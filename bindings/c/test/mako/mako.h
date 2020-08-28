@@ -75,8 +75,7 @@ enum Arguments {
 	ARG_TPSMIN,
 	ARG_TPSINTERVAL,
 	ARG_TPSCHANGE,
-	ARG_TXNTRACE,
-	ARG_TXNTAGGING
+	ARG_TXNTRACE
 };
 
 enum TPSChangeTypes { TPS_SIN, TPS_SQUARE, TPS_PULSE };
@@ -125,7 +124,6 @@ typedef struct {
 	char knobs[KNOB_MAX];
 	uint8_t flatbuffers;
 	int txntrace;
-	int txntagging;
 } mako_args_t;
 
 /* shared memory */
