@@ -40,6 +40,7 @@ struct DataDistributorInterface {
 	RequestStream<struct GetStorageWigglerStateRequest> storageWigglerState;
 	RequestStream<struct TriggerAuditRequest> triggerAudit;
 	RequestStream<struct TenantsOverStorageQuotaRequest> tenantsOverStorageQuota;
+	RequestStream<struct PrepareHybridRestoreRequest> prepareHybridRestoreReq;
 
 	DataDistributorInterface() {}
 	explicit DataDistributorInterface(const struct LocalityData& l, UID id) : locality(l), myId(id) {}
@@ -63,7 +64,23 @@ struct DataDistributorInterface {
 		           distributorSplitRange,
 		           storageWigglerState,
 		           triggerAudit,
-		           tenantsOverStorageQuota);
+		           tenantsOverStorageQuota,
+		           prepareHybridRestoreReq);
+	}
+};
+
+// when receive this request, DD will do the preparation work for blob migrator
+struct PrepareHybridRestoreRequest {
+	constexpr static FileIdentifier file_identifier = 1704246;
+	UID requesterID;
+	ReplyPromise<Void> reply;
+	StorageServerInterface ssi;
+
+	PrepareHybridRestoreRequest() {}
+	PrepareHybridRestoreRequest(const UID& id, const StorageServerInterface& ssi) : requesterID(id), ssi(ssi) {}
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, requesterID, reply, ssi);
 	}
 };
 
