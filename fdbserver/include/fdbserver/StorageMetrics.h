@@ -184,11 +184,13 @@ struct StorageServerMetrics {
 	    bandwidthSample; // FIXME: iops and bandwidth calculations are not effectively tested, since they aren't
 	                     // currently used by data distribution
 	TransientStorageMetricSample bytesReadSample;
+	TransientStorageMetricSample opsReadSample;
 
 	StorageServerMetrics()
 	  : byteSample(0), iopsSample(SERVER_KNOBS->IOPS_UNITS_PER_SAMPLE),
 	    bandwidthSample(SERVER_KNOBS->BANDWIDTH_UNITS_PER_SAMPLE),
-	    bytesReadSample(SERVER_KNOBS->BYTES_READ_UNITS_PER_SAMPLE) {}
+	    bytesReadSample(SERVER_KNOBS->BYTES_READ_UNITS_PER_SAMPLE),
+	    opsReadSample(SERVER_KNOBS->OPS_READ_UNITES_PER_SAMPLE) {}
 
 	// Get the current estimated metrics for the given keys
 	StorageMetrics getMetrics(KeyRangeRef const& keys) const {
@@ -226,6 +228,12 @@ struct StorageServerMetrics {
 		if (metrics.bytesReadPerKSecond)
 			notifyMetrics.bytesReadPerKSecond = bytesReadSample.addAndExpire(key, metrics.bytesReadPerKSecond, expire) *
 			                                    SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS;
+
+		if (metrics.opsReadPerKSecond) {
+			notifyMetrics.opsReadPerKSecond = opsReadSample.addAndExpire(key, metrics.opsReadPerKSecond, expire) *
+			                                  SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS;
+		}
+
 		if (!notifyMetrics.allZero()) {
 			auto& v = waitMetricsMap[key];
 			for (int i = 0; i < v.size(); i++) {
@@ -244,9 +252,12 @@ struct StorageServerMetrics {
 		double expire = now() + SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL;
 		int64_t bytesReadPerKSecond =
 		    bytesReadSample.addAndExpire(key, in, expire) * SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS;
+		int64_t opsReadPerKSecond =
+		    opsReadSample.addAndExpire(key, 1, expire) * SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS;
 		if (bytesReadPerKSecond > 0) {
 			StorageMetrics notifyMetrics;
 			notifyMetrics.bytesReadPerKSecond = bytesReadPerKSecond;
+			notifyMetrics.opsReadPerKSecond = opsReadPerKSecond;
 			auto& v = waitMetricsMap[key];
 			for (int i = 0; i < v.size(); i++) {
 				CODE_PROBE(true, "ShardNotifyMetrics");

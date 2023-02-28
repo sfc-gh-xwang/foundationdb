@@ -43,12 +43,15 @@ BandwidthStatus getBandwidthStatus(StorageMetrics const& metrics) {
 }
 
 ReadBandwidthStatus getReadBandwidthStatus(StorageMetrics const& metrics) {
-	if (metrics.bytesReadPerKSecond <= SERVER_KNOBS->SHARD_READ_HOT_BANDWIDTH_MIN_PER_KSECONDS ||
-	    metrics.bytesReadPerKSecond <= SERVER_KNOBS->SHARD_MAX_READ_DENSITY_RATIO * metrics.bytes *
-	                                       SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS) {
-		return ReadBandwidthStatusNormal;
-	} else {
+	bool highBytes = metrics.bytesReadPerKSecond > SERVER_KNOBS->SHARD_READ_HOT_BANDWIDTH_MIN_PER_KSECONDS &&
+	                 metrics.bytesReadPerKSecond > SERVER_KNOBS->SHARD_MAX_READ_DENSITY_RATIO * metrics.bytes *
+	                                                   SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS;
+	bool highOps = metrics.opsReadPerKSecond > SERVER_KNOBS->SHARD_MAX_READ_OPS_PER_KSEC;
+
+	if (highBytes || highOps) {
 		return ReadBandwidthStatusHigh;
+	} else {
+		return ReadBandwidthStatusNormal;
 	}
 }
 
