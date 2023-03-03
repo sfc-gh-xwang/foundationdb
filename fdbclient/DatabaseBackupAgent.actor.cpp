@@ -2687,6 +2687,79 @@ public:
 		return Void();
 	}
 
+	ACTOR static Future<Void> flushBackup(DatabaseBackupAgent* backupAgent,
+	                                      Database dest,
+	                                      Key tagName,
+	                                      Version commitVersion) {
+		// Wait for the destination to apply mutations up to the lock commit before switching over.
+		state UID destlogUid = wait(backupAgent->getLogUid(dest, tagName));
+		state ReadYourWritesTransaction tr2(dest);
+		loop {
+			try {
+				tr2.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr2.setOption(FDBTransactionOptions::LOCK_AWARE);
+				state Optional<Value> backupUid =
+				    wait(tr2.get(backupAgent->states.get(BinaryWriter::toValue(destlogUid, Unversioned()))
+				                     .pack(DatabaseBackupAgent::keyFolderId)));
+				TraceEvent("DBA_SwitchoverBackupUID")
+				    .detail("Uid", backupUid)
+				    .detail("Key",
+				            backupAgent->states.get(BinaryWriter::toValue(destlogUid, Unversioned()))
+				                .pack(DatabaseBackupAgent::keyFolderId));
+				if (!backupUid.present()) {
+					throw backup_duplicate();
+				}
+				Optional<Value> v = wait(tr2.get(
+				    BinaryWriter::toValue(destlogUid, Unversioned()).withPrefix(applyMutationsBeginRange.begin)));
+				TraceEvent("DBA_SwitchoverVersion")
+				    .detail("Version", v.present() ? BinaryReader::fromStringRef<Version>(v.get(), Unversioned()) : 0);
+				if (v.present() && BinaryReader::fromStringRef<Version>(v.get(), Unversioned()) >= commitVersion) {
+					break;
+				}
+				state Future<Void> versionWatch = tr2.watch(
+				    BinaryWriter::toValue(destlogUid, Unversioned()).withPrefix(applyMutationsBeginRange.begin));
+				wait(tr2.commit());
+				wait(versionWatch);
+				tr2.reset();
+			} catch (Error& e) {
+				wait(tr2.onError(e));
+			}
+		}
+
+		TraceEvent("DBA_SwitchoverReady").log();
+
+		try {
+			wait(backupAgent->discontinueBackup(dest, tagName));
+		} catch (Error& e) {
+			if (e.code() != error_code_backup_duplicate && e.code() != error_code_backup_unneeded) {
+				throw;
+			}
+		}
+		wait(success(backupAgent->waitBackup(dest, tagName, StopWhenDone::True)));
+		TraceEvent("DBA_SwitchoverStopped").log();
+
+		state ReadYourWritesTransaction tr3(dest);
+		loop {
+			try {
+				tr3.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr3.setOption(FDBTransactionOptions::LOCK_AWARE);
+				Version destVersion = wait(tr3.getReadVersion());
+				TraceEvent("DBA_SwitchoverVersionUpgrade").detail("Src", commitVersion).detail("Dest", destVersion);
+				if (destVersion <= commitVersion) {
+					CODE_PROBE(true, "Forcing dest backup cluster to higher version");
+					tr3.set(minRequiredCommitVersionKey, BinaryWriter::toValue(commitVersion + 1, Unversioned()));
+					wait(tr3.commit());
+				} else {
+					break;
+				}
+			} catch (Error& e) {
+				wait(tr3.onError(e));
+			}
+		}
+		TraceEvent("DBA_SwitchoverVersionUpgraded").log();
+		return Void();
+	}
+
 	ACTOR static Future<Void> atomicSwitchover(DatabaseBackupAgent* backupAgent,
 	                                           Database dest,
 	                                           Key tagName,
@@ -2734,73 +2807,7 @@ public:
 		}
 
 		TraceEvent("DBA_SwitchoverLocked").detail("Version", commitVersion);
-
-		// Wait for the destination to apply mutations up to the lock commit before switching over.
-		state ReadYourWritesTransaction tr2(dest);
-		loop {
-			try {
-				tr2.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr2.setOption(FDBTransactionOptions::LOCK_AWARE);
-				state Optional<Value> backupUid =
-				    wait(tr2.get(backupAgent->states.get(BinaryWriter::toValue(destlogUid, Unversioned()))
-				                     .pack(DatabaseBackupAgent::keyFolderId)));
-				TraceEvent("DBA_SwitchoverBackupUID")
-				    .detail("Uid", backupUid)
-				    .detail("Key",
-				            backupAgent->states.get(BinaryWriter::toValue(destlogUid, Unversioned()))
-				                .pack(DatabaseBackupAgent::keyFolderId));
-				if (!backupUid.present())
-					throw backup_duplicate();
-				Optional<Value> v = wait(tr2.get(
-				    BinaryWriter::toValue(destlogUid, Unversioned()).withPrefix(applyMutationsBeginRange.begin)));
-				TraceEvent("DBA_SwitchoverVersion")
-				    .detail("Version", v.present() ? BinaryReader::fromStringRef<Version>(v.get(), Unversioned()) : 0);
-				if (v.present() && BinaryReader::fromStringRef<Version>(v.get(), Unversioned()) >= commitVersion)
-					break;
-
-				state Future<Void> versionWatch = tr2.watch(
-				    BinaryWriter::toValue(destlogUid, Unversioned()).withPrefix(applyMutationsBeginRange.begin));
-				wait(tr2.commit());
-				wait(versionWatch);
-				tr2.reset();
-			} catch (Error& e) {
-				wait(tr2.onError(e));
-			}
-		}
-
-		TraceEvent("DBA_SwitchoverReady").log();
-
-		try {
-			wait(backupAgent->discontinueBackup(dest, tagName));
-		} catch (Error& e) {
-			if (e.code() != error_code_backup_duplicate && e.code() != error_code_backup_unneeded)
-				throw;
-		}
-
-		wait(success(backupAgent->waitBackup(dest, tagName, StopWhenDone::True)));
-
-		TraceEvent("DBA_SwitchoverStopped").log();
-
-		state ReadYourWritesTransaction tr3(dest);
-		loop {
-			try {
-				tr3.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr3.setOption(FDBTransactionOptions::LOCK_AWARE);
-				Version destVersion = wait(tr3.getReadVersion());
-				TraceEvent("DBA_SwitchoverVersionUpgrade").detail("Src", commitVersion).detail("Dest", destVersion);
-				if (destVersion <= commitVersion) {
-					CODE_PROBE(true, "Forcing dest backup cluster to higher version");
-					tr3.set(minRequiredCommitVersionKey, BinaryWriter::toValue(commitVersion + 1, Unversioned()));
-					wait(tr3.commit());
-				} else {
-					break;
-				}
-			} catch (Error& e) {
-				wait(tr3.onError(e));
-			}
-		}
-
-		TraceEvent("DBA_SwitchoverVersionUpgraded").log();
+		wait(flushBackup(backupAgent, dest, tagName, commitVersion));
 
 		try {
 			wait(drAgent.submitBackup(backupAgent->taskBucket->src,
@@ -3262,6 +3269,10 @@ public:
 
 Future<Void> DatabaseBackupAgent::unlockBackup(Reference<ReadYourWritesTransaction> tr, Key tagName) {
 	return DatabaseBackupAgentImpl::unlockBackup(this, tr, tagName);
+}
+
+Future<Void> DatabaseBackupAgent::flushBackup(Database dest, Key tagName, Version commitVersion) {
+	return DatabaseBackupAgentImpl::flushBackup(this, dest, tagName, commitVersion);
 }
 
 Future<Void> DatabaseBackupAgent::atomicSwitchover(Database dest,

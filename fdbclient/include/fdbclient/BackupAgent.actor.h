@@ -404,6 +404,8 @@ public:
 		return taskBucket->run(cx, futureBucket, pollDelay, maxConcurrentTasks);
 	}
 
+	Future<Void> flushBackup(Database dest, Key tagName, Version commitVersion);
+
 	Future<Void> atomicSwitchover(Database dest,
 	                              Key tagName,
 	                              Standalone<VectorRef<KeyRangeRef>> backupRanges,
