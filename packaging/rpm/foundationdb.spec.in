@@ -135,5 +135,6 @@ ifdef(`RHEL6', `/etc/rc.d/init.d/foundationdb', `/lib/systemd/system/foundationd
 /usr/bin/fdbdr
 /usr/bin/fdbbackup
 /usr/bin/fdbrestore
+/usr/bin/fdbmove
 /usr/lib64/libfdb_c.so
 /usr/include/*

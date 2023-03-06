@@ -151,6 +151,7 @@
               <File Id='FDBBACKUPEXE' Name='fdbbackup.exe' DiskId='1' Source='$(var.bindir)fdbbackup.exe' KeyPath='yes'/>
               <File Id='FDBRESTOREEXE' Name='fdbrestore.exe' DiskId='1' Source='$(var.bindir)fdbrestore.exe' KeyPath='no'/>
               <File Id='FDBDREXE' Name='fdbdr.exe' DiskId='1' Source='$(var.bindir)fdbdr.exe' KeyPath='no'/>
+              <File Id='FDBMOVEEXE' Name='fdbmove.exe' DiskId='1' Source='$(var.bindir)fdbmove.exe' KeyPath='no'/>
             </Component>
 
             <Component Id='FDBCLibraryPFiles' Guid='{6184C0C5-D29F-48DD-BE62-4776EB79C34A}' Win64='yes'>

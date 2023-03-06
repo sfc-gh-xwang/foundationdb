@@ -49,6 +49,7 @@ ln -s /usr/local/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/local/bi
 ln -s /usr/local/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/local/bin/fdbrestore
 ln -s /usr/local/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/local/bin/fdbdr
 ln -s /usr/local/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/local/bin/dr_agent
+ln -s /usr/local/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/local/bin/fdbmove
 
 pkgbuild --root $CLIENTSDIR --identifier FoundationDB-clients --version $VERSION --scripts "$SRCDIR"/packaging/osx/scripts-clients FoundationDB-clients.pkg
 

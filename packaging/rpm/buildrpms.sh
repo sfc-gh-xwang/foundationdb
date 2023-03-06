@@ -46,6 +46,7 @@ ln -s ../lib/foundationdb/backup_agent/backup_agent $INSTDIR/usr/bin/fdbbackup
 ln -s ../lib/foundationdb/backup_agent/backup_agent $INSTDIR/usr/bin/fdbrestore
 ln -s ../lib/foundationdb/backup_agent/backup_agent $INSTDIR/usr/bin/fdbdr
 ln -s ../lib/foundationdb/backup_agent/backup_agent $INSTDIR/usr/bin/dr_agent
+ln -s ../lib/foundationdb/backup_agent/backup_agent $INSTDIR/usr/bin/fdbmove
 
 (cd $INSTDIR ; tar -czf $TEMPDIR/SOURCES/install-files.tar.gz *)
 

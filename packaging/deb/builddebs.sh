@@ -61,6 +61,7 @@ ln -s ../lib/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/bin/fdbbacku
 ln -s ../lib/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/bin/fdbrestore
 ln -s ../lib/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/bin/fdbdr
 ln -s ../lib/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/bin/dr_agent
+ln -s ../lib/foundationdb/backup_agent/backup_agent $CLIENTSDIR/usr/bin/fdbmove
 
 echo "Installed-Size:" $(du -sx --exclude DEBIAN $CLIENTSDIR | awk '{print $1}') >> $CLIENTSDIR/DEBIAN/control
 
