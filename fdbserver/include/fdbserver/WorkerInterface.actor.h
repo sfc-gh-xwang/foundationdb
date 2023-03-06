@@ -38,6 +38,7 @@
 #include "fdbclient/BlobWorkerInterface.h"
 #include "fdbclient/ClientBooleanParams.h"
 #include "fdbclient/StorageServerInterface.h"
+#include "fdbclient/TenantBalancerInterface.h"
 #include "fdbserver/TesterInterface.actor.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbserver/LogSystemConfig.h"
@@ -66,6 +67,7 @@ struct WorkerInterface {
 	RequestStream<struct InitializeLogRouterRequest> logRouter;
 	RequestStream<struct InitializeBackupRequest> backup;
 	RequestStream<struct InitializeEncryptKeyProxyRequest> encryptKeyProxy;
+	RequestStream<struct InitializeTenantBalancerRequest> tenantBalancer;
 
 	RequestStream<struct LoadedPingRequest> debugPing;
 	RequestStream<struct CoordinationPingMessage> coordinationPing;
@@ -133,7 +135,8 @@ struct WorkerInterface {
 		           workerSnapReq,
 		           backup,
 		           encryptKeyProxy,
-		           updateServerDBInfo);
+		           updateServerDBInfo,
+		           tenantBalancer);
 	}
 };
 
@@ -441,6 +444,7 @@ struct RegisterWorkerRequest {
 	Optional<BlobMigratorInterface> blobMigratorInterf;
 	Optional<EncryptKeyProxyInterface> encryptKeyProxyInterf;
 	Optional<ConsistencyScanInterface> consistencyScanInterf;
+	Optional<TenantBalancerInterface> tenantBalancerInterf;
 	Standalone<VectorRef<StringRef>> issues;
 	std::vector<NetworkAddress> incompatiblePeers;
 	ReplyPromise<RegisterWorkerReply> reply;
@@ -465,6 +469,7 @@ struct RegisterWorkerRequest {
 	                      Optional<BlobMigratorInterface> mgInterf,
 	                      Optional<EncryptKeyProxyInterface> ekpInterf,
 	                      Optional<ConsistencyScanInterface> csInterf,
+	                      Optional<TenantBalancerInterface> tenantBalancerInterf,
 	                      bool degraded,
 	                      Optional<Version> lastSeenKnobVersion,
 	                      Optional<ConfigClassSet> knobConfigClassSet,
@@ -474,8 +479,8 @@ struct RegisterWorkerRequest {
 	  : wi(wi), initialClass(initialClass), processClass(processClass), priorityInfo(priorityInfo),
 	    generation(generation), distributorInterf(ddInterf), ratekeeperInterf(rkInterf), blobManagerInterf(bmInterf),
 	    blobMigratorInterf(mgInterf), encryptKeyProxyInterf(ekpInterf), consistencyScanInterf(csInterf),
-	    degraded(degraded), lastSeenKnobVersion(lastSeenKnobVersion), knobConfigClassSet(knobConfigClassSet),
-	    requestDbInfo(false), recoveredDiskFiles(recoveredDiskFiles),
+	    tenantBalancerInterf(tenantBalancerInterf), degraded(degraded), lastSeenKnobVersion(lastSeenKnobVersion),
+	    knobConfigClassSet(knobConfigClassSet), requestDbInfo(false), recoveredDiskFiles(recoveredDiskFiles),
 	    configBroadcastInterface(configBroadcastInterface), clusterId(clusterId) {}
 
 	template <class Ar>
@@ -492,6 +497,7 @@ struct RegisterWorkerRequest {
 		           blobMigratorInterf,
 		           encryptKeyProxyInterf,
 		           consistencyScanInterf,
+		           tenantBalancerInterf,
 		           issues,
 		           incompatiblePeers,
 		           reply,
@@ -914,6 +920,20 @@ struct InitializeEncryptKeyProxyRequest {
 	}
 };
 
+struct InitializeTenantBalancerRequest {
+	constexpr static FileIdentifier file_identifier = 5875895;
+	UID reqId;
+	ReplyPromise<TenantBalancerInterface> reply;
+
+	InitializeTenantBalancerRequest() = default;
+	explicit InitializeTenantBalancerRequest(UID uid) : reqId(uid) {}
+
+	template <typename Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reqId, reply);
+	}
+};
+
 struct TraceBatchDumpRequest {
 	constexpr static FileIdentifier file_identifier = 8184121;
 	ReplyPromise<Void> reply;
@@ -1082,6 +1102,7 @@ struct Role {
 	static const Role BACKUP;
 	static const Role ENCRYPT_KEY_PROXY;
 	static const Role CONSISTENCYSCAN;
+	static const Role TENANT_BALANCER;
 
 	std::string roleName;
 	std::string abbreviation;
@@ -1123,6 +1144,8 @@ struct Role {
 			return ENCRYPT_KEY_PROXY;
 		case ProcessClass::ConsistencyScan:
 			return CONSISTENCYSCAN;
+		case ProcessClass::TenantBalancer:
+			return TENANT_BALANCER;
 		case ProcessClass::Worker:
 			return WORKER;
 		case ProcessClass::NoRole:
@@ -1257,6 +1280,9 @@ ACTOR Future<Void> storageCacheServer(StorageServerInterface interf,
 ACTOR Future<Void> backupWorker(BackupInterface bi,
                                 InitializeBackupRequest req,
                                 Reference<AsyncVar<ServerDBInfo> const> db);
+ACTOR Future<Void> tenantBalancer(TenantBalancerInterface tbi,
+                                  Reference<AsyncVar<ServerDBInfo> const> db,
+                                  Reference<IClusterConnectionRecord> connRecord);
 
 void registerThreadForProfiling();
 
