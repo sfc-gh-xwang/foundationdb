@@ -40,8 +40,8 @@
 
 namespace TenantAPI {
 
-static const int TENANT_ID_PREFIX_MIN_VALUE = 0;
-static const int TENANT_ID_PREFIX_MAX_VALUE = 32767;
+static constexpr int TENANT_ID_PREFIX_MIN_VALUE = 0;
+static constexpr int TENANT_ID_PREFIX_MAX_VALUE = 32767;
 
 template <class Transaction>
 Future<Optional<TenantMapEntry>> tryGetTenantTransaction(Transaction tr, int64_t tenantId) {
