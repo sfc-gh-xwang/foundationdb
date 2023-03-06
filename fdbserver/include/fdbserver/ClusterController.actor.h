@@ -58,6 +58,7 @@ struct WorkerInfo : NonCopyable {
 	Future<Void> haltBlobMigrator;
 	Future<Void> haltEncryptKeyProxy;
 	Future<Void> haltConsistencyScan;
+	Future<Void> haltTenantBalancer;
 	Standalone<VectorRef<StringRef>> issues;
 
 	WorkerInfo()
@@ -80,7 +81,8 @@ struct WorkerInfo : NonCopyable {
 	  : watcher(std::move(r.watcher)), reply(std::move(r.reply)), gen(r.gen), reboots(r.reboots),
 	    initialClass(r.initialClass), priorityInfo(r.priorityInfo), details(std::move(r.details)),
 	    haltRatekeeper(r.haltRatekeeper), haltDistributor(r.haltDistributor), haltBlobManager(r.haltBlobManager),
-	    haltEncryptKeyProxy(r.haltEncryptKeyProxy), haltConsistencyScan(r.haltConsistencyScan), issues(r.issues) {}
+	    haltEncryptKeyProxy(r.haltEncryptKeyProxy), haltConsistencyScan(r.haltConsistencyScan),
+	    haltTenantBalancer(r.haltTenantBalancer), issues(r.issues) {}
 	void operator=(WorkerInfo&& r) noexcept {
 		watcher = std::move(r.watcher);
 		reply = std::move(r.reply);
@@ -93,6 +95,7 @@ struct WorkerInfo : NonCopyable {
 		haltDistributor = r.haltDistributor;
 		haltBlobManager = r.haltBlobManager;
 		haltEncryptKeyProxy = r.haltEncryptKeyProxy;
+		haltTenantBalancer = r.haltTenantBalancer;
 		issues = r.issues;
 	}
 };
@@ -218,6 +221,17 @@ public:
 			serverInfo->set(newInfo);
 		}
 
+		void setTenantBalancer(const TenantBalancerInterface& interf) {
+			auto newInfo = serverInfo->get();
+			newInfo.id = deterministicRandom()->randomUniqueID();
+			newInfo.infoGeneration = ++dbInfoCount;
+			newInfo.client.id = deterministicRandom()->randomUniqueID();
+			newInfo.client.tenantBalancer = interf;
+			newInfo.tenantBalancer = interf;
+			clientInfo->set(newInfo.client);
+			serverInfo->set(newInfo);
+		}
+
 		void clearInterf(ProcessClass::ClassType t) {
 			auto newInfo = serverInfo->get();
 			auto newClientInfo = clientInfo->get();
@@ -237,6 +251,9 @@ public:
 				newClientInfo.encryptKeyProxy = Optional<EncryptKeyProxyInterface>();
 			} else if (t == ProcessClass::ConsistencyScanClass) {
 				newInfo.consistencyScan = Optional<ConsistencyScanInterface>();
+			} else if (t == ProcessClass::TenantBalancerClass) {
+				newInfo.tenantBalancer = Optional<TenantBalancerInterface>();
+				newClientInfo.tenantBalancer = Optional<TenantBalancerInterface>();
 			}
 			serverInfo->set(newInfo);
 			clientInfo->set(newClientInfo);
@@ -336,7 +353,9 @@ public:
 		       (db.serverInfo->get().client.encryptKeyProxy.present() &&
 		        db.serverInfo->get().client.encryptKeyProxy.get().locality.processId() == processId) ||
 		       (db.serverInfo->get().consistencyScan.present() &&
-		        db.serverInfo->get().consistencyScan.get().locality.processId() == processId);
+		        db.serverInfo->get().consistencyScan.get().locality.processId() == processId) ||
+		       (db.serverInfo->get().client.tenantBalancer.present() &&
+		        db.serverInfo->get().client.tenantBalancer.get().locality.processId() == processId);
 	}
 
 	WorkerDetails getStorageWorker(RecruitStorageRequest const& req) {
@@ -2925,7 +2944,7 @@ public:
 		const auto& pid = worker.interf.locality.processId();
 		if ((role != ProcessClass::DataDistributor && role != ProcessClass::Ratekeeper &&
 		     role != ProcessClass::BlobManager && role != ProcessClass::EncryptKeyProxy &&
-		     role != ProcessClass::ConsistencyScan) ||
+		     role != ProcessClass::ConsistencyScan && role != ProcessClass::TenantBalancer) ||
 		    pid == masterProcessId.get()) {
 			return false;
 		}
@@ -3398,6 +3417,8 @@ public:
 	Optional<UID> recruitingEncryptKeyProxyID;
 	AsyncVar<bool> recruitConsistencyScan;
 	Optional<UID> recruitingConsistencyScanID;
+	AsyncVar<bool> recruitTenantBalancer;
+	Optional<UID> recruitingTenantBalancerID;
 
 	// Stores the health information from a particular worker's perspective.
 	struct WorkerHealth {
@@ -3444,7 +3465,8 @@ public:
 	    datacenterVersionDifference(0), versionDifferenceUpdated(false), remoteDCMonitorStarted(false),
 	    remoteTransactionSystemDegraded(false), recruitDistributor(false), recruitRatekeeper(false),
 	    recruitBlobManager(false), recruitBlobMigrator(false), recruitEncryptKeyProxy(false),
-	    recruitConsistencyScan(false), clusterControllerMetrics("ClusterController", id.toString()),
+	    recruitConsistencyScan(false), recruitTenantBalancer(false),
+	    clusterControllerMetrics("ClusterController", id.toString()),
 	    openDatabaseRequests("OpenDatabaseRequests", clusterControllerMetrics),
 	    registerWorkerRequests("RegisterWorkerRequests", clusterControllerMetrics),
 	    getWorkersRequests("GetWorkersRequests", clusterControllerMetrics),

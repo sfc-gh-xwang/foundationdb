@@ -35,6 +35,7 @@
 #include "fdbclient/IdempotencyId.actor.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "fdbclient/TagThrottle.actor.h"
+#include "fdbclient/TenantBalancerInterface.h"
 #include "fdbclient/VersionVector.h"
 
 #include "fdbrpc/Stats.h"
@@ -133,6 +134,7 @@ struct ClientDBInfo {
 	std::vector<VersionHistory> history;
 	UID clusterId;
 	Optional<EncryptKeyProxyInterface> encryptKeyProxy;
+	Optional<TenantBalancerInterface> tenantBalancer;
 
 	TenantMode tenantMode;
 	ClusterType clusterType = ClusterType::STANDALONE;
@@ -156,6 +158,7 @@ struct ClientDBInfo {
 		           history,
 		           tenantMode,
 		           encryptKeyProxy,
+		           tenantBalancer,
 		           clusterId,
 		           clusterType,
 		           metaclusterName);

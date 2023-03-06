@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "fdbclient/TenantBalancerInterface.h"
 #include "fdbserver/RatekeeperInterface.h"
 #include "fdbserver/DataDistributorInterface.h"
 
@@ -197,6 +198,33 @@ struct EncryptKeyProxySingleton : Singleton<EncryptKeyProxyInterface> {
 	void recruit(ClusterControllerData& cc) const {
 		cc.lastRecruitTime = now();
 		cc.recruitEncryptKeyProxy.set(true);
+	}
+};
+
+struct TenantBalancerSingleton : Singleton<TenantBalancerInterface> {
+	TenantBalancerSingleton(const Optional<TenantBalancerInterface>& interface) : Singleton(interface) {}
+
+	Role getRole() const { return Role::TENANT_BALANCER; }
+	ProcessClass::ClusterRole getClusterRole() const { return ProcessClass::TenantBalancer; }
+
+	void setInterfaceToDbInfo(ClusterControllerData& cc) const {
+		if (interface.present()) {
+			TraceEvent("CCTB_SetInterf", cc.id).detail("Id", interface.get().id());
+			cc.db.setTenantBalancer(interface.get());
+		}
+	}
+
+	void halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
+		if (interface.present()) {
+			TraceEvent("CCTB_Halt", cc.id).detail("Id", interface.get().id());
+			cc.id_worker[pid].haltTenantBalancer =
+			    brokenPromiseToNever(interface.get().haltTenantBalancer.getReply(HaltTenantBalancerRequest(cc.id)));
+		}
+	}
+
+	void recruit(ClusterControllerData& cc) const {
+		cc.lastRecruitTime = now();
+		cc.recruitTenantBalancer.set(true);
 	}
 };
 

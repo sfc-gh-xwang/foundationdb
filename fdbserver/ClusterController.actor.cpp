@@ -30,6 +30,7 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/SystemData.h"
 #include "fdbclient/DatabaseContext.h"
+#include "fdbclient/TenantBalancerInterface.h"
 #include "fdbrpc/FailureMonitor.h"
 #include "fdbclient/EncryptKeyProxyInterface.h"
 #include "fdbserver/BlobGranuleServerCommon.actor.h"
@@ -130,10 +131,13 @@ ACTOR Future<Void> clusterWatchDatabase(ClusterControllerData* cluster,
 			dbInfo.blobManager = db->serverInfo->get().blobManager;
 			dbInfo.blobMigrator = db->serverInfo->get().blobMigrator;
 			dbInfo.consistencyScan = db->serverInfo->get().consistencyScan;
+			dbInfo.tenantBalancer = db->serverInfo->get().tenantBalancer;
 			dbInfo.latencyBandConfig = db->serverInfo->get().latencyBandConfig;
 			dbInfo.myLocality = db->serverInfo->get().myLocality;
 			dbInfo.client = ClientDBInfo();
 			dbInfo.client.encryptKeyProxy = db->serverInfo->get().client.encryptKeyProxy;
+			dbInfo.client.id = deterministicRandom()->randomUniqueID();
+			dbInfo.client.tenantBalancer = db->serverInfo->get().tenantBalancer;
 			dbInfo.client.tenantMode = TenantAPI::tenantModeForClusterType(db->clusterType, db->config.tenantMode);
 			dbInfo.client.clusterId = db->serverInfo->get().client.clusterId;
 			dbInfo.client.clusterType = db->clusterType;
@@ -510,6 +514,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	WorkerDetails newRKWorker = findNewProcessForSingleton(self, ProcessClass::Ratekeeper, id_used);
 	WorkerDetails newDDWorker = findNewProcessForSingleton(self, ProcessClass::DataDistributor, id_used);
 	WorkerDetails newCSWorker = findNewProcessForSingleton(self, ProcessClass::ConsistencyScan, id_used);
+	WorkerDetails newTBWorker = findNewProcessForSingleton(self, ProcessClass::TenantBalancer, id_used);
 
 	WorkerDetails newBMWorker;
 	WorkerDetails newMGWorker;
@@ -532,6 +537,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	auto bestFitnessForRK = findBestFitnessForSingleton(self, newRKWorker, ProcessClass::Ratekeeper);
 	auto bestFitnessForDD = findBestFitnessForSingleton(self, newDDWorker, ProcessClass::DataDistributor);
 	auto bestFitnessForCS = findBestFitnessForSingleton(self, newCSWorker, ProcessClass::ConsistencyScan);
+	auto bestFitnessForTB = findBestFitnessForSingleton(self, newTBWorker, ProcessClass::TenantBalancer);
 
 	ProcessClass::Fitness bestFitnessForBM;
 	ProcessClass::Fitness bestFitnessForMG;
@@ -554,6 +560,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	BlobManagerSingleton bmSingleton(db.blobManager);
 	BlobMigratorSingleton mgSingleton(db.blobMigrator);
 	EncryptKeyProxySingleton ekpSingleton(db.client.encryptKeyProxy);
+	TenantBalancerSingleton tbSingleton(db.client.tenantBalancer);
 
 	// Check if the singletons are healthy.
 	// side effect: try to rerecruit the singletons to more optimal processes
@@ -565,6 +572,9 @@ void checkBetterSingletons(ClusterControllerData* self) {
 
 	bool csHealthy = isHealthySingleton<ConsistencyScanSingleton>(
 	    self, newCSWorker, csSingleton, bestFitnessForCS, self->recruitingConsistencyScanID);
+
+	bool tbHealthy = isHealthySingleton<TenantBalancerSingleton>(
+	    self, newTBWorker, tbSingleton, bestFitnessForTB, self->recruitingTenantBalancerID);
 
 	bool bmHealthy = true;
 	bool mgHealthy = true;
@@ -584,7 +594,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	}
 	// if any of the singletons are unhealthy (rerecruited or not stable), then do not
 	// consider any further re-recruitments
-	if (!(rkHealthy && ddHealthy && bmHealthy && ekpHealthy && csHealthy && mgHealthy)) {
+	if (!(rkHealthy && ddHealthy && bmHealthy && ekpHealthy && csHealthy && mgHealthy && tbHealthy)) {
 		return;
 	}
 
@@ -593,9 +603,11 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	Optional<Standalone<StringRef>> currRKProcessId = rkSingleton.getInterface().locality.processId();
 	Optional<Standalone<StringRef>> currDDProcessId = ddSingleton.getInterface().locality.processId();
 	Optional<Standalone<StringRef>> currCSProcessId = csSingleton.getInterface().locality.processId();
+	Optional<Standalone<StringRef>> currTBProcessId = tbSingleton.getInterface().locality.processId();
 	Optional<Standalone<StringRef>> newRKProcessId = newRKWorker.interf.locality.processId();
 	Optional<Standalone<StringRef>> newDDProcessId = newDDWorker.interf.locality.processId();
 	Optional<Standalone<StringRef>> newCSProcessId = newCSWorker.interf.locality.processId();
+	Optional<Standalone<StringRef>> newTBProcessId = newTBWorker.interf.locality.processId();
 
 	Optional<Standalone<StringRef>> currBMProcessId, newBMProcessId;
 	Optional<Standalone<StringRef>> currMGProcessId, newMGProcessId;
@@ -614,8 +626,12 @@ void checkBetterSingletons(ClusterControllerData* self) {
 		newEKPProcessId = newEKPWorker.interf.locality.processId();
 	}
 
-	std::vector<Optional<Standalone<StringRef>>> currPids = { currRKProcessId, currDDProcessId, currCSProcessId };
-	std::vector<Optional<Standalone<StringRef>>> newPids = { newRKProcessId, newDDProcessId, newCSProcessId };
+	std::vector<Optional<Standalone<StringRef>>> currPids = {
+		currRKProcessId, currDDProcessId, currCSProcessId, currTBProcessId
+	};
+	std::vector<Optional<Standalone<StringRef>>> newPids = {
+		newRKProcessId, newDDProcessId, newCSProcessId, newTBProcessId
+	};
 	if (self->db.blobGranulesEnabled.get()) {
 		currPids.emplace_back(currBMProcessId);
 		newPids.emplace_back(newBMProcessId);
@@ -655,7 +671,8 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	    newColocMap[newBMProcessId] <= currColocMap[currBMProcessId] &&
 	    newColocMap[newMGProcessId] <= currColocMap[currMGProcessId] &&
 	    newColocMap[newEKPProcessId] <= currColocMap[currEKPProcessId] &&
-	    newColocMap[newCSProcessId] <= currColocMap[currCSProcessId]) {
+	    newColocMap[newCSProcessId] <= currColocMap[currCSProcessId] &&
+	    newColocMap[newTBProcessId] <= currColocMap[currTBProcessId]) {
 		// rerecruit the singleton for which we have found a better process, if any
 		if (newColocMap[newRKProcessId] < currColocMap[currRKProcessId]) {
 			rkSingleton.recruit(*self);
@@ -670,6 +687,8 @@ void checkBetterSingletons(ClusterControllerData* self) {
 			ekpSingleton.recruit(*self);
 		} else if (newColocMap[newCSProcessId] < currColocMap[currCSProcessId]) {
 			csSingleton.recruit(*self);
+		} else if (newColocMap[newTBProcessId] < currColocMap[currTBProcessId]) {
+			tbSingleton.recruit(*self);
 		}
 	}
 }
@@ -952,7 +971,8 @@ void clusterRegisterMaster(ClusterControllerData* self, RegisterMasterRequest co
 	    db->clientInfo->get().tenantMode != db->config.tenantMode ||
 	    db->clientInfo->get().clusterId != db->serverInfo->get().client.clusterId ||
 	    db->clientInfo->get().clusterType != db->clusterType ||
-	    db->clientInfo->get().metaclusterName != db->metaclusterName) {
+	    db->clientInfo->get().metaclusterName != db->metaclusterName ||
+	    db->clientInfo->get().tenantBalancer != db->serverInfo->get().tenantBalancer) {
 		TraceEvent("PublishNewClientInfo", self->id)
 		    .detail("Master", dbInfo.master.id())
 		    .detail("GrvProxies", db->clientInfo->get().grvProxies)
@@ -978,6 +998,7 @@ void clusterRegisterMaster(ClusterControllerData* self, RegisterMasterRequest co
 		clientInfo.clusterId = db->serverInfo->get().client.clusterId;
 		clientInfo.clusterType = db->clusterType;
 		clientInfo.metaclusterName = db->metaclusterName;
+		clientInfo.tenantBalancer = db->serverInfo->get().tenantBalancer;
 		db->clientInfo->set(clientInfo);
 		dbInfo.client = db->clientInfo->get();
 	}
@@ -1252,6 +1273,13 @@ ACTOR Future<Void> registerWorker(RegisterWorkerRequest req,
 		auto registeringSingleton = ConsistencyScanSingleton(req.consistencyScanInterf);
 		haltRegisteringOrCurrentSingleton<ConsistencyScanSingleton>(
 		    self, w, currSingleton, registeringSingleton, self->recruitingConsistencyScanID);
+	}
+
+	if (req.tenantBalancerInterf.present()) {
+		auto currSingleton = TenantBalancerSingleton(self->db.serverInfo->get().tenantBalancer);
+		auto registeringSingleton = TenantBalancerSingleton(req.tenantBalancerInterf);
+		haltRegisteringOrCurrentSingleton<TenantBalancerSingleton>(
+		    self, w, currSingleton, registeringSingleton, self->recruitingTenantBalancerID);
 	}
 
 	// Notify the worker to register again with new process class/exclusive property
@@ -2348,6 +2376,95 @@ ACTOR Future<Void> monitorEncryptKeyProxy(ClusterControllerData* self) {
 	}
 }
 
+ACTOR Future<Void> startTenantBalancer(ClusterControllerData* self) {
+	// If master fails at the same time, give it a chance to clear master PID.
+	wait(delay(0.0));
+
+	TraceEvent("CCStartTenantBalancer", self->id).log();
+	loop {
+		try {
+			state bool noTenantBalancer = !self->db.serverInfo->get().tenantBalancer.present();
+			while (!self->masterProcessId.present() ||
+			       self->masterProcessId != self->db.serverInfo->get().master.locality.processId() ||
+			       self->db.serverInfo->get().recoveryState < RecoveryState::ACCEPTING_COMMITS) {
+				wait(self->db.serverInfo->onChange() || delay(SERVER_KNOBS->WAIT_FOR_GOOD_RECRUITMENT_DELAY));
+			}
+			if (noTenantBalancer && self->db.serverInfo->get().tenantBalancer.present()) {
+				// Existing tenant balancer registers while waiting, so skip.
+				return Void();
+			}
+			std::map<Optional<Standalone<StringRef>>, int> id_used = self->getUsedIds();
+			WorkerFitnessInfo tbWorker = self->getWorkerForRoleInDatacenter(self->clusterControllerDcId,
+			                                                                ProcessClass::TenantBalancer,
+			                                                                ProcessClass::NeverAssign,
+			                                                                self->db.config,
+			                                                                id_used);
+			InitializeTenantBalancerRequest req(deterministicRandom()->randomUniqueID());
+			state WorkerDetails worker = tbWorker.worker;
+			if (self->onMasterIsBetter(worker, ProcessClass::TenantBalancer)) {
+				worker = self->id_worker[self->masterProcessId.get()].details;
+			}
+
+			self->recruitingTenantBalancerID = req.reqId;
+			TraceEvent("CCRecruitTenantBalancer", self->id)
+			    .detail("Addr", worker.interf.address())
+			    .detail("TenantBalancerId", req.reqId);
+
+			ErrorOr<TenantBalancerInterface> interf = wait(worker.interf.tenantBalancer.getReplyUnlessFailedFor(
+			    req, SERVER_KNOBS->WAIT_FOR_TENANT_BALANCER_JOIN_DELAY, 0));
+			if (interf.present()) {
+				self->recruitTenantBalancer.set(false);
+				self->recruitingTenantBalancerID = interf.get().id();
+				const auto& tenantBalancer = self->db.serverInfo->get().tenantBalancer;
+				TraceEvent("CCTenantBalancerRecruited", self->id)
+				    .detail("Addr", worker.interf.address())
+				    .detail("TenantBalancerId", interf.get().id());
+
+				if (tenantBalancer.present() && tenantBalancer.get().id() != interf.get().id() &&
+				    self->id_worker.count(tenantBalancer.get().locality.processId())) {
+					TraceEvent("CCHaltTenantBalancerAfterRecruit", self->id)
+					    .detail("TenantBalancerId", tenantBalancer.get().id())
+					    .detail("DcId", printable(self->clusterControllerDcId));
+					TenantBalancerSingleton(tenantBalancer).halt(*self, tenantBalancer.get().locality.processId());
+				}
+				if (!tenantBalancer.present() || tenantBalancer.get().id() != interf.get().id()) {
+					self->db.setTenantBalancer(interf.get());
+				}
+				checkOutstandingRequests(self);
+				return Void();
+			}
+		} catch (Error& e) {
+			TraceEvent("CCTenantBalancerRecruitError", self->id).error(e);
+			if (e.code() != error_code_no_more_servers) {
+				throw;
+			}
+		}
+		wait(lowPriorityDelay(SERVER_KNOBS->ATTEMPT_RECRUITMENT_DELAY));
+	}
+}
+
+ACTOR Future<Void> monitorTenantBalancer(ClusterControllerData* self) {
+	while (self->db.serverInfo->get().recoveryState < RecoveryState::ACCEPTING_COMMITS) {
+		wait(self->db.serverInfo->onChange());
+	}
+
+	loop {
+		if (self->db.serverInfo->get().tenantBalancer.present() && !self->recruitTenantBalancer.get()) {
+			choose {
+				when(wait(waitFailureClient(self->db.serverInfo->get().tenantBalancer.get().waitFailure,
+				                            SERVER_KNOBS->TENANT_BALANCER_FAILURE_TIME))) {
+					TraceEvent("CCTenantBalancerDied", self->id)
+					    .detail("TenantBalancerId", self->db.serverInfo->get().tenantBalancer.get().id());
+					self->db.clearInterf(ProcessClass::TenantBalancerClass);
+				}
+				when(wait(self->recruitTenantBalancer.onChange())) {}
+			}
+		} else {
+			wait(startTenantBalancer(self));
+		}
+	}
+}
+
 // Acquires the BM lock by getting the next epoch no.
 ACTOR Future<int64_t> getNextBMEpoch(ClusterControllerData* self) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->cx);
@@ -2922,6 +3039,7 @@ ACTOR Future<Void> clusterControllerCore(ClusterControllerFullInterface interf,
 	self.addActor.send(monitorBlobMigrator(&self));
 	self.addActor.send(watchBlobRestoreCommand(&self));
 	self.addActor.send(monitorConsistencyScan(&self));
+	self.addActor.send(monitorTenantBalancer(&self));
 	self.addActor.send(metaclusterMetricsUpdater(&self));
 	self.addActor.send(dbInfoUpdater(&self));
 	self.addActor.send(updateClusterId(&self));

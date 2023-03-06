@@ -203,8 +203,6 @@ struct TenantBalancerInterface {
 	LocalityData locality;
 	UID uniqueId;
 
-	RequestStream<ReplyPromise<Void>> waitFailure;
-
 	RequestStream<HaltTenantBalancerRequest> haltTenantBalancer;
 	RequestStream<GetMovementStatusRequest> getMovementStatus;
 	RequestStream<GetActiveMovementsRequest> getActiveMovements;
