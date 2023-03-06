@@ -315,6 +315,10 @@ public:
 	// REST KMS configurations
 	bool REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 
+	// tenant balancer
+	// rpc request timeout for tenant balancer clients
+	double TENANT_BALANCER_REQUEST_TIMEOUT;
+
 	ClientKnobs(Randomize randomize);
 	void initialize(Randomize randomize);
 };

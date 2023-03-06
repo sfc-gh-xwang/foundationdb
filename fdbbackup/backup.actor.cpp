@@ -18,6 +18,8 @@
  * limitations under the License.
  */
 
+#include "fdbclient/NativeAPI.actor.h"
+#include "fdbclient/TenantBalancerInterface.h"
 #include "flow/ApiVersion.h"
 #include "fmt/format.h"
 #include "fdbbackup/BackupTLSConfig.h"
@@ -81,7 +83,7 @@
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 // Type of program being executed
-enum class ProgramExe { AGENT, BACKUP, RESTORE, FASTRESTORE_TOOL, DR_AGENT, DB_BACKUP, UNDEFINED };
+enum class ProgramExe { AGENT, BACKUP, RESTORE, FASTRESTORE_TOOL, DR_AGENT, DB_BACKUP, DB_MOVE, UNDEFINED };
 
 enum class BackupType {
 	UNDEFINED = 0,
@@ -108,7 +110,8 @@ enum class DBType { UNDEFINED = 0, START, STATUS, SWITCH, ABORT, PAUSE, RESUME }
 // New fast restore reuses the type from legacy slow restore
 enum class RestoreType { UNKNOWN, START, STATUS, ABORT, WAIT };
 
-//
+enum class DBMoveType { UNDEFINED = 0, STATUS, LIST, START, ABORT };
+
 enum {
 	// Backup constants
 	OPT_DESTCONTAINER,
@@ -193,6 +196,12 @@ enum {
 	OPT_DSTONLY,
 
 	OPT_TRACE_FORMAT,
+
+	// Tenants
+	OPT_TENANT_NAME,
+
+	// Metacluster constants
+	OPT_MANAGEMENT_CLUSTER,
 };
 
 // Top level binary commands.
@@ -921,12 +930,59 @@ CSimpleOpt::SOption g_rgDBPauseOptions[] = {
 	SO_END_OF_OPTIONS
 };
 
+CSimpleOpt::SOption g_rgDBMoveStatusOptions[] = {
+#ifdef _WIN32
+	{ OPT_PARENTPID, "--parentpid", SO_REQ_SEP },
+#endif
+	{ OPT_MANAGEMENT_CLUSTER, "-m", SO_REQ_SEP },
+	{ OPT_MANAGEMENT_CLUSTER, "--managementcluster", SO_REQ_SEP },
+	{ OPT_TENANT_NAME, "-t", SO_REQ_SEP },
+	{ OPT_TENANT_NAME, "--tenant", SO_REQ_SEP },
+	TLS_OPTION_FLAGS,
+	SO_END_OF_OPTIONS
+};
+
+CSimpleOpt::SOption g_rgDBMoveListOptions[] = {
+#ifdef _WIN32
+	{ OPT_PARENTPID, "--parentpid", SO_REQ_SEP },
+#endif
+	{ OPT_MANAGEMENT_CLUSTER, "-m", SO_REQ_SEP },
+	{ OPT_MANAGEMENT_CLUSTER, "--managementcluster", SO_REQ_SEP },
+	TLS_OPTION_FLAGS,
+	SO_END_OF_OPTIONS
+};
+
+CSimpleOpt::SOption g_rgDBMoveStartOptions[] = {
+#ifdef _WIN32
+	{ OPT_PARENTPID, "--parentpid", SO_REQ_SEP },
+#endif
+	{ OPT_MANAGEMENT_CLUSTER, "-m", SO_REQ_SEP },
+	{ OPT_MANAGEMENT_CLUSTER, "--managementcluster", SO_REQ_SEP },
+	{ OPT_TENANT_NAME, "-t", SO_REQ_SEP },
+	{ OPT_TENANT_NAME, "--tenant", SO_REQ_SEP },
+	TLS_OPTION_FLAGS,
+	SO_END_OF_OPTIONS
+};
+
+CSimpleOpt::SOption g_rgDBMoveAbortOptions[] = {
+#ifdef _WIN32
+	{ OPT_PARENTPID, "--parentpid", SO_REQ_SEP },
+#endif
+	{ OPT_MANAGEMENT_CLUSTER, "-m", SO_REQ_SEP },
+	{ OPT_MANAGEMENT_CLUSTER, "--managementcluster", SO_REQ_SEP },
+	{ OPT_TENANT_NAME, "-t", SO_REQ_SEP },
+	{ OPT_TENANT_NAME, "--tenant", SO_REQ_SEP },
+	TLS_OPTION_FLAGS,
+	SO_END_OF_OPTIONS
+};
+
 const KeyRef exeAgent = "backup_agent"_sr;
 const KeyRef exeBackup = "fdbbackup"_sr;
 const KeyRef exeRestore = "fdbrestore"_sr;
 const KeyRef exeFastRestoreTool = "fastrestore_tool"_sr; // must be lower case
 const KeyRef exeDatabaseAgent = "dr_agent"_sr;
 const KeyRef exeDatabaseBackup = "fdbdr"_sr;
+const KeyRef exeDatabaseMovement = "fdbmove"_sr;
 
 extern const char* getSourceVersion();
 
@@ -1338,6 +1394,19 @@ static void printDBBackupUsage(bool devhelp) {
 	return;
 }
 
+static void printDBMovementUsage(bool devhelp) {
+	printf("FoundationDB " FDB_VT_PACKAGE_NAME " (v" FDB_VT_VERSION ")\n");
+	printf("Usage: %s [TOP_LEVEL_OPTIONS] (start | status | list | abort) [OPTIONS]\n\n",
+	       exeDatabaseMovement.toString().c_str());
+	printf(" TOP_LEVEL_OPTIONS:\n");
+	printf("  --build_flags  Print build information and exit.\n");
+	printf("  -v, --version  Print version information and exit.\n");
+	printf("  -h, --help     Display this help and exit.\n");
+	printf("\n");
+
+	printf(" ACTION OPTIONS:\n");
+}
+
 static void printUsage(ProgramExe programExe, bool devhelp) {
 
 	switch (programExe) {
@@ -1358,6 +1427,9 @@ static void printUsage(ProgramExe programExe, bool devhelp) {
 		break;
 	case ProgramExe::DB_BACKUP:
 		printDBBackupUsage(devhelp);
+		break;
+	case ProgramExe::DB_MOVE:
+		printDBMovementUsage(devhelp);
 		break;
 	case ProgramExe::UNDEFINED:
 	default:
@@ -1437,6 +1509,14 @@ ProgramExe getProgramType(std::string programExe) {
 		enProgramExe = ProgramExe::DB_BACKUP;
 	}
 
+	// Check if db move
+	else if ((programExe.length() >= exeDatabaseMovement.size()) &&
+	         (programExe.compare(programExe.length() - exeDatabaseMovement.size(),
+	                             exeDatabaseMovement.size(),
+	                             (const char*)exeDatabaseMovement.begin()) == 0)) {
+		enProgramExe = ProgramExe::DB_MOVE;
+	}
+
 	return enProgramExe;
 }
 
@@ -1506,6 +1586,20 @@ DBType getDBType(std::string dbType) {
 		enBackupType = i->second;
 
 	return enBackupType;
+}
+
+DBMoveType getDBMoveType(std::string dbMoveTypeStr) {
+	DBMoveType dbMoveType = DBMoveType::UNDEFINED;
+	std::transform(dbMoveTypeStr.begin(), dbMoveTypeStr.end(), dbMoveTypeStr.begin(), ::tolower);
+	static const std::map<std::string, DBMoveType> values = { { "status", DBMoveType::STATUS },
+		                                                      { "list", DBMoveType::LIST },
+		                                                      { "start", DBMoveType::START },
+		                                                      { "abort", DBMoveType::ABORT } };
+	auto iter = values.find(dbMoveTypeStr);
+	if (iter != values.end()) {
+		dbMoveType = iter->second;
+	}
+	return dbMoveType;
 }
 
 ACTOR Future<std::string> getLayerStatus(Reference<ReadYourWritesTransaction> tr,
@@ -3066,6 +3160,166 @@ ACTOR Future<Void> modifyBackup(Database db, std::string tagName, BackupModifyOp
 	return Void();
 }
 
+ACTOR
+Future<TenantMovementStatus> getMovementStatus(Database database, Key tenantName) {
+	state GetMovementStatusRequest req(tenantName);
+	state Future<ErrorOr<GetMovementStatusReply>> getMovementStatusReply = Never();
+	state Future<Void> initialize = Void();
+	loop choose {
+		when(ErrorOr<GetMovementStatusReply> reply =
+		         wait(timeoutError(getMovementStatusReply, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+			if (reply.isError()) {
+				throw reply.getError();
+			}
+			return reply.get().movementStatus;
+		}
+		// TODO: handle tenant balancer change
+		when(wait(database->onTenantBalancerChanged() || initialize)) {
+			initialize = Never();
+			getMovementStatusReply = database->getTenantBalancer().present()
+			                             ? database->getTenantBalancer().get().getMovementStatus.tryGetReply(req)
+			                             : Never();
+		}
+	}
+}
+
+ACTOR
+Future<Void> statusDBMove(Database database, Key tenantName, bool json = false) {
+	try {
+		state TenantMovementStatus status = wait(getMovementStatus(database, tenantName));
+		if (json) {
+			printf("%s\n", status.toJson().c_str());
+		} else {
+			printf("Status for movement with ID %s\n", status.tenantMovementInfo.movementId.toString().c_str());
+			printf("  Moving tenant %s\n", printable(status.tenantMovementInfo.tenantId).c_str());
+			if (status.mutationLag.present()) {
+				printf("  Mutation lag: %.03f seconds\n", status.mutationLag.get());
+			}
+			if (status.switchVersion.present()) {
+				printf("  Switch version: %lld\n", static_cast<long long>(status.switchVersion.get()));
+			}
+		}
+	} catch (Error& e) {
+		if (e.code() == error_code_actor_cancelled) {
+			throw;
+		}
+		if (json) {
+			json_spirit::mValue statusRootValue;
+			JSONDoc statusRoot(statusRootValue);
+			statusRoot.create("movementState") = "Unknown";
+			statusRoot.create("error") = e.what();
+			printf("%s\n", json_spirit::write_string(statusRootValue).c_str());
+		} else {
+			fprintf(stderr, "ERROR: %s\n", e.what());
+		}
+	}
+	return Void();
+}
+
+ACTOR
+Future<std::vector<TenantMovementInfo>> getActiveMovements(Database db) {
+	state GetActiveMovementsRequest req;
+	state Future<ErrorOr<GetActiveMovementsReply>> getActiveMovementsReply = Never();
+	state Future<Void> initialize = Void();
+	loop choose {
+		when(ErrorOr<GetActiveMovementsReply> reply =
+		         wait(timeoutError(getActiveMovementsReply, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+			if (reply.isError()) {
+				throw reply.getError();
+			}
+			return reply.get().activeMovements;
+		}
+		when(wait(db->onTenantBalancerChanged() || initialize)) {
+			initialize = Never();
+			getActiveMovementsReply = db->getTenantBalancer().present()
+			                              ? db->getTenantBalancer().get().getActiveMovements.tryGetReply(req)
+			                              : Never();
+		}
+	}
+}
+
+ACTOR
+Future<Void> fetchAndDisplayDBMove(Database db) {
+	try {
+		state std::vector<TenantMovementInfo> activeMovements = wait(getActiveMovements(db));
+		fprintf(stdout, "%d active movements\n", (int)activeMovements.size());
+	} catch (Error& e) {
+		if (e.code() == error_code_actor_cancelled) {
+			throw;
+		}
+		fprintf(stderr, "ERROR: %s\n", e.what());
+	}
+	return Void();
+}
+
+ACTOR
+Future<Void> listDBMove(Database database) {
+	wait(fetchAndDisplayDBMove(database));
+	return Void();
+}
+
+ACTOR
+Future<Void> submitDBMove(Database db, Key tenantName, ClusterName dstCluster) {
+	try {
+		state MoveTenantsToClusterRequest req(tenantName, dstCluster);
+		state Future<ErrorOr<MoveTenantsToClusterReply>> replyFuture = Never();
+		state Future<Void> initialize = Void();
+		loop choose {
+			when(ErrorOr<MoveTenantsToClusterReply> reply =
+			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+				if (reply.isError()) {
+					throw reply.getError();
+				}
+				break;
+			}
+			when(wait(db->onTenantBalancerChanged() || initialize)) {
+				initialize = Never();
+				replyFuture = db->getTenantBalancer().present()
+				                  ? db->getTenantBalancer().get().moveTenantsToCluster.tryGetReply(req)
+				                  : Never();
+			}
+		}
+		printf("Data movement successfully submitted\n");
+	} catch (Error& e) {
+		if (e.code() == error_code_actor_cancelled) {
+			throw;
+		}
+		fprintf(stderr, "ERROR: %s\n", e.what());
+	}
+	return Void();
+}
+
+ACTOR
+Future<Void> abortDBMove(Database db, Key tenantName) {
+	try {
+		state AbortMovementRequest req(tenantName);
+		state Future<ErrorOr<AbortMovementReply>> replyFuture = Never();
+		state Future<Void> initialize = Void();
+		loop choose {
+			when(ErrorOr<AbortMovementReply> reply =
+			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+				if (reply.isError()) {
+					throw reply.getError();
+				}
+				break;
+			}
+			when(wait(db->onTenantBalancerChanged() || initialize)) {
+				initialize = Never();
+				replyFuture = db->getTenantBalancer().present()
+				                  ? db->getTenantBalancer().get().abortMovement.tryGetReply(req)
+				                  : Never();
+			}
+		}
+		printf("Data movement aborted\n");
+	} catch (Error& e) {
+		if (e.code() == error_code_actor_cancelled) {
+			throw;
+		}
+		fprintf(stderr, "ERROR: %s\n", e.what());
+	}
+	return Void();
+}
+
 static std::vector<std::vector<StringRef>> parseLine(std::string& line, bool& err, bool& partial) {
 	err = false;
 	partial = false;
@@ -3294,6 +3548,7 @@ int main(int argc, char* argv[]) {
 		BackupType backupType = BackupType::UNDEFINED;
 		RestoreType restoreType = RestoreType::UNKNOWN;
 		DBType dbType = DBType::UNDEFINED;
+		DBMoveType dbMoveType = DBMoveType::UNDEFINED;
 
 		std::unique_ptr<CSimpleOpt> args;
 
@@ -3458,6 +3713,30 @@ int main(int argc, char* argv[]) {
 				    argc - 1, argv + 1, g_rgRestoreOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 			}
 			break;
+		case ProgramExe::DB_MOVE:
+			if (argc < 2) {
+				printDBMovementUsage(false);
+				return FDB_EXIT_ERROR;
+			}
+			dbMoveType = getDBMoveType(argv[1]);
+			switch (dbMoveType) {
+			case DBMoveType::STATUS:
+				args = std::make_unique<CSimpleOpt>(argc - 1, &argv[1], g_rgDBMoveStatusOptions, SO_O_EXACT);
+				break;
+			case DBMoveType::LIST:
+				args = std::make_unique<CSimpleOpt>(argc - 1, &argv[1], g_rgDBMoveListOptions, SO_O_EXACT);
+				break;
+			case DBMoveType::START:
+				args = std::make_unique<CSimpleOpt>(argc - 1, &argv[1], g_rgDBMoveStartOptions, SO_O_EXACT);
+				break;
+			case DBMoveType::ABORT:
+				args = std::make_unique<CSimpleOpt>(argc - 1, &argv[1], g_rgDBMoveAbortOptions, SO_O_EXACT);
+				break;
+			default:
+				args = std::make_unique<CSimpleOpt>(argc, argv, g_rgOptions, SO_O_EXACT);
+				break;
+			}
+			break;
 		case ProgramExe::UNDEFINED:
 		default:
 			fprintf(stderr, "FoundationDB " FDB_VT_PACKAGE_NAME " (v" FDB_VT_VERSION ")\n");
@@ -3533,6 +3812,9 @@ int main(int argc, char* argv[]) {
 		Optional<std::string> encryptionKeyFile;
 
 		BackupModifyOptions modifyOptions;
+
+		std::string managementClusterFile;
+		Optional<std::string> tenantName;
 
 		if (argc == 1) {
 			printUsage(programExe, false);
@@ -3950,6 +4232,19 @@ int main(int argc, char* argv[]) {
 			case OPT_DUMP_END:
 				dumpEnd = parseVersion(args->OptionArg());
 				break;
+			case OPT_MANAGEMENT_CLUSTER:
+				managementClusterFile = args->OptionArg();
+				break;
+			case OPT_TENANT_NAME: {
+				const char* tenantNameStr = args->OptionArg();
+				tenantName = tryUnprintable(tenantNameStr);
+				if (!tenantName.present()) {
+					fprintf(stderr, "ERROR: Could not parse tenantName `%s'\n", tenantNameStr);
+					printHelpTeaser(argv[0]);
+					return FDB_EXIT_ERROR;
+				}
+				break;
+			}
 			case OPT_JSON:
 				jsonOutput = true;
 				break;
@@ -4025,6 +4320,12 @@ int main(int argc, char* argv[]) {
 				}
 				break;
 
+			case ProgramExe::DB_MOVE:
+				fprintf(stderr, "ERROR: FDBMove does not support argument value `%s'\n", args->File(argLoop));
+				printHelpTeaser(argv[0]);
+				return FDB_EXIT_ERROR;
+				break;
+
 			case ProgramExe::UNDEFINED:
 			default:
 				return FDB_EXIT_ERROR;
@@ -4063,6 +4364,7 @@ int main(int argc, char* argv[]) {
 
 		Database db;
 		Database sourceDb;
+		Database managementDb;
 		FileBackupAgent ba;
 		Key tag;
 		Future<Optional<Void>> f;
@@ -4110,6 +4412,9 @@ int main(int argc, char* argv[]) {
 		};
 
 		auto initCluster = [&](bool quiet = false) {
+			if (clusterFile.empty()) {
+				return false;
+			}
 			Optional<Database> result = connectToCluster(clusterFile, localities, quiet);
 			if (result.present()) {
 				db = result.get();
@@ -4131,6 +4436,20 @@ int main(int argc, char* argv[]) {
 				sourceDb = result.get();
 			}
 
+			return result.present();
+		};
+
+		auto initManagementCluster = [&](bool required, bool quiet = false) {
+			if (managementClusterFile.empty() && required) {
+				if (!quiet) {
+					fprintf(stderr, "ERROR: management cluster file is required\n");
+				}
+				return false;
+			}
+			Optional<Database> result = connectToCluster(managementClusterFile, localities, quiet);
+			if (result.present()) {
+				managementDb = result.get();
+			}
 			return result.present();
 		};
 
@@ -4509,6 +4828,48 @@ int main(int argc, char* argv[]) {
 				break;
 			}
 			break;
+
+		case ProgramExe::DB_MOVE: {
+			bool canInitManagementDb = initManagementCluster(true, true);
+			if (!canInitManagementDb) {
+				fprintf(stderr, "Management cluster file required\n");
+				return FDB_EXIT_ERROR;
+			}
+			switch (dbMoveType) {
+			case DBMoveType::STATUS:
+				if (!tenantName.present()) {
+					fprintf(stderr, "Tenant name required\n");
+					return FDB_EXIT_ERROR;
+				}
+				f = stopAfter(statusDBMove(managementDb, StringRef(tenantName.get()), jsonOutput));
+				break;
+			case DBMoveType::LIST:
+				f = stopAfter(listDBMove(managementDb));
+				break;
+			case DBMoveType::START:
+				if (!tenantName.present()) {
+					fprintf(stderr, "Tenant name required\n");
+					return FDB_EXIT_ERROR;
+				}
+				f = stopAfter(submitDBMove(managementDb, StringRef(tenantName.get()), "dummy"_sr));
+				break;
+			case DBMoveType::ABORT:
+				if (!tenantName.present()) {
+					fprintf(stderr, "Tenant name required\n");
+					return FDB_EXIT_ERROR;
+				}
+				f = stopAfter(abortDBMove(managementDb, StringRef(tenantName.get())));
+				break;
+			case DBMoveType::UNDEFINED:
+			default:
+				fprintf(stderr, "ERROR: Unsupported data movement action %s\n", argv[1]);
+				printHelpTeaser(argv[0]);
+				return FDB_EXIT_ERROR;
+				break;
+			}
+			break;
+		}
+
 		case ProgramExe::UNDEFINED:
 		default:
 			return FDB_EXIT_ERROR;

@@ -315,6 +315,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 	init( REST_KMS_ALLOW_NOT_SECURE_CONNECTION,     false ); if ( randomize && BUGGIFY ) REST_KMS_ALLOW_NOT_SECURE_CONNECTION = !REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 
+	init( TENANT_BALANCER_REQUEST_TIMEOUT,             20 );
+
 	// clang-format on
 }
 
