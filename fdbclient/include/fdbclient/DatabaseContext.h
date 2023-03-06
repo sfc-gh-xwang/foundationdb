@@ -763,6 +763,9 @@ public:
 	// { "InitializationError" : <error code> }
 	Standalone<StringRef> getClientStatus();
 
+	Optional<TenantBalancerInterface> getTenantBalancer() const;
+	Future<Void> onTenantBalancerChanged() const;
+
 private:
 	using WatchMapKey = std::pair<int64_t, Key>;
 	using WatchMapKeyHasher = boost::hash<WatchMapKey>;
