@@ -19,6 +19,7 @@
  */
 
 #include "fdbclient/CoordinationInterface.h"
+#include "fdbclient/Tenant.h"
 #include "fdbclient/TenantBalancerInterface.h"
 #include "fdbserver/ServerDBInfo.h"
 #include "fdbserver/WaitFailure.h"

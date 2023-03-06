@@ -3,6 +3,6 @@
 
 namespace TenantAPI {
 
-void fooFunc(TenantMovementRecord movement) {}
+void fooFunc(TenantMovementMapEntry movement) {}
 
 } // namespace TenantAPI
