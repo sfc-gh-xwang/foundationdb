@@ -1,0 +1,16 @@
+[configuration]
+allowDefaultTenant = false
+tenantModes = ['optional', 'required']
+allowCreatingTenants = false
+extraDatabaseMode = 'Multiple'
+
+[[test]]
+testTitle = 'OnlineTenantMovementTest'
+clearAfterTest = true
+timeout = 2100
+runSetup = true
+
+    [[test.workload]]
+    testName = 'OnlineTenantMovement'
+    maxTenants = 1000
+    testDuration = 120
