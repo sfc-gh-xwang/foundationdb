@@ -18,12 +18,16 @@
  * limitations under the License.
  */
 
+#include "fdbclient/ClusterConnectionMemoryRecord.h"
 #include "fdbclient/CoordinationInterface.h"
+#include "fdbclient/FDBOptions.g.h"
+#include "fdbclient/MetaclusterManagement.actor.h"
+#include "fdbclient/ReadYourWrites.h"
 #include "fdbclient/Tenant.h"
 #include "fdbclient/TenantBalancerInterface.h"
 #include "fdbserver/ServerDBInfo.h"
 #include "fdbserver/WaitFailure.h"
-
+#include "flow/ApiVersion.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 struct TenantBalancer {
@@ -81,16 +85,59 @@ ACTOR Future<Void> getActiveMovements(TenantBalancer* self, GetActiveMovementsRe
 
 ACTOR Future<Void> moveTenantsToCluster(TenantBalancer* self, MoveTenantsToClusterRequest req) {
 	++self->moveTenantsToClusterRequests;
-	TraceEvent(SevDebug, "TenantBalancerMoveTenantsToCluster", self->tbi.id()).log();
+	TraceEvent("TenantBalancerMoveTenantsToCluster", self->tbi.id()).log();
 
-	try {
-		MoveTenantsToClusterReply reply;
-		req.reply.send(reply);
-	} catch (Error& e) {
-		TraceEvent(SevDebug, "TenantBalancerMoveTenantsToClusterError", self->tbi.id()).error(e);
-		req.reply.sendError(e);
+	Database managementDb = Database::createDatabase(self->connRecord, ApiVersion::LATEST_VERSION);
+	state Reference<ReadYourWritesTransaction> tr(new ReadYourWritesTransaction(managementDb));
+
+	UID debugUid(0xeeeeffff, 0);
+	tr->debugTransaction(debugUid);
+
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+			MetaclusterTenantMapEntry tenantMapEntry = wait(MetaclusterAPI::getTenantTransaction(tr, req.tenantName));
+			ASSERT_EQ(req.tenantName, tenantMapEntry.tenantName);
+			ClusterName srcClusterName = tenantMapEntry.assignedCluster;
+
+			// No need to move
+			if (srcClusterName == req.dstCluster) {
+				MoveTenantsToClusterReply reply;
+				req.reply.send(reply);
+				return Void();
+			}
+
+			DataClusterMetadata srcClusterMetadata = wait(MetaclusterAPI::getClusterTransaction(tr, srcClusterName));
+			ClusterConnectionString srcConnectionStr = srcClusterMetadata.connectionString;
+			Reference<IClusterConnectionRecord> srcClusterFile =
+			    makeReference<ClusterConnectionMemoryRecord>(srcConnectionStr);
+			state Database srcDb = Database::createDatabase(srcClusterFile, ApiVersion::LATEST_VERSION);
+
+			DataClusterMetadata dstClusterMetadata = wait(MetaclusterAPI::getClusterTransaction(tr, req.dstCluster));
+			ClusterConnectionString dstConnectionStr = dstClusterMetadata.connectionString;
+			Reference<IClusterConnectionRecord> dstClusterFile =
+			    makeReference<ClusterConnectionMemoryRecord>(dstConnectionStr);
+			Database dstDb = Database::createDatabase(dstClusterFile, ApiVersion::LATEST_VERSION);
+
+			Reference<ReadYourWritesTransaction> srcTr(new ReadYourWritesTransaction(srcDb));
+			Reference<ReadYourWritesTransaction> DstTr(new ReadYourWritesTransaction(dstDb));
+
+			MoveTenantsToClusterReply reply;
+			req.reply.send(reply);
+			return Void();
+		} catch (Error& e) {
+			TraceEvent(SevWarn, "TenantBalancerMoveTenantsToClusterError", self->tbi.id())
+			    .error(e)
+			    .detail("Message", e.what());
+			if (e.code() == error_code_tenant_not_found || e.code() == error_code_cluster_not_found) {
+				req.reply.sendError(e);
+				return Void();
+			}
+			req.reply.sendError(e);
+			wait(tr->onError(e));
+		}
 	}
-	return Void();
 }
 
 ACTOR Future<Void> abortMovement(TenantBalancer* self, AbortMovementRequest req) {
