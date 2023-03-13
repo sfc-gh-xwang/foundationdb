@@ -5,6 +5,7 @@
 #include "fdbclient/ConfigKnobs.h"
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/IKnobCollection.h"
+#include "fdbclient/Knobs.h"
 #include "fdbclient/MetaclusterManagement.actor.h"
 #include "fdbclient/MultiVersionTransaction.h"
 #include "fdbclient/TenantBalancerInterface.h"
@@ -1027,16 +1028,32 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		state TenantName tenant = self->chooseTenantName();
 		state bool tenantExists = self->createdTenants.contains(tenant);
 		state ClusterName dstClusterName = self->chooseClusterName();
-		ASSERT(self->mgmtDb->getTenantBalancer().present());
-		TenantBalancerInterface tbi = self->mgmtDb->getTenantBalancer().get();
-		MoveTenantsToClusterRequest req;
-		req.tenantName = tenant;
-		req.dstCluster = dstClusterName;
 		try {
-			MoveTenantsToClusterReply reply = wait(tbi.moveTenantsToCluster.getReply(req));
+			state MoveTenantsToClusterRequest req(tenant, dstClusterName);
+			state Future<ErrorOr<MoveTenantsToClusterReply>> replyFuture = Never();
+			state Future<Void> init = Void();
+			loop choose {
+				when(ErrorOr<MoveTenantsToClusterReply> reply =
+				         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+					if (reply.isError()) {
+						if (reply.getError().code() == error_code_tenant_not_found) {
+							ASSERT(!tenantExists);
+							break;
+						}
+						throw reply.getError();
+					}
+					break;
+				}
+				when(wait(self->mgmtDb->onTenantBalancerChanged() || init)) {
+					init = Never();
+					replyFuture = self->mgmtDb->getTenantBalancer().present()
+					                  ? self->mgmtDb->getTenantBalancer().get().moveTenantsToCluster.tryGetReply(req)
+					                  : Never();
+				}
+			}
 		} catch (Error& e) {
-			if (e.code() == error_code_tenant_not_found) {
-				ASSERT(!tenantExists);
+			if (e.code() == error_code_actor_cancelled) {
+				throw;
 			}
 		}
 		return Void();
