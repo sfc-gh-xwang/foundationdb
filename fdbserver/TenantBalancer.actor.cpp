@@ -43,7 +43,6 @@ struct TenantBalancer {
 	    abortMovementRequests("AbortMovementRequests", tenantBalancerMetrics) {
 		managementDb =
 		    openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::False, EnableLocalityLoadBalance::True);
-		TraceEvent("TenantBalancerInited", tbi.id());
 	}
 
 	TenantBalancerInterface tbi;
@@ -135,10 +134,6 @@ ACTOR Future<Void> tenantBalancerCore(TenantBalancer* self) {
 		}
 		when(AbortMovementRequest req = waitNext(self->tbi.abortMovement.getFuture())) {
 			self->actors.add(abortMovement(self, req));
-		}
-		when(wait(self->dbInfo->onChange())) {
-			self->managementDb = openDBOnServer(
-			    self->dbInfo, TaskPriority::DefaultEndpoint, LockAware::False, EnableLocalityLoadBalance::True);
 		}
 		when(wait(self->actors.getResult())) {}
 	}
