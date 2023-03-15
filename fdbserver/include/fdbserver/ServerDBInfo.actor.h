@@ -54,7 +54,6 @@ struct ServerDBInfo {
 	Optional<BlobMigratorInterface> blobMigrator;
 	Optional<ConsistencyScanInterface> consistencyScan;
 	std::vector<ResolverInterface> resolvers;
-	Optional<TenantBalancerInterface> tenantBalancer;
 	DBRecoveryCount
 	    recoveryCount; // A recovery count from DBCoreState.  A successful cluster recovery increments it twice;
 	                   // unsuccessful recoveries may increment it once. Depending on where the current master is in its
@@ -89,7 +88,6 @@ struct ServerDBInfo {
 		           blobMigrator,
 		           consistencyScan,
 		           resolvers,
-		           tenantBalancer,
 		           recoveryCount,
 		           recoveryState,
 		           masterLifetime,

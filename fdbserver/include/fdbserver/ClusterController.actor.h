@@ -227,7 +227,6 @@ public:
 			newInfo.infoGeneration = ++dbInfoCount;
 			newInfo.client.id = deterministicRandom()->randomUniqueID();
 			newInfo.client.tenantBalancer = interf;
-			newInfo.tenantBalancer = interf;
 			clientInfo->set(newInfo.client);
 			serverInfo->set(newInfo);
 		}
@@ -252,7 +251,7 @@ public:
 			} else if (t == ProcessClass::ConsistencyScanClass) {
 				newInfo.consistencyScan = Optional<ConsistencyScanInterface>();
 			} else if (t == ProcessClass::TenantBalancerClass) {
-				newInfo.tenantBalancer = Optional<TenantBalancerInterface>();
+				newInfo.client.tenantBalancer = Optional<TenantBalancerInterface>();
 				newClientInfo.tenantBalancer = Optional<TenantBalancerInterface>();
 			}
 			serverInfo->set(newInfo);

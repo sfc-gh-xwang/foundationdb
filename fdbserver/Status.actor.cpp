@@ -845,8 +845,8 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
 		roles.addRole("encrypt_key_proxy", db->get().client.encryptKeyProxy.get());
 	}
 
-	if (db->get().tenantBalancer.present()) {
-		roles.addRole("tenant_balancer", db->get().tenantBalancer.get());
+	if (db->get().client.tenantBalancer.present()) {
+		roles.addRole("tenant_balancer", db->get().client.tenantBalancer.get());
 	}
 
 	for (auto& tLogSet : db->get().logSystemConfig.tLogs) {
