@@ -1082,6 +1082,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 			state Future<Void> logger = delayedTrace();
 			state int operation = deterministicRandom()->randomInt(0, 10);
 			wait(moveTenant(self));
+			wait(delay(0.001));
 		}
 		return Void();
 	}
