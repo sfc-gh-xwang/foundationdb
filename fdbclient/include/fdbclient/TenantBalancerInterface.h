@@ -182,6 +182,18 @@ struct AbortMovementRequest {
 	}
 };
 
+struct PersistInterfaceRequest {
+	constexpr static FileIdentifier file_identifier = 3278033;
+	ReplyPromise<Void> reply;
+
+	PersistInterfaceRequest() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reply);
+	}
+};
+
 struct HaltTenantBalancerRequest {
 	constexpr static FileIdentifier file_identifier = 15769279;
 
@@ -208,6 +220,7 @@ struct TenantBalancerInterface {
 	RequestStream<GetActiveMovementsRequest> getActiveMovements;
 	RequestStream<MoveTenantsToClusterRequest> moveTenantsToCluster;
 	RequestStream<AbortMovementRequest> abortMovement;
+	RequestStream<PersistInterfaceRequest> persistInterface;
 	RequestStream<ReplyPromise<Void>> waitFailure;
 
 	NetworkAddress address() const { return haltTenantBalancer.getEndpoint().getPrimaryAddress(); }
@@ -229,6 +242,7 @@ struct TenantBalancerInterface {
 		           getActiveMovements,
 		           moveTenantsToCluster,
 		           abortMovement,
+		           persistInterface,
 		           waitFailure);
 	}
 
@@ -245,6 +259,7 @@ struct TenantBalancerInterface {
 		streams.push_back(getActiveMovements.getReceiver());
 		streams.push_back(moveTenantsToCluster.getReceiver());
 		streams.push_back(abortMovement.getReceiver());
+		streams.push_back(persistInterface.getReceiver());
 		FlowTransport::transport().addEndpoints(streams);
 	}
 };

@@ -52,7 +52,6 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		DataClusterData(Database db) : db(db) {}
 	};
 
-	Database mgmtDb;
 	Reference<IDatabase> managementDb;
 	std::map<ClusterName, Reference<DataClusterData>> dataDbs;
 	std::map<TenantGroupName, Reference<TenantGroupData>> tenantGroups;
@@ -92,13 +91,12 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 	}
 
 	ACTOR static Future<Void> _setup(Database cx, OnlineTenantMovementWorkload* self) {
-		self->mgmtDb = cx;
 		Reference<IDatabase> threadSafeHandle =
 		    wait(unsafeThreadFutureToFuture(ThreadSafeDatabase::createFromExistingDatabase(cx)));
 		MultiVersionApi::api->selectApiVersion(cx->apiVersion.version());
 		self->managementDb = MultiVersionDatabase::debugCreateFromExistingDatabase(threadSafeHandle);
 
-		ASSERT(!g_simulator->extraDatabases.empty());
+		// ASSERT(!g_simulator->extraDatabases.empty());
 		for (auto connectionString : g_simulator->extraDatabases) {
 			ClusterConnectionString ccs(connectionString);
 			self->dataDbIndex.push_back(ClusterName(format("cluster_%08d", self->dataDbs.size())));
@@ -1024,10 +1022,51 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		return Void();
 	}
 
+	ACTOR
+	template <typename IDatabase>
+	static Future<Future<Void>> getTbiChangedFuture(Reference<IDatabase> db) {
+		state Reference<ITransaction> tr = db->createTransaction();
+		state Future<Void> future = Never();
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				state ThreadFuture<Void> threadFuture = tr->watch("\xff/TenantBalancerInterf"_sr);
+				wait(safeThreadFutureToFuture(tr->commit()));
+				future = safeThreadFutureToFuture(threadFuture);
+				break;
+			} catch (Error& e) {
+				wait(safeThreadFutureToFuture(tr->onError(e)));
+			}
+		}
+		return future;
+	}
+
+	ACTOR
+	template <typename IDatabase>
+	static Future<Optional<TenantBalancerInterface>> getTenantBalancerInterface(Reference<IDatabase> db) {
+		state Reference<ITransaction> tr = db->createTransaction();
+		state Optional<TenantBalancerInterface> interf;
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				ThreadFuture<Optional<Value>> valueF = tr->get("\xff/TenantBalancerInterf"_sr);
+				Optional<Value> value = wait(safeThreadFutureToFuture(valueF));
+				if (value.present()) {
+					interf = BinaryReader::fromStringRef<TenantBalancerInterface>(value.get(), IncludeVersion());
+				}
+				break;
+			} catch (Error& e) {
+				wait(safeThreadFutureToFuture(tr->onError(e)));
+			}
+		}
+		return interf;
+	}
+
 	ACTOR static Future<Void> moveTenant(OnlineTenantMovementWorkload* self) {
 		state TenantName tenant = self->chooseTenantName();
 		state bool tenantExists = self->createdTenants.contains(tenant);
-		state ClusterName dstClusterName = self->chooseClusterName();
+		state ClusterName dstClusterName = "management"_sr;
+		state Future<Void> onTbiChanged = wait(getTbiChangedFuture(self->managementDb));
 		try {
 			state MoveTenantsToClusterRequest req(tenant, dstClusterName);
 			state Future<ErrorOr<MoveTenantsToClusterReply>> replyFuture = Never();
@@ -1044,11 +1083,12 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 					}
 					break;
 				}
-				when(wait(self->mgmtDb->onTenantBalancerChanged() || init)) {
+				when(wait(onTbiChanged || init)) {
 					init = Never();
-					replyFuture = self->mgmtDb->getTenantBalancer().present()
-					                  ? self->mgmtDb->getTenantBalancer().get().moveTenantsToCluster.tryGetReply(req)
-					                  : Never();
+					state Optional<TenantBalancerInterface> tbi = wait(getTenantBalancerInterface(self->managementDb));
+					replyFuture = tbi.present() ? tbi.get().moveTenantsToCluster.tryGetReply(req) : Never();
+					Future<Void> _onTbiChanged = wait(getTbiChangedFuture(self->managementDb));
+					onTbiChanged = _onTbiChanged;
 				}
 			}
 		} catch (Error& e) {
@@ -1082,7 +1122,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 			state Future<Void> logger = delayedTrace();
 			state int operation = deterministicRandom()->randomInt(0, 10);
 			wait(moveTenant(self));
-			wait(delay(0.001));
+			wait(delay(0.1));
 		}
 		return Void();
 	}

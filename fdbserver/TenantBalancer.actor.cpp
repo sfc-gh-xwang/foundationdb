@@ -27,6 +27,7 @@
 #include "fdbclient/Tenant.h"
 #include "fdbclient/TenantBalancerInterface.h"
 #include "fdbserver/ServerDBInfo.h"
+#include "fdbserver/TenantBalancer.actor.h"
 #include "fdbserver/WaitFailure.h"
 #include "flow/ApiVersion.h"
 #include "flow/TaskPriority.h"
@@ -145,6 +146,10 @@ ACTOR Future<Void> tenantBalancer(TenantBalancerInterface tbi,
                                   Reference<IClusterConnectionRecord> connRecord) {
 	state TenantBalancer self(tbi, db, connRecord);
 	try {
+		PersistInterfaceRequest _ = waitNext(tbi.persistInterface.getFuture());
+		TraceEvent("TenantBalancerPersistInterfReq").log();
+		wait(writeTenantBalancerInterfaceToDb(self.managementDb, tbi));
+
 		wait(tenantBalancerCore(&self));
 	} catch (Error& e) {
 		TraceEvent("TenantBalancerTerminated", tbi.id()).error(e);

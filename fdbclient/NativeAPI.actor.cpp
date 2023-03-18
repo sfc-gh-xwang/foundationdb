@@ -11248,15 +11248,6 @@ Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> DatabaseContext::getHotRa
 	    Reference<DatabaseContext>::addRef(this), ssi, ReadHotSubRangeRequest(keys, type, splitCount));
 }
 
-Optional<TenantBalancerInterface> DatabaseContext::getTenantBalancer() const {
-	return clientInfo->get().tenantBalancer;
-}
-
-Future<Void> DatabaseContext::onTenantBalancerChanged() const {
-	// TODO: target tenant balancer specifically
-	return clientInfo->onChange();
-}
-
 int64_t getMaxKeySize(KeyRef const& key) {
 	return getMaxWriteKeySize(key, true);
 }

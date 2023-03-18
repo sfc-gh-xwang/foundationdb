@@ -19,7 +19,6 @@
  */
 
 #include "fdbclient/NativeAPI.actor.h"
-#include "fdbclient/TenantBalancerInterface.h"
 #include "flow/ApiVersion.h"
 #include "fmt/format.h"
 #include "fdbbackup/BackupTLSConfig.h"
@@ -50,6 +49,7 @@
 #include "fdbclient/RunRYWTransaction.actor.h"
 #include "fdbclient/S3BlobStore.h"
 #include "fdbclient/SystemData.h"
+#include "fdbclient/TenantBalancerInterface.h"
 #include "fdbclient/json_spirit/json_spirit_writer_template.h"
 
 #include "flow/Platform.h"
@@ -3173,12 +3173,10 @@ Future<TenantMovementStatus> getMovementStatus(Database database, Key tenantName
 			}
 			return reply.get().movementStatus;
 		}
-		// TODO: handle tenant balancer change
-		when(wait(database->onTenantBalancerChanged() || initialize)) {
+		// TODO
+		when(wait(initialize)) {
 			initialize = Never();
-			getMovementStatusReply = database->getTenantBalancer().present()
-			                             ? database->getTenantBalancer().get().getMovementStatus.tryGetReply(req)
-			                             : Never();
+			getMovementStatusReply = Never();
 		}
 	}
 }
@@ -3229,11 +3227,10 @@ Future<std::vector<TenantMovementInfo>> getActiveMovements(Database db) {
 			}
 			return reply.get().activeMovements;
 		}
-		when(wait(db->onTenantBalancerChanged() || initialize)) {
+		// TODO
+		when(wait(initialize)) {
 			initialize = Never();
-			getActiveMovementsReply = db->getTenantBalancer().present()
-			                              ? db->getTenantBalancer().get().getActiveMovements.tryGetReply(req)
-			                              : Never();
+			getActiveMovementsReply = Never();
 		}
 	}
 }
@@ -3272,11 +3269,10 @@ Future<Void> submitDBMove(Database db, Key tenantName, ClusterName dstCluster) {
 				}
 				break;
 			}
-			when(wait(db->onTenantBalancerChanged() || initialize)) {
+			// TODO
+			when(wait(initialize)) {
 				initialize = Never();
-				replyFuture = db->getTenantBalancer().present()
-				                  ? db->getTenantBalancer().get().moveTenantsToCluster.tryGetReply(req)
-				                  : Never();
+				replyFuture = Never();
 			}
 		}
 		printf("Data movement successfully submitted\n");
@@ -3303,11 +3299,10 @@ Future<Void> abortDBMove(Database db, Key tenantName) {
 				}
 				break;
 			}
-			when(wait(db->onTenantBalancerChanged() || initialize)) {
+			// TODO
+			when(wait(initialize)) {
 				initialize = Never();
-				replyFuture = db->getTenantBalancer().present()
-				                  ? db->getTenantBalancer().get().abortMovement.tryGetReply(req)
-				                  : Never();
+				replyFuture = Never();
 			}
 		}
 		printf("Data movement aborted\n");

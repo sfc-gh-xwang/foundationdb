@@ -136,7 +136,7 @@ ACTOR Future<Void> clusterWatchDatabase(ClusterControllerData* cluster,
 			dbInfo.client = ClientDBInfo();
 			dbInfo.client.encryptKeyProxy = db->serverInfo->get().client.encryptKeyProxy;
 			dbInfo.client.id = deterministicRandom()->randomUniqueID();
-			dbInfo.client.tenantBalancer = db->serverInfo->get().client.tenantBalancer;
+			dbInfo.tenantBalancer = db->serverInfo->get().tenantBalancer;
 			dbInfo.client.tenantMode = TenantAPI::tenantModeForClusterType(db->clusterType, db->config.tenantMode);
 			dbInfo.client.clusterId = db->serverInfo->get().client.clusterId;
 			dbInfo.client.clusterType = db->clusterType;
@@ -559,7 +559,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	BlobManagerSingleton bmSingleton(db.blobManager);
 	BlobMigratorSingleton mgSingleton(db.blobMigrator);
 	EncryptKeyProxySingleton ekpSingleton(db.client.encryptKeyProxy);
-	TenantBalancerSingleton tbSingleton(db.client.tenantBalancer);
+	TenantBalancerSingleton tbSingleton(db.tenantBalancer);
 
 	// Check if the singletons are healthy.
 	// side effect: try to rerecruit the singletons to more optimal processes
@@ -971,7 +971,7 @@ void clusterRegisterMaster(ClusterControllerData* self, RegisterMasterRequest co
 	    db->clientInfo->get().clusterId != db->serverInfo->get().client.clusterId ||
 	    db->clientInfo->get().clusterType != db->clusterType ||
 	    db->clientInfo->get().metaclusterName != db->metaclusterName ||
-	    db->clientInfo->get().tenantBalancer != db->serverInfo->get().client.tenantBalancer) {
+	    db->clientInfo->get().encryptKeyProxy != db->serverInfo->get().encryptKeyProxy) {
 		TraceEvent("PublishNewClientInfo", self->id)
 		    .detail("Master", dbInfo.master.id())
 		    .detail("GrvProxies", db->clientInfo->get().grvProxies)
@@ -997,7 +997,6 @@ void clusterRegisterMaster(ClusterControllerData* self, RegisterMasterRequest co
 		clientInfo.clusterId = db->serverInfo->get().client.clusterId;
 		clientInfo.clusterType = db->clusterType;
 		clientInfo.metaclusterName = db->metaclusterName;
-		clientInfo.tenantBalancer = db->serverInfo->get().client.tenantBalancer;
 		db->clientInfo->set(clientInfo);
 		dbInfo.client = db->clientInfo->get();
 	}
@@ -1275,10 +1274,14 @@ ACTOR Future<Void> registerWorker(RegisterWorkerRequest req,
 	}
 
 	if (req.tenantBalancerInterf.present()) {
-		auto currSingleton = TenantBalancerSingleton(self->db.serverInfo->get().client.tenantBalancer);
+		auto currSingleton = TenantBalancerSingleton(self->db.serverInfo->get().tenantBalancer);
 		auto registeringSingleton = TenantBalancerSingleton(req.tenantBalancerInterf);
 		haltRegisteringOrCurrentSingleton<TenantBalancerSingleton>(
 		    self, w, currSingleton, registeringSingleton, self->recruitingTenantBalancerID);
+		if (!self->recruitingTenantBalancerID.present() &&
+		    (!currSingleton.isPresent() || currSingleton.getInterface().id() != req.tenantBalancerInterf.get().id())) {
+			req.tenantBalancerInterf.get().persistInterface.send(PersistInterfaceRequest());
+		}
 	}
 
 	// Notify the worker to register again with new process class/exclusive property
@@ -2382,13 +2385,13 @@ ACTOR Future<Void> startTenantBalancer(ClusterControllerData* self) {
 	TraceEvent("CCStartTenantBalancer", self->id).log();
 	loop {
 		try {
-			state bool noTenantBalancer = !self->db.serverInfo->get().client.tenantBalancer.present();
+			state bool noTenantBalancer = !self->db.serverInfo->get().tenantBalancer.present();
 			while (!self->masterProcessId.present() ||
 			       self->masterProcessId != self->db.serverInfo->get().master.locality.processId() ||
 			       self->db.serverInfo->get().recoveryState < RecoveryState::ACCEPTING_COMMITS) {
 				wait(self->db.serverInfo->onChange() || delay(SERVER_KNOBS->WAIT_FOR_GOOD_RECRUITMENT_DELAY));
 			}
-			if (noTenantBalancer && self->db.serverInfo->get().client.tenantBalancer.present()) {
+			if (noTenantBalancer && self->db.serverInfo->get().tenantBalancer.present()) {
 				// Existing tenant balancer registers while waiting, so skip.
 				return Void();
 			}
@@ -2414,7 +2417,7 @@ ACTOR Future<Void> startTenantBalancer(ClusterControllerData* self) {
 			if (interf.present()) {
 				self->recruitTenantBalancer.set(false);
 				self->recruitingTenantBalancerID = interf.get().id();
-				const auto& tenantBalancer = self->db.serverInfo->get().client.tenantBalancer;
+				const auto& tenantBalancer = self->db.serverInfo->get().tenantBalancer;
 				TraceEvent("CCTenantBalancerRecruited", self->id)
 				    .detail("Addr", worker.interf.address())
 				    .detail("TenantBalancerId", interf.get().id());
@@ -2428,6 +2431,7 @@ ACTOR Future<Void> startTenantBalancer(ClusterControllerData* self) {
 				}
 				if (!tenantBalancer.present() || tenantBalancer.get().id() != interf.get().id()) {
 					self->db.setTenantBalancer(interf.get());
+					interf.get().persistInterface.send(PersistInterfaceRequest());
 				}
 				checkOutstandingRequests(self);
 				return Void();
@@ -2448,12 +2452,12 @@ ACTOR Future<Void> monitorTenantBalancer(ClusterControllerData* self) {
 	}
 
 	loop {
-		if (self->db.serverInfo->get().client.tenantBalancer.present() && !self->recruitTenantBalancer.get()) {
+		if (self->db.serverInfo->get().tenantBalancer.present() && !self->recruitTenantBalancer.get()) {
 			choose {
-				when(wait(waitFailureClient(self->db.serverInfo->get().client.tenantBalancer.get().waitFailure,
+				when(wait(waitFailureClient(self->db.serverInfo->get().tenantBalancer.get().waitFailure,
 				                            SERVER_KNOBS->TENANT_BALANCER_FAILURE_TIME))) {
 					TraceEvent("CCTenantBalancerDied", self->id)
-					    .detail("TenantBalancerId", self->db.serverInfo->get().client.tenantBalancer.get().id());
+					    .detail("TenantBalancerId", self->db.serverInfo->get().tenantBalancer.get().id());
 					self->db.clearInterf(ProcessClass::TenantBalancerClass);
 				}
 				when(wait(self->recruitTenantBalancer.onChange())) {}

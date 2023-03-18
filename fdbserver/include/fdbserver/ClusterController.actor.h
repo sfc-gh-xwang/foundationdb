@@ -225,9 +225,7 @@ public:
 			auto newInfo = serverInfo->get();
 			newInfo.id = deterministicRandom()->randomUniqueID();
 			newInfo.infoGeneration = ++dbInfoCount;
-			newInfo.client.id = deterministicRandom()->randomUniqueID();
-			newInfo.client.tenantBalancer = interf;
-			clientInfo->set(newInfo.client);
+			newInfo.tenantBalancer = interf;
 			serverInfo->set(newInfo);
 		}
 
@@ -251,8 +249,7 @@ public:
 			} else if (t == ProcessClass::ConsistencyScanClass) {
 				newInfo.consistencyScan = Optional<ConsistencyScanInterface>();
 			} else if (t == ProcessClass::TenantBalancerClass) {
-				newInfo.client.tenantBalancer = Optional<TenantBalancerInterface>();
-				newClientInfo.tenantBalancer = Optional<TenantBalancerInterface>();
+				newInfo.tenantBalancer = Optional<TenantBalancerInterface>();
 			}
 			serverInfo->set(newInfo);
 			clientInfo->set(newClientInfo);
@@ -353,8 +350,8 @@ public:
 		        db.serverInfo->get().client.encryptKeyProxy.get().locality.processId() == processId) ||
 		       (db.serverInfo->get().consistencyScan.present() &&
 		        db.serverInfo->get().consistencyScan.get().locality.processId() == processId) ||
-		       (db.serverInfo->get().client.tenantBalancer.present() &&
-		        db.serverInfo->get().client.tenantBalancer.get().locality.processId() == processId);
+		       (db.serverInfo->get().tenantBalancer.present() &&
+		        db.serverInfo->get().tenantBalancer.get().locality.processId() == processId);
 	}
 
 	WorkerDetails getStorageWorker(RecruitStorageRequest const& req) {
