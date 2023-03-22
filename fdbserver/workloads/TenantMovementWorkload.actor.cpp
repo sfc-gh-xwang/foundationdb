@@ -10,6 +10,7 @@
 #include "fdbclient/MultiVersionTransaction.h"
 #include "fdbclient/TenantBalancerInterface.h"
 #include "fdbclient/TenantManagement.actor.h"
+#include "fdbclient/TenantMovement.actor.h"
 #include "fdbclient/ThreadSafeTransaction.h"
 #include "fdbrpc/simulator.h"
 #include "fdbserver/workloads/MetaclusterConsistency.actor.h"
@@ -354,6 +355,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		state Reference<DataClusterData> dataDb = self->dataDbs[clusterName];
 		state bool dryRun = deterministicRandom()->coinflip();
 		state bool forceJoin = deterministicRandom()->coinflip();
+		state bool forceReuseTenantIdPrefix = deterministicRandom()->coinflip();
 
 		state std::vector<std::string> messages;
 		state bool retried = false;
@@ -377,6 +379,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 				                                   ApplyManagementClusterUpdates(!dataDb->detached),
 				                                   RestoreDryRun(dryRun),
 				                                   ForceJoin(forceJoin),
+				                                   ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
 				                                   &messages);
 				Optional<Void> result = wait(timeout(restoreFuture, deterministicRandom()->randomInt(1, 30)));
 				if (!result.present()) {
@@ -1022,77 +1025,16 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		return Void();
 	}
 
-	ACTOR
-	template <typename IDatabase>
-	static Future<Future<Void>> getTbiChangedFuture(Reference<IDatabase> db) {
-		state Reference<ITransaction> tr = db->createTransaction();
-		state Future<Void> future = Never();
-		loop {
-			try {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				state ThreadFuture<Void> threadFuture = tr->watch("\xff/TenantBalancerInterf"_sr);
-				wait(safeThreadFutureToFuture(tr->commit()));
-				future = safeThreadFutureToFuture(threadFuture);
-				break;
-			} catch (Error& e) {
-				wait(safeThreadFutureToFuture(tr->onError(e)));
-			}
-		}
-		return future;
-	}
-
-	ACTOR
-	template <typename IDatabase>
-	static Future<Optional<TenantBalancerInterface>> getTenantBalancerInterface(Reference<IDatabase> db) {
-		state Reference<ITransaction> tr = db->createTransaction();
-		state Optional<TenantBalancerInterface> interf;
-		loop {
-			try {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				ThreadFuture<Optional<Value>> valueF = tr->get("\xff/TenantBalancerInterf"_sr);
-				Optional<Value> value = wait(safeThreadFutureToFuture(valueF));
-				if (value.present()) {
-					interf = BinaryReader::fromStringRef<TenantBalancerInterface>(value.get(), IncludeVersion());
-				}
-				break;
-			} catch (Error& e) {
-				wait(safeThreadFutureToFuture(tr->onError(e)));
-			}
-		}
-		return interf;
-	}
-
 	ACTOR static Future<Void> moveTenant(OnlineTenantMovementWorkload* self) {
 		state TenantName tenant = self->chooseTenantName();
 		state bool tenantExists = self->createdTenants.contains(tenant);
 		state ClusterName dstClusterName = "management"_sr;
-		state Future<Void> onTbiChanged = wait(getTbiChangedFuture(self->managementDb));
 		try {
-			state MoveTenantsToClusterRequest req(tenant, dstClusterName);
-			state Future<ErrorOr<MoveTenantsToClusterReply>> replyFuture = Never();
-			state Future<Void> init = Void();
-			loop choose {
-				when(ErrorOr<MoveTenantsToClusterReply> reply =
-				         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
-					if (reply.isError()) {
-						if (reply.getError().code() == error_code_tenant_not_found) {
-							ASSERT(!tenantExists);
-							break;
-						}
-						throw reply.getError();
-					}
-					break;
-				}
-				when(wait(onTbiChanged || init)) {
-					init = Never();
-					state Optional<TenantBalancerInterface> tbi = wait(getTenantBalancerInterface(self->managementDb));
-					replyFuture = tbi.present() ? tbi.get().moveTenantsToCluster.tryGetReply(req) : Never();
-					Future<Void> _onTbiChanged = wait(getTbiChangedFuture(self->managementDb));
-					onTbiChanged = _onTbiChanged;
-				}
-			}
+			wait(MetaclusterAPI::moveTenant(self->managementDb, tenant, dstClusterName));
 		} catch (Error& e) {
-			if (e.code() == error_code_actor_cancelled) {
+			if (e.code() == error_code_tenant_not_found) {
+				ASSERT(!tenantExists);
+			} else if (e.code() == error_code_actor_cancelled) {
 				throw;
 			}
 		}
