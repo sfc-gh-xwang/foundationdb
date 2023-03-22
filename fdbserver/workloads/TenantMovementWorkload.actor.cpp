@@ -97,7 +97,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		MultiVersionApi::api->selectApiVersion(cx->apiVersion.version());
 		self->managementDb = MultiVersionDatabase::debugCreateFromExistingDatabase(threadSafeHandle);
 
-		// ASSERT(!g_simulator->extraDatabases.empty());
+		ASSERT(!g_simulator->extraDatabases.empty());
 		for (auto connectionString : g_simulator->extraDatabases) {
 			ClusterConnectionString ccs(connectionString);
 			self->dataDbIndex.push_back(ClusterName(format("cluster_%08d", self->dataDbs.size())));

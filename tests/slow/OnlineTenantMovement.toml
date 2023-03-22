@@ -2,7 +2,7 @@
 allowDefaultTenant = false
 tenantModes = ['optional', 'required']
 allowCreatingTenants = false
-extraDatabaseMode = 'Disabled'
+extraDatabaseMode = 'Multiple'
 
 [[test]]
 testTitle = 'OnlineTenantMovementTest'
