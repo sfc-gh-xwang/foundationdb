@@ -33,6 +33,7 @@ enum class AbortState { UNKNOWN, ROLLED_BACK, COMPLETED };
 
 struct TenantMovementInfo {
 	constexpr static FileIdentifier file_identifier = 16510400;
+	Arena arena;
 
 	UID movementId;
 	Key tenantId;
@@ -42,12 +43,13 @@ struct TenantMovementInfo {
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, movementId, tenantId);
+		serializer(ar, movementId, tenantId, arena);
 	}
 };
 
 struct TenantMovementStatus {
 	constexpr static FileIdentifier file_identifier = 5103586;
+	Arena arena;
 
 	TenantMovementInfo tenantMovementInfo;
 	Optional<double> databaseVersionLag;
@@ -59,7 +61,7 @@ struct TenantMovementStatus {
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantMovementInfo, databaseVersionLag, mutationLag, switchVersion);
+		serializer(ar, tenantMovementInfo, databaseVersionLag, mutationLag, switchVersion, arena);
 	}
 };
 
@@ -79,6 +81,7 @@ struct GetMovementStatusReply {
 
 struct GetMovementStatusRequest {
 	constexpr static FileIdentifier file_identifier = 11494877;
+	Arena arena;
 
 	Key tenantName;
 	ReplyPromise<GetMovementStatusReply> reply;
@@ -88,7 +91,7 @@ struct GetMovementStatusRequest {
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantName, reply);
+		serializer(ar, tenantName, reply, arena);
 	}
 };
 
@@ -127,6 +130,7 @@ struct MoveTenantsToClusterRequest {
 
 struct GetActiveMovementsReply {
 	constexpr static FileIdentifier file_identifier = 2320458;
+	Arena arena;
 
 	std::vector<TenantMovementInfo> activeMovements;
 
@@ -136,7 +140,7 @@ struct GetActiveMovementsReply {
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, activeMovements);
+		serializer(ar, activeMovements, arena);
 	}
 };
 
@@ -168,6 +172,7 @@ struct AbortMovementReply {
 
 struct AbortMovementRequest {
 	constexpr static FileIdentifier file_identifier = 14058403;
+	Arena arena;
 
 	Key tenantName;
 
@@ -178,7 +183,7 @@ struct AbortMovementRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantName, reply);
+		serializer(ar, tenantName, reply, arena);
 	}
 };
 
@@ -211,6 +216,7 @@ struct HaltTenantBalancerRequest {
 
 struct TenantBalancerInterface {
 	constexpr static FileIdentifier file_identifier = 6185894;
+	Arena arena;
 
 	LocalityData locality;
 	UID uniqueId;
@@ -243,7 +249,8 @@ struct TenantBalancerInterface {
 		           moveTenantsToCluster,
 		           abortMovement,
 		           persistInterface,
-		           waitFailure);
+		           waitFailure,
+		           arena);
 	}
 
 	TenantBalancerInterface() : uniqueId(deterministicRandom()->randomUniqueID()) {}
