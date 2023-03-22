@@ -6,6 +6,7 @@
 #define FDBCLIENT_TENANT_MOVEMENT_ACTOR_H
 
 #include "fdbclient/IClientApi.h"
+#include "fdbclient/TenantBalancer.h"
 #include "fdbclient/TenantBalancerInterface.h"
 #include "fdbclient/TenantMovement.h"
 #include "flow/actorcompiler.h" // has to be last include
@@ -18,7 +19,7 @@ static Future<Future<Void>> getTbiChangedFuture(Reference<IDatabase> db) {
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			state ThreadFuture<Void> threadFuture = tr->watch("\xff/TenantBalancerInterf"_sr);
+			state ThreadFuture<Void> threadFuture = tr->watch(TenantBalancerMetadata::tenantBalancerInterfKey);
 			wait(safeThreadFutureToFuture(tr->commit()));
 			future = safeThreadFutureToFuture(threadFuture);
 			break;
@@ -33,15 +34,12 @@ ACTOR
 template <typename IDatabase>
 static Future<Optional<TenantBalancerInterface>> getTenantBalancerInterface(Reference<IDatabase> db) {
 	state Reference<ITransaction> tr = db->createTransaction();
-	state Optional<TenantBalancerInterface> interf;
+	state TenantBalancerInterface interf;
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			ThreadFuture<Optional<Value>> valueF = tr->get("\xff/TenantBalancerInterf"_sr);
-			Optional<Value> value = wait(safeThreadFutureToFuture(valueF));
-			if (value.present()) {
-				interf = BinaryReader::fromStringRef<TenantBalancerInterface>(value.get(), IncludeVersion());
-			}
+			TenantBalancerInterface _interf = wait(TenantBalancerMetadata::getTenantBalancerInterface().getD(tr));
+			interf = _interf;
 			break;
 		} catch (Error& e) {
 			wait(safeThreadFutureToFuture(tr->onError(e)));

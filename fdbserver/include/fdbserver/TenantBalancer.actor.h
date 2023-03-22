@@ -8,6 +8,7 @@
 
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ReadYourWrites.h"
+#include "fdbclient/TenantBalancer.h"
 #include "fdbclient/TenantBalancerInterface.h"
 
 // This must be the last include
@@ -20,7 +21,7 @@ Future<Void> writeTenantBalancerInterfaceToDb(Database db, TenantBalancerInterfa
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			tr->set("\xff/TenantBalancerInterf"_sr, BinaryWriter::toValue(tbi, IncludeVersion()));
+			TenantBalancerMetadata::getTenantBalancerInterface().set(tr, tbi);
 			wait(tr->commit());
 			break;
 		} catch (Error& e) {
