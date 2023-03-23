@@ -21,8 +21,10 @@
 #pragma once
 
 #include "fdbclient/TenantBalancerInterface.h"
+#include "fdbserver/ClusterController.actor.h"
 #include "fdbserver/RatekeeperInterface.h"
 #include "fdbserver/DataDistributorInterface.h"
+#include "fdbserver/WorkerInterface.actor.h"
 
 // This is used to artificially amplify the used count for processes
 // occupied by non-singletons. This ultimately makes it less desirable
