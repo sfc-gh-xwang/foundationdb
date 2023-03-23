@@ -19,7 +19,7 @@ static Future<Future<Void>> getTbiChangedFuture(Reference<IDatabase> db) {
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			state ThreadFuture<Void> threadFuture = tr->watch(TenantBalancerMetadata::tenantBalancerInterfKey);
+			state ThreadFuture<Void> threadFuture = TenantBalancerMetadata::getTenantBalancerInterface().watch(tr);
 			wait(safeThreadFutureToFuture(tr->commit()));
 			future = safeThreadFutureToFuture(threadFuture);
 			break;
