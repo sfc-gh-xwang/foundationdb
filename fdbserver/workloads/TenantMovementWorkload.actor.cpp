@@ -1041,6 +1041,55 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		return Void();
 	}
 
+	ACTOR static Future<Void> abortTenantMovement(OnlineTenantMovementWorkload* self) {
+		state TenantName tenant = self->chooseTenantName();
+		state bool tenantExists = self->createdTenants.contains(tenant);
+		try {
+			wait(MetaclusterAPI::abortTenantMovement(self->managementDb, tenant));
+		} catch (Error& e) {
+			if (e.code() == error_code_tenant_not_found) {
+				ASSERT(!tenantExists);
+			} else if (e.code() == error_code_actor_cancelled) {
+				throw;
+			}
+		}
+		return Void();
+	}
+
+	ACTOR static Future<Void> getTenantMovementStatus(OnlineTenantMovementWorkload* self) {
+		state TenantName tenant = self->chooseTenantName();
+		state bool tenantExists = self->createdTenants.contains(tenant);
+		state TenantMovementStatus status;
+		try {
+			TenantMovementStatus _status = wait(MetaclusterAPI::getTenantMovementStatus(self->managementDb, tenant));
+			status = _status;
+		} catch (Error& e) {
+			if (e.code() == error_code_tenant_not_found) {
+				ASSERT(!tenantExists);
+			} else if (e.code() == error_code_actor_cancelled) {
+				throw;
+			}
+		}
+		return Void();
+	}
+
+	ACTOR static Future<Void> getActiveMovements(OnlineTenantMovementWorkload* self) {
+		state TenantName tenant = self->chooseTenantName();
+		state bool tenantExists = self->createdTenants.contains(tenant);
+		state std::vector<TenantMovementInfo> tenantMovementInfo;
+		try {
+			std::vector<TenantMovementInfo> _info = wait(MetaclusterAPI::getActiveMovements(self->managementDb));
+			tenantMovementInfo = _info;
+		} catch (Error& e) {
+			if (e.code() == error_code_tenant_not_found) {
+				ASSERT(!tenantExists);
+			} else if (e.code() == error_code_actor_cancelled) {
+				throw;
+			}
+		}
+		return Void();
+	}
+
 	Future<Void> start(Database const& cx) override {
 		if (clientId == 0) {
 			return _start(cx, this);
@@ -1062,8 +1111,16 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		state double start = now();
 		while (now() < start + self->testDuration) {
 			state Future<Void> logger = delayedTrace();
-			state int operation = deterministicRandom()->randomInt(0, 10);
-			wait(moveTenant(self));
+			state int operation = deterministicRandom()->randomInt(0, 5);
+			if (operation == 0) {
+				wait(moveTenant(self));
+			} else if (operation == 1) {
+				wait(abortTenantMovement(self));
+			} else if (operation == 2) {
+				wait(getTenantMovementStatus(self));
+			} else if (operation == 3) {
+				wait(getActiveMovements(self));
+			}
 			wait(delay(0.1));
 		}
 		return Void();
