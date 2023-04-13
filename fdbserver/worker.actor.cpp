@@ -2320,7 +2320,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 						    .detail("EncryptKeyProxyID",
 						            localInfo.client.encryptKeyProxy.present()
 						                ? localInfo.client.encryptKeyProxy.get().id()
-						                : UID());
+						                : UID())
 						    .detail("TenantBalancerID",
 						            localInfo.tenantBalancer.present() ? localInfo.tenantBalancer.get().id() : UID());
 						dbInfo->set(localInfo);

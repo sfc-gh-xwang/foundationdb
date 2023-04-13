@@ -22,7 +22,6 @@
 #include "fdbclient/ClusterConnectionMemoryRecord.h"
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBOptions.g.h"
-#include "fdbclient/MetaclusterManagement.actor.h"
 #include "fdbclient/ReadYourWrites.h"
 #include "fdbclient/Tenant.h"
 #include "fdbclient/TenantBalancerInterface.h"
@@ -31,6 +30,8 @@
 #include "fdbserver/WaitFailure.h"
 #include "flow/ApiVersion.h"
 #include "flow/TaskPriority.h"
+#include "metacluster/Metacluster.h"
+
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 struct TenantBalancer {

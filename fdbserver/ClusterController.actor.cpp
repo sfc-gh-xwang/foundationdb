@@ -970,8 +970,7 @@ void clusterRegisterMaster(ClusterControllerData* self, RegisterMasterRequest co
 	    db->clientInfo->get().tenantMode != db->config.tenantMode ||
 	    db->clientInfo->get().clusterId != db->serverInfo->get().client.clusterId ||
 	    db->clientInfo->get().clusterType != db->clusterType ||
-	    db->clientInfo->get().metaclusterName != db->metaclusterName ||
-	    db->clientInfo->get().encryptKeyProxy != db->serverInfo->get().encryptKeyProxy) {
+	    db->clientInfo->get().metaclusterName != db->metaclusterName) {
 		TraceEvent("PublishNewClientInfo", self->id)
 		    .detail("Master", dbInfo.master.id())
 		    .detail("GrvProxies", db->clientInfo->get().grvProxies)
