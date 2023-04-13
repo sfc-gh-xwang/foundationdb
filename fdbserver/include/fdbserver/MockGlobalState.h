@@ -84,6 +84,10 @@ public:
 	};
 
 	static constexpr uint64_t DEFAULT_DISK_SPACE = 1000LL * 1024 * 1024 * 1024;
+	// assume 80k operation will saturate the CPU linearly. We can change the model to a better one in the future.
+	static constexpr double DEFAULT_OP_CPU_MULTIPLIER = 100.0 / 80000;
+
+	double op_cpu_multiplier = DEFAULT_OP_CPU_MULTIPLIER;
 
 	// control plane statistics associated with a real storage server
 	uint64_t totalDiskSpace = DEFAULT_DISK_SPACE, usedDiskSpace = DEFAULT_DISK_SPACE;
@@ -173,6 +177,8 @@ public:
 	// trigger the asynchronous fetch keys operation
 	void signalFetchKeys(const KeyRangeRef& range, int64_t rangeTotalBytes);
 
+	HealthMetrics::StorageStats getStorageStats() const;
+
 protected:
 	PromiseStream<FetchKeysParams> fetchKeysRequests;
 
@@ -199,6 +205,8 @@ protected:
 
 	// Update byte sample as if clear a whole range
 	void byteSampleApplyClear(KeyRangeRef const& range);
+
+	double calculateCpuUsage() const;
 };
 
 class MockGlobalStateImpl;
