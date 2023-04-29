@@ -238,7 +238,9 @@ class UpgradeTest:
         logger.info("Starting cluster version {}".format(self.cluster_version))
         self.cluster.start_cluster()
         self.cluster.create_database(
-            enable_tenants=(self.api_version >= TENANT_API_VERSION)
+            tenant_mode="optional_experimental"
+            if (self.api_version >= TENANT_API_VERSION)
+            else None
         )
         return self
 

@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import typing
 from pathlib import Path
 
 from cluster_args import CreateTmpFdbClusterArgParser
@@ -27,7 +28,7 @@ class TempCluster(LocalCluster):
         authorization_keypair_id: str = "",
         remove_at_exit: bool = True,
         custom_config: dict = {},
-        enable_tenants: bool = True,
+        tenant_mode: typing.Union[str, None] = "optional_experimental",
         enable_encryption_at_rest: bool = False,
     ):
         self.build_dir = Path(build_dir).resolve()
@@ -37,7 +38,7 @@ class TempCluster(LocalCluster):
         tmp_dir.mkdir(parents=True)
         self.tmp_dir = tmp_dir
         self.remove_at_exit = remove_at_exit
-        self.enable_tenants = enable_tenants
+        self.tenant_mode = tenant_mode
         self.enable_encryption_at_rest = enable_encryption_at_rest
         super().__init__(
             tmp_dir,
@@ -57,10 +58,7 @@ class TempCluster(LocalCluster):
 
     def __enter__(self):
         super().__enter__()
-        if self.enable_tenants:
-            super().create_database()
-        else:
-            super().create_database(enable_tenants=False)
+        super().create_database(tenant_mode=self.tenant_mode)
         return self
 
     def __exit__(self, xc_type, exc_value, traceback):

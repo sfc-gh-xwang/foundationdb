@@ -159,6 +159,12 @@ set(API_TESTER_SRCS
 add_library(fdb_c_unit_tests_impl OBJECT ${UNIT_TEST_SRCS})
 add_library(fdb_c_api_tester_impl OBJECT ${API_TESTER_SRCS})
 
+set(COMBINATORIAL_TEST_SRCS
+  test/combinatorial/combinatorial.hpp
+  test/combinatorial/combinatorial.cpp
+  test/combinatorial/authorization.cpp
+)
+
 if(OPEN_FOR_IDE)
   add_library(fdb_c_performance_test OBJECT test/performance_test.c test/test.h)
   add_library(fdb_c_ryw_benchmark OBJECT test/ryw_benchmark.c test/test.h)
@@ -170,6 +176,7 @@ if(OPEN_FOR_IDE)
   add_library(trace_partial_file_suffix_test OBJECT ${TRACE_PARTIAL_FILE_SUFFIX_TEST_SRCS})
   add_library(disconnected_timeout_unit_tests OBJECT ${DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS})
   add_library(fdb_c_client_config_tester OBJECT test/client_config_tester.cpp)
+  add_library(fdb_c_combinatorial_test OBJECT ${COMBINATORIAL_TEST_SRCS})
 else()
   add_executable(fdb_c_performance_test test/performance_test.c test/test.h)
   add_executable(fdb_c_ryw_benchmark test/ryw_benchmark.c test/test.h)
@@ -184,6 +191,8 @@ else()
   add_executable(disconnected_timeout_unit_tests ${DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS})
   add_executable(fdb_c_api_tester)
   target_link_libraries(fdb_c_api_tester PRIVATE fdb_c fdb_c_api_tester_impl)
+  add_executable(fdb_c_combinatorial_test ${COMBINATORIAL_TEST_SRCS})
+  target_link_libraries(fdb_c_combinatorial_test PRIVATE fdb_c tokensign fmt::fmt Threads::Threads fdb_cpp boost_target rapidjson)
   strip_debug_symbols(fdb_c_performance_test)
   strip_debug_symbols(fdb_c_ryw_benchmark)
   strip_debug_symbols(fdb_c_txn_size_test)

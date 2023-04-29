@@ -87,6 +87,15 @@ struct MappedKeyValueRef : native::FDBMappedKeyValue {
 	}
 };
 
+// Trivially construct a BytesRef out of string literals
+namespace literals {
+
+inline BytesRef operator""_br(const char* str, size_t len) {
+	return BytesRef(reinterpret_cast<const uint8_t*>(str), len);
+}
+
+} // namespace literals
+
 struct KeyValue {
 	Key key;
 	Value value;
@@ -1061,6 +1070,10 @@ public:
 	Tenant& operator=(const Tenant&) noexcept = default;
 	Tenant() noexcept : tenant(nullptr) {}
 
+	bool valid() const noexcept { return tenant.get() != nullptr; }
+
+	explicit operator bool() const noexcept { return valid(); }
+
 	void atomic_store(Tenant other) { std::atomic_store(&tenant, other.tenant); }
 
 	Tenant atomic_load() {
@@ -1178,6 +1191,8 @@ public:
 	Database() noexcept : db(nullptr) {}
 
 	bool valid() const noexcept { return db != nullptr; }
+
+	explicit operator bool() const noexcept { return valid(); }
 
 	void atomic_store(Database other) { std::atomic_store(&db, other.db); }
 
