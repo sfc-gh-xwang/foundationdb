@@ -5,7 +5,7 @@
 #include <cassert>
 
 #include "fdbclient/FDBTypes.h"
-#include "fdbclient/KeyBackedTypes.h"
+#include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbrpc/TenantName.h"
 
 using TenantMovementId = UID;

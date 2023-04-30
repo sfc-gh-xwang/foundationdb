@@ -1,5 +1,5 @@
 #include "fdbclient/TenantBalancer.h"
-#include "fdbclient/KeyBackedTypes.h"
+#include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/TenantBalancerInterface.h"
 
 const Key TenantBalancerMetadata::tenantBalancerInterfKey("\xff/TenantBalancerInterf"_sr);

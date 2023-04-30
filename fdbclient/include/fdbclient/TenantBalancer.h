@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fdbclient/KeyBackedTypes.h"
+#include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/TenantBalancerInterface.h"
 
 struct TenantBalancerMetadata {
