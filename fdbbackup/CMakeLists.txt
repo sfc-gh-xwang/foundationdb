@@ -26,7 +26,6 @@ if(NOT OPEN_FOR_IDE)
     fdb_install(PROGRAMS $<TARGET_FILE:fdbbackup> DESTINATION bin COMPONENT clients RENAME fdbrestore)
     fdb_install(PROGRAMS $<TARGET_FILE:fdbbackup> DESTINATION bin COMPONENT clients RENAME dr_agent)
     fdb_install(PROGRAMS $<TARGET_FILE:fdbbackup> DESTINATION bin COMPONENT clients RENAME fdbdr)
-    fdb_install(PROGRAMS $<TARGET_FILE:fdbbackup> DESTINATION bin COMPONENT clients RENAME fdbmove)
   else()
     add_custom_target(prepare_fdbbackup_install ALL DEPENDS strip_only_fdbbackup)
     fdb_install(PROGRAMS ${CMAKE_BINARY_DIR}/packages/bin/fdbbackup DESTINATION bin COMPONENT clients)
@@ -34,16 +33,15 @@ if(NOT OPEN_FOR_IDE)
     fdb_install(PROGRAMS ${CMAKE_BINARY_DIR}/packages/bin/fdbbackup DESTINATION bin COMPONENT clients RENAME fdbrestore)
     fdb_install(PROGRAMS ${CMAKE_BINARY_DIR}/packages/bin/fdbbackup DESTINATION bin COMPONENT clients RENAME dr_agent)
     fdb_install(PROGRAMS ${CMAKE_BINARY_DIR}/packages/bin/fdbbackup DESTINATION bin COMPONENT clients RENAME fdbdr)
-    fdb_install(PROGRAMS ${CMAKE_BINARY_DIR}/packages/bin/fdbbackup DESTINATION bin COMPONENT clients RENAME fdbmove)
   endif()
   symlink_files(
     LOCATION packages/bin
     SOURCE fdbbackup
-    TARGETS fdbdr dr_agent backup_agent fdbrestore fastrestore_tool fdbmove)
+    TARGETS fdbdr dr_agent backup_agent fdbrestore fastrestore_tool)
   symlink_files(
     LOCATION bin
     SOURCE fdbbackup
-    TARGETS fdbdr dr_agent backup_agent fdbrestore fastrestore_tool fdbmove)
+    TARGETS fdbdr dr_agent backup_agent fdbrestore fastrestore_tool)
 endif()
 
 if (GPERFTOOLS_FOUND)
