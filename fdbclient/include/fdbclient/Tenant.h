@@ -25,7 +25,6 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/VersionedMap.h"
-#include "fdbclient/TenantMovement.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/BooleanParam.h"
 #include "flow/flat_buffers.h"
@@ -213,7 +212,6 @@ struct TenantMetadataSpecification {
 	    tenantGroupMap;
 	KeyBackedMap<TenantGroupName, int64_t> storageQuota;
 	KeyBackedBinaryValue<Versionstamp> lastTenantModification;
-	TenantMovementMetadata tenantMovementMetadata;
 
 	TenantMetadataSpecification(KeyRef prefix)
 	  : subspace(prefix.withSuffix("tenant/"_sr)), tenantMap(subspace.withSuffix("map/"_sr), IncludeVersion()),
@@ -223,7 +221,7 @@ struct TenantMetadataSpecification {
 	    tenantGroupTenantIndex(subspace.withSuffix("tenantGroup/tenantIndex/"_sr)),
 	    tenantGroupMap(subspace.withSuffix("tenantGroup/map/"_sr), IncludeVersion()),
 	    storageQuota(subspace.withSuffix("storageQuota/"_sr)),
-	    lastTenantModification(subspace.withSuffix("lastModification"_sr)), tenantMovementMetadata(subspace) {}
+	    lastTenantModification(subspace.withSuffix("lastModification"_sr)) {}
 };
 
 struct TenantMetadata {
@@ -243,7 +241,6 @@ struct TenantMetadata {
 	// This system keys stores the tenant id prefix that is used during metacluster/standalone cluster creation. If the
 	// key is not present then we will assume the prefix to be 0
 	static KeyBackedProperty<int64_t>& tenantIdPrefix();
-	static inline auto& tenantMovementMetadata() { return instance().tenantMovementMetadata; }
 
 	static Key tenantMapPrivatePrefix();
 };

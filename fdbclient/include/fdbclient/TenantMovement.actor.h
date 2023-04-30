@@ -8,7 +8,6 @@
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/TenantBalancer.h"
 #include "fdbclient/TenantBalancerInterface.h"
-#include "fdbclient/TenantMovement.h"
 #include "flow/actorcompiler.h" // has to be last include
 
 ACTOR
