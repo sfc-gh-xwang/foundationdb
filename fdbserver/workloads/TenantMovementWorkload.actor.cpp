@@ -1125,7 +1125,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		state double start = now();
 		while (now() < start + self->testDuration) {
 			state Future<Void> logger = delayedTrace();
-			state int operation = deterministicRandom()->randomInt(0, 5);
+			state int operation = deterministicRandom()->randomInt(0, 10);
 			if (operation == 0) {
 				wait(moveTenant(self));
 			} else if (operation == 1) {
@@ -1134,6 +1134,10 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 				wait(getTenantMovementStatus(self));
 			} else if (operation == 3) {
 				wait(getActiveMovements(self));
+			} else if (operation == 8) {
+				wait(removeCluster(self));
+			} else if (operation == 9) {
+				wait(registerCluster(self));
 			}
 			wait(delay(0.1));
 		}
