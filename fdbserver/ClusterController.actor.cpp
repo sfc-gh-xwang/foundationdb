@@ -2450,6 +2450,30 @@ ACTOR Future<Void> monitorTenantBalancer(ClusterControllerData* self) {
 		wait(self->db.serverInfo->onChange());
 	}
 
+	// Figure out cluster type.
+	state Optional<MetaclusterRegistrationEntry> registrationEntry;
+	{
+		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->cx);
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				Optional<MetaclusterRegistrationEntry> _registrationEntry =
+				    wait(metacluster::metadata::metaclusterRegistration().get(tr));
+				registrationEntry = _registrationEntry;
+				break;
+			} catch (Error& error) {
+				wait(tr->onError(error));
+			}
+		}
+	}
+	const ClusterType clusterType =
+	    !registrationEntry.present() ? ClusterType::STANDALONE : registrationEntry.get().clusterType;
+	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
+		return Void();
+	}
+
+	TraceEvent("CCMonitorTenantBalancer").log();
+
 	loop {
 		if (self->db.serverInfo->get().tenantBalancer.present() && !self->recruitTenantBalancer.get()) {
 			choose {
