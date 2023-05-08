@@ -2944,12 +2944,13 @@ ACTOR Future<Void> workerHealthMonitor(ClusterControllerData* self) {
 }
 
 ACTOR Future<Void> metaclusterMetricsUpdater(ClusterControllerData* self) {
+	state Future<Void> updaterDelay = Void();
 	loop {
-		state Future<Void> updaterDelay =
-		    self->db.clusterType == ClusterType::METACLUSTER_MANAGEMENT ? delay(60.0) : Never();
 		choose {
-			when(wait(self->db.serverInfo->onChange())) {}
-			when(wait(updaterDelay)) {
+			when(wait(self->db.serverInfo->onChange())) {
+				updaterDelay = Void();
+			}
+			when(wait(self->db.clusterType == ClusterType::METACLUSTER_MANAGEMENT ? updaterDelay : Never())) {
 				try {
 					wait(store(self->db.metaclusterMetrics,
 					           metacluster::MetaclusterMetrics::getMetaclusterMetrics(self->cx)));
@@ -2959,6 +2960,8 @@ ACTOR Future<Void> metaclusterMetricsUpdater(ClusterControllerData* self) {
 						throw;
 					}
 				}
+
+				updaterDelay = delay(60.0);
 			}
 		}
 	}
