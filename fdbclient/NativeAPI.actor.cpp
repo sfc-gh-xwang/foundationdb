@@ -1226,7 +1226,7 @@ ACTOR static Future<Void> handleTssMismatches(DatabaseContext* cx) {
 			TraceEvent(SevWarnAlways, quarantine ? "TSS_QuarantineMismatch" : "TSS_KillMismatch")
 			    .detail("TSSID", data.first.toString());
 			CODE_PROBE(quarantine, "Quarantining TSS because it got mismatch");
-			CODE_PROBE(!quarantine, "Killing TSS because it got mismatch");
+			CODE_PROBE(!quarantine, "Killing TSS because it got mismatch", probe::decoration::rare);
 
 			tr = makeReference<ReadYourWritesTransaction>(Database(Reference<DatabaseContext>::addRef(cx)));
 			state int tries = 0;
@@ -4923,7 +4923,7 @@ static Future<Void> tssStreamComparison(Request request,
 
 			// skip tss comparison if both are end of stream
 			if ((!ssEndOfStream || !tssEndOfStream) && !TSS_doCompare(ssReply.get(), tssReply.get())) {
-				CODE_PROBE(true, "TSS mismatch in stream comparison");
+				CODE_PROBE(true, "TSS mismatch in stream comparison", probe::decoration::rare);
 				TraceEvent mismatchEvent(
 				    (g_network->isSimulated() && g_simulator->tssMode == ISimulator::TSSMode::EnabledDropMutations)
 				        ? SevWarnAlways
@@ -4939,7 +4939,8 @@ static Future<Void> tssStreamComparison(Request request,
 					           "Tracing Full TSS Mismatch in stream comparison",
 					           probe::decoration::rare);
 					CODE_PROBE(!FLOW_KNOBS->LOAD_BALANCE_TSS_MISMATCH_TRACE_FULL,
-					           "Tracing Partial TSS Mismatch in stream comparison and storing the rest in FDB");
+					           "Tracing Partial TSS Mismatch in stream comparison and storing the rest in FDB",
+					           probe::decoration::rare);
 
 					if (!FLOW_KNOBS->LOAD_BALANCE_TSS_MISMATCH_TRACE_FULL) {
 						mismatchEvent.disable();
@@ -9681,7 +9682,7 @@ ACTOR Future<Void> changeFeedTSSValidator(ChangeFeedStreamRequest req,
 		while (!ssSummary.empty() && !tssSummary.empty()) {
 			CODE_PROBE(true, "Comparing TSS change feed data");
 			if (ssSummary.front() != tssSummary.front()) {
-				CODE_PROBE(true, "TSS change feed mismatch");
+				CODE_PROBE(true, "TSS change feed mismatch", probe::decoration::rare);
 				handleTSSChangeFeedMismatch(req,
 				                            tssData,
 				                            matchesFound,
@@ -9704,7 +9705,7 @@ ACTOR Future<Void> changeFeedTSSValidator(ChangeFeedStreamRequest req,
 
 		ASSERT(!ssDone || !tssDone); // both shouldn't be done, otherwise we shouldn't have looped
 		if ((ssDone && !tssSummary.empty()) || (tssDone && !ssSummary.empty())) {
-			CODE_PROBE(true, "TSS change feed mismatch at end of stream");
+			CODE_PROBE(true, "TSS change feed mismatch at end of stream", probe::decoration::rare);
 			handleTSSChangeFeedMismatch(req,
 			                            tssData,
 			                            matchesFound,
@@ -10426,7 +10427,7 @@ void coalesceChangeFeedLocations(std::vector<KeyRangeLocationInfo>& locations) {
 		return;
 	}
 
-	CODE_PROBE(true, "coalescing change feed locations");
+	CODE_PROBE(true, "coalescing change feed locations", probe::decoration::rare);
 
 	// FIXME: there's technically a probability of "hash" collisions here, but it's extremely low. Could validate that
 	// two teams with the same xor are in fact the same, or fall back to not doing this if it gets a wrong shard server
@@ -11057,6 +11058,8 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 		int randLen = deterministicRandom()->randomInt(2, 20);
 		value = StringRef(deterministicRandom()->randomAlphaNumeric(randLen));
 	}
+	Standalone<BlobRangeChangeLogRef> changeLog(BlobRangeChangeLogRef(range, value));
+	state Value changeValue = blobRangeChangeLogValueFor(changeLog);
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
@@ -11075,21 +11078,26 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 				if (startBlobRanges.empty()) {
 					// already unblobbified
 					return true;
-				} else if (startBlobRanges.front().begin != range.begin) {
-					// If there is a blob at the beginning of the range and it isn't aligned
+				} else if (startBlobRanges.front().begin < range.begin) {
+					// If there is a blob at the beginning of the range that overlaps the start
 					return false;
 				}
 				// if blob range does start at the specified, key, we need to make sure the end of also a boundary of a
 				// blob range
-				Optional<Value> endPresent = wait(tr->get(range.end.withPrefix(blobRangeKeys.begin)));
-				if (!endPresent.present()) {
+				Standalone<VectorRef<KeyRangeRef>> endBlobRanges =
+				    wait(getBlobRanges(&tr->getTransaction(), singleKeyRange(range.end), 1));
+				if (!endBlobRanges.empty() && endBlobRanges.front().begin < range.end) {
 					return false;
 				}
 			}
 
 			tr->set(blobRangeChangeKey, deterministicRandom()->randomUniqueID().toString());
 			// This is not coalescing because we want to keep each range logically separate.
+			// FIXME: if not active, do coalescing - had issues
 			wait(krmSetRange(tr, blobRangeKeys.begin, range, value));
+			// RYWTransaction has issues with atomic op sizing when using addVersionstampAtEnd on old api versions
+			tr->getTransaction().atomicOp(
+			    addVersionStampAtEnd(blobRangeChangeLogKeys.begin), changeValue, MutationRef::SetVersionstampedKey);
 			wait(tr->commit());
 			return true;
 		} catch (Error& e) {

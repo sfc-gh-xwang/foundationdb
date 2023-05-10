@@ -1,5 +1,6 @@
+
 /*
- * GlobalData.h
+ * BlobRestoreCommon.h
  *
  * This source file is part of the FoundationDB open source project
  *
@@ -18,42 +19,20 @@
  * limitations under the License.
  */
 
-#ifndef __FDBBENCH_GLOBALDATA_H__
-#define __FDBBENCH_GLOBALDATA_H__
-
+#ifndef FDBCLIENT_BLOBRESTORECOMMON_H
+#define FDBCLIENT_BLOBRESTORECOMMON_H
 #pragma once
 
 #include "fdbclient/FDBTypes.h"
+#include "fdbclient/SystemData.h"
+#include "fdbclient/KeyBackedTypes.actor.h"
 
-KeyValueRef getKV(size_t keySize, size_t valueSize);
-KeyRef getKey(size_t keySize);
+struct BlobGranuleBackupConfig : public KeyBackedClass {
+	BlobGranuleBackupConfig(KeyRef prefix = SystemKey("\xff\x02/bgbackup/"_sr)) : KeyBackedClass(prefix) {}
 
-// Pre-generate a vector of T using a lambda then return them
-// via next() one by one with wrap-around
-template <typename T>
-struct InputGenerator {
-	InputGenerator() {}
-
-	template <typename Fn>
-	InputGenerator(int n, Fn genFunc) {
-		ASSERT(n > 0);
-		data.reserve(n);
-		for (int i = 0; i < n; ++i) {
-			data.push_back(genFunc());
-		}
-		lastIndex = -1;
-	}
-
-	const T& next() {
-		if (++lastIndex == data.size()) {
-			lastIndex = 0;
-		}
-
-		return data[lastIndex];
-	}
-
-	std::vector<T> data;
-	int lastIndex;
+	KeyBackedProperty<bool> enabled() { return subspace.pack(__FUNCTION__sr); }
+	KeyBackedProperty<std::string> manifestUrl() { return subspace.pack(__FUNCTION__sr); }
+	KeyBackedProperty<std::string> mutationLogsUrl() { return subspace.pack(__FUNCTION__sr); }
 };
 
 #endif
