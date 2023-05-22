@@ -51,6 +51,7 @@ struct ProcessClass {
 		EncryptKeyProxyClass,
 		ConsistencyScanClass,
 		BlobMigratorClass,
+		SimHTTPServerClass,
 		TenantBalancerClass,
 		InvalidClass = -1
 	};
@@ -80,6 +81,7 @@ struct ProcessClass {
 	static_assert(ProcessClass::EncryptKeyProxyClass == 20);
 	static_assert(ProcessClass::ConsistencyScanClass == 21);
 	static_assert(ProcessClass::BlobMigratorClass == 22);
+	static_assert(ProcessClass::SimHTTPServerClass == 23);
 	static_assert(ProcessClass::InvalidClass == -1);
 
 	enum Fitness {
@@ -155,6 +157,7 @@ public:
 		else if (s=="storage_cache") _class = StorageCacheClass;
 		else if (s=="backup") _class = BackupClass;
 		else if (s=="encrypt_key_proxy") _class = EncryptKeyProxyClass;
+		else if (s=="sim_http_server") _class = SimHTTPServerClass;
 		else if (s=="tenant_balancer") _class = TenantBalancerClass;
 		else _class = InvalidClass;
 	}
@@ -187,6 +190,7 @@ public:
 		else if (classStr=="storage_cache") _class = StorageCacheClass;
 		else if (classStr=="backup") _class = BackupClass;
 		else if (classStr=="encrypt_key_proxy") _class = EncryptKeyProxyClass;
+		else if (classStr=="sim_http_server") _class = SimHTTPServerClass;
 		else if (classStr=="tenant_balancer") _class = TenantBalancerClass;
 		else _class = InvalidClass;
 
@@ -229,6 +233,7 @@ public:
 			case StorageCacheClass: return "storage_cache";
 			case BackupClass: return "backup";
 			case EncryptKeyProxyClass: return "encrypt_key_proxy";
+			case SimHTTPServerClass: return "sim_http_server";
 			case TenantBalancerClass: return "tenant_balancer";
 			default: return "invalid";
 		}

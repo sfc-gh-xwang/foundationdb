@@ -1,4 +1,4 @@
-# Blob Granules are only upgrade-able as of snowflake/release-71.2.3 and release
+# Blob Granules are only upgrade-able as of snowflake/release-71.2.3 and tests were only added as of 71.2.8
 
 [configuration]
 testClass = "BlobGranuleRestart"
@@ -8,9 +8,6 @@ injectTargetedSSRestart = true
 injectSSDelay = true
 # FIXME: re-enable rocks at some point
 storageEngineExcludeTypes = [4, 5]
-
-[[knobs]]
-enable_blob_granule_file_logical_size=false
 
 [[test]]
 testTitle = 'BlobGranuleRestartCycle'

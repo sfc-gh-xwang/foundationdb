@@ -48,6 +48,7 @@
 #define CLIENT_BUGGIFY CLIENT_BUGGIFY_WITH_PROB(P_BUGGIFIED_SECTION_FIRES[int(BuggifyType::Client)])
 
 FDB_BOOLEAN_PARAM(UseProvisionalProxies);
+FDB_BOOLEAN_PARAM(UseRawAccess);
 
 // Incomplete types that are reference counted
 class DatabaseContext;
@@ -244,13 +245,14 @@ class Tenant : public ReferenceCounted<Tenant>, public FastAllocated<Tenant>, No
 public:
 	Tenant(Database cx, TenantName name);
 	explicit Tenant(int64_t id);
-	Tenant(Future<int64_t> id, Optional<TenantName> name);
+	Tenant(Future<TenantLookupInfo> tenantLookupFuture, Optional<TenantName> name);
 
 	static Tenant* allocateOnForeignThread() { return (Tenant*)Tenant::operator new(sizeof(Tenant)); }
 
-	Future<Void> ready() const { return success(idFuture); }
+	Future<Void> ready() const { return success(lookupFuture); }
 	int64_t id() const;
-	Future<int64_t> getIdFuture() const;
+	Optional<TenantGroupName> tenantGroup() const;
+	Future<TenantLookupInfo> getLookupFuture() const;
 	KeyRef prefix() const;
 	std::string description() const;
 
@@ -258,7 +260,7 @@ public:
 
 private:
 	mutable int64_t bigEndianId = -1;
-	Future<int64_t> idFuture;
+	Future<TenantLookupInfo> lookupFuture;
 };
 
 template <>

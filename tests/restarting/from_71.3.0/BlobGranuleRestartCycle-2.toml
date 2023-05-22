@@ -1,4 +1,4 @@
-# Blob Granules are only upgrade-able as of snowflake/release-71.2.3 and release-7.2
+# Blob Granules are only upgrade-able as of snowflake/release-71.2.3 and tests were only added as of 71.2.8
 
 [configuration]
 testClass = "BlobGranuleRestart"
