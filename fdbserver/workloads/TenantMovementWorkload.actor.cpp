@@ -21,6 +21,7 @@
 #include "metacluster/MetaclusterConsistency.actor.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
+#include "metacluster/MetaclusterTypes.h"
 
 struct OnlineTenantMovementWorkload : public TestWorkload {
 	static constexpr auto NAME = "OnlineTenantMovement";
@@ -650,8 +651,10 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 						preferredClusterIndex = deterministicRandom()->randomInt(0, preferredClusters.size());
 						tenantMapEntry.assignedCluster = preferredClusters[preferredClusterIndex];
 					}
-					Future<Void> createFuture =
-					    metacluster::createTenant(self->managementDb, tenantMapEntry, assignClusterAutomatically);
+					Future<Void> createFuture = metacluster::createTenant(self->managementDb,
+					                                                      tenantMapEntry,
+					                                                      assignClusterAutomatically,
+					                                                      metacluster::IgnoreCapacityLimit::False);
 					Optional<Void> result = wait(timeout(createFuture, deterministicRandom()->randomInt(1, 30)));
 					if (result.present()) {
 						break;

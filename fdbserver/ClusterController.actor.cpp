@@ -2358,11 +2358,12 @@ ACTOR Future<Void> startTenantBalancer(ClusterControllerData* self) {
 				return Void();
 			}
 			std::map<Optional<Standalone<StringRef>>, int> id_used = self->getUsedIds();
-			WorkerFitnessInfo tbWorker = self->getWorkerForRoleInDatacenter(self->clusterControllerDcId,
-			                                                                ProcessClass::TenantBalancer,
-			                                                                ProcessClass::NeverAssign,
-			                                                                self->db.config,
-			                                                                id_used);
+			WorkerFitnessInfo tbWorker = Recruiter::getWorkerForRoleInDatacenter(self,
+			                                                                     self->clusterControllerDcId,
+			                                                                     ProcessClass::TenantBalancer,
+			                                                                     ProcessClass::NeverAssign,
+			                                                                     self->db.config,
+			                                                                     id_used);
 			InitializeTenantBalancerRequest req(deterministicRandom()->randomUniqueID());
 			state WorkerDetails worker = tbWorker.worker;
 			if (self->onMasterIsBetter(worker, ProcessClass::TenantBalancer)) {

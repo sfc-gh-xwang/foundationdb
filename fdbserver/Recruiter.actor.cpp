@@ -142,7 +142,9 @@ bool isLongLivedStateless(ClusterControllerData const* clusterControllerData, Op
 	        clusterControllerData->db.serverInfo->get().client.encryptKeyProxy.get().locality.processId() ==
 	            processId) ||
 	       (clusterControllerData->db.serverInfo->get().consistencyScan.present() &&
-	        clusterControllerData->db.serverInfo->get().consistencyScan.get().locality.processId() == processId);
+	        clusterControllerData->db.serverInfo->get().consistencyScan.get().locality.processId() == processId) ||
+	       (clusterControllerData->db.serverInfo->get().tenantBalancer.present() &&
+	        clusterControllerData->db.serverInfo->get().tenantBalancer.get().locality.processId() == processId);
 }
 
 std::set<Optional<Standalone<StringRef>>> getDatacenters(ClusterControllerData const* clusterControllerData,
