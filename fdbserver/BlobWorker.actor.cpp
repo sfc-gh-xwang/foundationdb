@@ -369,14 +369,14 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<Blob
 	return cipherKeysCtx;
 }
 
-ACTOR Future<BlobGranuleCipherKey> lookupCipherKey(Reference<BlobWorkerData> bwData,
+ACTOR Future<BlobGranuleCipherKey> lookupCipherKey(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                                    BlobCipherDetails cipherDetails,
                                                    Arena* arena) {
 	std::unordered_set<BlobCipherDetails> cipherDetailsSet;
 	cipherDetailsSet.emplace(cipherDetails);
 	state std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> cipherKeyMap =
 	    wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-	        bwData->dbInfo, cipherDetailsSet, BlobCipherMetrics::BLOB_GRANULE));
+	        dbInfo, cipherDetailsSet, BlobCipherMetrics::BLOB_GRANULE));
 
 	ASSERT(cipherKeyMap.size() == 1);
 
@@ -392,7 +392,7 @@ ACTOR Future<BlobGranuleCipherKey> lookupCipherKey(Reference<BlobWorkerData> bwD
 	return BlobGranuleCipherKey::fromBlobCipherKey(cipherKeyMapItr->second, *arena);
 }
 
-ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<BlobWorkerData> bwData,
+ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                                                 BlobCipherDetails textCipherDetails,
                                                                 BlobCipherDetails headerCipherDetails,
                                                                 StringRef ivRef,
@@ -400,11 +400,11 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<BlobWo
 	state BlobGranuleCipherKeysCtx cipherKeysCtx;
 
 	// Fetch 'textCipher' key
-	BlobGranuleCipherKey textCipherKey = wait(lookupCipherKey(bwData, textCipherDetails, arena));
+	BlobGranuleCipherKey textCipherKey = wait(lookupCipherKey(dbInfo, textCipherDetails, arena));
 	cipherKeysCtx.textCipherKey = textCipherKey;
 
 	// Fetch 'headerCipher' key
-	BlobGranuleCipherKey headerCipherKey = wait(lookupCipherKey(bwData, headerCipherDetails, arena));
+	BlobGranuleCipherKey headerCipherKey = wait(lookupCipherKey(dbInfo, headerCipherDetails, arena));
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
@@ -425,7 +425,7 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<BlobWo
 	return cipherKeysCtx;
 }
 
-Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMeta(Reference<BlobWorkerData> bwData,
+Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMeta(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                                                   BlobGranuleCipherKeysMeta cipherKeysMeta,
                                                                   Arena* arena) {
 	BlobCipherDetails textCipherDetails(
@@ -436,10 +436,10 @@ Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMeta(Reference<Blob
 
 	StringRef ivRef = StringRef(*arena, cipherKeysMeta.ivStr);
 
-	return getGranuleCipherKeysImpl(bwData, textCipherDetails, headerCipherDetails, ivRef, arena);
+	return getGranuleCipherKeysImpl(dbInfo, textCipherDetails, headerCipherDetails, ivRef, arena);
 }
 
-Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMetaRef(Reference<BlobWorkerData> bwData,
+Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMetaRef(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                                                      BlobGranuleCipherKeysMetaRef cipherKeysMetaRef,
                                                                      Arena* arena) {
 	BlobCipherDetails textCipherDetails(
@@ -448,7 +448,7 @@ Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMetaRef(Reference<B
 	BlobCipherDetails headerCipherDetails(
 	    cipherKeysMetaRef.headerDomainId, cipherKeysMetaRef.headerBaseCipherId, cipherKeysMetaRef.headerSalt);
 
-	return getGranuleCipherKeysImpl(bwData, textCipherDetails, headerCipherDetails, cipherKeysMetaRef.ivRef, arena);
+	return getGranuleCipherKeysImpl(dbInfo, textCipherDetails, headerCipherDetails, cipherKeysMetaRef.ivRef, arena);
 }
 
 ACTOR Future<Void> readAndCheckGranuleLock(Reference<ReadYourWritesTransaction> tr,
@@ -941,13 +941,15 @@ ACTOR Future<BlobFileIndex> writeSnapshot(Reference<BlobWorkerData> bwData,
 	state std::string fileName = randomBGFilename(bwData->id, granuleID, version, ".snapshot");
 	state Standalone<GranuleSnapshot> snapshot;
 	state int64_t bytesRead = 0;
+	state bool canStopEarly =
+	    (SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET == 0 || SERVER_KNOBS->BG_ENABLE_SPLIT_TRUNCATED);
 	state bool injectTooBig = initialSnapshot && g_network->isSimulated() && BUGGIFY_WITH_PROB(0.1);
 
 	wait(delay(0, TaskPriority::BlobWorkerUpdateStorage));
 
 	loop {
 		try {
-			if (initialSnapshot && snapshot.size() > 1 &&
+			if (initialSnapshot && snapshot.size() > 1 && canStopEarly &&
 			    (injectTooBig || bytesRead >= 3 * SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES)) {
 				// throw transaction too old either on injection for simulation, or if snapshot would be too large now
 				throw transaction_too_old();
@@ -1288,7 +1290,7 @@ ACTOR Future<BlobFileIndex> compactFromBlob(Reference<BlobWorkerData> bwData,
 			ASSERT(bwData->encryptMode.isEncryptionEnabled());
 			CODE_PROBE(true, "fetching cipher keys for blob snapshot file");
 			BlobGranuleCipherKeysCtx keysCtx =
-			    wait(getGranuleCipherKeysFromKeysMeta(bwData, snapshotF.cipherKeysMeta.get(), &filenameArena));
+			    wait(getGranuleCipherKeysFromKeysMeta(bwData->dbInfo, snapshotF.cipherKeysMeta.get(), &filenameArena));
 			snapCipherKeysCtx = std::move(keysCtx);
 		}
 
@@ -1319,7 +1321,7 @@ ACTOR Future<BlobFileIndex> compactFromBlob(Reference<BlobWorkerData> bwData,
 				ASSERT(bwData->encryptMode.isEncryptionEnabled());
 				CODE_PROBE(true, "fetching cipher keys for delta file");
 				BlobGranuleCipherKeysCtx keysCtx =
-				    wait(getGranuleCipherKeysFromKeysMeta(bwData, deltaF.cipherKeysMeta.get(), &filenameArena));
+				    wait(getGranuleCipherKeysFromKeysMeta(bwData->dbInfo, deltaF.cipherKeysMeta.get(), &filenameArena));
 				deltaCipherKeysCtx = std::move(keysCtx);
 			}
 
@@ -3971,7 +3973,7 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 							ASSERT(!chunk.snapshotFile.get().cipherKeysCtx.present());
 							CODE_PROBE(true, "fetching cipher keys from meta ref for snapshot file");
 							snapCipherKeysCtx = getGranuleCipherKeysFromKeysMetaRef(
-							    bwData, chunk.snapshotFile.get().cipherKeysMetaRef.get(), &rep.arena);
+							    bwData->dbInfo, chunk.snapshotFile.get().cipherKeysMetaRef.get(), &rep.arena);
 						}
 					}
 					state std::unordered_map<int, Future<BlobGranuleCipherKeysCtx>> deltaCipherKeysCtxs;
@@ -3992,7 +3994,7 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 							deltaCipherKeysCtxs.emplace(
 							    deltaIdx,
 							    getGranuleCipherKeysFromKeysMetaRef(
-							        bwData, chunk.deltaFiles[deltaIdx].cipherKeysMetaRef.get(), &rep.arena));
+							        bwData->dbInfo, chunk.deltaFiles[deltaIdx].cipherKeysMetaRef.get(), &rep.arena));
 						}
 					}
 
@@ -5518,6 +5520,38 @@ bool blobWorkerTerminated(Reference<BlobWorkerData> self, IKeyValueStore* persis
 
 #define PERSIST_PREFIX "\xff\xff"
 static const KeyRef persistID = PERSIST_PREFIX "ID"_sr;
+static const KeyRef persistEncryptionAtRestModeKey = "encryptionAtRestMode"_sr;
+
+ACTOR Future<Void> checkUpdateEncryptionAtRestMode(Reference<BlobWorkerData> self,
+                                                   Future<DatabaseConfiguration> configF) {
+	DatabaseConfiguration config = wait(configF);
+	EncryptionAtRestMode encryptionAtRestMode = config.encryptionAtRestMode;
+	if (self->persistedEncryptMode.present()) {
+		// Ensure the BlobWorker encryptionAtRestMode status matches with the cluster config, if not, kill the
+		// BlobWorker process. Approach prevents a fake BlobWorker process joining the cluster.
+		if (self->persistedEncryptMode.get() != encryptionAtRestMode) {
+			TraceEvent(SevError, "BlobWorkerEncryptionAtRestMismatch", self->id)
+			    .detail("Expected", encryptionAtRestMode.toString())
+			    .detail("Present", self->persistedEncryptMode.get().toString());
+			ASSERT(false);
+		}
+		TraceEvent("BlobWorkerPersistEncryptionAtRestModePresent", self->id)
+		    .detail("Mode", self->persistedEncryptMode.get().toString());
+	} else {
+		self->persistedEncryptMode = encryptionAtRestMode;
+		if (self->storage) {
+			CODE_PROBE(true, "BlobWorker: Persisting encryption at rest mode");
+			self->storage->set(KeyValueRef(persistEncryptionAtRestModeKey, self->persistedEncryptMode.get().toValue()));
+			wait(self->storage->commit());
+			TraceEvent("BlobWorkerPersistEncryptionAtRestMode", self->id)
+			    .detail("Mode", self->persistedEncryptMode.get().toString());
+		}
+	}
+
+	ASSERT(self->persistedEncryptMode.present());
+	self->encryptMode = self->persistedEncryptMode.get();
+	return Void();
+}
 
 ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
                               ReplyPromise<InitializeBlobWorkerReply> recruitReply,
@@ -5568,8 +5602,7 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 		rep.interf = bwInterf;
 		recruitReply.send(rep);
 
-		DatabaseConfiguration config = wait(configFuture);
-		self->encryptMode = config.encryptionAtRestMode;
+		wait(checkUpdateEncryptionAtRestMode(self, configFuture));
 		TraceEvent("BWEncryptionAtRestMode", self->id).detail("Mode", self->encryptMode.toString());
 
 		TraceEvent("BlobWorkerInit", self->id).log();
@@ -5593,8 +5626,9 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 
 ACTOR Future<UID> restorePersistentState(Reference<BlobWorkerData> self) {
 	state Future<Optional<Value>> fID = self->storage->readValue(persistID);
+	state Future<Optional<Value>> fEncryptionAtRestMode = self->storage->readValue(persistEncryptionAtRestModeKey);
 
-	wait(waitForAll(std::vector{ fID }));
+	wait(waitForAll(std::vector{ fID, fEncryptionAtRestMode }));
 
 	if (!SERVER_KNOBS->BLOB_WORKER_DISK_ENABLED || !fID.get().present()) {
 		CODE_PROBE(true, "Restored uninitialized blob worker");
@@ -5602,6 +5636,14 @@ ACTOR Future<UID> restorePersistentState(Reference<BlobWorkerData> self) {
 	}
 	UID recoveredID = BinaryReader::fromStringRef<UID>(fID.get().get(), Unversioned());
 	ASSERT(recoveredID != self->id);
+
+	if (fEncryptionAtRestMode.get().present()) {
+		CODE_PROBE(true, "BlobWorker: Retrieved persisted encryption at rest mode");
+		self->persistedEncryptMode =
+		    Optional<EncryptionAtRestMode>(EncryptionAtRestMode::fromValue(fEncryptionAtRestMode.get()));
+		TraceEvent("BlobWorkerPersistEncryptionAtRestModeRead", self->id)
+		    .detail("Mode", self->persistedEncryptMode.get().toString());
+	}
 	return recoveredID;
 }
 
@@ -5659,9 +5701,8 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 		self->storage->set(KeyValueRef(persistID, BinaryWriter::toValue(self->id, Unversioned())));
 		wait(self->storage->commit());
 
-		DatabaseConfiguration config = wait(configFuture);
-		self->encryptMode = config.encryptionAtRestMode;
-		TraceEvent("BWEncryptionAtRestMode", self->id).detail("Mode", self->encryptMode.toString());
+		wait(checkUpdateEncryptionAtRestMode(self, configFuture));
+		TraceEvent("BWEncryptionAtRestModeRecover", self->id).detail("Mode", self->encryptMode.toString());
 
 		TraceEvent("BlobWorkerInit", self->id).log();
 		wait(blobWorkerCore(bwInterf, self));

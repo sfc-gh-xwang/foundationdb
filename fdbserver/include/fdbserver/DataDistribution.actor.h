@@ -36,6 +36,7 @@
 #include "fdbserver/MoveKeys.actor.h"
 #include "fdbserver/ShardsAffectedByTeamFailure.h"
 #include "fdbclient/StorageWiggleMetrics.actor.h"
+#include "fdbclient/DataDistributionConfig.actor.h"
 #include <boost/heap/policies.hpp>
 #include <boost/heap/skew_heap.hpp>
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -163,7 +164,13 @@ struct RelocateShard {
 
 	bool isRestore() const { return this->dataMove != nullptr; }
 
+	void setParentRange(KeyRange const& parent);
+	Optional<KeyRange> getParentRange() const;
+
 private:
+	// If this rs comes from a splitting, parent range is the original range.
+	Optional<KeyRange> parent_range;
+
 	RelocateShard()
 	  : priority(0), cancelled(false), dataMoveId(anonymousShardId), reason(RelocateReason::OTHER),
 	    moveReason(DataMovementReason::INVALID) {}
@@ -479,7 +486,8 @@ struct DDShardInfo {
 
 struct InitialDataDistribution : ReferenceCounted<InitialDataDistribution> {
 	InitialDataDistribution()
-	  : dataMoveMap(std::make_shared<DataMove>()), customReplication(makeReference<KeyRangeMap<int>>(-1)) {}
+	  : dataMoveMap(std::make_shared<DataMove>()),
+	    userRangeConfig(makeReference<DDConfiguration::RangeConfigMapSnapshot>(allKeys.begin, allKeys.end)) {}
 
 	// Read from dataDistributionModeKey. Whether DD is disabled. DD can be disabled persistently (mode = 0). Set mode
 	// to 1 will enable all disabled parts
@@ -492,7 +500,7 @@ struct InitialDataDistribution : ReferenceCounted<InitialDataDistribution> {
 	Optional<Key> initHealthyZoneValue; // set for maintenance mode
 	KeyRangeMap<std::shared_ptr<DataMove>> dataMoveMap;
 	std::vector<AuditStorageState> auditStates;
-	Reference<KeyRangeMap<int>> customReplication;
+	Reference<DDConfiguration::RangeConfigMapSnapshot> userRangeConfig;
 };
 
 // Holds the permitted size and IO Bounds for a shard

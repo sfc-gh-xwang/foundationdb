@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "fdbclient/BlobGranuleCommon.h"
+#include "fdbclient/BlobRestoreCommon.h"
+#include "fdbclient/ClientBooleanParams.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/SystemData.h"
 #include "fdbclient/DatabaseContext.h"
@@ -68,7 +70,7 @@
 #include "fdbrpc/Replication.h"
 #include "fdbrpc/ReplicationUtils.h"
 #include "fdbrpc/sim_validation.h"
-#include "fdbclient/KeyBackedTypes.h"
+#include "fdbclient/KeyBackedTypes.actor.h"
 #include "flow/Error.h"
 #include "flow/Trace.h"
 #include "flow/Util.h"
@@ -1918,9 +1920,6 @@ ACTOR Future<Void> handleForcedRecoveries(ClusterControllerData* self, ClusterCo
 }
 
 ACTOR Future<Void> triggerAuditStorage(ClusterControllerData* self, TriggerAuditRequest req) {
-	TraceEvent(SevInfo, "CCTriggerAuditStorageBegin", self->id)
-	    .detail("Range", req.range)
-	    .detail("AuditType", req.type);
 	state UID auditId;
 
 	try {
@@ -1928,26 +1927,25 @@ ACTOR Future<Void> triggerAuditStorage(ClusterControllerData* self, TriggerAudit
 		       !self->db.serverInfo->get().distributor.present()) {
 			wait(self->db.serverInfo->onChange());
 		}
-
+		TraceEvent(SevVerbose, "CCTriggerAuditStorageBegin", self->id)
+		    .detail("Range", req.range)
+		    .detail("AuditType", req.type)
+		    .detail("DDId", self->db.serverInfo->get().distributor.get().id());
 		TriggerAuditRequest fReq(req.getType(), req.range);
 		UID auditId_ = wait(self->db.serverInfo->get().distributor.get().triggerAudit.getReply(fReq));
 		auditId = auditId_;
-		TraceEvent(SevDebug, "CCTriggerAuditStorageEnd", self->id)
+		TraceEvent(SevVerbose, "CCTriggerAuditStorageEnd", self->id)
 		    .detail("AuditID", auditId)
 		    .detail("Range", req.range)
 		    .detail("AuditType", req.type);
-		if (!req.reply.isSet()) {
-			req.reply.send(auditId);
-		}
+		req.reply.send(auditId);
 	} catch (Error& e) {
-		TraceEvent(SevDebug, "CCTriggerAuditStorageError", self->id)
+		TraceEvent(SevInfo, "CCTriggerAuditStorageFailed", self->id)
 		    .errorUnsuppressed(e)
 		    .detail("AuditID", auditId)
 		    .detail("Range", req.range)
 		    .detail("AuditType", req.type);
-		if (!req.reply.isSet()) {
-			req.reply.sendError(audit_storage_failed());
-		}
+		req.reply.sendError(audit_storage_failed());
 	}
 
 	return Void();
@@ -1956,7 +1954,7 @@ ACTOR Future<Void> triggerAuditStorage(ClusterControllerData* self, TriggerAudit
 ACTOR Future<Void> handleTriggerAuditStorage(ClusterControllerData* self, ClusterControllerFullInterface interf) {
 	loop {
 		TriggerAuditRequest req = waitNext(interf.clientInterface.triggerAudit.getFuture());
-		TraceEvent(SevDebug, "TriggerAuditStorageReceived", self->id)
+		TraceEvent(SevVerbose, "CCTriggerAuditStorageReceived", self->id)
 		    .detail("ClusterControllerDcId", self->clusterControllerDcId)
 		    .detail("Range", req.range)
 		    .detail("AuditType", req.type);
@@ -2371,46 +2369,35 @@ ACTOR Future<int64_t> getNextBMEpoch(ClusterControllerData* self) {
 }
 
 ACTOR Future<Void> watchBlobRestoreCommand(ClusterControllerData* self) {
-	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->cx);
 	state Reference<BlobRestoreController> restoreController =
 	    makeReference<BlobRestoreController>(self->cx, normalKeys);
-	state Key blobRestoreCommandKey = blobRestoreCommandKeyFor(normalKeys);
 	loop {
 		try {
-			tr->reset();
-			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			Optional<Value> blobRestoreCommand = wait(tr->get(blobRestoreCommandKey));
-			if (blobRestoreCommand.present()) {
-				state Standalone<BlobRestoreState> restoreState = decodeBlobRestoreState(blobRestoreCommand.get());
-				TraceEvent("WatchBlobRestore", self->id).detail("Phase", restoreState.phase);
-				if (restoreState.phase == BlobRestorePhase::INIT) {
-					if (self->db.blobGranulesEnabled.get()) {
-						wait(BlobRestoreController::updateState(restoreController, STARTING_MIGRATOR, {}));
-						const auto& blobManager = self->db.serverInfo->get().blobManager;
-						if (blobManager.present()) {
-							BlobManagerSingleton(blobManager)
-							    .haltBlobGranules(*self, blobManager.get().locality.processId());
-						}
-						const auto& blobMigrator = self->db.serverInfo->get().blobMigrator;
-						if (blobMigrator.present()) {
-							BlobMigratorSingleton(blobMigrator).halt(*self, blobMigrator.get().locality.processId());
-						}
-					} else {
-						TraceEvent("SkipBlobRestoreInitCommand", self->id).log();
-						BlobRestoreState error("Blob granules should be enabled first."_sr);
-						Value value = blobRestoreCommandValueFor(error);
-						tr->set(blobRestoreCommandKey, value);
+			state BlobRestorePhase phase = wait(BlobRestoreController::currentPhase(restoreController));
+			TraceEvent("WatchBlobRestore", self->id).detail("Phase", phase);
+			if (phase == BlobRestorePhase::INIT) {
+				if (self->db.blobGranulesEnabled.get()) {
+					wait(BlobRestoreController::setPhase(restoreController, STARTING_MIGRATOR, {}));
+					const auto& blobManager = self->db.serverInfo->get().blobManager;
+					if (blobManager.present()) {
+						BlobManagerSingleton(blobManager)
+						    .haltBlobGranules(*self, blobManager.get().locality.processId());
 					}
+					const auto& blobMigrator = self->db.serverInfo->get().blobMigrator;
+					if (blobMigrator.present()) {
+						BlobMigratorSingleton(blobMigrator).halt(*self, blobMigrator.get().locality.processId());
+					}
+				} else {
+					TraceEvent("SkipBlobRestoreInitCommand", self->id).log();
+					wait(BlobRestoreController::setError(restoreController, "Blob granules should be enabled first"));
 				}
-				self->db.blobRestoreEnabled.set(restoreState.phase < BlobRestorePhase::DONE);
 			}
+			self->db.blobRestoreEnabled.set(phase > BlobRestorePhase::UNINIT && phase < BlobRestorePhase::DONE);
 
-			state Future<Void> watch = tr->watch(blobRestoreCommandKey);
-			wait(tr->commit());
-			wait(watch);
+			wait(BlobRestoreController::onPhaseChange(restoreController, BlobRestorePhase::INIT));
 		} catch (Error& e) {
-			wait(tr->onError(e));
+			TraceEvent("WatchBlobRestoreCommand", self->id).error(e);
+			throw e;
 		}
 	}
 }
@@ -2801,12 +2788,13 @@ ACTOR Future<Void> workerHealthMonitor(ClusterControllerData* self) {
 }
 
 ACTOR Future<Void> metaclusterMetricsUpdater(ClusterControllerData* self) {
+	state Future<Void> updaterDelay = Void();
 	loop {
-		state Future<Void> updaterDelay =
-		    self->db.clusterType == ClusterType::METACLUSTER_MANAGEMENT ? delay(60.0) : Never();
 		choose {
-			when(wait(self->db.serverInfo->onChange())) {}
-			when(wait(updaterDelay)) {
+			when(wait(self->db.serverInfo->onChange())) {
+				updaterDelay = Void();
+			}
+			when(wait(self->db.clusterType == ClusterType::METACLUSTER_MANAGEMENT ? updaterDelay : Never())) {
 				try {
 					wait(store(self->db.metaclusterMetrics,
 					           metacluster::MetaclusterMetrics::getMetaclusterMetrics(self->cx)));
@@ -2816,6 +2804,8 @@ ACTOR Future<Void> metaclusterMetricsUpdater(ClusterControllerData* self) {
 						throw;
 					}
 				}
+
+				updaterDelay = delay(60.0);
 			}
 		}
 	}
