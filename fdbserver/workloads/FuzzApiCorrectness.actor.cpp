@@ -764,8 +764,8 @@ struct FuzzApiCorrectnessWorkload : TestWorkload {
 		}
 	};
 
-	struct TestGet : public BaseTest<TestGet, Optional<Value>> {
-		typedef BaseTest<TestGet, Optional<Value>> base_type;
+	struct TestGet : public BaseTest<TestGet, ValueReadResult> {
+		typedef BaseTest<TestGet, ValueReadResult> base_type;
 		Key key;
 
 		TestGet(unsigned int id, FuzzApiCorrectnessWorkload* workload, Reference<ITransaction> tr)
@@ -808,8 +808,8 @@ struct FuzzApiCorrectnessWorkload : TestWorkload {
 		}
 	};
 
-	struct TestGetKey : public BaseTest<TestGetKey, Key> {
-		typedef BaseTest<TestGetKey, Key> base_type;
+	struct TestGetKey : public BaseTest<TestGetKey, KeyReadResult> {
+		typedef BaseTest<TestGetKey, KeyReadResult> base_type;
 		KeySelector keysel;
 
 		TestGetKey(unsigned int id, FuzzApiCorrectnessWorkload* workload, Reference<ITransaction> tr)

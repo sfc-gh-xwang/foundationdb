@@ -20,6 +20,7 @@
 
 #include <cinttypes>
 #include "fdbclient/BlobGranuleCommon.h"
+#include "fdbclient/json_spirit/json_spirit_value.h"
 #include "fdbserver/BlobGranuleServerCommon.actor.h"
 #include "fdbserver/BlobManagerInterface.h"
 #include "fmt/format.h"
@@ -1305,7 +1306,7 @@ ACTOR static Future<double> doReadProbe(Future<double> grvProbe, Transaction* tr
 	loop {
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 		try {
-			Optional<Standalone<StringRef>> _ = wait(tr->get("\xff/StatusJsonTestKey62793"_sr));
+			wait(success(tr->get("\xff/StatusJsonTestKey62793"_sr)));
 			return g_network->timer_monotonic() - start;
 		} catch (Error& e) {
 			wait(tr->onError(e));
@@ -1443,7 +1444,7 @@ ACTOR static Future<JsonBuilderObject> versionEpochStatusFetcher(Database cx,
 				tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				Optional<Value> versionEpochVal = wait(timeoutError(BUGGIFY ? Never() : tr.get(versionEpochKey), 5.0));
+				ValueReadResult versionEpochVal = wait(timeoutError(BUGGIFY ? Never() : tr.get(versionEpochKey), 5.0));
 				message["enabled"] = versionEpochVal.present();
 				if (!versionEpochVal.present()) {
 					break;
@@ -1474,7 +1475,7 @@ ACTOR static Future<Void> consistencyCheckStatusFetcher(Database cx,
 				tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				Optional<Value> ccSuspendVal =
+				ValueReadResult ccSuspendVal =
 				    wait(timeoutError(BUGGIFY ? Never() : tr.get(fdbShouldConsistencyCheckBeSuspended), 5.0));
 				bool ccSuspend = ccSuspendVal.present()
 				                     ? BinaryReader::fromStringRef<bool>(ccSuspendVal.get(), Unversioned())
@@ -1682,13 +1683,13 @@ loadConfiguration(Database cx, JsonBuilderArray* messages, std::set<std::string>
 			}
 
 			ASSERT(result.present());
-			state std::vector<Future<Optional<Value>>> replicasFutures;
+			state std::vector<Future<ValueReadResult>> replicasFutures;
 			for (auto& region : result.get().regions) {
 				replicasFutures.push_back(tr.get(datacenterReplicasKeyFor(region.dcId)));
 			}
-			state Future<Optional<Value>> healthyZoneValue = tr.get(healthyZoneKey);
-			state Future<Optional<Value>> rebalanceDDIgnored = tr.get(rebalanceDDIgnoreKey);
-			state Future<Optional<Value>> ddModeKey = tr.get(dataDistributionModeKey);
+			state Future<ValueReadResult> healthyZoneValue = tr.get(healthyZoneKey);
+			state Future<ValueReadResult> rebalanceDDIgnored = tr.get(rebalanceDDIgnoreKey);
+			state Future<ValueReadResult> ddModeKey = tr.get(dataDistributionModeKey);
 
 			choose {
 				when(wait(waitForAll(replicasFutures) && success(healthyZoneValue) && success(rebalanceDDIgnored) &&
@@ -2886,7 +2887,7 @@ ACTOR Future<JsonBuilderObject> lockedStatusFetcher(Reference<AsyncVar<ServerDBI
 		tr.setOption(FDBTransactionOptions::READ_LOCK_AWARE);
 		try {
 			choose {
-				when(Optional<Value> lockUID = wait(tr.get(databaseLockedKey))) {
+				when(ValueReadResult lockUID = wait(tr.get(databaseLockedKey))) {
 					if (lockUID.present()) {
 						statusObj["locked"] = true;
 						statusObj["lock_uid"] =
@@ -2928,7 +2929,7 @@ ACTOR Future<Optional<Value>> getActivePrimaryDC(Database cx, int* fullyReplicat
 			tr.setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			state Future<RangeResult> fReplicaKeys = tr.getRange(datacenterReplicasKeys, CLIENT_KNOBS->TOO_MANY);
-			state Future<Optional<Value>> fPrimaryDatacenterKey = tr.get(primaryDatacenterKey);
+			state Future<ValueReadResult> fPrimaryDatacenterKey = tr.get(primaryDatacenterKey);
 			wait(timeoutError(success(fPrimaryDatacenterKey) && success(fReplicaKeys), 5));
 
 			*fullyReplicatedRegions = fReplicaKeys.get().size();
@@ -2937,7 +2938,7 @@ ACTOR Future<Optional<Value>> getActivePrimaryDC(Database cx, int* fullyReplicat
 				messages->push_back(
 				    JsonString::makeMessage("primary_dc_missing", "Unable to determine primary datacenter."));
 			}
-			return fPrimaryDatacenterKey.get();
+			return fPrimaryDatacenterKey.get().contents();
 		} catch (Error& e) {
 			if (e.code() == error_code_timed_out) {
 				messages->push_back(
@@ -3021,25 +3022,6 @@ ACTOR Future<JsonBuilderObject> storageWigglerStatsFetcher(Optional<DataDistribu
 		                                            "Fetching storage wiggler stats timed out."));
 	}
 	return res;
-}
-
-// read consistencyScanInfo through Read-only tx
-ACTOR Future<Optional<Value>> consistencyScanInfoFetcher(Database cx) {
-	state Reference<ReadYourWritesTransaction> tr(new ReadYourWritesTransaction(cx));
-	state Optional<Value> val;
-	loop {
-		try {
-			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			wait(store(val, ConsistencyScanInfo::getInfo(tr)));
-			wait(tr->commit());
-			break;
-		} catch (Error& e) {
-			wait(tr->onError(e));
-		}
-	}
-
-	TraceEvent("ConsistencyScanInfoFetcher").log();
-	return val;
 }
 
 // constructs the cluster section of the json status output
@@ -3589,18 +3571,36 @@ ACTOR Future<StatusReply> clusterGetStatus(
 
 		// Fetch Consistency Scan Information
 		try {
-			Optional<Value> val = wait(timeoutError(consistencyScanInfoFetcher(cx), 2.0));
-			if (val.present()) {
-				ConsistencyScanInfo consistencyScanInfo =
-				    ObjectReader::fromStringRef<ConsistencyScanInfo>(val.get(), IncludeVersion());
-				TraceEvent("StatusConsistencyScanGotVal").log();
-				statusObj["consistency_scan_info"] = consistencyScanInfo.toJSON();
+			state ConsistencyScanState cs;
+			state ConsistencyScanState::Config config;
+			state ConsistencyScanState::RoundStats currentRound;
+			state ConsistencyScanState::LifetimeStats lifetime;
+			state ConsistencyScanState::StatsHistoryMap::RangeResultType olderStats;
+			auto sysDB = SystemDBWriteLockedNow(cx.getReference());
+
+			// TODO: Use the same transaction.
+			wait(timeoutError(
+			    store(config, cs.config().getD(sysDB)) && store(currentRound, cs.currentRoundStats().getD(sysDB)) &&
+			        store(lifetime, cs.lifetimeStats().getD(sysDB)) &&
+			        store(olderStats,
+			              cs.roundStatsHistory().getRange(sysDB, {}, {}, 5, Snapshot::False, Reverse::True)),
+			    2.0));
+			json_spirit::mObject csDoc;
+			csDoc["configuration"] = config.toJSON();
+			csDoc["lifetime_stats"] = lifetime.toJSON();
+			csDoc["current_round"] = currentRound.toJSON();
+			json_spirit::mArray olderRounds;
+			for (auto const& kv : olderStats.results) {
+				olderRounds.push_back(kv.second.toJSON());
 			}
+			csDoc["previous_rounds"] = olderRounds;
+
+			statusObj["consistency_scan"] = csDoc;
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled)
 				throw;
-			messages.push_back(JsonString::makeMessage("fetch_consistency_scan_info_timeout",
-			                                           "Fetching consistency scan information timed out."));
+			messages.push_back(JsonString::makeMessage("fetch_consistency_scan_status_timeout",
+			                                           "Fetching consistency scan state timed out."));
 		}
 
 		// Create the status_incomplete message if there were any reasons that the status is incomplete.

@@ -1043,6 +1043,10 @@ public:
 	double FILE_LATENCY_SKETCH_ACCURACY;
 	double LATENCY_METRICS_LOGGING_INTERVAL;
 
+	// Relocation request queue measurement
+	double RELOCATION_METRICS_SMOOTHING;
+	double RELOCATION_METRICS_WINDOW;
+
 	// Cluster recovery
 	std::string CLUSTER_RECOVERY_EVENT_NAME_PREFIX;
 

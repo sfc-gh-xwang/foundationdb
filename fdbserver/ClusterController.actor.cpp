@@ -88,8 +88,8 @@ ACTOR Future<Optional<Value>> getPreviousCoordinators(ClusterControllerData* sel
 			tr.setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			Optional<Value> previousCoordinators = wait(tr.get(previousCoordinatorsKey));
-			return previousCoordinators;
+			ValueReadResult previousCoordinators = wait(tr.get(previousCoordinatorsKey));
+			return previousCoordinators.contents();
 		} catch (Error& e) {
 			wait(tr.onError(e));
 		}
@@ -1295,7 +1295,7 @@ ACTOR Future<Void> timeKeeper(ClusterControllerData* self) {
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-				Optional<Value> disableValue = wait(tr->get(timeKeeperDisableKey));
+				ValueReadResult disableValue = wait(tr->get(timeKeeperDisableKey));
 				if (disableValue.present()) {
 					break;
 				}
@@ -1427,7 +1427,7 @@ ACTOR Future<Void> monitorProcessClasses(ClusterControllerData* self) {
 			trVer.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			trVer.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-			Optional<Value> val = wait(trVer.get(processClassVersionKey));
+			ValueReadResult val = wait(trVer.get(processClassVersionKey));
 
 			if (val.present())
 				break;
@@ -1516,7 +1516,7 @@ ACTOR Future<Void> monitorServerInfoConfig(ClusterControllerData::DBInfo* db) {
 				tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 				tr.setOption(FDBTransactionOptions::READ_LOCK_AWARE);
 
-				Optional<Value> configVal = wait(tr.get(latencyBandConfigKey));
+				ValueReadResult configVal = wait(tr.get(latencyBandConfigKey));
 				Optional<LatencyBandConfig> config;
 				if (configVal.present()) {
 					config = LatencyBandConfig::parse(configVal.get());
@@ -1556,7 +1556,7 @@ ACTOR Future<Void> monitorGlobalConfig(ClusterControllerData::DBInfo* db) {
 			try {
 				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 				tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-				state Optional<Value> globalConfigVersion = wait(tr.get(globalConfigVersionKey));
+				state ValueReadResult globalConfigVersion = wait(tr.get(globalConfigVersionKey));
 				state ClientDBInfo clientInfo = db->serverInfo->get().client;
 
 				if (globalConfigVersion.present()) {
@@ -2446,7 +2446,7 @@ ACTOR Future<int64_t> getNextBMEpoch(ClusterControllerData* self) {
 		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 		tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 		try {
-			Optional<Value> oldEpoch = wait(tr->get(blobManagerEpochKey));
+			ValueReadResult oldEpoch = wait(tr->get(blobManagerEpochKey));
 			state int64_t newEpoch = oldEpoch.present() ? decodeBlobManagerEpochValue(oldEpoch.get()) + 1 : 1;
 			tr->set(blobManagerEpochKey, blobManagerEpochValueFor(newEpoch));
 
@@ -2679,7 +2679,7 @@ ACTOR Future<Void> watchBlobGranulesConfigKey(ClusterControllerData* self) {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-			Optional<Value> blobConfig = wait(tr->get(blobGranuleConfigKey));
+			ValueReadResult blobConfig = wait(tr->get(blobGranuleConfigKey));
 			if (blobConfig.present()) {
 				self->db.blobGranulesEnabled.set(blobConfig.get() == "1"_sr);
 			}
@@ -2915,7 +2915,7 @@ ACTOR Future<Void> updateClusterId(ClusterControllerData* self) {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 
-			Optional<Value> clusterIdVal = wait(tr->get(clusterIdKey));
+			ValueReadResult clusterIdVal = wait(tr->get(clusterIdKey));
 
 			if (clusterIdVal.present()) {
 				UID clusterId = BinaryReader::fromStringRef<UID>(clusterIdVal.get(), IncludeVersion());
