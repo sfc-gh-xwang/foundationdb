@@ -338,7 +338,7 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                   "description":"abc"
                }
             ],
-            "fault_domain":"0ccb4e0fdbdb5583010f6b77d9d10ece",  // pragma: allowlist secret
+            "fault_domain":"0ccb4e0fdbdb5583010f6b77d9d10ece",
             "under_maintenance":true,
             "excluded":false,
             "address":"1.2.3.4:1234",
@@ -537,7 +537,7 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                  "count" : 1,
                  "max_protocol_count" : 1,
                  "protocol_version" : "fdb00a400050001",
-                 "source_version" : "9430e1127b4991cbc5ab2b17f41cfffa5de07e9d"  // pragma: allowlist secret
+                 "source_version" : "9430e1127b4991cbc5ab2b17f41cfffa5de07e9d"
              }
          ]
       },
@@ -631,7 +631,7 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
             ]
          },
          "required_logs":3,
-         "missing_logs":"7f8d623d0cb9966e",  // pragma: allowlist secret
+         "missing_logs":"7f8d623d0cb9966e",
          "active_generations":1,
          "description":"Recovery complete."
       },
@@ -731,7 +731,7 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
       "lowest_compatible_protocol_version":"fdb00a500040001",
       "connection_string":"a:a@127.0.0.1:4000",
       "full_replication":true,
-      "maintenance_zone":"0ccb4e0fdbdb5583010f6b77d9d10ece",  // pragma: allowlist secret
+      "maintenance_zone":"0ccb4e0fdbdb5583010f6b77d9d10ece",
       "maintenance_seconds_remaining":1.0,
       "data_distribution_disabled_for_ss_failures":true,
       "data_distribution_disabled_for_rebalance":true,

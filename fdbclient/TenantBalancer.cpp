@@ -2,11 +2,9 @@
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/TenantBalancerInterface.h"
 
-const Key TenantBalancerMetadata::tenantBalancerInterfKey("\xff/TenantBalancerInterf"_sr);
-
 KeyBackedObjectProperty<TenantBalancerInterface, decltype(IncludeVersion())>
 TenantBalancerMetadata::getTenantBalancerInterface() {
 	static KeyBackedObjectProperty<TenantBalancerInterface, decltype(IncludeVersion())> tenantBalancerKeyBackedProperty(
-	    tenantBalancerInterfKey, IncludeVersion());
+	    "\xff/TenantBalancerInterf"_sr, IncludeVersion());
 	return tenantBalancerKeyBackedProperty;
 }
