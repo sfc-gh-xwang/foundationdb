@@ -1153,10 +1153,10 @@ public:
 		throw no_more_servers();
 	}
 
-	static RecruitFromConfigurationReply findWorkersForConfiguration(Recruiter* self,
-	                                                                 ClusterControllerData* clusterControllerData,
-	                                                                 RecruitFromConfigurationRequest const& req) {
-		RecruitFromConfigurationReply rep = findWorkersForConfigurationDispatch(self, clusterControllerData, req, true);
+	static WorkerRecruitment findWorkersForConfiguration(Recruiter* self,
+	                                                     ClusterControllerData* clusterControllerData,
+	                                                     RecruitmentInfo const& info) {
+		WorkerRecruitment rep = findWorkersForConfigurationDispatch(self, clusterControllerData, info, true);
 		if (g_network->isSimulated()) {
 			try {
 				// FIXME: The logic to pick a satellite in a remote region is not
@@ -1164,9 +1164,9 @@ public:
 				// Since satellites will generally be in the primary region,
 				// disable the determinism check for remote region satellites.
 				bool remoteDCUsedAsSatellite = false;
-				if (req.configuration.regions.size() > 1) {
+				if (info.configuration.regions.size() > 1) {
 					auto [region, remoteRegion] =
-					    getPrimaryAndRemoteRegion(req.configuration.regions, req.configuration.regions[0].dcId);
+					    getPrimaryAndRemoteRegion(info.configuration.regions, info.configuration.regions[0].dcId);
 					for (const auto& satellite : region.satellites) {
 						if (satellite.dcId == remoteRegion.dcId) {
 							remoteDCUsedAsSatellite = true;
@@ -1174,8 +1174,8 @@ public:
 					}
 				}
 				if (!remoteDCUsedAsSatellite) {
-					RecruitFromConfigurationReply compare =
-					    findWorkersForConfigurationDispatch(self, clusterControllerData, req, false);
+					WorkerRecruitment compare =
+					    findWorkersForConfigurationDispatch(self, clusterControllerData, info, false);
 
 					std::map<Optional<Standalone<StringRef>>, int> firstUsed;
 					std::map<Optional<Standalone<StringRef>>, int> secondUsed;
@@ -1191,7 +1191,7 @@ public:
 					updateIdUsed(rep.tLogs, firstUsed);
 					updateIdUsed(compare.tLogs, secondUsed);
 					compareWorkers(clusterControllerData->id_worker,
-					               req.configuration,
+					               info.configuration,
 					               rep.tLogs,
 					               firstUsed,
 					               compare.tLogs,
@@ -1201,7 +1201,7 @@ public:
 					updateIdUsed(rep.satelliteTLogs, firstUsed);
 					updateIdUsed(compare.satelliteTLogs, secondUsed);
 					compareWorkers(clusterControllerData->id_worker,
-					               req.configuration,
+					               info.configuration,
 					               rep.satelliteTLogs,
 					               firstUsed,
 					               compare.satelliteTLogs,
@@ -1215,7 +1215,7 @@ public:
 					updateIdUsed(rep.resolvers, firstUsed);
 					updateIdUsed(compare.resolvers, secondUsed);
 					compareWorkers(clusterControllerData->id_worker,
-					               req.configuration,
+					               info.configuration,
 					               rep.commitProxies,
 					               firstUsed,
 					               compare.commitProxies,
@@ -1223,7 +1223,7 @@ public:
 					               ProcessClass::CommitProxy,
 					               "CommitProxy");
 					compareWorkers(clusterControllerData->id_worker,
-					               req.configuration,
+					               info.configuration,
 					               rep.grvProxies,
 					               firstUsed,
 					               compare.grvProxies,
@@ -1231,7 +1231,7 @@ public:
 					               ProcessClass::GrvProxy,
 					               "GrvProxy");
 					compareWorkers(clusterControllerData->id_worker,
-					               req.configuration,
+					               info.configuration,
 					               rep.resolvers,
 					               firstUsed,
 					               compare.resolvers,
@@ -1241,7 +1241,7 @@ public:
 					updateIdUsed(rep.backupWorkers, firstUsed);
 					updateIdUsed(compare.backupWorkers, secondUsed);
 					compareWorkers(clusterControllerData->id_worker,
-					               req.configuration,
+					               info.configuration,
 					               rep.backupWorkers,
 					               firstUsed,
 					               compare.backupWorkers,
@@ -1256,13 +1256,13 @@ public:
 		return rep;
 	}
 
-	static ErrorOr<RecruitFromConfigurationReply> findWorkersForConfigurationFromDC(
+	static ErrorOr<WorkerRecruitment> findWorkersForConfigurationFromDC(
 	    Recruiter* self,
 	    ClusterControllerData const* clusterControllerData,
-	    RecruitFromConfigurationRequest const& req,
+	    RecruitmentInfo const& info,
 	    Optional<Key> dcId,
 	    bool checkGoodRecruitment) {
-		RecruitFromConfigurationReply result;
+		WorkerRecruitment recruitment;
 		std::map<Optional<Standalone<StringRef>>, int> id_used;
 		Recruiter::updateKnownIds(clusterControllerData, &id_used);
 
@@ -1270,36 +1270,40 @@ public:
 
 		std::set<Optional<Key>> primaryDC;
 		primaryDC.insert(dcId);
-		result.dcId = dcId;
+		recruitment.dcId = dcId;
 
-		auto [region, remoteRegion] = getPrimaryAndRemoteRegion(req.configuration.regions, dcId.get());
+		auto [region, remoteRegion] = getPrimaryAndRemoteRegion(info.configuration.regions, dcId.get());
 
-		if (req.recruitSeedServers) {
+		if (info.recruitSeedServers) {
 			auto primaryStorageServers = getWorkersForSeedServers(
-			    self, clusterControllerData, req.configuration, req.configuration.storagePolicy, dcId);
+			    self, clusterControllerData, info.configuration, info.configuration.storagePolicy, dcId);
 			for (int i = 0; i < primaryStorageServers.size(); i++) {
-				result.storageServers.push_back(primaryStorageServers[i].interf);
+				recruitment.storageServers.push_back(primaryStorageServers[i].interf);
 			}
 		}
 
 		auto tLogs = self->getWorkersForTLogs(clusterControllerData,
-		                                      req.configuration,
-		                                      req.configuration.tLogReplicationFactor,
-		                                      req.configuration.getDesiredLogs(),
-		                                      req.configuration.tLogPolicy,
+		                                      info.configuration,
+		                                      info.configuration.tLogReplicationFactor,
+		                                      info.configuration.getDesiredLogs(),
+		                                      info.configuration.tLogPolicy,
 		                                      id_used,
 		                                      false,
 		                                      primaryDC);
 		for (int i = 0; i < tLogs.size(); i++) {
-			result.tLogs.push_back(tLogs[i].interf);
+			recruitment.tLogs.push_back(tLogs[i].interf);
 		}
 
 		std::vector<WorkerDetails> satelliteLogs;
-		if (region.satelliteTLogReplicationFactor > 0 && req.configuration.usableRegions > 1) {
-			satelliteLogs = self->getWorkersForSatelliteLogs(
-			    clusterControllerData, req.configuration, region, remoteRegion, id_used, result.satelliteFallback);
+		if (region.satelliteTLogReplicationFactor > 0 && info.configuration.usableRegions > 1) {
+			satelliteLogs = self->getWorkersForSatelliteLogs(clusterControllerData,
+			                                                 info.configuration,
+			                                                 region,
+			                                                 remoteRegion,
+			                                                 id_used,
+			                                                 recruitment.satelliteFallback);
 			for (int i = 0; i < satelliteLogs.size(); i++) {
-				result.satelliteTLogs.push_back(satelliteLogs[i].interf);
+				recruitment.satelliteTLogs.push_back(satelliteLogs[i].interf);
 			}
 		}
 
@@ -1308,7 +1312,7 @@ public:
 		                                                             dcId,
 		                                                             ProcessClass::CommitProxy,
 		                                                             ProcessClass::ExcludeFit,
-		                                                             req.configuration,
+		                                                             info.configuration,
 		                                                             id_used,
 		                                                             preferredSharing);
 		preferredSharing[first_commit_proxy.worker.interf.locality.processId()] = 0;
@@ -1316,7 +1320,7 @@ public:
 		                                                          dcId,
 		                                                          ProcessClass::GrvProxy,
 		                                                          ProcessClass::ExcludeFit,
-		                                                          req.configuration,
+		                                                          info.configuration,
 		                                                          id_used,
 		                                                          preferredSharing);
 		preferredSharing[first_grv_proxy.worker.interf.locality.processId()] = 1;
@@ -1324,7 +1328,7 @@ public:
 		                                                         dcId,
 		                                                         ProcessClass::Resolver,
 		                                                         ProcessClass::ExcludeFit,
-		                                                         req.configuration,
+		                                                         info.configuration,
 		                                                         id_used,
 		                                                         preferredSharing);
 		preferredSharing[first_resolver.worker.interf.locality.processId()] = 2;
@@ -1339,435 +1343,456 @@ public:
 		auto commit_proxies = self->getWorkersForRoleInDatacenter(clusterControllerData,
 		                                                          dcId,
 		                                                          ProcessClass::CommitProxy,
-		                                                          req.configuration.getDesiredCommitProxies(),
-		                                                          req.configuration,
+		                                                          info.configuration.getDesiredCommitProxies(),
+		                                                          info.configuration,
 		                                                          id_used,
 		                                                          preferredSharing,
 		                                                          first_commit_proxy);
 		auto grv_proxies = self->getWorkersForRoleInDatacenter(clusterControllerData,
 		                                                       dcId,
 		                                                       ProcessClass::GrvProxy,
-		                                                       req.configuration.getDesiredGrvProxies(),
-		                                                       req.configuration,
+		                                                       info.configuration.getDesiredGrvProxies(),
+		                                                       info.configuration,
 		                                                       id_used,
 		                                                       preferredSharing,
 		                                                       first_grv_proxy);
 		auto resolvers = self->getWorkersForRoleInDatacenter(clusterControllerData,
 		                                                     dcId,
 		                                                     ProcessClass::Resolver,
-		                                                     req.configuration.getDesiredResolvers(),
-		                                                     req.configuration,
+		                                                     info.configuration.getDesiredResolvers(),
+		                                                     info.configuration,
 		                                                     id_used,
 		                                                     preferredSharing,
 		                                                     first_resolver);
 		for (int i = 0; i < commit_proxies.size(); i++)
-			result.commitProxies.push_back(commit_proxies[i].interf);
+			recruitment.commitProxies.push_back(commit_proxies[i].interf);
 		for (int i = 0; i < grv_proxies.size(); i++)
-			result.grvProxies.push_back(grv_proxies[i].interf);
+			recruitment.grvProxies.push_back(grv_proxies[i].interf);
 		for (int i = 0; i < resolvers.size(); i++)
-			result.resolvers.push_back(resolvers[i].interf);
+			recruitment.resolvers.push_back(resolvers[i].interf);
 
-		if (req.maxOldLogRouters > 0) {
+		if (info.maxOldLogRouters > 0) {
 			if (tLogs.size() == 1) {
-				result.oldLogRouters.push_back(tLogs[0].interf);
+				recruitment.oldLogRouters.push_back(tLogs[0].interf);
 			} else {
 				for (int i = 0; i < tLogs.size(); i++) {
 					if (tLogs[i].interf.locality.processId() != clusterControllerData->clusterControllerProcessId) {
-						result.oldLogRouters.push_back(tLogs[i].interf);
+						recruitment.oldLogRouters.push_back(tLogs[i].interf);
 					}
 				}
 			}
 		}
 
-		if (req.configuration.backupWorkerEnabled) {
-			const int nBackup = std::max<int>(
-			    (req.configuration.desiredLogRouterCount > 0 ? req.configuration.desiredLogRouterCount : tLogs.size()),
-			    req.maxOldLogRouters);
+		if (info.configuration.backupWorkerEnabled) {
+			const int nBackup =
+			    std::max<int>((info.configuration.desiredLogRouterCount > 0 ? info.configuration.desiredLogRouterCount
+			                                                                : tLogs.size()),
+			                  info.maxOldLogRouters);
 			auto backupWorkers = self->getWorkersForRoleInDatacenter(
-			    clusterControllerData, dcId, ProcessClass::Backup, nBackup, req.configuration, id_used);
+			    clusterControllerData, dcId, ProcessClass::Backup, nBackup, info.configuration, id_used);
 			std::transform(backupWorkers.begin(),
 			               backupWorkers.end(),
-			               std::back_inserter(result.backupWorkers),
+			               std::back_inserter(recruitment.backupWorkers),
 			               [](const WorkerDetails& w) { return w.interf; });
 		}
 
 		if (!clusterControllerData->goodRecruitmentTime.isReady() && checkGoodRecruitment &&
-		    (RoleFitness(SERVER_KNOBS->EXPECTED_TLOG_FITNESS, req.configuration.getDesiredLogs(), ProcessClass::TLog)
+		    (RoleFitness(SERVER_KNOBS->EXPECTED_TLOG_FITNESS, info.configuration.getDesiredLogs(), ProcessClass::TLog)
 		         .betterCount(RoleFitness(tLogs, ProcessClass::TLog, id_used)) ||
-		     (region.satelliteTLogReplicationFactor > 0 && req.configuration.usableRegions > 1 &&
+		     (region.satelliteTLogReplicationFactor > 0 && info.configuration.usableRegions > 1 &&
 		      RoleFitness(SERVER_KNOBS->EXPECTED_TLOG_FITNESS,
-		                  req.configuration.getDesiredSatelliteLogs(dcId),
+		                  info.configuration.getDesiredSatelliteLogs(dcId),
 		                  ProcessClass::TLog)
 		          .betterCount(RoleFitness(satelliteLogs, ProcessClass::TLog, id_used))) ||
 		     RoleFitness(SERVER_KNOBS->EXPECTED_COMMIT_PROXY_FITNESS,
-		                 req.configuration.getDesiredCommitProxies(),
+		                 info.configuration.getDesiredCommitProxies(),
 		                 ProcessClass::CommitProxy)
 		         .betterCount(RoleFitness(commit_proxies, ProcessClass::CommitProxy, id_used)) ||
 		     RoleFitness(SERVER_KNOBS->EXPECTED_GRV_PROXY_FITNESS,
-		                 req.configuration.getDesiredGrvProxies(),
+		                 info.configuration.getDesiredGrvProxies(),
 		                 ProcessClass::GrvProxy)
 		         .betterCount(RoleFitness(grv_proxies, ProcessClass::GrvProxy, id_used)) ||
 		     RoleFitness(SERVER_KNOBS->EXPECTED_RESOLVER_FITNESS,
-		                 req.configuration.getDesiredResolvers(),
+		                 info.configuration.getDesiredResolvers(),
 		                 ProcessClass::Resolver)
 		         .betterCount(RoleFitness(resolvers, ProcessClass::Resolver, id_used)))) {
 			return operation_failed();
 		}
 
-		return result;
+		return recruitment;
 	}
 
-	static RecruitFromConfigurationReply findWorkersForConfigurationDispatch(
-	    Recruiter* self,
-	    ClusterControllerData* clusterControllerData,
-	    RecruitFromConfigurationRequest const& req,
-	    bool checkGoodRecruitment) {
-		if (req.configuration.regions.size() > 1) {
-			std::vector<RegionInfo> regions = req.configuration.regions;
-			if (regions[0].priority == regions[1].priority &&
-			    regions[1].dcId == clusterControllerData->clusterControllerDcId.get()) {
-				TraceEvent("CCSwitchPrimaryDc", clusterControllerData->id)
+	static WorkerRecruitment findWorkersForMultiRegion(Recruiter* self,
+	                                                   ClusterControllerData* clusterControllerData,
+	                                                   RecruitmentInfo const& info,
+	                                                   bool checkGoodRecruitment) {
+		std::vector<RegionInfo> regions = info.configuration.regions;
+		if (regions[0].priority == regions[1].priority &&
+		    regions[1].dcId == clusterControllerData->clusterControllerDcId.get()) {
+			TraceEvent("CCSwitchPrimaryDc", clusterControllerData->id)
+			    .detail("CCDcId", clusterControllerData->clusterControllerDcId.get())
+			    .detail("OldPrimaryDcId", regions[0].dcId)
+			    .detail("NewPrimaryDcId", regions[1].dcId);
+			std::swap(regions[0], regions[1]);
+		}
+
+		if (regions[1].dcId == clusterControllerData->clusterControllerDcId.get() &&
+		    (!clusterControllerData->versionDifferenceUpdated ||
+		     clusterControllerData->datacenterVersionDifference >= SERVER_KNOBS->MAX_VERSION_DIFFERENCE)) {
+			if (regions[1].priority >= 0) {
+				TraceEvent("CCSwitchPrimaryDcVersionDifference", clusterControllerData->id)
 				    .detail("CCDcId", clusterControllerData->clusterControllerDcId.get())
 				    .detail("OldPrimaryDcId", regions[0].dcId)
 				    .detail("NewPrimaryDcId", regions[1].dcId);
 				std::swap(regions[0], regions[1]);
+			} else {
+				TraceEvent(SevWarnAlways, "CCDcPriorityNegative")
+				    .detail("DcId", regions[1].dcId)
+				    .detail("Priority", regions[1].priority)
+				    .detail("FindWorkersInDc", regions[0].dcId)
+				    .detail("Warning", "Failover did not happen but CC is in remote DC");
 			}
+		}
 
-			if (regions[1].dcId == clusterControllerData->clusterControllerDcId.get() &&
-			    (!clusterControllerData->versionDifferenceUpdated ||
-			     clusterControllerData->datacenterVersionDifference >= SERVER_KNOBS->MAX_VERSION_DIFFERENCE)) {
-				if (regions[1].priority >= 0) {
-					TraceEvent("CCSwitchPrimaryDcVersionDifference", clusterControllerData->id)
-					    .detail("CCDcId", clusterControllerData->clusterControllerDcId.get())
-					    .detail("OldPrimaryDcId", regions[0].dcId)
-					    .detail("NewPrimaryDcId", regions[1].dcId);
-					std::swap(regions[0], regions[1]);
-				} else {
-					TraceEvent(SevWarnAlways, "CCDcPriorityNegative")
-					    .detail("DcId", regions[1].dcId)
-					    .detail("Priority", regions[1].priority)
-					    .detail("FindWorkersInDc", regions[0].dcId)
-					    .detail("Warning", "Failover did not happen but CC is in remote DC");
-				}
-			}
+		TraceEvent("CCFindWorkersForConfiguration", clusterControllerData->id)
+		    .detail("CCDcId", clusterControllerData->clusterControllerDcId.get())
+		    .detail("Region0DcId", regions[0].dcId)
+		    .detail("Region1DcId", regions[1].dcId)
+		    .detail("DatacenterVersionDifference", clusterControllerData->datacenterVersionDifference)
+		    .detail("VersionDifferenceUpdated", clusterControllerData->versionDifferenceUpdated);
 
-			TraceEvent("CCFindWorkersForConfiguration", clusterControllerData->id)
-			    .detail("CCDcId", clusterControllerData->clusterControllerDcId.get())
-			    .detail("Region0DcId", regions[0].dcId)
-			    .detail("Region1DcId", regions[1].dcId)
-			    .detail("DatacenterVersionDifference", clusterControllerData->datacenterVersionDifference)
-			    .detail("VersionDifferenceUpdated", clusterControllerData->versionDifferenceUpdated);
-
-			bool setPrimaryDesired = false;
-			try {
-				auto reply = findWorkersForConfigurationFromDC(
-				    self, clusterControllerData, req, regions[0].dcId, checkGoodRecruitment);
-				setPrimaryDesired = true;
-				std::vector<Optional<Key>> dcPriority;
-				dcPriority.push_back(regions[0].dcId);
-				dcPriority.push_back(regions[1].dcId);
-				clusterControllerData->desiredDcIds.set(dcPriority);
-				if (reply.isError()) {
-					throw reply.getError();
-				} else if (regions[0].dcId == clusterControllerData->clusterControllerDcId.get()) {
-					return reply.get();
-				}
-				TraceEvent(SevWarn, "CCRecruitmentFailed", clusterControllerData->id)
-				    .detail("Reason", "Recruited Txn system and CC are in different DCs")
-				    .detail("CCDcId", clusterControllerData->clusterControllerDcId.get())
-				    .detail("RecruitedTxnSystemDcId", regions[0].dcId);
-				throw no_more_servers();
-			} catch (Error& e) {
-				if (!clusterControllerData->goodRemoteRecruitmentTime.isReady() &&
-				    regions[1].dcId != clusterControllerData->clusterControllerDcId.get() && checkGoodRecruitment) {
-					throw operation_failed();
-				}
-
-				if (e.code() != error_code_no_more_servers || regions[1].priority < 0) {
-					throw;
-				}
-				TraceEvent(SevWarn, "AttemptingRecruitmentInRemoteDc", clusterControllerData->id)
-				    .error(e)
-				    .detail("SetPrimaryDesired", setPrimaryDesired);
-				auto reply = findWorkersForConfigurationFromDC(
-				    self, clusterControllerData, req, regions[1].dcId, checkGoodRecruitment);
-				if (!setPrimaryDesired) {
-					std::vector<Optional<Key>> dcPriority;
-					dcPriority.push_back(regions[1].dcId);
-					dcPriority.push_back(regions[0].dcId);
-					clusterControllerData->desiredDcIds.set(dcPriority);
-				}
-				if (reply.isError()) {
-					throw reply.getError();
-				} else if (regions[1].dcId == clusterControllerData->clusterControllerDcId.get()) {
-					return reply.get();
-				}
-				throw;
-			}
-		} else if (req.configuration.regions.size() == 1) {
+		bool setPrimaryDesired = false;
+		try {
+			auto recruitment = findWorkersForConfigurationFromDC(
+			    self, clusterControllerData, info, regions[0].dcId, checkGoodRecruitment);
+			setPrimaryDesired = true;
 			std::vector<Optional<Key>> dcPriority;
-			dcPriority.push_back(req.configuration.regions[0].dcId);
+			dcPriority.push_back(regions[0].dcId);
+			dcPriority.push_back(regions[1].dcId);
 			clusterControllerData->desiredDcIds.set(dcPriority);
-			auto reply = findWorkersForConfigurationFromDC(
-			    self, clusterControllerData, req, req.configuration.regions[0].dcId, checkGoodRecruitment);
-			if (reply.isError()) {
-				throw reply.getError();
-			} else if (req.configuration.regions[0].dcId == clusterControllerData->clusterControllerDcId.get()) {
-				return reply.get();
+			if (recruitment.isError()) {
+				throw recruitment.getError();
+			} else if (regions[0].dcId == clusterControllerData->clusterControllerDcId.get()) {
+				return recruitment.get();
 			}
+			TraceEvent(SevWarn, "CCRecruitmentFailed", clusterControllerData->id)
+			    .detail("Reason", "Recruited Txn system and CC are in different DCs")
+			    .detail("CCDcId", clusterControllerData->clusterControllerDcId.get())
+			    .detail("RecruitedTxnSystemDcId", regions[0].dcId);
 			throw no_more_servers();
-		} else {
-			RecruitFromConfigurationReply result;
-			std::map<Optional<Standalone<StringRef>>, int> id_used;
-			Recruiter::updateKnownIds(clusterControllerData, &id_used);
-			auto tLogs = self->getWorkersForTLogs(clusterControllerData,
-			                                      req.configuration,
-			                                      req.configuration.tLogReplicationFactor,
-			                                      req.configuration.getDesiredLogs(),
-			                                      req.configuration.tLogPolicy,
-			                                      id_used);
-			for (int i = 0; i < tLogs.size(); i++) {
-				result.tLogs.push_back(tLogs[i].interf);
-			}
-
-			if (req.maxOldLogRouters > 0) {
-				if (tLogs.size() == 1) {
-					result.oldLogRouters.push_back(tLogs[0].interf);
-				} else {
-					for (int i = 0; i < tLogs.size(); i++) {
-						if (tLogs[i].interf.locality.processId() != clusterControllerData->clusterControllerProcessId) {
-							result.oldLogRouters.push_back(tLogs[i].interf);
-						}
-					}
-				}
-			}
-
-			if (req.recruitSeedServers) {
-				auto primaryStorageServers = getWorkersForSeedServers(
-				    self, clusterControllerData, req.configuration, req.configuration.storagePolicy);
-				for (int i = 0; i < primaryStorageServers.size(); i++)
-					result.storageServers.push_back(primaryStorageServers[i].interf);
-			}
-
-			auto datacenters = getDatacenters(self, clusterControllerData, req.configuration);
-
-			std::tuple<RoleFitness, RoleFitness, RoleFitness> bestFitness;
-			int numEquivalent = 1;
-			Optional<Key> bestDC;
-
-			for (auto dcId : datacenters) {
-				try {
-					// SOMEDAY: recruitment in other DCs besides the clusterControllerDcID will not account for the
-					// processes used by the master and cluster controller properly.
-					auto used = id_used;
-					std::map<Optional<Standalone<StringRef>>, int> preferredSharing;
-					auto first_commit_proxy = self->getWorkerForRoleInDatacenter(clusterControllerData,
-					                                                             dcId,
-					                                                             ProcessClass::CommitProxy,
-					                                                             ProcessClass::ExcludeFit,
-					                                                             req.configuration,
-					                                                             used,
-					                                                             preferredSharing);
-					preferredSharing[first_commit_proxy.worker.interf.locality.processId()] = 0;
-					auto first_grv_proxy = self->getWorkerForRoleInDatacenter(clusterControllerData,
-					                                                          dcId,
-					                                                          ProcessClass::GrvProxy,
-					                                                          ProcessClass::ExcludeFit,
-					                                                          req.configuration,
-					                                                          used,
-					                                                          preferredSharing);
-					preferredSharing[first_grv_proxy.worker.interf.locality.processId()] = 1;
-					auto first_resolver = self->getWorkerForRoleInDatacenter(clusterControllerData,
-					                                                         dcId,
-					                                                         ProcessClass::Resolver,
-					                                                         ProcessClass::ExcludeFit,
-					                                                         req.configuration,
-					                                                         used,
-					                                                         preferredSharing);
-					preferredSharing[first_resolver.worker.interf.locality.processId()] = 2;
-
-					// If one of the first process recruitments is forced to share a process, allow all of next
-					// recruitments to also share a process.
-					auto maxUsed = std::max({ first_commit_proxy.used, first_grv_proxy.used, first_resolver.used });
-					first_commit_proxy.used = maxUsed;
-					first_grv_proxy.used = maxUsed;
-					first_resolver.used = maxUsed;
-
-					auto commit_proxies =
-					    self->getWorkersForRoleInDatacenter(clusterControllerData,
-					                                        dcId,
-					                                        ProcessClass::CommitProxy,
-					                                        req.configuration.getDesiredCommitProxies(),
-					                                        req.configuration,
-					                                        used,
-					                                        preferredSharing,
-					                                        first_commit_proxy);
-
-					auto grv_proxies = self->getWorkersForRoleInDatacenter(clusterControllerData,
-					                                                       dcId,
-					                                                       ProcessClass::GrvProxy,
-					                                                       req.configuration.getDesiredGrvProxies(),
-					                                                       req.configuration,
-					                                                       used,
-					                                                       preferredSharing,
-					                                                       first_grv_proxy);
-
-					auto resolvers = self->getWorkersForRoleInDatacenter(clusterControllerData,
-					                                                     dcId,
-					                                                     ProcessClass::Resolver,
-					                                                     req.configuration.getDesiredResolvers(),
-					                                                     req.configuration,
-					                                                     used,
-					                                                     preferredSharing,
-					                                                     first_resolver);
-
-					auto fitness = std::make_tuple(RoleFitness(commit_proxies, ProcessClass::CommitProxy, used),
-					                               RoleFitness(grv_proxies, ProcessClass::GrvProxy, used),
-					                               RoleFitness(resolvers, ProcessClass::Resolver, used));
-
-					if (dcId == clusterControllerData->clusterControllerDcId) {
-						bestFitness = fitness;
-						bestDC = dcId;
-						for (int i = 0; i < resolvers.size(); i++) {
-							result.resolvers.push_back(resolvers[i].interf);
-						}
-						for (int i = 0; i < commit_proxies.size(); i++) {
-							result.commitProxies.push_back(commit_proxies[i].interf);
-						}
-						for (int i = 0; i < grv_proxies.size(); i++) {
-							result.grvProxies.push_back(grv_proxies[i].interf);
-						}
-
-						if (req.configuration.backupWorkerEnabled) {
-							const int nBackup = std::max<int>(tLogs.size(), req.maxOldLogRouters);
-							auto backupWorkers = self->getWorkersForRoleInDatacenter(
-							    clusterControllerData, dcId, ProcessClass::Backup, nBackup, req.configuration, used);
-							std::transform(backupWorkers.begin(),
-							               backupWorkers.end(),
-							               std::back_inserter(result.backupWorkers),
-							               [](const WorkerDetails& w) { return w.interf; });
-						}
-
-						break;
-					} else {
-						if (fitness < bestFitness) {
-							bestFitness = fitness;
-							numEquivalent = 1;
-							bestDC = dcId;
-						} else if (fitness == bestFitness &&
-						           deterministicRandom()->random01() < 1.0 / ++numEquivalent) {
-							bestDC = dcId;
-						}
-					}
-				} catch (Error& e) {
-					if (e.code() != error_code_no_more_servers) {
-						throw;
-					}
-				}
-			}
-
-			if (bestDC != clusterControllerData->clusterControllerDcId) {
-				TraceEvent("BestDCIsNotClusterDC").log();
-				std::vector<Optional<Key>> dcPriority;
-				dcPriority.push_back(bestDC);
-				clusterControllerData->desiredDcIds.set(dcPriority);
-				throw no_more_servers();
-			}
-			// If this cluster controller dies, do not prioritize recruiting the next one in the same DC
-			clusterControllerData->desiredDcIds.set(std::vector<Optional<Key>>());
-			TraceEvent("FindWorkersForConfig")
-			    .detail("Replication", req.configuration.tLogReplicationFactor)
-			    .detail("DesiredLogs", req.configuration.getDesiredLogs())
-			    .detail("ActualLogs", result.tLogs.size())
-			    .detail("DesiredCommitProxies", req.configuration.getDesiredCommitProxies())
-			    .detail("ActualCommitProxies", result.commitProxies.size())
-			    .detail("DesiredGrvProxies", req.configuration.getDesiredGrvProxies())
-			    .detail("ActualGrvProxies", result.grvProxies.size())
-			    .detail("DesiredResolvers", req.configuration.getDesiredResolvers())
-			    .detail("ActualResolvers", result.resolvers.size());
-
-			if (!clusterControllerData->goodRecruitmentTime.isReady() && checkGoodRecruitment &&
-			    (RoleFitness(
-			         SERVER_KNOBS->EXPECTED_TLOG_FITNESS, req.configuration.getDesiredLogs(), ProcessClass::TLog)
-			         .betterCount(RoleFitness(tLogs, ProcessClass::TLog, id_used)) ||
-			     RoleFitness(SERVER_KNOBS->EXPECTED_COMMIT_PROXY_FITNESS,
-			                 req.configuration.getDesiredCommitProxies(),
-			                 ProcessClass::CommitProxy)
-			         .betterCount(std::get<0>(bestFitness)) ||
-			     RoleFitness(SERVER_KNOBS->EXPECTED_GRV_PROXY_FITNESS,
-			                 req.configuration.getDesiredGrvProxies(),
-			                 ProcessClass::GrvProxy)
-			         .betterCount(std::get<1>(bestFitness)) ||
-			     RoleFitness(SERVER_KNOBS->EXPECTED_RESOLVER_FITNESS,
-			                 req.configuration.getDesiredResolvers(),
-			                 ProcessClass::Resolver)
-			         .betterCount(std::get<2>(bestFitness)))) {
+		} catch (Error& e) {
+			if (!clusterControllerData->goodRemoteRecruitmentTime.isReady() &&
+			    regions[1].dcId != clusterControllerData->clusterControllerDcId.get() && checkGoodRecruitment) {
 				throw operation_failed();
 			}
 
-			return result;
+			if (e.code() != error_code_no_more_servers || regions[1].priority < 0) {
+				throw;
+			}
+			TraceEvent(SevWarn, "AttemptingRecruitmentInRemoteDc", clusterControllerData->id)
+			    .error(e)
+			    .detail("SetPrimaryDesired", setPrimaryDesired);
+			auto recruitment = findWorkersForConfigurationFromDC(
+			    self, clusterControllerData, info, regions[1].dcId, checkGoodRecruitment);
+			if (!setPrimaryDesired) {
+				std::vector<Optional<Key>> dcPriority;
+				dcPriority.push_back(regions[1].dcId);
+				dcPriority.push_back(regions[0].dcId);
+				clusterControllerData->desiredDcIds.set(dcPriority);
+			}
+			if (recruitment.isError()) {
+				throw recruitment.getError();
+			} else if (regions[1].dcId == clusterControllerData->clusterControllerDcId.get()) {
+				return recruitment.get();
+			}
+			throw;
 		}
 	}
 
-	static RecruitRemoteFromConfigurationReply findRemoteWorkersForConfiguration(
-	    Recruiter* self,
-	    ClusterControllerData const* clusterControllerData,
-	    RecruitRemoteFromConfigurationRequest const& req) {
-		RecruitRemoteFromConfigurationReply result;
+	static WorkerRecruitment findWorkersForSingleRegion(Recruiter* self,
+	                                                    ClusterControllerData* clusterControllerData,
+	                                                    RecruitmentInfo const& info,
+	                                                    bool checkGoodRecruitment) {
+		std::vector<Optional<Key>> dcPriority;
+		dcPriority.push_back(info.configuration.regions[0].dcId);
+		clusterControllerData->desiredDcIds.set(dcPriority);
+		auto recruitment = findWorkersForConfigurationFromDC(
+		    self, clusterControllerData, info, info.configuration.regions[0].dcId, checkGoodRecruitment);
+		if (recruitment.isError()) {
+			throw recruitment.getError();
+		} else if (info.configuration.regions[0].dcId == clusterControllerData->clusterControllerDcId.get()) {
+			return recruitment.get();
+		}
+		throw no_more_servers();
+	}
+
+	static WorkerRecruitment findWorkersForZeroRegion(Recruiter* self,
+	                                                  ClusterControllerData* clusterControllerData,
+	                                                  RecruitmentInfo const& info,
+	                                                  bool checkGoodRecruitment) {
+		WorkerRecruitment recruitment;
+		std::map<Optional<Standalone<StringRef>>, int> id_used;
+		Recruiter::updateKnownIds(clusterControllerData, &id_used);
+		auto tLogs = self->getWorkersForTLogs(clusterControllerData,
+		                                      info.configuration,
+		                                      info.configuration.tLogReplicationFactor,
+		                                      info.configuration.getDesiredLogs(),
+		                                      info.configuration.tLogPolicy,
+		                                      id_used);
+		for (int i = 0; i < tLogs.size(); i++) {
+			recruitment.tLogs.push_back(tLogs[i].interf);
+		}
+
+		if (info.maxOldLogRouters > 0) {
+			if (tLogs.size() == 1) {
+				recruitment.oldLogRouters.push_back(tLogs[0].interf);
+			} else {
+				for (int i = 0; i < tLogs.size(); i++) {
+					if (tLogs[i].interf.locality.processId() != clusterControllerData->clusterControllerProcessId) {
+						recruitment.oldLogRouters.push_back(tLogs[i].interf);
+					}
+				}
+			}
+		}
+
+		if (info.recruitSeedServers) {
+			auto primaryStorageServers = getWorkersForSeedServers(
+			    self, clusterControllerData, info.configuration, info.configuration.storagePolicy);
+			for (int i = 0; i < primaryStorageServers.size(); i++)
+				recruitment.storageServers.push_back(primaryStorageServers[i].interf);
+		}
+
+		auto datacenters = getDatacenters(self, clusterControllerData, info.configuration);
+
+		std::tuple<RoleFitness, RoleFitness, RoleFitness> bestFitness;
+		int numEquivalent = 1;
+		Optional<Key> bestDC;
+
+		for (auto dcId : datacenters) {
+			try {
+				// SOMEDAY: recruitment in other DCs besides the clusterControllerDcID will not account for the
+				// processes used by the master and cluster controller properly.
+				auto used = id_used;
+				std::map<Optional<Standalone<StringRef>>, int> preferredSharing;
+				auto first_commit_proxy = self->getWorkerForRoleInDatacenter(clusterControllerData,
+				                                                             dcId,
+				                                                             ProcessClass::CommitProxy,
+				                                                             ProcessClass::ExcludeFit,
+				                                                             info.configuration,
+				                                                             used,
+				                                                             preferredSharing);
+				preferredSharing[first_commit_proxy.worker.interf.locality.processId()] = 0;
+				auto first_grv_proxy = self->getWorkerForRoleInDatacenter(clusterControllerData,
+				                                                          dcId,
+				                                                          ProcessClass::GrvProxy,
+				                                                          ProcessClass::ExcludeFit,
+				                                                          info.configuration,
+				                                                          used,
+				                                                          preferredSharing);
+				preferredSharing[first_grv_proxy.worker.interf.locality.processId()] = 1;
+				auto first_resolver = self->getWorkerForRoleInDatacenter(clusterControllerData,
+				                                                         dcId,
+				                                                         ProcessClass::Resolver,
+				                                                         ProcessClass::ExcludeFit,
+				                                                         info.configuration,
+				                                                         used,
+				                                                         preferredSharing);
+				preferredSharing[first_resolver.worker.interf.locality.processId()] = 2;
+
+				// If one of the first process recruitments is forced to share a process, allow all of next
+				// recruitments to also share a process.
+				auto maxUsed = std::max({ first_commit_proxy.used, first_grv_proxy.used, first_resolver.used });
+				first_commit_proxy.used = maxUsed;
+				first_grv_proxy.used = maxUsed;
+				first_resolver.used = maxUsed;
+
+				auto commit_proxies = self->getWorkersForRoleInDatacenter(clusterControllerData,
+				                                                          dcId,
+				                                                          ProcessClass::CommitProxy,
+				                                                          info.configuration.getDesiredCommitProxies(),
+				                                                          info.configuration,
+				                                                          used,
+				                                                          preferredSharing,
+				                                                          first_commit_proxy);
+
+				auto grv_proxies = self->getWorkersForRoleInDatacenter(clusterControllerData,
+				                                                       dcId,
+				                                                       ProcessClass::GrvProxy,
+				                                                       info.configuration.getDesiredGrvProxies(),
+				                                                       info.configuration,
+				                                                       used,
+				                                                       preferredSharing,
+				                                                       first_grv_proxy);
+
+				auto resolvers = self->getWorkersForRoleInDatacenter(clusterControllerData,
+				                                                     dcId,
+				                                                     ProcessClass::Resolver,
+				                                                     info.configuration.getDesiredResolvers(),
+				                                                     info.configuration,
+				                                                     used,
+				                                                     preferredSharing,
+				                                                     first_resolver);
+
+				auto fitness = std::make_tuple(RoleFitness(commit_proxies, ProcessClass::CommitProxy, used),
+				                               RoleFitness(grv_proxies, ProcessClass::GrvProxy, used),
+				                               RoleFitness(resolvers, ProcessClass::Resolver, used));
+
+				if (dcId == clusterControllerData->clusterControllerDcId) {
+					bestFitness = fitness;
+					bestDC = dcId;
+					for (int i = 0; i < resolvers.size(); i++) {
+						recruitment.resolvers.push_back(resolvers[i].interf);
+					}
+					for (int i = 0; i < commit_proxies.size(); i++) {
+						recruitment.commitProxies.push_back(commit_proxies[i].interf);
+					}
+					for (int i = 0; i < grv_proxies.size(); i++) {
+						recruitment.grvProxies.push_back(grv_proxies[i].interf);
+					}
+
+					if (info.configuration.backupWorkerEnabled) {
+						const int nBackup = std::max<int>(tLogs.size(), info.maxOldLogRouters);
+						auto backupWorkers = self->getWorkersForRoleInDatacenter(
+						    clusterControllerData, dcId, ProcessClass::Backup, nBackup, info.configuration, used);
+						std::transform(backupWorkers.begin(),
+						               backupWorkers.end(),
+						               std::back_inserter(recruitment.backupWorkers),
+						               [](const WorkerDetails& w) { return w.interf; });
+					}
+
+					break;
+				} else {
+					if (fitness < bestFitness) {
+						bestFitness = fitness;
+						numEquivalent = 1;
+						bestDC = dcId;
+					} else if (fitness == bestFitness && deterministicRandom()->random01() < 1.0 / ++numEquivalent) {
+						bestDC = dcId;
+					}
+				}
+			} catch (Error& e) {
+				if (e.code() != error_code_no_more_servers) {
+					throw;
+				}
+			}
+		}
+
+		if (bestDC != clusterControllerData->clusterControllerDcId) {
+			TraceEvent("BestDCIsNotClusterDC").log();
+			std::vector<Optional<Key>> dcPriority;
+			dcPriority.push_back(bestDC);
+			clusterControllerData->desiredDcIds.set(dcPriority);
+			throw no_more_servers();
+		}
+		// If this cluster controller dies, do not prioritize recruiting the next one in the same DC
+		clusterControllerData->desiredDcIds.set(std::vector<Optional<Key>>());
+		TraceEvent("FindWorkersForConfig")
+		    .detail("Replication", info.configuration.tLogReplicationFactor)
+		    .detail("DesiredLogs", info.configuration.getDesiredLogs())
+		    .detail("ActualLogs", recruitment.tLogs.size())
+		    .detail("DesiredCommitProxies", info.configuration.getDesiredCommitProxies())
+		    .detail("ActualCommitProxies", recruitment.commitProxies.size())
+		    .detail("DesiredGrvProxies", info.configuration.getDesiredGrvProxies())
+		    .detail("ActualGrvProxies", recruitment.grvProxies.size())
+		    .detail("DesiredResolvers", info.configuration.getDesiredResolvers())
+		    .detail("ActualResolvers", recruitment.resolvers.size());
+
+		if (!clusterControllerData->goodRecruitmentTime.isReady() && checkGoodRecruitment &&
+		    (RoleFitness(SERVER_KNOBS->EXPECTED_TLOG_FITNESS, info.configuration.getDesiredLogs(), ProcessClass::TLog)
+		         .betterCount(RoleFitness(tLogs, ProcessClass::TLog, id_used)) ||
+		     RoleFitness(SERVER_KNOBS->EXPECTED_COMMIT_PROXY_FITNESS,
+		                 info.configuration.getDesiredCommitProxies(),
+		                 ProcessClass::CommitProxy)
+		         .betterCount(std::get<0>(bestFitness)) ||
+		     RoleFitness(SERVER_KNOBS->EXPECTED_GRV_PROXY_FITNESS,
+		                 info.configuration.getDesiredGrvProxies(),
+		                 ProcessClass::GrvProxy)
+		         .betterCount(std::get<1>(bestFitness)) ||
+		     RoleFitness(SERVER_KNOBS->EXPECTED_RESOLVER_FITNESS,
+		                 info.configuration.getDesiredResolvers(),
+		                 ProcessClass::Resolver)
+		         .betterCount(std::get<2>(bestFitness)))) {
+			throw operation_failed();
+		}
+
+		return recruitment;
+	}
+
+	static WorkerRecruitment findWorkersForConfigurationDispatch(Recruiter* self,
+	                                                             ClusterControllerData* clusterControllerData,
+	                                                             RecruitmentInfo const& info,
+	                                                             bool checkGoodRecruitment) {
+		if (info.configuration.regions.size() > 1) {
+			return findWorkersForMultiRegion(self, clusterControllerData, info, checkGoodRecruitment);
+		} else if (info.configuration.regions.size() == 1) {
+			return findWorkersForSingleRegion(self, clusterControllerData, info, checkGoodRecruitment);
+		} else {
+			return findWorkersForZeroRegion(self, clusterControllerData, info, checkGoodRecruitment);
+		}
+	}
+
+	static RemoteWorkerRecruitment findRemoteWorkersForConfiguration(Recruiter* self,
+	                                                                 ClusterControllerData const* clusterControllerData,
+	                                                                 RemoteRecruitmentInfo const& info) {
+		RemoteWorkerRecruitment recruitment;
 		std::map<Optional<Standalone<StringRef>>, int> id_used;
 
 		Recruiter::updateKnownIds(clusterControllerData, &id_used);
 
-		if (req.dbgId.present()) {
-			TraceEvent(SevDebug, "FindRemoteWorkersForConf", req.dbgId.get())
-			    .detail("RemoteDcId", req.dcId)
-			    .detail("Configuration", req.configuration.toString())
-			    .detail("Policy", req.configuration.getRemoteTLogPolicy()->name());
+		if (info.dbgId.present()) {
+			TraceEvent(SevDebug, "FindRemoteWorkersForConf", info.dbgId.get())
+			    .detail("RemoteDcId", info.dcId)
+			    .detail("Configuration", info.configuration.toString())
+			    .detail("Policy", info.configuration.getRemoteTLogPolicy()->name());
 		}
 
 		std::set<Optional<Key>> remoteDC;
-		remoteDC.insert(req.dcId);
+		remoteDC.insert(info.dcId);
 
 		auto remoteLogs = self->getWorkersForTLogs(clusterControllerData,
-		                                           req.configuration,
-		                                           req.configuration.getRemoteTLogReplicationFactor(),
-		                                           req.configuration.getDesiredRemoteLogs(),
-		                                           req.configuration.getRemoteTLogPolicy(),
+		                                           info.configuration,
+		                                           info.configuration.getRemoteTLogReplicationFactor(),
+		                                           info.configuration.getDesiredRemoteLogs(),
+		                                           info.configuration.getRemoteTLogPolicy(),
 		                                           id_used,
 		                                           false,
 		                                           remoteDC,
-		                                           req.exclusionWorkerIds);
+		                                           info.exclusionWorkerIds);
 		for (int i = 0; i < remoteLogs.size(); i++) {
-			result.remoteTLogs.push_back(remoteLogs[i].interf);
+			recruitment.remoteTLogs.push_back(remoteLogs[i].interf);
 		}
 
-		auto logRouters = self->getWorkersForRoleInDatacenter(
-		    clusterControllerData, req.dcId, ProcessClass::LogRouter, req.logRouterCount, req.configuration, id_used);
+		auto logRouters = self->getWorkersForRoleInDatacenter(clusterControllerData,
+		                                                      info.dcId,
+		                                                      ProcessClass::LogRouter,
+		                                                      info.logRouterCount,
+		                                                      info.configuration,
+		                                                      id_used);
 		for (int i = 0; i < logRouters.size(); i++) {
-			result.logRouters.push_back(logRouters[i].interf);
+			recruitment.logRouters.push_back(logRouters[i].interf);
 		}
 
 		if (!clusterControllerData->goodRemoteRecruitmentTime.isReady() &&
 		    ((RoleFitness(
-		          SERVER_KNOBS->EXPECTED_TLOG_FITNESS, req.configuration.getDesiredRemoteLogs(), ProcessClass::TLog)
+		          SERVER_KNOBS->EXPECTED_TLOG_FITNESS, info.configuration.getDesiredRemoteLogs(), ProcessClass::TLog)
 		          .betterCount(RoleFitness(remoteLogs, ProcessClass::TLog, id_used))) ||
-		     (RoleFitness(SERVER_KNOBS->EXPECTED_LOG_ROUTER_FITNESS, req.logRouterCount, ProcessClass::LogRouter)
+		     (RoleFitness(SERVER_KNOBS->EXPECTED_LOG_ROUTER_FITNESS, info.logRouterCount, ProcessClass::LogRouter)
 		          .betterCount(RoleFitness(logRouters, ProcessClass::LogRouter, id_used))))) {
 			throw operation_failed();
 		}
 
-		if (req.dbgId.present()) {
-			TraceEvent(SevDebug, "FindRemoteWorkersForConf_ReturnResult", req.dbgId.get())
-			    .detail("RemoteDcId", req.dcId)
-			    .detail("ResultRemoteLogs", result.remoteTLogs.size());
-			result.dbgId = req.dbgId;
+		if (info.dbgId.present()) {
+			TraceEvent(SevDebug, "FindRemoteWorkersForConf_ReturnResult", info.dbgId.get())
+			    .detail("RemoteDcId", info.dcId)
+			    .detail("ResultRemoteLogs", recruitment.remoteTLogs.size());
+			recruitment.dbgId = info.dbgId;
 		}
 
-		return result;
+		return recruitment;
 	}
 
 	ACTOR static Future<Void> newSeedServers(Reference<ClusterRecoveryData> clusterRecoveryData,
-	                                         RecruitFromConfigurationReply recruits,
+	                                         WorkerRecruitment recruitment,
 	                                         std::vector<StorageServerInterface>* servers) {
 		// This is only necessary if the database is at version 0
 		servers->clear();
@@ -1777,15 +1802,15 @@ public:
 		state int idx = 0;
 		state std::map<Optional<Value>, Tag> dcId_tags;
 		state int8_t nextLocality = 0;
-		while (idx < recruits.storageServers.size()) {
+		while (idx < recruitment.storageServers.size()) {
 			TraceEvent(
 			    getRecoveryEventName(ClusterRecoveryEventType::CLUSTER_RECOVERY_SS_RECRUITMENT_EVENT_NAME).c_str(),
 			    clusterRecoveryData->dbgid)
-			    .detail("CandidateWorker", recruits.storageServers[idx].locality.toString());
+			    .detail("CandidateWorker", recruitment.storageServers[idx].locality.toString());
 
 			InitializeStorageRequest isr;
-			isr.seedTag = dcId_tags.count(recruits.storageServers[idx].locality.dcId())
-			                  ? dcId_tags[recruits.storageServers[idx].locality.dcId()]
+			isr.seedTag = dcId_tags.count(recruitment.storageServers[idx].locality.dcId())
+			                  ? dcId_tags[recruitment.storageServers[idx].locality.dcId()]
 			                  : Tag(nextLocality, 0);
 			isr.storeType = clusterRecoveryData->configuration.storageServerStoreType;
 			isr.reqId = deterministicRandom()->randomUniqueID();
@@ -1793,7 +1818,7 @@ public:
 			isr.initialClusterVersion = clusterRecoveryData->recoveryTransactionVersion;
 			isr.encryptMode = clusterRecoveryData->configuration.encryptionAtRestMode;
 
-			ErrorOr<InitializeStorageReply> newServer = wait(recruits.storageServers[idx].storage.tryGetReply(isr));
+			ErrorOr<InitializeStorageReply> newServer = wait(recruitment.storageServers[idx].storage.tryGetReply(isr));
 
 			if (newServer.isError()) {
 				if (!newServer.isError(error_code_recruitment_failed) &&
@@ -1803,12 +1828,12 @@ public:
 				CODE_PROBE(true, "initial storage recuitment loop failed to get new server");
 				wait(delay(SERVER_KNOBS->STORAGE_RECRUITMENT_DELAY));
 			} else {
-				if (!dcId_tags.count(recruits.storageServers[idx].locality.dcId())) {
-					dcId_tags[recruits.storageServers[idx].locality.dcId()] = Tag(nextLocality, 0);
+				if (!dcId_tags.count(recruitment.storageServers[idx].locality.dcId())) {
+					dcId_tags[recruitment.storageServers[idx].locality.dcId()] = Tag(nextLocality, 0);
 					nextLocality++;
 				}
 
-				Tag& tag = dcId_tags[recruits.storageServers[idx].locality.dcId()];
+				Tag& tag = dcId_tags[recruitment.storageServers[idx].locality.dcId()];
 				tag.id++;
 				idx++;
 
@@ -1829,7 +1854,7 @@ public:
 	}
 
 	ACTOR static Future<Void> newCommitProxies(Reference<ClusterRecoveryData> clusterRecoveryData,
-	                                           RecruitFromConfigurationReply recr) {
+	                                           WorkerRecruitment recr) {
 		std::vector<Future<CommitProxyInterface>> initializationReplies;
 		for (int i = 0; i < recr.commitProxies.size(); i++) {
 			InitializeCommitProxyRequest req;
@@ -1860,7 +1885,7 @@ public:
 	}
 
 	ACTOR static Future<Void> newGrvProxies(Reference<ClusterRecoveryData> clusterRecoveryData,
-	                                        RecruitFromConfigurationReply recr) {
+	                                        WorkerRecruitment recr) {
 		std::vector<Future<GrvProxyInterface>> initializationReplies;
 		for (int i = 0; i < recr.grvProxies.size(); i++) {
 			InitializeGrvProxyRequest req;
@@ -1880,8 +1905,7 @@ public:
 		return Void();
 	}
 
-	ACTOR static Future<Void> newResolvers(Reference<ClusterRecoveryData> clusterRecoveryData,
-	                                       RecruitFromConfigurationReply recr) {
+	ACTOR static Future<Void> newResolvers(Reference<ClusterRecoveryData> clusterRecoveryData, WorkerRecruitment recr) {
 		std::vector<Future<ResolverInterface>> initializationReplies;
 		for (int i = 0; i < recr.resolvers.size(); i++) {
 			InitializeResolverRequest req;
@@ -1906,7 +1930,7 @@ public:
 
 	ACTOR static Future<Void> newTLogServers(Recruiter* self,
 	                                         Reference<ClusterRecoveryData> clusterRecoveryData,
-	                                         RecruitFromConfigurationReply recr,
+	                                         WorkerRecruitment recr,
 	                                         Reference<ILogSystem> oldLogSystem,
 	                                         std::vector<Standalone<CommitTransactionRef>>* initialConfChanges) {
 		if (clusterRecoveryData->configuration.usableRegions > 1) {
@@ -1944,19 +1968,16 @@ public:
 			               std::back_inserter(exclusionWorkerIds),
 			               [](const WorkerInterface& in) { return in.id(); });
 
-			RecruitRemoteFromConfigurationRequest remoteRecruitReq(
+			RemoteRecruitmentInfo remoteRecruitmentInfo(
 			    clusterRecoveryData->configuration,
 			    remoteDcId,
 			    recr.tLogs.size() * std::max<int>(1,
 			                                      clusterRecoveryData->configuration.desiredLogRouterCount /
 			                                          std::max<int>(1, recr.tLogs.size())),
 			    exclusionWorkerIds);
-			remoteRecruitReq.dbgId = clusterRecoveryData->dbgid;
-			state Reference<RecruitRemoteWorkersInfo> recruitWorkersInfo =
-			    makeReference<RecruitRemoteWorkersInfo>(remoteRecruitReq);
-			recruitWorkersInfo->dbgId = clusterRecoveryData->dbgid;
-			Future<RecruitRemoteFromConfigurationReply> fRemoteWorkers =
-			    clusterRecruitRemoteFromConfiguration(self, clusterRecoveryData->controllerData, recruitWorkersInfo);
+			remoteRecruitmentInfo.dbgId = clusterRecoveryData->dbgid;
+			Future<RemoteWorkerRecruitment> fRemoteWorkers =
+			    clusterRecruitRemoteFromConfiguration(self, clusterRecoveryData->controllerData, remoteRecruitmentInfo);
 
 			clusterRecoveryData->primaryLocality = clusterRecoveryData->dcId_locality[recr.dcId];
 			clusterRecoveryData->logSystem = Reference<ILogSystem>(); // Cancels the actors in the previous log system.
@@ -1989,32 +2010,20 @@ public:
 		return Void();
 	}
 
-	ACTOR static Future<RecruitRemoteFromConfigurationReply> clusterRecruitRemoteFromConfiguration(
+	ACTOR static Future<RemoteWorkerRecruitment> clusterRecruitRemoteFromConfiguration(
 	    Recruiter* self,
 	    ClusterControllerData* clusterControllerData,
-	    Reference<RecruitRemoteWorkersInfo> req) {
-		// At the moment this doesn't really need to be an actor (it always completes immediately)
+	    RemoteRecruitmentInfo info) {
 		CODE_PROBE(true, "ClusterController RecruitTLogsRequest Remote");
 		loop {
 			try {
-				auto rep = findRemoteWorkersForConfiguration(self, clusterControllerData, req->req);
-				return rep;
+				return findRemoteWorkersForConfiguration(self, clusterControllerData, info);
 			} catch (Error& e) {
-				if (e.code() == error_code_no_more_servers &&
-				    clusterControllerData->goodRemoteRecruitmentTime.isReady()) {
-					self->outstandingRemoteRecruitmentRequests.push_back(req);
-					TraceEvent(SevWarn, "RecruitRemoteFromConfigurationNotAvailable", clusterControllerData->id)
-					    .error(e);
-					wait(req->waitForCompletion.onTrigger());
-					return req->rep;
-				} else if (e.code() == error_code_operation_failed || e.code() == error_code_no_more_servers) {
+				if (e.code() == error_code_operation_failed || e.code() == error_code_no_more_servers) {
 					// recruitment not good enough, try again
 					TraceEvent("RecruitRemoteFromConfigurationRetry", clusterControllerData->id)
 					    .error(e)
 					    .detail("GoodRecruitmentTimeReady", clusterControllerData->goodRemoteRecruitmentTime.isReady());
-					while (!clusterControllerData->goodRemoteRecruitmentTime.isReady()) {
-						wait(lowPriorityDelay(SERVER_KNOBS->ATTEMPT_RECRUITMENT_DELAY));
-					}
 				} else {
 					TraceEvent(SevError, "RecruitRemoteFromConfigurationError", clusterControllerData->id).error(e);
 					throw;
@@ -2024,167 +2033,40 @@ public:
 		}
 	}
 
-	ACTOR static Future<Void> clusterRecruitFromConfiguration(Recruiter* self,
-	                                                          ClusterControllerData* clusterControllerData,
-	                                                          Reference<RecruitWorkersInfo> req) {
-		// At the moment this doesn't really need to be an actor (it always completes immediately)
-		CODE_PROBE(true, "ClusterController RecruitTLogsRequest");
-		loop {
-			try {
-				req->rep = findWorkersForConfiguration(self, clusterControllerData, req->req);
-				return Void();
-			} catch (Error& e) {
-				if (e.code() == error_code_no_more_servers && clusterControllerData->goodRecruitmentTime.isReady()) {
-					self->outstandingRecruitmentRequests.push_back(req);
-					TraceEvent(SevWarn, "RecruitFromConfigurationNotAvailable", clusterControllerData->id).error(e);
-					wait(req->waitForCompletion.onTrigger());
-					return Void();
-				} else if (e.code() == error_code_operation_failed || e.code() == error_code_no_more_servers) {
-					// recruitment not good enough, try again
-					TraceEvent("RecruitFromConfigurationRetry", clusterControllerData->id)
-					    .error(e)
-					    .detail("GoodRecruitmentTimeReady", clusterControllerData->goodRecruitmentTime.isReady());
-					while (!clusterControllerData->goodRecruitmentTime.isReady()) {
-						wait(lowPriorityDelay(SERVER_KNOBS->ATTEMPT_RECRUITMENT_DELAY));
-					}
-				} else {
-					TraceEvent(SevError, "RecruitFromConfigurationError", clusterControllerData->id).error(e);
-					throw;
-				}
-			}
-			wait(lowPriorityDelay(SERVER_KNOBS->ATTEMPT_RECRUITMENT_DELAY));
-		}
-	}
-
-	ACTOR static Future<std::vector<Standalone<CommitTransactionRef>>> recruitEverything(
+	ACTOR static Future<std::vector<Standalone<CommitTransactionRef>>> recruitWorkers(
 	    Recruiter* self,
 	    Reference<ClusterRecoveryData> clusterRecoveryData,
+	    WorkerRecruitment recruitment,
 	    std::vector<StorageServerInterface>* seedServers,
 	    Reference<ILogSystem> oldLogSystem) {
-		if (!clusterRecoveryData->configuration.isValid()) {
-			RecoveryStatus::RecoveryStatus status;
-			if (clusterRecoveryData->configuration.initialized) {
-				TraceEvent(
-				    SevWarn,
-				    getRecoveryEventName(ClusterRecoveryEventType::CLUSTER_RECOVERY_INVALID_CONFIG_EVENT_NAME).c_str(),
-				    clusterRecoveryData->dbgid)
-				    .setMaxEventLength(11000)
-				    .setMaxFieldLength(10000)
-				    .detail("Conf", clusterRecoveryData->configuration.toString());
-				status = RecoveryStatus::configuration_invalid;
-			} else if (!clusterRecoveryData->cstate.prevDBState.tLogs.size()) {
-				status = RecoveryStatus::configuration_never_created;
-				clusterRecoveryData->neverCreated = true;
-			} else {
-				status = RecoveryStatus::configuration_missing;
-			}
-			TraceEvent(getRecoveryEventName(ClusterRecoveryEventType::CLUSTER_RECOVERY_STATE_EVENT_NAME).c_str(),
-			           clusterRecoveryData->dbgid)
-			    .detail("StatusCode", status)
-			    .detail("Status", RecoveryStatus::names[status])
-			    .trackLatest(clusterRecoveryData->clusterRecoveryStateEventHolder->trackingKey);
-			return Never();
-		} else {
-			TraceEvent(getRecoveryEventName(ClusterRecoveryEventType::CLUSTER_RECOVERY_STATE_EVENT_NAME).c_str(),
-			           clusterRecoveryData->dbgid)
-			    .setMaxFieldLength(-1)
-			    .detail("StatusCode", RecoveryStatus::recruiting_transaction_servers)
-			    .detail("Status", RecoveryStatus::names[RecoveryStatus::recruiting_transaction_servers])
-			    .detail("Conf", clusterRecoveryData->configuration.toString())
-			    .detail("RequiredCommitProxies", 1)
-			    .detail("RequiredGrvProxies", 1)
-			    .detail("RequiredResolvers", 1)
-			    .trackLatest(clusterRecoveryData->clusterRecoveryStateEventHolder->trackingKey);
-			// The cluster's EncryptionAtRest status is now readable.
-			if (clusterRecoveryData->controllerData->encryptionAtRestMode.canBeSet()) {
-				clusterRecoveryData->controllerData->encryptionAtRestMode.send(
-				    Recruiter::getEncryptionAtRest(clusterRecoveryData->configuration));
-			}
-		}
-
-		// FIXME: we only need log routers for the same locality as the master
-		int maxLogRouters = clusterRecoveryData->cstate.prevDBState.logRouterTags;
-		for (auto& old : clusterRecoveryData->cstate.prevDBState.oldTLogData) {
-			maxLogRouters = std::max(maxLogRouters, old.logRouterTags);
-		}
-
-		// TODO: Refactor to remove this request
-		RecruitFromConfigurationRequest recruitReq(
-		    clusterRecoveryData->configuration, clusterRecoveryData->lastEpochEnd == 0, maxLogRouters);
-		state Reference<RecruitWorkersInfo> recruitWorkersInfo = makeReference<RecruitWorkersInfo>(recruitReq);
-		recruitWorkersInfo->dbgId = clusterRecoveryData->dbgid;
-		wait(clusterRecruitFromConfiguration(self, clusterRecoveryData->controllerData, recruitWorkersInfo));
-		state RecruitFromConfigurationReply recruits = recruitWorkersInfo->rep;
-
-		std::string primaryDcIds, remoteDcIds;
-
-		clusterRecoveryData->primaryDcId.clear();
-		clusterRecoveryData->remoteDcIds.clear();
-		if (recruits.dcId.present()) {
-			clusterRecoveryData->primaryDcId.push_back(recruits.dcId);
-			if (!primaryDcIds.empty()) {
-				primaryDcIds += ',';
-			}
-			primaryDcIds += printable(recruits.dcId);
-			if (clusterRecoveryData->configuration.regions.size() > 1) {
-				Key remoteDcId = recruits.dcId.get() == clusterRecoveryData->configuration.regions[0].dcId
-				                     ? clusterRecoveryData->configuration.regions[1].dcId
-				                     : clusterRecoveryData->configuration.regions[0].dcId;
-				clusterRecoveryData->remoteDcIds.push_back(remoteDcId);
-				if (!remoteDcIds.empty()) {
-					remoteDcIds += ',';
-				}
-				remoteDcIds += printable(remoteDcId);
-			}
-		}
-		clusterRecoveryData->backupWorkers.swap(recruits.backupWorkers);
-
-		TraceEvent(getRecoveryEventName(ClusterRecoveryEventType::CLUSTER_RECOVERY_STATE_EVENT_NAME).c_str(),
-		           clusterRecoveryData->dbgid)
-		    .detail("StatusCode", RecoveryStatus::initializing_transaction_servers)
-		    .detail("Status", RecoveryStatus::names[RecoveryStatus::initializing_transaction_servers])
-		    .detail("CommitProxies", recruits.commitProxies.size())
-		    .detail("GrvProxies", recruits.grvProxies.size())
-		    .detail("TLogs", recruits.tLogs.size())
-		    .detail("Resolvers", recruits.resolvers.size())
-		    .detail("SatelliteTLogs", recruits.satelliteTLogs.size())
-		    .detail("OldLogRouters", recruits.oldLogRouters.size())
-		    .detail("StorageServers", recruits.storageServers.size())
-		    .detail("BackupWorkers", clusterRecoveryData->backupWorkers.size())
-		    .detail("PrimaryDcIds", primaryDcIds)
-		    .detail("RemoteDcIds", remoteDcIds)
-		    .trackLatest(clusterRecoveryData->clusterRecoveryStateEventHolder->trackingKey);
-
 		// Actually, newSeedServers does both the recruiting and initialization of the seed servers; so if this is a
 		// brand new database we are sort of lying that we are past the recruitment phase.  In a perfect world we would
 		// split that up so that the recruitment part happens above (in parallel with recruiting the transaction
 		// servers?).
-		wait(newSeedServers(clusterRecoveryData, recruits, seedServers));
+		wait(RecruiterImpl::newSeedServers(clusterRecoveryData, recruitment, seedServers));
 		state std::vector<Standalone<CommitTransactionRef>> confChanges;
-		wait(newCommitProxies(clusterRecoveryData, recruits) && newGrvProxies(clusterRecoveryData, recruits) &&
-		     newResolvers(clusterRecoveryData, recruits) &&
-		     newTLogServers(self, clusterRecoveryData, recruits, oldLogSystem, &confChanges));
-
-		// Update recovery related information to the newly elected sequencer (master) process.
-		wait(brokenPromiseToNever(clusterRecoveryData->masterInterface.updateRecoveryData.getReply(
-		    UpdateRecoveryDataRequest(clusterRecoveryData->recoveryTransactionVersion,
-		                              clusterRecoveryData->lastEpochEnd,
-		                              clusterRecoveryData->commitProxies,
-		                              clusterRecoveryData->resolvers,
-		                              clusterRecoveryData->versionEpoch,
-		                              clusterRecoveryData->primaryLocality))));
-
+		wait(RecruiterImpl::newCommitProxies(clusterRecoveryData, recruitment) &&
+		     RecruiterImpl::newGrvProxies(clusterRecoveryData, recruitment) &&
+		     RecruiterImpl::newResolvers(clusterRecoveryData, recruitment) &&
+		     RecruiterImpl::newTLogServers(self, clusterRecoveryData, recruitment, oldLogSystem, &confChanges));
 		return confChanges;
 	}
 };
 
 Recruiter::Recruiter(UID const& id) : id(id), startTime(now()) {}
 
-Future<std::vector<Standalone<CommitTransactionRef>>> Recruiter::recruitEverything(
+WorkerRecruitment Recruiter::findWorkers(ClusterControllerData* clusterControllerData,
+                                         RecruitmentInfo const& info,
+                                         bool checkGoodRecruitment) {
+	return RecruiterImpl::findWorkersForConfigurationDispatch(this, clusterControllerData, info, checkGoodRecruitment);
+}
+
+Future<std::vector<Standalone<CommitTransactionRef>>> Recruiter::recruitWorkers(
     Reference<ClusterRecoveryData> clusterRecoveryData,
-    std::vector<StorageServerInterface>& seedServers,
+    WorkerRecruitment const& recruitment,
+    std::vector<StorageServerInterface>* seedServers,
     Reference<ILogSystem> oldLogSystem) {
-	return RecruiterImpl::recruitEverything(this, clusterRecoveryData, &seedServers, oldLogSystem);
+	return RecruiterImpl::recruitWorkers(this, clusterRecoveryData, recruitment, seedServers, oldLogSystem);
 }
 
 void Recruiter::clusterRecruitStorage(RecruitStorageRequest req,
@@ -2314,50 +2196,6 @@ void Recruiter::checkRegions(ClusterControllerData* clusterControllerData, const
 	} catch (Error& e) {
 		if (e.code() != error_code_no_more_servers) {
 			throw;
-		}
-	}
-}
-
-void Recruiter::checkOutstandingRecruitmentRequests(ClusterControllerData* clusterControllerData) {
-	for (int i = 0; i < this->outstandingRecruitmentRequests.size(); i++) {
-		Reference<RecruitWorkersInfo> info = this->outstandingRecruitmentRequests[i];
-		try {
-			info->rep = RecruiterImpl::findWorkersForConfiguration(this, clusterControllerData, info->req);
-			if (info->dbgId.present()) {
-				TraceEvent("CheckOutstandingRecruitment", info->dbgId.get())
-				    .detail("Request", info->req.configuration.toString());
-			}
-			info->waitForCompletion.trigger();
-			swapAndPop(&this->outstandingRecruitmentRequests, i--);
-		} catch (Error& e) {
-			if (e.code() == error_code_no_more_servers || e.code() == error_code_operation_failed) {
-				TraceEvent(SevWarn, "RecruitTLogMatchingSetNotAvailable", this->id).error(e);
-			} else {
-				TraceEvent(SevError, "RecruitTLogsRequestError", this->id).error(e);
-				throw;
-			}
-		}
-	}
-}
-
-void Recruiter::checkOutstandingRemoteRecruitmentRequests(ClusterControllerData const* clusterControllerData) {
-	for (int i = 0; i < this->outstandingRemoteRecruitmentRequests.size(); i++) {
-		Reference<RecruitRemoteWorkersInfo> info = this->outstandingRemoteRecruitmentRequests[i];
-		try {
-			info->rep = RecruiterImpl::findRemoteWorkersForConfiguration(this, clusterControllerData, info->req);
-			if (info->dbgId.present()) {
-				TraceEvent("CheckOutstandingRemoteRecruitment", info->dbgId.get())
-				    .detail("Request", info->req.configuration.toString());
-			}
-			info->waitForCompletion.trigger();
-			swapAndPop(&this->outstandingRemoteRecruitmentRequests, i--);
-		} catch (Error& e) {
-			if (e.code() == error_code_no_more_servers || e.code() == error_code_operation_failed) {
-				TraceEvent(SevWarn, "RecruitRemoteTLogMatchingSetNotAvailable", this->id).error(e);
-			} else {
-				TraceEvent(SevError, "RecruitRemoteTLogsRequestError", this->id).error(e);
-				throw;
-			}
 		}
 	}
 }
