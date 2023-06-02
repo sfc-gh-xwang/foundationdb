@@ -15,32 +15,31 @@ static int workers = 0;
 // Adds a worker with the specified process class to the given
 // ClusterControllerData's list of workers. This function simulates the
 // behavior of `registerWorker`, and is used only for testing purposes.
-void addWorker(ClusterControllerData& data, ProcessClass::ClassType classType) {
-	Standalone<StringRef> id = StringRef(std::to_string(workers++));
+void addWorker(ClusterControllerData& data, ProcessClass::ClassType classType, LocalityData const& locality) {
+	Optional<Standalone<StringRef>> id = locality.processId();
 
 	data.id_worker[id] = WorkerInfo();
 	data.id_worker[id].details = WorkerDetails();
-	data.id_worker[id].details.recoveredDiskFiles = true;
-
-	data.id_worker[id].details.interf.locality.set(LocalityData::keyDcId, "1"_sr);
-	// data.id_worker[id].details.interf.locality.set("data_hall"_sr, "1"_sr);
-	// data.id_worker[id].details.interf.locality.set("rack"_sr, "1"_sr);
-	data.id_worker[id].details.interf.locality.set("zoneid"_sr, "1"_sr);
-	// data.id_worker[id].details.interf.locality.set(LocalityData::keyMachineId, "1"_sr);
-	data.id_worker[id].details.interf.locality.set(LocalityData::keyProcessId, id);
-
+	data.id_worker[id].details.interf.locality = locality;
 	data.id_worker[id].details.processClass = ProcessClass(classType, ProcessClass::ClassSource::CommandLineSource);
+	data.id_worker[id].details.recoveredDiskFiles = true;
 }
 
-void addWorkers(ClusterControllerData& data, ProcessClass::ClassType classType, int count) {
+void addWorkers(ClusterControllerData& data,
+                ProcessClass::ClassType classType,
+                Optional<Standalone<StringRef>> zoneId,
+                Optional<Standalone<StringRef>> machineId,
+                Optional<Standalone<StringRef>> dcId,
+                int count) {
 	for (int i = 0; i < count; ++i) {
-		addWorker(data, classType);
+		Standalone<StringRef> id = StringRef(std::to_string(workers++));
+		addWorker(data, classType, LocalityData(id, zoneId, machineId, dcId));
 	}
 }
 
-// Returns the number of unique stateless processes the workers in `workers`
-// are running on.
-int uniqueStatelessProcesses(WorkerRecruitment const& workers) {
+// Returns the number of unique processes the workers in `workers` are running
+// on.
+int uniqueProcesses(WorkerRecruitment const& workers) {
 	std::unordered_set<UID> ids;
 	std::transform(workers.grvProxies.begin(),
 	               workers.grvProxies.end(),
@@ -70,7 +69,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/GrvProxies") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, 5);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 5);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -93,7 +92,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/CommitProxies") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, 5);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 5);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -116,7 +115,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/Resolvers") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, 5);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 5);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -143,7 +142,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/CCNoDc") {
 	                           LocalityData(), // don't set a dcID for the CC
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, 5);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 5);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -171,7 +170,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/SingleProcessMultipleRoles") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, 1);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 1);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -200,7 +199,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/All") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, 6);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 6);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -210,7 +209,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/All") {
 	ASSERT_EQ(workers.resolvers.size(), 2);
 
 	// Make sure all roles were recruited on separate processes.
-	ASSERT_EQ(uniqueStatelessProcesses(workers), 6);
+	ASSERT_EQ(uniqueProcesses(workers), 6);
 
 	return Void();
 }
@@ -228,7 +227,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/Zero") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, 5);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 5);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -253,7 +252,7 @@ TEST_CASE("/fdbserver/Recruiter/TLogs") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::TransactionClass, 5);
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 5);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -272,7 +271,7 @@ TEST_CASE("/fdbserver/Recruiter/TLogs/NotEnoughDesired") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::TransactionClass, 4);
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 4);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -291,7 +290,7 @@ TEST_CASE("/fdbserver/Recruiter/TLogs/NotEnoughRequired") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::TransactionClass, 2);
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 2);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -322,7 +321,7 @@ TEST_CASE("/fdbserver/Recruiter/TLogs/NoReplicationPolicy") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::TransactionClass, 5);
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 5);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
