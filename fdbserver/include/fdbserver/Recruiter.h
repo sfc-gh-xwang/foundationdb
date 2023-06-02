@@ -47,9 +47,6 @@ class Recruiter {
 	// potentially failed.
 	const double startTime;
 
-	std::vector<std::pair<RecruitStorageRequest, double>> outstandingStorageRequests;
-	std::vector<std::pair<RecruitBlobWorkerRequest, double>> outstandingBlobWorkerRequests;
-
 public:
 	explicit Recruiter(UID const& id);
 
@@ -74,24 +71,18 @@ public:
 	    std::vector<StorageServerInterface>* seedServers,
 	    Reference<ILogSystem> oldLogSystem);
 
-	void clusterRecruitStorage(RecruitStorageRequest req,
-	                           bool gotProcessClasses,
-	                           std::map<Optional<Standalone<StringRef>>, WorkerInfo> const& id_worker);
+	// Returns a worker that is suitable to run as a storage server. If no
+	// valid worker can be found, throws `no_more_servers`.
+	WorkerDetails findStorage(RecruitStorageRequest const& req,
+	                          std::map<Optional<Standalone<StringRef>>, WorkerInfo> const& id_worker) const;
 
-	// Trys to send a reply to req with a worker (process) that a blob worker can be recruited on
-	// Otherwise, add the req to a list of outstanding reqs that will eventually be dealt with
-	void clusterRecruitBlobWorker(RecruitBlobWorkerRequest req,
-	                              bool gotProcessClasses,
-	                              std::map<Optional<Standalone<StringRef>>, WorkerInfo> const& id_worker,
-	                              Optional<Standalone<StringRef>> clusterControllerDcId);
-
-	// TODO: Make private eventually
-	void checkOutstandingRecruitmentRequests(ClusterControllerData* clusterControllerData);
-	void checkOutstandingStorageRequests(bool gotProcessClasses,
-	                                     std::map<Optional<Standalone<StringRef>>, WorkerInfo> const& id_worker);
-	void checkOutstandingBlobWorkerRequests(bool gotProcessClasses,
-	                                        std::map<Optional<Standalone<StringRef>>, WorkerInfo> const& id_worker,
-	                                        Optional<Standalone<StringRef>> clusterControllerDcId);
+	// Returns a worker that is suitable to run as a blob worker. Only workers
+	// in the same datacenter as the cluster controller (and therefore the blob
+	// manager) will be considered. If no valid worker can be found, throws
+	// `no_more_servers`.
+	WorkerDetails findBlobWorker(RecruitBlobWorkerRequest const& req,
+	                             std::map<Optional<Standalone<StringRef>>, WorkerInfo> const& id_worker,
+	                             Optional<Standalone<StringRef>> const& clusterControllerDcId) const;
 
 	// Check if txn system is recruited successfully in each region.
 	void checkRegions(ClusterControllerData* clusterControllerData, const std::vector<RegionInfo>& regions);

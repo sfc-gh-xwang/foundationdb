@@ -286,6 +286,73 @@ ACTOR Future<Void> clusterOpenDatabase(ClusterControllerData::DBInfo* db, OpenDa
 	return Void();
 }
 
+ACTOR Future<Void> clusterRecruitStorage(ClusterControllerData* clusterControllerData, RecruitStorageRequest req) {
+	state double timeoutTime = now() + SERVER_KNOBS->RECRUITMENT_TIMEOUT;
+	loop {
+		try {
+			if (timeoutTime < now()) {
+				req.reply.sendError(timed_out());
+				return Void();
+			} else if (!clusterControllerData->gotProcessClasses && !req.criticalRecruitment) {
+				throw no_more_servers();
+			}
+
+			auto worker = clusterControllerData->recruiter.findStorage(req, clusterControllerData->id_worker);
+
+			RecruitStorageReply rep;
+			rep.worker = worker.interf;
+			rep.processClass = worker.processClass;
+			req.reply.send(rep);
+			return Void();
+		} catch (Error& e) {
+			if (e.code() == error_code_no_more_servers) {
+				TraceEvent(SevWarn, "RecruitStorageNotAvailable", clusterControllerData->id)
+				    .errorUnsuppressed(e)
+				    .suppressFor(1.0)
+				    .detail("IsCriticalRecruitment", req.criticalRecruitment);
+			} else {
+				TraceEvent(SevError, "RecruitStorageError", clusterControllerData->id).error(e);
+				throw; // Any other error will bring down the cluster controller
+			}
+		}
+		wait(lowPriorityDelay(SERVER_KNOBS->ATTEMPT_STORAGE_RECRUITMENT_DELAY));
+	}
+}
+
+ACTOR Future<Void> clusterRecruitBlobWorker(ClusterControllerData* clusterControllerData,
+                                            RecruitBlobWorkerRequest req) {
+	state double timeoutTime = now() + SERVER_KNOBS->RECRUITMENT_TIMEOUT;
+	loop {
+		try {
+			if (timeoutTime < now()) {
+				req.reply.sendError(timed_out());
+				return Void();
+			} else if (!clusterControllerData->gotProcessClasses) {
+				throw no_more_servers();
+			}
+
+			auto worker = clusterControllerData->recruiter.findBlobWorker(
+			    req, clusterControllerData->id_worker, clusterControllerData->clusterControllerDcId);
+
+			RecruitBlobWorkerReply rep;
+			rep.worker = worker.interf;
+			rep.processClass = worker.processClass;
+			req.reply.send(rep);
+			return Void();
+		} catch (Error& e) {
+			if (e.code() == error_code_no_more_servers) {
+				TraceEvent(SevWarn, "RecruitBlobWorkerNotAvailable", clusterControllerData->id)
+				    .errorUnsuppressed(e)
+				    .suppressFor(1.0);
+			} else {
+				TraceEvent(SevError, "RecruitBlobWorkerError", clusterControllerData->id).error(e);
+				throw;
+			}
+		}
+		wait(lowPriorityDelay(SERVER_KNOBS->ATTEMPT_RECRUITMENT_DELAY));
+	}
+}
+
 // Finds and returns a new process for role
 WorkerDetails findNewProcessForSingleton(ClusterControllerData* self,
                                          const ProcessClass::ClusterRole role,
@@ -596,12 +663,6 @@ ACTOR Future<Void> doCheckOutstandingRequests(ClusterControllerData* self) {
 			}
 		}
 
-		self->recruiter.checkOutstandingStorageRequests(self->gotProcessClasses, self->id_worker);
-
-		if (self->db.blobGranulesEnabled.get()) {
-			self->recruiter.checkOutstandingBlobWorkerRequests(
-			    self->gotProcessClasses, self->id_worker, self->clusterControllerDcId);
-		}
 		checkBetterSingletons(self);
 
 		self->checkRecoveryStalled();
@@ -2330,6 +2391,23 @@ ACTOR Future<int64_t> getNextBMEpoch(ClusterControllerData* self) {
 	}
 }
 
+ACTOR Future<Void> stopConsistencyScan(Database db) {
+	state ConsistencyScanState cs = ConsistencyScanState();
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
+	loop {
+		try {
+			SystemDBWriteLockedNow(db.getReference())->setOptions(tr);
+			state ConsistencyScanState::Config config = wait(ConsistencyScanState().config().getD(tr));
+			config.enabled = false;
+			cs.config().set(tr, config);
+			wait(tr->commit());
+			return Void();
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+}
+
 ACTOR Future<Void> watchBlobRestoreCommand(ClusterControllerData* self) {
 	state Reference<BlobRestoreController> restoreController =
 	    makeReference<BlobRestoreController>(self->cx, normalKeys);
@@ -2355,7 +2433,9 @@ ACTOR Future<Void> watchBlobRestoreCommand(ClusterControllerData* self) {
 				}
 			}
 			self->db.blobRestoreEnabled.set(phase > BlobRestorePhase::UNINIT && phase < BlobRestorePhase::DONE);
-
+			if (self->db.blobRestoreEnabled.get()) {
+				wait(stopConsistencyScan(self->cx));
+			}
 			wait(BlobRestoreController::onPhaseChange(restoreController, BlobRestorePhase::INIT));
 		} catch (Error& e) {
 			TraceEvent("WatchBlobRestoreCommand", self->id).error(e);
@@ -2912,11 +2992,10 @@ ACTOR Future<Void> clusterControllerCore(ClusterControllerFullInterface interf,
 			self.addActor.send(clusterOpenDatabase(&self.db, req));
 		}
 		when(RecruitStorageRequest req = waitNext(interf.recruitStorage.getFuture())) {
-			self.recruiter.clusterRecruitStorage(req, self.gotProcessClasses, self.id_worker);
+			self.addActor.send(clusterRecruitStorage(&self, req));
 		}
 		when(RecruitBlobWorkerRequest req = waitNext(interf.recruitBlobWorker.getFuture())) {
-			self.recruiter.clusterRecruitBlobWorker(
-			    req, self.gotProcessClasses, self.id_worker, self.clusterControllerDcId);
+			self.addActor.send(clusterRecruitBlobWorker(&self, req));
 		}
 		when(RegisterWorkerRequest req = waitNext(interf.registerWorker.getFuture())) {
 			++self.registerWorkerRequests;
