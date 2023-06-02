@@ -45,24 +45,15 @@ int uniqueStatelessProcesses(WorkerRecruitment const& workers) {
 	std::transform(workers.grvProxies.begin(),
 	               workers.grvProxies.end(),
 	               std::inserter(ids, ids.end()),
-	               [](WorkerInterface const& w) {
-		               printf("id: %s\n", w.id().toString().c_str());
-		               return w.id();
-	               });
+	               [](WorkerDetails const& w) { return w.interf.id(); });
 	std::transform(workers.commitProxies.begin(),
 	               workers.commitProxies.end(),
 	               std::inserter(ids, ids.end()),
-	               [](WorkerInterface const& w) {
-		               printf("id: %s\n", w.id().toString().c_str());
-		               return w.id();
-	               });
+	               [](WorkerDetails const& w) { return w.interf.id(); });
 	std::transform(workers.resolvers.begin(),
 	               workers.resolvers.end(),
 	               std::inserter(ids, ids.end()),
-	               [](WorkerInterface const& w) {
-		               printf("id: %s\n", w.id().toString().c_str());
-		               return w.id();
-	               });
+	               [](WorkerDetails const& w) { return w.interf.id(); });
 	return ids.size();
 }
 
@@ -192,8 +183,8 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/SingleProcessMultipleRoles") {
 	ASSERT_EQ(workers.resolvers.size(), 1);
 
 	// Check that all roles are running on the same process.
-	ASSERT_EQ(workers.grvProxies.front().id(), workers.commitProxies.front().id());
-	ASSERT_EQ(workers.grvProxies.front().id(), workers.resolvers.front().id());
+	ASSERT_EQ(workers.grvProxies.front().interf.id(), workers.commitProxies.front().interf.id());
+	ASSERT_EQ(workers.grvProxies.front().interf.id(), workers.resolvers.front().interf.id());
 
 	return Void();
 }
