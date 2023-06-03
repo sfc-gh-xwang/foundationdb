@@ -53,6 +53,18 @@ int uniqueProcesses(WorkerRecruitment const& workers) {
 	               workers.resolvers.end(),
 	               std::inserter(ids, ids.end()),
 	               [](WorkerDetails const& w) { return w.interf.id(); });
+	std::transform(workers.tLogs.begin(),
+	               workers.tLogs.end(),
+	               std::inserter(ids, ids.end()),
+	               [](WorkerDetails const& w) { return w.interf.id(); });
+	std::transform(workers.satelliteTLogs.begin(),
+	               workers.satelliteTLogs.end(),
+	               std::inserter(ids, ids.end()),
+	               [](WorkerDetails const& w) { return w.interf.id(); });
+	std::transform(workers.storageServers.begin(),
+	               workers.storageServers.end(),
+	               std::inserter(ids, ids.end()),
+	               [](WorkerDetails const& w) { return w.interf.id(); });
 	return ids.size();
 }
 
@@ -326,6 +338,175 @@ TEST_CASE("/fdbserver/Recruiter/TLogs/NoReplicationPolicy") {
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	ASSERT_EQ(recruiter.findWorkers(&data, info, false).tLogs.size(), 1);
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/Noop") {
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/resolvers"_sr, "1"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+	auto recruitment1 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 3);
+
+	// Adding another stateless process shouldn't trigger a recovery.
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 1);
+	auto recruitment2 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 3);
+
+	ASSERT(!(recruitment1 < recruitment2));
+	ASSERT(!(recruitment2 < recruitment1));
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/Unset") {
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/resolvers"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/logs"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/log_replicas"_sr, "1"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+	addWorkers(data, ProcessClass::ClassType::UnsetClass, "1"_sr, {}, "1"_sr, 1);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+	auto recruitment1 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 1);
+
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 1);
+	auto recruitment2 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 2);
+
+	ASSERT(recruitment1 < recruitment2);
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/AddGrvProxy") {
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/resolvers"_sr, "1"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+	auto recruitment1 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 3);
+
+	addWorkers(data, ProcessClass::ClassType::GrvProxyClass, "1"_sr, {}, "1"_sr, 1);
+	auto recruitment2 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 3);
+
+	ASSERT(recruitment1 < recruitment2);
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/AddCommitProxy") {
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/resolvers"_sr, "1"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+	auto recruitment1 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 3);
+
+	addWorkers(data, ProcessClass::ClassType::CommitProxyClass, "1"_sr, {}, "1"_sr, 1);
+	auto recruitment2 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 3);
+
+	ASSERT(recruitment1 < recruitment2);
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/AddResolver") {
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/resolvers"_sr, "1"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+	auto recruitment1 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 3);
+
+	addWorkers(data, ProcessClass::ClassType::ResolutionClass, "1"_sr, {}, "1"_sr, 1);
+	auto recruitment2 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 3);
+
+	ASSERT(recruitment1 < recruitment2);
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/AddTLog") {
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/resolvers"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/logs"_sr, "1"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/log_replicas"_sr, "1"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+	addWorkers(data, ProcessClass::ClassType::StorageClass, "1"_sr, {}, "1"_sr, 1);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+	auto recruitment1 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 4);
+
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 1);
+	auto recruitment2 = recruiter.findWorkers(&data, info, false);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 4);
+
+	ASSERT(recruitment1 < recruitment2);
 
 	return Void();
 }
