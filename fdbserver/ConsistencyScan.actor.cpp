@@ -106,16 +106,16 @@ ACTOR Future<Void> pollDatabaseSize(Reference<ConsistencyScanMemoryState> memSta
 			}
 		}
 
-		wait(delay(1.0));
+		wait(delay(5.0));
 	}
 }
 
 ACTOR Future<std::vector<StorageServerInterface>> loadShardInterfaces(Reference<ConsistencyScanMemoryState> memState,
                                                                       Reference<ReadYourWritesTransaction> tr,
-                                                                      Future<RangeResult> readShardBoundaries) {
-	state RangeResult UIDtoTagMap = wait(tr->getRange(serverTagKeys, CLIENT_KNOBS->TOO_MANY));
+                                                                      Future<RangeReadResult> readShardBoundaries) {
+	state RangeReadResult UIDtoTagMap = wait(tr->getRange(serverTagKeys, CLIENT_KNOBS->TOO_MANY));
 	ASSERT(!UIDtoTagMap.more && UIDtoTagMap.size() < CLIENT_KNOBS->TOO_MANY);
-	state RangeResult shardBoundaries = wait(readShardBoundaries);
+	state RangeReadResult shardBoundaries = wait(readShardBoundaries);
 	ASSERT(shardBoundaries.size() == 2);
 
 	state std::vector<UID> sourceStorageServers;
@@ -550,7 +550,7 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 					systemDB->setOptions(tr);
 
 					// The shard boundaries for the shard that lastEndKey is in
-					state RangeResult shardBoundaries;
+					state RangeReadResult shardBoundaries;
 					state std::vector<StorageServerInterface> storageServerInterfaces;
 					// The consistency scan config update version
 					state Optional<Versionstamp> csVersion;
@@ -564,7 +564,7 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 					GetRangeLimits limits;
 					limits.minRows = 2;
 					limits.rows = 2;
-					Future<RangeResult> readShardBoundaries =
+					Future<RangeReadResult> readShardBoundaries =
 					    tr->getRange(lastLessOrEqual(statsCurrentRound.lastEndKey.withPrefix(keyServersPrefix)),
 					                 firstGreaterThan(allKeys.end.withPrefix(keyServersPrefix)),
 					                 limits,
@@ -636,7 +636,8 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 
 					if (scanRange) {
 						if (DEBUG_SCAN_PROGRESS) {
-							TraceEvent(SevDebug, "ConsistencyScanProgressScanRangeStart", memState->csId);
+							TraceEvent(SevDebug, "ConsistencyScanProgressScanRangeStart", memState->csId)
+							    .detail("StartKey", targetRange.begin);
 						}
 						// Stats for *this unit of durable progress only*, which will be committed atomically with the
 						// endKey update. Total bytes from all replicas read
@@ -702,11 +703,17 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 									}
 								}
 							} else {
-								TraceEvent("ConsistencyScan_FailedRequest", memState->csId)
-								    .errorUnsuppressed(failedRequest.get())
-								    .suppressFor(5.0);
+								// transaction too old expected here for large shards
+								CODE_PROBE(failedRequest.get().code() == error_code_transaction_too_old,
+								           "consistency scan loop shard too large for one transaction");
+								if (failedRequest.get().code() != error_code_transaction_too_old) {
+									TraceEvent("ConsistencyScan_FailedRequest", memState->csId)
+									    .errorUnsuppressed(failedRequest.get())
+									    .suppressFor(5.0);
+								}
 								// FIXME: increment failed request count if error present
 								ASSERT(failedRequest.get().code() != error_code_operation_cancelled);
+								totalReadBytesFromStorageServers += 100000;
 								break;
 							}
 						}
@@ -737,6 +744,11 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 						statsCurrentRound.lastEndKey = Key();
 						statsCurrentRound.complete = true;
 
+						if (DEBUG_SCAN_PROGRESS) {
+							TraceEvent(SevDebug, "ConsistencyScanProgressRoundComplete", memState->csId)
+							    .detail("BytesRead", statsCurrentRound.logicalBytesScanned);
+						}
+
 						// Return to main loop after this commit, but delay first for the difference between the time
 						// the round took and minRoundTimeSeconds
 						restartMainLoop = true;
@@ -745,16 +757,6 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 						    0.0));
 					}
 
-					// Save updated stats.
-					cs.currentRoundStats().set(tr, statsCurrentRound);
-					cs.lifetimeStats().set(tr, statsLifetime);
-
-					wait(tr->commit());
-					if (DEBUG_SCAN_PROGRESS) {
-						TraceEvent(SevDebug, "ConsistencyScanProgress_RoundComplete", memState->csId)
-						    .detail("BytesRead", statsCurrentRound.logicalBytesScanned)
-						    .detail("ProgressKey", statsCurrentRound.lastEndKey);
-					}
 					// fmt::print("CONSISTENCY SCAN PROGRESS: {}\n",
 					//            json_spirit::write_string(json_spirit::mValue(statsCurrentRound.toJSON())));
 					break;
@@ -764,7 +766,7 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 					    e.code() == error_code_all_alternatives_failed || e.code() == error_code_process_behind) {
 						// sleep for a bit extra
 						totalReadBytesFromStorageServers += 100000;
-						tr->reset();
+						break;
 					} else {
 						try {
 							wait(tr->onError(e));
@@ -774,10 +776,56 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 						}
 					}
 				}
-			} // Transaction retry loop for making one increment of durable progress
+			} // Transaction retry loop for making one increment of progress
 
-			if (DEBUG_SCAN_PROGRESS) {
-				TraceEvent(SevDebug, "ConsistencyScanProgressScanLoopDurable", memState->csId);
+			// Save updated stats if we made progress. Do in new transaction because we could have read data until the
+			// old one expired
+			tr->reset();
+			if (statsCurrentRound.lastEndKey != savedCurrentRoundState.lastEndKey || statsCurrentRound.complete) {
+				if (DEBUG_SCAN_PROGRESS) {
+					TraceEvent(SevDebug, "ConsistencyScanProgressScanLoopSaving", memState->csId)
+					    .detail("ProgressKey", statsCurrentRound.lastEndKey);
+				}
+				loop {
+					if (DEBUG_SCAN_PROGRESS) {
+						TraceEvent(SevDebug, "ConsistencyScanProgressScanLoopSaveStart", memState->csId)
+						    .detail("ProgressKey", statsCurrentRound.lastEndKey);
+					}
+					try {
+						systemDB->setOptions(tr);
+						Optional<Versionstamp> csVersion2 = wait(cs.trigger.get(tr));
+						if (csVersion2 != configVersion) {
+							if (DEBUG_SCAN_PROGRESS) {
+								TraceEvent(SevDebug, "ConsistencyScanProgressScanLoopVersionMismatch2", memState->csId);
+							}
+							restartMainLoop = true;
+							break;
+						}
+						cs.currentRoundStats().set(tr, statsCurrentRound);
+						cs.lifetimeStats().set(tr, statsLifetime);
+
+						wait(tr->commit());
+						if (DEBUG_SCAN_PROGRESS) {
+							TraceEvent(SevDebug, "ConsistencyScanProgressScanLoopDurable", memState->csId)
+							    .detail("BytesRead", statsCurrentRound.logicalBytesScanned)
+							    .detail("ProgressKey", statsCurrentRound.lastEndKey);
+						}
+						break;
+					} catch (Error& e) {
+						if (DEBUG_SCAN_PROGRESS) {
+							TraceEvent(SevDebug, "ConsistencyScanProgressScanLoopSaveError", memState->csId)
+							    .errorUnsuppressed(e)
+							    .detail("ProgressKey", statsCurrentRound.lastEndKey);
+						}
+						wait(tr->onError(e));
+					}
+				}
+			} else {
+				CODE_PROBE(true, "consistency scan loop no progress");
+				if (DEBUG_SCAN_PROGRESS) {
+					TraceEvent(SevDebug, "ConsistencyScanProgressScanLoopNoProgress", memState->csId)
+					    .detail("ProgressKey", statsCurrentRound.lastEndKey);
+				}
 			}
 
 			// Wait for the rate control to generate enough budget to match what we read.
@@ -875,9 +923,10 @@ ACTOR Future<Void> disableConsistencyScanInSim(Database db, Reference<Consistenc
 			state ConsistencyScanState::Config config = wait(cs.config().getD(tr));
 			state bool skipDisable = false;
 			// see if any rounds have completed
-			ConsistencyScanState::StatsHistoryMap::RangeResultType olderStats =
+			state ConsistencyScanState::RoundStats statsCurrentRound = wait(cs.currentRoundStats().getD(tr));
+			state ConsistencyScanState::StatsHistoryMap::RangeResultType olderStats =
 			    wait(cs.roundStatsHistory().getRange(tr, {}, {}, 1, Snapshot::False, Reverse::False));
-			if (olderStats.results.empty()) {
+			if (olderStats.results.empty() && !statsCurrentRound.complete) {
 				TraceEvent("ConsistencyScan_SimDisable_NoRoundsCompleted", memState->csId).log();
 				skipDisable = true;
 			}
@@ -1345,7 +1394,7 @@ ACTOR Future<Void> checkDataConsistency(Database cx,
 		tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 		state int bytesReadInRange = 0;
 
-		RangeResult UIDtoTagMap = wait(tr.getRange(serverTagKeys, CLIENT_KNOBS->TOO_MANY));
+		RangeReadResult UIDtoTagMap = wait(tr.getRange(serverTagKeys, CLIENT_KNOBS->TOO_MANY));
 		ASSERT(!UIDtoTagMap.more && UIDtoTagMap.size() < CLIENT_KNOBS->TOO_MANY);
 		decodeKeyServersValue(UIDtoTagMap, keyLocations[shard].value, sourceStorageServers, destStorageServers, false);
 
