@@ -894,7 +894,10 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
             "skippedRanges" : 0,
             "start_datetime" : "1970-01-01 00:00:00.000 +0000",
             "start_timestamp" : 0,
-            "start_version" : 0
+            "start_version" : 0,
+            "last_progress_datetime" : "1970-01-01 00:00:00.000 +0000",
+            "last_progress_timestamp" : 0,
+            "last_progress_version" : 0
          },
          "lifetime_stats" : {
             "errors" : 0,
@@ -914,7 +917,10 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                "skippedRanges" : 0,
                "start_datetime" : "1970-01-01 00:00:00.000 +0000",
                "start_timestamp" : 0,
-               "start_version" : 0
+               "start_version" : 0,
+               "last_progress_datetime" : "1970-01-01 00:00:00.000 +0000",
+               "last_progress_timestamp" : 0,
+               "last_progress_version" : 0
             }
          ]
       },
