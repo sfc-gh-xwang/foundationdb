@@ -27,8 +27,10 @@
 
 #include "fdbclient/BlobCipher.h"
 #include "fdbclient/BlobGranuleCommon.h"
+#include "fdbrpc/DDSketch.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/ApiVersion.h"
+#include "flow/TaskPriority.h"
 #include "flow/network.h"
 #include "fmt/format.h"
 #include "fdbclient/Audit.h"
@@ -959,6 +961,7 @@ public:
 
 	std::deque<StorageServer::EmptyVersionQueueEntry> versionQueue;
 	double lastVersionSampleTime;
+	DDSketch<double> safeDelayWindowSketch;
 
 	std::map<Version, Standalone<VerUpdateRef>> const& getMutationLog() const { return mutationLog; }
 	std::map<Version, Standalone<VerUpdateRef>>& getMutableMutationLog() { return mutationLog; }
@@ -1470,8 +1473,8 @@ public:
 	                                                              SS_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM,
 	                                                              Histogram::Unit::bytes)),
 	    tag(invalidTag), poppedAllAfter(std::numeric_limits<Version>::max()), cpuUsage(0.0), diskUsage(0.0),
-	    lastVersionSampleTime(0), storage(this, storage), shardChangeCounter(0), lastTLogVersion(0),
-	    lastVersionWithData(0), restoredVersion(0), prevVersion(0),
+	    lastVersionSampleTime(0), safeDelayWindowSketch(0.001), storage(this, storage), shardChangeCounter(0),
+	    lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
 	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()), primaryLocality(tagLocalityInvalid),
 	    knownCommittedVersion(0), versionLag(0), logProtocol(0), thisServerID(ssi.id()), tssInQuarantine(false), db(db),
 	    actors(false), byteSampleClears(false, "\xff\xff\xff"_sr), durableInProgress(Void()), watchBytes(0),
@@ -2170,6 +2173,7 @@ inline void sampleRequestVersions(StorageServer* self, const Version& version, c
 		if (!self->versionQueue.empty() && (SERVER_KNOBS->SS_EMPTY_VERSION_DELAY_LESS_SKEW_STAT || popped)) {
 			double emptyVersionSafeDelay = timestamp - self->versionQueue.front().timestamp;
 			TraceEvent("EmptyVersionSafeDelay", self->thisServerID).detail("Timestamp", emptyVersionSafeDelay);
+			self->safeDelayWindowSketch.addSample(emptyVersionSafeDelay);
 		}
 		self->lastVersionSampleTime = timestamp;
 	}
@@ -11728,6 +11732,23 @@ ACTOR Future<Void> reportStorageServerState(StorageServer* self) {
 	}
 }
 
+ACTOR Future<Void> syncDelayWindowWithTlog(StorageServer* self) {
+	loop {
+		choose {
+			// TODO: change this to a knob
+			when(wait(delay(0.005, TaskPriority::Low))) {
+				// TODO: change this to a knob
+				double window = self->safeDelayWindowSketch.percentile(0.01);
+				// TODO: send to tlog
+				TraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
+				    .detail("Percentile001", self->safeDelayWindowSketch.percentile(0.001))
+				    .detail("Percentile005", self->safeDelayWindowSketch.percentile(0.005))
+				    .detail("Percentile010", self->safeDelayWindowSketch.percentile(0.010));
+			}
+		}
+	}
+}
+
 ACTOR Future<Void> storageServerCore(StorageServer* self, StorageServerInterface ssi) {
 	state Future<Void> doUpdate = Void();
 	state bool updateReceived = false; // true iff the current update() actor assigned to doUpdate has already
@@ -11756,6 +11777,7 @@ ACTOR Future<Void> storageServerCore(StorageServer* self, StorageServerInterface
 	self->actors.add(traceRole(Role::STORAGE_SERVER, ssi.id()));
 	self->actors.add(reportStorageServerState(self));
 	self->actors.add(storageEngineConsistencyCheck(self));
+	self->actors.add(syncDelayWindowWithTlog(self));
 
 	self->transactionTagCounter.startNewInterval();
 	self->actors.add(
