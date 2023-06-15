@@ -197,6 +197,9 @@ struct CommonStorageCounters {
 	// The number of key-value pairs fetched by fetchKeys()
 	Counter kvFetched;
 
+	// how many waitMetrics is served
+	Counter waitMetrics;
+
 	// name and id are the inputs to CounterCollection initialization. If metrics provided, the caller should guarantee
 	// the lifetime of metrics is longer than this counter
 	CommonStorageCounters(const std::string& name,
@@ -258,7 +261,9 @@ Future<Void> serveStorageMetricsRequests(ServiceType* self, StorageServerInterfa
 				self->getHotRangeMetrics(req);
 			}
 			when(SplitRangeRequest req = waitNext(ssi.getRangeSplitPoints.getFuture())) {
-				if (!self->isReadable(req.keys)) {
+				if ((!req.tenantInfo.hasTenant() && !self->isReadable(req.keys)) ||
+				    (req.tenantInfo.hasTenant() &&
+				     !self->isReadable(req.keys.withPrefix(req.tenantInfo.prefix.get())))) {
 					CODE_PROBE(true, "getSplitPoints immediate wrong_shard_server()");
 					self->sendErrorWithPenalty(req.reply, wrong_shard_server(), self->getPenalty());
 				} else {
