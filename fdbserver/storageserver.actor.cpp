@@ -2159,10 +2159,16 @@ std::vector<StorageServerShard> StorageServer::getStorageServerShards(KeyRangeRe
 	return res;
 }
 
+ReadMetrics getReadMetrics() {
+	// For now, return 0.0 for range busyness. Eventually, this will be determined by looking at how much is
+	// attributable to the ranges associated with the read, which will be added as parameters to this function.
+	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
+}
+
 // Lightweight blocking function that updates requested version to version queue for statistics
 inline void sampleRequestVersions(StorageServer* self, const Version& version, const double& timestamp) {
 	if (timestamp - self->lastVersionSampleTime > SERVER_KNOBS->SS_EMPTY_VERSION_DELAY_SAMPLE_INTERVAL) {
-		TraceEvent("EmptyVersionSSRecv", self->thisServerID).detail("Timestamp", timestamp);
+		DisabledTraceEvent("EmptyVersionSSRecv", self->thisServerID).detail("Timestamp", timestamp);
 		bool popped = false;
 		while (!self->versionQueue.empty() && self->versionQueue.front().version <= version) {
 			self->versionQueue.pop_front();
@@ -2172,17 +2178,13 @@ inline void sampleRequestVersions(StorageServer* self, const Version& version, c
 		// NOTE: This current approach collects pessimistic statistics
 		if (!self->versionQueue.empty() && (SERVER_KNOBS->SS_EMPTY_VERSION_DELAY_LESS_SKEW_STAT || popped)) {
 			double emptyVersionSafeDelay = timestamp - self->versionQueue.front().timestamp;
-			TraceEvent("EmptyVersionSafeDelay", self->thisServerID).detail("Timestamp", emptyVersionSafeDelay);
-			self->safeDelayWindowSketch.addSample(emptyVersionSafeDelay);
+			TraceEvent("EmptyVersionSafeDelay", self->thisServerID).detail("Duration", emptyVersionSafeDelay);
+			TraceEvent("VersionQueueStats", self->thisServerID)
+			    .detail("QueueSize", self->versionQueue.size())
+			    .detail("QueueTimewindow", self->versionQueue.back().timestamp - self->versionQueue.front().timestamp);
 		}
 		self->lastVersionSampleTime = timestamp;
 	}
-}
-
-ReadMetrics getReadMetrics() {
-	// For now, return 0.0 for range busyness. Eventually, this will be determined by looking at how much is
-	// attributable to the ranges associated with the read, which will be added as parameters to this function.
-	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
 }
 
 ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
@@ -9338,13 +9340,12 @@ ACTOR Future<Void> tssDelayForever() {
 }
 
 inline void sampleTlogUpdateVersions(StorageServer* self, const Version& version, const double& timestamp) {
-	TraceEvent("EmptyVersionTlogRecv", self->thisServerID).detail("Timestamp", timestamp);
+	DisabledTraceEvent("EmptyVersionTlogRecv", self->thisServerID).detail("Timestamp", timestamp);
 	// If queue piles up it means that there's not enough reads, so the queue is useless in this time
 	// window anyway, we do a cheap clear() and let it build up again
 	if (self->versionQueue.size() >= SERVER_KNOBS->SS_EMPTY_VERSION_DELAY_QUEUE_MAX_LENGTH)
 		self->versionQueue.clear();
 	self->versionQueue.emplace_back(version, timestamp);
-	TraceEvent("VersionQueueStats", self->thisServerID).detail("Size", self->versionQueue.size());
 }
 
 ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
