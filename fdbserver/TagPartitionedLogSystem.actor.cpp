@@ -3185,3 +3185,11 @@ ACTOR Future<TLogLockResult> TagPartitionedLogSystem::lockTLog(
 		}
 	}
 }
+
+void TagPartitionedLogSystem::pushEmptyVersionDelay(double delayWindow) {
+	for (auto& logSet : tLogs) {
+		for (auto& tlog : logSet->logServers) {
+			tlog->get().interf().emptyVersionDelayRequest.tryGetReply(TlogEmptyVersionDelayRequest(delayWindow));
+		}
+	}
+}
