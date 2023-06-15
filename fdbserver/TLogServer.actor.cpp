@@ -345,6 +345,8 @@ struct TLogData : NonCopyable {
 	FlowLock concurrentLogRouterReads;
 	FlowLock persistentDataCommitLock;
 
+	double ssSyncDelayWindow;
+
 	// Beginning of fields used by snapshot based backup and restore
 	double ignorePopDeadline; // time until which the ignorePopRequest will be
 	                          // honored
@@ -388,8 +390,8 @@ struct TLogData : NonCopyable {
 	    instanceID(deterministicRandom()->randomUniqueID().first()), bytesInput(0), bytesDurable(0),
 	    targetVolatileBytes(SERVER_KNOBS->TLOG_SPILL_THRESHOLD), overheadBytesInput(0), overheadBytesDurable(0),
 	    peekMemoryLimiter(SERVER_KNOBS->TLOG_SPILL_REFERENCE_MAX_PEEK_MEMORY_BYTES),
-	    concurrentLogRouterReads(SERVER_KNOBS->CONCURRENT_LOG_ROUTER_READS), ignorePopDeadline(0), dataFolder(folder),
-	    degraded(degraded),
+	    concurrentLogRouterReads(SERVER_KNOBS->CONCURRENT_LOG_ROUTER_READS), ssSyncDelayWindow(0), ignorePopDeadline(0),
+	    dataFolder(folder), degraded(degraded),
 	    commitLatencyDist(Histogram::getHistogram("tLog"_sr, "commit"_sr, Histogram::Unit::milliseconds)),
 	    queueWaitLatencyDist(Histogram::getHistogram("tLog"_sr, "QueueWait"_sr, Histogram::Unit::milliseconds)),
 	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)) {
@@ -2049,7 +2051,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		//   - Batching empty peek is disabled, or
 		//   - Batching empty peek interval has been reached.
 		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-		    (now() - blockStart > SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL)) {
+		    (now() - blockStart > self->ssSyncDelayWindow)) {
 			break;
 		}
 
@@ -2057,8 +2059,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
 		// batching interval has expired.
-		wait(logData->version.whenAtLeast(waitUntilVersion) ||
-		     delay(SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL - (now() - blockStart)));
+		wait(logData->version.whenAtLeast(waitUntilVersion) || delay(self->ssSyncDelayWindow - (now() - blockStart)));
 		if (logData->version.get() < waitUntilVersion) {
 			break; // We know that from `reqBegin` to logData->version are all empty messages. Skip re-executing the
 			       // peek logic.
@@ -2718,6 +2719,9 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 			} else {
 				logData->logSystem->set(Reference<ILogSystem>());
 			}
+		}
+		when(TlogEmptyVersionDelayRequest req = waitNext(tli.emptyVersionDelayRequest.getFuture())) {
+			self->ssSyncDelayWindow = req.delayWindow;
 		}
 		when(TLogPeekStreamRequest req = waitNext(tli.peekStreamMessages.getFuture())) {
 			TraceEvent(SevDebug, "TLogPeekStream", logData->logId)

@@ -52,6 +52,7 @@ struct TLogInterface {
 	RequestStream<struct TLogDisablePopRequest> disablePopRequest;
 	RequestStream<struct TLogEnablePopRequest> enablePopRequest;
 	RequestStream<struct TLogSnapRequest> snapRequest;
+	RequestStream<struct TlogEmptyVersionDelayRequest> emptyVersionDelayRequest;
 
 	TLogInterface() {}
 	explicit TLogInterface(const LocalityData& locality)
@@ -85,6 +86,7 @@ struct TLogInterface {
 		streams.push_back(enablePopRequest.getReceiver());
 		streams.push_back(snapRequest.getReceiver());
 		streams.push_back(peekStreamMessages.getReceiver(TaskPriority::TLogPeek));
+		streams.push_back(emptyVersionDelayRequest.getReceiver());
 		FlowTransport::transport().addEndpoints(streams);
 	}
 
@@ -113,6 +115,8 @@ struct TLogInterface {
 			snapRequest = RequestStream<struct TLogSnapRequest>(peekMessages.getEndpoint().getAdjustedEndpoint(10));
 			peekStreamMessages =
 			    RequestStream<struct TLogPeekStreamRequest>(peekMessages.getEndpoint().getAdjustedEndpoint(11));
+			emptyVersionDelayRequest =
+			    RequestStream<struct TlogEmptyVersionDelayRequest>(peekMessages.getEndpoint().getAdjustedEndpoint(12));
 		}
 	}
 };
@@ -405,6 +409,21 @@ struct TLogSnapRequest {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, reply, snapPayload, snapUID, role, arena);
+	}
+};
+
+struct TlogEmptyVersionDelayRequest {
+	constexpr static FileIdentifier file_identifier = 12074218;
+	double delayWindow;
+
+	ReplyPromise<Void> reply;
+
+	TlogEmptyVersionDelayRequest() {}
+	TlogEmptyVersionDelayRequest(double delayWindow) : delayWindow(delayWindow) {}
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, delayWindow, reply);
 	}
 };
 
