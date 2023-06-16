@@ -2815,6 +2815,8 @@ ACTOR void setupAndRun(std::string dataFolder,
 			}
 		}
 
+		wait(HTTP::registerAlwaysFailHTTPHandler());
+
 		TraceEvent("SimulatedClusterTenantMode")
 		    .detail("UsingTenant", defaultTenant)
 		    .detail("TenantMode", tenantMode.get().toString())
