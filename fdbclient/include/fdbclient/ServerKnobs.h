@@ -112,7 +112,7 @@ public:
 	double POP_FROM_LOG_DELAY;
 	double TLOG_PULL_ASYNC_DATA_WARNING_TIMEOUT_SECS;
 
-	// Empty Version Peek Batching
+	// Dynamic Empty Version Wait
 	bool PEEK_BATCHING_EMPTY_MSG; // Enable tlog empty version peeks batching.
 	double PEEK_BATCHING_EMPTY_MSG_INTERVAL; // Maximum wait time for a batch on tlog side.
 	enum DYNAMIC_EMPTY_VERSION_WAIT_MODE { DISABLED, EMPTY_VERSION_WAIT_LOG_ONLY, EMPTY_VERSION_WAIT };
@@ -127,7 +127,11 @@ public:
 	                                            // samples will be discarded once limit is reached. It is advised to
 	                                            // keep this window big enough to capture tlog sync time window of
 	                                            // multiple times the size of SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL
-	                                            // for collected statistics to make sense.AA
+	                                            // for collected statistics to make sense.
+	double DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL; // Interval of pushing calculated delay window from ss to tlogs
+	double DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
+	                                                        // delay window. Setting this too high will result in higher
+	                                                        // read latency.
 
 	// Data distribution queue
 	double HEALTH_POLL_TIME;

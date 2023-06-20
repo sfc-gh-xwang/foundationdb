@@ -2172,7 +2172,6 @@ inline void sampleRequestVersions(StorageServer* self, const Version& version, c
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return;
 	if (timestamp - self->lastVersionSampleTime > SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL) {
-		DisabledTraceEvent("EmptyVersionSSRecv", self->thisServerID).detail("Timestamp", timestamp);
 		bool popped = false;
 		while (!self->versionQueue.empty() && self->versionQueue.front().version <= version) {
 			self->versionQueue.pop_front();
@@ -2182,11 +2181,12 @@ inline void sampleRequestVersions(StorageServer* self, const Version& version, c
 		// NOTE: This current approach collects pessimistic statistics
 		if (!self->versionQueue.empty() && (SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
 			double emptyVersionSafeWait = timestamp - self->versionQueue.front().timestamp;
-			if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
-			    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY)
+			if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 				TraceEvent("EmptyVersionWaitWindow", self->thisServerID)
 				    .detail("QueueSize", self->versionQueue.size())
 				    .detail("WaitWindow", emptyVersionSafeWait);
+
+			self->safeWaitWindowSketch.addSample(emptyVersionSafeWait);
 		}
 		self->lastVersionSampleTime = timestamp;
 	}
@@ -11748,14 +11748,22 @@ ACTOR Future<Void> syncDelayWindowWithTlog(StorageServer* self) {
 		return Void();
 	loop {
 		choose {
-			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL, TaskPriority::Low))) {
+			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL))) {
+				if (!self->logSystem) // wait for logSystem to be assigned
+					continue;
 				double waitWindow = self->safeWaitWindowSketch.percentile(
 				    SERVER_KNOBS->DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
 				self->logSystem->pushEmptyVersionWaitWindow(waitWindow);
-				TraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
-				    .detail("Percentile001", self->safeWaitWindowSketch.percentile(0.001))
-				    .detail("Percentile005", self->safeWaitWindowSketch.percentile(0.005))
-				    .detail("Percentile010", self->safeWaitWindowSketch.percentile(0.010));
+				if (waitWindow > 0)
+					TraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
+					    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
+					    .detail("Percentile001", self->safeWaitWindowSketch.percentile(0.001))
+					    .detail("Percentile005", self->safeWaitWindowSketch.percentile(0.005))
+					    .detail("Percentile010", self->safeWaitWindowSketch.percentile(0.010));
+
+				// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe let
+				// it return a reply and then clear?
+				self->safeWaitWindowSketch.clear();
 			}
 		}
 	}
