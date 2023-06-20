@@ -36,6 +36,7 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/Tuple.h"
+#include <boost/unordered/unordered_flat_map.hpp>
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 typedef StringRef TransactionTagRef;
@@ -623,13 +624,13 @@ void setTagQuota(Reference<Tr> tr, TransactionTagRef tag, int64_t reservedQuota,
 }; // namespace ThrottleApi
 
 template <class Value>
-using TransactionTagMap = std::unordered_map<TransactionTag, Value, std::hash<TransactionTagRef>>;
+using TransactionTagMap = boost::unordered::unordered_flat_map<TransactionTag, Value, std::hash<TransactionTagRef>>;
 
 template <class Value>
 using PrioritizedTransactionTagMap = std::map<TransactionPriority, TransactionTagMap<Value>>;
 
 template <class Value>
-using UIDTransactionTagMap = std::unordered_map<UID, TransactionTagMap<Value>>;
+using UIDTransactionTagMap = boost::unordered::unordered_flat_map<UID, TransactionTagMap<Value>>;
 
 #include "flow/unactorcompiler.h"
 #endif

@@ -299,7 +299,8 @@ PrioritizedTransactionTagMap<ClientTagThrottleLimits> RkTagThrottleCollection::g
 
 		if (!tagPresent) {
 			CODE_PROBE(true, "All tag throttles expired");
-			tagItr = tagData.erase(tagItr);
+			// boost::unordered_flat_map::earse returns void instead of the next iterator.
+			tagData.erase(tagItr++);
 		} else {
 			++tagItr;
 		}

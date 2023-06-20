@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "boost/algorithm/string.hpp"
+#include <boost/unordered/unordered_flat_map.hpp>
 
 #include "flow/CodeProbe.h"
 #include "fmt/format.h"
@@ -2227,14 +2228,14 @@ Future<Void> DatabaseContext::connectionFileChanged() {
 
 void DatabaseContext::expireThrottles() {
 	for (auto& priorityItr : throttledTags) {
-		for (auto tagItr = priorityItr.second.begin(); tagItr != priorityItr.second.end();) {
-			if (tagItr->second.expired()) {
+		boost::unordered::erase_if(priorityItr.second, [](const auto& kv){
+			if (kv.second.expired()) {
 				CODE_PROBE(true, "Expiring client throttle");
-				tagItr = priorityItr.second.erase(tagItr);
+				return true;
 			} else {
-				++tagItr;
+				return false;
 			}
-		}
+		});
 	}
 }
 
