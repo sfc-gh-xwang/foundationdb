@@ -2720,8 +2720,8 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 				logData->logSystem->set(Reference<ILogSystem>());
 			}
 		}
-		when(TlogEmptyVersionDelayRequest req = waitNext(tli.emptyVersionDelayRequest.getFuture())) {
-			self->ssSyncDelayWindow = req.delayWindow;
+		when(TlogEmptyVersionWaitRequest req = waitNext(tli.emptyVersionWaitRequest.getFuture())) {
+			self->ssSyncDelayWindow = req.waitWindow;
 		}
 		when(TLogPeekStreamRequest req = waitNext(tli.peekStreamMessages.getFuture())) {
 			TraceEvent(SevDebug, "TLogPeekStream", logData->logId)

@@ -963,7 +963,7 @@ public:
 
 	std::deque<StorageServer::EmptyVersionQueueEntry> versionQueue;
 	double lastVersionSampleTime;
-	DDSketch<double> safeDelayWindowSketch;
+	DDSketch<double> safeWaitWindowSketch;
 
 	std::map<Version, Standalone<VerUpdateRef>> const& getMutationLog() const { return mutationLog; }
 	std::map<Version, Standalone<VerUpdateRef>>& getMutableMutationLog() { return mutationLog; }
@@ -1475,7 +1475,7 @@ public:
 	                                                              SS_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM,
 	                                                              Histogram::Unit::bytes)),
 	    tag(invalidTag), poppedAllAfter(std::numeric_limits<Version>::max()), cpuUsage(0.0), diskUsage(0.0),
-	    lastVersionSampleTime(0), safeDelayWindowSketch(0.001), storage(this, storage), shardChangeCounter(0),
+	    lastVersionSampleTime(0), safeWaitWindowSketch(0.001), storage(this, storage), shardChangeCounter(0),
 	    lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
 	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()), primaryLocality(tagLocalityInvalid),
 	    knownCommittedVersion(0), versionLag(0), logProtocol(0), thisServerID(ssi.id()), tssInQuarantine(false), db(db),
@@ -11744,17 +11744,18 @@ ACTOR Future<Void> reportStorageServerState(StorageServer* self) {
 }
 
 ACTOR Future<Void> syncDelayWindowWithTlog(StorageServer* self) {
+	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+		return Void();
 	loop {
 		choose {
-			// TODO: change this to a knob
-			when(wait(delay(0.005, TaskPriority::Low))) {
-				// TODO: change this to a knob
-				double window = self->safeDelayWindowSketch.percentile(0.01);
-				// TODO: send to tlog
+			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL, TaskPriority::Low))) {
+				double waitWindow = self->safeWaitWindowSketch.percentile(
+				    SERVER_KNOBS->DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
+				self->logSystem->pushEmptyVersionWaitWindow(waitWindow);
 				TraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
-				    .detail("Percentile001", self->safeDelayWindowSketch.percentile(0.001))
-				    .detail("Percentile005", self->safeDelayWindowSketch.percentile(0.005))
-				    .detail("Percentile010", self->safeDelayWindowSketch.percentile(0.010));
+				    .detail("Percentile001", self->safeWaitWindowSketch.percentile(0.001))
+				    .detail("Percentile005", self->safeWaitWindowSketch.percentile(0.005))
+				    .detail("Percentile010", self->safeWaitWindowSketch.percentile(0.010));
 			}
 		}
 	}
