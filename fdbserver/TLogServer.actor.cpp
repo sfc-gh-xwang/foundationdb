@@ -345,8 +345,6 @@ struct TLogData : NonCopyable {
 	FlowLock concurrentLogRouterReads;
 	FlowLock persistentDataCommitLock;
 
-	double emptyVersionWaitWindow;
-
 	// Beginning of fields used by snapshot based backup and restore
 	double ignorePopDeadline; // time until which the ignorePopRequest will be
 	                          // honored
@@ -377,6 +375,9 @@ struct TLogData : NonCopyable {
 	// and ends when the data is flushed and durable.
 	Reference<Histogram> timeUntilDurableDist;
 
+	// Track dynamic empty version wait window for each storage server
+	std::unordered_map<Tag, double> emptyVersionWaitWindowMap;
+
 	TLogData(UID dbgid,
 	         UID workerID,
 	         IKeyValueStore* persistentData,
@@ -390,8 +391,8 @@ struct TLogData : NonCopyable {
 	    instanceID(deterministicRandom()->randomUniqueID().first()), bytesInput(0), bytesDurable(0),
 	    targetVolatileBytes(SERVER_KNOBS->TLOG_SPILL_THRESHOLD), overheadBytesInput(0), overheadBytesDurable(0),
 	    peekMemoryLimiter(SERVER_KNOBS->TLOG_SPILL_REFERENCE_MAX_PEEK_MEMORY_BYTES),
-	    concurrentLogRouterReads(SERVER_KNOBS->CONCURRENT_LOG_ROUTER_READS), emptyVersionWaitWindow(0),
-	    ignorePopDeadline(0), dataFolder(folder), degraded(degraded),
+	    concurrentLogRouterReads(SERVER_KNOBS->CONCURRENT_LOG_ROUTER_READS), ignorePopDeadline(0), dataFolder(folder),
+	    degraded(degraded),
 	    commitLatencyDist(Histogram::getHistogram("tLog"_sr, "commit"_sr, Histogram::Unit::milliseconds)),
 	    queueWaitLatencyDist(Histogram::getHistogram("tLog"_sr, "QueueWait"_sr, Histogram::Unit::milliseconds)),
 	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)) {
@@ -2050,8 +2051,11 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		//   - Have data return to the caller, or
 		//   - Batching empty peek is disabled, or
 		//   - Batching empty peek interval has been reached.
+		auto it = self->emptyVersionWaitWindowMap.find(reqTag);
+		double emptyVersionWaitWindow = it == self->emptyVersionWaitWindowMap.end() ? 0 : it->second;
+		TraceEvent("WaitWindowApplied").detail("Tag", reqTag.toString()).detail("WaitWindow", emptyVersionWaitWindow);
 		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-		    (now() - blockStart > self->emptyVersionWaitWindow)) {
+		    (now() - blockStart > emptyVersionWaitWindow)) {
 			break;
 		}
 
@@ -2059,8 +2063,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
 		// batching interval has expired.
-		wait(logData->version.whenAtLeast(waitUntilVersion) ||
-		     delay(self->emptyVersionWaitWindow - (now() - blockStart)));
+		wait(logData->version.whenAtLeast(waitUntilVersion) || delay(emptyVersionWaitWindow - (now() - blockStart)));
 		if (logData->version.get() < waitUntilVersion) {
 			break; // We know that from `reqBegin` to logData->version are all empty messages. Skip re-executing the
 			       // peek logic.
@@ -2722,9 +2725,8 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 			}
 		}
 		when(TlogEmptyVersionWaitRequest req = waitNext(tli.emptyVersionWaitRequest.getFuture())) {
-			if (req.waitWindow > 0)
-				TraceEvent("TlogUpdateWaitWindow", logData->logId).detail("WaitWindow", req.waitWindow);
-			self->emptyVersionWaitWindow = req.waitWindow;
+			TraceEvent("TlogRecvWaitWindowUpdate").detail("WaitWindowUpdate", req.waitWindow).detail("Tag", req.tag);
+			self->emptyVersionWaitWindowMap[req.tag] = req.waitWindow;
 		}
 		when(TLogPeekStreamRequest req = waitNext(tli.peekStreamMessages.getFuture())) {
 			TraceEvent(SevDebug, "TLogPeekStream", logData->logId)

@@ -11765,8 +11765,9 @@ ACTOR Future<Void> syncDelayWindowWithTlog(StorageServer* self) {
 				}
 				double waitWindow = self->safeWaitWindowSketch.percentile(
 				    SERVER_KNOBS->DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
-				self->logSystem->pushEmptyVersionWaitWindow(waitWindow -
-				                                            SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT);
+				self->logSystem->pushEmptyVersionWaitWindow(
+				    waitWindow - SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT, self->tag);
+				TraceEvent("SSTagInspect", self->thisServerID).detail("Tag", self->tag.toString());
 				if (waitWindow > 0)
 					TraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
 					    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())

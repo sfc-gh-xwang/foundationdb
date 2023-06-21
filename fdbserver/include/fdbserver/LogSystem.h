@@ -703,7 +703,7 @@ struct ILogSystem {
 	virtual void setOldestBackupEpoch(LogEpoch epoch) = 0;
 
 	// Broadcast calculated delayWindow from a storage server to all tlogs. At most once delivery.
-	virtual void pushEmptyVersionWaitWindow(double waitWindow) = 0;
+	virtual void pushEmptyVersionWaitWindow(double waitWindow, const Tag& tag) = 0;
 };
 
 struct LengthPrefixedStringRef {

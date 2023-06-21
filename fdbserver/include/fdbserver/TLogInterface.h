@@ -415,15 +415,15 @@ struct TLogSnapRequest {
 struct TlogEmptyVersionWaitRequest {
 	constexpr static FileIdentifier file_identifier = 12074218;
 	double waitWindow;
-
+	Tag tag;
 	ReplyPromise<Void> reply;
 
 	TlogEmptyVersionWaitRequest() = default;
-	TlogEmptyVersionWaitRequest(double waitWindow) : waitWindow(waitWindow) {}
+	TlogEmptyVersionWaitRequest(double waitWindow, Tag tag) : waitWindow(waitWindow), tag(tag) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, waitWindow, reply);
+		serializer(ar, waitWindow, tag, reply);
 	}
 };
 
