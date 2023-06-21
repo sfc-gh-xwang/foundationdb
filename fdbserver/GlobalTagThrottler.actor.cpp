@@ -25,6 +25,8 @@
 #include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbserver/TagThrottler.h"
 
+#include <boost/unordered/unordered_flat_map.hpp>
+
 #include <limits>
 
 #include "flow/actorcompiler.h" // must be last include
@@ -64,7 +66,7 @@
 
 class GlobalTagThrottlerImpl {
 	template <class K, class V, class H>
-	static Optional<V> tryGet(std::unordered_map<K, V, H> const& m, K const& k) {
+	static Optional<V> tryGet(boost::unordered::unordered_flat_map<K, V, H> const& m, K const& k) {
 		auto it = m.find(k);
 		if (it == m.end()) {
 			return {};
@@ -171,7 +173,7 @@ class GlobalTagThrottlerImpl {
 	uint32_t lastBusyThrottlingIdCount{ 0 };
 
 	ThrottlingIdMap<PerThrottlingIdStatistics> throttlingStatistics;
-	std::unordered_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
+	boost::unordered::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
 
 	// Returns the cost rate for the given throttling ID on the given storage server
 	Optional<double> getCurrentCost(UID storageServerId, ThrottlingId throttlingId) const {
@@ -503,17 +505,17 @@ public:
 	}
 
 	void removeExpiredThrottlingIds() {
-		for (auto it = throttlingStatistics.begin(); it != throttlingStatistics.end();) {
-			const auto& [throttlingId, stats] = *it;
+		boost::unordered::erase_if(throttlingStatistics, [&](const auto& kv) {
+			const auto& [throttlingId, stats] = kv;
 			if (!stats.recentTransactionsAdded()) {
 				for (auto& [ss, throttlingIdToCounters] : throughput) {
 					throttlingIdToCounters.erase(throttlingId);
 				}
-				it = throttlingStatistics.erase(it);
+				return true;
 			} else {
-				++it;
+				return false;
 			}
-		}
+		});
 	}
 
 	Future<Void> removeExpiredThrottlingIdsActor() {
