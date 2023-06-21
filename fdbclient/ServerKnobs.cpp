@@ -126,6 +126,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( SS_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH,               1000 ); 
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL,            0.010 );
 	init( DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE,      0.01 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT,               100 );
 
 	// disk snapshot max timeout, to be put in TLog, storage and coordinator nodes
 	init( MAX_FORKED_PROCESS_OUTPUT,                            1024 );

@@ -132,6 +132,8 @@ public:
 	double DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
 	                                                        // delay window. Setting this too high will result in higher
 	                                                        // read latency.
+	double DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT; // shift neutral position away from zero for DDSketch to account for
+	                                                // negative samples
 
 	// Data distribution queue
 	double HEALTH_POLL_TIME;

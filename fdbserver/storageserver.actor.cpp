@@ -2168,10 +2168,15 @@ ReadMetrics getReadMetrics() {
 }
 
 // Lightweight blocking function that updates requested version to version queue for statistics
-inline void sampleRequestVersions(StorageServer* self, const Version& version, const double& timestamp) {
+void sampleRequestVersions(StorageServer* self,
+                           const Version& version,
+                           const double& versionArrivalTimestamp,
+                           const double& versionWaitTime) {
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return;
-	if (timestamp - self->lastVersionSampleTime > SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL) {
+
+	bool positiveSample = false;
+	if (versionArrivalTimestamp - self->lastVersionSampleTime > SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL) {
 		bool popped = false;
 		while (!self->versionQueue.empty() && self->versionQueue.front().version <= version) {
 			self->versionQueue.pop_front();
@@ -2180,15 +2185,23 @@ inline void sampleRequestVersions(StorageServer* self, const Version& version, c
 
 		// NOTE: This current approach collects pessimistic statistics
 		if (!self->versionQueue.empty() && (SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
-			double emptyVersionSafeWait = timestamp - self->versionQueue.front().timestamp;
+			double emptyVersionSafeWait = versionArrivalTimestamp - self->versionQueue.front().timestamp;
 			if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 				TraceEvent("EmptyVersionWaitWindow", self->thisServerID)
 				    .detail("QueueSize", self->versionQueue.size())
 				    .detail("WaitWindow", emptyVersionSafeWait);
 
-			self->safeWaitWindowSketch.addSample(emptyVersionSafeWait);
+			TraceEvent("PositiveEmptyVersionSample").detail("Duration", emptyVersionSafeWait);
+			self->safeWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT +
+			                                     emptyVersionSafeWait);
+			positiveSample = true;
 		}
-		self->lastVersionSampleTime = timestamp;
+		self->lastVersionSampleTime = versionArrivalTimestamp;
+	}
+
+	if (!positiveSample) {
+		TraceEvent("NegativeEmptyVersionSample").detail("Duration", versionWaitTime);
+		self->safeWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT - versionWaitTime);
 	}
 }
 
@@ -2217,9 +2230,6 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 		state double queueWaitEnd = g_network->timer();
 		data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-		// Track request version recv time right before we need to wait for the version
-		sampleRequestVersions(data, req.version, now());
-
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent("GetValueDebug",
 			                      req.options.get().debugID.get().first(),
@@ -2228,7 +2238,9 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 		state Optional<Value> v;
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
 		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext));
-		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
+		state double readVersionWaitTime = g_network->timer() - queueWaitEnd;
+		data->counters.readVersionWaitSample.addMeasurement(readVersionWaitTime);
+		sampleRequestVersions(data, req.version, queueWaitEnd, readVersionWaitTime);
 
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent("GetValueDebug",
@@ -4384,9 +4396,6 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request version recv time right before we need to wait for the version
-	sampleRequestVersions(data, req.version, now());
-
 	try {
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent(
@@ -4402,7 +4411,9 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 		    .detail("DebugID",
 		            req.options.present() && req.options.get().debugID.present() ? req.options.get().debugID.get()
 		                                                                         : UID());
-		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
+		state double readVersionWaitTime = g_network->timer() - queueWaitEnd;
+		data->counters.readVersionWaitSample.addMeasurement(readVersionWaitTime);
+		sampleRequestVersions(data, req.version, queueWaitEnd, readVersionWaitTime);
 
 		tenantGroup =
 		    data->getTenantGroup(version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
@@ -5571,9 +5582,6 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request version recv time right before we need to wait for the version
-	sampleRequestVersions(data, req.version, now());
-
 	try {
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent(
@@ -5581,7 +5589,9 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 		// VERSION_VECTOR change
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
 		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context));
-		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
+		state double readVersionWaitTime = g_network->timer() - queueWaitEnd;
+		data->counters.readVersionWaitSample.addMeasurement(readVersionWaitTime);
+		sampleRequestVersions(data, req.version, queueWaitEnd, readVersionWaitTime);
 
 		data->checkTenantEntry(
 		    req.version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
@@ -5775,8 +5785,6 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 	// Active load balancing runs at a very high priority (to obtain accurate queue lengths)
 	// so we need to downgrade here
 	wait(delay(0, TaskPriority::DefaultEndpoint));
-
-	sampleRequestVersions(data, req.version, now());
 
 	try {
 		if (req.options.present() && req.options.get().debugID.present())
@@ -5991,13 +5999,12 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request version recv time right before we need to wait for the version
-	sampleRequestVersions(data, req.version, now());
-
 	try {
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
 		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext));
-		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
+		state double readVersionWaitTime = g_network->timer() - queueWaitEnd;
+		data->counters.readVersionWaitSample.addMeasurement(readVersionWaitTime);
+		sampleRequestVersions(data, req.version, queueWaitEnd, readVersionWaitTime);
 
 		tenantGroup =
 		    data->getTenantGroup(version, req.tenantInfo, req.options.map(&ReadOptions::lockAware).orDefault(false));
@@ -11744,16 +11751,22 @@ ACTOR Future<Void> reportStorageServerState(StorageServer* self) {
 }
 
 ACTOR Future<Void> syncDelayWindowWithTlog(StorageServer* self) {
+	// TODO: wait until dbinfo on change then check logSystem is assigned or not
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return Void();
+
 	loop {
 		choose {
 			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL))) {
-				if (!self->logSystem) // wait for logSystem to be assigned
+				if (!self->logSystem) {
+					// FIXME: wait for logSystem to be assigned, is there a better way to do this?
+					TraceEvent("LogSystemNull");
 					continue;
+				}
 				double waitWindow = self->safeWaitWindowSketch.percentile(
 				    SERVER_KNOBS->DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
-				self->logSystem->pushEmptyVersionWaitWindow(waitWindow);
+				self->logSystem->pushEmptyVersionWaitWindow(waitWindow -
+				                                            SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT);
 				if (waitWindow > 0)
 					TraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
 					    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
