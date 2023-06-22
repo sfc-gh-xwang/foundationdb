@@ -963,6 +963,7 @@ public:
 
 	std::deque<StorageServer::EmptyVersionQueueEntry> versionQueue;
 	double lastVersionSampleTime;
+	double lastWaitWindow;
 	DDSketch<double> safeWaitWindowSketch;
 
 	std::map<Version, Standalone<VerUpdateRef>> const& getMutationLog() const { return mutationLog; }
@@ -1475,8 +1476,8 @@ public:
 	                                                              SS_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM,
 	                                                              Histogram::Unit::bytes)),
 	    tag(invalidTag), poppedAllAfter(std::numeric_limits<Version>::max()), cpuUsage(0.0), diskUsage(0.0),
-	    lastVersionSampleTime(0), safeWaitWindowSketch(0.001), storage(this, storage), shardChangeCounter(0),
-	    lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
+	    lastVersionSampleTime(0), lastWaitWindow(0), safeWaitWindowSketch(0.001), storage(this, storage),
+	    shardChangeCounter(0), lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
 	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()), primaryLocality(tagLocalityInvalid),
 	    knownCommittedVersion(0), versionLag(0), logProtocol(0), thisServerID(ssi.id()), tssInQuarantine(false), db(db),
 	    actors(false), byteSampleClears(false, "\xff\xff\xff"_sr), durableInProgress(Void()), watchBytes(0),
@@ -2167,13 +2168,10 @@ ReadMetrics getReadMetrics() {
 	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
 }
 
-// Lightweight blocking function that updates requested version to version queue for statistics
-void sampleRequestVersions(StorageServer* self,
-                           const Version& version,
-                           const double& versionArrivalTimestamp,
-                           const double& versionWaitTime) {
+// Lightweight blocking function that updates requested version to version queue for statistics.
+bool samplePositiveWaitWindow(StorageServer* self, Version version, double versionArrivalTimestamp) {
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
-		return;
+		return true; // this effectively disables negative sample collection
 
 	bool positiveSample = false;
 	if (versionArrivalTimestamp - self->lastVersionSampleTime > SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL) {
@@ -2198,10 +2196,16 @@ void sampleRequestVersions(StorageServer* self,
 		}
 		self->lastVersionSampleTime = versionArrivalTimestamp;
 	}
+	return positiveSample;
+}
 
+// Lightweight blocking function that updates requested version to version queue for statistics
+inline void sampleNegativeWaitWindow(StorageServer* self, bool positiveSample, double waitTime) {
+	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
+		return;
 	if (!positiveSample) {
-		TraceEvent("NegativeEmptyVersionSample").detail("Duration", versionWaitTime);
-		self->safeWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT - versionWaitTime);
+		TraceEvent("NegativeEmptyVersionSample").detail("Duration", waitTime);
+		self->safeWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT - waitTime);
 	}
 }
 
@@ -2230,6 +2234,11 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 		state double queueWaitEnd = g_network->timer();
 		data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
+		// Track request time and determin if waitWindow is positive at this moment
+		// We must do it here because during waifForVersion() below, the underlying wait queue may be updated with more
+		// tlog syncs, by then we will have no way to tell if the request version waited or not
+		state bool positiveWaitWindowSample = samplePositiveWaitWindow(data, req.version, queueWaitEnd);
+
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent("GetValueDebug",
 			                      req.options.get().debugID.get().first(),
@@ -2238,9 +2247,11 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 		state Optional<Value> v;
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
 		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext));
-		state double readVersionWaitTime = g_network->timer() - queueWaitEnd;
-		data->counters.readVersionWaitSample.addMeasurement(readVersionWaitTime);
-		sampleRequestVersions(data, req.version, queueWaitEnd, readVersionWaitTime);
+		state double versionWaitTime = g_network->timer() - queueWaitEnd;
+		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
+
+		// Track wait window as negative if it is deemed not positive when it arrives
+		sampleNegativeWaitWindow(data, positiveWaitWindowSample, versionWaitTime);
 
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent("GetValueDebug",
@@ -4396,6 +4407,11 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
+	// Track request time and determin if waitWindow is positive at this moment
+	// We must do it here because during waifForVersion() below, the underlying wait queue may be updated with more
+	// tlog syncs, by then we will have no way to tell if the request version waited or not
+	state bool positiveWaitWindowSample = samplePositiveWaitWindow(data, req.version, queueWaitEnd);
+
 	try {
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent(
@@ -4411,9 +4427,11 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 		    .detail("DebugID",
 		            req.options.present() && req.options.get().debugID.present() ? req.options.get().debugID.get()
 		                                                                         : UID());
-		state double readVersionWaitTime = g_network->timer() - queueWaitEnd;
-		data->counters.readVersionWaitSample.addMeasurement(readVersionWaitTime);
-		sampleRequestVersions(data, req.version, queueWaitEnd, readVersionWaitTime);
+		state double versionWaitTime = g_network->timer() - queueWaitEnd;
+		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
+
+		// Track wait window as negative if it is deemed not positive when it arrives
+		sampleNegativeWaitWindow(data, positiveWaitWindowSample, versionWaitTime);
 
 		tenantGroup =
 		    data->getTenantGroup(version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
@@ -5582,6 +5600,11 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
+	// Track request time and determin if waitWindow is positive at this moment
+	// We must do it here because during waifForVersion() below, the underlying wait queue may be updated with more
+	// tlog syncs, by then we will have no way to tell if the request version waited or not
+	state bool positiveWaitWindowSample = samplePositiveWaitWindow(data, req.version, queueWaitEnd);
+
 	try {
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent(
@@ -5589,9 +5612,11 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 		// VERSION_VECTOR change
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
 		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context));
-		state double readVersionWaitTime = g_network->timer() - queueWaitEnd;
-		data->counters.readVersionWaitSample.addMeasurement(readVersionWaitTime);
-		sampleRequestVersions(data, req.version, queueWaitEnd, readVersionWaitTime);
+		state double versionWaitTime = g_network->timer() - queueWaitEnd;
+		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
+
+		// Track wait window as negative if it is deemed not positive when it arrives
+		sampleNegativeWaitWindow(data, positiveWaitWindowSample, versionWaitTime);
 
 		data->checkTenantEntry(
 		    req.version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
@@ -5999,12 +6024,19 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
+	// Track request time and determin if waitWindow is positive at this moment
+	// We must do it here because during waifForVersion() below, the underlying wait queue may be updated with more
+	// tlog syncs, by then we will have no way to tell if the request version waited or not
+	state bool positiveWaitWindowSample = samplePositiveWaitWindow(data, req.version, queueWaitEnd);
+
 	try {
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
 		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext));
-		state double readVersionWaitTime = g_network->timer() - queueWaitEnd;
-		data->counters.readVersionWaitSample.addMeasurement(readVersionWaitTime);
-		sampleRequestVersions(data, req.version, queueWaitEnd, readVersionWaitTime);
+		state double versionWaitTime = g_network->timer() - queueWaitEnd;
+		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
+
+		// Track wait window as negative if it is deemed not positive when it arrives
+		sampleNegativeWaitWindow(data, positiveWaitWindowSample, versionWaitTime);
 
 		tenantGroup =
 		    data->getTenantGroup(version, req.tenantInfo, req.options.map(&ReadOptions::lockAware).orDefault(false));
@@ -11763,20 +11795,24 @@ ACTOR Future<Void> syncDelayWindowWithTlog(StorageServer* self) {
 					TraceEvent("LogSystemNull");
 					continue;
 				}
-				double waitWindow = self->safeWaitWindowSketch.percentile(
-				    SERVER_KNOBS->DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
-				self->logSystem->pushEmptyVersionWaitWindow(
-				    waitWindow - SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT, self->tag);
-				TraceEvent("SSTagInspect", self->thisServerID).detail("Tag", self->tag.toString());
-				if (waitWindow > 0)
-					TraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
-					    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
-					    .detail("Percentile001", self->safeWaitWindowSketch.percentile(0.001))
-					    .detail("Percentile005", self->safeWaitWindowSketch.percentile(0.005))
-					    .detail("Percentile010", self->safeWaitWindowSketch.percentile(0.010));
+				// if sample population is zero (e.g., after clear), do not change wait window
+				double waitWindowTarget = self->safeWaitWindowSketch.getPopulationSize() == 0
+				                              ? self->lastWaitWindow
+				                              : self->lastWaitWindow +
+				                                    self->safeWaitWindowSketch.percentile(
+				                                        SERVER_KNOBS->DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
+				                                    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT;
+				self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag);
+				self->lastWaitWindow = waitWindowTarget;
+
+				TraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
+				    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
+				    .detail("Percentile001", self->safeWaitWindowSketch.percentile(0.001))
+				    .detail("Percentile005", self->safeWaitWindowSketch.percentile(0.005))
+				    .detail("Percentile010", self->safeWaitWindowSketch.percentile(0.010));
 
 				// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe let
-				// it return a reply and then clear?
+				// it return a reply and then clear? but then we will have missed out datapoints
 				self->safeWaitWindowSketch.clear();
 			}
 		}

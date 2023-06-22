@@ -2052,13 +2052,16 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		//   - Batching empty peek is disabled, or
 		//   - Batching empty peek interval has been reached.
 		auto it = self->emptyVersionWaitWindowMap.find(reqTag);
-		double emptyVersionWaitWindow = it == self->emptyVersionWaitWindowMap.end() ? 0 : it->second;
+		state double emptyVersionWaitWindow = it == self->emptyVersionWaitWindowMap.end()
+		                                          ? 0 // default wait window to zero if no information
+		                                          : it->second;
 		TraceEvent("WaitWindowApplied").detail("Tag", reqTag.toString()).detail("WaitWindow", emptyVersionWaitWindow);
 		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
 		    (now() - blockStart > emptyVersionWaitWindow)) {
 			break;
 		}
 
+		// this will be disabled once dynamic wait window is deployed
 		state Version waitUntilVersion = logData->version.get() + 1;
 
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
