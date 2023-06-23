@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 
+#include "fdbclient/ServerKnobs.h"
 #include "flow/Hash3.h"
 #include "flow/UnitTest.h"
 #include "fdbclient/NativeAPI.actor.h"
@@ -2047,21 +2048,42 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			//TraceEvent("TLogPeekResults", self->dbgid).detail("ForAddress", replyPromise.getEndpoint().getPrimaryAddress()).detail("MessageBytes", messages.getLength()).detail("NextEpoch", next_pos.epoch).detail("NextSeq", next_pos.sequence).detail("NowSeq", self->sequence.getNextSequence());
 		}
 
-		// Reply the peek request when
-		//   - Have data return to the caller, or
-		//   - Batching empty peek is disabled, or
-		//   - Batching empty peek interval has been reached.
-		auto it = self->emptyVersionWaitWindowMap.find(reqTag);
-		state double emptyVersionWaitWindow = it == self->emptyVersionWaitWindowMap.end()
-		                                          ? 0 // default wait window to zero if no information
-		                                          : it->second;
-		TraceEvent("WaitWindowApplied").detail("Tag", reqTag.toString()).detail("WaitWindow", emptyVersionWaitWindow);
-		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-		    (now() - blockStart > emptyVersionWaitWindow)) {
+		// reply immediately if have message, or static and dynamic delay are both diabled
+		if (messages.getLength() > 0 || (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG &&
+		                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT !=
+		                                     ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)) {
 			break;
 		}
 
-		// this will be disabled once dynamic wait window is deployed
+		// static and dynamic are both enabled, log error and disable both
+		if (SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG &&
+		    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+		        ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
+			TraceEvent("ConflictingKnobSettings")
+			    .detail("Reason", "Cannot enable static and dynamic empty version wait batching at the same time");
+			break;
+		}
+
+		state double emptyVersionWaitWindow = 0;
+		if (SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG) {
+			// only static delay enabled
+			emptyVersionWaitWindow = SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL;
+		} else if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+		           ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
+			// only dynamic delay enabled
+			auto it = self->emptyVersionWaitWindowMap.find(reqTag);
+			emptyVersionWaitWindow = it == self->emptyVersionWaitWindowMap.end()
+			                             ? 0 // default wait window to zero if no information
+			                             : it->second;
+			TraceEvent("DynamicWaitWindowApplied")
+			    .detail("Tag", reqTag.toString())
+			    .detail("WaitWindow", emptyVersionWaitWindow);
+		}
+
+		if (now() - blockStart > emptyVersionWaitWindow) {
+			break;
+		}
+
 		state Version waitUntilVersion = logData->version.get() + 1;
 
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
