@@ -378,6 +378,8 @@ struct TLogData : NonCopyable {
 
 	// Track dynamic empty version wait window for each storage server
 	std::unordered_map<Tag, double> emptyVersionWaitWindowMap;
+	uint32_t tlogVersionSyncNumber;
+	double lastEmptyVersionTlogReportTimestamp;
 
 	TLogData(UID dbgid,
 	         UID workerID,
@@ -396,7 +398,8 @@ struct TLogData : NonCopyable {
 	    degraded(degraded),
 	    commitLatencyDist(Histogram::getHistogram("tLog"_sr, "commit"_sr, Histogram::Unit::milliseconds)),
 	    queueWaitLatencyDist(Histogram::getHistogram("tLog"_sr, "QueueWait"_sr, Histogram::Unit::milliseconds)),
-	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)) {
+	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)),
+	    tlogVersionSyncNumber(0), lastEmptyVersionTlogReportTimestamp(0) {
 		cx = openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	}
 };
@@ -2750,9 +2753,16 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 			}
 		}
 		when(TlogEmptyVersionWaitRequest req = waitNext(tli.emptyVersionWaitRequest.getFuture())) {
-			DisabledTraceEvent("TlogRecvWaitWindowUpdate")
+			DisabledTraceEvent(SevDebug, "TlogRecvWaitWindowUpdate")
 			    .detail("WaitWindowUpdate", req.waitWindow)
 			    .detail("Tag", req.tag);
+			++self->tlogVersionSyncNumber;
+			if (now() - self->lastEmptyVersionTlogReportTimestamp >
+			    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_REPORT_INTERVAL) {
+				TraceEvent("TlogVersionSyncStatistics", self->workerID).detail("Amount", self->tlogVersionSyncNumber);
+				self->tlogVersionSyncNumber = 0;
+				self->lastEmptyVersionTlogReportTimestamp = now();
+			}
 			self->emptyVersionWaitWindowMap[req.tag] = req.waitWindow;
 		}
 		when(TLogPeekStreamRequest req = waitNext(tli.peekStreamMessages.getFuture())) {

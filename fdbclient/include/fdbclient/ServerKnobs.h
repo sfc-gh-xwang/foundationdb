@@ -134,6 +134,8 @@ public:
 	                                                        // read latency.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT; // shift neutral position away from zero for DDSketch to account for
 	                                                // negative samples
+	double DYNAMIC_EMPTY_VERSION_WAIT_REPORT_INTERVAL; // interval of reporting dynamic empty version wait related
+	                                                   // observability metrics
 
 	// Data distribution queue
 	double HEALTH_POLL_TIME;
