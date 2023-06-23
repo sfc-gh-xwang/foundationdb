@@ -2728,7 +2728,9 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 			}
 		}
 		when(TlogEmptyVersionWaitRequest req = waitNext(tli.emptyVersionWaitRequest.getFuture())) {
-			TraceEvent("TlogRecvWaitWindowUpdate").detail("WaitWindowUpdate", req.waitWindow).detail("Tag", req.tag);
+			DisabledTraceEvent("TlogRecvWaitWindowUpdate")
+			    .detail("WaitWindowUpdate", req.waitWindow)
+			    .detail("Tag", req.tag);
 			self->emptyVersionWaitWindowMap[req.tag] = req.waitWindow;
 		}
 		when(TLogPeekStreamRequest req = waitNext(tli.peekStreamMessages.getFuture())) {
