@@ -18,7 +18,6 @@
  * limitations under the License.
  */
 
-#include "fdbclient/ServerKnobs.h"
 #include "flow/Hash3.h"
 #include "flow/UnitTest.h"
 #include "fdbclient/NativeAPI.actor.h"
@@ -2078,10 +2077,8 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			emptyVersionWaitWindow = it == self->emptyVersionWaitWindowMap.end()
 			                             ? 0 // default wait window to zero if no information
 			                             : it->second;
-			TraceEvent("DynamicWaitWindowApplied")
-			    .detail("Tag", reqTag.toString())
-			    .detail("WaitWindow", emptyVersionWaitWindow);
 		}
+		TraceEvent("WaitWindowApplied").detail("Tag", reqTag.toString()).detail("WaitWindow", emptyVersionWaitWindow);
 
 		if (now() - blockStart > emptyVersionWaitWindow) {
 			break;
@@ -2757,8 +2754,7 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 			    .detail("WaitWindowUpdate", req.waitWindow)
 			    .detail("Tag", req.tag);
 			++self->tlogVersionSyncNumber;
-			if (now() - self->lastEmptyVersionTlogReportTimestamp >
-			    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_REPORT_INTERVAL) {
+			if (now() - self->lastEmptyVersionTlogReportTimestamp > SERVER_KNOBS->VERSION_SYNC_REPORT_INTERVAL) {
 				TraceEvent("TlogVersionSyncStatistics", self->workerID).detail("Amount", self->tlogVersionSyncNumber);
 				self->tlogVersionSyncNumber = 0;
 				self->lastEmptyVersionTlogReportTimestamp = now();

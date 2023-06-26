@@ -129,13 +129,13 @@ public:
 	                                            // multiple times the size of SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL
 	                                            // for collected statistics to make sense.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL; // Interval of pushing calculated delay window from ss to tlogs
-	double DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
+	double DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
 	                                                        // delay window. Setting this too high will result in higher
 	                                                        // read latency.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT; // shift neutral position away from zero for DDSketch to account for
 	                                                // negative samples
-	double DYNAMIC_EMPTY_VERSION_WAIT_REPORT_INTERVAL; // interval of reporting dynamic empty version wait related
-	                                                   // observability metrics
+	double VERSION_SYNC_REPORT_INTERVAL; // interval of reporting dynamic empty version wait related
+	                                     // observability metrics
 
 	// Data distribution queue
 	double HEALTH_POLL_TIME;

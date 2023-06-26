@@ -2237,7 +2237,7 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 		state double queueWaitEnd = g_network->timer();
 		data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-		// Track request time and determin if waitWindow is positive at this moment
+		// Track request time and determine if waitWindow is positive at this moment
 		// We must do it here because during waifForVersion() below, the underlying wait queue may be updated with more
 		// tlog syncs, by then we will have no way to tell if the request version waited or not
 		state bool shouldSampleNegative = samplePositiveWaitWindow(data, req.version, queueWaitEnd);
@@ -4411,7 +4411,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request time and determin if waitWindow is positive at this moment
+	// Track request time and determine if waitWindow is positive at this moment
 	// We must do it here because during waifForVersion() below, the underlying wait queue may be updated with more
 	// tlog syncs, by then we will have no way to tell if the request version waited or not
 	state bool shouldSampleNegative = samplePositiveWaitWindow(data, req.version, queueWaitEnd);
@@ -5604,7 +5604,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request time and determin if waitWindow is positive at this moment
+	// Track request time and determine if waitWindow is positive at this moment
 	// We must do it here because during waifForVersion() below, the underlying wait queue may be updated with more
 	// tlog syncs, by then we will have no way to tell if the request version waited or not
 	state bool shouldSampleNegative = samplePositiveWaitWindow(data, req.version, queueWaitEnd);
@@ -6028,7 +6028,7 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request time and determin if waitWindow is positive at this moment
+	// Track request time and determine if waitWindow is positive at this moment
 	// We must do it here because during waifForVersion() below, the underlying wait queue may be updated with more
 	// tlog syncs, by then we will have no way to tell if the request version waited or not
 	state bool shouldSampleNegative = samplePositiveWaitWindow(data, req.version, queueWaitEnd);
@@ -11786,7 +11786,7 @@ ACTOR Future<Void> reportStorageServerState(StorageServer* self) {
 	}
 }
 
-ACTOR Future<Void> syncDelayWindowWithTlog(StorageServer* self) {
+ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	// TODO: wait until dbinfo on change then check logSystem is assigned or not
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return Void();
@@ -11803,16 +11803,25 @@ ACTOR Future<Void> syncDelayWindowWithTlog(StorageServer* self) {
 				                              ? self->lastWaitWindow
 				                              : self->lastWaitWindow +
 				                                    self->safeWaitWindowSketch.percentile(
-				                                        SERVER_KNOBS->DYNAMIC_ENPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
+				                                        SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
 				                                    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT;
+
+				// Under read bursts, it is possible the sketch gives negative results because of requests waiting for
+				// versions even if we have already set waitWindow to zero. We keep sending the minimum wait window
+				// possible to tlog (zero)
+				if (waitWindowTarget < 0)
+					waitWindowTarget = 0;
+
 				self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag);
 				self->lastWaitWindow = waitWindowTarget;
 
-				DisabledTraceEvent("EmptyVersionSketchPercentile", self->thisServerID)
+				TraceEvent(SevDebug, "EmptyVersionSketchPercentile", self->thisServerID)
 				    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
-				    .detail("Percentile001", self->safeWaitWindowSketch.percentile(0.001))
-				    .detail("Percentile005", self->safeWaitWindowSketch.percentile(0.005))
-				    .detail("Percentile010", self->safeWaitWindowSketch.percentile(0.010));
+				    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
+				    .detail("PercentileDecision",
+				            self->safeWaitWindowSketch.percentile(
+				                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
+				                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT);
 
 				// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe let
 				// it return a reply and then clear? but then we will have missed out datapoints
@@ -11850,7 +11859,7 @@ ACTOR Future<Void> storageServerCore(StorageServer* self, StorageServerInterface
 	self->actors.add(traceRole(Role::STORAGE_SERVER, ssi.id()));
 	self->actors.add(reportStorageServerState(self));
 	self->actors.add(storageEngineConsistencyCheck(self));
-	self->actors.add(syncDelayWindowWithTlog(self));
+	self->actors.add(syncWaitWindowWithTlog(self));
 
 	self->transactionTagCounter.startNewInterval();
 	self->actors.add(
