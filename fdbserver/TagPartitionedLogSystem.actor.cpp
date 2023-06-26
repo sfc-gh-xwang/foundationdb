@@ -3186,10 +3186,25 @@ ACTOR Future<TLogLockResult> TagPartitionedLogSystem::lockTLog(
 	}
 }
 
-void TagPartitionedLogSystem::pushEmptyVersionWaitWindow(double waitWindow, const Tag& tag) {
-	for (auto& logSet : tLogs) {
-		for (auto& tlog : logSet->logServers) {
-			tlog->get().interf().emptyVersionWaitRequest.tryGetReply(TlogEmptyVersionWaitRequest(waitWindow, tag));
+Future<Void> TagPartitionedLogSystem::pushEmptyVersionWaitWindow(double waitWindow, const Tag& tag) {
+	return pushEmptyVersionWaitWindow_internal(this, waitWindow, tag);
+}
+
+ACTOR Future<Void> TagPartitionedLogSystem::pushEmptyVersionWaitWindow_internal(TagPartitionedLogSystem const* self,
+                                                                                double waitWindow,
+                                                                                Tag tag) {
+	try {
+		std::vector<Future<Void>> sent;
+		for (auto& logSet : self->tLogs) {
+			for (auto& t : logSet->logServers) {
+				sent.push_back(transformErrors(throwErrorOr(t->get().interf().emptyVersionWaitRequest.tryGetReply(
+				                                   TlogEmptyVersionWaitRequest(waitWindow, tag))),
+				                               connection_failed()));
+			}
 		}
+		wait(waitForAll(sent));
+	} catch (Error& error) {
+		TraceEvent(SevDebug, "PushEmptyVersionWaitWindowFailure").log();
 	}
+	return Void();
 }

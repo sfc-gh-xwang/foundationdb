@@ -11827,16 +11827,15 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					emergencyRewrite = true;
 
 				if (emergencyRewrite || now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
-					self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag);
 					lastWaitWindow = waitWindowTarget;
 
-					TraceEvent(SevDebug, "EmptyVersionSketchPercentile", self->thisServerID)
+					TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
+					    .suppressFor(5)
 					    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
 					    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
-					    .detail("PercentileDecision",
-					            self->safeWaitWindowSketch.percentile(
-					                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
-					                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT);
+					    .detail("WaitWindowDecision", waitWindowTarget);
+
+					wait(self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag));
 
 					// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe
 					// let it return a reply and then clear? but then we will have missed out datapoints
