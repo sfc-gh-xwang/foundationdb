@@ -117,24 +117,34 @@ public:
 	double PEEK_BATCHING_EMPTY_MSG_INTERVAL; // Maximum wait time for a batch on tlog side.
 	enum DYNAMIC_EMPTY_VERSION_WAIT_MODE { DISABLED, EMPTY_VERSION_WAIT_LOG_ONLY, EMPTY_VERSION_WAIT };
 	int DYNAMIC_EMPTY_VERSION_WAIT; // Choose from DYNAMIC_EMPTY_VERSION_WAIT_MODE.
-	bool SS_EMPTY_VERSION_WAIT_LESS_SKEW_STAT; // Whether to log non-queue-popping samples in empty version wait window
-	                                           // logging. Enabling this will result in less skewed logging but trace
-	                                           // many more lines.
-	double SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL; // Interval of sampling incoming requests at each storage server for
-	                                              // empty version wait window logging. Sampling too frequently may
-	                                              // incur extra storage server CPU cost and latency penalty for reads.
-	int SS_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH; // Max size limit of empty version wait window logging queue. Tlog
-	                                            // samples will be discarded once limit is reached. It is advised to
-	                                            // keep this window big enough to capture tlog sync time window of
-	                                            // multiple times the size of SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL
-	                                            // for collected statistics to make sense.
-	double DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL; // Interval of pushing calculated delay window from ss to tlogs
+	bool DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT; // Whether to log non-queue-popping samples in empty version wait
+	                                                // window logging. Enabling this will result in less skewed logging
+	                                                // but trace many more lines.
+	double DYNAMIC_EMPTY_VERSION_WAIT_SS_SAMPLE_INTERVAL; // Interval of sampling incoming requests at each storage
+	                                                      // server for empty version wait window logging. Sampling too
+	                                                      // frequently may incur extra storage server CPU cost and
+	                                                      // latency penalty for reads.
+	int DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH; // Max size limit of empty version wait window logging queue. Tlog
+	                                                 // samples will be discarded once limit is reached. It is advised
+	                                                 // to keep this window big enough to capture tlog sync time window
+	                                                 // of multiple times the size of
+	                                                 // SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL for collected statistics
+	                                                 // to make sense.
+	double DYNAMIC_EMPTY_VERSION_WAIT_CHECK_INTERVAL; // Interval of ss checking local statistics to make a new decision
+	                                                  // of wait window.
+	double DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL; // Interval of pushing calculated delay window from ss to tlogs.
+	                                                 // IMPORTANT: This have huge impact on tlog CPU utilization
+	                                                 // especially on larger clusters. All ss will broadcast sync
+	                                                 // request to all tlogs following this interval. A cluster with 100
+	                                                 // ss with interval set to 0.01s will result in each tlog receiving
+	                                                 // 10000 more sync messages per second!
+	double DYNAMIC_EMPTY_VERSION_WAIT_SPIKE_THRESHOLD; // If previous synced window is this amount greater than the new
+	                                                   // window, bypass sync interval and sync immediately.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
-	                                                        // delay window. Setting this too high will result in higher
-	                                                        // read latency.
-	double DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT; // shift neutral position away from zero for DDSketch to account for
+	                                                        // delay window.
+	double DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT; // Shift neutral position away from zero for DDSketch to account for
 	                                                // negative samples
-	double VERSION_SYNC_REPORT_INTERVAL; // interval of reporting dynamic empty version wait related
+	double VERSION_SYNC_REPORT_INTERVAL; // Interval of tracing dynamic empty version wait related
 	                                     // observability metrics
 
 	// Data distribution queue

@@ -121,13 +121,15 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( PEEK_BATCHING_EMPTY_MSG,                             false ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG = true;
 	init( PEEK_BATCHING_EMPTY_MSG_INTERVAL,                    0.001 ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG_INTERVAL = 0.01;
 	init( DYNAMIC_EMPTY_VERSION_WAIT,    EMPTY_VERSION_WAIT_LOG_ONLY );
-	init( SS_EMPTY_VERSION_WAIT_LESS_SKEW_STAT,                false ); 
-	init( SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL,               0.001 ); 
-	init( SS_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH,               1000 ); 
+	init( DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT,           false ); 
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SS_SAMPLE_INTERVAL,       0.001 ); 
+	init( DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH,          1000 ); 
+	init( DYNAMIC_EMPTY_VERSION_WAIT_CHECK_INTERVAL,           0.010 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL,            1.000 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SPIKE_THRESHOLD,          0.005 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE,      0.01 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT,               100 );
-	init( VERSION_SYNC_REPORT_INTERVAL,             10 );
+	init( VERSION_SYNC_REPORT_INTERVAL,                           10 );
 
 	// disk snapshot max timeout, to be put in TLog, storage and coordinator nodes
 	init( MAX_FORKED_PROCESS_OUTPUT,                            1024 );

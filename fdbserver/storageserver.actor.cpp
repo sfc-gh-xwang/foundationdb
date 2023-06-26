@@ -963,7 +963,6 @@ public:
 
 	std::deque<StorageServer::EmptyVersionQueueEntry> versionQueue;
 	double lastVersionSampleTime;
-	double lastWaitWindow;
 	DDSketch<double> safeWaitWindowSketch;
 
 	std::map<Version, Standalone<VerUpdateRef>> const& getMutationLog() const { return mutationLog; }
@@ -1476,8 +1475,8 @@ public:
 	                                                              SS_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM,
 	                                                              Histogram::Unit::bytes)),
 	    tag(invalidTag), poppedAllAfter(std::numeric_limits<Version>::max()), cpuUsage(0.0), diskUsage(0.0),
-	    lastVersionSampleTime(0), lastWaitWindow(0), safeWaitWindowSketch(0.001), storage(this, storage),
-	    shardChangeCounter(0), lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
+	    lastVersionSampleTime(0), safeWaitWindowSketch(0.001), storage(this, storage), shardChangeCounter(0),
+	    lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
 	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()), primaryLocality(tagLocalityInvalid),
 	    knownCommittedVersion(0), versionLag(0), logProtocol(0), thisServerID(ssi.id()), tssInQuarantine(false), db(db),
 	    actors(false), byteSampleClears(false, "\xff\xff\xff"_sr), durableInProgress(Void()), watchBytes(0),
@@ -2176,7 +2175,8 @@ bool samplePositiveWaitWindow(StorageServer* self, Version version, double versi
 
 	bool shouldSample = false;
 	bool positiveSample = false;
-	if (versionArrivalTimestamp - self->lastVersionSampleTime > SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL) {
+	if (versionArrivalTimestamp - self->lastVersionSampleTime >
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SS_SAMPLE_INTERVAL) {
 		shouldSample = true;
 		bool popped = false;
 		while (!self->versionQueue.empty() && self->versionQueue.front().version <= version) {
@@ -2185,7 +2185,7 @@ bool samplePositiveWaitWindow(StorageServer* self, Version version, double versi
 		}
 
 		// NOTE: This current approach collects pessimistic statistics
-		if (!self->versionQueue.empty() && (SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
+		if (!self->versionQueue.empty() && (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
 			double emptyVersionSafeWait = versionArrivalTimestamp - self->versionQueue.front().timestamp;
 			if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 				TraceEvent("EmptyVersionWaitWindow", self->thisServerID)
@@ -9393,7 +9393,7 @@ inline void sampleTlogUpdateVersions(StorageServer* self, const Version& version
 	DisabledTraceEvent("EmptyVersionTlogRecv", self->thisServerID).detail("Timestamp", timestamp);
 	// If queue piles up it means that there's not enough reads, so the queue is useless in this time
 	// window anyway, we do a cheap clear() and let it build up again
-	if (self->versionQueue.size() >= SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
+	if (self->versionQueue.size() >= SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
 		TraceEvent("VersionQueueTlogCleared", self->thisServerID)
 		    .detail("QueueTimewindow", self->versionQueue.back().timestamp - self->versionQueue.front().timestamp);
 		self->versionQueue.clear();
@@ -11791,17 +11791,20 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return Void();
 
+	state double lastSyncTime = now();
+	state double lastWaitWindow = 0;
+
 	loop {
 		choose {
-			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL))) {
+			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_CHECK_INTERVAL))) {
 				if (!self->logSystem) {
 					continue;
 				}
 
 				// if sample population is zero (e.g., after clear), do not change wait window
 				double waitWindowTarget = self->safeWaitWindowSketch.getPopulationSize() == 0
-				                              ? self->lastWaitWindow
-				                              : self->lastWaitWindow +
+				                              ? lastWaitWindow
+				                              : lastWaitWindow +
 				                                    self->safeWaitWindowSketch.percentile(
 				                                        SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
 				                                    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT;
@@ -11812,20 +11815,34 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				if (waitWindowTarget < 0)
 					waitWindowTarget = 0;
 
-				self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag);
-				self->lastWaitWindow = waitWindowTarget;
+				// Skip sending wait window if new decision is the same as the last one sent. Common case is when wait
+				// window are consistently zero.
+				if (waitWindowTarget == lastWaitWindow)
+					continue;
 
-				TraceEvent(SevDebug, "EmptyVersionSketchPercentile", self->thisServerID)
-				    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
-				    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
-				    .detail("PercentileDecision",
-				            self->safeWaitWindowSketch.percentile(
-				                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
-				                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT);
+				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval knob
+				// 1. Last window much bigger than new window.
+				bool emergencyRewrite = false;
+				if (lastWaitWindow - waitWindowTarget > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SPIKE_THRESHOLD)
+					emergencyRewrite = true;
 
-				// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe let
-				// it return a reply and then clear? but then we will have missed out datapoints
-				self->safeWaitWindowSketch.clear();
+				if (emergencyRewrite || now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
+					self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag);
+					lastWaitWindow = waitWindowTarget;
+
+					TraceEvent(SevDebug, "EmptyVersionSketchPercentile", self->thisServerID)
+					    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
+					    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
+					    .detail("PercentileDecision",
+					            self->safeWaitWindowSketch.percentile(
+					                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
+					                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT);
+
+					// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe
+					// let it return a reply and then clear? but then we will have missed out datapoints
+					self->safeWaitWindowSketch.clear();
+					lastSyncTime = now();
+				}
 			}
 		}
 	}
