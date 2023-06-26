@@ -377,8 +377,7 @@ struct TLogData : NonCopyable {
 
 	// Track dynamic empty version wait window for each storage server
 	std::unordered_map<Tag, double> emptyVersionWaitWindowMap;
-	uint32_t tlogVersionSyncNumber;
-	double lastEmptyVersionTlogReportTimestamp;
+	uint32_t emptyVersionSyncMsgCount;
 
 	TLogData(UID dbgid,
 	         UID workerID,
@@ -398,7 +397,7 @@ struct TLogData : NonCopyable {
 	    commitLatencyDist(Histogram::getHistogram("tLog"_sr, "commit"_sr, Histogram::Unit::milliseconds)),
 	    queueWaitLatencyDist(Histogram::getHistogram("tLog"_sr, "QueueWait"_sr, Histogram::Unit::milliseconds)),
 	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)),
-	    tlogVersionSyncNumber(0), lastEmptyVersionTlogReportTimestamp(0) {
+	    emptyVersionSyncMsgCount(0) {
 		cx = openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	}
 };
@@ -2050,35 +2049,26 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			//TraceEvent("TLogPeekResults", self->dbgid).detail("ForAddress", replyPromise.getEndpoint().getPrimaryAddress()).detail("MessageBytes", messages.getLength()).detail("NextEpoch", next_pos.epoch).detail("NextSeq", next_pos.sequence).detail("NowSeq", self->sequence.getNextSequence());
 		}
 
-		// reply immediately if have message, or static and dynamic delay are both diabled
-		if (messages.getLength() > 0 || (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG &&
-		                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT !=
-		                                     ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)) {
-			break;
-		}
-
-		// static and dynamic are both enabled, log error and disable both
-		if (SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG &&
-		    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
-		        ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
-			TraceEvent("ConflictingKnobSettings")
-			    .detail("Reason", "Cannot enable static and dynamic empty version wait batching at the same time");
+		// reply immediately if have message, or peek batching is disabled
+		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG) {
 			break;
 		}
 
 		state double emptyVersionWaitWindow = 0;
-		if (SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG) {
-			// only static delay enabled
+		switch (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT) {
+		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED:
 			emptyVersionWaitWindow = SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL;
-		} else if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
-		           ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
-			// only dynamic delay enabled
+			break;
+		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY:
+			emptyVersionWaitWindow = 0;
+			break;
+		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
 			auto it = self->emptyVersionWaitWindowMap.find(reqTag);
 			emptyVersionWaitWindow = it == self->emptyVersionWaitWindowMap.end()
 			                             ? 0 // default wait window to zero if no information
 			                             : it->second;
+			break;
 		}
-		TraceEvent("WaitWindowApplied").detail("Tag", reqTag.toString()).detail("WaitWindow", emptyVersionWaitWindow);
 
 		if (now() - blockStart > emptyVersionWaitWindow) {
 			break;
@@ -2750,15 +2740,7 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 			}
 		}
 		when(TlogEmptyVersionWaitRequest req = waitNext(tli.emptyVersionWaitRequest.getFuture())) {
-			DisabledTraceEvent(SevDebug, "TlogRecvWaitWindowUpdate")
-			    .detail("WaitWindowUpdate", req.waitWindow)
-			    .detail("Tag", req.tag);
-			++self->tlogVersionSyncNumber;
-			if (now() - self->lastEmptyVersionTlogReportTimestamp > SERVER_KNOBS->VERSION_SYNC_REPORT_INTERVAL) {
-				TraceEvent("TlogVersionSyncStatistics", self->workerID).detail("Amount", self->tlogVersionSyncNumber);
-				self->tlogVersionSyncNumber = 0;
-				self->lastEmptyVersionTlogReportTimestamp = now();
-			}
+			++self->emptyVersionSyncMsgCount;
 			self->emptyVersionWaitWindowMap[req.tag] = req.waitWindow;
 		}
 		when(TLogPeekStreamRequest req = waitNext(tli.peekStreamMessages.getFuture())) {
@@ -3028,26 +3010,29 @@ ACTOR Future<Void> tLogCore(TLogData* self,
 	logData->addActor.send(waitFailureServer(tli.waitFailure.getFuture()));
 	logData->addActor.send(logData->removed);
 	// FIXME: update tlogMetrics to include new information, or possibly only have one copy for the shared instance
-	logData->addActor.send(logData->cc.traceCounters("TLogMetrics",
-	                                                 logData->logId,
-	                                                 SERVER_KNOBS->STORAGE_LOGGING_DELAY,
-	                                                 logData->logId.toString() + "/TLogMetrics",
-	                                                 [self = self](TraceEvent& te) {
-		                                                 StorageBytes sbTlog = self->persistentData->getStorageBytes();
-		                                                 te.detail("KvstoreBytesUsed", sbTlog.used);
-		                                                 te.detail("KvstoreBytesFree", sbTlog.free);
-		                                                 te.detail("KvstoreBytesAvailable", sbTlog.available);
-		                                                 te.detail("KvstoreBytesTotal", sbTlog.total);
-		                                                 te.detail("KvstoreBytesTemp", sbTlog.temp);
+	logData->addActor.send(
+	    logData->cc.traceCounters("TLogMetrics",
+	                              logData->logId,
+	                              SERVER_KNOBS->STORAGE_LOGGING_DELAY,
+	                              logData->logId.toString() + "/TLogMetrics",
+	                              [self = self](TraceEvent& te) {
+		                              StorageBytes sbTlog = self->persistentData->getStorageBytes();
+		                              te.detail("KvstoreBytesUsed", sbTlog.used);
+		                              te.detail("KvstoreBytesFree", sbTlog.free);
+		                              te.detail("KvstoreBytesAvailable", sbTlog.available);
+		                              te.detail("KvstoreBytesTotal", sbTlog.total);
+		                              te.detail("KvstoreBytesTemp", sbTlog.temp);
 
-		                                                 StorageBytes sbQueue =
-		                                                     self->rawPersistentQueue->getStorageBytes();
-		                                                 te.detail("QueueDiskBytesUsed", sbQueue.used);
-		                                                 te.detail("QueueDiskBytesFree", sbQueue.free);
-		                                                 te.detail("QueueDiskBytesAvailable", sbQueue.available);
-		                                                 te.detail("QueueDiskBytesTotal", sbQueue.total);
-		                                                 te.detail("QueueDiskBytesTemp", sbQueue.temp);
-	                                                 }));
+		                              StorageBytes sbQueue = self->rawPersistentQueue->getStorageBytes();
+		                              te.detail("QueueDiskBytesUsed", sbQueue.used);
+		                              te.detail("QueueDiskBytesFree", sbQueue.free);
+		                              te.detail("QueueDiskBytesAvailable", sbQueue.available);
+		                              te.detail("QueueDiskBytesTotal", sbQueue.total);
+		                              te.detail("QueueDiskBytesTemp", sbQueue.temp);
+
+		                              te.detail("EmptyVersionSyncMsgCount", self->emptyVersionSyncMsgCount);
+		                              self->emptyVersionSyncMsgCount = 0;
+	                              }));
 
 	logData->addActor.send(serveTLogInterface(self, tli, logData, warningCollectorInput));
 	logData->addActor.send(cleanupPeekTrackers(logData.getPtr()));
