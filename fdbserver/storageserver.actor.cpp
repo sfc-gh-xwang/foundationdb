@@ -11787,8 +11787,7 @@ ACTOR Future<Void> reportStorageServerState(StorageServer* self) {
 }
 
 ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
-	// TODO: wait until dbinfo on change then check logSystem is assigned or not
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return Void();
 
 	state double lastSyncTime = now();
@@ -11835,7 +11834,9 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
 					    .detail("WaitWindowDecision", waitWindowTarget);
 
-					wait(self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag));
+					if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+					    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+						wait(self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag));
 
 					// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe
 					// let it return a reply and then clear? but then we will have missed out datapoints
