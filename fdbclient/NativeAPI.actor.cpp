@@ -2228,7 +2228,7 @@ Future<Void> DatabaseContext::connectionFileChanged() {
 
 void DatabaseContext::expireThrottles() {
 	for (auto& priorityItr : throttledTags) {
-		boost::unordered::erase_if(priorityItr.second, [](const auto& kv){
+		boost::unordered::erase_if(priorityItr.second, [](const auto& kv) {
 			if (kv.second.expired()) {
 				CODE_PROBE(true, "Expiring client throttle");
 				return true;

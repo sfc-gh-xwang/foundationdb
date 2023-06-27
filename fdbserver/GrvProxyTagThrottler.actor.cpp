@@ -123,9 +123,8 @@ void GrvProxyTagThrottler::updateRates(ThrottlingIdMap<double> const& newRates) 
 			queue.rateInfo.reset();
 		}
 	}
-	boost::unordered::erase_if(queues, [](const auto& kv) {
-		return kv.second.requests.empty() && !kv.second.rateInfo.present();
-	});
+	boost::unordered::erase_if(
+	    queues, [](const auto& kv) { return kv.second.requests.empty() && !kv.second.rateInfo.present(); });
 }
 
 // First look at the tenant group for a request. If a tenant group exists,
