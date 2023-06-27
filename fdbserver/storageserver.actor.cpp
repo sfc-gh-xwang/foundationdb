@@ -28,11 +28,9 @@
 #include "benchmark/benchmark.h"
 #include "fdbclient/BlobCipher.h"
 #include "fdbclient/BlobGranuleCommon.h"
-#include "fdbrpc/DDSketch.h"
 #include "fdbclient/RandomKeyValueUtils.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/ApiVersion.h"
-#include "flow/TaskPriority.h"
 #include "flow/network.h"
 #include "fmt/format.h"
 #include "fdbclient/Audit.h"
@@ -961,9 +959,9 @@ public:
 		}
 	};
 
-	std::deque<StorageServer::EmptyVersionQueueEntry> versionQueue;
-	double lastVersionSampleTime;
-	DDSketch<double> safeWaitWindowSketch;
+	std::deque<StorageServer::EmptyVersionQueueEntry> emptyVersionQueue;
+	double emptyVersionWaitLastSampleTime;
+	DDSketch<double> emptyVersionWaitWindowSketch;
 
 	std::map<Version, Standalone<VerUpdateRef>> const& getMutationLog() const { return mutationLog; }
 	std::map<Version, Standalone<VerUpdateRef>>& getMutableMutationLog() { return mutationLog; }
@@ -1475,8 +1473,8 @@ public:
 	                                                              SS_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM,
 	                                                              Histogram::Unit::bytes)),
 	    tag(invalidTag), poppedAllAfter(std::numeric_limits<Version>::max()), cpuUsage(0.0), diskUsage(0.0),
-	    lastVersionSampleTime(0), safeWaitWindowSketch(0.001), storage(this, storage), shardChangeCounter(0),
-	    lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
+	    emptyVersionWaitLastSampleTime(0), emptyVersionWaitWindowSketch(0.001), storage(this, storage),
+	    shardChangeCounter(0), lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
 	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()), primaryLocality(tagLocalityInvalid),
 	    knownCommittedVersion(0), versionLag(0), logProtocol(0), thisServerID(ssi.id()), tssInQuarantine(false), db(db),
 	    actors(false), byteSampleClears(false, "\xff\xff\xff"_sr), durableInProgress(Void()), watchBytes(0),
@@ -2167,48 +2165,49 @@ ReadMetrics getReadMetrics() {
 	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
 }
 
-// Lightweight blocking function that updates requested version to version queue for statistics.
-// Return if a negative sample need to be considered following this function
+// Lightweight blocking function that samples request and log positive safe wait window.
+// Return if a negative sample need to be considered following this function.
 bool samplePositiveWaitWindow(StorageServer* self, Version version, double versionArrivalTimestamp) {
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
-		return false; // disable
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
+		return false;
 
 	bool shouldSample = false;
 	bool positiveSample = false;
-	if (versionArrivalTimestamp - self->lastVersionSampleTime >
+	if (versionArrivalTimestamp - self->emptyVersionWaitLastSampleTime >
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SS_SAMPLE_INTERVAL) {
 		shouldSample = true;
 		bool popped = false;
-		while (!self->versionQueue.empty() && self->versionQueue.front().version <= version) {
-			self->versionQueue.pop_front();
+		while (!self->emptyVersionQueue.empty() && self->emptyVersionQueue.front().version <= version) {
+			self->emptyVersionQueue.pop_front();
 			popped = true;
 		}
 
 		// NOTE: This current approach collects pessimistic statistics
-		if (!self->versionQueue.empty() && (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
-			double emptyVersionSafeWait = versionArrivalTimestamp - self->versionQueue.front().timestamp;
-			if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
-				TraceEvent("EmptyVersionWaitWindow", self->thisServerID)
-				    .detail("QueueSize", self->versionQueue.size())
-				    .detail("WaitWindow", emptyVersionSafeWait);
-
-			TraceEvent("PositiveEmptyVersionSample").detail("Duration", emptyVersionSafeWait);
-			self->safeWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT +
-			                                     emptyVersionSafeWait);
+		if (!self->emptyVersionQueue.empty() && (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
+			double emptyVersionSafeWait = versionArrivalTimestamp - self->emptyVersionQueue.front().timestamp;
+			TraceEvent("EmptyVersionWaitWindow", self->thisServerID)
+			    .suppressFor(5)
+			    .detail("QueueSize", self->emptyVersionQueue.size())
+			    .detail("WaitWindow", emptyVersionSafeWait);
+			TraceEvent("PositiveEmptyVersionSample").detail("Duration", emptyVersionSafeWait); // remove before merge
+			self->emptyVersionWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT +
+			                                             emptyVersionSafeWait);
 			positiveSample = true;
 		}
-		self->lastVersionSampleTime = versionArrivalTimestamp;
+		self->emptyVersionWaitLastSampleTime = versionArrivalTimestamp;
 	}
 	return shouldSample && positiveSample;
 }
 
-// Lightweight blocking function that updates requested version to version queue for statistics
+// Lightweight blocking function that samples request and log negative wait window adjustments.
 inline void sampleNegativeWaitWindow(StorageServer* self, bool shouldSample, double waitTime) {
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return;
 	if (shouldSample) {
-		TraceEvent("NegativeEmptyVersionSample").detail("Duration", waitTime);
-		self->safeWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT - waitTime);
+		TraceEvent("NegativeEmptyVersionSample").detail("Duration", waitTime); // remove before merge
+		self->emptyVersionWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT - waitTime);
 	}
 }
 
@@ -9393,12 +9392,13 @@ inline void sampleTlogUpdateVersions(StorageServer* self, const Version& version
 	DisabledTraceEvent("EmptyVersionTlogRecv", self->thisServerID).detail("Timestamp", timestamp);
 	// If queue piles up it means that there's not enough reads, so the queue is useless in this time
 	// window anyway, we do a cheap clear() and let it build up again
-	if (self->versionQueue.size() >= SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
+	if (self->emptyVersionQueue.size() >= SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
 		TraceEvent("VersionQueueTlogCleared", self->thisServerID)
-		    .detail("QueueTimewindow", self->versionQueue.back().timestamp - self->versionQueue.front().timestamp);
-		self->versionQueue.clear();
+		    .detail("QueueTimewindow",
+		            self->emptyVersionQueue.back().timestamp - self->emptyVersionQueue.front().timestamp);
+		self->emptyVersionQueue.clear();
 	}
-	self->versionQueue.emplace_back(version, timestamp);
+	self->emptyVersionQueue.emplace_back(version, timestamp);
 }
 
 ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
@@ -11787,7 +11787,8 @@ ACTOR Future<Void> reportStorageServerState(StorageServer* self) {
 }
 
 ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return Void();
 
 	state double lastSyncTime = now();
@@ -11801,10 +11802,10 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				}
 
 				// if sample population is zero (e.g., after clear), do not change wait window
-				double waitWindowTarget = self->safeWaitWindowSketch.getPopulationSize() == 0
+				double waitWindowTarget = self->emptyVersionWaitWindowSketch.getPopulationSize() == 0
 				                              ? lastWaitWindow
 				                              : lastWaitWindow +
-				                                    self->safeWaitWindowSketch.percentile(
+				                                    self->emptyVersionWaitWindowSketch.percentile(
 				                                        SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
 				                                    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT;
 
@@ -11830,7 +11831,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 					TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
 					    .suppressFor(5)
-					    .detail("SketchSize", self->safeWaitWindowSketch.getPopulationSize())
+					    .detail("SketchSize", self->emptyVersionWaitWindowSketch.getPopulationSize())
 					    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
 					    .detail("WaitWindowDecision", waitWindowTarget);
 
@@ -11840,7 +11841,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 					// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe
 					// let it return a reply and then clear? but then we will have missed out datapoints
-					self->safeWaitWindowSketch.clear();
+					self->emptyVersionWaitWindowSketch.clear();
 					lastSyncTime = now();
 				}
 			}
