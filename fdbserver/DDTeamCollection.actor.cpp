@@ -68,6 +68,31 @@ int EligibilityCounter::getCount(int combinedType) const {
 	return minCount;
 }
 
+template <class T>
+LinearFunc<T>::LinearFunc(std::pair<T, double> p1, std::pair<T, double> p2) {
+	ASSERT(p1.first != p2.first);
+	if (p1.first > p2.first) {
+		std::swap(p1, p2);
+	}
+	leftPoint = p1;
+	rightPoint = p2;
+	a = (p2.second - p1.second) / (p2.first - p1.first);
+	b = p2.second - a * p2.first;
+}
+
+template <class T>
+double LinearFunc<T>::getY(T x) {
+	double result;
+	if (x <= leftPoint.first) {
+		result = leftPoint.second;
+	} else if (x >= rightPoint.first) {
+		result = rightPoint.second;
+	} else {
+		result = a * x + b;
+	}
+	return result;
+}
+
 } // namespace data_distribution
 
 class DDTeamCollectionImpl {
@@ -291,7 +316,7 @@ public:
 			// When relocating shards, DD would evaluate the CPU & LoadBytes of sourceTeam. If
 			// both of metrics are below pivot values, we would return the source team to dataDistributionRelocator
 			if (req.teamSelect.isForRelocateShard() && SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
-				auto sourceTeam = self->evaluateSourceTeam(req.src, req.inflightPenalty);
+				auto sourceTeam = self->evaluateSourceTeam(req);
 				if (sourceTeam.present()) {
 					CODE_PROBE(true, "dd re-evaluation triggered");
 					TraceEvent(SevDebug, "GetTeamReturnSourceTeam", self->distributorId)
@@ -300,9 +325,12 @@ public:
 					    .detail("CompleteSources", req.completeSources)
 					    .detail("SourceTeamInfo", sourceTeam.get()->getDesc())
 					    .detail("SourceTeamCpu", sourceTeam.get()->getAverageCPU())
-					    .detail("PivotCpu", self->teamPivots.strictPivotCPU)
-					    .detail("SourceTeamLoadBytes", sourceTeam.get()->getLoadBytes(true, req.inflightPenalty))
-					    .detail("PivotLoadBytes", self->teamPivots.pivotLoadBytes);
+					    .detail("LowerPivotCpu", self->teamPivots.lowerPivotCPU)
+					    .detail("PivotCpu", self->teamPivots.pivotCPU)
+					    .detail("SourceTeamBytes", sourceTeam.get()->getLoadBytes())
+					    .detail("LowerPivotBytes", self->teamPivots.lowerPivotBytes)
+					    .detail("UpperPivotBytes", self->teamPivots.upperPivotBytes)
+					    .detail("PivotBytes", self->teamPivots.pivotLoadBytes);
 					req.reply.send(std::make_pair(sourceTeam, foundSrc));
 					return Void();
 				}
@@ -3298,8 +3326,20 @@ void DDTeamCollection::updateLoadBytesPivot(std::vector<int64_t>& teamLoadBytes)
 		size_t pivot = teamLoadBytes.size() * SERVER_KNOBS->LOAD_BYTES_PIVOT_RATIO;
 		std::nth_element(teamLoadBytes.begin(), teamLoadBytes.begin() + pivot, teamLoadBytes.end());
 		teamPivots.pivotLoadBytes = teamLoadBytes[pivot];
+
+		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
+			size_t lowerPivot = teamLoadBytes.size() * std::min(1.0, SERVER_KNOBS->DD_LOWER_LOAD_BYTES_PIVOT_RATIO);
+			std::nth_element(teamLoadBytes.begin(), teamLoadBytes.begin() + lowerPivot, teamLoadBytes.end());
+			size_t upperPivot = teamLoadBytes.size() * std::min(1.0, SERVER_KNOBS->DD_UPPER_LOAD_BYTES_PIVOT_RATIO);
+			std::nth_element(teamLoadBytes.begin(), teamLoadBytes.begin() + upperPivot, teamLoadBytes.end());
+
+			teamPivots.lowerPivotBytes = teamLoadBytes[lowerPivot];
+			teamPivots.upperPivotBytes = teamLoadBytes[upperPivot];
+		}
 	} else {
 		teamPivots.pivotLoadBytes = std::numeric_limits<int64_t>::max();
+		teamPivots.lowerPivotBytes = std::numeric_limits<int64_t>::max();
+		teamPivots.upperPivotBytes = std::numeric_limits<int64_t>::max();
 	}
 }
 
@@ -3332,13 +3372,13 @@ void DDTeamCollection::updateCpuPivot(std::vector<double>& teamAverageCPU) {
 		teamPivots.pivotCPU = teamAverageCPU[pivot];
 
 		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
-			size_t strictPivot = teamAverageCPU.size() * std::min(1.0, SERVER_KNOBS->DD_STRICT_CPU_PIVOT_RATIO);
-			std::nth_element(teamAverageCPU.begin(), teamAverageCPU.begin() + strictPivot, teamAverageCPU.end());
-			teamPivots.strictPivotCPU = teamAverageCPU[strictPivot];
+			size_t lowerPivot = teamAverageCPU.size() * std::min(1.0, SERVER_KNOBS->DD_LOWER_CPU_PIVOT_RATIO);
+			std::nth_element(teamAverageCPU.begin(), teamAverageCPU.begin() + lowerPivot, teamAverageCPU.end());
+			teamPivots.lowerPivotCPU = teamAverageCPU[lowerPivot];
 		}
 	} else {
 		teamPivots.pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
-		teamPivots.strictPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
+		teamPivots.lowerPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
 	}
 
 	if (teamPivots.pivotCPU > SERVER_KNOBS->MAX_DEST_CPU_PERCENT) {
@@ -3395,7 +3435,9 @@ void DDTeamCollection::updateTeamEligibility(const double inflightPenalty) {
 	    .detail("PivotAvailableSpaceRatio", teamPivots.pivotAvailableSpaceRatio)
 	    .detail("PivotCpuRatio", teamPivots.pivotCPU)
 	    .detail("PivotLoadBytes", teamPivots.pivotLoadBytes)
-	    .detail("StrictPivotCpuRatio", teamPivots.strictPivotCPU);
+	    .detail("LowerPivotCpuRatio", teamPivots.lowerPivotCPU)
+	    .detail("LowerPivotLoadBytes", teamPivots.lowerPivotBytes)
+	    .detail("UpperPivotLoadBytes", teamPivots.upperPivotBytes);
 }
 
 void DDTeamCollection::updateTeamPivots(const double inflightPenalty) {
@@ -3572,14 +3614,59 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::findTeamFromServers
 	return Optional<Reference<IDataDistributionTeam>>();
 }
 
-Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(const std::vector<UID>& servers,
-                                                                                const double inflightPenalty) {
-	auto sourceTeam = findTeamFromServers(servers, /* wantHealthy=*/true);
+template <typename T>
+double getProbabilityWithPivot(T lowerPivot, T upperPivot, T sample) {
+	double result;
+	if (lowerPivot == upperPivot) {
+		// Deal with special case at first
+		if (sample < upperPivot) {
+			result = 1;
+		} else if (sample > upperPivot) {
+			result = 0;
+		} else {
+			// sample == lowerPivot == upperPivot
+			// In simulation, we would be optimistic to set the probability to be 1, and allow prevention.
+			// In production, on the other side, be pessimistic and not to prevent movements.
+			if (g_network->isSimulated()) {
+				result = 1;
+			} else {
+				result = 0;
+			}
+		}
+	} else {
+		data_distribution::LinearFunc<T> linearFunc(std::make_pair((T)lowerPivot, (double)1.0),
+		                                            std::make_pair((T)upperPivot, (double)0.0));
+		result = linearFunc.getY(sample);
+	}
+	return result;
+}
+
+Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(GetTeamRequest& req) {
+	Optional<Reference<IDataDistributionTeam>> sourceTeam = findTeamFromServers(req.src, /* wantHealthy=*/true);
 	if (sourceTeam.present()) {
-		if (sourceTeam.get()->hasLowerLoadBytes(teamPivots.pivotLoadBytes, inflightPenalty) &&
-		    sourceTeam.get()->hasHealthyAvailableSpace(teamPivots.pivotAvailableSpaceRatio) &&
-		    sourceTeam.get()->hasLowerCpu(teamPivots.strictPivotCPU)) {
-			return sourceTeam;
+		// Make sure there is enough available space in source team before preventing.
+		if (sourceTeam.get()->hasHealthyAvailableSpace(teamPivots.pivotAvailableSpaceRatio)) {
+			ASSERT_LE(teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes);
+			ASSERT_LE(teamPivots.lowerPivotCPU, teamPivots.pivotCPU);
+
+			int64_t sourceLoadBytes = sourceTeam.get()->getLoadBytes(true, req.inflightPenalty);
+			double sourceCPU = sourceTeam.get()->getAverageCPU();
+
+			double probabilityLoadBytes = getProbabilityWithPivot<int64_t>(
+			    teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes, sourceLoadBytes);
+
+			double probabilityCPU =
+			    getProbabilityWithPivot<double>(teamPivots.lowerPivotCPU, teamPivots.pivotCPU, sourceCPU);
+
+			// FIXME: There is some potential precision issue with double here.
+			ASSERT(probabilityLoadBytes >= 0 && probabilityLoadBytes <= 1);
+			ASSERT(probabilityCPU >= 0 && probabilityCPU <= 1);
+
+			if (probabilityLoadBytes * probabilityCPU == 0) {
+				// As long as either LoadBytes or CPU doesn't pass the normal pivot check, we won't do any prevention.
+			} else if (deterministicRandom()->random01() < (probabilityLoadBytes + probabilityCPU) / 2) {
+				return sourceTeam;
+			}
 		}
 	}
 	return Optional<Reference<IDataDistributionTeam>>();
@@ -3929,12 +4016,6 @@ DDTeamCollection::DDTeamCollection(DDTeamCollectionInitParams const& params)
 		    .detail("State", "Inactive")
 		    .trackLatest(ddTrackerStartingEventHolder->trackingKey);
 	}
-	teamPivots = { .lastPivotsUpdate = 0,
-		           .pivotAvailableSpaceRatio = SERVER_KNOBS->MIN_AVAILABLE_SPACE_RATIO,
-		           .pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT,
-		           .pivotLoadBytes = std::numeric_limits<int64_t>::max(),
-		           .strictPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT,
-		           .minTeamAvgCPU = std::numeric_limits<double>::max() };
 }
 
 DDTeamCollection::~DDTeamCollection() {

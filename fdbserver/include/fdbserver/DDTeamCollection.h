@@ -295,9 +295,11 @@ protected:
 	struct {
 		double lastPivotsUpdate = 0.0;
 		double pivotAvailableSpaceRatio = 100.0;
-		double pivotCPU = 100.0;
+		double pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
+		double lowerPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
 		int64_t pivotLoadBytes = std::numeric_limits<int64_t>::max();
-		double strictPivotCPU = 100.0;
+		int64_t lowerPivotBytes = std::numeric_limits<int64_t>::max();
+		int64_t upperPivotBytes = std::numeric_limits<int64_t>::max();
 		double minTeamAvgCPU = std::numeric_limits<double>::max();
 	} teamPivots;
 
@@ -342,8 +344,7 @@ protected:
 
 	// Evaluate the CPU and LoadBytes of source team to determine if a shard can
 	// remain on the source team rather than being moved to a new destination team.
-	Optional<Reference<IDataDistributionTeam>> evaluateSourceTeam(const std::vector<UID>& servers,
-	                                                              const double inflightPenalty);
+	Optional<Reference<IDataDistributionTeam>> evaluateSourceTeam(GetTeamRequest& req);
 
 	Future<Void> logOnCompletion(Future<Void> signal);
 

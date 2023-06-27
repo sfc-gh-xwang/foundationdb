@@ -213,8 +213,10 @@ public:
 	double CPU_PIVOT_RATIO;
 	// DD won't move out a shard from its source team, if the utilization of source team meets two criterias:
 	// 1. The load bytes is below pivot load bytes, where using LOAD_BYTES_PIVOT_RATIO to calculate pivot load bytes
-	// 2. The CPU is below strict pivot CPU, where using DD_STRICT_CPU_PIVOT_RATIO to calculate pivot CPU
-	double DD_STRICT_CPU_PIVOT_RATIO;
+	// 2. The CPU is below lower pivot CPU, where using DD_LOWER_CPU_PIVOT_RATIO to calculate pivot CPU
+	double DD_LOWER_LOAD_BYTES_PIVOT_RATIO;
+	double DD_UPPER_LOAD_BYTES_PIVOT_RATIO;
+	double DD_LOWER_CPU_PIVOT_RATIO;
 	// DD won't move shard to teams that has CPU > MAX_DEST_CPU_PERCENT
 	double MAX_DEST_CPU_PERCENT;
 	// The constant interval DD update pivot values for team selection. It should be >=

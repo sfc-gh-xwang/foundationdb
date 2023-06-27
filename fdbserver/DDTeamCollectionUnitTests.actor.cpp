@@ -959,7 +959,7 @@ public:
 
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_reevaluation_enabled",
 		                                                          KnobValueRef::create(bool{ true }));
-		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_strict_cpu_pivot_ratio",
+		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_lower_cpu_pivot_ratio",
 		                                                          KnobValueRef::create(double{ 0.6 }));
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("cpu_pivot_ratio",
 		                                                          KnobValueRef::create(double{ 0.9 }));

@@ -53,6 +53,23 @@ private:
 	std::unordered_map<Type, int> type_count;
 };
 
+// Implement y = ax + b where x in (leftPoint.first, rightPoint.first).
+// If x <= leftPoint.first, y = leftPoint.second;
+// If x >= rightPoint.first, y = rightPoint.second;
+template <class T>
+class LinearFunc {
+public:
+	// Initialize with two points: p1, p2
+	LinearFunc(std::pair<T, double> p1, std::pair<T, double> p2);
+	double getY(T x);
+
+private:
+	std::pair<T, double> leftPoint;
+	std::pair<T, double> rightPoint;
+	double a;
+	double b;
+};
+
 } // namespace data_distribution
 
 struct IDataDistributionTeam {
