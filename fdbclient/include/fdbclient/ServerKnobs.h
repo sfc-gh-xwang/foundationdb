@@ -132,6 +132,8 @@ public:
 	                                                 // to make sense.
 	double DYNAMIC_EMPTY_VERSION_WAIT_CHECK_INTERVAL; // Interval of ss checking local statistics to make a new decision
 	                                                  // of wait window.
+	int DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT; // Minimum amount of collected samples required to make a
+	                                                        // new window decision.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL; // Interval of pushing calculated delay window from ss to tlogs.
 	                                                 // IMPORTANT: This have huge impact on tlog CPU utilization
 	                                                 // especially on larger clusters. All ss will broadcast sync

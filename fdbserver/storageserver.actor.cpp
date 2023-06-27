@@ -29,6 +29,7 @@
 #include "fdbclient/BlobCipher.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/RandomKeyValueUtils.h"
+#include "fdbclient/ServerKnobs.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/ApiVersion.h"
 #include "flow/network.h"
@@ -11801,26 +11802,46 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					continue;
 				}
 
-				// if sample population is zero (e.g., after clear), do not change wait window
-				double waitWindowTarget = self->emptyVersionWaitWindowSketch.getPopulationSize() == 0
-				                              ? lastWaitWindow
-				                              : lastWaitWindow +
-				                                    self->emptyVersionWaitWindowSketch.percentile(
-				                                        SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
-				                                    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT;
+				if (self->emptyVersionWaitWindowSketch.getPopulationSize() <
+				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT)
+					continue;
 
-				// Under read bursts, it is possible the sketch gives negative results because of requests waiting for
-				// versions even if we have already set waitWindow to zero. We keep sending the minimum wait window
-				// possible to tlog (zero)
+				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+				    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY) {
+					if (now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
+						TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
+						    .suppressFor(5)
+						    .detail("SketchSize", self->emptyVersionWaitWindowSketch.getPopulationSize())
+						    .detail("PercentileSacrifice",
+						            SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
+						    .detail("WaitWindowDecision",
+						            self->emptyVersionWaitWindowSketch.percentile(
+						                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
+						                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT);
+						self->emptyVersionWaitWindowSketch.clear();
+						lastSyncTime = now();
+					}
+					continue;
+				}
+
+				double waitWindowTarget = lastWaitWindow +
+				                          self->emptyVersionWaitWindowSketch.percentile(
+				                              SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE) -
+				                          SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT;
+
+				// Under read bursts, it is possible the sketch gives negative results because of requests waiting
+				// for versions even if we have already set waitWindow to zero. We keep sending the minimum wait
+				// window possible to tlog (zero)
 				if (waitWindowTarget < 0)
 					waitWindowTarget = 0;
 
-				// Skip sending wait window if new decision is the same as the last one sent. Common case is when wait
-				// window are consistently zero.
+				// Skip sending wait window if new decision is the same as the last one sent. Common case is when
+				// wait window are consistently zero.
 				if (waitWindowTarget == lastWaitWindow)
 					continue;
 
-				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval knob
+				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval
+				// knob
 				// 1. Last window much bigger than new window.
 				bool emergencyRewrite = false;
 				if (lastWaitWindow - waitWindowTarget > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SPIKE_THRESHOLD)
@@ -11835,12 +11856,10 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
 					    .detail("WaitWindowDecision", waitWindowTarget);
 
-					if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
-					    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
-						wait(self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag));
+					wait(self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag));
 
-					// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side. Maybe
-					// let it return a reply and then clear? but then we will have missed out datapoints
+					// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side.
+					// Maybe let it return a reply and then clear? but then we will have missed out datapoints
 					self->emptyVersionWaitWindowSketch.clear();
 					lastSyncTime = now();
 				}
