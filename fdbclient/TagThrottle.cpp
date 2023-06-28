@@ -1,5 +1,5 @@
 /*
- * TagThrottle.actor.cpp
+ * TagThrottle.cpp
  *
  * This source file is part of the FoundationDB open source project
  *
@@ -18,13 +18,9 @@
  * limitations under the License.
  */
 
-#include "fdbclient/CommitProxyInterface.h"
-#include "fdbclient/DatabaseContext.h"
 #include "fdbclient/SystemData.h"
 #include "fdbclient/TagThrottle.h"
 #include "fdbclient/Tuple.h"
-
-#include "flow/actorcompiler.h" // has to be last include
 
 KeyRangeRef const tagQuotaKeys = KeyRangeRef("\xff/tagQuota/"_sr, "\xff/tagQuota0"_sr);
 KeyRef const tagQuotaPrefix = tagQuotaKeys.begin;
