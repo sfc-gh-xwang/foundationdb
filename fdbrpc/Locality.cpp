@@ -45,6 +45,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::NeverAssign;
@@ -63,6 +64,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::NeverAssign;
@@ -81,6 +83,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -99,6 +102,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -117,6 +121,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -135,6 +140,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -153,6 +159,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -172,6 +179,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::MasterClass:
 		case ProcessClass::TesterClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -200,6 +208,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -218,6 +227,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -236,6 +246,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -254,6 +265,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -272,6 +284,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
@@ -315,6 +328,7 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		case ProcessClass::TesterClass:
 		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
