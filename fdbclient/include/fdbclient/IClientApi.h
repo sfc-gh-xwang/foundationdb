@@ -157,6 +157,9 @@ public:
 	virtual ThreadFuture<Version> verifyBlobRange(const KeyRangeRef& keyRange, Optional<Version> version) = 0;
 	virtual ThreadFuture<bool> flushBlobRange(const KeyRangeRef& keyRange, bool compact, Optional<Version> version) = 0;
 
+	// Return a JSON string containing tenant client-side status information
+	virtual ThreadFuture<Standalone<StringRef>> getClientStatus() = 0;
+
 	virtual void addref() = 0;
 	virtual void delref() = 0;
 };

@@ -645,6 +645,22 @@ ThreadFuture<bool> DLTenant::flushBlobRange(const KeyRangeRef& keyRange, bool co
 	});
 }
 
+ThreadFuture<Standalone<StringRef>> DLTenant::getClientStatus() {
+	if (!api->databaseGetClientStatus) {
+		return unsupported_operation();
+	}
+	FdbCApi::FDBFuture* f = api->tenantGetClientStatus(tenant);
+	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
+		const uint8_t* str;
+		int strLength;
+		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		ASSERT(!error);
+
+		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
+		return Standalone<StringRef>(StringRef(str, strLength), Arena());
+	});
+}
+
 // DLDatabase
 DLDatabase::DLDatabase(Reference<FdbCApi> api, ThreadFuture<FdbCApi::FDBDatabase*> dbFuture) : api(api), db(nullptr) {
 	addref();
@@ -1094,6 +1110,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_tenant_get_id",
 	                   headerVersion >= ApiVersion::withTenantGetId().version());
+	loadClientFunction(&api->tenantGetClientStatus,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_tenant_get_client_status",
+	                   headerVersion >= ApiVersion::withGetClientStatus().version());
 	loadClientFunction(&api->tenantDestroy, lib, fdbCPath, "fdb_tenant_destroy", headerVersion >= 710);
 
 	loadClientFunction(&api->transactionSetOption, lib, fdbCPath, "fdb_transaction_set_option", headerVersion >= 0);
@@ -1970,6 +1991,10 @@ ThreadFuture<bool> MultiVersionTenant::flushBlobRange(const KeyRangeRef& keyRang
                                                       Optional<Version> version) {
 	return executeOperation(
 	    &ITenant::flushBlobRange, keyRange, std::forward<bool>(compact), std::forward<Optional<Version>>(version));
+}
+
+ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
+	return tenantState->db->getClientStatus();
 }
 
 MultiVersionTenant::TenantState::TenantState(Reference<MultiVersionDatabase> db, TenantNameRef tenantName)
