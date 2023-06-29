@@ -2191,14 +2191,15 @@ bool samplePositiveWaitWindow(StorageServer* self, Version version, double versi
 			    .suppressFor(5)
 			    .detail("QueueSize", self->emptyVersionQueue.size())
 			    .detail("WaitWindow", emptyVersionSafeWait);
-			TraceEvent("PositiveEmptyVersionSample").detail("Duration", emptyVersionSafeWait); // remove before merge
+			TraceEvent("PositiveEmptyVersionSample", self->thisServerID)
+			    .detail("Duration", emptyVersionSafeWait); // remove before merge
 			self->emptyVersionWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT +
 			                                             emptyVersionSafeWait);
 			positiveSample = true;
 		}
 		self->emptyVersionWaitLastSampleTime = versionArrivalTimestamp;
 	}
-	return shouldSample && positiveSample;
+	return shouldSample && !positiveSample;
 }
 
 // Lightweight blocking function that samples request and log negative wait window adjustments.
@@ -11802,16 +11803,20 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					continue;
 				}
 
-				if (self->emptyVersionWaitWindowSketch.getPopulationSize() <
-				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT)
+				uint64_t sampleCount = self->emptyVersionWaitWindowSketch.getPopulationSize();
+				if (sampleCount < SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT) {
+					TraceEvent("EmptyVersionWaitWindowUpdateSkip", self->thisServerID)
+					    .suppressFor(5)
+					    .detail("SketchSize", sampleCount);
 					continue;
+				}
 
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
 				    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY) {
 					if (now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
 						TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
 						    .suppressFor(5)
-						    .detail("SketchSize", self->emptyVersionWaitWindowSketch.getPopulationSize())
+						    .detail("SketchSize", sampleCount)
 						    .detail("PercentileSacrifice",
 						            SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
 						    .detail("WaitWindowDecision",
@@ -11837,8 +11842,8 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 				// Skip sending wait window if new decision is the same as the last one sent. Common case is when
 				// wait window are consistently zero.
-				if (waitWindowTarget == lastWaitWindow)
-					continue;
+				// if (waitWindowTarget == lastWaitWindow)
+				// 	continue;
 
 				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval
 				// knob
@@ -11852,7 +11857,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 					TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
 					    .suppressFor(5)
-					    .detail("SketchSize", self->emptyVersionWaitWindowSketch.getPopulationSize())
+					    .detail("SketchSize", sampleCount)
 					    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
 					    .detail("WaitWindowDecision", waitWindowTarget);
 
