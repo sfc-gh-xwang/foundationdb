@@ -11862,9 +11862,6 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					    .detail("WaitWindowDecision", waitWindowTarget);
 
 					wait(self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag));
-
-					// TODO: ideally we want to clear this after the wait window kicks in to effect at tlog side.
-					// Maybe let it return a reply and then clear? but then we will have missed out datapoints
 					self->emptyVersionWaitWindowSketch.clear();
 					lastSyncTime = now();
 				}

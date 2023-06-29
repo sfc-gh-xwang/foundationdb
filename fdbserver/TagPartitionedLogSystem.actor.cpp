@@ -3193,18 +3193,13 @@ Future<Void> TagPartitionedLogSystem::pushEmptyVersionWaitWindow(double waitWind
 ACTOR Future<Void> TagPartitionedLogSystem::pushEmptyVersionWaitWindow_internal(TagPartitionedLogSystem const* self,
                                                                                 double waitWindow,
                                                                                 Tag tag) {
-	try {
-		std::vector<Future<Void>> sent;
-		for (auto& logSet : self->tLogs) {
-			for (auto& t : logSet->logServers) {
-				sent.push_back(transformErrors(throwErrorOr(t->get().interf().emptyVersionWaitRequest.tryGetReply(
-				                                   TlogEmptyVersionWaitRequest(waitWindow, tag))),
-				                               connection_failed()));
-			}
+	std::vector<Future<Void>> sent;
+	for (auto& logSet : self->tLogs) {
+		for (auto& t : logSet->logServers) {
+			sent.push_back(
+			    t->get().interf().emptyVersionWaitRequest.getReply(TlogEmptyVersionWaitRequest(waitWindow, tag)));
 		}
-		wait(waitForAll(sent));
-	} catch (Error& error) {
-		TraceEvent(SevDebug, "PushEmptyVersionWaitWindowFailure").log();
 	}
+	wait(waitForAll(sent));
 	return Void();
 }
