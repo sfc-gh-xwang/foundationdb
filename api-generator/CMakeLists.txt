@@ -1,0 +1,6 @@
+if(OPEN_FOR_IDE)
+    add_library(parser OBJECT Parser.cpp)
+else()
+    add_executable(parser Parser.cpp)
+endif()
+target_link_libraries(parser PRIVATE boost_target fmt::fmt)
