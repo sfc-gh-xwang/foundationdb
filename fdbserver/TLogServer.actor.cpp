@@ -377,10 +377,11 @@ struct TLogData : NonCopyable {
 
 	// Track dynamic empty version wait window for each storage server
 	std::unordered_map<Tag, double> emptyVersionWaitWindowMap;
-	std::unordered_map<Tag, Promise<Void>> emptyVersionWaitWindowNotify;
+	std::unordered_map<Tag, Promise<Void>> emptyVersionWaitWindowApplied;
+	std::unordered_map<Tag, bool> emptyVersionWaitWindowReplied;
+	std::unordered_map<Tag, uint32_t> emptyVersionWaitWindowWaitingPeeks;
 	uint32_t versionSyncMsgCount;
 	uint32_t tlogPeekMsgCount;
-	// std::unordered_map<Tag, Future<Void>> emptyVersionWaitOverwrite;
 
 	TLogData(UID dbgid,
 	         UID workerID,
@@ -2068,7 +2069,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			break;
 		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
 			auto it = self->emptyVersionWaitWindowMap.find(reqTag);
-			if (it == self->emptyVersionWaitWindowMap.end()) {
+			if (it != self->emptyVersionWaitWindowMap.end()) {
 				haveDynamicEmptyVersionWaitInfo = true;
 				emptyVersionWaitWindow = it->second;
 			}
@@ -2078,19 +2079,28 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		// TODO: Can we remove this block to fall back to wait(delay(0)) case below? with no performance degradation?
 		// Does wait(delay(0)) immediately return or there's a chance for other actors to run?
 		if (now() - blockStart > emptyVersionWaitWindow) {
-			if (haveDynamicEmptyVersionWaitInfo)
-				self->emptyVersionWaitWindowNotify[reqTag].send(Void());
+			if (haveDynamicEmptyVersionWaitInfo && !self->emptyVersionWaitWindowReplied[reqTag]
+			    // && self->emptyVersionWaitWindowApplied[reqTag].getPromiseReferenceCount() > 0
+			) {
+				self->emptyVersionWaitWindowApplied[reqTag].send(Void());
+				self->emptyVersionWaitWindowReplied[reqTag] = true;
+			}
 			break;
 		}
 
 		state Version waitUntilVersion = logData->version.get() + 1;
 
+		++self->emptyVersionWaitWindowWaitingPeeks[reqTag];
+
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
 		// batching interval has expired.
 		wait(logData->version.whenAtLeast(waitUntilVersion) || delay(emptyVersionWaitWindow - (now() - blockStart)));
 		if (logData->version.get() < waitUntilVersion) {
-			if (haveDynamicEmptyVersionWaitInfo)
-				self->emptyVersionWaitWindowNotify[reqTag].send(Void());
+			// if (haveDynamicEmptyVersionWaitInfo && !self->emptyVersionWaitWindowReplied[reqTag]) {
+			// 	self->emptyVersionWaitWindowApplied[reqTag].send(Void());
+			// 	self->emptyVersionWaitWindowReplied[reqTag] = true;
+			// }
+			--self->emptyVersionWaitWindowWaitingPeeks[reqTag];
 			break; // We know that from `reqBegin` to logData->version are all empty messages. Skip re-executing the
 			       // peek logic.
 		}
@@ -2165,8 +2175,15 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequest req) {
 	self->emptyVersionWaitWindowMap[req.tag] = req.waitWindow;
-	self->emptyVersionWaitWindowNotify[req.tag] = Promise<Void>();
-	wait(self->emptyVersionWaitWindowNotify[req.tag].getFuture());
+	self->emptyVersionWaitWindowApplied[req.tag] = Promise<Void>();
+	self->emptyVersionWaitWindowReplied[req.tag] = false;
+	// 1. If no peek request is using window currently, window is effectively applied immediately, notify ss right away.
+	// 2. If >0 peek request is using window currently, window is effectively applied after the next application of
+	// window. Notify ss on first window application.
+	// 3. If we do not do this, this actor will time out waiting on next application of the window, which may never
+	// come.
+	if (self->emptyVersionWaitWindowWaitingPeeks[req.tag])
+		wait(self->emptyVersionWaitWindowApplied[req.tag].getFuture());
 	req.reply.send(Void());
 	return Void();
 }
