@@ -140,6 +140,9 @@ public:
 	                                                 // request to all tlogs following this interval. A cluster with 100
 	                                                 // ss with interval set to 0.01s will result in each tlog receiving
 	                                                 // 10000 more sync messages per second!
+	double DYNAMIC_EMPTY_VERSION_WAIT_IDLE_TIME; // After this amount of time with no sufficient samples, force set
+	                                             // wait window to DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WAIT_WINDOW
+	double DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WAIT_WINDOW;
 	double DYNAMIC_EMPTY_VERSION_WAIT_SPIKE_THRESHOLD; // If previous synced window is this amount greater than the new
 	                                                   // window, bypass sync interval and sync immediately.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe

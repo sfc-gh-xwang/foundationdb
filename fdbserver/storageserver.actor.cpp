@@ -2192,6 +2192,7 @@ bool samplePositiveWaitWindow(StorageServer* self, Version version, double versi
 			    .detail("QueueSize", self->emptyVersionQueue.size())
 			    .detail("WaitWindow", emptyVersionSafeWait);
 			TraceEvent("PositiveEmptyVersionSample", self->thisServerID)
+			    .suppressFor(1)
 			    .detail("Duration", emptyVersionSafeWait); // remove before merge
 			self->emptyVersionWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT +
 			                                             emptyVersionSafeWait);
@@ -2208,7 +2209,9 @@ inline void sampleNegativeWaitWindow(StorageServer* self, bool shouldSample, dou
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return;
 	if (shouldSample) {
-		TraceEvent("NegativeEmptyVersionSample").detail("Duration", waitTime); // remove before merge
+		TraceEvent("NegativeEmptyVersionSample", self->thisServerID)
+		    .suppressFor(1)
+		    .detail("Duration", waitTime); // remove before merge
 		self->emptyVersionWaitWindowSketch.addSample(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT - waitTime);
 	}
 }
@@ -11803,11 +11806,17 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					continue;
 				}
 
-				uint64_t sampleCount = self->emptyVersionWaitWindowSketch.getPopulationSize();
+				state uint64_t sampleCount = self->emptyVersionWaitWindowSketch.getPopulationSize();
 				if (sampleCount < SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT) {
 					TraceEvent("EmptyVersionWaitWindowUpdateSkip", self->thisServerID)
 					    .suppressFor(5)
 					    .detail("SketchSize", sampleCount);
+					if (now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_TIME) {
+						wait(self->logSystem->pushEmptyVersionWaitWindow(
+						    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WAIT_WINDOW, self->tag));
+						self->emptyVersionWaitWindowSketch.clear();
+						lastSyncTime = now();
+					}
 					continue;
 				}
 
