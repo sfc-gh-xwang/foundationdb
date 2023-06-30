@@ -2309,7 +2309,11 @@ void* loadFunction(void* lib, const char* func_name) {
 
 	dlfcn = dlsym(lib, func_name);
 	if (dlfcn == nullptr) {
-		TraceEvent(SevWarn, "LoadFunctionFailed").detail("Function", func_name).detail("Error", dlerror());
+		auto err = dlerror();
+		TraceEvent(SevWarn, "LoadFunctionFailed").detail("Function", func_name).detail("Error", err);
+		if (err != nullptr) {
+			std::cerr << "Load function " << func_name << " failed due to: " << err << std::endl;
+		}
 	}
 
 	return dlfcn;
