@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 
+#include "fdbclient/ServerKnobs.h"
 #include "flow/Hash3.h"
 #include "flow/UnitTest.h"
 #include "fdbclient/NativeAPI.actor.h"

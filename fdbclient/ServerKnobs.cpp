@@ -120,19 +120,20 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Dynamic Empty Version Wait
 	init( PEEK_BATCHING_EMPTY_MSG,                              true ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG = true;
 	init( PEEK_BATCHING_EMPTY_MSG_INTERVAL,                    0.001 ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG_INTERVAL = 0.01;
-	init( DYNAMIC_EMPTY_VERSION_WAIT,     DYNAMIC_EMPTY_VERSION_WAIT );
-	init( DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT,            true ); 
-	init( DYNAMIC_EMPTY_VERSION_WAIT_SS_SAMPLE_INTERVAL,      0.0001 ); 
+	init( DYNAMIC_EMPTY_VERSION_WAIT,             EMPTY_VERSION_WAIT );
+	// Dynamic Empty Version Wait: Sampling
 	init( DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH,         10000 ); 
-	init( DYNAMIC_EMPTY_VERSION_WAIT_CHECK_INTERVAL,            0.01 );
-	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT,   1000 );
-	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL,                1 );
-	init( DYNAMIC_EMPTY_VERSION_WAIT_IDLE_TIME,                   60 );
-	init( DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WAIT_WINDOW,          0.01 );
-	init( DYNAMIC_EMPTY_VERSION_WAIT_SPIKE_THRESHOLD,          0.005 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT,            true ); 
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL,              0 ); 
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE,      0.01 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT,               100 );
-	init( VERSION_SYNC_REPORT_INTERVAL,                           10 );
+	// Dynamic Empty Version Wait: Syncing
+	init( DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_INTERVAL,        0.01 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD,      0.005 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL,                1 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT,  10000 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_IDLE_INTERVAL,               60 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WINDOW,               0.01 );
 
 	// disk snapshot max timeout, to be put in TLog, storage and coordinator nodes
 	init( MAX_FORKED_PROCESS_OUTPUT,                            1024 );

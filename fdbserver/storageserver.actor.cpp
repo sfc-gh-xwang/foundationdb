@@ -2176,7 +2176,7 @@ bool samplePositiveWaitWindow(StorageServer* self, Version version, double versi
 	bool shouldSample = false;
 	bool positiveSample = false;
 	if (versionArrivalTimestamp - self->emptyVersionWaitLastSampleTime >
-	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SS_SAMPLE_INTERVAL) {
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL) {
 		shouldSample = true;
 		bool popped = false;
 		while (!self->emptyVersionQueue.empty() && self->emptyVersionQueue.front().version <= version) {
@@ -11801,7 +11801,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 	loop {
 		choose {
-			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_CHECK_INTERVAL))) {
+			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_INTERVAL))) {
 				if (!self->logSystem) {
 					continue;
 				}
@@ -11811,9 +11811,9 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					TraceEvent("EmptyVersionWaitWindowUpdateSkip", self->thisServerID)
 					    .suppressFor(5)
 					    .detail("SketchSize", sampleCount);
-					if (now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_TIME) {
+					if (now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_INTERVAL) {
 						wait(self->logSystem->pushEmptyVersionWaitWindow(
-						    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WAIT_WINDOW, self->tag));
+						    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WINDOW, self->tag));
 						self->emptyVersionWaitWindowSketch.clear();
 						lastSyncTime = now();
 					}
@@ -11851,14 +11851,15 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 				// Skip sending wait window if new decision is the same as the last one sent. Common case is when
 				// wait window are consistently zero.
+				// TODO: enable this after everything is stable
 				// if (waitWindowTarget == lastWaitWindow)
 				// 	continue;
 
 				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval
 				// knob
-				// 1. Last window much bigger than new window.
+				// 1. Rising edge client request: Last window much bigger than new window.
 				bool emergencyRewrite = false;
-				if (lastWaitWindow - waitWindowTarget > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SPIKE_THRESHOLD)
+				if (lastWaitWindow - waitWindowTarget > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD)
 					emergencyRewrite = true;
 
 				if (emergencyRewrite || now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
