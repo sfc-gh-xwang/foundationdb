@@ -438,13 +438,14 @@ struct UpdateWorkerHealthRequest {
 	NetworkAddress address;
 	std::vector<NetworkAddress> degradedPeers;
 	std::vector<NetworkAddress> disconnectedPeers;
+	std::vector<NetworkAddress> recoveredPeers;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
 		if constexpr (!is_fb_function<Ar>) {
 			ASSERT(ar.protocolVersion().isValid());
 		}
-		serializer(ar, address, degradedPeers, disconnectedPeers);
+		serializer(ar, address, degradedPeers, disconnectedPeers, recoveredPeers);
 	}
 };
 
@@ -798,6 +799,20 @@ struct InitializeBlobWorkerReply {
 };
 
 struct InitializeBlobWorkerRequest {
+	constexpr static FileIdentifier file_identifier = 5838547;
+	UID reqId;
+	UID interfaceId;
+	KeyValueStoreType storeType;
+	ReplyPromise<InitializeBlobWorkerReply> reply;
+	EncryptionAtRestMode encryptMode;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reqId, interfaceId, storeType, reply, encryptMode);
+	}
+};
+
+struct InitializeBlobWorkerRequestOld {
 	constexpr static FileIdentifier file_identifier = 5838547;
 	UID reqId;
 	UID interfaceId;
@@ -1242,7 +1257,7 @@ ACTOR Future<Void> tLog(IKeyValueStore* persistentData,
 
 typedef decltype(&tLog) TLogFn;
 
-extern bool isSimulatorProcessReliable();
+extern bool isSimulatorProcessUnreliable();
 
 ACTOR template <class T>
 Future<T> ioTimeoutError(Future<T> what, double time, const char* context = nullptr) {
@@ -1258,7 +1273,7 @@ Future<T> ioTimeoutError(Future<T> what, double time, const char* context = null
 		}
 		when(wait(end)) {
 			Error err = io_timeout();
-			if (!isSimulatorProcessReliable()) {
+			if (isSimulatorProcessUnreliable()) {
 				err = err.asInjectedFault();
 			}
 			TraceEvent e(SevError, "IoTimeoutError");
@@ -1307,7 +1322,7 @@ Future<T> ioDegradedOrTimeoutError(Future<T> what,
 		}
 		when(wait(end)) {
 			Error err = io_timeout();
-			if (!isSimulatorProcessReliable()) {
+			if (isSimulatorProcessUnreliable()) {
 				err = err.asInjectedFault();
 			}
 			TraceEvent e(SevError, "IoTimeoutError");
