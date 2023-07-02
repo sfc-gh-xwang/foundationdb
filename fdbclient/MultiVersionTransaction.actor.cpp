@@ -1114,7 +1114,7 @@ void DLApi::init() {
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_tenant_get_client_status",
-	                   headerVersion >= ApiVersion::withGetClientStatus().version());
+	                   headerVersion >= ApiVersion::withTenantGetClientStatus().version());
 	loadClientFunction(&api->tenantDestroy, lib, fdbCPath, "fdb_tenant_destroy", headerVersion >= 710);
 
 	loadClientFunction(&api->transactionSetOption, lib, fdbCPath, "fdb_transaction_set_option", headerVersion >= 0);
