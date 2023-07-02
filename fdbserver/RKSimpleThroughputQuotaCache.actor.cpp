@@ -1,5 +1,5 @@
 /**
- * RKThroughputQuotaCache.actor.cpp
+ * RKSimplThroughputQuotaCache.actor.cpp
  */
 
 #include "fdbclient/DatabaseContext.h"
@@ -7,9 +7,9 @@
 #include "fdbserver/IRKThroughputQuotaCache.h"
 #include "flow/actorcompiler.h" // must be last include
 
-class RKThroughputQuotaCacheImpl {
+class RKSimpleThroughputQuotaCacheImpl {
 public:
-	ACTOR static Future<Void> run(RKThroughputQuotaCache* self) {
+	ACTOR static Future<Void> run(RKSimpleThroughputQuotaCache* self) {
 		loop {
 			state Reference<ReadYourWritesTransaction> tr = self->db->createTransaction();
 			loop {
@@ -22,7 +22,7 @@ public:
 					state KeyBackedRangeResult<std::pair<TenantGroupName, ThrottleApi::ThroughputQuotaValue>>
 					    tenantGroupQuotas = wait(TenantMetadata::throughputQuota().getRange(
 					        tr, {}, {}, CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER));
-					TraceEvent("RKThroughputQuotaCache_ReadCurrentQuotas", self->id)
+					TraceEvent("RKSimpleThroughputQuotaCache_ReadCurrentQuotas", self->id)
 					    .detail("TagQuotasSize", tagQuotas.size())
 					    .detail("TenantGroupQuotasSize", tenantGroupQuotas.results.size());
 					self->quotas.clear();
@@ -37,7 +37,7 @@ public:
 					wait(delay(5.0));
 					break;
 				} catch (Error& e) {
-					TraceEvent("RKThroughputQuotaCacheError", self->id).error(e);
+					TraceEvent("RKSimpleThroughputQuotaCacheError", self->id).error(e);
 					wait(tr->onError(e));
 				}
 			}
@@ -45,11 +45,11 @@ public:
 	}
 }; // class RKThroughputQuotaCacheImpl
 
-RKThroughputQuotaCache::RKThroughputQuotaCache(UID id, Database db) : id(id), db(db) {}
+RKSimpleThroughputQuotaCache::RKSimpleThroughputQuotaCache(UID id, Database db) : id(id), db(db) {}
 
-RKThroughputQuotaCache::~RKThroughputQuotaCache() = default;
+RKSimpleThroughputQuotaCache::~RKSimpleThroughputQuotaCache() = default;
 
-Optional<int64_t> RKThroughputQuotaCache::getTotalQuota(ThrottlingId const& tag) const {
+Optional<int64_t> RKSimpleThroughputQuotaCache::getTotalQuota(ThrottlingId const& tag) const {
 	auto it = quotas.find(tag);
 	if (it == quotas.end()) {
 		return {};
@@ -58,7 +58,7 @@ Optional<int64_t> RKThroughputQuotaCache::getTotalQuota(ThrottlingId const& tag)
 	}
 }
 
-Optional<int64_t> RKThroughputQuotaCache::getReservedQuota(ThrottlingId const& tag) const {
+Optional<int64_t> RKSimpleThroughputQuotaCache::getReservedQuota(ThrottlingId const& tag) const {
 	auto it = quotas.find(tag);
 	if (it == quotas.end()) {
 		return {};
@@ -67,12 +67,12 @@ Optional<int64_t> RKThroughputQuotaCache::getReservedQuota(ThrottlingId const& t
 	}
 }
 
-int RKThroughputQuotaCache::size() const {
+int RKSimpleThroughputQuotaCache::size() const {
 	return quotas.size();
 }
 
-Future<Void> RKThroughputQuotaCache::run() {
-	return RKThroughputQuotaCacheImpl::run(this);
+Future<Void> RKSimpleThroughputQuotaCache::run() {
+	return RKSimpleThroughputQuotaCacheImpl::run(this);
 }
 
 MockRKThroughputQuotaCache::~MockRKThroughputQuotaCache() = default;

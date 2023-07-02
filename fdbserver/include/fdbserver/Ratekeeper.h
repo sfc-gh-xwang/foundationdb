@@ -67,7 +67,7 @@ class Ratekeeper {
 	RKBlobMonitor blobMonitor;
 	RKRateServer rateServer;
 	RKRateUpdater normalRateUpdater, batchRateUpdater;
-	RKThroughputQuotaCache quotaCache;
+	RKSimpleThroughputQuotaCache quotaCache;
 	QuotaThrottler quotaThrottler;
 
 	PromiseStream<Future<Void>> addActor;

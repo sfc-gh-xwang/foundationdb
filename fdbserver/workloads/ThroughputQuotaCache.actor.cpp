@@ -8,7 +8,7 @@
 
 #include "flow/actorcompiler.h" // must be the last include
 
-// Tests the functionality of the RKThroughputQuotaCache class
+// Tests the functionality of the RKSimpleThroughputQuotaCache class
 class ThroughputQuotaCacheWorkload : public TestWorkload {
 	static int64_t testReservedQuota() { return 100 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 
@@ -79,7 +79,9 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		}
 	}
 
-	ACTOR static Future<Void> testTagQuota(Database cx, TransactionTag tag, RKThroughputQuotaCache const* quotaCache) {
+	ACTOR static Future<Void> testTagQuota(Database cx,
+	                                       TransactionTag tag,
+	                                       RKSimpleThroughputQuotaCache const* quotaCache) {
 		state ThrottlingId throttlingId = ThrottlingIdRef::fromTag(tag);
 		ASSERT_EQ(quotaCache->size(), 0);
 		wait(setTagQuota(cx, tag, testReservedQuota(), testTotalQuota()));
@@ -99,7 +101,7 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 
 	ACTOR static Future<Void> testTenantGroupQuota(Database cx,
 	                                               TenantGroupName tenantGroup,
-	                                               RKThroughputQuotaCache const* quotaCache) {
+	                                               RKSimpleThroughputQuotaCache const* quotaCache) {
 		state ThrottlingId throttlingId = ThrottlingIdRef::fromTenantGroup(tenantGroup);
 		ASSERT_EQ(quotaCache->size(), 0);
 		wait(setTenantGroupQuota(cx, tenantGroup, testReservedQuota(), testTotalQuota()));
@@ -121,7 +123,7 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 	// together in the quota database, without conflicting.
 	ACTOR static Future<Void> testConflictingNames(Database cx,
 	                                               Standalone<StringRef> sharedName,
-	                                               RKThroughputQuotaCache const* quotaCache) {
+	                                               RKSimpleThroughputQuotaCache const* quotaCache) {
 		ASSERT_EQ(quotaCache->size(), 0);
 		wait(setTenantGroupQuota(cx, sharedName, testReservedQuota(), testTotalQuota()));
 		wait(setTagQuota(cx, sharedName, testReservedQuota() * 2, testTotalQuota() * 2));
@@ -138,7 +140,7 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 	}
 
 	ACTOR static Future<Void> _start(Database cx) {
-		state RKThroughputQuotaCache quotaCache(deterministicRandom()->randomUniqueID(), cx);
+		state RKSimpleThroughputQuotaCache quotaCache(deterministicRandom()->randomUniqueID(), cx);
 		state Future<Void> runFuture = quotaCache.run();
 		wait(testTagQuota(cx, "testTag"_sr, &quotaCache));
 		wait(testTenantGroupQuota(cx, "testTenantGroup"_sr, &quotaCache));

@@ -30,15 +30,15 @@ public:
 };
 
 // Uses the system keyspace to populate a cache of per-tenant throughput quotas
-class RKThroughputQuotaCache : public IRKThroughputQuotaCache {
-	friend class RKThroughputQuotaCacheImpl;
+class RKSimpleThroughputQuotaCache : public IRKThroughputQuotaCache {
+	friend class RKSimpleThroughputQuotaCacheImpl;
 	ThrottlingIdMap<ThrottleApi::ThroughputQuotaValue> quotas;
 	UID id;
 	Database db;
 
 public:
-	RKThroughputQuotaCache(UID id, Database db);
-	~RKThroughputQuotaCache();
+	RKSimpleThroughputQuotaCache(UID id, Database db);
+	~RKSimpleThroughputQuotaCache();
 	Optional<int64_t> getTotalQuota(ThrottlingId const&) const override;
 	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;
 	int size() const override;
