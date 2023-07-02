@@ -46,6 +46,10 @@ class UpdateStreamImpl {
 		return KeyRangeRef(getUpdateKey(metadataPrefix, startIndex), getUpdateKey(metadataPrefix, endIndex));
 	}
 
+	// Verifies that the current UpdateStream object's lease is still valid. If the lease has not been
+	// modified yet, but will be before the transaction commits, then the transaction will fail to commit
+	// with a conflict, because the lease key is added to the write conflict range. Then, the next time
+	// validateLease is called, the stale lease will be detected.
 	ACTOR static Future<Void> validateLease(UpdateStream* self, Reference<ReadYourWritesTransaction> tr) {
 		Optional<Value> value = wait(getValue(tr, self->getLeaseKey()));
 		Optional<UID> currentLeaseId;
@@ -63,6 +67,8 @@ class UpdateStreamImpl {
 		return Void();
 	}
 
+	// Reads the last populated key in the persistent update queue keyrange. If no such key exists,
+	// there have never been any updates in the queue.
 	ACTOR static Future<Optional<uint64_t>> getLastUpdateIndex(Reference<ReadYourWritesTransaction> tr,
 	                                                           Key metadataPrefix) {
 		state KeyRange updateKeys = getUpdateKeyRange(metadataPrefix, /*startIndex=*/0);
@@ -74,6 +80,18 @@ class UpdateStreamImpl {
 		}
 	}
 
+	// Blocks until some new update is ready to consume, or the lease has been invalidated.
+	//
+	// The ABA problem is circumvented when waiting on the watches, because if there is a new
+	// update to the next update key, there are two possiblities:
+	//
+	//   1) The current UpdateStream object still has the lease. In this case, the new update will
+	//      not be cleared until control returns to the getUpdates actor. But that cannot happen while
+	//      blocked waiting on the watches in waitForUpdates. So eventually, watchUpdatesFuture will
+	//      be ready.
+	//   2) The current UpdateStream object no longer has the lease. In this case, the watchLeaseFuture
+	//      will eventually become ready, because it is impossible for the lease to be reobtained by
+	//      the current UpdateStream object.
 	ACTOR static Future<Void> waitForUpdates(UpdateStream* self, Database db) {
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 		loop {
@@ -121,6 +139,7 @@ public:
 		state Reference<ReadYourWritesTransaction> tr;
 		state std::deque<UpdateStream::Update> toSend;
 		loop {
+			// Block until some update is ready to consume
 			wait(waitForUpdates(self, db));
 			tr = makeReference<ReadYourWritesTransaction>(db);
 			loop {
