@@ -3,6 +3,7 @@
  */
 
 #include "fdbclient/TagThrottle.h"
+#include "fdbclient/UpdateStream.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbserver/workloads/workloads.actor.h"
 
@@ -19,7 +20,14 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		loop {
 			try {
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				ThrottleApi::setTagQuota(tr, tag, reservedQuota, totalQuota);
+				ThrottleApi::ThroughputQuotaValue tagQuotaValue;
+				tagQuotaValue.reservedQuota = reservedQuota;
+				tagQuotaValue.totalQuota = totalQuota;
+				if (!tagQuotaValue.isValid()) {
+					throw invalid_throttle_quota_value();
+				}
+				wait(UpdateStream::update(
+				    tr, ThrottleApi::getTagQuotaKey(tag), tagQuotaValue.pack().pack(), throughputQuotaUpdatePrefix));
 				wait(tr->commit());
 				return Void();
 			} catch (Error& e) {
@@ -33,7 +41,8 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		loop {
 			try {
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr->clear(ThrottleApi::getTagQuotaKey(tag));
+				wait(UpdateStream::update(
+				    tr, ThrottleApi::getTagQuotaKey(tag), Optional<Value>(), throughputQuotaUpdatePrefix));
 				wait(tr->commit());
 				return Void();
 			} catch (Error& e) {
@@ -56,7 +65,10 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 				if (!throughputQuotaValue.isValid()) {
 					throw invalid_throttle_quota_value();
 				}
-				TenantMetadata::throughputQuota().set(tr, tenantGroup, throughputQuotaValue);
+				wait(UpdateStream::update(tr,
+				                          TenantMetadata::throughputQuota().packKey(tenantGroup),
+				                          throughputQuotaValue.pack().pack(),
+				                          throughputQuotaUpdatePrefix));
 				wait(tr->commit());
 				return Void();
 			} catch (Error& e) {
@@ -70,7 +82,10 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		loop {
 			try {
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				TenantMetadata::throughputQuota().erase(tr, tenantGroup);
+				wait(UpdateStream::update(tr,
+				                          TenantMetadata::throughputQuota().packKey(tenantGroup),
+				                          Optional<Value>(),
+				                          throughputQuotaUpdatePrefix));
 				wait(tr->commit());
 				return Void();
 			} catch (Error& e) {
@@ -79,9 +94,7 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		}
 	}
 
-	ACTOR static Future<Void> testTagQuota(Database cx,
-	                                       TransactionTag tag,
-	                                       RKSimpleThroughputQuotaCache const* quotaCache) {
+	ACTOR static Future<Void> testTagQuota(Database cx, TransactionTag tag, IRKThroughputQuotaCache const* quotaCache) {
 		state ThrottlingId throttlingId = ThrottlingIdRef::fromTag(tag);
 		ASSERT_EQ(quotaCache->size(), 0);
 		wait(setTagQuota(cx, tag, testReservedQuota(), testTotalQuota()));
@@ -101,7 +114,7 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 
 	ACTOR static Future<Void> testTenantGroupQuota(Database cx,
 	                                               TenantGroupName tenantGroup,
-	                                               RKSimpleThroughputQuotaCache const* quotaCache) {
+	                                               IRKThroughputQuotaCache const* quotaCache) {
 		state ThrottlingId throttlingId = ThrottlingIdRef::fromTenantGroup(tenantGroup);
 		ASSERT_EQ(quotaCache->size(), 0);
 		wait(setTenantGroupQuota(cx, tenantGroup, testReservedQuota(), testTotalQuota()));
@@ -123,7 +136,7 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 	// together in the quota database, without conflicting.
 	ACTOR static Future<Void> testConflictingNames(Database cx,
 	                                               Standalone<StringRef> sharedName,
-	                                               RKSimpleThroughputQuotaCache const* quotaCache) {
+	                                               IRKThroughputQuotaCache const* quotaCache) {
 		ASSERT_EQ(quotaCache->size(), 0);
 		wait(setTenantGroupQuota(cx, sharedName, testReservedQuota(), testTotalQuota()));
 		wait(setTagQuota(cx, sharedName, testReservedQuota() * 2, testTotalQuota() * 2));
@@ -139,12 +152,31 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		return Void();
 	}
 
+	static void updateThroughput(IRKThroughputQuotaCache& quotaCache) {
+		MockThroughputTracker throughputTracker;
+		double const throughput = 100.0;
+		throughputTracker.update(ThrottlingIdRef::fromTag("testTag"_sr), throughput);
+		throughputTracker.update(ThrottlingIdRef::fromTenantGroup("testTenantGroup"_sr), throughput);
+		throughputTracker.update(ThrottlingIdRef::fromTag("testConflictingName"_sr), throughput);
+		throughputTracker.update(ThrottlingIdRef::fromTenantGroup("testConflictingName"_sr), throughput);
+		quotaCache.updateThroughput(throughputTracker);
+	}
+
+	static std::unique_ptr<IRKThroughputQuotaCache> getQuotaCache(Database cx) {
+		if (deterministicRandom()->coinflip()) {
+			return std::make_unique<RKSimpleThroughputQuotaCache>(deterministicRandom()->randomUniqueID(), cx);
+		} else {
+			return std::make_unique<RKThroughputQuotaCache>(deterministicRandom()->randomUniqueID(), cx);
+		}
+	}
+
 	ACTOR static Future<Void> _start(Database cx) {
-		state RKSimpleThroughputQuotaCache quotaCache(deterministicRandom()->randomUniqueID(), cx);
-		state Future<Void> runFuture = quotaCache.run();
-		wait(testTagQuota(cx, "testTag"_sr, &quotaCache));
-		wait(testTenantGroupQuota(cx, "testTenantGroup"_sr, &quotaCache));
-		wait(testConflictingNames(cx, "testConflictingName"_sr, &quotaCache));
+		state std::unique_ptr<IRKThroughputQuotaCache> quotaCache = getQuotaCache(cx);
+		state Future<Void> runFuture = quotaCache->run();
+		updateThroughput(*quotaCache);
+		wait(testTagQuota(cx, "testTag"_sr, quotaCache.get()));
+		wait(testTenantGroupQuota(cx, "testTenantGroup"_sr, quotaCache.get()));
+		wait(testConflictingNames(cx, "testConflictingName"_sr, quotaCache.get()));
 		return Void();
 	}
 

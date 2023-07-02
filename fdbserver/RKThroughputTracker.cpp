@@ -155,6 +155,10 @@ double ServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId) 
 	return result;
 }
 
+std::unordered_set<ThrottlingId> ServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	throw not_implemented();
+}
+
 Optional<double> ServerThroughputTracker::getThroughput(UID storageServerId) const {
 	auto throttlingIdToThroughputCounters = tryGet(throughput, storageServerId);
 	if (!throttlingIdToThroughputCounters.present()) {
@@ -188,6 +192,16 @@ double ClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId) 
 	}
 }
 
+std::unordered_set<ThrottlingId> ClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	std::unordered_set<ThrottlingId> result;
+	for (auto const& [throttlingId, throughputSmoother] : throughput) {
+		if (throughputSmoother.smoother.smoothRate() > threshold) {
+			result.insert(throttlingId);
+		}
+	}
+	return result;
+}
+
 void ClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {
 	for (auto const& [throttlingId, newPerThrottlingIdThroughput] : newThroughput) {
 		throughput[throttlingId].smoother.addDelta(newPerThrottlingIdThroughput);
@@ -195,5 +209,34 @@ void ClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThrough
 }
 
 void ClientThroughputTracker::removeThrottlingId(ThrottlingId const& throttlingId) {
+	throughput.erase(throttlingId);
+}
+
+MockThroughputTracker::~MockThroughputTracker() = default;
+
+double MockThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
+	auto it = throughput.find(throttlingId);
+	if (it == throughput.end()) {
+		return 0.0;
+	} else {
+		return it->second;
+	}
+}
+
+std::unordered_set<ThrottlingId> MockThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	std::unordered_set<ThrottlingId> result;
+	for (auto const& [throttlingId, throughputValue] : throughput) {
+		if (throughputValue > threshold) {
+			result.insert(throttlingId);
+		}
+	}
+	return result;
+}
+
+void MockThroughputTracker::update(ThrottlingId const& throttlingId, double newThroughput) {
+	throughput[throttlingId] = newThroughput;
+}
+
+void MockThroughputTracker::removeThrottlingId(ThrottlingId const& throttlingId) {
 	throughput.erase(throttlingId);
 }

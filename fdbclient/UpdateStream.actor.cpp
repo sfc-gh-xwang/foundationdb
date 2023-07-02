@@ -3,7 +3,7 @@
  */
 
 #include "fdbclient/ReadYourWrites.h"
-#include "fdbserver/UpdateStream.h"
+#include "fdbclient/UpdateStream.h"
 #include "flow/actorcompiler.h" // must be last include
 
 class UpdateStreamImpl {
@@ -96,6 +96,7 @@ class UpdateStreamImpl {
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 		loop {
 			try {
+				self->applyTransactionOptions(tr);
 				Optional<uint64_t> lastUpdateIndex = wait(getLastUpdateIndex(tr, self->metadataPrefix));
 				if (lastUpdateIndex != self->lastUpdateIndex) {
 					return Void();
@@ -120,16 +121,17 @@ class UpdateStreamImpl {
 
 public:
 	ACTOR static Future<Optional<uint64_t>> start(UpdateStream* self, Database db) {
-		state Reference<ReadYourWritesTransaction> tr;
+		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 		loop {
 			try {
-				tr = makeReference<ReadYourWritesTransaction>(db);
+				self->applyTransactionOptions(tr);
 				state Optional<uint64_t> lastUpdateIndex = wait(getLastUpdateIndex(tr, self->metadataPrefix));
 				tr->set(self->getLeaseKey(), BinaryWriter::toValue(self->leaseId, Unversioned()));
 				wait(tr->commit());
 				self->lastUpdateIndex = lastUpdateIndex;
 				return self->lastUpdateIndex;
 			} catch (Error& e) {
+				TraceEvent(SevDebug, "UpdateStreamStartError").error(e);
 				wait(tr->onError(e));
 			}
 		}
@@ -144,6 +146,7 @@ public:
 			tr = makeReference<ReadYourWritesTransaction>(db);
 			loop {
 				try {
+					self->applyTransactionOptions(tr);
 					wait(validateLease(self, tr));
 					state uint64_t startIndex = getNextIndex(self->lastUpdateIndex);
 					state KeyRangeRef updateKeys =
@@ -218,8 +221,9 @@ public:
 	}
 };
 
-UpdateStream::UpdateStream(Key metadataPrefix, int batchSize)
-  : metadataPrefix(metadataPrefix), batchSize(batchSize), leaseId(deterministicRandom()->randomUniqueID()) {}
+UpdateStream::UpdateStream(Key metadataPrefix, int batchSize, bool accessSystemKeys, bool immediatePriority)
+  : metadataPrefix(metadataPrefix), batchSize(batchSize), leaseId(deterministicRandom()->randomUniqueID()),
+    accessSystemKeys(accessSystemKeys), immediatePriority(immediatePriority) {}
 
 Key UpdateStream::getLeaseKey() const {
 	return ("lease"_sr).withPrefix(metadataPrefix);
@@ -245,6 +249,15 @@ Future<Void> UpdateStream::update(Reference<ReadYourWritesTransaction> tr,
 
 UID UpdateStream::getLeaseId() const {
 	return leaseId;
+}
+
+void UpdateStream::applyTransactionOptions(Reference<ReadYourWritesTransaction> tr) const {
+	if (accessSystemKeys) {
+		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+	}
+	if (immediatePriority) {
+		tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+	}
 }
 
 UpdateStream::Update::Update(Key const& key, Optional<Value> const& value, uint64_t index)

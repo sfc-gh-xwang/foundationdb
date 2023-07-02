@@ -87,11 +87,14 @@ private:
 	UID leaseId;
 	Optional<uint64_t> lastUpdateIndex;
 	PromiseStream<Update> results;
+	bool accessSystemKeys;
+	bool immediatePriority;
 
 	Key getLeaseKey() const;
+	void applyTransactionOptions(Reference<ReadYourWritesTransaction>) const;
 
 public:
-	UpdateStream(Key metadataPrefix, int batchSize);
+	UpdateStream(Key metadataPrefix, int batchSize, bool accessSystemKeys, bool immediatePriority);
 
 	// Call this before reading a snapshot of the watched data.
 	// All updates after calling start will be made visible

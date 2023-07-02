@@ -5,6 +5,7 @@
 #pragma once
 
 #include "fdbclient/NativeAPI.actor.h"
+#include "fdbserver/IRKThroughputTracker.h"
 #include "flow/flow.h"
 #include "flow/Optional.h"
 
@@ -27,9 +28,40 @@ public:
 	// Responsible for updating the quota cache. The returned future
 	// should never be ready, but can be used for propagating errors.
 	virtual Future<Void> run() = 0;
+
+	// Update per-throttlingId throughput statistics. Depending on the
+	// implementation, this may cause quotas to be tracked or forgotten.
+	virtual void updateThroughput(IRKThroughputTracker const&) = 0;
 };
 
-// Uses the system keyspace to populate a cache of per-tenant throughput quotas
+// Uses UpdateStream to monitor the throughput quotas of sufficiently busy throttlingIds
+class RKThroughputQuotaCache : public IRKThroughputQuotaCache {
+	friend class RKThroughputQuotaCacheImpl;
+
+	struct QuotaData {
+		double lastActiveTime;
+		Optional<ThrottleApi::ThroughputQuotaValue> quota;
+		QuotaData() : lastActiveTime(now()) {}
+	};
+
+	ThrottlingIdMap<QuotaData> quotas;
+	UID id;
+	Database db;
+	PromiseStream<ThrottlingId> activeThrottlingIdStream;
+
+	void applyUpdate(Key const&, Optional<Value> const&);
+
+public:
+	RKThroughputQuotaCache(UID id, Database db);
+	~RKThroughputQuotaCache();
+	Optional<int64_t> getTotalQuota(ThrottlingId const&) const override;
+	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;
+	int size() const override;
+	Future<Void> run() override;
+	void updateThroughput(IRKThroughputTracker const&) override;
+};
+
+// Periodically polls the system keyspace to populate a cache of per-throttlingId throughput quotas
 class RKSimpleThroughputQuotaCache : public IRKThroughputQuotaCache {
 	friend class RKSimpleThroughputQuotaCacheImpl;
 	ThrottlingIdMap<ThrottleApi::ThroughputQuotaValue> quotas;
@@ -43,6 +75,7 @@ public:
 	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;
 	int size() const override;
 	Future<Void> run() override;
+	void updateThroughput(IRKThroughputTracker const&) override {}
 };
 
 // Cache is updated by a test client that manually sets and removes quotas
@@ -55,6 +88,7 @@ public:
 	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;
 	int size() const override;
 	Future<Void> run() override;
+	void updateThroughput(IRKThroughputTracker const&) override {}
 
 	void setQuota(ThrottlingId const&, int64_t totalQuota, int64_t reservedQuota);
 	void removeQuota(ThrottlingId const&);

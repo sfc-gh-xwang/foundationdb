@@ -28,6 +28,7 @@
 
 KeyRangeRef const tagQuotaKeys = KeyRangeRef("\xff/tagQuota/"_sr, "\xff/tagQuota0"_sr);
 KeyRef const tagQuotaPrefix = tagQuotaKeys.begin;
+KeyRef const throughputQuotaUpdatePrefix = "\xff/throughputQuotaUpdates/"_sr;
 
 Key ThrottleApi::getTagQuotaKey(TransactionTagRef tag) {
 	return tag.withPrefix(tagQuotaPrefix);

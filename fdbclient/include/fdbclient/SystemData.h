@@ -465,6 +465,7 @@ extern const KeyRef tagThrottleLimitKey;
 extern const KeyRef tagThrottleCountKey;
 extern const KeyRangeRef tagQuotaKeys;
 extern const KeyRef tagQuotaPrefix;
+extern const KeyRef throughputQuotaUpdatePrefix;
 
 // Log Range constant variables
 // Used in the backup pipeline to track mutations

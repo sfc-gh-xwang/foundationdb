@@ -2,8 +2,9 @@
  * UpdateStream.actor.cpp
  */
 
-#include "fdbserver/UpdateStream.h"
+#include "fdbclient/UpdateStream.h"
 #include "fdbserver/workloads/workloads.actor.h"
+#include "flow/actorcompiler.h" // must be last include
 
 namespace {
 
@@ -52,7 +53,8 @@ class Consumer {
 	ACTOR static Future<Void> run(Consumer* self, Database db, int batchSize) {
 		state Reference<UpdateStream> updateStream;
 		loop {
-			updateStream = makeReference<UpdateStream>(self->metadataPrefix, batchSize);
+			updateStream = makeReference<UpdateStream>(
+			    self->metadataPrefix, batchSize, /*accessSystemKeys=*/false, /*immediatePriority=*/false);
 			Optional<uint64_t> startIndex = wait(updateStream->start(db));
 			TraceEvent(SevDebug, "UpdateStreamWorkloadReadingSnapshot")
 			    .detail("StartIndex", startIndex)
