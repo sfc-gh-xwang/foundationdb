@@ -38,6 +38,7 @@ class RKThroughputQuotaCacheImpl {
 			tr = makeReference<ReadYourWritesTransaction>(self->db);
 			loop {
 				tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 				try {
 					wait(store(it->second.quota, getQuota(tr, throttlingId)));
 					break;
@@ -56,6 +57,8 @@ class RKThroughputQuotaCacheImpl {
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);
 		while (it != self->quotas.end()) {
 			loop {
+				tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 				try {
 					auto& [throttlingId, quotaData] = *it;
 					wait(store(quotaData.quota, getQuota(tr, throttlingId)));
