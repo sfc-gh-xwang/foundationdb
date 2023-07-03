@@ -1,5 +1,5 @@
 /**
- * RKSimplThroughputQuotaCache.actor.cpp
+ * RKSimpleThroughputQuotaCache.actor.cpp
  */
 
 #include "fdbclient/DatabaseContext.h"
@@ -49,8 +49,8 @@ RKSimpleThroughputQuotaCache::RKSimpleThroughputQuotaCache(UID id, Database db) 
 
 RKSimpleThroughputQuotaCache::~RKSimpleThroughputQuotaCache() = default;
 
-Optional<int64_t> RKSimpleThroughputQuotaCache::getTotalQuota(ThrottlingId const& tag) const {
-	auto it = quotas.find(tag);
+Optional<int64_t> RKSimpleThroughputQuotaCache::getTotalQuota(ThrottlingId const& throttlingId) const {
+	auto it = quotas.find(throttlingId);
 	if (it == quotas.end()) {
 		return {};
 	} else {
@@ -58,8 +58,8 @@ Optional<int64_t> RKSimpleThroughputQuotaCache::getTotalQuota(ThrottlingId const
 	}
 }
 
-Optional<int64_t> RKSimpleThroughputQuotaCache::getReservedQuota(ThrottlingId const& tag) const {
-	auto it = quotas.find(tag);
+Optional<int64_t> RKSimpleThroughputQuotaCache::getReservedQuota(ThrottlingId const& throttlingId) const {
+	auto it = quotas.find(throttlingId);
 	if (it == quotas.end()) {
 		return {};
 	} else {
@@ -77,8 +77,8 @@ Future<Void> RKSimpleThroughputQuotaCache::run() {
 
 MockRKThroughputQuotaCache::~MockRKThroughputQuotaCache() = default;
 
-Optional<int64_t> MockRKThroughputQuotaCache::getTotalQuota(ThrottlingId const& tag) const {
-	auto it = quotas.find(tag);
+Optional<int64_t> MockRKThroughputQuotaCache::getTotalQuota(ThrottlingId const& throttlingId) const {
+	auto it = quotas.find(throttlingId);
 	if (it == quotas.end()) {
 		return {};
 	} else {
@@ -86,8 +86,8 @@ Optional<int64_t> MockRKThroughputQuotaCache::getTotalQuota(ThrottlingId const& 
 	}
 }
 
-Optional<int64_t> MockRKThroughputQuotaCache::getReservedQuota(ThrottlingId const& tag) const {
-	auto it = quotas.find(tag);
+Optional<int64_t> MockRKThroughputQuotaCache::getReservedQuota(ThrottlingId const& throttlingId) const {
+	auto it = quotas.find(throttlingId);
 	if (it == quotas.end()) {
 		return {};
 	} else {
@@ -99,13 +99,13 @@ int MockRKThroughputQuotaCache::size() const {
 	return quotas.size();
 }
 
-void MockRKThroughputQuotaCache::setQuota(ThrottlingId const& tag, int64_t totalQuota, int64_t reservedQuota) {
-	quotas[tag].totalQuota = totalQuota;
-	quotas[tag].reservedQuota = reservedQuota;
+void MockRKThroughputQuotaCache::setQuota(ThrottlingId const& throttlingId, int64_t totalQuota, int64_t reservedQuota) {
+	quotas[throttlingId].totalQuota = totalQuota;
+	quotas[throttlingId].reservedQuota = reservedQuota;
 }
 
-void MockRKThroughputQuotaCache::removeQuota(ThrottlingId const& tag) {
-	quotas.erase(tag);
+void MockRKThroughputQuotaCache::removeQuota(ThrottlingId const& throttlingId) {
+	quotas.erase(throttlingId);
 }
 
 Future<Void> MockRKThroughputQuotaCache::run() {
