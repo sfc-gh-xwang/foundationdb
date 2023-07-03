@@ -9,6 +9,21 @@
 
 class RKThroughputQuotaCacheImpl {
 
+	ACTOR static Future<Void> expireOldThrottlingIds(RKThroughputQuotaCache* self) {
+		loop {
+			wait(delayJittered(self->expirationCheckInterval));
+			auto it = self->quotas.begin();
+			while (it != self->quotas.end()) {
+				auto const lastActiveTime = it->second.lastActiveTime;
+				if (lastActiveTime + self->expirationThreshold < now()) {
+					it = self->quotas.erase(it);
+				} else {
+					++it;
+				}
+			}
+		}
+	}
+
 	// Reads and deserializes the quota for the provided throttlingId with the provided transaction
 	ACTOR static Future<Optional<ThrottleApi::ThroughputQuotaValue>> getQuota(Reference<ReadYourWritesTransaction> tr,
 	                                                                          ThrottlingId throttlingId) {
@@ -78,9 +93,10 @@ public:
 	ACTOR static Future<Void> run(RKThroughputQuotaCache* self) {
 		state Reference<UpdateStream> updateStream;
 		state FutureStream<UpdateStream::Update> updates;
+		state Future<Void> cleanerActor = expireOldThrottlingIds(self);
 		loop {
 			updateStream = makeReference<UpdateStream>(throughputQuotaUpdatePrefix,
-			                                           SERVER_KNOBS->GLOBAL_TAG_THROTTLING_QUOTA_CACHE_BATCH_SIZE,
+			                                           SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,
 			                                           /*accessSystemKeys=*/true,
 			                                           /*immediatePriority=*/true);
 			wait(success(updateStream->start(self->db)));
@@ -108,8 +124,13 @@ public:
 	}
 }; // class RKThroughputQuotaCacheImpl
 
-RKThroughputQuotaCache::RKThroughputQuotaCache(UID id, Database db, double throughputThreshold)
-  : id(id), db(db), throughputThreshold(throughputThreshold) {}
+RKThroughputQuotaCache::RKThroughputQuotaCache(UID id,
+                                               Database db,
+                                               double throughputThreshold,
+                                               double expirationCheckInterval,
+                                               double expirationThreshold)
+  : id(id), db(db), throughputThreshold(throughputThreshold), expirationCheckInterval(expirationCheckInterval),
+    expirationThreshold(expirationThreshold) {}
 
 RKThroughputQuotaCache::~RKThroughputQuotaCache() = default;
 
@@ -167,4 +188,8 @@ void RKThroughputQuotaCache::updateThroughput(IRKThroughputTracker const& throug
 	for (auto const& throttlingId : activeThrottlingIds) {
 		activeThrottlingIdStream.send(throttlingId);
 	}
+}
+
+int RKThroughputQuotaCache::activeThrottlingIds() const {
+	return quotas.size();
 }

@@ -48,18 +48,29 @@ class RKThroughputQuotaCache : public IRKThroughputQuotaCache {
 	UID id;
 	Database db;
 	double throughputThreshold;
+	double expirationCheckInterval;
+	double expirationThreshold;
 	PromiseStream<ThrottlingId> activeThrottlingIdStream;
 
 	void applyUpdate(Key const&, Optional<Value> const&);
 
 public:
-	RKThroughputQuotaCache(UID id, Database db, double throughputThreshold);
+	RKThroughputQuotaCache(UID id,
+	                       Database db,
+	                       double throughputThreshold,
+	                       double expirationCheckInterval,
+	                       double expirationThreshold);
 	~RKThroughputQuotaCache();
 	Optional<int64_t> getTotalQuota(ThrottlingId const&) const override;
 	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;
 	int size() const override;
 	Future<Void> run() override;
 	void updateThroughput(IRKThroughputTracker const&) override;
+
+	// Returns the number of active throttling IDs with quotas
+	// currently being tracked. These quotas may or may not
+	// be set.
+	int activeThrottlingIds() const;
 };
 
 // Periodically polls the system keyspace to populate a cache of per-throttlingId throughput quotas

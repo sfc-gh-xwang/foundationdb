@@ -35,8 +35,11 @@ std::unique_ptr<IRKThroughputQuotaCache> createThroughputQuotaCache(UID id, Data
 	if (SERVER_KNOBS->GLOBAL_TAG_THROTTLING_USE_SIMPLE_QUOTA_CACHE) {
 		return std::make_unique<RKSimpleThroughputQuotaCache>(id, db);
 	} else {
-		return std::make_unique<RKThroughputQuotaCache>(
-		    id, db, SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRACK_QUOTA_THRESHOLD);
+		return std::make_unique<RKThroughputQuotaCache>(id,
+		                                                db,
+		                                                SERVER_KNOBS->THROUGHPUT_QUOTA_TRACK_THRESHOLD,
+		                                                SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL,
+		                                                SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD);
 	}
 }
 

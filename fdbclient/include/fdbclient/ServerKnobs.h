@@ -758,11 +758,17 @@ public:
 	// Used to determine which throughput quota cache implementation will be used
 	// (simple polling or update streaming).
 	bool GLOBAL_TAG_THROTTLING_USE_SIMPLE_QUOTA_CACHE;
-	// Above this cluser-wide throughput threshold (in bytes/second), ratekeeper will monitor
+	// Above this cluster-wide throughput threshold (in bytes/second), ratekeeper will monitor
 	// the quota for a particular throttlingId
-	int64_t GLOBAL_TAG_THROTTLING_TRACK_QUOTA_THRESHOLD;
+	int64_t THROUGHPUT_QUOTA_TRACK_THRESHOLD;
 	// Number of updates read in a single transaction by the throughput quota cache
-	int GLOBAL_TAG_THROTTLING_QUOTA_CACHE_BATCH_SIZE;
+	int THROUGHPUT_QUOTA_CACHE_BATCH_SIZE;
+	// Interval at which throughput quota cache will check to
+	// expire inactive throttlingIds
+	double THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL;
+	// Period of inactivity after which the throughput quota cache
+	// will expire a throttlingId.
+	double THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;
