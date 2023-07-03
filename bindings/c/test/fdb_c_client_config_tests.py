@@ -344,10 +344,8 @@ class ClientConfigTest:
         tester_proc = subprocess.Popen(
             cmd_args, stdout=subprocess.PIPE, stderr=sys.stderr
         )
-        out, err = tester_proc.communicate()
+        out, _ = tester_proc.communicate()
         self.tc.assertEqual(0, tester_proc.returncode)
-        if err:
-            print("Test failed due to: {}".format(err))
         if self.print_status:
             # Parse the output as status json
             try:
