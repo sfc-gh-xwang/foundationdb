@@ -29,6 +29,19 @@
 
 #include "flow/actorcompiler.h" // must be last include
 
+namespace {
+
+std::unique_ptr<IRKThroughputQuotaCache> createThroughputQuotaCache(UID id, Database db) {
+	if (SERVER_KNOBS->GLOBAL_TAG_THROTTLING_USE_SIMPLE_QUOTA_CACHE) {
+		return std::make_unique<RKSimpleThroughputQuotaCache>(id, db);
+	} else {
+		return std::make_unique<RKThroughputQuotaCache>(
+		    id, db, SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRACK_QUOTA_THRESHOLD);
+	}
+}
+
+} // namespace
+
 const char* limitReasonName[] = { "workload",
 	                              "storage_server_write_queue_size",
 	                              "storage_server_write_bandwidth_mvcc",
@@ -84,7 +97,7 @@ public:
 		self.addActor.send(self.rateServer.run(
 		    self.normalRateUpdater, self.batchRateUpdater, self.quotaThrottler, self.recoveryTracker));
 
-		self.addActor.send(self.quotaCache.run());
+		self.addActor.send(self.quotaCache->run());
 		self.addActor.send(self.quotaThrottler.monitorThrottlingChanges());
 		if (SERVER_KNOBS->BW_THROTTLING_ENABLED) {
 			self.addActor.send(self.blobMonitor.run(self.configurationMonitor, self.recoveryTracker));
@@ -195,7 +208,8 @@ Ratekeeper::Ratekeeper(UID id,
                                       SERVER_KNOBS->MAX_TL_SS_VERSION_DIFFERENCE_BATCH,
                                       SERVER_KNOBS->TARGET_DURABILITY_LAG_VERSIONS_BATCH,
                                       SERVER_KNOBS->TARGET_BW_LAG_BATCH)),
-    quotaCache(id, db), quotaThrottler(metricsTracker, quotaCache, id, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND) {}
+    quotaCache(createThroughputQuotaCache(id, db)),
+    quotaThrottler(metricsTracker, *quotaCache, id, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND) {}
 
 void Ratekeeper::updateTagThrottling() {
 	quotaThrottler.updateThrottling(metricsTracker.getStorageQueueInfo());

@@ -2,8 +2,9 @@
  * RKThroughputQuotaCache.actor.cpp
  */
 
-#include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbclient/UpdateStream.h"
+#include "fdbserver/IRKThroughputQuotaCache.h"
+#include "fdbserver/Knobs.h"
 #include "flow/actorcompiler.h" // must be last include
 
 class RKThroughputQuotaCacheImpl {
@@ -75,8 +76,10 @@ public:
 		state Reference<UpdateStream> updateStream;
 		state FutureStream<UpdateStream::Update> updates;
 		loop {
-			updateStream = makeReference<UpdateStream>(
-			    "\xff/quotaUpdates/"_sr, /*batchSize=*/10, /*accessSystemKeys=*/true, /*immediatePriority=*/true);
+			updateStream = makeReference<UpdateStream>(throughputQuotaUpdatePrefix,
+			                                           SERVER_KNOBS->GLOBAL_TAG_THROTTLING_QUOTA_CACHE_BATCH_SIZE,
+			                                           /*accessSystemKeys=*/true,
+			                                           /*immediatePriority=*/true);
 			wait(success(updateStream->start(self->db)));
 			wait(readSnapshot(self));
 			updates = updateStream->getUpdates(self->db);
