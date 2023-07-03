@@ -47,12 +47,13 @@ class RKThroughputQuotaCache : public IRKThroughputQuotaCache {
 	ThrottlingIdMap<QuotaData> quotas;
 	UID id;
 	Database db;
+	double throughputThreshold;
 	PromiseStream<ThrottlingId> activeThrottlingIdStream;
 
 	void applyUpdate(Key const&, Optional<Value> const&);
 
 public:
-	RKThroughputQuotaCache(UID id, Database db);
+	RKThroughputQuotaCache(UID id, Database db, double throughputThreshold);
 	~RKThroughputQuotaCache();
 	Optional<int64_t> getTotalQuota(ThrottlingId const&) const override;
 	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;

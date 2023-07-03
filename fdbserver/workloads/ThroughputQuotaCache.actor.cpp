@@ -152,6 +152,9 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		return Void();
 	}
 
+	// This has no effect for an RKSimpleThroughputQuotaCache object, but for
+	// RKThroughputQuotaCache, it's necessary to report sufficient throughput,
+	// or the throttlingIds will be ignored.
 	static void updateThroughput(IRKThroughputQuotaCache& quotaCache) {
 		MockThroughputTracker throughputTracker;
 		double const throughput = 100.0;
@@ -166,7 +169,8 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		if (deterministicRandom()->coinflip()) {
 			return std::make_unique<RKSimpleThroughputQuotaCache>(deterministicRandom()->randomUniqueID(), cx);
 		} else {
-			return std::make_unique<RKThroughputQuotaCache>(deterministicRandom()->randomUniqueID(), cx);
+			return std::make_unique<RKThroughputQuotaCache>(
+			    deterministicRandom()->randomUniqueID(), cx, /*throughputThreshold=*/10.0);
 		}
 	}
 

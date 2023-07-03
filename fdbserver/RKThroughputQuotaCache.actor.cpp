@@ -102,7 +102,8 @@ public:
 	}
 }; // class RKThroughputQuotaCacheImpl
 
-RKThroughputQuotaCache::RKThroughputQuotaCache(UID id, Database db) : id(id), db(db) {}
+RKThroughputQuotaCache::RKThroughputQuotaCache(UID id, Database db, double throughputThreshold)
+  : id(id), db(db), throughputThreshold(throughputThreshold) {}
 
 RKThroughputQuotaCache::~RKThroughputQuotaCache() = default;
 
@@ -156,8 +157,7 @@ void RKThroughputQuotaCache::applyUpdate(Key const& key, Optional<Value> const& 
 }
 
 void RKThroughputQuotaCache::updateThroughput(IRKThroughputTracker const& throughputTracker) {
-	// TODO: Use real threshold
-	auto const activeThrottlingIds = throughputTracker.getActiveThrottlingIds(/*threshold=*/10.0);
+	auto const activeThrottlingIds = throughputTracker.getActiveThrottlingIds(throughputThreshold);
 	for (auto const& throttlingId : activeThrottlingIds) {
 		activeThrottlingIdStream.send(throttlingId);
 	}
