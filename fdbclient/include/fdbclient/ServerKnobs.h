@@ -762,7 +762,7 @@ public:
 	// the quota for a particular throttlingId
 	int64_t THROUGHPUT_QUOTA_TRACK_THRESHOLD;
 	// Number of updates read in a single transaction by the throughput quota cache
-	int THROUGHPUT_QUOTA_CACHE_BATCH_SIZE;
+	int64_t THROUGHPUT_QUOTA_CACHE_BATCH_SIZE;
 	// Interval at which throughput quota cache will check to
 	// expire inactive throttlingIds
 	double THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL;

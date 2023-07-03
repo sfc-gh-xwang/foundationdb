@@ -65,26 +65,45 @@ class RKThroughputQuotaCacheImpl {
 		return Void();
 	}
 
-	// TODO: Read multiple at once
+	// Use a single transaction to parallelly read a batch of quotas
+	ACTOR static Future<Void> readBatch(RKThroughputQuotaCache* self,
+	                                    ThrottlingIdMap<RKThroughputQuotaCache::QuotaData>::iterator begin,
+	                                    int batchSize) {
+		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);
+		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData>::iterator it;
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				std::vector<Future<Void>> futures;
+				futures.reserve(batchSize);
+				it = begin;
+				for (int i = 0; i < batchSize; ++i) {
+					auto& [throttlingId, quotaData] = *it;
+					futures.push_back(store(quotaData.quota, getQuota(tr, throttlingId)));
+					++it;
+				}
+				wait(waitForAll(futures));
+				return Void();
+			} catch (Error& e) {
+				TraceEvent("RKThroughputQuotaCacheReadBatchError", self->id).error(e);
+				wait(tr->onError(e));
+			}
+		}
+	}
+
 	ACTOR static Future<Void> readSnapshot(RKThroughputQuotaCache* self) {
 		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData> newSnapshot = self->quotas;
 		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData>::iterator it = newSnapshot.begin();
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);
-		TraceEvent("RKThroughputQuotaCacheReadSnapshotStart", self->id);
-		while (it != self->quotas.end()) {
-			loop {
-				tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-				try {
-					auto& [throttlingId, quotaData] = *it;
-					wait(store(quotaData.quota, getQuota(tr, throttlingId)));
-					break;
-				} catch (Error& e) {
-					TraceEvent(SevDebug, "RKThroughputQuotaCacheReadSnapshotError", self->id).error(e);
-					wait(tr->onError(e));
-				}
-			}
-			++it;
+		state int batchSize;
+		TraceEvent("RKThroughputQuotaCacheReadSnapshotStart", self->id).detail("QuotasToRead", newSnapshot.size());
+		while (it != newSnapshot.end()) {
+			CODE_PROBE(it != newSnapshot.begin(), "RKThroughputQuotaCache reading snapshot in multiple batches");
+			batchSize =
+			    std::min(std::distance(it, self->quotas.end()), SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_BATCH_SIZE);
+			wait(readBatch(self, it, batchSize));
+			std::advance(it, batchSize);
 		}
 		self->quotas = std::move(newSnapshot);
 		TraceEvent("RKThroughputQuotaCacheReadSnapshotComplete", self->id).detail("QuotasSize", self->quotas.size());
