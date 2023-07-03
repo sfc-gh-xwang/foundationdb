@@ -70,6 +70,7 @@ class RKThroughputQuotaCacheImpl {
 		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData> newSnapshot = self->quotas;
 		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData>::iterator it = newSnapshot.begin();
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);
+		TraceEvent("RKThroughputQuotaCacheReadSnapshotStart", self->id);
 		while (it != self->quotas.end()) {
 			loop {
 				tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
@@ -79,13 +80,14 @@ class RKThroughputQuotaCacheImpl {
 					wait(store(quotaData.quota, getQuota(tr, throttlingId)));
 					break;
 				} catch (Error& e) {
-					TraceEvent(SevDebug, "RKThroughputQuotaCacheReadSnapshotError").error(e);
+					TraceEvent(SevDebug, "RKThroughputQuotaCacheReadSnapshotError", self->id).error(e);
 					wait(tr->onError(e));
 				}
 			}
 			++it;
 		}
 		self->quotas = std::move(newSnapshot);
+		TraceEvent("RKThroughputQuotaCacheReadSnapshotComplete", self->id).detail("QuotasSize", self->quotas.size());
 		return Void();
 	}
 
@@ -94,6 +96,7 @@ public:
 		state Reference<UpdateStream> updateStream;
 		state FutureStream<UpdateStream::Update> updates;
 		state Future<Void> cleanerActor = expireOldThrottlingIds(self);
+		TraceEvent("RKThroughputQuotaCacheRun", self->id);
 		loop {
 			updateStream = makeReference<UpdateStream>(throughputQuotaUpdatePrefix,
 			                                           SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,
@@ -113,7 +116,7 @@ public:
 					}
 				}
 			} catch (Error& e) {
-				TraceEvent("RKThroughputQuotaCacheRunError").error(e);
+				TraceEvent("RKThroughputQuotaCacheRunError", self->id).error(e);
 				if (e.code() == error_code_restart_update_stream) {
 					continue;
 				} else {
