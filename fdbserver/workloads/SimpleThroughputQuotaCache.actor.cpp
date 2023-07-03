@@ -1,5 +1,5 @@
 /**
- * ThroughputQuotaCache.actor.cpp
+ * SimpleThroughputQuotaCache.actor.cpp
  */
 
 #include "fdbclient/TagThrottle.h"
@@ -9,8 +9,9 @@
 
 #include "flow/actorcompiler.h" // must be the last include
 
-// Tests the functionality of the RKSimpleThroughputQuotaCache class
-class ThroughputQuotaCacheWorkload : public TestWorkload {
+// Simple workload to test the functionality of RKSimpleThroughputQuotaCache
+// and RKThroughputQuotaCache.
+class SimpleThroughputQuotaCacheWorkload : public TestWorkload {
 	static int64_t testReservedQuota() { return 100 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 
 	static int64_t testTotalQuota() { return 1000 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
@@ -185,12 +186,12 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 	}
 
 public:
-	static constexpr auto NAME = "ThroughputQuotaCache";
-	explicit ThroughputQuotaCacheWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {}
+	static constexpr auto NAME = "SimpleThroughputQuotaCache";
+	explicit SimpleThroughputQuotaCacheWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {}
 	Future<Void> setup(Database const& cx) override { return Void(); }
 	Future<Void> start(Database const& cx) override { return clientId ? Void() : _start(cx); }
 	Future<bool> check(Database const& cx) override { return true; }
 	void getMetrics(std::vector<PerfMetric>& m) override {}
 };
 
-WorkloadFactory<ThroughputQuotaCacheWorkload> ThroughputQuotaCacheWorkloadFactory;
+WorkloadFactory<SimpleThroughputQuotaCacheWorkload> SimpleThroughputQuotaCacheWorkloadFactory;
