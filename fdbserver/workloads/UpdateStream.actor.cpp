@@ -6,105 +6,6 @@
 #include "fdbserver/workloads/workloads.actor.h"
 #include "flow/actorcompiler.h" // must be last include
 
-namespace {
-
-class Consumer {
-	std::unordered_map<Key, Value> kvState;
-	Key metadataPrefix, dataPrefix;
-	int id;
-
-	ACTOR static Future<std::unordered_map<Key, Value>> readSnapshot(Database db, Key dataPrefix) {
-		state Transaction tr(db);
-		loop {
-			try {
-				RangeReadResult rangeResult = wait(tr.getRange(prefixRange(dataPrefix), CLIENT_KNOBS->TOO_MANY));
-				std::unordered_map<Key, Value> result;
-				for (const auto kv : rangeResult.contents()) {
-					result[kv.key] = kv.value;
-				}
-				return result;
-			} catch (Error& e) {
-				wait(tr.onError(e));
-			}
-		}
-	}
-
-	void applyUpdate(UpdateStream::Update const& update) {
-		TraceEvent(SevDebug, "UpdateStreamWorkloadApplyingUpdate")
-		    .detail("Key", update.key)
-		    .detail("Value", update.value)
-		    .detail("Index", update.index)
-		    .detail("ConsumerId", id);
-		if (update.value.present()) {
-			kvState[update.key] = update.value.get();
-		} else {
-			kvState.erase(update.key);
-		}
-	}
-
-	static Future<Void> randomDelay(double maxDuration) {
-		if (deterministicRandom()->coinflip()) {
-			return delay(deterministicRandom()->random01() * maxDuration);
-		} else {
-			return Void();
-		}
-	}
-
-	ACTOR static Future<Void> run(Consumer* self, Database db, int batchSize) {
-		state Reference<UpdateStream> updateStream;
-		loop {
-			updateStream = makeReference<UpdateStream>(
-			    self->metadataPrefix, batchSize, /*accessSystemKeys=*/false, /*immediatePriority=*/false);
-			Optional<uint64_t> startIndex = wait(updateStream->start(db));
-			TraceEvent(SevDebug, "UpdateStreamWorkloadReadingSnapshot")
-			    .detail("StartIndex", startIndex)
-			    .detail("ConsumerId", self->id)
-			    .detail("LeaseId", updateStream->getLeaseId());
-			wait(randomDelay(5.0));
-			wait(store(self->kvState, readSnapshot(db, self->dataPrefix)));
-			wait(randomDelay(5.0));
-			state FutureStream<UpdateStream::Update> updates = updateStream->getUpdates(db);
-			loop {
-				try {
-					UpdateStream::Update update = waitNext(updates);
-					self->applyUpdate(update);
-					wait(randomDelay(0.1));
-				} catch (Error& e) {
-					TraceEvent(SevDebug, "UpdateStreamWorkloadConsumerError").error(e).detail("ConsumerId", self->id);
-					if (e.code() == error_code_restart_update_stream) {
-						wait(randomDelay(5.0));
-						break;
-					} else {
-						throw e;
-					}
-				}
-			}
-		}
-	}
-
-	ACTOR static Future<Void> waitForConvergence(Consumer const* self, Database db) {
-		loop {
-			state std::unordered_map<Key, Value> snapshot = wait(readSnapshot(db, self->dataPrefix));
-			if (self->kvState == snapshot) {
-				TraceEvent(SevDebug, "UpdateStreamWorkloadConsumerReachedConvergence").detail("ConsumerId", self->id);
-				return Void();
-			} else {
-				wait(delay(1.0));
-			}
-		}
-	}
-
-public:
-	Consumer(Key const& metadataPrefix, Key const& dataPrefix, int id)
-	  : metadataPrefix(metadataPrefix), dataPrefix(dataPrefix), id(id) {}
-
-	Future<Void> run(Database db, int batchSize) { return run(this, db, batchSize); }
-
-	Future<Void> waitForConvergence(Database db) const { return waitForConvergence(this, db); }
-};
-
-} // namespace
-
 class UpdateStreamWorkload : public TestWorkload {
 	Key metadataPrefix;
 	Key dataPrefix;
@@ -117,6 +18,104 @@ class UpdateStreamWorkload : public TestWorkload {
 	int updatesPerTransaction;
 	double delayBetweenTransactions;
 	double clearProbability;
+
+	class Consumer {
+		std::unordered_map<Key, Value> kvState;
+		Key metadataPrefix, dataPrefix;
+		int id;
+
+		ACTOR static Future<std::unordered_map<Key, Value>> readSnapshot(Database db, Key dataPrefix) {
+			state Transaction tr(db);
+			loop {
+				try {
+					RangeReadResult rangeResult = wait(tr.getRange(prefixRange(dataPrefix), CLIENT_KNOBS->TOO_MANY));
+					std::unordered_map<Key, Value> result;
+					for (const auto kv : rangeResult.contents()) {
+						result[kv.key] = kv.value;
+					}
+					return result;
+				} catch (Error& e) {
+					wait(tr.onError(e));
+				}
+			}
+		}
+
+		void applyUpdate(UpdateStream::Update const& update) {
+			TraceEvent(SevDebug, "UpdateStreamWorkloadApplyingUpdate")
+			    .detail("Key", update.key)
+			    .detail("Value", update.value)
+			    .detail("Index", update.index)
+			    .detail("ConsumerId", id);
+			if (update.value.present()) {
+				kvState[update.key] = update.value.get();
+			} else {
+				kvState.erase(update.key);
+			}
+		}
+
+		static Future<Void> randomDelay(double maxDuration) {
+			if (deterministicRandom()->coinflip()) {
+				return delay(deterministicRandom()->random01() * maxDuration);
+			} else {
+				return Void();
+			}
+		}
+
+		ACTOR static Future<Void> run(Consumer* self, Database db, int batchSize) {
+			state Reference<UpdateStream> updateStream;
+			loop {
+				updateStream = makeReference<UpdateStream>(
+				    self->metadataPrefix, batchSize, /*accessSystemKeys=*/false, /*immediatePriority=*/false);
+				Optional<uint64_t> startIndex = wait(updateStream->start(db));
+				TraceEvent(SevDebug, "UpdateStreamWorkloadReadingSnapshot")
+				    .detail("StartIndex", startIndex)
+				    .detail("ConsumerId", self->id)
+				    .detail("LeaseId", updateStream->getLeaseId());
+				wait(randomDelay(5.0));
+				wait(store(self->kvState, readSnapshot(db, self->dataPrefix)));
+				wait(randomDelay(5.0));
+				state FutureStream<UpdateStream::Update> updates = updateStream->getUpdates(db);
+				loop {
+					try {
+						UpdateStream::Update update = waitNext(updates);
+						self->applyUpdate(update);
+						wait(randomDelay(0.1));
+					} catch (Error& e) {
+						TraceEvent(SevDebug, "UpdateStreamWorkloadConsumerError")
+						    .error(e)
+						    .detail("ConsumerId", self->id);
+						if (e.code() == error_code_restart_update_stream) {
+							wait(randomDelay(5.0));
+							break;
+						} else {
+							throw e;
+						}
+					}
+				}
+			}
+		}
+
+		ACTOR static Future<Void> waitForConvergence(Consumer const* self, Database db) {
+			loop {
+				state std::unordered_map<Key, Value> snapshot = wait(readSnapshot(db, self->dataPrefix));
+				if (self->kvState == snapshot) {
+					TraceEvent(SevDebug, "UpdateStreamWorkloadConsumerReachedConvergence")
+					    .detail("ConsumerId", self->id);
+					return Void();
+				} else {
+					wait(delay(1.0));
+				}
+			}
+		}
+
+	public:
+		Consumer(Key const& metadataPrefix, Key const& dataPrefix, int id)
+		  : metadataPrefix(metadataPrefix), dataPrefix(dataPrefix), id(id) {}
+
+		Future<Void> run(Database db, int batchSize) { return run(this, db, batchSize); }
+
+		Future<Void> waitForConvergence(Database db) const { return waitForConvergence(this, db); }
+	};
 
 	Key getKey(uint64_t index) { return BinaryWriter::toValue(index, Unversioned()).withPrefix(dataPrefix); }
 
