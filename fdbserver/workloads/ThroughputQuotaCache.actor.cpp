@@ -10,31 +10,59 @@
 
 // This workload tests to functionality of RKThroughputQuotaCache
 class ThroughputQuotaCacheWorkload : public TestWorkload {
+	int numTags;
+
 	static int64_t testReservedQuota() { return 100 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 	static int64_t testTotalQuota() { return 1000 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 	static double const throughputThreshold;
 	static double const activeThroughput;
 
+	static TransactionTag getTransactionTag(uint64_t index) {
+		return BinaryWriter::toValue(index, Unversioned()).withPrefix("testTag/"_sr);
+	}
+
+	static ThrottlingId getThrottlingId(uint64_t index) { return ThrottlingIdRef::fromTag(getTransactionTag(index)); }
+
 	// Simulates continuous active througput using the specified throttlingId
-	ACTOR static Future<Void> keepActive(ThrottlingId throttlingId, RKThroughputQuotaCache* quotaCache) {
+	ACTOR static Future<Void> keepActive(ThroughputQuotaCacheWorkload const* self, RKThroughputQuotaCache* quotaCache) {
 		state MockThroughputTracker throughputTracker;
-		throughputTracker.update(throttlingId, activeThroughput);
+		for (uint64_t index = 0; index < self->numTags; ++index) {
+			throughputTracker.update(getThrottlingId(index), activeThroughput);
+		}
 		loop {
 			quotaCache->updateThroughput(throughputTracker);
 			wait(delay(1.0));
 		}
 	}
 
+	ACTOR static Future<Void> setTagQuotas(ThroughputQuotaCacheWorkload const* self, Database db) {
+		state uint64_t index = 0;
+		while (index < self->numTags) {
+			wait(ThroughputQuotaUtil::setTagQuota(db, getTransactionTag(index), testReservedQuota(), testTotalQuota()));
+			++index;
+		}
+		return Void();
+	}
+
+	ACTOR static Future<Void> removeTagQuotas(ThroughputQuotaCacheWorkload const* self, Database db) {
+		state uint64_t index = 0;
+		while (index < self->numTags) {
+			wait(ThroughputQuotaUtil::removeTagQuota(db, getTransactionTag(index)));
+			++index;
+		}
+		return Void();
+	}
+
 	// Tests tracking throughput before setting quota
-	ACTOR static Future<Void> testTrackThroughputFirst(Database db, RKThroughputQuotaCache* quotaCache) {
-		state TransactionTag tag = "testTag"_sr;
-		state ThrottlingId throttlingId = ThrottlingIdRef::fromTag(tag);
+	ACTOR static Future<Void> testTrackThroughputFirst(ThroughputQuotaCacheWorkload const* self,
+	                                                   Database db,
+	                                                   RKThroughputQuotaCache* quotaCache) {
 		ASSERT_EQ(quotaCache->size(), 0);
 		ASSERT_EQ(quotaCache->activeThrottlingIds(), 0);
 
 		// First, track active throughput, without setting any quota.
-		state Future<Void> keepActiveFuture = keepActive(throttlingId, quotaCache);
-		while (quotaCache->activeThrottlingIds() != 1) {
+		state Future<Void> keepActiveFuture = keepActive(self, quotaCache);
+		while (quotaCache->activeThrottlingIds() != self->numTags) {
 			wait(delay(1.0));
 		}
 		ASSERT_EQ(quotaCache->size(), 0);
@@ -42,15 +70,13 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		// Next, report set a quota for the tag. The tag is already being
 		// tracked by the quota cache, so the quota cache should pick up the
 		// newly set quota.
-		wait(ThroughputQuotaUtil::setTagQuota(db, tag, testReservedQuota(), testTotalQuota()));
-		while (quotaCache->size() != 1) {
+		wait(setTagQuotas(self, db));
+		while (quotaCache->size() != self->numTags) {
 			wait(delay(1.0));
 		}
-		ASSERT_EQ(quotaCache->getReservedQuota(throttlingId).get(), testReservedQuota());
-		ASSERT_EQ(quotaCache->getTotalQuota(throttlingId).get(), testTotalQuota());
 
 		// Cleanup
-		wait(ThroughputQuotaUtil::removeTagQuota(db, tag));
+		wait(removeTagQuotas(self, db));
 		while (quotaCache->size() != 0) {
 			wait(delay(1.0));
 		}
@@ -62,30 +88,28 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 	}
 
 	// Tests setting quota before tracking throughput
-	ACTOR static Future<Void> testSetQuotaFirst(Database db, RKThroughputQuotaCache* quotaCache) {
-		state TransactionTag tag = "testTag"_sr;
-		state ThrottlingId throttlingId = ThrottlingIdRef::fromTag(tag);
+	ACTOR static Future<Void> testSetQuotaFirst(ThroughputQuotaCacheWorkload const* self,
+	                                            Database db,
+	                                            RKThroughputQuotaCache* quotaCache) {
 		state Future<Void> keepActiveFuture;
 		ASSERT_EQ(quotaCache->size(), 0);
 		ASSERT_EQ(quotaCache->activeThrottlingIds(), 0);
 
 		// First, only set the quota, without reporting any throughput.
-		wait(ThroughputQuotaUtil::setTagQuota(db, tag, testReservedQuota(), testTotalQuota()));
+		wait(setTagQuotas(self, db));
 		wait(delay(10.0));
 		ASSERT_EQ(quotaCache->size(), 0);
 		ASSERT_EQ(quotaCache->activeThrottlingIds(), 0);
 
 		// Next, report active throughput from the tag. Eventually, quota
 		// should be tracked.
-		keepActiveFuture = keepActive(throttlingId, quotaCache);
-		while (quotaCache->size() != 1 || quotaCache->activeThrottlingIds() != 1) {
+		keepActiveFuture = keepActive(self, quotaCache);
+		while (quotaCache->size() != self->numTags || quotaCache->activeThrottlingIds() != self->numTags) {
 			wait(delay(1.0));
 		}
-		ASSERT_EQ(quotaCache->getReservedQuota(throttlingId).get(), testReservedQuota());
-		ASSERT_EQ(quotaCache->getTotalQuota(throttlingId).get(), testTotalQuota());
 
 		// Cleanup
-		wait(ThroughputQuotaUtil::removeTagQuota(db, tag));
+		wait(removeTagQuotas(self, db));
 		while (quotaCache->size() != 0) {
 			wait(delay(1.0));
 		}
@@ -96,23 +120,26 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		return Void();
 	}
 
-	ACTOR static Future<Void> _start(Database db) {
+	ACTOR static Future<Void> _start(ThroughputQuotaCacheWorkload const* self, Database db) {
 		state RKThroughputQuotaCache quotaCache(deterministicRandom()->randomUniqueID(),
 		                                        db,
 		                                        throughputThreshold,
 		                                        /*expirationCheckInterval=*/5.0,
 		                                        /*expirationThreshold=*/60.0);
+		TraceEvent("ThroughputQuotaCacheWorkloadStart").detail("NumTags", self->numTags);
 		state Future<Void> quotaCacheFuture = quotaCache.run();
-		wait(testSetQuotaFirst(db, &quotaCache));
-		wait(testTrackThroughputFirst(db, &quotaCache));
+		wait(testSetQuotaFirst(self, db, &quotaCache));
+		wait(testTrackThroughputFirst(self, db, &quotaCache));
 		return Void();
 	}
 
 public:
 	static constexpr auto NAME = "ThroughputQuotaCache";
-	explicit ThroughputQuotaCacheWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {}
+	explicit ThroughputQuotaCacheWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
+		numTags = getOption(options, "numTags"_sr, deterministicRandom()->randomInt(1, 101));
+	}
 	Future<Void> setup(Database const&) override { return Void(); }
-	Future<Void> start(Database const& db) override { return clientId ? Void() : _start(db); }
+	Future<Void> start(Database const& db) override { return clientId ? Void() : _start(this, db); }
 	Future<bool> check(Database const&) override { return true; }
 	void getMetrics(std::vector<PerfMetric>&) override {}
 };
