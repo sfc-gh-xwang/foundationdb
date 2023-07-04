@@ -803,7 +803,6 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( GLOBAL_TAG_THROTTLING_TRACE_INTERVAL,                  5.0 );
 	init( GLOBAL_TAG_THROTTLING_REPORT_ONLY,                   false );
 	init( GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD,            4096 );
-	init( GLOBAL_TAG_THROTTLING_USE_SIMPLE_QUOTA_CACHE,         true ); if(randomize && BUGGIFY) GLOBAL_TAG_THROTTLING_USE_SIMPLE_QUOTA_CACHE = false;
 	init( THROUGHPUT_QUOTA_TRACK_THRESHOLD,                   409600 );
 	init( THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,                      10 ); if(randomize && BUGGIFY) THROUGHPUT_QUOTA_CACHE_BATCH_SIZE = deterministicRandom()->randomInt(1, 20);
 	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL,      5.0 );

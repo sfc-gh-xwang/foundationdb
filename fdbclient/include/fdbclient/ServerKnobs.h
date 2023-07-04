@@ -755,9 +755,6 @@ public:
 	// Below this throughput threshold (in bytes/second), ratekeeper will forget about the
 	// throughput of a particular throttlingId on a particular storage server
 	int64_t GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
-	// Used to determine which throughput quota cache implementation will be used
-	// (simple polling or update streaming).
-	bool GLOBAL_TAG_THROTTLING_USE_SIMPLE_QUOTA_CACHE;
 	// Above this cluster-wide throughput threshold (in bytes/second), ratekeeper will monitor
 	// the quota for a particular throttlingId
 	int64_t THROUGHPUT_QUOTA_TRACK_THRESHOLD;

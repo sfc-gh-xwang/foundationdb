@@ -117,7 +117,11 @@ ACTOR Future<Void> setQuota(Reference<IDatabase> db, TransactionTag tag, QuotaTy
 				if (!quota.isValid()) {
 					throw invalid_throttle_quota_value();
 				}
-				ThrottleApi::setTagQuota(tr, tag, quota.reservedQuota, quota.totalQuota);
+				if (CLIENT_KNOBS->USE_SIMPLE_THROUGHPUT_QUOTA_CACHE) {
+					ThrottleApi::setTagQuota(tr, tag, quota.reservedQuota, quota.totalQuota);
+				} else {
+					wait(ThrottleApi::setTagQuotaWithUpdateStream(tr, tag, quota.reservedQuota, quota.totalQuota));
+				}
 			}
 			wait(safeThreadFutureToFuture(tr->commit()));
 			fmt::print("Successfully updated quota.\n");
@@ -134,7 +138,11 @@ ACTOR Future<Void> clearQuota(Reference<IDatabase> db, TransactionTag tag) {
 		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 		try {
 			TenantMetadata::storageQuota().erase(tr, tag);
-			ThrottleApi::removeTagQuota(tr, tag);
+			if (CLIENT_KNOBS->USE_SIMPLE_THROUGHPUT_QUOTA_CACHE) {
+				ThrottleApi::removeTagQuota(tr, tag);
+			} else {
+				wait(ThrottleApi::removeTagQuotaWithUpdateStream(tr, tag));
+			}
 			wait(safeThreadFutureToFuture(tr->commit()));
 			fmt::print("Successfully cleared quota.\n");
 			return Void();

@@ -32,7 +32,7 @@
 namespace {
 
 std::unique_ptr<IRKThroughputQuotaCache> createThroughputQuotaCache(UID id, Database db) {
-	if (SERVER_KNOBS->GLOBAL_TAG_THROTTLING_USE_SIMPLE_QUOTA_CACHE) {
+	if (CLIENT_KNOBS->USE_SIMPLE_THROUGHPUT_QUOTA_CACHE) {
 		return std::make_unique<RKSimpleThroughputQuotaCache>(id, db);
 	} else {
 		return std::make_unique<RKThroughputQuotaCache>(id,

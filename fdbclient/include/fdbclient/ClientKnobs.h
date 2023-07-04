@@ -288,6 +288,9 @@ public:
 	// Interval at which clients report their per-throttlingId throughput
 	// statistics to GRV proxies
 	double CLIENT_THROUGHPUT_REPORT_INTERVAL;
+	// Used to determine which throughput quota cache implementation will be used
+	// (simple polling or update streaming).
+	bool USE_SIMPLE_THROUGHPUT_QUOTA_CACHE;
 
 	// busyness reporting
 	double BUSYNESS_SPIKE_START_THRESHOLD;
