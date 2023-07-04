@@ -156,7 +156,19 @@ double ServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId) 
 }
 
 std::unordered_set<ThrottlingId> ServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	throw not_implemented();
+	ThrottlingIdMap<double> throttlingIdToThroughput;
+	for (auto const& [ss, throttlingIdToThroughputCounters] : throughput) {
+		for (auto const& [throttlingId, throughputCounters] : throttlingIdToThroughputCounters) {
+			throttlingIdToThroughput[throttlingId] += throughputCounters.getThroughput();
+		}
+	}
+	std::unordered_set<ThrottlingId> result;
+	for (auto const& [throttlingId, clusterWideThroughput] : throttlingIdToThroughput) {
+		if (clusterWideThroughput > threshold) {
+			result.insert(throttlingId);
+		}
+	}
+	return result;
 }
 
 Optional<double> ServerThroughputTracker::getThroughput(UID storageServerId) const {
