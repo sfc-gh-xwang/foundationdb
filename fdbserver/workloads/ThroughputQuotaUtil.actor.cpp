@@ -3,6 +3,7 @@
  */
 
 #include "fdbclient/DatabaseContext.h"
+#include "fdbclient/ThrottleApi.h"
 #include "fdbclient/UpdateStream.h"
 #include "fdbserver/workloads/ThroughputQuotaUtil.h"
 #include "flow/actorcompiler.h" // must be last include

@@ -2,7 +2,6 @@
  * ThroughputQuotaCache.actor.cpp
  */
 
-#include "fdbclient/TagThrottle.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbserver/workloads/ThroughputQuotaUtil.h"
 #include "fdbserver/workloads/workloads.actor.h"

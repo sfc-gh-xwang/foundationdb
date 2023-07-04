@@ -36,7 +36,6 @@
 #include "fdbrpc/TenantInfo.h"
 #include "fdbrpc/TSSComparison.h"
 #include "fdbclient/CommitTransaction.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/Tenant.h"
 #include "fdbclient/Tracing.h"
 #include "flow/UnitTest.h"

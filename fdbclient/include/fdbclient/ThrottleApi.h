@@ -1,5 +1,5 @@
 /**
- * TagThrottle.h
+ * ThrottleApi.h
  */
 
 #pragma once

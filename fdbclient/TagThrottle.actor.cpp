@@ -21,7 +21,7 @@
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/SystemData.h"
-#include "fdbclient/TagThrottle.h"
+#include "fdbclient/ThrottleApi.h"
 #include "fdbclient/Tuple.h"
 
 #include "flow/actorcompiler.h" // has to be last include

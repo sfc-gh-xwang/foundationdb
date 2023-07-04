@@ -2,7 +2,6 @@
  * SimpleThroughputQuotaCache.actor.cpp
  */
 
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/UpdateStream.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbserver/Knobs.h"

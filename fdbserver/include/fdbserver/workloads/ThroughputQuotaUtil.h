@@ -5,7 +5,6 @@
 #pragma once
 
 #include "fdbclient/NativeAPI.actor.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/Tenant.h"
 #include "flow/flow.h"
 
