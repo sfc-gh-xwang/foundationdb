@@ -134,7 +134,7 @@ ACTOR Future<Void> clearQuota(Reference<IDatabase> db, TransactionTag tag) {
 		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 		try {
 			TenantMetadata::storageQuota().erase(tr, tag);
-			tr->clear(ThrottleApi::getTagQuotaKey(tag));
+			ThrottleApi::removeTagQuota(tr, tag);
 			wait(safeThreadFutureToFuture(tr->commit()));
 			fmt::print("Successfully cleared quota.\n");
 			return Void();

@@ -28,6 +28,11 @@ void setTagQuota(Reference<Tr> tr, TransactionTagRef tag, int64_t reservedQuota,
 }
 
 template <class Tr>
+void removeTagQuota(Reference<Tr> tr, TransactionTagRef tag) {
+	tr->clear(getTagQuotaKey(tag));
+}
+
+template <class Tr>
 Future<Void> setTagQuotaWithUpdateStream(Reference<Tr> tr,
                                          TransactionTagRef tag,
                                          int64_t reservedQuota,
