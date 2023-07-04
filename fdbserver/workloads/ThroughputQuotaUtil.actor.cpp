@@ -15,14 +15,7 @@ ACTOR static Future<Void> _setTagQuota(Database db, TransactionTag tag, int64_t 
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			ThrottleApi::ThroughputQuotaValue tagQuotaValue;
-			tagQuotaValue.reservedQuota = reservedQuota;
-			tagQuotaValue.totalQuota = totalQuota;
-			if (!tagQuotaValue.isValid()) {
-				throw invalid_throttle_quota_value();
-			}
-			wait(UpdateStream::update(
-			    tr, ThrottleApi::getTagQuotaKey(tag), tagQuotaValue.pack().pack(), throughputQuotaUpdatePrefix));
+			wait(ThrottleApi::setTagQuotaWithUpdateStream(tr, tag, reservedQuota, totalQuota));
 			wait(tr->commit());
 			return Void();
 		} catch (Error& e) {
@@ -36,8 +29,7 @@ ACTOR static Future<Void> _removeTagQuota(Database db, TransactionTag tag) {
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			wait(UpdateStream::update(
-			    tr, ThrottleApi::getTagQuotaKey(tag), Optional<Value>(), throughputQuotaUpdatePrefix));
+			wait(ThrottleApi::removeTagQuotaWithUpdateStream(tr, tag));
 			wait(tr->commit());
 			return Void();
 		} catch (Error& e) {
