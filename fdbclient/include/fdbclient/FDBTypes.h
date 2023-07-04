@@ -1863,4 +1863,7 @@ struct Traceable<Versionstamp> : std::true_type {
 	static std::string toString(const Versionstamp& v) { return v.toString(); }
 };
 
+using TransactionTagRef = StringRef;
+using TransactionTag = Standalone<TransactionTagRef>;
+
 #endif

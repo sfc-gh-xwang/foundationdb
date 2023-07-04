@@ -15,9 +15,6 @@
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/Tuple.h"
 
-typedef StringRef TransactionTagRef;
-typedef Standalone<TransactionTagRef> TransactionTag;
-
 namespace ThrottleApi {
 
 class ThroughputQuotaValue {
