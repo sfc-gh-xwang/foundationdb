@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "fdbclient/IClientApi.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "flow/FastRef.h"
 
@@ -114,6 +115,7 @@ public:
 	                           Key const&,
 	                           Optional<Value> const&,
 	                           Key metadataPrefix);
+	static Future<Void> update(Reference<ITransaction>, Key const&, Optional<Value> const&, Key metadataPrefix);
 
 	UID getLeaseId() const;
 };

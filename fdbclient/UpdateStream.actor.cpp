@@ -21,6 +21,15 @@ class UpdateStreamImpl {
 		return result.contents();
 	}
 
+	ACTOR static Future<RangeResult> getRange(Reference<ITransaction> tr,
+	                                          KeyRange keys,
+	                                          int limit,
+	                                          Reverse reverse = Reverse::False) {
+		state ThreadFuture<RangeReadResult> resultFuture = tr->getRange(keys, limit, Snapshot::False, reverse);
+		RangeReadResult result = wait(safeThreadFutureToFuture(resultFuture));
+		return result.contents();
+	}
+
 	static uint64_t getNextIndex(Optional<uint64_t> currentIndex) {
 		uint64_t result = 0;
 		if (currentIndex.present()) {
@@ -69,8 +78,8 @@ class UpdateStreamImpl {
 
 	// Reads the last populated key in the persistent update queue keyrange. If no such key exists,
 	// there have never been any updates in the queue.
-	ACTOR static Future<Optional<uint64_t>> getLastUpdateIndex(Reference<ReadYourWritesTransaction> tr,
-	                                                           Key metadataPrefix) {
+	ACTOR template <class Tr>
+	static Future<Optional<uint64_t>> getLastUpdateIndex(Reference<Tr> tr, Key metadataPrefix) {
 		state KeyRange updateKeys = getUpdateKeyRange(metadataPrefix, /*startIndex=*/0);
 		RangeResult rangeResult = wait(getRange(tr, updateKeys, /*limit=*/1, Reverse::True));
 		if (rangeResult.size() == 0) {
@@ -201,10 +210,8 @@ public:
 		}
 	}
 
-	ACTOR static Future<Void> update(Reference<ReadYourWritesTransaction> tr,
-	                                 Key key,
-	                                 Optional<Value> value,
-	                                 Key metadataPrefix) {
+	ACTOR template <class Tr>
+	static Future<Void> update(Reference<Tr> tr, Key key, Optional<Value> value, Key metadataPrefix) {
 		if (value.present()) {
 			tr->set(key, value.get());
 		} else {
@@ -241,6 +248,13 @@ FutureStream<UpdateStream::Update> UpdateStream::getUpdates(Database db) {
 }
 
 Future<Void> UpdateStream::update(Reference<ReadYourWritesTransaction> tr,
+                                  Key const& key,
+                                  Optional<Value> const& value,
+                                  Key metadataPrefix) {
+	return UpdateStreamImpl::update(tr, key, value, metadataPrefix);
+}
+
+Future<Void> UpdateStream::update(Reference<ITransaction> tr,
                                   Key const& key,
                                   Optional<Value> const& value,
                                   Key metadataPrefix) {
