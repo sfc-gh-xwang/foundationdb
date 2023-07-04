@@ -1866,4 +1866,10 @@ struct Traceable<Versionstamp> : std::true_type {
 using TransactionTagRef = StringRef;
 using TransactionTag = Standalone<TransactionTagRef>;
 
+template <class Value>
+using TransactionTagMap = std::unordered_map<TransactionTag, Value, std::hash<TransactionTagRef>>;
+
+template <class Value>
+using UIDTransactionTagMap = std::unordered_map<UID, TransactionTagMap<Value>>;
+
 #endif

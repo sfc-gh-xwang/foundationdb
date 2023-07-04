@@ -24,7 +24,7 @@
 
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
-#include "fdbclient/ThrottleApi.h"
+#include "fdbclient/ThroughputQuotaValue.h"
 #include "fdbclient/VersionedMap.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/BooleanParam.h"
