@@ -137,6 +137,9 @@ public:
 			} catch (Error& e) {
 				TraceEvent("RKThroughputQuotaCacheRunError", self->id).error(e);
 				if (e.code() == error_code_restart_update_stream) {
+					// If two ratekeepers attempt to run at the same time, wait here
+					// to avoid rapidly competing for the lease
+					wait(delayJittered(1.0));
 					continue;
 				} else {
 					throw e;
