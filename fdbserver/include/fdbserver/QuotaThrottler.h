@@ -29,7 +29,7 @@ class QuotaThrottler {
 	PImpl<class QuotaThrottlerImpl> impl;
 
 public:
-	QuotaThrottler(IRKMetricsTracker const&, IRKThroughputQuotaCache const&, UID id, int maxFallingBehind);
+	QuotaThrottler(IRKMetricsTracker const&, IRKThroughputQuotaCache&, UID id, int maxFallingBehind);
 	~QuotaThrottler();
 
 	// Poll the system keyspace looking for updates made through the tag throttling API

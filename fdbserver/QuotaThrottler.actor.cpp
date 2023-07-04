@@ -131,7 +131,7 @@ class QuotaThrottlerImpl {
 	};
 
 	IRKMetricsTracker const* metricsTracker;
-	IRKThroughputQuotaCache const* quotaCache;
+	IRKThroughputQuotaCache* quotaCache;
 	UID id;
 	int maxFallingBehind{ 0 };
 	uint32_t lastBusyThrottlingIdCount{ 0 };
@@ -306,7 +306,7 @@ class QuotaThrottlerImpl {
 
 public:
 	QuotaThrottlerImpl(IRKMetricsTracker const& metricsTracker,
-	                   IRKThroughputQuotaCache const& quotaCache,
+	                   IRKThroughputQuotaCache& quotaCache,
 	                   UID id,
 	                   int maxFallingBehind)
 	  : metricsTracker(&metricsTracker), quotaCache(&quotaCache), id(id), maxFallingBehind(maxFallingBehind) {
@@ -370,6 +370,7 @@ public:
 		if (clientThroughputTracker.present()) {
 			clientThroughputTracker.get().update(newThroughput);
 		}
+		quotaCache->updateThroughput(throughputTracker());
 	}
 
 	int64_t throttleCount() const { return lastBusyThrottlingIdCount; }
@@ -400,7 +401,7 @@ public:
 };
 
 QuotaThrottler::QuotaThrottler(IRKMetricsTracker const& metricsTracker,
-                               IRKThroughputQuotaCache const& quotaCache,
+                               IRKThroughputQuotaCache& quotaCache,
                                UID id,
                                int maxFallingBehind)
   : impl(PImpl<QuotaThrottlerImpl>::create(metricsTracker, quotaCache, id, maxFallingBehind)) {}
