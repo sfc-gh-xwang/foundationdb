@@ -19,6 +19,7 @@
  */
 
 #include "fdbclient/ThrottleApi.h"
+#include "fdbserver/workloads/ThroughputQuotaUtil.h"
 #include "fdbserver/workloads/workloads.actor.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -34,42 +35,20 @@ class ThroughputQuotaWorkload : public TestWorkload {
 
 	int64_t getTotalQuota() const { return totalQuotaInPages * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 
-	void setTagQuota(Reference<ReadYourWritesTransaction> tr) {
+	Future<Void> setTagQuota(Database const& db) {
 		TraceEvent("ThroughputQuotaWorkload_SettingTagQuota")
 		    .detail("Tag", printable(name))
 		    .detail("ReservedQuota", getReservedQuota())
 		    .detail("TotalQuota", getTotalQuota());
-		ThrottleApi::setTagQuota(tr, name, getReservedQuota(), getTotalQuota());
+		return ThroughputQuotaUtil::setTagQuota(db, name, getReservedQuota(), getTotalQuota());
 	}
 
-	void setTenantGroupQuota(Reference<ReadYourWritesTransaction> tr) {
-		TraceEvent("ThroughputQuotaWorkload_SettingTenantGruopQuota")
+	Future<Void> setTenantGroupQuota(Database const& db) {
+		TraceEvent("ThroughputQuotaWorkload_SettingTenantGroupQuota")
 		    .detail("TenantGroup", printable(name))
 		    .detail("ReservedQuota", getReservedQuota())
 		    .detail("TotalQuota", getTotalQuota());
-		ThrottleApi::ThroughputQuotaValue throughputQuotaValue;
-		throughputQuotaValue.reservedQuota = getReservedQuota();
-		throughputQuotaValue.totalQuota = getTotalQuota();
-		TenantMetadata::throughputQuota().set(tr, name, throughputQuotaValue);
-	}
-
-	ACTOR static Future<Void> setup(ThroughputQuotaWorkload* self, Database cx) {
-		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
-		loop {
-			try {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				if (self->nameRepresentsTenantGroup) {
-					self->setTenantGroupQuota(tr);
-				} else {
-					self->setTagQuota(tr);
-				}
-				wait(tr->commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("ThroughputQuotaWorkload_SetupError").error(e);
-				wait(tr->onError(e));
-			}
-		};
+		return ThroughputQuotaUtil::setTenantGroupQuota(db, name, getReservedQuota(), getTotalQuota());
 	}
 
 public:
@@ -77,11 +56,20 @@ public:
 	explicit ThroughputQuotaWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
 		nameRepresentsTenantGroup = getOption(options, "nameRepresentsTenantGroup"_sr, false);
 		name = getOption(options, "name"_sr, nameRepresentsTenantGroup ? "sampleTenantGroup"_sr : "sampleTag"_sr);
-		reservedQuotaInPages = getOption(options, "reservedQuota"_sr, 0);
+		reservedQuotaInPages = getOption(options, "reservedQuotaInPages"_sr, 0);
 		totalQuotaInPages = getOption(options, "totalQuotaInPages"_sr, 0);
 	}
 
-	Future<Void> setup(Database const& cx) override { return clientId ? Void() : setup(this, cx); }
+	Future<Void> setup(Database const& db) override {
+		if (clientId != 0) {
+			return Void();
+		}
+		if (nameRepresentsTenantGroup) {
+			return setTenantGroupQuota(db);
+		} else {
+			return setTagQuota(db);
+		}
+	}
 	Future<Void> start(Database const& cx) override { return Void(); }
 	Future<bool> check(Database const& cx) override { return true; }
 	void getMetrics(std::vector<PerfMetric>& m) override {}
