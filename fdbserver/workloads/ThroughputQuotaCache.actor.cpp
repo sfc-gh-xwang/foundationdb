@@ -96,12 +96,6 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		return Void();
 	}
 
-	ACTOR static Future<Void> testExpiredThroughput(Database db, RKThroughputQuotaCache* quotaCache) {
-		ASSERT_EQ(quotaCache->size(), 0);
-		wait(delay(0));
-		return Void();
-	}
-
 	ACTOR static Future<Void> _start(Database db) {
 		state RKThroughputQuotaCache quotaCache(deterministicRandom()->randomUniqueID(),
 		                                        db,
