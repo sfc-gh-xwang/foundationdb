@@ -18,17 +18,6 @@
 typedef StringRef TransactionTagRef;
 typedef Standalone<TransactionTagRef> TransactionTag;
 
-struct ClientTrCommitCostEstimation {
-	int opsCount = 0;
-	uint64_t writeCosts = 0;
-	std::deque<std::pair<int, uint64_t>> clearIdxCosts;
-	uint32_t expensiveCostEstCount = 0;
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar, opsCount, writeCosts, clearIdxCosts, expensiveCostEstCount);
-	}
-};
-
 namespace ThrottleApi {
 
 class ThroughputQuotaValue {
