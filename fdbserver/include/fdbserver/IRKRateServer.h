@@ -54,6 +54,7 @@ public:
 	virtual Future<Void> run(class IRKRateUpdater const& normalRateUpdater,
 	                         class IRKRateUpdater const& batchRateUpdater,
 	                         class QuotaThrottler&,
+	                         class IRKThroughputQuotaCache const&,
 	                         class IRKRecoveryTracker&) = 0;
 };
 
@@ -76,6 +77,7 @@ public:
 	Future<Void> run(class IRKRateUpdater const& normalRateUpdater,
 	                 class IRKRateUpdater const& batchRateUpdater,
 	                 class QuotaThrottler&,
+	                 class IRKThroughputQuotaCache const&,
 	                 class IRKRecoveryTracker&) override;
 };
 
@@ -93,6 +95,7 @@ public:
 	Future<Void> run(class IRKRateUpdater const& normalRateUpdater,
 	                 class IRKRateUpdater const& batchRateUpdater,
 	                 class QuotaThrottler&,
+	                 class IRKThroughputQuotaCache const&,
 	                 class IRKRecoveryTracker&) override {
 		return Never();
 	}
