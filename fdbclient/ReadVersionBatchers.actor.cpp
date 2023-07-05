@@ -2,9 +2,12 @@
  * ReadVersionBatchers.actor.cpp
  */
 
+#include "fdbclient/ClientKnobCollection.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseContext.h"
+#include "fdbclient/Knobs.h"
 #include "fdbclient/ReadVersionBatchers.h"
+#include "flow/Optional.h"
 #include "flow/actorcompiler.h" // must be last include
 
 ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext parentSpan,
@@ -21,13 +24,21 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 		g_traceBatch.addEvent("TransactionDebug", debugID.get().first(), "NativeAPI.getConsistentReadVersion.Before");
 	loop {
 		try {
+			state Optional<double> averageTransactionCost = {};
+			if (throttlingId.present() && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+				cx->addTransaction(throttlingId.get(), transactionCount);
+
+				averageTransactionCost = cx->getAverageTransactionCost(throttlingId.get());
+			}
+
 			state GetReadVersionRequest req(span.context,
 			                                transactionCount,
 			                                priority,
 			                                cx->ssVersionVectorCache.getMaxVersion(),
 			                                flags,
 			                                throttlingId,
-			                                debugID);
+			                                debugID,
+			                                averageTransactionCost);
 			state Future<Void> onProxiesChanged = cx->onProxiesChanged();
 
 			choose {

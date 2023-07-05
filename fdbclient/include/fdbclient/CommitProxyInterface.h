@@ -314,6 +314,7 @@ struct GetReadVersionRequest : TimedRequest {
 	TransactionPriority priority;
 
 	Optional<ThrottlingId> throttlingId;
+	Optional<double> expectedTransactionCost;
 
 	// Not serialized, because this field does not need to be sent to master.
 	// It is used for reporting to clients the amount of time spent delayed by
@@ -332,9 +333,11 @@ struct GetReadVersionRequest : TimedRequest {
 	                      Version maxVersion,
 	                      uint32_t flags = 0,
 	                      Optional<ThrottlingId> const& throttlingId = Optional<ThrottlingId>(),
-	                      Optional<UID> debugID = Optional<UID>())
+	                      Optional<UID> debugID = Optional<UID>(),
+	                      Optional<double> expectedTransactionCost = Optional<double>())
 	  : spanContext(spanContext), transactionCount(transactionCount), flags(flags), priority(priority),
-	    throttlingId(throttlingId), debugID(debugID), maxVersion(maxVersion) {
+	    throttlingId(throttlingId), expectedTransactionCost(expectedTransactionCost), debugID(debugID),
+	    maxVersion(maxVersion) {
 		flags = flags & ~FLAG_PRIORITY_MASK;
 		switch (priority) {
 		case TransactionPriority::BATCH:
@@ -357,7 +360,15 @@ struct GetReadVersionRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, transactionCount, flags, debugID, reply, spanContext, maxVersion, throttlingId);
+		serializer(ar,
+		           transactionCount,
+		           flags,
+		           debugID,
+		           reply,
+		           spanContext,
+		           maxVersion,
+		           throttlingId,
+		           expectedTransactionCost);
 
 		if (ar.isDeserializing) {
 			if ((flags & PRIORITY_SYSTEM_IMMEDIATE) == PRIORITY_SYSTEM_IMMEDIATE) {

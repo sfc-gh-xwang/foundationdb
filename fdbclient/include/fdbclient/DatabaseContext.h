@@ -724,6 +724,8 @@ public:
 	}
 
 	void addCost(ThrottlingId const&, uint64_t bytes);
+	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
+	double getAverageTransactionCost(ThrottlingId const&);
 
 	// used in template functions to create a transaction
 	using TransactionT = ReadYourWritesTransaction;
