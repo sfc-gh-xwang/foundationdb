@@ -69,7 +69,6 @@ class UpdateStreamImpl {
 			TraceEvent(SevWarn, "UpdateStreamLostLease")
 			    .detail("LeaseId", self->leaseId)
 			    .detail("CurrentLeaseId", currentLeaseId);
-			CODE_PROBE(true, "UpdateStream lost lease");
 			throw restart_update_stream();
 		}
 		tr->addWriteConflictRange(singleKeyRange(self->getLeaseKey()));
