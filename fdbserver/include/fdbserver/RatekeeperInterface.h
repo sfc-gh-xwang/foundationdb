@@ -79,10 +79,17 @@ struct GetRateInfoReply {
 	double leaseDuration;
 	HealthMetrics healthMetrics;
 	Optional<ThrottlingIdMap<double>> proxyThrottledTags;
+	Optional<ThrottlingIdMap<double>> targetThroughput;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, transactionRate, batchTransactionRate, leaseDuration, healthMetrics, proxyThrottledTags);
+		serializer(ar,
+		           transactionRate,
+		           batchTransactionRate,
+		           leaseDuration,
+		           healthMetrics,
+		           proxyThrottledTags,
+		           targetThroughput);
 	}
 };
 

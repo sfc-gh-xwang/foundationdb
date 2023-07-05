@@ -2,11 +2,14 @@
  * RKRateServer.h
  */
 
+#include "fdbclient/Knobs.h"
 #include "fdbserver/IRKRateServer.h"
 #include "fdbserver/IRKRateUpdater.h"
 #include "fdbserver/IRKRecoveryTracker.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/QuotaThrottler.h"
+
+#include "flow/actorcompiler.h" // must be last include
 
 class RKRateServerImpl {
 public:
@@ -52,6 +55,10 @@ public:
 				if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
 					CODE_PROBE(proxyThrottledTags.size() > 0, "Returning tag throttles to a proxy");
 					reply.proxyThrottledTags = std::move(proxyThrottledTags);
+
+					if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+						reply.targetThroughput = quotaThrottler->getTargetThroughput(self->grvProxyInfo.size());
+					}
 				}
 			}
 
