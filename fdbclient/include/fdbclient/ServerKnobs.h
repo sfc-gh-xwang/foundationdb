@@ -212,10 +212,8 @@ public:
 	// team count. DD won't move shard to teams that has CPU > pivot CPU.
 	double CPU_PIVOT_RATIO;
 	// DD won't move out a shard from its source team, if the utilization of source team meets two criterias:
-	// 1. The available space ratio is above strict pivot space ratio, where using DD_STRICT_AVAILABLE_SPACE_PIVOT_RATIO
-	// to calculate pivot space ratio.
-	// 2. The CPU is below strict pivot CPU, where using DD_STRICT_CPU_PIVOT_RATIO to calculate pivot CPU.
-	double DD_STRICT_AVAILABLE_SPACE_PIVOT_RATIO;
+	// 1. The load bytes is below pivot load bytes, where using LOAD_BYTES_PIVOT_RATIO to calculate pivot load bytes
+	// 2. The CPU is below strict pivot CPU, where using DD_STRICT_CPU_PIVOT_RATIO to calculate pivot CPU
 	double DD_STRICT_CPU_PIVOT_RATIO;
 	// DD won't move shard to teams that has CPU > MAX_DEST_CPU_PERCENT
 	double MAX_DEST_CPU_PERCENT;
@@ -479,7 +477,7 @@ public:
 	double POLLING_FREQUENCY;
 	double HEARTBEAT_FREQUENCY;
 
-	// Commit CommitProxy
+	// Commit Proxy and GRV Proxy
 	double START_TRANSACTION_BATCH_INTERVAL_MIN;
 	double START_TRANSACTION_BATCH_INTERVAL_MAX;
 	double START_TRANSACTION_BATCH_INTERVAL_LATENCY_FRACTION;
@@ -488,7 +486,9 @@ public:
 	double START_TRANSACTION_MAX_TRANSACTIONS_TO_START;
 	int START_TRANSACTION_MAX_REQUESTS_TO_START;
 	double START_TRANSACTION_RATE_WINDOW;
+	double TAG_THROTTLE_RATE_WINDOW;
 	double START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET;
+	double TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET;
 	int START_TRANSACTION_MAX_QUEUE_SIZE;
 	int KEY_LOCATION_MAX_QUEUE_SIZE;
 	int TENANT_ID_REQUEST_MAX_QUEUE_SIZE;
@@ -641,6 +641,8 @@ public:
 	                                             // be determined as degraded worker.
 	int CC_SATELLITE_DEGRADATION_MIN_BAD_SERVER; // The minimum amount of degraded server in satellite DC to be
 	                                             // determined as degraded satellite.
+	bool CC_ENABLE_REMOTE_LOG_ROUTER_MONITORING; // When enabled, gray failure tries to detect whether the remote log
+	                                             // router is degraded and may use trigger recovery to recover from it.
 	double CC_THROTTLE_SINGLETON_RERECRUIT_INTERVAL; // The interval to prevent re-recruiting the same singleton if a
 	                                                 // recruiting fight between two cluster controllers occurs.
 
@@ -724,26 +726,12 @@ public:
 	double TLOG_IGNORE_POP_AUTO_ENABLE_DELAY;
 
 	// Tag throttling
-	int64_t MAX_MANUAL_THROTTLED_TRANSACTION_TAGS;
-	int64_t MAX_AUTO_THROTTLED_TRANSACTION_TAGS;
-	double MIN_TAG_COST;
-	double AUTO_THROTTLE_TARGET_TAG_BUSYNESS;
-	double AUTO_THROTTLE_RAMP_TAG_BUSYNESS;
-	double AUTO_TAG_THROTTLE_RAMP_UP_TIME;
-	double AUTO_TAG_THROTTLE_DURATION;
 	double TAG_THROTTLE_PUSH_INTERVAL;
-	double AUTO_TAG_THROTTLE_START_AGGREGATION_TIME;
-	double AUTO_TAG_THROTTLE_UPDATE_FREQUENCY;
-	double TAG_THROTTLE_EXPIRED_CLEANUP_INTERVAL;
-	bool AUTO_TAG_THROTTLING_ENABLED;
 	// Limit to the number of throttling tags each storage server
 	// will track and send to the ratekeeper
 	int64_t SS_THROTTLE_TAGS_TRACKED;
-	// Use global tag throttling strategy. i.e. throttle based on the cluster-wide
-	// throughput for tags and their associated quotas.
+	// Deprecated (TODO: Remove in 8.1)
 	bool GLOBAL_TAG_THROTTLING;
-	// Enforce tag throttling on proxies rather than on clients
-	bool ENFORCE_TAG_THROTTLING_ON_PROXIES;
 	// Minimum number of transactions per second that the global tag throttler must allow for each tag.
 	// When the measured tps for a tag gets too low, the denominator in the
 	// average cost calculation gets small, resulting in an unstable calculation.
@@ -764,6 +752,9 @@ public:
 	// compute rates, but these rates won't be sent to GRV proxies for
 	// enforcement.
 	bool GLOBAL_TAG_THROTTLING_REPORT_ONLY;
+	// Below this throughput threshold (in bytes/second), ratekeeper will forget about the
+	// throughput of a particular throttlingId on a particular storage server
+	int64_t GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;

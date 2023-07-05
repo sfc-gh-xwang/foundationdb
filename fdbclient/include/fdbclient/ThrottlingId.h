@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "fdbclient/TagThrottle.actor.h"
+#include "fdbclient/TagThrottle.h"
 #include "fdbrpc/TenantName.h"
 #include "flow/Arena.h"
 #include <boost/unordered/unordered_flat_map.hpp>
@@ -33,6 +33,20 @@ public:
 		serializer(ar, _isTag, value);
 	}
 };
+
+namespace std {
+
+template <>
+struct hash<ThrottlingIdRef> {
+	size_t operator()(ThrottlingIdRef const& throttlingId) const { return throttlingId.hash(); }
+};
+
+template <>
+struct hash<Standalone<ThrottlingIdRef>> {
+	size_t operator()(Standalone<ThrottlingIdRef> const throttlingId) const { return throttlingId.hash(); }
+};
+
+} // namespace std
 
 struct HashThrottlingId {
 	size_t operator()(ThrottlingIdRef const& throttlingId) const;

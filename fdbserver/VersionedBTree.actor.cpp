@@ -2654,7 +2654,7 @@ public:
 		else if (cacheEntry.writing()) {
 			// This is very unlikely, maybe impossible in the current pager use cases
 			// Wait for the previous write to finish, then start new write
-			CODE_PROBE(true, "DWALPager update page while it is being written");
+			CODE_PROBE(true, "DWALPager update page while it is being written", probe::decoration::rare);
 			cacheEntry.writeFuture =
 			    mapAsync(cacheEntry.writeFuture, [=](Void) { return writePhysicalPage(reason, level, pageIDs, data); });
 		} else {
@@ -5062,8 +5062,8 @@ public:
 	               EncodingType encodingType = EncodingType::MAX_ENCODING_TYPE,
 	               Reference<IPageEncryptionKeyProvider> keyProvider = {})
 	  : m_pager(pager), m_db(db), m_expectedEncryptionMode(expectedEncryptionMode), m_encodingType(encodingType),
-	    m_enforceEncodingType(false), m_keyProvider(keyProvider), m_pBuffer(nullptr), m_mutationCount(0), m_name(name),
-	    m_logID(logID), m_pBoundaryVerifier(DecodeBoundaryVerifier::getVerifier(name)) {
+	    m_enforceEncodingType(false), m_keyProvider(keyProvider), m_pBuffer(nullptr), m_mutationCount(0),
+	    m_pBoundaryVerifier(DecodeBoundaryVerifier::getVerifier(name)), m_name(name), m_logID(logID) {
 		m_pDecodeCacheMemory = m_pager->getPageCachePenaltySource();
 		m_lazyClearActor = 0;
 		m_init = init_impl(this);
@@ -5797,7 +5797,8 @@ private:
 		// a and b must be consecutive pages from the same array of records
 		static bool shiftItem(PageToBuild& a, PageToBuild& b, int deltaSize, int kvBytes) {
 			if (a.count < 2) {
-				CODE_PROBE(true, "Redwood skip page balancing since the left page has only 1 item");
+				CODE_PROBE(
+				    true, "Redwood skip page balancing since the left page has only 1 item", probe::decoration::rare);
 				return false;
 			}
 
