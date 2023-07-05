@@ -59,15 +59,9 @@
  * consumers, so the restart_update_stream error should be rare if UpdateStream is
  * used as intended.
  *
- * NOTE: Because updates are delivered exactly once and are guaranteed to be idempotent,
- * there is potential to either:
- *
- *   - Support non-idempotent updates or
- *   - Handle commit_unknown_result more elegantly and avoid restarting
- *     by potentially consuming some updates multiple times.
- *
- * As of the time of writing this class, neither usecase is necessary, but
- * future usecases may require one of the above enhancements.
+ * NOTE: This class can potentially be improved by handling commit_unknown_result
+ * errors more elegantly and avoiding restarting. However, this would add complexity
+ * that was not necessary at the time of writing this class.
  */
 
 class UpdateStream : public ReferenceCounted<UpdateStream> {
