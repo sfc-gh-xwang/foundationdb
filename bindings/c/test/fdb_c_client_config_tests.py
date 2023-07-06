@@ -131,6 +131,9 @@ class ClientConfigTest:
         self.trace_file_identifier = None
         self.trace_initialize_on_setup = False
         self.trace_format = None
+        # When set true, the tester creates a tenant and generates the client status at the
+        # tenant level
+        self.enable_tenant = False
 
     # ----------------------------
     # Configuration methods
@@ -336,6 +339,9 @@ class ClientConfigTest:
 
         if self.print_status:
             cmd_args += ["--print-status"]
+
+        if self.enable_tenant:
+            cmd_args += ["--enable-tenant"]
 
         print(
             "\nExecuting test command: {}".format(" ".join([str(c) for c in cmd_args])),

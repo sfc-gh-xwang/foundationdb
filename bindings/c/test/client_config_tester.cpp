@@ -33,6 +33,7 @@
 #include "test/fdb_api.hpp"
 #include "SimpleOpt/SimpleOpt.h"
 #include <thread>
+#include <random>
 #include <string_view>
 #include <unordered_map>
 #include "fdbclient/FDBOptions.g.h"
@@ -59,7 +60,8 @@ enum TesterOptionId {
 	OPT_TMP_DIR,
 	OPT_EXPECTED_ERROR,
 	OPT_PRINT_STATUS,
-	OPT_NETWORK_OPTION
+	OPT_NETWORK_OPTION,
+	OPT_ENABLE_TENANT
 };
 
 const int MIN_TESTABLE_API_VERSION = 400;
@@ -79,6 +81,7 @@ CSimpleOpt::SOption TesterOptionDefs[] = //
 	  { OPT_EXPECTED_ERROR, "--expected-error", SO_REQ_SEP },
 	  { OPT_PRINT_STATUS, "--print-status", SO_NONE },
 	  { OPT_NETWORK_OPTION, "--network-option-", SO_REQ_SEP },
+	  { OPT_ENABLE_TENANT, "--enable-tenant", SO_NONE },
 	  SO_END_OF_OPTIONS };
 
 class TesterOptions {
@@ -99,11 +102,13 @@ public:
 	fdb::Error::CodeType expectedError = 0;
 	bool printStatus = false;
 	std::vector<std::pair<std::string, std::string>> networkOptions;
+	bool enableTenant = false;
 };
 
 namespace {
 TesterOptions options;
-}
+std::string tenantName;
+} // namespace
 
 void printProgramUsage(const char* execName) {
 	printf("usage: %s [OPTIONS]\n"
@@ -131,9 +136,13 @@ void printProgramUsage(const char* execName) {
 	       "  --expected-error ERR\n"
 	       "                 FDB error code the test expected to fail with (default: 0).\n"
 	       "  --print-status\n"
-	       "                 Print database client status.\n"
+	       "                 Print database client status. When tenant mode is enabled,\n"
+	       "                 it prints the client status from tenant level.\n"
 	       "  --network-option-OPTIONNAME OPTIONVALUE\n"
 	       "                 Changes a network option. OPTIONAME should be lowercase.\n"
+	       "  --enable-tenant\n"
+	       "                 Enable the tester in tenant mode. When set true, it creates \n"
+	       "                 a tenant and would print the client status from the tenant level.\n"
 	       "  -h, --help     Display this help and exit.\n",
 	       FDB_API_VERSION);
 }
@@ -214,6 +223,9 @@ bool processArg(const CSimpleOpt& args) {
 		options.networkOptions.emplace_back(optionName, args.OptionArg());
 		break;
 	}
+	case OPT_ENABLE_TENANT:
+		options.enableTenant = true;
+		break;
 	}
 	return true;
 }
@@ -296,12 +308,65 @@ void applyNetworkOptions() {
 	}
 }
 
+/* Helper function to generate random string. Ideally we need this to be a shared-util function. */
+std::string randomString(int len) {
+
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_int_distribution<> dis(97, 122); // ASCII range for lowercase letters
+
+	std::string ret;
+	ret.reserve(len);
+
+	for (int i = 0; i < len; ++i) {
+		ret += static_cast<char>(dis(gen));
+	}
+
+	return ret;
+}
+
 void printDatabaseStatus(fdb::Database db) {
 	if (options.printStatus) {
-		auto statusFuture = db.getClientStatus();
+		auto tenant = options.enableTenant ? db.openTenant(fdb::toBytesRef(tenantName)) : fdb::Tenant();
+
+		auto statusFuture = options.enableTenant ? tenant.getClientStatus() : db.getClientStatus();
 		fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
 		fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
 		fflush(stdout);
+	}
+}
+
+/* In the current test, this function should only be called once, which assigns the tenantName */
+void createTenant() {
+	tenantName = randomString(10);
+	fdb::Database db(options.clusterFile);
+	auto tx = db.createTransaction();
+	while (true) {
+		try {
+			fdb::Tenant::createTenant(tx, fdb::toBytesRef(tenantName));
+			auto commitFuture = tx.commit();
+			fdb_check(commitFuture.blockUntilReady(), "Wait on commit failed");
+			if (commitFuture.error()) {
+				throw commitFuture.error();
+			}
+		} catch (fdb::Error err) {
+			if (err.code() == error_code_timed_out) {
+				fmt::print(stderr, "Transaction timed out\n");
+				printDatabaseStatus(db);
+				exitImmediately(1);
+			}
+			auto onErrorFuture = tx.onError(err);
+			fdb_check(onErrorFuture.blockUntilReady(), "Wait on onError failed");
+			auto onErrResult = onErrorFuture.error();
+			if (onErrResult) {
+				fmt::print(stderr,
+				           "Transaction failed with a non-retriable error: {}({})\n",
+				           onErrResult.code(),
+				           onErrResult.what());
+				printDatabaseStatus(db);
+				checkErrorCodeAndExit(onErrResult.code());
+			}
+		}
 	}
 }
 
@@ -360,6 +425,10 @@ int main(int argc, char** argv) {
 		fdb_check(fdb::network::setupNothrow(), "Setup network failed");
 
 		std::thread network_thread{ [] { fdb_check(fdb::network::run(), "FDB network thread failed"); } };
+
+		if (options.enableTenant) {
+			createTenant();
+		}
 
 		// Try creating a database and executing a transaction
 		testTransaction();
