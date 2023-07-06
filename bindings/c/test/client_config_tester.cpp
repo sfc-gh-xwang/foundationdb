@@ -343,12 +343,14 @@ void createTenant() {
 	auto tx = db.createTransaction();
 	while (true) {
 		try {
+			tx.setOption(FDB_TR_OPTION_TIMEOUT, options.transactionTimeout);
 			fdb::Tenant::createTenant(tx, fdb::toBytesRef(tenantName));
 			auto commitFuture = tx.commit();
 			fdb_check(commitFuture.blockUntilReady(), "Wait on commit failed");
 			if (commitFuture.error()) {
 				throw commitFuture.error();
 			}
+			break;
 		} catch (fdb::Error err) {
 			if (err.code() == error_code_timed_out) {
 				fmt::print(stderr, "Transaction timed out\n");
@@ -360,7 +362,7 @@ void createTenant() {
 			auto onErrResult = onErrorFuture.error();
 			if (onErrResult) {
 				fmt::print(stderr,
-				           "Transaction failed with a non-retriable error: {}({})\n",
+				           "Transaction to create a tenant failed with a non-retriable error: {}({})\n",
 				           onErrResult.code(),
 				           onErrResult.what());
 				printDatabaseStatus(db);

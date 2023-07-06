@@ -392,18 +392,22 @@ class ClientConfigTests(unittest.TestCase):
         # Local client only
         test = ClientConfigTest(self)
         test.print_status = True
-        test.exec()
-        test.check_healthy_status(True)
+        for test_tenant in [False, True]:
+            test.enable_tenant = test_tenant
+            test.exec()
+            test.check_healthy_status(True)
 
     def test_disable_mvc_bypass(self):
         # Local client only
         test = ClientConfigTest(self)
         test.print_status = True
         test.disable_client_bypass = True
-        test.exec()
-        test.check_healthy_status_report()
-        test.check_available_clients([CURRENT_VERSION])
-        test.check_current_client(CURRENT_VERSION)
+        for test_tenant in [False, True]:
+            test.enable_tenant = test_tenant
+            test.exec()
+            test.check_healthy_status_report()
+            test.check_available_clients([CURRENT_VERSION])
+            test.check_current_client(CURRENT_VERSION)
 
     def test_single_external_client_only(self):
         # Single external client only
@@ -411,20 +415,24 @@ class ClientConfigTests(unittest.TestCase):
         test.print_status = True
         test.create_external_lib_path(CURRENT_VERSION)
         test.disable_local_client = True
-        test.exec()
-        test.check_healthy_status_report()
-        test.check_available_clients([CURRENT_VERSION])
-        test.check_current_client(CURRENT_VERSION)
+        for test_tenant in [False, True]:
+            test.enable_tenant = test_tenant
+            test.exec()
+            test.check_healthy_status_report()
+            test.check_available_clients([CURRENT_VERSION])
+            test.check_current_client(CURRENT_VERSION)
 
     def test_same_local_and_external_client(self):
         # Same version local & external client
         test = ClientConfigTest(self)
         test.print_status = True
         test.create_external_lib_path(CURRENT_VERSION)
-        test.exec()
-        test.check_healthy_status_report()
-        test.check_available_clients([CURRENT_VERSION])
-        test.check_current_client(CURRENT_VERSION)
+        for test_tenant in [False, True]:
+            test.enable_tenant = test_tenant
+            test.exec()
+            test.check_healthy_status_report()
+            test.check_available_clients([CURRENT_VERSION])
+            test.check_current_client(CURRENT_VERSION)
 
     def test_multiple_external_clients(self):
         # Multiple external clients, normal case
@@ -482,10 +490,12 @@ class ClientConfigTests(unittest.TestCase):
         test.disable_local_client = True
         test.api_version = api_version_from_str(CURRENT_VERSION)
         test.ignore_external_client_failures = True
-        test.exec()
-        test.check_healthy_status_report()
-        test.check_available_clients([CURRENT_VERSION])
-        test.check_current_client(CURRENT_VERSION)
+        for test_tenant in [False, True]:
+            test.enable_tenant = test_tenant
+            test.exec()
+            test.check_healthy_status_report()
+            test.check_available_clients([CURRENT_VERSION])
+            test.check_current_client(CURRENT_VERSION)
 
     def test_external_client_not_matching_cluster_version(self):
         # Trying to connect to a cluster having only
@@ -497,11 +507,13 @@ class ClientConfigTests(unittest.TestCase):
         test.api_version = api_version_from_str(PREV_RELEASE_VERSION)
         test.transaction_timeout = 5000
         test.expected_error = 2125  # Incompatible client
-        test.exec()
-        test.check_initialization_state("incompatible")
-        test.check_healthy_status(False)
-        test.check_available_clients([PREV_RELEASE_VERSION])
-        test.check_current_client(None)
+        for test_tenant in [False, True]:
+            test.enable_tenant = test_tenant
+            test.exec()
+            test.check_initialization_state("incompatible")
+            test.check_healthy_status(False)
+            test.check_available_clients([PREV_RELEASE_VERSION])
+            test.check_current_client(None)
 
     def test_external_client_not_matching_cluster_version_ignore(self):
         # Trying to connect to a cluster having only
@@ -536,11 +548,13 @@ class ClientConfigTests(unittest.TestCase):
         test.transaction_timeout = 100
         test.create_cluster_file_with_wrong_port()
         test.expected_error = 1031  # Timeout
-        test.exec()
-        test.check_initialization_state("initializing")
-        test.check_healthy_status(False)
-        test.check_available_clients([CURRENT_VERSION])
-        test.check_protocol_version_not_set()
+        for test_tenant in [False, True]:
+            test.enable_tenant = test_tenant
+            test.exec()
+            test.check_initialization_state("initializing")
+            test.check_healthy_status(False)
+            test.check_available_clients([CURRENT_VERSION])
+            test.check_protocol_version_not_set()
 
     def test_invalid_cluster_file(self):
         # Testing with an invalid cluster file
@@ -552,11 +566,13 @@ class ClientConfigTests(unittest.TestCase):
         test.transaction_timeout = 5000
         test.create_invalid_cluster_file()
         test.expected_error = 2104  # Connection string invalid
-        test.exec()
-        test.check_initialization_state("initialization_failed")
-        test.check_healthy_status(False)
-        test.check_available_clients([CURRENT_VERSION])
-        test.check_protocol_version_not_set()
+        for test_tenant in [False, True]:
+            test.enable_tenant = test_tenant
+            test.exec()
+            test.check_initialization_state("initialization_failed")
+            test.check_healthy_status(False)
+            test.check_available_clients([CURRENT_VERSION])
+            test.check_protocol_version_not_set()
 
 
 # Client configuration tests using a cluster of previous release version
