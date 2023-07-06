@@ -2598,24 +2598,21 @@ TEST_CASE("Database get client status") {
 	checkClientStatusFuture(statusFuture);
 }
 
-enum TenantOp {
-	CREATE,
-	DELETE
-};
+enum TenantOp { CREATE, DELETE };
 
 void tenantHelper(fdb::BytesRef name, TenantOp op) {
 	// Helper functin to create | delete a tenant
 	auto tr = db.createTransaction();
 	while (1) {
 		switch (op) {
-			case TenantOp::CREATE:
-				fdb::Tenant::createTenant(tr, name);
-				break;
-			case TenantOp::DELETE:
-				fdb::Tenant::deleteTenant(tr, name);
-				break;
-			default:
-				UNREACHABLE();
+		case TenantOp::CREATE:
+			fdb::Tenant::createTenant(tr, name);
+			break;
+		case TenantOp::DELETE:
+			fdb::Tenant::deleteTenant(tr, name);
+			break;
+		default:
+			UNREACHABLE();
 		}
 		auto f1 = tr.commit();
 
@@ -2627,7 +2624,6 @@ void tenantHelper(fdb::BytesRef name, TenantOp op) {
 		}
 		break;
 	}
-
 }
 
 void createTenant(fdb::BytesRef name) {
@@ -2641,7 +2637,7 @@ void deleteTenant(fdb::BytesRef name) {
 TEST_CASE("Tenant get client status") {
 	auto tenantName = "testTenantForClientStatus"_br;
 	createTenant(tenantName);
-	
+
 	auto tenant = db.openTenant(tenantName);
 	auto statusFuture = tenant.getClientStatus();
 	checkClientStatusFuture(statusFuture);
