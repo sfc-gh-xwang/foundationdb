@@ -34,7 +34,8 @@
 // Between each set of waits, releaseTransactions is run, releasing queued transactions
 // that have passed the tag throttling stage. Transactions that are not yet ready
 // are requeued during releaseTransactions.
-class GrvProxyTagThrottler {
+class IGrvProxyTagThrottler {
+protected:
 	class DelayedRequest {
 		static uint64_t lastSequenceNumber;
 		double startTime;
@@ -49,7 +50,6 @@ class GrvProxyTagThrottler {
 		void updateProxyTagThrottledDuration(LatencyBandsMap&);
 		bool isMaxThrottled(double maxThrottleDuration) const;
 	};
-
 	struct TagQueue {
 		Optional<GrvTransactionRateInfo> rateInfo;
 		Deque<DelayedRequest> requests;
@@ -66,6 +66,26 @@ class GrvProxyTagThrottler {
 		void endReleaseWindow(int64_t numStarted, double elapsed);
 	};
 
+public:
+	virtual ~IGrvProxyTagThrottler() = default;
+
+	// Called with rates received from ratekeeper
+	virtual void updateRates(ThrottlingIdMap<double> const& newRates) = 0;
+
+	// elapsed indicates the amount of time since the last epoch was run.
+	// If a request is ready to be executed, it is sent to the deque
+	// corresponding to its priority. If not, the request remains queued.
+	virtual void releaseTransactions(double elapsed,
+	                                 Deque<GetReadVersionRequest>& outBatchPriority,
+	                                 Deque<GetReadVersionRequest>& outDefaultPriority) = 0;
+
+	virtual void addRequest(GetReadVersionRequest const&) = 0;
+
+	virtual void addLatencyBandThreshold(double value) = 0;
+};
+
+class GrvProxyTagThrottlerTPS : public IGrvProxyTagThrottler {
+
 	// Track the budgets for each tag
 	ThrottlingIdMap<TagQueue> queues;
 	double maxThrottleDuration;
@@ -74,21 +94,52 @@ class GrvProxyTagThrottler {
 	LatencyBandsMap latencyBandsMap;
 
 public:
-	explicit GrvProxyTagThrottler(double maxThrottleDuration);
+	explicit GrvProxyTagThrottlerTPS(double maxThrottleDuration);
 
 	// Called with rates received from ratekeeper
-	void updateRates(ThrottlingIdMap<double> const& newRates);
+	void updateRates(ThrottlingIdMap<double> const& newRates) override;
 
 	// elapsed indicates the amount of time since the last epoch was run.
 	// If a request is ready to be executed, it is sent to the deque
 	// corresponding to its priority. If not, the request remains queued.
 	void releaseTransactions(double elapsed,
 	                         Deque<GetReadVersionRequest>& outBatchPriority,
-	                         Deque<GetReadVersionRequest>& outDefaultPriority);
+	                         Deque<GetReadVersionRequest>& outDefaultPriority) override;
 
-	void addRequest(GetReadVersionRequest const&);
+	void addRequest(GetReadVersionRequest const&) override;
 
-	void addLatencyBandThreshold(double value);
+	void addLatencyBandThreshold(double value) override;
+
+public: // testing
+	// Returns number of tags tracked
+	uint32_t size() const;
+};
+
+class GrvProxyTagThrottlerBPS : public IGrvProxyTagThrottler {
+
+	// Track the budgets for each tag
+	ThrottlingIdMap<TagQueue> queues;
+	double maxThrottleDuration;
+
+	// Track latency bands for each tag
+	LatencyBandsMap latencyBandsMap;
+
+public:
+	explicit GrvProxyTagThrottlerBPS(double maxThrottleDuration);
+
+	// Called with rates received from ratekeeper
+	void updateRates(ThrottlingIdMap<double> const& newRates) override;
+
+	// elapsed indicates the amount of time since the last epoch was run.
+	// If a request is ready to be executed, it is sent to the deque
+	// corresponding to its priority. If not, the request remains queued.
+	void releaseTransactions(double elapsed,
+	                         Deque<GetReadVersionRequest>& outBatchPriority,
+	                         Deque<GetReadVersionRequest>& outDefaultPriority) override;
+
+	void addRequest(GetReadVersionRequest const&) override;
+
+	void addLatencyBandThreshold(double value) override;
 
 public: // testing
 	// Returns number of tags tracked

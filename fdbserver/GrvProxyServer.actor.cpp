@@ -35,10 +35,12 @@
 #include "fdbserver/WorkerInterface.actor.h"
 #include "fdbrpc/sim_validation.h"
 #include "flow/IRandom.h"
+#include "flow/Optional.h"
 #include "flow/Trace.h"
 #include "flow/flow.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 #include "flow/genericactors.actor.h"
+#include <memory>
 
 struct GrvProxyStats {
 	CounterCollection cc;
@@ -185,7 +187,7 @@ struct GrvProxyData {
 	Version version;
 	Version minKnownCommittedVersion; // we should ask master for this version.
 
-	GrvProxyTagThrottler tagThrottler;
+	std::unique_ptr<IGrvProxyTagThrottler> tagThrottler;
 
 	// Cache of the latest commit versions of storage servers.
 	VersionVector ssVersionVectorCache;
@@ -199,7 +201,7 @@ struct GrvProxyData {
 			if (newLatencyBandConfig.present()) {
 				for (auto band : newLatencyBandConfig.get().grvConfig.bands) {
 					stats.grvLatencyBands.addThreshold(band);
-					tagThrottler.addLatencyBandThreshold(band);
+					tagThrottler->addLatencyBandThreshold(band);
 				}
 			}
 		}
@@ -218,8 +220,13 @@ struct GrvProxyData {
 	                                dbgid,
 	                                SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
 	                                SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
-	    updateCommitRequests(0), lastCommitTime(0), version(0), minKnownCommittedVersion(invalidVersion),
-	    tagThrottler(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION) {}
+	    updateCommitRequests(0), lastCommitTime(0), version(0), minKnownCommittedVersion(invalidVersion) {
+		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+			tagThrottler = std::make_unique<GrvProxyTagThrottlerBPS>(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION);
+		} else {
+			tagThrottler = std::make_unique<GrvProxyTagThrottlerTPS>(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION);
+		}
+	}
 };
 
 ACTOR Future<Void> healthMetricsRequestServer(GrvProxyInterface grvProxy,
@@ -439,8 +446,12 @@ ACTOR Future<Void> getRate(UID myID,
 				lastDetailedReply = now();
 			}
 
-			if (rep.proxyThrottledTags.present()) {
-				proxyData->tagThrottler.updateRates(rep.proxyThrottledTags.get());
+			if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+				if (rep.targetThroughput.present()) {
+					proxyData->tagThrottler->updateRates(rep.targetThroughput.get());
+				}
+			} else if (rep.proxyThrottledTags.present()) {
+				proxyData->tagThrottler->updateRates(rep.proxyThrottledTags.get());
 			}
 		}
 		when(wait(leaseTimeout)) {
@@ -489,7 +500,7 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
                                                GrvProxyStats* stats,
                                                GrvTransactionRateInfo* batchRateInfo,
                                                ThrottlingIdMap<uint64_t>* throttlingIdTransactionCounter,
-                                               GrvProxyTagThrottler* tagThrottler) {
+                                               IGrvProxyTagThrottler* tagThrottler) {
 	getCurrentLineage()->modify(&TransactionLineage::operation) =
 	    TransactionLineage::Operation::GetConsistentReadVersion;
 	loop choose {
@@ -866,7 +877,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	                                          &grvProxyData->stats,
 	                                          &batchRateInfo,
 	                                          &throttlingIdTransactionCounter,
-	                                          &grvProxyData->tagThrottler));
+	                                          grvProxyData->tagThrottler.get()));
 
 	while (std::find(db->get().client.grvProxies.begin(), db->get().client.grvProxies.end(), proxy) ==
 	       db->get().client.grvProxies.end()) {
@@ -889,7 +900,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 			elapsed = 1e-15;
 		}
 
-		grvProxyData->tagThrottler.releaseTransactions(elapsed, defaultQueue, batchQueue);
+		grvProxyData->tagThrottler->releaseTransactions(elapsed, defaultQueue, batchQueue);
 		normalRateInfo.startReleaseWindow();
 		batchRateInfo.startReleaseWindow();
 

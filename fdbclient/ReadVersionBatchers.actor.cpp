@@ -8,6 +8,7 @@
 #include "fdbclient/Knobs.h"
 #include "fdbclient/ReadVersionBatchers.h"
 #include "flow/Optional.h"
+#include "flow/Trace.h"
 #include "flow/actorcompiler.h" // must be last include
 
 ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext parentSpan,
@@ -24,11 +25,19 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 		g_traceBatch.addEvent("TransactionDebug", debugID.get().first(), "NativeAPI.getConsistentReadVersion.Before");
 	loop {
 		try {
-			state Optional<double> averageTransactionCost = {};
-			if (throttlingId.present() && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+			state Optional<double> expectedTransactionCost = {};
+			if (throttlingId.present() && CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS &&
+			    CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
 				cx->addTransaction(throttlingId.get(), transactionCount);
+				
+				double averageCost = cx->getAverageTransactionCost(throttlingId.get());
+				expectedTransactionCost = averageCost * transactionCount;
 
-				averageTransactionCost = cx->getAverageTransactionCost(throttlingId.get());
+				TraceEvent("GRVBatcher")
+				    .detail("ThrottlingId", throttlingId)
+				    .detail("TransactionCount", transactionCount)
+				    .detail("AverageTransactionCost", averageCost)
+				    .detail("ExpectedTransactionCost", expectedTransactionCost);
 			}
 
 			state GetReadVersionRequest req(span.context,
@@ -38,7 +47,7 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 			                                flags,
 			                                throttlingId,
 			                                debugID,
-			                                averageTransactionCost);
+			                                expectedTransactionCost);
 			state Future<Void> onProxiesChanged = cx->onProxiesChanged();
 
 			choose {

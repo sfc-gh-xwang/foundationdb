@@ -51,13 +51,17 @@ public:
 			if (now() > p.lastTagPushTime + SERVER_KNOBS->TAG_THROTTLE_PUSH_INTERVAL) {
 				p.lastTagPushTime = now();
 
-				auto proxyThrottledTags = quotaThrottler->getProxyRates(self->grvProxyInfo.size());
-				if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
-					CODE_PROBE(proxyThrottledTags.size() > 0, "Returning tag throttles to a proxy");
-					reply.proxyThrottledTags = std::move(proxyThrottledTags);
-
-					if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
-						reply.targetThroughput = quotaThrottler->getTargetThroughput(self->grvProxyInfo.size());
+				if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+					auto targetThroughput = quotaThrottler->getTargetThroughput(self->grvProxyInfo.size());
+					if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
+						CODE_PROBE(targetThroughput.size() > 0, "Returning tag throttles to a proxy");
+						reply.targetThroughput = std::move(targetThroughput);
+					}
+				} else {
+					auto proxyThrottledTags = quotaThrottler->getProxyRates(self->grvProxyInfo.size());
+					if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
+						CODE_PROBE(proxyThrottledTags.size() > 0, "Returning tag throttles to a proxy");
+						reply.proxyThrottledTags = std::move(proxyThrottledTags);
 					}
 				}
 			}
