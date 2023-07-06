@@ -2582,6 +2582,73 @@ TEST_CASE("Tenant create, access, and delete") {
 	}
 }
 
+void checkClientStatusFuture(fdb::TypedFuture<fdb::future_var::KeyRef> f) {
+	// Sanity check of the client status.
+	fdbCheck(waitFuture(f));
+	auto value = f.get();
+	std::string statusJsonStr(value.begin(), value.end());
+	rapidjson::Document statusJson;
+	statusJson.Parse(statusJsonStr.c_str());
+	CHECK(statusJson.HasMember("Healthy"));
+	CHECK(statusJson["Healthy"].GetBool());
+}
+
+TEST_CASE("Database get client status") {
+	auto statusFuture = db.getClientStatus();
+	checkClientStatusFuture(statusFuture);
+}
+
+enum TenantOp {
+	CREATE,
+	DELETE
+};
+
+void tenantHelper(fdb::BytesRef name, TenantOp op) {
+	// Helper functin to create | delete a tenant
+	auto tr = db.createTransaction();
+	while (1) {
+		switch (op) {
+			case TenantOp::CREATE:
+				fdb::Tenant::createTenant(tr, name);
+				break;
+			case TenantOp::DELETE:
+				fdb::Tenant::deleteTenant(tr, name);
+				break;
+			default:
+				UNREACHABLE();
+		}
+		auto f1 = tr.commit();
+
+		auto err = waitFuture(f1);
+		if (err) {
+			auto f2 = tr.onError(err);
+			fdbCheck(waitFuture(f2));
+			continue;
+		}
+		break;
+	}
+
+}
+
+void createTenant(fdb::BytesRef name) {
+	tenantHelper(name, TenantOp::CREATE);
+}
+
+void deleteTenant(fdb::BytesRef name) {
+	tenantHelper(name, TenantOp::DELETE);
+}
+
+TEST_CASE("Tenant get client status") {
+	auto tenantName = "testTenantForClientStatus"_br;
+	createTenant(tenantName);
+	
+	auto tenant = db.openTenant(tenantName);
+	auto statusFuture = tenant.getClientStatus();
+	checkClientStatusFuture(statusFuture);
+
+	deleteTenant(tenantName);
+}
+
 int64_t granule_start_load_fail(const char* filename,
                                 int filenameLength,
                                 int64_t offset,
