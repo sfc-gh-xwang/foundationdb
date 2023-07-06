@@ -308,9 +308,8 @@ void applyNetworkOptions() {
 	}
 }
 
-/* Helper function to generate random string. Ideally we need this to be a shared-util function. */
+// Helper function to generate random string. Ideally we need this to be a shared-util function.
 std::string randomString(int len) {
-
 	std::random_device rd;
 	std::mt19937 gen(rd());
 	std::uniform_int_distribution<> dis(97, 122); // ASCII range for lowercase letters
@@ -328,11 +327,32 @@ std::string randomString(int len) {
 void printDatabaseStatus(fdb::Database db) {
 	if (options.printStatus) {
 		auto tenant = options.enableTenant ? db.openTenant(fdb::toBytesRef(tenantName)) : fdb::Tenant();
-
 		auto statusFuture = options.enableTenant ? tenant.getClientStatus() : db.getClientStatus();
 		fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
 		fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
 		fflush(stdout);
+	}
+}
+
+
+// Helper function to handle transaction errors
+void handleTransactionError(fdb::Database& db, fdb::Transaction& tx, const fdb::Error& err) {
+	if (err.code() == error_code_timed_out) {
+		fmt::print(stderr, "Transaction timed out\n");
+		printDatabaseStatus(db);
+		exitImmediately(1);
+	}
+	
+	auto onErrorFuture = tx.onError(err);
+	fdb_check(onErrorFuture.blockUntilReady(), "Wait on onError failed");
+	auto onErrResult = onErrorFuture.error();
+	if (onErrResult) {
+		fmt::print(stderr,
+			   "Transaction failed with a non-retriable error: {}({})\n",
+			   onErrResult.code(),
+			   onErrResult.what());
+		printDatabaseStatus(db);
+		checkErrorCodeAndExit(onErrResult.code());
 	}
 }
 
@@ -352,22 +372,7 @@ void createTenant() {
 			}
 			break;
 		} catch (fdb::Error err) {
-			if (err.code() == error_code_timed_out) {
-				fmt::print(stderr, "Transaction timed out\n");
-				printDatabaseStatus(db);
-				exitImmediately(1);
-			}
-			auto onErrorFuture = tx.onError(err);
-			fdb_check(onErrorFuture.blockUntilReady(), "Wait on onError failed");
-			auto onErrResult = onErrorFuture.error();
-			if (onErrResult) {
-				fmt::print(stderr,
-				           "Transaction to create a tenant failed with a non-retriable error: {}({})\n",
-				           onErrResult.code(),
-				           onErrResult.what());
-				printDatabaseStatus(db);
-				checkErrorCodeAndExit(onErrResult.code());
-			}
+			handleTransactionError(db, tx, err);
 		}
 	}
 }
@@ -392,22 +397,7 @@ void testTransaction() {
 			}
 			break;
 		} catch (fdb::Error err) {
-			if (err.code() == error_code_timed_out) {
-				fmt::print(stderr, "Transaction timed out\n");
-				printDatabaseStatus(db);
-				exitImmediately(1);
-			}
-			auto onErrorFuture = tx.onError(err);
-			fdb_check(onErrorFuture.blockUntilReady(), "Wait on onError failed");
-			auto onErrResult = onErrorFuture.error();
-			if (onErrResult) {
-				fmt::print(stderr,
-				           "Transaction failed with a non-retriable error: {}({})\n",
-				           onErrResult.code(),
-				           onErrResult.what());
-				printDatabaseStatus(db);
-				checkErrorCodeAndExit(onErrResult.code());
-			}
+			handleTransactionError(db, tx, err);
 		}
 	}
 	printDatabaseStatus(db);
