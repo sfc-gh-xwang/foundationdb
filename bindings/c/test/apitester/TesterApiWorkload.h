@@ -41,6 +41,9 @@ public:
 
 	virtual void checkProgress() override;
 
+	// Check the DB-level client status
+	virtual void checkDBClientStatus();
+
 	// Workload specific setup phase.
 	virtual void setup(TTaskFct cont);
 
@@ -79,6 +82,12 @@ protected:
 
 	// Run the workload until explicit stop
 	bool runUntilStop;
+
+	// Whether buggify is enabled
+	bool buggify;
+
+	// Check client status of DB after the test run
+	bool checkDBClientStatusAfter;
 
 	// The number of operations to be executed (for runUntilStop=false)
 	int numRandomOperations;

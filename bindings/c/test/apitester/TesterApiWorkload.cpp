@@ -22,6 +22,8 @@
 #include "TesterUtil.h"
 #include "test/fdb_api.hpp"
 #include <fmt/format.h>
+#include <iostream>
+#include <rapidjson/document.h>
 
 namespace FdbApiTester {
 
@@ -41,6 +43,7 @@ ApiWorkload::ApiWorkload(const WorkloadConfig& config) : WorkloadBase(config) {
 	stopReceived = false;
 	checkingProgress = false;
 	apiVersion = config.apiVersion;
+	checkDBClientStatusAfter = config.getBoolOption("checkDBClientStatusAfter", false);
 
 	for (int i = 0; i < config.numTenants; ++i) {
 		tenants.push_back(fdb::ByteString(fdb::toBytesRef("tenant" + std::to_string(i))));
@@ -64,6 +67,40 @@ void ApiWorkload::checkProgress() {
 	ASSERT(runUntilStop);
 	numRandomOpLeft = numOperationsForProgressCheck;
 	checkingProgress = true;
+}
+
+void ApiWorkload::checkDBClientStatus() {
+	auto tenantId = randomTenant();
+	auto result = std::make_shared<fdb::Key>();
+	execTransaction(
+	    [result](auto ctx) {
+		    // Call the getClientStatus API to fetch the status
+		    auto f = ctx->db().getClientStatus();
+		    ctx->continueAfter(f, [ctx, f, result]() {
+			    *result = copyValueRef(f.get()).value();
+			    ctx->done();
+		    });
+	    },
+	    [this, result]() {
+		    if (result->size() == 0) {
+			    // Never expect an empty response from client status
+			    error("Unexpected empty response from get client status");
+			    return;
+		    }
+		    info("Database client status: {}", fdb::toCharsRef(*result));
+		    rapidjson::Document statusJson;
+		    // Simply using result->c_str() runs into an issue with the Parse function
+		    // due to type mismatch ('const unsigned char *' v.s. 'const char *').
+		    statusJson.Parse((const char*)result->c_str());
+		    // We only check that the status has a "Healthy" field and it is a Bool
+		    // type. Its value can be either true or false because we randomly inject
+		    // errors. It would be nice if one could access the "buggify" field defined
+		    // in the TestSpec easily, so that we could assert on the value of the
+		    // healthy field
+		    ASSERT(statusJson.HasMember("Healthy"));
+		    ASSERT(statusJson["Healthy"].IsBool());
+	    },
+	    getTenant(tenantId));
 }
 
 void ApiWorkload::start() {
@@ -105,8 +142,13 @@ void ApiWorkload::randomOperations() {
 		}
 	} else {
 		int numLeft = numRandomOpLeft--;
-		if (numLeft == 0)
+		if (numLeft == 0) {
+			// Check DB client status if configured to do so
+			if (checkDBClientStatusAfter) {
+				checkDBClientStatus();
+			}
 			return;
+		}
 	}
 	randomOperation([this]() { randomOperations(); });
 }

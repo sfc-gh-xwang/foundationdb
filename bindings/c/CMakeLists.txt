@@ -160,6 +160,7 @@ set(API_TESTER_SRCS
 
 add_library(fdb_c_unit_tests_impl OBJECT ${UNIT_TEST_SRCS})
 add_library(fdb_c_api_tester_impl OBJECT ${API_TESTER_SRCS})
+target_link_libraries(fdb_c_api_tester_impl PRIVATE rapidjson)
 
 if(OPEN_FOR_IDE)
   add_library(fdb_c_performance_test OBJECT test/performance_test.c test/test.h)
