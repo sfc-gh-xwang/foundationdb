@@ -22,7 +22,6 @@ maxKeysPerTransaction = 50
 initialSize = 100
 numRandomOperations = 100
 readExistingKeysRatio = 0.9
-checkDBClientStatusAfter = true
 
 [[test.workload]]
 name = 'AtomicOpsCorrectness'
