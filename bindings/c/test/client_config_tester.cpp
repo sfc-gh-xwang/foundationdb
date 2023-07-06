@@ -334,7 +334,6 @@ void printDatabaseStatus(fdb::Database db) {
 	}
 }
 
-
 // Helper function to handle transaction errors
 void handleTransactionError(fdb::Database& db, fdb::Transaction& tx, const fdb::Error& err) {
 	if (err.code() == error_code_timed_out) {
@@ -342,15 +341,13 @@ void handleTransactionError(fdb::Database& db, fdb::Transaction& tx, const fdb::
 		printDatabaseStatus(db);
 		exitImmediately(1);
 	}
-	
+
 	auto onErrorFuture = tx.onError(err);
 	fdb_check(onErrorFuture.blockUntilReady(), "Wait on onError failed");
 	auto onErrResult = onErrorFuture.error();
 	if (onErrResult) {
-		fmt::print(stderr,
-			   "Transaction failed with a non-retriable error: {}({})\n",
-			   onErrResult.code(),
-			   onErrResult.what());
+		fmt::print(
+		    stderr, "Transaction failed with a non-retriable error: {}({})\n", onErrResult.code(), onErrResult.what());
 		printDatabaseStatus(db);
 		checkErrorCodeAndExit(onErrResult.code());
 	}
