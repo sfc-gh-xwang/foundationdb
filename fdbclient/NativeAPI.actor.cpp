@@ -11224,7 +11224,7 @@ void DatabaseContext::addTransaction(const ThrottlingId& throttlingId, uint64_t 
 	throughputTracker.addTransaction(throttlingId, numTransactions);
 }
 
-double DatabaseContext::getAverageTransactionCost(const ThrottlingId& throttlingId) {
+double DatabaseContext::getAverageTransactionCost(const ThrottlingId& throttlingId) const {
 	return throughputTracker.getAverageTransactionCost(throttlingId);
 }
 

@@ -22,7 +22,7 @@ class ThroughputTracker {
 	struct ThroughputSmoother {
 		HoltLinearSmoother smoother;
 		ThroughputSmoother()
-		  : smoother(CLIENT_KNOBS->AVERGAE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERGAE_COST_FOLDING_TIME) {}
+		  : smoother(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME) {}
 	};
 
 	ThrottlingIdMap<ThroughputSmoother> smoothThroughput;
@@ -32,5 +32,5 @@ public:
 	Future<Void> run(class DatabaseContext& cx);
 	void addCost(ThrottlingId const&, uint64_t cost);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
-	double getAverageTransactionCost(ThrottlingId const&);
+	double getAverageTransactionCost(ThrottlingId const&) const;
 };

@@ -2,7 +2,6 @@
  * ThroughputTracker.actor.cpp
  */
 
-#include "fdbclient/ClientKnobs.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/Knobs.h"
 #include "fdbclient/ThroughputTracker.h"
@@ -62,8 +61,8 @@ void ThroughputTracker::addTransaction(ThrottlingId const& throttlingId, uint64_
 	smoothTransactionRate[throttlingId].smoother.addDelta(numTransactions);
 }
 
-double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttlingId) {
-	if (now() - startTime < CLIENT_KNOBS->AVERGAE_COST_START_DELAY) {
+double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttlingId) const {
+	if (now() - startTime < CLIENT_KNOBS->AVERAGE_COST_START_DELAY) {
 		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
 	}
 
