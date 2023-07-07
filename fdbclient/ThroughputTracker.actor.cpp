@@ -67,12 +67,12 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
 	}
 
-	auto throughput = smoothThroughput.find(throttlingId);
-	auto transactionRate = smoothTransactionRate.find(throttlingId);
+	auto throughputIt = smoothThroughput.find(throttlingId);
+	auto transactionRateIt = smoothTransactionRate.find(throttlingId);
 
-	if (throughput == smoothThroughput.end() || transactionRate == smoothTransactionRate.end()) {
+	if (throughputIt == smoothThroughput.end() || transactionRateIt == smoothTransactionRate.end()) {
 		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
 	} else {
-		return throughput->second.smoother.smoothRate() / transactionRate->second.smoother.smoothRate();
+		return throughputIt->second.smoother.smoothTotal() / transactionRateIt->second.smoother.smoothTotal();
 	}
 }

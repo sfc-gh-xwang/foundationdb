@@ -24,15 +24,17 @@
 #include "flow/UnitTest.h"
 #include "flow/actorcompiler.h" // must be last include
 
-GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate)
-  : rateWindow(rateWindow), maxEmptyQueueBudget(maxEmptyQueueBudget), rate(rate), smoothRate(rateWindow),
-    smoothReleased(rateWindow) {
+GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow,
+                                               double maxEmptyQueueBudget,
+                                               double rate,
+                                               double maxToStart)
+  : rateWindow(rateWindow), maxEmptyQueueBudget(maxEmptyQueueBudget), rate(rate), maxToStart(maxToStart),
+    smoothRate(rateWindow), smoothReleased(rateWindow) {
 	smoothRate.setTotal(rate);
 }
 
 bool GrvTransactionRateInfo::canStart(int64_t numAlreadyStarted, int64_t count) const {
-	return numAlreadyStarted + count <=
-	       std::min(limit + budget, SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
+	return numAlreadyStarted + count <= std::min(limit + budget, maxToStart);
 }
 
 void GrvTransactionRateInfo::endReleaseWindow(int64_t numStarted, bool queueEmpty, double elapsed) {
@@ -112,7 +114,8 @@ ACTOR static Future<Void> mockClient(GrvTransactionRateInfo* rateInfo, double de
 // Rate limit set at 10, but client attempts 20 transactions per second.
 // Client should be throttled to only 10 transactions per second.
 TEST_CASE("/GrvTransactionRateInfo/Simple") {
-	state GrvTransactionRateInfo rateInfo(/*rateWindow=*/2.0, /*maxEmptyQueueBudget=*/100, /*rate=*/10);
+	state GrvTransactionRateInfo rateInfo(
+	    /*rateWindow=*/2.0, /*maxEmptyQueueBudget=*/100, /*rate=*/10, /*maxToStart=*/100000);
 	state int64_t counter;
 	rateInfo.setRate(10.0);
 	wait(timeout(mockClient(&rateInfo, 20.0, &counter), 60.0, Void()));

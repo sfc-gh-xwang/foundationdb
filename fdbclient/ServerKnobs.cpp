@@ -526,6 +526,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( START_TRANSACTION_BATCH_INTERVAL_SMOOTHER_ALPHA,       0.1 );
 	init( START_TRANSACTION_BATCH_QUEUE_CHECK_INTERVAL,        0.001 );
 	init( START_TRANSACTION_MAX_TRANSACTIONS_TO_START,        100000 );
+	init( START_TRANSACTION_MAX_BYTES_TO_START,            408900000 );
 	init( START_TRANSACTION_MAX_REQUESTS_TO_START,             10000 );
 	init( START_TRANSACTION_RATE_WINDOW,                         2.0 );
 	init( TAG_THROTTLE_RATE_WINDOW,                              2.0 );

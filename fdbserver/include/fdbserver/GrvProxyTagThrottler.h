@@ -21,9 +21,11 @@
 #pragma once
 
 #include "fdbclient/CommitProxyInterface.h"
+#include "fdbclient/ServerKnobs.h"
 #include "fdbclient/TagThrottle.h"
 #include "fdbserver/GrvTransactionRateInfo.h"
 #include "fdbserver/LatencyBandsMap.h"
+#include <memory>
 
 // GrvProxyTagThrottler is used to throttle GetReadVersionRequests based on tag quotas
 // before they're pushed into priority-partitioned queues.
@@ -50,21 +52,6 @@ protected:
 		void updateProxyTagThrottledDuration(LatencyBandsMap&);
 		bool isMaxThrottled(double maxThrottleDuration) const;
 	};
-	struct TagQueue {
-		Optional<GrvTransactionRateInfo> rateInfo;
-		Deque<DelayedRequest> requests;
-
-		TagQueue() = default;
-		explicit TagQueue(double rate)
-		  : rateInfo(GrvTransactionRateInfo(SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
-		                                    SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
-		                                    rate)) {}
-
-		void setRate(double rate);
-		bool isMaxThrottled(double maxThrottleDuration) const;
-		void rejectRequests(LatencyBandsMap&);
-		void endReleaseWindow(int64_t numStarted, double elapsed);
-	};
 
 public:
 	virtual ~IGrvProxyTagThrottler() = default;
@@ -82,9 +69,55 @@ public:
 	virtual void addRequest(GetReadVersionRequest const&) = 0;
 
 	virtual void addLatencyBandThreshold(double value) = 0;
+
+public: // testing
+	// Returns number of tags tracked
+	virtual uint32_t size() const = 0;
+};
+
+class GrvProxyTagThrottler : public IGrvProxyTagThrottler {
+	std::unique_ptr<IGrvProxyTagThrottler> impl;
+
+public:
+	explicit GrvProxyTagThrottler(double maxThrottleDuration);
+
+	// Called with rates received from ratekeeper
+	void updateRates(ThrottlingIdMap<double> const& newRates) override;
+
+	// elapsed indicates the amount of time since the last epoch was run.
+	// If a request is ready to be executed, it is sent to the deque
+	// corresponding to its priority. If not, the request remains queued.
+	void releaseTransactions(double elapsed,
+	                         Deque<GetReadVersionRequest>& outBatchPriority,
+	                         Deque<GetReadVersionRequest>& outDefaultPriority) override;
+
+	void addRequest(GetReadVersionRequest const&) override;
+
+	void addLatencyBandThreshold(double value) override;
+
+public: // testing
+	// Returns number of tags tracked
+	uint32_t size() const override;
 };
 
 class GrvProxyTagThrottlerTPS : public IGrvProxyTagThrottler {
+
+	struct TagQueue {
+		Optional<GrvTransactionRateInfo> rateInfo;
+		Deque<DelayedRequest> requests;
+
+		TagQueue() = default;
+		explicit TagQueue(double rate)
+		  : rateInfo(GrvTransactionRateInfo(SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
+		                                    SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
+		                                    rate,
+		                                    SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START)) {}
+
+		void setRate(double rate);
+		bool isMaxThrottled(double maxThrottleDuration) const;
+		void rejectRequests(LatencyBandsMap&);
+		void endReleaseWindow(int64_t numStarted, double elapsed);
+	};
 
 	// Track the budgets for each tag
 	ThrottlingIdMap<TagQueue> queues;
@@ -112,10 +145,26 @@ public:
 
 public: // testing
 	// Returns number of tags tracked
-	uint32_t size() const;
+	uint32_t size() const override;
 };
 
 class GrvProxyTagThrottlerBPS : public IGrvProxyTagThrottler {
+	struct TagQueue {
+		Optional<GrvTransactionRateInfo> rateInfo;
+		Deque<DelayedRequest> requests;
+
+		TagQueue() = default;
+		explicit TagQueue(double rate)
+		  : rateInfo(GrvTransactionRateInfo(SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
+		                                    SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
+		                                    rate,
+		                                    SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START)) {}
+
+		void setRate(double rate);
+		bool isMaxThrottled(double maxThrottleDuration) const;
+		void rejectRequests(LatencyBandsMap&);
+		void endReleaseWindow(int64_t numStarted, double elapsed);
+	};
 
 	// Track the budgets for each tag
 	ThrottlingIdMap<TagQueue> queues;
@@ -143,5 +192,5 @@ public:
 
 public: // testing
 	// Returns number of tags tracked
-	uint32_t size() const;
+	uint32_t size() const override;
 };

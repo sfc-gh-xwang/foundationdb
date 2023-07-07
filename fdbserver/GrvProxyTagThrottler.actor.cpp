@@ -35,20 +35,22 @@ bool IGrvProxyTagThrottler::DelayedRequest::isMaxThrottled(double maxThrottleDur
 	return now() - startTime > maxThrottleDuration;
 }
 
-void IGrvProxyTagThrottler::TagQueue::setRate(double rate) {
+void GrvProxyTagThrottlerTPS::TagQueue::setRate(double rate) {
 	if (rateInfo.present()) {
 		rateInfo.get().setRate(rate);
 	} else {
-		rateInfo = GrvTransactionRateInfo(
-		    SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW, SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET, rate);
+		rateInfo = GrvTransactionRateInfo(SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
+		                                  SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
+		                                  rate,
+		                                  SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 	}
 }
 
-bool IGrvProxyTagThrottler::TagQueue::isMaxThrottled(double maxThrottleDuration) const {
+bool GrvProxyTagThrottlerTPS::TagQueue::isMaxThrottled(double maxThrottleDuration) const {
 	return !requests.empty() && requests.front().isMaxThrottled(maxThrottleDuration);
 }
 
-void IGrvProxyTagThrottler::TagQueue::rejectRequests(LatencyBandsMap& latencyBandsMap) {
+void GrvProxyTagThrottlerTPS::TagQueue::rejectRequests(LatencyBandsMap& latencyBandsMap) {
 	CODE_PROBE(true, "GrvProxyTagThrottler rejecting requests");
 	while (!requests.empty()) {
 		auto& delayedReq = requests.front();
@@ -58,7 +60,7 @@ void IGrvProxyTagThrottler::TagQueue::rejectRequests(LatencyBandsMap& latencyBan
 	}
 }
 
-void IGrvProxyTagThrottler::TagQueue::endReleaseWindow(int64_t numStarted, double elapsed) {
+void GrvProxyTagThrottlerTPS::TagQueue::endReleaseWindow(int64_t numStarted, double elapsed) {
 	if (rateInfo.present()) {
 		CODE_PROBE(requests.empty(), "Tag queue ending release window with empty request queue");
 		CODE_PROBE(!requests.empty(), "Tag queue ending release window with requests still queued");
@@ -222,13 +224,45 @@ uint32_t GrvProxyTagThrottlerTPS::size() const {
 	return queues.size();
 }
 
+void GrvProxyTagThrottlerBPS::TagQueue::setRate(double rate) {
+	if (rateInfo.present()) {
+		rateInfo.get().setRate(rate);
+	} else {
+		rateInfo = GrvTransactionRateInfo(SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
+		                                  SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
+		                                  rate,
+		                                  SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START);
+	}
+}
+
+bool GrvProxyTagThrottlerBPS::TagQueue::isMaxThrottled(double maxThrottleDuration) const {
+	return !requests.empty() && requests.front().isMaxThrottled(maxThrottleDuration);
+}
+
+void GrvProxyTagThrottlerBPS::TagQueue::rejectRequests(LatencyBandsMap& latencyBandsMap) {
+	CODE_PROBE(true, "GrvProxyTagThrottler rejecting requests");
+	while (!requests.empty()) {
+		auto& delayedReq = requests.front();
+		delayedReq.updateProxyTagThrottledDuration(latencyBandsMap);
+		delayedReq.req.reply.sendError(proxy_tag_throttled());
+		requests.pop_front();
+	}
+}
+
+void GrvProxyTagThrottlerBPS::TagQueue::endReleaseWindow(int64_t numStarted, double elapsed) {
+	if (rateInfo.present()) {
+		CODE_PROBE(requests.empty(), "Tag queue ending release window with empty request queue");
+		CODE_PROBE(!requests.empty(), "Tag queue ending release window with requests still queued");
+		rateInfo.get().endReleaseWindow(numStarted, requests.empty(), elapsed);
+	}
+}
+
 GrvProxyTagThrottlerBPS::GrvProxyTagThrottlerBPS(double maxThrottleDuration)
   : maxThrottleDuration(maxThrottleDuration),
     latencyBandsMap("GrvProxyTagThrottler",
                     deterministicRandom()->randomUniqueID(),
                     SERVER_KNOBS->GLOBAL_TAG_THROTTLING_PROXY_LOGGING_INTERVAL,
                     SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED) {}
-
 
 void GrvProxyTagThrottlerBPS::updateRates(ThrottlingIdMap<double> const& newRates) {
 	for (const auto& [throttlingId, rate] : newRates) {
@@ -274,7 +308,8 @@ void GrvProxyTagThrottlerBPS::releaseTransactions(double elapsed,
 		// Sequence number of the first queued request
 		int64_t nextSeqNo;
 		bool operator>(TagQueueHandle const& rhs) const { return nextSeqNo > rhs.nextSeqNo; }
-		explicit TagQueueHandle(TagQueue& queue, uint32_t& bytesReleased) : queue(&queue), bytesReleased(&bytesReleased) {
+		explicit TagQueueHandle(TagQueue& queue, uint32_t& bytesReleased)
+		  : queue(&queue), bytesReleased(&bytesReleased) {
 			ASSERT(!this->queue->requests.empty());
 			nextSeqNo = this->queue->requests.front().sequenceNumber;
 		}
@@ -317,9 +352,10 @@ void GrvProxyTagThrottlerBPS::releaseTransactions(double elapsed,
 		while (!tagQueueHandle.queue->requests.empty()) {
 			auto& delayedReq = tagQueueHandle.queue->requests.front();
 			double bytes = CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
-			if (delayedReq.req.expectedTransactionCost.present()){ 
+			if (delayedReq.req.expectedTransactionCost.present()) {
 				bytes = delayedReq.req.expectedTransactionCost.get();
 			}
+			bytes *= delayedReq.req.transactionCount;
 			ASSERT_EQ(tagQueueHandle.nextSeqNo, delayedReq.sequenceNumber);
 			if (tagQueueHandle.queue->rateInfo.present() &&
 			    !tagQueueHandle.queue->rateInfo.get().canStart(*(tagQueueHandle.bytesReleased), bytes)) {
@@ -382,6 +418,35 @@ uint32_t GrvProxyTagThrottlerBPS::size() const {
 	return queues.size();
 }
 
+GrvProxyTagThrottler::GrvProxyTagThrottler(double maxThrottleDuration) {
+	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+		impl = std::make_unique<GrvProxyTagThrottlerBPS>(maxThrottleDuration);
+	} else {
+		impl = std::make_unique<GrvProxyTagThrottlerTPS>(maxThrottleDuration);
+	}
+}
+
+void GrvProxyTagThrottler::updateRates(ThrottlingIdMap<double> const& newRates) {
+	impl->updateRates(newRates);
+}
+
+void GrvProxyTagThrottler::releaseTransactions(double elapsed,
+                                               Deque<GetReadVersionRequest>& outBatchPriority,
+                                               Deque<GetReadVersionRequest>& outDefaultPriority) {
+	impl->releaseTransactions(elapsed, outBatchPriority, outDefaultPriority);
+}
+
+void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {
+	impl->addRequest(req);
+}
+
+void GrvProxyTagThrottler::addLatencyBandThreshold(double value) {
+	impl->addLatencyBandThreshold(value);
+}
+
+uint32_t GrvProxyTagThrottler::size() const {
+	return impl->size();
+}
 
 ACTOR static Future<Void> mockClient(IGrvProxyTagThrottler* throttler,
                                      TransactionPriority priority,
@@ -476,7 +541,7 @@ static bool isNear(double desired, int64_t actual) {
 // Rate limit set at 10, but client attempts 20 transactions per second.
 // Client should be throttled to only 10 transactions per second.
 TEST_CASE("/GrvProxyTagThrottler/Simple") {
-	state GrvProxyTagThrottlerTPS throttler(5.0);
+	state GrvProxyTagThrottler throttler(5.0);
 	state TransactionTagMap<uint32_t> counters;
 	{
 		ThrottlingIdMap<double> rates;
@@ -495,7 +560,7 @@ TEST_CASE("/GrvProxyTagThrottler/Simple") {
 
 // Clients share the available 30 transaction/second budget
 TEST_CASE("/GrvProxyTagThrottler/MultiClient") {
-	state GrvProxyTagThrottlerTPS throttler(5.0);
+	state GrvProxyTagThrottler throttler(5.0);
 	state TransactionTagMap<uint32_t> counters;
 	{
 		ThrottlingIdMap<double> rates;
@@ -518,7 +583,7 @@ TEST_CASE("/GrvProxyTagThrottler/MultiClient") {
 
 // Each tag receives 10 transaction/second budget
 TEST_CASE("/GrvProxyTagThrottler/MultiTag") {
-	state GrvProxyTagThrottlerTPS throttler(5.0);
+	state GrvProxyTagThrottler throttler(5.0);
 	state TransactionTagMap<uint32_t> counters;
 	{
 		ThrottlingIdMap<double> rates;
@@ -542,7 +607,7 @@ TEST_CASE("/GrvProxyTagThrottler/MultiTag") {
 
 // Test processing GetReadVersionRequests that batch several transactions
 TEST_CASE("/GrvProxyTagThrottler/Batch") {
-	state GrvProxyTagThrottlerTPS throttler(5.0);
+	state GrvProxyTagThrottler throttler(5.0);
 	state TransactionTagMap<uint32_t> counters;
 	{
 		ThrottlingIdMap<double> rates;
@@ -562,7 +627,7 @@ TEST_CASE("/GrvProxyTagThrottler/Batch") {
 
 // Tests cleanup of tags that are no longer throttled.
 TEST_CASE("/GrvProxyTagThrottler/Cleanup1") {
-	GrvProxyTagThrottlerTPS throttler(5.0);
+	GrvProxyTagThrottler throttler(5.0);
 	for (int i = 0; i < 1000; ++i) {
 		auto const tag = getRandomTag();
 		ThrottlingIdMap<double> rates;
@@ -575,7 +640,7 @@ TEST_CASE("/GrvProxyTagThrottler/Cleanup1") {
 
 // Tests cleanup of tags once queues have been emptied
 TEST_CASE("/GrvProxyTagThrottler/Cleanup2") {
-	GrvProxyTagThrottlerTPS throttler(5.0);
+	GrvProxyTagThrottler throttler(5.0);
 	{
 		GetReadVersionRequest req;
 		req.transactionCount = 1;
@@ -600,7 +665,7 @@ TEST_CASE("/GrvProxyTagThrottler/Cleanup2") {
 // Tests that unthrottled transactions are released in FIFO order, even when they
 // have different tags
 TEST_CASE("/GrvProxyTagThrottler/Fifo") {
-	state GrvProxyTagThrottlerTPS throttler(5.0);
+	state GrvProxyTagThrottler throttler(5.0);
 	state Future<Void> server = mockServer(&throttler);
 	wait(mockFifoClient(&throttler));
 	return Void();
@@ -617,7 +682,7 @@ TEST_CASE("/GrvProxyTagThrottler/Fifo") {
 // If the throttler is allowed to accumulate budget indefinitely
 // during the idle 60 seconds, this test will fail.
 TEST_CASE("/GrvProxyTagThrottler/LimitedIdleBudget") {
-	state GrvProxyTagThrottlerTPS throttler(5.0);
+	state GrvProxyTagThrottler throttler(5.0);
 	state TransactionTagMap<uint32_t> counters;
 	{
 		ThrottlingIdMap<double> rates;

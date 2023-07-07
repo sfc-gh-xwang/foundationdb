@@ -29,6 +29,7 @@
 #include "fdbclient/VersionVector.h"
 #include "fdbserver/GrvProxyTagThrottler.h"
 #include "fdbserver/GrvTransactionRateInfo.h"
+#include "fdbserver/Knobs.h"
 #include "fdbserver/LogSystem.h"
 #include "fdbserver/LogSystemDiskQueueAdapter.h"
 #include "fdbserver/WaitFailure.h"
@@ -187,7 +188,7 @@ struct GrvProxyData {
 	Version version;
 	Version minKnownCommittedVersion; // we should ask master for this version.
 
-	std::unique_ptr<IGrvProxyTagThrottler> tagThrottler;
+	GrvProxyTagThrottler tagThrottler;
 
 	// Cache of the latest commit versions of storage servers.
 	VersionVector ssVersionVectorCache;
@@ -201,7 +202,7 @@ struct GrvProxyData {
 			if (newLatencyBandConfig.present()) {
 				for (auto band : newLatencyBandConfig.get().grvConfig.bands) {
 					stats.grvLatencyBands.addThreshold(band);
-					tagThrottler->addLatencyBandThreshold(band);
+					tagThrottler.addLatencyBandThreshold(band);
 				}
 			}
 		}
@@ -220,13 +221,8 @@ struct GrvProxyData {
 	                                dbgid,
 	                                SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
 	                                SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
-	    updateCommitRequests(0), lastCommitTime(0), version(0), minKnownCommittedVersion(invalidVersion) {
-		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
-			tagThrottler = std::make_unique<GrvProxyTagThrottlerBPS>(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION);
-		} else {
-			tagThrottler = std::make_unique<GrvProxyTagThrottlerTPS>(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION);
-		}
-	}
+	    updateCommitRequests(0), lastCommitTime(0), version(0), minKnownCommittedVersion(invalidVersion),
+	    tagThrottler(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION) {}
 };
 
 ACTOR Future<Void> healthMetricsRequestServer(GrvProxyInterface grvProxy,
@@ -448,10 +444,10 @@ ACTOR Future<Void> getRate(UID myID,
 
 			if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
 				if (rep.targetThroughput.present()) {
-					proxyData->tagThrottler->updateRates(rep.targetThroughput.get());
+					proxyData->tagThrottler.updateRates(rep.targetThroughput.get());
 				}
 			} else if (rep.proxyThrottledTags.present()) {
-				proxyData->tagThrottler->updateRates(rep.proxyThrottledTags.get());
+				proxyData->tagThrottler.updateRates(rep.proxyThrottledTags.get());
 			}
 		}
 		when(wait(leaseTimeout)) {
@@ -500,7 +496,7 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
                                                GrvProxyStats* stats,
                                                GrvTransactionRateInfo* batchRateInfo,
                                                ThrottlingIdMap<uint64_t>* throttlingIdTransactionCounter,
-                                               IGrvProxyTagThrottler* tagThrottler) {
+                                               GrvProxyTagThrottler* tagThrottler) {
 	getCurrentLineage()->modify(&TransactionLineage::operation) =
 	    TransactionLineage::Operation::GetConsistentReadVersion;
 	loop choose {
@@ -831,10 +827,12 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state int64_t batchTransactionCount = 0;
 	state GrvTransactionRateInfo normalRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
 	                                            SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                            /*rate=*/10);
+	                                            /*rate=*/10,
+	                                            SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 	state GrvTransactionRateInfo batchRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
 	                                           SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                           /*rate=*/0);
+	                                           /*rate=*/0,
+	                                           SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 
 	state Deque<GetReadVersionRequest> systemQueue;
 	state Deque<GetReadVersionRequest> defaultQueue;
@@ -877,7 +875,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	                                          &grvProxyData->stats,
 	                                          &batchRateInfo,
 	                                          &throttlingIdTransactionCounter,
-	                                          grvProxyData->tagThrottler.get()));
+	                                          &grvProxyData->tagThrottler));
 
 	while (std::find(db->get().client.grvProxies.begin(), db->get().client.grvProxies.end(), proxy) ==
 	       db->get().client.grvProxies.end()) {
@@ -900,7 +898,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 			elapsed = 1e-15;
 		}
 
-		grvProxyData->tagThrottler->releaseTransactions(elapsed, defaultQueue, batchQueue);
+		grvProxyData->tagThrottler.releaseTransactions(elapsed, defaultQueue, batchQueue);
 		normalRateInfo.startReleaseWindow();
 		batchRateInfo.startReleaseWindow();
 

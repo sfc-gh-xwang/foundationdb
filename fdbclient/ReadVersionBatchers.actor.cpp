@@ -29,15 +29,8 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 			if (throttlingId.present() && CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS &&
 			    CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
 				cx->addTransaction(throttlingId.get(), transactionCount);
-				
-				double averageCost = cx->getAverageTransactionCost(throttlingId.get());
-				expectedTransactionCost = averageCost * transactionCount;
 
-				TraceEvent("GRVBatcher")
-				    .detail("ThrottlingId", throttlingId)
-				    .detail("TransactionCount", transactionCount)
-				    .detail("AverageTransactionCost", averageCost)
-				    .detail("ExpectedTransactionCost", expectedTransactionCost);
+				expectedTransactionCost = cx->getAverageTransactionCost(throttlingId.get());
 			}
 
 			state GetReadVersionRequest req(span.context,
