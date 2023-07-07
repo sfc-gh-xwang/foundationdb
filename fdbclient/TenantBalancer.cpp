@@ -1,3 +1,7 @@
+/*
+ * TenantBalancer.cpp
+ * Copyright (c) 2023 Snowflake Computing
+ */
 #include "fdbclient/TenantBalancer.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/TenantBalancerInterface.h"

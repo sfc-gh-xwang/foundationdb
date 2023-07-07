@@ -1,3 +1,7 @@
+/*
+ * TenantBalancer.h
+ * Copyright (c) 2023 Snowflake Computing
+ */
 #pragma once
 
 #include "fdbclient/KeyBackedTypes.actor.h"

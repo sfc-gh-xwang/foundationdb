@@ -1,3 +1,7 @@
+/*
+ * TenantMovement.actor.h
+ * Copyright (c) 2023 Snowflake Computing
+ */
 #pragma once
 #if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_TENANT_MOVEMENT_ACTOR_G_H)
 #define FDBCLIENT_TENANT_MOVEMENT_ACTOR_G_H

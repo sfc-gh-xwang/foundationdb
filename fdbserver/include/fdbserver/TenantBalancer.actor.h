@@ -1,3 +1,7 @@
+/*
+ * TenantBalancer.actor.h
+ * Copyright (c) 2023 Snowflake Computing
+ */
 #pragma once
 
 #if defined(NO_INTELLISENSE) && !defined(FDBSERVER_TENANT_BALANCER_ACTOR_G_H)
