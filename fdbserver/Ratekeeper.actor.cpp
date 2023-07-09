@@ -81,8 +81,12 @@ public:
 		self.addActor.send(self.metricsTracker.run());
 		self.addActor.send(traceRole(Role::RATEKEEPER, rkInterf.id()));
 
-		self.addActor.send(self.rateServer.run(
-		    self.normalRateUpdater, self.batchRateUpdater, self.quotaThrottler, self.quotaCache, self.recoveryTracker));
+		self.addActor.send(self.rateServer.run(self.normalRateUpdater,
+		                                       self.batchRateUpdater,
+		                                       self.quotaThrottler,
+		                                       self.quotaCache,
+		                                       self.metricsTracker,
+		                                       self.recoveryTracker));
 
 		self.addActor.send(self.quotaCache.run());
 		self.addActor.send(self.quotaThrottler.monitorThrottlingChanges());
@@ -195,7 +199,7 @@ Ratekeeper::Ratekeeper(UID id,
                                       SERVER_KNOBS->MAX_TL_SS_VERSION_DIFFERENCE_BATCH,
                                       SERVER_KNOBS->TARGET_DURABILITY_LAG_VERSIONS_BATCH,
                                       SERVER_KNOBS->TARGET_BW_LAG_BATCH)),
-    quotaCache(id, db), quotaThrottler(metricsTracker, id, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND) {}
+    quotaCache(id, db), quotaThrottler(id, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND) {}
 
 void Ratekeeper::updateTagThrottling() {
 	quotaThrottler.updateThrottling(metricsTracker.getStorageQueueInfo());

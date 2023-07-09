@@ -55,6 +55,7 @@ public:
 	                         class IRKRateUpdater const& batchRateUpdater,
 	                         class QuotaThrottler&,
 	                         class IRKThroughputQuotaCache const&,
+	                         class IRKMetricsTracker const&,
 	                         class IRKRecoveryTracker&) = 0;
 };
 
@@ -78,6 +79,7 @@ public:
 	                 class IRKRateUpdater const& batchRateUpdater,
 	                 class QuotaThrottler&,
 	                 class IRKThroughputQuotaCache const&,
+	                 class IRKMetricsTracker const&,
 	                 class IRKRecoveryTracker&) override;
 };
 
@@ -96,6 +98,7 @@ public:
 	                 class IRKRateUpdater const& batchRateUpdater,
 	                 class QuotaThrottler&,
 	                 class IRKThroughputQuotaCache const&,
+	                 class IRKMetricsTracker const&,
 	                 class IRKRecoveryTracker&) override {
 		return Never();
 	}
