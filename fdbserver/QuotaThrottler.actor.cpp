@@ -148,25 +148,12 @@ class QuotaThrottlerImpl {
 		}
 	}
 
-	// For transactions with the provided throttlingId, returns the average cost that gets associated with the provided
-	// storage server
-	Optional<double> getAverageTransactionCost(ThrottlingId throttlingId, UID storageServerId) const {
-		auto const cost = serverThroughputTracker.getThroughput(storageServerId, throttlingId);
-		if (!cost.present()) {
-			return {};
-		}
+	Optional<double> getTransactionRate(ThrottlingId const& throttlingId) const {
 		auto const stats = tryGet(throttlingStatistics, throttlingId);
 		if (!stats.present()) {
 			return {};
 		}
-		auto const transactionRate = stats.get().getTransactionRate();
-		// If there is less than GLOBAL_TAG_THROTTLING_MIN_RATE transactions per second, we do not have enough data
-		// to accurately compute an average transaction cost.
-		if (transactionRate < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MIN_RATE) {
-			return {};
-		} else {
-			return cost.get() / transactionRate;
-		}
+		return stats.get().getTransactionRate();
 	}
 
 	// For transactions with the provided throttling ID, returns the average cost of all transactions
@@ -174,110 +161,64 @@ class QuotaThrottlerImpl {
 	// return an empty Optional, because no accurate estimation can be made.
 	Optional<double> getAverageTransactionCost(ThrottlingId throttlingId, TraceEvent& te) const {
 		auto const cost = throughputTracker().getThroughput(throttlingId);
-		auto const stats = tryGet(throttlingStatistics, throttlingId);
-		if (!stats.present()) {
+		auto const transactionRate = getTransactionRate(throttlingId);
+		if (!transactionRate.present()) {
 			return CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
 		}
-		auto const transactionRate = stats.get().getTransactionRate();
-		te.detail("TransactionRate", transactionRate);
+		te.detail("TransactionRate", transactionRate.get());
 		te.detail("Cost", cost);
 		if (transactionRate < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MIN_RATE) {
 			return {};
 		} else {
-			return std::max(static_cast<double>(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE), cost / transactionRate);
+			return std::max(static_cast<double>(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE), cost / transactionRate.get());
 		}
 	}
 
-	// Of all throttling IDs meaningfully performing workload on the given storage server,
-	// returns the ratio of total quota allocated to the specified throttling ID
-	double getQuotaRatio(ThrottlingIdRef throttlingId,
-	                     UID storageServerId,
-	                     IRKThroughputQuotaCache const& quotaCache) const {
-		double sumQuota{ 0.0 };
-		double throttlingIdQuota{ 0.0 };
-		auto const throttlingIdsAffectingStorageServer =
-		    serverThroughputTracker.getThrottlingIdsAffectingStorageServer(storageServerId);
-		for (const auto& t : throttlingIdsAffectingStorageServer) {
-			auto const tQuota = quotaCache.getTotalQuota(t);
-			sumQuota += tQuota.orDefault(0);
-			if (t == throttlingId) {
-				throttlingIdQuota = tQuota.orDefault(0);
-			}
-		}
-		if (throttlingIdQuota == 0.0) {
-			return 0;
-		}
-		ASSERT_GT(sumQuota, 0.0);
-		return throttlingIdQuota / sumQuota;
-	}
-
-	Optional<double> getThrottlingRatio(UID storageServerId) const {
-		auto const& storageQueueInfo = metricsTracker->getStorageQueueInfo();
-		auto it = storageQueueInfo.find(storageServerId);
-		if (it == storageQueueInfo.end()) {
-			return {};
-		}
-		auto const& [_, ssInfo] = *it;
-		return ssInfo.getTagThrottlingRatio(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
-		                                    SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER);
-	}
-
-	// Returns the desired cost for a storage server, based on its current
-	// cost and throttling ratio
-	Optional<double> getLimitingCost(UID storageServerId) const {
-		Optional<double> const throttlingRatio = getThrottlingRatio(storageServerId);
-		Optional<double> const currentCost = serverThroughputTracker.getThroughput(storageServerId);
-		if (!throttlingRatio.present() || !currentCost.present()) {
-			return {};
-		}
-		return throttlingRatio.get() * currentCost.get();
-	}
-
-	// For a given storage server and throttling ID combination, return the limiting transaction rate.
-	Optional<double> getLimitingTps(UID storageServerId,
-	                                ThrottlingId throttlingId,
-	                                IRKThroughputQuotaCache const& quotaCache) const {
-		auto const quotaRatio = getQuotaRatio(throttlingId, storageServerId, quotaCache);
-		Optional<double> const limitingCost = getLimitingCost(storageServerId);
-		Optional<double> const averageTransactionCost = getAverageTransactionCost(throttlingId, storageServerId);
-		if (!limitingCost.present() || !averageTransactionCost.present()) {
-			return {};
-		}
-
-		auto const limitingCostForThrottlingId = limitingCost.get() * quotaRatio;
-		return limitingCostForThrottlingId / averageTransactionCost.get();
-	}
-
-	// Return the limiting transaction rate, aggregated across all storage servers.
-	// The limits from the worst maxFallingBehind zones are
-	// ignored, because we do not non-workload related issues (e.g. slow disks)
+	// Returns the limiting transaction rate for the provided throttlingId.
+	// The throttling ratios from the worst maxFallingBehind zones are
+	// ignored, because we do not want non-workload related issues (e.g. slow disks)
 	// to affect tag throttling. If more than maxFallingBehind zones are at
 	// or near saturation, this indicates that throttling should take place.
-	Optional<double> getLimitingTps(ThrottlingId throttlingId, IRKThroughputQuotaCache const& quotaCache) const {
+	Optional<double> getLimitingTps(ThrottlingId const& throttlingId) const {
+		// Calculate the current transaction
+		auto const transactionRate = getTransactionRate(throttlingId);
+		if (!transactionRate.present()) {
+			return {};
+		}
+
 		// TODO: The algorithm for ignoring the worst zones can be made more efficient
-		std::unordered_map<Optional<Standalone<StringRef>>, double> zoneIdToLimitingTps;
+		std::unordered_map<Optional<Standalone<StringRef>>, double> zoneThrottlingRatios;
 		auto const& storageQueueInfo = metricsTracker->getStorageQueueInfo();
 		for (auto const& [id, ssInfo] : storageQueueInfo) {
-			auto const limitingTpsForSS = getLimitingTps(id, throttlingId, quotaCache);
-			if (limitingTpsForSS.present()) {
-				auto it = zoneIdToLimitingTps.find(ssInfo.locality.zoneId());
-				if (it != zoneIdToLimitingTps.end()) {
-					auto& limitingTpsForZone = it->second;
-					limitingTpsForZone = std::min<double>(limitingTpsForZone, limitingTpsForSS.get());
-				} else {
-					zoneIdToLimitingTps[ssInfo.locality.zoneId()] = limitingTpsForSS.get();
+			// Ignore storage servers where throttlingId is not significantly contributing
+			if (!serverThroughputTracker.getThroughput(id, throttlingId).present()) {
+				continue;
+			}
+
+			auto const throttlingRatio =
+			    ssInfo.getTagThrottlingRatio(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER);
+			if (throttlingRatio.present()) {
+				auto const [it, inserted] =
+				    zoneThrottlingRatios.try_emplace(ssInfo.locality.zoneId(), throttlingRatio.get());
+				if (!inserted) {
+					auto& zoneThrottlingRatio = it->second;
+					zoneThrottlingRatio = std::min<double>(zoneThrottlingRatio, throttlingRatio.get());
 				}
 			}
 		}
-		if (zoneIdToLimitingTps.size() <= maxFallingBehind) {
+		if (zoneThrottlingRatios.size() <= maxFallingBehind) {
 			return {};
 		} else {
-			std::vector<double> zoneLimits;
-			for (const auto& [_, limit] : zoneIdToLimitingTps) {
-				zoneLimits.push_back(limit);
+			std::vector<double> zoneThrottlingRatiosVector;
+			zoneThrottlingRatiosVector.reserve(zoneThrottlingRatios.size());
+			for (auto const& [_, throttlingRatio] : zoneThrottlingRatios) {
+				zoneThrottlingRatiosVector.push_back(throttlingRatio);
 			}
-			std::nth_element(zoneLimits.begin(), zoneLimits.begin() + maxFallingBehind, zoneLimits.end());
-			return zoneLimits[maxFallingBehind];
+			std::nth_element(zoneThrottlingRatiosVector.begin(),
+			                 zoneThrottlingRatiosVector.begin() + maxFallingBehind,
+			                 zoneThrottlingRatiosVector.end());
+			return transactionRate.get() * zoneThrottlingRatiosVector[maxFallingBehind];
 		}
 	}
 
@@ -285,7 +226,7 @@ class QuotaThrottlerImpl {
 	                              IRKThroughputQuotaCache const& quotaCache,
 	                              bool& isBusy,
 	                              TraceEvent& te) {
-		auto const limitingTps = getLimitingTps(throttlingId, quotaCache);
+		auto const limitingTps = getLimitingTps(throttlingId);
 		auto const averageTransactionCost = getAverageTransactionCost(throttlingId, te);
 		auto const totalQuota = quotaCache.getTotalQuota(throttlingId);
 		auto const reservedQuota = quotaCache.getReservedQuota(throttlingId);
