@@ -420,7 +420,7 @@ public:
 		totalWriteCost += cost;
 	}
 
-	void setCapacity(double value) { capacity = value; }
+	void setCapacity(double pagesPerSecond) { capacity = pagesPerSecond; }
 
 	StorageQueueInfo getStorageQueueInfo() const {
 		StorageQueueInfo result(id, LocalityData({}, Value(id.toString()), {}, {}));
@@ -479,7 +479,7 @@ public:
 		}
 	}
 
-	void setCapacity(int index, double value) { storageServers[index].setCapacity(value); }
+	void setCapacity(int index, double pagesPerSecond) { storageServers[index].setCapacity(pagesPerSecond); }
 
 	Map<UID, StorageQueueInfo> getStorageQueueInfos() const {
 		Map<UID, StorageQueueInfo> result;
@@ -923,7 +923,7 @@ TEST_CASE("/QuotaThrottler/IgnoreWorstZone") {
 	state QuotaThrottler quotaThrottler(metricsTracker, UID{}, 1);
 	state StorageServerCollection storageServers(10, 100);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
-	storageServers.setCapacity(0, 1);
+	storageServers.setCapacity(/*index=*/0, /*pagesPerSecond=*/1);
 	quotaCache.setQuota(testTag, 100 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE, 0);
 	state Future<Void> client =
 	    runClient(&quotaThrottler, &quotaCache, &storageServers, testTag, 5.0, 6.0, OpType::READ);
@@ -932,7 +932,7 @@ TEST_CASE("/QuotaThrottler/IgnoreWorstZone") {
 	});
 	state Future<Void> updater = updateQuotaThrottler(&metricsTracker, &quotaThrottler, &storageServers);
 	wait(timeoutError(monitor || client || updater, 600.0));
-	storageServers.setCapacity(1, 1);
+	storageServers.setCapacity(/*index=*/1, /*pagesPerSecond=*/1);
 	monitor = monitorActor(&quotaThrottler, &quotaCache, [](auto& qt, auto const& qc) {
 		return targetRateIsNear(qt, qc, ThrottlingIdRef::fromTag("sampleTag1"_sr), 10.0 / 6.0);
 	});
