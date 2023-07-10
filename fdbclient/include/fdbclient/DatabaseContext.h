@@ -33,6 +33,7 @@
 #include <unordered_map>
 #pragma once
 
+#include "fdbclient/BulkLoad.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/KeyRangeMap.h"
@@ -425,6 +426,26 @@ public:
 	                            Optional<Version> version,
 	                            Optional<Reference<Tenant>> tenant = {});
 	Future<bool> blobRestore(const KeyRange range, Optional<Version> version);
+
+	// bulk load functions
+
+	// state management
+	Future<BulkLoadID> startBulkLoad(KeyRange range, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> bulkLoadAllFilesRegistered(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> abortBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> cleanupBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+
+	// internal state management - not exposed to public clients
+	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadState desiredState);
+	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadState desiredState);
+
+	// operational management
+	Future<std::vector<BulkLoadID>> listBulkLoads(bool onlyActive);
+	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id);
+
+	// bulk data writing apis
+	// TODO: the actual file pointer + serialization APIs
 
 	// private:
 	explicit DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,

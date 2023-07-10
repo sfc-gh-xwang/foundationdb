@@ -352,6 +352,7 @@ ERROR( blob_restore_corrupted_manifest, 2387, "Corrupted manifest" )
 ERROR( blob_restore_missing_manifest, 2388, "Missing manifest" )
 ERROR( blob_migrator_replaced, 2389, "Blob migrator is replaced")
 
+// 2400 - json errors
 ERROR( key_not_found, 2400, "Expected key is missing")
 ERROR( json_malformed, 2401, "JSON string was malformed")
 ERROR( json_eof_expected, 2402, "JSON string did not terminate where expected")
@@ -367,6 +368,15 @@ ERROR( snap_not_fully_recovered_unsupported, 2506, "Unsupported when the cluster
 ERROR( snap_log_anti_quorum_unsupported, 2507, "Unsupported when log anti quorum is configured" )
 ERROR( snap_with_recovery_unsupported, 2508, "Cluster recovery during snapshot operation not supported" )
 ERROR( snap_invalid_uid_string, 2509, "The given uid string is not a 32-length hex string" )
+
+// 26XX - Bulk Load operations errors
+ERROR( bulk_load_aborted, 2600, "Bulk load operation was aborted" );
+ERROR( bulk_load_abort_failed, 2601, "Bulk load abort failed" );
+ERROR( bulk_load_range_conflict, 2602, "Bulk load for key range already in progress" );
+ERROR( bulk_load_cleanup_failed, 2603, "Bulk load could not clean up because it is still in progress");
+ERROR( bulk_load_not_found, 2604, "Bulk load ID not found" );
+// other internal-only state transition failures - end user should not see this error
+ERROR( bulk_load_invalid_state_transition, 2605, "Bulk load abort failed" );
 
 // 27XX - Encryption operations errors
 ERROR( encrypt_ops_error, 2700, "Encryption operation error" )

@@ -41,6 +41,8 @@
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BlobGranuleRequest.actor.h"
 #include "fdbclient/BlobWorkerInterface.h"
+#include "fdbclient/BulkLoad.h"
+#include "fdbclient/BulkLoadTracker.actor.h"
 #include "fdbclient/KeyRangeMap.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/ManagementAPI.actor.h"
@@ -5803,6 +5805,37 @@ ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
 	}
 }
 
+// FIXME: handle state transitions from STAGING to STAGING_BLOB_DONE
+ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID id, BulkLoadState state) {
+
+	if (state >= BulkLoadState::STAGING_BLOB_DONE) {
+		return Void();
+	}
+
+	try {
+		if (state < BulkLoadState::STAGING) {
+			wait(bmData->db->waitBulkLoadStateAtLeast(id, BulkLoadState::STAGING));
+		}
+
+		// FIXME: ACTUALLY IMPLEMENT BLOB STAGING!
+		wait(delay(deterministicRandom()->random01()));
+
+		// TODO: do we also need to check manager lock as part of these transactions? should be idempotent by any
+		// manager
+
+		// FIXME: only change to STAGING_BLOB_DONE
+		wait(bmData->db->updateBulkLoadState(id, BulkLoadState::DONE));
+		return Void();
+	} catch (Error& e) {
+		if (e.code() == error_code_bulk_load_aborted || e.code() == error_code_bulk_load_not_found) {
+			// If bulk load aborted/cleaned up, stop tracking it
+			// TODO: code probe
+			return Void();
+		}
+		throw e;
+	}
+}
+
 // Simulation validation that multiple blob managers aren't started with the same epoch within same cluster
 static std::map<std::pair<UID, int64_t>, UID> managerEpochsSeen;
 
@@ -5899,6 +5932,12 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 		}
 
 		self->addActor.send(watchBackupEnabled(self));
+
+		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadID& id, const BulkLoadState& state) {
+			return trackBulkLoad(self, id, state);
+		};
+		state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler, self->addActor);
+		bulkLoadTracker.start();
 
 		loop choose {
 			when(wait(self->iAmReplaced.getFuture())) {

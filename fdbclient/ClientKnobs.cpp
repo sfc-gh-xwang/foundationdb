@@ -326,6 +326,9 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( REST_KMS_ALLOW_NOT_SECURE_CONNECTION,     false ); if ( randomize && BUGGIFY ) REST_KMS_ALLOW_NOT_SECURE_CONNECTION = !REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 	init( SIM_KMS_VAULT_MAX_KEYS,                    4096 );
 
+	// Bulk Loading
+	init( ALLOW_BULK_LOADS,                         false );
+
 	// clang-format on
 }
 
