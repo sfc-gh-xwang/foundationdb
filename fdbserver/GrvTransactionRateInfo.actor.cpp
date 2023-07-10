@@ -21,16 +21,18 @@
 #include "fdbserver/GrvTransactionRateInfo.h"
 
 #include "fdbserver/Knobs.h"
+#include "fdbclient/Knobs.h"
 #include "flow/UnitTest.h"
 #include "flow/actorcompiler.h" // must be last include
 
-GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow,
-                                               double maxEmptyQueueBudget,
-                                               double rate,
-                                               double maxToStart)
-  : rateWindow(rateWindow), maxEmptyQueueBudget(maxEmptyQueueBudget), rate(rate), maxToStart(maxToStart),
-    smoothRate(rateWindow), smoothReleased(rateWindow) {
+GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate)
+  : rateWindow(rateWindow), maxEmptyQueueBudget(maxEmptyQueueBudget), rate(rate), smoothRate(rateWindow),
+    smoothReleased(rateWindow) {
 	smoothRate.setTotal(rate);
+
+	maxToStart = (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT)
+	                 ? SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START
+	                 : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START;
 }
 
 bool GrvTransactionRateInfo::canStart(int64_t numAlreadyStarted, int64_t count) const {
@@ -115,7 +117,7 @@ ACTOR static Future<Void> mockClient(GrvTransactionRateInfo* rateInfo, double de
 // Client should be throttled to only 10 transactions per second.
 TEST_CASE("/GrvTransactionRateInfo/Simple") {
 	state GrvTransactionRateInfo rateInfo(
-	    /*rateWindow=*/2.0, /*maxEmptyQueueBudget=*/100, /*rate=*/10, /*maxToStart=*/100000);
+	    /*rateWindow=*/2.0, /*maxEmptyQueueBudget=*/100, /*rate=*/10);
 	state int64_t counter;
 	rateInfo.setRate(10.0);
 	wait(timeout(mockClient(&rateInfo, 20.0, &counter), 60.0, Void()));
