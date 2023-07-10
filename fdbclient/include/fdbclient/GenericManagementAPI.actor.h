@@ -545,6 +545,16 @@ Future<ConfigurationResult> changeConfig(Reference<DB> db, std::map<std::string,
 				             MutationRef::SetVersionstampedValue);
 			}
 
+			// storage engine param changes are stateless
+			// everytime the storage engine or a parameter changes, it will reset all params to default.
+			// Thus we clear everything exisiting keys before setting the new values
+			if (storageEngineParamsChange) {
+				tr->clear(storageEngineParamsKeys);
+			}
+			if (tssStorageEngineParamsChange) {
+				tr->clear(tssStorageEngineParamsKeys);
+			}
+
 			for (auto i = m.begin(); i != m.end(); ++i) {
 				tr->set(StringRef(i->first), StringRef(i->second));
 				if (i->first == perpetualStorageWiggleKey) {

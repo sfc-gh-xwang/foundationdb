@@ -71,13 +71,13 @@ bool checkForStorageEngineParamsChange(std::map<std::string, std::string>& m,
 		paramsChange = true;
 		auto storeType =
 		    static_cast<KeyValueStoreType::StoreType>(std::stoi(m[configKeysPrefix.toString() + engine_type]));
-		auto& paramsInitMap = StorageEngineParamsFactory::getParams(storeType);
+		auto& supportedParamsMap = StorageEngineParamsFactory::getSupportedParams(storeType);
 
 		for (const auto& [k, v] : m) {
 			if (!KeyRef(k).startsWith(engine_prefix))
 				continue;
 			std::string paramKeyStr = KeyRef(k).removePrefix(engine_prefix).toString();
-			if (!paramsInitMap.contains(paramKeyStr)) {
+			if (!supportedParamsMap.contains(paramKeyStr)) {
 				fmt::print("Warning: {} is not a supported parameter for {} {}.\n",
 				           paramKeyStr,
 				           engine_type,

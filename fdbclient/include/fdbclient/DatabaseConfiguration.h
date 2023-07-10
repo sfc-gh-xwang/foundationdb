@@ -104,6 +104,7 @@ struct StorageEngineParamSet : public ReferenceCounted<StorageEngineParamSet> {
 
 	constexpr static FileIdentifier file_identifier = 2389372;
 
+	// each represents the needed effort to update the parameter
 	enum CHANGETYPE { RUNTIME, NEEDREBOOT, NEEDREPLACEMENT };
 
 	StorageEngineParamSet() {}
@@ -119,25 +120,8 @@ struct StorageEngineParamSet : public ReferenceCounted<StorageEngineParamSet> {
 
 	void clear(const std::string& name) { params.erase(name); }
 
-	int get(const std::string& name, int defaultValue) const {
-		return params.contains(name) ? std::stoi(params.at(name)) : defaultValue;
-	}
-
-	int getInt(const std::string& name) const { return std::stoi(params.at(name)); }
-
-	double get(const std::string& name, double defaultValue) const {
-		return params.contains(name) ? std::stod(params.at(name)) : defaultValue;
-	}
-
-	double getDouble(const std::string& name) const { return std::stod(params.at(name)); }
-
-	bool get(const std::string& name, bool defaultValue) const {
-		return params.contains(name) ? params.at(name) == "true" : defaultValue;
-	}
-
-	bool getBool(const std::string& name) const { return params.at(name) == "true"; }
-
-	std::string get(const std::string& name, const std::string& defaultValue) const {
+	template <class valueType>
+	valueType getOrDefault(const std::string& name, valueType defaultValue) {
 		return params.contains(name) ? params.at(name) : defaultValue;
 	}
 
@@ -441,19 +425,9 @@ struct StorageEngineParamsFactory {
 		factories()[storeType] = vals;
 	}
 
-	static std::map<std::string, std::pair<StorageEngineParamSet::CHANGETYPE, std::string>>& getParams(
+	static std::map<std::string, std::pair<StorageEngineParamSet::CHANGETYPE, std::string>>& getSupportedParams(
 	    KeyValueStoreType::StoreType storeType) {
 		return factories()[storeType];
-	}
-
-	static std::map<std::string, std::string> getParamsValue(KeyValueStoreType::StoreType storeType) {
-		std::map<std::string, std::string> result;
-		if (factories().contains(storeType)) {
-			auto m = factories().at(storeType);
-			for (const auto& [k, pair] : m)
-				result[k] = pair.second;
-		}
-		return result;
 	}
 
 	static StorageEngineParamSet::CHANGETYPE getChangeType(KeyValueStoreType::StoreType storeType,

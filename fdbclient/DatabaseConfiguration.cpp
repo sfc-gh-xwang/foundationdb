@@ -27,46 +27,7 @@
 #include "flow/genericactors.actor.h"
 #include "flow/UnitTest.h"
 
-StorageEngineParamsFactory redwoodFactory(
-    KeyValueStoreType::SSD_REDWOOD_V1,
-    { { "page_size", { StorageEngineParamSet::CHANGETYPE::NEEDREPLACEMENT, "8192" } },
-      { "kvstore_range_prefetch", { StorageEngineParamSet::CHANGETYPE::RUNTIME, "true" } },
-      { "metrics_interval", { StorageEngineParamSet::CHANGETYPE::NEEDREBOOT, "5.0" } },
-      { "histogram_interval", { StorageEngineParamSet::CHANGETYPE::NEEDREBOOT, "30.0" } },
-      { "remote_kv_store", { StorageEngineParamSet::CHANGETYPE::NEEDREBOOT, "false" } } });
-
-DatabaseConfiguration::DatabaseConfiguration() {
-	resetInternal();
-}
-
-void DatabaseConfiguration::resetInternal() {
-	// does NOT reset rawConfiguration
-	initialized = false;
-	commitProxyCount = grvProxyCount = resolverCount = desiredTLogCount = tLogWriteAntiQuorum = tLogReplicationFactor =
-	    storageTeamSize = desiredLogRouterCount = -1;
-	tLogVersion = TLogVersion::DEFAULT;
-	tLogDataStoreType = storageServerStoreType = testingStorageServerStoreType = KeyValueStoreType::END;
-	desiredTSSCount = 0;
-	tLogSpillType = TLogSpillType::DEFAULT;
-	autoCommitProxyCount = CLIENT_KNOBS->DEFAULT_AUTO_COMMIT_PROXIES;
-	autoGrvProxyCount = CLIENT_KNOBS->DEFAULT_AUTO_GRV_PROXIES;
-	autoResolverCount = CLIENT_KNOBS->DEFAULT_AUTO_RESOLVERS;
-	autoDesiredTLogCount = CLIENT_KNOBS->DEFAULT_AUTO_LOGS;
-	usableRegions = 1;
-	regions.clear();
-	tLogPolicy = storagePolicy = remoteTLogPolicy = Reference<IReplicationPolicy>();
-	remoteDesiredTLogCount = -1;
-	remoteTLogReplicationFactor = repopulateRegionAntiQuorum = 0;
-	backupWorkerEnabled = false;
-	perpetualStorageWiggleSpeed = 0;
-	perpetualStorageWiggleLocality = "0";
-	storageMigrationType = StorageMigrationType::DEFAULT;
-	blobGranulesEnabled = false;
-	tenantMode = TenantMode::DISABLED;
-	encryptionAtRestMode = EncryptionAtRestMode::DISABLED;
-	storageEngineParams = StorageEngineParamSet();
-	tssStorageEngineParams = StorageEngineParamSet();
-}
+namespace {
 
 int toInt(ValueRef const& v) {
 	return atoi(v.toString().c_str());
@@ -191,6 +152,61 @@ void parse(std::vector<RegionInfo>* regions, ValueRef const& v) {
 		regions->clear();
 		return;
 	}
+}
+
+std::string configureStorageEngineParamsStringFromJSON(const StatusObject& json) {
+	std::string result;
+	for (auto kv : json) {
+		result += ":";
+		// storage engine params and values are always saved as strings
+		ASSERT_EQ(kv.second.type(), json_spirit::str_type);
+		result += kv.first + "=" + kv.second.get_str();
+	}
+	return result;
+}
+
+} // namespace
+
+StorageEngineParamsFactory redwoodFactory(
+    KeyValueStoreType::SSD_REDWOOD_V1,
+    { { "page_size", { StorageEngineParamSet::CHANGETYPE::NEEDREPLACEMENT, "8192" } },
+      { "kvstore_range_prefetch", { StorageEngineParamSet::CHANGETYPE::RUNTIME, "true" } },
+      { "metrics_interval", { StorageEngineParamSet::CHANGETYPE::NEEDREBOOT, "5.0" } },
+      { "histogram_interval", { StorageEngineParamSet::CHANGETYPE::NEEDREBOOT, "30.0" } },
+      { StorageEngineParamsFactory::REMOTE_KV_STORE_PARAM_KEY,
+        { StorageEngineParamSet::CHANGETYPE::NEEDREBOOT, "false" } } });
+
+DatabaseConfiguration::DatabaseConfiguration() {
+	resetInternal();
+}
+
+void DatabaseConfiguration::resetInternal() {
+	// does NOT reset rawConfiguration
+	initialized = false;
+	commitProxyCount = grvProxyCount = resolverCount = desiredTLogCount = tLogWriteAntiQuorum = tLogReplicationFactor =
+	    storageTeamSize = desiredLogRouterCount = -1;
+	tLogVersion = TLogVersion::DEFAULT;
+	tLogDataStoreType = storageServerStoreType = testingStorageServerStoreType = KeyValueStoreType::END;
+	desiredTSSCount = 0;
+	tLogSpillType = TLogSpillType::DEFAULT;
+	autoCommitProxyCount = CLIENT_KNOBS->DEFAULT_AUTO_COMMIT_PROXIES;
+	autoGrvProxyCount = CLIENT_KNOBS->DEFAULT_AUTO_GRV_PROXIES;
+	autoResolverCount = CLIENT_KNOBS->DEFAULT_AUTO_RESOLVERS;
+	autoDesiredTLogCount = CLIENT_KNOBS->DEFAULT_AUTO_LOGS;
+	usableRegions = 1;
+	regions.clear();
+	tLogPolicy = storagePolicy = remoteTLogPolicy = Reference<IReplicationPolicy>();
+	remoteDesiredTLogCount = -1;
+	remoteTLogReplicationFactor = repopulateRegionAntiQuorum = 0;
+	backupWorkerEnabled = false;
+	perpetualStorageWiggleSpeed = 0;
+	perpetualStorageWiggleLocality = "0";
+	storageMigrationType = StorageMigrationType::DEFAULT;
+	blobGranulesEnabled = false;
+	tenantMode = TenantMode::DISABLED;
+	encryptionAtRestMode = EncryptionAtRestMode::DISABLED;
+	storageEngineParams = StorageEngineParamSet();
+	tssStorageEngineParams = StorageEngineParamSet();
 }
 
 void DatabaseConfiguration::setDefaultReplicationPolicy() {
@@ -415,7 +431,12 @@ std::string DatabaseConfiguration::configureStringFromJSON(const StatusObject& j
 	for (auto kv : json) {
 		// These JSON properties are ignored for some reason.  This behavior is being maintained in a refactor
 		// of this code and the old code gave no reasoning.
-		static std::set<std::string> ignore = { "tss_storage_engine", "perpetual_storage_wiggle_locality" };
+		// "storage_engine_params" is handled when reading the "storage_engine" key since they are concatenated in the
+		// configure command, in particular, "configure storage_engine=<engine_type>[:param=val]"
+		static std::set<std::string> ignore = { "tss_storage_engine",
+			                                    "perpetual_storage_wiggle_locality",
+			                                    "storage_engine_params",
+			                                    "tss_storage_engine_params" };
 		if (ignore.contains(kv.first)) {
 			continue;
 		}
@@ -434,6 +455,12 @@ std::string DatabaseConfiguration::configureStringFromJSON(const StatusObject& j
 
 			if (directSet.contains(kv.first)) {
 				result += kv.first + "=" + kv.second.get_str();
+				// TODO: tss_storage_engine_params should be added, it's ignored at present to be maintain the old
+				// behavior of this function
+				if (kv.first == "storage_engine" && json.contains("storage_engine_params")) {
+					result += configureStorageEngineParamsStringFromJSON(
+					    json.find("storage_engine_params")->second.get_obj());
+				}
 			} else {
 				// For the rest, it is assumed that the property name is meaningless and the value string
 				// is a standalone 'configure' command which has the identical effect.
@@ -447,9 +474,6 @@ std::string DatabaseConfiguration::configureStringFromJSON(const StatusObject& j
 			          json_spirit::write_string(json_spirit::mValue(kv.second.get_array()),
 			                                    json_spirit::Output_options::none);
 		} else {
-			static std::set<std::string> directSet = { "storage_engine_params", "tss_storage_engine_params" };
-			if (directSet.contains(kv.first))
-				continue;
 			throw invalid_config_db_key();
 		}
 	}
@@ -701,10 +725,11 @@ bool DatabaseConfiguration::setInternal(KeyRef key, ValueRef value) {
 	} else if (ck.startsWith("excluded/"_sr)) {
 		// excluded servers: don't keep the state internally
 	} else if (ck.startsWith(storageEngineParamsPrefix.removePrefix(configKeysPrefix))) {
-		// TODO : should we hardcode the above condition like others?
+		// parse the storage engine parameter's name and set the value
 		auto paramName = ck.removePrefix(storageEngineParamsPrefix.removePrefix(configKeysPrefix)).toString();
 		storageEngineParams.set(paramName, value.toString());
 	} else if (ck.startsWith(tssStorageEngineParamsPrefix.removePrefix(configKeysPrefix))) {
+		// parse the tss storage engine parameter's name and set the value
 		auto paramName = ck.removePrefix(tssStorageEngineParamsPrefix.removePrefix(configKeysPrefix)).toString();
 		tssStorageEngineParams.set(paramName, value.toString());
 	} else {
@@ -920,5 +945,27 @@ TEST_CASE("/fdbclient/databaseConfiguration/overwriteCommitProxy") {
 	ASSERT(conf1 == conf2);
 	ASSERT(conf1.getDesiredCommitProxies() == conf2.getDesiredCommitProxies());
 
+	return Void();
+}
+
+TEST_CASE("/fdbclient/databaseConfiguration/configureStringFromJSON/storageEngineParams") {
+	StatusObject configJSON1;
+	configJSON1["storage_engine"] = "ssd-2";
+	StorageEngineParamSet storageEngineParams1;
+	storageEngineParams1.set("unknown_param", "val");
+	configJSON1["storage_engine_params"] = storageEngineParams1.toJSON();
+	// log_engine=ssd-2 is by default added by the function
+	ASSERT_EQ(" storage_engine=ssd-2:unknown_param=val log_engine=ssd-2",
+	          DatabaseConfiguration::configureStringFromJSON(configJSON1));
+
+	StatusObject configJSON2;
+	configJSON2["storage_engine"] = "redwood";
+	StorageEngineParamSet storageEngineParams2;
+	storageEngineParams2.set("page_size", "4096");
+	storageEngineParams2.set("remote_kv_store", "true");
+	configJSON2["storage_engine_params"] = storageEngineParams2.toJSON();
+	// log_engine=ssd-2 is by default added by the function
+	ASSERT_EQ(" storage_engine=redwood:page_size=4096:remote_kv_store=true log_engine=ssd-2",
+	          DatabaseConfiguration::configureStringFromJSON(configJSON2));
 	return Void();
 }
