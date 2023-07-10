@@ -29,7 +29,7 @@ class QuotaThrottler {
 	PImpl<class QuotaThrottlerImpl> impl;
 
 public:
-	QuotaThrottler(UID id, int maxFallingBehind);
+	QuotaThrottler(UID id, int maxFallingBehind, double limitingThreshold);
 	~QuotaThrottler();
 
 	// Poll the system keyspace looking for updates made through the tag throttling API

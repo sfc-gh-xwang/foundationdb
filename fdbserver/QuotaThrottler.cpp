@@ -127,6 +127,7 @@ class QuotaThrottlerImpl {
 
 	UID id;
 	int maxFallingBehind{ 0 };
+	double limitingThreshold{ 0.0 };
 	uint32_t lastBusyThrottlingIdCount{ 0 };
 
 	ThrottlingIdMap<PerThrottlingIdStatistics> throttlingStatistics;
@@ -182,7 +183,8 @@ class QuotaThrottlerImpl {
 		auto const& storageQueueInfo = metricsTracker.getStorageQueueInfo();
 		for (auto const& [id, ssInfo] : storageQueueInfo) {
 			// Ignore storage servers where throttlingId is not significantly contributing
-			if (!serverThroughputTracker.getThroughput(id, throttlingId).present()) {
+			auto const throughput = serverThroughputTracker.getThroughput(id, throttlingId);
+			if (!throughput.present() || throughput.get() < limitingThreshold) {
 				continue;
 			}
 
@@ -253,7 +255,8 @@ class QuotaThrottlerImpl {
 	}
 
 public:
-	QuotaThrottlerImpl(UID id, int maxFallingBehind) : id(id), maxFallingBehind(maxFallingBehind) {
+	QuotaThrottlerImpl(UID id, int maxFallingBehind, double limitingThreshold)
+	  : id(id), maxFallingBehind(maxFallingBehind), limitingThreshold(limitingThreshold) {
 		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
 			clientThroughputTracker = ClientThroughputTracker();
 		}
@@ -340,8 +343,8 @@ public:
 	uint32_t throttlingIdsTracked() const { return throttlingStatistics.size(); }
 };
 
-QuotaThrottler::QuotaThrottler(UID id, int maxFallingBehind)
-  : impl(PImpl<QuotaThrottlerImpl>::create(id, maxFallingBehind)) {}
+QuotaThrottler::QuotaThrottler(UID id, int maxFallingBehind, double limitingThreshold)
+  : impl(PImpl<QuotaThrottlerImpl>::create(id, maxFallingBehind, limitingThreshold)) {}
 
 QuotaThrottler::~QuotaThrottler() = default;
 

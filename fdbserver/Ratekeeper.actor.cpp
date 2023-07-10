@@ -199,7 +199,9 @@ Ratekeeper::Ratekeeper(UID id,
                                       SERVER_KNOBS->MAX_TL_SS_VERSION_DIFFERENCE_BATCH,
                                       SERVER_KNOBS->TARGET_DURABILITY_LAG_VERSIONS_BATCH,
                                       SERVER_KNOBS->TARGET_BW_LAG_BATCH)),
-    quotaCache(id, db), quotaThrottler(id, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND) {}
+    quotaCache(id, db), quotaThrottler(id,
+                                       SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND,
+                                       SERVER_KNOBS->GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD) {}
 
 void Ratekeeper::updateTagThrottling() {
 	quotaThrottler.updateThrottling(metricsTracker.getStorageQueueInfo());

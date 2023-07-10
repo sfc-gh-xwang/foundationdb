@@ -169,7 +169,8 @@ class TestEnv {
 
 public:
 	TestEnv(int numSS, int throughputPerSS, int maxFallingBehind = 0)
-	  : quotaThrottler(UID{}, maxFallingBehind), storageServers(numSS, throughputPerSS) {}
+	  : quotaThrottler(UID{}, maxFallingBehind, /*limitingThreshold=*/CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
+	    storageServers(numSS, throughputPerSS) {}
 
 	Optional<double> getTPSLimit(ThrottlingId const& throttlingId) {
 		auto rates = quotaThrottler.getProxyRates(/*numProxies=*/1, quotaCache, metricsTracker);
