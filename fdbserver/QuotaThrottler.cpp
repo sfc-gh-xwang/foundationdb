@@ -173,13 +173,11 @@ class QuotaThrottlerImpl {
 	// to affect tag throttling. If more than maxFallingBehind zones are at
 	// or near saturation, this indicates that throttling should take place.
 	Optional<double> getLimitingTps(ThrottlingId const& throttlingId, IRKMetricsTracker const& metricsTracker) const {
-		// Calculate the current transaction
 		auto const transactionRate = getTransactionRate(throttlingId);
 		if (!transactionRate.present()) {
 			return {};
 		}
 
-		// TODO: The algorithm for ignoring the worst zones can be made more efficient
 		std::unordered_map<Optional<Standalone<StringRef>>, double> zoneThrottlingRatios;
 		auto const& storageQueueInfo = metricsTracker.getStorageQueueInfo();
 		for (auto const& [id, ssInfo] : storageQueueInfo) {
@@ -203,15 +201,18 @@ class QuotaThrottlerImpl {
 		if (zoneThrottlingRatios.size() <= maxFallingBehind) {
 			return {};
 		} else {
-			std::vector<double> zoneThrottlingRatiosVector;
-			zoneThrottlingRatiosVector.reserve(zoneThrottlingRatios.size());
+			// max heap:
+			std::priority_queue<double, std::vector<double>> pq;
+			ASSERT_GE(maxFallingBehind, 0);
 			for (auto const& [_, throttlingRatio] : zoneThrottlingRatios) {
-				zoneThrottlingRatiosVector.push_back(throttlingRatio);
+				if (pq.size() < maxFallingBehind + 1) {
+					pq.push(throttlingRatio);
+				} else if (pq.top() > throttlingRatio) {
+					pq.pop();
+					pq.push(throttlingRatio);
+				}
 			}
-			std::nth_element(zoneThrottlingRatiosVector.begin(),
-			                 zoneThrottlingRatiosVector.begin() + maxFallingBehind,
-			                 zoneThrottlingRatiosVector.end());
-			return transactionRate.get() * zoneThrottlingRatiosVector[maxFallingBehind];
+			return transactionRate.get() * pq.top();
 		}
 	}
 
