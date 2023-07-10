@@ -40,7 +40,14 @@ void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
 		rateInfo.get().setRate(rate);
 	} else {
 		rateInfo = GrvTransactionRateInfo(
-		    SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW, SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET, rate);
+		    SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
+		    (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT)
+		        ? SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET
+		        : SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
+		    rate,
+		    (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT)
+		        ? SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START
+		        : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 	}
 }
 
@@ -159,7 +166,6 @@ void GrvProxyTagThrottler::releaseTransactions(double elapsed,
 
 		while (!tagQueueHandle.queue->requests.empty()) {
 			auto& delayedReq = tagQueueHandle.queue->requests.front();
-
 			auto count = delayedReq.req.transactionCount;
 			if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
 				if (delayedReq.req.expectedTransactionCost.present()) {

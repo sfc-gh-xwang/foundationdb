@@ -20,6 +20,7 @@
 
 #include "fdbclient/ClientKnobs.h"
 #include "fdbclient/DatabaseContext.h"
+#include "fdbclient/Knobs.h"
 #include "fdbclient/Notified.h"
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
@@ -28,7 +29,6 @@
 #include "fdbclient/VersionVector.h"
 #include "fdbserver/GrvProxyTagThrottler.h"
 #include "fdbserver/GrvTransactionRateInfo.h"
-#include "fdbserver/Knobs.h"
 #include "fdbserver/LogSystem.h"
 #include "fdbserver/LogSystemDiskQueueAdapter.h"
 #include "fdbserver/WaitFailure.h"
@@ -824,10 +824,12 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state int64_t batchTransactionCount = 0;
 	state GrvTransactionRateInfo normalRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
 	                                            SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                            /*rate=*/10);
+	                                            /*rate=*/10,
+	                                            SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 	state GrvTransactionRateInfo batchRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
 	                                           SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                           /*rate=*/0);
+	                                           /*rate=*/0,
+	                                           SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 
 	state Deque<GetReadVersionRequest> systemQueue;
 	state Deque<GetReadVersionRequest> defaultQueue;

@@ -8,7 +8,6 @@
 #include "flow/actorcompiler.h" // must be last include
 
 class ThroughputTrackerImpl {
-
 public:
 	ACTOR static Future<Void> run(ThroughputTracker* self, DatabaseContext* cx) {
 		state Future<Void> timer = Never();

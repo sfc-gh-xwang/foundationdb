@@ -45,7 +45,7 @@ class GrvTransactionRateInfo {
 	Smoother smoothReleased;
 
 public:
-	GrvTransactionRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate);
+	GrvTransactionRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate, double maxToStart);
 
 	// Determines the number of transactions that this proxy is allowed to release
 	// in this release window.

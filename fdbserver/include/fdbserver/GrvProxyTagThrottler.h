@@ -56,9 +56,15 @@ class GrvProxyTagThrottler {
 
 		TagQueue() = default;
 		explicit TagQueue(double rate)
-		  : rateInfo(GrvTransactionRateInfo(SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
-		                                    SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
-		                                    rate)) {}
+		  : rateInfo(GrvTransactionRateInfo(
+		        SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
+		        (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT)
+		            ? SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET
+		            : SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
+		        rate,
+		        (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT)
+		            ? SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START
+		            : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START)) {}
 
 		void setRate(double rate);
 		bool isMaxThrottled(double maxThrottleDuration) const;
