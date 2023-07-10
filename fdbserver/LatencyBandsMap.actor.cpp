@@ -33,9 +33,7 @@ public:
 				return (now() - kv.second.lastUpdated > SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER);
 			});
 
-			if (count > 0) {
-				CODE_PROBE(true, "LatencyBandsMap erasing expired tag");
-			}
+			CODE_PROBE(count > 0, "LatencyBandsMap erasing expired tag");
 		}
 	}
 };

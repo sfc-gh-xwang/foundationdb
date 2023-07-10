@@ -5,7 +5,6 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/IRKThroughputTracker.h"
 #include <boost/unordered/unordered_flat_map.hpp>
-#include <boost/unordered/unordered_set_fwd.hpp>
 
 namespace {
 
@@ -83,14 +82,14 @@ void ServerThroughputTracker::cleanupUnseenThrottlingIds(
 // throttlingId. If no more throttlingIds are being tracked for a particular storage server,
 // stop tracking this storage server altogether.
 void ServerThroughputTracker::cleanupUnseenStorageServers(std::unordered_set<UID> const& seen) {
-	boost::unordered::erase_if(throughput, [&](const auto& kv) {
+	boost::unordered::erase_if(throughput, [&](auto& kv) {
 		auto& [ssId, throttlingIdToThroughputCounters] = kv;
 
 		if (seen.count(ssId)) {
 			return false;
 		} else {
-			boost::unordered::erase_if(throttlingIdToThroughputCounters, [](auto& kv) {
-				auto& throughputCounters = kv.second;
+			boost::unordered::erase_if(throttlingIdToThroughputCounters, [](auto& kv2) {
+				auto& throughputCounters = kv2.second;
 				throughputCounters.updateThroughput(0, OpType::READ);
 				throughputCounters.updateThroughput(0, OpType::WRITE);
 				return throughputCounters.getThroughput() < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
