@@ -126,6 +126,9 @@ public:
 
 class TestEnv {
 	MockRKThroughputQuotaCache quotaCache;
+	MockRKMetricsTracker metricsTracker;
+	QuotaThrottler quotaThrottler;
+	StorageServerCollection storageServers;
 
 	void updateThroughput(ThrottlingId const& throttlingId, double numPages, OpType opType) {
 		auto cost = numPages * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
@@ -165,10 +168,6 @@ class TestEnv {
 	}
 
 public:
-	MockRKMetricsTracker metricsTracker;
-	QuotaThrottler quotaThrottler;
-	StorageServerCollection storageServers;
-
 	TestEnv(int numSS, int throughputPerSS, int maxFallingBehind = 0)
 	  : quotaThrottler(UID{}, maxFallingBehind), storageServers(numSS, throughputPerSS) {}
 
@@ -225,6 +224,14 @@ public:
 	}
 
 	void removeQuota(ThrottlingId const& throttlingId) { quotaCache.removeQuota(throttlingId); }
+
+	int throttlingIdsTracked() const { return quotaThrottler.throttlingIdsTracked(); }
+
+	void removeExpiredThrottlingIds() { quotaThrottler.removeExpiredThrottlingIds(); }
+
+	int throttleCount() const { return quotaThrottler.throttleCount(); }
+
+	void setCapacity(int index, double pagesPerSecond) { storageServers.setCapacity(index, pagesPerSecond); }
 }; // class TestEnv
 
 ACTOR template <class Check>
@@ -372,9 +379,8 @@ TEST_CASE("/QuotaThrottler/ActiveThrottling") {
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ);
-	state Future<Void> monitor = monitorActor(&env, [testTag](auto& env) {
-		return env.targetRateIsNear(testTag, 50 / 6.0) && env.quotaThrottler.throttleCount() == 1;
-	});
+	state Future<Void> monitor = monitorActor(
+	    &env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 50 / 6.0) && env.throttleCount() == 1; });
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
 	return Void();
@@ -396,7 +402,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling1") {
 	futures.push_back(env.runClient(testTag1, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ));
 	futures.push_back(env.runClient(testTag2, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
-		return env.totalTargetRateIsNear(50 / 6.0) && env.quotaThrottler.throttleCount() == 2;
+		return env.totalTargetRateIsNear(50 / 6.0) && env.throttleCount() == 2;
 	});
 	futures.push_back(env.update());
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
@@ -419,7 +425,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling2") {
 	futures.push_back(env.runClient(testTag1, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 0, 1 }));
 	futures.push_back(env.runClient(testTag2, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
-		return env.totalTargetRateIsNear(100 / 6.0) && env.quotaThrottler.throttleCount() == 2;
+		return env.totalTargetRateIsNear(100 / 6.0) && env.throttleCount() == 2;
 	});
 	futures.push_back(env.update());
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
@@ -443,7 +449,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling3") {
 	futures.push_back(env.runClient(testTag2, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
 		return env.targetRateIsNear(testTag1, 50 / 6.0) && env.targetRateIsNear(testTag2, 100 / 6.0) &&
-		       env.quotaThrottler.throttleCount() == 1;
+		       env.throttleCount() == 1;
 	});
 	futures.push_back(env.update());
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
@@ -480,13 +486,13 @@ TEST_CASE("/QuotaThrottler/ExpireTags") {
 	wait(client && updater);
 	client.cancel();
 	updater.cancel();
-	ASSERT_EQ(env.quotaThrottler.throttlingIdsTracked(), 1);
-	env.quotaThrottler.removeExpiredThrottlingIds();
-	ASSERT_EQ(env.quotaThrottler.throttlingIdsTracked(), 1);
+	ASSERT_EQ(env.throttlingIdsTracked(), 1);
+	env.removeExpiredThrottlingIds();
+	ASSERT_EQ(env.throttlingIdsTracked(), 1);
 	wait(delay(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER + 1.0));
-	ASSERT_EQ(env.quotaThrottler.throttlingIdsTracked(), 1);
-	env.quotaThrottler.removeExpiredThrottlingIds();
-	ASSERT_EQ(env.quotaThrottler.throttlingIdsTracked(), 0);
+	ASSERT_EQ(env.throttlingIdsTracked(), 1);
+	env.removeExpiredThrottlingIds();
+	ASSERT_EQ(env.throttlingIdsTracked(), 0);
 	return Void();
 }
 
@@ -504,7 +510,7 @@ TEST_CASE("/QuotaThrottler/TagLimit") {
 		                                OpType::READ));
 	}
 	wait(timeout(waitForAll(futures), 60.0, Void()));
-	ASSERT_EQ(env.quotaThrottler.throttlingIdsTracked(), SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED);
+	ASSERT_EQ(env.throttlingIdsTracked(), SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED);
 	return Void();
 }
 
@@ -518,14 +524,14 @@ TEST_CASE("/QuotaThrottler/TagLimit") {
 TEST_CASE("/QuotaThrottler/IgnoreWorstZone") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100, /*maxFallingBehind=*/1);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
-	env.storageServers.setCapacity(/*index=*/0, /*pagesPerSecond=*/1);
+	env.setCapacity(/*index=*/0, /*pagesPerSecond=*/1);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor = monitorActor(
 	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0); });
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
-	env.storageServers.setCapacity(/*index=*/1, /*pagesPerSecond=*/1);
+	env.setCapacity(/*index=*/1, /*pagesPerSecond=*/1);
 	monitor = monitorActor(
 	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 10.0 / 6.0); });
 	wait(timeoutError(monitor || client || updater, 600.0));
