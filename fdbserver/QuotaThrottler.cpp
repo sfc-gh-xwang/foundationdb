@@ -27,10 +27,6 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/QuotaThrottler.h"
 
-#include <limits>
-
-#include "flow/actorcompiler.h" // must be last include
-
 // In the function names below, several terms are used repeatedly. The context-specific are defined here:
 //
 // Cost: Every read or write operation has an associated cost, determined by the number of bytes accessed.
