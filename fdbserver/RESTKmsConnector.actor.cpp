@@ -326,7 +326,7 @@ ACTOR Future<Void> parseDiscoverKmsUrlFile(Reference<RESTKmsConnectorCtx> ctx, s
 	    filename, IAsyncFile::OPEN_NO_AIO | IAsyncFile::OPEN_READONLY | IAsyncFile::OPEN_UNCACHED, 0644));
 	state int64_t fSize = wait(dFile->size());
 	state Standalone<StringRef> buff = makeString(fSize);
-	int bytesRead = wait(dFile->read(mutateString(buff), fSize, 0));
+	int bytesRead = wait(uncancellable(holdWhile(dFile, dFile->read(mutateString(buff), fSize, 0))));
 	if (bytesRead != fSize) {
 		TraceEvent(SevWarnAlways, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
 		    .detail("Filename", filename)
@@ -789,8 +789,11 @@ Future<T> kmsRequestImpl(
 					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS);
 				}
 
-				Reference<HTTP::IncomingResponse> resp = wait(ctx->restClient.doPost(
-				    kmsEncryptionFullUrl, requestBodyRef.toString(), RESTKmsConnectorUtils::getHTTPHeaders()));
+				HTTP::Headers headers;
+				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
+				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
+				Reference<HTTP::IncomingResponse> resp =
+				    wait(ctx->restClient.doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
 				urlCtx->nRequests++;
 
 				try {
@@ -1084,7 +1087,7 @@ ACTOR Future<Void> procureValidationTokensFromFiles(Reference<RESTKmsConnectorCt
 		}
 
 		state Standalone<StringRef> buff = makeString(fSize);
-		int bytesRead = wait(tFile->read(mutateString(buff), fSize, 0));
+		int bytesRead = wait(uncancellable(holdWhile(tFile, tFile->read(mutateString(buff), fSize, 0))));
 		if (bytesRead != fSize) {
 			TraceEvent(SevError, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
 			    .detail("Filename", tokenFile)
