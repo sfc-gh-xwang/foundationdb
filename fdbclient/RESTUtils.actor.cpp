@@ -305,16 +305,18 @@ void RESTUrl::parseUrl(const std::string& fullUrl) {
 				// service is empty
 			}
 		}
+
+		if (this->host.empty()) {
+			CODE_PROBE(true, "REST URI empty host");
+			throw std::string("host cannot be empty");
+		}
+
 		// URI is allowed to use canonical IPv6 address format representation
 		if (this->host[0] == '[' || this->host[this->host.size() - 1] == ']') {
 			if (this->host[0] != '[' || this->host[this->host.size() - 1] != ']' || this->host.size() <= 2) {
 				throw std::string("malformed IPv6 address");
 			}
 			this->host = this->host.substr(1, this->host.size() - 2);
-		}
-		if (this->host.empty()) {
-			CODE_PROBE(true, "REST URI empty host");
-			throw std::string("host cannot be empty");
 		}
 
 		if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
