@@ -215,26 +215,31 @@ class QuotaThrottlerImpl {
 		}
 	}
 
-	Optional<double> getTargetTps(ThrottlingId throttlingId,
-	                              IRKThroughputQuotaCache const& quotaCache,
-	                              IRKMetricsTracker const& metricsTracker,
-	                              bool& isBusy,
-	                              TraceEvent& te) {
+	struct TargetTpsResult {
+		Optional<double> targetTps;
+		bool isBusy{ false };
+	};
+
+	TargetTpsResult getTargetTps(ThrottlingId throttlingId,
+	                             IRKThroughputQuotaCache const& quotaCache,
+	                             IRKMetricsTracker const& metricsTracker,
+	                             TraceEvent& te) {
+		TargetTpsResult result;
 		auto const limitingTps = getLimitingTps(throttlingId, metricsTracker);
 		auto const averageTransactionCost = getAverageTransactionCost(throttlingId, te);
 		auto const totalQuota = quotaCache.getTotalQuota(throttlingId);
 		auto const reservedQuota = quotaCache.getReservedQuota(throttlingId);
 		if (!averageTransactionCost.present() || !totalQuota.present() || !reservedQuota.present()) {
-			return {};
+			return result;
 		}
 		auto const desiredTps = totalQuota.get() / averageTransactionCost.get();
 		auto const reservedTps = reservedQuota.get() / averageTransactionCost.get();
-		auto const targetTps = getMax(reservedTps, getMin(desiredTps, limitingTps));
 
-		isBusy = limitingTps.present() && limitingTps.get() < desiredTps;
+		result.targetTps = getMax(reservedTps, getMin(desiredTps, limitingTps));
+		result.isBusy = limitingTps.present() && limitingTps.get() < desiredTps;
 
 		te.detail("ThrottlingId", throttlingId)
-		    .detail("TargetTps", targetTps)
+		    .detail("TargetTps", result.targetTps)
 		    .detail("AverageTransactionCost", averageTransactionCost)
 		    .detail("LimitingTps", limitingTps)
 		    .detail("ReservedTps", reservedTps)
@@ -243,7 +248,7 @@ class QuotaThrottlerImpl {
 		    .detail("TotalQuota", totalQuota)
 		    .detail("ReservedQuota", reservedQuota);
 
-		return targetTps;
+		return result;
 	}
 
 public:
@@ -286,8 +291,7 @@ public:
 			if (!traceEnabled) {
 				te.disable();
 			}
-			bool isBusy{ false };
-			auto const targetTps = getTargetTps(throttlingId, quotaCache, metricsTracker, isBusy, te);
+			auto const [targetTps, isBusy] = getTargetTps(throttlingId, quotaCache, metricsTracker, te);
 			if (isBusy) {
 				++lastBusyThrottlingIdCount;
 			}
