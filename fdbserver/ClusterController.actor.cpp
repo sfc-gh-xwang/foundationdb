@@ -2346,11 +2346,11 @@ ACTOR Future<Void> monitorTenantBalancer(ClusterControllerData* self) {
 		wait(self->db.serverInfo->onChange());
 	}
 
-	// Only management cluster runs TB.
-	if (self->db.clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
+	if (!SERVER_KNOBS->CC_ENABLE_TENANT_BALANCER) {
 		return Void();
 	}
 
+	CODE_PROBE(true, "TenantBalancer enabled");
 	TraceEvent("CCMonitorTenantBalancer").log();
 
 	loop {

@@ -10,6 +10,9 @@ generateFearless = false
 processesPerMachine = 1
 machineCount = 5
 
+[[knobs]]
+cc_enable_tenant_balancer = true
+
 [[test]]
 testTitle = 'MetaclusterRestoreTest'
 clearAfterTest = false
