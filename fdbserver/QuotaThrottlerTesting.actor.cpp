@@ -222,7 +222,7 @@ Future<Void> monitorActor(TestEnv* env, Check check) {
 		wait(delay(1.0));
 		if (check(*env)) {
 			// Wait for 10 consecutive successes so we're certain
-			// than a stable equilibrium has been reached
+			// that a stable equilibrium has been reached
 			if (++successes == 10) {
 				return Void();
 			}
