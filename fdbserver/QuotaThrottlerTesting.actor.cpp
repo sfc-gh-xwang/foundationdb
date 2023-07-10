@@ -191,7 +191,7 @@ public:
 
 	bool targetRateIsNear(ThrottlingId const& throttlingId, Optional<double> expected) {
 		Optional<double> rate;
-		auto targetRates = quotaThrottler.getProxyRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		auto const targetRates = quotaThrottler.getProxyRates(/*numProxies=*/1, quotaCache, metricsTracker);
 		auto it = targetRates.find(throttlingId);
 		if (it != targetRates.end()) {
 			rate = it->second;
@@ -201,6 +201,19 @@ public:
 		    .detail("CurrentTPSRate", rate)
 		    .detail("ExpectedTPSRate", expected);
 		return isNear(rate, expected);
+	}
+
+	bool totalTargetRateIsNear(double expected) {
+		auto const targetRates = quotaThrottler.getProxyRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		double targetRateSum = 0.0;
+		for (auto const& [_, targetRate] : targetRates) {
+			targetRateSum += targetRate;
+		}
+		TraceEvent("QuotaThrottling_TotalRateMonitor")
+		    .detail("NumThrottlingIds", targetRates.size())
+		    .detail("CurrentTotalTPSRate", targetRateSum)
+		    .detail("ExpectedTotalTPSRate", expected);
+		return isNear(targetRateSum, expected);
 	}
 
 	Future<Void> update() { return _update(this); }
@@ -371,9 +384,9 @@ TEST_CASE("/QuotaThrottler/ActiveThrottling") {
 // Total quota is set to 50 pages/second for one tag, 100 pages/second for another.
 // For each tag, a client attempts to execute 10 6-page read transactions per second.
 // Target rates are adjusted to utilize the full 50 pages/second capacity of the
-//   add storage servers. The two tags receive this capacity with a 2:1 ratio,
-//   matching the ratio of their total quotas.
-TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling") {
+// storage servers. The two tags' total target rate will stabilize at 50 / 6.0
+// transactions per second.
+TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling1") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag1 = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	auto testTag2 = ThrottlingIdRef::fromTag("sampleTag2"_sr);
@@ -383,8 +396,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling") {
 	futures.push_back(env.runClient(testTag1, 10.0, 6.0, OpType::READ));
 	futures.push_back(env.runClient(testTag2, 10.0, 6.0, OpType::READ));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
-		return env.targetRateIsNear(testTag1, (50 / 6.0) / 3) && env.targetRateIsNear(testTag2, 2 * (50 / 6.0) / 3) &&
-		       env.quotaThrottler.throttleCount() == 2;
+		return env.totalTargetRateIsNear(50 / 6.0) && env.quotaThrottler.throttleCount() == 2;
 	});
 	futures.push_back(env.update());
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
@@ -407,8 +419,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling2") {
 	futures.push_back(env.runClient(testTag1, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 0, 1 }));
 	futures.push_back(env.runClient(testTag2, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
-		return env.targetRateIsNear(testTag1, 50 / 6.0) && env.targetRateIsNear(testTag2, 50 / 6.0) &&
-		       env.quotaThrottler.throttleCount() == 2;
+		return env.totalTargetRateIsNear(100 / 6.0) && env.quotaThrottler.throttleCount() == 2;
 	});
 	futures.push_back(env.update());
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
@@ -420,8 +431,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling2") {
 // One client attempts 10 6-page read transactions per second, all directed towards a single storage server.
 // Another client, using a different tag, attempts 10 6-page read transactions split across the other two storage
 // servers. Target rates adjust to 50/6 and 100/6 transactions per second for the two clients, based on the capacities
-// of the
-//   storage servers being accessed.
+// of the storage servers being accessed.
 TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling3") {
 	state TestEnv env(/*numSS=*/3, /*throughputPerSS=*/50);
 	auto testTag1 = ThrottlingIdRef::fromTag("sampleTag1"_sr);
@@ -445,7 +455,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling3") {
 // Reserved quota is set to 70 pages/second.
 // A client attempts to execute 10 6-page read transactions per second.
 // Despite the storage server only having capacity to serve 50/6 transactions per second,
-//   the reserved quota will ensure the target rate adjusts to 70/6 transactions per second.
+// the reserved quota will ensure the target rate adjusts to 70/6 transactions per second.
 TEST_CASE("/QuotaThrottler/ReservedQuota") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
