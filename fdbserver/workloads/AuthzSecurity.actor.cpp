@@ -602,11 +602,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                                               TenantInfo tenant,
 	                                                                               Version v) {
 		try {
-			GetBlobGranuleLocationsReply reply = wait(
-			    basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
-			                     &CommitProxyInterface::getBlobGranuleLocations,
-			                     GetBlobGranuleLocationsRequest(
-			                         SpanContext(), tenant, ""_sr, Optional<KeyRef>(), 100, false, false, v, Arena())));
+			GetBlobGranuleLocationsReply reply =
+			    wait(basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
+			                          &CommitProxyInterface::getBlobGranuleLocations,
+			                          GetBlobGranuleLocationsRequest(
+			                              SpanContext(), tenant, ""_sr, "\xff"_sr, 100, false, false, v, Arena())));
 			return reply;
 		} catch (Error& e) {
 			if (e.code() == error_code_operation_cancelled) {
@@ -655,6 +655,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                           WipedString reqToken,
 	                                                           Version committedVersion,
 	                                                           bool doStreamReqInstead = false) {
+
 		try {
 			ErrorOr<GetBlobGranuleLocationsReply> rep =
 			    wait(getGranuleLocations(self, cx, TenantInfo(tenant->id(), locToken), committedVersion));
@@ -684,6 +685,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 			auto& bwInterf = rep.get().bwInterfs[bwInterfIdx];
 
 			if (!doStreamReqInstead) {
+				CODE_PROBE(true, "Authz blob granule doing request");
 				BlobGranuleFileRequest fileReq;
 				fileReq.arena.dependsOn(rep.get().arena);
 				fileReq.keyRange = rep.get().results[locIdx].first;
@@ -695,9 +697,12 @@ struct AuthzSecurityWorkload : TestWorkload {
 				}
 				ASSERT(!fileRep.get().chunks.empty());
 			} else {
+				CODE_PROBE(true, "Authz blob granule doing stream request");
 				BlobGranuleMutationStreamRequest streamReq;
 				streamReq.arena.dependsOn(rep.get().arena);
 				streamReq.keyRange = rep.get().results[locIdx].first;
+				// has to exactly match granule range - strip 8 byte tenant prefix since it'll get re-applied
+				streamReq.keyRange = streamReq.keyRange.removePrefix(streamReq.keyRange.begin.substr(0, 8));
 				streamReq.tenantInfo = TenantInfo(tenant->id(), reqToken);
 				streamReq.beginVersion = committedVersion;
 				streamReq.readVersion = committedVersion;
@@ -715,7 +720,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 			return Optional<Error>();
 		} catch (Error& e) {
 			if (e.code() == error_code_end_of_stream) {
-				CODE_PROBE(true, "Authz blob granule stream request successful", probe::decoration::rare);
+				CODE_PROBE(true, "Authz blob granule stream request successful");
 				return Optional<Error>();
 			}
 			CODE_PROBE(e.code() == error_code_permission_denied,
