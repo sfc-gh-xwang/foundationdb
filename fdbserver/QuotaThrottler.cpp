@@ -90,8 +90,6 @@ class QuotaThrottlerImpl {
 		}
 	}
 
-	enum class LimitType { RESERVED, TOTAL };
-
 	// Track various statistics per throttling ID, aggregated across all storage servers
 	class PerThrottlingIdStatistics {
 		HoltLinearSmoother transactionCounter;
