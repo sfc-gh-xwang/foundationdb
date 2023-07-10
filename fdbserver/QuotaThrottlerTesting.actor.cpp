@@ -85,11 +85,11 @@ public:
 	}
 
 	void addCost(ThrottlingId throttlingId,
-	             double pagesPerSecond,
+	             double numPages,
 	             std::vector<int> const& storageServerIndices,
 	             OpType opType) {
 		if (storageServerIndices.empty()) {
-			auto costPerSS = CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE * (pagesPerSecond / storageServers.size());
+			auto costPerSS = CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE * (numPages / storageServers.size());
 			if (opType == OpType::WRITE) {
 				costPerSS *= CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO;
 			}
@@ -101,8 +101,7 @@ public:
 				}
 			}
 		} else {
-			auto const costPerSS =
-			    CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE * (pagesPerSecond / storageServerIndices.size());
+			auto const costPerSS = CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE * (numPages / storageServerIndices.size());
 			for (auto i : storageServerIndices) {
 				if (opType == OpType::READ) {
 					storageServers[i].addReadCost(throttlingId, costPerSS);
@@ -141,16 +140,16 @@ class TestEnv {
 	ACTOR static Future<Void> _runClient(TestEnv* self,
 	                                     ThrottlingId throttlingId,
 	                                     double tpsRate,
-	                                     double costPerTransaction,
+	                                     double pagesPerTransaction,
 	                                     OpType opType,
 	                                     std::vector<int> storageServerIndices) {
 		loop {
 			auto tpsLimit = self->getTPSLimit(throttlingId);
 			state double enforcedRate = tpsLimit.present() ? std::min<double>(tpsRate, tpsLimit.get()) : tpsRate;
 			wait(delay(1 / enforcedRate));
-			self->storageServers.addCost(throttlingId, costPerTransaction, storageServerIndices, opType);
+			self->storageServers.addCost(throttlingId, pagesPerTransaction, storageServerIndices, opType);
 			self->quotaThrottler.addRequests(throttlingId, 1);
-			self->updateThroughput(throttlingId, costPerTransaction, opType);
+			self->updateThroughput(throttlingId, pagesPerTransaction, opType);
 		}
 	}
 
@@ -184,10 +183,10 @@ public:
 
 	Future<Void> runClient(ThrottlingId const& throttlingId,
 	                       double tpsRate,
-	                       double costPerTransaction,
+	                       double pagesPerTransaction,
 	                       OpType opType,
 	                       std::vector<int> const& storageServerIndices = std::vector<int>()) {
-		return _runClient(this, throttlingId, tpsRate, costPerTransaction, opType, storageServerIndices);
+		return _runClient(this, throttlingId, tpsRate, pagesPerTransaction, opType, storageServerIndices);
 	}
 
 	bool targetRateIsNear(ThrottlingId const& throttlingId, Optional<double> expected) {
@@ -242,7 +241,7 @@ TEST_CASE("/QuotaThrottler/Simple") {
 	state TestEnv env(/*maxFallingBehind=*/0, /*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
-	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*costPerTransaction=*/6.0, OpType::READ);
+	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor =
 	    monitorActor(&env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 100.0 / 6.0); });
 	state Future<Void> updater = env.update();
@@ -258,7 +257,7 @@ TEST_CASE("/QuotaThrottler/WriteThrottling") {
 	state TestEnv env(/*maxFallingBehind=*/0, /*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
-	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*costPerTransaction=*/6.0, OpType::WRITE);
+	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*pagesPerTransaction=*/6.0, OpType::WRITE);
 	state Future<Void> monitor = monitorActor(&env, [testTag](auto& env) {
 		return env.targetRateIsNear(testTag, 100.0 / (6.0 * CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO));
 	});
@@ -280,8 +279,8 @@ TEST_CASE("/QuotaThrottler/MultiTagThrottling") {
 	env.setQuota(testTag2, /*totalQuotaInPages=*/100);
 	state std::vector<Future<Void>> futures;
 	state std::vector<Future<Void>> monitorFutures;
-	futures.push_back(env.runClient(testTag1, /*tpsRate=*/5.0, /*costPerTransaction=*/6.0, OpType::READ));
-	futures.push_back(env.runClient(testTag2, /*tpsRate=*/5.0, /*costPerTransaction=*/6.0, OpType::READ));
+	futures.push_back(env.runClient(testTag1, /*tpsRate=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ));
+	futures.push_back(env.runClient(testTag2, /*tpsRate=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ));
 	futures.push_back(env.update());
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
 		return env.targetRateIsNear(testTag1, 100.0 / 6.0) && env.targetRateIsNear(testTag2, 100.0 / 6.0);
@@ -298,7 +297,7 @@ TEST_CASE("/QuotaThrottler/AttemptWorkloadAboveQuota") {
 	state TestEnv env(/*maxFallingBehind=*/0, /*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
-	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/20.0, /*costPerTransaction=*/10.0, OpType::READ);
+	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/20.0, /*pagesPerTransaction=*/10.0, OpType::READ);
 	state Future<Void> monitor =
 	    monitorActor(&env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 10.0); });
 	state Future<Void> updater = env.update();
@@ -317,7 +316,7 @@ TEST_CASE("/QuotaThrottler/UpdateQuota") {
 	state TestEnv env(/*maxFallingBehind=*/0, /*numSS=*/10, /*throughputPerSS=*/100);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
-	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*costPerTransaction=*/6.0, OpType::READ);
+	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor = monitorActor(
 	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0); });
 	state Future<Void> updater = env.update();
@@ -339,7 +338,7 @@ TEST_CASE("/QuotaThrottler/RemoveQuota") {
 	state TestEnv env(/*maxFallingBehind=*/0, /*numSS=*/10, /*throughputPerSS=*/100);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
-	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*costPerTransaction=*/6.0, OpType::READ);
+	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor = monitorActor(
 	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0); });
 	state Future<Void> updater = env.update();
@@ -359,7 +358,7 @@ TEST_CASE("/QuotaThrottler/ActiveThrottling") {
 	state TestEnv env(/*maxFallingBehind=*/0, /*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
-	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/10.0, /*costPerTransaction=*/6.0, OpType::READ);
+	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor = monitorActor(&env, [testTag](auto& env) {
 		return env.targetRateIsNear(testTag, 50 / 6.0) && env.quotaThrottler.throttleCount() == 1;
 	});
@@ -405,8 +404,8 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling2") {
 	env.setQuota(testTag1, /*totalQuotaInPages=*/100);
 	env.setQuota(testTag2, /*totalQuotaInPages=*/100);
 	std::vector<Future<Void>> futures;
-	futures.push_back(env.runClient(testTag1, /*tpsRate=*/10.0, /*costPerTransaction=*/6.0, OpType::READ, { 0, 1 }));
-	futures.push_back(env.runClient(testTag2, /*tpsRate=*/10.0, /*costPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
+	futures.push_back(env.runClient(testTag1, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 0, 1 }));
+	futures.push_back(env.runClient(testTag2, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
 		return env.targetRateIsNear(testTag1, 50 / 6.0) && env.targetRateIsNear(testTag2, 50 / 6.0) &&
 		       env.quotaThrottler.throttleCount() == 2;
@@ -430,8 +429,8 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling3") {
 	env.setQuota(testTag1, /*totalQuotaInPages=*/100);
 	env.setQuota(testTag2, /*totalQuotaInPages=*/100);
 	std::vector<Future<Void>> futures;
-	futures.push_back(env.runClient(testTag1, /*tpsRate=*/10.0, /*costPerTransaction=*/6.0, OpType::READ, { 0 }));
-	futures.push_back(env.runClient(testTag2, /*tpsRate=*/10.0, /*costPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
+	futures.push_back(env.runClient(testTag1, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 0 }));
+	futures.push_back(env.runClient(testTag2, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
 		return env.targetRateIsNear(testTag1, 50 / 6.0) && env.targetRateIsNear(testTag2, 100 / 6.0) &&
 		       env.quotaThrottler.throttleCount() == 1;
@@ -451,7 +450,7 @@ TEST_CASE("/QuotaThrottler/ReservedQuota") {
 	state TestEnv env(/*maxFallingBehind=*/0, /*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100, /*reservedQuotaInPages=*/70);
-	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/10.0, /*costPerTransaction=*/6.0, OpType::READ);
+	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor =
 	    monitorActor(&env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 70 / 6.0); });
 	state Future<Void> updater = env.update();
@@ -466,7 +465,7 @@ TEST_CASE("/QuotaThrottler/ExpireTags") {
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 
 	state Future<Void> client =
-	    timeout(env.runClient(testTag, /*tpsRate=*/10.0, /*costPerTransaction=*/6.0, OpType::READ), 60.0, Void());
+	    timeout(env.runClient(testTag, /*tpsRate=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ), 60.0, Void());
 	state Future<Void> updater = timeout(env.update(), 60.0, Void());
 	wait(client && updater);
 	client.cancel();
@@ -491,7 +490,7 @@ TEST_CASE("/QuotaThrottler/TagLimit") {
 		deterministicRandom()->randomBytes(mutateString(tag), tag.size());
 		futures.push_back(env.runClient(ThrottlingIdRef::fromTag(tag),
 		                                /*tpsRate=*/1.0,
-		                                /*costPerTransaction=*/6.0,
+		                                /*pagesPerTransaction=*/6.0,
 		                                OpType::READ));
 	}
 	wait(timeout(waitForAll(futures), 60.0, Void()));
@@ -511,7 +510,7 @@ TEST_CASE("/QuotaThrottler/IgnoreWorstZone") {
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.storageServers.setCapacity(/*index=*/0, /*pagesPerSecond=*/1);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
-	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*costPerTransaction=*/6.0, OpType::READ);
+	state Future<Void> client = env.runClient(testTag, /*tpsRate=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor = monitorActor(
 	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0); });
 	state Future<Void> updater = env.update();
