@@ -2,7 +2,6 @@
  * RKRateServer.h
  */
 
-#include "fdbclient/Knobs.h"
 #include "fdbserver/IRKRateServer.h"
 #include "fdbserver/IRKRateUpdater.h"
 #include "fdbserver/IRKRecoveryTracker.h"

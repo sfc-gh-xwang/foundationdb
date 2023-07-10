@@ -2,13 +2,9 @@
  * ReadVersionBatchers.actor.cpp
  */
 
-#include "fdbclient/ClientKnobCollection.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseContext.h"
-#include "fdbclient/Knobs.h"
 #include "fdbclient/ReadVersionBatchers.h"
-#include "flow/Optional.h"
-#include "flow/Trace.h"
 #include "flow/actorcompiler.h" // must be last include
 
 ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext parentSpan,

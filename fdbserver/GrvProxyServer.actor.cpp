@@ -20,7 +20,6 @@
 
 #include "fdbclient/ClientKnobs.h"
 #include "fdbclient/DatabaseContext.h"
-#include "fdbclient/Knobs.h"
 #include "fdbclient/Notified.h"
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
@@ -36,12 +35,10 @@
 #include "fdbserver/WorkerInterface.actor.h"
 #include "fdbrpc/sim_validation.h"
 #include "flow/IRandom.h"
-#include "flow/Optional.h"
 #include "flow/Trace.h"
 #include "flow/flow.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 #include "flow/genericactors.actor.h"
-#include <memory>
 
 struct GrvProxyStats {
 	CounterCollection cc;

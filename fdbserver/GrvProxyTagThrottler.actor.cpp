@@ -161,9 +161,12 @@ void GrvProxyTagThrottler::releaseTransactions(double elapsed,
 			auto& delayedReq = tagQueueHandle.queue->requests.front();
 
 			auto count = delayedReq.req.transactionCount;
-			if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT &&
-			    delayedReq.req.expectedTransactionCost.present()) {
-				count *= delayedReq.req.expectedTransactionCost.get();
+			if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+				if (delayedReq.req.expectedTransactionCost.present()) {
+					count *= delayedReq.req.expectedTransactionCost.get();
+				} else {
+					count *= CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+				}
 			}
 
 			ASSERT_EQ(tagQueueHandle.nextSeqNo, delayedReq.sequenceNumber);

@@ -3,7 +3,6 @@
  */
 
 #include "fdbclient/DatabaseContext.h"
-#include "fdbclient/Knobs.h"
 #include "fdbclient/ThroughputTracker.h"
 #include "fdbrpc/LoadBalance.actor.h"
 #include "flow/actorcompiler.h" // must be last include
