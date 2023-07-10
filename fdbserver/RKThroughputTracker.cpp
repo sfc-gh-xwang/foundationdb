@@ -83,11 +83,11 @@ void ServerThroughputTracker::cleanupUnseenThrottlingIds(
 // throttlingId. If no more throttlingIds are being tracked for a particular storage server,
 // stop tracking this storage server altogether.
 void ServerThroughputTracker::cleanupUnseenStorageServers(std::unordered_set<UID> const& seen) {
-	auto it1 = throughput.begin();
-	while (it1 != throughput.end()) {
-		auto& [ssId, throttlingIdToThroughputCounters] = *it1;
+	boost::unordered::erase_if(throughput, [&](const auto& kv) {
+		auto& [ssId, throttlingIdToThroughputCounters] = kv;
+
 		if (seen.count(ssId)) {
-			++it1;
+			return false;
 		} else {
 			boost::unordered::erase_if(throttlingIdToThroughputCounters, [](auto& kv) {
 				auto& throughputCounters = kv.second;
@@ -95,13 +95,9 @@ void ServerThroughputTracker::cleanupUnseenStorageServers(std::unordered_set<UID
 				throughputCounters.updateThroughput(0, OpType::WRITE);
 				return throughputCounters.getThroughput() < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
 			});
-			if (throttlingIdToThroughputCounters.empty()) {
-				throughput.erase(++it1);
-			} else {
-				++it1;
-			}
+			return throttlingIdToThroughputCounters.empty();
 		}
-	}
+	});
 }
 
 void ServerThroughputTracker::update(Map<UID, StorageQueueInfo> const& sqInfos) {

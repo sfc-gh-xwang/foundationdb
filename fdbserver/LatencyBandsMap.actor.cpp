@@ -28,14 +28,14 @@ public:
 	ACTOR static Future<Void> expireOldTagsActor(LatencyBandsMap* self) {
 		loop {
 			wait(delay(5.0));
-			boost::unordered::erase_if(self->map, [](const auto& kv) {
-				if (now() - kv.second.lastUpdated > SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER) {
-					CODE_PROBE(true, "LatencyBandsMap erasing expired tag");
-					return true;
-				} else {
-					return false;
-				}
+
+			auto count = boost::unordered::erase_if(self->map, [](const auto& kv) {
+				return (now() - kv.second.lastUpdated > SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER);
 			});
+
+			if (count > 0) {
+				CODE_PROBE(true, "LatencyBandsMap erasing expired tag");
+			}
 		}
 	}
 };
