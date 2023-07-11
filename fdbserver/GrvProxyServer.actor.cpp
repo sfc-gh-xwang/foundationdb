@@ -22,6 +22,7 @@
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/Knobs.h"
 #include "fdbclient/Notified.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
 #include "fdbclient/CommitProxyInterface.h"
@@ -439,12 +440,15 @@ ACTOR Future<Void> getRate(UID myID,
 				lastDetailedReply = now();
 			}
 
-			if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+			if (isClientAverageCostTrackingEnabled()) {
+				// track-average-cost-on-client is enabled, update the tag throttler with the
+				// target throughput in bytes per second.
 				if (rep.targetThroughput.present()) {
 					proxyData->tagThrottler.updateRates(rep.targetThroughput.get());
 				}
-			} else if (rep.proxyThrottledTags.present()) {
-				proxyData->tagThrottler.updateRates(rep.proxyThrottledTags.get());
+			} else if (rep.targetTransactionRate.present()) {
+				// Update the tag throttler with the target rates in transactions per second
+				proxyData->tagThrottler.updateRates(rep.targetTransactionRate.get());
 			}
 		}
 		when(wait(leaseTimeout)) {

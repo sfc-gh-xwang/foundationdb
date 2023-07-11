@@ -22,6 +22,7 @@
 
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/TagThrottle.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/GrvTransactionRateInfo.h"
 #include "fdbserver/LatencyBandsMap.h"
 
@@ -50,21 +51,17 @@ class GrvProxyTagThrottler {
 		bool isMaxThrottled(double maxThrottleDuration) const;
 	};
 
+	// Create a GrvTransactionRateInfo with the correct units and limits.
+	// If track-average-cost-on-client is enabled, then all the rate into
+	// will be in bytes per second, otherwise it will be in transactions per second.
+	static GrvTransactionRateInfo createGrvTransactionRateInfo(double rate);
+
 	struct TagQueue {
 		Optional<GrvTransactionRateInfo> rateInfo;
 		Deque<DelayedRequest> requests;
 
 		TagQueue() = default;
-		explicit TagQueue(double rate)
-		  : rateInfo(GrvTransactionRateInfo(
-		        SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
-		        (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT)
-		            ? SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET
-		            : SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
-		        rate,
-		        (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT)
-		            ? SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START
-		            : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START)) {}
+		explicit TagQueue(double rate) : rateInfo(createGrvTransactionRateInfo(rate)) {}
 
 		void setRate(double rate);
 		bool isMaxThrottled(double maxThrottleDuration) const;
@@ -78,6 +75,10 @@ class GrvProxyTagThrottler {
 
 	// Track latency bands for each tag
 	LatencyBandsMap latencyBandsMap;
+
+	// Get the cost of a GRV Request. If track-average-cost-on-client is enabled,
+	// the cost returned is in bytes per second, otherwise it's in transactions per second.
+	uint32_t getCost(GetReadVersionRequest const&) const;
 
 public:
 	explicit GrvProxyTagThrottler(double maxThrottleDuration);

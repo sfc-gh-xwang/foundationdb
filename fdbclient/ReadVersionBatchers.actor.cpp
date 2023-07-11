@@ -5,6 +5,7 @@
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/ReadVersionBatchers.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "flow/actorcompiler.h" // must be last include
 
 ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext parentSpan,
@@ -22,8 +23,7 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 	loop {
 		try {
 			state Optional<double> expectedTransactionCost = {};
-			if (throttlingId.present() && CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS &&
-			    CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+			if (throttlingId.present() && isClientAverageCostTrackingEnabled()) {
 				cx->addTransaction(throttlingId.get(), transactionCount);
 
 				expectedTransactionCost = cx->getAverageTransactionCost(throttlingId.get());

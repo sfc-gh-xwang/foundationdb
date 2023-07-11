@@ -407,7 +407,7 @@ public:
 		}
 	}
 
-	ThrottlingIdMap<double> getProxyRates(int numProxies) {
+	ThrottlingIdMap<double> getTargetRates(int numProxies) {
 		ThrottlingIdMap<double> result;
 		lastBusyThrottlingIdCount = 0;
 
@@ -457,8 +457,8 @@ public:
 			if (targetBps.present()) {
 				auto const smoothedTargetBps = stats.updateAndGetTargetThroughputLimit(targetBps.get());
 				te.detail("SmoothedTargetBps", smoothedTargetBps).detail("NumProxies", numProxies);
-				// TODO: Adjust Min?
-				result[throttlingId] = std::max(1.0, smoothedTargetBps / numProxies);
+				result[throttlingId] =
+				    std::max(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE, (int64_t)smoothedTargetBps / numProxies);
 				if (traceEnabled) {
 					stats.updateLastLogged();
 				}
@@ -518,8 +518,8 @@ Future<Void> QuotaThrottler::monitorThrottlingChanges() {
 void QuotaThrottler::addRequests(ThrottlingId throttlingId, int count) {
 	return impl->addRequests(throttlingId, count);
 }
-ThrottlingIdMap<double> QuotaThrottler::getProxyRates(int numProxies) {
-	return impl->getProxyRates(numProxies);
+ThrottlingIdMap<double> QuotaThrottler::getTargetRates(int numProxies) {
+	return impl->getTargetRates(numProxies);
 }
 ThrottlingIdMap<double> QuotaThrottler::getTargetThroughput(int numProxies) {
 	return impl->getTargetThroughput(numProxies);
@@ -549,7 +549,7 @@ enum class LimitType { RESERVED, TOTAL };
 enum class OpType { READ, WRITE };
 
 Optional<double> getTPSLimit(QuotaThrottler& quotaThrottler, ThrottlingId throttlingId) {
-	auto rates = quotaThrottler.getProxyRates(/*numProxies=*/1);
+	auto rates = quotaThrottler.getTargetRates(/*numProxies=*/1);
 	auto it = rates.find(throttlingId);
 	if (it != rates.end()) {
 		return it->second;
@@ -719,7 +719,7 @@ bool isNear(Optional<double> a, Optional<double> b) {
 
 bool targetRateIsNear(QuotaThrottler& quotaThrottler, ThrottlingId throttlingId, Optional<double> expected) {
 	Optional<double> rate;
-	auto targetRates = quotaThrottler.getProxyRates(1);
+	auto targetRates = quotaThrottler.getTargetRates(1);
 	auto it = targetRates.find(throttlingId);
 	if (it != targetRates.end()) {
 		rate = it->second;

@@ -2,6 +2,7 @@
  * RKRateServer.h
  */
 
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/IRKRateServer.h"
 #include "fdbserver/IRKRateUpdater.h"
 #include "fdbserver/IRKRecoveryTracker.h"
@@ -50,17 +51,17 @@ public:
 			if (now() > p.lastTagPushTime + SERVER_KNOBS->TAG_THROTTLE_PUSH_INTERVAL) {
 				p.lastTagPushTime = now();
 
-				if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+				if (isClientAverageCostTrackingEnabled()) {
 					auto targetThroughput = quotaThrottler->getTargetThroughput(self->grvProxyInfo.size());
 					if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
-						CODE_PROBE(targetThroughput.size() > 0, "Returning tag throttles to a proxy");
+						CODE_PROBE(targetThroughput.size() > 0, "Returning per-throttlingId TPS limits");
 						reply.targetThroughput = std::move(targetThroughput);
 					}
 				} else {
-					auto proxyThrottledTags = quotaThrottler->getProxyRates(self->grvProxyInfo.size());
+					auto targetTransactionRate = quotaThrottler->getTargetRates(self->grvProxyInfo.size());
 					if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
-						CODE_PROBE(proxyThrottledTags.size() > 0, "Returning tag throttles to a proxy");
-						reply.proxyThrottledTags = std::move(proxyThrottledTags);
+						CODE_PROBE(targetTransactionRate.size() > 0, "Returning per-throttlingId throughput limits");
+						reply.targetTransactionRate = std::move(targetTransactionRate);
 					}
 				}
 			}

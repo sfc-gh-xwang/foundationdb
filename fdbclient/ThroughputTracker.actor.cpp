@@ -50,7 +50,7 @@ Future<Void> ThroughputTracker::run(DatabaseContext& cx) {
 
 void ThroughputTracker::addCost(ThrottlingId const& throttlingId, uint64_t cost) {
 	throughput[throttlingId] += cost;
-	if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+	if (isClientAverageCostTrackingEnabled()) {
 		smoothThroughput[throttlingId].smoother.addDelta(cost);
 	}
 }
@@ -72,4 +72,9 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 	} else {
 		return throughputIt->second.smoother.smoothTotal() / transactionRateIt->second.smoother.smoothTotal();
 	}
+}
+
+bool isClientAverageCostTrackingEnabled() {
+	// TRACK_AVERAGE_COST_ON_CLIENT depends on TRACK_THROUGHPUT_ON_CLIENTS
+	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT;
 }

@@ -34,3 +34,5 @@ public:
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
 };
+
+bool isClientAverageCostTrackingEnabled();

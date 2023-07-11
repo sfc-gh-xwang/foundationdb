@@ -78,7 +78,7 @@ struct GetRateInfoReply {
 	double batchTransactionRate;
 	double leaseDuration;
 	HealthMetrics healthMetrics;
-	Optional<ThrottlingIdMap<double>> proxyThrottledTags;
+	Optional<ThrottlingIdMap<double>> targetTransactionRate;
 	Optional<ThrottlingIdMap<double>> targetThroughput;
 
 	template <class Ar>
@@ -88,7 +88,7 @@ struct GetRateInfoReply {
 		           batchTransactionRate,
 		           leaseDuration,
 		           healthMetrics,
-		           proxyThrottledTags,
+		           targetTransactionRate,
 		           targetThroughput);
 	}
 };
