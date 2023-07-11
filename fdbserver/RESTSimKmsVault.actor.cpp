@@ -614,7 +614,7 @@ ACTOR Future<Void> initOrUpdateDiscoverUrlFile() {
 		for (i = 0; i < nServers.get(); i++) {
 			state std::string url = "http://" + getHostname(i) + ":" + getPort(i) + "\n";
 			TraceEvent("RESTSimKmsVaultDiscovery").detail("Url", url);
-			wait(uncancellable(holdWhile(dFile, dFile->write(url.data(), url.size(), offset))));
+			wait(uncancellable(holdWhile(url, dFile->write(url.data(), url.size(), offset))));
 			offset += url.size();
 		}
 		wait(dFile->sync());
@@ -642,7 +642,7 @@ ACTOR Future<Void> initTokenValidationFile() {
 
 	try {
 		wait(store(tFile, IAsyncFileSystem::filesystem()->open(tokenFilePath, fileFlags, 0666)));
-		wait(uncancellable(holdWhile(tFile, tFile->write(dummyToken.data(), dummyToken.size(), 0))));
+		wait(uncancellable(holdWhile(dummyToken, tFile->write(dummyToken.data(), dummyToken.size(), 0))));
 		wait(tFile->sync());
 
 		// fmt::print("RESTSimKms config file {} created\n", tokenFilePath);
