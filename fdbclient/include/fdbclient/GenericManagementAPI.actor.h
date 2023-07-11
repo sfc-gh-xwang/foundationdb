@@ -141,7 +141,7 @@ bool isTenantModeModeConfigValid(DatabaseConfiguration oldConfiguration, Databas
 // Check if there's any storage engine params change for the specified engine
 // engine_prefix will tell whether it's storage engine, tss engine or others
 // paramsChange will be set to true if we find any related changes
-bool checkForStorageEngineParamsChange(std::map<std::string, std::string>& m,
+bool checkForStorageEngineParamsChange(const std::map<std::string, std::string>& m,
                                        const std::string& engine_type,
                                        KeyRef engine_prefix,
                                        bool& paramsChange);
@@ -543,16 +543,6 @@ Future<ConfigurationResult> changeConfig(Reference<DB> db, std::map<std::string,
 				                 .withPrefix("0123456789"_sr)
 				                 .withSuffix("\x00\x00\x00\x00"_sr),
 				             MutationRef::SetVersionstampedValue);
-			}
-
-			// storage engine param changes are stateless
-			// everytime the storage engine or a parameter changes, it will reset all params to default.
-			// Thus we clear everything exisiting keys before setting the new values
-			if (storageEngineParamsChange) {
-				tr->clear(storageEngineParamsKeys);
-			}
-			if (tssStorageEngineParamsChange) {
-				tr->clear(tssStorageEngineParamsKeys);
 			}
 
 			for (auto i = m.begin(); i != m.end(); ++i) {

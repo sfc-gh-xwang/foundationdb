@@ -63,14 +63,14 @@ bool isInteger(const std::string& s) {
 // storage engine params changes always set the storage_engine explicitly even it's not changed.
 // When there's no params specified, it will clear any existing params
 // return false if not supported params are found
-bool checkForStorageEngineParamsChange(std::map<std::string, std::string>& m,
+bool checkForStorageEngineParamsChange(const std::map<std::string, std::string>& m,
                                        const std::string& engine_type,
                                        KeyRef engine_prefix,
                                        bool& paramsChange) {
 	if (m.contains(configKeysPrefix.toString() + engine_type)) {
 		paramsChange = true;
 		auto storeType =
-		    static_cast<KeyValueStoreType::StoreType>(std::stoi(m[configKeysPrefix.toString() + engine_type]));
+		    static_cast<KeyValueStoreType::StoreType>(std::stoi(m.at(configKeysPrefix.toString() + engine_type)));
 		auto& supportedParamsMap = StorageEngineParamsFactory::getSupportedParams(storeType);
 
 		for (const auto& [k, v] : m) {
