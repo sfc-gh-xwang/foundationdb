@@ -127,7 +127,8 @@ public:
 	Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(const KeyRange& range,
 	                                                                    Version begin,
 	                                                                    Optional<Version> readVersion,
-	                                                                    Version* readVersionOut) override;
+	                                                                    Version* readVersionOut,
+	                                                                    int64_t mutationByteLimit) override;
 
 	Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules(const KeyRange& range,
 	                                                                           Optional<Version> summaryVersion,

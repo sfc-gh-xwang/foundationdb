@@ -8194,7 +8194,9 @@ ACTOR Future<Void> streamRemainingGranuleMutations(BlobWorkerInterface bwInterf,
 	return Void();
 }
 
-ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileRequest req, BlobWorkerInterface bwInterf) {
+ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileRequest req,
+                                                           BlobWorkerInterface bwInterf,
+                                                           bool streamRemainingMutations) {
 	std::vector<Reference<ReferencedInterface<BlobWorkerInterface>>> v;
 	v.push_back(makeReference<ReferencedInterface<BlobWorkerInterface>>(bwInterf));
 	state Reference<MultiInterface<ReferencedInterface<BlobWorkerInterface>>> location =
@@ -8214,7 +8216,7 @@ ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileReques
 
 		ASSERT(!rep.chunks.empty());
 
-		if (req.summarize) {
+		if (req.summarize || !streamRemainingMutations) {
 			return rep;
 		}
 
@@ -8254,9 +8256,11 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
     Optional<Version> read,
     Version* readVersionOut,
     int chunkLimit,
-    bool summarize) { // read not present is "use transaction version"
+    bool summarize,
+    int64_t mutationByteLimit) { // read not present is "use transaction version"
 
 	ASSERT(chunkLimit > 0);
+	ASSERT(mutationByteLimit >= 0);
 	state KeyRange keyRange = range;
 	state int i;
 	state Version rv;
@@ -8276,12 +8280,14 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 	// Cache misses could still read from the DB, or we could add it to the Transaction State Store and
 	// have proxies serve it from memory.
 	if (BG_REQUEST_DEBUG) {
-		fmt::print("Doing blob granule request [{0} - {1}) @ {2}{3}\n",
-		           range.begin.printable(),
-		           range.end.printable(),
-		           rv,
-		           self->getTenant().present() ? " for tenant " + printable(self->getTenant().get()->description())
-		                                       : "");
+		fmt::print(
+		    "Doing blob granule request [{0} - {1}) @ {2}{3}{4}\n",
+		    range.begin.printable(),
+		    range.end.printable(),
+		    rv,
+		    self->getTenant().present() ? " for tenant " + printable(self->getTenant().get()->description()) : "",
+		    mutationByteLimit < std::numeric_limits<int64_t>::max() ? fmt::format("( byteLimit={0})", mutationByteLimit)
+		                                                            : "");
 	}
 
 	if (self->getTenant().present()) {
@@ -8374,7 +8380,11 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		req.canCollapseBegin = true; // TODO make this a parameter once we support it
 		req.summarize = summarize;
 
-		if (BUGGIFY_WITH_PROB(0.1)) {
+		state bool streamRemainingMutations = true;
+		if (mutationByteLimit < req.granuleMutationBytesLimit) {
+			req.granuleMutationBytesLimit = mutationByteLimit;
+			streamRemainingMutations = false;
+		} else if (BUGGIFY_WITH_PROB(0.1)) {
 			req.granuleMutationBytesLimit = 0;
 		} else if (BUGGIFY_WITH_PROB(0.1)) {
 			req.granuleMutationBytesLimit = deterministicRandom()->randomSkewedUInt32(1, 1000000);
@@ -8383,7 +8393,8 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		// use load balance with one option for now for retry and error handling
 		try {
 			choose {
-				when(BlobGranuleFileReply rep = wait(getFullGranuleFileReply(req, bwInterf))) {
+				when(BlobGranuleFileReply rep =
+				         wait(getFullGranuleFileReply(req, bwInterf, streamRemainingMutations))) {
 					if (BG_REQUEST_DEBUG) {
 						fmt::print("Blob granule request for [{0} - {1}) @ {2} - {3} got reply from {4}:\n",
 						           granule.begin.printable(),
@@ -8489,9 +8500,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 Future<Standalone<VectorRef<BlobGranuleChunkRef>>> Transaction::readBlobGranules(const KeyRange& range,
                                                                                  Version begin,
                                                                                  Optional<Version> readVersion,
-                                                                                 Version* readVersionOut) {
+                                                                                 Version* readVersionOut,
+                                                                                 int64_t mutationByteLimit) {
 	return readBlobGranulesActor(
-	    this, range, begin, readVersion, readVersionOut, std::numeric_limits<int>::max(), false);
+	    this, range, begin, readVersion, readVersionOut, std::numeric_limits<int>::max(), false, mutationByteLimit);
 }
 
 ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranulesActor(Transaction* self,
@@ -8502,7 +8514,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules
 
 	state Version readVersionOut;
 	Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-	    wait(readBlobGranulesActor(self, range, 0, summaryVersion, &readVersionOut, rangeLimit, true));
+	    wait(readBlobGranulesActor(self, range, 0, summaryVersion, &readVersionOut, rangeLimit, true, 0));
 	ASSERT(chunks.size() <= rangeLimit);
 	ASSERT(!summaryVersion.present() || readVersionOut == summaryVersion.get());
 	Standalone<VectorRef<BlobGranuleSummaryRef>> summaries;

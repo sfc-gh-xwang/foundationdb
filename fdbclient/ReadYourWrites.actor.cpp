@@ -1906,7 +1906,8 @@ Future<Standalone<VectorRef<BlobGranuleChunkRef>>> ReadYourWritesTransaction::re
     const KeyRange& range,
     Version begin,
     Optional<Version> readVersion,
-    Version* readVersionOut) {
+    Version* readVersionOut,
+    int64_t mutationByteLimit) {
 	if (!options.readYourWritesDisabled) {
 		return blob_granule_no_ryw();
 	}
@@ -1922,7 +1923,8 @@ Future<Standalone<VectorRef<BlobGranuleChunkRef>>> ReadYourWritesTransaction::re
 	if (range.begin > maxKey || range.end > maxKey)
 		return key_outside_legal_range();
 
-	return waitOrError(tr.readBlobGranules(range, begin, readVersion, readVersionOut), resetPromise.getFuture());
+	return waitOrError(tr.readBlobGranules(range, begin, readVersion, readVersionOut, mutationByteLimit),
+	                   resetPromise.getFuture());
 }
 
 Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> ReadYourWritesTransaction::summarizeBlobGranules(

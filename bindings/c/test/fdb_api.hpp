@@ -74,14 +74,14 @@ struct MappedKeyValueRef : native::FDBMappedKeyValue {
 		return ValueRef(native::FDBMappedKeyValue::value.key, native::FDBMappedKeyValue::value.key_length);
 	}
 	KeyRef rangeBeginKey() const noexcept {
-		return KeyRef(native::FDBMappedKeyValue::getRange.begin.key.key, native::FDBMappedKeyValue::getRange.begin.key.key_length);
+		return KeyRef(native::FDBMappedKeyValue::getRange.begin.key.key,
+		              native::FDBMappedKeyValue::getRange.begin.key.key_length);
 	}
 	KeyRef rangeEndKey() const noexcept {
-		return KeyRef(native::FDBMappedKeyValue::getRange.end.key.key, native::FDBMappedKeyValue::getRange.end.key.key_length);
+		return KeyRef(native::FDBMappedKeyValue::getRange.end.key.key,
+		              native::FDBMappedKeyValue::getRange.end.key.key_length);
 	}
-	int rangeSize() const noexcept {
-		return native::FDBMappedKeyValue::getRange.m_size;
-	}
+	int rangeSize() const noexcept { return native::FDBMappedKeyValue::getRange.m_size; }
 	KeyValueRef rangeKeyValue(int i) const noexcept {
 		return (KeyValueRef&)native::FDBMappedKeyValue::getRange.data[i];
 	}
@@ -910,12 +910,20 @@ public:
 		return native::fdb_transaction_watch(tr.get(), key.data(), intSize(key));
 	}
 
-	TypedFuture<future_var::ReadBlobGranulesDescriptionResult> readBlobGranulesDescription(KeyRef begin,
-	                                                                                       KeyRef end,
-	                                                                                       int64_t beginVersion,
-	                                                                                       int64_t readVersion) {
-		return native::fdb_transaction_read_blob_granules_description_v2(
-		    tr.get(), begin.data(), intSize(begin), end.data(), intSize(end), beginVersion, readVersion);
+	TypedFuture<future_var::ReadBlobGranulesDescriptionResult> readBlobGranulesDescription(
+	    KeyRef begin,
+	    KeyRef end,
+	    int64_t beginVersion,
+	    int64_t readVersion,
+	    int64_t mutationByteLimit = std::numeric_limits<int64_t>::max()) {
+		return native::fdb_transaction_read_blob_granules_description_v3(tr.get(),
+		                                                                 begin.data(),
+		                                                                 intSize(begin),
+		                                                                 end.data(),
+		                                                                 intSize(end),
+		                                                                 beginVersion,
+		                                                                 readVersion,
+		                                                                 mutationByteLimit);
 	}
 
 	TypedFuture<future_var::ReadBlobGranulesDescriptionResultV1> readBlobGranulesDescriptionV1(
