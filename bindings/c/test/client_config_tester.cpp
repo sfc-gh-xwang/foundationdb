@@ -392,7 +392,9 @@ void Tester::printDatabaseStatus() {
 }
 
 void Tester::testTransaction() {
-	fdb::Transaction tx = db.createTransaction();
+	// If tenant mode is on, use tenant to create transaction. Otherwise, use DB
+	fdb::Transaction tx =
+	    useTenant ? db.openTenant(fdb::toBytesRef(tenantName)).createTransaction() : db.createTransaction();
 	while (true) {
 		// Set a time out to avoid long delays when testing invalid configurations
 		try {
