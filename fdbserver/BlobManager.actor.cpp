@@ -42,7 +42,7 @@
 #include "fdbclient/BlobGranuleRequest.actor.h"
 #include "fdbclient/BlobWorkerInterface.h"
 #include "fdbclient/BulkLoad.h"
-#include "fdbclient/BulkLoadTracker.actor.h"
+#include "fdbclient/BulkLoadTracker.h"
 #include "fdbclient/KeyRangeMap.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/ManagementAPI.actor.h"
@@ -5936,8 +5936,8 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadID& id, const BulkLoadState& state) {
 			return trackBulkLoad(self, id, state);
 		};
-		state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler, self->addActor);
-		bulkLoadTracker.start();
+		state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);
+		self->addActor.send(bulkLoadTracker.start());
 
 		loop choose {
 			when(wait(self->iAmReplaced.getFuture())) {
