@@ -55,12 +55,12 @@ static MockRKThroughputQuotaCache getQuotaCache(int numThrottlingIds) {
 }
 
 ACTOR static Future<Void> benchQuotaThrottlerActor(benchmark::State* benchState) {
-	state int numStorageServers = benchState->range(0);
-	state int numThrottlingIds = benchState->range(1);
-	state int busyThrottlingIdsPerSS = benchState->range(2);
+	state int const numStorageServers = benchState->range(0);
+	state int const numThrottlingIds = benchState->range(1);
+	state int const busyThrottlingIdsPerSS = benchState->range(2);
+	state MockRKMetricsTracker const metricsTracker = getMetricsTracker(numStorageServers, busyThrottlingIdsPerSS);
 	state QuotaThrottler quotaThrottler(
 	    UID{}, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND, SERVER_KNOBS->GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD);
-	state MockRKMetricsTracker metricsTracker = getMetricsTracker(numStorageServers, busyThrottlingIdsPerSS);
 	wait(prepareQuotaThrottler(&quotaThrottler, &metricsTracker, numThrottlingIds));
 	MockRKThroughputQuotaCache quotaCache = getQuotaCache(numThrottlingIds);
 	while (benchState->KeepRunning()) {
