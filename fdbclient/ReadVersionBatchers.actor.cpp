@@ -25,13 +25,13 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 		g_traceBatch.addEvent("TransactionDebug", debugID.get().first(), "NativeAPI.getConsistentReadVersion.Before");
 	loop {
 		try {
-			state Optional<double> expectedTransactionCost = {};
+			state Optional<double> expectedTotalCost = {};
 			if (throttlingId.present() && isClientAverageCostTrackingEnabled()) {
 				cx->addTransaction(throttlingId.get(), transactionCount);
 
 				auto averageCost = cx->getAverageTransactionCost(throttlingId.get());
 
-				expectedTransactionCost = averageCost * (transactionCount - expectedCostsCount) + expectedCosts;
+				expectedTotalCost = averageCost * (transactionCount - expectedCostsCount) + expectedCosts;
 			}
 
 			state GetReadVersionRequest req(span.context,
@@ -41,7 +41,7 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 			                                flags,
 			                                throttlingId,
 			                                debugID,
-			                                expectedTransactionCost);
+			                                expectedTotalCost);
 			state Future<Void> onProxiesChanged = cx->onProxiesChanged();
 
 			choose {

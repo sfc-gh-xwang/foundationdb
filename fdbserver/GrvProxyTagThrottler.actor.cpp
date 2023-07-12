@@ -112,8 +112,8 @@ uint32_t GrvProxyTagThrottler::getCost(GetReadVersionRequest const& req) const {
 
 	if (isClientAverageCostTrackingEnabled()) {
 		// track-average-cost-on-client is enabled use the expectedTransactionCost.
-		if (req.expectedTransactionCost.present()) {
-			return req.expectedTransactionCost.get();
+		if (req.expectedTotalCost.present()) {
+			return req.expectedTotalCost.get();
 		} else {
 			// expectedTransactionCost not provided, use req.transactionCount * DEFAULT_EXPECTED_TRANSACTION_COST
 			return req.transactionCount * CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
