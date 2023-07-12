@@ -198,10 +198,29 @@ def test_tenant_operation_retries(db):
         tr.on_error(e).wait()
 
 
+def test_tenant_status(db):
+    # Skip this test if it is not 8.0. Ideally we use a decorator to automatically gate test
+    # functions based on api version
+    if fdb.get_api_version() < 800:
+        return
+
+    tenant_name = b"tenantStatus"
+    cleanup_tenant(db, tenant_name)
+
+    fdb.tenant_management.create_tenant(db, tenant_name)
+
+    tenant = db.open_tenant(tenant_name)
+    status_str = tenant.get_client_status().wait()
+    status = json.loads(status_str)
+    assert "Healthy" in status
+    assert status["Healthy"]
+
+
 def test_tenants(db):
     test_tenant_tuple_name(db)
     test_tenant_operations(db)
     test_tenant_operation_retries(db)
+    test_tenant_status(db)
 
 
 # Expect a cluster file as input. This test will write to the FDB cluster, so
