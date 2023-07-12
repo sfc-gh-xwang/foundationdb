@@ -381,8 +381,11 @@ struct TLogData : NonCopyable {
 	std::unordered_map<Tag, Promise<Void>> emptyVersionWaitWindowApplied;
 	std::unordered_map<Tag, bool> emptyVersionWaitWindowReplied;
 	std::unordered_map<Tag, uint32_t> emptyVersionWaitWindowWaitingPeeks;
-	uint32_t versionSyncMsgCount;
+
+	// Tlog side empty peek number monitoring
 	uint32_t tlogPeekMsgCount;
+	uint32_t tlogEmptyPeekMsgCount;
+	uint32_t versionSyncMsgCount;
 
 	TLogData(UID dbgid,
 	         UID workerID,
@@ -402,7 +405,7 @@ struct TLogData : NonCopyable {
 	    commitLatencyDist(Histogram::getHistogram("tLog"_sr, "commit"_sr, Histogram::Unit::milliseconds)),
 	    queueWaitLatencyDist(Histogram::getHistogram("tLog"_sr, "QueueWait"_sr, Histogram::Unit::milliseconds)),
 	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)),
-	    versionSyncMsgCount(0), tlogPeekMsgCount(0) {
+	    tlogPeekMsgCount(0), tlogEmptyPeekMsgCount(0), versionSyncMsgCount(0) {
 		cx = openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	}
 };
@@ -3048,31 +3051,33 @@ ACTOR Future<Void> tLogCore(TLogData* self,
 	logData->addActor.send(waitFailureServer(tli.waitFailure.getFuture()));
 	logData->addActor.send(logData->removed);
 	// FIXME: update tlogMetrics to include new information, or possibly only have one copy for the shared instance
-	logData->addActor.send(logData->cc.traceCounters("TLogMetrics",
-	                                                 logData->logId,
-	                                                 SERVER_KNOBS->STORAGE_LOGGING_DELAY,
-	                                                 logData->logId.toString() + "/TLogMetrics",
-	                                                 [self = self](TraceEvent& te) {
-		                                                 StorageBytes sbTlog = self->persistentData->getStorageBytes();
-		                                                 te.detail("KvstoreBytesUsed", sbTlog.used);
-		                                                 te.detail("KvstoreBytesFree", sbTlog.free);
-		                                                 te.detail("KvstoreBytesAvailable", sbTlog.available);
-		                                                 te.detail("KvstoreBytesTotal", sbTlog.total);
-		                                                 te.detail("KvstoreBytesTemp", sbTlog.temp);
+	logData->addActor.send(
+	    logData->cc.traceCounters("TLogMetrics",
+	                              logData->logId,
+	                              SERVER_KNOBS->STORAGE_LOGGING_DELAY,
+	                              logData->logId.toString() + "/TLogMetrics",
+	                              [self = self](TraceEvent& te) {
+		                              StorageBytes sbTlog = self->persistentData->getStorageBytes();
+		                              te.detail("KvstoreBytesUsed", sbTlog.used);
+		                              te.detail("KvstoreBytesFree", sbTlog.free);
+		                              te.detail("KvstoreBytesAvailable", sbTlog.available);
+		                              te.detail("KvstoreBytesTotal", sbTlog.total);
+		                              te.detail("KvstoreBytesTemp", sbTlog.temp);
 
-		                                                 StorageBytes sbQueue =
-		                                                     self->rawPersistentQueue->getStorageBytes();
-		                                                 te.detail("QueueDiskBytesUsed", sbQueue.used);
-		                                                 te.detail("QueueDiskBytesFree", sbQueue.free);
-		                                                 te.detail("QueueDiskBytesAvailable", sbQueue.available);
-		                                                 te.detail("QueueDiskBytesTotal", sbQueue.total);
-		                                                 te.detail("QueueDiskBytesTemp", sbQueue.temp);
+		                              StorageBytes sbQueue = self->rawPersistentQueue->getStorageBytes();
+		                              te.detail("QueueDiskBytesUsed", sbQueue.used);
+		                              te.detail("QueueDiskBytesFree", sbQueue.free);
+		                              te.detail("QueueDiskBytesAvailable", sbQueue.available);
+		                              te.detail("QueueDiskBytesTotal", sbQueue.total);
+		                              te.detail("QueueDiskBytesTemp", sbQueue.temp);
 
-		                                                 te.detail("TlogPeekMsgCount", self->tlogPeekMsgCount);
-		                                                 te.detail("VersionSyncMsgCount", self->versionSyncMsgCount);
-		                                                 self->tlogPeekMsgCount = 0;
-		                                                 self->versionSyncMsgCount = 0;
-	                                                 }));
+		                              te.detail("TlogPeekMsgCount", self->tlogPeekMsgCount);
+		                              te.detail("TlogEmptyPeekMsgCount", self->tlogEmptyPeekMsgCount);
+		                              te.detail("VersionSyncMsgCount", self->versionSyncMsgCount);
+		                              self->tlogPeekMsgCount = 0;
+		                              self->tlogEmptyPeekMsgCount = 0;
+		                              self->versionSyncMsgCount = 0;
+	                              }));
 
 	logData->addActor.send(serveTLogInterface(self, tli, logData, warningCollectorInput));
 	logData->addActor.send(cleanupPeekTrackers(logData.getPtr()));
