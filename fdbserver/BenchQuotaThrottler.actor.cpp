@@ -9,10 +9,6 @@
 #include "benchmark/benchmark.h"
 #include "flow/actorcompiler.h" // must be last include
 
-static LocalityData getLocalityData(int index) {
-	return LocalityData({}, /*zoneID=*/Value(UID(index, index).toString()), {}, {});
-}
-
 static uint64_t getThroughput() {
 	return SERVER_KNOBS->MIN_TAG_READ_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
 }
@@ -24,9 +20,8 @@ static ThrottlingId getThrottlingId(int index) {
 static MockRKMetricsTracker getMetricsTracker(int numStorageServers, int busyThrottlingIdsPerSS) {
 	MockRKMetricsTracker result;
 	for (int i = 0; i < numStorageServers; ++i) {
-		StorageQueueInfo ssInfo(UID(i, i), getLocalityData(i));
-		ssInfo.valid = true;
-		ssInfo.lastReply.bytesInput = SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES;
+		auto ssInfo = StorageQueueInfo::createTestInfo(
+		    UID(i, i), /*storageQueueBytes=*/SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES);
 		for (int j = 0; j < busyThrottlingIdsPerSS; ++j) {
 			ssInfo.busiestReaders.emplace_back(getThrottlingId(j), getThroughput());
 			ssInfo.busiestWriters.emplace_back(getThrottlingId(j), getThroughput());
