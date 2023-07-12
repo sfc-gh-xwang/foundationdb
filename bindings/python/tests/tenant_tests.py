@@ -199,10 +199,18 @@ def test_tenant_operation_retries(db):
 
 
 def test_tenant_status(db):
+    @fdb.transactional
+    def simple_txn(tr):
+        tr.get_read_version().wait()
+
     # Skip this test if it is not 8.0. Ideally we use a decorator to automatically gate test
     # functions based on api version
     if fdb.get_api_version() < 800:
         return
+
+    # Execute a simple transaction
+    # to make sure the database is initialized
+    simple_txn(db)
 
     tenant_name = b"tenantStatus"
     cleanup_tenant(db, tenant_name)
