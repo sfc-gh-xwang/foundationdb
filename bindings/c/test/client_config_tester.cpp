@@ -107,7 +107,6 @@ public:
 
 namespace {
 TesterOptions options;
-std::string tenantName;
 } // namespace
 
 void printProgramUsage(const char* execName) {
@@ -324,39 +323,28 @@ std::string randomString(int len) {
 	return ret;
 }
 
-void printDatabaseStatus(fdb::Database db) {
-	if (options.printStatus) {
-		auto tenant = options.enableTenant ? db.openTenant(fdb::toBytesRef(tenantName)) : fdb::Tenant();
-		auto statusFuture = options.enableTenant ? tenant.getClientStatus() : db.getClientStatus();
-		fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
-		fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
-		fflush(stdout);
-	}
-}
-
-// Helper function to handle transaction errors
-void handleTransactionError(fdb::Database& db, fdb::Transaction& tx, const fdb::Error& err) {
-	if (err.code() == error_code_timed_out) {
-		fmt::print(stderr, "Transaction timed out\n");
-		printDatabaseStatus(db);
-		exitImmediately(1);
+class Tester {
+public:
+	Tester(const TesterOptions options) : useTenant(options.enableTenant), db(fdb::Database(options.clusterFile)) {
+		if (options.enableTenant) {
+			createTenant();
+		}
 	}
 
-	auto onErrorFuture = tx.onError(err);
-	fdb_check(onErrorFuture.blockUntilReady(), "Wait on onError failed");
-	auto onErrResult = onErrorFuture.error();
-	if (onErrResult) {
-		fmt::print(
-		    stderr, "Transaction failed with a non-retriable error: {}({})\n", onErrResult.code(), onErrResult.what());
-		printDatabaseStatus(db);
-		checkErrorCodeAndExit(onErrResult.code());
-	}
-}
+	void testTransaction();
 
-/* In the current test, this function should only be called once, which assigns the tenantName */
-void createTenant() {
+private:
+	void createTenant();
+	void handleTransactionError(fdb::Transaction& tx, const fdb::Error& err);
+	void printDatabaseStatus();
+
+	bool useTenant;
+	fdb::Database db;
+	std::string tenantName;
+};
+
+void Tester::createTenant() {
 	tenantName = randomString(10);
-	fdb::Database db(options.clusterFile);
 	auto tx = db.createTransaction();
 	while (true) {
 		try {
@@ -369,13 +357,41 @@ void createTenant() {
 			}
 			break;
 		} catch (fdb::Error err) {
-			handleTransactionError(db, tx, err);
+			handleTransactionError(tx, err);
 		}
 	}
 }
 
-void testTransaction() {
-	fdb::Database db(options.clusterFile);
+// Helper function to handle transaction errors
+void Tester::handleTransactionError(fdb::Transaction& tx, const fdb::Error& err) {
+	if (err.code() == error_code_timed_out) {
+		fmt::print(stderr, "Transaction timed out\n");
+		printDatabaseStatus();
+		exitImmediately(1);
+	}
+
+	auto onErrorFuture = tx.onError(err);
+	fdb_check(onErrorFuture.blockUntilReady(), "Wait on onError failed");
+	auto onErrResult = onErrorFuture.error();
+	if (onErrResult) {
+		fmt::print(
+		    stderr, "Transaction failed with a non-retriable error: {}({})\n", onErrResult.code(), onErrResult.what());
+		printDatabaseStatus();
+		checkErrorCodeAndExit(onErrResult.code());
+	}
+}
+
+void Tester::printDatabaseStatus() {
+	if (options.printStatus) {
+		auto tenant = useTenant ? db.openTenant(fdb::toBytesRef(tenantName)) : fdb::Tenant();
+		auto statusFuture = useTenant ? tenant.getClientStatus() : db.getClientStatus();
+		fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
+		fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
+		fflush(stdout);
+	}
+}
+
+void Tester::testTransaction() {
 	fdb::Transaction tx = db.createTransaction();
 	while (true) {
 		// Set a time out to avoid long delays when testing invalid configurations
@@ -394,10 +410,10 @@ void testTransaction() {
 			}
 			break;
 		} catch (fdb::Error err) {
-			handleTransactionError(db, tx, err);
+			handleTransactionError(tx, err);
 		}
 	}
-	printDatabaseStatus(db);
+	printDatabaseStatus();
 }
 
 } // namespace
@@ -415,12 +431,10 @@ int main(int argc, char** argv) {
 
 		std::thread network_thread{ [] { fdb_check(fdb::network::run(), "FDB network thread failed"); } };
 
-		if (options.enableTenant) {
-			createTenant();
-		}
+		Tester tester(options);
 
 		// Try creating a database and executing a transaction
-		testTransaction();
+		tester.testTransaction();
 
 		fdb_check(fdb::network::stop(), "Stop network failed");
 		network_thread.join();
