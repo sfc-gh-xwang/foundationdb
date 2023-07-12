@@ -1135,7 +1135,8 @@ ACTOR Future<std::map<NetworkAddress, std::pair<WorkerInterface, std::string>>> 
 			if (regionsValue.present()) {
 				usableRegions = atoi(regionsValue.get().toString().c_str());
 			}
-			auto masterDcId = dbInfo->get().master.locality.dcId();
+			ASSERT(dbInfo->get().master.present());
+			auto masterDcId = dbInfo->get().master.get().locality.dcId();
 			int storageFailures = 0;
 			for (const auto& server : storageServers) {
 				TraceEvent(SevDebug, "StorageServerDcIdInfo")
