@@ -6,8 +6,11 @@
 #include "fdbclient/ThrottleApi.h"
 #include "fdbclient/Tuple.h"
 
+// Used to store per-tag throughput quotas:
 KeyRangeRef const tagQuotaKeys = KeyRangeRef("\xff/tagQuota/"_sr, "\xff/tagQuota0"_sr);
 KeyRef const tagQuotaPrefix = tagQuotaKeys.begin;
+
+// Used to store updates to per-tag throughput quotas:
 KeyRef const throughputQuotaUpdatePrefix = "\xff/throughputQuotaUpdates/"_sr;
 
 Key ThrottleApi::getTagQuotaKey(TransactionTagRef tag) {

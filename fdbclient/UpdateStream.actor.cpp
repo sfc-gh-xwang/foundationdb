@@ -50,7 +50,7 @@ class UpdateStreamImpl {
 	}
 
 	static KeyRange getUpdateKeyRange(Key metadataPrefix,
-	                                  uint64_t startIndex,
+	                                  uint64_t startIndex = 0,
 	                                  uint64_t endIndex = std::numeric_limits<uint64_t>::max()) {
 		return KeyRangeRef(getUpdateKey(metadataPrefix, startIndex), getUpdateKey(metadataPrefix, endIndex));
 	}
@@ -68,7 +68,8 @@ class UpdateStreamImpl {
 		if (!currentLeaseId.present() || self->leaseId != currentLeaseId) {
 			TraceEvent(SevWarn, "UpdateStreamLostLease")
 			    .detail("LeaseId", self->leaseId)
-			    .detail("CurrentLeaseId", currentLeaseId);
+			    .detail("CurrentLeaseId", currentLeaseId)
+			    .detail("MetadataPrefix", self->metadataPrefix);
 			throw restart_update_stream();
 		}
 		tr->addWriteConflictRange(singleKeyRange(self->getLeaseKey()));
@@ -79,7 +80,7 @@ class UpdateStreamImpl {
 	// there have never been any updates in the queue.
 	ACTOR template <class Tr>
 	static Future<Optional<uint64_t>> getLastUpdateIndex(Reference<Tr> tr, Key metadataPrefix) {
-		state KeyRange updateKeys = getUpdateKeyRange(metadataPrefix, /*startIndex=*/0);
+		state KeyRange updateKeys = getUpdateKeyRange(metadataPrefix);
 		RangeResult rangeResult = wait(getRange(tr, updateKeys, /*limit=*/1, Reverse::True));
 		if (rangeResult.size() == 0) {
 			return Optional<uint64_t>();
@@ -117,7 +118,10 @@ class UpdateStreamImpl {
 				wait(watchUpdatesFuture || watchLeaseFuture);
 				return Void();
 			} catch (Error& e) {
-				TraceEvent("UpdateStreamWaitForUpdatesError").error(e).detail("LeaseId", self->leaseId);
+				TraceEvent("UpdateStreamWaitForUpdatesError")
+				    .error(e)
+				    .detail("LeaseId", self->leaseId)
+				    .detail("MetadataPrefix", self->metadataPrefix);
 				if (e.code() == error_code_restart_update_stream) {
 					CODE_PROBE(true, "UpdateStream lease invalidated while waiting for updates");
 					self->results.sendError(e);
@@ -146,12 +150,10 @@ public:
 	}
 
 	ACTOR static Future<Void> getUpdates(UpdateStream* self, Database db) {
-		state Reference<ReadYourWritesTransaction> tr;
-		state std::deque<UpdateStream::Update> toSend;
 		loop {
 			// Block until some update is ready to consume
 			wait(waitForUpdates(self, db));
-			tr = makeReference<ReadYourWritesTransaction>(db);
+			state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 			loop {
 				try {
 					self->applyTransactionOptions(tr);
@@ -163,7 +165,7 @@ public:
 
 					// Queue updates to send assuming transaction successfully commits
 					state int i = 0;
-					toSend.clear();
+					state std::deque<UpdateStream::Update> toSend;
 					while (i < updates.size() && i < self->batchSize) {
 						state uint64_t updateIndex = indexFromUpdateKey(self->metadataPrefix, updates[i].key);
 						ASSERT_EQ(updateIndex, startIndex + i);
@@ -192,7 +194,10 @@ public:
 					self->lastUpdateIndex = startIndex + std::min(updates.size(), self->batchSize) - 1;
 					break;
 				} catch (Error& e) {
-					TraceEvent("UpdateStreamGetUpdatesError").error(e).detail("LeaseId", self->leaseId);
+					TraceEvent("UpdateStreamGetUpdatesError")
+					    .error(e)
+					    .detail("LeaseId", self->leaseId)
+					    .detail("MetadataPrefix", self->metadataPrefix);
 					if (e.code() == error_code_commit_unknown_result) {
 						CODE_PROBE(true,
 						           "UpdateStream got commit_unknown_result while attempting to clear update queue");
