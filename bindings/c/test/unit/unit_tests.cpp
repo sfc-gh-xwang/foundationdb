@@ -51,6 +51,8 @@
 
 #include "test/fdb_api.hpp"
 
+namespace {
+
 void fdbCheck(const fdb::Error& err) {
 	if (err) {
 		std::cerr << err.what() << std::endl;
@@ -88,18 +90,6 @@ std::string strinc_str(const std::string& s) {
 	char* p = r.data();
 	p[r.size() - 1]++;
 	return r;
-}
-
-TEST_CASE("strinc_str") {
-	CHECK(strinc_str("a").compare("b") == 0);
-	CHECK(strinc_str("y").compare("z") == 0);
-	CHECK(strinc_str("!").compare("\"") == 0);
-	CHECK(strinc_str("*").compare("+") == 0);
-	CHECK(strinc_str("fdb").compare("fdc") == 0);
-	CHECK(strinc_str("foundation database 6").compare("foundation database 7") == 0);
-
-	char terminated[] = { 'a', 'b', '\xff' };
-	CHECK(strinc_str(std::string(terminated, 3)).compare("ac") == 0);
 }
 
 // Helper function to add `prefix` to all keys in the given map. Returns a new
@@ -233,6 +223,56 @@ GetMappedRangeResult getMappedRange(fdb::Transaction& tr,
 // Clears all data in the database.
 void clear_data(fdb::Database db) {
 	insert_data(db, {});
+}
+
+enum TenantOp { CREATE, DELETE };
+
+void tenantHelper(fdb::BytesRef name, TenantOp op) {
+	// Helper functin to create | delete a tenant
+	auto tr = db.createTransaction();
+	while (1) {
+		switch (op) {
+		case TenantOp::CREATE:
+			fdb::Tenant::createTenant(tr, name);
+			break;
+		case TenantOp::DELETE:
+			fdb::Tenant::deleteTenant(tr, name);
+			break;
+		default:
+			UNREACHABLE();
+		}
+		auto f1 = tr.commit();
+
+		auto err = waitFuture(f1);
+		if (err) {
+			auto f2 = tr.onError(err);
+			fdbCheck(waitFuture(f2));
+			continue;
+		}
+		break;
+	}
+}
+
+void createTenant(fdb::BytesRef name) {
+	tenantHelper(name, TenantOp::CREATE);
+}
+
+void deleteTenant(fdb::BytesRef name) {
+	tenantHelper(name, TenantOp::DELETE);
+}
+
+} // namespace
+
+TEST_CASE("strinc_str") {
+	CHECK(strinc_str("a").compare("b") == 0);
+	CHECK(strinc_str("y").compare("z") == 0);
+	CHECK(strinc_str("!").compare("\"") == 0);
+	CHECK(strinc_str("*").compare("+") == 0);
+	CHECK(strinc_str("fdb").compare("fdc") == 0);
+	CHECK(strinc_str("foundation database 6").compare("foundation database 7") == 0);
+
+	char terminated[] = { 'a', 'b', '\xff' };
+	CHECK(strinc_str(std::string(terminated, 3)).compare("ac") == 0);
 }
 
 TEST_CASE("fdb_future_set_callback") {
@@ -2596,42 +2636,6 @@ void checkClientStatusFuture(fdb::TypedFuture<fdb::future_var::KeyRef> f) {
 TEST_CASE("Database get client status") {
 	auto statusFuture = db.getClientStatus();
 	checkClientStatusFuture(statusFuture);
-}
-
-enum TenantOp { CREATE, DELETE };
-
-void tenantHelper(fdb::BytesRef name, TenantOp op) {
-	// Helper functin to create | delete a tenant
-	auto tr = db.createTransaction();
-	while (1) {
-		switch (op) {
-		case TenantOp::CREATE:
-			fdb::Tenant::createTenant(tr, name);
-			break;
-		case TenantOp::DELETE:
-			fdb::Tenant::deleteTenant(tr, name);
-			break;
-		default:
-			UNREACHABLE();
-		}
-		auto f1 = tr.commit();
-
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-		break;
-	}
-}
-
-void createTenant(fdb::BytesRef name) {
-	tenantHelper(name, TenantOp::CREATE);
-}
-
-void deleteTenant(fdb::BytesRef name) {
-	tenantHelper(name, TenantOp::DELETE);
 }
 
 TEST_CASE("Tenant get client status") {

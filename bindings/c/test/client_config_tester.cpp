@@ -142,7 +142,7 @@ void printProgramUsage(const char* execName) {
 	       "                 Changes a network option. OPTIONAME should be lowercase.\n"
 	       "  --enable-tenant\n"
 	       "                 Enable the tester in tenant mode. When set true, it creates \n"
-	       "                 a tenant and would print the client status from the tenant level.\n"
+	       "                 a tenant and prints the client status from the tenant level.\n"
 	       "  -h, --help     Display this help and exit.\n",
 	       FDB_API_VERSION);
 }
