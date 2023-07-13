@@ -377,10 +377,15 @@ struct TLogData : NonCopyable {
 	Reference<Histogram> timeUntilDurableDist;
 
 	// Track dynamic empty version wait window for each storage server
-	std::unordered_map<Tag, double> emptyVersionWaitWindowMap;
-	std::unordered_map<Tag, Promise<Void>> emptyVersionWaitWindowApplied;
-	std::unordered_map<Tag, bool> emptyVersionWaitWindowReplied;
-	std::unordered_map<Tag, uint32_t> emptyVersionWaitWindowWaitingPeeks;
+	struct emptyVersionWaitMeta {
+		double waitWindow; // "atomically" change (as appears to peek actor) with transisioning state
+		bool transitioning; // whether tlog-ss pair is currently in transitioning state
+		Promise<Void> applied; // signal tlogEmptyVersionWait actor to conclude current transition
+		bool replied; // whether current transition has been answered. ensure Promise is only delivered once
+		uint32_t oldPeekRefcount; // during non-transition, all requests will use this refcount
+		uint32_t newPeekRefcount; // during transition, all new requests will use new window and this refcount
+	};
+	std::unordered_map<Tag, emptyVersionWaitMeta> emptyVersionWaitMetaMap;
 
 	// Tlog side empty peek number monitoring
 	uint32_t tlogPeekMsgCount;
@@ -1847,6 +1852,11 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	state Version endVersion;
 	state bool onlySpilled;
 
+	// Dynamic Empty Version Wait
+	state bool emptyVersionWaitTransition = false;
+	state bool emptyVersionWaitRefcounted = false;
+	state bool emptyVersionWaitDynamicWindowExist = false;
+
 	// Run the peek logic in a loop to account for the case where there is no data to return to the caller, and we may
 	// want to wait a little bit instead of just sending back an empty message. This feature is controlled by a knob.
 	loop {
@@ -2062,7 +2072,6 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			break;
 		}
 
-		state bool haveDynamicEmptyVersionWaitInfo = false;
 		state double emptyVersionWaitWindow = 0;
 		switch (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT) {
 		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED:
@@ -2072,43 +2081,63 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			emptyVersionWaitWindow = 0;
 			break;
 		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
-			auto it = self->emptyVersionWaitWindowMap.find(reqTag);
-			if (it != self->emptyVersionWaitWindowMap.end()) {
-				haveDynamicEmptyVersionWaitInfo = true;
-				emptyVersionWaitWindow = it->second;
+			auto it = self->emptyVersionWaitMetaMap.find(reqTag);
+			if (it != self->emptyVersionWaitMetaMap.end()) {
+				// snapshot transition state now and lock it for current request
+				emptyVersionWaitTransition = self->emptyVersionWaitMetaMap[reqTag].transitioning;
+				emptyVersionWaitDynamicWindowExist = true;
+				emptyVersionWaitWindow = it->second.waitWindow;
 			}
 			break;
 		}
 
-		// TODO: Can we remove this block to fall back to wait(delay(0)) case below? with no performance degradation?
-		// Does wait(delay(0)) immediately return or there's a chance for other actors to run?
+		// now peek batching is enabled, either static or dynamic
+		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+		        ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT &&
+		    !emptyVersionWaitRefcounted) {
+			emptyVersionWaitRefcounted = true;
+			if (emptyVersionWaitTransition)
+				++self->emptyVersionWaitMetaMap[reqTag].newPeekRefcount;
+			else
+				++self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount;
+		}
+
 		if (now() - blockStart > emptyVersionWaitWindow) {
-			if (haveDynamicEmptyVersionWaitInfo && !self->emptyVersionWaitWindowReplied[reqTag]
-			    // && self->emptyVersionWaitWindowApplied[reqTag].getPromiseReferenceCount() > 0
-			) {
-				self->emptyVersionWaitWindowApplied[reqTag].send(Void());
-				self->emptyVersionWaitWindowReplied[reqTag] = true;
-			}
 			break;
 		}
 
 		state Version waitUntilVersion = logData->version.get() + 1;
 
-		++self->emptyVersionWaitWindowWaitingPeeks[reqTag];
-
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
 		// batching interval has expired.
 		wait(logData->version.whenAtLeast(waitUntilVersion) || delay(emptyVersionWaitWindow - (now() - blockStart)));
 		if (logData->version.get() < waitUntilVersion) {
-			// if (haveDynamicEmptyVersionWaitInfo && !self->emptyVersionWaitWindowReplied[reqTag]) {
-			// 	self->emptyVersionWaitWindowApplied[reqTag].send(Void());
-			// 	self->emptyVersionWaitWindowReplied[reqTag] = true;
-			// }
-			--self->emptyVersionWaitWindowWaitingPeeks[reqTag];
 			break; // We know that from `reqBegin` to logData->version are all empty messages. Skip re-executing the
 			       // peek logic.
 		}
 	}
+
+	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT &&
+	    emptyVersionWaitRefcounted) {
+		if (emptyVersionWaitTransition)
+			--self->emptyVersionWaitMetaMap[reqTag].newPeekRefcount;
+		else
+			--self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount;
+		// Only when all following are satisfied we consider window applied and ack back:
+		// 1. Tlog has dynamic wait window info for the ss
+		// 2. Reply signal must be initiated by non-transitioning peek (those initiated before new window is applied)
+		// 3. All peeks with old wait window has been served (refcount = 0)
+		// 4. Haven't signaled empty version wait actor in this window update yet
+		if (emptyVersionWaitDynamicWindowExist && !emptyVersionWaitTransition &&
+		    self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount == 0 &&
+		    !self->emptyVersionWaitMetaMap[reqTag].replied) {
+			self->emptyVersionWaitMetaMap[reqTag].replied = true;
+			self->emptyVersionWaitMetaMap[reqTag].applied.send(Void());
+		}
+	}
+
+	if (messages.getLength() <= 0)
+		++self->tlogEmptyPeekMsgCount;
 
 	TLogPeekReply reply;
 	reply.maxKnownVersion = logData->version.get();
@@ -2178,16 +2207,46 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 }
 
 ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequest req) {
-	self->emptyVersionWaitWindowMap[req.tag] = req.waitWindow;
-	self->emptyVersionWaitWindowApplied[req.tag] = Promise<Void>();
-	self->emptyVersionWaitWindowReplied[req.tag] = false;
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+		return Void();
+
+	if (!self->emptyVersionWaitMetaMap.contains(req.tag)) {
+		self->emptyVersionWaitMetaMap[req.tag].waitWindow = 0;
+		self->emptyVersionWaitMetaMap[req.tag].transitioning = false;
+		self->emptyVersionWaitMetaMap[req.tag].replied = false;
+		self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount = 0;
+		self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount = 0;
+	}
+
+	// During transition no furthur emptyVersionWait for the tlog-ss pair should be sent to tlog
+	// FIXME: the msg can be delivered more than once?
+	// ASSERT(!self->emptyVersionWaitMetaMap[req.tag].transitioning);
+	if (self->emptyVersionWaitMetaMap[req.tag].transitioning) {
+		// discard additional requests when more-than-once delivery of the same wait window update is received
+		return Void();
+	}
+
+	// Upon receiving a new wait window:
+	// 1. Following requests will immediately start to use the new window
+	// 2. Ack back will only be sent after all requests with old window has been served
+	self->emptyVersionWaitMetaMap[req.tag].transitioning = true;
+	self->emptyVersionWaitMetaMap[req.tag].waitWindow = req.waitWindow;
+
 	// 1. If no peek request is using window currently, window is effectively applied immediately, notify ss right away.
 	// 2. If >0 peek request is using window currently, window is effectively applied after the next application of
 	// window. Notify ss on first window application.
 	// 3. If we do not do this, this actor will time out waiting on next application of the window, which may never
 	// come.
-	if (self->emptyVersionWaitWindowWaitingPeeks[req.tag])
-		wait(self->emptyVersionWaitWindowApplied[req.tag].getFuture());
+	if (self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount > 0) {
+		self->emptyVersionWaitMetaMap[req.tag].applied = Promise<Void>();
+		self->emptyVersionWaitMetaMap[req.tag].replied = false;
+		wait(self->emptyVersionWaitMetaMap[req.tag].applied.getFuture());
+	}
+
+	self->emptyVersionWaitMetaMap[req.tag].transitioning = false;
+	self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount = self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount;
+	self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount = 0;
 	req.reply.send(Void());
 	return Void();
 }
