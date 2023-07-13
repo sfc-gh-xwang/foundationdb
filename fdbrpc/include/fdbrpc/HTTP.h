@@ -166,7 +166,10 @@ public:
 	                            std::string service,
 	                            int port,
 	                            Reference<IRequestHandler> requestHandler)
-	  : hostname(hostname), service(service), port(port), requestHandler(requestHandler) {}
+	  : hostname(hostname),
+	    service(service),
+	    port(port),
+	    requestHandler(requestHandler) {}
 
 	void addAddress(NetworkAddress addr);
 	void removeIp(IPAddress addr);
