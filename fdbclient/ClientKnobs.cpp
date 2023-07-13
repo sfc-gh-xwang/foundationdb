@@ -290,7 +290,10 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( GRV_BATCHER_CLEANING_INTERVAL,            5.0 );
 	init( TRACK_THROUGHPUT_ON_CLIENTS,            false ); if( randomize && BUGGIFY ) TRACK_THROUGHPUT_ON_CLIENTS = true;
 	init( CLIENT_THROUGHPUT_REPORT_INTERVAL,        1.0 );
-	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); if(randomize && BUGGIFY) USE_SIMPLE_THROUGHPUT_QUOTA_CACHE = false;
+	// TODO: Randomly turn this knob off once throughput once
+	// RKThroughputQuotaCache is receiving throughput updates
+	// from IRKThroughputTracker:
+	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true );
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
