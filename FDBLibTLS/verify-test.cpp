@@ -37,7 +37,12 @@
 
 struct FDBLibTLSVerifyTest {
 	FDBLibTLSVerifyTest(std::string input)
-	  : input(input), valid(false), verify_cert(true), verify_time(true), subject_criteria({}), issuer_criteria({}),
+	  : input(input),
+	    valid(false),
+	    verify_cert(true),
+	    verify_time(true),
+	    subject_criteria({}),
+	    issuer_criteria({}),
 	    root_criteria({}){};
 	FDBLibTLSVerifyTest(std::string input,
 	                    bool verify_cert,
@@ -45,8 +50,13 @@ struct FDBLibTLSVerifyTest {
 	                    std::map<int, Criteria> subject,
 	                    std::map<int, Criteria> issuer,
 	                    std::map<int, Criteria> root)
-	  : input(input), valid(true), verify_cert(verify_cert), verify_time(verify_time), subject_criteria(subject),
-	    issuer_criteria(issuer), root_criteria(root){};
+	  : input(input),
+	    valid(true),
+	    verify_cert(verify_cert),
+	    verify_time(verify_time),
+	    subject_criteria(subject),
+	    issuer_criteria(issuer),
+	    root_criteria(root){};
 	~FDBLibTLSVerifyTest(){};
 
 	int run();

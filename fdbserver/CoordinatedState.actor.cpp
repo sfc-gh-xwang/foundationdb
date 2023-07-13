@@ -79,7 +79,12 @@ struct CoordinatedStateImpl {
 	bool initial;
 
 	CoordinatedStateImpl(ServerCoordinators const& c)
-	  : coordinators(c), stage(0), conflictGen(0), doomed(false), ac(false), initial(false) {}
+	  : coordinators(c),
+	    stage(0),
+	    conflictGen(0),
+	    doomed(false),
+	    ac(false),
+	    initial(false) {}
 	uint64_t getConflict() const { return conflictGen; }
 
 	bool isDoomed(GenerationRegReadReply const& rep) const {
@@ -241,7 +246,9 @@ struct MovableValue {
 
 	MovableValue() : mode(Active) {}
 	MovableValue(Value const& v, int mode, Optional<Value> other = Optional<Value>())
-	  : value(v), mode(mode), other(other) {}
+	  : value(v),
+	    mode(mode),
+	    other(other) {}
 
 	// To change this serialization, ProtocolVersion::MovableCoordinatedStateV2 must be updated, and downgrades need to
 	// be considered

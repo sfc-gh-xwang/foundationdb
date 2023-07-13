@@ -49,9 +49,11 @@ struct VersionedMutation {
 
 	VersionedMutation() = default;
 	explicit VersionedMutation(MutationRef mutation, LogMessageVersion version)
-	  : mutation(mutation), version(version) {}
+	  : mutation(mutation),
+	    version(version) {}
 	explicit VersionedMutation(Arena& arena, const VersionedMutation& vm)
-	  : mutation(arena, vm.mutation), version(vm.version) {}
+	  : mutation(arena, vm.mutation),
+	    version(vm.version) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

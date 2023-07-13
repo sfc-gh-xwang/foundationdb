@@ -63,8 +63,13 @@ struct RangeResultBlock {
 class PipelinedReader {
 public:
 	PipelinedReader(uint8_t h, Version bv, Version ev, unsigned pd, Key p)
-	  : readerLimit(pd), hash(h), prefix(StringRef(&hash, sizeof(uint8_t)).withPrefix(p)), beginVersion(bv),
-	    endVersion(ev), currentBeginVersion(bv), pipelineDepth(pd) {}
+	  : readerLimit(pd),
+	    hash(h),
+	    prefix(StringRef(&hash, sizeof(uint8_t)).withPrefix(p)),
+	    beginVersion(bv),
+	    endVersion(ev),
+	    currentBeginVersion(bv),
+	    pipelineDepth(pd) {}
 
 	void startReading(Database cx);
 	Future<Void> getNext(Database cx);
@@ -98,7 +103,11 @@ class MutationLogReader : public ReferenceCounted<MutationLogReader> {
 public:
 	MutationLogReader() : finished(256) {}
 	MutationLogReader(Database cx, Version bv, Version ev, Key uid, Key beginKey, unsigned pd)
-	  : beginVersion(bv), endVersion(ev), prefix(uid.withPrefix(beginKey)), pipelineDepth(pd), finished(0) {
+	  : beginVersion(bv),
+	    endVersion(ev),
+	    prefix(uid.withPrefix(beginKey)),
+	    pipelineDepth(pd),
+	    finished(0) {
 		pipelinedReaders.reserve(256);
 		if (pipelineDepth > 0) {
 			for (int h = 0; h < 256; ++h) {

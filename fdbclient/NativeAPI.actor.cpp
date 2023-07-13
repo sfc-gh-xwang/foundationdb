@@ -151,9 +151,14 @@ TLSConfig tlsConfig(TLSEndpointType::CLIENT);
 
 // The default values, TRACE_DEFAULT_ROLL_SIZE and TRACE_DEFAULT_MAX_LOGS_SIZE are located in Trace.h.
 NetworkOptions::NetworkOptions()
-  : traceRollSize(TRACE_DEFAULT_ROLL_SIZE), traceMaxLogsSize(TRACE_DEFAULT_MAX_LOGS_SIZE), traceLogGroup("default"),
-    traceFormat("xml"), traceClockSource("now"), traceInitializeOnSetup(false),
-    supportedVersions(new ReferencedObject<Standalone<VectorRef<ClientVersionRef>>>()), runLoopProfilingEnabled(false),
+  : traceRollSize(TRACE_DEFAULT_ROLL_SIZE),
+    traceMaxLogsSize(TRACE_DEFAULT_MAX_LOGS_SIZE),
+    traceLogGroup("default"),
+    traceFormat("xml"),
+    traceClockSource("now"),
+    traceInitializeOnSetup(false),
+    supportedVersions(new ReferencedObject<Standalone<VectorRef<ClientVersionRef>>>()),
+    runLoopProfilingEnabled(false),
     primaryClient(true) {}
 
 static const Key CLIENT_LATENCY_INFO_PREFIX = "client_latency/"_sr;
@@ -670,9 +675,15 @@ ACTOR Future<Void> databaseLogger(DatabaseContext* cx) {
 			    .detail("MeanRowReadLatency", cx->readLatencies.mean())
 			    .detail("MedianRowReadLatency", cx->readLatencies.median())
 			    .detail("MaxRowReadLatency", cx->readLatencies.max())
+			    .detail("MeanReadRangeLatency", cx->readRangeLatencies.mean())
+			    .detail("MedianReadRangeLatency", cx->readRangeLatencies.median())
+			    .detail("MaxReadRangeLatency", cx->readRangeLatencies.max())
 			    .detail("MeanGRVLatency", cx->GRVLatencies.mean())
 			    .detail("MedianGRVLatency", cx->GRVLatencies.median())
 			    .detail("MaxGRVLatency", cx->GRVLatencies.max())
+			    .detail("MeanKeyLocationLatency", cx->keyLocationLatencies.mean())
+			    .detail("MedianKeyLocationLatency", cx->keyLocationLatencies.median())
+			    .detail("MaxKeyLocationLatency", cx->keyLocationLatencies.max())
 			    .detail("MeanCommitLatency", cx->commitLatencies.mean())
 			    .detail("MedianCommitLatency", cx->commitLatencies.median())
 			    .detail("MaxCommitLatency", cx->commitLatencies.max())
@@ -722,7 +733,9 @@ ACTOR Future<Void> databaseLogger(DatabaseContext* cx) {
 
 		cx->latencies.clear();
 		cx->readLatencies.clear();
+		cx->readRangeLatencies.clear();
 		cx->GRVLatencies.clear();
+		cx->keyLocationLatencies.clear();
 		cx->commitLatencies.clear();
 		cx->mutationsPerCommit.clear();
 		cx->bytesPerCommit.clear();
@@ -1383,7 +1396,10 @@ struct SingleSpecialKeyImpl : SpecialKeyRangeReadImpl {
 	SingleSpecialKeyImpl(KeyRef k,
 	                     const std::function<Future<ValueReadResult>(ReadYourWritesTransaction*)>& f,
 	                     bool supportsTenants = false)
-	  : SpecialKeyRangeReadImpl(singleKeyRange(k)), k(k), f(f), tenantSupport(supportsTenants) {}
+	  : SpecialKeyRangeReadImpl(singleKeyRange(k)),
+	    k(k),
+	    f(f),
+	    tenantSupport(supportsTenants) {}
 
 	bool supportsTenants() const override {
 		CODE_PROBE(tenantSupport, "Single special key in tenant");
@@ -1512,13 +1528,20 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
                                  int _apiVersion,
                                  IsSwitchable switchable,
                                  Optional<TenantName> defaultTenant)
-  : lockAware(lockAware), switchable(switchable), dbId(deterministicRandom()->randomUniqueID()),
-    connectionRecord(connectionRecord), proxyProvisional(false), clientLocality(clientLocality),
-    enableLocalityLoadBalance(enableLocalityLoadBalance), defaultTenant(defaultTenant),
+  : lockAware(lockAware),
+    switchable(switchable),
+    dbId(deterministicRandom()->randomUniqueID()),
+    connectionRecord(connectionRecord),
+    proxyProvisional(false),
+    clientLocality(clientLocality),
+    enableLocalityLoadBalance(enableLocalityLoadBalance),
+    defaultTenant(defaultTenant),
     readVersionBatchers(CLIENT_KNOBS->MAX_GRV_BATCHERS,
                         CLIENT_KNOBS->GRV_BATCHER_EXPIRATION_TIMEOUT,
                         CLIENT_KNOBS->GRV_BATCHER_CLEANING_INTERVAL),
-    internal(internal), cc("TransactionMetrics", dbId.toString()), transactionReadVersions("ReadVersions", cc),
+    internal(internal),
+    cc("TransactionMetrics", dbId.toString()),
+    transactionReadVersions("ReadVersions", cc),
     transactionReadVersionsThrottled("ReadVersionsThrottled", cc),
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
@@ -1528,43 +1551,87 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
-    transactionLogicalReads("LogicalUncachedReads", cc), transactionPhysicalReads("PhysicalReadRequests", cc),
+    transactionLogicalReads("LogicalUncachedReads", cc),
+    transactionPhysicalReads("PhysicalReadRequests", cc),
     transactionPhysicalReadsCompleted("PhysicalReadRequestsCompleted", cc),
-    transactionGetKeyRequests("GetKeyRequests", cc), transactionGetValueRequests("GetValueRequests", cc),
+    transactionGetKeyRequests("GetKeyRequests", cc),
+    transactionGetValueRequests("GetValueRequests", cc),
     transactionGetRangeRequests("GetRangeRequests", cc),
     transactionGetMappedRangeRequests("GetMappedRangeRequests", cc),
-    transactionGetRangeStreamRequests("GetRangeStreamRequests", cc), transactionWatchRequests("WatchRequests", cc),
-    transactionGetAddressesForKeyRequests("GetAddressesForKeyRequests", cc), transactionBytesRead("BytesRead", cc),
-    transactionKeysRead("KeysRead", cc), transactionMetadataVersionReads("MetadataVersionReads", cc),
+    transactionGetRangeStreamRequests("GetRangeStreamRequests", cc),
+    transactionWatchRequests("WatchRequests", cc),
+    transactionGetAddressesForKeyRequests("GetAddressesForKeyRequests", cc),
+    transactionBytesRead("BytesRead", cc),
+    transactionKeysRead("KeysRead", cc),
+    transactionMetadataVersionReads("MetadataVersionReads", cc),
     transactionCommittedMutations("CommittedMutations", cc),
-    transactionCommittedMutationBytes("CommittedMutationBytes", cc), transactionSetMutations("SetMutations", cc),
-    transactionClearMutations("ClearMutations", cc), transactionAtomicMutations("AtomicMutations", cc),
-    transactionsCommitStarted("CommitStarted", cc), transactionsCommitCompleted("CommitCompleted", cc),
+    transactionCommittedMutationBytes("CommittedMutationBytes", cc),
+    transactionSetMutations("SetMutations", cc),
+    transactionClearMutations("ClearMutations", cc),
+    transactionAtomicMutations("AtomicMutations", cc),
+    transactionsCommitStarted("CommitStarted", cc),
+    transactionsCommitCompleted("CommitCompleted", cc),
     transactionKeyServerLocationRequests("KeyServerLocationRequests", cc),
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
-    transactionStatusRequests("StatusRequests", cc), transactionTenantLookupRequests("TenantLookupRequests", cc),
-    transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc), transactionsTooOld("TooOld", cc),
-    transactionsFutureVersions("FutureVersions", cc), transactionsNotCommitted("NotCommitted", cc),
-    transactionsMaybeCommitted("MaybeCommitted", cc), transactionsResourceConstrained("ResourceConstrained", cc),
-    transactionsProcessBehind("ProcessBehind", cc), transactionsThrottled("Throttled", cc),
+    transactionStatusRequests("StatusRequests", cc),
+    transactionTenantLookupRequests("TenantLookupRequests", cc),
+    transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
+    transactionsTooOld("TooOld", cc),
+    transactionsFutureVersions("FutureVersions", cc),
+    transactionsNotCommitted("NotCommitted", cc),
+    transactionsMaybeCommitted("MaybeCommitted", cc),
+    transactionsResourceConstrained("ResourceConstrained", cc),
+    transactionsProcessBehind("ProcessBehind", cc),
+    transactionsThrottled("Throttled", cc),
     transactionsExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
-    transactionGrvFullBatches("NumGrvFullBatches", cc), transactionGrvTimedOutBatches("NumGrvTimedOutBatches", cc),
-    transactionCommitVersionNotFoundForSS("CommitVersionNotFoundForSS", cc), anyBGReads(false),
-    ccBG("BlobGranuleReadMetrics", dbId.toString()), bgReadInputBytes("BGReadInputBytes", ccBG),
-    bgReadOutputBytes("BGReadOutputBytes", ccBG), bgReadSnapshotRows("BGReadSnapshotRows", ccBG),
-    bgReadRowsCleared("BGReadRowsCleared", ccBG), bgReadRowsInserted("BGReadRowsInserted", ccBG),
-    bgReadRowsUpdated("BGReadRowsUpdated", ccBG), bgLatencies(), bgGranulesPerRequest(), usedAnyChangeFeeds(false),
-    ccFeed("ChangeFeedClientMetrics", dbId.toString()), feedStreamStarts("FeedStreamStarts", ccFeed),
-    feedMergeStreamStarts("FeedMergeStreamStarts", ccFeed), feedErrors("FeedErrors", ccFeed),
-    feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed), feedPops("FeedPops", ccFeed),
-    feedPopsFallback("FeedPopsFallback", ccFeed), latencies(), readLatencies(), commitLatencies(), GRVLatencies(),
-    mutationsPerCommit(), bytesPerCommit(), outstandingWatches(0), sharedStatePtr(nullptr), lastGrvTime(0.0),
-    cachedReadVersion(0), lastRkBatchThrottleTime(0.0), lastRkDefaultThrottleTime(0.0), lastProxyRequestTime(0.0),
-    transactionTracingSample(false), taskID(taskID), clientInfo(clientInfo), clientInfoMonitor(clientInfoMonitor),
-    coordinator(coordinator), apiVersion(_apiVersion), mvCacheInsertLocation(0), healthMetricsLastUpdated(0),
-    detailedHealthMetricsLastUpdated(0), smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
+    transactionGrvFullBatches("NumGrvFullBatches", cc),
+    transactionGrvTimedOutBatches("NumGrvTimedOutBatches", cc),
+    transactionCommitVersionNotFoundForSS("CommitVersionNotFoundForSS", cc),
+    anyBGReads(false),
+    ccBG("BlobGranuleReadMetrics", dbId.toString()),
+    bgReadInputBytes("BGReadInputBytes", ccBG),
+    bgReadOutputBytes("BGReadOutputBytes", ccBG),
+    bgReadSnapshotRows("BGReadSnapshotRows", ccBG),
+    bgReadRowsCleared("BGReadRowsCleared", ccBG),
+    bgReadRowsInserted("BGReadRowsInserted", ccBG),
+    bgReadRowsUpdated("BGReadRowsUpdated", ccBG),
+    bgLatencies(),
+    bgGranulesPerRequest(),
+    usedAnyChangeFeeds(false),
+    ccFeed("ChangeFeedClientMetrics", dbId.toString()),
+    feedStreamStarts("FeedStreamStarts", ccFeed),
+    feedMergeStreamStarts("FeedMergeStreamStarts", ccFeed),
+    feedErrors("FeedErrors", ccFeed),
+    feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
+    feedPops("FeedPops", ccFeed),
+    feedPopsFallback("FeedPopsFallback", ccFeed),
+    latencies(),
+    readLatencies(),
+    readRangeLatencies(),
+    commitLatencies(),
+    GRVLatencies(),
+    keyLocationLatencies(),
+    mutationsPerCommit(),
+    bytesPerCommit(),
+    outstandingWatches(0),
+    sharedStatePtr(nullptr),
+    lastGrvTime(0.0),
+    cachedReadVersion(0),
+    lastRkBatchThrottleTime(0.0),
+    lastRkDefaultThrottleTime(0.0),
+    lastProxyRequestTime(0.0),
+    transactionTracingSample(false),
+    taskID(taskID),
+    clientInfo(clientInfo),
+    clientInfoMonitor(clientInfoMonitor),
+    coordinator(coordinator),
+    apiVersion(_apiVersion),
+    mvCacheInsertLocation(0),
+    healthMetricsLastUpdated(0),
+    detailedHealthMetricsLastUpdated(0),
+    smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
     specialKeySpace(std::make_unique<SpecialKeySpace>(specialKeys.begin, specialKeys.end, /* test */ false)),
     connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())) {
 
@@ -1826,10 +1893,13 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 }
 
 DatabaseContext::DatabaseContext(const Error& err)
-  : deferredError(err), readVersionBatchers(CLIENT_KNOBS->MAX_GRV_BATCHERS,
-                                            CLIENT_KNOBS->GRV_BATCHER_EXPIRATION_TIMEOUT,
-                                            CLIENT_KNOBS->GRV_BATCHER_CLEANING_INTERVAL),
-    internal(IsInternal::False), cc("TransactionMetrics"), transactionReadVersions("ReadVersions", cc),
+  : deferredError(err),
+    readVersionBatchers(CLIENT_KNOBS->MAX_GRV_BATCHERS,
+                        CLIENT_KNOBS->GRV_BATCHER_EXPIRATION_TIMEOUT,
+                        CLIENT_KNOBS->GRV_BATCHER_CLEANING_INTERVAL),
+    internal(IsInternal::False),
+    cc("TransactionMetrics"),
+    transactionReadVersions("ReadVersions", cc),
     transactionReadVersionsThrottled("ReadVersionsThrottled", cc),
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
@@ -1839,40 +1909,74 @@ DatabaseContext::DatabaseContext(const Error& err)
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
-    transactionLogicalReads("LogicalUncachedReads", cc), transactionPhysicalReads("PhysicalReadRequests", cc),
+    transactionLogicalReads("LogicalUncachedReads", cc),
+    transactionPhysicalReads("PhysicalReadRequests", cc),
     transactionPhysicalReadsCompleted("PhysicalReadRequestsCompleted", cc),
-    transactionGetKeyRequests("GetKeyRequests", cc), transactionGetValueRequests("GetValueRequests", cc),
+    transactionGetKeyRequests("GetKeyRequests", cc),
+    transactionGetValueRequests("GetValueRequests", cc),
     transactionGetRangeRequests("GetRangeRequests", cc),
     transactionGetMappedRangeRequests("GetMappedRangeRequests", cc),
-    transactionGetRangeStreamRequests("GetRangeStreamRequests", cc), transactionWatchRequests("WatchRequests", cc),
-    transactionGetAddressesForKeyRequests("GetAddressesForKeyRequests", cc), transactionBytesRead("BytesRead", cc),
-    transactionKeysRead("KeysRead", cc), transactionMetadataVersionReads("MetadataVersionReads", cc),
+    transactionGetRangeStreamRequests("GetRangeStreamRequests", cc),
+    transactionWatchRequests("WatchRequests", cc),
+    transactionGetAddressesForKeyRequests("GetAddressesForKeyRequests", cc),
+    transactionBytesRead("BytesRead", cc),
+    transactionKeysRead("KeysRead", cc),
+    transactionMetadataVersionReads("MetadataVersionReads", cc),
     transactionCommittedMutations("CommittedMutations", cc),
-    transactionCommittedMutationBytes("CommittedMutationBytes", cc), transactionSetMutations("SetMutations", cc),
-    transactionClearMutations("ClearMutations", cc), transactionAtomicMutations("AtomicMutations", cc),
-    transactionsCommitStarted("CommitStarted", cc), transactionsCommitCompleted("CommitCompleted", cc),
+    transactionCommittedMutationBytes("CommittedMutationBytes", cc),
+    transactionSetMutations("SetMutations", cc),
+    transactionClearMutations("ClearMutations", cc),
+    transactionAtomicMutations("AtomicMutations", cc),
+    transactionsCommitStarted("CommitStarted", cc),
+    transactionsCommitCompleted("CommitCompleted", cc),
     transactionKeyServerLocationRequests("KeyServerLocationRequests", cc),
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
-    transactionStatusRequests("StatusRequests", cc), transactionTenantLookupRequests("TenantLookupRequests", cc),
-    transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc), transactionsTooOld("TooOld", cc),
-    transactionsFutureVersions("FutureVersions", cc), transactionsNotCommitted("NotCommitted", cc),
-    transactionsMaybeCommitted("MaybeCommitted", cc), transactionsResourceConstrained("ResourceConstrained", cc),
-    transactionsProcessBehind("ProcessBehind", cc), transactionsThrottled("Throttled", cc),
+    transactionStatusRequests("StatusRequests", cc),
+    transactionTenantLookupRequests("TenantLookupRequests", cc),
+    transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
+    transactionsTooOld("TooOld", cc),
+    transactionsFutureVersions("FutureVersions", cc),
+    transactionsNotCommitted("NotCommitted", cc),
+    transactionsMaybeCommitted("MaybeCommitted", cc),
+    transactionsResourceConstrained("ResourceConstrained", cc),
+    transactionsProcessBehind("ProcessBehind", cc),
+    transactionsThrottled("Throttled", cc),
     transactionsExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
-    transactionGrvFullBatches("NumGrvFullBatches", cc), transactionGrvTimedOutBatches("NumGrvTimedOutBatches", cc),
-    transactionCommitVersionNotFoundForSS("CommitVersionNotFoundForSS", cc), anyBGReads(false),
-    ccBG("BlobGranuleReadMetrics"), bgReadInputBytes("BGReadInputBytes", ccBG),
-    bgReadOutputBytes("BGReadOutputBytes", ccBG), bgReadSnapshotRows("BGReadSnapshotRows", ccBG),
-    bgReadRowsCleared("BGReadRowsCleared", ccBG), bgReadRowsInserted("BGReadRowsInserted", ccBG),
-    bgReadRowsUpdated("BGReadRowsUpdated", ccBG), bgLatencies(), bgGranulesPerRequest(), usedAnyChangeFeeds(false),
-    ccFeed("ChangeFeedClientMetrics"), feedStreamStarts("FeedStreamStarts", ccFeed),
-    feedMergeStreamStarts("FeedMergeStreamStarts", ccFeed), feedErrors("FeedErrors", ccFeed),
-    feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed), feedPops("FeedPops", ccFeed),
-    feedPopsFallback("FeedPopsFallback", ccFeed), latencies(), readLatencies(), commitLatencies(), GRVLatencies(),
-    mutationsPerCommit(), bytesPerCommit(), outstandingWatches(0), sharedStatePtr(nullptr),
-    transactionTracingSample(false), smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
+    transactionGrvFullBatches("NumGrvFullBatches", cc),
+    transactionGrvTimedOutBatches("NumGrvTimedOutBatches", cc),
+    transactionCommitVersionNotFoundForSS("CommitVersionNotFoundForSS", cc),
+    anyBGReads(false),
+    ccBG("BlobGranuleReadMetrics"),
+    bgReadInputBytes("BGReadInputBytes", ccBG),
+    bgReadOutputBytes("BGReadOutputBytes", ccBG),
+    bgReadSnapshotRows("BGReadSnapshotRows", ccBG),
+    bgReadRowsCleared("BGReadRowsCleared", ccBG),
+    bgReadRowsInserted("BGReadRowsInserted", ccBG),
+    bgReadRowsUpdated("BGReadRowsUpdated", ccBG),
+    bgLatencies(),
+    bgGranulesPerRequest(),
+    usedAnyChangeFeeds(false),
+    ccFeed("ChangeFeedClientMetrics"),
+    feedStreamStarts("FeedStreamStarts", ccFeed),
+    feedMergeStreamStarts("FeedMergeStreamStarts", ccFeed),
+    feedErrors("FeedErrors", ccFeed),
+    feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
+    feedPops("FeedPops", ccFeed),
+    feedPopsFallback("FeedPopsFallback", ccFeed),
+    latencies(),
+    readLatencies(),
+    readRangeLatencies(),
+    commitLatencies(),
+    GRVLatencies(),
+    keyLocationLatencies(),
+    mutationsPerCommit(),
+    bytesPerCommit(),
+    outstandingWatches(0),
+    sharedStatePtr(nullptr),
+    transactionTracingSample(false),
+    smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
     connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())) {
 	initializeSpecialCounters();
 }
@@ -2881,7 +2985,8 @@ AddressExclusion AddressExclusion::parse(StringRef const& key) {
 Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)) {}
 Tenant::Tenant(int64_t id) : lookupFuture(id) {}
 Tenant::Tenant(Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
-  : name(name), lookupFuture(tenantLookupInfo) {}
+  : name(name),
+    lookupFuture(tenantLookupInfo) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
@@ -3002,6 +3107,7 @@ ACTOR Future<KeyRangeLocationInfo> getKeyLocation_internal(Database cx,
                                                            Version version) {
 
 	state Span span("NAPI:getKeyLocation"_loc, spanContext);
+	state double startTime = now();
 	if (isBackward) {
 		ASSERT(key != allKeys.begin && key <= allKeys.end);
 	} else {
@@ -3022,6 +3128,7 @@ ACTOR Future<KeyRangeLocationInfo> getKeyLocation_internal(Database cx,
 			             span.context, tenant, key, Optional<KeyRef>(), 100, isBackward, version, key.arena()),
 			         TaskPriority::DefaultPromiseEndpoint))) {
 				++cx->transactionKeyServerLocationRequestsCompleted;
+				cx->keyLocationLatencies.addSample(now() - startTime);
 				if (debugID.present())
 					g_traceBatch.addEvent("TransactionDebug", debugID.get().first(), "NativeAPI.getKeyLocation.After");
 				ASSERT(rep.results.size() == 1);
@@ -3132,6 +3239,7 @@ ACTOR Future<std::vector<KeyRangeLocationInfo>> getKeyRangeLocations_internal(
     UseProvisionalProxies useProvisionalProxies,
     Version version) {
 	state Span span("NAPI:getKeyRangeLocations"_loc, spanContext);
+	state double startTime = now();
 	if (debugID.present())
 		g_traceBatch.addEvent("TransactionDebug", debugID.get().first(), "NativeAPI.getKeyLocations.Before");
 
@@ -3146,6 +3254,7 @@ ACTOR Future<std::vector<KeyRangeLocationInfo>> getKeyRangeLocations_internal(
 			             span.context, tenant, keys.begin, keys.end, limit, reverse, version, keys.arena()),
 			         TaskPriority::DefaultPromiseEndpoint))) {
 				++cx->transactionKeyServerLocationRequestsCompleted;
+				cx->keyLocationLatencies.addSample(now() - startTime);
 				state GetKeyServerLocationsReply rep = _rep;
 				if (debugID.present())
 					g_traceBatch.addEvent("TransactionDebug", debugID.get().first(), "NativeAPI.getKeyLocations.After");
@@ -3433,8 +3542,21 @@ TransactionState::TransactionState(Database cx,
                                    TaskPriority taskID,
                                    SpanContext spanContext,
                                    Reference<TransactionLogInfo> trLogInfo)
-  : cx(cx), trLogInfo(trLogInfo), options(cx), taskID(taskID), spanContext(spanContext),
-    readVersionObtainedFromGrvProxy(true), tenant_(tenant), tenantSet(tenant.present()) {}
+  : cx(cx),
+    trLogInfo(trLogInfo),
+    options(cx),
+    taskID(taskID),
+    spanContext(spanContext),
+    readVersionObtainedFromGrvProxy(true),
+    tenant_(tenant),
+    tenantSet(tenant.present()) {}
+
+TransactionState::~TransactionState() {
+	// Need to cancel the actors, because otherwise they may access already destroyed
+	// transaction state members
+	readVersionFuture.cancel();
+	startFuture.cancel();
+}
 
 Reference<TransactionState> TransactionState::cloneAndReset(Reference<TransactionLogInfo> newTrLogInfo,
                                                             bool generateNewSpan) const {
@@ -3516,7 +3638,7 @@ bool TransactionState::hasTenant(ResolveDefaultTenant resolveDefaultTenant) {
 	return tenant_.present();
 }
 
-ACTOR Future<Void> startTransaction(Reference<TransactionState> trState) {
+ACTOR Future<Void> startTransaction(TransactionState* trState) {
 	wait(success(trState->readVersionFuture));
 	if (trState->hasTenant()) {
 		wait(trState->tenant().get()->ready());
@@ -3533,7 +3655,7 @@ Future<Void> TransactionState::startTransaction(uint32_t readVersionFlags) {
 		if (readVersionFuture.isReady() && (!hasTenant() || tenant().get()->ready().isReady())) {
 			startFuture = Void();
 		} else {
-			startFuture = ::startTransaction(Reference<TransactionState>::addRef(this));
+			startFuture = ::startTransaction(this);
 		}
 	}
 
@@ -4110,7 +4232,10 @@ public:
 	WatchRefCountUpdater() = default;
 
 	WatchRefCountUpdater(const Database& cx_, const int64_t tenantID_, KeyRef key_, const Version& ver)
-	  : cx(cx_), tenantID(tenantID_), key(key_), version(ver) {}
+	  : cx(cx_),
+	    tenantID(tenantID_),
+	    key(key_),
+	    version(ver) {}
 
 	WatchRefCountUpdater& operator=(WatchRefCountUpdater&& other) {
 		if (cx.getReference()) {
@@ -4510,15 +4635,17 @@ void getRangeFinished(Reference<TransactionState> trState,
                       Reverse reverse,
                       RangeReadResultFamily result) {
 	int64_t bytes = getRangeResultFamilyBytes(result);
+	double timeNow = now();
 
 	trState->addReadCost(getReadOperationCost(bytes));
 	trState->cx->transactionBytesRead += bytes;
 	trState->cx->transactionKeysRead += result.size();
+	trState->cx->readRangeLatencies.addSample(timeNow - startTime);
 
 	if (trState->trLogInfo) {
 		trState->trLogInfo->addLog(FdbClientLogEvents::EventGetRange(startTime,
 		                                                             trState->cx->clientLocality.dcId(),
-		                                                             now() - startTime,
+		                                                             timeNow - startTime,
 		                                                             bytes,
 		                                                             begin.getKey(),
 		                                                             end.getKey(),
@@ -5467,7 +5594,9 @@ Transaction::Transaction(Database const& cx, Optional<Reference<Tenant>> const& 
                                             cx->taskID,
                                             generateSpanID(cx->transactionTracingSample),
                                             createTrLogInfoProbabilistically(cx))),
-    span(trState->spanContext, "Transaction"_loc), backoff(CLIENT_KNOBS->DEFAULT_BACKOFF), tr(trState->spanContext) {
+    span(trState->spanContext, "Transaction"_loc),
+    backoff(CLIENT_KNOBS->DEFAULT_BACKOFF),
+    tr(trState->spanContext) {
 	if (cx->debugUseTag) {
 		debugAddTag(trState);
 	}
@@ -7233,7 +7362,7 @@ bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority prior
 	return false;
 }
 
-ACTOR Future<Version> getReadVersion_internal(Reference<TransactionState> trState, uint32_t flags) {
+ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
 	if (!CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !trState->options.skipGrvCache &&
 	    (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE ||
 	     trState->options.useGrvCache) &&
@@ -7343,7 +7472,7 @@ ACTOR Future<Version> getReadVersion_internal(Reference<TransactionState> trStat
 Future<Version> TransactionState::getReadVersion(uint32_t flags) {
 	ASSERT(!readVersionFuture.isValid());
 
-	return getReadVersion_internal(Reference<TransactionState>::addRef(this), flags);
+	return getReadVersion_internal(this, flags);
 }
 
 Optional<ThrottlingId> TransactionState::getThrottlingId() {
@@ -7382,6 +7511,20 @@ void TransactionState::flushWriteCost() {
 
 int64_t TransactionState::getTotalCost() const {
 	return readCost + writeCost;
+}
+
+ACTOR Future<Version> Transaction_getReadVersion(Reference<TransactionState> trState) {
+	if (!trState->readVersionFuture.isValid()) {
+		trState->readVersionFuture = trState->getReadVersion(0);
+	}
+	// Here are we waiting on readVersionFuture instead of simply returning it
+	// because unlike readVersionFuture, this actor holds a reference to the transaction
+	Version v = wait(trState->readVersionFuture);
+	return v;
+}
+
+Future<Version> Transaction::getReadVersion() {
+	return Transaction_getReadVersion(trState);
 }
 
 Optional<Version> Transaction::getCachedReadVersion() const {
@@ -9433,9 +9576,15 @@ ACTOR Future<Void> storageFeedVersionUpdater(StorageServerInterface interf, Chan
 		if (self->version.get() < self->desired.get()) {
 			wait(delay(CLIENT_KNOBS->CHANGE_FEED_EMPTY_BATCH_TIME) || self->version.whenAtLeast(self->desired.get()));
 			if (self->version.get() < self->desired.get()) {
+				// Avoid requesting a version hugely in the future and causing head-of-line blocking
+				// If the BW is behind and the storage is not, the returned version will still jump.
+				// If the storage is behind and the BW is stuck behind with it, this will repeat requests every *knob*
+				// versions which is not ideal but can be acceptable.
+				Version targetVersion = std::min(
+				    self->desired.get(), self->version.get() + CLIENT_KNOBS->CHANGE_FEED_DESIRED_VERSION_JUMP_MAX);
 				try {
 					ChangeFeedVersionUpdateReply rep = wait(brokenPromiseToNever(
-					    interf.changeFeedVersionUpdate.getReply(ChangeFeedVersionUpdateRequest(self->desired.get()))));
+					    interf.changeFeedVersionUpdate.getReply(ChangeFeedVersionUpdateRequest(targetVersion))));
 					if (rep.version > self->version.get()) {
 						self->version.set(rep.version);
 					}
@@ -9881,7 +10030,10 @@ ChangeFeedStorageData::~ChangeFeedStorageData() {
 }
 
 ChangeFeedData::ChangeFeedData(DatabaseContext* context)
-  : dbgid(deterministicRandom()->randomUniqueID()), context(context), notAtLatest(1), created(now()) {
+  : dbgid(deterministicRandom()->randomUniqueID()),
+    context(context),
+    notAtLatest(1),
+    created(now()) {
 	if (context) {
 		context->notAtLatestChangeFeeds[dbgid] = this;
 	}

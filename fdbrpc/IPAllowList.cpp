@@ -53,7 +53,8 @@ int netmaskWeightImpl(std::array<unsigned char, Sz> const& addr) {
 } // namespace
 
 AuthAllowedSubnet::AuthAllowedSubnet(IPAddress const& baseAddress, IPAddress const& addressMask)
-  : baseAddress(baseAddress), addressMask(addressMask) {
+  : baseAddress(baseAddress),
+    addressMask(addressMask) {
 	ASSERT(baseAddress.isV4() == addressMask.isV4());
 }
 

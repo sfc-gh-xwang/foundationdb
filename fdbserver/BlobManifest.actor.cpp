@@ -233,8 +233,15 @@ public:
 	                         int64_t epoch,
 	                         int64_t seqNo,
 	                         Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx)
-	  : blobConn_(blobConn), epoch_(epoch), seqNo_(seqNo), segmentNo_(1), totalRows_(0), logicalSize_(0),
-	    totalBytes_(0), closed_(false), cipherKeysCtx_(cipherKeysCtx) {}
+	  : blobConn_(blobConn),
+	    epoch_(epoch),
+	    seqNo_(seqNo),
+	    segmentNo_(1),
+	    totalRows_(0),
+	    logicalSize_(0),
+	    totalBytes_(0),
+	    closed_(false),
+	    cipherKeysCtx_(cipherKeysCtx) {}
 
 	// Append a new row to the splitter
 	void append(KeyValueRef row) {
@@ -410,7 +417,11 @@ public:
 	                   int64_t epoch,
 	                   int64_t seqNo,
 	                   bool encryptionEnabled)
-	  : db_(db), blobConn_(blobConn), epoch_(epoch), seqNo_(seqNo), dbInfo_(dbInfo),
+	  : db_(db),
+	    blobConn_(blobConn),
+	    epoch_(epoch),
+	    seqNo_(seqNo),
+	    dbInfo_(dbInfo),
 	    encryptionEnabled_(encryptionEnabled) {}
 	virtual ~BlobManifestDumper() {}
 
@@ -652,7 +663,9 @@ public:
 	BlobManifestLoader(Database& db,
 	                   Reference<AsyncVar<ServerDBInfo> const> dbInfo,
 	                   Reference<BlobConnectionProvider> blobConn)
-	  : db_(db), blobConn_(blobConn), dbInfo_(dbInfo) {}
+	  : db_(db),
+	    blobConn_(blobConn),
+	    dbInfo_(dbInfo) {}
 	virtual ~BlobManifestLoader() {}
 
 	// Execute the loader

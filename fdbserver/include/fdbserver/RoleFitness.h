@@ -35,13 +35,22 @@ struct RoleFitness {
 	bool degraded = false;
 
 	RoleFitness(int bestFit, int worstFit, int count, ProcessClass::ClusterRole role)
-	  : bestFit((ProcessClass::Fitness)bestFit), worstFit((ProcessClass::Fitness)worstFit), role(role), count(count) {}
+	  : bestFit((ProcessClass::Fitness)bestFit),
+	    worstFit((ProcessClass::Fitness)worstFit),
+	    role(role),
+	    count(count) {}
 
 	RoleFitness(int fitness, int count, ProcessClass::ClusterRole role)
-	  : bestFit((ProcessClass::Fitness)fitness), worstFit((ProcessClass::Fitness)fitness), role(role), count(count) {}
+	  : bestFit((ProcessClass::Fitness)fitness),
+	    worstFit((ProcessClass::Fitness)fitness),
+	    role(role),
+	    count(count) {}
 
 	RoleFitness()
-	  : bestFit(ProcessClass::NeverAssign), worstFit(ProcessClass::NeverAssign), role(ProcessClass::NoRole), count(0) {}
+	  : bestFit(ProcessClass::NeverAssign),
+	    worstFit(ProcessClass::NeverAssign),
+	    role(ProcessClass::NoRole),
+	    count(0) {}
 
 	RoleFitness(const std::vector<WorkerDetails>& workers,
 	            ProcessClass::ClusterRole role,

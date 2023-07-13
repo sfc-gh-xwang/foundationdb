@@ -124,14 +124,17 @@ MetaclusterTenantMapEntry::MetaclusterTenantMapEntry() {}
 MetaclusterTenantMapEntry::MetaclusterTenantMapEntry(int64_t id,
                                                      TenantName tenantName,
                                                      metacluster::TenantState tenantState)
-  : tenantName(tenantName), tenantState(tenantState) {
+  : tenantName(tenantName),
+    tenantState(tenantState) {
 	setId(id);
 }
 MetaclusterTenantMapEntry::MetaclusterTenantMapEntry(int64_t id,
                                                      TenantName tenantName,
                                                      metacluster::TenantState tenantState,
                                                      Optional<TenantGroupName> tenantGroup)
-  : tenantName(tenantName), tenantState(tenantState), tenantGroup(tenantGroup) {
+  : tenantName(tenantName),
+    tenantState(tenantState),
+    tenantGroup(tenantGroup) {
 	setId(id);
 }
 

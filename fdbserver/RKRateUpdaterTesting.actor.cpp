@@ -151,7 +151,8 @@ struct RKRateUpdaterTestEnvironment {
 	RKRateUpdater rateUpdater;
 
 	RKRateUpdaterTestEnvironment(int storageTeamSize = 1)
-	  : rateServer(testActualTps), configurationMonitor(storageTeamSize),
+	  : rateServer(testActualTps),
+	    configurationMonitor(storageTeamSize),
 	    rateUpdater(UID{},
 	                RatekeeperLimits(TransactionPriority::DEFAULT,
 	                                 "",

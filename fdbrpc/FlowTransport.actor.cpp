@@ -102,7 +102,9 @@ private:
 };
 
 EndpointMap::EndpointMap(int wellKnownEndpointCount)
-  : wellKnownEndpointCount(wellKnownEndpointCount), data(wellKnownEndpointCount), firstFree(-1) {}
+  : wellKnownEndpointCount(wellKnownEndpointCount),
+    data(wellKnownEndpointCount),
+    firstFree(-1) {}
 
 void EndpointMap::realloc() {
 	int oldSize = data.size();
@@ -413,8 +415,12 @@ ACTOR Future<Void> pingLatencyLogger(TransportData* self) {
 }
 
 TransportData::TransportData(uint64_t transportId, int maxWellKnownEndpoints, IPAllowList const* allowList)
-  : endpoints(maxWellKnownEndpoints), endpointNotFoundReceiver(endpoints), pingReceiver(endpoints),
-    numIncompatibleConnections(0), lastIncompatibleMessage(0), transportId(transportId),
+  : endpoints(maxWellKnownEndpoints),
+    endpointNotFoundReceiver(endpoints),
+    pingReceiver(endpoints),
+    numIncompatibleConnections(0),
+    lastIncompatibleMessage(0),
+    transportId(transportId),
     allowList(allowList == nullptr ? IPAllowList() : *allowList) {
 	degraded = makeReference<AsyncVar<bool>>(false);
 	pingLogger = pingLatencyLogger(this);
@@ -890,13 +896,27 @@ ACTOR Future<Void> connectionKeeper(Reference<Peer> self,
 }
 
 Peer::Peer(TransportData* transport, NetworkAddress const& destination)
-  : transport(transport), destination(destination), compatible(true), connected(false), outgoingConnectionIdle(true),
-    lastConnectTime(0.0), reconnectionDelay(FLOW_KNOBS->INITIAL_RECONNECTION_TIME), peerReferences(-1),
-    bytesReceived(0), bytesSent(0), lastDataPacketSentTime(now()), outstandingReplies(0),
-    pingLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1), lastLoggedTime(0.0),
-    lastLoggedBytesReceived(0), lastLoggedBytesSent(0), timeoutCount(0),
+  : transport(transport),
+    destination(destination),
+    compatible(true),
+    connected(false),
+    outgoingConnectionIdle(true),
+    lastConnectTime(0.0),
+    reconnectionDelay(FLOW_KNOBS->INITIAL_RECONNECTION_TIME),
+    peerReferences(-1),
+    bytesReceived(0),
+    bytesSent(0),
+    lastDataPacketSentTime(now()),
+    outstandingReplies(0),
+    pingLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1),
+    lastLoggedTime(0.0),
+    lastLoggedBytesReceived(0),
+    lastLoggedBytesSent(0),
+    timeoutCount(0),
     protocolVersion(Reference<AsyncVar<Optional<ProtocolVersion>>>(new AsyncVar<Optional<ProtocolVersion>>())),
-    connectOutgoingCount(0), connectIncomingCount(0), connectFailedCount(0),
+    connectOutgoingCount(0),
+    connectIncomingCount(0),
+    connectFailedCount(0),
     connectLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1) {
 	IFailureMonitor::failureMonitor().setStatus(destination, FailureStatus(false));
 }

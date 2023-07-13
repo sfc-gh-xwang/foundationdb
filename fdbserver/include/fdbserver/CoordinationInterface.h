@@ -88,7 +88,9 @@ struct GenerationRegReadReply {
 	UniqueGeneration gen, rgen;
 	GenerationRegReadReply() {}
 	GenerationRegReadReply(Optional<Value> value, UniqueGeneration gen, UniqueGeneration rgen)
-	  : value(value), gen(gen), rgen(rgen) {}
+	  : value(value),
+	    gen(gen),
+	    rgen(rgen) {}
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, value, gen, rgen);
@@ -142,7 +144,10 @@ struct CandidacyRequest {
 
 	CandidacyRequest() {}
 	CandidacyRequest(Key key, LeaderInfo const& myInfo, UID const& knownLeader, UID const& prevChangeID)
-	  : key(key), myInfo(myInfo), knownLeader(knownLeader), prevChangeID(prevChangeID) {}
+	  : key(key),
+	    myInfo(myInfo),
+	    knownLeader(knownLeader),
+	    prevChangeID(prevChangeID) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -163,7 +168,10 @@ struct ElectionResultRequest {
 	                      std::vector<Hostname> hostnames,
 	                      std::vector<NetworkAddress> coordinators,
 	                      UID knownLeader)
-	  : key(key), hostnames(std::move(hostnames)), coordinators(std::move(coordinators)), knownLeader(knownLeader) {}
+	  : key(key),
+	    hostnames(std::move(hostnames)),
+	    coordinators(std::move(coordinators)),
+	    knownLeader(knownLeader) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -197,7 +205,9 @@ struct LeaderHeartbeatRequest {
 
 	LeaderHeartbeatRequest() {}
 	explicit LeaderHeartbeatRequest(Key key, LeaderInfo const& myInfo, UID prevChangeID)
-	  : key(key), myInfo(myInfo), prevChangeID(prevChangeID) {}
+	  : key(key),
+	    myInfo(myInfo),
+	    prevChangeID(prevChangeID) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

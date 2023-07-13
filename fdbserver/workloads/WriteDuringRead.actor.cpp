@@ -59,7 +59,10 @@ struct WriteDuringReadWorkload : TestWorkload {
 	bool useExtraDB;
 
 	WriteDuringReadWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), transactions("Transactions"), retries("Retries"), success(true) {
+	  : TestWorkload(wcx),
+	    transactions("Transactions"),
+	    retries("Retries"),
+	    success(true) {
 		testDuration = getOption(options, "testDuration"_sr, 60.0);
 		slowModeStart = getOption(options, "slowModeStart"_sr, 1000.0);
 		numOps = getOption(options, "numOps"_sr, 21);

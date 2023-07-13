@@ -71,7 +71,8 @@ struct EvictablePageCache : ReferenceCounted<EvictablePageCache> {
 	EvictablePageCache() : pageSize(0), maxPages(0), cacheEvictionType(RANDOM) {}
 
 	explicit EvictablePageCache(int pageSize, int64_t maxSize)
-	  : pageSize(pageSize), maxPages(maxSize / pageSize),
+	  : pageSize(pageSize),
+	    maxPages(maxSize / pageSize),
 	    cacheEvictionType(evictionPolicyStringToEnum(FLOW_KNOBS->CACHE_EVICTION_POLICY)) {
 		cacheEvictions.init("EvictablePageCache.CacheEvictions"_sr);
 	}
@@ -300,8 +301,14 @@ private:
 	                const std::string& filename,
 	                int64_t length,
 	                Reference<EvictablePageCache> pageCache)
-	  : filename(filename), uncached(uncached), length(length), prevLength(length), pageCache(pageCache),
-	    currentTruncate(Void()), currentTruncateSize(0), rateControl(nullptr) {
+	  : filename(filename),
+	    uncached(uncached),
+	    length(length),
+	    prevLength(length),
+	    pageCache(pageCache),
+	    currentTruncate(Void()),
+	    currentTruncateSize(0),
+	    rateControl(nullptr) {
 		if (!g_network->isSimulated()) {
 			countFileCacheWrites.init("AsyncFile.CountFileCacheWrites"_sr, filename);
 			countFileCacheReads.init("AsyncFile.CountFileCacheReads"_sr, filename);
@@ -612,8 +619,17 @@ struct AFCPage : public EvictablePage, public FastAllocated<AFCPage> {
 	}
 
 	AFCPage(AsyncFileCached* owner, int64_t offset)
-	  : EvictablePage(owner->pageCache), owner(owner), pageOffset(offset), notReading(Void()), notFlushing(Void()),
-	    dirty(false), valid(false), truncated(false), writeThroughCount(0), flushableIndex(-1), zeroCopyRefCount(0) {
+	  : EvictablePage(owner->pageCache),
+	    owner(owner),
+	    pageOffset(offset),
+	    notReading(Void()),
+	    notFlushing(Void()),
+	    dirty(false),
+	    valid(false),
+	    truncated(false),
+	    writeThroughCount(0),
+	    flushableIndex(-1),
+	    zeroCopyRefCount(0) {
 		pageCache->allocate(this);
 	}
 

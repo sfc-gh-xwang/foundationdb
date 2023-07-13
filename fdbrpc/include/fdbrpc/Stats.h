@@ -86,7 +86,9 @@ class CounterCollection {
 
 public:
 	CounterCollection(std::string const& name, std::string const& id = std::string())
-	  : name(name), id(id), logTime(0) {}
+	  : name(name),
+	    id(id),
+	    logTime(0) {}
 	~CounterCollection() {
 		for (auto c : countersToRemove)
 			c->remove();

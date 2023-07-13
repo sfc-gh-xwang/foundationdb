@@ -158,7 +158,9 @@ public:
 	Reference<IRequestHandler> requestHandler;
 
 	SimRegisteredHandlerContext(std::string hostname, std::string service, Reference<IRequestHandler> requestHandler)
-	  : hostname(hostname), service(service), requestHandler(requestHandler) {}
+	  : hostname(hostname),
+	    service(service),
+	    requestHandler(requestHandler) {}
 
 	void addAddress(NetworkAddress addr);
 	void removeIp(IPAddress addr);

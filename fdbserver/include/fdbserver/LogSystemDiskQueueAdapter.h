@@ -37,7 +37,8 @@ struct PeekTxsInfo {
 	bool operator!=(const PeekTxsInfo& r) const { return !(*this == r); }
 
 	PeekTxsInfo(int8_t primaryLocality, int8_t secondaryLocality, Version knownCommittedVersion)
-	  : primaryLocality(primaryLocality), secondaryLocality(secondaryLocality),
+	  : primaryLocality(primaryLocality),
+	    secondaryLocality(secondaryLocality),
 	    knownCommittedVersion(knownCommittedVersion) {}
 };
 
@@ -60,9 +61,18 @@ public:
 	                          Reference<AsyncVar<PeekTxsInfo>> peekLocality,
 	                          Version txsPoppedVersion,
 	                          bool recover)
-	  : peekLocality(peekLocality), peekTypeSwitches(0), enableRecovery(recover), logSystem(logSystem),
-	    startLoc(txsPoppedVersion), recoveryLoc(txsPoppedVersion), recoveryQueueLoc(txsPoppedVersion),
-	    recoveryQueueDataSize(0), poppedUpTo(0), nextCommit(1), hasDiscardedData(false), totalRecoveredBytes(0) {
+	  : peekLocality(peekLocality),
+	    peekTypeSwitches(0),
+	    enableRecovery(recover),
+	    logSystem(logSystem),
+	    startLoc(txsPoppedVersion),
+	    recoveryLoc(txsPoppedVersion),
+	    recoveryQueueLoc(txsPoppedVersion),
+	    recoveryQueueDataSize(0),
+	    poppedUpTo(0),
+	    nextCommit(1),
+	    hasDiscardedData(false),
+	    totalRecoveredBytes(0) {
 		if (enableRecovery) {
 			localityChanged = peekLocality ? peekLocality->onChange() : Never();
 			cursor = logSystem->peekTxs(UID(),
