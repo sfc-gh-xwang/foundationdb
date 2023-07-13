@@ -128,7 +128,9 @@ struct Profiler {
 	bool timerInitialized;
 
 	Profiler(int period, std::string const& outfn, INetwork* network)
-	  : signalClosure(signal_handler_for_closure, this), environmentInfoWriter(Unversioned()), network(network),
+	  : signalClosure(signal_handler_for_closure, this),
+	    environmentInfoWriter(Unversioned()),
+	    network(network),
 	    timerInitialized(false) {
 		actor = profile(this, period, outfn);
 	}

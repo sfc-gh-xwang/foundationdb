@@ -36,7 +36,8 @@
 static std::unordered_map<BlobMetadataDomainId, Standalone<BlobMetadataDetailsRef>> simBlobMetadataStore;
 
 SimKmsVaultKeyCtx::SimKmsVaultKeyCtx(EncryptCipherBaseKeyId kId, const uint8_t* data, const int dataLen)
-  : id(kId), keyLen(dataLen) {
+  : id(kId),
+    keyLen(dataLen) {
 	key = makeString(keyLen);
 	memcpy(mutateString(key), data, keyLen);
 	kcv = Sha256KCV().computeKCV((const uint8_t*)data, dataLen);

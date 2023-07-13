@@ -249,7 +249,8 @@ private:
 
 		OptionGroup() {}
 		OptionGroup(OptionGroup<T>& base)
-		  : options(base.options.begin(), base.options.end()), legalOptions(base.legalOptions) {}
+		  : options(base.options.begin(), base.options.end()),
+		    legalOptions(base.legalOptions) {}
 
 		// Enable or disable an option. Returns true if option value changed
 		bool setOption(typename T::Option option, bool enabled, Optional<StringRef> arg) {

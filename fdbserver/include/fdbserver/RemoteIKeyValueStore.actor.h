@@ -143,8 +143,12 @@ struct OpenKVStoreRequest {
 	                   int64_t memoryLimit,
 	                   bool checkChecksums = false,
 	                   bool checkIntegrity = false)
-	  : storeType(storeType), filename(filename), logID(logID), memoryLimit(memoryLimit),
-	    checkChecksums(checkChecksums), checkIntegrity(checkIntegrity) {}
+	  : storeType(storeType),
+	    filename(filename),
+	    logID(logID),
+	    memoryLimit(memoryLimit),
+	    checkChecksums(checkChecksums),
+	    checkIntegrity(checkIntegrity) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -223,8 +227,12 @@ struct IKVSReadRangeReply {
 	IKVSReadRangeReply() = default;
 
 	explicit IKVSReadRangeReply(const RangeResult& res)
-	  : arena(res.arena()), data(static_cast<const VectorRef<KeyValueRef>&>(res)), more(res.more),
-	    readThrough(res.readThrough), readToBegin(res.readToBegin), readThroughEnd(res.readThroughEnd) {}
+	  : arena(res.arena()),
+	    data(static_cast<const VectorRef<KeyValueRef>&>(res)),
+	    more(res.more),
+	    readThrough(res.readThrough),
+	    readToBegin(res.readToBegin),
+	    readThroughEnd(res.readThroughEnd) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

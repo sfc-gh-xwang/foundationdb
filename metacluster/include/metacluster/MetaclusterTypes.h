@@ -105,7 +105,9 @@ struct DataClusterEntry {
 	DataClusterEntry() = default;
 	DataClusterEntry(ClusterUsage capacity) : capacity(capacity) {}
 	DataClusterEntry(UID id, ClusterUsage capacity, ClusterUsage allocated)
-	  : id(id), capacity(capacity), allocated(allocated) {}
+	  : id(id),
+	    capacity(capacity),
+	    allocated(allocated) {}
 
 	// Returns true if all configurable properties match
 	bool matchesConfiguration(DataClusterEntry const& other) const { return capacity == other.capacity; }
@@ -140,7 +142,8 @@ struct DataClusterMetadata {
 
 	DataClusterMetadata() = default;
 	DataClusterMetadata(DataClusterEntry const& entry, ClusterConnectionString const& connectionString)
-	  : entry(entry), connectionString(connectionString) {}
+	  : entry(entry),
+	    connectionString(connectionString) {}
 
 	bool matchesConfiguration(DataClusterMetadata const& other) const {
 		return entry.matchesConfiguration(other.entry) && connectionString == other.connectionString;

@@ -122,8 +122,10 @@ struct DDShardInfo;
 struct DataMove {
 	DataMove() : meta(DataMoveMetaData()), restore(false), valid(false), cancelled(false) {}
 	explicit DataMove(DataMoveMetaData meta, bool restore)
-	  : meta(std::move(meta)), restore(restore), valid(true), cancelled(meta.getPhase() == DataMoveMetaData::Deleting) {
-	}
+	  : meta(std::move(meta)),
+	    restore(restore),
+	    valid(true),
+	    cancelled(meta.getPhase() == DataMoveMetaData::Deleting) {}
 
 	// Checks if the DataMove is consistent with the shard.
 	void validateShard(const DDShardInfo& shard, KeyRangeRef range, int priority = SERVER_KNOBS->PRIORITY_RECOVER_MOVE);
@@ -155,12 +157,22 @@ struct RelocateShard {
 	// static RelocateShard emptyRelocateShard() { return {}; }
 
 	RelocateShard(KeyRange const& keys, DataMovementReason moveReason, RelocateReason reason, UID traceId = UID())
-	  : keys(keys), priority(dataMovementPriority(moveReason)), cancelled(false), dataMoveId(anonymousShardId),
-	    reason(reason), moveReason(moveReason), traceId(traceId) {}
+	  : keys(keys),
+	    priority(dataMovementPriority(moveReason)),
+	    cancelled(false),
+	    dataMoveId(anonymousShardId),
+	    reason(reason),
+	    moveReason(moveReason),
+	    traceId(traceId) {}
 
 	RelocateShard(KeyRange const& keys, int priority, RelocateReason reason, UID traceId = UID())
-	  : keys(keys), priority(priority), cancelled(false), dataMoveId(anonymousShardId), reason(reason),
-	    moveReason(priorityToDataMovementReason(priority)), traceId(traceId) {}
+	  : keys(keys),
+	    priority(priority),
+	    cancelled(false),
+	    dataMoveId(anonymousShardId),
+	    reason(reason),
+	    moveReason(priorityToDataMovementReason(priority)),
+	    traceId(traceId) {}
 
 	bool isRestore() const { return this->dataMove != nullptr; }
 
@@ -172,7 +184,10 @@ private:
 	Optional<KeyRange> parent_range;
 
 	RelocateShard()
-	  : priority(0), cancelled(false), dataMoveId(anonymousShardId), reason(RelocateReason::OTHER),
+	  : priority(0),
+	    cancelled(false),
+	    dataMoveId(anonymousShardId),
+	    reason(RelocateReason::OTHER),
 	    moveReason(DataMovementReason::INVALID) {}
 };
 
@@ -194,7 +209,9 @@ struct GetTopKMetricsReply {
 	double minReadLoad = -1, maxReadLoad = -1;
 	GetTopKMetricsReply() {}
 	GetTopKMetricsReply(std::vector<KeyRangeStorageMetrics> const& m, double minReadLoad, double maxReadLoad)
-	  : shardMetrics(m), minReadLoad(minReadLoad), maxReadLoad(maxReadLoad) {}
+	  : shardMetrics(m),
+	    minReadLoad(minReadLoad),
+	    maxReadLoad(maxReadLoad) {}
 };
 
 struct GetTopKMetricsRequest {
@@ -210,7 +227,9 @@ public:
 	                      int topK = 1,
 	                      double maxReadLoadPerKSecond = std::numeric_limits<double>::max(),
 	                      double minReadLoadPerKSecond = 0)
-	  : topK(topK), keys(keys), maxReadLoadPerKSecond(maxReadLoadPerKSecond),
+	  : topK(topK),
+	    keys(keys),
+	    maxReadLoadPerKSecond(maxReadLoadPerKSecond),
 	    minReadLoadPerKSecond(minReadLoadPerKSecond) {
 		ASSERT_GE(topK, 1);
 	}
@@ -266,7 +285,9 @@ struct ShardMetrics {
 	}
 
 	ShardMetrics(StorageMetrics const& metrics, double lastLowBandwidthStartTime, int shardCount)
-	  : metrics(metrics), lastLowBandwidthStartTime(lastLowBandwidthStartTime), shardCount(shardCount) {}
+	  : metrics(metrics),
+	    lastLowBandwidthStartTime(lastLowBandwidthStartTime),
+	    shardCount(shardCount) {}
 };
 
 struct ShardTrackedData {
@@ -279,7 +300,9 @@ class PhysicalShardCollection : public ReferenceCounted<PhysicalShardCollection>
 public:
 	PhysicalShardCollection() : requireTransition(false), lastTransitionStartTime(now()) {}
 	PhysicalShardCollection(Reference<IDDTxnProcessor> db)
-	  : txnProcessor(db), requireTransition(false), lastTransitionStartTime(now()) {}
+	  : txnProcessor(db),
+	    requireTransition(false),
+	    lastTransitionStartTime(now()) {}
 
 	enum class PhysicalShardCreationTime { DDInit, DDRelocator };
 
@@ -291,8 +314,12 @@ public:
 		              StorageMetrics const& metrics,
 		              std::vector<ShardsAffectedByTeamFailure::Team> teams,
 		              PhysicalShardCreationTime whenCreated)
-		  : txnProcessor(txnProcessor), id(id), metrics(metrics),
-		    stats(makeReference<AsyncVar<Optional<StorageMetrics>>>()), teams(teams), whenCreated(whenCreated) {}
+		  : txnProcessor(txnProcessor),
+		    id(id),
+		    metrics(metrics),
+		    stats(makeReference<AsyncVar<Optional<StorageMetrics>>>()),
+		    teams(teams),
+		    whenCreated(whenCreated) {}
 
 		// Adds `newRange` to this physical shard and starts monitoring the shard.
 		void addRange(const KeyRange& newRange);

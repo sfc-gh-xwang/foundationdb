@@ -59,7 +59,9 @@ struct SidebandWorkload : TestWorkload {
 	PerfIntCounter messages, consistencyErrors, keysUnexpectedlyPresent;
 
 	SidebandWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), messages("Messages"), consistencyErrors("Causal Consistency Errors"),
+	  : TestWorkload(wcx),
+	    messages("Messages"),
+	    consistencyErrors("Causal Consistency Errors"),
 	    keysUnexpectedlyPresent("KeysUnexpectedlyPresent") {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		operationsPerSecond = getOption(options, "operationsPerSecond"_sr, 50.0);

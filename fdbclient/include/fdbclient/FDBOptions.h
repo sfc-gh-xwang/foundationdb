@@ -56,8 +56,15 @@ struct FDBOptionInfo {
 	              bool sensitive,
 	              int defaultFor,
 	              ParamType paramType)
-	  : name(name), comment(comment), parameterComment(parameterComment), hasParameter(hasParameter), hidden(hidden),
-	    persistent(persistent), sensitive(sensitive), defaultFor(defaultFor), paramType(paramType) {}
+	  : name(name),
+	    comment(comment),
+	    parameterComment(parameterComment),
+	    hasParameter(hasParameter),
+	    hidden(hidden),
+	    persistent(persistent),
+	    sensitive(sensitive),
+	    defaultFor(defaultFor),
+	    paramType(paramType) {}
 
 	FDBOptionInfo() {}
 };

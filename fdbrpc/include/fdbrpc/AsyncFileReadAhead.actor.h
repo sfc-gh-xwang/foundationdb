@@ -211,8 +211,11 @@ public:
 	                        int readAheadBlocks,
 	                        int maxConcurrentReads,
 	                        int cacheSizeBlocks)
-	  : m_f(f), m_block_size(blockSize), m_read_ahead_blocks(readAheadBlocks),
-	    m_cache_block_limit(std::max<int>(1, cacheSizeBlocks)), m_max_concurrent_reads(maxConcurrentReads) {}
+	  : m_f(f),
+	    m_block_size(blockSize),
+	    m_read_ahead_blocks(readAheadBlocks),
+	    m_cache_block_limit(std::max<int>(1, cacheSizeBlocks)),
+	    m_max_concurrent_reads(maxConcurrentReads) {}
 };
 
 #include "flow/unactorcompiler.h"

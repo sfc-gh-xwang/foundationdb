@@ -35,7 +35,9 @@ struct SelectorCorrectnessWorkload : TestWorkload {
 	PerfIntCounter transactions, retries;
 
 	SelectorCorrectnessWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), transactions("Transactions"), retries("Retries") {
+	  : TestWorkload(wcx),
+	    transactions("Transactions"),
+	    retries("Retries") {
 
 		minOperationsPerTransaction = getOption(options, "minOperationsPerTransaction"_sr, 10);
 		maxOperationsPerTransaction = getOption(options, "minOperationsPerTransaction"_sr, 50);

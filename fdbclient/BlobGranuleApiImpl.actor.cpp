@@ -329,7 +329,8 @@ struct GranuleLoadFreeHandle : NonCopyable, ReferenceCounted<GranuleLoadFreeHand
 	int64_t loadId;
 
 	GranuleLoadFreeHandle(const FDBReadBlobGranuleContext* granuleContext, int64_t loadId)
-	  : granuleContext(granuleContext), loadId(loadId) {}
+	  : granuleContext(granuleContext),
+	    loadId(loadId) {}
 
 	~GranuleLoadFreeHandle() { granuleContext->free_load_f(loadId, granuleContext->userContext); }
 };

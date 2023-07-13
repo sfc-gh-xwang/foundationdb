@@ -56,8 +56,11 @@ private:
 
 public:
 	explicit MovingWindow(double timeWindow)
-	  : previous(0), total(0), maxDequeSize(SERVER_KNOBS->MOVING_WINDOW_SAMPLE_SIZE / sizeof(std::pair<double, T>)),
-	    interval(timeWindow), previousPopTime(now()) {}
+	  : previous(0),
+	    total(0),
+	    maxDequeSize(SERVER_KNOBS->MOVING_WINDOW_SAMPLE_SIZE / sizeof(std::pair<double, T>)),
+	    interval(timeWindow),
+	    previousPopTime(now()) {}
 
 	T getTotal() const { return total; }
 

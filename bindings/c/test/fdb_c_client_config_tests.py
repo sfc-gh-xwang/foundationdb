@@ -131,6 +131,9 @@ class ClientConfigTest:
         self.trace_file_identifier = None
         self.trace_initialize_on_setup = False
         self.trace_format = None
+        # When set true, the tester creates a tenant and generates the client status at the
+        # tenant level
+        self.enable_tenant = False
 
     # ----------------------------
     # Configuration methods
@@ -336,6 +339,9 @@ class ClientConfigTest:
 
         if self.print_status:
             cmd_args += ["--print-status"]
+
+        if self.enable_tenant:
+            cmd_args += ["--enable-tenant"]
 
         print(
             "\nExecuting test command: {}".format(" ".join([str(c) for c in cmd_args])),
@@ -882,6 +888,48 @@ class ClientTracingTests(unittest.TestCase):
                     self.assertFalse(attr in event)
                 return
         self.fail("No matching event found")
+
+
+class TenantStatusTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.cluster = TestCluster(CURRENT_VERSION)
+        cls.cluster.setup()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.cluster.tear_down()
+
+    def test_local_client_only(self):
+        # Local client only
+        test = ClientConfigTest(self)
+        test.print_status = True
+        test.enable_tenant = True
+        test.exec()
+        test.check_healthy_status(True)
+
+    def test_disable_mvc_bypass(self):
+        # Local client only
+        test = ClientConfigTest(self)
+        test.print_status = True
+        test.disable_client_bypass = True
+        test.enable_tenant = True
+        test.exec()
+        test.check_healthy_status_report()
+        test.check_available_clients([CURRENT_VERSION])
+        test.check_current_client(CURRENT_VERSION)
+
+    def test_single_external_client_only(self):
+        # Single external client only
+        test = ClientConfigTest(self)
+        test.print_status = True
+        test.create_external_lib_path(CURRENT_VERSION)
+        test.disable_local_client = True
+        test.enable_tenant = True
+        test.exec()
+        test.check_healthy_status_report()
+        test.check_available_clients([CURRENT_VERSION])
+        test.check_current_client(CURRENT_VERSION)
 
 
 if __name__ == "__main__":

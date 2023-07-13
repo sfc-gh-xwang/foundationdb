@@ -40,7 +40,10 @@ struct StreamingReadWorkload : TestWorkload {
 	DDSketch<double> latencies;
 
 	StreamingReadWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), transactions("Transactions"), readKeys("Keys Read"), readValueBytes("Value Bytes Read"),
+	  : TestWorkload(wcx),
+	    transactions("Transactions"),
+	    readKeys("Keys Read"),
+	    readValueBytes("Value Bytes Read"),
 	    latencies() {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		actorCount = getOption(options, "actorCount"_sr, 20);

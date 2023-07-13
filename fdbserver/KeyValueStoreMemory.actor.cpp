@@ -1053,10 +1053,24 @@ KeyValueStoreMemory<Container>::KeyValueStoreMemory(IDiskQueue* log,
                                                     bool replaceContent,
                                                     bool exactRecovery,
                                                     bool enableEncryption)
-  : type(storeType), id(id), log(log), db(db), committedWriteBytes(0), overheadWriteBytes(0), currentSnapshotEnd(-1),
-    previousSnapshotEnd(-1), committedDataSize(0), transactionSize(0), transactionIsLarge(false), resetSnapshot(false),
-    disableSnapshot(disableSnapshot), replaceContent(replaceContent), firstCommitWithSnapshot(true), snapshotCount(0),
-    memoryLimit(memoryLimit), enableEncryption(enableEncryption) {
+  : type(storeType),
+    id(id),
+    log(log),
+    db(db),
+    committedWriteBytes(0),
+    overheadWriteBytes(0),
+    currentSnapshotEnd(-1),
+    previousSnapshotEnd(-1),
+    committedDataSize(0),
+    transactionSize(0),
+    transactionIsLarge(false),
+    resetSnapshot(false),
+    disableSnapshot(disableSnapshot),
+    replaceContent(replaceContent),
+    firstCommitWithSnapshot(true),
+    snapshotCount(0),
+    memoryLimit(memoryLimit),
+    enableEncryption(enableEncryption) {
 	// create reserved buffer for radixtree store type
 	this->reserved_buffer =
 	    (storeType == KeyValueStoreType::MEMORY) ? nullptr : new uint8_t[CLIENT_KNOBS->SYSTEM_KEY_SIZE_LIMIT];

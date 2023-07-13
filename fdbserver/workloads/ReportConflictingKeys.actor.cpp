@@ -39,7 +39,10 @@ struct ReportConflictingKeysWorkload : TestWorkload {
 	PerfIntCounter invalidReports, commits, conflicts, xacts;
 
 	ReportConflictingKeysWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), invalidReports("InvalidReports"), commits("commits"), conflicts("Conflicts"),
+	  : TestWorkload(wcx),
+	    invalidReports("InvalidReports"),
+	    commits("commits"),
+	    conflicts("Conflicts"),
 	    xacts("Transactions") {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		// transactionsPerSecond = getOption(options, "transactionsPerSecond"_sr, 5000.0) / clientCount;

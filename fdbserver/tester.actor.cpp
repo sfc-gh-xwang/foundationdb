@@ -63,8 +63,13 @@
 WorkloadContext::WorkloadContext() {}
 
 WorkloadContext::WorkloadContext(const WorkloadContext& r)
-  : options(r.options), clientId(r.clientId), clientCount(r.clientCount), sharedRandomNumber(r.sharedRandomNumber),
-    dbInfo(r.dbInfo), ccr(r.ccr), defaultTenant(r.defaultTenant) {}
+  : options(r.options),
+    clientId(r.clientId),
+    clientCount(r.clientCount),
+    sharedRandomNumber(r.sharedRandomNumber),
+    dbInfo(r.dbInfo),
+    ccr(r.ccr),
+    defaultTenant(r.defaultTenant) {}
 
 WorkloadContext::~WorkloadContext() {}
 

@@ -55,7 +55,10 @@ struct RegisterClusterImpl {
 	                    ClusterName clusterName,
 	                    ClusterConnectionString connectionString,
 	                    DataClusterEntry clusterEntry)
-	  : ctx(managementDb), clusterName(clusterName), connectionString(connectionString), clusterEntry(clusterEntry) {}
+	  : ctx(managementDb),
+	    clusterName(clusterName),
+	    connectionString(connectionString),
+	    clusterEntry(clusterEntry) {}
 
 	// Store the cluster entry for the new cluster in a registering state
 	ACTOR static Future<Void> registerInManagementCluster(RegisterClusterImpl* self,

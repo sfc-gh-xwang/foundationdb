@@ -41,7 +41,8 @@ public:
 };
 
 LatencyBandsMap::ExpirableBands::ExpirableBands(LatencyBands&& bands)
-  : latencyBands(std::move(bands)), lastUpdated(now()) {}
+  : latencyBands(std::move(bands)),
+    lastUpdated(now()) {}
 
 Optional<LatencyBands*> LatencyBandsMap::getLatencyBands(ThrottlingId tag) {
 	if (map.size() == maxSize && !map.count(tag)) {
@@ -61,7 +62,10 @@ Optional<LatencyBands*> LatencyBandsMap::getLatencyBands(ThrottlingId tag) {
 }
 
 LatencyBandsMap::LatencyBandsMap(std::string const& name, UID id, double loggingInterval, int maxSize)
-  : name(name), id(id), loggingInterval(loggingInterval), maxSize(maxSize) {
+  : name(name),
+    id(id),
+    loggingInterval(loggingInterval),
+    maxSize(maxSize) {
 	expireOldTags = LatencyBandsMapImpl::expireOldTagsActor(this);
 }
 
