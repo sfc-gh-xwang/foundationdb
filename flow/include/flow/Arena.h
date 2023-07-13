@@ -931,7 +931,10 @@ public:
 
 	template <VecSerStrategy S>
 	VectorRef(const VectorRef<T, S>& other)
-	  : VPS(other), data(other.data), m_size(other.m_size), m_capacity(other.m_capacity) {}
+	  : VPS(other),
+	    data(other.data),
+	    m_size(other.m_size),
+	    m_capacity(other.m_capacity) {}
 	template <VecSerStrategy S>
 	VectorRef& operator=(const VectorRef<T, S>& other) {
 		*static_cast<VPS*>(this) = other;
@@ -944,7 +947,9 @@ public:
 	// Arena constructor for non-Ref types, identified by !flow_ref
 	template <class T2 = T, VecSerStrategy S>
 	VectorRef(Arena& p, const VectorRef<T, S>& toCopy, typename std::enable_if<!flow_ref<T2>::value, int>::type = 0)
-	  : VPS(toCopy), data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]), m_size(toCopy.size()),
+	  : VPS(toCopy),
+	    data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]),
+	    m_size(toCopy.size()),
 	    m_capacity(toCopy.size()) {
 		if (m_size > 0) {
 			std::copy(toCopy.data, toCopy.data + m_size, data);
@@ -954,7 +959,10 @@ public:
 	// Arena constructor for Ref types, which must have an Arena constructor
 	template <class T2 = T, VecSerStrategy S>
 	VectorRef(Arena& p, const VectorRef<T, S>& toCopy, typename std::enable_if<flow_ref<T2>::value, int>::type = 0)
-	  : VPS(), data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]), m_size(toCopy.size()), m_capacity(toCopy.size()) {
+	  : VPS(),
+	    data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]),
+	    m_size(toCopy.size()),
+	    m_capacity(toCopy.size()) {
 		for (int i = 0; i < m_size; i++) {
 			auto ptr = new (&data[i]) T(p, toCopy[i]);
 			VPS::add(*ptr);
@@ -1284,7 +1292,9 @@ public: // Construction
 	static_assert(std::is_trivially_destructible_v<T>);
 	SmallVectorRef() {}
 	SmallVectorRef(const SmallVectorRef<T, InlineMembers>& other)
-	  : m_size(other.m_size), arr(other.arr), data(other.data) {}
+	  : m_size(other.m_size),
+	    arr(other.arr),
+	    data(other.data) {}
 	SmallVectorRef& operator=(const SmallVectorRef<T, InlineMembers>& other) {
 		m_size = other.m_size;
 		arr = other.arr;

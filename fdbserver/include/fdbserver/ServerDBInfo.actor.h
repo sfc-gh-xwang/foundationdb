@@ -70,7 +70,10 @@ struct ServerDBInfo {
 	int64_t infoGeneration;
 
 	ServerDBInfo()
-	  : recoveryCount(0), recoveryState(RecoveryState::UNINITIALIZED), logSystemConfig(0), infoGeneration(0) {}
+	  : recoveryCount(0),
+	    recoveryState(RecoveryState::UNINITIALIZED),
+	    logSystemConfig(0),
+	    infoGeneration(0) {}
 
 	bool operator==(ServerDBInfo const& r) const { return id == r.id; }
 	bool operator!=(ServerDBInfo const& r) const { return id != r.id; }

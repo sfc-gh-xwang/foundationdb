@@ -59,7 +59,9 @@ class ThrottlingCounterImpl {
 
 public:
 	ThrottlingCounterImpl(UID thisServerID, int maxReadersTracked, double minRateTracked)
-	  : thisServerID(thisServerID), maxReadersTracked(maxReadersTracked), minRateTracked(minRateTracked),
+	  : thisServerID(thisServerID),
+	    maxReadersTracked(maxReadersTracked),
+	    minRateTracked(minRateTracked),
 	    busiestReaderEventHolder(makeReference<EventCacheHolder>(thisServerID.toString() + "/BusiestReader")) {}
 
 	// Tenant groups take priority over tags if both are available

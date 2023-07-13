@@ -57,7 +57,9 @@ struct DatabaseConnections {
 	Reference<IDatabase> configDb;
 	DatabaseConnections() = default;
 	DatabaseConnections(Database localDb, Reference<IDatabase> db, Reference<IDatabase> configDb)
-	  : localDb(localDb), db(db), configDb(configDb) {}
+	  : localDb(localDb),
+	    db(db),
+	    configDb(configDb) {}
 };
 
 struct CommandHelp {
@@ -66,7 +68,9 @@ struct CommandHelp {
 	std::string long_desc;
 	CommandHelp() {}
 	CommandHelp(const char* usage, const char* short_desc, const char* long_desc)
-	  : usage(usage), short_desc(short_desc), long_desc(long_desc) {}
+	  : usage(usage),
+	    short_desc(short_desc),
+	    long_desc(long_desc) {}
 };
 
 void arrayGenerator(const char* text, const char* line, const char** options, std::vector<std::string>& lc);

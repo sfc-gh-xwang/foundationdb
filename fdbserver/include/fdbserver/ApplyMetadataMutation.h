@@ -53,7 +53,11 @@ struct ResolverData {
 
 	// For initial broadcast
 	ResolverData(UID debugId, Reference<IKeyValueStore> store, KeyRangeMap<ServerCacheInfo>* info, bool& forceRecovery)
-	  : dbgid(debugId), txnStateStore(store), keyInfo(info), confChanges(forceRecovery), initialCommit(true) {}
+	  : dbgid(debugId),
+	    txnStateStore(store),
+	    keyInfo(info),
+	    confChanges(forceRecovery),
+	    initialCommit(true) {}
 
 	// For transaction batches that contain metadata mutations
 	ResolverData(UID debugId,
@@ -65,8 +69,15 @@ struct ResolverData {
 	             Version popVersion,
 	             std::map<UID, Reference<StorageInfo>>* storageCache,
 	             std::unordered_map<UID, StorageServerInterface>* tssMapping)
-	  : dbgid(debugId), txnStateStore(store), keyInfo(info), confChanges(forceRecovery), logSystem(logSystem),
-	    toCommit(toCommit), popVersion(popVersion), storageCache(storageCache), tssMapping(tssMapping) {}
+	  : dbgid(debugId),
+	    txnStateStore(store),
+	    keyInfo(info),
+	    confChanges(forceRecovery),
+	    logSystem(logSystem),
+	    toCommit(toCommit),
+	    popVersion(popVersion),
+	    storageCache(storageCache),
+	    tssMapping(tssMapping) {}
 };
 
 inline bool isMetadataMutation(MutationRef const& m) {

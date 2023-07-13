@@ -1827,7 +1827,11 @@ struct InFlightFile {
 	bool emptyDeltaFile;
 
 	InFlightFile(Future<BlobFileIndex> future, Version version, uint64_t bytes, bool snapshot, bool emptyDeltaFile)
-	  : future(future), version(version), bytes(bytes), snapshot(snapshot), emptyDeltaFile(emptyDeltaFile) {}
+	  : future(future),
+	    version(version),
+	    bytes(bytes),
+	    snapshot(snapshot),
+	    emptyDeltaFile(emptyDeltaFile) {}
 };
 
 namespace {

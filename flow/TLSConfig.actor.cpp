@@ -283,7 +283,9 @@ LoadedTLSConfig TLSConfig::loadSync() const {
 }
 
 TLSPolicy::TLSPolicy(const LoadedTLSConfig& loaded, std::function<void()> on_failure)
-  : rules(), on_failure(std::move(on_failure)), is_client(loaded.getEndpointType() == TLSEndpointType::CLIENT) {
+  : rules(),
+    on_failure(std::move(on_failure)),
+    is_client(loaded.getEndpointType() == TLSEndpointType::CLIENT) {
 	set_verify_peers(loaded.getVerifyPeers());
 }
 

@@ -171,14 +171,23 @@ struct EncryptBaseCipherKey {
 	int64_t expireAt;
 
 	EncryptBaseCipherKey()
-	  : domainId(0), baseCipherId(0), baseCipherKey(StringRef()), baseCipherKCV(0), refreshAt(0), expireAt(0) {}
+	  : domainId(0),
+	    baseCipherId(0),
+	    baseCipherKey(StringRef()),
+	    baseCipherKCV(0),
+	    refreshAt(0),
+	    expireAt(0) {}
 	explicit EncryptBaseCipherKey(EncryptCipherDomainId dId,
 	                              EncryptCipherBaseKeyId cipherId,
 	                              Standalone<StringRef> cipherKey,
 	                              EncryptCipherKeyCheckValue cipherKCV,
 	                              int64_t refAtTS,
 	                              int64_t expAtTS)
-	  : domainId(dId), baseCipherId(cipherId), baseCipherKey(cipherKey), baseCipherKCV(cipherKCV), refreshAt(refAtTS),
+	  : domainId(dId),
+	    baseCipherId(cipherId),
+	    baseCipherKey(cipherKey),
+	    baseCipherKCV(cipherKCV),
+	    refreshAt(refAtTS),
 	    expireAt(expAtTS) {}
 
 	bool needsRefresh() const {
@@ -201,7 +210,8 @@ struct BlobMetadataCacheEntry {
 
 	BlobMetadataCacheEntry() : creationTimeSec(0) {}
 	explicit BlobMetadataCacheEntry(Standalone<BlobMetadataDetailsRef> metadataDetails)
-	  : metadataDetails(metadataDetails), creationTimeSec(now()) {}
+	  : metadataDetails(metadataDetails),
+	    creationTimeSec(now()) {}
 
 	bool isValid() const { return (now() - creationTimeSec) < SERVER_KNOBS->BLOB_METADATA_CACHE_TTL; }
 };
@@ -254,7 +264,8 @@ public:
 	LatencySample kmsBlobMetadataReqLatency;
 
 	explicit EncryptKeyProxyData(UID id)
-	  : myId(id), ekpCacheMetrics("EKPMetrics", myId.toString()),
+	  : myId(id),
+	    ekpCacheMetrics("EKPMetrics", myId.toString()),
 	    baseCipherKeyIdCacheMisses("EKPCipherIdCacheMisses", ekpCacheMetrics),
 	    baseCipherKeyIdCacheHits("EKPCipherIdCacheHits", ekpCacheMetrics),
 	    baseCipherDomainIdCacheMisses("EKPCipherDomainIdCacheMisses", ekpCacheMetrics),

@@ -109,7 +109,9 @@ struct SimpleWorkload final : FDBWorkload {
 		              FDBDatabase* db,
 		              unsigned long from,
 		              unsigned long to)
-		  : ActorBase(promise, self, db), from(from), to(to) {
+		  : ActorBase(promise, self, db),
+		    from(from),
+		    to(to) {
 			error = fdb_database_create_transaction(db, &tx);
 			if (error) {
 				done(this);
@@ -184,7 +186,9 @@ struct SimpleWorkload final : FDBWorkload {
 		double startTime;
 
 		ClientActor(const Callback& promise, SimpleWorkload& self, FDBDatabase* db)
-		  : ActorBase(promise, self, db), random(0, self.numTuples - 1), startTime(self.context->now()) {
+		  : ActorBase(promise, self, db),
+		    random(0, self.numTuples - 1),
+		    startTime(self.context->now()) {
 			error = fdb_database_create_transaction(db, &tx);
 			if (error) {
 				done(this);

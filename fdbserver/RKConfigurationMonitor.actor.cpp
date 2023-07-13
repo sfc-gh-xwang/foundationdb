@@ -44,7 +44,8 @@ public:
 }; // class RKConfigurationMonitorImpl
 
 RKConfigurationMonitor::RKConfigurationMonitor(Database db, Reference<AsyncVar<ServerDBInfo> const> dbInfo)
-  : db(db), dbInfo(dbInfo) {
+  : db(db),
+    dbInfo(dbInfo) {
 	remoteDC = dbInfo->get().logSystemConfig.getRemoteDcId();
 }
 

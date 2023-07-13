@@ -306,7 +306,8 @@ public:
 	const StringRef systemKeysPrefix = systemKeys.begin;
 
 	AESEncryptionKeyProvider(Reference<AsyncVar<ServerDBInfo> const> db, EncryptionAtRestMode encryptionMode)
-	  : db(db), encryptionMode(encryptionMode) {
+	  : db(db),
+	    encryptionMode(encryptionMode) {
 		ASSERT(encryptionMode != EncryptionAtRestMode::DISABLED);
 		ASSERT(db.isValid());
 	}

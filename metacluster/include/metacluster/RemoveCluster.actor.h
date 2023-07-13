@@ -70,7 +70,10 @@ struct RemoveClusterImpl {
 	  : ctx(db,
 	        Optional<ClusterName>(),
 	        { DataClusterState::REGISTERING, DataClusterState::REMOVING, DataClusterState::RESTORING }),
-	    db(db), clusterType(clusterType), clusterName(clusterName), forceRemove(forceRemove),
+	    db(db),
+	    clusterType(clusterType),
+	    clusterName(clusterName),
+	    forceRemove(forceRemove),
 	    dataClusterTimeout(dataClusterTimeout) {}
 
 	// Returns false if the cluster is no longer present, or true if it is present and the removal should proceed.

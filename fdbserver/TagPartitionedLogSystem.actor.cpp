@@ -34,9 +34,14 @@ ACTOR Future<Version> minVersionWhenReady(Future<Void> f, std::vector<Future<TLo
 }
 
 LogSet::LogSet(const TLogSet& tLogSet)
-  : tLogWriteAntiQuorum(tLogSet.tLogWriteAntiQuorum), tLogReplicationFactor(tLogSet.tLogReplicationFactor),
-    tLogLocalities(tLogSet.tLogLocalities), tLogVersion(tLogSet.tLogVersion), tLogPolicy(tLogSet.tLogPolicy),
-    isLocal(tLogSet.isLocal), locality(tLogSet.locality), startVersion(tLogSet.startVersion),
+  : tLogWriteAntiQuorum(tLogSet.tLogWriteAntiQuorum),
+    tLogReplicationFactor(tLogSet.tLogReplicationFactor),
+    tLogLocalities(tLogSet.tLogLocalities),
+    tLogVersion(tLogSet.tLogVersion),
+    tLogPolicy(tLogSet.tLogPolicy),
+    isLocal(tLogSet.isLocal),
+    locality(tLogSet.locality),
+    startVersion(tLogSet.startVersion),
     satelliteTagLocations(tLogSet.satelliteTagLocations) {
 	for (const auto& log : tLogSet.tLogs) {
 		logServers.push_back(makeReference<AsyncVar<OptionalInterface<TLogInterface>>>(log));
@@ -52,9 +57,14 @@ LogSet::LogSet(const TLogSet& tLogSet)
 }
 
 LogSet::LogSet(const CoreTLogSet& coreSet)
-  : tLogWriteAntiQuorum(coreSet.tLogWriteAntiQuorum), tLogReplicationFactor(coreSet.tLogReplicationFactor),
-    tLogLocalities(coreSet.tLogLocalities), tLogVersion(coreSet.tLogVersion), tLogPolicy(coreSet.tLogPolicy),
-    isLocal(coreSet.isLocal), locality(coreSet.locality), startVersion(coreSet.startVersion),
+  : tLogWriteAntiQuorum(coreSet.tLogWriteAntiQuorum),
+    tLogReplicationFactor(coreSet.tLogReplicationFactor),
+    tLogLocalities(coreSet.tLogLocalities),
+    tLogVersion(coreSet.tLogVersion),
+    tLogPolicy(coreSet.tLogPolicy),
+    isLocal(coreSet.isLocal),
+    locality(coreSet.locality),
+    startVersion(coreSet.startVersion),
     satelliteTagLocations(coreSet.satelliteTagLocations) {
 	for (const auto& log : coreSet.tLogs) {
 		logServers.push_back(
@@ -66,9 +76,15 @@ LogSet::LogSet(const CoreTLogSet& coreSet)
 }
 
 TLogSet::TLogSet(const LogSet& rhs)
-  : tLogWriteAntiQuorum(rhs.tLogWriteAntiQuorum), tLogReplicationFactor(rhs.tLogReplicationFactor),
-    tLogLocalities(rhs.tLogLocalities), tLogVersion(rhs.tLogVersion), tLogPolicy(rhs.tLogPolicy), isLocal(rhs.isLocal),
-    locality(rhs.locality), startVersion(rhs.startVersion), satelliteTagLocations(rhs.satelliteTagLocations) {
+  : tLogWriteAntiQuorum(rhs.tLogWriteAntiQuorum),
+    tLogReplicationFactor(rhs.tLogReplicationFactor),
+    tLogLocalities(rhs.tLogLocalities),
+    tLogVersion(rhs.tLogVersion),
+    tLogPolicy(rhs.tLogPolicy),
+    isLocal(rhs.isLocal),
+    locality(rhs.locality),
+    startVersion(rhs.startVersion),
+    satelliteTagLocations(rhs.satelliteTagLocations) {
 	for (const auto& tlog : rhs.logServers) {
 		tLogs.push_back(tlog->get());
 	}
@@ -81,17 +97,26 @@ TLogSet::TLogSet(const LogSet& rhs)
 }
 
 OldTLogConf::OldTLogConf(const OldLogData& oldLogData)
-  : epochBegin(oldLogData.epochBegin), epochEnd(oldLogData.epochEnd), logRouterTags(oldLogData.logRouterTags),
-    txsTags(oldLogData.txsTags), pseudoLocalities(oldLogData.pseudoLocalities), epoch(oldLogData.epoch) {
+  : epochBegin(oldLogData.epochBegin),
+    epochEnd(oldLogData.epochEnd),
+    logRouterTags(oldLogData.logRouterTags),
+    txsTags(oldLogData.txsTags),
+    pseudoLocalities(oldLogData.pseudoLocalities),
+    epoch(oldLogData.epoch) {
 	for (const Reference<LogSet>& logSet : oldLogData.tLogs) {
 		tLogs.emplace_back(*logSet);
 	}
 }
 
 CoreTLogSet::CoreTLogSet(const LogSet& logset)
-  : tLogWriteAntiQuorum(logset.tLogWriteAntiQuorum), tLogReplicationFactor(logset.tLogReplicationFactor),
-    tLogLocalities(logset.tLogLocalities), tLogPolicy(logset.tLogPolicy), isLocal(logset.isLocal),
-    locality(logset.locality), startVersion(logset.startVersion), satelliteTagLocations(logset.satelliteTagLocations),
+  : tLogWriteAntiQuorum(logset.tLogWriteAntiQuorum),
+    tLogReplicationFactor(logset.tLogReplicationFactor),
+    tLogLocalities(logset.tLogLocalities),
+    tLogPolicy(logset.tLogPolicy),
+    isLocal(logset.isLocal),
+    locality(logset.locality),
+    startVersion(logset.startVersion),
+    satelliteTagLocations(logset.satelliteTagLocations),
     tLogVersion(logset.tLogVersion) {
 	for (const auto& log : logset.logServers) {
 		tLogs.push_back(log->get().id());
@@ -100,8 +125,12 @@ CoreTLogSet::CoreTLogSet(const LogSet& logset)
 }
 
 OldTLogCoreData::OldTLogCoreData(const OldLogData& oldData)
-  : logRouterTags(oldData.logRouterTags), txsTags(oldData.txsTags), epochBegin(oldData.epochBegin),
-    epochEnd(oldData.epochEnd), pseudoLocalities(oldData.pseudoLocalities), epoch(oldData.epoch) {
+  : logRouterTags(oldData.logRouterTags),
+    txsTags(oldData.txsTags),
+    epochBegin(oldData.epochBegin),
+    epochEnd(oldData.epochEnd),
+    pseudoLocalities(oldData.pseudoLocalities),
+    epoch(oldData.epoch) {
 	for (const Reference<LogSet>& logSet : oldData.tLogs) {
 		if (logSet->logServers.size()) {
 			tLogs.emplace_back(*logSet);

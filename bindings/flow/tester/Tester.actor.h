@@ -106,7 +106,10 @@ struct InstructionData : public ReferenceCounted<InstructionData> {
 	Reference<FDB::Transaction> tr;
 
 	InstructionData(bool _isDatabase, bool _isSnapshot, StringRef _instruction, Reference<FDB::Transaction> _tr)
-	  : isDatabase(_isDatabase), isSnapshot(_isSnapshot), instruction(_instruction), tr(_tr) {}
+	  : isDatabase(_isDatabase),
+	    isSnapshot(_isSnapshot),
+	    instruction(_instruction),
+	    tr(_tr) {}
 };
 
 struct FlowTesterData;
@@ -138,7 +141,8 @@ struct DirectoryOrSubspace {
 	DirectoryOrSubspace(Reference<FDB::IDirectory> directory) : directory(directory) {}
 	DirectoryOrSubspace(FDB::Subspace* subspace) : subspace(subspace) {}
 	DirectoryOrSubspace(Reference<FDB::DirectorySubspace> dirSubspace)
-	  : directory(dirSubspace), subspace(dirSubspace.getPtr()) {}
+	  : directory(dirSubspace),
+	    subspace(dirSubspace.getPtr()) {}
 
 	bool valid() { return directory.present() || subspace.present(); }
 

@@ -38,7 +38,10 @@ struct BackgroundSelectorWorkload : TestWorkload {
 	PerfIntCounter operations, checks, retries;
 
 	BackgroundSelectorWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), operations("Operations"), checks("Checks"), retries("Retries") {
+	  : TestWorkload(wcx),
+	    operations("Operations"),
+	    checks("Checks"),
+	    retries("Retries") {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		actorsPerClient = std::max(getOption(options, "actorsPerClient"_sr, 1), 1);
 		maxDiff = std::max(getOption(options, "maxDiff"_sr, 100), 2);

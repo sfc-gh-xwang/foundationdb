@@ -62,7 +62,9 @@ public:
 
 	struct Part : ReferenceCounted<Part> {
 		Part(int n, int minSize)
-		  : number(n), writer(content.getWriteBuffer(minSize), nullptr, Unversioned()), length(0) {
+		  : number(n),
+		    writer(content.getWriteBuffer(minSize), nullptr, Unversioned()),
+		    length(0) {
 			etag = std::string();
 			::MD5_Init(&content_md5_buf);
 		}
@@ -252,7 +254,10 @@ private:
 
 public:
 	AsyncFileS3BlobStoreWrite(Reference<S3BlobStoreEndpoint> bstore, std::string bucket, std::string object)
-	  : m_bstore(bstore), m_bucket(bucket), m_object(object), m_cursor(0),
+	  : m_bstore(bstore),
+	    m_bucket(bucket),
+	    m_object(object),
+	    m_cursor(0),
 	    m_concurrentUploads(bstore->knobs.concurrent_writes_per_file) {
 
 		// Add first part
@@ -294,7 +299,9 @@ public:
 	mutable Future<int64_t> m_size;
 
 	AsyncFileS3BlobStoreRead(Reference<S3BlobStoreEndpoint> bstore, std::string bucket, std::string object)
-	  : m_bstore(bstore), m_bucket(bucket), m_object(object) {}
+	  : m_bstore(bstore),
+	    m_bucket(bucket),
+	    m_object(object) {}
 };
 
 #include "flow/unactorcompiler.h"

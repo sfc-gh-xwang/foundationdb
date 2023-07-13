@@ -93,7 +93,9 @@ bool PolicyOne::validate(std::vector<LocalityEntry> const& solutionSet,
 }
 
 PolicyAcross::PolicyAcross(int count, std::string const& attribKey, Reference<IReplicationPolicy> const policy)
-  : _count(count), _attribKey(attribKey), _policy(policy) {
+  : _count(count),
+    _attribKey(attribKey),
+    _policy(policy) {
 	return;
 }
 

@@ -182,12 +182,31 @@ struct SystemStatistics {
 	int64_t machineAvailableRAM;
 
 	SystemStatistics()
-	  : initialized(false), elapsed(0), processCPUSeconds(0), mainThreadCPUSeconds(0), processMemory(0),
-	    processResidentMemory(0), processDiskTotalBytes(0), processDiskFreeBytes(0), processDiskQueueDepth(0),
-	    processDiskIdleSeconds(0), processDiskReadSeconds(0), processDiskWriteSeconds(0), processDiskRead(0),
-	    processDiskWrite(0), processDiskReadCount(0), processDiskWriteCount(0), processDiskWriteSectors(0),
-	    processDiskReadSectors(0), machineMegabitsSent(0), machineMegabitsReceived(0), machineOutSegs(0),
-	    machineRetransSegs(0), machineCPUSeconds(0), machineTotalRAM(0), machineCommittedRAM(0),
+	  : initialized(false),
+	    elapsed(0),
+	    processCPUSeconds(0),
+	    mainThreadCPUSeconds(0),
+	    processMemory(0),
+	    processResidentMemory(0),
+	    processDiskTotalBytes(0),
+	    processDiskFreeBytes(0),
+	    processDiskQueueDepth(0),
+	    processDiskIdleSeconds(0),
+	    processDiskReadSeconds(0),
+	    processDiskWriteSeconds(0),
+	    processDiskRead(0),
+	    processDiskWrite(0),
+	    processDiskReadCount(0),
+	    processDiskWriteCount(0),
+	    processDiskWriteSectors(0),
+	    processDiskReadSectors(0),
+	    machineMegabitsSent(0),
+	    machineMegabitsReceived(0),
+	    machineOutSegs(0),
+	    machineRetransSegs(0),
+	    machineCPUSeconds(0),
+	    machineTotalRAM(0),
+	    machineCommittedRAM(0),
 	    machineAvailableRAM(0) {}
 };
 

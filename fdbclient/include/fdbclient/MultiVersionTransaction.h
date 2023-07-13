@@ -794,7 +794,9 @@ struct ClientDesc {
 	bool const useFutureVersion;
 
 	ClientDesc(std::string libPath, bool external, bool useFutureVersion)
-	  : libPath(libPath), external(external), useFutureVersion(useFutureVersion) {}
+	  : libPath(libPath),
+	    external(external),
+	    useFutureVersion(useFutureVersion) {}
 };
 
 struct ClientInfo : ClientDesc, ThreadSafeReferenceCounted<ClientInfo> {
@@ -807,13 +809,25 @@ struct ClientInfo : ClientDesc, ThreadSafeReferenceCounted<ClientInfo> {
 	std::vector<std::pair<void (*)(void*), void*>> threadCompletionHooks;
 
 	ClientInfo()
-	  : ClientDesc(std::string(), false, false), protocolVersion(0), api(nullptr), failed(true), initialized(false),
+	  : ClientDesc(std::string(), false, false),
+	    protocolVersion(0),
+	    api(nullptr),
+	    failed(true),
+	    initialized(false),
 	    threadIndex(0) {}
 	ClientInfo(IClientApi* api)
-	  : ClientDesc("internal", false, false), protocolVersion(0), api(api), failed(false), initialized(false),
+	  : ClientDesc("internal", false, false),
+	    protocolVersion(0),
+	    api(api),
+	    failed(false),
+	    initialized(false),
 	    threadIndex(0) {}
 	ClientInfo(IClientApi* api, std::string libPath, bool useFutureVersion, int threadIndex)
-	  : ClientDesc(libPath, true, useFutureVersion), protocolVersion(0), api(api), failed(false), initialized(false),
+	  : ClientDesc(libPath, true, useFutureVersion),
+	    protocolVersion(0),
+	    api(api),
+	    failed(false),
+	    initialized(false),
 	    threadIndex(threadIndex) {}
 
 	void loadVersion();

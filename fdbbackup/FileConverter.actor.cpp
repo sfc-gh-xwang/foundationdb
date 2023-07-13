@@ -147,7 +147,9 @@ struct VersionedData {
 
 struct MutationFilesReadProgress : public ReferenceCounted<MutationFilesReadProgress> {
 	MutationFilesReadProgress(std::vector<LogFile>& logs, Version begin, Version end)
-	  : files(logs), beginVersion(begin), endVersion(end) {}
+	  : files(logs),
+	    beginVersion(begin),
+	    endVersion(end) {}
 
 	struct FileProgress : public ReferenceCounted<FileProgress> {
 		FileProgress(Reference<IAsyncFile> f, int index) : fd(f), idx(index), offset(0), eof(false) {}
