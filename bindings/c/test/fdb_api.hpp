@@ -1146,6 +1146,8 @@ public:
 			throw std::runtime_error("waitPurgeGranulesComplete() from null tenant");
 		return native::fdb_tenant_wait_purge_granules_complete(tenant.get(), purgeKey.data(), intSize(purgeKey));
 	}
+
+	TypedFuture<future_var::KeyRef> getClientStatus() { return native::fdb_tenant_get_client_status(tenant.get()); }
 };
 
 class Database : public IDatabaseOps {

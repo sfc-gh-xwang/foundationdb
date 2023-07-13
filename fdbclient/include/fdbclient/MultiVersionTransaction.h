@@ -252,6 +252,9 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 	                                   int64_t version);
 
 	FDBFuture* (*tenantGetId)(FDBTenant* tenant);
+
+	FDBFuture* (*tenantGetClientStatus)(FDBTenant* tenant);
+
 	void (*tenantDestroy)(FDBTenant* tenant);
 
 	// Transaction
@@ -526,6 +529,9 @@ public:
 
 	ThreadFuture<Version> verifyBlobRange(const KeyRangeRef& keyRange, Optional<Version> version) override;
 	ThreadFuture<bool> flushBlobRange(const KeyRangeRef& keyRange, bool compact, Optional<Version> version) override;
+
+	// Return a JSON string containing tenant client-side status information
+	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
 	void addref() override { ThreadSafeReferenceCounted<DLTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<DLTenant>::delref(); }
@@ -844,6 +850,9 @@ public:
 
 	void addref() override { ThreadSafeReferenceCounted<MultiVersionTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<MultiVersionTenant>::delref(); }
+
+	// Return a JSON string containing tenant client-side status information
+	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
 	// A struct that manages the current connection state of the MultiVersionDatabase. This wraps the underlying
 	// IDatabase object that is currently interacting with the cluster.
