@@ -422,6 +422,16 @@ ThreadFuture<int64_t> DLTransaction::getTotalCost() {
 	});
 }
 
+ThreadFuture<Void> DLTransaction::setExpectedCost(uint64_t value) {
+	if (!api->transactionSetExpectedCost) {
+		return unsupported_operation();
+	}
+
+	FdbCApi::FDBFuture* f = api->transactionSetExpectedCost(tr, value);
+
+	return toThreadFuture<Void>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) { return Void(); });
+}
+
 ThreadFuture<int64_t> DLTransaction::getApproximateSize() {
 	if (!api->transactionGetApproximateSize) {
 		return unsupported_operation();
@@ -1148,6 +1158,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_transaction_get_total_cost",
 	                   headerVersion >= ApiVersion::withGetTotalCost().version());
+	loadClientFunction(&api->transactionSetExpectedCost,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_transaction_set_expected_cost",
+	                   headerVersion >= ApiVersion::withSetExpectedCost().version());
 	loadClientFunction(&api->transactionGetApproximateSize,
 	                   lib,
 	                   fdbCPath,
@@ -1681,6 +1696,10 @@ ThreadFuture<double> MultiVersionTransaction::getTagThrottledDuration() {
 
 ThreadFuture<int64_t> MultiVersionTransaction::getTotalCost() {
 	return executeOperation(&ITransaction::getTotalCost);
+}
+
+ThreadFuture<Void> MultiVersionTransaction::setExpectedCost(uint64_t value) {
+	return executeOperation(&ITransaction::setExpectedCost, std::move(value));
 }
 
 ThreadFuture<int64_t> MultiVersionTransaction::getApproximateSize() {

@@ -103,6 +103,7 @@ public:
 	virtual SpanContext getSpanContext() const = 0;
 	virtual double getTagThrottledDuration() const = 0;
 	virtual int64_t getTotalCost() const = 0;
+	virtual void setExpectedCost(uint64_t value) = 0;
 	virtual int64_t getApproximateSize() const = 0;
 	virtual Future<Standalone<StringRef>> getVersionstamp() = 0;
 	virtual void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) = 0;

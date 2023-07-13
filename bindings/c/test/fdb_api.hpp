@@ -74,14 +74,14 @@ struct MappedKeyValueRef : native::FDBMappedKeyValue {
 		return ValueRef(native::FDBMappedKeyValue::value.key, native::FDBMappedKeyValue::value.key_length);
 	}
 	KeyRef rangeBeginKey() const noexcept {
-		return KeyRef(native::FDBMappedKeyValue::getRange.begin.key.key, native::FDBMappedKeyValue::getRange.begin.key.key_length);
+		return KeyRef(native::FDBMappedKeyValue::getRange.begin.key.key,
+		              native::FDBMappedKeyValue::getRange.begin.key.key_length);
 	}
 	KeyRef rangeEndKey() const noexcept {
-		return KeyRef(native::FDBMappedKeyValue::getRange.end.key.key, native::FDBMappedKeyValue::getRange.end.key.key_length);
+		return KeyRef(native::FDBMappedKeyValue::getRange.end.key.key,
+		              native::FDBMappedKeyValue::getRange.end.key.key_length);
 	}
-	int rangeSize() const noexcept {
-		return native::FDBMappedKeyValue::getRange.m_size;
-	}
+	int rangeSize() const noexcept { return native::FDBMappedKeyValue::getRange.m_size; }
 	KeyValueRef rangeKeyValue(int i) const noexcept {
 		return (KeyValueRef&)native::FDBMappedKeyValue::getRange.data[i];
 	}
@@ -971,6 +971,10 @@ public:
 	}
 
 	TypedFuture<future_var::Int64> getTotalCost() const { return native::fdb_transaction_get_total_cost(tr.get()); }
+
+	TypedFuture<future_var::None> setExpectedCost(uint64_t value) {
+		return native::fdb_transaction_set_expected_cost(tr.get(), value);
+	}
 
 	TypedFuture<future_var::Double> getTagThrottledDuration() const {
 		return native::fdb_transaction_get_tag_throttled_duration(tr.get());

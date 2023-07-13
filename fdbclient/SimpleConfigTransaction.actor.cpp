@@ -304,6 +304,10 @@ int64_t SimpleConfigTransaction::getTotalCost() const {
 	return 0;
 }
 
+void SimpleConfigTransaction::setExpectedCost(uint64_t value) {
+	(void)value;
+}
+
 int64_t SimpleConfigTransaction::getApproximateSize() const {
 	return impl->getApproximateSize();
 }

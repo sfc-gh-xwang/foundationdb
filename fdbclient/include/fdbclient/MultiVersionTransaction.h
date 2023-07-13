@@ -360,6 +360,7 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 	fdb_error_t (*transactionGetCommittedVersion)(FDBTransaction* tr, int64_t* outVersion);
 	FDBFuture* (*transactionGetTagThrottledDuration)(FDBTransaction* tr);
 	FDBFuture* (*transactionGetTotalCost)(FDBTransaction* tr);
+	FDBFuture* (*transactionSetExpectedCost)(FDBTransaction* tr, uint64_t value);
 	FDBFuture* (*transactionGetApproximateSize)(FDBTransaction* tr);
 	FDBFuture* (*transactionWatch)(FDBTransaction* tr, uint8_t const* keyName, int keyNameLength);
 	FDBFuture* (*transactionOnError)(FDBTransaction* tr, fdb_error_t error);
@@ -479,6 +480,7 @@ public:
 	ThreadFuture<SpanContext> getSpanContext() override { return SpanContext(); };
 	ThreadFuture<double> getTagThrottledDuration() override;
 	ThreadFuture<int64_t> getTotalCost() override;
+	ThreadFuture<Void> setExpectedCost(uint64_t value) override;
 	ThreadFuture<int64_t> getApproximateSize() override;
 
 	void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) override;
@@ -711,6 +713,7 @@ public:
 	ThreadFuture<SpanContext> getSpanContext() override;
 	ThreadFuture<double> getTagThrottledDuration() override;
 	ThreadFuture<int64_t> getTotalCost() override;
+	ThreadFuture<Void> setExpectedCost(uint64_t value) override;
 	ThreadFuture<int64_t> getApproximateSize() override;
 
 	void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) override;

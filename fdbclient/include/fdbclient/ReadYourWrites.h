@@ -153,6 +153,7 @@ public:
 
 	double getTagThrottledDuration() const override { return tr.getTagThrottledDuration(); }
 	int64_t getTotalCost() const override { return tr.getTotalCost(); }
+	void setExpectedCost(uint64_t value) override { tr.setExpectedTransactionCost(value); }
 	int64_t getApproximateSize() const override { return approximateSize; }
 	[[nodiscard]] Future<Standalone<StringRef>> getVersionstamp() override;
 
