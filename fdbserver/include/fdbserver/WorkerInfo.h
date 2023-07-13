@@ -118,18 +118,18 @@ struct RecruitmentInfo {
 	    maxOldLogRouters(maxOldLogRouters) {}
 };
 
-// Stores the interfaces for all the workers required for a functioning
-// transaction subsystem.
+// Stores details about all the workers required for a functioning transaction
+// subsystem.
 struct WorkerRecruitment {
-	std::vector<WorkerInterface> grvProxies;
-	std::vector<WorkerInterface> commitProxies;
-	std::vector<WorkerInterface> resolvers;
-	std::vector<WorkerInterface> tLogs;
-	std::vector<WorkerInterface> satelliteTLogs;
-	std::vector<WorkerInterface> storageServers;
+	std::vector<WorkerDetails> grvProxies;
+	std::vector<WorkerDetails> commitProxies;
+	std::vector<WorkerDetails> resolvers;
+	std::vector<WorkerDetails> tLogs;
+	std::vector<WorkerDetails> satelliteTLogs;
+	std::vector<WorkerDetails> storageServers;
 	// During recovery, log routers for older generations will be recruited.
-	std::vector<WorkerInterface> oldLogRouters;
-	std::vector<WorkerInterface> backupWorkers;
+	std::vector<WorkerDetails> oldLogRouters;
+	std::vector<WorkerDetails> backupWorkers;
 	// dcId is where the master is recruited. It prefers to be in
 	// configuration.primaryDcId, but it can be recruited from
 	// configuration.secondaryDc: The dcId will be the secondaryDcId and this
@@ -169,7 +169,7 @@ struct RemoteRecruitmentInfo {
 };
 
 struct RemoteWorkerRecruitment {
-	std::vector<WorkerInterface> remoteTLogs;
-	std::vector<WorkerInterface> logRouters;
+	std::vector<WorkerDetails> remoteTLogs;
+	std::vector<WorkerDetails> logRouters;
 	Optional<UID> dbgId;
 };

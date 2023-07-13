@@ -2375,7 +2375,7 @@ ACTOR Future<Void> TagPartitionedLogSystem::epochEnd(Reference<AsyncVar<Referenc
 }
 
 ACTOR Future<Void> TagPartitionedLogSystem::recruitOldLogRouters(TagPartitionedLogSystem* self,
-                                                                 std::vector<WorkerInterface> workers,
+                                                                 std::vector<WorkerDetails> workers,
                                                                  LogEpoch recoveryCount,
                                                                  int8_t locality,
                                                                  Version startVersion,
@@ -2430,7 +2430,7 @@ ACTOR Future<Void> TagPartitionedLogSystem::recruitOldLogRouters(TagPartitionedL
 					req.tLogPolicy = tLogPolicy;
 					req.locality = locality;
 					auto reply = transformErrors(
-					    throwErrorOr(workers[nextRouter].logRouter.getReplyUnlessFailedFor(
+					    throwErrorOr(workers[nextRouter].interf.logRouter.getReplyUnlessFailedFor(
 					        req, SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 					    cluster_recovery_failed());
 					logRouterInitializationReplies.back().push_back(reply);
@@ -2479,7 +2479,7 @@ ACTOR Future<Void> TagPartitionedLogSystem::recruitOldLogRouters(TagPartitionedL
 					req.tLogPolicy = tLogPolicy;
 					req.locality = locality;
 					auto reply = transformErrors(
-					    throwErrorOr(workers[nextRouter].logRouter.getReplyUnlessFailedFor(
+					    throwErrorOr(workers[nextRouter].interf.logRouter.getReplyUnlessFailedFor(
 					        req, SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 					    cluster_recovery_failed());
 					logRouterInitializationReplies.back().push_back(reply);
@@ -2610,7 +2610,7 @@ ACTOR Future<Void> TagPartitionedLogSystem::newRemoteEpoch(TagPartitionedLogSyst
 	std::vector<LocalityData> localities;
 	localities.resize(remoteWorkers.remoteTLogs.size());
 	for (int i = 0; i < remoteWorkers.remoteTLogs.size(); i++) {
-		localities[i] = remoteWorkers.remoteTLogs[i].locality;
+		localities[i] = remoteWorkers.remoteTLogs[i].interf.locality;
 	}
 
 	state Future<Void> oldRouterRecruitment = Void();
@@ -2639,10 +2639,10 @@ ACTOR Future<Void> TagPartitionedLogSystem::newRemoteEpoch(TagPartitionedLogSyst
 		req.tLogPolicy = logSet->tLogPolicy;
 		req.locality = remoteLocality;
 		TraceEvent("RemoteTLogRouterReplies", self->dbgid)
-		    .detail("WorkerID", remoteWorkers.logRouters[i % remoteWorkers.logRouters.size()].id());
+		    .detail("WorkerID", remoteWorkers.logRouters[i % remoteWorkers.logRouters.size()].interf.id());
 		logRouterInitializationReplies.push_back(transformErrors(
 		    throwErrorOr(
-		        remoteWorkers.logRouters[i % remoteWorkers.logRouters.size()].logRouter.getReplyUnlessFailedFor(
+		        remoteWorkers.logRouters[i % remoteWorkers.logRouters.size()].interf.logRouter.getReplyUnlessFailedFor(
 		            req, SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 		    cluster_recovery_failed()));
 	}
@@ -2719,9 +2719,9 @@ ACTOR Future<Void> TagPartitionedLogSystem::newRemoteEpoch(TagPartitionedLogSyst
 
 	remoteTLogInitializationReplies.reserve(remoteWorkers.remoteTLogs.size());
 	for (int i = 0; i < remoteWorkers.remoteTLogs.size(); i++) {
-		TraceEvent("RemoteTLogReplies", self->dbgid).detail("WorkerID", remoteWorkers.remoteTLogs[i].id());
+		TraceEvent("RemoteTLogReplies", self->dbgid).detail("WorkerID", remoteWorkers.remoteTLogs[i].interf.id());
 		remoteTLogInitializationReplies.push_back(transformErrors(
-		    throwErrorOr(remoteWorkers.remoteTLogs[i].tLog.getReplyUnlessFailedFor(
+		    throwErrorOr(remoteWorkers.remoteTLogs[i].interf.tLog.getReplyUnlessFailedFor(
 		        remoteTLogReqs[i], SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 		    cluster_recovery_failed()));
 	}
@@ -2741,7 +2741,7 @@ ACTOR Future<Void> TagPartitionedLogSystem::newRemoteEpoch(TagPartitionedLogSyst
 	for (int i = 0; i < remoteTLogInitializationReplies.size(); i++) {
 		logSet->logServers[i] = makeReference<AsyncVar<OptionalInterface<TLogInterface>>>(
 		    OptionalInterface<TLogInterface>(remoteTLogInitializationReplies[i].get()));
-		logSet->tLogLocalities[i] = remoteWorkers.remoteTLogs[i].locality;
+		logSet->tLogLocalities[i] = remoteWorkers.remoteTLogs[i].interf.locality;
 	}
 	filterLocalityDataForPolicy(logSet->tLogPolicy, &logSet->tLogLocalities);
 
@@ -2838,7 +2838,7 @@ ACTOR Future<Reference<ILogSystem>> TagPartitionedLogSystem::newEpoch(Reference<
 
 		logSystem->tLogs[1]->tLogLocalities.resize(recr.satelliteTLogs.size());
 		for (int i = 0; i < recr.satelliteTLogs.size(); i++) {
-			logSystem->tLogs[1]->tLogLocalities[i] = recr.satelliteTLogs[i].locality;
+			logSystem->tLogs[1]->tLogLocalities[i] = recr.satelliteTLogs[i].interf.locality;
 		}
 		filterLocalityDataForPolicy(logSystem->tLogs[1]->tLogPolicy, &logSystem->tLogs[1]->tLogLocalities);
 
@@ -2893,7 +2893,7 @@ ACTOR Future<Reference<ILogSystem>> TagPartitionedLogSystem::newEpoch(Reference<
 	std::vector<LocalityData> localities;
 	localities.resize(recr.tLogs.size());
 	for (int i = 0; i < recr.tLogs.size(); i++) {
-		localities[i] = recr.tLogs[i].locality;
+		localities[i] = recr.tLogs[i].interf.locality;
 	}
 
 	state Future<Void> oldRouterRecruitment = Never();
@@ -2991,9 +2991,9 @@ ACTOR Future<Reference<ILogSystem>> TagPartitionedLogSystem::newEpoch(Reference<
 
 	initializationReplies.reserve(recr.tLogs.size());
 	for (int i = 0; i < recr.tLogs.size(); i++) {
-		TraceEvent("PrimaryTLogReplies", logSystem->getDebugID()).detail("WorkerID", recr.tLogs[i].id());
+		TraceEvent("PrimaryTLogReplies", logSystem->getDebugID()).detail("WorkerID", recr.tLogs[i].interf.id());
 		initializationReplies.push_back(transformErrors(
-		    throwErrorOr(recr.tLogs[i].tLog.getReplyUnlessFailedFor(
+		    throwErrorOr(recr.tLogs[i].interf.tLog.getReplyUnlessFailedFor(
 		        reqs[i], SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 		    cluster_recovery_failed()));
 	}
@@ -3061,9 +3061,9 @@ ACTOR Future<Reference<ILogSystem>> TagPartitionedLogSystem::newEpoch(Reference<
 		satelliteInitializationReplies.reserve(recr.satelliteTLogs.size());
 		for (int i = 0; i < recr.satelliteTLogs.size(); i++) {
 			TraceEvent("PrimarySatelliteTLogReplies", logSystem->getDebugID())
-			    .detail("WorkerID", recr.satelliteTLogs[i].id());
+			    .detail("WorkerID", recr.satelliteTLogs[i].interf.id());
 			satelliteInitializationReplies.push_back(transformErrors(
-			    throwErrorOr(recr.satelliteTLogs[i].tLog.getReplyUnlessFailedFor(
+			    throwErrorOr(recr.satelliteTLogs[i].interf.tLog.getReplyUnlessFailedFor(
 			        sreqs[i], SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 			    cluster_recovery_failed()));
 		}
@@ -3092,7 +3092,7 @@ ACTOR Future<Reference<ILogSystem>> TagPartitionedLogSystem::newEpoch(Reference<
 	for (int i = 0; i < initializationReplies.size(); i++) {
 		logSystem->tLogs[0]->logServers[i] = makeReference<AsyncVar<OptionalInterface<TLogInterface>>>(
 		    OptionalInterface<TLogInterface>(initializationReplies[i].get()));
-		logSystem->tLogs[0]->tLogLocalities[i] = recr.tLogs[i].locality;
+		logSystem->tLogs[0]->tLogLocalities[i] = recr.tLogs[i].interf.locality;
 	}
 	filterLocalityDataForPolicy(logSystem->tLogs[0]->tLogPolicy, &logSystem->tLogs[0]->tLogLocalities);
 

@@ -240,7 +240,7 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 	int8_t safeLocality;
 	int8_t primaryLocality;
 
-	std::vector<WorkerInterface> backupWorkers; // Recruited backup workers from cluster controller.
+	std::vector<WorkerDetails> backupWorkers; // Recruited backup workers from cluster controller.
 
 	CounterCollection cc;
 	Counter changeCoordinatorsRequests;
