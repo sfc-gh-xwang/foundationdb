@@ -75,7 +75,10 @@ struct AsyncFileCorrectnessWorkload : public AsyncFileWorkload {
 	PerfIntCounter numOperations;
 
 	AsyncFileCorrectnessWorkload(WorkloadContext const& wcx)
-	  : AsyncFileWorkload(wcx), memoryFile(nullptr), success(true), numOperations("Num Operations") {
+	  : AsyncFileWorkload(wcx),
+	    memoryFile(nullptr),
+	    success(true),
+	    numOperations("Num Operations") {
 		maxOperationSize = getOption(options, "maxOperationSize"_sr, 4096);
 		numSimultaneousOperations = getOption(options, "numSimultaneousOperations"_sr, 10);
 		targetFileSize = getOption(options, "targetFileSize"_sr, (uint64_t)163840);

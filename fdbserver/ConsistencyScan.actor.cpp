@@ -66,10 +66,15 @@ struct ConsistencyScanStats {
 	int targetRate = 0;
 
 	explicit ConsistencyScanStats(UID id, double interval)
-	  : cc("ConsistencyScanStats", id.toString()), logicalBytesScanned("LogicalBytesScanned", cc),
-	    replicatedBytesRead("ReplicatedBytesRead", cc), requests("Requests", cc), failedRequests("FailedRequests", cc),
-	    scanLoops("ScanLoops", cc), inconsistencies("Inconsistencies", cc),
-	    databasePollSuccesses("DatabasePollSuccesses", cc), databasePollErrors("DatabasePollErrors", cc) {
+	  : cc("ConsistencyScanStats", id.toString()),
+	    logicalBytesScanned("LogicalBytesScanned", cc),
+	    replicatedBytesRead("ReplicatedBytesRead", cc),
+	    requests("Requests", cc),
+	    failedRequests("FailedRequests", cc),
+	    scanLoops("ScanLoops", cc),
+	    inconsistencies("Inconsistencies", cc),
+	    databasePollSuccesses("DatabasePollSuccesses", cc),
+	    databasePollErrors("DatabasePollErrors", cc) {
 		specialCounter(cc, "WaitingBetweenRounds", [this]() { return this->waitingBetweenRounds; });
 		specialCounter(cc, "TargetRate", [this]() { return this->targetRate; });
 		logger = cc.traceCounters("ConsistencyScanMetrics", id, interval, "ConsistencyScanMetrics");
@@ -85,7 +90,9 @@ struct ConsistencyScanMemoryState : public ReferenceCounted<ConsistencyScanMemor
 	ConsistencyScanStats stats;
 
 	explicit ConsistencyScanMemoryState(Reference<AsyncVar<ServerDBInfo> const> dbInfo, UID csId)
-	  : csId(csId), dbInfo(dbInfo), stats(csId, SERVER_KNOBS->WORKER_LOGGING_INTERVAL) {}
+	  : csId(csId),
+	    dbInfo(dbInfo),
+	    stats(csId, SERVER_KNOBS->WORKER_LOGGING_INTERVAL) {}
 };
 
 // TODO: test the test and write a canary key that the storage servers intentionally get wrong

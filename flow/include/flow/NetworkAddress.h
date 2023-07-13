@@ -38,13 +38,18 @@ struct NetworkAddress {
 	enum { FLAG_PRIVATE = 1, FLAG_TLS = 2 };
 
 	NetworkAddress()
-	  : ip(IPAddress(0)), port(0), flags(FLAG_PRIVATE), fromHostname(NetworkAddressFromHostname::False) {}
+	  : ip(IPAddress(0)),
+	    port(0),
+	    flags(FLAG_PRIVATE),
+	    fromHostname(NetworkAddressFromHostname::False) {}
 	NetworkAddress(const IPAddress& address,
 	               uint16_t port,
 	               bool isPublic,
 	               bool isTLS,
 	               NetworkAddressFromHostname fromHostname = NetworkAddressFromHostname::False)
-	  : ip(address), port(port), flags((isPublic ? 0 : FLAG_PRIVATE) | (isTLS ? FLAG_TLS : 0)),
+	  : ip(address),
+	    port(port),
+	    flags((isPublic ? 0 : FLAG_PRIVATE) | (isTLS ? FLAG_TLS : 0)),
 	    fromHostname(fromHostname) {}
 	NetworkAddress(uint32_t ip,
 	               uint16_t port,

@@ -32,7 +32,13 @@ struct ITransactor : ReferenceCounted<ITransactor> {
 		int64_t reads, writes, retries, transactions;
 		double totalLatency, grvLatency, rowReadLatency, commitLatency;
 		Stats()
-		  : reads(0), writes(0), retries(0), transactions(0), totalLatency(0), grvLatency(0), rowReadLatency(0),
+		  : reads(0),
+		    writes(0),
+		    retries(0),
+		    transactions(0),
+		    totalLatency(0),
+		    grvLatency(0),
+		    rowReadLatency(0),
 		    commitLatency(0) {}
 		void operator+=(Stats const& s) {
 			reads += s.reads;
@@ -57,7 +63,11 @@ struct RWTransactor : ITransactor {
 	int keyCount, keyBytes;
 
 	RWTransactor(int reads, int writes, int keyCount, int keyBytes, int minValueBytes, int maxValueBytes)
-	  : reads(reads), writes(writes), minValueBytes(minValueBytes), maxValueBytes(maxValueBytes), keyCount(keyCount),
+	  : reads(reads),
+	    writes(writes),
+	    minValueBytes(minValueBytes),
+	    maxValueBytes(maxValueBytes),
+	    keyCount(keyCount),
 	    keyBytes(keyBytes) {
 		ASSERT(minValueBytes <= maxValueBytes);
 		valueString = std::string(maxValueBytes, '.');
@@ -154,7 +164,11 @@ struct SweepTransactor : ITransactor {
 	double duration;
 
 	SweepTransactor(double duration, double startDelay, Reference<ITransactor> a, Reference<ITransactor> b)
-	  : a(a), b(b), startTime(-1), startDelay(startDelay), duration(duration) {}
+	  : a(a),
+	    b(b),
+	    startTime(-1),
+	    startDelay(startDelay),
+	    duration(duration) {}
 
 	Future<Void> doTransaction(Database const& db, Stats* stats) override {
 		if (startTime == -1)
@@ -193,7 +207,12 @@ struct MeasureSinglePeriod : IMeasurer {
 	ITransactor::Stats stats; // totalled over the period
 
 	MeasureSinglePeriod(double delay, double duration)
-	  : delay(delay), duration(duration), totalLatency(), grvLatency(), rowReadLatency(), commitLatency() {}
+	  : delay(delay),
+	    duration(duration),
+	    totalLatency(),
+	    grvLatency(),
+	    rowReadLatency(),
+	    commitLatency() {}
 
 	Future<Void> start() override {
 		startT = now();
@@ -242,7 +261,10 @@ struct MeasurePeriodically : IMeasurer {
 	std::vector<PerfMetric> accumulatedMetrics;
 
 	MeasurePeriodically(double period, std::set<std::string> includeMetrics)
-	  : period(period), includeMetrics(includeMetrics), msp(0, period), msp0(0, period) {}
+	  : period(period),
+	    includeMetrics(includeMetrics),
+	    msp(0, period),
+	    msp0(0, period) {}
 
 	Future<Void> start() override {
 		msp.start();
@@ -307,7 +329,10 @@ struct ThroughputWorkload : TestWorkload {
 	double totalLatencyIntegral, totalTransactionsIntegral, startT;
 
 	ThroughputWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), activeActors(0), totalLatencyIntegral(0), totalTransactionsIntegral(0) {
+	  : TestWorkload(wcx),
+	    activeActors(0),
+	    totalLatencyIntegral(0),
+	    totalTransactionsIntegral(0) {
 		auto multi = makeReference<MeasureMulti>();
 		measurer = multi;
 

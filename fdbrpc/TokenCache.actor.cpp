@@ -145,7 +145,8 @@ struct AuditEntry {
 	Optional<Standalone<StringRef>> tokenId;
 	bool operator==(const AuditEntry& other) const noexcept = default;
 	explicit AuditEntry(NetworkAddress const& address, TenantId tenantId, CacheEntry const& cacheEntry)
-	  : address(address), tenantId(tenantId),
+	  : address(address),
+	    tenantId(tenantId),
 	    tokenId(cacheEntry.tokenId.present() ? Standalone<StringRef>(cacheEntry.tokenId.get(), cacheEntry.arena)
 	                                         : Optional<Standalone<StringRef>>()) {}
 };

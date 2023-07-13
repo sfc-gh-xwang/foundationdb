@@ -32,10 +32,13 @@ struct ClientVersionRef {
 	ClientVersionRef() { initUnknown(); }
 
 	ClientVersionRef(Arena& arena, ClientVersionRef const& cv)
-	  : clientVersion(arena, cv.clientVersion), sourceVersion(arena, cv.sourceVersion),
+	  : clientVersion(arena, cv.clientVersion),
+	    sourceVersion(arena, cv.sourceVersion),
 	    protocolVersion(arena, cv.protocolVersion) {}
 	ClientVersionRef(StringRef clientVersion, StringRef sourceVersion, StringRef protocolVersion)
-	  : clientVersion(clientVersion), sourceVersion(sourceVersion), protocolVersion(protocolVersion) {}
+	  : clientVersion(clientVersion),
+	    sourceVersion(sourceVersion),
+	    protocolVersion(protocolVersion) {}
 	ClientVersionRef(StringRef versionString) {
 		std::vector<StringRef> parts = versionString.splitAny(","_sr);
 		if (parts.size() != 3) {

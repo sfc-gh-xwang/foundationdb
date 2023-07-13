@@ -279,9 +279,17 @@ struct GranuleStatusReply : public ReplyPromiseStreamReply {
 	                            bool mergeCandidate,
 	                            int64_t originalEpoch,
 	                            int64_t originalSeqno)
-	  : granuleRange(range), doSplit(doSplit), writeHotSplit(writeHotSplit), initialSplitTooBig(initialSplitTooBig),
-	    continueEpoch(continueEpoch), continueSeqno(continueSeqno), granuleID(granuleID), startVersion(startVersion),
-	    blockedVersion(blockedVersion), mergeCandidate(mergeCandidate), originalEpoch(originalEpoch),
+	  : granuleRange(range),
+	    doSplit(doSplit),
+	    writeHotSplit(writeHotSplit),
+	    initialSplitTooBig(initialSplitTooBig),
+	    continueEpoch(continueEpoch),
+	    continueSeqno(continueSeqno),
+	    granuleID(granuleID),
+	    startVersion(startVersion),
+	    blockedVersion(blockedVersion),
+	    mergeCandidate(mergeCandidate),
+	    originalEpoch(originalEpoch),
 	    originalSeqno(originalSeqno) {}
 
 	int expectedSize() const {
@@ -351,7 +359,9 @@ struct GranuleAssignmentRef {
 	GranuleAssignmentRef() {}
 
 	explicit GranuleAssignmentRef(KeyRangeRef range, int64_t epochAssigned, int64_t seqnoAssigned)
-	  : range(range), epochAssigned(epochAssigned), seqnoAssigned(seqnoAssigned) {}
+	  : range(range),
+	    epochAssigned(epochAssigned),
+	    seqnoAssigned(seqnoAssigned) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -391,8 +401,10 @@ struct FlushGranuleRequest {
 
 	FlushGranuleRequest() : managerEpoch(-1), flushVersion(invalidVersion), compactAfter(false) {}
 	explicit FlushGranuleRequest(int64_t managerEpoch, KeyRange granuleRange, Version flushVersion, bool compactAfter)
-	  : managerEpoch(managerEpoch), granuleRange(granuleRange), flushVersion(flushVersion), compactAfter(compactAfter) {
-	}
+	  : managerEpoch(managerEpoch),
+	    granuleRange(granuleRange),
+	    flushVersion(flushVersion),
+	    compactAfter(compactAfter) {}
 
 	void setRange(const KeyRangeRef& range) { granuleRange = range; }
 

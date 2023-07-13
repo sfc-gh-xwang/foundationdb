@@ -143,7 +143,10 @@ public:
 };
 
 AsyncFileEncrypted::AsyncFileEncrypted(Reference<IAsyncFile> file, Mode mode)
-  : file(file), mode(mode), readBuffers(FLOW_KNOBS->MAX_DECRYPTED_BLOCKS), currentBlock(0) {
+  : file(file),
+    mode(mode),
+    readBuffers(FLOW_KNOBS->MAX_DECRYPTED_BLOCKS),
+    currentBlock(0) {
 	firstBlockIV = AsyncFileEncryptedImpl::getFirstBlockIV(file->getFilename());
 	if (mode == Mode::APPEND_ONLY) {
 		encryptor =

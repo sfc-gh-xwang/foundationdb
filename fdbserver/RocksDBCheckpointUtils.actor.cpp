@@ -258,7 +258,9 @@ public:
 	class RocksCfCheckpointIterator : public ICheckpointIterator {
 	public:
 		RocksCfCheckpointIterator(RocksDBColumnFamilyReader* reader, const KeyRange& range, const UID& logId)
-		  : reader(reader), range(range), logId(logId) {
+		  : reader(reader),
+		    range(range),
+		    logId(logId) {
 			ASSERT(reader != nullptr);
 			ASSERT(reader->db != nullptr);
 			ASSERT(reader->cf != nullptr);
@@ -341,7 +343,10 @@ private:
 
 		struct ReadRangeAction : TypedAction<Reader, ReadRangeAction>, FastAllocated<ReadRangeAction> {
 			ReadRangeAction(int rowLimit, int byteLimit, RocksCfCheckpointIterator* iterator)
-			  : rowLimit(rowLimit), byteLimit(byteLimit), iterator(iterator), startTime(timer_monotonic()) {}
+			  : rowLimit(rowLimit),
+			    byteLimit(byteLimit),
+			    iterator(iterator),
+			    startTime(timer_monotonic()) {}
 
 			double getTimeEstimate() const override { return SERVER_KNOBS->READ_RANGE_TIME_ESTIMATE; }
 
@@ -397,7 +402,9 @@ Future<RangeResult> RocksDBColumnFamilyReader::RocksCfCheckpointIterator::nextBa
 }
 
 RocksDBColumnFamilyReader::RocksDBColumnFamilyReader(const CheckpointMetaData& checkpoint, UID logId)
-  : logId(logId), checkpoint(checkpoint), numIter(0) {
+  : logId(logId),
+    checkpoint(checkpoint),
+    numIter(0) {
 	if (g_network->isSimulated()) {
 		threads = CoroThreadPool::createThreadPool();
 	} else {
@@ -703,7 +710,8 @@ ACTOR Future<Void> RocksDBColumnFamilyReader::doClose(RocksDBColumnFamilyReader*
 class RocksDBSstFileWriter : public IRocksDBSstFileWriter {
 public:
 	RocksDBSstFileWriter()
-	  : writer(std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions(), rocksdb::Options())), hasData(false){};
+	  : writer(std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions(), rocksdb::Options())),
+	    hasData(false){};
 
 	void open(const std::string localFile) override;
 
@@ -803,7 +811,10 @@ KeyValue RocksDBCheckpointByteSampleReader::next() {
 class RocksDBCFCheckpointReader : public ICheckpointReader {
 public:
 	RocksDBCFCheckpointReader(const CheckpointMetaData& checkpoint, UID logId)
-	  : checkpoint_(checkpoint), id_(logId), file_(Reference<IAsyncFile>()), offset_(0) {}
+	  : checkpoint_(checkpoint),
+	    id_(logId),
+	    file_(Reference<IAsyncFile>()),
+	    offset_(0) {}
 
 	Future<Void> init(StringRef token) override;
 

@@ -53,11 +53,24 @@ ILogSystem::ServerPeekCursor::ServerPeekCursor(Reference<AsyncVar<OptionalInterf
                                                Version end,
                                                bool returnIfBlocked,
                                                bool parallelGetMore)
-  : interf(interf), tag(tag), rd(results.arena, results.messages, Unversioned()), messageVersion(begin), end(end),
-    poppedVersion(0), hasMsg(false), randomID(deterministicRandom()->randomUniqueID()),
-    returnIfBlocked(returnIfBlocked), onlySpilled(false), parallelGetMore(parallelGetMore),
-    usePeekStream(SERVER_KNOBS->PEEK_USING_STREAMING), sequence(0), lastReset(0), resetCheck(Void()), slowReplies(0),
-    fastReplies(0), unknownReplies(0) {
+  : interf(interf),
+    tag(tag),
+    rd(results.arena, results.messages, Unversioned()),
+    messageVersion(begin),
+    end(end),
+    poppedVersion(0),
+    hasMsg(false),
+    randomID(deterministicRandom()->randomUniqueID()),
+    returnIfBlocked(returnIfBlocked),
+    onlySpilled(false),
+    parallelGetMore(parallelGetMore),
+    usePeekStream(SERVER_KNOBS->PEEK_USING_STREAMING),
+    sequence(0),
+    lastReset(0),
+    resetCheck(Void()),
+    slowReplies(0),
+    fastReplies(0),
+    unknownReplies(0) {
 	this->results.maxKnownVersion = 0;
 	this->results.minKnownCommittedVersion = 0;
 	DebugLogTraceEvent(SevDebug, "SPC_Starting", randomID)
@@ -76,11 +89,25 @@ ILogSystem::ServerPeekCursor::ServerPeekCursor(TLogPeekReply const& results,
                                                bool hasMsg,
                                                Version poppedVersion,
                                                Tag tag)
-  : tag(tag), results(results), rd(results.arena, results.messages, Unversioned()), messageVersion(messageVersion),
-    end(end), poppedVersion(poppedVersion), messageAndTags(message), hasMsg(hasMsg),
-    randomID(deterministicRandom()->randomUniqueID()), returnIfBlocked(false), onlySpilled(false),
-    parallelGetMore(false), usePeekStream(false), sequence(0), lastReset(0), resetCheck(Void()), slowReplies(0),
-    fastReplies(0), unknownReplies(0) {
+  : tag(tag),
+    results(results),
+    rd(results.arena, results.messages, Unversioned()),
+    messageVersion(messageVersion),
+    end(end),
+    poppedVersion(poppedVersion),
+    messageAndTags(message),
+    hasMsg(hasMsg),
+    randomID(deterministicRandom()->randomUniqueID()),
+    returnIfBlocked(false),
+    onlySpilled(false),
+    parallelGetMore(false),
+    usePeekStream(false),
+    sequence(0),
+    lastReset(0),
+    resetCheck(Void()),
+    slowReplies(0),
+    fastReplies(0),
+    unknownReplies(0) {
 	//TraceEvent("SPC_Clone", randomID);
 	this->results.maxKnownVersion = 0;
 	this->results.minKnownCommittedVersion = 0;
@@ -556,8 +583,14 @@ Version ILogSystem::ServerPeekCursor::popped() const {
 
 ILogSystem::MergedPeekCursor::MergedPeekCursor(std::vector<Reference<ILogSystem::IPeekCursor>> const& serverCursors,
                                                Version begin)
-  : serverCursors(serverCursors), tag(invalidTag), bestServer(-1), currentCursor(0), readQuorum(serverCursors.size()),
-    messageVersion(begin), hasNextMessage(false), randomID(deterministicRandom()->randomUniqueID()),
+  : serverCursors(serverCursors),
+    tag(invalidTag),
+    bestServer(-1),
+    currentCursor(0),
+    readQuorum(serverCursors.size()),
+    messageVersion(begin),
+    hasNextMessage(false),
+    randomID(deterministicRandom()->randomUniqueID()),
     tLogReplicationFactor(0) {
 	sortedVersions.resize(serverCursors.size());
 }
@@ -573,8 +606,13 @@ ILogSystem::MergedPeekCursor::MergedPeekCursor(
     std::vector<LocalityData> const& tLogLocalities,
     Reference<IReplicationPolicy> const tLogPolicy,
     int tLogReplicationFactor)
-  : tag(tag), bestServer(bestServer), currentCursor(0), readQuorum(readQuorum), messageVersion(begin),
-    hasNextMessage(false), randomID(deterministicRandom()->randomUniqueID()),
+  : tag(tag),
+    bestServer(bestServer),
+    currentCursor(0),
+    readQuorum(readQuorum),
+    messageVersion(begin),
+    hasNextMessage(false),
+    randomID(deterministicRandom()->randomUniqueID()),
     tLogReplicationFactor(tLogReplicationFactor) {
 	if (tLogPolicy) {
 		logSet = makeReference<LogSet>();
@@ -600,9 +638,16 @@ ILogSystem::MergedPeekCursor::MergedPeekCursor(std::vector<Reference<ILogSystem:
                                                Optional<LogMessageVersion> nextVersion,
                                                Reference<LogSet> logSet,
                                                int tLogReplicationFactor)
-  : logSet(logSet), serverCursors(serverCursors), bestServer(bestServer), currentCursor(0), readQuorum(readQuorum),
-    nextVersion(nextVersion), messageVersion(messageVersion), hasNextMessage(false),
-    randomID(deterministicRandom()->randomUniqueID()), tLogReplicationFactor(tLogReplicationFactor) {
+  : logSet(logSet),
+    serverCursors(serverCursors),
+    bestServer(bestServer),
+    currentCursor(0),
+    readQuorum(readQuorum),
+    nextVersion(nextVersion),
+    messageVersion(messageVersion),
+    hasNextMessage(false),
+    randomID(deterministicRandom()->randomUniqueID()),
+    tLogReplicationFactor(tLogReplicationFactor) {
 	sortedVersions.resize(serverCursors.size());
 	calcHasMessage();
 }
@@ -845,8 +890,16 @@ ILogSystem::SetPeekCursor::SetPeekCursor(std::vector<Reference<LogSet>> const& l
                                          Version begin,
                                          Version end,
                                          bool parallelGetMore)
-  : logSets(logSets), tag(tag), bestSet(bestSet), bestServer(bestServer), currentSet(bestSet), currentCursor(0),
-    messageVersion(begin), hasNextMessage(false), useBestSet(true), randomID(deterministicRandom()->randomUniqueID()) {
+  : logSets(logSets),
+    tag(tag),
+    bestSet(bestSet),
+    bestServer(bestServer),
+    currentSet(bestSet),
+    currentCursor(0),
+    messageVersion(begin),
+    hasNextMessage(false),
+    useBestSet(true),
+    randomID(deterministicRandom()->randomUniqueID()) {
 	serverCursors.resize(logSets.size());
 	int maxServers = 0;
 	for (int i = 0; i < logSets.size(); i++) {
@@ -867,9 +920,17 @@ ILogSystem::SetPeekCursor::SetPeekCursor(std::vector<Reference<LogSet>> const& l
                                          int bestServer,
                                          Optional<LogMessageVersion> nextVersion,
                                          bool useBestSet)
-  : logSets(logSets), serverCursors(serverCursors), bestSet(bestSet), bestServer(bestServer), currentSet(bestSet),
-    currentCursor(0), nextVersion(nextVersion), messageVersion(messageVersion), hasNextMessage(false),
-    useBestSet(useBestSet), randomID(deterministicRandom()->randomUniqueID()) {
+  : logSets(logSets),
+    serverCursors(serverCursors),
+    bestSet(bestSet),
+    bestServer(bestServer),
+    currentSet(bestSet),
+    currentCursor(0),
+    nextVersion(nextVersion),
+    messageVersion(messageVersion),
+    hasNextMessage(false),
+    useBestSet(useBestSet),
+    randomID(deterministicRandom()->randomUniqueID()) {
 	int maxServers = 0;
 	for (int i = 0; i < logSets.size(); i++) {
 		maxServers = std::max<int>(maxServers, serverCursors[i].size());
@@ -1200,7 +1261,9 @@ Version ILogSystem::SetPeekCursor::popped() const {
 
 ILogSystem::MultiCursor::MultiCursor(std::vector<Reference<IPeekCursor>> cursors,
                                      std::vector<LogMessageVersion> epochEnds)
-  : cursors(cursors), epochEnds(epochEnds), poppedVersion(0) {
+  : cursors(cursors),
+    epochEnds(epochEnds),
+    poppedVersion(0) {
 	for (int i = 0; i < std::min<int>(cursors.size(), SERVER_KNOBS->MULTI_CURSOR_PRE_FETCH_LIMIT); i++) {
 		cursors[cursors.size() - i - 1]->getMore();
 	}
@@ -1302,9 +1365,19 @@ ILogSystem::BufferedCursor::BufferedCursor(std::vector<Reference<IPeekCursor>> c
                                            bool withTags,
                                            bool collectTags,
                                            bool canDiscardPopped)
-  : cursors(cursors), messageIndex(0), messageVersion(begin), end(end), hasNextMessage(false), withTags(withTags),
-    knownUnique(false), minKnownCommittedVersion(0), poppedVersion(0), initialPoppedVersion(0),
-    canDiscardPopped(canDiscardPopped), randomID(deterministicRandom()->randomUniqueID()), collectTags(collectTags) {
+  : cursors(cursors),
+    messageIndex(0),
+    messageVersion(begin),
+    end(end),
+    hasNextMessage(false),
+    withTags(withTags),
+    knownUnique(false),
+    minKnownCommittedVersion(0),
+    poppedVersion(0),
+    initialPoppedVersion(0),
+    canDiscardPopped(canDiscardPopped),
+    randomID(deterministicRandom()->randomUniqueID()),
+    collectTags(collectTags) {
 	targetQueueSize = SERVER_KNOBS->DESIRED_OUTSTANDING_MESSAGES / cursors.size();
 	messages.reserve(SERVER_KNOBS->DESIRED_OUTSTANDING_MESSAGES);
 	cursorMessages.resize(cursors.size());
@@ -1316,9 +1389,18 @@ ILogSystem::BufferedCursor::BufferedCursor(
     Version begin,
     Version end,
     bool parallelGetMore)
-  : messageIndex(0), messageVersion(begin), end(end), hasNextMessage(false), withTags(true), knownUnique(true),
-    minKnownCommittedVersion(0), poppedVersion(0), initialPoppedVersion(0), canDiscardPopped(false),
-    randomID(deterministicRandom()->randomUniqueID()), collectTags(false) {
+  : messageIndex(0),
+    messageVersion(begin),
+    end(end),
+    hasNextMessage(false),
+    withTags(true),
+    knownUnique(true),
+    minKnownCommittedVersion(0),
+    poppedVersion(0),
+    initialPoppedVersion(0),
+    canDiscardPopped(false),
+    randomID(deterministicRandom()->randomUniqueID()),
+    collectTags(false) {
 	targetQueueSize = SERVER_KNOBS->DESIRED_OUTSTANDING_MESSAGES / logServers.size();
 	messages.reserve(SERVER_KNOBS->DESIRED_OUTSTANDING_MESSAGES);
 	cursorMessages.resize(logServers.size());

@@ -48,7 +48,11 @@ struct CheckpointRequest {
 	                  const CheckpointFormat format,
 	                  const UID& id,
 	                  const std::string& checkpointDir)
-	  : version(version), ranges(ranges), format(format), checkpointID(id), checkpointDir(checkpointDir) {}
+	  : version(version),
+	    ranges(ranges),
+	    format(format),
+	    checkpointID(id),
+	    checkpointDir(checkpointDir) {}
 };
 
 ACTOR static Future<Void> replaceRange_impl(class IKeyValueStore* self,

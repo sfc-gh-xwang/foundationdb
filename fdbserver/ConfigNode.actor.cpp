@@ -828,14 +828,23 @@ class ConfigNodeImpl {
 
 public:
 	ConfigNodeImpl(std::string const& folder)
-	  : id(deterministicRandom()->randomUniqueID()), kvStore(folder, id, "globalconf-"), cc("ConfigNode"),
-	    compactRequests("CompactRequests", cc), rollbackRequests("RollbackRequests", cc),
-	    rollforwardRequests("RollforwardRequests", cc), successfulChangeRequests("SuccessfulChangeRequests", cc),
-	    failedChangeRequests("FailedChangeRequests", cc), snapshotRequests("SnapshotRequests", cc),
-	    getCommittedVersionRequests("GetCommittedVersionRequests", cc), lockRequests("LockRequests", cc),
-	    successfulCommits("SuccessfulCommits", cc), failedCommits("FailedCommits", cc),
-	    setMutations("SetMutations", cc), clearMutations("ClearMutations", cc),
-	    getValueRequests("GetValueRequests", cc), getGenerationRequests("GetGenerationRequests", cc) {
+	  : id(deterministicRandom()->randomUniqueID()),
+	    kvStore(folder, id, "globalconf-"),
+	    cc("ConfigNode"),
+	    compactRequests("CompactRequests", cc),
+	    rollbackRequests("RollbackRequests", cc),
+	    rollforwardRequests("RollforwardRequests", cc),
+	    successfulChangeRequests("SuccessfulChangeRequests", cc),
+	    failedChangeRequests("FailedChangeRequests", cc),
+	    snapshotRequests("SnapshotRequests", cc),
+	    getCommittedVersionRequests("GetCommittedVersionRequests", cc),
+	    lockRequests("LockRequests", cc),
+	    successfulCommits("SuccessfulCommits", cc),
+	    failedCommits("FailedCommits", cc),
+	    setMutations("SetMutations", cc),
+	    clearMutations("ClearMutations", cc),
+	    getValueRequests("GetValueRequests", cc),
+	    getGenerationRequests("GetGenerationRequests", cc) {
 		logger = cc.traceCounters("ConfigNodeMetrics", id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, "ConfigNode");
 		TraceEvent(SevInfo, "StartingConfigNode", id).detail("KVStoreAlreadyExists", kvStore.exists());
 	}

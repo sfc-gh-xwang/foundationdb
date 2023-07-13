@@ -21,7 +21,8 @@
 #include "fdbclient/ClientKnobCollection.h"
 
 ClientKnobCollection::ClientKnobCollection(Randomize randomize, IsSimulated isSimulated)
-  : flowKnobs(randomize, isSimulated), clientKnobs(randomize) {}
+  : flowKnobs(randomize, isSimulated),
+    clientKnobs(randomize) {}
 
 void ClientKnobCollection::initialize(Randomize randomize, IsSimulated isSimulated) {
 	flowKnobs.initialize(randomize, isSimulated);

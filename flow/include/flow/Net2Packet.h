@@ -43,7 +43,8 @@ struct ReliablePacket : FastAllocated<ReliablePacket> {
 class UnsentPacketQueue : NonCopyable {
 public:
 	UnsentPacketQueue()
-	  : unsent_first(0), unsent_last(0),
+	  : unsent_first(0),
+	    unsent_last(0),
 	    sendQueueLatencyHistogram(
 	        Histogram::getHistogram("UnsentPacketQueue"_sr, "QueueWait"_sr, Histogram::Unit::milliseconds)) {}
 

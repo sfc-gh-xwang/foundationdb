@@ -576,8 +576,11 @@ struct WriteToBuffer : Context {
 	              int vtable_start,
 	              uint8_t* buffer,
 	              std::vector<int>::iterator writeToOffsetsIter)
-	  : Context(context), buffer_length(buffer_length), vtable_start(vtable_start),
-	    writeToOffsetsIter(writeToOffsetsIter), buffer(buffer) {}
+	  : Context(context),
+	    buffer_length(buffer_length),
+	    vtable_start(vtable_start),
+	    writeToOffsetsIter(writeToOffsetsIter),
+	    buffer(buffer) {}
 
 	struct MessageWriter {
 		template <class T>
@@ -827,7 +830,9 @@ struct SaveAlternative : Context {
 	const VTableSet* vtables;
 
 	SaveAlternative(Writer& writer, const VTableSet* vtables, const Context& context)
-	  : Context(context), writer(writer), vtables(vtables) {}
+	  : Context(context),
+	    writer(writer),
+	    vtables(vtables) {}
 
 	RelativeOffset save(uint8_t type_tag, const typename UnionTraits::Member& member) {
 		return save_<0>(type_tag, member);
@@ -895,7 +900,9 @@ struct SaveVisitorLambda : Context {
 	Writer& writer;
 
 	SaveVisitorLambda(const Context& context, const VTableSet* vtableset, Writer& writer)
-	  : Context(context), vtableset(vtableset), writer(writer) {}
+	  : Context(context),
+	    vtableset(vtableset),
+	    writer(writer) {}
 
 	template <class... Members>
 	void operator()(const Members&... members) {

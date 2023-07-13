@@ -46,7 +46,9 @@
 
 struct MetricsRule {
 	MetricsRule(bool enabled = false, int minLevel = 0, StringRef const& name = StringRef())
-	  : namePattern(name), enabled(enabled), minLevel(minLevel) {}
+	  : namePattern(name),
+	    enabled(enabled),
+	    minLevel(minLevel) {}
 
 	Standalone<StringRef> typePattern;
 	Standalone<StringRef> namePattern;
@@ -106,9 +108,12 @@ struct MetricsRule {
 
 struct MetricsConfig {
 	MetricsConfig(Key prefix = KeyRef())
-	  : space(prefix), ruleMap(space.get("Rules"_sr).key()), addressMap(space.get("Enum"_sr).get("Address"_sr).key()),
+	  : space(prefix),
+	    ruleMap(space.get("Rules"_sr).key()),
+	    addressMap(space.get("Enum"_sr).get("Address"_sr).key()),
 	    nameAndTypeMap(space.get("Enum"_sr).get("NameType"_sr).key()),
-	    ruleChangeKey(space.get("RulesChanged"_sr).key()), enumsChangeKey(space.get("EnumsChanged"_sr).key()),
+	    ruleChangeKey(space.get("RulesChanged"_sr).key()),
+	    enumsChangeKey(space.get("EnumsChanged"_sr).key()),
 	    fieldChangeKey(space.get("FieldsChanged"_sr).key()) {}
 
 	Subspace space;

@@ -189,7 +189,8 @@ Future<Reference<IConnection>> SimExternalConnection::connect(NetworkAddress toA
 }
 
 SimExternalConnection::SimExternalConnection(ip::tcp::socket&& socket)
-  : socket(std::move(socket)), dbgid(deterministicRandom()->randomUniqueID()) {}
+  : socket(std::move(socket)),
+    dbgid(deterministicRandom()->randomUniqueID()) {}
 
 static constexpr auto testEchoServerPort = 8000;
 

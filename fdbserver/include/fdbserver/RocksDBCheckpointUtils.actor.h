@@ -77,8 +77,17 @@ struct CheckpointFile {
 struct SstFileMetaData {
 	constexpr static FileIdentifier file_identifier = 3804347;
 	SstFileMetaData()
-	  : size(0), file_number(0), smallest_seqno(0), largest_seqno(0), num_reads_sampled(0), being_compacted(false),
-	    num_entries(0), num_deletions(0), temperature(0), oldest_blob_file_number(0), oldest_ancester_time(0),
+	  : size(0),
+	    file_number(0),
+	    smallest_seqno(0),
+	    largest_seqno(0),
+	    num_reads_sampled(0),
+	    being_compacted(false),
+	    num_entries(0),
+	    num_deletions(0),
+	    temperature(0),
+	    oldest_blob_file_number(0),
+	    oldest_ancester_time(0),
 	    file_creation_time(0) {}
 
 	SstFileMetaData(const std::string& _file_name,
@@ -97,12 +106,24 @@ struct SstFileMetaData {
 	                uint64_t _file_creation_time,
 	                std::string& _file_checksum,
 	                std::string& _file_checksum_func_name)
-	  : size(_size), name(_file_name), file_number(_file_number), db_path(_path), smallest_seqno(_smallest_seqno),
-	    largest_seqno(_largest_seqno), smallestkey(_smallestkey), largestkey(_largestkey),
-	    num_reads_sampled(_num_reads_sampled), being_compacted(_being_compacted), num_entries(0), num_deletions(0),
-	    temperature(_temperature), oldest_blob_file_number(_oldest_blob_file_number),
-	    oldest_ancester_time(_oldest_ancester_time), file_creation_time(_file_creation_time),
-	    file_checksum(_file_checksum), file_checksum_func_name(_file_checksum_func_name) {}
+	  : size(_size),
+	    name(_file_name),
+	    file_number(_file_number),
+	    db_path(_path),
+	    smallest_seqno(_smallest_seqno),
+	    largest_seqno(_largest_seqno),
+	    smallestkey(_smallestkey),
+	    largestkey(_largestkey),
+	    num_reads_sampled(_num_reads_sampled),
+	    being_compacted(_being_compacted),
+	    num_entries(0),
+	    num_deletions(0),
+	    temperature(_temperature),
+	    oldest_blob_file_number(_oldest_blob_file_number),
+	    oldest_ancester_time(_oldest_ancester_time),
+	    file_creation_time(_file_creation_time),
+	    file_checksum(_file_checksum),
+	    file_checksum_func_name(_file_checksum_func_name) {}
 
 	// File size in bytes.
 	size_t size;

@@ -14,6 +14,6 @@ repos:
     hooks:
     - id: flake8
 -   repo: git@github.com:snowflakedb/casec_precommit.git
-    rev: 30374abd7e4cfcd07a03794bb706812ac9fa8da2
+    rev: fa4b425f6113fba52fa0b6096bc64f7ccb380490  # v1.19
     hooks:
     - id: fdb-secret-scanner

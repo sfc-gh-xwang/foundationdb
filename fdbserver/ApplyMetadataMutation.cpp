@@ -61,8 +61,13 @@ public:
 	                           Arena& arena_,
 	                           const VectorRef<MutationRef>& mutations_,
 	                           IKeyValueStore* txnStateStore_)
-	  : spanContext(spanContext_), dbgid(dbgid_), arena(arena_), mutations(mutations_), txnStateStore(txnStateStore_),
-	    confChange(dummyConfChange), encryptMode(EncryptionAtRestMode::DISABLED) {}
+	  : spanContext(spanContext_),
+	    dbgid(dbgid_),
+	    arena(arena_),
+	    mutations(mutations_),
+	    txnStateStore(txnStateStore_),
+	    confChange(dummyConfChange),
+	    encryptMode(EncryptionAtRestMode::DISABLED) {}
 
 	ApplyMetadataMutationsImpl(const SpanContext& spanContext_,
 	                           Arena& arena_,
@@ -77,17 +82,33 @@ public:
 	                           Version popVersion_,
 	                           bool initialCommit_,
 	                           bool provisionalCommitProxy_)
-	  : spanContext(spanContext_), dbgid(proxyCommitData_.dbgid), arena(arena_), mutations(mutations_),
-	    txnStateStore(proxyCommitData_.txnStateStore.getPtr()), toCommit(toCommit_), cipherKeys(cipherKeys_),
-	    confChange(confChange_), logSystem(logSystem_), version(version), popVersion(popVersion_),
-	    vecBackupKeys(&proxyCommitData_.vecBackupKeys), keyInfo(&proxyCommitData_.keyInfo),
+	  : spanContext(spanContext_),
+	    dbgid(proxyCommitData_.dbgid),
+	    arena(arena_),
+	    mutations(mutations_),
+	    txnStateStore(proxyCommitData_.txnStateStore.getPtr()),
+	    toCommit(toCommit_),
+	    cipherKeys(cipherKeys_),
+	    confChange(confChange_),
+	    logSystem(logSystem_),
+	    version(version),
+	    popVersion(popVersion_),
+	    vecBackupKeys(&proxyCommitData_.vecBackupKeys),
+	    keyInfo(&proxyCommitData_.keyInfo),
 	    cacheInfo(&proxyCommitData_.cacheInfo),
 	    uid_applyMutationsData(proxyCommitData_.firstProxy ? &proxyCommitData_.uid_applyMutationsData : nullptr),
-	    commit(proxyCommitData_.commit), cx(proxyCommitData_.cx), committedVersion(&proxyCommitData_.committedVersion),
-	    storageCache(&proxyCommitData_.storageCache), tag_popped(&proxyCommitData_.tag_popped),
-	    tssMapping(&proxyCommitData_.tssMapping), tenantMap(&proxyCommitData_.tenantMap),
-	    tenantNameIndex(&proxyCommitData_.tenantNameIndex), lockedTenants(&proxyCommitData_.lockedTenants),
-	    encryptMode(encryptMode), initialCommit(initialCommit_), provisionalCommitProxy(provisionalCommitProxy_) {
+	    commit(proxyCommitData_.commit),
+	    cx(proxyCommitData_.cx),
+	    committedVersion(&proxyCommitData_.committedVersion),
+	    storageCache(&proxyCommitData_.storageCache),
+	    tag_popped(&proxyCommitData_.tag_popped),
+	    tssMapping(&proxyCommitData_.tssMapping),
+	    tenantMap(&proxyCommitData_.tenantMap),
+	    tenantNameIndex(&proxyCommitData_.tenantNameIndex),
+	    lockedTenants(&proxyCommitData_.lockedTenants),
+	    encryptMode(encryptMode),
+	    initialCommit(initialCommit_),
+	    provisionalCommitProxy(provisionalCommitProxy_) {
 		if (encryptMode.isEncryptionEnabled()) {
 			ASSERT(cipherKeys != nullptr);
 			ASSERT(cipherKeys->count(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID) > 0);
@@ -102,11 +123,21 @@ public:
 	                           const VectorRef<MutationRef>& mutations_,
 	                           const std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>* cipherKeys_,
 	                           EncryptionAtRestMode encryptMode)
-	  : spanContext(spanContext_), dbgid(resolverData_.dbgid), arena(resolverData_.arena), mutations(mutations_),
-	    txnStateStore(resolverData_.txnStateStore.getPtr()), toCommit(resolverData_.toCommit), cipherKeys(cipherKeys_),
-	    confChange(resolverData_.confChanges), logSystem(resolverData_.logSystem), popVersion(resolverData_.popVersion),
-	    keyInfo(resolverData_.keyInfo), storageCache(resolverData_.storageCache), encryptMode(encryptMode),
-	    initialCommit(resolverData_.initialCommit), forResolver(true) {
+	  : spanContext(spanContext_),
+	    dbgid(resolverData_.dbgid),
+	    arena(resolverData_.arena),
+	    mutations(mutations_),
+	    txnStateStore(resolverData_.txnStateStore.getPtr()),
+	    toCommit(resolverData_.toCommit),
+	    cipherKeys(cipherKeys_),
+	    confChange(resolverData_.confChanges),
+	    logSystem(resolverData_.logSystem),
+	    popVersion(resolverData_.popVersion),
+	    keyInfo(resolverData_.keyInfo),
+	    storageCache(resolverData_.storageCache),
+	    encryptMode(encryptMode),
+	    initialCommit(resolverData_.initialCommit),
+	    forResolver(true) {
 		if (encryptMode.isEncryptionEnabled()) {
 			ASSERT(cipherKeys != nullptr);
 			ASSERT(cipherKeys->count(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID) > 0);

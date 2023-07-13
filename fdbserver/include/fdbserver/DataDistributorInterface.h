@@ -110,7 +110,9 @@ struct PrepareBlobRestoreRequest {
 
 	PrepareBlobRestoreRequest() = default;
 	PrepareBlobRestoreRequest(const UID& id, StorageServerInterface ssi, KeyRangeRef keyRange)
-	  : requesterID(id), ssi(std::move(ssi)), keys(keyRange) {}
+	  : requesterID(id),
+	    ssi(std::move(ssi)),
+	    keys(keyRange) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -154,7 +156,9 @@ struct GetDataDistributorMetricsRequest {
 
 	GetDataDistributorMetricsRequest() = default;
 	explicit GetDataDistributorMetricsRequest(KeyRange const& keys, const int shardLimit, bool midOnly = false)
-	  : keys(keys), shardLimit(shardLimit), midOnly(midOnly) {}
+	  : keys(keys),
+	    shardLimit(shardLimit),
+	    midOnly(midOnly) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -172,7 +176,9 @@ struct DistributorSnapRequest {
 
 	explicit DistributorSnapRequest(Optional<UID> const& debugID = Optional<UID>()) : debugID(debugID) {}
 	explicit DistributorSnapRequest(StringRef snap, UID snapUID, Optional<UID> debugID = Optional<UID>())
-	  : snapPayload(snap), snapUID(snapUID), debugID(debugID) {}
+	  : snapPayload(snap),
+	    snapUID(snapUID),
+	    debugID(debugID) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

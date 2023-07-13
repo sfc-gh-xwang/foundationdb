@@ -115,7 +115,9 @@ struct ConsistencyCheckWorkload : TestWorkload {
 	ProcessEvents::Event onTimeoutEvent;
 
 	ConsistencyCheckWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), onTimeout(*this), onTimeoutEvent({ "Timeout"_sr, "TracedTooManyLines"_sr }, onTimeout) {
+	  : TestWorkload(wcx),
+	    onTimeout(*this),
+	    onTimeoutEvent({ "Timeout"_sr, "TracedTooManyLines"_sr }, onTimeout) {
 		performQuiescentChecks = getOption(options, "performQuiescentChecks"_sr, false);
 		performCacheCheck = getOption(options, "performCacheCheck"_sr, false);
 		performTSSCheck = getOption(options, "performTSSCheck"_sr, true);

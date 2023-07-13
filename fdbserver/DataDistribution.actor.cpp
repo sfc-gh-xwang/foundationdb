@@ -84,7 +84,11 @@ ShardSizeBounds ShardSizeBounds::shardSizeBoundsBeforeTrack() {
 
 struct DDAudit {
 	DDAudit(UID id, KeyRange range, AuditType type)
-	  : id(id), range(range), type(type), auditMap(AuditPhase::Invalid, allKeys.end), actors(true) {}
+	  : id(id),
+	    range(range),
+	    type(type),
+	    auditMap(AuditPhase::Invalid, allKeys.end),
+	    actors(true) {}
 
 	const UID id;
 	KeyRange range;
@@ -328,8 +332,13 @@ public:
 	Future<Void> onConfigChange;
 
 	DataDistributor(Reference<AsyncVar<ServerDBInfo> const> const& db, UID id, Reference<DDSharedContext> context)
-	  : dbInfo(db), context(context), ddId(id), txnProcessor(nullptr), lock(context->lock),
-	    configuration(context->configuration), initialDDEventHolder(makeReference<EventCacheHolder>("InitialDD")),
+	  : dbInfo(db),
+	    context(context),
+	    ddId(id),
+	    txnProcessor(nullptr),
+	    lock(context->lock),
+	    configuration(context->configuration),
+	    initialDDEventHolder(makeReference<EventCacheHolder>("InitialDD")),
 	    movingDataEventHolder(makeReference<EventCacheHolder>("MovingData")),
 	    totalDataInFlightEventHolder(makeReference<EventCacheHolder>("TotalDataInFlight")),
 	    totalDataInFlightRemoteEventHolder(makeReference<EventCacheHolder>("TotalDataInFlightRemote")),
