@@ -349,7 +349,7 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	void flushWriteCost();
 	int64_t getTotalCost() const;
 
-	void setExpectedTransactionCost(uint64_t bytes);
+	void setExpectedCost(uint64_t bytes);
 	Optional<uint64_t> getExpectedTransactionCost() const;
 
 private:
@@ -518,7 +518,7 @@ public:
 
 	int64_t getTotalCost() const { return trState->getTotalCost(); }
 
-	void setExpectedTransactionCost(uint64_t bytes) { trState->setExpectedTransactionCost(bytes); }
+	void setExpectedCost(uint64_t bytes) { trState->setExpectedCost(bytes); }
 
 	double getTagThrottledDuration() const;
 

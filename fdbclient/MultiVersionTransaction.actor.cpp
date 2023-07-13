@@ -19,6 +19,7 @@
  */
 
 #include <fcntl.h>
+#include <utility>
 
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/json_spirit/json_spirit_reader_template.h"
@@ -1699,7 +1700,7 @@ ThreadFuture<int64_t> MultiVersionTransaction::getTotalCost() {
 }
 
 ThreadFuture<Void> MultiVersionTransaction::setExpectedCost(uint64_t value) {
-	return executeOperation(&ITransaction::setExpectedCost, std::move(value));
+	return executeOperation(&ITransaction::setExpectedCost, std::forward<uint64_t>(value));
 }
 
 ThreadFuture<int64_t> MultiVersionTransaction::getApproximateSize() {

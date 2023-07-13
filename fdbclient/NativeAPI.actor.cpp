@@ -7412,7 +7412,7 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 	                                                               span.context,
 	                                                               trState->options.throttlingTag,
 	                                                               versionDebugID,
-																   trState->getExpectedTransactionCost());
+	                                                               trState->getExpectedTransactionCost());
 	trState->startTime = now();
 	GetReadVersionReply rep = wait(f);
 	double replyTime = now();
@@ -7528,7 +7528,7 @@ Future<Version> Transaction::getReadVersion() {
 	return Transaction_getReadVersion(trState);
 }
 
-void TransactionState::setExpectedTransactionCost(uint64_t bytes) {
+void TransactionState::setExpectedCost(uint64_t bytes) {
 	expectedTransactionCost = bytes;
 }
 

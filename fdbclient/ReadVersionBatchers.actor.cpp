@@ -111,7 +111,11 @@ class Batcher {
 	                                             uint32_t flags,
 	                                             Optional<ThrottlingId> throttlingId) {
 		state std::vector<Promise<GetReadVersionReply>> requests;
+
+		// The total transaction cost, provided by the client as an optional API.
+		// If the client does not specify an expected cost, the average cost will be utilized instead.
 		state uint64_t expectedCost = 0;
+		// How many transactions provided the expected cost.
 		state uint expectedCostCount = 0;
 
 		state PromiseStream<Future<Void>> addActor;
