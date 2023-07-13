@@ -645,6 +645,12 @@ ThreadFuture<bool> DLTenant::flushBlobRange(const KeyRangeRef& keyRange, bool co
 	});
 }
 
+ThreadFuture<Standalone<StringRef>> DLTenant::getClientStatus() {
+	// Currently no code path uses this function, so we simply assert and throw a not_implemented error
+	ASSERT(false);
+	throw not_implemented();
+}
+
 // DLDatabase
 DLDatabase::DLDatabase(Reference<FdbCApi> api, ThreadFuture<FdbCApi::FDBDatabase*> dbFuture) : api(api), db(nullptr) {
 	addref();
@@ -1094,6 +1100,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_tenant_get_id",
 	                   headerVersion >= ApiVersion::withTenantGetId().version());
+	loadClientFunction(&api->tenantGetClientStatus,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_tenant_get_client_status",
+	                   headerVersion >= ApiVersion::withTenantGetClientStatus().version());
 	loadClientFunction(&api->tenantDestroy, lib, fdbCPath, "fdb_tenant_destroy", headerVersion >= 710);
 
 	loadClientFunction(&api->transactionSetOption, lib, fdbCPath, "fdb_transaction_set_option", headerVersion >= 0);
@@ -1970,6 +1981,10 @@ ThreadFuture<bool> MultiVersionTenant::flushBlobRange(const KeyRangeRef& keyRang
                                                       Optional<Version> version) {
 	return executeOperation(
 	    &ITenant::flushBlobRange, keyRange, std::forward<bool>(compact), std::forward<Optional<Version>>(version));
+}
+
+ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
+	return tenantState->db->getClientStatus();
 }
 
 MultiVersionTenant::TenantState::TenantState(Reference<MultiVersionDatabase> db, TenantNameRef tenantName)
