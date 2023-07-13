@@ -41,7 +41,8 @@ public:
 }; // class RKRecoveryTrackerImpl
 
 RKRecoveryTracker::RKRecoveryTracker(Reference<IAsyncListener<bool>> inRecovery)
-  : inRecovery(inRecovery), maxVersion(0) {
+  : inRecovery(inRecovery),
+    maxVersion(0) {
 	recovering = inRecovery->get();
 	recoveryVersion = std::numeric_limits<Version>::max();
 	if (recovering) {

@@ -101,7 +101,10 @@ struct FlowTransactionWrapper : public TransactionWrapper {
 	T transaction;
 	T lastTransaction;
 	FlowTransactionWrapper(Database cx, Database extraDB, bool useExtraDB)
-	  : cx(cx), extraDB(extraDB), useExtraDB(useExtraDB), transaction(cx) {
+	  : cx(cx),
+	    extraDB(extraDB),
+	    useExtraDB(useExtraDB),
+	    transaction(cx) {
 		if (useExtraDB && deterministicRandom()->random01() < 0.5) {
 			transaction = T(extraDB);
 		}
@@ -263,7 +266,9 @@ struct TransactionFactory : public TransactionFactoryInterface {
 	bool useExtraDB;
 
 	TransactionFactory(DB dbHandle, DB extraDbHandle, bool useExtraDB)
-	  : dbHandle(dbHandle), extraDbHandle(extraDbHandle), useExtraDB(useExtraDB) {}
+	  : dbHandle(dbHandle),
+	    extraDbHandle(extraDbHandle),
+	    useExtraDB(useExtraDB) {}
 	~TransactionFactory() override {}
 
 	// Creates a new transaction
@@ -277,7 +282,10 @@ struct ApiWorkload : TestWorkload {
 	Database extraDB;
 
 	ApiWorkload(WorkloadContext const& wcx, int maxClients = -1)
-	  : TestWorkload(wcx), maxClients(maxClients), success(true), transactionFactory(nullptr) {
+	  : TestWorkload(wcx),
+	    maxClients(maxClients),
+	    success(true),
+	    transactionFactory(nullptr) {
 		clientPrefixInt = getOption(options, "clientId"_sr, clientId);
 		clientPrefix = format("%010d", clientPrefixInt);
 

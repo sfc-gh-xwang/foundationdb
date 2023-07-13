@@ -57,7 +57,10 @@ struct CoreTLogSet {
 	TLogVersion tLogVersion;
 
 	CoreTLogSet()
-	  : tLogWriteAntiQuorum(0), tLogReplicationFactor(0), isLocal(true), locality(tagLocalityUpgraded),
+	  : tLogWriteAntiQuorum(0),
+	    tLogReplicationFactor(0),
+	    isLocal(true),
+	    locality(tagLocalityUpgraded),
 	    startVersion(invalidVersion) {}
 	explicit CoreTLogSet(const LogSet& logset);
 
@@ -147,7 +150,10 @@ struct DBCoreState {
 	EncryptionAtRestMode encryptionAtRestMode; // cluster encryption data at-rest mode
 
 	DBCoreState()
-	  : logRouterTags(0), txsTags(0), recoveryCount(0), logSystemType(LogSystemType::empty),
+	  : logRouterTags(0),
+	    txsTags(0),
+	    recoveryCount(0),
+	    logSystemType(LogSystemType::empty),
 	    newestProtocolVersion(ProtocolVersion::invalidProtocolVersion),
 	    lowestCompatibleProtocolVersion(ProtocolVersion::invalidProtocolVersion),
 	    encryptionAtRestMode(EncryptionAtRestMode()) {}

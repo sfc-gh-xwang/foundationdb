@@ -260,7 +260,9 @@ extern "C" DLLEXPORT fdb_bool_t fdb_future_is_ready(FDBFuture* f) {
 class CAPICallback final : public ThreadCallback {
 public:
 	CAPICallback(void (*callbackf)(FDBFuture*, void*), FDBFuture* f, void* userdata)
-	  : callbackf(callbackf), f(f), userdata(userdata) {}
+	  : callbackf(callbackf),
+	    f(f),
+	    userdata(userdata) {}
 
 	bool canFire(int notMadeActive) const override { return true; }
 	void fire(const Void& unused, int& userParam) override {

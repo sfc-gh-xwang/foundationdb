@@ -87,10 +87,21 @@ struct ReadWriteCommon : KVWorkload {
 	double loadTime, clientBegin;
 
 	explicit ReadWriteCommon(WorkloadContext const& wcx)
-	  : KVWorkload(wcx), totalReadsMetric("ReadWrite.TotalReads"_sr), totalRetriesMetric("ReadWrite.TotalRetries"_sr),
-	    aTransactions("A Transactions"), bTransactions("B Transactions"), retries("Retries"), latencies(sampleError),
-	    readLatencies(sampleError), commitLatencies(sampleError), GRVLatencies(sampleError),
-	    fullReadLatencies(sampleError), readLatencyTotal(0), readLatencyCount(0), loadTime(0.0), clientBegin(0) {
+	  : KVWorkload(wcx),
+	    totalReadsMetric("ReadWrite.TotalReads"_sr),
+	    totalRetriesMetric("ReadWrite.TotalRetries"_sr),
+	    aTransactions("A Transactions"),
+	    bTransactions("B Transactions"),
+	    retries("Retries"),
+	    latencies(sampleError),
+	    readLatencies(sampleError),
+	    commitLatencies(sampleError),
+	    GRVLatencies(sampleError),
+	    fullReadLatencies(sampleError),
+	    readLatencyTotal(0),
+	    readLatencyCount(0),
+	    loadTime(0.0),
+	    clientBegin(0) {
 
 		transactionSuccessMetric.init("ReadWrite.SuccessfulTransaction"_sr);
 		transactionFailureMetric.init("ReadWrite.FailedTransaction"_sr);

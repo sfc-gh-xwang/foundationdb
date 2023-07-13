@@ -70,7 +70,10 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		                  ClusterName cluster,
 		                  Optional<TenantGroupName> tenantGroup,
 		                  AccessTime createTime)
-		  : name(name), cluster(cluster), tenantGroup(tenantGroup), createTime(createTime) {}
+		  : name(name),
+		    cluster(cluster),
+		    tenantGroup(tenantGroup),
+		    createTime(createTime) {}
 	};
 
 	struct TenantGroupData {

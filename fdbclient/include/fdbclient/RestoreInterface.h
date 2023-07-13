@@ -71,8 +71,15 @@ struct RestoreRequest {
 	                        const UID& randomUid,
 	                        Key& addPrefix,
 	                        Key removePrefix)
-	  : index(index), tagName(tagName), url(url), proxy(proxy), targetVersion(targetVersion), range(range),
-	    randomUid(randomUid), addPrefix(addPrefix), removePrefix(removePrefix) {}
+	  : index(index),
+	    tagName(tagName),
+	    url(url),
+	    proxy(proxy),
+	    targetVersion(targetVersion),
+	    range(range),
+	    randomUid(randomUid),
+	    addPrefix(addPrefix),
+	    removePrefix(removePrefix) {}
 
 	// To change this serialization, ProtocolVersion::RestoreRequestValue must be updated, and downgrades need to be
 	// considered

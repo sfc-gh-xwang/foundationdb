@@ -359,7 +359,9 @@ template <typename T, typename Codec = TupleCodec<T>>
 class KeyBackedProperty {
 public:
 	KeyBackedProperty(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {}, Codec codec = {})
-	  : key(key), trigger(trigger), codec(codec) {}
+	  : key(key),
+	    trigger(trigger),
+	    codec(codec) {}
 
 	template <class Transaction>
 	Future<Optional<T>> get(Transaction tr, Snapshot snapshot = Snapshot::False) const {
@@ -549,7 +551,9 @@ template <typename _KeyType,
 class KeyBackedMap {
 public:
 	KeyBackedMap(KeyRef prefix = invalidKey, Optional<WatchableTrigger> trigger = {}, ValueCodec valueCodec = {})
-	  : subspace(prefixRange(prefix)), trigger(trigger), valueCodec(valueCodec) {}
+	  : subspace(prefixRange(prefix)),
+	    trigger(trigger),
+	    valueCodec(valueCodec) {}
 
 	typedef _KeyType KeyType;
 	typedef _ValueType ValueType;
@@ -885,7 +889,8 @@ template <typename _ValueType, typename Codec = TupleCodec<_ValueType>>
 class KeyBackedSet {
 public:
 	KeyBackedSet(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {})
-	  : subspace(prefixRange(key)), trigger(trigger) {}
+	  : subspace(prefixRange(key)),
+	    trigger(trigger) {}
 
 	typedef _ValueType ValueType;
 	typedef KeyBackedRangeResult<ValueType> RangeResultType;
@@ -1134,7 +1139,8 @@ public:
 class KeyBackedClass {
 public:
 	KeyBackedClass(StringRef prefix, Optional<Key> triggerOverride = {})
-	  : subspace(prefix), trigger(triggerOverride.orDefault(subspace.pack("_changeTrigger"_sr))) {}
+	  : subspace(prefix),
+	    trigger(triggerOverride.orDefault(subspace.pack("_changeTrigger"_sr))) {}
 
 	Subspace subspace;
 	WatchableTrigger trigger;

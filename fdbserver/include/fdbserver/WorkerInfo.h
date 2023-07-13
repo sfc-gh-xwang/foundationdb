@@ -42,7 +42,8 @@ struct WorkerInfo : NonCopyable {
 	Standalone<VectorRef<StringRef>> issues;
 
 	WorkerInfo()
-	  : gen(-1), reboots(0),
+	  : gen(-1),
+	    reboots(0),
 	    priorityInfo(ProcessClass::UnsetFit, false, ClusterControllerPriorityInfo::FitnessUnknown) {}
 	WorkerInfo(Future<Void> watcher,
 	           ReplyPromise<RegisterWorkerReply> reply,
@@ -54,14 +55,29 @@ struct WorkerInfo : NonCopyable {
 	           bool degraded,
 	           bool recoveredDiskFiles,
 	           Standalone<VectorRef<StringRef>> issues)
-	  : watcher(watcher), reply(reply), gen(gen), reboots(0), initialClass(initialClass), priorityInfo(priorityInfo),
-	    details(interf, processClass, degraded, recoveredDiskFiles), issues(issues) {}
+	  : watcher(watcher),
+	    reply(reply),
+	    gen(gen),
+	    reboots(0),
+	    initialClass(initialClass),
+	    priorityInfo(priorityInfo),
+	    details(interf, processClass, degraded, recoveredDiskFiles),
+	    issues(issues) {}
 
 	WorkerInfo(WorkerInfo&& r) noexcept
-	  : watcher(std::move(r.watcher)), reply(std::move(r.reply)), gen(r.gen), reboots(r.reboots),
-	    initialClass(r.initialClass), priorityInfo(r.priorityInfo), details(std::move(r.details)),
-	    haltRatekeeper(r.haltRatekeeper), haltDistributor(r.haltDistributor), haltBlobManager(r.haltBlobManager),
-	    haltEncryptKeyProxy(r.haltEncryptKeyProxy), haltConsistencyScan(r.haltConsistencyScan), issues(r.issues) {}
+	  : watcher(std::move(r.watcher)),
+	    reply(std::move(r.reply)),
+	    gen(r.gen),
+	    reboots(r.reboots),
+	    initialClass(r.initialClass),
+	    priorityInfo(r.priorityInfo),
+	    details(std::move(r.details)),
+	    haltRatekeeper(r.haltRatekeeper),
+	    haltDistributor(r.haltDistributor),
+	    haltBlobManager(r.haltBlobManager),
+	    haltEncryptKeyProxy(r.haltEncryptKeyProxy),
+	    haltConsistencyScan(r.haltConsistencyScan),
+	    issues(r.issues) {}
 	void operator=(WorkerInfo&& r) noexcept {
 		watcher = std::move(r.watcher);
 		reply = std::move(r.reply);
@@ -85,7 +101,9 @@ struct WorkerFitnessInfo {
 
 	WorkerFitnessInfo() : fitness(ProcessClass::NeverAssign), used(0) {}
 	WorkerFitnessInfo(WorkerDetails worker, ProcessClass::Fitness fitness, int used)
-	  : worker(worker), fitness(fitness), used(used) {}
+	  : worker(worker),
+	    fitness(fitness),
+	    used(used) {}
 };
 
 struct RecruitmentInfo {
@@ -95,7 +113,9 @@ struct RecruitmentInfo {
 
 	RecruitmentInfo() {}
 	explicit RecruitmentInfo(DatabaseConfiguration const& configuration, bool recruitSeedServers, int maxOldLogRouters)
-	  : configuration(configuration), recruitSeedServers(recruitSeedServers), maxOldLogRouters(maxOldLogRouters) {}
+	  : configuration(configuration),
+	    recruitSeedServers(recruitSeedServers),
+	    maxOldLogRouters(maxOldLogRouters) {}
 };
 
 // Stores the interfaces for all the workers required for a functioning
@@ -142,7 +162,9 @@ struct RemoteRecruitmentInfo {
 	                      Optional<Key> const& dcId,
 	                      int logRouterCount,
 	                      const std::vector<UID>& exclusionWorkerIds)
-	  : configuration(configuration), dcId(dcId), logRouterCount(logRouterCount),
+	  : configuration(configuration),
+	    dcId(dcId),
+	    logRouterCount(logRouterCount),
 	    exclusionWorkerIds(exclusionWorkerIds) {}
 };
 

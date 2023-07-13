@@ -51,7 +51,11 @@ struct VersionedMessage {
 	size_t bytes; // arena's size when inserted, which can grow afterwards
 
 	VersionedMessage(LogMessageVersion v, StringRef m, const VectorRef<Tag>& t, const Arena& a, size_t n)
-	  : version(v), message(m), tags(t), arena(a), bytes(n) {}
+	  : version(v),
+	    message(m),
+	    tags(t),
+	    arena(a),
+	    bytes(n) {}
 	Version getVersion() const { return version.version; }
 	uint32_t getSubVersion() const { return version.sub; }
 
@@ -277,10 +281,20 @@ struct BackupData {
 	Future<Void> logger;
 
 	explicit BackupData(UID id, Reference<AsyncVar<ServerDBInfo> const> db, const InitializeBackupRequest& req)
-	  : myId(id), tag(req.routerTag), totalTags(req.totalTags), startVersion(req.startVersion),
-	    endVersion(req.endVersion), recruitedEpoch(req.recruitedEpoch), backupEpoch(req.backupEpoch),
-	    minKnownCommittedVersion(invalidVersion), savedVersion(req.startVersion - 1), popVersion(req.startVersion - 1),
-	    db(db), pulledVersion(0), paused(false), lock(new FlowLock(SERVER_KNOBS->BACKUP_LOCK_BYTES)),
+	  : myId(id),
+	    tag(req.routerTag),
+	    totalTags(req.totalTags),
+	    startVersion(req.startVersion),
+	    endVersion(req.endVersion),
+	    recruitedEpoch(req.recruitedEpoch),
+	    backupEpoch(req.backupEpoch),
+	    minKnownCommittedVersion(invalidVersion),
+	    savedVersion(req.startVersion - 1),
+	    popVersion(req.startVersion - 1),
+	    db(db),
+	    pulledVersion(0),
+	    paused(false),
+	    lock(new FlowLock(SERVER_KNOBS->BACKUP_LOCK_BYTES)),
 	    cc("BackupWorker", myId.toString()) {
 		cx = openDBOnServer(db, TaskPriority::DefaultEndpoint, LockAware::True);
 

@@ -25,7 +25,11 @@ DirectoryLayer::Node::Node(Reference<DirectoryLayer> const& directoryLayer,
                            Optional<Subspace> const& subspace,
                            IDirectory::Path const& path,
                            IDirectory::Path const& targetPath)
-  : directoryLayer(directoryLayer), subspace(subspace), path(path), targetPath(targetPath), loadedMetadata(false) {}
+  : directoryLayer(directoryLayer),
+    subspace(subspace),
+    path(path),
+    targetPath(targetPath),
+    loadedMetadata(false) {}
 
 bool DirectoryLayer::Node::exists() const {
 	return subspace.present();

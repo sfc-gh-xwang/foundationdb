@@ -113,10 +113,23 @@ struct ConfigureAutoResult {
 	int32_t desired_logs;
 
 	ConfigureAutoResult()
-	  : processes(-1), machines(-1), old_commit_proxies(-1), old_grv_proxies(-1), old_resolvers(-1), old_logs(-1),
-	    old_processes_with_transaction(-1), old_machines_with_transaction(-1), auto_commit_proxies(-1),
-	    auto_grv_proxies(-1), auto_resolvers(-1), auto_logs(-1), auto_processes_with_transaction(-1),
-	    auto_machines_with_transaction(-1), desired_commit_proxies(-1), desired_grv_proxies(-1), desired_resolvers(-1),
+	  : processes(-1),
+	    machines(-1),
+	    old_commit_proxies(-1),
+	    old_grv_proxies(-1),
+	    old_resolvers(-1),
+	    old_logs(-1),
+	    old_processes_with_transaction(-1),
+	    old_machines_with_transaction(-1),
+	    auto_commit_proxies(-1),
+	    auto_grv_proxies(-1),
+	    auto_resolvers(-1),
+	    auto_logs(-1),
+	    auto_processes_with_transaction(-1),
+	    auto_machines_with_transaction(-1),
+	    desired_commit_proxies(-1),
+	    desired_grv_proxies(-1),
+	    desired_resolvers(-1),
 	    desired_logs(-1) {}
 
 	bool isValid() const { return processes != -1; }

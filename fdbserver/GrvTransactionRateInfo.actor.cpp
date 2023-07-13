@@ -25,7 +25,10 @@
 #include "flow/actorcompiler.h" // must be last include
 
 GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate)
-  : rateWindow(rateWindow), maxEmptyQueueBudget(maxEmptyQueueBudget), rate(rate), smoothRate(rateWindow),
+  : rateWindow(rateWindow),
+    maxEmptyQueueBudget(maxEmptyQueueBudget),
+    rate(rate),
+    smoothRate(rateWindow),
     smoothReleased(rateWindow) {
 	smoothRate.setTotal(rate);
 }

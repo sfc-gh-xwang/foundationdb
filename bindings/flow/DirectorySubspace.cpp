@@ -25,7 +25,10 @@ DirectorySubspace::DirectorySubspace(Path const& path,
                                      StringRef const& prefix,
                                      Reference<DirectoryLayer> directoryLayer,
                                      Standalone<StringRef> const& layer)
-  : Subspace(prefix), directoryLayer(directoryLayer), path(path), layer(layer) {}
+  : Subspace(prefix),
+    directoryLayer(directoryLayer),
+    path(path),
+    layer(layer) {}
 
 Future<Reference<DirectorySubspace>> DirectorySubspace::create(Reference<Transaction> const& tr,
                                                                Path const& path,

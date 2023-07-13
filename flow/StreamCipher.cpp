@@ -71,7 +71,9 @@ void StreamCipherKey::initializeKey(uint8_t* data, int len) {
 }
 
 StreamCipherKey::StreamCipherKey(int size)
-  : id(deterministicRandom()->randomUniqueID()), arr(std::make_unique<uint8_t[]>(size)), keySize(size) {
+  : id(deterministicRandom()->randomUniqueID()),
+    arr(std::make_unique<uint8_t[]>(size)),
+    keySize(size) {
 	memset(arr.get(), 0, keySize);
 	cipherKeys[id] = this;
 }
@@ -82,13 +84,17 @@ StreamCipherKey::~StreamCipherKey() {
 }
 
 StreamCipher::StreamCipher(int keySize)
-  : id(deterministicRandom()->randomUniqueID()), ctx(EVP_CIPHER_CTX_new()), hmacCtx(HMAC_CTX_new()),
+  : id(deterministicRandom()->randomUniqueID()),
+    ctx(EVP_CIPHER_CTX_new()),
+    hmacCtx(HMAC_CTX_new()),
     cipherKey(std::make_unique<StreamCipherKey>(keySize)) {
 	ctxs[id] = ctx;
 }
 
 StreamCipher::StreamCipher()
-  : id(deterministicRandom()->randomUniqueID()), ctx(EVP_CIPHER_CTX_new()), hmacCtx(HMAC_CTX_new()),
+  : id(deterministicRandom()->randomUniqueID()),
+    ctx(EVP_CIPHER_CTX_new()),
+    hmacCtx(HMAC_CTX_new()),
     cipherKey(std::make_unique<StreamCipherKey>(AES_256_KEY_LENGTH)) {
 	ctxs[id] = ctx;
 }

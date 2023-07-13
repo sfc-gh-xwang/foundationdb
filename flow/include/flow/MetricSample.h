@@ -100,7 +100,8 @@ struct TransientThresholdMetricSample : MetricSample<T> {
 	int64_t thresholdLimit;
 
 	TransientThresholdMetricSample(int64_t metricUnitsPerSample, int64_t threshold)
-	  : MetricSample<T>(metricUnitsPerSample), thresholdLimit(threshold) {}
+	  : MetricSample<T>(metricUnitsPerSample),
+	    thresholdLimit(threshold) {}
 
 	template <class U>
 	bool isAboveThreshold(const U& key) const {

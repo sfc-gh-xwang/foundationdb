@@ -88,7 +88,11 @@ public:
 	  : PriorityMultiLock(concurrency, parseStringToVector<int>(weights, ',')) {}
 
 	PriorityMultiLock(int concurrency, std::vector<int> weightsByPriority)
-	  : concurrency(concurrency), available(concurrency), waiting(0), totalPendingWeights(0), killed(false) {
+	  : concurrency(concurrency),
+	    available(concurrency),
+	    waiting(0),
+	    totalPendingWeights(0),
+	    killed(false) {
 
 		priorities.resize(weightsByPriority.size());
 		for (int i = 0; i < priorities.size(); ++i) {

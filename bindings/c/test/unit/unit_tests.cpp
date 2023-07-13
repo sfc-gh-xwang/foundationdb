@@ -163,7 +163,11 @@ struct GetMappedRangeResult {
 		         const std::string& begin,
 		         const std::string& end,
 		         const std::vector<std::pair<std::string, std::string>>& range_results)
-		  : key(key), value(value), begin(begin), end(end), range_results(range_results) {}
+		  : key(key),
+		    value(value),
+		    begin(begin),
+		    end(end),
+		    range_results(range_results) {}
 
 		std::string key;
 		std::string value;

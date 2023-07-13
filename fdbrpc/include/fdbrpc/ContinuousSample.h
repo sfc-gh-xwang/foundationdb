@@ -32,7 +32,12 @@ template <class T>
 class ContinuousSample {
 public:
 	explicit ContinuousSample(int sampleSize)
-	  : sampleSize(sampleSize), populationSize(0), sorted(true), _min(T()), _max(T()), _sum(T()) {}
+	  : sampleSize(sampleSize),
+	    populationSize(0),
+	    sorted(true),
+	    _min(T()),
+	    _max(T()),
+	    _sum(T()) {}
 
 	void swap(ContinuousSample<T>& other) {
 		std::swap(samples, other.samples);

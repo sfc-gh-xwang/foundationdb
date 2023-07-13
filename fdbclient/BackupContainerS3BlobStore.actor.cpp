@@ -47,7 +47,9 @@ public:
 	class BackupFile : public IBackupFile, ReferenceCounted<BackupFile> {
 	public:
 		BackupFile(std::string fileName, Reference<IAsyncFile> file)
-		  : IBackupFile(fileName), m_file(file), m_offset(0) {}
+		  : IBackupFile(fileName),
+		    m_file(file),
+		    m_offset(0) {}
 
 		Future<Void> append(const void* data, int len) override {
 			Future<Void> r = m_file->write(data, len, m_offset);
@@ -157,7 +159,10 @@ BackupContainerS3BlobStore::BackupContainerS3BlobStore(Reference<S3BlobStoreEndp
                                                        const S3BlobStoreEndpoint::ParametersT& params,
                                                        const Optional<std::string>& encryptionKeyFileName,
                                                        bool isBackup)
-  : m_bstore(bstore), m_name(name), m_bucket("FDB_BACKUPS_V2"), isBackup(isBackup) {
+  : m_bstore(bstore),
+    m_name(name),
+    m_bucket("FDB_BACKUPS_V2"),
+    isBackup(isBackup) {
 	setEncryptionKey(encryptionKeyFileName);
 	// Currently only one parameter is supported, "bucket"
 	for (const auto& [name, value] : params) {

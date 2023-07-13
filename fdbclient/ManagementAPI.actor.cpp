@@ -1364,7 +1364,8 @@ struct NameQuorumChange final : IQuorumChange {
 	std::string newName;
 	Reference<IQuorumChange> otherChange;
 	explicit NameQuorumChange(std::string const& newName, Reference<IQuorumChange> const& otherChange)
-	  : newName(newName), otherChange(otherChange) {}
+	  : newName(newName),
+	    otherChange(otherChange) {}
 	Future<std::vector<NetworkAddress>> getDesiredCoordinators(Transaction* tr,
 	                                                           std::vector<NetworkAddress> oldCoordinators,
 	                                                           Reference<IClusterConnectionRecord> ccr,

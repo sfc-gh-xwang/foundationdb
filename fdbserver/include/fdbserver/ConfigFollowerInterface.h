@@ -32,9 +32,11 @@ struct VersionedConfigMutationRef {
 
 	VersionedConfigMutationRef() = default;
 	explicit VersionedConfigMutationRef(Arena& arena, Version version, ConfigMutationRef mutation)
-	  : version(version), mutation(arena, mutation) {}
+	  : version(version),
+	    mutation(arena, mutation) {}
 	explicit VersionedConfigMutationRef(Arena& arena, VersionedConfigMutationRef const& rhs)
-	  : version(rhs.version), mutation(arena, rhs.mutation) {}
+	  : version(rhs.version),
+	    mutation(arena, rhs.mutation) {}
 
 	size_t expectedSize() const { return mutation.expectedSize(); }
 
@@ -51,9 +53,11 @@ struct VersionedConfigCommitAnnotationRef {
 
 	VersionedConfigCommitAnnotationRef() = default;
 	explicit VersionedConfigCommitAnnotationRef(Arena& arena, Version version, ConfigCommitAnnotationRef annotation)
-	  : version(version), annotation(arena, annotation) {}
+	  : version(version),
+	    annotation(arena, annotation) {}
 	explicit VersionedConfigCommitAnnotationRef(Arena& arena, VersionedConfigCommitAnnotationRef rhs)
-	  : version(rhs.version), annotation(arena, rhs.annotation) {}
+	  : version(rhs.version),
+	    annotation(arena, rhs.annotation) {}
 
 	size_t expectedSize() const { return annotation.expectedSize(); }
 
@@ -79,7 +83,9 @@ struct ConfigFollowerGetSnapshotAndChangesReply {
 	    Snapshot&& snapshot,
 	    Standalone<VectorRef<VersionedConfigMutationRef>> changes,
 	    Standalone<VectorRef<VersionedConfigCommitAnnotationRef>> annotations)
-	  : snapshotVersion(snapshotVersion), snapshot(std::forward<Snapshot>(snapshot)), changes(changes),
+	  : snapshotVersion(snapshotVersion),
+	    snapshot(std::forward<Snapshot>(snapshot)),
+	    changes(changes),
 	    annotations(annotations) {}
 
 	template <class Ar>
@@ -112,7 +118,8 @@ struct ConfigFollowerGetChangesReply {
 	ConfigFollowerGetChangesReply() = default;
 	explicit ConfigFollowerGetChangesReply(Standalone<VectorRef<VersionedConfigMutationRef>> const& changes,
 	                                       Standalone<VectorRef<VersionedConfigCommitAnnotationRef>> const& annotations)
-	  : changes(changes), annotations(annotations) {}
+	  : changes(changes),
+	    annotations(annotations) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -128,7 +135,8 @@ struct ConfigFollowerGetChangesRequest {
 
 	ConfigFollowerGetChangesRequest() = default;
 	explicit ConfigFollowerGetChangesRequest(Version lastSeenVersion, Version mostRecentVersion)
-	  : lastSeenVersion(lastSeenVersion), mostRecentVersion(mostRecentVersion) {}
+	  : lastSeenVersion(lastSeenVersion),
+	    mostRecentVersion(mostRecentVersion) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -167,8 +175,12 @@ struct ConfigFollowerRollforwardRequest {
 	                                          Standalone<VectorRef<VersionedConfigMutationRef>> mutations,
 	                                          Standalone<VectorRef<VersionedConfigCommitAnnotationRef>> annotations,
 	                                          bool specialZeroQuorum)
-	  : rollback(rollback), lastKnownCommitted(lastKnownCommitted), target(target), mutations(mutations),
-	    annotations(annotations), specialZeroQuorum(specialZeroQuorum) {}
+	  : rollback(rollback),
+	    lastKnownCommitted(lastKnownCommitted),
+	    target(target),
+	    mutations(mutations),
+	    annotations(annotations),
+	    specialZeroQuorum(specialZeroQuorum) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -188,7 +200,10 @@ struct ConfigFollowerGetCommittedVersionReply {
 	                                                Version lastCompacted,
 	                                                Version lastLive,
 	                                                Version lastCommitted)
-	  : registered(registered), lastCompacted(lastCompacted), lastLive(lastLive), lastCommitted(lastCommitted) {}
+	  : registered(registered),
+	    lastCompacted(lastCompacted),
+	    lastLive(lastLive),
+	    lastCommitted(lastCommitted) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

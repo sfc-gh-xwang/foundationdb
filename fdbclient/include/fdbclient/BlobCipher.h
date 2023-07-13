@@ -163,7 +163,9 @@ struct BlobCipherDetails {
 	BlobCipherDetails(const EncryptCipherDomainId& dId,
 	                  const EncryptCipherBaseKeyId& bId,
 	                  const EncryptCipherRandomSalt& random)
-	  : encryptDomainId(dId), baseCipherId(bId), salt(random) {}
+	  : encryptDomainId(dId),
+	    baseCipherId(bId),
+	    salt(random) {}
 
 	void validateCipherDetailsWithCipherKey(Reference<BlobCipherKey> headerCipherKey);
 
@@ -204,7 +206,8 @@ struct EncryptHeaderCipherDetails {
 	EncryptHeaderCipherDetails() = default;
 	EncryptHeaderCipherDetails(const BlobCipherDetails& tCipherDetails) : textCipherDetails(tCipherDetails) {}
 	EncryptHeaderCipherDetails(const BlobCipherDetails& tCipherDetails, const BlobCipherDetails& hCipherDetails)
-	  : textCipherDetails(tCipherDetails), headerCipherDetails(hCipherDetails) {}
+	  : textCipherDetails(tCipherDetails),
+	    headerCipherDetails(hCipherDetails) {}
 };
 
 #pragma pack(push, 1) // exact fit - no padding
@@ -234,7 +237,9 @@ struct BlobCipherEncryptHeaderFlagsV1 {
 	BlobCipherEncryptHeaderFlagsV1(const EncryptCipherMode& cipherMode,
 	                               const EncryptAuthTokenMode& tokenMode,
 	                               const EncryptAuthTokenAlgo& authAlgo)
-	  : encryptMode(cipherMode), authTokenMode(tokenMode), authTokenAlgo(authAlgo) {}
+	  : encryptMode(cipherMode),
+	    authTokenMode(tokenMode),
+	    authTokenAlgo(authAlgo) {}
 
 	bool operator==(const BlobCipherEncryptHeaderFlagsV1& o) const {
 		return encryptMode == o.encryptMode && authTokenMode == o.authTokenMode && authTokenAlgo == o.authTokenAlgo;
@@ -295,7 +300,10 @@ struct AesCtrWithAuthV1 {
 	                 const EncryptCipherKeyCheckValue hKCV,
 	                 const uint8_t* ivBuf,
 	                 const int ivLen)
-	  : cipherTextDetails(textDetails), textKCV(tKCV), cipherHeaderDetails(headerDetails), headerKCV(hKCV) {
+	  : cipherTextDetails(textDetails),
+	    textKCV(tKCV),
+	    cipherHeaderDetails(headerDetails),
+	    headerKCV(hKCV) {
 		ASSERT_EQ(ivLen, AES_256_IV_LENGTH);
 		memcpy(&iv[0], ivBuf, ivLen);
 		memset(&authToken[0], 0, Params::authTokenSize);
@@ -396,7 +404,8 @@ struct AesCtrNoAuthV1 {
 	               const EncryptCipherKeyCheckValue tKCV,
 	               const uint8_t* ivBuf,
 	               const int ivLen)
-	  : cipherTextDetails(textDetails), textKCV(tKCV) {
+	  : cipherTextDetails(textDetails),
+	    textKCV(tKCV) {
 		ASSERT_EQ(ivLen, AES_256_IV_LENGTH);
 		memcpy(&iv[0], ivBuf, ivLen);
 	}
@@ -468,7 +477,8 @@ struct EncryptHeaderCipherKCVs {
 	EncryptHeaderCipherKCVs() = default;
 	EncryptHeaderCipherKCVs(const EncryptCipherKeyCheckValue tKCV) : textKCV(tKCV) {}
 	EncryptHeaderCipherKCVs(const EncryptCipherKeyCheckValue tKCV, const EncryptCipherKeyCheckValue hKCV)
-	  : textKCV(tKCV), headerKCV(hKCV) {}
+	  : textKCV(tKCV),
+	    headerKCV(hKCV) {}
 };
 
 struct BlobCipherEncryptHeaderRef {

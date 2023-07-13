@@ -82,9 +82,13 @@ struct WriteMapEntry {
 	              bool is_conflict,
 	              bool following_keys_unreadable,
 	              bool is_unreadable)
-	  : key(key), stack(std::move(stack)), following_keys_cleared(following_keys_cleared),
-	    following_keys_conflict(following_keys_conflict), is_conflict(is_conflict),
-	    following_keys_unreadable(following_keys_unreadable), is_unreadable(is_unreadable) {}
+	  : key(key),
+	    stack(std::move(stack)),
+	    following_keys_cleared(following_keys_cleared),
+	    following_keys_conflict(following_keys_conflict),
+	    is_conflict(is_conflict),
+	    following_keys_unreadable(following_keys_unreadable),
+	    is_unreadable(is_unreadable) {}
 
 	int compare(StringRef const& r) const { return key.compare(r); }
 
@@ -135,7 +139,10 @@ public:
 	}
 
 	WriteMap(WriteMap&& r) noexcept
-	  : arena(r.arena), writeMapEmpty(r.writeMapEmpty), writes(std::move(r.writes)), ver(r.ver),
+	  : arena(r.arena),
+	    writeMapEmpty(r.writeMapEmpty),
+	    writes(std::move(r.writes)),
+	    ver(r.ver),
 	    scratch_iterator(std::move(r.scratch_iterator)) {}
 
 	WriteMap& operator=(WriteMap&& r) noexcept;
