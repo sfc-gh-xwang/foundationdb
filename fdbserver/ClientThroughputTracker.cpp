@@ -6,8 +6,8 @@
 #include "fdbserver/Knobs.h"
 
 ClientThroughputTracker::ThroughputSmoother::ThroughputSmoother()
-  : smoother(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME,
-             SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME),
+  : smoother(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,
+             SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME),
     lastUpdated(now()) {}
 
 void ClientThroughputTracker::ThroughputSmoother::addThroughput(double newThroughput) {

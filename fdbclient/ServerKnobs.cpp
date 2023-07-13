@@ -810,6 +810,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   2.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME,   10.0 );
 	init( GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME,               10.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,            1.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME,           10.0 );
 
 	//Storage Metrics
 	init( STORAGE_METRICS_AVERAGE_INTERVAL,                    120.0 );
