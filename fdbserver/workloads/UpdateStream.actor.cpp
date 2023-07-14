@@ -110,7 +110,9 @@ class UpdateStreamWorkload : public TestWorkload {
 
 	public:
 		Consumer(Key const& metadataPrefix, Key const& dataPrefix, int id)
-		  : metadataPrefix(metadataPrefix), dataPrefix(dataPrefix), id(id) {}
+		  : metadataPrefix(metadataPrefix),
+		    dataPrefix(dataPrefix),
+		    id(id) {}
 
 		Future<Void> run(Database db, int batchSize) { return run(this, db, batchSize); }
 

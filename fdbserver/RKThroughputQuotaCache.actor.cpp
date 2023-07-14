@@ -154,7 +154,10 @@ RKThroughputQuotaCache::RKThroughputQuotaCache(UID id,
                                                double throughputThreshold,
                                                double expirationCheckInterval,
                                                double expirationThreshold)
-  : id(id), db(db), throughputThreshold(throughputThreshold), expirationCheckInterval(expirationCheckInterval),
+  : id(id),
+    db(db),
+    throughputThreshold(throughputThreshold),
+    expirationCheckInterval(expirationCheckInterval),
     expirationThreshold(expirationThreshold) {}
 
 RKThroughputQuotaCache::~RKThroughputQuotaCache() = default;

@@ -233,8 +233,11 @@ public:
 };
 
 UpdateStream::UpdateStream(Key metadataPrefix, int batchSize, bool accessSystemKeys, bool immediatePriority)
-  : metadataPrefix(metadataPrefix), batchSize(batchSize), leaseId(deterministicRandom()->randomUniqueID()),
-    accessSystemKeys(accessSystemKeys), immediatePriority(immediatePriority) {}
+  : metadataPrefix(metadataPrefix),
+    batchSize(batchSize),
+    leaseId(deterministicRandom()->randomUniqueID()),
+    accessSystemKeys(accessSystemKeys),
+    immediatePriority(immediatePriority) {}
 
 Key UpdateStream::getLeaseKey() const {
 	return ("lease"_sr).withPrefix(metadataPrefix);
@@ -279,4 +282,6 @@ void UpdateStream::applyTransactionOptions(Reference<ReadYourWritesTransaction> 
 }
 
 UpdateStream::Update::Update(Key const& key, Optional<Value> const& value, uint64_t index)
-  : key(key), value(value), index(index) {}
+  : key(key),
+    value(value),
+    index(index) {}
