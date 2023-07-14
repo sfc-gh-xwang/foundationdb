@@ -69,8 +69,11 @@ struct UnitTestWorkload : TestWorkload {
 	PerfDoubleCounter totalWallTime, totalSimTime;
 
 	UnitTestWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), testsAvailable("Test Cases Available"), testsExecuted("Test Cases Executed"),
-	    testsFailed("Test Cases Failed"), totalWallTime("Total wall clock time (s)"),
+	  : TestWorkload(wcx),
+	    testsAvailable("Test Cases Available"),
+	    testsExecuted("Test Cases Executed"),
+	    testsFailed("Test Cases Failed"),
+	    totalWallTime("Total wall clock time (s)"),
 	    totalSimTime("Total flow time (s)") {
 		enabled = !clientId; // only do this on the "first" client
 		testPattern = getOption(options, "testsMatching"_sr, Value()).toString();

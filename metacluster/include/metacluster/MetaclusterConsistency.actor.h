@@ -338,7 +338,8 @@ public:
 	MetaclusterConsistencyCheck() {}
 	MetaclusterConsistencyCheck(Reference<DB> managementDb,
 	                            AllowPartialMetaclusterOperations allowPartialMetaclusterOperations)
-	  : managementDb(managementDb), metaclusterData(managementDb),
+	  : managementDb(managementDb),
+	    metaclusterData(managementDb),
 	    allowPartialMetaclusterOperations(allowPartialMetaclusterOperations) {}
 
 	Future<Void> run() { return run(this); }

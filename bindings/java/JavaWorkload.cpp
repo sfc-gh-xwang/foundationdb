@@ -525,7 +525,9 @@ struct JavaWorkload final : FDBWorkload {
 	bool failed = false;
 	jobject workload = nullptr;
 	JavaWorkload(const std::shared_ptr<JVM>& jvm, FDBLogger& log, const std::string& name)
-	  : jvm(jvm), log(log), name(name) {
+	  : jvm(jvm),
+	    log(log),
+	    name(name) {
 		boost::replace_all(this->name, ".", "/");
 	}
 	~JavaWorkload() {

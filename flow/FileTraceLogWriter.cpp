@@ -77,8 +77,15 @@ FileTraceLogWriter::FileTraceLogWriter(std::string const& directory,
                                        uint64_t maxLogsSize,
                                        std::function<void()> const& onError,
                                        Reference<ITraceLogIssuesReporter> const& issues)
-  : directory(directory), processName(processName), basename(basename), extension(extension),
-    tracePartialFileSuffix(tracePartialFileSuffix), maxLogsSize(maxLogsSize), traceFileFD(-1), index(0), issues(issues),
+  : directory(directory),
+    processName(processName),
+    basename(basename),
+    extension(extension),
+    tracePartialFileSuffix(tracePartialFileSuffix),
+    maxLogsSize(maxLogsSize),
+    traceFileFD(-1),
+    index(0),
+    issues(issues),
     onError(onError) {}
 
 void FileTraceLogWriter::addref() {

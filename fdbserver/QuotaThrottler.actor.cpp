@@ -27,6 +27,8 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/QuotaThrottler.h"
 
+#include <boost/unordered/unordered_flat_map.hpp>
+
 #include <limits>
 
 #include "flow/actorcompiler.h" // must be last include
@@ -65,7 +67,7 @@
 
 class QuotaThrottlerImpl {
 	template <class K, class V, class H>
-	static Optional<V> tryGet(std::unordered_map<K, V, H> const& m, K const& k) {
+	static Optional<V> tryGet(boost::unordered::unordered_flat_map<K, V, H> const& m, K const& k) {
 		auto it = m.find(k);
 		if (it == m.end()) {
 			return {};
@@ -110,7 +112,8 @@ class QuotaThrottlerImpl {
 		                       SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME),
 		    targetRate(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
 		    targetThroughput(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
-		    transactionsLastAdded(now()), lastLogged(0) {}
+		    transactionsLastAdded(now()),
+		    lastLogged(0) {}
 
 		void addTransactions(int count) {
 			transactionsLastAdded = now();
@@ -381,7 +384,10 @@ public:
 	                   IRKThroughputQuotaCache const& quotaCache,
 	                   UID id,
 	                   int maxFallingBehind)
-	  : metricsTracker(&metricsTracker), quotaCache(&quotaCache), id(id), maxFallingBehind(maxFallingBehind) {
+	  : metricsTracker(&metricsTracker),
+	    quotaCache(&quotaCache),
+	    id(id),
+	    maxFallingBehind(maxFallingBehind) {
 		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
 			clientThroughputTracker = ClientThroughputTracker();
 		}
@@ -482,18 +488,18 @@ public:
 	void updateThrottling(Map<UID, StorageQueueInfo> const& sqInfos) { serverThroughputTracker.update(sqInfos); }
 
 	void removeExpiredThrottlingIds() {
-		for (auto it = throttlingStatistics.begin(); it != throttlingStatistics.end();) {
-			const auto& [throttlingId, stats] = *it;
+		boost::unordered::erase_if(throttlingStatistics, [&](const auto& kv) {
+			const auto& [throttlingId, stats] = kv;
 			if (!stats.recentTransactionsAdded()) {
 				serverThroughputTracker.removeThrottlingId(throttlingId);
 				if (clientThroughputTracker.present()) {
 					clientThroughputTracker.get().removeThrottlingId(throttlingId);
 				}
-				it = throttlingStatistics.erase(it);
+				return true;
 			} else {
-				++it;
+				return false;
 			}
-		}
+		});
 	}
 
 	Future<Void> removeExpiredThrottlingIdsActor() {

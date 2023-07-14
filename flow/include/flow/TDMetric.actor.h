@@ -50,7 +50,9 @@ struct MetricNameRef {
 	MetricNameRef() {}
 	MetricNameRef(const StringRef& type, const StringRef& name, const StringRef& id) : type(type), name(name), id(id) {}
 	MetricNameRef(Arena& a, const MetricNameRef& copyFrom)
-	  : type(a, copyFrom.type), name(a, copyFrom.name), id(a, copyFrom.id) {}
+	  : type(a, copyFrom.type),
+	    name(a, copyFrom.name),
+	    id(a, copyFrom.id) {}
 
 	StringRef type, name, id;
 
@@ -98,9 +100,13 @@ struct KeyWithWriter {
 	int writerOffset;
 
 	KeyWithWriter(Standalone<StringRef> const& key, BinaryWriter& writer, int writerOffset = 0)
-	  : key(key), writer(std::move(writer)), writerOffset(writerOffset) {}
+	  : key(key),
+	    writer(std::move(writer)),
+	    writerOffset(writerOffset) {}
 	KeyWithWriter(KeyWithWriter&& r)
-	  : key(std::move(r.key)), writer(std::move(r.writer)), writerOffset(r.writerOffset) {}
+	  : key(std::move(r.key)),
+	    writer(std::move(r.writer)),
+	    writerOffset(r.writerOffset) {}
 	void operator=(KeyWithWriter&& r) {
 		key = std::move(r.key);
 		writer = std::move(r.writer);
@@ -125,8 +131,12 @@ public:
 struct MetricKeyRef {
 	MetricKeyRef() : level(-1) {}
 	MetricKeyRef(Arena& a, const MetricKeyRef& copyFrom)
-	  : prefix(a, copyFrom.prefix), name(a, copyFrom.name), address(a, copyFrom.address),
-	    fieldName(a, copyFrom.fieldName), fieldType(a, copyFrom.fieldType), level(copyFrom.level) {}
+	  : prefix(a, copyFrom.prefix),
+	    name(a, copyFrom.name),
+	    address(a, copyFrom.address),
+	    fieldName(a, copyFrom.fieldName),
+	    fieldType(a, copyFrom.fieldType),
+	    level(copyFrom.level) {}
 
 	StringRef prefix;
 	MetricNameRef name;
@@ -273,11 +283,16 @@ struct MetricData {
 	BinaryWriter writer;
 
 	explicit MetricData(uint64_t appendStart = 0)
-	  : start(0), rollTime(std::numeric_limits<uint64_t>::max()), appendStart(appendStart),
+	  : start(0),
+	    rollTime(std::numeric_limits<uint64_t>::max()),
+	    appendStart(appendStart),
 	    writer(AssumeVersion(g_network->protocolVersion())) {}
 
 	MetricData(MetricData&& r) noexcept
-	  : start(r.start), rollTime(r.rollTime), appendStart(r.appendStart), writer(std::move(r.writer)) {}
+	  : start(r.start),
+	    rollTime(r.rollTime),
+	    appendStart(r.appendStart),
+	    writer(std::move(r.writer)) {}
 
 	void operator=(MetricData&& r) noexcept {
 		start = r.start;

@@ -119,7 +119,11 @@ class SampleSender : public std::enable_shared_from_this<SampleSender<Protocol, 
 
 public:
 	SampleSender(Socket& socket, Callback const& callback, std::shared_ptr<Sample> const& sample)
-	  : socket(socket), callback(callback), iter(sample->data.begin()), end(sample->data.end()), sample_(sample) {
+	  : socket(socket),
+	    callback(callback),
+	    iter(sample->data.begin()),
+	    end(sample->data.end()),
+	    sample_(sample) {
 		sendNext();
 	}
 };
@@ -203,7 +207,9 @@ struct FluentDIngestorImpl {
 	std::shared_ptr<FluentDSocket> socket;
 	boost::asio::steady_timer retryTimer;
 	FluentDIngestorImpl(Protocol protocol, NetworkAddress const& endpoint)
-	  : protocol(protocol), endpoint(endpoint), io_context(ActorLineageProfiler::instance().context()),
+	  : protocol(protocol),
+	    endpoint(endpoint),
+	    io_context(ActorLineageProfiler::instance().context()),
 	    retryTimer(io_context) {
 		connect();
 	}

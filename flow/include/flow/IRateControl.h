@@ -41,7 +41,10 @@ public:
 class SpeedLimit final : public IRateControl, ReferenceCounted<SpeedLimit> {
 public:
 	SpeedLimit(int windowLimit, double windowSeconds)
-	  : m_limit(windowLimit), m_seconds(windowSeconds), m_last_update(0), m_budget(0) {
+	  : m_limit(windowLimit),
+	    m_seconds(windowSeconds),
+	    m_last_update(0),
+	    m_budget(0) {
 		m_last_update = now();
 	}
 	~SpeedLimit() override { m_stop.send(Never()); }

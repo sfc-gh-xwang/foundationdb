@@ -91,7 +91,8 @@ class Batcher {
 		Optional<UID> debugID;
 
 		VersionRequest(SpanContext spanContext, Optional<UID> debugID = {})
-		  : spanContext(spanContext), debugID(debugID) {}
+		  : spanContext(spanContext),
+		    debugID(debugID) {}
 	};
 
 	int outstandingRequests = 0;

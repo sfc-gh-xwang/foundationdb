@@ -119,7 +119,8 @@ struct StorageServerStatusInfo : public StorageServerInterface {
 	EventMap eventMap;
 	StorageServerStatusInfo(const StorageServerInterface& interface,
 	                        Optional<StorageMetadataType> metadata = Optional<StorageMetadataType>())
-	  : StorageServerInterface(interface), metadata(metadata) {}
+	  : StorageServerInterface(interface),
+	    metadata(metadata) {}
 };
 
 ACTOR static Future<Optional<TraceEventFields>> latestEventOnWorker(WorkerInterface worker, std::string eventName) {
@@ -1605,7 +1606,8 @@ struct ProtocolVersionData {
 	ProtocolVersionData() : runningProtocolVersion(currentProtocolVersion()) {}
 
 	ProtocolVersionData(uint64_t newestProtocolVersionValue, uint64_t lowestCompatibleProtocolVersionValue)
-	  : runningProtocolVersion(currentProtocolVersion()), newestProtocolVersion(newestProtocolVersionValue),
+	  : runningProtocolVersion(currentProtocolVersion()),
+	    newestProtocolVersion(newestProtocolVersionValue),
 	    lowestCompatibleProtocolVersion(lowestCompatibleProtocolVersionValue) {}
 };
 
@@ -1643,7 +1645,10 @@ struct LoadConfigurationResult {
 	bool dataDistributionDisabled;
 
 	LoadConfigurationResult()
-	  : fullReplication(true), healthyZoneSeconds(0), rebalanceDDIgnored(false), dataDistributionDisabled(false) {}
+	  : fullReplication(true),
+	    healthyZoneSeconds(0),
+	    rebalanceDDIgnored(false),
+	    dataDistributionDisabled(false) {}
 };
 
 ACTOR static Future<std::pair<Optional<DatabaseConfiguration>, Optional<LoadConfigurationResult>>>

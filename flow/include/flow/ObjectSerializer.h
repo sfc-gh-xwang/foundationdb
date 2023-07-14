@@ -143,7 +143,8 @@ public:
 
 	template <class VersionOptions>
 	ArenaObjectReader(Arena const& arena, const StringRef& input, VersionOptions vo)
-	  : _data(input.begin()), _arena(arena) {
+	  : _data(input.begin()),
+	    _arena(arena) {
 		vo.read(*this);
 	}
 
@@ -244,8 +245,12 @@ public:
 	                      MarkForWipeFuncType markForWipeFunc,
 	                      void* allocatorContext,
 	                      VersionOptions vo)
-	  : arena(), allocatorFunc(allocatorFunc), markForWipeFunc(markForWipeFunc), allocatorContext(allocatorContext),
-	    data(nullptr), size(0) {
+	  : arena(),
+	    allocatorFunc(allocatorFunc),
+	    markForWipeFunc(markForWipeFunc),
+	    allocatorContext(allocatorContext),
+	    data(nullptr),
+	    size(0) {
 		vo.write(*this);
 	}
 

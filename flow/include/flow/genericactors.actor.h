@@ -1724,7 +1724,9 @@ struct BoundedFlowLock : NonCopyable, public ReferenceCounted<BoundedFlowLock> {
 
 	BoundedFlowLock() : minOutstanding(0), nextPermitNumber(0), unrestrictedPermits(1), boundedPermits(0) {}
 	explicit BoundedFlowLock(int64_t unrestrictedPermits, int64_t boundedPermits)
-	  : minOutstanding(0), nextPermitNumber(0), unrestrictedPermits(unrestrictedPermits),
+	  : minOutstanding(0),
+	    nextPermitNumber(0),
+	    unrestrictedPermits(unrestrictedPermits),
 	    boundedPermits(boundedPermits) {}
 
 	Future<int64_t> take() { return takeActor(this); }
@@ -2216,7 +2218,8 @@ class AsyncListener final : public IAsyncListener<Output> {
 
 public:
 	AsyncListener(Reference<AsyncVar<Input> const> const& input, F const& f)
-	  : output(f(input->get())), monitorActor(monitor(input, &output, f)) {}
+	  : output(f(input->get())),
+	    monitorActor(monitor(input, &output, f)) {}
 	Output const& get() const override { return output.get(); }
 	Future<Void> onChange() const override { return output.onChange(); }
 };

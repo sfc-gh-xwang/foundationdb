@@ -169,12 +169,15 @@ Ratekeeper::Ratekeeper(UID id,
                        Database db,
                        Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                        RatekeeperInterface rkInterf)
-  : id(id), db(db), metricsTracker(id, db, rkInterf.reportCommitCostEstimation.getFuture(), dbInfo),
+  : id(id),
+    db(db),
+    metricsTracker(id, db, rkInterf.reportCommitCostEstimation.getFuture(), dbInfo),
     configurationMonitor(db, dbInfo),
     recoveryTracker(IAsyncListener<bool>::create(
         dbInfo,
         [](auto const& info) { return info.recoveryState < RecoveryState::ACCEPTING_COMMITS; })),
-    blobMonitor(db, dbInfo), rateServer(rkInterf.getRateInfo.getFuture()),
+    blobMonitor(db, dbInfo),
+    rateServer(rkInterf.getRateInfo.getFuture()),
     normalRateUpdater(id,
                       RatekeeperLimits(TransactionPriority::DEFAULT,
                                        /*context=*/"",
@@ -195,7 +198,8 @@ Ratekeeper::Ratekeeper(UID id,
                                       SERVER_KNOBS->MAX_TL_SS_VERSION_DIFFERENCE_BATCH,
                                       SERVER_KNOBS->TARGET_DURABILITY_LAG_VERSIONS_BATCH,
                                       SERVER_KNOBS->TARGET_BW_LAG_BATCH)),
-    quotaCache(id, db), quotaThrottler(metricsTracker, quotaCache, id, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND) {}
+    quotaCache(id, db),
+    quotaThrottler(metricsTracker, quotaCache, id, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND) {}
 
 void Ratekeeper::updateTagThrottling() {
 	quotaThrottler.updateThrottling(metricsTracker.getStorageQueueInfo());

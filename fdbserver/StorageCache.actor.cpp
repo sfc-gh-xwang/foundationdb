@@ -97,7 +97,9 @@ struct AddingCacheRange : NonCopyable {
 
 class CacheRangeInfo : public ReferenceCounted<CacheRangeInfo>, NonCopyable {
 	CacheRangeInfo(KeyRange keys, std::unique_ptr<AddingCacheRange>&& adding, StorageCacheData* readWrite)
-	  : adding(std::move(adding)), readWrite(readWrite), keys(keys) {}
+	  : adding(std::move(adding)),
+	    readWrite(readWrite),
+	    keys(keys) {}
 
 public:
 	std::unique_ptr<AddingCacheRange> adding;
@@ -228,14 +230,25 @@ public:
 		// LatencyBands readLatencyBands;
 
 		Counters(StorageCacheData* self)
-		  : cc("StorageCacheServer", self->thisServerID.toString()), allQueries("QueryQueue", cc),
-		    getKeyQueries("GetKeyQueries", cc), getValueQueries("GetValueQueries", cc),
-		    getRangeQueries("GetRangeQueries", cc), finishedQueries("FinishedQueries", cc),
-		    rowsQueried("RowsQueried", cc), bytesQueried("BytesQueried", cc), bytesInput("BytesInput", cc),
-		    bytesFetched("BytesFetched", cc), mutationBytes("MutationBytes", cc), mutations("Mutations", cc),
-		    setMutations("SetMutations", cc), clearRangeMutations("ClearRangeMutations", cc),
-		    atomicMutations("AtomicMutations", cc), updateBatches("UpdateBatches", cc),
-		    updateVersions("UpdateVersions", cc), loops("Loops", cc), readsRejected("ReadsRejected", cc) {
+		  : cc("StorageCacheServer", self->thisServerID.toString()),
+		    allQueries("QueryQueue", cc),
+		    getKeyQueries("GetKeyQueries", cc),
+		    getValueQueries("GetValueQueries", cc),
+		    getRangeQueries("GetRangeQueries", cc),
+		    finishedQueries("FinishedQueries", cc),
+		    rowsQueried("RowsQueried", cc),
+		    bytesQueried("BytesQueried", cc),
+		    bytesInput("BytesInput", cc),
+		    bytesFetched("BytesFetched", cc),
+		    mutationBytes("MutationBytes", cc),
+		    mutations("Mutations", cc),
+		    setMutations("SetMutations", cc),
+		    clearRangeMutations("ClearRangeMutations", cc),
+		    atomicMutations("AtomicMutations", cc),
+		    updateBatches("UpdateBatches", cc),
+		    updateVersions("UpdateVersions", cc),
+		    loops("Loops", cc),
+		    readsRejected("ReadsRejected", cc) {
 			specialCounter(cc, "LastTLogVersion", [self]() { return self->lastTLogVersion; });
 			specialCounter(cc, "Version", [self]() { return self->version.get(); });
 			specialCounter(cc, "VersionLag", [self]() { return self->versionLag; });
@@ -244,10 +257,21 @@ public:
 
 	explicit StorageCacheData(UID thisServerID, uint16_t index, Reference<AsyncVar<ServerDBInfo> const> const& db)
 	  : /*versionedData(FastAllocPTree<KeyRef>{std::make_shared<int>(0)}), */
-	    thisServerID(thisServerID), index(index), logProtocol(0), db(db), cacheRangeChangeCounter(0),
-	    lastTLogVersion(0), lastVersionWithData(0), peekVersion(0), compactionInProgress(Void()),
-	    fetchKeysParallelismLock(SERVER_KNOBS->FETCH_KEYS_PARALLELISM_BYTES), debug_inApplyUpdate(false),
-	    debug_lastValidateTime(0), versionLag(0), behind(false), counters(this) {
+	    thisServerID(thisServerID),
+	    index(index),
+	    logProtocol(0),
+	    db(db),
+	    cacheRangeChangeCounter(0),
+	    lastTLogVersion(0),
+	    lastVersionWithData(0),
+	    peekVersion(0),
+	    compactionInProgress(Void()),
+	    fetchKeysParallelismLock(SERVER_KNOBS->FETCH_KEYS_PARALLELISM_BYTES),
+	    debug_inApplyUpdate(false),
+	    debug_lastValidateTime(0),
+	    versionLag(0),
+	    behind(false),
+	    counters(this) {
 		version.initMetric("StorageCacheData.Version"_sr, counters.cc.getId());
 		desiredOldestVersion.initMetric("StorageCacheData.DesriedOldestVersion"_sr, counters.cc.getId());
 		oldestVersion.initMetric("StorageCacheData.OldestVersion"_sr, counters.cc.getId());
@@ -1553,7 +1577,10 @@ ACTOR Future<Void> fetchKeys(StorageCacheData* data, AddingCacheRange* cacheRang
 };
 
 AddingCacheRange::AddingCacheRange(StorageCacheData* server, KeyRangeRef const& keys)
-  : keys(keys), server(server), transferredVersion(invalidVersion), phase(WaitPrevious) {
+  : keys(keys),
+    server(server),
+    transferredVersion(invalidVersion),
+    phase(WaitPrevious) {
 	fetchClient = fetchKeys(server, this);
 }
 
@@ -1713,9 +1740,13 @@ void cacheWarmup(StorageCacheData* data, const KeyRangeRef& keys, bool nowAssign
 class StorageCacheUpdater {
 public:
 	StorageCacheUpdater()
-	  : currentVersion(invalidVersion), fromVersion(invalidVersion), processedCacheStartKey(false) {}
+	  : currentVersion(invalidVersion),
+	    fromVersion(invalidVersion),
+	    processedCacheStartKey(false) {}
 	StorageCacheUpdater(Version currentVersion)
-	  : currentVersion(invalidVersion), fromVersion(currentVersion), processedCacheStartKey(false) {}
+	  : currentVersion(invalidVersion),
+	    fromVersion(currentVersion),
+	    processedCacheStartKey(false) {}
 
 	void applyMutation(StorageCacheData* data, MutationRef const& m, Version ver) {
 		//TraceEvent("SCNewVersion", data->thisServerID).detail("VerWas", data->mutableData().latestVersion).detail("ChVer", ver);

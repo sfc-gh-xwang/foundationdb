@@ -28,8 +28,12 @@ GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow,
                                                double maxEmptyQueueBudget,
                                                double rate,
                                                double maxToStart)
-  : rateWindow(rateWindow), maxEmptyQueueBudget(maxEmptyQueueBudget), rate(rate), maxToStart(maxToStart),
-    smoothRate(rateWindow), smoothReleased(rateWindow) {
+  : rateWindow(rateWindow),
+    maxEmptyQueueBudget(maxEmptyQueueBudget),
+    rate(rate),
+    maxToStart(maxToStart),
+    smoothRate(rateWindow),
+    smoothReleased(rateWindow) {
 	smoothRate.setTotal(rate);
 }
 

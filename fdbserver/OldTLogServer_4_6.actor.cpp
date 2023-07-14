@@ -69,7 +69,8 @@ struct OldTagMessagesRef {
 
 	OldTagMessagesRef() {}
 	OldTagMessagesRef(Arena& a, const OldTagMessagesRef& from)
-	  : tag(from.tag), messageOffsets(a, from.messageOffsets) {}
+	  : tag(from.tag),
+	    messageOffsets(a, from.messageOffsets) {}
 
 	size_t expectedSize() const { return messageOffsets.expectedSize(); }
 
@@ -88,8 +89,11 @@ struct TLogQueueEntryRef {
 
 	TLogQueueEntryRef() : version(0), knownCommittedVersion(0) {}
 	TLogQueueEntryRef(Arena& a, TLogQueueEntryRef const& from)
-	  : id(from.id), version(from.version), knownCommittedVersion(from.knownCommittedVersion),
-	    messages(a, from.messages), tags(a, from.tags) {}
+	  : id(from.id),
+	    version(from.version),
+	    knownCommittedVersion(from.knownCommittedVersion),
+	    messages(a, from.messages),
+	    tags(a, from.tags) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -318,11 +322,22 @@ struct TLogData : NonCopyable {
 	         IKeyValueStore* persistentData,
 	         IDiskQueue* persistentQueue,
 	         Reference<AsyncVar<ServerDBInfo> const> const& dbInfo)
-	  : dbgid(dbgid), workerID(workerID), persistentData(persistentData), rawPersistentQueue(persistentQueue),
-	    persistentQueue(new TLogQueue(persistentQueue, dbgid)), diskQueueCommitBytes(0),
-	    largeDiskQueueCommitBytes(false), dbInfo(dbInfo), queueCommitEnd(0), queueCommitBegin(0),
-	    instanceID(deterministicRandom()->randomUniqueID().first()), bytesInput(0), bytesDurable(0), prevVersion(0),
-	    updatePersist(Void()), terminated(false) {}
+	  : dbgid(dbgid),
+	    workerID(workerID),
+	    persistentData(persistentData),
+	    rawPersistentQueue(persistentQueue),
+	    persistentQueue(new TLogQueue(persistentQueue, dbgid)),
+	    diskQueueCommitBytes(0),
+	    largeDiskQueueCommitBytes(false),
+	    dbInfo(dbInfo),
+	    queueCommitEnd(0),
+	    queueCommitBegin(0),
+	    instanceID(deterministicRandom()->randomUniqueID().first()),
+	    bytesInput(0),
+	    bytesDurable(0),
+	    prevVersion(0),
+	    updatePersist(Void()),
+	    terminated(false) {}
 };
 
 struct LogData : NonCopyable, public ReferenceCounted<LogData> {
@@ -335,12 +350,17 @@ struct LogData : NonCopyable, public ReferenceCounted<LogData> {
 		bool update_version_sizes;
 
 		TagData(Version popped, bool nothing_persistent, bool popped_recently, OldTag tag)
-		  : nothing_persistent(nothing_persistent), popped_recently(popped_recently), popped(popped),
+		  : nothing_persistent(nothing_persistent),
+		    popped_recently(popped_recently),
+		    popped(popped),
 		    update_version_sizes(tag != txsTagOld) {}
 
 		TagData(TagData&& r) noexcept
-		  : version_messages(std::move(r.version_messages)), nothing_persistent(r.nothing_persistent),
-		    popped_recently(r.popped_recently), popped(r.popped), update_version_sizes(r.update_version_sizes) {}
+		  : version_messages(std::move(r.version_messages)),
+		    nothing_persistent(r.nothing_persistent),
+		    popped_recently(r.popped_recently),
+		    popped(r.popped),
+		    update_version_sizes(r.update_version_sizes) {}
 		void operator=(TagData&& r) noexcept {
 			version_messages = std::move(r.version_messages);
 			nothing_persistent = r.nothing_persistent;
@@ -436,9 +456,18 @@ struct LogData : NonCopyable, public ReferenceCounted<LogData> {
 	Future<Void> recovery;
 
 	explicit LogData(TLogData* tLogData, TLogInterface interf)
-	  : stopped(false), initialized(false), recoveryCount(), queueCommittingVersion(0), knownCommittedVersion(0),
-	    cc("TLog", interf.id().toString()), bytesInput("BytesInput", cc), bytesDurable("BytesDurable", cc),
-	    logId(interf.id()), newPersistentDataVersion(invalidVersion), tli(interf), tLogData(tLogData),
+	  : stopped(false),
+	    initialized(false),
+	    recoveryCount(),
+	    queueCommittingVersion(0),
+	    knownCommittedVersion(0),
+	    cc("TLog", interf.id().toString()),
+	    bytesInput("BytesInput", cc),
+	    bytesDurable("BytesDurable", cc),
+	    logId(interf.id()),
+	    newPersistentDataVersion(invalidVersion),
+	    tli(interf),
+	    tLogData(tLogData),
 	    recovery(Void()) {
 		startRole(Role::TRANSACTION_LOG,
 		          interf.id(),

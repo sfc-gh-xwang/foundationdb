@@ -79,10 +79,24 @@ struct ProcessInfo : NonCopyable {
 	            INetworkConnections* net,
 	            const char* dataFolder,
 	            const char* coordinationFolder)
-	  : name(name), coordinationFolder(coordinationFolder), dataFolder(dataFolder), machine(nullptr),
-	    addresses(addresses), address(addresses.address), locality(locality), startingClass(startingClass),
-	    failed(false), excluded(false), cleared(false), rebooting(false), drProcess(false), network(net),
-	    fault_injection_r(0), fault_injection_p1(0), fault_injection_p2(0), blob_inject_failure_rate(0),
+	  : name(name),
+	    coordinationFolder(coordinationFolder),
+	    dataFolder(dataFolder),
+	    machine(nullptr),
+	    addresses(addresses),
+	    address(addresses.address),
+	    locality(locality),
+	    startingClass(startingClass),
+	    failed(false),
+	    excluded(false),
+	    cleared(false),
+	    rebooting(false),
+	    drProcess(false),
+	    network(net),
+	    fault_injection_r(0),
+	    fault_injection_p1(0),
+	    fault_injection_p2(0),
+	    blob_inject_failure_rate(0),
 	    failedDisk(false) {
 		uid = deterministicRandom()->randomUniqueID();
 	}

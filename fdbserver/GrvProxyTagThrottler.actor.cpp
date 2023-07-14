@@ -23,6 +23,7 @@
 #include "fdbserver/GrvProxyTagThrottler.h"
 #include "fdbserver/Knobs.h"
 #include "flow/UnitTest.h"
+#include <boost/unordered/unordered_flat_map.hpp>
 #include "flow/actorcompiler.h" // must be last include
 
 uint64_t GrvProxyTagThrottler::DelayedRequest::lastSequenceNumber = 0;
@@ -99,16 +100,8 @@ void GrvProxyTagThrottler::updateRates(ThrottlingIdMap<double> const& newRates) 
 			queue.rateInfo.reset();
 		}
 	}
-
-	// TODO: Use std::erase_if in C++20
-	for (auto it = queues.begin(); it != queues.end();) {
-		const auto& [throttlingId, queue] = *it;
-		if (queue.requests.empty() && !queue.rateInfo.present()) {
-			it = queues.erase(it);
-		} else {
-			++it;
-		}
-	}
+	boost::unordered::erase_if(
+	    queues, [](const auto& kv) { return kv.second.requests.empty() && !kv.second.rateInfo.present(); });
 }
 
 void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {

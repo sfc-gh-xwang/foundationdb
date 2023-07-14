@@ -248,7 +248,11 @@ struct BoundaryEvaluation {
 	                   BoundaryEvalType type,
 	                   int64_t originalEpoch,
 	                   int64_t originalSeqno)
-	  : epoch(epoch), seqno(seqno), type(type), originalEpoch(originalEpoch), originalSeqno(originalSeqno) {
+	  : epoch(epoch),
+	    seqno(seqno),
+	    type(type),
+	    originalEpoch(originalEpoch),
+	    originalSeqno(originalSeqno) {
 		ASSERT(type != UNKNOWN);
 	}
 
@@ -311,14 +315,27 @@ struct BlobManagerStats {
 	                          std::unordered_map<UID, BlobWorkerInterface>* workers,
 	                          std::map<Key, bool>* mergeHardBoundaries,
 	                          std::unordered_map<Key, BlobGranuleMergeBoundary>* mergeBoundaries)
-	  : cc("BlobManagerStats", id.toString()), granuleSplits("GranuleSplits", cc),
-	    granuleWriteHotSplits("GranuleWriteHotSplits", cc), granuleMerges("GranuleMerges", cc),
-	    ccGranulesChecked("CCGranulesChecked", cc), ccRowsChecked("CCRowsChecked", cc),
-	    ccBytesChecked("CCBytesChecked", cc), ccMismatches("CCMismatches", cc), ccTimeouts("CCTimeouts", cc),
-	    ccErrors("CCErrors", cc), purgesProcessed("PurgesProcessed", cc),
-	    granulesFullyPurged("GranulesFullyPurged", cc), granulesPartiallyPurged("GranulesPartiallyPurged", cc),
-	    filesPurged("FilesPurged", cc), activeMerges(0), blockedAssignments(0), lastFlushVersion(0),
-	    lastMLogTruncationVersion(0), lastManifestSeqNo(0), lastManifestDumpTs(0), manifestSizeInBytes(0) {
+	  : cc("BlobManagerStats", id.toString()),
+	    granuleSplits("GranuleSplits", cc),
+	    granuleWriteHotSplits("GranuleWriteHotSplits", cc),
+	    granuleMerges("GranuleMerges", cc),
+	    ccGranulesChecked("CCGranulesChecked", cc),
+	    ccRowsChecked("CCRowsChecked", cc),
+	    ccBytesChecked("CCBytesChecked", cc),
+	    ccMismatches("CCMismatches", cc),
+	    ccTimeouts("CCTimeouts", cc),
+	    ccErrors("CCErrors", cc),
+	    purgesProcessed("PurgesProcessed", cc),
+	    granulesFullyPurged("GranulesFullyPurged", cc),
+	    granulesPartiallyPurged("GranulesPartiallyPurged", cc),
+	    filesPurged("FilesPurged", cc),
+	    activeMerges(0),
+	    blockedAssignments(0),
+	    lastFlushVersion(0),
+	    lastMLogTruncationVersion(0),
+	    lastManifestSeqNo(0),
+	    lastManifestDumpTs(0),
+	    manifestSizeInBytes(0) {
 		specialCounter(cc, "WorkerCount", [workers]() { return workers->size(); });
 		specialCounter(cc, "Epoch", [epoch]() { return epoch; });
 		specialCounter(cc, "ActiveMerges", [this]() { return this->activeMerges; });
@@ -365,7 +382,10 @@ struct MergeCandidateInfo {
 		ASSERT(st != MergeCandidateCanMerge);
 	}
 	MergeCandidateInfo(UID granuleID, Version startVersion)
-	  : st(MergeCandidateCanMerge), granuleID(granuleID), startVersion(startVersion), seen(false) {}
+	  : st(MergeCandidateCanMerge),
+	    granuleID(granuleID),
+	    startVersion(startVersion),
+	    seen(false) {}
 
 	bool canMerge() const { return st == MergeCandidateCanMerge; }
 
@@ -436,14 +456,21 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	                Database db,
 	                Optional<Key> dcId,
 	                int64_t epoch)
-	  : id(id), db(db), dcId(dcId),
+	  : id(id),
+	    db(db),
+	    dcId(dcId),
 	    stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, epoch, &workersById, &mergeHardBoundaries, &mergeBoundaries),
-	    knownBlobRanges(false, normalKeys.end), tenantData(BGTenantMap(dbInfo)),
+	    knownBlobRanges(false, normalKeys.end),
+	    tenantData(BGTenantMap(dbInfo)),
 	    mergeCandidates(MergeCandidateInfo(MergeCandidateUnknown), normalKeys.end),
-	    activeGranuleMerges(invalidVersion, normalKeys.end), forcePurgingRanges(false, normalKeys.end),
+	    activeGranuleMerges(invalidVersion, normalKeys.end),
+	    forcePurgingRanges(false, normalKeys.end),
 	    concurrentMergeChecks(SERVER_KNOBS->BLOB_MANAGER_CONCURRENT_MERGE_CHECKS),
-	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY), recruitingStream(0), exclusionTracker(db),
-	    epoch(epoch), dbInfo(dbInfo) {}
+	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
+	    recruitingStream(0),
+	    exclusionTracker(db),
+	    epoch(epoch),
+	    dbInfo(dbInfo) {}
 
 	// only initialize blob store if actually needed
 	void initBStore() {

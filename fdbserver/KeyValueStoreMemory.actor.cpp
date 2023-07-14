@@ -58,21 +58,10 @@ public:
 	void dispose() override {
 		recovering.cancel();
 		log->dispose();
-		if (reserved_buffer != nullptr) {
-			delete[] reserved_buffer;
-			reserved_buffer = nullptr;
-		}
+		log = nullptr;
 		delete this;
 	}
-	void close() override {
-		recovering.cancel();
-		log->close();
-		if (reserved_buffer != nullptr) {
-			delete[] reserved_buffer;
-			reserved_buffer = nullptr;
-		}
-		delete this;
-	}
+	void close() override { delete this; }
 
 	// IKeyValueStore
 	KeyValueStoreType getType() const override { return type; }
@@ -294,6 +283,18 @@ public:
 	// when being used as TxnStateStore backend.
 	Future<EncryptionAtRestMode> encryptionMode() override {
 		return EncryptionAtRestMode(EncryptionAtRestMode::DISABLED);
+	}
+
+	~KeyValueStoreMemory() {
+		recovering.cancel();
+		if (log) {
+			log->close();
+			log = nullptr;
+		}
+		if (reserved_buffer != nullptr) {
+			delete[] reserved_buffer;
+			reserved_buffer = nullptr;
+		}
 	}
 
 private:
@@ -1052,10 +1053,24 @@ KeyValueStoreMemory<Container>::KeyValueStoreMemory(IDiskQueue* log,
                                                     bool replaceContent,
                                                     bool exactRecovery,
                                                     bool enableEncryption)
-  : type(storeType), id(id), log(log), db(db), committedWriteBytes(0), overheadWriteBytes(0), currentSnapshotEnd(-1),
-    previousSnapshotEnd(-1), committedDataSize(0), transactionSize(0), transactionIsLarge(false), resetSnapshot(false),
-    disableSnapshot(disableSnapshot), replaceContent(replaceContent), firstCommitWithSnapshot(true), snapshotCount(0),
-    memoryLimit(memoryLimit), enableEncryption(enableEncryption) {
+  : type(storeType),
+    id(id),
+    log(log),
+    db(db),
+    committedWriteBytes(0),
+    overheadWriteBytes(0),
+    currentSnapshotEnd(-1),
+    previousSnapshotEnd(-1),
+    committedDataSize(0),
+    transactionSize(0),
+    transactionIsLarge(false),
+    resetSnapshot(false),
+    disableSnapshot(disableSnapshot),
+    replaceContent(replaceContent),
+    firstCommitWithSnapshot(true),
+    snapshotCount(0),
+    memoryLimit(memoryLimit),
+    enableEncryption(enableEncryption) {
 	// create reserved buffer for radixtree store type
 	this->reserved_buffer =
 	    (storeType == KeyValueStoreType::MEMORY) ? nullptr : new uint8_t[CLIENT_KNOBS->SYSTEM_KEY_SIZE_LIMIT];
@@ -1091,23 +1106,23 @@ IKeyValueStore* keyValueStoreMemory(std::string const& basename,
 	}
 }
 
-IKeyValueStore* keyValueStoreLogSystem(class IDiskQueue* queue,
-                                       Reference<AsyncVar<ServerDBInfo> const> db,
-                                       UID logID,
-                                       int64_t memoryLimit,
-                                       bool disableSnapshot,
-                                       bool replaceContent,
-                                       bool exactRecovery,
-                                       bool enableEncryption) {
+Reference<IKeyValueStore> keyValueStoreLogSystem(class IDiskQueue* queue,
+                                                 Reference<AsyncVar<ServerDBInfo> const> db,
+                                                 UID logID,
+                                                 int64_t memoryLimit,
+                                                 bool disableSnapshot,
+                                                 bool replaceContent,
+                                                 bool exactRecovery,
+                                                 bool enableEncryption) {
 	// ServerDBInfo is required if encryption is to be enabled, or the KV store instance have been encrypted.
 	ASSERT(!enableEncryption || db.isValid());
-	return new KeyValueStoreMemory<IKeyValueContainer>(queue,
-	                                                   db,
-	                                                   logID,
-	                                                   memoryLimit,
-	                                                   KeyValueStoreType::MEMORY,
-	                                                   disableSnapshot,
-	                                                   replaceContent,
-	                                                   exactRecovery,
-	                                                   enableEncryption);
+	return makeReference<KeyValueStoreMemory<IKeyValueContainer>>(queue,
+	                                                              db,
+	                                                              logID,
+	                                                              memoryLimit,
+	                                                              KeyValueStoreType::MEMORY,
+	                                                              disableSnapshot,
+	                                                              replaceContent,
+	                                                              exactRecovery,
+	                                                              enableEncryption);
 }

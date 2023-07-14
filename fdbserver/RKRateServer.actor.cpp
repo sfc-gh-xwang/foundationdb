@@ -76,7 +76,8 @@ public:
 }; // class RKRateServerImpl
 
 RKRateServer::RKRateServer(FutureStream<GetRateInfoRequest> getRateInfo)
-  : getRateInfo(getRateInfo), smoothReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT),
+  : getRateInfo(getRateInfo),
+    smoothReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT),
     smoothBatchReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT) {}
 
 RKRateServer::~RKRateServer() = default;

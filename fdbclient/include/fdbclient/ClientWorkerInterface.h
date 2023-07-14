@@ -56,7 +56,9 @@ struct RebootRequest {
 	uint32_t waitForDuration; // seconds
 
 	explicit RebootRequest(bool deleteData = false, bool checkData = false, uint32_t waitForDuration = 0)
-	  : deleteData(deleteData), checkData(checkData), waitForDuration(waitForDuration) {}
+	  : deleteData(deleteData),
+	    checkData(checkData),
+	    waitForDuration(waitForDuration) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

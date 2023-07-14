@@ -28,7 +28,6 @@
 #include "flow/EncryptUtils.h"
 #include "flow/FastRef.h"
 #include "flow/IRandom.h"
-#include "flow/Optional.h"
 #include "flow/network.h"
 #include "flow/UnitTest.h"
 
@@ -37,7 +36,8 @@
 static std::unordered_map<BlobMetadataDomainId, Standalone<BlobMetadataDetailsRef>> simBlobMetadataStore;
 
 SimKmsVaultKeyCtx::SimKmsVaultKeyCtx(EncryptCipherBaseKeyId kId, const uint8_t* data, const int dataLen)
-  : id(kId), keyLen(dataLen) {
+  : id(kId),
+    keyLen(dataLen) {
 	key = makeString(keyLen);
 	memcpy(mutateString(key), data, keyLen);
 	kcv = Sha256KCV().computeKCV((const uint8_t*)data, dataLen);
@@ -90,14 +90,7 @@ public:
 		return itr->second;
 	}
 
-	Optional<EncryptCipherBaseKeyId> getBaseCipherIdFromDomainId(const EncryptCipherDomainId domainId) const {
-		if (domainId < 0) {
-			// ensure input domainId is acceptable
-			if (domainId != SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID && domainId != ENCRYPT_HEADER_DOMAIN_ID &&
-			    domainId != FDB_DEFAULT_ENCRYPT_DOMAIN_ID) {
-				return Optional<EncryptCipherBaseKeyId>();
-			}
-		}
+	EncryptCipherBaseKeyId getBaseCipherIdFromDomainId(const EncryptCipherDomainId domainId) const {
 		return 1 + abs(domainId) % maxEncryptionKeys;
 	}
 
@@ -154,11 +147,8 @@ Reference<SimKmsVaultKeyCtx> getByBaseCipherId(const EncryptCipherBaseKeyId base
 
 Reference<SimKmsVaultKeyCtx> getByDomainId(const EncryptCipherDomainId domainId) {
 	Reference<SimKmsVaultCtx> ctx = SimKmsVaultCtx::getInstance();
-	Optional<EncryptCipherBaseKeyId> baseCipherId = ctx->getBaseCipherIdFromDomainId(domainId);
-	if (baseCipherId.present()) {
-		return ctx->getByBaseCipherId(baseCipherId.get());
-	}
-	return Reference<SimKmsVaultKeyCtx>();
+	const EncryptCipherBaseKeyId baseCipherId = ctx->getBaseCipherIdFromDomainId(domainId);
+	return ctx->getByBaseCipherId(baseCipherId);
 }
 
 uint32_t maxSimKeys() {

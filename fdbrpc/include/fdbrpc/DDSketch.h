@@ -77,8 +77,12 @@ class DDSketchBase {
 
 public:
 	explicit DDSketchBase(double errorGuarantee)
-	  : errorGuarantee(errorGuarantee), populationSize(0), zeroPopulationSize(0), minValue(defaultMin()),
-	    maxValue(defaultMax()), sum(T()) {
+	  : errorGuarantee(errorGuarantee),
+	    populationSize(0),
+	    zeroPopulationSize(0),
+	    minValue(defaultMin()),
+	    maxValue(defaultMax()),
+	    sum(T()) {
 		ASSERT(errorGuarantee > 0 && errorGuarantee < 1);
 	}
 
@@ -217,7 +221,8 @@ template <class T>
 class DDSketch : public DDSketchBase<DDSketch<T>, T> {
 public:
 	explicit DDSketch(double errorGuarantee = 0.005)
-	  : DDSketchBase<DDSketch<T>, T>(errorGuarantee), gamma((1.0 + errorGuarantee) / (1.0 - errorGuarantee)),
+	  : DDSketchBase<DDSketch<T>, T>(errorGuarantee),
+	    gamma((1.0 + errorGuarantee) / (1.0 - errorGuarantee)),
 	    multiplier(fastLogger::correctingFactor * log(2) / log(gamma)) {
 		ASSERT(errorGuarantee > 0);
 		offset = getIndex(1.0 / DDSketchBase<DDSketch<T>, T>::EPS);
@@ -245,7 +250,8 @@ template <class T>
 class DDSketchSlow : public DDSketchBase<DDSketchSlow<T>, T> {
 public:
 	DDSketchSlow(double errorGuarantee = 0.1)
-	  : DDSketchBase<DDSketchSlow<T>, T>(errorGuarantee), gamma((1.0 + errorGuarantee) / (1.0 - errorGuarantee)),
+	  : DDSketchBase<DDSketchSlow<T>, T>(errorGuarantee),
+	    gamma((1.0 + errorGuarantee) / (1.0 - errorGuarantee)),
 	    logGamma(log(gamma)) {
 		offset = getIndex(1.0 / DDSketchBase<DDSketch<T>, T>::EPS) + 5;
 		this->setBucketSize(2 * offset);

@@ -102,11 +102,17 @@ struct MoveKeysParams {
 	               UID relocationIntervalId,
 	               const DDEnabledState* ddEnabledState,
 	               CancelConflictingDataMoves cancelConflictingDataMoves)
-	  : dataMoveId(dataMoveId), keys(keys), destinationTeam(destinationTeam), healthyDestinations(healthyDestinations),
-	    lock(lock), dataMovementComplete(dataMovementComplete),
+	  : dataMoveId(dataMoveId),
+	    keys(keys),
+	    destinationTeam(destinationTeam),
+	    healthyDestinations(healthyDestinations),
+	    lock(lock),
+	    dataMovementComplete(dataMovementComplete),
 	    startMoveKeysParallelismLock(startMoveKeysParallelismLock),
-	    finishMoveKeysParallelismLock(finishMoveKeysParallelismLock), hasRemote(hasRemote),
-	    relocationIntervalId(relocationIntervalId), ddEnabledState(ddEnabledState),
+	    finishMoveKeysParallelismLock(finishMoveKeysParallelismLock),
+	    hasRemote(hasRemote),
+	    relocationIntervalId(relocationIntervalId),
+	    ddEnabledState(ddEnabledState),
 	    cancelConflictingDataMoves(cancelConflictingDataMoves) {}
 
 	MoveKeysParams(UID dataMoveId,
@@ -121,11 +127,17 @@ struct MoveKeysParams {
 	               UID relocationIntervalId,
 	               const DDEnabledState* ddEnabledState,
 	               CancelConflictingDataMoves cancelConflictingDataMoves)
-	  : dataMoveId(dataMoveId), ranges(ranges), destinationTeam(destinationTeam),
-	    healthyDestinations(healthyDestinations), lock(lock), dataMovementComplete(dataMovementComplete),
+	  : dataMoveId(dataMoveId),
+	    ranges(ranges),
+	    destinationTeam(destinationTeam),
+	    healthyDestinations(healthyDestinations),
+	    lock(lock),
+	    dataMovementComplete(dataMovementComplete),
 	    startMoveKeysParallelismLock(startMoveKeysParallelismLock),
-	    finishMoveKeysParallelismLock(finishMoveKeysParallelismLock), hasRemote(hasRemote),
-	    relocationIntervalId(relocationIntervalId), ddEnabledState(ddEnabledState),
+	    finishMoveKeysParallelismLock(finishMoveKeysParallelismLock),
+	    hasRemote(hasRemote),
+	    relocationIntervalId(relocationIntervalId),
+	    ddEnabledState(ddEnabledState),
 	    cancelConflictingDataMoves(cancelConflictingDataMoves) {}
 };
 
