@@ -289,7 +289,9 @@ public:
 	// statistics to GRV proxies
 	double CLIENT_THROUGHPUT_REPORT_INTERVAL;
 	// Used to determine which throughput quota cache implementation will be used
-	// (simple polling or update streaming).
+	// (simple polling or update streaming). This knob should be disabled first on
+	// clients, then on servers. Otherwise, servers will miss mutations to the
+	// tag quota system keyspace.
 	bool USE_SIMPLE_THROUGHPUT_QUOTA_CACHE;
 
 	// busyness reporting

@@ -28,7 +28,7 @@
  *
  * When an UpdateStream is created, it must first call the start method to
  * learn about the last known update in the update queue. Then it is the
- * responisibility of the consumer to read a (possibly inconsistent) snapshot
+ * responsibility of the consumer to read a (possibly inconsistent) snapshot
  * of whatever data they are interested in (the UpdateStream class does not
  * provide snapshotting functionality). Once the snapshot has been read,
  * the consumer calls the getUpdates method to access a FutureStream of
