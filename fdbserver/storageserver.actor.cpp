@@ -1540,7 +1540,7 @@ public:
 	    emptyVersionWaitWindowSketchPositive(0.00001),
 	    emptyVersionWaitWindowSketchNegative(0.00001),
 	    emptyVersionWaitWindowContSample(2 * SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT),
-	    minSafeWaitWindow(0),
+	    minSafeWaitWindow(INT_MAX),
 	    positiveSampleNum(0),
 	    negativeSampleNum(0),
 	    storage(this, storage),
@@ -11919,7 +11919,7 @@ void inline resetWaitWindowStatistics(StorageServer* self) {
 	}
 	self->positiveSampleNum = 0;
 	self->negativeSampleNum = 0;
-	self->minSafeWaitWindow = 0;
+	self->minSafeWaitWindow = INT_MAX;
 }
 
 ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
