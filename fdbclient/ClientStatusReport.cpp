@@ -31,6 +31,7 @@ namespace {
 class ClientReportGenerator {
 public:
 	ClientReportGenerator(DatabaseContext& cx) : cx(cx), numConnectionsFailed(0), healthy(true) {}
+	ClientReportGenerator(TenantContext& tcx) : cx(*tcx.db), numConnectionsFailed(0), healthy(true) {}
 
 	Standalone<StringRef> generateReport() {
 		if (cx.isError()) {
@@ -168,6 +169,12 @@ private:
 
 // Get client-side status information
 Standalone<StringRef> DatabaseContext::getClientStatus() {
+	ClientReportGenerator generator(*this);
+	return generator.generateReport();
+}
+
+// Get client-side status information for tenant
+Standalone<StringRef> TenantContext::getClientStatus() {
 	ClientReportGenerator generator(*this);
 	return generator.generateReport();
 }

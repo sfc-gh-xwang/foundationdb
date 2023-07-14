@@ -808,6 +808,17 @@ private:
 	void initializeSpecialCounters();
 };
 
+struct TenantContext {
+	TenantContext(DatabaseContext *db, TenantName name) : db(db), name(name), lookupFuture(db->lookupTenant(name)) {}
+
+	// Return client status at the tenant level
+	Standalone<StringRef> getClientStatus();
+
+	DatabaseContext* db;
+	TenantName name; 
+	Future<TenantLookupInfo> lookupFuture;
+};
+
 // Similar to tr.onError(), but doesn't require a DatabaseContext.
 struct Backoff {
 	Backoff(double backoff = CLIENT_KNOBS->DEFAULT_BACKOFF, double maxBackoff = CLIENT_KNOBS->DEFAULT_MAX_BACKOFF)

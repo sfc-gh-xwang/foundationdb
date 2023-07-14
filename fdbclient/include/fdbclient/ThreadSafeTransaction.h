@@ -27,6 +27,7 @@
 #include "fdbclient/ReadYourWrites.h"
 #include "flow/ThreadHelper.actor.h"
 #include "fdbclient/ClusterInterface.h"
+#include "fdbclient/DatabaseContext.h"
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/ISingleThreadTransaction.h"
 
@@ -121,6 +122,7 @@ private:
 	Reference<ThreadSafeDatabase> db;
 	TenantName name;
 	Tenant* tenant;
+	TenantContext tenantCtx;
 };
 
 // An implementation of ITransaction that serializes operations onto the network thread and interacts with the
