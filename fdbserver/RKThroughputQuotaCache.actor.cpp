@@ -12,15 +12,10 @@ class RKThroughputQuotaCacheImpl {
 	ACTOR static Future<Void> expireOldThrottlingIds(RKThroughputQuotaCache* self) {
 		loop {
 			wait(delayJittered(self->expirationCheckInterval));
-			auto it = self->quotas.begin();
-			while (it != self->quotas.end()) {
-				auto const lastActiveTime = it->second.lastActiveTime;
-				if (lastActiveTime + self->expirationThreshold < now()) {
-					it = self->quotas.erase(it);
-				} else {
-					++it;
-				}
-			}
+			auto const mustBeActiveSince = now() - self->expirationThreshold;
+			boost::unordered::erase_if(self->quotas, [mustBeActiveSince](auto const& kv) {
+				return kv.second.lastActiveTime < mustBeActiveSince;
+			});
 		}
 	}
 
