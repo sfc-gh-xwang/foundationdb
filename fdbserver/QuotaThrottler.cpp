@@ -253,7 +253,8 @@ public:
 	    maxFallingBehind(maxFallingBehind),
 	    limitingThreshold(limitingThreshold) {
 		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
-			clientThroughputTracker = ClientThroughputTracker();
+			clientThroughputTracker =
+			    ClientThroughputTracker(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL);
 		}
 	}
 

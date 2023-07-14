@@ -754,11 +754,14 @@ public:
 	bool GLOBAL_TAG_THROTTLING_REPORT_ONLY;
 	// Below this throughput threshold (in bytes/second), ratekeeper will forget about the
 	// throughput of a particular throttlingId on a particular storage server
-	double GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
+	double GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD;
 	// If a throttlingId's throughput on a particular storage server exceeds this threshold,
 	// this storage server's throttling ratio will contribute the calculation of the
 	// throttlingId's limiting transaction rate
 	double GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD;
+	// Interval at which to expire inactive throttlingIds from the
+	// client throughput tracker running on ratekeeper:
+	double CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;
