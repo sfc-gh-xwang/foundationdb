@@ -223,7 +223,8 @@ struct StatusReply {
 
 	StatusReply() {}
 	explicit StatusReply(StatusObject obj)
-	  : statusObj(obj), statusStr(json_spirit::write_string(json_spirit::mValue(obj))) {}
+	  : statusObj(obj),
+	    statusStr(json_spirit::write_string(json_spirit::mValue(obj))) {}
 	explicit StatusReply(std::string&& text) : statusStr(text) {}
 
 	template <class Ar>
@@ -288,7 +289,8 @@ struct MoveShardRequest {
 
 	MoveShardRequest() {}
 	MoveShardRequest(KeyRange shard, std::vector<NetworkAddress> addresses)
-	  : shard{ std::move(shard) }, addresses{ std::move(addresses) } {}
+	  : shard{ std::move(shard) },
+	    addresses{ std::move(addresses) } {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

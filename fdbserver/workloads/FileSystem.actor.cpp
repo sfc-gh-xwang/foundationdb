@@ -44,7 +44,11 @@ struct FileSystemWorkload : TestWorkload {
 	};
 
 	FileSystemWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), queries("Queries"), writes("Latency"), latencies(), writeLatencies() {
+	  : TestWorkload(wcx),
+	    queries("Queries"),
+	    writes("Latency"),
+	    latencies(),
+	    writeLatencies() {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		transactionsPerSecond = getOption(options, "transactionsPerSecond"_sr, 5000.0) / clientCount;
 		double allowedLatency = getOption(options, "allowedLatency"_sr, 0.250);

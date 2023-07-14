@@ -122,7 +122,8 @@ struct ResolutionRequestBuilder {
 	                         Version prevVersion,
 	                         Version lastReceivedVersion,
 	                         Span& parentSpan)
-	  : self(self), requests(self->resolvers.size()) {
+	  : self(self),
+	    requests(self->resolvers.size()) {
 		for (auto& req : requests) {
 			req.spanContext = parentSpan.context;
 			req.prevVersion = prevVersion;
@@ -760,10 +761,13 @@ std::set<Tag> CommitBatchContext::getWrittenTagsPreResolution() {
 CommitBatchContext::CommitBatchContext(ProxyCommitData* const pProxyCommitData_,
                                        const std::vector<CommitTransactionRequest>* trs_,
                                        const int currentBatchMemBytesCount)
-  : pProxyCommitData(pProxyCommitData_), trs(std::move(*const_cast<std::vector<CommitTransactionRequest>*>(trs_))),
-    currentBatchMemBytesCount(currentBatchMemBytesCount), startTime(g_network->now()),
+  : pProxyCommitData(pProxyCommitData_),
+    trs(std::move(*const_cast<std::vector<CommitTransactionRequest>*>(trs_))),
+    currentBatchMemBytesCount(currentBatchMemBytesCount),
+    startTime(g_network->now()),
     localBatchNumber(++pProxyCommitData->localCommitBatchesStarted),
-    toCommit(pProxyCommitData->logSystem, pProxyCommitData->localTLogCount), span("MP:commitBatch"_loc),
+    toCommit(pProxyCommitData->logSystem, pProxyCommitData->localTLogCount),
+    span("MP:commitBatch"_loc),
     committed(trs.size()) {
 
 	evaluateBatchSize();
@@ -3430,7 +3434,9 @@ struct TransactionStateResolveContext {
 	TransactionStateResolveContext() = default;
 
 	TransactionStateResolveContext(ProxyCommitData* pCommitData_, PromiseStream<Future<Void>>* pActors_)
-	  : pCommitData(pCommitData_), pTxnStateStore(pCommitData_->txnStateStore), pActors(pActors_) {
+	  : pCommitData(pCommitData_),
+	    pTxnStateStore(pCommitData_->txnStateStore),
+	    pActors(pActors_) {
 		ASSERT(pTxnStateStore.isValid());
 	}
 };

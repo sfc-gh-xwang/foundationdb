@@ -41,7 +41,9 @@ protected:
 	FlowReceiver() : m_isLocalEndpoint(false), m_stream(false) {}
 
 	FlowReceiver(Endpoint const& remoteEndpoint, bool stream)
-	  : endpoint(remoteEndpoint), m_isLocalEndpoint(false), m_stream(stream) {
+	  : endpoint(remoteEndpoint),
+	    m_isLocalEndpoint(false),
+	    m_stream(stream) {
 		FlowTransport::transport().addPeerReference(endpoint, m_stream);
 	}
 
@@ -105,7 +107,8 @@ struct NetSAV final : SAV<T>, FlowReceiver, FastAllocated<NetSAV<T>> {
 
 	NetSAV(int futures, int promises) : SAV<T>(futures, promises) {}
 	NetSAV(int futures, int promises, const Endpoint& remoteEndpoint)
-	  : SAV<T>(futures, promises), FlowReceiver(remoteEndpoint, false) {}
+	  : SAV<T>(futures, promises),
+	    FlowReceiver(remoteEndpoint, false) {}
 
 	void destroy() override { delete this; }
 	void receive(ArenaObjectReader& reader) override {
@@ -344,9 +347,12 @@ struct NetNotifiedQueueWithAcknowledgements final : NotifiedQueue<T>,
 	Promise<Void> onConnect;
 
 	NetNotifiedQueueWithAcknowledgements(int futures, int promises)
-	  : NotifiedQueue<T>(futures, promises), onConnect(nullptr) {}
+	  : NotifiedQueue<T>(futures, promises),
+	    onConnect(nullptr) {}
 	NetNotifiedQueueWithAcknowledgements(int futures, int promises, const Endpoint& remoteEndpoint)
-	  : NotifiedQueue<T>(futures, promises), FlowReceiver(remoteEndpoint, true), onConnect(nullptr) {
+	  : NotifiedQueue<T>(futures, promises),
+	    FlowReceiver(remoteEndpoint, true),
+	    onConnect(nullptr) {
 		// A ReplyPromiseStream will be terminated on the server side if the network connection with the client breaks
 		acknowledgements.failures = tagError<Void>(FlowTransport::transport().loadedDisconnect(), operation_obsolete());
 	}
@@ -503,7 +509,8 @@ public:
 		rhs.errors = nullptr;
 	}
 	explicit ReplyPromiseStream(const Endpoint& endpoint)
-	  : queue(new NetNotifiedQueueWithAcknowledgements<T>(0, 1, endpoint)), errors(nullptr) {}
+	  : queue(new NetNotifiedQueueWithAcknowledgements<T>(0, 1, endpoint)),
+	    errors(nullptr) {}
 
 	// Used by endStreamOnDisconnect to detect when all references to the ReplyPromiseStream have been dropped
 	Future<Void> getErrorFutureAndDelPromiseRef() {
@@ -685,7 +692,8 @@ struct NetNotifiedQueue final : NotifiedQueue<T>, FlowReceiver, FastAllocated<Ne
 
 	NetNotifiedQueue(int futures, int promises) : NotifiedQueue<T>(futures, promises) {}
 	NetNotifiedQueue(int futures, int promises, const Endpoint& remoteEndpoint)
-	  : NotifiedQueue<T>(futures, promises), FlowReceiver(remoteEndpoint, true) {}
+	  : NotifiedQueue<T>(futures, promises),
+	    FlowReceiver(remoteEndpoint, true) {}
 
 	void destroy() override { delete this; }
 	void receive(ArenaObjectReader& reader) override {

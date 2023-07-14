@@ -109,7 +109,8 @@ struct LocalityRecord final : public ReferenceCounted<LocalityRecord> {
 	Reference<KeyValueMap> _dataMap;
 	LocalityEntry _entryIndex;
 	LocalityRecord(Reference<KeyValueMap> const& dataMap, int arrayIndex)
-	  : _dataMap(dataMap), _entryIndex(arrayIndex) {}
+	  : _dataMap(dataMap),
+	    _entryIndex(arrayIndex) {}
 	LocalityRecord(LocalityRecord const& entry) : _dataMap(entry._dataMap), _entryIndex(entry._entryIndex) {}
 	LocalityRecord& operator=(LocalityRecord const& source) {
 		_dataMap = source._dataMap;

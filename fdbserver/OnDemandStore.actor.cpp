@@ -34,7 +34,10 @@ void OnDemandStore::open() {
 }
 
 OnDemandStore::OnDemandStore(std::string const& folder, UID myID, std::string const& prefix)
-  : folder(folder), myID(myID), store(nullptr), prefix(prefix) {}
+  : folder(folder),
+    myID(myID),
+    store(nullptr),
+    prefix(prefix) {}
 
 OnDemandStore::~OnDemandStore() {
 	close();

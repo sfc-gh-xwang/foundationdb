@@ -58,14 +58,19 @@ struct ConfigureTenantImpl {
 	                    TenantName tenantName,
 	                    std::map<Standalone<StringRef>, Optional<Value>> configurationParameters,
 	                    IgnoreCapacityLimit ignoreCapacityLimit)
-	  : ctx(managementDb), tenantName(tenantName), configurationParameters(configurationParameters),
+	  : ctx(managementDb),
+	    tenantName(tenantName),
+	    configurationParameters(configurationParameters),
 	    ignoreCapacityLimit(ignoreCapacityLimit) {}
 
 	ConfigureTenantImpl(Reference<DB> managementDb,
 	                    TenantName tenantName,
 	                    TenantAPI::TenantLockState lockState,
 	                    UID lockId)
-	  : ctx(managementDb), tenantName(tenantName), lockState(lockState), lockId(lockId) {}
+	  : ctx(managementDb),
+	    tenantName(tenantName),
+	    lockState(lockState),
+	    lockId(lockId) {}
 
 	// This verifies that the tenant group can be changed, and if so it updates all of the tenant group data
 	// structures. It does not update the TenantMapEntry stored in the tenant map.

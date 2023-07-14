@@ -50,7 +50,9 @@ struct RenameTenantImpl {
 	int64_t configurationSequenceNum = -1;
 
 	RenameTenantImpl(Reference<DB> managementDb, TenantName oldName, TenantName newName)
-	  : ctx(managementDb), oldName(oldName), newName(newName) {}
+	  : ctx(managementDb),
+	    oldName(oldName),
+	    newName(newName) {}
 
 	ACTOR static Future<Void> markTenantsInRenamingState(RenameTenantImpl* self,
 	                                                     Reference<typename DB::TransactionT> tr) {

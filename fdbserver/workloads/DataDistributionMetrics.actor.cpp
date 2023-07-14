@@ -37,7 +37,11 @@ struct DataDistributionMetricsWorkload : KVWorkload {
 	double delayPerLoop;
 
 	DataDistributionMetricsWorkload(WorkloadContext const& wcx)
-	  : KVWorkload(wcx), numShards(0), avgBytes(0), commits("Commits"), errors("Errors") {
+	  : KVWorkload(wcx),
+	    numShards(0),
+	    avgBytes(0),
+	    commits("Commits"),
+	    errors("Errors") {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		// transaction time out duration(ms)
 		transactionTimeLimit = getOption(options, "transactionTimeLimit"_sr, 10000);

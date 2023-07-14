@@ -27,6 +27,8 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/QuotaThrottler.h"
 
+#include <boost/unordered/unordered_flat_map.hpp>
+
 // In the function names below, several terms are used repeatedly. The context-specific are defined here:
 //
 // Cost: Every read or write operation has an associated cost, determined by the number of bytes accessed.
@@ -60,16 +62,6 @@
 //                    that the global tag throttler aims to achieve (across all clients).
 
 class QuotaThrottlerImpl {
-	template <class K, class V, class H>
-	static Optional<V> tryGet(std::unordered_map<K, V, H> const& m, K const& k) {
-		auto it = m.find(k);
-		if (it == m.end()) {
-			return {};
-		} else {
-			return it->second;
-		}
-	}
-
 	static Optional<double> getMin(Optional<double> a, Optional<double> b) {
 		if (a.present() && b.present()) {
 			return std::min(a.get(), b.get());
@@ -143,11 +135,11 @@ class QuotaThrottlerImpl {
 	}
 
 	Optional<double> getTransactionRate(ThrottlingId const& throttlingId) const {
-		auto const stats = tryGet(throttlingStatistics, throttlingId);
-		if (!stats.present()) {
+		auto it = throttlingStatistics.find(throttlingId);
+		if (it == throttlingStatistics.end()) {
 			return {};
 		}
-		return stats.get().getTransactionRate();
+		return it->second.getTransactionRate();
 	}
 
 	// For transactions with the provided throttling ID, returns the average cost of all transactions
@@ -326,14 +318,9 @@ public:
 	void updateThrottling(Map<UID, StorageQueueInfo> const& sqInfos) { serverThroughputTracker.update(sqInfos); }
 
 	void removeExpiredThrottlingIds() {
-		for (auto it = throttlingStatistics.begin(); it != throttlingStatistics.end();) {
-			const auto& [throttlingId, stats] = *it;
-			if (!stats.recentTransactionsAdded()) {
-				it = throttlingStatistics.erase(it);
-			} else {
-				++it;
-			}
-		}
+		boost::unordered::erase_if(throttlingStatistics, [](auto const& kv){
+			return !kv.second.recentTransactionsAdded();
+		});
 	}
 
 	Future<Void> removeExpiredThrottlingIdsActor() {

@@ -7,6 +7,7 @@
 #include "fdbclient/ThrottlingId.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKMetricsTracker.h"
+#include <boost/unordered/unordered_flat_map.hpp>
 
 // Tracks the cluster-wide throughput (in bytes/second) of each throttlingId
 class IRKThroughputTracker {
@@ -35,7 +36,7 @@ class ServerThroughputTracker : public IRKThroughputTracker {
 		double getThroughput() const;
 	};
 
-	std::unordered_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
+	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
 
 	void cleanupUnseenStorageServers(std::unordered_set<UID> const& seen);
 

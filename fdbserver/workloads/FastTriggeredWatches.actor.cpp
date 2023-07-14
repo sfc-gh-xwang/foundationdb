@@ -35,7 +35,9 @@ struct FastTriggeredWatchesWorkload : TestWorkload {
 	Value defaultValue;
 
 	FastTriggeredWatchesWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), operations("Operations"), retries("Retries") {
+	  : TestWorkload(wcx),
+	    operations("Operations"),
+	    retries("Retries") {
 		testDuration = getOption(options, "testDuration"_sr, 600.0);
 		nodes = getOption(options, "nodes"_sr, 100);
 		defaultValue = StringRef(format("%010d", deterministicRandom()->randomInt(0, 1000)));

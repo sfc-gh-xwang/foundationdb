@@ -74,8 +74,13 @@ struct RegionInfo {
 	std::vector<SatelliteInfo> satellites;
 
 	RegionInfo()
-	  : priority(0), satelliteDesiredTLogCount(-1), satelliteTLogReplicationFactor(0), satelliteTLogWriteAntiQuorum(0),
-	    satelliteTLogUsableDcs(1), satelliteTLogReplicationFactorFallback(0), satelliteTLogWriteAntiQuorumFallback(0),
+	  : priority(0),
+	    satelliteDesiredTLogCount(-1),
+	    satelliteTLogReplicationFactor(0),
+	    satelliteTLogWriteAntiQuorum(0),
+	    satelliteTLogUsableDcs(1),
+	    satelliteTLogReplicationFactorFallback(0),
+	    satelliteTLogWriteAntiQuorumFallback(0),
 	    satelliteTLogUsableDcsFallback(0) {}
 
 	struct sort_by_priority {

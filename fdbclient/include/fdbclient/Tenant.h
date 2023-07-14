@@ -66,7 +66,10 @@ struct TenantMapEntryTxnStateStore {
 	                            TenantName tenantName,
 	                            TenantAPI::TenantLockState tenantLockState,
 	                            Optional<TenantGroupName> group)
-	  : id(id), tenantName(tenantName), tenantLockState(tenantLockState), group(group) {}
+	  : id(id),
+	    tenantName(tenantName),
+	    tenantLockState(tenantLockState),
+	    group(group) {}
 
 	Value encode() const { return ObjectWriter::toValue(*this, IncludeVersion()); }
 	static TenantMapEntryTxnStateStore decode(ValueRef const& value) {
@@ -220,9 +223,12 @@ struct TenantMetadataSpecification {
 	KeyBackedBinaryValue<Versionstamp> lastTenantModification;
 
 	TenantMetadataSpecification(KeyRef prefix)
-	  : subspace(prefix.withSuffix("tenant/"_sr)), tenantMap(subspace.withSuffix("map/"_sr), IncludeVersion()),
-	    tenantNameIndex(subspace.withSuffix("nameIndex/"_sr)), lastTenantId(subspace.withSuffix("lastId"_sr)),
-	    tenantCount(subspace.withSuffix("count"_sr)), tenantTombstones(subspace.withSuffix("tombstones/"_sr)),
+	  : subspace(prefix.withSuffix("tenant/"_sr)),
+	    tenantMap(subspace.withSuffix("map/"_sr), IncludeVersion()),
+	    tenantNameIndex(subspace.withSuffix("nameIndex/"_sr)),
+	    lastTenantId(subspace.withSuffix("lastId"_sr)),
+	    tenantCount(subspace.withSuffix("count"_sr)),
+	    tenantTombstones(subspace.withSuffix("tombstones/"_sr)),
 	    tombstoneCleanupData(subspace.withSuffix("tombstoneCleanup"_sr), IncludeVersion()),
 	    tenantGroupTenantIndex(subspace.withSuffix("tenantGroup/tenantIndex/"_sr)),
 	    tenantGroupMap(subspace.withSuffix("tenantGroup/map/"_sr), IncludeVersion()),

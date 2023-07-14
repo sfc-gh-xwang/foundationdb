@@ -273,7 +273,8 @@ ACTOR Future<ReadMetrics> normalizeKeySelectorActor(SpecialKeySpace* sks,
 SpecialKeySpace::SpecialKeySpace(KeyRef spaceStartKey, KeyRef spaceEndKey, bool testOnly)
   : readImpls(nullptr, spaceEndKey),
     modules(testOnly ? SpecialKeySpace::MODULE::TESTONLY : SpecialKeySpace::MODULE::UNKNOWN, spaceEndKey),
-    writeImpls(nullptr, spaceEndKey), range(KeyRangeRef(spaceStartKey, spaceEndKey)) {
+    writeImpls(nullptr, spaceEndKey),
+    range(KeyRangeRef(spaceStartKey, spaceEndKey)) {
 	// Default begin of KeyRangeMap is Key(), insert the range to update start key
 	readImpls.insert(range, nullptr);
 	writeImpls.insert(range, nullptr);
@@ -2394,7 +2395,8 @@ std::string_view to_string_view(StringRef sr) {
 } // namespace
 
 ActorProfilerConf::ActorProfilerConf(KeyRangeRef kr)
-  : SpecialKeyRangeRWImpl(kr), config(ProfilerConfig::instance().getConfig()) {}
+  : SpecialKeyRangeRWImpl(kr),
+    config(ProfilerConfig::instance().getConfig()) {}
 
 Future<RangeReadResult> ActorProfilerConf::getRange(ReadYourWritesTransaction* ryw,
                                                     KeyRangeRef kr,

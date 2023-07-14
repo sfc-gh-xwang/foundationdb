@@ -60,7 +60,10 @@ struct PTree : public ReferenceCounted<PTree<T>>, FastAllocated<PTree<T>>, NonCo
 		priority = deterministicRandom()->randomUInt32();
 	}
 	PTree(uint32_t pri, T const& data, Reference<PTree> const& left, Reference<PTree> const& right, Version ver)
-	  : priority(pri), lastUpdateVersion(ver), updated(false), data(data) {
+	  : priority(pri),
+	    lastUpdateVersion(ver),
+	    updated(false),
+	    data(data) {
 		pointer[0] = left;
 		pointer[1] = right;
 	}
@@ -702,7 +705,9 @@ public:
 
 	VersionedMap() : oldestVersion(0), latestVersion(0) { roots.emplace_back(0, Tree()); }
 	VersionedMap(VersionedMap&& v) noexcept
-	  : oldestVersion(v.oldestVersion), latestVersion(v.latestVersion), roots(std::move(v.roots)) {}
+	  : oldestVersion(v.oldestVersion),
+	    latestVersion(v.latestVersion),
+	    roots(std::move(v.roots)) {}
 	void operator=(VersionedMap&& v) noexcept {
 		oldestVersion = v.oldestVersion;
 		latestVersion = v.latestVersion;

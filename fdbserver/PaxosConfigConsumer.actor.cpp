@@ -369,7 +369,9 @@ public:
 	explicit GetCommittedVersionQuorum(std::vector<ConfigFollowerInterface> const& cfis,
 	                                   Version lastSeenVersion,
 	                                   Version largestCompacted)
-	  : cfis(cfis), lastSeenVersion(lastSeenVersion), largestCompacted(largestCompacted) {}
+	  : cfis(cfis),
+	    lastSeenVersion(lastSeenVersion),
+	    largestCompacted(largestCompacted) {}
 	Future<QuorumVersion> getCommittedVersion() {
 		ASSERT(!isReady()); // ensures this function is not accidentally called before resetting state
 		for (const auto& cfi : cfis) {
@@ -640,8 +642,11 @@ public:
 	                        double pollingInterval,
 	                        Optional<double> compactionInterval,
 	                        bool readPreviousCoordinators)
-	  : cfis(cfis), getCommittedVersionQuorum(cfis, 0, 0), pollingInterval(pollingInterval),
-	    compactionInterval(compactionInterval), readPreviousCoordinators(readPreviousCoordinators),
+	  : cfis(cfis),
+	    getCommittedVersionQuorum(cfis, 0, 0),
+	    pollingInterval(pollingInterval),
+	    compactionInterval(compactionInterval),
+	    readPreviousCoordinators(readPreviousCoordinators),
 	    id(deterministicRandom()->randomUniqueID()) {}
 };
 

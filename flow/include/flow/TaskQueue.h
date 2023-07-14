@@ -124,14 +124,17 @@ private:
 		TaskPriority taskID;
 		Task* task;
 		OrderedTask(int64_t priority, TaskPriority taskID, Task* task)
-		  : priority(priority), taskID(taskID), task(task) {}
+		  : priority(priority),
+		    taskID(taskID),
+		    task(task) {}
 		bool operator<(OrderedTask const& rhs) const { return priority < rhs.priority; }
 	};
 
 	struct DelayedTask : OrderedTask {
 		double at;
 		DelayedTask(double at, int64_t priority, TaskPriority taskID, Task* task)
-		  : OrderedTask(priority, taskID, task), at(at) {}
+		  : OrderedTask(priority, taskID, task),
+		    at(at) {}
 		bool operator<(DelayedTask const& rhs) const { return at > rhs.at; } // Ordering is reversed for priority_queue
 	};
 

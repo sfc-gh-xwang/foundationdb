@@ -43,8 +43,11 @@ struct StorefrontWorkload : TestWorkload {
 	PerfDoubleCounter totalLatency;
 
 	StorefrontWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), transactions("Transactions"), retries("Retries"),
-	    spuriousCommitFailures("Spurious Commit Failures"), totalLatency("Total Latency") {
+	  : TestWorkload(wcx),
+	    transactions("Transactions"),
+	    retries("Retries"),
+	    spuriousCommitFailures("Spurious Commit Failures"),
+	    totalLatency("Total Latency") {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		transactionsPerSecond = getOption(options, "transactionsPerSecond"_sr, 1000.0);
 		actorCount = getOption(options, "actorsPerClient"_sr, std::max((int)(transactionsPerSecond / 100), 1));

@@ -36,7 +36,8 @@
 class BackupProgress : NonCopyable, ReferenceCounted<BackupProgress> {
 public:
 	BackupProgress(UID id, const std::map<LogEpoch, ILogSystem::EpochTagsVersionsInfo>& infos)
-	  : dbgid(id), epochInfos(infos) {}
+	  : dbgid(id),
+	    epochInfos(infos) {}
 	~BackupProgress() {}
 
 	// Adds a backup status. If the tag already has an entry, then the max of
