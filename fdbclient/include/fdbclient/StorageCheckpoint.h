@@ -76,15 +76,27 @@ public:
 	                   const std::vector<UID>& src,
 	                   UID const& checkpointID,
 	                   UID const& actionId)
-	  : version(invalidVersion), ranges(ranges), format(format), src(src), checkpointID(checkpointID), state(Pending),
+	  : version(invalidVersion),
+	    ranges(ranges),
+	    format(format),
+	    src(src),
+	    checkpointID(checkpointID),
+	    state(Pending),
 	    actionId(actionId) {}
 	CheckpointMetaData(const std::vector<KeyRange>& ranges,
 	                   Version version,
 	                   CheckpointFormat format,
 	                   UID const& checkpointID)
-	  : version(version), ranges(ranges), format(format), checkpointID(checkpointID), state(Pending) {}
+	  : version(version),
+	    ranges(ranges),
+	    format(format),
+	    checkpointID(checkpointID),
+	    state(Pending) {}
 	CheckpointMetaData(Version version, CheckpointFormat format, UID checkpointID)
-	  : version(version), format(format), checkpointID(checkpointID), state(Pending) {}
+	  : version(version),
+	    format(format),
+	    checkpointID(checkpointID),
+	    state(Pending) {}
 
 	CheckpointState getState() const { return static_cast<CheckpointState>(state); }
 

@@ -299,7 +299,9 @@ public:
 
 		Entry(const SI_CHAR* a_pszItem = NULL, int a_nOrder = 0) : pItem(a_pszItem), pComment(NULL), nOrder(a_nOrder) {}
 		Entry(const SI_CHAR* a_pszItem, const SI_CHAR* a_pszComment, int a_nOrder)
-		  : pItem(a_pszItem), pComment(a_pszComment), nOrder(a_nOrder) {}
+		  : pItem(a_pszItem),
+		    pComment(a_pszComment),
+		    nOrder(a_nOrder) {}
 		Entry(const Entry& rhs) { operator=(rhs); }
 		Entry& operator=(const Entry& rhs) {
 			pItem = rhs.pItem;
@@ -1142,8 +1144,14 @@ template <class SI_CHAR, class SI_STRLESS, class SI_CONVERTER>
 CSimpleIniTempl<SI_CHAR, SI_STRLESS, SI_CONVERTER>::CSimpleIniTempl(bool a_bIsUtf8,
                                                                     bool a_bAllowMultiKey,
                                                                     bool a_bAllowMultiLine)
-  : m_pData(0), m_uDataLen(0), m_pFileComment(NULL), m_bStoreIsUtf8(a_bIsUtf8), m_bAllowMultiKey(a_bAllowMultiKey),
-    m_bAllowMultiLine(a_bAllowMultiLine), m_bSpaces(true), m_nOrder(0) {}
+  : m_pData(0),
+    m_uDataLen(0),
+    m_pFileComment(NULL),
+    m_bStoreIsUtf8(a_bIsUtf8),
+    m_bAllowMultiKey(a_bAllowMultiKey),
+    m_bAllowMultiLine(a_bAllowMultiLine),
+    m_bSpaces(true),
+    m_nOrder(0) {}
 
 template <class SI_CHAR, class SI_STRLESS, class SI_CONVERTER>
 CSimpleIniTempl<SI_CHAR, SI_STRLESS, SI_CONVERTER>::~CSimpleIniTempl() {

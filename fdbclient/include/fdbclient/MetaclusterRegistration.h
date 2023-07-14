@@ -66,22 +66,34 @@ struct MetaclusterRegistrationEntryImpl {
 
 	MetaclusterRegistrationEntryImpl() = default;
 	MetaclusterRegistrationEntryImpl(ClusterName metaclusterName, UID metaclusterId, MetaclusterVersion version)
-	  : clusterType(ClusterType::METACLUSTER_MANAGEMENT), metaclusterName(metaclusterName), name(metaclusterName),
-	    metaclusterId(metaclusterId), id(metaclusterId), version(version) {}
+	  : clusterType(ClusterType::METACLUSTER_MANAGEMENT),
+	    metaclusterName(metaclusterName),
+	    name(metaclusterName),
+	    metaclusterId(metaclusterId),
+	    id(metaclusterId),
+	    version(version) {}
 	MetaclusterRegistrationEntryImpl(ClusterName metaclusterName,
 	                                 ClusterName name,
 	                                 UID metaclusterId,
 	                                 UID id,
 	                                 MetaclusterVersion version)
-	  : clusterType(ClusterType::METACLUSTER_DATA), metaclusterName(metaclusterName), name(name),
-	    metaclusterId(metaclusterId), id(id), version(version) {
+	  : clusterType(ClusterType::METACLUSTER_DATA),
+	    metaclusterName(metaclusterName),
+	    name(name),
+	    metaclusterId(metaclusterId),
+	    id(id),
+	    version(version) {
 		ASSERT(metaclusterName != name && metaclusterId != id);
 	}
 
 	template <bool V>
 	MetaclusterRegistrationEntryImpl(MetaclusterRegistrationEntryImpl<V> other)
-	  : clusterType(other.clusterType), metaclusterName(other.metaclusterName), name(other.name),
-	    metaclusterId(other.metaclusterId), id(other.id), version(other.version) {}
+	  : clusterType(other.clusterType),
+	    metaclusterName(other.metaclusterName),
+	    name(other.name),
+	    metaclusterId(other.metaclusterId),
+	    id(other.id),
+	    version(other.version) {}
 
 	// Returns true if this entry is associated with the same cluster as the passed in entry. If one entry is from the
 	// management cluster and the other is from a data cluster, this checks whether they are part of the same

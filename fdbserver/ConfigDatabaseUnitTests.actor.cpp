@@ -95,7 +95,8 @@ class WriteToTransactionEnvironment {
 
 public:
 	WriteToTransactionEnvironment(std::string const& dataDir)
-	  : dataDir(dataDir), node(makeReference<ConfigNode>(dataDir)) {
+	  : dataDir(dataDir),
+	    node(makeReference<ConfigNode>(dataDir)) {
 		platform::eraseDirectoryRecursive(dataDir);
 		setup();
 	}
@@ -282,7 +283,8 @@ class BroadcasterToLocalConfigEnvironment {
 
 public:
 	BroadcasterToLocalConfigEnvironment(std::string const& dataDir, std::string const& configPath)
-	  : readFrom(dataDir, configPath, {}), cbi(makeReference<AsyncVar<ConfigBroadcastInterface>>()),
+	  : readFrom(dataDir, configPath, {}),
+	    cbi(makeReference<AsyncVar<ConfigBroadcastInterface>>()),
 	    broadcaster(ConfigFollowerInterface{}) {}
 
 	Future<Void> setup(ConfigClassSet const& configClassSet) { return setup(this, configClassSet); }
@@ -445,7 +447,9 @@ class TransactionToLocalConfigEnvironment {
 
 public:
 	TransactionToLocalConfigEnvironment(std::string const& dataDir, std::string const& configPath)
-	  : writeTo(dataDir), readFrom(dataDir, configPath, {}), cbi(makeReference<AsyncVar<ConfigBroadcastInterface>>()),
+	  : writeTo(dataDir),
+	    readFrom(dataDir, configPath, {}),
+	    cbi(makeReference<AsyncVar<ConfigBroadcastInterface>>()),
 	    broadcaster(writeTo.getFollowerInterface()) {}
 
 	Future<Void> setup(ConfigClassSet const& configClassSet) { return setup(this, configClassSet); }

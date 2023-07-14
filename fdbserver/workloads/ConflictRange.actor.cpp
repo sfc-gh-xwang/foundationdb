@@ -39,7 +39,10 @@ struct ConflictRangeWorkload : TestWorkload {
 	PerfIntCounter withConflicts, withoutConflicts, retries;
 
 	ConflictRangeWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), withConflicts("WithConflicts"), withoutConflicts("withoutConflicts"), retries("Retries") {
+	  : TestWorkload(wcx),
+	    withConflicts("WithConflicts"),
+	    withoutConflicts("withoutConflicts"),
+	    retries("Retries") {
 		minOperationsPerTransaction = getOption(options, "minOperationsPerTransaction"_sr, 2);
 		maxOperationsPerTransaction = getOption(options, "minOperationsPerTransaction"_sr, 4);
 		maxKeySpace = getOption(options, "maxKeySpace"_sr, 100);

@@ -39,7 +39,10 @@ struct LowLatencyWorkload : TestWorkload {
 	bool ok;
 
 	LowLatencyWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), operations("Operations"), retries("Retries"), ok(true) {
+	  : TestWorkload(wcx),
+	    operations("Operations"),
+	    retries("Retries"),
+	    ok(true) {
 		testDuration = getOption(options, "testDuration"_sr, 600.0);
 		maxGRVLatency = getOption(options, "maxGRVLatency"_sr, 20.0);
 		maxCommitLatency = getOption(options, "maxCommitLatency"_sr, 30.0);
@@ -75,10 +78,12 @@ struct LowLatencyWorkload : TestWorkload {
 				state double operationStart = now();
 				state bool doCommit = self->testWrites && deterministicRandom()->coinflip();
 				state double maxLatency = doCommit ? self->maxCommitLatency : self->maxGRVLatency;
+				state UID debugId = deterministicRandom()->randomUniqueID();
+				tr.debugTransaction(debugId);
 				++self->operations;
+				TraceEvent("StartLowLatencyTransaction", debugId).log();
 				loop {
 					try {
-						TraceEvent("StartLowLatencyTransaction").log();
 						tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 						tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 						if (doCommit) {
@@ -89,13 +94,13 @@ struct LowLatencyWorkload : TestWorkload {
 						}
 						break;
 					} catch (Error& e) {
-						TraceEvent("LowLatencyTransactionFailed").errorUnsuppressed(e);
+						TraceEvent("LowLatencyTransactionFailed", debugId).errorUnsuppressed(e);
 						wait(tr.onError(e));
 						++self->retries;
 					}
 				}
 				if (now() - operationStart > maxLatency) {
-					TraceEvent(SevError, "LatencyTooLarge")
+					TraceEvent(SevError, "LatencyTooLarge", debugId)
 					    .detail("MaxLatency", maxLatency)
 					    .detail("ObservedLatency", now() - operationStart)
 					    .detail("IsCommit", doCommit);

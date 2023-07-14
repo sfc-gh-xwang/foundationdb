@@ -37,6 +37,7 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/GenericTransactionHelper.h"
 #include "fdbclient/Subspace.h"
+#include "fdbclient/TupleVersionstamp.h"
 #include "flow/ObjectSerializer.h"
 #include "flow/Platform.h"
 #include "flow/genericactors.actor.h"
@@ -121,6 +122,26 @@ inline Standalone<StringRef> TupleCodec<UID>::pack(UID const& val) {
 template <>
 inline UID TupleCodec<UID>::unpack(Standalone<StringRef> const& val) {
 	return BinaryReader::fromStringRef<UID>(TupleCodec<Standalone<StringRef>>::unpack(val), Unversioned());
+}
+
+template <>
+inline Standalone<StringRef> TupleCodec<TupleVersionstamp>::pack(TupleVersionstamp const& val) {
+	return Tuple::makeTuple(val).pack();
+}
+template <>
+inline TupleVersionstamp TupleCodec<TupleVersionstamp>::unpack(Standalone<StringRef> const& val) {
+	return Tuple::unpack(val).getVersionstamp(0);
+}
+
+template <>
+inline Standalone<StringRef> TupleCodec<Versionstamp>::pack(Versionstamp const& val) {
+	return TupleCodec<TupleVersionstamp>::pack(TupleVersionstamp(val.version, val.batchNumber));
+}
+template <>
+inline Versionstamp TupleCodec<Versionstamp>::unpack(Standalone<StringRef> const& val) {
+	TupleVersionstamp vs = TupleCodec<TupleVersionstamp>::unpack(val);
+	ASSERT(vs.getUserVersion() == 0);
+	return Versionstamp(vs.getVersion(), vs.getBatchNumber());
 }
 
 // This is backward compatible with TupleCodec<Standalone<StringRef>>
@@ -338,7 +359,9 @@ template <typename T, typename Codec = TupleCodec<T>>
 class KeyBackedProperty {
 public:
 	KeyBackedProperty(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {}, Codec codec = {})
-	  : key(key), trigger(trigger), codec(codec) {}
+	  : key(key),
+	    trigger(trigger),
+	    codec(codec) {}
 
 	template <class Transaction>
 	Future<Optional<T>> get(Transaction tr, Snapshot snapshot = Snapshot::False) const {
@@ -528,7 +551,9 @@ template <typename _KeyType,
 class KeyBackedMap {
 public:
 	KeyBackedMap(KeyRef prefix = invalidKey, Optional<WatchableTrigger> trigger = {}, ValueCodec valueCodec = {})
-	  : subspace(prefixRange(prefix)), trigger(trigger), valueCodec(valueCodec) {}
+	  : subspace(prefixRange(prefix)),
+	    trigger(trigger),
+	    valueCodec(valueCodec) {}
 
 	typedef _KeyType KeyType;
 	typedef _ValueType ValueType;
@@ -778,6 +803,16 @@ public:
 	}
 
 	template <class Transaction>
+	void setVersionstamp(Transaction tr, KeyType const& key, ValueType const& val, int offset = 0) {
+		Key k = packKey(key);
+		Value v = packValue(val).withSuffix(StringRef(reinterpret_cast<uint8_t*>(&offset), 4));
+		tr->atomicOp(k, v, MutationRef::SetVersionstampedValue);
+		if (trigger.present()) {
+			trigger->update(tr);
+		}
+	}
+
+	template <class Transaction>
 	void erase(Transaction tr, KeyType const& key) {
 		kbt_debug("MAP ERASE {}\n", packKey(key).printable());
 		tr->clear(packKey(key));
@@ -854,7 +889,8 @@ template <typename _ValueType, typename Codec = TupleCodec<_ValueType>>
 class KeyBackedSet {
 public:
 	KeyBackedSet(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {})
-	  : subspace(prefixRange(key)), trigger(trigger) {}
+	  : subspace(prefixRange(key)),
+	    trigger(trigger) {}
 
 	typedef _ValueType ValueType;
 	typedef KeyBackedRangeResult<ValueType> RangeResultType;
@@ -1103,7 +1139,8 @@ public:
 class KeyBackedClass {
 public:
 	KeyBackedClass(StringRef prefix, Optional<Key> triggerOverride = {})
-	  : subspace(prefix), trigger(triggerOverride.orDefault(subspace.pack("_changeTrigger"_sr))) {}
+	  : subspace(prefix),
+	    trigger(triggerOverride.orDefault(subspace.pack("_changeTrigger"_sr))) {}
 
 	Subspace subspace;
 	WatchableTrigger trigger;

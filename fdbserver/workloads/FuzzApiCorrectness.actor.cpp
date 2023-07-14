@@ -49,7 +49,8 @@ struct ExceptionContract {
 	std::function<void(TraceEvent&)> augment;
 
 	ExceptionContract(const char* func_, const std::function<void(TraceEvent&)>& augment_)
-	  : func(func_), augment(augment_) {}
+	  : func(func_),
+	    augment(augment_) {}
 	ExceptionContract& operator=(const std::map<int, occurance_t>& e) {
 		expected = e;
 		return *this;
@@ -65,8 +66,7 @@ struct ExceptionContract {
 		    e.code() == error_code_future_version || e.code() == error_code_transaction_cancelled ||
 		    e.code() == error_code_key_too_large || e.code() == error_code_value_too_large ||
 		    e.code() == error_code_process_behind || e.code() == error_code_batch_transaction_throttled ||
-		    e.code() == error_code_tag_throttled || e.code() == error_code_grv_proxy_memory_limit_exceeded ||
-		    e.code() == error_code_tenant_name_required) {
+		    e.code() == error_code_grv_proxy_memory_limit_exceeded || e.code() == error_code_tenant_name_required) {
 			return;
 		}
 
@@ -571,7 +571,9 @@ struct FuzzApiCorrectnessWorkload : TestWorkload {
 		std::vector<ThreadFuture<Void>> pre_steps;
 
 		BaseTest(unsigned int id_, FuzzApiCorrectnessWorkload* wl, const char* func)
-		  : id(id_), workload(wl), contract(func, std::bind(&BaseTest::augmentTrace, this, ph::_1)) {}
+		  : id(id_),
+		    workload(wl),
+		    contract(func, std::bind(&BaseTest::augmentTrace, this, ph::_1)) {}
 
 		static Key makeKey() {
 			double ksrv = deterministicRandom()->random01();

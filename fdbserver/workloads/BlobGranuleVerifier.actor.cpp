@@ -88,6 +88,7 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 
 	Future<Void> summaryClient;
 	Future<Void> forceFlushingClient;
+	Future<Void> reqWayInFuture;
 	Promise<Void> triggerSummaryComplete;
 
 	BlobGranuleVerifierWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
@@ -361,6 +362,9 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 						}
 						self->timeTravelReads++;
 					} catch (Error& e) {
+						if (e.code() == error_code_actor_cancelled) {
+							throw;
+						}
 						fmt::print("Error TT: {0}\n", e.name());
 						if (e.code() == error_code_blob_granule_transaction_too_old) {
 							self->timeTravelTooOld++;
@@ -507,6 +511,9 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 			forceFlushingClient = validateForceFlushing(cx, normalKeys, testDuration, triggerSummaryComplete);
 		} else {
 			forceFlushingClient = Future<Void>(Void());
+		}
+		if (clientId == 0 && deterministicRandom()->random01() < 0.1) {
+			reqWayInFuture = requestWayInTheFuture(cx, normalKeys, {});
 		}
 		return delay(testDuration);
 	}

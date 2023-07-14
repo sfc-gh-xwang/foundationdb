@@ -67,7 +67,7 @@ extern const char* getSourceVersion();
 
 using namespace std::literals;
 
-bool isSimulatorProcessReliable() {
+bool isSimulatorProcessUnreliable() {
 	return g_network->isSimulated() && !g_simulator->getCurrentProcess()->isReliable();
 }
 
@@ -1529,7 +1529,8 @@ private:
 };
 
 SimulationConfig::SimulationConfig(const TestConfig& testConfig)
-  : extraDatabaseMode(testConfig.extraDatabaseMode), extraDatabaseCount(testConfig.extraDatabaseCount) {
+  : extraDatabaseMode(testConfig.extraDatabaseMode),
+    extraDatabaseCount(testConfig.extraDatabaseCount) {
 	generateNormalConfig(testConfig);
 }
 

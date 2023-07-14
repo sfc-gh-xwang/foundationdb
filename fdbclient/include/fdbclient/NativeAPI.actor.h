@@ -168,8 +168,7 @@ struct TransactionOptions {
 
 	TransactionPriority priority;
 
-	TagSet tags; // All tags set on transaction
-	TagSet readTags; // Tags that can be sent with read requests
+	Optional<TransactionTag> throttlingTag;
 
 	// update clear function if you add a new field
 
@@ -190,7 +189,9 @@ struct TransactionLogInfo : public ReferenceCounted<TransactionLogInfo>, NonCopy
 	TransactionLogInfo() : logLocation(DONT_LOG), maxFieldLength(0) {}
 	TransactionLogInfo(LoggingLocation location) : logLocation(location), maxFieldLength(0) {}
 	TransactionLogInfo(std::string id, LoggingLocation location)
-	  : logLocation(location), maxFieldLength(0), identifier(id) {}
+	  : logLocation(location),
+	    maxFieldLength(0),
+	    identifier(id) {}
 
 	void setIdentifier(std::string id) { identifier = id; }
 	void logTo(LoggingLocation loc) { logLocation = logLocation | loc; }
@@ -236,7 +237,11 @@ struct Watch : public ReferenceCounted<Watch>, NonCopyable {
 	Watch() : valuePresent(false), setPresent(false), watchFuture(Never()) {}
 	Watch(Key key) : key(key), valuePresent(false), setPresent(false), watchFuture(Never()) {}
 	Watch(Key key, Optional<Value> val)
-	  : key(key), value(val), valuePresent(true), setPresent(false), watchFuture(Never()) {}
+	  : key(key),
+	    value(val),
+	    valuePresent(true),
+	    setPresent(false),
+	    watchFuture(Never()) {}
 
 	void setWatch(Future<Void> watchFuture);
 };
@@ -284,10 +289,6 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	SpanContext spanContext;
 	UseProvisionalProxies useProvisionalProxies = UseProvisionalProxies::False;
 	bool readVersionObtainedFromGrvProxy;
-	// Measured by summing the bytes accessed by each read and write operation
-	// after rounding up to the nearest page size and applying a write penalty
-	int64_t totalCost = 0;
-
 	double proxyTagThrottledDuration = 0.0;
 
 	// Special flag to skip prepending tenant prefix to mutations and conflict ranges
@@ -314,7 +315,9 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 
 	// Only available so that Transaction can have a default constructor, for use in state variables
 	TransactionState(TaskPriority taskID, SpanContext spanContext)
-	  : taskID(taskID), spanContext(spanContext), tenantSet(false) {}
+	  : taskID(taskID),
+	    spanContext(spanContext),
+	    tenantSet(false) {}
 
 	// VERSION_VECTOR changed default values of readVersionObtainedFromGrvProxy
 	TransactionState(Database cx,
@@ -322,6 +325,8 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	                 TaskPriority taskID,
 	                 SpanContext spanContext,
 	                 Reference<TransactionLogInfo> trLogInfo);
+
+	~TransactionState();
 
 	Reference<TransactionState> cloneAndReset(Reference<TransactionLogInfo> newTrLogInfo, bool generateNewSpan) const;
 
@@ -339,9 +344,25 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	Future<Void> startTransaction(uint32_t readVersionFlags = 0);
 	Future<Version> getReadVersion(uint32_t flags);
 
+	void addReadCost(uint64_t bytes);
+	void addWriteCost(uint64_t bytes);
+	void flushWriteCost();
+	int64_t getTotalCost() const;
+
 private:
 	Optional<Reference<Tenant>> tenant_;
 	bool tenantSet;
+
+	// Measured by summing the bytes accessed by each read operation
+	// after rounding up to the nearest page size
+	int64_t readCost = 0;
+
+	// Measured by summing the bytes accessed by each write operation
+	// after rounding up to the nearest page size and applying a write penalty
+	int64_t writeCost = 0;
+	bool flushedWriteCost = false;
+
+	Optional<ThrottlingId> getThrottlingId();
 };
 
 class Transaction : NonCopyable {
@@ -350,12 +371,7 @@ public:
 	~Transaction();
 
 	void setVersion(Version v);
-	Future<Version> getReadVersion() {
-		if (!trState->readVersionFuture.isValid()) {
-			trState->readVersionFuture = trState->getReadVersion(0);
-		}
-		return trState->readVersionFuture;
-	}
+	Future<Version> getReadVersion();
 	Future<Version> getRawReadVersion();
 	Optional<Version> getCachedReadVersion() const;
 
@@ -494,7 +510,7 @@ public:
 	// May be called only after commit() returns success
 	Version getCommittedVersion() const { return trState->committedVersion; }
 
-	int64_t getTotalCost() const { return trState->totalCost; }
+	int64_t getTotalCost() const { return trState->getTotalCost(); }
 
 	double getTagThrottledDuration() const;
 
@@ -551,7 +567,7 @@ public:
 
 	Reference<TransactionState> trState;
 	std::vector<Reference<Watch>> watches;
-	TagSet const& getTags() const;
+	Optional<TransactionTag> const& getTag() const&;
 	Span span;
 
 	// used in template functions as returned Future type

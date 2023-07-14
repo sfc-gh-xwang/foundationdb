@@ -64,7 +64,10 @@ public:
 		         const std::string& containerName,
 		         const std::string& blobName,
 		         std::shared_ptr<AzureClient> const& client)
-		  : asyncTaskThread(&asyncTaskThread), containerName(containerName), blobName(blobName), client(client) {}
+		  : asyncTaskThread(&asyncTaskThread),
+		    containerName(containerName),
+		    blobName(blobName),
+		    client(client) {}
 
 		void addref() override { ReferenceCounted<ReadFile>::addref(); }
 		void delref() override { ReferenceCounted<ReadFile>::delref(); }
@@ -125,7 +128,10 @@ public:
 		          const std::string& containerName,
 		          const std::string& blobName,
 		          std::shared_ptr<AzureClient> const& client)
-		  : asyncTaskThread(&asyncTaskThread), containerName(containerName), blobName(blobName), client(client) {}
+		  : asyncTaskThread(&asyncTaskThread),
+		    containerName(containerName),
+		    blobName(blobName),
+		    client(client) {}
 
 		void addref() override { ReferenceCounted<WriteFile>::addref(); }
 		void delref() override { ReferenceCounted<WriteFile>::delref(); }
@@ -190,7 +196,9 @@ public:
 
 	public:
 		BackupFile(const std::string& fileName, Reference<IAsyncFile> file)
-		  : IBackupFile(fileName), m_file(file), m_offset(0) {}
+		  : IBackupFile(fileName),
+		    m_file(file),
+		    m_offset(0) {}
 		Future<Void> append(const void* data, int len) override {
 			Future<Void> r = m_file->write(data, len, m_offset);
 			m_offset += len;

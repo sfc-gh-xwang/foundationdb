@@ -72,7 +72,8 @@ struct ConfigTransactionGetGenerationRequest {
 	ConfigTransactionGetGenerationRequest() = default;
 	explicit ConfigTransactionGetGenerationRequest(CoordinatorsHash coordinatorsHash,
 	                                               Optional<Version> const& lastSeenLiveVersion)
-	  : coordinatorsHash(coordinatorsHash), lastSeenLiveVersion(lastSeenLiveVersion) {}
+	  : coordinatorsHash(coordinatorsHash),
+	    lastSeenLiveVersion(lastSeenLiveVersion) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -101,7 +102,9 @@ struct ConfigTransactionGetRequest {
 
 	ConfigTransactionGetRequest() = default;
 	explicit ConfigTransactionGetRequest(CoordinatorsHash coordinatorsHash, ConfigGeneration generation, ConfigKey key)
-	  : coordinatorsHash(coordinatorsHash), generation(generation), key(key) {}
+	  : coordinatorsHash(coordinatorsHash),
+	    generation(generation),
+	    key(key) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -123,7 +126,9 @@ struct ConfigTransactionCommitRequest {
 	                                        ConfigGeneration generation,
 	                                        VectorRef<ConfigMutationRef> mutations,
 	                                        ConfigCommitAnnotationRef annotation)
-	  : coordinatorsHash(coordinatorsHash), generation(generation), mutations(arena, mutations),
+	  : coordinatorsHash(coordinatorsHash),
+	    generation(generation),
+	    mutations(arena, mutations),
 	    annotation(arena, annotation) {}
 
 	size_t expectedSize() const { return mutations.expectedSize() + annotation.expectedSize(); }
@@ -156,7 +161,8 @@ struct ConfigTransactionGetConfigClassesRequest {
 
 	ConfigTransactionGetConfigClassesRequest() = default;
 	explicit ConfigTransactionGetConfigClassesRequest(CoordinatorsHash coordinatorsHash, ConfigGeneration generation)
-	  : coordinatorsHash(coordinatorsHash), generation(generation) {}
+	  : coordinatorsHash(coordinatorsHash),
+	    generation(generation) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -188,7 +194,9 @@ struct ConfigTransactionGetKnobsRequest {
 	explicit ConfigTransactionGetKnobsRequest(CoordinatorsHash coordinatorsHash,
 	                                          ConfigGeneration generation,
 	                                          Optional<Key> configClass)
-	  : coordinatorsHash(coordinatorsHash), generation(generation), configClass(configClass) {}
+	  : coordinatorsHash(coordinatorsHash),
+	    generation(generation),
+	    configClass(configClass) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

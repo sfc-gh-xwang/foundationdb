@@ -814,7 +814,8 @@ struct QuietDatabaseChecker {
 	std::vector<std::string> lastFailReasons;
 
 	QuietDatabaseChecker(double maxDDRunTime)
-	  : maxDDRunTime(maxDDRunTime), timeoutEvent({ "Timeout"_sr, "TracedTooManyLines"_sr }, timeoutCallback) {}
+	  : maxDDRunTime(maxDDRunTime),
+	    timeoutEvent({ "Timeout"_sr, "TracedTooManyLines"_sr }, timeoutCallback) {}
 
 	void logFailure(StringRef name, StringRef msg, Error const& e) {
 		std::string reasons = fmt::format("{}", fmt::join(lastFailReasons, ", "));
@@ -833,7 +834,10 @@ struct QuietDatabaseChecker {
 		std::vector<std::string>& failReasons;
 
 		Impl(double start, const std::string& phase, const double maxDDRunTime, std::vector<std::string>& failReasons)
-		  : start(start), phase(phase), maxDDRunTime(maxDDRunTime), failReasons(failReasons) {}
+		  : start(start),
+		    phase(phase),
+		    maxDDRunTime(maxDDRunTime),
+		    failReasons(failReasons) {}
 
 		template <class T, class Comparison = std::less_equal<>>
 		Impl& add(BaseTraceEvent& evt,
@@ -949,6 +953,7 @@ ACTOR Future<Void> disableConsistencyScanInSim(Database db, bool waitForCompleti
 
 	if (waitForCompletion) {
 		TraceEvent("ConsistencyScan_SimDisableWaiting").log();
+		printf("Waiting for consistency scan to complete...\n");
 		loop {
 			bool waitForCorruption = g_simulator->doInjectConsistencyScanCorruption.present() &&
 			                         g_simulator->doInjectConsistencyScanCorruption.get();
@@ -988,6 +993,7 @@ ACTOR Future<Void> disableConsistencyScanInSim(Database db, bool waitForCompleti
 				config.enabled = false;
 			} else {
 				TraceEvent("ConsistencyScan_SimDisableAlreadyDisabled").log();
+				printf("Consistency scan already complete.\n");
 				return Void();
 			}
 
@@ -1008,6 +1014,7 @@ ACTOR Future<Void> disableConsistencyScanInSim(Database db, bool waitForCompleti
 	                                        ISimulator::SimConsistencyScanState::DisabledEnd);
 	CODE_PROBE(true, "Consistency Scan disabled in simulation");
 	TraceEvent("ConsistencyScan_SimDisabled").log();
+	printf("Consistency scan complete.\n");
 	return Void();
 }
 

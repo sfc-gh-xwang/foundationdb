@@ -79,7 +79,10 @@ public:
 	std::vector<std::vector<int>> satelliteTagLocations;
 
 	LogSet()
-	  : tLogWriteAntiQuorum(0), tLogReplicationFactor(0), isLocal(true), locality(tagLocalityInvalid),
+	  : tLogWriteAntiQuorum(0),
+	    tLogReplicationFactor(0),
+	    isLocal(true),
+	    locality(tagLocalityInvalid),
 	    startVersion(invalidVersion) {}
 	LogSet(const TLogSet& tlogSet);
 	LogSet(const CoreTLogSet& coreSet);
@@ -429,7 +432,10 @@ struct ILogSystem {
 			                StringRef message,
 			                const VectorRef<Tag>& tags,
 			                const LogMessageVersion& version)
-			  : arena(arena), message(message), tags(tags), version(version) {}
+			  : arena(arena),
+			    message(message),
+			    tags(tags),
+			    version(version) {}
 
 			bool operator<(BufferedMessage const& r) const { return version < r.version; }
 
@@ -633,7 +639,9 @@ struct ILogSystem {
 		Version epochBegin, epochEnd;
 
 		explicit EpochTagsVersionsInfo(int32_t n, Version begin, Version end)
-		  : logRouterTags(n), epochBegin(begin), epochEnd(end) {}
+		  : logRouterTags(n),
+		    epochBegin(begin),
+		    epochEnd(end) {}
 	};
 
 	// Returns EpochTagVersionsInfo for old epochs that this log system is aware of, excluding the current epoch.

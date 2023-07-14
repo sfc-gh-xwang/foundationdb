@@ -174,6 +174,9 @@ public:
 			// return the manifest if it's valid
 			BlobManifest manifest(result);
 			if (manifest.isValid()) {
+				TraceEvent("BlobRestoreManifest")
+				    .detail("FileName", firstFile.fileName)
+				    .detail("Count", manifest.totalSegments());
 				return manifest;
 			} else {
 				dprint("Skip corrupted manifest {} {}\n", firstFile.epoch, firstFile.seqNo);
@@ -230,8 +233,15 @@ public:
 	                         int64_t epoch,
 	                         int64_t seqNo,
 	                         Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx)
-	  : segmentNo_(1), blobConn_(blobConn), epoch_(epoch), seqNo_(seqNo), closed_(false), totalRows_(0),
-	    logicalSize_(0), totalBytes_(0), cipherKeysCtx_(cipherKeysCtx) {}
+	  : blobConn_(blobConn),
+	    epoch_(epoch),
+	    seqNo_(seqNo),
+	    segmentNo_(1),
+	    totalRows_(0),
+	    logicalSize_(0),
+	    totalBytes_(0),
+	    closed_(false),
+	    cipherKeysCtx_(cipherKeysCtx) {}
 
 	// Append a new row to the splitter
 	void append(KeyValueRef row) {
@@ -407,7 +417,11 @@ public:
 	                   int64_t epoch,
 	                   int64_t seqNo,
 	                   bool encryptionEnabled)
-	  : db_(db), blobConn_(blobConn), epoch_(epoch), seqNo_(seqNo), dbInfo_(dbInfo),
+	  : db_(db),
+	    blobConn_(blobConn),
+	    epoch_(epoch),
+	    seqNo_(seqNo),
+	    dbInfo_(dbInfo),
 	    encryptionEnabled_(encryptionEnabled) {}
 	virtual ~BlobManifestDumper() {}
 
@@ -462,12 +476,13 @@ private:
 
 				// last flush for in-memory data
 				wait(BlobManifestFileSplitter::close(splitter));
-				TraceEvent("BlobManfiestDump")
+				TraceEvent("BlobManifestDump")
 				    .detail("Size", splitter->totalBytes())
-				    .detail("Encrypted", self->encryptionEnabled_);
+				    .detail("Encrypted", self->encryptionEnabled_)
+				    .detail("Version", readVersion);
 				return splitter->totalBytes();
 			} catch (Error& e) {
-				TraceEvent("BlobManfiestDumpError").error(e).log();
+				TraceEvent("BlobManifestDumpError").error(e).log();
 				dprint("Manifest dumping error {}\n", e.what());
 				wait(BlobManifestFileSplitter::reset(splitter));
 				// wait to avoid spinning
@@ -485,6 +500,14 @@ private:
 			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+
+			state Version readVersion = wait(tr.getReadVersion());
+			int64_t lastFlushVersion = wait(BlobGranuleBackupConfig().lastFlushVersion().getD(&tr));
+			if (readVersion < lastFlushVersion) {
+				wait(delay(FLOW_KNOBS->PREVENT_FAST_SPIN_DELAY));
+				throw blob_granule_transaction_too_old();
+			}
+
 			for (auto range : ranges) {
 				try {
 					state PromiseStream<RangeReadResult> rows;
@@ -500,7 +523,7 @@ private:
 					throw;
 				}
 			}
-			Version readVersion = wait(tr.getReadVersion());
+
 			Value versionEncoded = BinaryWriter::toValue(readVersion, Unversioned());
 			splitter->append(KeyValueRef(blobManifestVersionKey, versionEncoded));
 			return readVersion;
@@ -640,7 +663,9 @@ public:
 	BlobManifestLoader(Database& db,
 	                   Reference<AsyncVar<ServerDBInfo> const> dbInfo,
 	                   Reference<BlobConnectionProvider> blobConn)
-	  : db_(db), blobConn_(blobConn), dbInfo_(dbInfo) {}
+	  : db_(db),
+	    blobConn_(blobConn),
+	    dbInfo_(dbInfo) {}
 	virtual ~BlobManifestLoader() {}
 
 	// Execute the loader
@@ -703,8 +728,8 @@ public:
 							TraceEvent("BlobRestoreMissingData").detail("KeyRange", granuleRange.toString());
 						} else {
 							TraceEvent("BlobManifestError").error(e).detail("KeyRange", granuleRange.toString());
+							throw;
 						}
-						throw;
 					}
 				}
 				return results;

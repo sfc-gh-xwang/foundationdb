@@ -158,7 +158,9 @@ public:
 	Reference<IRequestHandler> requestHandler;
 
 	SimRegisteredHandlerContext(std::string hostname, std::string service, Reference<IRequestHandler> requestHandler)
-	  : hostname(hostname), service(service), requestHandler(requestHandler) {}
+	  : hostname(hostname),
+	    service(service),
+	    requestHandler(requestHandler) {}
 
 	void addAddress(NetworkAddress addr);
 	void removeIp(IPAddress addr);
@@ -177,7 +179,7 @@ struct SimServerContext : ReferenceCounted<SimServerContext>, NonCopyable {
 	std::vector<Future<Void>> listenBinds;
 	std::vector<Reference<IListener>> listeners;
 
-	SimServerContext() : dbgid(deterministicRandom()->randomUniqueID()), running(true), actors(false), nextPort(5000) {}
+	SimServerContext() : dbgid(deterministicRandom()->randomUniqueID()), running(true), nextPort(5000), actors(false) {}
 
 	NetworkAddress newAddress();
 	void registerNewServer(NetworkAddress addr, Reference<IRequestHandler> server);

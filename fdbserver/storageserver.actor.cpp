@@ -92,7 +92,7 @@
 #include "fdbserver/SpanContextMessage.h"
 #include "fdbserver/StorageMetrics.actor.h"
 #include "fdbserver/TLogInterface.h"
-#include "fdbserver/TransactionTagCounter.h"
+#include "fdbserver/ThrottlingCounter.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/WorkerInterface.actor.h"
 #include "fdbserver/BlobGranuleServerCommon.actor.h"
@@ -246,8 +246,12 @@ struct AddingShard : NonCopyable {
 
 	// When fetchKeys "partially completes" (splits an adding shard in two), this is used to construct the left half
 	AddingShard(AddingShard* prev, KeyRange const& keys)
-	  : keys(keys), fetchClient(prev->fetchClient), server(prev->server), transferredVersion(prev->transferredVersion),
-	    fetchVersion(prev->fetchVersion), phase(prev->phase) {}
+	  : keys(keys),
+	    fetchClient(prev->fetchClient),
+	    server(prev->server),
+	    transferredVersion(prev->transferredVersion),
+	    fetchVersion(prev->fetchVersion),
+	    phase(prev->phase) {}
 	~AddingShard() {
 		if (!fetchComplete.isSet())
 			fetchComplete.send(Void());
@@ -266,7 +270,12 @@ struct AddingShard : NonCopyable {
 
 class ShardInfo : public ReferenceCounted<ShardInfo>, NonCopyable {
 	ShardInfo(KeyRange keys, std::unique_ptr<AddingShard>&& adding, StorageServer* readWrite)
-	  : adding(std::move(adding)), readWrite(readWrite), keys(keys), shardId(0LL), desiredShardId(0LL), version(0) {}
+	  : adding(std::move(adding)),
+	    readWrite(readWrite),
+	    keys(keys),
+	    shardId(0LL),
+	    desiredShardId(0LL),
+	    version(0) {}
 
 public:
 	// A shard has 3 mutual exclusive states: adding, readWrite and notAssigned.
@@ -655,17 +664,22 @@ public:
 	Version version;
 	Future<Version> watch_impl;
 	Promise<Version> versionPromise;
-	Optional<TagSet> tags;
+	Optional<TransactionTag> throttlingTag;
 	Optional<UID> debugID;
 	int64_t tenantId;
 
 	ServerWatchMetadata(Key key,
 	                    Optional<Value> value,
 	                    Version version,
-	                    Optional<TagSet> tags,
+	                    Optional<TransactionTag> throttlingTag,
 	                    Optional<UID> debugID,
 	                    int64_t tenantId)
-	  : key(key), value(value), version(version), tags(tags), debugID(debugID), tenantId(tenantId) {}
+	  : key(key),
+	    value(value),
+	    version(version),
+	    throttlingTag(throttlingTag),
+	    debugID(debugID),
+	    tenantId(tenantId) {}
 };
 
 struct BusiestWriteTagContext {
@@ -675,8 +689,10 @@ struct BusiestWriteTagContext {
 	double lastUpdateTime;
 
 	BusiestWriteTagContext(const UID& thisServerID)
-	  : busiestWriteTagTrackingKey(thisServerID.toString() + "/BusiestWriteTag"), ratekeeperID(UID()),
-	    busiestWriteTagEventHolder(makeReference<EventCacheHolder>(busiestWriteTagTrackingKey)), lastUpdateTime(-1) {}
+	  : busiestWriteTagTrackingKey(thisServerID.toString() + "/BusiestWriteTag"),
+	    ratekeeperID(UID()),
+	    busiestWriteTagEventHolder(makeReference<EventCacheHolder>(busiestWriteTagTrackingKey)),
+	    lastUpdateTime(-1) {}
 };
 
 // A SSPhysicalShard represents a physical shard, it contains a list of keyranges.
@@ -1228,7 +1244,7 @@ public:
 		return val;
 	}
 
-	TransactionTagCounter transactionTagCounter;
+	ThrottlingCounter throttlingCounter;
 	BusiestWriteTagContext busiestWriteTagContext;
 
 	Optional<LatencyBandConfig> latencyBandConfig;
@@ -1314,6 +1330,7 @@ public:
 		LatencySample readQueueWaitSample;
 		LatencySample kvReadRangeLatencySample;
 		LatencySample updateLatencySample;
+		LatencySample updateEncryptionLatencySample;
 
 		LatencyBands readLatencyBands;
 		LatencySample mappedRangeSample; // Samples getMappedRange latency
@@ -1322,34 +1339,63 @@ public:
 
 		explicit Counters(StorageServer* self)
 		  : CommonStorageCounters("StorageServer", self->thisServerID.toString(), &self->metrics),
-		    allQueries("QueryQueue", cc), systemKeyQueries("SystemKeyQueries", cc), getKeyQueries("GetKeyQueries", cc),
-		    getValueQueries("GetValueQueries", cc), getRangeQueries("GetRangeQueries", cc),
+		    allQueries("QueryQueue", cc),
+		    systemKeyQueries("SystemKeyQueries", cc),
+		    getKeyQueries("GetKeyQueries", cc),
+		    getValueQueries("GetValueQueries", cc),
+		    getRangeQueries("GetRangeQueries", cc),
 		    getRangeSystemKeyQueries("GetRangeSystemKeyQueries", cc),
-		    getMappedRangeQueries("GetMappedRangeQueries", cc), getRangeStreamQueries("GetRangeStreamQueries", cc),
-		    lowPriorityQueries("LowPriorityQueries", cc), rowsQueried("RowsQueried", cc),
-		    watchQueries("WatchQueries", cc), emptyQueries("EmptyQueries", cc), feedRowsQueried("FeedRowsQueried", cc),
-		    feedBytesQueried("FeedBytesQueried", cc), feedStreamQueries("FeedStreamQueries", cc),
-		    rejectedFeedStreamQueries("RejectedFeedStreamQueries", cc), feedVersionQueries("FeedVersionQueries", cc),
-		    logicalBytesInput("LogicalBytesInput", cc), logicalBytesMoveInOverhead("LogicalBytesMoveInOverhead", cc),
-		    kvCommitLogicalBytes("KVCommitLogicalBytes", cc), kvClearRanges("KVClearRanges", cc),
-		    kvClearSingleKey("KVClearSingleKey", cc), kvSystemClearRanges("KVSystemClearRanges", cc),
-		    bytesDurable("BytesDurable", cc), feedBytesFetched("FeedBytesFetched", cc),
-		    sampledBytesCleared("SampledBytesCleared", cc), atomicMutations("AtomicMutations", cc),
-		    changeFeedMutations("ChangeFeedMutations", cc),
-		    changeFeedMutationsDurable("ChangeFeedMutationsDurable", cc), updateBatches("UpdateBatches", cc),
-		    updateVersions("UpdateVersions", cc), loops("Loops", cc), fetchWaitingMS("FetchWaitingMS", cc),
-		    fetchWaitingCount("FetchWaitingCount", cc), fetchExecutingMS("FetchExecutingMS", cc),
-		    fetchExecutingCount("FetchExecutingCount", cc), readsRejected("ReadsRejected", cc),
-		    wrongShardServer("WrongShardServer", cc), fetchedVersions("FetchedVersions", cc),
-		    fetchesFromLogs("FetchesFromLogs", cc), quickGetValueHit("QuickGetValueHit", cc),
-		    quickGetValueMiss("QuickGetValueMiss", cc), quickGetKeyValuesHit("QuickGetKeyValuesHit", cc),
-		    quickGetKeyValuesMiss("QuickGetKeyValuesMiss", cc), kvScanBytes("KVScanBytes", cc),
-		    kvGetBytes("KVGetBytes", cc), eagerReadsKeys("EagerReadsKeys", cc), kvGets("KVGets", cc),
-		    kvScans("KVScans", cc), kvCommits("KVCommits", cc), changeFeedDiskReads("ChangeFeedDiskReads", cc),
+		    getRangeStreamQueries("GetRangeStreamQueries", cc),
+		    lowPriorityQueries("LowPriorityQueries", cc),
+		    rowsQueried("RowsQueried", cc),
+		    watchQueries("WatchQueries", cc),
+		    emptyQueries("EmptyQueries", cc),
+		    feedRowsQueried("FeedRowsQueried", cc),
+		    feedBytesQueried("FeedBytesQueried", cc),
+		    feedStreamQueries("FeedStreamQueries", cc),
+		    rejectedFeedStreamQueries("RejectedFeedStreamQueries", cc),
+		    feedVersionQueries("FeedVersionQueries", cc),
 		    getMappedRangeBytesQueried("GetMappedRangeBytesQueried", cc),
-		    finishedGetMappedRangeQueries("FinishedGetMappedRangeQueries", cc),
 		    finishedGetMappedRangeSecondaryQueries("FinishedGetMappedRangeSecondaryQueries", cc),
-		    pTreeSets("PTreeSets", cc), pTreeClears("PTreeClears", cc), pTreeClearSplits("PTreeClearSplits", cc),
+		    getMappedRangeQueries("GetMappedRangeQueries", cc),
+		    finishedGetMappedRangeQueries("FinishedGetMappedRangeQueries", cc),
+		    logicalBytesInput("LogicalBytesInput", cc),
+		    logicalBytesMoveInOverhead("LogicalBytesMoveInOverhead", cc),
+		    kvCommitLogicalBytes("KVCommitLogicalBytes", cc),
+		    kvClearRanges("KVClearRanges", cc),
+		    kvClearSingleKey("KVClearSingleKey", cc),
+		    kvSystemClearRanges("KVSystemClearRanges", cc),
+		    bytesDurable("BytesDurable", cc),
+		    feedBytesFetched("FeedBytesFetched", cc),
+		    sampledBytesCleared("SampledBytesCleared", cc),
+		    atomicMutations("AtomicMutations", cc),
+		    changeFeedMutations("ChangeFeedMutations", cc),
+		    changeFeedMutationsDurable("ChangeFeedMutationsDurable", cc),
+		    updateBatches("UpdateBatches", cc),
+		    updateVersions("UpdateVersions", cc),
+		    loops("Loops", cc),
+		    fetchWaitingMS("FetchWaitingMS", cc),
+		    fetchWaitingCount("FetchWaitingCount", cc),
+		    fetchExecutingMS("FetchExecutingMS", cc),
+		    fetchExecutingCount("FetchExecutingCount", cc),
+		    readsRejected("ReadsRejected", cc),
+		    wrongShardServer("WrongShardServer", cc),
+		    fetchedVersions("FetchedVersions", cc),
+		    fetchesFromLogs("FetchesFromLogs", cc),
+		    quickGetValueHit("QuickGetValueHit", cc),
+		    quickGetValueMiss("QuickGetValueMiss", cc),
+		    quickGetKeyValuesHit("QuickGetKeyValuesHit", cc),
+		    quickGetKeyValuesMiss("QuickGetKeyValuesMiss", cc),
+		    kvScanBytes("KVScanBytes", cc),
+		    kvGetBytes("KVGetBytes", cc),
+		    eagerReadsKeys("EagerReadsKeys", cc),
+		    kvGets("KVGets", cc),
+		    kvScans("KVScans", cc),
+		    kvCommits("KVCommits", cc),
+		    changeFeedDiskReads("ChangeFeedDiskReads", cc),
+		    pTreeSets("PTreeSets", cc),
+		    pTreeClears("PTreeClears", cc),
+		    pTreeClearSplits("PTreeClearSplits", cc),
 		    readLatencySample("ReadLatencyMetrics",
 		                      self->thisServerID,
 		                      SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
@@ -1374,6 +1420,18 @@ public:
 		                        self->thisServerID,
 		                        SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
 		                        SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
+		    kvReadRangeLatencySample("KVGetRangeMetrics",
+		                             self->thisServerID,
+		                             SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
+		                             SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
+		    updateLatencySample("UpdateLatencyMetrics",
+		                        self->thisServerID,
+		                        SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
+		                        SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
+		    updateEncryptionLatencySample("UpdateEncryptionLatencyMetrics",
+		                                  self->thisServerID,
+		                                  SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
+		                                  SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
 		    readLatencyBands("ReadLatencyBands", self->thisServerID, SERVER_KNOBS->STORAGE_LOGGING_DELAY),
 		    mappedRangeSample("GetMappedRangeMetrics",
 		                      self->thisServerID,
@@ -1386,15 +1444,7 @@ public:
 		    mappedRangeLocalSample("GetMappedRangeLocalMetrics",
 		                           self->thisServerID,
 		                           SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
-		                           SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
-		    kvReadRangeLatencySample("KVGetRangeMetrics",
-		                             self->thisServerID,
-		                             SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
-		                             SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
-		    updateLatencySample("UpdateLatencyMetrics",
-		                        self->thisServerID,
-		                        SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
-		                        SERVER_KNOBS->LATENCY_SKETCH_ACCURACY) {
+		                           SERVER_KNOBS->LATENCY_SKETCH_ACCURACY) {
 			specialCounter(cc, "LastTLogVersion", [self]() { return self->lastTLogVersion; });
 			specialCounter(cc, "Version", [self]() { return self->version.get(); });
 			specialCounter(cc, "StorageVersion", [self]() { return self->storageVersion(); });
@@ -1447,9 +1497,10 @@ public:
 	StorageServer(IKeyValueStore* storage,
 	              Reference<AsyncVar<ServerDBInfo> const> const& db,
 	              StorageServerInterface const& ssi)
-	  : shardAware(false), tlogCursorReadsLatencyHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
-	                                                                               TLOG_CURSOR_READS_LATENCY_HISTOGRAM,
-	                                                                               Histogram::Unit::milliseconds)),
+	  : shardAware(false),
+	    tlogCursorReadsLatencyHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
+	                                                            TLOG_CURSOR_READS_LATENCY_HISTOGRAM,
+	                                                            Histogram::Unit::milliseconds)),
 	    ssVersionLockLatencyHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
 	                                                          SS_VERSION_LOCK_LATENCY_HISTOGRAM,
 	                                                          Histogram::Unit::milliseconds)),
@@ -1480,31 +1531,63 @@ public:
 	    readRangeKVPairsReturnedHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
 	                                                              SS_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM,
 	                                                              Histogram::Unit::bytes)),
-	    tag(invalidTag), poppedAllAfter(std::numeric_limits<Version>::max()), cpuUsage(0.0), diskUsage(0.0),
-	    emptyVersionWaitLastSampleTime(0), emptyVersionWaitWindowLatency(0.00001),
-	    emptyVersionWaitWindowSketchPositive(0.00001), emptyVersionWaitWindowSketchNegative(0.00001),
+	    tag(invalidTag),
+	    poppedAllAfter(std::numeric_limits<Version>::max()),
+	    cpuUsage(0.0),
+	    diskUsage(0.0),
+	    emptyVersionWaitLastSampleTime(0),
+	    emptyVersionWaitWindowLatency(0.00001),
+	    emptyVersionWaitWindowSketchPositive(0.00001),
+	    emptyVersionWaitWindowSketchNegative(0.00001),
 	    emptyVersionWaitWindowContSample(2 * SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT),
-	    minSafeWaitWindow(0), positiveSampleNum(0), negativeSampleNum(0), storage(this, storage), shardChangeCounter(0),
-	    lastTLogVersion(0), lastVersionWithData(0), restoredVersion(0), prevVersion(0),
-	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()), primaryLocality(tagLocalityInvalid),
-	    knownCommittedVersion(0), versionLag(0), logProtocol(0), thisServerID(ssi.id()), tssInQuarantine(false), db(db),
-	    actors(false), byteSampleClears(false, "\xff\xff\xff"_sr), durableInProgress(Void()), watchBytes(0),
-	    numWatches(0), noRecentUpdates(false), lastUpdate(now()), updateEagerReads(nullptr),
+	    minSafeWaitWindow(0),
+	    positiveSampleNum(0),
+	    negativeSampleNum(0),
+	    storage(this, storage),
+	    shardChangeCounter(0),
+	    lastTLogVersion(0),
+	    lastVersionWithData(0),
+	    restoredVersion(0),
+	    prevVersion(0),
+	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()),
+	    primaryLocality(tagLocalityInvalid),
+	    knownCommittedVersion(0),
+	    versionLag(0),
+	    logProtocol(0),
+	    thisServerID(ssi.id()),
+	    tssInQuarantine(false),
+	    db(db),
+	    actors(false),
+	    byteSampleClears(false, "\xff\xff\xff"_sr),
+	    durableInProgress(Void()),
+	    watchBytes(0),
+	    numWatches(0),
+	    noRecentUpdates(false),
+	    lastUpdate(now()),
+	    updateEagerReads(nullptr),
 	    fetchKeysParallelismLock(SERVER_KNOBS->FETCH_KEYS_PARALLELISM),
 	    fetchKeysParallelismChangeFeedLock(SERVER_KNOBS->FETCH_KEYS_PARALLELISM_CHANGE_FEED),
-	    fetchKeysBytesBudget(SERVER_KNOBS->STORAGE_FETCH_BYTES), fetchKeysBudgetUsed(false),
+	    fetchKeysBytesBudget(SERVER_KNOBS->STORAGE_FETCH_BYTES),
+	    fetchKeysBudgetUsed(false),
 	    serveFetchCheckpointParallelismLock(SERVER_KNOBS->SERVE_FETCH_CHECKPOINT_PARALLELISM),
 	    ssLock(makeReference<PriorityMultiLock>(SERVER_KNOBS->STORAGE_SERVER_READ_CONCURRENCY,
 	                                            SERVER_KNOBS->STORAGESERVER_READ_PRIORITIES)),
 	    serveAuditStorageParallelismLock(SERVER_KNOBS->SERVE_AUDIT_STORAGE_PARALLELISM),
-	    instanceID(deterministicRandom()->randomUniqueID().first()), shuttingDown(false), behind(false),
-	    versionBehind(false), debug_inApplyUpdate(false), debug_lastValidateTime(0), lastBytesInputEBrake(0),
-	    lastDurableVersionEBrake(0), maxQueryQueue(0),
-	    transactionTagCounter(ssi.id(),
-	                          /*maxTagsTracked=*/SERVER_KNOBS->SS_THROTTLE_TAGS_TRACKED,
-	                          /*minRateTracked=*/SERVER_KNOBS->MIN_TAG_READ_PAGES_RATE *
-	                              CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
-	    busiestWriteTagContext(ssi.id()), counters(this),
+	    instanceID(deterministicRandom()->randomUniqueID().first()),
+	    shuttingDown(false),
+	    behind(false),
+	    versionBehind(false),
+	    debug_inApplyUpdate(false),
+	    debug_lastValidateTime(0),
+	    lastBytesInputEBrake(0),
+	    lastDurableVersionEBrake(0),
+	    maxQueryQueue(0),
+	    throttlingCounter(ssi.id(),
+	                      /*maxTagsTracked=*/SERVER_KNOBS->SS_THROTTLE_TAGS_TRACKED,
+	                      /*minRateTracked=*/SERVER_KNOBS->MIN_TAG_READ_PAGES_RATE *
+	                          CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
+	    busiestWriteTagContext(ssi.id()),
+	    counters(this),
 	    storageServerSourceTLogIDEventHolder(
 	        makeReference<EventCacheHolder>(ssi.id().toString() + "/StorageServerSourceTLogID")),
 	    tenantData(db) {
@@ -2375,7 +2458,7 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 
 	// Key size is not included in "BytesQueried", but still contributes to cost,
 	// so it must be accounted for here.
-	data->transactionTagCounter.addRequest(req.tags, tenantGroup, req.key.size() + resultSize);
+	data->throttlingCounter.addRequest(req.throttlingTag, tenantGroup, req.key.size() + resultSize);
 
 	++data->counters.finishedQueries;
 
@@ -2434,7 +2517,7 @@ ACTOR Future<Version> watchWaitForValueChange(StorageServer* data, SpanContext p
 			           "Starting watch loop with latestVersion > data->version",
 			           probe::decoration::rare);
 			GetValueRequest getReq(
-			    span.context, TenantInfo(), metadata->key, latest, metadata->tags, options, VersionVector());
+			    span.context, TenantInfo(), metadata->key, latest, metadata->throttlingTag, options, VersionVector());
 			state Future<Void> getValue = getValueQ(
 			    data, getReq); // we are relying on the delay zero at the top of getValueQ, if removed we need one here
 			GetValueReply reply = wait(getReq.reply.getFuture());
@@ -3387,7 +3470,7 @@ ACTOR Future<std::pair<ChangeFeedStreamReply, bool>> getChangeFeedMutations(Stor
 		// the end
 		if ((reply.mutations.empty() || reply.mutations.back().version < lastMemoryVersion) &&
 		    remainingLimitBytes <= 0) {
-			CODE_PROBE(true, "Memory feed adding empty version after memory filtered", probe::decoration::rare);
+			CODE_PROBE(true, "Memory feed adding empty version after memory filtered");
 			reply.mutations.push_back(reply.arena, MutationsAndVersionRef(lastMemoryVersion, lastMemoryKnownCommitted));
 		}
 	}
@@ -3911,7 +3994,7 @@ ACTOR Future<GetValueReqAndResultRef> quickGetValue(StorageServer* data,
 			                    pOriginalReq->tenantInfo,
 			                    key,
 			                    version,
-			                    pOriginalReq->tags,
+			                    pOriginalReq->throttlingTag,
 			                    pOriginalReq->options,
 			                    VersionVector());
 			// Note that it does not use readGuard to avoid server being overloaded here. Throttling is enforced at the
@@ -4605,7 +4688,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 		data->sendErrorWithPenalty(req.reply, e, data->getPenalty());
 	}
 
-	data->transactionTagCounter.addRequest(req.tags, tenantGroup, resultSize);
+	data->throttlingCounter.addRequest(req.throttlingTag, tenantGroup, resultSize);
 	++data->counters.finishedQueries;
 
 	double duration = g_network->timer() - req.requestTime();
@@ -4657,7 +4740,7 @@ ACTOR Future<GetRangeReqAndResultRef> quickGetKeyValues(
 		req.limitBytes = SERVER_KNOBS->QUICK_GET_KEY_VALUES_LIMIT_BYTES;
 		req.options = pOriginalReq->options;
 		// TODO: tweak priorities in req.options.get().type?
-		req.tags = pOriginalReq->tags;
+		req.throttlingTag = pOriginalReq->throttlingTag;
 		req.ssLatestCommitVersions = VersionVector();
 
 		// Note that it does not use readGuard to avoid server being overloaded here. Throttling is enforced at the
@@ -4873,7 +4956,7 @@ ACTOR Future<Void> validateRangeAgainstServer(StorageServer* data,
 			req.limit = limit;
 			req.limitBytes = limitBytes;
 			req.version = version;
-			req.tags = TagSet();
+			req.throttlingTag = {};
 			fs.push_back(remoteServer.getKeyValues.getReplyUnlessFailedFor(req, 2, 0));
 
 			GetKeyValuesRequest localReq;
@@ -4883,7 +4966,7 @@ ACTOR Future<Void> validateRangeAgainstServer(StorageServer* data,
 			localReq.limit = limit;
 			localReq.limitBytes = limitBytes;
 			localReq.version = version;
-			localReq.tags = TagSet();
+			localReq.throttlingTag = {};
 			data->actors.add(getKeyValuesQ(data, localReq));
 			fs.push_back(errorOr(localReq.reply.getFuture()));
 			std::vector<ErrorOr<GetKeyValuesReply>> reps = wait(getAll(fs));
@@ -6099,9 +6182,9 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 	}
 
 	// SOMEDAY: The size reported here is an undercount of the bytes read due to the fact that we have to scan for the
-	// key It would be more accurate to count all the read bytes, but it's not critical because this function is only
+	// key. It would be more accurate to count all the read bytes, but it's not critical because this function is only
 	// used if read-your-writes is disabled
-	data->transactionTagCounter.addRequest(req.tags, tenantGroup, resultSize);
+	data->throttlingCounter.addRequest(req.throttlingTag, tenantGroup, resultSize);
 
 	++data->counters.finishedQueries;
 
@@ -6136,7 +6219,7 @@ void getQueuingMetrics(StorageServer* self, StorageQueuingMetricsRequest const& 
 	reply.diskUsage = self->diskUsage;
 	reply.durableVersion = self->durableVersion.get();
 
-	reply.busiestTags = self->transactionTagCounter.getBusiestTags();
+	reply.busiestReaders = self->throttlingCounter.getBusiestReaders();
 
 	req.reply.send(reply);
 }
@@ -6733,8 +6816,13 @@ public:
 	                        StorageServer::CurrentRunningFetchKeys& currentRunning_,
 	                        Counter& bytesFetchedCounter,
 	                        Counter& kvFetchedCounter)
-	  : uid(uid_), startTime(startTime_), fetchedBytes(0), histograms(histograms_), currentRunning(currentRunning_),
-	    bytesFetchedCounter(bytesFetchedCounter), kvFetchedCounter(kvFetchedCounter) {
+	  : uid(uid_),
+	    startTime(startTime_),
+	    fetchedBytes(0),
+	    histograms(histograms_),
+	    currentRunning(currentRunning_),
+	    bytesFetchedCounter(bytesFetchedCounter),
+	    kvFetchedCounter(kvFetchedCounter) {
 
 		currentRunning.recordStart(uid, keyRange);
 	}
@@ -6852,6 +6940,16 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 		state int i;
 		for (i = 0; i < chunks.size(); ++i) {
 			state KeyRangeRef chunkRange = chunks[i].keyRange;
+			// Chunk is empty if no snapshot file. Skip it
+			if (!chunks[i].snapshotFile.present()) {
+				TraceEvent("SkipBlobChunk")
+				    .detail("Chunk", chunks[i].keyRange)
+				    .detail("Version", chunks[i].includedVersion);
+				RangeResult rows;
+				results.send(rows);
+				rows.readThrough = KeyRef(rows.arena(), std::min(chunkRange.end, keys.end));
+				continue;
+			}
 			state Reference<BlobConnectionProvider> blobConn = wait(loadBStoreForTenant(tenantData, chunkRange));
 			state RangeResult rows = wait(readBlobGranule(chunks[i], keys, 0, fetchVersion, blobConn));
 
@@ -8174,7 +8272,11 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 }
 
 AddingShard::AddingShard(StorageServer* server, KeyRangeRef const& keys)
-  : keys(keys), server(server), transferredVersion(invalidVersion), fetchVersion(invalidVersion), phase(WaitPrevious) {
+  : keys(keys),
+    server(server),
+    transferredVersion(invalidVersion),
+    fetchVersion(invalidVersion),
+    phase(WaitPrevious) {
 	fetchClient = fetchKeys(server, this);
 }
 
@@ -8871,11 +8973,17 @@ struct OrderByVersion {
 class StorageUpdater {
 public:
 	StorageUpdater()
-	  : currentVersion(invalidVersion), fromVersion(invalidVersion), restoredVersion(invalidVersion),
-	    processedStartKey(false), processedCacheStartKey(false) {}
+	  : currentVersion(invalidVersion),
+	    fromVersion(invalidVersion),
+	    restoredVersion(invalidVersion),
+	    processedStartKey(false),
+	    processedCacheStartKey(false) {}
 	StorageUpdater(Version fromVersion, Version restoredVersion)
-	  : currentVersion(fromVersion), fromVersion(fromVersion), restoredVersion(restoredVersion),
-	    processedStartKey(false), processedCacheStartKey(false) {}
+	  : currentVersion(fromVersion),
+	    fromVersion(fromVersion),
+	    restoredVersion(restoredVersion),
+	    processedStartKey(false),
+	    processedCacheStartKey(false) {}
 
 	void applyMutation(StorageServer* data,
 	                   MutationRef const& m,
@@ -9406,6 +9514,7 @@ inline void sampleTlogUpdateVersions(StorageServer* self, const Version& version
 
 ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 	state double updateStart = g_network->timer();
+	state double decryptionTime = 0;
 	state double start;
 	state bool enableClearRangeEagerReads =
 	    (data->storage.getKeyValueStoreType() == KeyValueStoreType::SSD_ROCKSDB_V1 ||
@@ -9567,7 +9676,10 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 							msg.updateEncryptCipherDetails(cipherDetails);
 							collectingCipherKeys = true;
 						} else {
-							msg = msg.decrypt(cipherKeys.get(), eager.arena, BlobCipherMetrics::TLOG);
+							double decryptionTimeV = 0;
+							msg = msg.decrypt(
+							    cipherKeys.get(), eager.arena, BlobCipherMetrics::TLOG, nullptr, &decryptionTimeV);
+							decryptionTime += decryptionTimeV;
 						}
 					}
 					// TraceEvent(SevDebug, "SSReadingLog", data->thisServerID).detail("Mutation", msg);
@@ -9723,7 +9835,10 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 					ASSERT(cipherKeys.present());
 					encryptedMutation.mutation = msg;
 					encryptedMutation.cipherKeys = msg.getCipherKeys(cipherKeys.get());
-					msg = msg.decrypt(encryptedMutation.cipherKeys, rd.arena(), BlobCipherMetrics::TLOG);
+					double decryptionTimeV = 0;
+					msg = msg.decrypt(
+					    encryptedMutation.cipherKeys, rd.arena(), BlobCipherMetrics::TLOG, nullptr, &decryptionTimeV);
+					decryptionTime += decryptionTimeV;
 				}
 
 				Span span("SS:update"_loc, spanContext);
@@ -9904,6 +10019,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 			data->behind = false;
 		}
 		const double duration = g_network->timer() - updateStart;
+		data->counters.updateEncryptionLatencySample.addMeasurement(decryptionTime);
 		data->counters.updateLatencySample.addMeasurement(duration);
 
 		return Void(); // update will get called again ASAP
@@ -10622,7 +10738,7 @@ void setAssignedStatus(StorageServer* self, KeyRangeRef keys, bool nowAssigned) 
 }
 
 void StorageServerDisk::clearRange(KeyRangeRef keys) {
-	storage->clear(keys, &data->metrics);
+	storage->clear(keys);
 	++(*kvClearRanges);
 	if (keys.singleKeyRange()) {
 		++(*kvClearSingleKey);
@@ -10639,7 +10755,7 @@ void StorageServerDisk::writeMutation(MutationRef mutation) {
 		storage->set(KeyValueRef(mutation.param1, mutation.param2));
 		*kvCommitLogicalBytes += mutation.expectedSize();
 	} else if (mutation.type == MutationRef::ClearRange) {
-		storage->clear(KeyRangeRef(mutation.param1, mutation.param2), &data->metrics);
+		storage->clear(KeyRangeRef(mutation.param1, mutation.param2));
 		++(*kvClearRanges);
 		if (KeyRangeRef(mutation.param1, mutation.param2).singleKeyRange()) {
 			++(*kvClearSingleKey);
@@ -10680,7 +10796,7 @@ void StorageServerDisk::writeMutations(const VectorRef<MutationRef>& mutations,
 			storage->set(KeyValueRef(m.param1, m.param2));
 			*kvCommitLogicalBytes += m.expectedSize();
 		} else if (m.type == MutationRef::ClearRange) {
-			storage->clear(KeyRangeRef(m.param1, m.param2), &data->metrics);
+			storage->clear(KeyRangeRef(m.param1, m.param2));
 			++(*kvClearRanges);
 			if (KeyRangeRef(m.param1, m.param2).singleKeyRange()) {
 				++(*kvClearSingleKey);
@@ -11064,7 +11180,7 @@ ACTOR Future<bool> restoreDurableState(StorageServer* data, IKeyValueStore* stor
 				++data->counters.kvSystemClearRanges;
 				// TODO(alexmiller): Figure out how to selectively enable spammy data distribution events.
 				// DEBUG_KEY_RANGE("clearInvalidVersion", invalidVersion, clearRange);
-				storage->clear(clearRange, &data->metrics);
+				storage->clear(clearRange);
 				++data->counters.kvSystemClearRanges;
 				data->byteSampleApplyClear(clearRange, invalidVersion);
 			}
@@ -11564,7 +11680,7 @@ ACTOR Future<Void> serveWatchValueRequestsImpl(StorageServer* self, FutureStream
 		// case 1: no watch set for the current key
 		if (!metadata.isValid()) {
 			metadata = makeReference<ServerWatchMetadata>(
-			    req.key, req.value, req.version, req.tags, req.debugID, req.tenantInfo.tenantId);
+			    req.key, req.value, req.version, req.throttlingTag, req.debugID, req.tenantInfo.tenantId);
 			KeyRef key = self->setWatchMetadata(metadata);
 			metadata->watch_impl = forward(watchWaitForValueChange(self, span.context, key, req.tenantInfo.tenantId),
 			                               metadata->versionPromise);
@@ -11574,7 +11690,7 @@ ACTOR Future<Void> serveWatchValueRequestsImpl(StorageServer* self, FutureStream
 		else if (metadata->value == req.value) {
 			if (req.version > metadata->version) {
 				metadata->version = req.version;
-				metadata->tags = req.tags;
+				metadata->throttlingTag = req.throttlingTag;
 				metadata->debugID = req.debugID;
 			}
 			self->actors.add(watchValueSendReply(self, req, metadata->versionPromise.getFuture(), span.context));
@@ -11586,7 +11702,7 @@ ACTOR Future<Void> serveWatchValueRequestsImpl(StorageServer* self, FutureStream
 			metadata->watch_impl.cancel();
 
 			metadata = makeReference<ServerWatchMetadata>(
-			    req.key, req.value, req.version, req.tags, req.debugID, req.tenantInfo.tenantId);
+			    req.key, req.value, req.version, req.throttlingTag, req.debugID, req.tenantInfo.tenantId);
 			KeyRef key = self->setWatchMetadata(metadata);
 			metadata->watch_impl = forward(watchWaitForValueChange(self, span.context, key, req.tenantInfo.tenantId),
 			                               metadata->versionPromise);
@@ -11606,8 +11722,13 @@ ACTOR Future<Void> serveWatchValueRequestsImpl(StorageServer* self, FutureStream
 					state Version latest = self->version.get();
 					options.debugID = metadata->debugID;
 
-					GetValueRequest getReq(
-					    span.context, TenantInfo(), metadata->key, latest, metadata->tags, options, VersionVector());
+					GetValueRequest getReq(span.context,
+					                       TenantInfo(),
+					                       metadata->key,
+					                       latest,
+					                       metadata->throttlingTag,
+					                       options,
+					                       VersionVector());
 					state Future<Void> getValue = getValueQ(self, getReq);
 					GetValueReply reply = wait(getReq.reply.getFuture());
 					metadata = self->getWatchMetadata(req.key.contents(), req.tenantInfo.tenantId);
@@ -11620,7 +11741,7 @@ ACTOR Future<Void> serveWatchValueRequestsImpl(StorageServer* self, FutureStream
 
 					if (reply.value == req.value) { // valSS == valreq
 						metadata = makeReference<ServerWatchMetadata>(
-						    req.key, req.value, req.version, req.tags, req.debugID, req.tenantInfo.tenantId);
+						    req.key, req.value, req.version, req.throttlingTag, req.debugID, req.tenantInfo.tenantId);
 						KeyRef key = self->setWatchMetadata(metadata);
 						metadata->watch_impl =
 						    forward(watchWaitForValueChange(self, span.context, key, req.tenantInfo.tenantId),
@@ -11952,9 +12073,9 @@ ACTOR Future<Void> storageServerCore(StorageServer* self, StorageServerInterface
 	self->actors.add(storageEngineConsistencyCheck(self));
 	self->actors.add(syncWaitWindowWithTlog(self));
 
-	self->transactionTagCounter.startNewInterval();
+	self->throttlingCounter.startNewInterval();
 	self->actors.add(
-	    recurring([&]() { self->transactionTagCounter.startNewInterval(); }, SERVER_KNOBS->TAG_MEASUREMENT_INTERVAL));
+	    recurring([&]() { self->throttlingCounter.startNewInterval(); }, SERVER_KNOBS->TAG_MEASUREMENT_INTERVAL));
 
 	self->coreStarted.send(Void());
 
@@ -12637,7 +12758,7 @@ static void versionedMapBound(benchmark::State& benchState) {
 	int64_t dataSize = benchState.range(1);
 	StorageServer::VersionedData data;
 	Arena arena;
-	ValueOrClearToRef value = ValueOrClearToRef::value(StringRef("fixed_value"));
+	ValueOrClearToRef value = ValueOrClearToRef::value("fixed_value"_sr);
 	// only insert half of the keys, so when we bench search (lower_bound/upper_bound), it could test the cases that
 	// the key exist and non-exist
 	RandomKeySetGenerator keyGen(dataSize * 2, "10..20/a..z");

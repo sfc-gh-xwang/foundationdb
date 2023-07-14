@@ -94,7 +94,9 @@ public:
 	OTELSum() : aggregation{ AGGREGATION_TEMPORALITY_CUMULATIVE }, isMonotonic{ true } {}
 	OTELSum(const std::string& n) : name{ n }, aggregation{ AGGREGATION_TEMPORALITY_CUMULATIVE }, isMonotonic{ true } {}
 	OTELSum(const std::string& n, int64_t v)
-	  : name{ n }, aggregation{ AGGREGATION_TEMPORALITY_CUMULATIVE }, isMonotonic{ true } {
+	  : name{ n },
+	    aggregation{ AGGREGATION_TEMPORALITY_CUMULATIVE },
+	    isMonotonic{ true } {
 		points.emplace_back(v);
 	}
 	// Returns the approximate number of msgpack bytes needed to serialize this object
@@ -130,8 +132,14 @@ public:
 	double max;
 	DataPointFlags flags;
 	HistogramDataPoint(double error, const std::vector<uint32_t>& s, double _min, double _max, double _sum)
-	  : errorGuarantee(error), recordTime{ now() }, buckets{ s }, count{ buckets.size() }, min{ _min }, max{ _max },
-	    sum{ _sum }, flags{ DataPointFlags::FLAG_NONE } {}
+	  : errorGuarantee(error),
+	    buckets{ s },
+	    recordTime{ now() },
+	    count{ buckets.size() },
+	    sum{ _sum },
+	    min{ _min },
+	    max{ _max },
+	    flags{ DataPointFlags::FLAG_NONE } {}
 	HistogramDataPoint& addAttribute(const std::string& key, const std::string& value) {
 		attributes.emplace_back(Attribute(key, value));
 		return *this;
@@ -150,7 +158,8 @@ public:
 	              double min,
 	              double max,
 	              double sum)
-	  : name{ n }, aggregation{ AGGREGATION_TEMPORALITY_DELTA } {
+	  : name{ n },
+	    aggregation{ AGGREGATION_TEMPORALITY_DELTA } {
 		points.emplace_back(error, s, min, max, sum);
 	}
 };

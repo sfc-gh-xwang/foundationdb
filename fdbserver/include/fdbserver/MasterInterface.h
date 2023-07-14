@@ -90,7 +90,8 @@ struct ChangeCoordinatorsRequest {
 
 	ChangeCoordinatorsRequest() {}
 	ChangeCoordinatorsRequest(Standalone<StringRef> newConnectionString, UID masterId)
-	  : newConnectionString(newConnectionString), masterId(masterId) {}
+	  : newConnectionString(newConnectionString),
+	    masterId(masterId) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -128,7 +129,10 @@ struct GetCommitVersionReply {
 
 	GetCommitVersionReply() : resolverChangesVersion(0), version(0), prevVersion(0), requestNum(0) {}
 	explicit GetCommitVersionReply(Version version, Version prevVersion, uint64_t requestNum)
-	  : resolverChangesVersion(0), version(version), prevVersion(prevVersion), requestNum(requestNum) {}
+	  : resolverChangesVersion(0),
+	    version(version),
+	    prevVersion(prevVersion),
+	    requestNum(requestNum) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -149,7 +153,9 @@ struct GetCommitVersionRequest {
 	                        uint64_t requestNum,
 	                        uint64_t mostRecentProcessedRequestNum,
 	                        UID requestingProxy)
-	  : spanContext(spanContext), requestNum(requestNum), mostRecentProcessedRequestNum(mostRecentProcessedRequestNum),
+	  : spanContext(spanContext),
+	    requestNum(requestNum),
+	    mostRecentProcessedRequestNum(mostRecentProcessedRequestNum),
 	    requestingProxy(requestingProxy) {}
 
 	template <class Ar>
@@ -184,8 +190,11 @@ struct UpdateRecoveryDataRequest {
 	                          const std::vector<ResolverInterface>& resolvers,
 	                          Optional<int64_t> versionEpoch,
 	                          int8_t primaryLocality)
-	  : recoveryTransactionVersion(recoveryTransactionVersion), lastEpochEnd(lastEpochEnd),
-	    commitProxies(commitProxies), resolvers(resolvers), versionEpoch(versionEpoch),
+	  : recoveryTransactionVersion(recoveryTransactionVersion),
+	    lastEpochEnd(lastEpochEnd),
+	    commitProxies(commitProxies),
+	    resolvers(resolvers),
+	    versionEpoch(versionEpoch),
 	    primaryLocality(primaryLocality) {}
 
 	template <class Ar>
@@ -218,8 +227,12 @@ struct ReportRawCommittedVersionRequest {
 	                                 Version minKnownCommittedVersion,
 	                                 Optional<Version> prevVersion,
 	                                 Optional<std::set<Tag>> writtenTags = Optional<std::set<Tag>>())
-	  : version(version), locked(locked), metadataVersion(metadataVersion),
-	    minKnownCommittedVersion(minKnownCommittedVersion), prevVersion(prevVersion), writtenTags(writtenTags) {}
+	  : version(version),
+	    locked(locked),
+	    metadataVersion(metadataVersion),
+	    minKnownCommittedVersion(minKnownCommittedVersion),
+	    prevVersion(prevVersion),
+	    writtenTags(writtenTags) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -253,7 +266,8 @@ struct CommitProxyVersionReplies {
 	NotifiedVersion latestRequestNum;
 
 	CommitProxyVersionReplies(CommitProxyVersionReplies&& r) noexcept
-	  : replies(std::move(r.replies)), latestRequestNum(std::move(r.latestRequestNum)) {}
+	  : replies(std::move(r.replies)),
+	    latestRequestNum(std::move(r.latestRequestNum)) {}
 	void operator=(CommitProxyVersionReplies&& r) noexcept {
 		replies = std::move(r.replies);
 		latestRequestNum = std::move(r.latestRequestNum);

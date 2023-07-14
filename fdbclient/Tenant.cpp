@@ -117,7 +117,8 @@ TenantMapEntry::TenantMapEntry(int64_t id, TenantName tenantName) : tenantName(t
 	setId(id);
 }
 TenantMapEntry::TenantMapEntry(int64_t id, TenantName tenantName, Optional<TenantGroupName> tenantGroup)
-  : tenantName(tenantName), tenantGroup(tenantGroup) {
+  : tenantName(tenantName),
+    tenantGroup(tenantGroup) {
 	setId(id);
 }
 

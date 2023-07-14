@@ -86,7 +86,9 @@ class CounterCollection {
 
 public:
 	CounterCollection(std::string const& name, std::string const& id = std::string())
-	  : name(name), id(id), logTime(0) {}
+	  : name(name),
+	    id(id),
+	    logTime(0) {}
 	~CounterCollection() {
 		for (auto c : countersToRemove)
 			c->remove();
@@ -201,11 +203,11 @@ FDB_BOOLEAN_PARAM(Filtered);
 class LatencyBands {
 	std::map<double, std::unique_ptr<Counter>> bands;
 	std::unique_ptr<Counter> filteredCount;
-	std::function<void(TraceEvent&)> decorator;
 
 	std::string name;
 	UID id;
 	double loggingInterval;
+	std::function<void(TraceEvent&)> decorator;
 
 	std::unique_ptr<CounterCollection> cc;
 	Future<Void> logger;

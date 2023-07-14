@@ -22,7 +22,7 @@
 #include "fdbserver/DataDistribution.actor.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/Ratekeeper.h"
-#include "fdbserver/TagThrottler.h"
+#include "fdbserver/QuotaThrottler.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/QuietDatabase.h"
 #include "flow/OwningResource.h"
@@ -81,13 +81,15 @@ public:
 		self.addActor.send(self.metricsTracker.run());
 		self.addActor.send(traceRole(Role::RATEKEEPER, rkInterf.id()));
 
-		self.addActor.send(self.rateServer.run(
-		    self.normalRateUpdater, self.batchRateUpdater, *self.tagThrottler, self.recoveryTracker));
+		self.addActor.send(self.rateServer.run(self.normalRateUpdater,
+		                                       self.batchRateUpdater,
+		                                       self.quotaThrottler,
+		                                       self.quotaCache,
+		                                       self.metricsTracker,
+		                                       self.recoveryTracker));
 
-		if (SERVER_KNOBS->GLOBAL_TAG_THROTTLING) {
-			self.addActor.send(self.quotaCache->run());
-		}
-		self.addActor.send(self.tagThrottler->monitorThrottlingChanges());
+		self.addActor.send(self.quotaCache.run());
+		self.addActor.send(self.quotaThrottler.monitorThrottlingChanges());
 		if (SERVER_KNOBS->BW_THROTTLING_ENABLED) {
 			self.addActor.send(self.blobMonitor.run(self.configurationMonitor, self.recoveryTracker));
 		}
@@ -128,19 +130,19 @@ public:
 
 					self.normalRateUpdater.update(self.metricsTracker,
 					                              self.rateServer,
-					                              *self.tagThrottler,
 					                              self.configurationMonitor,
 					                              self.recoveryTracker,
 					                              self.actualTpsHistory,
-					                              self.blobMonitor);
+					                              self.blobMonitor,
+					                              self.quotaThrottler.throttleCount());
 					self.batchRateUpdater.update(self.metricsTracker,
 					                             self.rateServer,
-					                             *self.tagThrottler,
 					                             self.configurationMonitor,
 					                             self.recoveryTracker,
 					                             self.actualTpsHistory,
-					                             self.blobMonitor);
-					self.tryUpdateAutoTagThrottling();
+					                             self.blobMonitor,
+					                             self.quotaThrottler.throttleCount());
+					self.updateTagThrottling();
 
 					self.rateServer.updateLastLimited(self.batchRateUpdater.getTpsLimit());
 					self.rateServer.cleanupExpiredGrvProxies();
@@ -171,12 +173,15 @@ Ratekeeper::Ratekeeper(UID id,
                        Database db,
                        Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                        RatekeeperInterface rkInterf)
-  : id(id), db(db), metricsTracker(id, db, rkInterf.reportCommitCostEstimation.getFuture(), dbInfo),
+  : id(id),
+    db(db),
+    metricsTracker(id, db, rkInterf.reportCommitCostEstimation.getFuture(), dbInfo),
     configurationMonitor(db, dbInfo),
     recoveryTracker(IAsyncListener<bool>::create(
         dbInfo,
         [](auto const& info) { return info.recoveryState < RecoveryState::ACCEPTING_COMMITS; })),
-    blobMonitor(db, dbInfo), rateServer(rkInterf.getRateInfo.getFuture()),
+    blobMonitor(db, dbInfo),
+    rateServer(rkInterf.getRateInfo.getFuture()),
     normalRateUpdater(id,
                       RatekeeperLimits(TransactionPriority::DEFAULT,
                                        /*context=*/"",
@@ -196,22 +201,14 @@ Ratekeeper::Ratekeeper(UID id,
                                       SERVER_KNOBS->SPRING_BYTES_TLOG_BATCH,
                                       SERVER_KNOBS->MAX_TL_SS_VERSION_DIFFERENCE_BATCH,
                                       SERVER_KNOBS->TARGET_DURABILITY_LAG_VERSIONS_BATCH,
-                                      SERVER_KNOBS->TARGET_BW_LAG_BATCH)) {
-	if (SERVER_KNOBS->GLOBAL_TAG_THROTTLING) {
-		quotaCache = std::make_unique<RKThroughputQuotaCache>(id, db);
-		tagThrottler = std::make_unique<GlobalTagThrottler>(
-		    metricsTracker, *quotaCache, id, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND);
-	} else {
-		tagThrottler = std::make_unique<TagThrottler>(db, id);
-	}
-}
+                                      SERVER_KNOBS->TARGET_BW_LAG_BATCH)),
+    quotaCache(id, db),
+    quotaThrottler(id,
+                   SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND,
+                   SERVER_KNOBS->GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD) {}
 
-void Ratekeeper::tryUpdateAutoTagThrottling() {
-	auto const& storageQueueInfo = metricsTracker.getStorageQueueInfo();
-	for (auto i = storageQueueInfo.begin(); i != storageQueueInfo.end(); ++i) {
-		auto const& ss = i->value;
-		addActor.send(tagThrottler->tryUpdateAutoThrottling(ss));
-	}
+void Ratekeeper::updateTagThrottling() {
+	quotaThrottler.updateThrottling(metricsTracker.getStorageQueueInfo());
 }
 
 ACTOR Future<Void> ratekeeper(RatekeeperInterface rkInterf, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {

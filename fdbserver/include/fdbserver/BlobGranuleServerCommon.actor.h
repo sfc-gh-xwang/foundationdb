@@ -57,7 +57,11 @@ struct BlobFileIndex {
 	              int64_t length,
 	              int64_t fullFileLength,
 	              int64_t logicalSize)
-	  : version(version), filename(filename), offset(offset), length(length), fullFileLength(fullFileLength),
+	  : version(version),
+	    filename(filename),
+	    offset(offset),
+	    length(length),
+	    fullFileLength(fullFileLength),
 	    logicalSize(logicalSize) {}
 
 	BlobFileIndex(Version version,
@@ -67,8 +71,13 @@ struct BlobFileIndex {
 	              int64_t fullFileLength,
 	              int64_t logicalSize,
 	              Optional<BlobGranuleCipherKeysMeta> ciphKeysMeta)
-	  : version(version), filename(filename), offset(offset), length(length), fullFileLength(fullFileLength),
-	    logicalSize(logicalSize), cipherKeysMeta(ciphKeysMeta) {}
+	  : version(version),
+	    filename(filename),
+	    offset(offset),
+	    length(length),
+	    fullFileLength(fullFileLength),
+	    logicalSize(logicalSize),
+	    cipherKeysMeta(ciphKeysMeta) {}
 
 	// compare on version
 	bool operator<(const BlobFileIndex& r) const { return version < r.version; }
@@ -158,7 +167,9 @@ struct BlobGranuleRestoreVersion {
 	// Two constructors required by VectorRef
 	BlobGranuleRestoreVersion() {}
 	BlobGranuleRestoreVersion(Arena& a, const BlobGranuleRestoreVersion& copyFrom)
-	  : granuleID(copyFrom.granuleID), keyRange(a, copyFrom.keyRange), version(copyFrom.version),
+	  : granuleID(copyFrom.granuleID),
+	    keyRange(a, copyFrom.keyRange),
+	    version(copyFrom.version),
 	    sizeInBytes(copyFrom.sizeInBytes) {}
 
 	UID granuleID;

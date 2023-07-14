@@ -384,16 +384,17 @@ ACTOR Future<Void> validateForceFlushing(Database cx,
 
 				// client req may not exactly align to granules - buggify this behavior
 				if (BUGGIFY_WITH_PROB(0.1)) {
-					if (deterministicRandom()->coinflip()) {
-						startKey = keyAfter(startKey);
-					}
 					// extend end (if there are granules in that space)
 					if (targetStart + targetRanges < granules.size() && deterministicRandom()->coinflip()) {
 						endKey = keyAfter(endKey);
 					}
+					if (deterministicRandom()->coinflip() && keyAfter(startKey) < endKey) {
+						startKey = keyAfter(startKey);
+					}
 				}
 
 				toFlush = KeyRangeRef(startKey, endKey);
+				ASSERT(!toFlush.empty());
 			}
 
 			break;
@@ -609,6 +610,34 @@ ACTOR Future<Void> checkFeedCleanup(Database cx, bool debug) {
 			wait(delay(2.0));
 			// reset transaction to get higher read version
 			tr.reset();
+		} catch (Error& e) {
+			wait(tr.onError(e));
+		}
+	}
+}
+
+// This ideally should have no effect on anything else, but before these fixes caused head-of-line blocking in change
+// feeds that could freeze the whole system
+ACTOR Future<Void> requestWayInTheFuture(Database cx, KeyRange range, Optional<Reference<Tenant>> tenant) {
+	state Transaction tr(cx, tenant);
+	state Version version = 0;
+	loop {
+		try {
+			wait(store(version, tr.getReadVersion()));
+			break;
+		} catch (Error& e) {
+			wait(tr.onError(e));
+		}
+	}
+
+	version += 100000000 * SERVER_KNOBS->VERSIONS_PER_SECOND;
+
+	loop {
+		try {
+			wait(success(tr.readBlobGranules(range, 0, version)));
+			// this intentionally should never succeed
+			ASSERT(false);
+			return Void();
 		} catch (Error& e) {
 			wait(tr.onError(e));
 		}

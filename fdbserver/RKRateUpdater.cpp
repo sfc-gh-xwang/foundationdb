@@ -2,22 +2,29 @@
  * RateUpdater.cpp
  */
 
+#include "fdbserver/IRKBlobMonitor.h"
+#include "fdbserver/IRKConfigurationMonitor.h"
+#include "fdbserver/IRKMetricsTracker.h"
+#include "fdbserver/IRKRateServer.h"
 #include "fdbserver/IRKRateUpdater.h"
-#include "fdbserver/TagThrottler.h"
+#include "fdbserver/Knobs.h"
 #include "flow/UnitTest.h"
 
 RKRateUpdater::RKRateUpdater(UID ratekeeperId, RatekeeperLimits const& limits)
-  : limits(limits), lastWarning(0), blobWorkerTime(now()), ratekeeperId(ratekeeperId) {}
+  : limits(limits),
+    lastWarning(0),
+    blobWorkerTime(now()),
+    ratekeeperId(ratekeeperId) {}
 
 RKRateUpdater::~RKRateUpdater() = default;
 
 void RKRateUpdater::update(IRKMetricsTracker const& metricsTracker,
                            IRKRateServer const& rateServer,
-                           ITagThrottler const& tagThrottler,
                            IRKConfigurationMonitor const& configurationMonitor,
                            IRKRecoveryTracker const& recoveryTracker,
                            Deque<double> const& actualTpsHistory,
-                           IRKBlobMonitor& blobMonitor) {
+                           IRKBlobMonitor& blobMonitor,
+                           int throttledTags) {
 	// double controlFactor = ;  // dt / eFoldingTime
 	double actualTps = getActualTps(rateServer, metricsTracker);
 
@@ -625,11 +632,7 @@ void RKRateUpdater::update(IRKMetricsTracker const& metricsTracker,
 		    .detail("LimitingStorageServerVersionLag", limitingVersionLag)
 		    .detail("WorstStorageServerDurabilityLag", worstDurabilityLag)
 		    .detail("LimitingStorageServerDurabilityLag", limitingDurabilityLag)
-		    .detail("TagsAutoThrottled", tagThrottler.autoThrottleCount())
-		    .detail("TagsAutoThrottledBusyRead", tagThrottler.busyReadTagCount())
-		    .detail("TagsAutoThrottledBusyWrite", tagThrottler.busyWriteTagCount())
-		    .detail("TagsManuallyThrottled", tagThrottler.manualThrottleCount())
-		    .detail("AutoThrottlingEnabled", tagThrottler.isAutoThrottlingEnabled())
+		    .detail("TagsAutoThrottled", throttledTags)
 		    .trackLatest(name);
 	}
 }
@@ -702,14 +705,21 @@ RatekeeperLimits::RatekeeperLimits(TransactionPriority priority,
                                    double maxVersionDifference,
                                    int64_t durabilityLagTargetVersions,
                                    double bwLagTarget)
-  : tpsLimit(std::numeric_limits<double>::infinity()), tpsLimitMetric(StringRef("Ratekeeper.TPSLimit" + context)),
-    reasonMetric(StringRef("Ratekeeper.Reason" + context)), storageTargetBytes(storageTargetBytes),
-    storageSpringBytes(storageSpringBytes), logTargetBytes(logTargetBytes), logSpringBytes(logSpringBytes),
+  : tpsLimit(std::numeric_limits<double>::infinity()),
+    tpsLimitMetric(StringRef("Ratekeeper.TPSLimit" + context)),
+    reasonMetric(StringRef("Ratekeeper.Reason" + context)),
+    storageTargetBytes(storageTargetBytes),
+    storageSpringBytes(storageSpringBytes),
+    logTargetBytes(logTargetBytes),
+    logSpringBytes(logSpringBytes),
     maxVersionDifference(maxVersionDifference),
     durabilityLagTargetVersions(durabilityLagTargetVersions +
                                 SERVER_KNOBS->MAX_READ_TRANSACTION_LIFE_VERSIONS), // The read transaction life versions
                                                                                    // are expected to not
     // be durable on the storage servers
-    lastDurabilityLag(0), durabilityLagLimit(std::numeric_limits<double>::infinity()), bwLagTarget(bwLagTarget),
-    priority(priority), context(context),
+    lastDurabilityLag(0),
+    durabilityLagLimit(std::numeric_limits<double>::infinity()),
+    bwLagTarget(bwLagTarget),
+    priority(priority),
+    context(context),
     rkUpdateEventCacheHolder(makeReference<EventCacheHolder>("RkUpdate" + context)) {}

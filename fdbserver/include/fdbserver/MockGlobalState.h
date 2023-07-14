@@ -63,7 +63,7 @@ inline bool isStatusTransitionValid(MockShardStatus from, MockShardStatus to) {
 }
 
 class MockStorageServerImpl;
-class MockStorageServer : public IStorageMetricsService, public ReferenceCounted<MockStorageServer> {
+class MockStorageServer final : public IStorageMetricsService, public ReferenceCounted<MockStorageServer> {
 	friend struct MockGlobalStateTester;
 	friend class MockStorageServerImpl;
 
@@ -120,8 +120,11 @@ public:
 	MockStorageServer() = default;
 
 	MockStorageServer(StorageServerInterface ssi, uint64_t availableDiskSpace, uint64_t usedDiskSpace = 0)
-	  : counters("MockStorageServer", ssi.id().toString()), totalDiskSpace(usedDiskSpace + availableDiskSpace),
-	    usedDiskSpace(usedDiskSpace), ssi(ssi), id(ssi.id()) {}
+	  : counters("MockStorageServer", ssi.id().toString()),
+	    totalDiskSpace(usedDiskSpace + availableDiskSpace),
+	    usedDiskSpace(usedDiskSpace),
+	    ssi(ssi),
+	    id(ssi.id()) {}
 
 	MockStorageServer(const UID& id, uint64_t availableDiskSpace, uint64_t usedDiskSpace = 0)
 	  : MockStorageServer(StorageServerInterface(id), availableDiskSpace, usedDiskSpace) {}
@@ -234,18 +237,21 @@ struct TopologyObject {
 	std::shared_ptr<TopologyObject> parent;
 	std::vector<std::shared_ptr<TopologyObject>> children;
 	TopologyObject(Type type, Standalone<StringRef> id, std::shared_ptr<TopologyObject> parent = nullptr)
-	  : type(type), topoId(id), parent(parent) {}
+	  : type(type),
+	    topoId(id),
+	    parent(parent) {}
 };
 
 struct Process : public TopologyObject {
 	LocalityData locality;
 	std::vector<StorageServerInterface> ssInterfaces;
 	Process(LocalityData locality, Standalone<StringRef> id, std::shared_ptr<TopologyObject> parent = nullptr)
-	  : TopologyObject(PROCESS, id, parent), locality(locality) {}
+	  : TopologyObject(PROCESS, id, parent),
+	    locality(locality) {}
 };
 } // namespace mock
 
-class MockGlobalState : public IKeyLocationService {
+class MockGlobalState final : public IKeyLocationService {
 	friend struct MockGlobalStateTester;
 	friend class MockGlobalStateImpl;
 

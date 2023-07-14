@@ -119,7 +119,8 @@ struct StorageServerStatusInfo : public StorageServerInterface {
 	EventMap eventMap;
 	StorageServerStatusInfo(const StorageServerInterface& interface,
 	                        Optional<StorageMetadataType> metadata = Optional<StorageMetadataType>())
-	  : StorageServerInterface(interface), metadata(metadata) {}
+	  : StorageServerInterface(interface),
+	    metadata(metadata) {}
 };
 
 ACTOR static Future<Optional<TraceEventFields>> latestEventOnWorker(WorkerInterface worker, std::string eventName) {
@@ -1605,7 +1606,8 @@ struct ProtocolVersionData {
 	ProtocolVersionData() : runningProtocolVersion(currentProtocolVersion()) {}
 
 	ProtocolVersionData(uint64_t newestProtocolVersionValue, uint64_t lowestCompatibleProtocolVersionValue)
-	  : runningProtocolVersion(currentProtocolVersion()), newestProtocolVersion(newestProtocolVersionValue),
+	  : runningProtocolVersion(currentProtocolVersion()),
+	    newestProtocolVersion(newestProtocolVersionValue),
 	    lowestCompatibleProtocolVersion(lowestCompatibleProtocolVersionValue) {}
 };
 
@@ -1643,7 +1645,10 @@ struct LoadConfigurationResult {
 	bool dataDistributionDisabled;
 
 	LoadConfigurationResult()
-	  : fullReplication(true), healthyZoneSeconds(0), rebalanceDDIgnored(false), dataDistributionDisabled(false) {}
+	  : fullReplication(true),
+	    healthyZoneSeconds(0),
+	    rebalanceDDIgnored(false),
+	    dataDistributionDisabled(false) {}
 };
 
 ACTOR static Future<std::pair<Optional<DatabaseConfiguration>, Optional<LoadConfigurationResult>>>
@@ -2251,15 +2256,11 @@ ACTOR static Future<JsonBuilderObject> workloadStatusFetcher(
 		TraceEventFields ratekeeper = f1.get();
 		TraceEventFields batchRatekeeper = f2.get();
 
-		bool autoThrottlingEnabled = ratekeeper.getInt("AutoThrottlingEnabled");
 		double tpsLimit = ratekeeper.getDouble("TPSLimit");
 		double batchTpsLimit = batchRatekeeper.getDouble("TPSLimit");
 		double transPerSec = ratekeeper.getDouble("ReleasedTPS");
 		double batchTransPerSec = ratekeeper.getDouble("ReleasedBatchTPS");
 		int autoThrottledTags = ratekeeper.getInt("TagsAutoThrottled");
-		int autoThrottledTagsBusyRead = ratekeeper.getInt("TagsAutoThrottledBusyRead");
-		int autoThrottledTagsBusyWrite = ratekeeper.getInt("TagsAutoThrottledBusyWrite");
-		int manualThrottledTags = ratekeeper.getInt("TagsManuallyThrottled");
 		int ssCount = ratekeeper.getInt("StorageServers");
 		int tlogCount = ratekeeper.getInt("TLogs");
 		int64_t worstFreeSpaceStorageServer = ratekeeper.getInt64("WorstFreeSpaceStorageServer");
@@ -2295,20 +2296,7 @@ ACTOR static Future<JsonBuilderObject> workloadStatusFetcher(
 		JsonBuilderObject throttledTagsObj;
 		JsonBuilderObject autoThrottledTagsObj;
 		autoThrottledTagsObj["count"] = autoThrottledTags;
-		autoThrottledTagsObj["busy_read"] = autoThrottledTagsBusyRead;
-		autoThrottledTagsObj["busy_write"] = autoThrottledTagsBusyWrite;
-		if (autoThrottlingEnabled) {
-			autoThrottledTagsObj["recommended_only"] = 0;
-		} else {
-			autoThrottledTagsObj["recommended_only"] = 1;
-		}
-
 		throttledTagsObj["auto"] = autoThrottledTagsObj;
-
-		JsonBuilderObject manualThrottledTagsObj;
-		manualThrottledTagsObj["count"] = manualThrottledTags;
-		throttledTagsObj["manual"] = manualThrottledTagsObj;
-
 		(*qos)["throttled_tags"] = throttledTagsObj;
 
 		JsonBuilderObject perfLimit = getPerfLimit(ratekeeper, transPerSec, tpsLimit);
@@ -2460,10 +2448,12 @@ ACTOR static Future<JsonBuilderObject> blobGranulesStatusFetcher(
 			Optional<TraceEventFields> fields = wait(timeoutError(
 			    latestEventOnWorker(addressWorkersMap[managerIntf.get().address()], "BlobManagerMetrics"), 2.0));
 			if (fields.present()) {
+				statusObj["last_flush_version"] = fields.get().getUint64("LastFlushVersion");
 				statusObj["last_manifest_dump_ts"] = fields.get().getUint64("LastManifestDumpTs");
 				statusObj["last_manifest_seq_no"] = fields.get().getUint64("LastManifestSeqNo");
 				statusObj["last_manifest_epoch"] = fields.get().getUint64("Epoch");
 				statusObj["last_manifest_size_in_bytes"] = fields.get().getUint64("ManifestSizeInBytes");
+				statusObj["last_truncation_version"] = fields.get().getUint64("LastMLogTruncationVersion");
 			}
 		}
 
@@ -2982,9 +2972,13 @@ ACTOR Future<std::pair<Optional<StorageWiggleMetrics>, Optional<StorageWiggleMet
 }
 
 ACTOR Future<KMSHealthStatus> getKMSHealthStatus(Reference<const AsyncVar<ServerDBInfo>> db) {
+	state KMSHealthStatus unhealthy;
+	unhealthy.canConnectToEKP = false;
+	unhealthy.canConnectToKms = false;
+	unhealthy.lastUpdatedTS = now();
 	try {
 		if (!db->get().client.encryptKeyProxy.present()) {
-			return KMSHealthStatus{ false, false, now() };
+			return unhealthy;
 		}
 		KMSHealthStatus reply = wait(timeoutError(
 		    db->get().client.encryptKeyProxy.get().getHealthStatus.getReply(EncryptKeyProxyHealthStatusRequest()),
@@ -2994,7 +2988,7 @@ ACTOR Future<KMSHealthStatus> getKMSHealthStatus(Reference<const AsyncVar<Server
 		if (e.code() != error_code_timed_out) {
 			throw;
 		}
-		return KMSHealthStatus{ false, false, now() };
+		return unhealthy;
 	}
 }
 
@@ -3079,10 +3073,25 @@ ACTOR Future<StatusReply> clusterGetStatus(
 		// Get EKP Health
 		if (db->get().client.encryptKeyProxy.present()) {
 			KMSHealthStatus status = wait(getKMSHealthStatus(db));
-			JsonBuilderObject _statusObj;
-			_statusObj["ekp_is_healthy"] = status.canConnectToEKP;
-			statusObj["encryption_at_rest"] = _statusObj;
-			statusObj["kms_is_healthy"] = status.canConnectToKms;
+
+			// encryption-at-rest status
+			JsonBuilderObject earStatusObj;
+			earStatusObj["ekp_is_healthy"] = status.canConnectToEKP;
+			statusObj["encryption_at_rest"] = earStatusObj;
+
+			JsonBuilderObject kmsStatusObj;
+			kmsStatusObj["kms_is_healthy"] = status.canConnectToKms;
+			if (status.canConnectToEKP) {
+				kmsStatusObj["kms_connector_type"] = status.kmsConnectorType;
+				kmsStatusObj["kms_stable"] = status.kmsStable;
+				JsonBuilderArray kmsUrlsArr;
+				for (const auto& url : status.restKMSUrls) {
+					kmsUrlsArr.push_back(url);
+				}
+				kmsStatusObj["kms_urls"] = kmsUrlsArr;
+			}
+			statusObj["kms"] = kmsStatusObj;
+
 			// TODO: In this scenario we should see if we can fetch any status fields that don't depend on encryption
 			if (!status.canConnectToKms || !status.canConnectToEKP) {
 				return StatusReply(statusObj.getJson());

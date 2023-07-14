@@ -163,9 +163,13 @@ public:
 	SimpleConfigConsumerImpl(ConfigSource const& configSource,
 	                         double const& pollingInterval,
 	                         Optional<double> const& compactionInterval)
-	  : pollingInterval(pollingInterval), compactionInterval(compactionInterval),
-	    id(deterministicRandom()->randomUniqueID()), cc("ConfigConsumer"), compactRequest("CompactRequest", cc),
-	    successfulChangeRequest("SuccessfulChangeRequest", cc), failedChangeRequest("FailedChangeRequest", cc),
+	  : pollingInterval(pollingInterval),
+	    compactionInterval(compactionInterval),
+	    id(deterministicRandom()->randomUniqueID()),
+	    cc("ConfigConsumer"),
+	    compactRequest("CompactRequest", cc),
+	    successfulChangeRequest("SuccessfulChangeRequest", cc),
+	    failedChangeRequest("FailedChangeRequest", cc),
 	    snapshotRequest("SnapshotRequest", cc) {
 		cfi = getConfigFollowerInterface(configSource);
 		logger = cc.traceCounters(

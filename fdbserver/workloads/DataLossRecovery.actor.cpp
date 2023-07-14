@@ -52,7 +52,10 @@ struct DataLossRecoveryWorkload : TestWorkload {
 	NetworkAddress addr;
 
 	DataLossRecoveryWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), startMoveKeysParallelismLock(5), finishMoveKeysParallelismLock(5), enabled(!clientId),
+	  : TestWorkload(wcx),
+	    startMoveKeysParallelismLock(5),
+	    finishMoveKeysParallelismLock(5),
+	    enabled(!clientId),
 	    pass(true) {}
 
 	void validationFailed(ErrorOr<Optional<Value>> expectedValue, ErrorOr<Optional<Value>> actualValue) {

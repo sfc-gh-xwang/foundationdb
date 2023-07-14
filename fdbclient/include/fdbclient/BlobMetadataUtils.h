@@ -41,12 +41,15 @@ struct BlobMetadataLocationRef {
 
 	BlobMetadataLocationRef() {}
 	BlobMetadataLocationRef(Arena& arena, const BlobMetadataLocationRef& from)
-	  : locationId(from.locationId), path(arena, from.path) {}
+	  : locationId(from.locationId),
+	    path(arena, from.path) {}
 
 	explicit BlobMetadataLocationRef(Arena& ar, BlobMetadataLocationId locationId, StringRef path)
-	  : locationId(locationId), path(ar, path) {}
+	  : locationId(locationId),
+	    path(ar, path) {}
 	explicit BlobMetadataLocationRef(BlobMetadataLocationId locationId, StringRef path)
-	  : locationId(locationId), path(path) {}
+	  : locationId(locationId),
+	    path(path) {}
 
 	int expectedSize() const { return sizeof(BlobMetadataLocationRef) + path.size(); }
 
@@ -67,14 +70,20 @@ struct BlobMetadataDetailsRef {
 
 	BlobMetadataDetailsRef() {}
 	BlobMetadataDetailsRef(Arena& arena, const BlobMetadataDetailsRef& from)
-	  : domainId(from.domainId), locations(arena, from.locations), refreshAt(from.refreshAt), expireAt(from.expireAt) {}
+	  : domainId(from.domainId),
+	    locations(arena, from.locations),
+	    refreshAt(from.refreshAt),
+	    expireAt(from.expireAt) {}
 
 	explicit BlobMetadataDetailsRef(Arena& ar,
 	                                BlobMetadataDomainId domainId,
 	                                VectorRef<BlobMetadataLocationRef> locations,
 	                                double refreshAt,
 	                                double expireAt)
-	  : domainId(domainId), locations(ar, locations), refreshAt(refreshAt), expireAt(expireAt) {
+	  : domainId(domainId),
+	    locations(ar, locations),
+	    refreshAt(refreshAt),
+	    expireAt(expireAt) {
 		ASSERT(!locations.empty());
 	}
 
@@ -82,7 +91,10 @@ struct BlobMetadataDetailsRef {
 	                                VectorRef<BlobMetadataLocationRef> locations,
 	                                double refreshAt,
 	                                double expireAt)
-	  : domainId(domainId), locations(locations), refreshAt(refreshAt), expireAt(expireAt) {
+	  : domainId(domainId),
+	    locations(locations),
+	    refreshAt(refreshAt),
+	    expireAt(expireAt) {
 		ASSERT(!locations.empty());
 	}
 

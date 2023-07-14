@@ -22,6 +22,7 @@
 #include "flow/OTELMetrics.h"
 #include "flow/TDMetric.actor.h"
 #include "flow/flow.h"
+#include "include/flow/TDMetric.actor.h"
 #include <cctype>
 #include <cstddef>
 #include <string>
@@ -149,7 +150,9 @@ void TDMetricCollection::checkRoll(uint64_t t, int64_t usedBytes) {
 }
 
 DynamicEventMetric::DynamicEventMetric(MetricNameRef const& name, Void)
-  : BaseEventMetric(name), latestRecorded(false), newFields(false) {}
+  : BaseEventMetric(name),
+    latestRecorded(false),
+    newFields(false) {}
 
 uint64_t DynamicEventMetric::log(uint64_t explicitTime) {
 	if (!enabled)

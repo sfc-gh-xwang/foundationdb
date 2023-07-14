@@ -22,6 +22,7 @@
 #include <cinttypes>
 #include "fdbclient/FDBTypes.h"
 #include "fmt/format.h"
+#include "fdbserver/ServerDBInfo.actor.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "fdbserver/IKeyValueStore.h"
 #include "flow/ActorCollection.h"
@@ -112,8 +113,14 @@ struct KVTest {
 	bool dispose;
 
 	explicit KVTest(int nodeCount, bool dispose, int keyBytes)
-	  : store(nullptr), startVersion(Version(time(nullptr)) << 30), lastSet(startVersion), lastCommit(startVersion),
-	    lastDurable(startVersion), nodeCount(nodeCount), keyBytes(keyBytes), dispose(dispose) {}
+	  : store(nullptr),
+	    startVersion(Version(time(nullptr)) << 30),
+	    lastSet(startVersion),
+	    lastCommit(startVersion),
+	    lastDurable(startVersion),
+	    nodeCount(nodeCount),
+	    keyBytes(keyBytes),
+	    dispose(dispose) {}
 	~KVTest() { close(); }
 	void close() {
 		if (store) {
@@ -210,7 +217,11 @@ struct KVStoreTestWorkload : TestWorkload {
 	KeyValueStoreType storeType;
 
 	KVStoreTestWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), reads("Reads"), sets("Sets"), commits("Commits"), setupTook(0) {
+	  : TestWorkload(wcx),
+	    reads("Reads"),
+	    sets("Sets"),
+	    commits("Commits"),
+	    setupTook(0) {
 		enabled = !clientId; // only do this on the "first" client
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		operationsPerSecond = getOption(options, "operationsPerSecond"_sr, 100e3);

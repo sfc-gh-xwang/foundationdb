@@ -2,7 +2,8 @@ set(FDB_C_SRCS
   fdb_c.cpp
   foundationdb/fdb_c.h
   foundationdb/fdb_c_internal.h
-  foundationdb/fdb_c_types.h)
+  foundationdb/fdb_c_types.h
+  foundationdb/fdb_c_requests.h)
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/foundationdb)
 
@@ -115,15 +116,12 @@ add_subdirectory(test/unit/third_party)
 find_package(Threads REQUIRED)
 set(UNIT_TEST_SRCS
   test/unit/unit_tests.cpp
-  test/unit/fdb_api.cpp
-  test/unit/fdb_api.hpp)
+)
 
 set(UNIT_TEST_VERSION_510_SRCS test/unit/unit_tests_version_510.cpp)
 set(TRACE_PARTIAL_FILE_SUFFIX_TEST_SRCS test/unit/trace_partial_file_suffix_test.cpp)
 set(DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS
-  test/unit/disconnected_timeout_tests.cpp
-  test/unit/fdb_api.cpp
-  test/unit/fdb_api.hpp)
+  test/unit/disconnected_timeout_tests.cpp)
 
 add_library(fdb_cpp INTERFACE test/fdb_api.hpp)
 target_sources(fdb_cpp INTERFACE)
@@ -165,7 +163,7 @@ if(OPEN_FOR_IDE)
   add_library(fdb_c_performance_test OBJECT test/performance_test.c test/test.h)
   add_library(fdb_c_ryw_benchmark OBJECT test/ryw_benchmark.c test/test.h)
   add_library(fdb_c_txn_size_test OBJECT test/txn_size_test.c test/test.h)
-  add_library(fdb_c_client_memory_test OBJECT test/client_memory_test.cpp test/unit/fdb_api.cpp test/unit/fdb_api.hpp)
+  add_library(fdb_c_client_memory_test OBJECT test/client_memory_test.cpp)
   add_library(mako OBJECT ${MAKO_SRCS})
   add_library(fdb_c_setup_tests OBJECT test/unit/setup_tests.cpp)
   add_library(fdb_c_unit_tests_version_510 OBJECT ${UNIT_TEST_VERSION_510_SRCS})
@@ -176,7 +174,7 @@ else()
   add_executable(fdb_c_performance_test test/performance_test.c test/test.h)
   add_executable(fdb_c_ryw_benchmark test/ryw_benchmark.c test/test.h)
   add_executable(fdb_c_txn_size_test test/txn_size_test.c test/test.h)
-  add_executable(fdb_c_client_memory_test test/client_memory_test.cpp test/unit/fdb_api.cpp test/unit/fdb_api.hpp)
+  add_executable(fdb_c_client_memory_test test/client_memory_test.cpp)
   add_executable(mako ${MAKO_SRCS})
   add_executable(fdb_c_setup_tests test/unit/setup_tests.cpp)
   add_executable(fdb_c_unit_tests)
@@ -196,7 +194,7 @@ endif()
 target_link_libraries(fdb_c_performance_test PRIVATE fdb_c Threads::Threads)
 target_link_libraries(fdb_c_ryw_benchmark PRIVATE fdb_c Threads::Threads)
 target_link_libraries(fdb_c_txn_size_test PRIVATE fdb_c Threads::Threads)
-target_link_libraries(fdb_c_client_memory_test PRIVATE fdb_c Threads::Threads)
+target_link_libraries(fdb_c_client_memory_test PRIVATE fdb_cpp Threads::Threads)
 
 target_include_directories(fdb_c_api_tester_impl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/foundationdb/ ${CMAKE_SOURCE_DIR}/flow/include ${CMAKE_BINARY_DIR}/flow/include)
 target_link_libraries(fdb_c_api_tester_impl PRIVATE fdb_cpp toml11_target Threads::Threads fmt::fmt boost_target)
@@ -211,7 +209,7 @@ target_link_libraries(fdb_c_setup_tests PRIVATE fdb_c Threads::Threads doctest)
 target_link_libraries(fdb_c_unit_tests_impl PRIVATE fdb_c Threads::Threads fdbclient rapidjson doctest)
 target_link_libraries(fdb_c_unit_tests_version_510 PRIVATE fdb_c Threads::Threads doctest)
 target_link_libraries(trace_partial_file_suffix_test PRIVATE fdb_c Threads::Threads flow doctest)
-target_link_libraries(disconnected_timeout_unit_tests PRIVATE fdb_c Threads::Threads doctest)
+target_link_libraries(disconnected_timeout_unit_tests PRIVATE fdb_c fdb_cpp Threads::Threads doctest)
 target_link_libraries(fdb_c_client_config_tester PRIVATE SimpleOpt fdb_cpp fdb_c fdbclient Threads::Threads fmt::fmt)
 target_include_directories(fdb_c_client_config_tester PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/foundationdb/)
 
@@ -314,7 +312,7 @@ else()
     --process-number 3
     )
 
-  if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND NOT USE_SANITIZER)
+  if(NOT USE_SANITIZER)
     add_python_venv_test(NAME fdb_c_client_config_tests
       COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/test/fdb_c_client_config_tests.py
       --build-dir ${CMAKE_BINARY_DIR}

@@ -868,8 +868,9 @@ struct TestOptionalMapClass {
 	Optional<StringRef> optionalSub(int x) const { return optionalValue.map<StringRef>(&StringRef::substr, (int)x); }
 
 	TestOptionalMapClass(StringRef value, bool setOptional)
-	  : value(value), constValue(value),
+	  : value(value),
 	    optionalValue(setOptional ? Optional<StringRef>(value) : Optional<StringRef>()),
+	    constValue(value),
 	    constOptionalValue(setOptional ? Optional<StringRef>(value) : Optional<StringRef>()) {}
 };
 

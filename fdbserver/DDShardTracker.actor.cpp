@@ -501,7 +501,8 @@ struct RangeToSplit {
 
 	RangeToSplit(RangeMap<Standalone<StringRef>, ShardTrackedData, KeyRangeRef>::iterator shard,
 	             Standalone<VectorRef<KeyRef>> faultLines)
-	  : shard(shard), faultLines(faultLines) {}
+	  : shard(shard),
+	    faultLines(faultLines) {}
 };
 
 Standalone<VectorRef<KeyRef>> findShardFaultLines(KeyRef shardBegin,
@@ -1429,11 +1430,20 @@ ACTOR Future<Void> fetchShardMetricsList(DataDistributionTracker* self, GetMetri
 }
 
 DataDistributionTracker::DataDistributionTracker(DataDistributionTrackerInitParams const& params)
-  : IDDShardTracker(), db(params.db), distributorId(params.distributorId), shards(params.shards), actors(false),
-    systemSizeEstimate(0), dbSizeEstimate(new AsyncVar<int64_t>()), maxShardSize(new AsyncVar<Optional<int64_t>>()),
-    output(params.output), shardsAffectedByTeamFailure(params.shardsAffectedByTeamFailure),
-    physicalShardCollection(params.physicalShardCollection), readyToStart(params.readyToStart),
-    anyZeroHealthyTeams(params.anyZeroHealthyTeams), trackerCancelled(params.trackerCancelled),
+  : IDDShardTracker(),
+    db(params.db),
+    distributorId(params.distributorId),
+    shards(params.shards),
+    actors(false),
+    systemSizeEstimate(0),
+    dbSizeEstimate(new AsyncVar<int64_t>()),
+    maxShardSize(new AsyncVar<Optional<int64_t>>()),
+    output(params.output),
+    shardsAffectedByTeamFailure(params.shardsAffectedByTeamFailure),
+    physicalShardCollection(params.physicalShardCollection),
+    readyToStart(params.readyToStart),
+    anyZeroHealthyTeams(params.anyZeroHealthyTeams),
+    trackerCancelled(params.trackerCancelled),
     ddTenantCache(params.ddTenantCache) {}
 
 DataDistributionTracker::~DataDistributionTracker() {

@@ -37,6 +37,7 @@
 #include "flow/ThreadHelper.actor.h"
 
 #include "metacluster/GetCluster.actor.h"
+#include "metacluster/MetaclusterMetadata.h"
 #include "metacluster/MetaclusterTypes.h"
 #include "metacluster/MetaclusterUtil.actor.h"
 
@@ -63,7 +64,8 @@ struct MetaclusterOperationContext {
 	MetaclusterOperationContext(Reference<DB> managementDb,
 	                            Optional<ClusterName> clusterName = {},
 	                            std::set<DataClusterState> extraSupportedDataClusterStates = {})
-	  : managementDb(managementDb), clusterName(clusterName),
+	  : managementDb(managementDb),
+	    clusterName(clusterName),
 	    extraSupportedDataClusterStates(extraSupportedDataClusterStates) {}
 
 	void checkClusterState() {
@@ -205,7 +207,7 @@ struct MetaclusterOperationContext {
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 
 				state bool checkRestoring = !self->extraSupportedDataClusterStates.count(DataClusterState::RESTORING);
-				state Future<KeyBackedRangeResult<std::pair<ClusterName, UID>>> activeRestoreIdFuture;
+				state Future<KeyBackedRangeResult<std::pair<ClusterName, metadata::RestoreId>>> activeRestoreIdFuture;
 				if (checkRestoring && self->clusterName.present()) {
 					activeRestoreIdFuture = metadata::activeRestoreIds().getRange(tr, {}, {}, 1);
 				}
@@ -230,7 +232,8 @@ struct MetaclusterOperationContext {
 				}
 
 				if (checkRestoring) {
-					KeyBackedRangeResult<std::pair<ClusterName, UID>> activeRestoreId = wait(activeRestoreIdFuture);
+					KeyBackedRangeResult<std::pair<ClusterName, metadata::RestoreId>> activeRestoreId =
+					    wait(activeRestoreIdFuture);
 					if (!activeRestoreId.results.empty()) {
 						CODE_PROBE(true, "Run data cluster transaction on restoring data cluster");
 						throw cluster_restoring();

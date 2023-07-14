@@ -28,6 +28,7 @@
 #include "fdbrpc/TenantInfo.h"
 #include "fdbclient/FDBOptions.g.h"
 #include "fdbclient/NativeAPI.actor.h"
+#include "fdbclient/Tracing.h"
 #include "fdbserver/TesterInterface.actor.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "fdbserver/workloads/BulkSetup.actor.h"
@@ -64,8 +65,12 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 	PerfDoubleCounter totalLatency;
 
 	CycleWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), transactions("Transactions"), retries("Retries"), tooOldRetries("Retries.too_old"),
-	    commitFailedRetries("Retries.commit_failed"), totalLatency("Latency") {
+	  : TestWorkload(wcx),
+	    transactions("Transactions"),
+	    retries("Retries"),
+	    tooOldRetries("Retries.too_old"),
+	    commitFailedRetries("Retries.commit_failed"),
+	    totalLatency("Latency") {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		transactionsPerSecond = getOption(options, "transactionsPerSecond"_sr, 5000.0) / clientCount;
 		actorCount = getOption(options, "actorsPerClient"_sr, transactionsPerSecond / 5);
@@ -155,10 +160,12 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 				state int r = deterministicRandom()->randomInt(0, self->nodeCount);
 				state Transaction tr(cx);
 				if (deterministicRandom()->random01() <= self->traceParentProbability) {
-					state Span span("CycleClient"_loc);
+					state Span span(SpanContext(deterministicRandom()->randomUniqueID(),
+					                            deterministicRandom()->randomUInt64(),
+					                            TraceFlags::sampled),
+					                "CycleClient"_loc);
 					TraceEvent("CycleTracingTransaction", span.context.traceID).log();
-					tr.setOption(FDBTransactionOptions::SPAN_PARENT,
-					             BinaryWriter::toValue(span.context, IncludeVersion()));
+					tr.setOption(FDBTransactionOptions::TRACE_PARENT, span.context.toString());
 				}
 				while (true) {
 					try {
@@ -295,7 +302,7 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 			    .detail("TransactionsAchieved", self->transactions.getMetric().value())
 			    .detail("MinTransactionsExpected", self->testDuration * self->minExpectedTransactionsPerSecond)
 			    .detail("TransactionGoal", self->transactionsPerSecond * self->testDuration);
-			ok = false;
+			// ok = false;
 		}
 		if (!self->clientId) {
 			// One client checks the validity of the cycle

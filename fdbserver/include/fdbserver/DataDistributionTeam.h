@@ -64,6 +64,7 @@ struct IDataDistributionTeam {
 	virtual void addReadInFlightToTeam(int64_t delta, const std::unordered_set<UID>& src) = 0;
 	virtual int64_t getDataInFlightToTeam() const = 0;
 	virtual int64_t getLoadBytes(bool includeInFlight = true, double inflightPenalty = 1.0) const = 0;
+	virtual bool hasLowerLoadBytes(int64_t thresholdBytes, double inflightPenalty) const = 0;
 	virtual int64_t getReadInFlightToTeam() const = 0;
 	virtual double getReadLoad(bool includeInFlight = true, double inflightPenalty = 1.0) const = 0;
 	virtual double getAverageCPU() const = 0;
@@ -167,14 +168,23 @@ struct GetTeamRequest {
 	               ForReadBalance forReadBalance = ForReadBalance::False,
 	               double inflightPenalty = 1.0,
 	               Optional<KeyRange> keys = Optional<KeyRange>())
-	  : teamSelect(teamSelectRequest), preferLowerDiskUtil(preferLowerDiskUtil), teamMustHaveShards(teamMustHaveShards),
-	    forReadBalance(forReadBalance), preferLowerReadUtil(preferLowerReadUtil), inflightPenalty(inflightPenalty),
-	    findTeamByServers(FindTeamByServers::False), keys(keys) {}
+	  : teamSelect(teamSelectRequest),
+	    preferLowerDiskUtil(preferLowerDiskUtil),
+	    teamMustHaveShards(teamMustHaveShards),
+	    forReadBalance(forReadBalance),
+	    preferLowerReadUtil(preferLowerReadUtil),
+	    inflightPenalty(inflightPenalty),
+	    findTeamByServers(FindTeamByServers::False),
+	    keys(keys) {}
 	GetTeamRequest(std::vector<UID> servers)
-	  : teamSelect(TeamSelect::WANT_COMPLETE_SRCS), preferLowerDiskUtil(PreferLowerDiskUtil::False),
-	    teamMustHaveShards(TeamMustHaveShards::False), forReadBalance(ForReadBalance::False),
-	    preferLowerReadUtil(PreferLowerReadUtil::False), inflightPenalty(1.0),
-	    findTeamByServers(FindTeamByServers::True), src(std::move(servers)) {}
+	  : teamSelect(TeamSelect::WANT_COMPLETE_SRCS),
+	    preferLowerDiskUtil(PreferLowerDiskUtil::False),
+	    teamMustHaveShards(TeamMustHaveShards::False),
+	    forReadBalance(ForReadBalance::False),
+	    preferLowerReadUtil(PreferLowerReadUtil::False),
+	    inflightPenalty(1.0),
+	    findTeamByServers(FindTeamByServers::True),
+	    src(std::move(servers)) {}
 
 	// return true if a.score < b.score
 	[[nodiscard]] bool lessCompare(TeamRef a, TeamRef b, int64_t aLoadBytes, int64_t bLoadBytes) const {

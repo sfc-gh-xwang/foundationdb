@@ -26,6 +26,7 @@
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/versions.h"
 #include "fdbclient/GenericManagementAPI.actor.h"
+#include "fdbclient/ApiRequestHandler.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "flow/Arena.h"
 #include "flow/ProtocolVersion.h"
@@ -352,6 +353,10 @@ ThreadFuture<bool> ThreadSafeTenant::flushBlobRange(const KeyRangeRef& keyRange,
 	});
 }
 
+ThreadFuture<Standalone<StringRef>> ThreadSafeTenant::getClientStatus() {
+	return this->db->getClientStatus();
+}
+
 ThreadSafeTenant::~ThreadSafeTenant() {
 	Tenant* t = this->tenant;
 	if (t)
@@ -362,7 +367,8 @@ ThreadSafeTransaction::ThreadSafeTransaction(DatabaseContext* cx,
                                              ISingleThreadTransaction::Type type,
                                              Optional<TenantName> tenantName,
                                              Tenant* tenantPtr)
-  : tenantName(tenantName), initialized(std::make_shared<std::atomic_bool>(false)) {
+  : tenantName(tenantName),
+    initialized(std::make_shared<std::atomic_bool>(false)) {
 	// Allocate memory for the transaction from this thread (so the pointer is known for subsequent method calls)
 	// but run its constructor on the main thread
 
@@ -396,7 +402,8 @@ ThreadSafeTransaction::ThreadSafeTransaction(DatabaseContext* cx,
 
 // This constructor is only used while refactoring fdbcli and only called from the main thread
 ThreadSafeTransaction::ThreadSafeTransaction(ReadYourWritesTransaction* ryw)
-  : tr(ryw), initialized(std::make_shared<std::atomic_bool>(true)) {
+  : tr(ryw),
+    initialized(std::make_shared<std::atomic_bool>(true)) {
 	if (tr)
 		tr->addref();
 }
@@ -534,46 +541,6 @@ ThreadFuture<Standalone<VectorRef<KeyRangeRef>>> ThreadSafeTransaction::getBlobG
 		tr->checkDeferredError();
 		return tr->getBlobGranuleRanges(r, rangeLimit);
 	});
-}
-
-ThreadResult<RangeResult> ThreadSafeTransaction::readBlobGranules(const KeyRangeRef& keyRange,
-                                                                  Version beginVersion,
-                                                                  Optional<Version> readVersion,
-                                                                  ReadBlobGranuleContext granule_context) {
-	// This should not be called directly, bypassMultiversionApi should not be set
-	return ThreadResult<RangeResult>(unsupported_operation());
-}
-
-ThreadFuture<Standalone<VectorRef<BlobGranuleChunkRef>>> ThreadSafeTransaction::readBlobGranulesStart(
-    const KeyRangeRef& keyRange,
-    Version beginVersion,
-    Optional<Version> readVersion,
-    Version* readVersionOut) {
-	ISingleThreadTransaction* tr = this->tr;
-	KeyRange r = keyRange;
-
-	return onMainThread(
-	    [tr, r, beginVersion, readVersion, readVersionOut]() -> Future<Standalone<VectorRef<BlobGranuleChunkRef>>> {
-		    tr->checkDeferredError();
-		    return tr->readBlobGranules(r, beginVersion, readVersion, readVersionOut);
-	    });
-}
-
-ThreadResult<RangeResult> ThreadSafeTransaction::readBlobGranulesFinish(
-    ThreadFuture<Standalone<VectorRef<BlobGranuleChunkRef>>> startFuture,
-    const KeyRangeRef& keyRange,
-    Version beginVersion,
-    Version readVersion,
-    ReadBlobGranuleContext granuleContext) {
-	// do this work off of fdb network threads for performance!
-	Standalone<VectorRef<BlobGranuleChunkRef>> files = startFuture.get();
-	GranuleMaterializeStats stats;
-	auto ret = loadAndMaterializeBlobGranules(files, keyRange, beginVersion, readVersion, granuleContext, stats);
-	if (!ret.isError()) {
-		ISingleThreadTransaction* tr = this->tr;
-		onMainThreadVoid([tr, stats]() { tr->addGranuleMaterializeStats(stats); });
-	}
-	return ret;
 }
 
 ThreadFuture<Standalone<VectorRef<BlobGranuleSummaryRef>>> ThreadSafeTransaction::summarizeBlobGranules(
@@ -797,6 +764,26 @@ void ThreadSafeTransaction::debugPrint(std::string const& message) {
 	onMainThreadVoid([tr, message]() { tr->debugPrint(message); });
 }
 
+ThreadFuture<ApiResult> ThreadSafeTransaction::execAsyncRequest(ApiRequest request) {
+	if (!request.hasValidHeader()) {
+		return client_invalid_operation();
+	}
+	if (request.getAllocatorInterface() != getAllocatorInterface()) {
+		// the request was allocated with a different client.
+		// The transaction must be retried and the request recreated.
+		return cluster_version_changed();
+	}
+	ISingleThreadTransaction* tr = this->tr;
+	return onMainThread([tr, request]() -> Future<ApiResult> {
+		tr->checkDeferredError();
+		return handleApiRequest(tr, request);
+	});
+}
+
+FDBAllocatorIfc* ThreadSafeTransaction::getAllocatorInterface() {
+	return localAllocatorInterface();
+}
+
 extern const char* getSourceVersion();
 
 ThreadSafeApi::ThreadSafeApi() : apiVersion(-1), transportId(0) {}
@@ -888,4 +875,8 @@ void ThreadSafeApi::addNetworkThreadCompletionHook(void (*hook)(void*), void* ho
 	MutexHolder holder(lock); // We could use the network thread to protect this action, but then we can't guarantee
 	                          // upon return that the hook is set.
 	threadCompletionHooks.emplace_back(hook, hookParameter);
+}
+
+FDBAllocatorIfc* ThreadSafeApi::getAllocatorInterface() {
+	return localAllocatorInterface();
 }

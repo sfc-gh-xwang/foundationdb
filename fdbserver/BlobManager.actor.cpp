@@ -28,6 +28,7 @@
 
 #include "fdbclient/BackupContainer.h"
 #include "fdbclient/ClientBooleanParams.h"
+#include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/ServerKnobs.h"
 #include "fdbrpc/simulator.h"
@@ -247,7 +248,11 @@ struct BoundaryEvaluation {
 	                   BoundaryEvalType type,
 	                   int64_t originalEpoch,
 	                   int64_t originalSeqno)
-	  : epoch(epoch), seqno(seqno), type(type), originalEpoch(originalEpoch), originalSeqno(originalSeqno) {
+	  : epoch(epoch),
+	    seqno(seqno),
+	    type(type),
+	    originalEpoch(originalEpoch),
+	    originalSeqno(originalSeqno) {
 		ASSERT(type != UNKNOWN);
 	}
 
@@ -310,14 +315,27 @@ struct BlobManagerStats {
 	                          std::unordered_map<UID, BlobWorkerInterface>* workers,
 	                          std::map<Key, bool>* mergeHardBoundaries,
 	                          std::unordered_map<Key, BlobGranuleMergeBoundary>* mergeBoundaries)
-	  : cc("BlobManagerStats", id.toString()), granuleSplits("GranuleSplits", cc),
-	    granuleWriteHotSplits("GranuleWriteHotSplits", cc), granuleMerges("GranuleMerges", cc),
-	    ccGranulesChecked("CCGranulesChecked", cc), ccRowsChecked("CCRowsChecked", cc),
-	    ccBytesChecked("CCBytesChecked", cc), ccMismatches("CCMismatches", cc), ccTimeouts("CCTimeouts", cc),
-	    ccErrors("CCErrors", cc), purgesProcessed("PurgesProcessed", cc),
-	    granulesFullyPurged("GranulesFullyPurged", cc), granulesPartiallyPurged("GranulesPartiallyPurged", cc),
-	    filesPurged("FilesPurged", cc), activeMerges(0), blockedAssignments(0), lastFlushVersion(0),
-	    lastMLogTruncationVersion(0), lastManifestSeqNo(0), lastManifestDumpTs(0), manifestSizeInBytes(0) {
+	  : cc("BlobManagerStats", id.toString()),
+	    granuleSplits("GranuleSplits", cc),
+	    granuleWriteHotSplits("GranuleWriteHotSplits", cc),
+	    granuleMerges("GranuleMerges", cc),
+	    ccGranulesChecked("CCGranulesChecked", cc),
+	    ccRowsChecked("CCRowsChecked", cc),
+	    ccBytesChecked("CCBytesChecked", cc),
+	    ccMismatches("CCMismatches", cc),
+	    ccTimeouts("CCTimeouts", cc),
+	    ccErrors("CCErrors", cc),
+	    purgesProcessed("PurgesProcessed", cc),
+	    granulesFullyPurged("GranulesFullyPurged", cc),
+	    granulesPartiallyPurged("GranulesPartiallyPurged", cc),
+	    filesPurged("FilesPurged", cc),
+	    activeMerges(0),
+	    blockedAssignments(0),
+	    lastFlushVersion(0),
+	    lastMLogTruncationVersion(0),
+	    lastManifestSeqNo(0),
+	    lastManifestDumpTs(0),
+	    manifestSizeInBytes(0) {
 		specialCounter(cc, "WorkerCount", [workers]() { return workers->size(); });
 		specialCounter(cc, "Epoch", [epoch]() { return epoch; });
 		specialCounter(cc, "ActiveMerges", [this]() { return this->activeMerges; });
@@ -364,7 +382,10 @@ struct MergeCandidateInfo {
 		ASSERT(st != MergeCandidateCanMerge);
 	}
 	MergeCandidateInfo(UID granuleID, Version startVersion)
-	  : st(MergeCandidateCanMerge), granuleID(granuleID), startVersion(startVersion), seen(false) {}
+	  : st(MergeCandidateCanMerge),
+	    granuleID(granuleID),
+	    startVersion(startVersion),
+	    seen(false) {}
 
 	bool canMerge() const { return st == MergeCandidateCanMerge; }
 
@@ -422,6 +443,7 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	int64_t seqNo = 1;
 	int64_t manifestDumperSeqNo = 1;
 	bool enableManifestEncryption = false;
+	AsyncTrigger backupTrigger;
 	AsyncTrigger manifestCompletitionTrigger;
 
 	Promise<Void> iAmReplaced;
@@ -434,14 +456,21 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	                Database db,
 	                Optional<Key> dcId,
 	                int64_t epoch)
-	  : id(id), db(db), dcId(dcId),
+	  : id(id),
+	    db(db),
+	    dcId(dcId),
 	    stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, epoch, &workersById, &mergeHardBoundaries, &mergeBoundaries),
-	    knownBlobRanges(false, normalKeys.end), tenantData(BGTenantMap(dbInfo)),
+	    knownBlobRanges(false, normalKeys.end),
+	    tenantData(BGTenantMap(dbInfo)),
 	    mergeCandidates(MergeCandidateInfo(MergeCandidateUnknown), normalKeys.end),
-	    activeGranuleMerges(invalidVersion, normalKeys.end), forcePurgingRanges(false, normalKeys.end),
+	    activeGranuleMerges(invalidVersion, normalKeys.end),
+	    forcePurgingRanges(false, normalKeys.end),
 	    concurrentMergeChecks(SERVER_KNOBS->BLOB_MANAGER_CONCURRENT_MERGE_CHECKS),
-	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY), recruitingStream(0), exclusionTracker(db),
-	    epoch(epoch), dbInfo(dbInfo) {}
+	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
+	    recruitingStream(0),
+	    exclusionTracker(db),
+	    epoch(epoch),
+	    dbInfo(dbInfo) {}
 
 	// only initialize blob store if actually needed
 	void initBStore() {
@@ -604,7 +633,6 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 
 	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), splits.front());
 
-	state Transaction tr = Transaction(bmData->db);
 	state int idx = 1;
 	state Reference<GranuleTenantData> tenantData;
 	wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange)));
@@ -614,28 +642,41 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 		wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange)));
 	}
 	for (; idx < splits.size() - 1; idx++) {
+		alignKeyBoundary(bmData, tenantData, splits[idx], offset, splitPoints);
+	}
+
+	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), splits.back());
+
+	return splitPoints;
+}
+
+// Find the next full db key for each split point
+ACTOR Future<Standalone<VectorRef<KeyRef>>> nextFullKeys(Reference<BlobManagerData> bmData,
+                                                         Standalone<VectorRef<KeyRef>> keys) {
+	state Standalone<VectorRef<KeyRef>> result;
+	result.push_back_deep(result.arena(), keys.front()); // keep the begin key as is
+
+	state Transaction tr = Transaction(bmData->db);
+	state int i = 1;
+	for (; i < keys.size() - 1; ++i) {
 		loop {
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 			try {
-				// Get the next full key in the granule.
-				RangeReadResult nextKeyRes = wait(
-				    tr.getRange(firstGreaterOrEqual(splits[idx]), lastLessThan(splits[idx + 1]), GetRangeLimits(1)));
+				RangeReadResult nextKeyRes =
+				    wait(tr.getRange(firstGreaterOrEqual(keys[i]), lastLessThan(keys[i + 1]), GetRangeLimits(1)));
 				if (nextKeyRes.size() == 0) {
 					break;
 				}
-
-				alignKeyBoundary(bmData, tenantData, nextKeyRes[0].key, offset, splitPoints);
+				result.push_back_deep(result.arena(), nextKeyRes[0].key);
 				break;
 			} catch (Error& e) {
 				wait(tr.onError(e));
 			}
 		}
 	}
-
-	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), splits.back());
-
-	return splitPoints;
+	result.push_back_deep(result.arena(), keys.back()); // keep the end key as is
+	return result;
 }
 
 ACTOR Future<BlobGranuleSplitPoints> splitRange(Reference<BlobManagerData> bmData,
@@ -712,7 +753,8 @@ ACTOR Future<BlobGranuleSplitPoints> splitRange(Reference<BlobManagerData> bmDat
 
 			// We only need to align the keys if there is a proposed split.
 			if (keys.size() > 2) {
-				BlobGranuleSplitPoints _splitPoints = wait(alignKeys(bmData, range, keys));
+				Standalone<VectorRef<KeyRef>> fullKeys = wait(nextFullKeys(bmData, keys));
+				BlobGranuleSplitPoints _splitPoints = wait(alignKeys(bmData, range, fullKeys));
 				splitPoints = _splitPoints;
 			} else {
 				splitPoints.keys = keys;
@@ -1672,17 +1714,19 @@ ACTOR Future<Void> reevaluateInitialSplit(Reference<BlobManagerData> bmData,
 	ASSERT(splitFirst.keys.size() >= 2);
 	ASSERT(splitFirst.keys.front() == granuleRange.begin);
 	ASSERT(splitFirst.keys.back() == proposedSplitKey);
-	for (int i = 0; i < splitFirst.keys.size(); i++) {
-		newRanges.push_back_deep(newRanges.arena(), splitFirst.keys[i]);
+	Standalone<VectorRef<KeyRef>> splitFirstFullKeys = wait(nextFullKeys(bmData, splitFirst.keys));
+	for (int i = 0; i < splitFirstFullKeys.size(); i++) {
+		newRanges.push_back_deep(newRanges.arena(), splitFirstFullKeys[i]);
 	}
 
 	BlobGranuleSplitPoints splitSecond = wait(fSplitSecond);
 	ASSERT(splitSecond.keys.size() >= 2);
 	ASSERT(splitSecond.keys.front() == proposedSplitKey);
 	ASSERT(splitSecond.keys.back() == granuleRange.end);
+	Standalone<VectorRef<KeyRef>> splitSecondFullKeys = wait(nextFullKeys(bmData, splitSecond.keys));
 	// i=1 to skip proposedSplitKey, since above already added it
-	for (int i = 1; i < splitSecond.keys.size(); i++) {
-		newRanges.push_back_deep(newRanges.arena(), splitSecond.keys[i]);
+	for (int i = 1; i < splitSecondFullKeys.size(); i++) {
+		newRanges.push_back_deep(newRanges.arena(), splitSecondFullKeys[i]);
 	}
 
 	if (BM_DEBUG) {
@@ -2633,9 +2677,7 @@ static void attemptStartMerge(Reference<BlobManagerData> bmData,
 	auto reCheckMergeCandidates = bmData->mergeCandidates.intersectingRanges(mergeRange);
 	for (auto it : reCheckMergeCandidates) {
 		if (!it->cvalue().mergeEligible()) {
-			CODE_PROBE(true,
-			           "granule no longer merge candidate after checking metrics, aborting merge",
-			           probe::decoration::rare);
+			CODE_PROBE(true, "granule no longer merge candidate after checking metrics, aborting merge");
 			return;
 		}
 	}
@@ -4087,7 +4129,9 @@ int numExistingBWOnAddr(Reference<BlobManagerData> self, const AddressExclusion&
 }
 
 // Tries to recruit a blob worker on the candidateWorker process
-ACTOR Future<Void> initializeBlobWorker(Reference<BlobManagerData> self, RecruitBlobWorkerReply candidateWorker) {
+ACTOR Future<Void> initializeBlobWorker(Reference<BlobManagerData> self,
+                                        RecruitBlobWorkerReply candidateWorker,
+                                        DatabaseConfiguration config) {
 	const NetworkAddress& netAddr = candidateWorker.worker.stableAddress();
 	AddressExclusion workerAddr(netAddr.ip, netAddr.port);
 	self->recruitingStream.set(self->recruitingStream.get() + 1);
@@ -4101,6 +4145,7 @@ ACTOR Future<Void> initializeBlobWorker(Reference<BlobManagerData> self, Recruit
 		initReq.reqId = deterministicRandom()->randomUniqueID();
 		initReq.interfaceId = interfaceId;
 		initReq.storeType = (KeyValueStoreType::StoreType)(SERVER_KNOBS->BLOB_WORKER_STORE_TYPE);
+		initReq.encryptMode = config.encryptionAtRestMode;
 
 		// acknowledge that this worker is currently being recruited on
 		self->recruitingLocalities.insert(candidateWorker.worker.stableAddress());
@@ -4187,6 +4232,8 @@ ACTOR Future<Void> blobWorkerRecruiter(
 		}
 	}
 
+	state DatabaseConfiguration config = wait(getDatabaseConfiguration(self->db, true));
+
 	loop {
 		try {
 			state RecruitBlobWorkerRequest recruitReq;
@@ -4234,7 +4281,7 @@ ACTOR Future<Void> blobWorkerRecruiter(
 				// when we get back a worker we can use, we will try to initialize a blob worker onto that
 				// process
 				when(RecruitBlobWorkerReply candidateWorker = wait(fCandidateWorker)) {
-					self->addActor.send(initializeBlobWorker(self, candidateWorker));
+					self->addActor.send(initializeBlobWorker(self, candidateWorker, config));
 				}
 
 				// when the CC changes, so does the request stream so we need to restart recruiting here
@@ -5571,84 +5618,40 @@ ACTOR Future<Void> bgConsistencyCheck(Reference<BlobManagerData> bmData) {
 	}
 }
 
-ACTOR Future<Void> updateLastFlushTs(Database db) {
-	state Transaction tr(db);
-	loop {
-		try {
-			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			KeyBackedProperty<int64_t> lastFlushTs(blobGranulesLastFlushKey);
-			int64_t epochs = (int64_t)now();
-			lastFlushTs.set(&tr, epochs);
-			wait(tr.commit());
-			return Void();
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
-}
+ACTOR Future<Void> updateLastFlushVersion(Database db, Version flushVersion) {
+	wait(runRYWTransaction(db, [=](Reference<ReadYourWritesTransaction> tr) -> Future<Void> {
+		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+		tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-ACTOR Future<int64_t> getLastFlushTs(Database db) {
-	state Transaction tr(db);
-	loop {
-		try {
-			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			KeyBackedProperty<int64_t> lastFlushTs(blobGranulesLastFlushKey);
-			state int64_t ret;
-			wait(store(ret, lastFlushTs.getD(&tr, Snapshot::False, 0)));
-			return ret;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
-}
-
-ACTOR Future<bool> shouldBackupManifest(Reference<BlobManagerData> bmData) {
-	bool enabled = wait(BlobGranuleBackupConfig().enabled().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
-	if (!enabled) {
-		TraceEvent("BackupManifestNotEnabled").log();
-		return false;
-	}
-
-	if (bmData->isFullRestoreMode) {
-		return false;
-	}
-
-	auto knownRanges = bmData->knownBlobRanges.intersectingRanges(normalKeys);
-	for (auto& it : knownRanges) {
-		if (it.cvalue()) {
-			return true; // there is at least one active blob range
-		}
-	}
-	TraceEvent("SkipManifestBackup")
-	    .detail("KnownRanges", knownRanges.empty())
-	    .detail("Total", bmData->knownBlobRanges.size());
-	return false;
-}
-
-ACTOR Future<Void> truncateMutationLogs(Reference<BlobManagerData> bmData) {
-	bool shouldBackup = wait(shouldBackupManifest(bmData));
-	if (!shouldBackup) {
+		BlobGranuleBackupConfig config;
+		int64_t epochs = (int64_t)now();
+		config.lastFlushTs().set(tr, epochs);
+		config.lastFlushVersion().set(tr, flushVersion);
 		return Void();
-	}
-	int64_t lastFlushTs = wait(getLastFlushTs(bmData->db));
-	bool shouldFlush = (now() - lastFlushTs) > SERVER_KNOBS->BLOB_RESTORE_MLOGS_RETENTION_SECS;
+	}));
+	return Void();
+}
 
+// Try to flush blob granules. Return the flushed version if it's successful.
+ACTOR Future<Version> maybeFlushGranules(Reference<BlobManagerData> bmData) {
+	state BlobGranuleBackupConfig config;
+	state int64_t lastFlushTs = wait(config.lastFlushTs().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
+	bool shouldFlush = lastFlushTs == 0 || (now() - lastFlushTs) > SERVER_KNOBS->BLOB_RESTORE_MLOGS_RETENTION_SECS;
 	if (!shouldFlush) {
-		TraceEvent("SkipBlobGranulesFlush").detail("LastFlushTs", lastFlushTs);
-		return Void();
+		int64_t lastFlushVersion =
+		    wait(config.lastFlushVersion().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
+		TraceEvent("SkipBlobGranulesFlush").detail("LastFlushTs", lastFlushTs).detail("LastFlushVer", lastFlushVersion);
+		bmData->stats.lastFlushVersion = lastFlushVersion;
+		return invalidVersion;
 	}
 
-	state std::string mlogsUrl =
-	    wait(BlobGranuleBackupConfig().mutationLogsUrl().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
+	state std::string mlogsUrl = wait(config.mutationLogsUrl().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
 	state Reference<IBackupContainer> bc = IBackupContainer::openContainer(mlogsUrl, {}, {});
 	state BackupDescription desc = wait(bc->describeBackup());
 	if (!desc.contiguousLogEnd.present()) {
 		TraceEvent("SkipBlobGranulesFlush").detail("LogUrl", mlogsUrl);
-		return Void(); // skip truncation if no valid backup for mutation logs
+		return invalidVersion; // skip truncation if no valid backup for mutation logs
 	}
 	state Version logEndVersion = desc.contiguousLogEnd.get();
 	TraceEvent("DescribedMutationLogs").detail("LogEndVersion", logEndVersion);
@@ -5668,32 +5671,24 @@ ACTOR Future<Void> truncateMutationLogs(Reference<BlobManagerData> bmData) {
 		    success(doBlobGranuleRequests(bmData->db, range, req, &BlobWorkerInterface::flushGranuleRequest));
 		futures.push_back(future);
 		if (futures.size() > SERVER_KNOBS->BLOB_GRANULES_FLUSH_BATCH_SIZE) {
-			waitForAll(futures);
+			wait(waitForAll(futures));
 			futures.clear();
 			TraceEvent("FlushedBlobGranules").detail("Completed", SERVER_KNOBS->BLOB_GRANULES_FLUSH_BATCH_SIZE);
 		}
 	}
-	waitForAll(futures);
-	wait(updateLastFlushTs(bmData->db));
+	wait(waitForAll(futures));
+	wait(updateLastFlushVersion(bmData->db, logEndVersion));
 	bmData->stats.lastFlushVersion = logEndVersion;
 	TraceEvent("FlushedBlobGranules").detail("FlushVersion", logEndVersion);
+	return logEndVersion;
+}
 
-	// Wait for next manifest dumped
-	state int64_t seqNo = bmData->manifestDumperSeqNo;
-	loop {
-		TraceEvent("WaitingBlobManifest").detail("Seq", seqNo);
-		wait(bmData->manifestCompletitionTrigger.onTrigger());
-		if (bmData->manifestDumperSeqNo > seqNo) {
-			TraceEvent("BlobManifestDumped").detail("Seq", bmData->manifestDumperSeqNo);
-			break;
-		}
-	}
-
-	// Truncate mutation logs to max retention period
+// Truncate mutation logs up to (last flush version - max retention period)
+ACTOR Future<Void> truncateMutations(Reference<BlobManagerData> bmData, Version flushVersion) {
 	Reference<ReadYourWritesTransaction> tr(new ReadYourWritesTransaction(bmData->db));
-	Optional<int64_t> logEndEpochs = wait(timeKeeperEpochsFromVersion(logEndVersion, tr));
+	Optional<int64_t> logEndEpochs = wait(timeKeeperEpochsFromVersion(flushVersion, tr));
 	if (!logEndEpochs.present()) {
-		TraceEvent("SkipMutationLogTruncation").detail("LogEndVersion", logEndVersion);
+		TraceEvent("SkipMutationLogTruncation").detail("LogEndVersion", flushVersion);
 		return Void(); // skip truncation if no timestamp about log end
 	}
 
@@ -5706,28 +5701,40 @@ ACTOR Future<Void> truncateMutationLogs(Reference<BlobManagerData> bmData) {
 	state std::string timestamp = BackupAgentBase::formatTime(epochs);
 	state Version truncVersion = wait(timeKeeperVersionFromDatetime(timestamp, bmData->db));
 
-	wait(bc->expireData(truncVersion, true));
-	bmData->stats.lastMLogTruncationVersion = truncVersion;
-	TraceEvent("TruncateMutationLogs").detail("Version", truncVersion).detail("Timestamp", timestamp);
-	CODE_PROBE(true, "Flush blob granules and truncate mutation logs");
+	if (truncVersion > 0) {
+		state std::string mlogsUrl =
+		    wait(BlobGranuleBackupConfig().mutationLogsUrl().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
+		state Reference<IBackupContainer> bc = IBackupContainer::openContainer(mlogsUrl, {}, {});
+		wait(bc->expireData(truncVersion, true));
+		bmData->stats.lastMLogTruncationVersion = truncVersion;
+		TraceEvent("TruncateMutationLogs").detail("Version", truncVersion).detail("Timestamp", timestamp);
+		CODE_PROBE(true, "Flush blob granules and truncate mutation logs");
+	}
 	return Void();
 }
 
-ACTOR Future<Void> truncateMutationLogsLoop(Reference<BlobManagerData> bmData) {
-	loop {
-		try {
-			wait(truncateMutationLogs(bmData));
-		} catch (Error& e) {
-			if (e.code() == error_code_operation_cancelled) {
-				throw;
-			}
-			TraceEvent("TruncateMutationLogsError").error(e); // skip and retry next time
-		}
-		wait(delay(SERVER_KNOBS->BLOB_MANIFEST_BACKUP_INTERVAL));
-	}
+// Dump manifest to external blob storage
+ACTOR Future<Void> backupManifest(Reference<BlobManagerData> bmData) {
+	TraceEvent("BackupManifest").log();
+	auto db = SystemDBWriteLockedNow(bmData->db.getReference());
+	std::string url = wait(BlobGranuleBackupConfig().manifestUrl().getD(db));
+	Reference<BlobConnectionProvider> manifestStore = BlobConnectionProvider::newBlobConnectionProvider(url);
+	int64_t bytes = wait(dumpManifest(bmData->db,
+	                                  bmData->dbInfo,
+	                                  manifestStore,
+	                                  bmData->epoch,
+	                                  bmData->manifestDumperSeqNo,
+	                                  bmData->enableManifestEncryption));
+	bmData->stats.lastManifestSeqNo = bmData->manifestDumperSeqNo;
+	bmData->stats.manifestSizeInBytes += bytes;
+	bmData->stats.lastManifestDumpTs = now();
+	bmData->manifestDumperSeqNo++;
+	bmData->manifestCompletitionTrigger.trigger();
+	return Void();
 }
 
-ACTOR Future<Void> backupManifest(Reference<BlobManagerData> bmData) {
+// Periodically backup manifest
+ACTOR Future<Void> backupManifestLoop(Reference<BlobManagerData> bmData) {
 	bmData->initBStore();
 
 	DatabaseConfiguration config = wait(getDatabaseConfiguration(bmData->db, true));
@@ -5735,30 +5742,106 @@ ACTOR Future<Void> backupManifest(Reference<BlobManagerData> bmData) {
 
 	loop {
 		try {
-			// Skip backup if no active blob ranges
-			bool shouldBackup = wait(shouldBackupManifest(bmData));
-			if (shouldBackup) {
-				TraceEvent("BackupManifest").log();
-				auto db = SystemDBWriteLockedNow(bmData->db.getReference());
-				std::string url = wait(BlobGranuleBackupConfig().manifestUrl().getD(db));
-				Reference<BlobConnectionProvider> manifestStore =
-				    BlobConnectionProvider::newBlobConnectionProvider(url);
-				int64_t bytes = wait(dumpManifest(bmData->db,
-				                                  bmData->dbInfo,
-				                                  manifestStore,
-				                                  bmData->epoch,
-				                                  bmData->manifestDumperSeqNo,
-				                                  bmData->enableManifestEncryption));
-				bmData->stats.lastManifestSeqNo = bmData->manifestDumperSeqNo;
-				bmData->stats.manifestSizeInBytes += bytes;
-				bmData->stats.lastManifestDumpTs = now();
-				bmData->manifestDumperSeqNo++;
-				bmData->manifestCompletitionTrigger.trigger();
+			bool enabled =
+			    wait(BlobGranuleBackupConfig().enabled().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
+			if (!enabled) {
+				TraceEvent("BackupManifestLoopExit").log();
+				bmData->stats.lastFlushVersion = 0;
+				bmData->stats.lastManifestDumpTs = 0;
+				bmData->stats.manifestSizeInBytes = 0;
+				return Void();
 			}
+			wait(backupManifest(bmData));
 		} catch (Error& e) {
+			if (e.code() == error_code_operation_cancelled) {
+				throw;
+			}
 			TraceEvent("BackupManifestError").error(e);
 		}
-		wait(delay(SERVER_KNOBS->BLOB_MANIFEST_BACKUP_INTERVAL));
+		wait(delay(SERVER_KNOBS->BLOB_MANIFEST_BACKUP_INTERVAL) || bmData->backupTrigger.onTrigger());
+	}
+}
+
+// Periodically flush granules and truncate mutation logs
+ACTOR Future<Void> truncateMutationsLoop(Reference<BlobManagerData> bmData) {
+	loop {
+		try {
+			bool enabled =
+			    wait(BlobGranuleBackupConfig().enabled().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
+			if (!enabled) {
+				TraceEvent("TruncateMutationLogsLoopExit").log();
+				return Void();
+			}
+
+			// Try flush blob granules
+			state Version lastFlushVersion = wait(maybeFlushGranules(bmData));
+			if (lastFlushVersion != invalidVersion) {
+				// Wait for next manifest dumped
+				state int64_t seqNo = bmData->manifestDumperSeqNo;
+				bmData->backupTrigger.trigger();
+				loop {
+					TraceEvent("WaitingBlobManifest").detail("Seq", seqNo);
+					if (bmData->manifestDumperSeqNo > seqNo) {
+						TraceEvent("BlobManifestDumped").detail("Seq", bmData->manifestDumperSeqNo);
+						break;
+					}
+					wait(bmData->manifestCompletitionTrigger.onTrigger());
+				}
+				// Truncate mutations up to lastFlushVersion -
+				wait(truncateMutations(bmData, lastFlushVersion));
+			}
+		} catch (Error& e) {
+			if (e.code() == error_code_operation_cancelled) {
+				throw;
+			}
+			TraceEvent("TruncateMutationsError").error(e); // skip and retry next time
+		}
+		wait(delay(SERVER_KNOBS->BLOB_MANIFEST_BACKUP_INTERVAL) || bmData->backupTrigger.onTrigger());
+	}
+}
+
+// Watch BlobGranuleBackupConfig to start or stop manifest backup actors.
+ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
+	state Reference<ReadYourWritesTransaction> tr(new ReadYourWritesTransaction(bmData->db));
+	state bool prevState = false; // save the last state so we don't have to initialize twice
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+			state bool enabled = wait(BlobGranuleBackupConfig().enabled().getD(tr));
+			TraceEvent("WatchBackupEnabled").detail("Enabled", enabled);
+			if (enabled && !prevState) { // only initialize once
+				int64_t lastFlushTs = wait(BlobGranuleBackupConfig().lastFlushTs().getD(tr));
+				if (lastFlushTs == 0) {
+					TraceEvent("StartInitialFlush").log();
+					loop {
+						Version lastFlushVersion = wait(maybeFlushGranules(bmData));
+						if (lastFlushVersion != invalidVersion) {
+							TraceEvent("CompleteInitialFlush").detail("Version", lastFlushVersion);
+							break;
+						}
+						wait(delay(5));
+					}
+				}
+				bmData->addActor.send(backupManifestLoop(bmData));
+				bmData->addActor.send(truncateMutationsLoop(bmData));
+			} else {
+				bmData->backupTrigger.trigger(); // notify backup loops to exit
+			}
+			prevState = enabled;
+
+			state Future<Void> watch = BlobGranuleBackupConfig().trigger.watch(tr);
+			wait(tr->commit());
+			wait(watch);
+			tr->reset();
+		} catch (Error& e) {
+			if (e.code() == error_code_operation_cancelled) {
+				throw;
+			}
+			wait(tr->onError(e));
+		}
 	}
 }
 
@@ -5852,12 +5935,12 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 		if (SERVER_KNOBS->BG_ENABLE_MERGING) {
 			self->addActor.send(granuleMergeChecker(self));
 		}
-		self->addActor.send(backupManifest(self));
-		self->addActor.send(truncateMutationLogsLoop(self));
 
 		if (BUGGIFY && !self->isFullRestoreMode) {
 			self->addActor.send(chaosRangeMover(self));
 		}
+
+		self->addActor.send(watchBackupEnabled(self));
 
 		loop choose {
 			when(wait(self->iAmReplaced.getFuture())) {
@@ -6188,6 +6271,39 @@ TEST_CASE("/blobmanager/updateranges") {
 	ASSERT(kbrRanges[1].second);
 	ASSERT(kbrRanges[2].first == rangeCToEnd);
 	ASSERT(!kbrRanges[2].second);
+
+	return Void();
+}
+
+TEST_CASE("/blobmanager/objectwriter") {
+	InitializeBlobWorkerRequest initReq1;
+	initReq1.reqId = deterministicRandom()->randomUniqueID();
+	initReq1.interfaceId = deterministicRandom()->randomUniqueID();
+	initReq1.storeType = (KeyValueStoreType::StoreType)(SERVER_KNOBS->BLOB_WORKER_STORE_TYPE);
+	initReq1.encryptMode = EncryptionAtRestMode::DOMAIN_AWARE;
+
+	InitializeBlobWorkerRequestOld initReq2;
+	initReq2.reqId = deterministicRandom()->randomUniqueID();
+	initReq2.interfaceId = deterministicRandom()->randomUniqueID();
+	initReq2.storeType = (KeyValueStoreType::StoreType)(SERVER_KNOBS->BLOB_WORKER_STORE_TYPE);
+
+	Value newReq = ObjectWriter::toValue(initReq1, Unversioned());
+	Value oldReq = ObjectWriter::toValue(initReq2, Unversioned());
+
+	InitializeBlobWorkerRequest decode1 =
+	    ObjectReader::fromStringRef<InitializeBlobWorkerRequest>(oldReq, Unversioned());
+	InitializeBlobWorkerRequestOld decode2 =
+	    ObjectReader::fromStringRef<InitializeBlobWorkerRequestOld>(newReq, Unversioned());
+
+	ASSERT(decode1.reqId == initReq2.reqId);
+	ASSERT(decode1.interfaceId == initReq2.interfaceId);
+	ASSERT(decode1.storeType == initReq2.storeType);
+	printf("%d %d\n", decode1.encryptMode.mode, EncryptionAtRestMode().mode);
+	ASSERT(decode1.encryptMode == EncryptionAtRestMode());
+
+	ASSERT(decode2.reqId == initReq1.reqId);
+	ASSERT(decode2.interfaceId == initReq1.interfaceId);
+	ASSERT(decode2.storeType == initReq1.storeType);
 
 	return Void();
 }

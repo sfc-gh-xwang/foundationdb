@@ -899,10 +899,24 @@ struct SystemStatisticsState {
 	    lastReadSectors;
 	uint64_t lastClockIdleTime, lastClockTotalTime;
 	SystemStatisticsState()
-	  : lastTime(0), lastClockThread(0), lastClockProcess(0), processLastSent(0), processLastReceived(0),
-	    machineLastSent(0), machineLastReceived(0), machineLastOutSegs(0), machineLastRetransSegs(0),
-	    lastReadMilliSecs(0), lastWriteMilliSecs(0), lastIOMilliSecs(0), lastReads(0), lastWrites(0),
-	    lastWriteSectors(0), lastReadSectors(0), lastClockIdleTime(0), lastClockTotalTime(0) {}
+	  : lastTime(0),
+	    lastClockThread(0),
+	    lastClockProcess(0),
+	    processLastSent(0),
+	    processLastReceived(0),
+	    machineLastSent(0),
+	    machineLastReceived(0),
+	    machineLastOutSegs(0),
+	    machineLastRetransSegs(0),
+	    lastReadMilliSecs(0),
+	    lastWriteMilliSecs(0),
+	    lastIOMilliSecs(0),
+	    lastReads(0),
+	    lastWrites(0),
+	    lastWriteSectors(0),
+	    lastReadSectors(0),
+	    lastClockIdleTime(0),
+	    lastClockTotalTime(0) {}
 };
 
 SystemStatistics getSystemStatistics(std::string const& dataFolder,

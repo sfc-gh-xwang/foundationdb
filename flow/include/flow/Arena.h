@@ -20,8 +20,6 @@
 
 #ifndef FLOW_ARENA_H
 #define FLOW_ARENA_H
-#include <array>
-#include <iterator>
 #pragma once
 
 #include "flow/BooleanParam.h"
@@ -34,7 +32,9 @@
 #include "flow/Optional.h"
 #include "flow/Traceable.h"
 #include <algorithm>
+#include <array>
 #include <boost/functional/hash.hpp>
+#include <iterator>
 #include <stdint.h>
 #include <string_view>
 #include <string>
@@ -99,6 +99,8 @@ FDB_BOOLEAN_PARAM(FastInaccurateEstimate);
 // Tag struct to indicate that the block containing allocated memory needs to be zero-ed out after use
 struct WipeAfterUse {};
 
+struct ArenaBlock;
+
 // An Arena is a custom allocator that consists of a set of ArenaBlocks.  Allocation is performed by bumping a pointer
 // on the most recent ArenaBlock until the block is unable to service the next allocation request.  When the current
 // ArenaBlock is full, a new (larger) one is added to the Arena.  Deallocation is not directly supported.  Instead,
@@ -133,8 +135,14 @@ public:
 
 	bool sameArena(const Arena& other) const { return impl.getPtr() == other.impl.getPtr(); }
 
+	ArenaBlock* getPtr() const { return impl.getPtr(); }
+
+	static Arena addRef(ArenaBlock* ptr);
+
 private:
-	Reference<struct ArenaBlock> impl;
+	Arena(ArenaBlock* ptr) : impl(ptr) {}
+
+	Reference<ArenaBlock> impl;
 };
 
 template <>
@@ -207,6 +215,11 @@ struct ArenaBlock : NonCopyable, ThreadSafeReferenceCounted<ArenaBlock> {
 	void destroyLeaf();
 	static void* operator new(size_t s) = delete;
 };
+
+inline Arena Arena::addRef(ArenaBlock* ptr) {
+	ptr->addref();
+	return Arena(ptr);
+}
 
 inline void* operator new(size_t size, Arena& p) {
 	UNSTOPPABLE_ASSERT(size < std::numeric_limits<int>::max());
@@ -918,7 +931,10 @@ public:
 
 	template <VecSerStrategy S>
 	VectorRef(const VectorRef<T, S>& other)
-	  : VPS(other), data(other.data), m_size(other.m_size), m_capacity(other.m_capacity) {}
+	  : VPS(other),
+	    data(other.data),
+	    m_size(other.m_size),
+	    m_capacity(other.m_capacity) {}
 	template <VecSerStrategy S>
 	VectorRef& operator=(const VectorRef<T, S>& other) {
 		*static_cast<VPS*>(this) = other;
@@ -931,7 +947,9 @@ public:
 	// Arena constructor for non-Ref types, identified by !flow_ref
 	template <class T2 = T, VecSerStrategy S>
 	VectorRef(Arena& p, const VectorRef<T, S>& toCopy, typename std::enable_if<!flow_ref<T2>::value, int>::type = 0)
-	  : VPS(toCopy), data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]), m_size(toCopy.size()),
+	  : VPS(toCopy),
+	    data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]),
+	    m_size(toCopy.size()),
 	    m_capacity(toCopy.size()) {
 		if (m_size > 0) {
 			std::copy(toCopy.data, toCopy.data + m_size, data);
@@ -941,7 +959,10 @@ public:
 	// Arena constructor for Ref types, which must have an Arena constructor
 	template <class T2 = T, VecSerStrategy S>
 	VectorRef(Arena& p, const VectorRef<T, S>& toCopy, typename std::enable_if<flow_ref<T2>::value, int>::type = 0)
-	  : VPS(), data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]), m_size(toCopy.size()), m_capacity(toCopy.size()) {
+	  : VPS(),
+	    data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]),
+	    m_size(toCopy.size()),
+	    m_capacity(toCopy.size()) {
 		for (int i = 0; i < m_size; i++) {
 			auto ptr = new (&data[i]) T(p, toCopy[i]);
 			VPS::add(*ptr);
@@ -1097,7 +1118,7 @@ public:
 		m_size--;
 	}
 
-	void pop_front(int count) {
+	void pop_front(int count = 1) {
 		VPS::invalidate();
 		count = std::min(m_size, count);
 
@@ -1271,7 +1292,9 @@ public: // Construction
 	static_assert(std::is_trivially_destructible_v<T>);
 	SmallVectorRef() {}
 	SmallVectorRef(const SmallVectorRef<T, InlineMembers>& other)
-	  : m_size(other.m_size), arr(other.arr), data(other.data) {}
+	  : m_size(other.m_size),
+	    arr(other.arr),
+	    data(other.data) {}
 	SmallVectorRef& operator=(const SmallVectorRef<T, InlineMembers>& other) {
 		m_size = other.m_size;
 		arr = other.arr;

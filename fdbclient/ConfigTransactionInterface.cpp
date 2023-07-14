@@ -42,7 +42,8 @@ ConfigTransactionInterface::ConfigTransactionInterface(NetworkAddress const& rem
     commit(Endpoint::wellKnown({ remote }, WLTOKEN_CONFIGTXN_COMMIT)) {}
 
 ConfigTransactionInterface::ConfigTransactionInterface(Hostname const& remote)
-  : _id(deterministicRandom()->randomUniqueID()), hostname(remote) {}
+  : _id(deterministicRandom()->randomUniqueID()),
+    hostname(remote) {}
 
 bool ConfigTransactionInterface::operator==(ConfigTransactionInterface const& rhs) const {
 	return _id == rhs._id;

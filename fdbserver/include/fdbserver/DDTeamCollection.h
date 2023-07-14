@@ -68,7 +68,9 @@ struct TSSPairState : ReferenceCounted<TSSPairState>, NonCopyable {
 	TSSPairState() : active(false) {}
 
 	TSSPairState(const LocalityData& locality)
-	  : dcId(locality.dcId()), dataHallId(locality.dataHallId()), active(true) {}
+	  : dcId(locality.dcId()),
+	    dataHallId(locality.dataHallId()),
+	    active(true) {}
 
 	bool inDataZone(const LocalityData& locality) const {
 		return locality.dcId() == dcId && locality.dataHallId() == dataHallId;
@@ -145,11 +147,19 @@ public:
 	bool initialized; // AsyncMap erases default constructed objects
 	LocalityData locality;
 	ServerStatus()
-	  : isWiggling(false), isFailed(true), isUndesired(false), isWrongConfiguration(false), initialized(false) {}
+	  : isWiggling(false),
+	    isFailed(true),
+	    isUndesired(false),
+	    isWrongConfiguration(false),
+	    initialized(false) {}
 	ServerStatus(LocalityData const& locality) : ServerStatus(false, false, false, locality) {}
 	ServerStatus(bool isFailed, bool isUndesired, bool isWiggling, LocalityData const& locality)
-	  : isWiggling(isWiggling), isFailed(isFailed), isUndesired(isUndesired), isWrongConfiguration(false),
-	    initialized(true), locality(locality) {}
+	  : isWiggling(isWiggling),
+	    isFailed(isFailed),
+	    isUndesired(isUndesired),
+	    isWrongConfiguration(false),
+	    initialized(true),
+	    locality(locality) {}
 	bool isUnhealthy() const { return isFailed || isUndesired; }
 	std::string toString() const {
 		return fmt::format("Failed: {}, Undesired: {}, Wiggling: {}", isFailed, isUndesired, isWiggling);
@@ -283,10 +293,10 @@ protected:
 
 	// team pivot values
 	struct {
-		double lastPivotValuesUpdate = 0.0;
-		double pivotAvailableSpaceRatio = 0.0;
+		double lastPivotsUpdate = 0.0;
+		double pivotAvailableSpaceRatio = 100.0;
 		double pivotCPU = 100.0;
-		double strictPivotAvailableSpaceRatio = 0.0;
+		int64_t pivotLoadBytes = std::numeric_limits<int64_t>::max();
 		double strictPivotCPU = 100.0;
 		double minTeamAvgCPU = std::numeric_limits<double>::max();
 	} teamPivots;
@@ -330,9 +340,10 @@ protected:
 	// When "wantHealthy" is true, only return if the team is healthy.
 	Optional<Reference<IDataDistributionTeam>> findTeamFromServers(const std::vector<UID>& servers, bool wantHealthy);
 
-	// Evaluate the CPU and AvailableSpace of source team to determine if a shard can
+	// Evaluate the CPU and LoadBytes of source team to determine if a shard can
 	// remain on the source team rather than being moved to a new destination team.
-	Optional<Reference<IDataDistributionTeam>> evaluateSourceTeam(const std::vector<UID>& servers);
+	Optional<Reference<IDataDistributionTeam>> evaluateSourceTeam(const std::vector<UID>& servers,
+	                                                              const double inflightPenalty);
 
 	Future<Void> logOnCompletion(Future<Void> signal);
 
@@ -656,14 +667,16 @@ protected:
 
 	Reference<TCTeamInfo> buildLargeTeam(int size);
 
-	void updateTeamPivotValues();
+	void updateTeamPivots(const double inflightPenalty);
 
-	// get the min available space ratio from every healthy team and update the pivot ratio `pivotAvailableSpaceRatio`
-	void updateAvailableSpacePivots();
+	void updateLoadBytesPivot(std::vector<int64_t>& teamLoadBytes);
 
-	void updateCpuPivots();
+	// get the median available space ratio from every healthy team and update the median pivot value
+	void updateMedianAvailableSpacePivot(std::vector<double>& teamAvailableSpace);
 
-	void updateTeamEligibility();
+	void updateCpuPivot(std::vector<double>& teamAverageCPU);
+
+	void updateTeamEligibility(const double inflightPenalty);
 
 public:
 	Reference<IDDTxnProcessor> db;

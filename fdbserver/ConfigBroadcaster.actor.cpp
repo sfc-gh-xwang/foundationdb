@@ -69,7 +69,9 @@ class ConfigBroadcasterImpl {
 		                       ConfigClassSet const& configClassSet,
 		                       Version lastSeenVersion,
 		                       ConfigBroadcastInterface broadcastInterface)
-		  : watcher(watcher), configClassSet(configClassSet), lastSeenVersion(lastSeenVersion),
+		  : watcher(watcher),
+		    configClassSet(configClassSet),
+		    lastSeenVersion(lastSeenVersion),
 		    broadcastInterface(broadcastInterface) {}
 	};
 
@@ -180,9 +182,14 @@ class ConfigBroadcasterImpl {
 	}
 
 	ConfigBroadcasterImpl()
-	  : lastCompactedVersion(0), largestLiveVersion(0), mostRecentVersion(0),
-	    id(deterministicRandom()->randomUniqueID()), cc("ConfigBroadcaster"), compactRequest("CompactRequest", cc),
-	    successfulChangeRequest("SuccessfulChangeRequest", cc), failedChangeRequest("FailedChangeRequest", cc),
+	  : lastCompactedVersion(0),
+	    largestLiveVersion(0),
+	    mostRecentVersion(0),
+	    id(deterministicRandom()->randomUniqueID()),
+	    cc("ConfigBroadcaster"),
+	    compactRequest("CompactRequest", cc),
+	    successfulChangeRequest("SuccessfulChangeRequest", cc),
+	    failedChangeRequest("FailedChangeRequest", cc),
 	    snapshotRequest("SnapshotRequest", cc) {
 		logger = cc.traceCounters(
 		    "ConfigBroadcasterMetrics", id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, "ConfigBroadcasterMetrics");

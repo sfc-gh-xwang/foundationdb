@@ -667,7 +667,9 @@ public:
 	explicit LineageReference(ActorLineage* ptr) : Reference<ActorLineage>(ptr), actorName_(""), allocated_(false) {}
 	LineageReference(const LineageReference& r) : Reference<ActorLineage>(r), actorName_(""), allocated_(false) {}
 	LineageReference(LineageReference&& r)
-	  : Reference<ActorLineage>(std::forward<LineageReference>(r)), actorName_(r.actorName_), allocated_(r.allocated_) {
+	  : Reference<ActorLineage>(std::forward<LineageReference>(r)),
+	    actorName_(r.actorName_),
+	    allocated_(r.allocated_) {
 		r.actorName_ = "";
 		r.allocated_ = false;
 	}
@@ -749,7 +751,9 @@ public:
 	T& value() { return *(T*)&value_storage; }
 
 	SAV(int futures, int promises)
-	  : promises(promises), futures(futures), error_state(Error::fromCode(UNSET_ERROR_CODE)) {
+	  : promises(promises),
+	    futures(futures),
+	    error_state(Error::fromCode(UNSET_ERROR_CODE)) {
 		Callback<T>::prev = Callback<T>::next = this;
 	}
 	~SAV() {
@@ -955,8 +959,8 @@ public:
 			rhs.sav = nullptr;
 		}
 	}
-	bool operator==(const Future& rhs) { return rhs.sav == sav; }
-	bool operator!=(const Future& rhs) { return rhs.sav != sav; }
+	bool operator==(const Future& rhs) const { return rhs.sav == sav; }
+	bool operator!=(const Future& rhs) const { return rhs.sav != sav; }
 
 	void cancel() {
 		if (sav)
@@ -1083,7 +1087,10 @@ struct NotifiedQueue : private SingleCallback<T>, FastAllocated<NotifiedQueue<T>
 	Promise<Void> onError;
 
 	NotifiedQueue(int futures, int promises)
-	  : promises(promises), futures(futures), onEmpty(nullptr), onError(nullptr) {
+	  : promises(promises),
+	    futures(futures),
+	    onEmpty(nullptr),
+	    onError(nullptr) {
 		SingleCallback<T>::next = this;
 	}
 

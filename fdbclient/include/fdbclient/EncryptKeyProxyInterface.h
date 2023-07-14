@@ -41,26 +41,43 @@ struct KMSHealthStatus {
 	bool canConnectToKms;
 	bool canConnectToEKP;
 	double lastUpdatedTS;
+	std::string kmsConnectorType;
+	std::vector<std::string> restKMSUrls;
+	bool kmsStable = true;
 
-	KMSHealthStatus() : canConnectToEKP(false), canConnectToKms(false), lastUpdatedTS(-1) {}
-	KMSHealthStatus(bool canConnectToKms, bool canConnectToEKP, double lastUpdatedTS)
-	  : canConnectToKms(canConnectToKms), canConnectToEKP(canConnectToEKP), lastUpdatedTS(lastUpdatedTS) {}
+	KMSHealthStatus() : canConnectToKms(false), canConnectToEKP(false), lastUpdatedTS(-1), kmsStable(true) {}
 
-	bool operator==(const KMSHealthStatus& other) {
+	bool operator==(const KMSHealthStatus& other) const {
 		return canConnectToKms == other.canConnectToKms && canConnectToEKP == other.canConnectToEKP;
+	}
+
+	bool healthnessChanged(const KMSHealthStatus& other) {
+		return canConnectToKms != other.canConnectToKms || canConnectToEKP != other.canConnectToEKP;
 	}
 
 	std::string toString() const {
 		std::stringstream ss;
 		ss << "CanConnectToKms(" << canConnectToKms << ")"
 		   << ", CanConnectToEKP(" << canConnectToEKP << ")"
-		   << ", LastUpdatedTS(" << lastUpdatedTS << ")";
+		   << ", LastUpdatedTS(" << lastUpdatedTS << ")"
+		   << ", KMSConnectorType(" << kmsConnectorType << ")"
+		   << ", RESTKmsUrls(";
+		bool firstUrl = true;
+		for (const auto& url : restKMSUrls) {
+			if (!firstUrl) {
+				ss << ", ";
+			}
+			ss << url;
+			firstUrl = false;
+		}
+
+		ss << "), KmsStable(" << kmsStable << ")";
 		return ss.str();
 	}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, canConnectToKms, canConnectToEKP, lastUpdatedTS);
+		serializer(ar, canConnectToKms, canConnectToEKP, lastUpdatedTS, kmsConnectorType, restKMSUrls, kmsStable);
 	}
 };
 
@@ -154,21 +171,33 @@ struct EKPBaseCipherDetails {
 	int64_t expireAt;
 
 	EKPBaseCipherDetails()
-	  : encryptDomainId(0), baseCipherId(0), baseCipherKey(Standalone<StringRef>()), baseCipherKCV(0), refreshAt(0),
+	  : encryptDomainId(0),
+	    baseCipherId(0),
+	    baseCipherKey(Standalone<StringRef>()),
+	    baseCipherKCV(0),
+	    refreshAt(0),
 	    expireAt(-1) {}
 	explicit EKPBaseCipherDetails(int64_t dId,
 	                              uint64_t id,
 	                              Standalone<StringRef> key,
 	                              EncryptCipherKeyCheckValue cipherKCV)
-	  : encryptDomainId(dId), baseCipherId(id), baseCipherKey(key), baseCipherKCV(cipherKCV),
-	    refreshAt(std::numeric_limits<int64_t>::max()), expireAt(std::numeric_limits<int64_t>::max()) {}
+	  : encryptDomainId(dId),
+	    baseCipherId(id),
+	    baseCipherKey(key),
+	    baseCipherKCV(cipherKCV),
+	    refreshAt(std::numeric_limits<int64_t>::max()),
+	    expireAt(std::numeric_limits<int64_t>::max()) {}
 	explicit EKPBaseCipherDetails(int64_t dId,
 	                              uint64_t id,
 	                              Standalone<StringRef> key,
 	                              EncryptCipherKeyCheckValue cipherKCV,
 	                              int64_t refAt,
 	                              int64_t expAt)
-	  : encryptDomainId(dId), baseCipherId(id), baseCipherKey(key), baseCipherKCV(cipherKCV), refreshAt(refAt),
+	  : encryptDomainId(dId),
+	    baseCipherId(id),
+	    baseCipherKey(key),
+	    baseCipherKCV(cipherKCV),
+	    refreshAt(refAt),
 	    expireAt(expAt) {}
 
 	bool operator==(const EKPBaseCipherDetails& r) const {
@@ -204,9 +233,11 @@ struct EKPGetBaseCipherKeysRequestInfo {
 	EncryptCipherBaseKeyId baseCipherId;
 
 	EKPGetBaseCipherKeysRequestInfo()
-	  : domainId(INVALID_ENCRYPT_DOMAIN_ID), baseCipherId(INVALID_ENCRYPT_CIPHER_KEY_ID) {}
+	  : domainId(INVALID_ENCRYPT_DOMAIN_ID),
+	    baseCipherId(INVALID_ENCRYPT_CIPHER_KEY_ID) {}
 	EKPGetBaseCipherKeysRequestInfo(const EncryptCipherDomainId dId, const EncryptCipherBaseKeyId bCId)
-	  : domainId(dId), baseCipherId(bCId) {}
+	  : domainId(dId),
+	    baseCipherId(bCId) {}
 
 	bool operator==(const EKPGetBaseCipherKeysRequestInfo& info) const {
 		return domainId == info.domainId && baseCipherId == info.baseCipherId;
@@ -240,7 +271,8 @@ struct EKPGetLatestBaseCipherKeysReply {
 
 	EKPGetLatestBaseCipherKeysReply() : numHits(0) {}
 	explicit EKPGetLatestBaseCipherKeysReply(const std::vector<EKPBaseCipherDetails>& cipherDetails)
-	  : baseCipherDetails(cipherDetails), numHits(0) {}
+	  : baseCipherDetails(cipherDetails),
+	    numHits(0) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

@@ -23,6 +23,7 @@
 #include "fdbclient/Knobs.h"
 #include "fdbclient/Notified.h"
 #include "fdbclient/SystemData.h"
+#include "fdbserver/ServerDBInfo.actor.h"
 #include "fdbserver/DeltaTree.h"
 #include "fdbclient/GetEncryptCipherKeys.h"
 #include "fdbserver/IDiskQueue.h"
@@ -57,21 +58,10 @@ public:
 	void dispose() override {
 		recovering.cancel();
 		log->dispose();
-		if (reserved_buffer != nullptr) {
-			delete[] reserved_buffer;
-			reserved_buffer = nullptr;
-		}
+		log = nullptr;
 		delete this;
 	}
-	void close() override {
-		recovering.cancel();
-		log->close();
-		if (reserved_buffer != nullptr) {
-			delete[] reserved_buffer;
-			reserved_buffer = nullptr;
-		}
-		delete this;
-	}
+	void close() override { delete this; }
 
 	// IKeyValueStore
 	KeyValueStoreType getType() const override { return type; }
@@ -133,7 +123,7 @@ public:
 		}
 	}
 
-	void clear(KeyRangeRef range, const StorageServerMetrics* storageMetrics, const Arena* arena) override {
+	void clear(KeyRangeRef range, const Arena* arena) override {
 		// A commit that occurs with no available space returns Never, so we can throw out all modifications
 		if (getAvailableSize() <= 0)
 			return;
@@ -293,6 +283,18 @@ public:
 	// when being used as TxnStateStore backend.
 	Future<EncryptionAtRestMode> encryptionMode() override {
 		return EncryptionAtRestMode(EncryptionAtRestMode::DISABLED);
+	}
+
+	~KeyValueStoreMemory() {
+		recovering.cancel();
+		if (log) {
+			log->close();
+			log = nullptr;
+		}
+		if (reserved_buffer != nullptr) {
+			delete[] reserved_buffer;
+			reserved_buffer = nullptr;
+		}
 	}
 
 private:
@@ -522,25 +524,14 @@ private:
 			uint16_t encryptHeaderSize;
 			// TODO: If possible we want to avoid memcpy to the disk log by using the same arena used by IDiskQueue
 			Arena arena;
-			if (CLIENT_KNOBS->ENABLE_CONFIGURABLE_ENCRYPTION) {
-				BlobCipherEncryptHeaderRef headerRef;
-				StringRef cipherText = cipher.encrypt(plaintext, v1.size() + v2.size(), &headerRef, arena);
-				Standalone<StringRef> headerRefStr = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
-				encryptHeaderSize = headerRefStr.size();
-				ASSERT(encryptHeaderSize > 0);
-				log->push(StringRef((const uint8_t*)&encryptHeaderSize, sizeof(encryptHeaderSize)));
-				log->push(headerRefStr);
-				log->push(cipherText);
-			} else {
-				BlobCipherEncryptHeader cipherHeader;
-				StringRef ciphertext =
-				    cipher.encrypt(plaintext, v1.size() + v2.size(), &cipherHeader, arena)->toStringRef();
-				encryptHeaderSize = BlobCipherEncryptHeader::headerSize;
-				ASSERT(encryptHeaderSize > 0);
-				log->push(StringRef((const uint8_t*)&encryptHeaderSize, sizeof(encryptHeaderSize)));
-				log->push(StringRef((const uint8_t*)&cipherHeader, encryptHeaderSize));
-				log->push(ciphertext);
-			}
+			BlobCipherEncryptHeaderRef headerRef;
+			StringRef cipherText = cipher.encrypt(plaintext, v1.size() + v2.size(), &headerRef, arena);
+			Standalone<StringRef> headerRefStr = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
+			encryptHeaderSize = headerRefStr.size();
+			ASSERT(encryptHeaderSize > 0);
+			log->push(StringRef((const uint8_t*)&encryptHeaderSize, sizeof(encryptHeaderSize)));
+			log->push(headerRefStr);
+			log->push(cipherText);
 		}
 		return log->push("\x01"_sr); // Changes here should be reflected in OP_DISK_OVERHEAD
 	}
@@ -592,25 +583,15 @@ private:
 		}
 		state Arena arena;
 		state StringRef plaintext;
-		if (CLIENT_KNOBS->ENABLE_CONFIGURABLE_ENCRYPTION) {
-			state BlobCipherEncryptHeaderRef cipherHeaderRef =
-			    BlobCipherEncryptHeaderRef::fromStringRef(StringRef(data.begin(), encryptHeaderSize));
-			TextAndHeaderCipherKeys cipherKeys = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-			    self->db, cipherHeaderRef, BlobCipherMetrics::KV_MEMORY));
-			DecryptBlobCipherAes256Ctr cipher(cipherKeys.cipherTextKey,
-			                                  cipherKeys.cipherHeaderKey,
-			                                  cipherHeaderRef.getIV(),
-			                                  BlobCipherMetrics::KV_MEMORY);
-			plaintext = cipher.decrypt(data.begin() + encryptHeaderSize, h.len1 + h.len2, cipherHeaderRef, arena);
-		} else {
-			state BlobCipherEncryptHeader cipherHeader = *(BlobCipherEncryptHeader*)data.begin();
-			TextAndHeaderCipherKeys cipherKeys = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-			    self->db, cipherHeader, BlobCipherMetrics::KV_MEMORY));
-			DecryptBlobCipherAes256Ctr cipher(
-			    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, cipherHeader.iv, BlobCipherMetrics::KV_MEMORY);
-			plaintext =
-			    cipher.decrypt(data.begin() + encryptHeaderSize, h.len1 + h.len2, cipherHeader, arena)->toStringRef();
-		}
+		state BlobCipherEncryptHeaderRef cipherHeaderRef =
+		    BlobCipherEncryptHeaderRef::fromStringRef(StringRef(data.begin(), encryptHeaderSize));
+		TextAndHeaderCipherKeys cipherKeys = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
+		    self->db, cipherHeaderRef, BlobCipherMetrics::KV_MEMORY));
+		DecryptBlobCipherAes256Ctr cipher(cipherKeys.cipherTextKey,
+		                                  cipherKeys.cipherHeaderKey,
+		                                  cipherHeaderRef.getIV(),
+		                                  BlobCipherMetrics::KV_MEMORY);
+		plaintext = cipher.decrypt(data.begin() + encryptHeaderSize, h.len1 + h.len2, cipherHeaderRef, arena);
 		return Standalone<StringRef>(plaintext, arena);
 	}
 
@@ -1072,10 +1053,24 @@ KeyValueStoreMemory<Container>::KeyValueStoreMemory(IDiskQueue* log,
                                                     bool replaceContent,
                                                     bool exactRecovery,
                                                     bool enableEncryption)
-  : type(storeType), id(id), log(log), db(db), committedWriteBytes(0), overheadWriteBytes(0), currentSnapshotEnd(-1),
-    previousSnapshotEnd(-1), committedDataSize(0), transactionSize(0), transactionIsLarge(false), resetSnapshot(false),
-    disableSnapshot(disableSnapshot), replaceContent(replaceContent), firstCommitWithSnapshot(true), snapshotCount(0),
-    memoryLimit(memoryLimit), enableEncryption(enableEncryption) {
+  : type(storeType),
+    id(id),
+    log(log),
+    db(db),
+    committedWriteBytes(0),
+    overheadWriteBytes(0),
+    currentSnapshotEnd(-1),
+    previousSnapshotEnd(-1),
+    committedDataSize(0),
+    transactionSize(0),
+    transactionIsLarge(false),
+    resetSnapshot(false),
+    disableSnapshot(disableSnapshot),
+    replaceContent(replaceContent),
+    firstCommitWithSnapshot(true),
+    snapshotCount(0),
+    memoryLimit(memoryLimit),
+    enableEncryption(enableEncryption) {
 	// create reserved buffer for radixtree store type
 	this->reserved_buffer =
 	    (storeType == KeyValueStoreType::MEMORY) ? nullptr : new uint8_t[CLIENT_KNOBS->SYSTEM_KEY_SIZE_LIMIT];
@@ -1111,23 +1106,23 @@ IKeyValueStore* keyValueStoreMemory(std::string const& basename,
 	}
 }
 
-IKeyValueStore* keyValueStoreLogSystem(class IDiskQueue* queue,
-                                       Reference<AsyncVar<ServerDBInfo> const> db,
-                                       UID logID,
-                                       int64_t memoryLimit,
-                                       bool disableSnapshot,
-                                       bool replaceContent,
-                                       bool exactRecovery,
-                                       bool enableEncryption) {
+Reference<IKeyValueStore> keyValueStoreLogSystem(class IDiskQueue* queue,
+                                                 Reference<AsyncVar<ServerDBInfo> const> db,
+                                                 UID logID,
+                                                 int64_t memoryLimit,
+                                                 bool disableSnapshot,
+                                                 bool replaceContent,
+                                                 bool exactRecovery,
+                                                 bool enableEncryption) {
 	// ServerDBInfo is required if encryption is to be enabled, or the KV store instance have been encrypted.
 	ASSERT(!enableEncryption || db.isValid());
-	return new KeyValueStoreMemory<IKeyValueContainer>(queue,
-	                                                   db,
-	                                                   logID,
-	                                                   memoryLimit,
-	                                                   KeyValueStoreType::MEMORY,
-	                                                   disableSnapshot,
-	                                                   replaceContent,
-	                                                   exactRecovery,
-	                                                   enableEncryption);
+	return makeReference<KeyValueStoreMemory<IKeyValueContainer>>(queue,
+	                                                              db,
+	                                                              logID,
+	                                                              memoryLimit,
+	                                                              KeyValueStoreType::MEMORY,
+	                                                              disableSnapshot,
+	                                                              replaceContent,
+	                                                              exactRecovery,
+	                                                              enableEncryption);
 }

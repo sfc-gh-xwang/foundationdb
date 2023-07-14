@@ -158,7 +158,9 @@ private:
 		VectorRef<KeyValueRef> values;
 
 		Entry(KeyRef const& beginKey, ExtStringRef const& endKey, VectorRef<KeyValueRef> const& values)
-		  : beginKey(beginKey), endKey(endKey), values(values) {}
+		  : beginKey(beginKey),
+		    endKey(endKey),
+		    values(values) {}
 		Entry(KeyValueRef const& kv, Arena& arena) : beginKey(kv.key), endKey(kv.key, 1) {
 			values.push_back(arena, kv);
 		}
@@ -185,8 +187,9 @@ public:
 		}
 
 		iterator(SnapshotCache* cache, class WriteMap* writes)
-		  : parent(cache), it(cache->entries.begin()), offset(0) {
-		} // for RYW to use the same constructor for snapshot cache and RYWIterator
+		  : parent(cache),
+		    it(cache->entries.begin()),
+		    offset(0) {} // for RYW to use the same constructor for snapshot cache and RYWIterator
 
 		enum SEGMENT_TYPE { UNKNOWN_RANGE, EMPTY_RANGE, KV };
 

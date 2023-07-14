@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <boost/container/flat_map.hpp>
+#include <boost/unordered/unordered_flat_map.hpp>
 #include <iterator>
 #include <cstring>
 #include <functional>
@@ -231,6 +232,34 @@ struct vector_like_traits<std::map<Key, T, Compare, Allocator>> : std::true_type
 template <class Key, class T, class Hash, class Pred, class Allocator>
 struct vector_like_traits<std::unordered_map<Key, T, Hash, Pred, Allocator>> : std::true_type {
 	using Vec = std::unordered_map<Key, T, Hash, Pred, Allocator>;
+	using value_type = std::pair<Key, T>;
+	using iterator = typename Vec::const_iterator;
+	using insert_iterator = std::insert_iterator<Vec>;
+
+	template <class Context>
+	static size_t num_entries(const Vec& v, Context&) {
+		return v.size();
+	}
+
+	// Return an insert_iterator starting with an empty vector. |size| is the
+	// number of elements to be inserted. Implementations may want to allocate
+	// enough memory up front to hold |size| elements.
+	template <class Context>
+	static insert_iterator insert(Vec& v, size_t size, Context&) {
+		v.clear();
+		v.reserve(size);
+		return std::inserter(v, v.end());
+	}
+
+	template <class Context>
+	static iterator begin(const Vec& v, Context&) {
+		return v.begin();
+	}
+};
+
+template <class Key, class T, class Hash, class Pred, class Allocator>
+struct vector_like_traits<boost::unordered::unordered_flat_map<Key, T, Hash, Pred, Allocator>> : std::true_type {
+	using Vec = boost::unordered::unordered_flat_map<Key, T, Hash, Pred, Allocator>;
 	using value_type = std::pair<Key, T>;
 	using iterator = typename Vec::const_iterator;
 	using insert_iterator = std::insert_iterator<Vec>;
@@ -576,8 +605,11 @@ struct WriteToBuffer : Context {
 	              int vtable_start,
 	              uint8_t* buffer,
 	              std::vector<int>::iterator writeToOffsetsIter)
-	  : Context(context), buffer_length(buffer_length), vtable_start(vtable_start),
-	    writeToOffsetsIter(writeToOffsetsIter), buffer(buffer) {}
+	  : Context(context),
+	    buffer_length(buffer_length),
+	    vtable_start(vtable_start),
+	    writeToOffsetsIter(writeToOffsetsIter),
+	    buffer(buffer) {}
 
 	struct MessageWriter {
 		template <class T>
@@ -827,7 +859,9 @@ struct SaveAlternative : Context {
 	const VTableSet* vtables;
 
 	SaveAlternative(Writer& writer, const VTableSet* vtables, const Context& context)
-	  : Context(context), writer(writer), vtables(vtables) {}
+	  : Context(context),
+	    writer(writer),
+	    vtables(vtables) {}
 
 	RelativeOffset save(uint8_t type_tag, const typename UnionTraits::Member& member) {
 		return save_<0>(type_tag, member);
@@ -895,7 +929,9 @@ struct SaveVisitorLambda : Context {
 	Writer& writer;
 
 	SaveVisitorLambda(const Context& context, const VTableSet* vtableset, Writer& writer)
-	  : Context(context), vtableset(vtableset), writer(writer) {}
+	  : Context(context),
+	    vtableset(vtableset),
+	    writer(writer) {}
 
 	template <class... Members>
 	void operator()(const Members&... members) {

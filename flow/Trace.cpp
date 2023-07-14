@@ -212,7 +212,9 @@ public:
 		WriterThread(Reference<BarrierList> barriers,
 		             Reference<ITraceLogWriter> logWriter,
 		             Reference<ITraceLogFormatter> formatter)
-		  : logWriter(logWriter), formatter(formatter), barriers(barriers) {}
+		  : logWriter(logWriter),
+		    formatter(formatter),
+		    barriers(barriers) {}
 
 		void init() override {}
 
@@ -284,8 +286,14 @@ public:
 	};
 
 	TraceLog()
-	  : formatter(new XmlTraceLogFormatter()), loggedLength(0), bufferLength(0), opened(false), preopenOverflowCount(0),
-	    logTraceEventMetrics(false), issues(new IssuesList), barriers(new BarrierList) {}
+	  : formatter(new XmlTraceLogFormatter()),
+	    loggedLength(0),
+	    bufferLength(0),
+	    opened(false),
+	    preopenOverflowCount(0),
+	    logTraceEventMetrics(false),
+	    issues(new IssuesList),
+	    barriers(new BarrierList) {}
 
 	bool isOpen() const { return opened; }
 
@@ -865,7 +873,12 @@ BaseTraceEvent::State::State(Severity severity) noexcept
 
 BaseTraceEvent::BaseTraceEvent() : enabled(), initialized(true), logged(true) {}
 BaseTraceEvent::BaseTraceEvent(Severity severity, const char* type, UID id)
-  : enabled(severity), initialized(false), logged(false), severity(severity), type(type), id(id) {}
+  : enabled(severity),
+    initialized(false),
+    logged(false),
+    severity(severity),
+    type(type),
+    id(id) {}
 
 BaseTraceEvent::BaseTraceEvent(BaseTraceEvent&& ev) {
 	enabled = std::move(ev.enabled);

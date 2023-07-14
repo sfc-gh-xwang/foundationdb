@@ -2,17 +2,21 @@
  * RKRateServer.h
  */
 
+#include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbserver/IRKRateServer.h"
 #include "fdbserver/IRKRateUpdater.h"
+#include "fdbserver/IRKRecoveryTracker.h"
 #include "fdbserver/Knobs.h"
-#include "fdbserver/TagThrottler.h"
+#include "fdbserver/QuotaThrottler.h"
 
 class RKRateServerImpl {
 public:
 	ACTOR static Future<Void> run(RKRateServer* self,
 	                              IRKRateUpdater const* normalRateUpdater,
 	                              IRKRateUpdater const* batchRateUpdater,
-	                              ITagThrottler* tagThrottler,
+	                              QuotaThrottler* quotaThrottler,
+	                              IRKThroughputQuotaCache const* quotaCache,
+	                              IRKMetricsTracker const* metricsTracker,
 	                              IRKRecoveryTracker* recoveryTracker) {
 		loop {
 			GetRateInfoRequest req = waitNext(self->getRateInfo);
@@ -23,9 +27,10 @@ public:
 			if (p.totalTransactions > 0) {
 				self->smoothReleasedTransactions.addDelta(req.totalReleasedTransactions - p.totalTransactions);
 
-				for (auto const& [tag, count] : req.throttledTagCounts) {
-					tagThrottler->addRequests(tag, count);
+				for (auto const& [throttlingId, count] : req.throttlingIdToTransactionCount) {
+					quotaThrottler->addRequests(throttlingId, count);
 				}
+				quotaThrottler->updateThroughput(req.throttlingIdToThroughput);
 			}
 			if (p.batchTransactions > 0) {
 				self->smoothBatchReleasedTransactions.addDelta(req.batchReleasedTransactions - p.batchTransactions);
@@ -43,26 +48,15 @@ public:
 			reply.batchTransactionRate = batchRateUpdater->getTpsLimit() / self->grvProxyInfo.size();
 			reply.leaseDuration = SERVER_KNOBS->METRIC_UPDATE_RATE;
 
-			if (p.lastThrottledTagChangeId != tagThrottler->getThrottledTagChangeId() ||
-			    now() > p.lastTagPushTime + SERVER_KNOBS->TAG_THROTTLE_PUSH_INTERVAL) {
-				p.lastThrottledTagChangeId = tagThrottler->getThrottledTagChangeId();
+			if (now() > p.lastTagPushTime + SERVER_KNOBS->TAG_THROTTLE_PUSH_INTERVAL) {
 				p.lastTagPushTime = now();
 
-				bool returningTagsToProxy{ false };
-				if (SERVER_KNOBS->ENFORCE_TAG_THROTTLING_ON_PROXIES) {
-					auto proxyThrottledTags = tagThrottler->getProxyRates(self->grvProxyInfo.size());
-					if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
-						returningTagsToProxy = proxyThrottledTags.size() > 0;
-						reply.proxyThrottledTags = std::move(proxyThrottledTags);
-					}
-				} else {
-					auto clientThrottledTags = tagThrottler->getClientRates();
-					if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
-						returningTagsToProxy = clientThrottledTags.size() > 0;
-						reply.clientThrottledTags = std::move(clientThrottledTags);
-					}
+				auto proxyThrottledTags =
+				    quotaThrottler->getProxyRates(self->grvProxyInfo.size(), *quotaCache, *metricsTracker);
+				if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
+					CODE_PROBE(proxyThrottledTags.size() > 0, "Returning tag throttles to a proxy");
+					reply.proxyThrottledTags = std::move(proxyThrottledTags);
 				}
-				CODE_PROBE(returningTagsToProxy, "Returning tag throttles to a proxy");
 			}
 
 			reply.healthMetrics.update(normalRateUpdater->getHealthMetrics(), true, req.detailed);
@@ -75,7 +69,8 @@ public:
 }; // class RKRateServerImpl
 
 RKRateServer::RKRateServer(FutureStream<GetRateInfoRequest> getRateInfo)
-  : getRateInfo(getRateInfo), smoothReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT),
+  : getRateInfo(getRateInfo),
+    smoothReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT),
     smoothBatchReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT) {}
 
 RKRateServer::~RKRateServer() = default;
@@ -108,9 +103,12 @@ void RKRateServer::updateLastLimited(double batchTpsLimit) {
 
 Future<Void> RKRateServer::run(IRKRateUpdater const& normalRateUpdater,
                                IRKRateUpdater const& batchRateUpdater,
-                               ITagThrottler& tagThrottler,
+                               QuotaThrottler& quotaThrottler,
+                               IRKThroughputQuotaCache const& quotaCache,
+                               IRKMetricsTracker const& metricsTracker,
                                IRKRecoveryTracker& recoveryTracker) {
-	return RKRateServerImpl::run(this, &normalRateUpdater, &batchRateUpdater, &tagThrottler, &recoveryTracker);
+	return RKRateServerImpl::run(
+	    this, &normalRateUpdater, &batchRateUpdater, &quotaThrottler, &quotaCache, &metricsTracker, &recoveryTracker);
 }
 
 void MockRKRateServer::updateProxy(UID proxyId, Version v, int newTotalTransactions) {

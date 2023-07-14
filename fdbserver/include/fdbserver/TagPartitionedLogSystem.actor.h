@@ -54,8 +54,12 @@ struct OldLogData {
 	// Constructor for T of OldTLogConf and OldTLogCoreData
 	template <class T>
 	explicit OldLogData(const T& conf)
-	  : logRouterTags(conf.logRouterTags), txsTags(conf.txsTags), epochBegin(conf.epochBegin), epochEnd(conf.epochEnd),
-	    pseudoLocalities(conf.pseudoLocalities), epoch(conf.epoch) {
+	  : logRouterTags(conf.logRouterTags),
+	    txsTags(conf.txsTags),
+	    epochBegin(conf.epochBegin),
+	    epochEnd(conf.epochEnd),
+	    pseudoLocalities(conf.pseudoLocalities),
+	    epoch(conf.epoch) {
 		tLogs.resize(conf.tLogs.size());
 		for (int j = 0; j < conf.tLogs.size(); j++) {
 			auto logSet = makeReference<LogSet>(conf.tLogs[j]);
@@ -127,10 +131,21 @@ struct TagPartitionedLogSystem final : ILogSystem, ReferenceCounted<TagPartition
 	                        LocalityData locality,
 	                        LogEpoch e,
 	                        Optional<PromiseStream<Future<Void>>> addActor = Optional<PromiseStream<Future<Void>>>())
-	  : dbgid(dbgid), logSystemType(LogSystemType::empty), expectedLogSets(0), logRouterTags(0), txsTags(0),
-	    repopulateRegionAntiQuorum(0), stopped(false), epoch(e), oldestBackupEpoch(0),
-	    recoveryCompleteWrittenToCoreState(false), remoteLogsWrittenToCoreState(false), hasRemoteServers(false),
-	    locality(locality), addActor(addActor), popActors(false) {}
+	  : dbgid(dbgid),
+	    logSystemType(LogSystemType::empty),
+	    expectedLogSets(0),
+	    logRouterTags(0),
+	    txsTags(0),
+	    repopulateRegionAntiQuorum(0),
+	    stopped(false),
+	    epoch(e),
+	    oldestBackupEpoch(0),
+	    recoveryCompleteWrittenToCoreState(false),
+	    remoteLogsWrittenToCoreState(false),
+	    hasRemoteServers(false),
+	    locality(locality),
+	    addActor(addActor),
+	    popActors(false) {}
 
 	void stopRejoins() final;
 
@@ -334,7 +349,7 @@ struct TagPartitionedLogSystem final : ILogSystem, ReferenceCounted<TagPartition
 	                                   bool* forceRecovery);
 
 	ACTOR static Future<Void> recruitOldLogRouters(TagPartitionedLogSystem* self,
-	                                               std::vector<WorkerInterface> workers,
+	                                               std::vector<WorkerDetails> workers,
 	                                               LogEpoch recoveryCount,
 	                                               int8_t locality,
 	                                               Version startVersion,

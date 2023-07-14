@@ -52,8 +52,11 @@ struct SpanContext {
 	SpanContext(UID traceID, uint64_t spanID) : traceID(traceID), spanID(spanID), m_Flags(TraceFlags::unsampled) {}
 	SpanContext(const SpanContext& span) = default;
 	bool isSampled() const { return (m_Flags & TraceFlags::sampled) == TraceFlags::sampled; }
-	std::string toString() const { return format("%016llx%016llx%016llx", traceID.first(), traceID.second(), spanID); };
 	bool isValid() const { return traceID.first() != 0 && traceID.second() != 0 && spanID != 0; }
+
+	// Serializes and deserializes to/from traceparent https://www.w3.org/TR/trace-context/ specification.
+	std::string toString() const;
+	static Optional<SpanContext> fromString(const std::string& s);
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -109,9 +112,13 @@ struct SpanEventRef {
 	SpanEventRef(const StringRef& name,
 	             const double& time,
 	             const SmallVectorRef<KeyValueRef>& attributes = SmallVectorRef<KeyValueRef>())
-	  : name(name), time(time), attributes(attributes) {}
+	  : name(name),
+	    time(time),
+	    attributes(attributes) {}
 	SpanEventRef(Arena& arena, const SpanEventRef& other)
-	  : name(arena, other.name), time(other.time), attributes(arena, other.attributes) {}
+	  : name(arena, other.name),
+	    time(other.time),
+	    attributes(arena, other.attributes) {}
 	StringRef name;
 	double time = 0.0;
 	SmallVectorRef<KeyValueRef> attributes;
@@ -131,7 +138,10 @@ public:
 	     const Location& location,
 	     const SpanContext& parentContext,
 	     const std::initializer_list<SpanContext>& links = {})
-	  : context(context), location(location), parentContext(parentContext), links(arena, links.begin(), links.end()),
+	  : context(context),
+	    location(location),
+	    parentContext(parentContext),
+	    links(arena, links.begin(), links.end()),
 	    begin(g_network->now()) {
 		this->kind = SpanKind::SERVER;
 		this->status = SpanStatus::OK;

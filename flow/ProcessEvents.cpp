@@ -32,7 +32,8 @@ struct EventImpl {
 	ProcessEvents::Callback callback;
 
 	EventImpl(std::vector<StringRef> names, ProcessEvents::Callback callback)
-	  : names(std::move(names)), callback(std::move(callback)) {
+	  : names(std::move(names)),
+	    callback(std::move(callback)) {
 		addEvent();
 	}
 	Id id() const { return reinterpret_cast<intptr_t>(this); }
@@ -45,7 +46,8 @@ struct ProcessEventsImpl {
 		unsigned& value;
 		ProcessEventsImpl& processEvents;
 		explicit Triggering(unsigned& value, ProcessEventsImpl& processEvents)
-		  : value(value), processEvents(processEvents) {
+		  : value(value),
+		    processEvents(processEvents) {
 			++value;
 		}
 		~Triggering() {

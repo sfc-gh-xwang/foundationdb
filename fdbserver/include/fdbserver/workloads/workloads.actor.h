@@ -264,7 +264,9 @@ struct DistributedTestResults {
 	DistributedTestResults() {}
 
 	DistributedTestResults(std::vector<PerfMetric> const& metrics, int successes, int failures)
-	  : metrics(metrics), successes(successes), failures(failures) {}
+	  : metrics(metrics),
+	    successes(successes),
+	    failures(failures) {}
 
 	bool ok() const { return successes && !failures; }
 };
@@ -297,11 +299,22 @@ public:
 	         double startDelay = 30.0,
 	         bool useDB = true,
 	         double databasePingDelay = -1.0)
-	  : title(title), dumpAfterTest(dump), clearAfterTest(clear), useDB(useDB), startDelay(startDelay), timeout(600),
-	    databasePingDelay(databasePingDelay), runConsistencyCheck(g_network->isSimulated()),
-	    runConsistencyCheckOnCache(false), runConsistencyCheckOnTSS(false), waitForQuiescenceBegin(true),
-	    waitForQuiescenceEnd(true), restorePerpetualWiggleSetting(true), simCheckRelocationDuration(false),
-	    simConnectionFailuresDisableDuration(0), simBackupAgents(ISimulator::BackupAgentType::NoBackupAgents),
+	  : title(title),
+	    dumpAfterTest(dump),
+	    clearAfterTest(clear),
+	    useDB(useDB),
+	    startDelay(startDelay),
+	    timeout(600),
+	    databasePingDelay(databasePingDelay),
+	    runConsistencyCheck(g_network->isSimulated()),
+	    runConsistencyCheckOnCache(false),
+	    runConsistencyCheckOnTSS(false),
+	    waitForQuiescenceBegin(true),
+	    waitForQuiescenceEnd(true),
+	    restorePerpetualWiggleSetting(true),
+	    simCheckRelocationDuration(false),
+	    simConnectionFailuresDisableDuration(0),
+	    simBackupAgents(ISimulator::BackupAgentType::NoBackupAgents),
 	    simDrAgents(ISimulator::BackupAgentType::NoBackupAgents) {
 		phases = TestWorkload::SETUP | TestWorkload::EXECUTION | TestWorkload::CHECK | TestWorkload::METRICS;
 		if (databasePingDelay < 0)
@@ -344,7 +357,8 @@ public:
 ACTOR Future<DistributedTestResults> runWorkload(Database cx,
                                                  std::vector<TesterInterface> testers,
                                                  TestSpec spec,
-                                                 Optional<TenantName> defaultTenant);
+                                                 Optional<TenantName> defaultTenant,
+                                                 bool requireCheckSuccess = true);
 
 void logMetrics(std::vector<PerfMetric> metrics);
 

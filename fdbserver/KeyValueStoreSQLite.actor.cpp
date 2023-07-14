@@ -58,7 +58,11 @@ struct SpringCleaningStats {
 	double lazyDeleteTime;
 
 	SpringCleaningStats()
-	  : springCleaningCount(0), lazyDeletePages(0), vacuumedPages(0), springCleaningTime(0.0), vacuumTime(0.0),
+	  : springCleaningCount(0),
+	    lazyDeletePages(0),
+	    vacuumedPages(0),
+	    springCleaningTime(0.0),
+	    vacuumTime(0.0),
 	    lazyDeleteTime(0.0) {}
 };
 
@@ -259,8 +263,14 @@ struct SQLiteDB : NonCopyable {
 	void createFromScratch();
 
 	SQLiteDB(std::string filename, bool page_checksums, bool fragment_values)
-	  : filename(filename), db(nullptr), btree(nullptr), table(-1), freetable(-1), haveMutex(false),
-	    page_checksums(page_checksums), fragment_values(fragment_values) {
+	  : filename(filename),
+	    db(nullptr),
+	    btree(nullptr),
+	    table(-1),
+	    freetable(-1),
+	    haveMutex(false),
+	    page_checksums(page_checksums),
+	    fragment_values(fragment_values) {
 		TraceEvent(SevDebug, "SQLiteDBCreate").detail("This", (void*)this).detail("Filename", filename).backtrace();
 	}
 
@@ -990,7 +1000,10 @@ struct RawCursor {
 	struct DefragmentingReader {
 		// Use this constructor for forward/backward range reads
 		DefragmentingReader(RawCursor& cur, Arena& m, bool forward)
-		  : cur(cur), arena(m), forward(forward), fragmentReadLimit(-1) {
+		  : cur(cur),
+		    arena(m),
+		    forward(forward),
+		    fragmentReadLimit(-1) {
 			parse();
 		}
 
@@ -998,7 +1011,10 @@ struct RawCursor {
 		// This exists to support IKeyValueStore::getPrefix().
 		// The reader will return exactly one KV pair if its key matches expectedKey, otherwise no KV pairs.
 		DefragmentingReader(RawCursor& cur, Arena& m, KeyRef expectedKey, int maxValueLen)
-		  : cur(cur), arena(m), forward(true), maxValueLen(maxValueLen) {
+		  : cur(cur),
+		    arena(m),
+		    forward(true),
+		    maxValueLen(maxValueLen) {
 			fragmentReadLimit = getEncodedKVFragmentSize(expectedKey.size(), maxValueLen);
 			parse();
 			// If a key was found but it wasn't the expected key then
@@ -1610,9 +1626,7 @@ public:
 	StorageBytes getStorageBytes() const override;
 
 	void set(KeyValueRef keyValue, const Arena* arena = nullptr) override;
-	void clear(KeyRangeRef range,
-	           const StorageServerMetrics* storageMetrics = nullptr,
-	           const Arena* arena = nullptr) override;
+	void clear(KeyRangeRef range, const Arena* arena = nullptr) override;
 	Future<Void> commit(bool sequential = false) override;
 
 	Future<Optional<Value>> readValue(KeyRef key, Optional<ReadOptions> optionss) override;
@@ -1670,7 +1684,10 @@ private:
 		                ThreadSafeCounter& counter,
 		                UID dbgid,
 		                Reference<ReadCursor>* ppReadCursor)
-		  : conn(filename, is_btree_v2, is_btree_v2), counter(counter), dbgid(dbgid), ppReadCursor(ppReadCursor) {}
+		  : conn(filename, is_btree_v2, is_btree_v2),
+		    counter(counter),
+		    dbgid(dbgid),
+		    ppReadCursor(ppReadCursor) {}
 		~Reader() override { ppReadCursor->clear(); }
 
 		void init() override { conn.open(false); }
@@ -1716,7 +1733,9 @@ private:
 			Optional<UID> debugID;
 			ThreadReturnPromise<Optional<Value>> result;
 			ReadValuePrefixAction(Key key, int maxLength, Optional<UID> debugID)
-			  : key(key), maxLength(maxLength), debugID(debugID){};
+			  : key(key),
+			    maxLength(maxLength),
+			    debugID(debugID){};
 			double getTimeEstimate() const override { return SERVER_KNOBS->READ_VALUE_TIME_ESTIMATE; }
 		};
 		void action(ReadValuePrefixAction& rv) {
@@ -1742,7 +1761,9 @@ private:
 			int rowLimit, byteLimit;
 			ThreadReturnPromise<RangeResult> result;
 			ReadRangeAction(KeyRange keys, int rowLimit, int byteLimit)
-			  : keys(keys), rowLimit(rowLimit), byteLimit(byteLimit) {}
+			  : keys(keys),
+			    rowLimit(rowLimit),
+			    byteLimit(byteLimit) {}
 			double getTimeEstimate() const override { return SERVER_KNOBS->READ_RANGE_TIME_ESTIMATE; }
 		};
 		void action(ReadRangeAction& rr) {
@@ -1777,10 +1798,20 @@ private:
 		                volatile int64_t& freeListPages,
 		                UID dbgid,
 		                std::vector<Reference<ReadCursor>>* pReadThreads)
-		  : kvs(kvs), conn(kvs->filename, isBtreeV2, isBtreeV2), cursor(nullptr), commits(), setsThisCommit(),
-		    freeTableEmpty(false), writesComplete(writesComplete), springCleaningStats(springCleaningStats),
-		    diskBytesUsed(diskBytesUsed), freeListPages(freeListPages), dbgid(dbgid), readThreads(*pReadThreads),
-		    checkAllChecksumsOnOpen(checkAllChecksumsOnOpen), checkIntegrityOnOpen(checkIntegrityOnOpen) {}
+		  : kvs(kvs),
+		    conn(kvs->filename, isBtreeV2, isBtreeV2),
+		    cursor(nullptr),
+		    commits(),
+		    setsThisCommit(),
+		    freeTableEmpty(false),
+		    writesComplete(writesComplete),
+		    springCleaningStats(springCleaningStats),
+		    diskBytesUsed(diskBytesUsed),
+		    freeListPages(freeListPages),
+		    dbgid(dbgid),
+		    readThreads(*pReadThreads),
+		    checkAllChecksumsOnOpen(checkAllChecksumsOnOpen),
+		    checkIntegrityOnOpen(checkIntegrityOnOpen) {}
 		~Writer() override {
 			TraceEvent("KVWriterDestroying", dbgid).log();
 			delete cursor;
@@ -2152,9 +2183,16 @@ KeyValueStoreSQLite::KeyValueStoreSQLite(std::string const& filename,
                                          KeyValueStoreType storeType,
                                          bool checkChecksums,
                                          bool checkIntegrity)
-  : type(storeType), logID(id), filename(filename), readThreads(CoroThreadPool::createThreadPool()),
-    writeThread(CoroThreadPool::createThreadPool()), readsRequested(0), writesRequested(0), writesComplete(0),
-    diskBytesUsed(0), freeListPages(0) {
+  : type(storeType),
+    logID(id),
+    filename(filename),
+    readThreads(CoroThreadPool::createThreadPool()),
+    writeThread(CoroThreadPool::createThreadPool()),
+    readsRequested(0),
+    writesRequested(0),
+    writesComplete(0),
+    diskBytesUsed(0),
+    freeListPages(0) {
 	TraceEvent(SevDebug, "KeyValueStoreSQLiteCreate").detail("Filename", filename);
 
 	stopOnErr = stopOnError(this);
@@ -2232,7 +2270,7 @@ void KeyValueStoreSQLite::set(KeyValueRef keyValue, const Arena* arena) {
 	++writesRequested;
 	writeThread->post(new Writer::SetAction(keyValue));
 }
-void KeyValueStoreSQLite::clear(KeyRangeRef range, const StorageServerMetrics* storageMetrics, const Arena* arena) {
+void KeyValueStoreSQLite::clear(KeyRangeRef range, const Arena* arena) {
 	++writesRequested;
 	writeThread->post(new Writer::ClearAction(range));
 }

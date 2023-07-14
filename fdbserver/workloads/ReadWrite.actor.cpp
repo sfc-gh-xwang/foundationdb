@@ -383,13 +383,14 @@ struct ReadWriteWorkload : ReadWriteCommon {
 	bool cacheResult;
 	Optional<Key> transactionTag;
 
-	int transactionsTagThrottled{ 0 };
-
 	// hot traffic pattern
 	double hotKeyFraction, forceHotProbability = 0; // key based hot traffic setting
 
 	ReadWriteWorkload(WorkloadContext const& wcx)
-	  : ReadWriteCommon(wcx), dependentReads(false), adjacentReads(false), adjacentWrites(false) {
+	  : ReadWriteCommon(wcx),
+	    dependentReads(false),
+	    adjacentReads(false),
+	    adjacentWrites(false) {
 		extraReadConflictRangesPerTransaction = getOption(options, "extraReadConflictRangesPerTransaction"_sr, 0);
 		extraWriteConflictRangesPerTransaction = getOption(options, "extraWriteConflictRangesPerTransaction"_sr, 0);
 		dependentReads = getOption(options, "dependentReads"_sr, false);
@@ -431,7 +432,7 @@ struct ReadWriteWorkload : ReadWriteCommon {
 		if (batchPriority) {
 			tr.setOption(FDBTransactionOptions::PRIORITY_BATCH);
 		}
-		if (transactionTag.present() && tr.getTags().size() == 0) {
+		if (transactionTag.present() && !tr.getTag().present()) {
 			tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, transactionTag.get());
 		}
 
@@ -482,9 +483,6 @@ struct ReadWriteWorkload : ReadWriteCommon {
 			m.emplace_back("Mean Commit Latency (ms)", 1000 * commitLatencies.mean(), Averaged::True);
 			m.emplace_back("Median Commit Latency (ms, averaged)", 1000 * commitLatencies.median(), Averaged::True);
 			m.emplace_back("Max Commit Latency (ms, averaged)", 1000 * commitLatencies.max(), Averaged::True);
-			if (transactionTag.present()) {
-				m.emplace_back("Transaction Tag Throttled", transactionsTagThrottled, Averaged::False);
-			}
 		}
 	}
 
@@ -534,9 +532,6 @@ struct ReadWriteWorkload : ReadWriteCommon {
 				wait(tr.warmRange(allKeys));
 				break;
 			} catch (Error& e) {
-				if (e.code() == error_code_tag_throttled) {
-					++self->transactionsTagThrottled;
-				}
 				wait(tr.onError(e));
 			}
 		}
@@ -712,10 +707,6 @@ struct ReadWriteWorkload : ReadWriteCommon {
 
 						break;
 					} catch (Error& e) {
-						if (e.code() == error_code_tag_throttled) {
-							++self->transactionsTagThrottled;
-						}
-
 						self->transactionFailureMetric->errorCode = e.code();
 						self->transactionFailureMetric->log();
 
