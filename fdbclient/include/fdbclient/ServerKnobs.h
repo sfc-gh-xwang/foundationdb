@@ -755,6 +755,17 @@ public:
 	// Below this throughput threshold (in bytes/second), ratekeeper will forget about the
 	// throughput of a particular throttlingId on a particular storage server
 	double GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
+	// Above this cluster-wide throughput threshold (in bytes/second), ratekeeper will monitor
+	// the quota for a particular throttlingId
+	int64_t THROUGHPUT_QUOTA_TRACK_THRESHOLD;
+	// Number of updates read in a single transaction by the throughput quota cache
+	int64_t THROUGHPUT_QUOTA_CACHE_BATCH_SIZE;
+	// Interval at which throughput quota cache will check to
+	// expire inactive throttlingIds
+	double THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL;
+	// Period of inactivity after which the throughput quota cache
+	// will expire a throttlingId.
+	double THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD;
 	// If a throttlingId's throughput on a particular storage server exceeds this threshold,
 	// this storage server's throttling ratio will contribute the calculation of the
 	// throttlingId's limiting transaction rate
