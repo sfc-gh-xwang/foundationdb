@@ -171,12 +171,6 @@ Optional<double> ServerThroughputTracker::getThroughput(UID storageServerId) con
 	return result;
 }
 
-void ServerThroughputTracker::removeThrottlingId(ThrottlingId const& throttlingId) {
-	for (auto& [ss, throttlingIdToCounters] : throughput) {
-		throttlingIdToCounters.erase(throttlingId);
-	}
-}
-
 int ServerThroughputTracker::storageServersTracked() const {
 	return throughput.size();
 }

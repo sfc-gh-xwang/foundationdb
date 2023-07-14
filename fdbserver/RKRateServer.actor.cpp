@@ -2,6 +2,7 @@
  * RKRateServer.h
  */
 
+#include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbserver/IRKRateServer.h"
 #include "fdbserver/IRKRateUpdater.h"
 #include "fdbserver/IRKRecoveryTracker.h"
@@ -14,6 +15,8 @@ public:
 	                              IRKRateUpdater const* normalRateUpdater,
 	                              IRKRateUpdater const* batchRateUpdater,
 	                              QuotaThrottler* quotaThrottler,
+	                              IRKThroughputQuotaCache const* quotaCache,
+	                              IRKMetricsTracker const* metricsTracker,
 	                              IRKRecoveryTracker* recoveryTracker) {
 		loop {
 			GetRateInfoRequest req = waitNext(self->getRateInfo);
@@ -48,7 +51,8 @@ public:
 			if (now() > p.lastTagPushTime + SERVER_KNOBS->TAG_THROTTLE_PUSH_INTERVAL) {
 				p.lastTagPushTime = now();
 
-				auto proxyThrottledTags = quotaThrottler->getProxyRates(self->grvProxyInfo.size());
+				auto proxyThrottledTags =
+				    quotaThrottler->getProxyRates(self->grvProxyInfo.size(), *quotaCache, *metricsTracker);
 				if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
 					CODE_PROBE(proxyThrottledTags.size() > 0, "Returning tag throttles to a proxy");
 					reply.proxyThrottledTags = std::move(proxyThrottledTags);
@@ -100,8 +104,11 @@ void RKRateServer::updateLastLimited(double batchTpsLimit) {
 Future<Void> RKRateServer::run(IRKRateUpdater const& normalRateUpdater,
                                IRKRateUpdater const& batchRateUpdater,
                                QuotaThrottler& quotaThrottler,
+                               IRKThroughputQuotaCache const& quotaCache,
+                               IRKMetricsTracker const& metricsTracker,
                                IRKRecoveryTracker& recoveryTracker) {
-	return RKRateServerImpl::run(this, &normalRateUpdater, &batchRateUpdater, &quotaThrottler, &recoveryTracker);
+	return RKRateServerImpl::run(
+	    this, &normalRateUpdater, &batchRateUpdater, &quotaThrottler, &quotaCache, &metricsTracker, &recoveryTracker);
 }
 
 void MockRKRateServer::updateProxy(UID proxyId, Version v, int newTotalTransactions) {

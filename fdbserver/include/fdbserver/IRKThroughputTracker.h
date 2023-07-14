@@ -68,9 +68,6 @@ public:
 	// across all throttling IDs
 	Optional<double> getThroughput(UID storageServerId) const;
 
-	// Used to remove a throttling ID which has expired
-	void removeThrottlingId(ThrottlingId const&);
-
 	// Returns the number of storage servers currently being tracked
 	int storageServersTracked() const;
 };
