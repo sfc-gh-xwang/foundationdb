@@ -1907,9 +1907,9 @@ using TransactionTagRef = StringRef;
 using TransactionTag = Standalone<TransactionTagRef>;
 
 template <class Value>
-using TransactionTagMap = std::unordered_map<TransactionTag, Value, std::hash<TransactionTagRef>>;
+using TransactionTagMap = boost::unordered_flat_map<TransactionTag, Value, std::hash<TransactionTagRef>>;
 
 template <class Value>
-using UIDTransactionTagMap = std::unordered_map<UID, TransactionTagMap<Value>>;
+using UIDTransactionTagMap = boost::unordered_flat_map<UID, TransactionTagMap<Value>>;
 
 #endif
