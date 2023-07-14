@@ -1,113 +1,501 @@
+#include <boost/spirit/home/x3/support/ast/position_tagged.hpp>
 #include <boost/spirit/home/x3/support/ast/variant.hpp>
+#include <boost/spirit/home/x3/support/utility/error_reporting.hpp>
+#include <boost/spirit/home/x3/support/utility/annotate_on_success.hpp>
+#include <boost/spirit/home/x3/numeric/real.hpp>
 #include <boost/fusion/adapted/std_pair.hpp>
 #include <boost/spirit/home/x3.hpp>
 #include <boost/variant.hpp>
 #include <boost/optional.hpp>
+#include <cassert>
+#include <cmath>
 #include <iostream>
+#include <iomanip>
 #include <map>
 #include <variant>
 #include <string>
 #include <vector>
 #include <type_traits>
-
-using namespace std;
+#include <fmt/format.h>
+#include <cxxabi.h>
 
 namespace x3 = boost::spirit::x3;
 
+namespace ast {
+
+struct scalar : x3::variant<bool, double, uint64_t, int64_t>, x3::position_tagged {
+	using base_type::base_type;
+	using base_type::operator=;
+
+	static constexpr double EPS = 1e-10;
+
+	bool operator==(const scalar& other) const {
+		auto const* lhs = boost::get<double>(this);
+		auto const* rhs = boost::get<double>(&other);
+		if (lhs && rhs) {
+			if (*lhs == *rhs)
+				return true;
+			// as parser should be producing something close to the expected value, we use "essentially equal" semantics
+			if (std::fabs(*lhs - *rhs) < std::min(std::fabs(*lhs), std::fabs(*rhs)) * EPS) {
+				return true;
+			} else {
+				std::cout << "scalar double mismatch: left-hand (" << *lhs << ") is not equal to right-hand (" << *rhs << ") within margin " << EPS << "\n";
+				return false;
+			}
+		} else {
+			if (get() != other.get()) {
+				std::cout << "scalar mismatch: which = " << get().which() << " vs " << other.get().which() << "\n";
+				return false;
+			} else {
+				return true;
+			}
+		}
+	}
+};
+
+struct single_value : x3::variant<scalar, std::string>, x3::position_tagged {
+	using base_type::base_type;
+	using base_type::operator=;
+
+	bool operator==(const single_value& other) const {
+		if (get() != other.get()) {
+			std::cout << "unmatched single_value: which = " << get().which() << " vs " << other.get().which() << "\n";
+			return false;
+		} else {
+			return true;
+		}
+	}
+};
+
+using metadatum = std::pair<std::string, boost::optional<single_value>>;
+using metadata = std::map<std::string, boost::optional<single_value>>;
+
+struct include {
+	std::string filename;
+};
+
+struct namespace_decl {
+	std::vector<std::string> ns;
+};
+
+struct attribute_decl {
+	std::string name;
+};
+
+// non-scalars cannot have default values, but I can't find a way to work around that with fusion at the moment.
 template <typename T>
 struct field {
 	std::string name;
 	boost::optional<T> default_;
+	boost::optional<metadata> metadata;
 };
 
+// when a table member is another table/struct or a struct member is another struct
+struct typeref {
+	std::string name;
+};
+
+using nonvector_field_variant = x3::variant<
+	field<int8_t>, 
+	field<uint8_t>,
+	field<int16_t>,
+	field<uint16_t>,
+	field<int32_t>,
+	field<uint32_t>,
+	field<int64_t>,
+	field<uint64_t>,
+	field<float>,
+	field<double>,
+	field<std::string>,
+	field<typeref>
+>;
+
+struct field_decl : nonvector_field_variant {
+	using base_type::base_type;
+	using base_type::operator=;
+	bool is_vector;
+};
+
+} // namespace ast
+
+BOOST_FUSION_ADAPT_STRUCT(ast::include, filename);
+BOOST_FUSION_ADAPT_STRUCT(ast::namespace_decl, ns);
+BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name);
+BOOST_FUSION_ADAPT_STRUCT(ast::typeref, name);
+
 BOOST_FUSION_ADAPT_TPL_STRUCT(
-		(T), (field) (T),
+		(T), (ast::field) (T),
 		(std::string, name)
-		(boost::optional<T>, default_))
+		(boost::optional<T>, default_)
+		(boost::optional<ast::metadata>, metadata))
 
-int main() {
-    auto stringRule = x3::rule<class StringClass, string>() = x3::lexeme[x3::alpha >> *x3::alnum];
+namespace detail {
 
-	auto stringConstantRule = x3::rule<class StringClass, string>() = x3::lexeme['"' > *(
-             "\\n" >> x3::attr('\n')
-           | "\\t" >> x3::attr('\t')
-           | "\\r" >> x3::attr('\r')
-           | "\\b" >> x3::attr('\b')
-           | "\\f" >> x3::attr('\f')
-           | "\\"  >> x3::char_("\"\\/") // escaped double-quote, backslash, and slash
-           | "\\x" >> x3::int_parser<char, 16, 2, 2>() // bytes in hex: e.g. "\xff"; always two digits
-           | ~x3::char_('"')
-       ) > '"'];
+std::string demangle_symbol(const std::string& mangled) {
+	int status = 0;
+	size_t length = 0;
+	auto demangled = abi::__cxa_demangle(mangled.c_str(), nullptr, &length, &status);
+	if (demangled) {
+		std::string ret(demangled, length);
+		free(demangled);
+		return ret;
+	} else {
+		return mangled;
+	}
+}
 
-    //auto stringConstantRule = x3::rule<class StringClass, string>() = x3::lexeme[x3::lit('"') >> *(x3::ascii::char_ - '"') >> '"'];
+} // namespace detail
 
-    auto variantRule = x3::rule<class VariantClass, x3::variant<std::string, float>>() = (stringRule | x3::float_);
+namespace rule {
 
-    auto pairRule = x3::rule<class PairClass, pair<int, x3::variant<std::string, float>>>() = x3::int_ >> ':' >> variantRule;
+struct error_handler
+{
+    template <typename Iterator, typename Exception, typename Context>
+    x3::error_handler_result on_error(
+        Iterator& first, Iterator const& last
+      , Exception const& x, Context const& context)
+    {
+        auto& error_handler = x3::get<x3::error_handler_tag>(context).get();
+        std::string message = "Error! Expecting: " + detail::demangle_symbol(x.which()) + " here:";
+        error_handler(x.where(), message);
+        return x3::error_handler_result::fail;
+    }
+};
 
-    auto mapRule = x3::rule<class MapClass, map<int, x3::variant<std::string, float>>>() = pairRule % ",";
-	using FieldType = x3::variant<field<std::string>, field<int>, field<double>>;
+// require doubles to have a decimal point to prefer ints over doubles
+x3::real_parser<double, x3::strict_real_policies<double>> const strict_double;
+x3::int_parser<int64_t, 16> const hex_int64;
+x3::uint_parser<uint64_t, 16> const hex_uint64;
 
-	auto stringFieldRule = x3::rule<class StringFieldClass, field<std::string>>() = x3::lit("string") >> stringRule >> -(x3::lit('=') >> stringConstantRule);
-	auto intFieldRule = x3::rule<class StringFieldClass, field<int>>() = x3::lit("int") >> stringRule >> -(x3::lit('=') >> x3::int_);
-	auto fieldRule = x3::rule<class FieldClass, x3::variant<field<std::string>, field<int>>>() = (stringFieldRule | intFieldRule);
+#ifdef DEFINE_RULE
+#error "DEFINE_RULE macro clashes with existing definition"
+#endif
+#define DEFINE_RULE(NAME, RULE, RESOLVED_TYPE) \
+	x3::rule<struct NAME##_class, RESOLVED_TYPE> const NAME = #NAME; \
+	auto const NAME##_def = RULE; \
+	struct NAME##_class : error_handler, x3::annotate_on_success {}; \
+	BOOST_SPIRIT_DEFINE(NAME)
 
-	//auto fieldRule = x3::rule<class FieldClass, x3::variant<field<std::string>, field<int>, field<double>>>() = (x3::lit("string") >> stringRule) | (x3::lit("int") >> x3::int_) | (x3::double_);
+// identifiers: names of namespaces, attributes, types, and fields
+DEFINE_RULE(ident,
+			(x3::ascii::alpha | x3::ascii::char_('_')) >> *(x3::ascii::alnum | x3::ascii::char_('_')),
+			std::string);
 
-	//auto fieldsRule = x3::rule<class FieldsClass, std::vector<FieldType>>() = fieldRule % ",";
+// parses references to other types in field declarations (parsed as identifiers) into ast::typeref
+DEFINE_RULE(typeref, ident, ast::typeref);
 
-	//string input = "string a = \"ab\\\"\"";
-	//string input = "string a";
-	string inputs[] = { "string a = \"bcd\" ", "string b", " int x", "int x = 10  " };
-	for (const auto& input : inputs) {
-		x3::variant<field<std::string>, field<int>> f;
-		//std::vector<FieldType> v;
+// quoted string constants with escapes. missing feature: "\uXXXX" which should parses into utf8
+DEFINE_RULE(string_constant,
+			(x3::lexeme['"' > *(
+				 "\\n" > x3::attr('\n')
+			   | "\\t" > x3::attr('\t')
+			   | "\\r" > x3::attr('\r')
+			   | "\\b" > x3::attr('\b')
+			   | "\\f" > x3::attr('\f')
+			   | "\\x" > x3::uint_parser<uint8_t, 16, 2, 2>() // bytes in hex: e.g. "\xff"; always two digits
+			   | "\\"  > x3::char_("\"\\/") // escaped double-quote, backslash, and slash
+			   | ~x3::char_('"')
+		   ) > '"']),
+			std::string);
+
+// constants and metadata
+DEFINE_RULE(boolean_constant, x3::bool_, bool);
+DEFINE_RULE(scalar,
+			boolean_constant | strict_double | ((x3::lit("0x") > hex_uint64) | x3::uint64) | x3::int64,
+			// as the parser evaluates rules from left-to-right, strict double must come before ints
+			// to prevent parsing e.g. "1.0" as an unsigned_constant 1 and leaving ".0" behind.
+			// unsigned_constant must come before int64 to parse "3" as unsigned int
+			ast::scalar);
+DEFINE_RULE(single_value, scalar | string_constant, ast::single_value);
+DEFINE_RULE(metadatum,
+			ident > -(x3::lit(':') > single_value),
+			ast::metadatum);
+DEFINE_RULE(metadata,
+			x3::lit('(') > (metadatum % ',') > ')',
+			ast::metadata);
+
+// includes, namespaces, attributes, root
+DEFINE_RULE(include,
+			x3::lit("include") > string_constant > ";",
+			ast::include);
+DEFINE_RULE(namespace_decl,
+			x3::lit("namespace") > ident > *(x3::lit('.') > ident) >> ';',
+			ast::namespace_decl);
+DEFINE_RULE(attribute_decl,
+			x3::lit("attribute") >> (
+				(x3::lit('"') > ident > x3::lit('"')) |
+				ident
+			),
+			ast::attribute_decl);
+/*
+// field declarations; currently missing hex default value support for scalars
+#ifdef DEFINE_FIELD_RULE
+#error "DEFINE_FIELD_RULE macro clashes with existing definition"
+#endif
+
+#define DEFINE_FIELD_RULE(FB_TYPE, CPP_TYPE, DEFAULT_VALUE_RULE) \
+	DEFINE_RULE(FB_TYPE##_fieldtype_part, \
+				ident >> ':' >> #FB_TYPE >> -(x3::lit('=') >> DEFAULT_VALUE_RULE) >> -metadata >> ';', \
+				CPP_TYPE);
+DEFINE_FIELD_RULE(bool, bool, x3::bool_);
+DEFINE_FIELD_RULE(int16, int16_t, x3::int16);
+DEFINE_FIELD_RULE(uint16, uint16_t, x3::uint16);
+DEFINE_FIELD_RULE(int32, int32_t, x3::int32);
+DEFINE_FIELD_RULE(uint32, uint32_t, x3::uint32);
+DEFINE_FIELD_RULE(int64, int64_t, x3::int64);
+DEFINE_FIELD_RULE(uint64, uint64_t, x3::uint64);
+DEFINE_FIELD_RULE(string, std::string, string_constant);
+#undef DEFINE_FIELD_RULE
+
+// Special handling: parse both [u]byte and [u]int8 as [u]int8_t
+DEFINE_RULE(byte_field_decl,
+			ident >> ':' >> (x3::lit("int8") | "byte") >> -(x3::lit('=') >> x3::int8) >> -metadata >> ';',
+			ast::field<int8_t>);
+DEFINE_RULE(ubyte_field_decl,
+			ident >> ':' >> (x3::lit("uint8") | "ubyte") >> -(x3::lit('=') >> x3::uint8) >> -metadata >> ';',
+			ast::field<uint8_t>);
+
+// field refering other types
+DEFINE_RULE(typeref_field_decl,
+			ident >> ':' >> typeref >> x3::attr(boost::optional<typeref>()) >> -metadata >> ';',
+			ast::field<ast::typeref>);
+
+DEFINE_RULE(nonvector_field_decl,
+			byte_field_decl |
+			ubyte_field_decl |
+			int16_field_decl |
+			uint16_field_decl |
+			int32_field_decl |
+			uint32_field_decl |
+			int64_field_decl |
+			uint64_field_decl |
+			string_field_decl |
+			typeref_field_decl,
+			ast::nonvector_field_decl);
+
+DEFINE_RULE(vector_field_decl,
+			x3::lit('[') >> nonvector_field_decl >> ']',
+*/
+
+#undef DEFINE_RULE
+
+} // namespace rule
+
+namespace test {
+
+// default optional indicates that we expect parse to fail (i.e. a parse error or a partial match)
+template <class AST>
+using case_type = std::pair<std::string, boost::optional<AST>>;
+
+template <class AST>
+using input_set_type = std::vector<case_type<AST>>;
+
+template <class Rule, class AST, class EQUALS_FN>
+bool run_ast_test(
+		const Rule& r,
+		const input_set_type<AST>& cases,
+		EQUALS_FN&& equals_fn) {
+	std::cout << "Testing " << r.name << " parser...\n";
+	unsigned failures = 0;
+	for (const auto& [input, expected] : cases) {
 		auto bg = input.begin();
 		auto ed = input.end();
-		auto success = x3::phrase_parse(bg, ed, fieldRule, x3::space, f) && bg == ed;
-		if (!success) cout << "Parsing not successful";
-		else {
-			boost::apply_visitor([](auto&& f_real) {
-				using ftype = std::decay_t<decltype(f_real)>;
-				cout << f_real.name << " ";
-				if constexpr (std::is_same_v<ftype, field<string>>) {
-					cout << "(string) ";
-				} else {
-					cout << "(int) ";
-				}
-				if (f_real.default_)
-					cout << "= " << *f_real.default_ << endl;
-				else
-					cout << "[no_default]" << endl;
-			}, f);
-			//cout << f.name << endl << (f.default_ ? *f.default_ : "[none]") << endl;
-			/*
-			for (auto const& e : v) {
-				boost::apply_visitor([](auto&& e_real) {
-					cout << typeid(std::decay_t<decltype(e_real)>).name() << ": " << e_real << endl;
-				}, e);
-			}
-			*/
+		auto output = AST();
+		using error_handler_type = x3::error_handler<decltype(bg)>;
+		error_handler_type error_handler(bg, ed, std::cerr);
+		auto const parser = x3::with<x3::error_handler_tag>(std::ref(error_handler))[r];
+		auto const parse_ok = x3::phrase_parse(bg, ed, parser, x3::space, output) && bg == ed;
+		auto test_ok = true;
+		auto value_match = true;
+		if (!expected) {
+			// parse should fail
+			test_ok = !parse_ok;
+		} else {
+			if (parse_ok)
+				value_match = equals_fn(*expected, output);
+			test_ok = parse_ok && value_match;
 		}
+		std::cout << "  "  << (test_ok ? "O " : "X ");
+		if (!test_ok)
+			std::cout << (!parse_ok ? "[parse_error] " : "")
+				  << (!value_match ? "[value_mismatch] " : "");
+		std::cout << std::quoted(input) << '\n';
+		failures += !test_ok;
 	}
-	/*
-    string input = "1 : 1.0, 2 : hello, 3 : world";
+	if (failures)
+		std::cout << failures << " cases failed\n";
+	return failures == 0;
+}
 
-    map<int, x3::variant<std::string, float>> variantMap;
+template <class Rule, class AST>
+bool run_ast_test(const Rule& r, const input_set_type<AST>& cases) {
+	return run_ast_test(r, cases, [](const AST& lhs, const AST& rhs) { return lhs == rhs; });
+}
 
-    auto bg = input.begin(), ed = input.end();
+input_set_type<std::string> const string_constant_input_set =
+	[]() -> input_set_type<std::string> {
+		using namespace std::string_literals;
+		return input_set_type<std::string> {
+			{ "\"\\n\"", "\n"s },
+			{ "\"\\t\"", "\t"s },
+			{ "\"\\r\"", "\r"s },
+			{ "\"\\b\"", "\b"s },
+			{ "\"\\f\"", "\f"s },
+			{ "\"\\\\\"", "\\"s },
+			{ "\"\\/\"", "/"s },
+			{ "\"\\\"\"", "\""s },
+			{ "\"\\x13\\xdc\"", "\x13\xdc"s },
+			{ "\"\\x1\"", {} }, // hex characters must contain two digits
+		};
+	}();
 
-    auto success = x3::phrase_parse(bg, ed, mapRule, x3::space, variantMap) && bg == ed;
+bool string_constant() {
+	return run_ast_test(rule::string_constant, string_constant_input_set);
+}
 
-    if (!success) cout<<"Parsing not succesfull";
+input_set_type<ast::scalar> const scalar_input_set = {
+	{ "1.0", ast::scalar(1.0) }, // double
+	{ "10", ast::scalar(uint64_t(10)) }, // uint64
+	{ "-10.0", ast::scalar(-10.0) }, // double
+	{ "-10", ast::scalar(int64_t(-10)) }, // int64
+	{ "-3", ast::scalar(int64_t(-3)) }, // int64
+	{ "0xfe", ast::scalar(uint64_t(0xfe)) }, // uint64
+	{ "0xDeadBeefDeadBeef", ast::scalar(uint64_t(0xdeadbeefdeadbeefUL)) }, // uint64
+	{ "0xdeadbeefdeadbeef", ast::scalar(uint64_t(0xdeadbeefdeadbeefUL)) }, // uint64
+	{ "-0xdeadbeefdeadbeef", boost::none }, // negative hex int64 not supported yet TODO: make this throw a parse error with message
+	{ "true", ast::scalar(true) }, // bool
+	{ "false", ast::scalar(false) }, // bool
+	{ "1", ast::scalar(uint64_t(1)) }, // uint64
+	{ "0", ast::scalar(uint64_t(0)) }, // uint64
+};
 
-	for (const auto& [k, v] : variantMap) {
-		cout << '"' << k << '"' << ", \"";
-		boost::apply_visitor([](auto&& v_real) {
-			cout << v_real << '"' << endl;
-		}, v);
+bool scalar() {
+	return run_ast_test(rule::scalar, scalar_input_set);
+}
+
+// reuse scalar/string_constant test input for single value test
+input_set_type<ast::single_value> const single_value_input_set =
+	[]() -> input_set_type<ast::single_value> {
+		auto ret = input_set_type<ast::single_value>();
+		for (auto const& [input, expected] : string_constant_input_set) {
+			if (expected) {
+				ret.emplace_back(input, *expected);
+			} else {
+				ret.emplace_back(input, boost::none);
+			}
+		}
+		for (auto const& [input, expected] : scalar_input_set) {
+			if (expected) {
+				ret.emplace_back(input, *expected);
+			} else {
+				ret.emplace_back(input, boost::none);
+			}
+		}
+		return ret;
+	}();
+
+bool single_value() {
+	return run_ast_test(rule::single_value, single_value_input_set);
+}
+
+input_set_type<ast::metadatum> const metadatum_input_set = []() {
+	using namespace std::string_literals;
+	auto ret = input_set_type<ast::metadatum>{
+		{ "attr", ast::metadatum{ "attr", boost::none }},
+		{ "abc: \"def\"", ast::metadatum{ "abc", ast::single_value("def"s) }},
+		{ "id: 42", ast::metadatum{ "id", ast::single_value(ast::scalar(uint64_t(42))) }},
+		{ "deprecated", ast::metadatum{ "deprecated", boost::none }},
+		{ "required", ast::metadatum{ "required", boost::none }},
+		{ "force_align: 16", ast::metadatum{ "force_align", ast::single_value(ast::scalar(uint64_t(16))) }},
+		{ "nested_flatbuffer: \"someTable\"", ast::metadatum{ "nested_flatbuffer", ast::single_value("someTable"s) }},
+	};
+	return ret;
+}();
+
+bool metadatum() {
+	return run_ast_test(
+			rule::metadatum,
+			metadatum_input_set,
+			[](const ast::metadatum& lhs, const ast::metadatum& rhs) {
+				auto const& [l_name, l_value] = lhs;
+				auto const& [r_name, r_value] = rhs;
+				if (l_name != r_name) {
+					std::cout << "attribute names mismatch: " << std::quoted(l_name) << " vs " << std::quoted(r_name) << "\n";
+					return false;
+				}
+				// not C++ parlance "lvalue", just left-hand value.
+				auto const l_value_set = bool(l_value);
+				auto const r_value_set = bool(r_value);
+				if (l_value_set != r_value_set) {
+					std::cout << "value availability mismatch: " << l_value_set << " vs " << r_value_set << "\n";
+					return false;
+				}
+				if (!l_value_set && !r_value_set) {
+					return true;
+				}
+				auto const& l_value_actual = *l_value;
+				auto const& r_value_actual = *r_value;
+				if (l_value_actual.get().which() != r_value_actual.get().which()) {
+					std::cout << "value variant type mismatch: " << l_value_actual.get().which() << " vs " << r_value_actual.get().which() << "\n";
+					return false;
+				}
+				if (l_value_actual.get() != r_value_actual.get()) {
+					std::cout << "unmatched variant values\n";
+					return false;
+				}
+				return true;
+		});
+}
+
+input_set_type<ast::metadata> const metadata_input_set = []() {
+	using namespace std::string_literals;
+	input_set_type<ast::metadata> ret = {
+		{
+			"(a: 10, b: \"c\", d, e: true)"s,
+			ast::metadata{
+				{ "a", ast::single_value(ast::scalar(uint64_t(10))) },
+				{ "b", ast::single_value("c"s) },
+				{ "d", boost::none },
+				{ "e", ast::single_value(ast::scalar(true)) }
+			},
+		},
+		{
+			// because x3 parser's parse-into-container class/function template uses map.insert() which does not
+			// update entries in-place, any insertions to the existing key are silently ignored, which isn't great.
+			"(a, b: 4, a: 3)",
+			ast::metadata{
+				{ "a", boost::none },
+				{ "b", ast::single_value(ast::scalar(uint64_t(4))) },
+			},
+		},
+		{
+			"(a: true, a: \"def\")",
+			ast::metadata{
+				{ "a", ast::single_value(ast::scalar(true)) },
+			},
+		},
+	};
+	return ret;
+}();
+
+bool metadata() {
+	return run_ast_test(rule::metadata, metadata_input_set);
+}
+
+} // namespace test
+
+int main() {
+	auto ok = true;
+	ok = ok && test::string_constant();
+	ok = ok && test::scalar();
+	ok = ok && test::single_value();
+	ok = ok && test::metadatum();
+	ok = ok && test::metadata();
+	if (!ok) {
+		std::cout << "TEST FAILED\n";
+		return 1;
+	} else {
+		std::cout << "TEST OK\n";
+		return 0;
 	}
-	*/
-
-    return 0;
 }

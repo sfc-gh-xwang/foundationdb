@@ -21,12 +21,12 @@ namespace client { namespace ast
     namespace x3 = boost::spirit::x3;
 
 	// inclusion of other flatbuffer schema: e.g. include "otherfile.fbs";
-	struct include {
+	struct includes {
 		std::string filename;
 	};
 
 	struct namespace_decl {
-		std::vector<std::string> namespace; // top to bottom, separated by '.'
+		std::vector<std::string> split; // top to bottom, separated by '.'
 	};
 
 	// when a table member is another table/struct or a struct member is another struct
@@ -68,20 +68,23 @@ namespace client { namespace ast
 		metadata_map metadata;
 	};
 
-	using singular_field = x3::variant<
-		field<int8_t>,
-		field<uint8_t>,
-		field<int16_t>,
-		field<uint16_t>,
-		field<int32_t>,
-		field<uint32_t>,
-		field<int64_t>,
-		field<uint64_t>,
-		field<float>,
-		field<double>,
-		field<std::string>,
-		field<type_ref>
-	>;
+	struct singular_field : x3::variant<
+			field<int8_t>,
+			field<uint8_t>,
+			field<int16_t>,
+			field<uint16_t>,
+			field<int32_t>,
+			field<uint32_t>,
+			field<int64_t>,
+			field<uint64_t>,
+			field<float>,
+			field<double>,
+			field<std::string>,
+			field<type_ref>
+		> {
+		using base_type::base_type;
+		using base_type::operator=;
+	};
 
 	struct vector_field : singular_field {
 		using base_type::base_type;
