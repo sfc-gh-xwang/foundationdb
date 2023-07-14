@@ -1,9 +1,9 @@
 /**
- * RKThroughputTracker.cpp
+ * ServerThroughputTracker.cpp
  */
 
-#include "fdbserver/Knobs.h"
 #include "fdbserver/IRKThroughputTracker.h"
+#include "fdbserver/Knobs.h"
 #include <boost/unordered/unordered_flat_map.hpp>
 
 namespace {
@@ -159,54 +159,4 @@ Optional<double> ServerThroughputTracker::getThroughput(UID storageServerId) con
 
 int ServerThroughputTracker::storageServersTracked() const {
 	return throughput.size();
-}
-
-ClientThroughputTracker::ThroughputSmoother::ThroughputSmoother()
-  : smoother(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME,
-             SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME),
-    lastUpdated(now()) {}
-
-void ClientThroughputTracker::ThroughputSmoother::addThroughput(double newThroughput) {
-	smoother.addDelta(newThroughput);
-	lastUpdated = now();
-}
-
-double ClientThroughputTracker::ThroughputSmoother::smoothRate() const {
-	return smoother.smoothRate();
-}
-
-bool ClientThroughputTracker::ThroughputSmoother::shouldForget(double expirationCheckInterval) const {
-	return (now() > lastUpdated + expirationCheckInterval &&
-	        smoother.smoothRate() < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD);
-}
-
-void ClientThroughputTracker::expireThrottlingIds() {
-	boost::unordered::erase_if(throughput, [expirationCheckInterval = this->expirationCheckInterval](auto const& kv) {
-		return kv.second.shouldForget(expirationCheckInterval);
-	});
-	lastExpirationCheck = now();
-}
-
-ClientThroughputTracker::ClientThroughputTracker(double expirationCheckInterval)
-  : lastExpirationCheck(now()),
-    expirationCheckInterval(expirationCheckInterval) {}
-
-ClientThroughputTracker::~ClientThroughputTracker() = default;
-
-double ClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
-	auto it = throughput.find(throttlingId);
-	if (it == throughput.end()) {
-		return 0.0;
-	} else {
-		return it->second.smoothRate();
-	}
-}
-
-void ClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {
-	for (auto const& [throttlingId, newPerThrottlingIdThroughput] : newThroughput) {
-		throughput[throttlingId].addThroughput(newPerThrottlingIdThroughput);
-	}
-	if (now() > lastExpirationCheck + expirationCheckInterval) {
-		expireThrottlingIds();
-	}
 }
