@@ -428,7 +428,9 @@ struct TLogData : NonCopyable {
 	    commitLatencyDist(Histogram::getHistogram("tLog"_sr, "commit"_sr, Histogram::Unit::milliseconds)),
 	    queueWaitLatencyDist(Histogram::getHistogram("tLog"_sr, "QueueWait"_sr, Histogram::Unit::milliseconds)),
 	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)),
-	    tlogPeekMsgCount(0), tlogEmptyPeekMsgCount(0), versionSyncMsgCount(0) {
+	    tlogPeekMsgCount(0),
+	    tlogEmptyPeekMsgCount(0),
+	    versionSyncMsgCount(0) {
 		cx = openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	}
 };
