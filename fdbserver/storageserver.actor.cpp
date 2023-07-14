@@ -2107,7 +2107,7 @@ inline void sampleNegativeWaitWindow(StorageServer* self, double versionArrivalT
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return;
 
-	double waitTime = now() - versionArrivalTime;
+	double waitTime = g_network->timer() - versionArrivalTime;
 	// TraceEvent("NegativeEmptyVersionSample", self->thisServerID)
 	//     .suppressFor(1)
 	//     .detail("Duration", waitTime); // remove before merge
@@ -12010,8 +12010,8 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					waitWindowTarget = 0;
 
 				// TODO: remove safetly cap?
-				if (waitWindowTarget > 0.05)
-					waitWindowTarget = 0.05;
+				// if (waitWindowTarget > 0.05)
+				// 	waitWindowTarget = 0.05;
 
 				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval
 				// knob
