@@ -93,26 +93,18 @@ targetTps = max(reservedTps, min(desiredTps, limitingTps));
 ```
 
 ### Limiting Rate Calculation
-In addition to throttlignId busyness statistics, the `StorageQueuingMetricsReply` messages sent from storage servers to the ratekeeper also contain metrics on the health of storage servers. The ratekeeper uses these metrics as part of its calculation of a global transaction rate (independent of tag throttling).
+In addition to throttlingId busyness statistics, the `StorageQueuingMetricsReply` messages sent from storage servers to the ratekeeper also contain metrics on the health of storage servers. The ratekeeper uses these metrics as part of its calculation of a global transaction rate (independent of tag throttling).
 
-The quota throttler also makes use of these metrics to compute a "throttling ratio" for each storage server. This throttling ratio is computed in `StorageQueueInfo::getThrottlingRatio`. The quota throttler uses the throttling ratio for each tracked storage server to compute a "limiting transaction rate" for each combination of storage server and tag.
+The quota throttler also makes use of these metrics to compute a "throttling ratio" for each storage server. This throttling ratio is computed in `StorageQueueInfo::getTagThrottlingRatio`. In the "healthy" case where no metrics are near saturation, the throttling ratio will be an empty `Optional<double>`, indicating that the storage server is not near saturation. If, on the other hand, the metrics indicate approaching saturation, the throttling ratio will indicate the ratio of current throughput the storage server can serve.
 
-In the "healthy" case where no metrics are near saturation, the throttling ratio will be an empty `Optional<double>`, indicating that the storage server is not near saturation. If, on the other hand, the metrics indicate approaching saturation, the throttling ratio will indicate the ratio of current throughput the storage server can serve. In this case, the quota throttler looks at the current cost being served by the storage server, multiplies it by the throttling ratio, and computes a limiting cost for the storage server. Among all throttlingIds using significant resources on this storage server, this limiting cost is divided up according to the relative total quotas allocated to these throttlingIds. Next, a transaction limit is determined for each throttlingId, based on how much the average transaction for the given throttlingId affects the given storage server.
-
-These per-throttlingId, per-storage limiting transaction rates are aggregated to compute per-throttlingId limiting transaction rates:
-
-```
-limitingTps(throttlingId) = min{limitingTps(throttlingId, storage) : all storage servers}
-```
-
-If the throttling ratio is empty for all storage servers affected by a throttlingId, then the per-throttlingId limiting TPS rate is also empty. In this case the target rate for this throttlingId is simply the desired rate.
-
-If an individual zone is unhealthy, it may cause the throttling ratio for storage servers in that zone to shoot up. This should not be misinterpretted as a workload issue that requires active throttling. Therefore, the zone with the worst throttling ratios is ignored when computing the limiting transaction rate for a throttlingId (similar to the calculation of the global transaction limit in `RKRateUpdater::update`).
+For each throttlingId, the limiting throttling ratio is computed as the minimum throttling ratio for all storage servers in the cluster to which the throttlingId is contributing significant workload (excluding the worst zone, to prevent throttling based on isolated hardware issues). This limiting throttling ratio is multiplied by the current transaction rate to give the limiting TPS for the throttlingId.
 
 ## Simulation Testing
 `TagThroughputQuota.toml` and `TenantGroupThroughputQuota.toml` provide simple end-to-end tests using the quota throttler. Quotas are set using the internal throughput quota API in the `ThroughputQuota` workload. This is run with the `Cycle` workload, which randomly tags transactions or assigns them to tenant groups. 
 
-In addition to this end-to-end test, there is a suite of unit tests with the `/QuotaThrottler/` prefix. These tests run in a mock environment, with mock storage servers providing simulated storage queue statistics and throttlingId busyness reports. Mock clients simulate workload on these mock storage servers, and get throttling feedback directly from a quota throttler which is monitoring the mock storage servers.
+The `ExpectStableThroughput.toml` test provides a more rigorous end-to-end test, asserting that throughput quotas are properly enforced over a long time period (20 simulated minutes).
+
+In addition to these end-to-end tests, there is a suite of unit tests with the `/QuotaThrottler/` prefix. These tests run in a mock environment, with mock storage servers providing simulated storage queue statistics and throttlingId busyness reports. Mock clients simulate workload on these mock storage servers, and get throttling feedback directly from a quota throttler which is monitoring the mock storage servers.
 
 In each unit test, the `monitorActor` function is used to periodically check whether or not a desired equilibrium state has been reached. If the desired state is reached and maintained for a sufficient period of time, the test passes. If the unit test is unable to reach this desired equilibrium state before a timeout, the test will fail. Commonly, the desired state is for the quota throttler to report a client rate sufficiently close to the desired rate specified as an input to the `rateIsNear` function.
 

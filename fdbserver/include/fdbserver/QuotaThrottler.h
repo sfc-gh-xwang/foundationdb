@@ -29,7 +29,7 @@ class QuotaThrottler {
 	PImpl<class QuotaThrottlerImpl> impl;
 
 public:
-	QuotaThrottler(IRKMetricsTracker const&, IRKThroughputQuotaCache const&, UID id, int maxFallingBehind);
+	QuotaThrottler(UID id, int maxFallingBehind, double limitingThreshold);
 	~QuotaThrottler();
 
 	// Poll the system keyspace looking for updates made through the tag throttling API
@@ -48,7 +48,7 @@ public:
 
 	// For each throttling ID and priority combination, return the throughput limit for the cluster
 	// (to be shared across all GRV proxies).
-	ThrottlingIdMap<double> getProxyRates(int numProxies);
+	ThrottlingIdMap<double> getProxyRates(int numProxies, IRKThroughputQuotaCache const&, IRKMetricsTracker const&);
 
 	// Update per-throttlingId throughput map based on new throughput statistics received
 	// from a GRV proxy.
