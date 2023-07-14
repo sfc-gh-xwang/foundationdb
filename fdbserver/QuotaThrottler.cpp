@@ -93,7 +93,8 @@ class QuotaThrottlerImpl {
 		explicit PerThrottlingIdStatistics()
 		  : transactionCounter(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,
 		                       SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME),
-		    targetRate(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME), transactionsLastAdded(now()),
+		    targetRate(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
+		    transactionsLastAdded(now()),
 		    lastLogged(0) {}
 
 		void addTransactions(int count) {
@@ -248,7 +249,9 @@ class QuotaThrottlerImpl {
 
 public:
 	QuotaThrottlerImpl(UID id, int maxFallingBehind, double limitingThreshold)
-	  : id(id), maxFallingBehind(maxFallingBehind), limitingThreshold(limitingThreshold) {
+	  : id(id),
+	    maxFallingBehind(maxFallingBehind),
+	    limitingThreshold(limitingThreshold) {
 		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
 			clientThroughputTracker = ClientThroughputTracker();
 		}
@@ -318,9 +321,8 @@ public:
 	void updateThrottling(Map<UID, StorageQueueInfo> const& sqInfos) { serverThroughputTracker.update(sqInfos); }
 
 	void removeExpiredThrottlingIds() {
-		boost::unordered::erase_if(throttlingStatistics, [](auto const& kv){
-			return !kv.second.recentTransactionsAdded();
-		});
+		boost::unordered::erase_if(throttlingStatistics,
+		                           [](auto const& kv) { return !kv.second.recentTransactionsAdded(); });
 	}
 
 	Future<Void> removeExpiredThrottlingIdsActor() {
