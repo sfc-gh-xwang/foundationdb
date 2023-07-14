@@ -25,15 +25,9 @@ bool ClientThroughputTracker::ThroughputSmoother::shouldForget(double expiration
 }
 
 void ClientThroughputTracker::expireThrottlingIds() {
-	auto it = throughput.begin();
-	while (it != throughput.end()) {
-		auto const& [_, throughputSmoother] = *it;
-		if (throughputSmoother.shouldForget(expirationCheckInterval)) {
-			it = throughput.erase(it);
-		} else {
-			++it;
-		}
-	}
+	boost::unordered::erase_if(throughput, [expirationCheckInterval = this->expirationCheckInterval](auto const& kv) {
+		return kv.second.shouldForget(expirationCheckInterval);
+	});
 	lastExpirationCheck = now();
 }
 
@@ -50,6 +44,16 @@ double ClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId) 
 	} else {
 		return it->second.smoothRate();
 	}
+}
+
+std::unordered_set<ThrottlingId> ClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	std::unordered_set<ThrottlingId> result;
+	for (auto const& [throttlingId, throughputSmoother] : throughput) {
+		if (throughputSmoother.smoother.smoothRate() > threshold) {
+			result.insert(throttlingId);
+		}
+	}
+	return result;
 }
 
 void ClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {

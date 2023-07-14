@@ -19,7 +19,6 @@
  */
 
 #include "fdbclient/FDBTypes.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/ThrottlingId.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"

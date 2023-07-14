@@ -803,6 +803,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( GLOBAL_TAG_THROTTLING_TRACE_INTERVAL,                  5.0 );
 	init( GLOBAL_TAG_THROTTLING_REPORT_ONLY,                   false );
 	init( GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD,  4096.0 );
+	init( THROUGHPUT_QUOTA_TRACK_THRESHOLD,                   409600 );
+	init( THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,                      10 ); if(randomize && BUGGIFY) THROUGHPUT_QUOTA_CACHE_BATCH_SIZE = deterministicRandom()->randomInt(1, 20);
+	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL,      5.0 );
+	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD,          60.0 );
 	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,         409600.0 );
 	init( CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL,   5.0 );
 
@@ -1167,6 +1171,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_MAX_BLOB_METADATA_REQUEST_VERSION,               1);
 	init( REST_KMS_CURRENT_CIPHER_REQUEST_VERSION,                  1);
 	init( REST_KMS_MAX_CIPHER_REQUEST_VERSION,                      1);
+	init( REST_SIM_KMS_VAULT_DIR,                                  "");
+	init( REST_KMS_STABILITY_CHECK_INTERVAL,                      5.0);
 
 	init( CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO,                0.5 ); if( randomize && BUGGIFY ) CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO = deterministicRandom()->random01();
 

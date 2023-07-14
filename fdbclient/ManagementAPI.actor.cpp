@@ -47,12 +47,46 @@
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
+namespace {
+
 bool isInteger(const std::string& s) {
 	if (s.empty())
 		return false;
 	char* p;
 	strtol(s.c_str(), &p, 10);
 	return (*p == 0);
+}
+
+} // namespace
+
+// Check if there's any storage engine params change,
+// storage engine params changes always set the storage_engine explicitly even it's not changed.
+// When there's no params specified, it will clear any existing params
+// return false if not supported params are found
+bool checkForStorageEngineParamsChange(const std::map<std::string, std::string>& m,
+                                       const std::string& engine_type,
+                                       KeyRef engine_prefix,
+                                       bool& paramsChange) {
+	if (m.contains(configKeysPrefix.toString() + engine_type)) {
+		paramsChange = true;
+		auto storeType =
+		    static_cast<KeyValueStoreType::StoreType>(std::stoi(m.at(configKeysPrefix.toString() + engine_type)));
+		auto& supportedParamsMap = StorageEngineParamsFactory::getSupportedParams(storeType);
+
+		for (const auto& [k, v] : m) {
+			if (!KeyRef(k).startsWith(engine_prefix))
+				continue;
+			std::string paramKeyStr = KeyRef(k).removePrefix(engine_prefix).toString();
+			if (!supportedParamsMap.contains(paramKeyStr)) {
+				fmt::print("Warning: {} is not a supported parameter for {} {}.\n",
+				           paramKeyStr,
+				           engine_type,
+				           KeyValueStoreType::getStoreTypeStr(storeType));
+				return false;
+			}
+		}
+	}
+	return true;
 }
 
 // Defines the mapping between configuration names (as exposed by fdbcli, buildConfiguration()) and actual configuration
@@ -236,21 +270,23 @@ std::map<std::string, std::string> configForToken(std::string const& mode) {
 			}
 		}
 
-		if (key == "storage_engine" || key == "log_engine") {
+		if (key == "storage_engine" || key == "log_engine" || key == "tss_storage_engine") {
 			StringRef s = value;
-
-			// Parse as engine_name[:p=v]... to handle future storage engine params
 			Value engine = s.eat(":");
-			std::map<Key, Value> params;
-			while (!s.empty()) {
-				params[s.eat("=")] = s.eat(":");
-			}
 
 			try {
 				out[p + key] = format("%d", KeyValueStoreType::fromString(engine.toString()).storeType());
 			} catch (Error& e) {
 				printf("Error: Invalid value for %s (%s): %s\n", key.c_str(), value.c_str(), e.what());
 			}
+
+			// Parse as engine_name[:p=v]... to handle future storage engine params
+			while (!s.empty()) {
+				auto k = s.eat("=");
+				auto v = s.eat(":");
+				out[p + fmt::format("{}_params/{}", key, k.toString())] = v.toString();
+			}
+
 			return out;
 		}
 
