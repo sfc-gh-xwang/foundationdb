@@ -27,6 +27,8 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/QuotaThrottler.h"
 
+#include <boost/unordered/unordered_flat_map.hpp>
+
 #include <limits>
 
 #include "flow/actorcompiler.h" // must be last include
@@ -65,7 +67,7 @@
 
 class QuotaThrottlerImpl {
 	template <class K, class V, class H>
-	static Optional<V> tryGet(std::unordered_map<K, V, H> const& m, K const& k) {
+	static Optional<V> tryGet(boost::unordered::unordered_flat_map<K, V, H> const& m, K const& k) {
 		auto it = m.find(k);
 		if (it == m.end()) {
 			return {};
@@ -383,18 +385,18 @@ public:
 	void updateThrottling(Map<UID, StorageQueueInfo> const& sqInfos) { serverThroughputTracker.update(sqInfos); }
 
 	void removeExpiredThrottlingIds() {
-		for (auto it = throttlingStatistics.begin(); it != throttlingStatistics.end();) {
-			const auto& [throttlingId, stats] = *it;
+		boost::unordered::erase_if(throttlingStatistics, [&](const auto& kv) {
+			const auto& [throttlingId, stats] = kv;
 			if (!stats.recentTransactionsAdded()) {
 				serverThroughputTracker.removeThrottlingId(throttlingId);
 				if (clientThroughputTracker.present()) {
 					clientThroughputTracker.get().removeThrottlingId(throttlingId);
 				}
-				it = throttlingStatistics.erase(it);
+				return true;
 			} else {
-				++it;
+				return false;
 			}
-		}
+		});
 	}
 
 	Future<Void> removeExpiredThrottlingIdsActor() {
