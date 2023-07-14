@@ -65,10 +65,15 @@ struct ConsistencyScanStats {
 	int targetRate = 0;
 
 	explicit ConsistencyScanStats(UID id, double interval)
-	  : cc("ConsistencyScanStats", id.toString()), logicalBytesScanned("LogicalBytesScanned", cc),
-	    replicatedBytesRead("ReplicatedBytesRead", cc), requests("Requests", cc), failedRequests("FailedRequests", cc),
-	    scanLoops("ScanLoops", cc), inconsistencies("Inconsistencies", cc),
-	    databasePollSuccesses("DatabasePollSuccesses", cc), databasePollErrors("DatabasePollErrors", cc) {
+	  : cc("ConsistencyScanStats", id.toString()),
+	    logicalBytesScanned("LogicalBytesScanned", cc),
+	    replicatedBytesRead("ReplicatedBytesRead", cc),
+	    requests("Requests", cc),
+	    failedRequests("FailedRequests", cc),
+	    scanLoops("ScanLoops", cc),
+	    inconsistencies("Inconsistencies", cc),
+	    databasePollSuccesses("DatabasePollSuccesses", cc),
+	    databasePollErrors("DatabasePollErrors", cc) {
 		specialCounter(cc, "WaitingBetweenRounds", [this]() { return this->waitingBetweenRounds; });
 		specialCounter(cc, "TargetRate", [this]() { return this->targetRate; });
 		logger = cc.traceCounters("ConsistencyScanMetrics", id, interval, "ConsistencyScanMetrics");
@@ -84,7 +89,9 @@ struct ConsistencyScanMemoryState : public ReferenceCounted<ConsistencyScanMemor
 	ConsistencyScanStats stats;
 
 	explicit ConsistencyScanMemoryState(Reference<AsyncVar<ServerDBInfo> const> dbInfo, UID csId)
-	  : csId(csId), dbInfo(dbInfo), stats(csId, SERVER_KNOBS->WORKER_LOGGING_INTERVAL) {}
+	  : csId(csId),
+	    dbInfo(dbInfo),
+	    stats(csId, SERVER_KNOBS->WORKER_LOGGING_INTERVAL) {}
 };
 
 // TODO: test the test and write a canary key that the storage servers intentionally get wrong
@@ -868,6 +875,8 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 								}
 							}
 
+							// throttle always includes replicated bytes read in total read bytes for throttling
+							totalReadBytesFromStorageServers += replicatedBytesReadThisLoop;
 							if (!failedRequest.present() && !newErrors) {
 								ASSERT(firstValidServer.present());
 								GetKeyValuesReply rangeResult = keyValueFutures[firstValidServer.get()].get().get();
@@ -926,7 +935,7 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 								ASSERT(failedRequest.get().code() != error_code_operation_cancelled);
 								// don't include replicated bytes this loop in metrics to avoid getting replication
 								// factor wrong, but make sure we stil throttle based on it
-								totalReadBytesFromStorageServers += replicatedBytesReadThisLoop + 100000;
+								totalReadBytesFromStorageServers += 100000;
 								break;
 							}
 
@@ -953,7 +962,6 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 						memState->stats.logicalBytesScanned += logicalBytesRead;
 						memState->stats.replicatedBytesRead += replicatedBytesRead;
 
-						totalReadBytesFromStorageServers += replicatedBytesRead;
 						if (DEBUG_SCAN_PROGRESS) {
 							TraceEvent(SevDebug, "ConsistencyScanProgressScanRangeEnd", memState->csId)
 							    .detail("BytesRead", logicalBytesRead)
@@ -1807,7 +1815,10 @@ ACTOR Future<Void> checkDataConsistency(Database cx,
 
 							if (e.code() == error_code_request_maybe_delivered) {
 								// SS in the team may be removed and we get this error.
-								*success = false;
+								testFailure("Storage got maybe delivered during data check",
+								            performQuiescentChecks,
+								            success,
+								            failureIsError);
 								return Void();
 							}
 							// All shards should be available in quiscence

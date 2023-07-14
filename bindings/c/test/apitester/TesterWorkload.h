@@ -221,7 +221,9 @@ protected:
 class WorkloadManager {
 public:
 	WorkloadManager(ITransactionExecutor* txExecutor, IScheduler* scheduler)
-	  : txExecutor(txExecutor), scheduler(scheduler), numWorkloadsFailed(0) {}
+	  : txExecutor(txExecutor),
+	    scheduler(scheduler),
+	    numWorkloadsFailed(0) {}
 
 	// Open named pipes for communication with the test controller
 	void openControlPipes(const std::string& inputPipeName, const std::string& outputPipeName);

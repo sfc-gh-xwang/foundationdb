@@ -72,11 +72,20 @@ struct GranuleMutationRef {
 
 	GranuleMutationRef() {}
 	GranuleMutationRef(MutationRef::Type t, Version v, StringRef param1, StringRef param2)
-	  : type(t), version(v), param1(param1), param2(param2) {}
+	  : type(t),
+	    version(v),
+	    param1(param1),
+	    param2(param2) {}
 	GranuleMutationRef(Arena& to, MutationRef::Type t, Version v, StringRef param1, StringRef param2)
-	  : type(t), version(v), param1(to, param1), param2(to, param2) {}
+	  : type(t),
+	    version(v),
+	    param1(to, param1),
+	    param2(to, param2) {}
 	GranuleMutationRef(Arena& to, const GranuleMutationRef& from)
-	  : type(from.type), version(from.version), param1(to, from.param1), param2(to, from.param2) {}
+	  : type(from.type),
+	    version(from.version),
+	    param1(to, from.param1),
+	    param2(to, from.param2) {}
 };
 #pragma pack(pop)
 
@@ -92,7 +101,12 @@ struct GranuleMaterializeStats {
 	int32_t rowsUpdated;
 
 	GranuleMaterializeStats()
-	  : inputBytes(0), outputBytes(0), snapshotRows(0), rowsCleared(0), rowsInserted(0), rowsUpdated(0) {}
+	  : inputBytes(0),
+	    outputBytes(0),
+	    snapshotRows(0),
+	    rowsCleared(0),
+	    rowsInserted(0),
+	    rowsUpdated(0) {}
 };
 
 struct BlobGranuleCipherKeysMeta {
@@ -116,9 +130,15 @@ struct BlobGranuleCipherKeysMeta {
 	                          const EncryptCipherKeyCheckValue hBaseCipherKCV,
 	                          const EncryptCipherRandomSalt hSalt,
 	                          const std::string& iv)
-	  : textDomainId(tDomainId), textBaseCipherId(tBaseCipherId), textBaseCipherKCV(tBaseCipherKCV), textSalt(tSalt),
-	    headerDomainId(hDomainId), headerBaseCipherId(hBaseCipherId), headerBaseCipherKCV(hBaseCipherKCV),
-	    headerSalt(hSalt), ivStr(iv) {}
+	  : textDomainId(tDomainId),
+	    textBaseCipherId(tBaseCipherId),
+	    textBaseCipherKCV(tBaseCipherKCV),
+	    textSalt(tSalt),
+	    headerDomainId(hDomainId),
+	    headerBaseCipherId(hBaseCipherId),
+	    headerBaseCipherKCV(hBaseCipherKCV),
+	    headerSalt(hSalt),
+	    ivStr(iv) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -194,6 +214,8 @@ struct BlobGranuleFileEncryptionKeys {
 	Reference<BlobCipherKey> headerCipherKey;
 };
 
+BlobGranuleFileEncryptionKeys getEncryptBlobCipherKey(const BlobGranuleCipherKeysCtx& cipherKeysCtx);
+
 struct BlobGranuleCipherKeysMetaRef {
 	EncryptCipherDomainId textDomainId;
 	EncryptCipherBaseKeyId textBaseCipherId;
@@ -205,9 +227,12 @@ struct BlobGranuleCipherKeysMetaRef {
 
 	BlobGranuleCipherKeysMetaRef() {}
 	BlobGranuleCipherKeysMetaRef(Arena& to, BlobGranuleCipherKeysMeta cipherKeysMeta)
-	  : textDomainId(cipherKeysMeta.textDomainId), textBaseCipherId(cipherKeysMeta.textBaseCipherId),
-	    textSalt(cipherKeysMeta.textSalt), headerDomainId(cipherKeysMeta.headerDomainId),
-	    headerBaseCipherId(cipherKeysMeta.headerBaseCipherId), headerSalt(cipherKeysMeta.headerSalt),
+	  : textDomainId(cipherKeysMeta.textDomainId),
+	    textBaseCipherId(cipherKeysMeta.textBaseCipherId),
+	    textSalt(cipherKeysMeta.textSalt),
+	    headerDomainId(cipherKeysMeta.headerDomainId),
+	    headerBaseCipherId(cipherKeysMeta.headerBaseCipherId),
+	    headerSalt(cipherKeysMeta.headerSalt),
 	    ivRef(StringRef(to, cipherKeysMeta.ivStr)) {}
 
 	template <class Ar>
@@ -238,7 +263,10 @@ struct BlobFilePointerRef {
 	                   int64_t length,
 	                   int64_t fullFileLength,
 	                   Version fileVersion)
-	  : filename(to, filename), offset(offset), length(length), fullFileLength(fullFileLength),
+	  : filename(to, filename),
+	    offset(offset),
+	    length(length),
+	    fullFileLength(fullFileLength),
 	    fileVersion(fileVersion) {}
 
 	BlobFilePointerRef(Arena& to,
@@ -248,8 +276,12 @@ struct BlobFilePointerRef {
 	                   int64_t fullFileLength,
 	                   Version fileVersion,
 	                   Optional<BlobGranuleCipherKeysCtx> ciphKeysCtx)
-	  : filename(to, filename), offset(offset), length(length), fullFileLength(fullFileLength),
-	    fileVersion(fileVersion), cipherKeysCtx(ciphKeysCtx) {}
+	  : filename(to, filename),
+	    offset(offset),
+	    length(length),
+	    fullFileLength(fullFileLength),
+	    fileVersion(fileVersion),
+	    cipherKeysCtx(ciphKeysCtx) {}
 
 	BlobFilePointerRef(Arena& to,
 	                   const std::string& filename,
@@ -258,7 +290,10 @@ struct BlobFilePointerRef {
 	                   int64_t fullFileLength,
 	                   Version fileVersion,
 	                   Optional<BlobGranuleCipherKeysMeta> ciphKeysMeta)
-	  : filename(to, filename), offset(offset), length(length), fullFileLength(fullFileLength),
+	  : filename(to, filename),
+	    offset(offset),
+	    length(length),
+	    fullFileLength(fullFileLength),
 	    fileVersion(fileVersion) {
 		if (ciphKeysMeta.present()) {
 			cipherKeysMetaRef = BlobGranuleCipherKeysMetaRef(to, ciphKeysMeta.get());
@@ -357,7 +392,9 @@ struct GranuleHistory {
 	GranuleHistory() {}
 
 	GranuleHistory(KeyRange range, Version version, Standalone<BlobGranuleHistoryValue> value)
-	  : range(range), version(version), value(value) {}
+	  : range(range),
+	    version(version),
+	    value(value) {}
 };
 
 // A manifest to assist full fdb restore from blob granule files
@@ -388,7 +425,8 @@ struct BlobRangeChangeLogRef {
 	BlobRangeChangeLogRef(KeyRangeRef range, ValueRef value) : range(range), value(value) {}
 	BlobRangeChangeLogRef(Arena& to, KeyRangeRef range, ValueRef value) : range(to, range), value(to, value) {}
 	BlobRangeChangeLogRef(Arena& to, const BlobRangeChangeLogRef& from)
-	  : range(to, from.range), value(to, from.value) {}
+	  : range(to, from.range),
+	    value(to, from.value) {}
 
 	int expectedSize() const { return range.expectedSize() + value.expectedSize(); }
 

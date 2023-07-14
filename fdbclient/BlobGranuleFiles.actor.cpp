@@ -81,9 +81,13 @@ struct ValueAndVersionRef {
 	explicit ValueAndVersionRef(Version version) : version(version), op(MutationRef::Type::ClearRange) {}
 	// create set
 	explicit ValueAndVersionRef(Version version, ValueRef value)
-	  : version(version), op(MutationRef::Type::SetValue), value(value) {}
+	  : version(version),
+	    op(MutationRef::Type::SetValue),
+	    value(value) {}
 	ValueAndVersionRef(Arena& arena, const ValueAndVersionRef& copyFrom)
-	  : version(copyFrom.version), op(copyFrom.op), value(arena, copyFrom.value) {}
+	  : version(copyFrom.version),
+	    op(copyFrom.op),
+	    value(arena, copyFrom.value) {}
 
 	bool isSet() const { return op == MutationRef::SetValue; }
 	bool isClear() const { return op == MutationRef::ClearRange; }
@@ -115,16 +119,26 @@ struct ParsedDeltaBoundaryRef {
 	// op constructor
 	ParsedDeltaBoundaryRef() {}
 	explicit ParsedDeltaBoundaryRef(KeyRef key, bool clearAfter, const ValueAndVersionRef& valueAndVersion)
-	  : key(key), op(valueAndVersion.op), value(valueAndVersion.value), clearAfter(clearAfter) {}
+	  : key(key),
+	    op(valueAndVersion.op),
+	    value(valueAndVersion.value),
+	    clearAfter(clearAfter) {}
 	// noop constructor
 	explicit ParsedDeltaBoundaryRef(KeyRef key, bool clearAfter)
-	  : key(key), op(MutationRef::Type::NoOp), clearAfter(clearAfter) {}
+	  : key(key),
+	    op(MutationRef::Type::NoOp),
+	    clearAfter(clearAfter) {}
 	// from snapshot set constructor
 	explicit ParsedDeltaBoundaryRef(const KeyValueRef& kv)
-	  : key(kv.key), op(MutationRef::Type::SetValue), value(kv.value), clearAfter(false) {}
+	  : key(kv.key),
+	    op(MutationRef::Type::SetValue),
+	    value(kv.value),
+	    clearAfter(false) {}
 
 	ParsedDeltaBoundaryRef(Arena& arena, const ParsedDeltaBoundaryRef& copyFrom)
-	  : key(arena, copyFrom.key), op(copyFrom.op), clearAfter(copyFrom.clearAfter) {
+	  : key(arena, copyFrom.key),
+	    op(copyFrom.op),
+	    clearAfter(copyFrom.clearAfter) {
 		if (copyFrom.isSet()) {
 			value = StringRef(arena, copyFrom.value);
 		}
@@ -146,7 +160,9 @@ struct DeltaBoundaryRef {
 
 	DeltaBoundaryRef() {}
 	DeltaBoundaryRef(Arena& ar, const DeltaBoundaryRef& copyFrom)
-	  : key(ar, copyFrom.key), values(ar, copyFrom.values), clearVersion(copyFrom.clearVersion) {}
+	  : key(ar, copyFrom.key),
+	    values(ar, copyFrom.values),
+	    clearVersion(copyFrom.clearVersion) {}
 
 	int totalSize() { return sizeof(DeltaBoundaryRef) + key.expectedSize() + values.expectedSize(); }
 	int expectedSize() const { return key.expectedSize() + values.expectedSize(); }
@@ -195,29 +211,6 @@ struct ChildBlockPointerRef {
 };
 
 namespace {
-BlobGranuleFileEncryptionKeys getEncryptBlobCipherKey(const BlobGranuleCipherKeysCtx cipherKeysCtx) {
-	BlobGranuleFileEncryptionKeys eKeys;
-
-	// Cipher key reconstructed is 'never' inserted into BlobCipherKey cache, choose 'neverExpire'
-	eKeys.textCipherKey = makeReference<BlobCipherKey>(cipherKeysCtx.textCipherKey.encryptDomainId,
-	                                                   cipherKeysCtx.textCipherKey.baseCipherId,
-	                                                   cipherKeysCtx.textCipherKey.baseCipher.begin(),
-	                                                   cipherKeysCtx.textCipherKey.baseCipher.size(),
-	                                                   cipherKeysCtx.textCipherKey.baseCipherKCV,
-	                                                   cipherKeysCtx.textCipherKey.salt,
-	                                                   std::numeric_limits<int64_t>::max(),
-	                                                   std::numeric_limits<int64_t>::max());
-	eKeys.headerCipherKey = makeReference<BlobCipherKey>(cipherKeysCtx.headerCipherKey.encryptDomainId,
-	                                                     cipherKeysCtx.headerCipherKey.baseCipherId,
-	                                                     cipherKeysCtx.headerCipherKey.baseCipher.begin(),
-	                                                     cipherKeysCtx.headerCipherKey.baseCipher.size(),
-	                                                     cipherKeysCtx.headerCipherKey.baseCipherKCV,
-	                                                     cipherKeysCtx.headerCipherKey.salt,
-	                                                     std::numeric_limits<int64_t>::max(),
-	                                                     std::numeric_limits<int64_t>::max());
-
-	return eKeys;
-}
 
 void validateEncryptionHeaderDetails(const BlobGranuleFileEncryptionKeys& eKeys,
                                      const BlobCipherEncryptHeader& header,
@@ -313,8 +306,9 @@ struct IndexBlockRef {
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
 		    BlobCipherMetrics::BLOB_GRANULE);
 		BlobCipherEncryptHeaderRef headerRef;
-		buffer =
-		    encryptor.encrypt(serializedBuff.contents().begin(), serializedBuff.contents().size(), &headerRef, arena);
+		buffer = serializedBuff;
+		arena.dependsOn(serializedBuff.arena());
+		encryptor.encryptInplace(mutateString(buffer), buffer.size(), &headerRef);
 		Standalone<StringRef> serialized = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
 		arena.dependsOn(serialized.arena());
 		encryptHeaderRef = serialized;
@@ -340,7 +334,8 @@ struct IndexBlockRef {
 		validateEncryptionHeaderDetails(eKeys, headerRef, cipherKeysCtx.ivRef);
 		DecryptBlobCipherAes256Ctr decryptor(
 		    eKeys.textCipherKey, eKeys.headerCipherKey, cipherKeysCtx.ivRef.begin(), BlobCipherMetrics::BLOB_GRANULE);
-		decrypted = decryptor.decrypt(idxRef.buffer.begin(), idxRef.buffer.size(), headerRef, arena);
+		decrypted = StringRef(idxRef.buffer.begin(), idxRef.buffer.size());
+		decryptor.decryptInplace(mutateString(decrypted), decrypted.size(), headerRef);
 
 		if (BG_ENCRYPT_COMPRESS_DEBUG) {
 			XXH64_hash_t chksum = XXH3_64bits(decrypted.begin(), decrypted.size());
@@ -434,7 +429,7 @@ struct IndexBlobGranuleFileChunkRef {
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
 		    BlobCipherMetrics::BLOB_GRANULE);
 		BlobCipherEncryptHeaderRef headerRef;
-		chunkRef.buffer = encryptor.encrypt(chunkRef.buffer.begin(), chunkRef.buffer.size(), &headerRef, arena);
+		encryptor.encryptInplace(mutateString(chunkRef.buffer), chunkRef.buffer.size(), &headerRef);
 		Standalone<StringRef> serialized = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
 		arena.dependsOn(serialized.arena());
 		chunkRef.encryptHeaderRef = serialized;
@@ -464,7 +459,8 @@ struct IndexBlobGranuleFileChunkRef {
 		validateEncryptionHeaderDetails(eKeys, headerRef, cipherKeysCtx.ivRef);
 		DecryptBlobCipherAes256Ctr decryptor(
 		    eKeys.textCipherKey, eKeys.headerCipherKey, cipherKeysCtx.ivRef.begin(), BlobCipherMetrics::BLOB_GRANULE);
-		decrypted = decryptor.decrypt(chunkRef.buffer.begin(), chunkRef.buffer.size(), headerRef, arena);
+		decrypted = StringRef(chunkRef.buffer.begin(), chunkRef.buffer.size());
+		decryptor.decryptInplace(mutateString(decrypted), decrypted.size(), headerRef);
 
 		if (BG_ENCRYPT_COMPRESS_DEBUG) {
 			XXH64_hash_t chksum = XXH3_64bits(decrypted.begin(), decrypted.size());
@@ -1752,6 +1748,8 @@ Standalone<StringRef> getBaseCipher() {
 
 const Standalone<StringRef> encryptBaseCipher = getBaseCipher();
 
+} // namespace
+
 BlobGranuleCipherKeysCtx getCipherKeysCtx(Arena& arena) {
 	BlobGranuleCipherKeysCtx cipherKeysCtx;
 	const EncryptCipherKeyCheckValue cipherKCV =
@@ -1774,8 +1772,6 @@ BlobGranuleCipherKeysCtx getCipherKeysCtx(Arena& arena) {
 
 	return cipherKeysCtx;
 }
-
-} // namespace
 
 TEST_CASE("/blobgranule/files/applyDelta") {
 	printf("Testing blob granule delta applying\n");

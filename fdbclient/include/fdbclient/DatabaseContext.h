@@ -60,7 +60,8 @@ public:
 private:
 	DatabaseContext* cx;
 	StorageServerInfo(DatabaseContext* cx, StorageServerInterface const& interf, LocalityData const& locality)
-	  : ReferencedInterface<StorageServerInterface>(interf, locality), cx(cx) {}
+	  : ReferencedInterface<StorageServerInterface>(interf, locality),
+	    cx(cx) {}
 };
 
 struct LocationInfo : MultiInterface<ReferencedInterface<StorageServerInterface>>, FastAllocated<LocationInfo> {
@@ -68,7 +69,8 @@ struct LocationInfo : MultiInterface<ReferencedInterface<StorageServerInterface>
 	explicit LocationInfo(const std::vector<Reference<ReferencedInterface<StorageServerInterface>>>& v)
 	  : Locations(v) {}
 	LocationInfo(const std::vector<Reference<ReferencedInterface<StorageServerInterface>>>& v, bool hasCaches)
-	  : Locations(v), hasCaches(hasCaches) {}
+	  : Locations(v),
+	    hasCaches(hasCaches) {}
 	LocationInfo(const LocationInfo&) = delete;
 	LocationInfo(LocationInfo&&) = delete;
 	LocationInfo& operator=(const LocationInfo&) = delete;
@@ -101,8 +103,15 @@ struct WatchParameters : public ReferenceCounted<WatchParameters> {
 	                TaskPriority taskID,
 	                Optional<UID> debugID,
 	                UseProvisionalProxies useProvisionalProxies)
-	  : tenant(tenant), key(key), value(value), version(version), throttlingTag(throttlingTag),
-	    spanContext(spanContext), taskID(taskID), debugID(debugID), useProvisionalProxies(useProvisionalProxies) {}
+	  : tenant(tenant),
+	    key(key),
+	    value(value),
+	    version(version),
+	    throttlingTag(throttlingTag),
+	    spanContext(spanContext),
+	    taskID(taskID),
+	    debugID(debugID),
+	    useProvisionalProxies(useProvisionalProxies) {}
 };
 
 class WatchMetadata : public ReferenceCounted<WatchMetadata> {
@@ -185,9 +194,13 @@ struct ChangeFeedCacheRange {
 	KeyRange range;
 
 	ChangeFeedCacheRange(Key tenantPrefix, Key rangeId, KeyRange range)
-	  : tenantPrefix(tenantPrefix), rangeId(rangeId), range(range) {}
+	  : tenantPrefix(tenantPrefix),
+	    rangeId(rangeId),
+	    range(range) {}
 	ChangeFeedCacheRange(std::tuple<Key, Key, KeyRange> range)
-	  : tenantPrefix(std::get<0>(range)), rangeId(std::get<1>(range)), range(std::get<2>(range)) {}
+	  : tenantPrefix(std::get<0>(range)),
+	    rangeId(std::get<1>(range)),
+	    range(std::get<2>(range)) {}
 
 	bool operator==(const ChangeFeedCacheRange& rhs) const {
 		return tenantPrefix == rhs.tenantPrefix && rangeId == rhs.rangeId && range == rhs.range;
@@ -594,7 +607,8 @@ public:
 	Counter feedPops;
 	Counter feedPopsFallback;
 
-	DDSketch<double> latencies, readLatencies, commitLatencies, GRVLatencies, mutationsPerCommit, bytesPerCommit;
+	DDSketch<double> latencies, readLatencies, readRangeLatencies, commitLatencies, GRVLatencies, keyLocationLatencies,
+	    mutationsPerCommit, bytesPerCommit;
 
 	int outstandingWatches;
 	int maxOutstandingWatches;
@@ -797,7 +811,8 @@ private:
 // Similar to tr.onError(), but doesn't require a DatabaseContext.
 struct Backoff {
 	Backoff(double backoff = CLIENT_KNOBS->DEFAULT_BACKOFF, double maxBackoff = CLIENT_KNOBS->DEFAULT_MAX_BACKOFF)
-	  : backoff(backoff), maxBackoff(maxBackoff) {}
+	  : backoff(backoff),
+	    maxBackoff(maxBackoff) {}
 
 	Future<Void> onError() {
 		double currentBackoff = backoff;

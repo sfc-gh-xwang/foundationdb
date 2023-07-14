@@ -153,7 +153,8 @@ ACTOR Future<std::vector<KeyBackedTag>> TagUidMap::getAll_impl(TagUidMap* tagsMa
 }
 
 KeyBackedTag::KeyBackedTag(std::string tagName, StringRef tagMapPrefix)
-  : KeyBackedProperty<UidAndAbortedFlagT>(TagUidMap(tagMapPrefix).getProperty(tagName)), tagName(tagName),
+  : KeyBackedProperty<UidAndAbortedFlagT>(TagUidMap(tagMapPrefix).getProperty(tagName)),
+    tagName(tagName),
     tagMapPrefix(tagMapPrefix) {}
 
 class RestoreConfig : public KeyBackedTaskConfig {
@@ -494,7 +495,8 @@ FileBackupAgent::FileBackupAgent()
   : subspace(Subspace(fileBackupPrefixRange.begin))
     // The other subspaces have logUID -> value
     ,
-    config(subspace.get(BackupAgentBase::keyConfig)), lastRestorable(subspace.get(FileBackupAgent::keyLastRestorable)),
+    config(subspace.get(BackupAgentBase::keyConfig)),
+    lastRestorable(subspace.get(FileBackupAgent::keyLastRestorable)),
     taskBucket(new TaskBucket(subspace.get(BackupAgentBase::keyTasks),
                               AccessSystemKeys::True,
                               PriorityBatch::False,
@@ -579,8 +581,14 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 	                         Optional<Reference<TenantEntryCache<Void>>> tenantCache,
 	                         Reference<IBackupFile> file = Reference<IBackupFile>(),
 	                         int blockSize = 0)
-	  : cx(cx), arena(arena), encryptMode(encryptMode), file(file), tenantCache(tenantCache), blockSize(blockSize),
-	    blockEnd(0), fileVersion(BACKUP_AGENT_ENCRYPTED_SNAPSHOT_FILE_VERSION) {
+	  : cx(cx),
+	    arena(arena),
+	    encryptMode(encryptMode),
+	    file(file),
+	    tenantCache(tenantCache),
+	    blockSize(blockSize),
+	    blockEnd(0),
+	    fileVersion(BACKUP_AGENT_ENCRYPTED_SNAPSHOT_FILE_VERSION) {
 		buffer = makeString(blockSize);
 		wPtr = mutateString(buffer);
 	}
@@ -969,7 +977,10 @@ private:
 //   just be padding anyway.
 struct RangeFileWriter : public IRangeFileWriter {
 	RangeFileWriter(Reference<IBackupFile> file = Reference<IBackupFile>(), int blockSize = 0)
-	  : file(file), blockSize(blockSize), blockEnd(0), fileVersion(BACKUP_AGENT_SNAPSHOT_FILE_VERSION) {}
+	  : file(file),
+	    blockSize(blockSize),
+	    blockEnd(0),
+	    fileVersion(BACKUP_AGENT_SNAPSHOT_FILE_VERSION) {}
 
 	// Handles the first block and internal blocks.  Ends current block if needed.
 	// The final flag is used in simulation to pad the file's final block to a whole block size
@@ -1264,7 +1275,9 @@ ACTOR Future<Standalone<VectorRef<KeyValueRef>>> decodeRangeFileBlock(Reference<
 // Header, [Key, Value]... Key len
 struct LogFileWriter {
 	LogFileWriter(Reference<IBackupFile> file = Reference<IBackupFile>(), int blockSize = 0)
-	  : file(file), blockSize(blockSize), blockEnd(0) {}
+	  : file(file),
+	    blockSize(blockSize),
+	    blockEnd(0) {}
 
 	// Start a new block if needed, then write the key and value
 	ACTOR static Future<Void> writeKV_impl(LogFileWriter* self, Key k, Value v) {

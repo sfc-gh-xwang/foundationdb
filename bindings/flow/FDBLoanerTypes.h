@@ -59,7 +59,9 @@ struct KeySelectorRef {
 	KeySelectorRef(const KeyRef& key, bool orEqual, int offset) : key(key), orEqual(orEqual), offset(offset) {}
 
 	KeySelectorRef(Arena& arena, const KeySelectorRef& copyFrom)
-	  : key(arena, copyFrom.key), orEqual(copyFrom.orEqual), offset(copyFrom.offset) {}
+	  : key(arena, copyFrom.key),
+	    orEqual(copyFrom.orEqual),
+	    offset(copyFrom.offset) {}
 	int expectedSize() const { return key.expectedSize(); }
 
 	// std::string toString() const {
@@ -217,14 +219,21 @@ struct RangeResultRef : VectorRef<KeyValueRef> {
 
 	RangeResultRef() : more(false), readToBegin(false), readThroughEnd(false) {}
 	RangeResultRef(Arena& p, const RangeResultRef& toCopy)
-	  : VectorRef<KeyValueRef>(p, toCopy), more(toCopy.more),
+	  : VectorRef<KeyValueRef>(p, toCopy),
+	    more(toCopy.more),
 	    readThrough(toCopy.readThrough.present() ? KeyRef(p, toCopy.readThrough.get()) : Optional<KeyRef>()),
-	    readToBegin(toCopy.readToBegin), readThroughEnd(toCopy.readThroughEnd) {}
+	    readToBegin(toCopy.readToBegin),
+	    readThroughEnd(toCopy.readThroughEnd) {}
 	RangeResultRef(const VectorRef<KeyValueRef>& value, bool more, Optional<KeyRef> readThrough = Optional<KeyRef>())
-	  : VectorRef<KeyValueRef>(value), more(more), readThrough(readThrough), readToBegin(false), readThroughEnd(false) {
-	}
+	  : VectorRef<KeyValueRef>(value),
+	    more(more),
+	    readThrough(readThrough),
+	    readToBegin(false),
+	    readThroughEnd(false) {}
 	RangeResultRef(bool readToBegin, bool readThroughEnd)
-	  : more(false), readToBegin(readToBegin), readThroughEnd(readThroughEnd) {}
+	  : more(false),
+	    readToBegin(readToBegin),
+	    readThroughEnd(readThroughEnd) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

@@ -168,10 +168,21 @@ private:
 class RawDiskQueue_TwoFiles : public Tracked<RawDiskQueue_TwoFiles> {
 public:
 	RawDiskQueue_TwoFiles(std::string basename, std::string fileExtension, UID dbgid, int64_t fileSizeWarningLimit)
-	  : basename(basename), fileExtension(fileExtension), dbgid(dbgid), dbg_file0BeginSeq(0),
-	    fileSizeWarningLimit(fileSizeWarningLimit), onError(delayed(error.getFuture())), onStopped(stopped.getFuture()),
-	    readyToPush(Void()), lastCommit(Void()), isFirstCommit(true), readingBuffer(dbgid), readingFile(-1),
-	    readingPage(-1), writingPos(-1), fileExtensionBytes(SERVER_KNOBS->DISK_QUEUE_FILE_EXTENSION_BYTES),
+	  : basename(basename),
+	    fileExtension(fileExtension),
+	    dbgid(dbgid),
+	    dbg_file0BeginSeq(0),
+	    fileSizeWarningLimit(fileSizeWarningLimit),
+	    onError(delayed(error.getFuture())),
+	    onStopped(stopped.getFuture()),
+	    readyToPush(Void()),
+	    lastCommit(Void()),
+	    isFirstCommit(true),
+	    readingBuffer(dbgid),
+	    readingFile(-1),
+	    readingPage(-1),
+	    writingPos(-1),
+	    fileExtensionBytes(SERVER_KNOBS->DISK_QUEUE_FILE_EXTENSION_BYTES),
 	    fileShrinkBytes(SERVER_KNOBS->DISK_QUEUE_FILE_SHRINK_BYTES) {
 		if (BUGGIFY)
 			fileExtensionBytes = _PAGE_SIZE * deterministicRandom()->randomSkewedUInt32(1, 10 << 10);
@@ -875,10 +886,21 @@ public:
 	          UID dbgid,
 	          DiskQueueVersion diskQueueVersion,
 	          int64_t fileSizeWarningLimit)
-	  : rawQueue(new RawDiskQueue_TwoFiles(basename, fileExtension, dbgid, fileSizeWarningLimit)), dbgid(dbgid),
-	    diskQueueVersion(diskQueueVersion), anyPopped(false), warnAlwaysForMemory(true), nextPageSeq(0), poppedSeq(0),
-	    lastPoppedSeq(0), lastCommittedSeq(0), pushed_page_buffer(nullptr), recovered(false), initialized(false),
-	    nextReadLocation(-1), readBufPage(nullptr), readBufPos(0) {}
+	  : rawQueue(new RawDiskQueue_TwoFiles(basename, fileExtension, dbgid, fileSizeWarningLimit)),
+	    dbgid(dbgid),
+	    diskQueueVersion(diskQueueVersion),
+	    anyPopped(false),
+	    warnAlwaysForMemory(true),
+	    nextPageSeq(0),
+	    poppedSeq(0),
+	    lastPoppedSeq(0),
+	    lastCommittedSeq(0),
+	    pushed_page_buffer(nullptr),
+	    recovered(false),
+	    initialized(false),
+	    nextReadLocation(-1),
+	    readBufPage(nullptr),
+	    readBufPos(0) {}
 
 	location push(StringRef contents) override {
 		ASSERT(recovered);
@@ -1566,8 +1588,10 @@ public:
 	                         UID dbgid,
 	                         DiskQueueVersion diskQueueVersion,
 	                         int64_t fileSizeWarningLimit)
-	  : queue(new DiskQueue(basename, fileExtension, dbgid, diskQueueVersion, fileSizeWarningLimit)), pushed(0),
-	    popped(0), committed(0){};
+	  : queue(new DiskQueue(basename, fileExtension, dbgid, diskQueueVersion, fileSizeWarningLimit)),
+	    pushed(0),
+	    popped(0),
+	    committed(0){};
 
 	// IClosable
 	Future<Void> getError() const override { return queue->getError(); }

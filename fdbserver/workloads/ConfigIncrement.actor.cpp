@@ -130,7 +130,9 @@ class ConfigIncrementWorkload : public TestWorkload {
 public:
 	static constexpr auto NAME = "ConfigIncrement";
 	ConfigIncrementWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), transactions("Transactions"), retries("Retries"),
+	  : TestWorkload(wcx),
+	    transactions("Transactions"),
+	    retries("Retries"),
 	    commitUnknownResult("CommitUnknownResult") {
 		incrementActors = getOption(options, "incrementActors"_sr, 10);
 		incrementsPerActor = getOption(options, "incrementsPerActor"_sr, 10);

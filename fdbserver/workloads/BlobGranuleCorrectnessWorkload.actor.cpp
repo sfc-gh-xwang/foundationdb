@@ -54,11 +54,17 @@ struct WriteData {
 
 	// start as MAX_VERSION while uncommitted/uncleared so that they're ignored by concurrent readers
 	explicit WriteData(int32_t val, int16_t valLength)
-	  : writeVersion(MAX_VERSION), clearVersion(MAX_VERSION), val(val), valLength(valLength) {}
+	  : writeVersion(MAX_VERSION),
+	    clearVersion(MAX_VERSION),
+	    val(val),
+	    valLength(valLength) {}
 
 	// loading existing write data from the database
 	explicit WriteData(Version writeVersion, Version clearVersion, int32_t val, int16_t valLength)
-	  : writeVersion(writeVersion), clearVersion(clearVersion), val(val), valLength(valLength) {}
+	  : writeVersion(writeVersion),
+	    clearVersion(clearVersion),
+	    val(val),
+	    valLength(valLength) {}
 };
 
 struct KeyData {
@@ -99,6 +105,7 @@ struct ThreadData : ReferenceCounted<ThreadData>, NonCopyable {
 
 	Future<Void> summaryClient;
 	Future<Void> forceFlushingClient;
+	Future<Void> reqWayInFuture;
 	Promise<Void> triggerSummaryComplete;
 
 	// stats
@@ -113,7 +120,8 @@ struct ThreadData : ReferenceCounted<ThreadData>, NonCopyable {
 	int64_t bytesWritten = 0;
 
 	ThreadData(uint32_t directoryID, int64_t targetByteRate)
-	  : directoryID(directoryID), targetByteRate(targetByteRate) {
+	  : directoryID(directoryID),
+	    targetByteRate(targetByteRate) {
 		tenantName = StringRef(std::to_string(directoryID));
 
 		targetByteRate *= (0.5 + deterministicRandom()->random01());
@@ -1187,6 +1195,9 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 				    validateForceFlushing(cx, it->directoryRange, testDuration, it->triggerSummaryComplete);
 			} else {
 				it->forceFlushingClient = Future<Void>(Void());
+			}
+			if (it->directoryID == 0 && deterministicRandom()->random01() < 0.1) {
+				it->reqWayInFuture = requestWayInTheFuture(cx, normalKeys, it->tenant);
 			}
 			clients.push_back(timeout(writeWorker(this, start, cx, it), testDuration, Void()));
 			clients.push_back(timeout(readWorker(this, start, cx, it), testDuration, Void()));

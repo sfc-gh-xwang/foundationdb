@@ -645,6 +645,12 @@ ThreadFuture<bool> DLTenant::flushBlobRange(const KeyRangeRef& keyRange, bool co
 	});
 }
 
+ThreadFuture<Standalone<StringRef>> DLTenant::getClientStatus() {
+	// Currently no code path uses this function, so we simply assert and throw a not_implemented error
+	ASSERT(false);
+	throw not_implemented();
+}
+
 // DLDatabase
 DLDatabase::DLDatabase(Reference<FdbCApi> api, ThreadFuture<FdbCApi::FDBDatabase*> dbFuture) : api(api), db(nullptr) {
 	addref();
@@ -937,7 +943,10 @@ void loadClientFunction(T* fp, void* lib, std::string libPath, const char* funct
 }
 
 DLApi::DLApi(std::string fdbCPath, bool unlinkOnLoad)
-  : fdbCPath(fdbCPath), api(new FdbCApi()), unlinkOnLoad(unlinkOnLoad), networkSetup(false) {}
+  : fdbCPath(fdbCPath),
+    api(new FdbCApi()),
+    unlinkOnLoad(unlinkOnLoad),
+    networkSetup(false) {}
 
 // Loads client API functions (definitions are in FdbCApi struct)
 void DLApi::init() {
@@ -1094,6 +1103,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_tenant_get_id",
 	                   headerVersion >= ApiVersion::withTenantGetId().version());
+	loadClientFunction(&api->tenantGetClientStatus,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_tenant_get_client_status",
+	                   headerVersion >= ApiVersion::withTenantGetClientStatus().version());
 	loadClientFunction(&api->tenantDestroy, lib, fdbCPath, "fdb_tenant_destroy", headerVersion >= 710);
 
 	loadClientFunction(&api->transactionSetOption, lib, fdbCPath, "fdb_transaction_set_option", headerVersion >= 0);
@@ -1359,7 +1373,10 @@ FDBAllocatorIfc* DLApi::getAllocatorInterface() {
 MultiVersionTransaction::MultiVersionTransaction(Reference<MultiVersionDatabase> db,
                                                  Optional<Reference<MultiVersionTenant>> tenant,
                                                  UniqueOrderedOptionList<FDBTransactionOptions> defaultOptions)
-  : db(db), tenant(tenant), startTime(timer_monotonic()), timeoutTsav(new ThreadSingleAssignmentVar<Void>()) {
+  : db(db),
+    tenant(tenant),
+    startTime(timer_monotonic()),
+    timeoutTsav(new ThreadSingleAssignmentVar<Void>()) {
 	setDefaultOptions(defaultOptions);
 	updateTransaction(false);
 }
@@ -1972,8 +1989,14 @@ ThreadFuture<bool> MultiVersionTenant::flushBlobRange(const KeyRangeRef& keyRang
 	    &ITenant::flushBlobRange, keyRange, std::forward<bool>(compact), std::forward<Optional<Version>>(version));
 }
 
+ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
+	return tenantState->db->getClientStatus();
+}
+
 MultiVersionTenant::TenantState::TenantState(Reference<MultiVersionDatabase> db, TenantNameRef tenantName)
-  : tenantVar(new ThreadSafeAsyncVar<Reference<ITenant>>(Reference<ITenant>(nullptr))), tenantName(tenantName), db(db),
+  : tenantVar(new ThreadSafeAsyncVar<Reference<ITenant>>(Reference<ITenant>(nullptr))),
+    tenantName(tenantName),
+    db(db),
     closed(false) {
 	updateTenant();
 }
@@ -1999,8 +2022,10 @@ void MultiVersionTenant::TenantState::updateTenant() {
 	}
 
 	tenantUpdater = mapThreadFuture<Void, Void>(currentDb.onChange, [self](ErrorOr<Void> result) {
-		self->updateTenant();
-		return Void();
+		if (!result.isError()) {
+			self->updateTenant();
+		}
+		return result;
 	});
 }
 
@@ -2248,8 +2273,10 @@ ThreadFuture<Standalone<StringRef>> MultiVersionDatabase::getClientStatus() {
 MultiVersionDatabase::DatabaseState::DatabaseState(ClusterConnectionRecord const& connectionRecord,
                                                    Reference<IDatabase> versionMonitorDb)
   : dbVar(new ThreadSafeAsyncVar<Reference<IDatabase>>(Reference<IDatabase>(nullptr))),
-    connectionRecord(connectionRecord), versionMonitorDb(versionMonitorDb),
-    initializationState(InitializationState::INITIALIZING), isConfigDB(false) {}
+    connectionRecord(connectionRecord),
+    versionMonitorDb(versionMonitorDb),
+    initializationState(InitializationState::INITIALIZING),
+    isConfigDB(false) {}
 
 void MultiVersionDatabase::DatabaseState::setDatabase(Reference<IDatabase> db) {
 	if (db.isValid()) {
@@ -3493,10 +3520,21 @@ void MultiVersionApi::loadEnvironmentVariableNetworkOptions() {
 }
 
 MultiVersionApi::MultiVersionApi()
-  : callbackOnMainThread(true), localClientDisabled(false), networkStartSetup(false), networkSetup(false),
-    disableBypass(false), bypassMultiClientApi(false), externalClient(false), ignoreExternalClientFailures(false),
-    failIncompatibleClient(false), retainClientLibCopies(false), apiVersion(0), threadCount(0), tmpDir("/tmp"),
-    traceShareBaseNameAmongThreads(false), envOptionsLoaded(false) {}
+  : callbackOnMainThread(true),
+    localClientDisabled(false),
+    networkStartSetup(false),
+    networkSetup(false),
+    disableBypass(false),
+    bypassMultiClientApi(false),
+    externalClient(false),
+    ignoreExternalClientFailures(false),
+    failIncompatibleClient(false),
+    retainClientLibCopies(false),
+    apiVersion(0),
+    threadCount(0),
+    tmpDir("/tmp"),
+    traceShareBaseNameAmongThreads(false),
+    envOptionsLoaded(false) {}
 
 MultiVersionApi* MultiVersionApi::api = new MultiVersionApi();
 
@@ -3578,7 +3616,9 @@ TEST_CASE("/fdbclient/multiversionclient/EnvironmentVariableParsing") {
 class ValidateFuture final : public ThreadCallback {
 public:
 	ValidateFuture(ThreadFuture<int> f, ErrorOr<int> expectedValue, std::set<int> legalErrors)
-	  : f(f), expectedValue(expectedValue), legalErrors(legalErrors) {}
+	  : f(f),
+	    expectedValue(expectedValue),
+	    legalErrors(legalErrors) {}
 
 	bool canFire(int notMadeActive) const override { return true; }
 
@@ -3609,7 +3649,9 @@ struct FutureInfo {
 	}
 
 	FutureInfo(ThreadFuture<int> future, ErrorOr<int> expectedValue, std::set<int> legalErrors = std::set<int>())
-	  : future(future), expectedValue(expectedValue), legalErrors(legalErrors) {}
+	  : future(future),
+	    expectedValue(expectedValue),
+	    legalErrors(legalErrors) {}
 
 	void validate() {
 		int userParam;
@@ -3840,7 +3882,9 @@ TEST_CASE("fdbclient/multiversionclient/AbortableSingleAssignmentVar") {
 class CAPICallback final : public ThreadCallback {
 public:
 	CAPICallback(void (*callbackf)(FdbCApi::FDBFuture*, void*), FdbCApi::FDBFuture* f, void* userdata)
-	  : callbackf(callbackf), f(f), userdata(userdata) {}
+	  : callbackf(callbackf),
+	    f(f),
+	    userdata(userdata) {}
 
 	bool canFire(int notMadeActive) const override { return true; }
 	void fire(const Void& unused, int& userParam) override {

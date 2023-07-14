@@ -42,11 +42,15 @@ struct LogRouterData {
 		Tag tag;
 
 		TagData(Tag tag, Version popped, Version durableKnownCommittedVersion)
-		  : popped(popped), durableKnownCommittedVersion(durableKnownCommittedVersion), tag(tag) {}
+		  : popped(popped),
+		    durableKnownCommittedVersion(durableKnownCommittedVersion),
+		    tag(tag) {}
 
 		TagData(TagData&& r) noexcept
-		  : version_messages(std::move(r.version_messages)), popped(r.popped),
-		    durableKnownCommittedVersion(r.durableKnownCommittedVersion), tag(r.tag) {}
+		  : version_messages(std::move(r.version_messages)),
+		    popped(r.popped),
+		    durableKnownCommittedVersion(r.durableKnownCommittedVersion),
+		    tag(r.tag) {}
 		void operator=(TagData&& r) noexcept {
 			version_messages = std::move(r.version_messages);
 			tag = r.tag;
@@ -134,11 +138,20 @@ struct LogRouterData {
 	}
 
 	LogRouterData(UID dbgid, const InitializeLogRouterRequest& req)
-	  : dbgid(dbgid), logSystem(new AsyncVar<Reference<ILogSystem>>()), version(req.startVersion - 1), minPopped(0),
-	    startVersion(req.startVersion), minKnownCommittedVersion(0), poppedVersion(0), routerTag(req.routerTag),
-	    allowPops(false), foundEpochEnd(false), generation(req.recoveryCount),
+	  : dbgid(dbgid),
+	    logSystem(new AsyncVar<Reference<ILogSystem>>()),
+	    version(req.startVersion - 1),
+	    minPopped(0),
+	    startVersion(req.startVersion),
+	    minKnownCommittedVersion(0),
+	    poppedVersion(0),
+	    routerTag(req.routerTag),
+	    allowPops(false),
+	    foundEpochEnd(false),
+	    generation(req.recoveryCount),
 	    peekLatencyDist(Histogram::getHistogram("LogRouter"_sr, "PeekTLogLatency"_sr, Histogram::Unit::milliseconds)),
-	    cc("LogRouter", dbgid.toString()), getMoreCount("GetMoreCount", cc),
+	    cc("LogRouter", dbgid.toString()),
+	    getMoreCount("GetMoreCount", cc),
 	    getMoreBlockedCount("GetMoreBlockedCount", cc) {
 		// setup just enough of a logSet to be able to call getPushLocations
 		logSet.logServers.resize(req.tLogLocalities.size());

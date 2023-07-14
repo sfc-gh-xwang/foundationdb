@@ -429,7 +429,9 @@ struct ProcessData {
 
 	ProcessData() {}
 	ProcessData(LocalityData locality, ProcessClass processClass, NetworkAddress address)
-	  : locality(locality), processClass(processClass), address(address) {}
+	  : locality(locality),
+	    processClass(processClass),
+	    address(address) {}
 
 	// To change this serialization, ProtocolVersion::WorkerListValue must be updated, and downgrades need to be
 	// considered

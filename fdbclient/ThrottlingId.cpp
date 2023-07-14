@@ -7,7 +7,8 @@
 ThrottlingIdRef::ThrottlingIdRef() = default;
 
 ThrottlingIdRef::ThrottlingIdRef(Arena& arena, ThrottlingIdRef other)
-  : _isTag(other._isTag), value(arena, other.value) {}
+  : _isTag(other._isTag),
+    value(arena, other.value) {}
 
 ThrottlingId ThrottlingIdRef::fromTag(TransactionTagRef const& tag) {
 	ThrottlingId result;

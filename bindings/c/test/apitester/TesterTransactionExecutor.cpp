@@ -79,9 +79,17 @@ public:
 	                       std::optional<fdb::BytesRef> tenantName,
 	                       bool transactional,
 	                       bool restartOnTimeout)
-	  : executor(executor), startFct(startFct), contAfterDone(cont), scheduler(scheduler), retryLimit(retryLimit),
-	    txState(TxState::IN_PROGRESS), commitCalled(false), bgBasePath(bgBasePath), restartOnTimeout(restartOnTimeout),
-	    tenantName(tenantName), transactional(transactional),
+	  : executor(executor),
+	    startFct(startFct),
+	    contAfterDone(cont),
+	    scheduler(scheduler),
+	    retryLimit(retryLimit),
+	    txState(TxState::IN_PROGRESS),
+	    commitCalled(false),
+	    bgBasePath(bgBasePath),
+	    restartOnTimeout(restartOnTimeout),
+	    tenantName(tenantName),
+	    transactional(transactional),
 	    selfConflictingKey(Random::get().randomByteStringLowerCase(8, 8)) {
 		databaseCreateErrorInjected = executor->getOptions().injectDatabaseCreateErrors &&
 		                              Random::get().randomBool(executor->getOptions().databaseCreateErrorRatio);
@@ -211,6 +219,22 @@ public:
 		}
 	}
 
+	// Complete the transaction with an (unretriable) error
+	void transactionFailed(fdb::Error err) {
+		ASSERT(err);
+		std::unique_lock<std::mutex> lock(mutex);
+		if (txState == TxState::DONE) {
+			return;
+		}
+		txState = TxState::DONE;
+		lock.unlock();
+
+		// No need for lock from here on, because only one thread
+		// can enter DONE state and handle it
+		cleanUp();
+		contAfterDone(err);
+	}
+
 protected:
 	virtual void doContinueAfter(fdb::Future f, TTaskFct cont, bool retryOnError) = 0;
 
@@ -229,23 +253,6 @@ protected:
 
 	bool canBeInjectedDatabaseCreateError(fdb::Error::CodeType errCode) {
 		return errCode == error_code_no_cluster_file_found || errCode == error_code_connection_string_invalid;
-	}
-
-	// Complete the transaction with an (unretriable) error
-	void transactionFailed(fdb::Error err) {
-		ASSERT(err);
-		std::unique_lock<std::mutex> lock(mutex);
-		if (txState == TxState::DONE) {
-			return;
-		}
-		txState = TxState::DONE;
-		lock.unlock();
-
-		// No need for lock from here on, because only one thread
-		// can enter DONE state and handle it
-
-		cleanUp();
-		contAfterDone(err);
 	}
 
 	// Handle result of an a transaction onError call
@@ -271,7 +278,12 @@ protected:
 		txState = TxState::IN_PROGRESS;
 		commitCalled = false;
 		lock.unlock();
-		startFct(shared_from_this());
+		try {
+			startFct(shared_from_this());
+		} catch (const fdb::Error& err) {
+			log::error("Error restarting transaction: {}", err.code());
+			transactionFailed(err);
+		}
 	}
 
 	void recreateAndRestartTransaction() {
@@ -788,9 +800,15 @@ public:
 				                                                transactional,
 				                                                restartOnTimeout);
 			}
-			startFct(ctx);
+			try {
+				startFct(ctx);
+			} catch (const fdb::Error& err) {
+				log::error("Error starting transaction: {}", err.code());
+				static_cast<TransactionContextBase*>(ctx.get())->transactionFailed(err);
+			}
 			return ctx;
 		} catch (...) {
+			log::error("Unexpected exception when starting transaction");
 			cont(fdb::Error(error_code_operation_failed));
 		}
 		return {};

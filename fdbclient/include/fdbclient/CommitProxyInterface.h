@@ -175,7 +175,9 @@ struct ExpireIdempotencyIdRequest {
 
 	ExpireIdempotencyIdRequest() {}
 	ExpireIdempotencyIdRequest(Version commitVersion, uint8_t batchIndexHighByte, TenantInfo tenant)
-	  : commitVersion(commitVersion), batchIndexHighByte(batchIndexHighByte), tenant(tenant) {}
+	  : commitVersion(commitVersion),
+	    batchIndexHighByte(batchIndexHighByte),
+	    tenant(tenant) {}
 
 	bool verify() const { return tenant.isAuthorized(); }
 
@@ -202,7 +204,9 @@ struct CommitID {
 	         uint16_t txnBatchId,
 	         const Optional<Value>& metadataVersion,
 	         const Optional<Standalone<VectorRef<int>>>& conflictingKRIndices = Optional<Standalone<VectorRef<int>>>())
-	  : version(version), txnBatchId(txnBatchId), metadataVersion(metadataVersion),
+	  : version(version),
+	    txnBatchId(txnBatchId),
+	    metadataVersion(metadataVersion),
 	    conflictingKRIndices(conflictingKRIndices) {}
 };
 
@@ -343,8 +347,13 @@ struct GetReadVersionRequest : TimedRequest {
 	                      uint32_t flags = 0,
 	                      Optional<ThrottlingId> const& throttlingId = Optional<ThrottlingId>(),
 	                      Optional<UID> debugID = Optional<UID>())
-	  : spanContext(spanContext), transactionCount(transactionCount), flags(flags), priority(priority),
-	    throttlingId(throttlingId), debugID(debugID), maxVersion(maxVersion) {
+	  : spanContext(spanContext),
+	    transactionCount(transactionCount),
+	    flags(flags),
+	    priority(priority),
+	    throttlingId(throttlingId),
+	    debugID(debugID),
+	    maxVersion(maxVersion) {
 		flags = flags & ~FLAG_PRIORITY_MASK;
 		switch (priority) {
 		case TransactionPriority::BATCH:
@@ -411,7 +420,8 @@ struct TenantLookupRequest {
 
 	TenantLookupRequest() : minTenantVersion(latestVersion) {}
 	TenantLookupRequest(TenantNameRef const& tenantName, Version minTenantVersion)
-	  : tenantName(tenantName), minTenantVersion(minTenantVersion) {}
+	  : tenantName(tenantName),
+	    minTenantVersion(minTenantVersion) {}
 
 	bool verify() const { return true; }
 
@@ -472,7 +482,13 @@ struct GetKeyServerLocationsRequest {
 	                             bool reverse,
 	                             Version minTenantVersion,
 	                             Arena const& arena)
-	  : arena(arena), spanContext(spanContext), tenant(tenant), begin(begin), end(end), limit(limit), reverse(reverse),
+	  : arena(arena),
+	    spanContext(spanContext),
+	    tenant(tenant),
+	    begin(begin),
+	    end(end),
+	    limit(limit),
+	    reverse(reverse),
 	    minTenantVersion(minTenantVersion) {}
 
 	bool verify() const { return tenant.isAuthorized(); }
@@ -524,8 +540,15 @@ struct GetBlobGranuleLocationsRequest {
 	                               bool justGranules,
 	                               Version minTenantVersion,
 	                               Arena const& arena)
-	  : arena(arena), spanContext(spanContext), tenant(tenant), begin(begin), end(end), limit(limit), reverse(reverse),
-	    justGranules(justGranules), minTenantVersion(minTenantVersion) {}
+	  : arena(arena),
+	    spanContext(spanContext),
+	    tenant(tenant),
+	    begin(begin),
+	    end(end),
+	    limit(limit),
+	    reverse(reverse),
+	    justGranules(justGranules),
+	    minTenantVersion(minTenantVersion) {}
 
 	bool verify() const { return tenant.isAuthorized(); }
 
@@ -545,7 +568,10 @@ struct GetRawCommittedVersionReply {
 	VersionVector ssVersionVectorDelta;
 
 	GetRawCommittedVersionReply()
-	  : debugID(Optional<UID>()), version(invalidVersion), locked(false), metadataVersion(Optional<Value>()),
+	  : debugID(Optional<UID>()),
+	    version(invalidVersion),
+	    locked(false),
+	    metadataVersion(Optional<Value>()),
 	    minKnownCommittedVersion(invalidVersion) {}
 
 	template <class Ar>
@@ -564,7 +590,9 @@ struct GetRawCommittedVersionRequest {
 	explicit GetRawCommittedVersionRequest(SpanContext spanContext,
 	                                       Optional<UID> const& debugID = Optional<UID>(),
 	                                       Version maxVersion = invalidVersion)
-	  : spanContext(spanContext), debugID(debugID), maxVersion(maxVersion) {}
+	  : spanContext(spanContext),
+	    debugID(debugID),
+	    maxVersion(maxVersion) {}
 	explicit GetRawCommittedVersionRequest() : spanContext(), debugID(), maxVersion(invalidVersion) {}
 
 	template <class Ar>
@@ -695,7 +723,9 @@ struct ProxySnapRequest {
 
 	explicit ProxySnapRequest(Optional<UID> const& debugID = Optional<UID>()) : debugID(debugID) {}
 	explicit ProxySnapRequest(StringRef snap, UID snapUID, Optional<UID> debugID = Optional<UID>())
-	  : snapPayload(snap), snapUID(snapUID), debugID(debugID) {}
+	  : snapPayload(snap),
+	    snapUID(snapUID),
+	    debugID(debugID) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

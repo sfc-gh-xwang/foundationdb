@@ -39,7 +39,7 @@
 // Resolver's data for applyMetadataMutations() calls.
 struct ResolverData {
 	const UID dbgid;
-	IKeyValueStore* txnStateStore = nullptr;
+	Reference<IKeyValueStore> txnStateStore;
 	KeyRangeMap<ServerCacheInfo>* keyInfo = nullptr;
 	Arena arena;
 	// Whether configuration changes. If so, a recovery is forced.
@@ -52,21 +52,32 @@ struct ResolverData {
 	std::unordered_map<UID, StorageServerInterface>* tssMapping = nullptr;
 
 	// For initial broadcast
-	ResolverData(UID debugId, IKeyValueStore* store, KeyRangeMap<ServerCacheInfo>* info, bool& forceRecovery)
-	  : dbgid(debugId), txnStateStore(store), keyInfo(info), confChanges(forceRecovery), initialCommit(true) {}
+	ResolverData(UID debugId, Reference<IKeyValueStore> store, KeyRangeMap<ServerCacheInfo>* info, bool& forceRecovery)
+	  : dbgid(debugId),
+	    txnStateStore(store),
+	    keyInfo(info),
+	    confChanges(forceRecovery),
+	    initialCommit(true) {}
 
 	// For transaction batches that contain metadata mutations
 	ResolverData(UID debugId,
 	             Reference<ILogSystem> logSystem,
-	             IKeyValueStore* store,
+	             Reference<IKeyValueStore> store,
 	             KeyRangeMap<ServerCacheInfo>* info,
 	             LogPushData* toCommit,
 	             bool& forceRecovery,
 	             Version popVersion,
 	             std::map<UID, Reference<StorageInfo>>* storageCache,
 	             std::unordered_map<UID, StorageServerInterface>* tssMapping)
-	  : dbgid(debugId), txnStateStore(store), keyInfo(info), confChanges(forceRecovery), logSystem(logSystem),
-	    toCommit(toCommit), popVersion(popVersion), storageCache(storageCache), tssMapping(tssMapping) {}
+	  : dbgid(debugId),
+	    txnStateStore(store),
+	    keyInfo(info),
+	    confChanges(forceRecovery),
+	    logSystem(logSystem),
+	    toCommit(toCommit),
+	    popVersion(popVersion),
+	    storageCache(storageCache),
+	    tssMapping(tssMapping) {}
 };
 
 inline bool isMetadataMutation(MutationRef const& m) {

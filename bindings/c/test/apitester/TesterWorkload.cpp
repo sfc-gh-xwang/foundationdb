@@ -81,8 +81,16 @@ bool WorkloadConfig::getBoolOption(const std::string& name, bool defaultVal) con
 }
 
 WorkloadBase::WorkloadBase(const WorkloadConfig& config)
-  : manager(nullptr), tasksScheduled(0), numErrors(0), lastTxCompleted(0), lastAction(Action::None),
-    clientId(config.clientId), numClients(config.numClients), failed(false), numTxCompleted(0), numTxStarted(0),
+  : manager(nullptr),
+    tasksScheduled(0),
+    numErrors(0),
+    lastTxCompleted(0),
+    lastAction(Action::None),
+    clientId(config.clientId),
+    numClients(config.numClients),
+    failed(false),
+    numTxCompleted(0),
+    numTxStarted(0),
     inProgress(false) {
 	maxErrors = config.getIntOption("maxErrors", 10);
 	minTxTimeoutMs = config.getIntOption("minTxTimeoutMs", 0);
@@ -265,12 +273,12 @@ void WorkloadManager::run() {
 		iter->start();
 	}
 	scheduler->join();
-	if (ctrlInputThread.joinable()) {
-		ctrlInputThread.join();
-	}
 	if (outputPipe.is_open()) {
 		outputPipe << "DONE" << std::endl;
 		outputPipe.close();
+	}
+	if (ctrlInputThread.joinable()) {
+		ctrlInputThread.join();
 	}
 	if (failed()) {
 		log::error("{} workloads failed", numWorkloadsFailed);

@@ -104,10 +104,18 @@ struct KmsUrlCtx {
 	double unresponsivenessPenaltyTS;
 
 	KmsUrlCtx()
-	  : url(""), nRequests(0), nFailedResponses(0), nResponseParseFailures(0), unresponsivenessPenalty(0.0),
+	  : url(""),
+	    nRequests(0),
+	    nFailedResponses(0),
+	    nResponseParseFailures(0),
+	    unresponsivenessPenalty(0.0),
 	    unresponsivenessPenaltyTS(0) {}
 	explicit KmsUrlCtx(const std::string& u)
-	  : url(u), nRequests(0), nFailedResponses(0), nResponseParseFailures(0), unresponsivenessPenalty(0.0),
+	  : url(u),
+	    nRequests(0),
+	    nFailedResponses(0),
+	    nResponseParseFailures(0),
+	    unresponsivenessPenalty(0.0),
 	    unresponsivenessPenaltyTS(0) {}
 
 	bool operator==(const KmsUrlCtx& toCompare) const { return url.compare(toCompare.url) == 0; }
@@ -224,7 +232,9 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	PromiseStream<Future<Void>> addActor;
 
 	RESTKmsConnectorCtx()
-	  : uid(deterministicRandom()->randomUniqueID()), lastKmsUrlsRefreshTs(0), lastKmsUrlDiscoverTS(0.0) {}
+	  : uid(deterministicRandom()->randomUniqueID()),
+	    lastKmsUrlsRefreshTs(0),
+	    lastKmsUrlDiscoverTS(0.0) {}
 	explicit RESTKmsConnectorCtx(const UID& id) : uid(id), lastKmsUrlsRefreshTs(0), lastKmsUrlDiscoverTS(0.0) {}
 };
 

@@ -637,7 +637,9 @@ public:
 	KeySelectorRef(const KeyRef& key, bool orEqual, int offset) : orEqual(orEqual), offset(offset) { setKey(key); }
 
 	KeySelectorRef(Arena& arena, const KeySelectorRef& copyFrom)
-	  : key(arena, copyFrom.key), orEqual(copyFrom.orEqual), offset(copyFrom.offset) {}
+	  : key(arena, copyFrom.key),
+	    orEqual(copyFrom.orEqual),
+	    offset(copyFrom.offset) {}
 	int expectedSize() const { return key.expectedSize(); }
 
 	void removeOrEqual(Arena& arena) {
@@ -761,7 +763,8 @@ public:
 
 	ReadMetrics() {}
 	ReadMetrics(BusynessT serverBusyness, BusynessT rangeBusyness)
-	  : serverBusyness(serverBusyness), rangeBusyness(rangeBusyness) {}
+	  : serverBusyness(serverBusyness),
+	    rangeBusyness(rangeBusyness) {}
 
 	float getServerBusyness() const { return (float)serverBusyness / scalingFactor; }
 	float getRangeBusyness() const { return (float)rangeBusyness / scalingFactor; }
@@ -898,14 +901,21 @@ struct RangeResultRef : VectorRef<KeyValueRef> {
 
 	RangeResultRef() : more(false), readToBegin(false), readThroughEnd(false) {}
 	RangeResultRef(Arena& p, const RangeResultRef& toCopy)
-	  : VectorRef<KeyValueRef>(p, toCopy), more(toCopy.more),
+	  : VectorRef<KeyValueRef>(p, toCopy),
+	    more(toCopy.more),
 	    readThrough(toCopy.readThrough.present() ? KeyRef(p, toCopy.readThrough.get()) : Optional<KeyRef>()),
-	    readToBegin(toCopy.readToBegin), readThroughEnd(toCopy.readThroughEnd) {}
+	    readToBegin(toCopy.readToBegin),
+	    readThroughEnd(toCopy.readThroughEnd) {}
 	RangeResultRef(const VectorRef<KeyValueRef>& value, bool more, Optional<KeyRef> readThrough = {})
-	  : VectorRef<KeyValueRef>(value), more(more), readThrough(readThrough), readToBegin(false), readThroughEnd(false) {
-	}
+	  : VectorRef<KeyValueRef>(value),
+	    more(more),
+	    readThrough(readThrough),
+	    readToBegin(false),
+	    readThroughEnd(false) {}
 	RangeResultRef(bool readToBegin, bool readThroughEnd)
-	  : more(false), readToBegin(readToBegin), readThroughEnd(readThroughEnd) {}
+	  : more(false),
+	    readToBegin(readToBegin),
+	    readThroughEnd(readThroughEnd) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -941,7 +951,8 @@ struct GetValueReqAndResultRef {
 
 	GetValueReqAndResultRef() {}
 	GetValueReqAndResultRef(Arena& a, const GetValueReqAndResultRef& copyFrom)
-	  : key(a, copyFrom.key), result(a, copyFrom.result) {}
+	  : key(a, copyFrom.key),
+	    result(a, copyFrom.result) {}
 
 	bool operator==(const GetValueReqAndResultRef& rhs) const { return key == rhs.key && result == rhs.result; }
 	bool operator!=(const GetValueReqAndResultRef& rhs) const { return !(rhs == *this); }
@@ -960,7 +971,9 @@ struct GetRangeReqAndResultRef {
 	GetRangeReqAndResultRef() {}
 	//	KeyValueRef(const KeyRef& key, const ValueRef& value) : key(key), value(value) {}
 	GetRangeReqAndResultRef(Arena& a, const GetRangeReqAndResultRef& copyFrom)
-	  : begin(a, copyFrom.begin), end(a, copyFrom.end), result(a, copyFrom.result) {}
+	  : begin(a, copyFrom.begin),
+	    end(a, copyFrom.end),
+	    result(a, copyFrom.result) {}
 
 	bool operator==(const GetRangeReqAndResultRef& rhs) const {
 		return begin == rhs.begin && end == rhs.end && result == rhs.result;
@@ -1025,14 +1038,21 @@ struct MappedRangeResultRef : VectorRef<MappedKeyValueRef> {
 
 	MappedRangeResultRef() : more(false), readToBegin(false), readThroughEnd(false) {}
 	MappedRangeResultRef(Arena& p, const MappedRangeResultRef& toCopy)
-	  : VectorRef<MappedKeyValueRef>(p, toCopy), more(toCopy.more),
+	  : VectorRef<MappedKeyValueRef>(p, toCopy),
+	    more(toCopy.more),
 	    readThrough(toCopy.readThrough.present() ? KeyRef(p, toCopy.readThrough.get()) : Optional<KeyRef>()),
-	    readToBegin(toCopy.readToBegin), readThroughEnd(toCopy.readThroughEnd) {}
+	    readToBegin(toCopy.readToBegin),
+	    readThroughEnd(toCopy.readThroughEnd) {}
 	MappedRangeResultRef(const VectorRef<MappedKeyValueRef>& value, bool more, Optional<KeyRef> readThrough = {})
-	  : VectorRef<MappedKeyValueRef>(value), more(more), readThrough(readThrough), readToBegin(false),
+	  : VectorRef<MappedKeyValueRef>(value),
+	    more(more),
+	    readThrough(readThrough),
+	    readToBegin(false),
 	    readThroughEnd(false) {}
 	MappedRangeResultRef(bool readToBegin, bool readThroughEnd)
-	  : more(false), readToBegin(readToBegin), readThroughEnd(readThroughEnd) {}
+	  : more(false),
+	    readToBegin(readToBegin),
+	    readThroughEnd(readThroughEnd) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -1218,7 +1238,11 @@ struct StorageBytes {
 
 	StorageBytes() {}
 	StorageBytes(int64_t free, int64_t total, int64_t used, int64_t available, int64_t temp = 0)
-	  : free(free), total(total), used(used), available(available), temp(temp) {}
+	  : free(free),
+	    total(total),
+	    used(used),
+	    available(available),
+	    temp(temp) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -1326,7 +1350,9 @@ struct ClusterControllerPriorityInfo {
 	                                  false,
 	                                  ClusterControllerPriorityInfo::FitnessUnknown) {}
 	ClusterControllerPriorityInfo(uint8_t processClassFitness, bool isExcluded, uint8_t dcFitness)
-	  : processClassFitness(processClassFitness), isExcluded(isExcluded), dcFitness(dcFitness) {}
+	  : processClassFitness(processClassFitness),
+	    isExcluded(isExcluded),
+	    dcFitness(dcFitness) {}
 
 	// To change this serialization, ProtocolVersion::ClusterControllerPriorityInfo must be updated, and downgrades need
 	// to be considered
@@ -1367,8 +1393,13 @@ struct HealthMetrics {
 	std::map<UID, int64_t> tLogQueue;
 
 	HealthMetrics()
-	  : worstStorageQueue(0), limitingStorageQueue(0), worstStorageDurabilityLag(0), limitingStorageDurabilityLag(0),
-	    worstTLogQueue(0), tpsLimit(0.0), batchLimited(false) {}
+	  : worstStorageQueue(0),
+	    limitingStorageQueue(0),
+	    worstStorageDurabilityLag(0),
+	    limitingStorageDurabilityLag(0),
+	    worstTLogQueue(0),
+	    tpsLimit(0.0),
+	    batchLimited(false) {}
 
 	void update(const HealthMetrics& hm, bool detailedInput, bool detailedOutput) {
 		worstStorageQueue = hm.worstStorageQueue;
@@ -1417,7 +1448,8 @@ struct DDMetricsRef {
 	DDMetricsRef() : shardBytes(0) {}
 	DDMetricsRef(int64_t bytes, KeyRef begin) : shardBytes(bytes), beginKey(begin) {}
 	DDMetricsRef(Arena& a, const DDMetricsRef& copyFrom)
-	  : shardBytes(copyFrom.shardBytes), beginKey(a, copyFrom.beginKey) {}
+	  : shardBytes(copyFrom.shardBytes),
+	    beginKey(a, copyFrom.beginKey) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -1690,7 +1722,10 @@ struct DatabaseSharedState {
 	std::atomic<int> refCount;
 
 	DatabaseSharedState()
-	  : protocolVersion(currentProtocolVersion()), mutexLock(Mutex()), grvCacheSpace(GRVCacheSpace()), refCount(0) {}
+	  : protocolVersion(currentProtocolVersion()),
+	    mutexLock(Mutex()),
+	    grvCacheSpace(GRVCacheSpace()),
+	    refCount(0) {}
 };
 
 inline bool isValidPerpetualStorageWiggleLocality(std::string locality) {
@@ -1712,7 +1747,9 @@ struct StorageMetadataType {
 
 	StorageMetadataType() : createdTime(0) {}
 	StorageMetadataType(double t, KeyValueStoreType storeType = KeyValueStoreType::END, bool wrongConfigured = false)
-	  : createdTime(t), storeType(storeType), wrongConfigured(wrongConfigured) {}
+	  : createdTime(t),
+	    storeType(storeType),
+	    wrongConfigured(wrongConfigured) {}
 
 	static double currentTime() { return g_network->timer(); }
 
@@ -1782,7 +1819,10 @@ struct ReadOptions {
 	            ReadType type = ReadType::NORMAL,
 	            CacheResult cache = CacheResult::True,
 	            Optional<Version> version = Optional<Version>())
-	  : type(type), cacheResult(cache), debugID(debugID), consistencyCheckStartVersion(version){};
+	  : type(type),
+	    cacheResult(cache),
+	    debugID(debugID),
+	    consistencyCheckStartVersion(version){};
 
 	ReadOptions(ReadType type, CacheResult cache = CacheResult::True) : ReadOptions({}, type, cache) {}
 

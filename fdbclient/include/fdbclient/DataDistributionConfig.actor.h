@@ -43,7 +43,8 @@ struct DDRangeConfig {
 	constexpr static FileIdentifier file_identifier = 9193856;
 
 	DDRangeConfig(Optional<int> replicationFactor = {}, Optional<int> teamID = {})
-	  : replicationFactor(replicationFactor), teamID(teamID) {}
+	  : replicationFactor(replicationFactor),
+	    teamID(teamID) {}
 
 	Optional<int> replicationFactor;
 	// Ranges with different team IDs should be assigned to different storage teams

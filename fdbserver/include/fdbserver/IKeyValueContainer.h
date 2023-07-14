@@ -39,7 +39,9 @@ struct KeyValueMapPair {
 	KeyValueMapPair(KeyValueMapPair const& rhs) : arena(rhs.arena), key(rhs.key), value(rhs.value) {}
 
 	KeyValueMapPair(KeyRef key, ValueRef value)
-	  : arena(key.expectedSize() + value.expectedSize()), key(arena, key), value(arena, value) {}
+	  : arena(key.expectedSize() + value.expectedSize()),
+	    key(arena, key),
+	    value(arena, value) {}
 
 	int compare(KeyValueMapPair const& r) const { return ::compare(key, r.key); }
 

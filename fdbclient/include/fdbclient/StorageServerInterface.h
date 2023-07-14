@@ -287,7 +287,9 @@ struct GetValueReply : public LoadBalancedReply {
 
 	GetValueReply() : cached(false) {}
 	GetValueReply(Optional<Value> value, bool cached, ReadMetrics readMetrics)
-	  : value(value), cached(cached), readMetrics(readMetrics) {}
+	  : value(value),
+	    cached(cached),
+	    readMetrics(readMetrics) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -318,8 +320,13 @@ struct GetValueRequest : TimedRequest {
 	                Optional<TransactionTag> throttlingTag,
 	                Optional<ReadOptions> options,
 	                VersionVector latestCommitVersions)
-	  : spanContext(spanContext), tenantInfo(tenantInfo), key(key), version(ver), throttlingTag(throttlingTag),
-	    options(options), ssLatestCommitVersions(latestCommitVersions) {}
+	  : spanContext(spanContext),
+	    tenantInfo(tenantInfo),
+	    key(key),
+	    version(ver),
+	    throttlingTag(throttlingTag),
+	    options(options),
+	    ssLatestCommitVersions(latestCommitVersions) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -361,8 +368,13 @@ struct WatchValueRequest {
 	                  Version ver,
 	                  Optional<TransactionTag> throttlingTag,
 	                  Optional<UID> debugID)
-	  : spanContext(spanContext), tenantInfo(tenantInfo), key(key), value(value), version(ver),
-	    throttlingTag(throttlingTag), debugID(debugID) {}
+	  : spanContext(spanContext),
+	    tenantInfo(tenantInfo),
+	    key(key),
+	    value(value),
+	    version(ver),
+	    throttlingTag(throttlingTag),
+	    debugID(debugID) {}
 
 	bool verify() const { return tenantInfo.isAuthorized(); }
 
@@ -502,7 +514,12 @@ struct GetKeyValuesStreamReply : public ReplyPromiseStreamReply {
 
 	GetKeyValuesStreamReply() : version(invalidVersion), more(false), cached(false) {}
 	GetKeyValuesStreamReply(GetKeyValuesReply r)
-	  : arena(r.arena), data(r.data), version(r.version), more(r.more), cached(r.cached), readMetrics(r.readMetrics) {}
+	  : arena(r.arena),
+	    data(r.data),
+	    version(r.version),
+	    more(r.more),
+	    cached(r.cached),
+	    readMetrics(r.readMetrics) {}
 
 	int expectedSize() const { return sizeof(GetKeyValuesStreamReply) + data.expectedSize(); }
 
@@ -565,7 +582,9 @@ struct GetKeyReply : public LoadBalancedReply {
 
 	GetKeyReply() : cached(false) {}
 	GetKeyReply(KeySelector sel, bool cached, ReadMetrics readMetrics)
-	  : sel(sel), cached(cached), readMetrics(readMetrics) {}
+	  : sel(sel),
+	    cached(cached),
+	    readMetrics(readMetrics) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -598,8 +617,13 @@ struct GetKeyRequest : TimedRequest {
 	              Optional<TransactionTag> throttlingTag,
 	              Optional<ReadOptions> options,
 	              VersionVector latestCommitVersions)
-	  : spanContext(spanContext), tenantInfo(tenantInfo), sel(sel), version(version), throttlingTag(throttlingTag),
-	    options(options), ssLatestCommitVersions(latestCommitVersions) {}
+	  : spanContext(spanContext),
+	    tenantInfo(tenantInfo),
+	    sel(sel),
+	    version(version),
+	    throttlingTag(throttlingTag),
+	    options(options),
+	    ssLatestCommitVersions(latestCommitVersions) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -633,7 +657,9 @@ struct GetShardStateRequest {
 	ReplyPromise<GetShardStateReply> reply;
 	GetShardStateRequest() = default;
 	GetShardStateRequest(KeyRange const& keys, waitMode mode, bool includePhysicalShard)
-	  : keys(keys), mode(mode), includePhysicalShard(includePhysicalShard) {}
+	  : keys(keys),
+	    mode(mode),
+	    includePhysicalShard(includePhysicalShard) {}
 	GetShardStateRequest(KeyRange const& keys, waitMode mode) : keys(keys), mode(mode), includePhysicalShard(false) {}
 
 	template <class Ar>
@@ -754,7 +780,11 @@ struct WaitMetricsRequest {
 	                   KeyRangeRef const& keys,
 	                   StorageMetrics const& min,
 	                   StorageMetrics const& max)
-	  : tenantInfo(tenantInfo), minVersion(minVersion), keys(arena, keys), min(min), max(max) {}
+	  : tenantInfo(tenantInfo),
+	    minVersion(minVersion),
+	    keys(arena, keys),
+	    min(min),
+	    max(max) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -792,7 +822,11 @@ struct SplitMetricsRequest {
 	                    StorageMetrics const& estimated,
 	                    bool isLastShard,
 	                    Optional<int> minSplitBytes)
-	  : keys(arena, keys), limits(limits), used(used), estimated(estimated), isLastShard(isLastShard),
+	  : keys(arena, keys),
+	    limits(limits),
+	    used(used),
+	    estimated(estimated),
+	    isLastShard(isLastShard),
 	    minSplitBytes(minSplitBytes) {}
 
 	template <class Ar>
@@ -817,14 +851,22 @@ struct ReadHotRangeWithMetrics {
 
 	ReadHotRangeWithMetrics() = default;
 	ReadHotRangeWithMetrics(KeyRangeRef const& keys, double density, double readBandwidth)
-	  : keys(keys), density(density), readBandwidthSec(readBandwidth) {}
+	  : keys(keys),
+	    density(density),
+	    readBandwidthSec(readBandwidth) {}
 
 	ReadHotRangeWithMetrics(KeyRangeRef const& keys, int64_t bytes, double readBandwidth, double readOpsKSec)
-	  : keys(keys), density(readBandwidth / std::max((int64_t)1, bytes)), readBandwidthSec(readBandwidth), bytes(bytes),
+	  : keys(keys),
+	    density(readBandwidth / std::max((int64_t)1, bytes)),
+	    readBandwidthSec(readBandwidth),
+	    bytes(bytes),
 	    readOpsSec(readOpsKSec) {}
 
 	ReadHotRangeWithMetrics(Arena& arena, const ReadHotRangeWithMetrics& rhs)
-	  : keys(arena, rhs.keys), density(rhs.density), readBandwidthSec(rhs.readBandwidthSec), bytes(rhs.bytes),
+	  : keys(arena, rhs.keys),
+	    density(rhs.density),
+	    readBandwidthSec(rhs.readBandwidthSec),
+	    bytes(rhs.bytes),
 	    readOpsSec(rhs.readOpsSec) {}
 
 	int expectedSize() const {
@@ -859,7 +901,9 @@ struct ReadHotSubRangeRequest {
 
 	ReadHotSubRangeRequest() {}
 	ReadHotSubRangeRequest(KeyRangeRef const& keys, SplitType type = SplitType::BYTES, int chunkCount = 1)
-	  : keys(arena, keys), type(type), chunkCount(chunkCount) {}
+	  : keys(arena, keys),
+	    type(type),
+	    chunkCount(chunkCount) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -890,7 +934,9 @@ struct SplitRangeRequest {
 
 	SplitRangeRequest() {}
 	SplitRangeRequest(TenantInfo tenantInfo, KeyRangeRef const& keys, int64_t chunkSize)
-	  : tenantInfo(tenantInfo), keys(arena, keys), chunkSize(chunkSize) {}
+	  : tenantInfo(tenantInfo),
+	    keys(arena, keys),
+	    chunkSize(chunkSize) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -967,7 +1013,9 @@ struct ChangeFeedPopRequest {
 
 	ChangeFeedPopRequest() {}
 	ChangeFeedPopRequest(Key const& rangeID, Version version, KeyRange const& range)
-	  : rangeID(rangeID), version(version), range(range) {}
+	  : rangeID(rangeID),
+	    version(version),
+	    range(range) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -991,7 +1039,10 @@ struct GetCheckpointRequest {
 	                     Version version,
 	                     CheckpointFormat format,
 	                     const Optional<UID>& actionId)
-	  : version(version), ranges(ranges), format(format), actionId(actionId) {}
+	  : version(version),
+	    ranges(ranges),
+	    format(format),
+	    actionId(actionId) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -1081,12 +1132,18 @@ struct OverlappingChangeFeedEntry {
 	                           Version emptyVersion,
 	                           Version stopVersion,
 	                           Version feedMetadataVersion)
-	  : feedId(feedId), range(range), emptyVersion(emptyVersion), stopVersion(stopVersion),
+	  : feedId(feedId),
+	    range(range),
+	    emptyVersion(emptyVersion),
+	    stopVersion(stopVersion),
 	    feedMetadataVersion(feedMetadataVersion) {}
 
 	OverlappingChangeFeedEntry(Arena& arena, const OverlappingChangeFeedEntry& rhs)
-	  : feedId(arena, rhs.feedId), range(arena, rhs.range), emptyVersion(rhs.emptyVersion),
-	    stopVersion(rhs.stopVersion), feedMetadataVersion(rhs.feedMetadataVersion) {}
+	  : feedId(arena, rhs.feedId),
+	    range(arena, rhs.range),
+	    emptyVersion(rhs.emptyVersion),
+	    stopVersion(rhs.stopVersion),
+	    feedMetadataVersion(rhs.feedMetadataVersion) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -1104,7 +1161,9 @@ struct OverlappingChangeFeedsReply {
 	OverlappingChangeFeedsReply() : cached(false), feedMetadataVersion(invalidVersion) {}
 	explicit OverlappingChangeFeedsReply(VectorRef<OverlappingChangeFeedEntry> const& feeds,
 	                                     Version feedMetadataVersion)
-	  : feeds(feeds), cached(false), feedMetadataVersion(feedMetadataVersion) {}
+	  : feeds(feeds),
+	    cached(false),
+	    feedMetadataVersion(feedMetadataVersion) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
