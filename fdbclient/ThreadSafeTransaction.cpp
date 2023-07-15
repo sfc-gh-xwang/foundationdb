@@ -250,10 +250,7 @@ ThreadSafeDatabase::~ThreadSafeDatabase() {
 	onMainThreadVoid([db]() { db->delref(); });
 }
 
-ThreadSafeTenant::ThreadSafeTenant(Reference<ThreadSafeDatabase> db, TenantName name)
-  : db(db),
-    name(name),
-    tenantCtx(TenantContext(db->db, name)) {
+ThreadSafeTenant::ThreadSafeTenant(Reference<ThreadSafeDatabase> db, TenantName name) : db(db), name(name) {
 	Tenant* tenant = this->tenant = Tenant::allocateOnForeignThread();
 	DatabaseContext* cx = db->db;
 	onMainThreadVoid([tenant, cx, name]() {
@@ -357,7 +354,7 @@ ThreadFuture<bool> ThreadSafeTenant::flushBlobRange(const KeyRangeRef& keyRange,
 }
 
 ThreadFuture<Standalone<StringRef>> ThreadSafeTenant::getClientStatus() {
-	return this->tenantCtx.getClientStatus();
+	return this->db->getClientStatus();
 }
 
 ThreadSafeTenant::~ThreadSafeTenant() {
