@@ -1152,9 +1152,8 @@ Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSState
 	reply.kmsStable = self->kmsStable;
 
 	try {
-		reply.restKMSUrls.reserve(reply.arena, self->kmsUrlStore.kmsUrls.size());
 		for (const auto& url : self->kmsUrlStore.kmsUrls) {
-			reply.restKMSUrls.emplace_back(reply.arena, url.toString());
+			reply.restKMSUrls.push_back(url.url);
 		}
 		req.reply.send(reply);
 	} catch (Error& e) {

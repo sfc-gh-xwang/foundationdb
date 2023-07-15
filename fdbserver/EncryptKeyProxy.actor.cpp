@@ -778,9 +778,7 @@ ACTOR Future<Void> getEKPStatus(Reference<EncryptKeyProxyData> ekpProxyData,
 	KmsConnGetKMSStateReq getKMSStateReq;
 	try {
 		KmsConnGetKMSStateRep getKMSStateRep = wait(kmsConnectorInf.getKMSStateReq.getReply(getKMSStateReq));
-		for (const auto& url : getKMSStateRep.restKMSUrls) {
-			status.restKMSUrls.push_back(url.toString());
-		}
+		status.restKMSUrls = getKMSStateRep.restKMSUrls;
 		status.kmsStable = getKMSStateRep.kmsStable;
 		req.reply.send(status);
 	} catch (Error& e) {
