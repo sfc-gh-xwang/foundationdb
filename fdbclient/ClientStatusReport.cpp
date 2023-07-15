@@ -31,12 +31,20 @@ namespace {
 class ClientReportGenerator {
 public:
 	ClientReportGenerator(DatabaseContext& cx) : cx(cx), numConnectionsFailed(0), healthy(true) {}
+	ClientReportGenerator(DatabaseContext& cx, ThreadFuture<TenantLookupInfo> tenantLookupInfoFuture)
+	  : cx(cx),
+	    numConnectionsFailed(0),
+	    healthy(true),
+	    tenantLookupInfoFuture(tenantLookupInfoFuture) {}
 
 	Standalone<StringRef> generateReport() {
 		if (cx.isError()) {
 			statusObj["InitializationError"] = cx.deferredError.code();
 			healthy = false;
 		} else {
+			if (tenantLookupInfoFuture.has_value()) {
+				reportTenantInfo();
+			}
 			reportCoordinators();
 			reportClientInfo();
 			reportStorageServers();
@@ -120,6 +128,21 @@ private:
 		}
 	}
 
+	void reportTenantInfo() {
+		if (tenantLookupInfoFuture->isError()) {
+			statusObj["TenantID"] = "Failed to find";
+			return;
+		}
+
+		if (!tenantLookupInfoFuture->isReady()) {
+			statusObj["TenantID"] = "Tenant ID resolution pending";
+			return;
+		}
+
+		auto tenantLookupInfo = tenantLookupInfoFuture->get();
+		statusObj["TenantID"] = tenantLookupInfo.id;
+	}
+
 	json_spirit::mObject connectionStatusReport(const NetworkAddress& address) {
 		json_spirit::mObject connStatus;
 		connStatus["Address"] = address.toString();
@@ -162,6 +185,7 @@ private:
 	std::set<NetworkAddress> serverAddresses;
 	int numConnectionsFailed;
 	bool healthy;
+	std::optional<ThreadFuture<TenantLookupInfo>> tenantLookupInfoFuture;
 };
 
 } // namespace
@@ -169,5 +193,11 @@ private:
 // Get client-side status information
 Standalone<StringRef> DatabaseContext::getClientStatus() {
 	ClientReportGenerator generator(*this);
+	return generator.generateReport();
+}
+
+// Get client-side status information from tenant level
+Standalone<StringRef> DatabaseContext::getClientStatusForTenant(ThreadFuture<TenantLookupInfo> tenantLookupInfoFuture) {
+	ClientReportGenerator generator(*this, tenantLookupInfoFuture);
 	return generator.generateReport();
 }

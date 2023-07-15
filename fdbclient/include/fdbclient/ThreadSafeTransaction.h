@@ -121,6 +121,7 @@ private:
 	Reference<ThreadSafeDatabase> db;
 	TenantName name;
 	Tenant* tenant;
+	ThreadFuture<TenantLookupInfo> tenantLookupInfoFuture;
 };
 
 // An implementation of ITransaction that serializes operations onto the network thread and interacts with the

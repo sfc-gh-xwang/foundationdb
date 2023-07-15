@@ -250,6 +250,10 @@ class ClientConfigTest:
             "Connections",
             "NumConnectionsFailed",
         }
+
+        if self.enable_tenant:
+            expected_db_attributes.add("TenantID")
+
         db_status = self.status_json["DatabaseStatus"]
         self.tc.assertEqual(expected_db_attributes, set(db_status.keys()))
         self.tc.assertTrue(db_status["Healthy"])

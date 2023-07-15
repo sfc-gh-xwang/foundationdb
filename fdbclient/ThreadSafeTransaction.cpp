@@ -253,9 +253,10 @@ ThreadSafeDatabase::~ThreadSafeDatabase() {
 ThreadSafeTenant::ThreadSafeTenant(Reference<ThreadSafeDatabase> db, TenantName name) : db(db), name(name) {
 	Tenant* tenant = this->tenant = Tenant::allocateOnForeignThread();
 	DatabaseContext* cx = db->db;
-	onMainThreadVoid([tenant, cx, name]() {
+	this->tenantLookupInfoFuture = onMainThread([tenant, cx, name]() -> Future<TenantLookupInfo> {
 		cx->addref();
 		new (tenant) Tenant(Database(cx), name);
+		return tenant->getLookupFuture();
 	});
 }
 
@@ -354,7 +355,11 @@ ThreadFuture<bool> ThreadSafeTenant::flushBlobRange(const KeyRangeRef& keyRange,
 }
 
 ThreadFuture<Standalone<StringRef>> ThreadSafeTenant::getClientStatus() {
-	return this->db->getClientStatus();
+	DatabaseContext* db = this->db->db;
+	ThreadFuture<TenantLookupInfo> tenantLookupInfoFuture = this->tenantLookupInfoFuture;
+	return onMainThread([db, tenantLookupInfoFuture] {
+		return Future<Standalone<StringRef>>(db->getClientStatusForTenant(tenantLookupInfoFuture));
+	});
 }
 
 ThreadSafeTenant::~ThreadSafeTenant() {
