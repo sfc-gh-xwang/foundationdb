@@ -226,7 +226,7 @@ class ClientConfigTest:
             self.tc.assertEqual(1, len(matching_clients))
             self.tc.assertEqual(expected_client, matching_clients[0])
 
-    def check_tenant_info(self, status_json, skip_validate_tenant_info=False):
+    def check_tenant_info(self, status_json):
         tenant_id = status_json["TenantID"]
         self.tc.assertIsNotNone(tenant_id)
 
