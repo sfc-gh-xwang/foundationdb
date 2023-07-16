@@ -2003,6 +2003,10 @@ ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
 	auto stateRef = tenantState->db->dbState;
 	auto tenant = tenantState->tenantVar->get();
 
+	if (!tenant.value.isValid()) {
+		return onMainThread([stateRef] { return Future<Standalone<StringRef>>(stateRef->getClientStatus(""_sr)); });
+	}
+
 	auto f = tenant.value->getClientStatus();
 	auto statusFuture = abortableFuture(f, tenant.onChange);
 	return flatMapThreadFuture<Standalone<StringRef>, Standalone<StringRef>>(
