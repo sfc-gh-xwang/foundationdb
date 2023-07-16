@@ -94,8 +94,6 @@ public:
 	std::string clusterFile;
 	std::string externalClientLibrary;
 	std::string externalClientDir;
-	bool disableLocalClient = false;
-	bool disableClientBypass = false;
 	int transactionTimeout = 0;
 	bool trace = false;
 	std::string traceDir;
