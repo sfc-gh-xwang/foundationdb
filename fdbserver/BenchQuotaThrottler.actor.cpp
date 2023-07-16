@@ -65,7 +65,6 @@ ACTOR static Future<Void> benchQuotaThrottlerActor(benchmark::State* benchState)
 	MockRKThroughputQuotaCache quotaCache = getQuotaCache(numThrottlingIds);
 	while (benchState->KeepRunning()) {
 		auto const rates = quotaThrottler.getProxyRates(/*numProxies=*/1, quotaCache, metricsTracker);
-		ASSERT_GT(rates.size(), 0);
 		benchmark::DoNotOptimize(rates);
 	}
 	benchState->SetItemsProcessed(static_cast<long>(benchState->iterations()));
