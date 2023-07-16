@@ -134,6 +134,7 @@ class ClientConfigTest:
         # When set true, the tester creates a tenant and generates the client status at the
         # tenant level
         self.enable_tenant = False
+        self.allow_nonexisting_tenant = False
 
     # ----------------------------
     # Configuration methods
@@ -225,7 +226,18 @@ class ClientConfigTest:
             self.tc.assertEqual(1, len(matching_clients))
             self.tc.assertEqual(expected_client, matching_clients[0])
 
-    def check_healthy_status_report(self, skip_validate_tenant_info=False):
+    def check_tenant_info(self, status_json, skip_validate_tenant_info=False):
+        tenant_id = status_json["TenantID"]
+        self.tc.assertIsNotNone(tenant_id)
+
+        if not self.allow_nonexisting_tenant:
+            # Validate that TenantID is an integer if expected valid
+            self.tc.assertTrue(isinstance(tenant_id, int))
+        else:
+            # Otherwise, TenantID must be a string field that includes word "Failed"
+            self.tc.assertTrue("Failed" in tenant_id)
+
+    def check_healthy_status_report(self):
         self.tc.assertIsNotNone(self.status_json)
         expected_mvc_attributes = {
             "Healthy",
@@ -267,20 +279,14 @@ class ClientConfigTest:
         # If tenant mode is on, TenantID must show up in the results, even if the tenant
         # is invalid
         if self.enable_tenant:
-            tenant_id = db_status["TenantID"]
-            if not tenant_id:
-                tenant_id = db_status["DatabaseStatus"]["TenantID"]
-
-            self.tc.assertIsNotNone(tenant_id)
-
-            if not skip_validate_tenant_info:
-                # Validate that TenantID is an integer if expected valid
-                self.tc.assertTrue(isinstance(tenant_id, int))
+            self.check_tenant_info(db_status)
 
     def check_healthy_status(self, expected_is_healthy):
         self.tc.assertIsNotNone(self.status_json)
         self.tc.assertTrue("Healthy" in self.status_json)
         self.tc.assertEqual(expected_is_healthy, self.status_json["Healthy"])
+        if self.enable_tenant:
+            self.check_tenant_info(self.status_json)
 
     def list_trace_files(self):
         return glob.glob(os.path.join(self.log_dir, "*"))
@@ -358,6 +364,9 @@ class ClientConfigTest:
 
         if self.enable_tenant:
             cmd_args += ["--enable-tenant"]
+
+        if self.allow_nonexisting_tenant:
+            cmd_args += ["--allow-nonexisting-tenant"]
 
         print(
             "\nExecuting test command: {}".format(" ".join([str(c) for c in cmd_args])),
@@ -924,6 +933,17 @@ class TenantStatusTests(unittest.TestCase):
         test.exec()
         test.check_healthy_status(True)
 
+    def test_local_client_only_non_existing_tenant(self):
+        # Local client only and use a nonexisting tenant to run transaction and generate status
+        # report
+        test = ClientConfigTest(self)
+        test.print_status = True
+        test.enable_tenant = True
+        test.allow_nonexisting_tenant = True
+        test.expected_error = 2131  # Tenant does not exist
+        test.exec()
+        test.check_healthy_status(True)
+
     def test_disable_mvc_bypass(self):
         # Local client only
         test = ClientConfigTest(self)
@@ -932,6 +952,19 @@ class TenantStatusTests(unittest.TestCase):
         test.enable_tenant = True
         test.exec()
         test.check_healthy_status_report()
+        test.check_available_clients([CURRENT_VERSION])
+        test.check_current_client(CURRENT_VERSION)
+
+    def test_disable_mvc_bypass_nonexisting_tenant(self):
+        # Test a case that a nonexisting tenant is used when generating status report
+        test = ClientConfigTest(self)
+        test.print_status = True
+        test.disable_client_bypass = True
+        test.enable_tenant = True
+        test.allow_nonexisting_tenant = True
+        test.expected_error = 2131  # Tenant does not exist
+        test.exec()
+        test.check_tenant_info(test.status_json["DatabaseStatus"])
         test.check_available_clients([CURRENT_VERSION])
         test.check_current_client(CURRENT_VERSION)
 

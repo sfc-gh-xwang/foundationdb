@@ -62,7 +62,8 @@ enum TesterOptionId {
 	OPT_EXPECTED_ERROR,
 	OPT_PRINT_STATUS,
 	OPT_NETWORK_OPTION,
-	OPT_ENABLE_TENANT
+	OPT_ENABLE_TENANT,
+	OPT_ALLOW_NONEXISTING_TENANT
 };
 
 const int MIN_TESTABLE_API_VERSION = 400;
@@ -83,6 +84,7 @@ CSimpleOpt::SOption TesterOptionDefs[] = //
 	  { OPT_PRINT_STATUS, "--print-status", SO_NONE },
 	  { OPT_NETWORK_OPTION, "--network-option-", SO_REQ_SEP },
 	  { OPT_ENABLE_TENANT, "--enable-tenant", SO_NONE },
+	  { OPT_ALLOW_NONEXISTING_TENANT, "--allow-nonexisting-tenant", SO_NONE },
 	  SO_END_OF_OPTIONS };
 
 class TesterOptions {
@@ -104,6 +106,7 @@ public:
 	bool printStatus = false;
 	std::vector<std::pair<std::string, std::string>> networkOptions;
 	bool enableTenant = false;
+	bool allowNonexistingTenant = false;
 };
 
 namespace {
@@ -143,6 +146,10 @@ void printProgramUsage(const char* execName) {
 	       "  --enable-tenant\n"
 	       "                 Enable the tester in tenant mode. When set true, it creates \n"
 	       "                 a tenant and prints the client status from the tenant level.\n"
+	       "  --allow-nonexisting-tenant\n"
+	       "                 When set true, it skips the tenant creation step when the tester \n"
+	       "                 is under tenant mode, testing the status report when opening \n"
+	       "                 a nonexisting tenant.\n"
 	       "  -h, --help     Display this help and exit.\n",
 	       FDB_API_VERSION);
 }
@@ -225,6 +232,9 @@ bool processArg(const CSimpleOpt& args) {
 	}
 	case OPT_ENABLE_TENANT:
 		options.enableTenant = true;
+		break;
+	case OPT_ALLOW_NONEXISTING_TENANT:
+		options.allowNonexistingTenant = true;
 		break;
 	}
 	return true;
@@ -328,7 +338,11 @@ class Tester {
 public:
 	Tester(const TesterOptions options) : useTenant(options.enableTenant), db(fdb::Database(options.clusterFile)) {
 		if (options.enableTenant) {
-			createTenant();
+			if (options.allowNonexistingTenant) {
+				tenantName = randomString(10);
+			} else {
+				createTenant();
+			}
 		}
 	}
 
@@ -389,7 +403,7 @@ bool Tester::checkTenantIDReadiness(const std::string& statusJsonStr) const {
 	statusJson.Parse(statusJsonStr.c_str());
 	// Local client case, "TenantID" is on the top-level
 	if (statusJson["TenantID"].IsString() && std::strstr(statusJson["TenantID"].GetString(), "pending")) {
-		return false; 
+		return false;
 	}
 
 	// The MVC case, "TenantID" is in the "DatabaseStatus" field
@@ -407,7 +421,7 @@ void Tester::printDatabaseStatus() {
 			fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
 			if (!useTenant) {
 				// For Database Status, there's no pending state to poll, thus print
-				// out the status json and return 
+				// out the status json and return
 				fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
 				fflush(stdout);
 				return;
