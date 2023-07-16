@@ -57,17 +57,16 @@ public:
 	void setCapacity(double pagesPerSecond) { capacity = pagesPerSecond; }
 
 	StorageQueueInfo getStorageQueueInfo() const {
-		StorageQueueInfo result(id, LocalityData({}, Value(id.toString()), {}, {}));
+		auto result = StorageQueueInfo::createTestInfo(id,
+		                                               ((totalReadCost.smoothRate() + totalWriteCost.smoothRate()) /
+		                                                (capacity * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE)) *
+		                                                   SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES);
 		for (const auto& [throttlingId, readCost] : readCosts) {
 			result.busiestReaders.emplace_back(throttlingId, readCost.smoothRate());
 		}
 		for (const auto& [throttlingId, writeCost] : writeCosts) {
 			result.busiestWriters.emplace_back(throttlingId, writeCost.smoothRate());
 		}
-		result.lastReply.bytesInput = ((totalReadCost.smoothRate() + totalWriteCost.smoothRate()) /
-		                               (capacity * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE)) *
-		                              SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES;
-		result.valid = true;
 		return result;
 	}
 }; // class MockStorageServer

@@ -78,12 +78,24 @@ public:
 class ClientThroughputTracker : public IRKThroughputTracker {
 	struct ThroughputSmoother {
 		HoltLinearSmoother smoother;
+		double lastUpdated;
 		ThroughputSmoother();
+
+	public:
+		void addThroughput(double newThroughput);
+		double smoothRate() const;
+		bool shouldForget(double expirationCheckInterval) const;
 	};
 
 	ThrottlingIdMap<ThroughputSmoother> throughput;
+	double lastExpirationCheck;
+	double expirationCheckInterval;
+
+	void expireThrottlingIds();
 
 public:
+	explicit ClientThroughputTracker(double expirationCheckInterval);
+
 	~ClientThroughputTracker();
 
 	double getThroughput(ThrottlingId const&) const override;
@@ -93,9 +105,6 @@ public:
 	// Updates per-throttlingId throughput statistics based on newly
 	// reported throughput metrics from a GRV proxy
 	void update(ThrottlingIdMap<uint64_t> const& newThroughput);
-
-	// Used to remove a throttling ID which has expired
-	void removeThrottlingId(ThrottlingId const&);
 };
 
 class MockThroughputTracker : public IRKThroughputTracker {
