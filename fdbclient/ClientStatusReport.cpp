@@ -129,18 +129,23 @@ private:
 	}
 
 	void reportTenantInfo() {
+		// Tenant info lookup failed
 		if (tenantLookupInfoFuture->isError()) {
-			statusObj["TenantID"] = "Failed to find";
+			statusObj["TenantID"] = fmt::format("Failed to find due to: {}", tenantLookupInfoFuture->getError().what());
 			return;
 		}
 
+		// Tenant info lookup pending
 		if (!tenantLookupInfoFuture->isReady()) {
-			statusObj["TenantID"] = "Tenant ID resolution pending";
+			statusObj["TenantID"] = "Tenant info resolution pending";
 			return;
 		}
 
 		auto tenantLookupInfo = tenantLookupInfoFuture->get();
 		statusObj["TenantID"] = tenantLookupInfo.id;
+		if (tenantLookupInfo.group.present()) {
+			statusObj["TenantGroup"] = tenantLookupInfo.group.get().toString();
+		}
 	}
 
 	json_spirit::mObject connectionStatusReport(const NetworkAddress& address) {

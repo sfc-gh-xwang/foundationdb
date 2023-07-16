@@ -34,6 +34,7 @@
 #include "SimpleOpt/SimpleOpt.h"
 #include <thread>
 #include <random>
+#include <rapidjson/document.h>
 #include <string_view>
 #include <unordered_map>
 #include "fdbclient/FDBOptions.g.h"
@@ -334,6 +335,7 @@ public:
 	void testTransaction();
 
 private:
+	bool checkTenantIDReadiness(const std::string& statusJsonStr) const;
 	void createTenant();
 	void handleTransactionError(fdb::Transaction& tx, const fdb::Error& err);
 	void printDatabaseStatus();
@@ -381,13 +383,46 @@ void Tester::handleTransactionError(fdb::Transaction& tx, const fdb::Error& err)
 	}
 }
 
+bool Tester::checkTenantIDReadiness(const std::string& statusJsonStr) const {
+	// Helper function to check if TenantID is ready
+	rapidjson::Document statusJson;
+	statusJson.Parse(statusJsonStr.c_str());
+	// Local client case, "TenantID" is on the top-level
+	if (statusJson["TenantID"].IsString() && std::strstr(statusJson["TenantID"].GetString(), "pending")) {
+		return false; 
+	}
+
+	// The MVC case, "TenantID" is in the "DatabaseStatus" field
+	if (statusJson.HasMember("DatabaseStatus") && statusJson["DatabaseStatus"]["TenantID"].IsString()) {
+		return !std::strstr(statusJson["DatabaseStatus"]["TenantID"].GetString(), "pending");
+	}
+	return true;
+}
+
 void Tester::printDatabaseStatus() {
 	if (options.printStatus) {
 		auto tenant = useTenant ? db.openTenant(fdb::toBytesRef(tenantName)) : fdb::Tenant();
-		auto statusFuture = useTenant ? tenant.getClientStatus() : db.getClientStatus();
-		fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
-		fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
-		fflush(stdout);
+		while (true) {
+			auto statusFuture = useTenant ? tenant.getClientStatus() : db.getClientStatus();
+			fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
+			if (!useTenant) {
+				// For Database Status, there's no pending state to poll, thus print
+				// out the status json and return 
+				fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
+				fflush(stdout);
+				return;
+			}
+
+			std::string statusJsonStr(statusFuture.get().begin(), statusFuture.get().end());
+			// If TenantID is not ready, we try again
+			if (!checkTenantIDReadiness(statusJsonStr)) {
+				continue;
+			}
+
+			fmt::print("{}\n", statusJsonStr);
+			fflush(stdout);
+			return;
+		}
 	}
 }
 
