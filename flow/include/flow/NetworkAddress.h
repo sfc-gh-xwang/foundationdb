@@ -35,7 +35,7 @@ struct NetworkAddress {
 	uint16_t flags;
 	bool fromHostname;
 
-	enum { FLAG_PRIVATE = 1, FLAG_TLS = 2 };
+	enum { FLAG_PUBLIC = 0, FLAG_PRIVATE = 1, FLAG_TLS = 2 };
 
 	NetworkAddress()
 	  : ip(IPAddress(0)),
@@ -49,7 +49,7 @@ struct NetworkAddress {
 	               NetworkAddressFromHostname fromHostname = NetworkAddressFromHostname::False)
 	  : ip(address),
 	    port(port),
-	    flags((isPublic ? 0 : FLAG_PRIVATE) | (isTLS ? FLAG_TLS : 0)),
+	    flags((isPublic ? FLAG_PUBLIC : FLAG_PRIVATE) | (isTLS ? FLAG_TLS : 0)),
 	    fromHostname(fromHostname) {}
 	NetworkAddress(uint32_t ip,
 	               uint16_t port,

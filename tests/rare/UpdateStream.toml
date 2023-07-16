@@ -1,0 +1,5 @@
+[[test]]
+testTitle='UpdateStream'
+
+    [[test.workload]]
+    testName='UpdateStream'

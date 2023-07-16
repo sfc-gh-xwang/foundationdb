@@ -34,7 +34,6 @@
 #include "fdbclient/GrvProxyInterface.h"
 #include "fdbclient/IdempotencyId.actor.h"
 #include "fdbclient/StorageServerInterface.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/VersionVector.h"
 
 #include "fdbrpc/Stats.h"
@@ -209,6 +208,17 @@ struct CommitID {
 	    txnBatchId(txnBatchId),
 	    metadataVersion(metadataVersion),
 	    conflictingKRIndices(conflictingKRIndices) {}
+};
+
+struct ClientTrCommitCostEstimation {
+	int opsCount = 0;
+	uint64_t writeCosts = 0;
+	std::deque<std::pair<int, uint64_t>> clearIdxCosts;
+	uint32_t expensiveCostEstCount = 0;
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, opsCount, writeCosts, clearIdxCosts, expensiveCostEstCount);
+	}
 };
 
 struct CommitTransactionRequest : TimedRequest {

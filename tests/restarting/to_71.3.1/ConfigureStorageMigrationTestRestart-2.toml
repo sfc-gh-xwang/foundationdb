@@ -1,5 +1,6 @@
 [configuration]
 extraMachineCountDC = 2
+simHTTPServerEnabled = false
 
 [[test]]
 testTitle = 'CloggedConfigureDatabaseTest'
