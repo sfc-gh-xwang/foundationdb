@@ -225,7 +225,7 @@ class ClientConfigTest:
             self.tc.assertEqual(1, len(matching_clients))
             self.tc.assertEqual(expected_client, matching_clients[0])
 
-    def check_healthy_status_report(self):
+    def check_healthy_status_report(self, skip_validate_tenant_info=False):
         self.tc.assertIsNotNone(self.status_json)
         expected_mvc_attributes = {
             "Healthy",
@@ -264,6 +264,18 @@ class ClientConfigTest:
         self.tc.assertGreater(len(db_status["Connections"]), 0)
         self.tc.assertEqual(0, db_status["NumConnectionsFailed"])
         self.tc.assertTrue(self.status_json["Healthy"])
+        # If tenant mode is on, TenantID must show up in the results, even if the tenant
+        # is invalid
+        if self.enable_tenant:
+            tenant_id = db_status["TenantID"]
+            if not tenant_id:
+                tenant_id = db_status["DatabaseStatus"]["TenantID"]
+
+            self.tc.assertIsNotNone(tenant_id)
+
+            if not skip_validate_tenant_info:
+                # Validate that TenantID is an integer if expected valid
+                self.tc.assertTrue(isinstance(tenant_id, int))
 
     def check_healthy_status(self, expected_is_healthy):
         self.tc.assertIsNotNone(self.status_json)
