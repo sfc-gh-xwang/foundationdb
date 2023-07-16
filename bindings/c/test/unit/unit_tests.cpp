@@ -265,6 +265,21 @@ void deleteTenant(fdb::BytesRef name) {
 	tenantHelper(name, TenantOp::DELETE);
 }
 
+rapidjson::Document getClientStatusJson(fdb::TypedFuture<fdb::future_var::KeyRef> f) {
+	fdbCheck(waitFuture(f));
+	auto value = f.get();
+	std::string statusJsonStr(value.begin(), value.end());
+	rapidjson::Document statusJson;
+	statusJson.Parse(statusJsonStr.c_str());
+	return statusJson;
+}
+
+void checkClientStatusHealthy(const rapidjson::Document& statusJson) {
+	// Sanity check of the client status.
+	CHECK(statusJson.HasMember("Healthy"));
+	CHECK(statusJson["Healthy"].GetBool());
+}
+
 } // namespace
 
 TEST_CASE("strinc_str") {
@@ -2626,20 +2641,9 @@ TEST_CASE("Tenant create, access, and delete") {
 	}
 }
 
-void checkClientStatusFuture(fdb::TypedFuture<fdb::future_var::KeyRef> f) {
-	// Sanity check of the client status.
-	fdbCheck(waitFuture(f));
-	auto value = f.get();
-	std::string statusJsonStr(value.begin(), value.end());
-	rapidjson::Document statusJson;
-	statusJson.Parse(statusJsonStr.c_str());
-	CHECK(statusJson.HasMember("Healthy"));
-	CHECK(statusJson["Healthy"].GetBool());
-}
-
 TEST_CASE("Database get client status") {
-	auto statusFuture = db.getClientStatus();
-	checkClientStatusFuture(statusFuture);
+	auto statusJson = getClientStatusJson(db.getClientStatus());
+	checkClientStatusHealthy(statusJson);
 }
 
 TEST_CASE("Tenant get client status") {
@@ -2647,8 +2651,16 @@ TEST_CASE("Tenant get client status") {
 	createTenant(tenantName);
 
 	auto tenant = db.openTenant(tenantName);
-	auto statusFuture = tenant.getClientStatus();
-	checkClientStatusFuture(statusFuture);
+
+	while (true) {
+		auto statusJson = getClientStatusJson(tenant.getClientStatus());
+		checkClientStatusHealthy(statusJson);
+		CHECK(statusJson.HasMember("TenantID"));
+		// Check if TenantID is ready
+		if (statusJson["TenantID"].IsInt64()) {
+			break;
+		}
+	}
 
 	deleteTenant(tenantName);
 }
