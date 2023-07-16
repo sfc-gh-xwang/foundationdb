@@ -159,7 +159,7 @@ public:
 					self->applyTransactionOptions(tr);
 					wait(validateLease(self, tr));
 					state uint64_t startIndex = getNextIndex(self->lastUpdateIndex);
-					state KeyRangeRef updateKeys =
+					state Standalone<KeyRangeRef> updateKeys =
 					    getUpdateKeyRange(self->metadataPrefix, startIndex, startIndex + self->batchSize + 1);
 					state RangeResult updates = wait(getRange(tr, updateKeys, /*limit=*/self->batchSize + 1));
 
