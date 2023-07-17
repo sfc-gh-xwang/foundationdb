@@ -350,8 +350,13 @@ struct GetReadVersionRequest : TimedRequest {
 	                      Optional<ThrottlingId> const& throttlingId = Optional<ThrottlingId>(),
 	                      Optional<UID> debugID = Optional<UID>(),
 	                      Optional<double> expectedTotalCost = Optional<double>())
-	  : spanContext(spanContext), transactionCount(transactionCount), flags(flags), priority(priority),
-	    throttlingId(throttlingId), expectedTotalCost(expectedTotalCost), debugID(debugID),
+	  : spanContext(spanContext),
+	    transactionCount(transactionCount),
+	    flags(flags),
+	    priority(priority),
+	    throttlingId(throttlingId),
+	    expectedTotalCost(expectedTotalCost),
+	    debugID(debugID),
 	    maxVersion(maxVersion) {
 		flags = flags & ~FLAG_PRIORITY_MASK;
 		switch (priority) {
@@ -375,15 +380,8 @@ struct GetReadVersionRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar,
-		           transactionCount,
-		           flags,
-		           debugID,
-		           reply,
-		           spanContext,
-		           maxVersion,
-		           throttlingId,
-		           expectedTotalCost);
+		serializer(
+		    ar, transactionCount, flags, debugID, reply, spanContext, maxVersion, throttlingId, expectedTotalCost);
 
 		if (ar.isDeserializing) {
 			if ((flags & PRIORITY_SYSTEM_IMMEDIATE) == PRIORITY_SYSTEM_IMMEDIATE) {

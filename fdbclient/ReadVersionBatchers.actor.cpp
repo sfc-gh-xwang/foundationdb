@@ -97,7 +97,9 @@ class Batcher {
 		Optional<uint64_t> expectedCost;
 
 		VersionRequest(SpanContext spanContext, Optional<UID> debugID = {}, Optional<uint64_t> expectedCost = {})
-		  : spanContext(spanContext), debugID(debugID), expectedCost(expectedCost) {}
+		  : spanContext(spanContext),
+		    debugID(debugID),
+		    expectedCost(expectedCost) {}
 	};
 
 	int outstandingRequests = 0;
