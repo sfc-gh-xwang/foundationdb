@@ -244,8 +244,12 @@ struct AddingShard : NonCopyable {
 
 	// When fetchKeys "partially completes" (splits an adding shard in two), this is used to construct the left half
 	AddingShard(AddingShard* prev, KeyRange const& keys)
-	  : keys(keys), fetchClient(prev->fetchClient), server(prev->server), transferredVersion(prev->transferredVersion),
-	    fetchVersion(prev->fetchVersion), phase(prev->phase) {}
+	  : keys(keys),
+	    fetchClient(prev->fetchClient),
+	    server(prev->server),
+	    transferredVersion(prev->transferredVersion),
+	    fetchVersion(prev->fetchVersion),
+	    phase(prev->phase) {}
 	~AddingShard() {
 		if (!fetchComplete.isSet())
 			fetchComplete.send(Void());
@@ -264,7 +268,12 @@ struct AddingShard : NonCopyable {
 
 class ShardInfo : public ReferenceCounted<ShardInfo>, NonCopyable {
 	ShardInfo(KeyRange keys, std::unique_ptr<AddingShard>&& adding, StorageServer* readWrite)
-	  : adding(std::move(adding)), readWrite(readWrite), keys(keys), shardId(0LL), desiredShardId(0LL), version(0) {}
+	  : adding(std::move(adding)),
+	    readWrite(readWrite),
+	    keys(keys),
+	    shardId(0LL),
+	    desiredShardId(0LL),
+	    version(0) {}
 
 public:
 	// A shard has 3 mutual exclusive states: adding, readWrite and notAssigned.
@@ -663,7 +672,12 @@ public:
 	                    Optional<TransactionTag> throttlingTag,
 	                    Optional<UID> debugID,
 	                    int64_t tenantId)
-	  : key(key), value(value), version(version), throttlingTag(throttlingTag), debugID(debugID), tenantId(tenantId) {}
+	  : key(key),
+	    value(value),
+	    version(version),
+	    throttlingTag(throttlingTag),
+	    debugID(debugID),
+	    tenantId(tenantId) {}
 };
 
 struct BusiestWriteTagContext {
@@ -673,8 +687,10 @@ struct BusiestWriteTagContext {
 	double lastUpdateTime;
 
 	BusiestWriteTagContext(const UID& thisServerID)
-	  : busiestWriteTagTrackingKey(thisServerID.toString() + "/BusiestWriteTag"), ratekeeperID(UID()),
-	    busiestWriteTagEventHolder(makeReference<EventCacheHolder>(busiestWriteTagTrackingKey)), lastUpdateTime(-1) {}
+	  : busiestWriteTagTrackingKey(thisServerID.toString() + "/BusiestWriteTag"),
+	    ratekeeperID(UID()),
+	    busiestWriteTagEventHolder(makeReference<EventCacheHolder>(busiestWriteTagTrackingKey)),
+	    lastUpdateTime(-1) {}
 };
 
 // A SSPhysicalShard represents a physical shard, it contains a list of keyranges.
@@ -1314,34 +1330,63 @@ public:
 
 		explicit Counters(StorageServer* self)
 		  : CommonStorageCounters("StorageServer", self->thisServerID.toString(), &self->metrics),
-		    allQueries("QueryQueue", cc), systemKeyQueries("SystemKeyQueries", cc), getKeyQueries("GetKeyQueries", cc),
-		    getValueQueries("GetValueQueries", cc), getRangeQueries("GetRangeQueries", cc),
+		    allQueries("QueryQueue", cc),
+		    systemKeyQueries("SystemKeyQueries", cc),
+		    getKeyQueries("GetKeyQueries", cc),
+		    getValueQueries("GetValueQueries", cc),
+		    getRangeQueries("GetRangeQueries", cc),
 		    getRangeSystemKeyQueries("GetRangeSystemKeyQueries", cc),
-		    getRangeStreamQueries("GetRangeStreamQueries", cc), lowPriorityQueries("LowPriorityQueries", cc),
-		    rowsQueried("RowsQueried", cc), watchQueries("WatchQueries", cc), emptyQueries("EmptyQueries", cc),
-		    feedRowsQueried("FeedRowsQueried", cc), feedBytesQueried("FeedBytesQueried", cc),
-		    feedStreamQueries("FeedStreamQueries", cc), rejectedFeedStreamQueries("RejectedFeedStreamQueries", cc),
-		    feedVersionQueries("FeedVersionQueries", cc), getMappedRangeBytesQueried("GetMappedRangeBytesQueried", cc),
+		    getRangeStreamQueries("GetRangeStreamQueries", cc),
+		    lowPriorityQueries("LowPriorityQueries", cc),
+		    rowsQueried("RowsQueried", cc),
+		    watchQueries("WatchQueries", cc),
+		    emptyQueries("EmptyQueries", cc),
+		    feedRowsQueried("FeedRowsQueried", cc),
+		    feedBytesQueried("FeedBytesQueried", cc),
+		    feedStreamQueries("FeedStreamQueries", cc),
+		    rejectedFeedStreamQueries("RejectedFeedStreamQueries", cc),
+		    feedVersionQueries("FeedVersionQueries", cc),
+		    getMappedRangeBytesQueried("GetMappedRangeBytesQueried", cc),
 		    finishedGetMappedRangeSecondaryQueries("FinishedGetMappedRangeSecondaryQueries", cc),
 		    getMappedRangeQueries("GetMappedRangeQueries", cc),
 		    finishedGetMappedRangeQueries("FinishedGetMappedRangeQueries", cc),
-		    logicalBytesInput("LogicalBytesInput", cc), logicalBytesMoveInOverhead("LogicalBytesMoveInOverhead", cc),
-		    kvCommitLogicalBytes("KVCommitLogicalBytes", cc), kvClearRanges("KVClearRanges", cc),
-		    kvClearSingleKey("KVClearSingleKey", cc), kvSystemClearRanges("KVSystemClearRanges", cc),
-		    bytesDurable("BytesDurable", cc), feedBytesFetched("FeedBytesFetched", cc),
-		    sampledBytesCleared("SampledBytesCleared", cc), atomicMutations("AtomicMutations", cc),
+		    logicalBytesInput("LogicalBytesInput", cc),
+		    logicalBytesMoveInOverhead("LogicalBytesMoveInOverhead", cc),
+		    kvCommitLogicalBytes("KVCommitLogicalBytes", cc),
+		    kvClearRanges("KVClearRanges", cc),
+		    kvClearSingleKey("KVClearSingleKey", cc),
+		    kvSystemClearRanges("KVSystemClearRanges", cc),
+		    bytesDurable("BytesDurable", cc),
+		    feedBytesFetched("FeedBytesFetched", cc),
+		    sampledBytesCleared("SampledBytesCleared", cc),
+		    atomicMutations("AtomicMutations", cc),
 		    changeFeedMutations("ChangeFeedMutations", cc),
-		    changeFeedMutationsDurable("ChangeFeedMutationsDurable", cc), updateBatches("UpdateBatches", cc),
-		    updateVersions("UpdateVersions", cc), loops("Loops", cc), fetchWaitingMS("FetchWaitingMS", cc),
-		    fetchWaitingCount("FetchWaitingCount", cc), fetchExecutingMS("FetchExecutingMS", cc),
-		    fetchExecutingCount("FetchExecutingCount", cc), readsRejected("ReadsRejected", cc),
-		    wrongShardServer("WrongShardServer", cc), fetchedVersions("FetchedVersions", cc),
-		    fetchesFromLogs("FetchesFromLogs", cc), quickGetValueHit("QuickGetValueHit", cc),
-		    quickGetValueMiss("QuickGetValueMiss", cc), quickGetKeyValuesHit("QuickGetKeyValuesHit", cc),
-		    quickGetKeyValuesMiss("QuickGetKeyValuesMiss", cc), kvScanBytes("KVScanBytes", cc),
-		    kvGetBytes("KVGetBytes", cc), eagerReadsKeys("EagerReadsKeys", cc), kvGets("KVGets", cc),
-		    kvScans("KVScans", cc), kvCommits("KVCommits", cc), changeFeedDiskReads("ChangeFeedDiskReads", cc),
-		    pTreeSets("PTreeSets", cc), pTreeClears("PTreeClears", cc), pTreeClearSplits("PTreeClearSplits", cc),
+		    changeFeedMutationsDurable("ChangeFeedMutationsDurable", cc),
+		    updateBatches("UpdateBatches", cc),
+		    updateVersions("UpdateVersions", cc),
+		    loops("Loops", cc),
+		    fetchWaitingMS("FetchWaitingMS", cc),
+		    fetchWaitingCount("FetchWaitingCount", cc),
+		    fetchExecutingMS("FetchExecutingMS", cc),
+		    fetchExecutingCount("FetchExecutingCount", cc),
+		    readsRejected("ReadsRejected", cc),
+		    wrongShardServer("WrongShardServer", cc),
+		    fetchedVersions("FetchedVersions", cc),
+		    fetchesFromLogs("FetchesFromLogs", cc),
+		    quickGetValueHit("QuickGetValueHit", cc),
+		    quickGetValueMiss("QuickGetValueMiss", cc),
+		    quickGetKeyValuesHit("QuickGetKeyValuesHit", cc),
+		    quickGetKeyValuesMiss("QuickGetKeyValuesMiss", cc),
+		    kvScanBytes("KVScanBytes", cc),
+		    kvGetBytes("KVGetBytes", cc),
+		    eagerReadsKeys("EagerReadsKeys", cc),
+		    kvGets("KVGets", cc),
+		    kvScans("KVScans", cc),
+		    kvCommits("KVCommits", cc),
+		    changeFeedDiskReads("ChangeFeedDiskReads", cc),
+		    pTreeSets("PTreeSets", cc),
+		    pTreeClears("PTreeClears", cc),
+		    pTreeClearSplits("PTreeClearSplits", cc),
 		    readLatencySample("ReadLatencyMetrics",
 		                      self->thisServerID,
 		                      SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
@@ -1443,9 +1488,10 @@ public:
 	StorageServer(IKeyValueStore* storage,
 	              Reference<AsyncVar<ServerDBInfo> const> const& db,
 	              StorageServerInterface const& ssi)
-	  : shardAware(false), tlogCursorReadsLatencyHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
-	                                                                               TLOG_CURSOR_READS_LATENCY_HISTOGRAM,
-	                                                                               Histogram::Unit::milliseconds)),
+	  : shardAware(false),
+	    tlogCursorReadsLatencyHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
+	                                                            TLOG_CURSOR_READS_LATENCY_HISTOGRAM,
+	                                                            Histogram::Unit::milliseconds)),
 	    ssVersionLockLatencyHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
 	                                                          SS_VERSION_LOCK_LATENCY_HISTOGRAM,
 	                                                          Histogram::Unit::milliseconds)),
@@ -1476,28 +1522,56 @@ public:
 	    readRangeKVPairsReturnedHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
 	                                                              SS_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM,
 	                                                              Histogram::Unit::bytes)),
-	    tag(invalidTag), poppedAllAfter(std::numeric_limits<Version>::max()), cpuUsage(0.0), diskUsage(0.0),
-	    lastVersionSampleTime(0), storage(this, storage), shardChangeCounter(0), lastTLogVersion(0),
-	    lastVersionWithData(0), restoredVersion(0), prevVersion(0),
-	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()), primaryLocality(tagLocalityInvalid),
-	    knownCommittedVersion(0), versionLag(0), logProtocol(0), thisServerID(ssi.id()), tssInQuarantine(false), db(db),
-	    actors(false), byteSampleClears(false, "\xff\xff\xff"_sr), durableInProgress(Void()), watchBytes(0),
-	    numWatches(0), noRecentUpdates(false), lastUpdate(now()), updateEagerReads(nullptr),
+	    tag(invalidTag),
+	    poppedAllAfter(std::numeric_limits<Version>::max()),
+	    cpuUsage(0.0),
+	    diskUsage(0.0),
+	    lastVersionSampleTime(0),
+	    storage(this, storage),
+	    shardChangeCounter(0),
+	    lastTLogVersion(0),
+	    lastVersionWithData(0),
+	    restoredVersion(0),
+	    prevVersion(0),
+	    rebootAfterDurableVersion(std::numeric_limits<Version>::max()),
+	    primaryLocality(tagLocalityInvalid),
+	    knownCommittedVersion(0),
+	    versionLag(0),
+	    logProtocol(0),
+	    thisServerID(ssi.id()),
+	    tssInQuarantine(false),
+	    db(db),
+	    actors(false),
+	    byteSampleClears(false, "\xff\xff\xff"_sr),
+	    durableInProgress(Void()),
+	    watchBytes(0),
+	    numWatches(0),
+	    noRecentUpdates(false),
+	    lastUpdate(now()),
+	    updateEagerReads(nullptr),
 	    fetchKeysParallelismLock(SERVER_KNOBS->FETCH_KEYS_PARALLELISM),
 	    fetchKeysParallelismChangeFeedLock(SERVER_KNOBS->FETCH_KEYS_PARALLELISM_CHANGE_FEED),
-	    fetchKeysBytesBudget(SERVER_KNOBS->STORAGE_FETCH_BYTES), fetchKeysBudgetUsed(false),
+	    fetchKeysBytesBudget(SERVER_KNOBS->STORAGE_FETCH_BYTES),
+	    fetchKeysBudgetUsed(false),
 	    serveFetchCheckpointParallelismLock(SERVER_KNOBS->SERVE_FETCH_CHECKPOINT_PARALLELISM),
 	    ssLock(makeReference<PriorityMultiLock>(SERVER_KNOBS->STORAGE_SERVER_READ_CONCURRENCY,
 	                                            SERVER_KNOBS->STORAGESERVER_READ_PRIORITIES)),
 	    serveAuditStorageParallelismLock(SERVER_KNOBS->SERVE_AUDIT_STORAGE_PARALLELISM),
-	    instanceID(deterministicRandom()->randomUniqueID().first()), shuttingDown(false), behind(false),
-	    versionBehind(false), debug_inApplyUpdate(false), debug_lastValidateTime(0), lastBytesInputEBrake(0),
-	    lastDurableVersionEBrake(0), maxQueryQueue(0),
+	    instanceID(deterministicRandom()->randomUniqueID().first()),
+	    shuttingDown(false),
+	    behind(false),
+	    versionBehind(false),
+	    debug_inApplyUpdate(false),
+	    debug_lastValidateTime(0),
+	    lastBytesInputEBrake(0),
+	    lastDurableVersionEBrake(0),
+	    maxQueryQueue(0),
 	    throttlingCounter(ssi.id(),
 	                      /*maxTagsTracked=*/SERVER_KNOBS->SS_THROTTLE_TAGS_TRACKED,
 	                      /*minRateTracked=*/SERVER_KNOBS->MIN_TAG_READ_PAGES_RATE *
 	                          CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
-	    busiestWriteTagContext(ssi.id()), counters(this),
+	    busiestWriteTagContext(ssi.id()),
+	    counters(this),
 	    storageServerSourceTLogIDEventHolder(
 	        makeReference<EventCacheHolder>(ssi.id().toString() + "/StorageServerSourceTLogID")),
 	    tenantData(db) {
@@ -6690,8 +6764,13 @@ public:
 	                        StorageServer::CurrentRunningFetchKeys& currentRunning_,
 	                        Counter& bytesFetchedCounter,
 	                        Counter& kvFetchedCounter)
-	  : uid(uid_), startTime(startTime_), fetchedBytes(0), histograms(histograms_), currentRunning(currentRunning_),
-	    bytesFetchedCounter(bytesFetchedCounter), kvFetchedCounter(kvFetchedCounter) {
+	  : uid(uid_),
+	    startTime(startTime_),
+	    fetchedBytes(0),
+	    histograms(histograms_),
+	    currentRunning(currentRunning_),
+	    bytesFetchedCounter(bytesFetchedCounter),
+	    kvFetchedCounter(kvFetchedCounter) {
 
 		currentRunning.recordStart(uid, keyRange);
 	}
@@ -8141,7 +8220,11 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 }
 
 AddingShard::AddingShard(StorageServer* server, KeyRangeRef const& keys)
-  : keys(keys), server(server), transferredVersion(invalidVersion), fetchVersion(invalidVersion), phase(WaitPrevious) {
+  : keys(keys),
+    server(server),
+    transferredVersion(invalidVersion),
+    fetchVersion(invalidVersion),
+    phase(WaitPrevious) {
 	fetchClient = fetchKeys(server, this);
 }
 
@@ -8838,11 +8921,17 @@ struct OrderByVersion {
 class StorageUpdater {
 public:
 	StorageUpdater()
-	  : currentVersion(invalidVersion), fromVersion(invalidVersion), restoredVersion(invalidVersion),
-	    processedStartKey(false), processedCacheStartKey(false) {}
+	  : currentVersion(invalidVersion),
+	    fromVersion(invalidVersion),
+	    restoredVersion(invalidVersion),
+	    processedStartKey(false),
+	    processedCacheStartKey(false) {}
 	StorageUpdater(Version fromVersion, Version restoredVersion)
-	  : currentVersion(fromVersion), fromVersion(fromVersion), restoredVersion(restoredVersion),
-	    processedStartKey(false), processedCacheStartKey(false) {}
+	  : currentVersion(fromVersion),
+	    fromVersion(fromVersion),
+	    restoredVersion(restoredVersion),
+	    processedStartKey(false),
+	    processedCacheStartKey(false) {}
 
 	void applyMutation(StorageServer* data,
 	                   MutationRef const& m,

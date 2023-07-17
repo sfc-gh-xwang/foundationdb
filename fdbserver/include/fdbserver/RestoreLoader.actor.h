@@ -86,13 +86,18 @@ struct LoaderBatchData : public ReferenceCounted<LoaderBatchData> {
 
 		Counters(LoaderBatchData* self, UID loaderInterfID, int batchIndex)
 		  : cc("LoaderBatch", loaderInterfID.toString() + ":" + std::to_string(batchIndex)),
-		    loadedRangeBytes("LoadedRangeBytes", cc), loadedLogBytes("LoadedLogBytes", cc), sentBytes("SentBytes", cc),
-		    sampledRangeBytes("SampledRangeBytes", cc), sampledLogBytes("SampledLogBytes", cc),
+		    loadedRangeBytes("LoadedRangeBytes", cc),
+		    loadedLogBytes("LoadedLogBytes", cc),
+		    sentBytes("SentBytes", cc),
+		    sampledRangeBytes("SampledRangeBytes", cc),
+		    sampledLogBytes("SampledLogBytes", cc),
 		    oldLogMutations("OldLogMutations", cc) {}
 	} counters;
 
 	explicit LoaderBatchData(UID nodeID, int batchIndex)
-	  : vbState(LoaderVersionBatchState::NOT_INIT), loadFileReqs(0), counters(this, nodeID, batchIndex) {
+	  : vbState(LoaderVersionBatchState::NOT_INIT),
+	    loadFileReqs(0),
+	    counters(this, nodeID, batchIndex) {
 		pollMetrics =
 		    counters.cc.traceCounters(format("FastRestoreLoaderMetrics%d", batchIndex),
 		                              nodeID,
@@ -136,7 +141,9 @@ struct RestoreLoaderSchedSendLoadParamRequest {
 	double start;
 
 	explicit RestoreLoaderSchedSendLoadParamRequest(int batchIndex, Promise<Void> toSched, double start)
-	  : batchIndex(batchIndex), toSched(toSched), start(start){};
+	  : batchIndex(batchIndex),
+	    toSched(toSched),
+	    start(start){};
 	RestoreLoaderSchedSendLoadParamRequest() = default;
 
 	bool operator<(RestoreLoaderSchedSendLoadParamRequest const& rhs) const {
@@ -184,7 +191,11 @@ struct RestoreLoaderData : RestoreRoleData, public ReferenceCounted<RestoreLoade
 	void delref() { return ReferenceCounted<RestoreLoaderData>::delref(); }
 
 	explicit RestoreLoaderData(UID loaderInterfID, int assignedIndex, RestoreControllerInterface ci)
-	  : ci(ci), finishedLoadingVB(0), finishedSendingVB(0), inflightSendingReqs(0), inflightLoadingReqs(0) {
+	  : ci(ci),
+	    finishedLoadingVB(0),
+	    finishedSendingVB(0),
+	    inflightSendingReqs(0),
+	    inflightLoadingReqs(0) {
 		nodeID = loaderInterfID;
 		nodeIndex = assignedIndex;
 		role = RestoreRole::Loader;

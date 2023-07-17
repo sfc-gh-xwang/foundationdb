@@ -79,9 +79,17 @@ public:
 	                       std::optional<fdb::BytesRef> tenantName,
 	                       bool transactional,
 	                       bool restartOnTimeout)
-	  : executor(executor), startFct(startFct), contAfterDone(cont), scheduler(scheduler), retryLimit(retryLimit),
-	    txState(TxState::IN_PROGRESS), commitCalled(false), bgBasePath(bgBasePath), restartOnTimeout(restartOnTimeout),
-	    tenantName(tenantName), transactional(transactional),
+	  : executor(executor),
+	    startFct(startFct),
+	    contAfterDone(cont),
+	    scheduler(scheduler),
+	    retryLimit(retryLimit),
+	    txState(TxState::IN_PROGRESS),
+	    commitCalled(false),
+	    bgBasePath(bgBasePath),
+	    restartOnTimeout(restartOnTimeout),
+	    tenantName(tenantName),
+	    transactional(transactional),
 	    selfConflictingKey(Random::get().randomByteStringLowerCase(8, 8)) {
 		databaseCreateErrorInjected = executor->getOptions().injectDatabaseCreateErrors &&
 		                              Random::get().randomBool(executor->getOptions().databaseCreateErrorRatio);

@@ -91,7 +91,10 @@ struct SystemTransactionGenerator : ReferenceCounted<SystemTransactionGenerator<
 	typedef typename DB::TransactionT TransactionT;
 
 	SystemTransactionGenerator(Reference<DB> db, bool write, bool lockAware, bool immediate)
-	  : db(db), write(write), lockAware(lockAware), immediate(immediate) {}
+	  : db(db),
+	    write(write),
+	    lockAware(lockAware),
+	    immediate(immediate) {}
 
 	Reference<TransactionT> createTransaction() const { return db->createTransaction(); }
 

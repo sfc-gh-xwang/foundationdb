@@ -70,7 +70,10 @@ private: // Forward-declare IndexedSet::Node because Clang is much stricter abou
 		// combinations, but still take advantage of move constructors when available (or required).
 		template <class T_, class Metric_>
 		Node(T_&& data, Metric_&& m, Node* parent = 0)
-		  : data(std::forward<T_>(data)), balance(0), total(std::forward<Metric_>(m)), parent(parent) {
+		  : data(std::forward<T_>(data)),
+		    balance(0),
+		    total(std::forward<Metric_>(m)),
+		    parent(parent) {
 			child[0] = child[1] = nullptr;
 		}
 		Node(Node const&) = delete;
@@ -371,7 +374,8 @@ public:
 	Value value;
 
 	template <class Key_, class Value_>
-	MapPair(Key_&& key, Value_&& value) : key(std::forward<Key_>(key)), value(std::forward<Value_>(value)) {}
+	MapPair(Key_&& key, Value_&& value) : key(std::forward<Key_>(key)),
+	                                      value(std::forward<Value_>(value)) {}
 	void operator=(MapPair const& rhs) {
 		key = rhs.key;
 		value = rhs.value;

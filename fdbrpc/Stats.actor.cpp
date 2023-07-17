@@ -30,8 +30,14 @@
 #include "flow/actorcompiler.h" // has to be last include
 
 Counter::Counter(std::string const& name, CounterCollection& collection, bool skipTraceOnSilentInterval)
-  : name(name), interval_start(0), last_event(0), interval_sq_time(0), roughness_interval_start(0), interval_delta(0),
-    interval_start_value(0), skip_trace_on_silent_interval(skipTraceOnSilentInterval) {
+  : name(name),
+    interval_start(0),
+    last_event(0),
+    interval_sq_time(0),
+    roughness_interval_start(0),
+    interval_delta(0),
+    interval_start_value(0),
+    skip_trace_on_silent_interval(skipTraceOnSilentInterval) {
 	metric.init(collection.getName() + "." + (char)toupper(name.at(0)) + name.substr(1), collection.getId());
 	collection.addCounter(this);
 }
@@ -180,7 +186,10 @@ LatencyBands::LatencyBands(std::string const& name,
                            UID id,
                            double loggingInterval,
                            std::function<void(TraceEvent&)> const& decorator)
-  : name(name), id(id), loggingInterval(loggingInterval), decorator(decorator) {}
+  : name(name),
+    id(id),
+    loggingInterval(loggingInterval),
+    decorator(decorator) {}
 
 void LatencyBands::addThreshold(double value) {
 	if (value > 0 && bands.count(value) == 0) {
@@ -222,7 +231,11 @@ LatencySample::LatencySample(std::string name,
                              double loggingInterval,
                              double accuracy,
                              bool skipTraceOnSilentInterval)
-  : IMetric(knobToMetricModel(FLOW_KNOBS->METRICS_DATA_MODEL)), name(name), id(id), sampleEmit(now()), sketch(accuracy),
+  : IMetric(knobToMetricModel(FLOW_KNOBS->METRICS_DATA_MODEL)),
+    name(name),
+    id(id),
+    sampleEmit(now()),
+    sketch(accuracy),
     skipTraceOnSilentInterval(skipTraceOnSilentInterval),
     latencySampleEventHolder(makeReference<EventCacheHolder>(id.toString() + "/" + name)) {
 	logger = recurring([this]() { logSample(); }, loggingInterval);

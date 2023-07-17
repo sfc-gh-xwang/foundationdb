@@ -1963,7 +1963,9 @@ public:
 		RemappedPage(Version v = invalidVersion,
 		             LogicalPageID o = invalidLogicalPageID,
 		             LogicalPageID n = invalidLogicalPageID)
-		  : version(v), originalPageID(o), newPageID(n) {}
+		  : version(v),
+		    originalPageID(o),
+		    newPageID(n) {}
 
 		Version version;
 		LogicalPageID originalPageID;
@@ -2021,8 +2023,12 @@ public:
 	          int concurrentExtentReads,
 	          bool memoryOnly)
 	  : ioLock(makeReference<PriorityMultiLock>(FLOW_KNOBS->MAX_OUTSTANDING, SERVER_KNOBS->REDWOOD_IO_PRIORITIES)),
-	    pageCacheBytes(pageCacheSizeBytes), desiredPageSize(desiredPageSize), desiredExtentSize(desiredExtentSize),
-	    filename(filename), memoryOnly(memoryOnly), remapCleanupWindowBytes(remapCleanupWindowBytes),
+	    pageCacheBytes(pageCacheSizeBytes),
+	    desiredPageSize(desiredPageSize),
+	    desiredExtentSize(desiredExtentSize),
+	    filename(filename),
+	    memoryOnly(memoryOnly),
+	    remapCleanupWindowBytes(remapCleanupWindowBytes),
 	    concurrentExtentReads(new FlowLock(concurrentExtentReads)) {
 
 		// This sets the page cache size for all PageCacheT instances using the same evictor
@@ -5079,9 +5085,17 @@ public:
 	               Optional<EncryptionAtRestMode> expectedEncryptionMode,
 	               EncodingType encodingType = EncodingType::MAX_ENCODING_TYPE,
 	               Reference<IPageEncryptionKeyProvider> keyProvider = {})
-	  : m_pager(pager), m_db(db), m_expectedEncryptionMode(expectedEncryptionMode), m_encodingType(encodingType),
-	    m_enforceEncodingType(false), m_keyProvider(keyProvider), m_pBuffer(nullptr), m_mutationCount(0),
-	    m_pBoundaryVerifier(DecodeBoundaryVerifier::getVerifier(name)), m_name(name), m_logID(logID) {
+	  : m_pager(pager),
+	    m_db(db),
+	    m_expectedEncryptionMode(expectedEncryptionMode),
+	    m_encodingType(encodingType),
+	    m_enforceEncodingType(false),
+	    m_keyProvider(keyProvider),
+	    m_pBuffer(nullptr),
+	    m_mutationCount(0),
+	    m_pBoundaryVerifier(DecodeBoundaryVerifier::getVerifier(name)),
+	    m_name(name),
+	    m_logID(logID) {
 		m_pDecodeCacheMemory = m_pager->getPageCachePenaltySource();
 		m_lazyClearActor = 0;
 		m_init = init_impl(this);
@@ -5743,10 +5757,18 @@ private:
 		            bool enableEncryptionDomain,
 		            bool splitByDomain,
 		            IPageEncryptionKeyProvider* keyProvider)
-		  : startIndex(index), count(0), pageSize(blockSize),
-		    largeDeltaTree(pageSize > BTreePage::BinaryTree::SmallSizeLimit), blockSize(blockSize), blockCount(1),
-		    kvBytes(0), encodingType(encodingType), height(height), enableEncryptionDomain(enableEncryptionDomain),
-		    splitByDomain(splitByDomain), keyProvider(keyProvider) {
+		  : startIndex(index),
+		    count(0),
+		    pageSize(blockSize),
+		    largeDeltaTree(pageSize > BTreePage::BinaryTree::SmallSizeLimit),
+		    blockSize(blockSize),
+		    blockCount(1),
+		    kvBytes(0),
+		    encodingType(encodingType),
+		    height(height),
+		    enableEncryptionDomain(enableEncryptionDomain),
+		    splitByDomain(splitByDomain),
+		    keyProvider(keyProvider) {
 
 			// Subtrace Page header overhead, BTreePage overhead, and DeltaTree (BTreePage::BinaryTree) overhead.
 			bytesLeft =
@@ -6693,8 +6715,14 @@ private:
 		                     Reference<IPageEncryptionKeyProvider> keyProvider,
 		                     Optional<int64_t> pageDomainId,
 		                     int maxHeightAllowed)
-		  : updating(updating), page(p), clonedPage(alreadyCloned), changesMade(false), parentInfo(parentInfo),
-		    keyProvider(keyProvider), pageDomainId(pageDomainId), maxHeightAllowed(maxHeightAllowed) {}
+		  : updating(updating),
+		    page(p),
+		    clonedPage(alreadyCloned),
+		    changesMade(false),
+		    parentInfo(parentInfo),
+		    keyProvider(keyProvider),
+		    pageDomainId(pageDomainId),
+		    maxHeightAllowed(maxHeightAllowed) {}
 
 		// Whether updating the existing page is allowed
 		bool updating;
@@ -8150,7 +8178,8 @@ public:
 	                     EncodingType encodingType = EncodingType::MAX_ENCODING_TYPE,
 	                     Reference<IPageEncryptionKeyProvider> keyProvider = {},
 	                     int64_t pageCacheBytes = 0)
-	  : m_filename(filename), prefetch(SERVER_KNOBS->REDWOOD_KVSTORE_RANGE_PREFETCH) {
+	  : m_filename(filename),
+	    prefetch(SERVER_KNOBS->REDWOOD_KVSTORE_RANGE_PREFETCH) {
 		if (!encryptionMode.present() || encryptionMode.get().isEncryptionEnabled()) {
 			ASSERT(keyProvider.isValid() || db.isValid());
 		}

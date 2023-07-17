@@ -81,8 +81,16 @@ bool WorkloadConfig::getBoolOption(const std::string& name, bool defaultVal) con
 }
 
 WorkloadBase::WorkloadBase(const WorkloadConfig& config)
-  : manager(nullptr), tasksScheduled(0), numErrors(0), lastTxCompleted(0), lastAction(Action::None),
-    clientId(config.clientId), numClients(config.numClients), failed(false), numTxCompleted(0), numTxStarted(0),
+  : manager(nullptr),
+    tasksScheduled(0),
+    numErrors(0),
+    lastTxCompleted(0),
+    lastAction(Action::None),
+    clientId(config.clientId),
+    numClients(config.numClients),
+    failed(false),
+    numTxCompleted(0),
+    numTxStarted(0),
     inProgress(false) {
 	maxErrors = config.getIntOption("maxErrors", 10);
 	minTxTimeoutMs = config.getIntOption("minTxTimeoutMs", 0);

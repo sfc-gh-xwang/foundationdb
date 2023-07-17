@@ -2913,7 +2913,7 @@ public:
 					    .detail("Server", server->getId())
 					    .detail("IsTss", isTss)
 					    .detail("Reason", "Absent server list item");
-					return Void();
+					return Never();
 				}
 				Optional<StorageMetadataType> metadata = wait(metadataMap.get(tr, server->getId()));
 				// NOTE: in upgrade testing, there may not be any metadata
@@ -3879,26 +3879,50 @@ bool DDTeamCollection::satisfiesPolicy(const std::vector<Reference<TCServerInfo>
 }
 
 DDTeamCollection::DDTeamCollection(DDTeamCollectionInitParams const& params)
-  : doBuildTeams(true), lastBuildTeamsFailed(false), teamBuilder(Void()), lock(params.lock), output(params.output),
-    unhealthyServers(0), storageWiggler(makeReference<StorageWiggler>(this)), processingWiggle(params.processingWiggle),
-    getAverageShardBytes(params.getAverageShardBytes), shardsAffectedByTeamFailure(params.shardsAffectedByTeamFailure),
+  : doBuildTeams(true),
+    lastBuildTeamsFailed(false),
+    teamBuilder(Void()),
+    lock(params.lock),
+    output(params.output),
+    unhealthyServers(0),
+    storageWiggler(makeReference<StorageWiggler>(this)),
+    processingWiggle(params.processingWiggle),
+    getAverageShardBytes(params.getAverageShardBytes),
+    shardsAffectedByTeamFailure(params.shardsAffectedByTeamFailure),
     initialFailureReactionDelay(
         delayed(params.readyToStart, SERVER_KNOBS->INITIAL_FAILURE_REACTION_DELAY, TaskPriority::DataDistribution)),
-    initializationDoneActor(logOnCompletion(params.readyToStart && initialFailureReactionDelay)), recruitingStream(0),
-    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY), healthyTeamCount(0),
-    zeroHealthyTeams(params.zeroHealthyTeams), optimalTeamCount(0), zeroOptimalTeams(true), isTssRecruiting(false),
-    includedDCs(params.includedDCs), otherTrackedDCs(params.otherTrackedDCs),
-    processingUnhealthy(params.processingUnhealthy), readyToStart(params.readyToStart),
-    checkTeamDelay(delay(SERVER_KNOBS->CHECK_TEAM_DELAY, TaskPriority::DataDistribution)), badTeamRemover(Void()),
-    checkInvalidLocalities(Void()), wrongStoreTypeRemover(Void()), clearHealthyZoneFuture(true),
-    lowestUtilizationTeam(0), highestUtilizationTeam(0), getShardMetrics(params.getShardMetrics),
-    getUnhealthyRelocationCount(params.getUnhealthyRelocationCount), removeFailedServer(params.removeFailedServer),
+    initializationDoneActor(logOnCompletion(params.readyToStart && initialFailureReactionDelay)),
+    recruitingStream(0),
+    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
+    healthyTeamCount(0),
+    zeroHealthyTeams(params.zeroHealthyTeams),
+    optimalTeamCount(0),
+    zeroOptimalTeams(true),
+    isTssRecruiting(false),
+    includedDCs(params.includedDCs),
+    otherTrackedDCs(params.otherTrackedDCs),
+    processingUnhealthy(params.processingUnhealthy),
+    readyToStart(params.readyToStart),
+    checkTeamDelay(delay(SERVER_KNOBS->CHECK_TEAM_DELAY, TaskPriority::DataDistribution)),
+    badTeamRemover(Void()),
+    checkInvalidLocalities(Void()),
+    wrongStoreTypeRemover(Void()),
+    clearHealthyZoneFuture(true),
+    lowestUtilizationTeam(0),
+    highestUtilizationTeam(0),
+    getShardMetrics(params.getShardMetrics),
+    getUnhealthyRelocationCount(params.getUnhealthyRelocationCount),
+    removeFailedServer(params.removeFailedServer),
     ddTrackerStartingEventHolder(makeReference<EventCacheHolder>("DDTrackerStarting")),
     teamCollectionInfoEventHolder(makeReference<EventCacheHolder>("TeamCollectionInfo")),
     storageServerRecruitmentEventHolder(
         makeReference<EventCacheHolder>("StorageServerRecruitment_" + params.distributorId.toString())),
-    primary(params.primary), distributorId(params.distributorId), underReplication(false), db(params.db),
-    configuration(params.configuration), storageServerSet(new LocalityMap<UID>()) {
+    primary(params.primary),
+    distributorId(params.distributorId),
+    underReplication(false),
+    db(params.db),
+    configuration(params.configuration),
+    storageServerSet(new LocalityMap<UID>()) {
 
 	if (!primary || configuration.usableRegions == 1) {
 		TraceEvent("DDTrackerStarting", distributorId)
@@ -4196,7 +4220,11 @@ struct ServerPriority {
 
 	ServerPriority() {}
 	ServerPriority(int healthyShards, int unhealthyShards, int64_t loadBytes, UID id, Reference<TCServerInfo> info)
-	  : healthyShards(healthyShards), unhealthyShards(unhealthyShards), loadBytes(loadBytes), id(id), info(info) {}
+	  : healthyShards(healthyShards),
+	    unhealthyShards(unhealthyShards),
+	    loadBytes(loadBytes),
+	    id(id),
+	    info(info) {}
 
 	bool operator<(ServerPriority const& r) const {
 		if (healthyShards != r.healthyShards) {

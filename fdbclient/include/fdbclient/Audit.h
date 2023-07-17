@@ -44,7 +44,10 @@ struct AuditStorageState {
 	AuditStorageState() : type(0), phase(0) {}
 	AuditStorageState(UID id, AuditType type) : id(id), type(static_cast<uint8_t>(type)), phase(0) {}
 	AuditStorageState(UID id, KeyRange range, AuditType type)
-	  : id(id), range(range), type(static_cast<uint8_t>(type)), phase(0) {}
+	  : id(id),
+	    range(range),
+	    type(static_cast<uint8_t>(type)),
+	    phase(0) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -80,7 +83,9 @@ struct AuditStorageRequest {
 
 	AuditStorageRequest() = default;
 	AuditStorageRequest(UID id, KeyRange range, AuditType type)
-	  : id(id), range(range), type(static_cast<uint8_t>(type)) {}
+	  : id(id),
+	    range(range),
+	    type(static_cast<uint8_t>(type)) {}
 
 	void setType(AuditType type) { this->type = static_cast<uint8_t>(this->type); }
 	AuditType getType() const { return static_cast<AuditType>(this->type); }
@@ -105,7 +110,10 @@ struct TriggerAuditRequest {
 
 	TriggerAuditRequest() = default;
 	TriggerAuditRequest(AuditType type, KeyRange range)
-	  : type(static_cast<uint8_t>(type)), range(range), force(false), async(false) {}
+	  : type(static_cast<uint8_t>(type)),
+	    range(range),
+	    force(false),
+	    async(false) {}
 
 	void setType(AuditType type) { this->type = static_cast<uint8_t>(this->type); }
 	AuditType getType() const { return static_cast<AuditType>(this->type); }

@@ -146,7 +146,10 @@ struct WorkerDetails {
 
 	WorkerDetails() : degraded(false), recoveredDiskFiles(false) {}
 	WorkerDetails(const WorkerInterface& interf, ProcessClass processClass, bool degraded, bool recoveredDiskFiles)
-	  : interf(interf), processClass(processClass), degraded(degraded), recoveredDiskFiles(recoveredDiskFiles) {}
+	  : interf(interf),
+	    processClass(processClass),
+	    degraded(degraded),
+	    recoveredDiskFiles(recoveredDiskFiles) {}
 
 	bool operator<(const WorkerDetails& r) const { return interf.id() < r.interf.id(); }
 
@@ -234,7 +237,8 @@ struct RegisterWorkerReply {
 	RegisterWorkerReply()
 	  : priorityInfo(ProcessClass::UnsetFit, false, ClusterControllerPriorityInfo::FitnessUnknown) {}
 	RegisterWorkerReply(ProcessClass processClass, ClusterControllerPriorityInfo priorityInfo)
-	  : processClass(processClass), priorityInfo(priorityInfo) {}
+	  : processClass(processClass),
+	    priorityInfo(priorityInfo) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -359,7 +363,8 @@ struct RegisterWorkerRequest {
 	Optional<UID> clusterId;
 
 	RegisterWorkerRequest()
-	  : priorityInfo(ProcessClass::UnsetFit, false, ClusterControllerPriorityInfo::FitnessUnknown), degraded(false) {}
+	  : priorityInfo(ProcessClass::UnsetFit, false, ClusterControllerPriorityInfo::FitnessUnknown),
+	    degraded(false) {}
 	RegisterWorkerRequest(WorkerInterface wi,
 	                      ProcessClass initialClass,
 	                      ProcessClass processClass,
@@ -377,12 +382,24 @@ struct RegisterWorkerRequest {
 	                      bool recoveredDiskFiles,
 	                      ConfigBroadcastInterface configBroadcastInterface,
 	                      Optional<UID> clusterId)
-	  : wi(wi), initialClass(initialClass), processClass(processClass), priorityInfo(priorityInfo),
-	    generation(generation), distributorInterf(ddInterf), ratekeeperInterf(rkInterf), blobManagerInterf(bmInterf),
-	    blobMigratorInterf(mgInterf), encryptKeyProxyInterf(ekpInterf), consistencyScanInterf(csInterf),
-	    degraded(degraded), lastSeenKnobVersion(lastSeenKnobVersion), knobConfigClassSet(knobConfigClassSet),
-	    requestDbInfo(false), recoveredDiskFiles(recoveredDiskFiles),
-	    configBroadcastInterface(configBroadcastInterface), clusterId(clusterId) {}
+	  : wi(wi),
+	    initialClass(initialClass),
+	    processClass(processClass),
+	    priorityInfo(priorityInfo),
+	    generation(generation),
+	    distributorInterf(ddInterf),
+	    ratekeeperInterf(rkInterf),
+	    blobManagerInterf(bmInterf),
+	    blobMigratorInterf(mgInterf),
+	    encryptKeyProxyInterf(ekpInterf),
+	    consistencyScanInterf(csInterf),
+	    degraded(degraded),
+	    lastSeenKnobVersion(lastSeenKnobVersion),
+	    knobConfigClassSet(knobConfigClassSet),
+	    requestDbInfo(false),
+	    recoveredDiskFiles(recoveredDiskFiles),
+	    configBroadcastInterface(configBroadcastInterface),
+	    clusterId(clusterId) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -871,7 +888,9 @@ struct WorkerSnapRequest {
 	StringRef role;
 
 	WorkerSnapRequest(StringRef snapPayload, UID snapUID, StringRef role)
-	  : snapPayload(snapPayload), snapUID(snapUID), role(role) {}
+	  : snapPayload(snapPayload),
+	    snapUID(snapUID),
+	    role(role) {}
 	WorkerSnapRequest() = default;
 
 	template <class Ar>
@@ -954,10 +973,17 @@ struct DebugEntryRef {
 	MutationRef mutation;
 	DebugEntryRef() {}
 	DebugEntryRef(const char* c, Version v, MutationRef const& m)
-	  : time(now()), address(g_network->getLocalAddress()), context((const uint8_t*)c, strlen(c)), version(v),
+	  : time(now()),
+	    address(g_network->getLocalAddress()),
+	    context((const uint8_t*)c, strlen(c)),
+	    version(v),
 	    mutation(m) {}
 	DebugEntryRef(Arena& a, DebugEntryRef const& d)
-	  : time(d.time), address(d.address), context(d.context), version(d.version), mutation(a, d.mutation) {}
+	  : time(d.time),
+	    address(d.address),
+	    context(d.context),
+	    version(d.version),
+	    mutation(a, d.mutation) {}
 
 	size_t expectedSize() const { return context.expectedSize() + mutation.expectedSize(); }
 
@@ -1058,7 +1084,9 @@ struct Role {
 
 private:
 	Role(std::string roleName, std::string abbreviation, bool includeInTraceRoles = true)
-	  : roleName(roleName), abbreviation(abbreviation), includeInTraceRoles(includeInTraceRoles) {
+	  : roleName(roleName),
+	    abbreviation(abbreviation),
+	    includeInTraceRoles(includeInTraceRoles) {
 		ASSERT(abbreviation.size() == 2); // Having a fixed size makes log queries more straightforward
 	}
 };

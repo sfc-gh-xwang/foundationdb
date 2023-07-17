@@ -69,8 +69,16 @@ FDBLibTLSSession::FDBLibTLSSession(Reference<FDBLibTLSPolicy> policy,
                                    TLSRecvCallbackFunc recv_func,
                                    void* recv_ctx,
                                    void* uidptr)
-  : tls_ctx(nullptr), tls_sctx(nullptr), is_client(is_client), policy(policy), send_func(send_func), send_ctx(send_ctx),
-    recv_func(recv_func), recv_ctx(recv_ctx), handshake_completed(false), lastVerifyFailureLogged(0.0) {
+  : tls_ctx(nullptr),
+    tls_sctx(nullptr),
+    is_client(is_client),
+    policy(policy),
+    send_func(send_func),
+    send_ctx(send_ctx),
+    recv_func(recv_func),
+    recv_ctx(recv_ctx),
+    handshake_completed(false),
+    lastVerifyFailureLogged(0.0) {
 	if (uidptr)
 		uid = *(UID*)uidptr;
 

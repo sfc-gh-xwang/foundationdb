@@ -40,7 +40,10 @@ class RESTClient : public ReferenceCounted<RESTClient> {
 public:
 	struct Stats {
 		explicit Stats(const std::string& hService)
-		  : host_service(hService), requests_successful(0), requests_failed(0), bytes_sent(0) {}
+		  : host_service(hService),
+		    requests_successful(0),
+		    requests_failed(0),
+		    bytes_sent(0) {}
 		Stats operator-(const Stats& rhs);
 		void clear() { requests_failed = requests_successful = bytes_sent = 0; }
 		json_spirit::mObject getJSON();

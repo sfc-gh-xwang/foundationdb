@@ -11,7 +11,10 @@
 #include "flow/UnitTest.h"
 
 RKRateUpdater::RKRateUpdater(UID ratekeeperId, RatekeeperLimits const& limits)
-  : limits(limits), lastWarning(0), blobWorkerTime(now()), ratekeeperId(ratekeeperId) {}
+  : limits(limits),
+    lastWarning(0),
+    blobWorkerTime(now()),
+    ratekeeperId(ratekeeperId) {}
 
 RKRateUpdater::~RKRateUpdater() = default;
 
@@ -702,14 +705,21 @@ RatekeeperLimits::RatekeeperLimits(TransactionPriority priority,
                                    double maxVersionDifference,
                                    int64_t durabilityLagTargetVersions,
                                    double bwLagTarget)
-  : tpsLimit(std::numeric_limits<double>::infinity()), tpsLimitMetric(StringRef("Ratekeeper.TPSLimit" + context)),
-    reasonMetric(StringRef("Ratekeeper.Reason" + context)), storageTargetBytes(storageTargetBytes),
-    storageSpringBytes(storageSpringBytes), logTargetBytes(logTargetBytes), logSpringBytes(logSpringBytes),
+  : tpsLimit(std::numeric_limits<double>::infinity()),
+    tpsLimitMetric(StringRef("Ratekeeper.TPSLimit" + context)),
+    reasonMetric(StringRef("Ratekeeper.Reason" + context)),
+    storageTargetBytes(storageTargetBytes),
+    storageSpringBytes(storageSpringBytes),
+    logTargetBytes(logTargetBytes),
+    logSpringBytes(logSpringBytes),
     maxVersionDifference(maxVersionDifference),
     durabilityLagTargetVersions(durabilityLagTargetVersions +
                                 SERVER_KNOBS->MAX_READ_TRANSACTION_LIFE_VERSIONS), // The read transaction life versions
                                                                                    // are expected to not
     // be durable on the storage servers
-    lastDurabilityLag(0), durabilityLagLimit(std::numeric_limits<double>::infinity()), bwLagTarget(bwLagTarget),
-    priority(priority), context(context),
+    lastDurabilityLag(0),
+    durabilityLagLimit(std::numeric_limits<double>::infinity()),
+    bwLagTarget(bwLagTarget),
+    priority(priority),
+    context(context),
     rkUpdateEventCacheHolder(makeReference<EventCacheHolder>("RkUpdate" + context)) {}

@@ -101,7 +101,10 @@ struct TLogSet {
 	std::vector<std::vector<int>> satelliteTagLocations;
 
 	TLogSet()
-	  : tLogWriteAntiQuorum(0), tLogReplicationFactor(0), isLocal(true), locality(tagLocalityInvalid),
+	  : tLogWriteAntiQuorum(0),
+	    tLogReplicationFactor(0),
+	    isLocal(true),
+	    locality(tagLocalityInvalid),
 	    startVersion(invalidVersion) {}
 	explicit TLogSet(const LogSet& rhs);
 
@@ -183,7 +186,12 @@ struct LogSystemConfig {
 	LogEpoch oldestBackupEpoch;
 
 	LogSystemConfig(LogEpoch e = 0)
-	  : logSystemType(LogSystemType::empty), logRouterTags(0), txsTags(0), expectedLogSets(0), stopped(false), epoch(e),
+	  : logSystemType(LogSystemType::empty),
+	    logRouterTags(0),
+	    txsTags(0),
+	    expectedLogSets(0),
+	    stopped(false),
+	    epoch(e),
 	    oldestBackupEpoch(e) {}
 
 	std::string toString() const;

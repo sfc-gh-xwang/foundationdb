@@ -104,10 +104,18 @@ struct KmsUrlCtx {
 	double unresponsivenessPenaltyTS;
 
 	KmsUrlCtx()
-	  : url(""), nRequests(0), nFailedResponses(0), nResponseParseFailures(0), unresponsivenessPenalty(0.0),
+	  : url(""),
+	    nRequests(0),
+	    nFailedResponses(0),
+	    nResponseParseFailures(0),
+	    unresponsivenessPenalty(0.0),
 	    unresponsivenessPenaltyTS(0) {}
 	explicit KmsUrlCtx(const std::string& u)
-	  : url(u), nRequests(0), nFailedResponses(0), nResponseParseFailures(0), unresponsivenessPenalty(0.0),
+	  : url(u),
+	    nRequests(0),
+	    nFailedResponses(0),
+	    nResponseParseFailures(0),
+	    unresponsivenessPenalty(0.0),
 	    unresponsivenessPenaltyTS(0) {}
 
 	bool operator==(const KmsUrlCtx& toCompare) const { return url.compare(toCompare.url) == 0; }
@@ -222,9 +230,13 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	RESTClient restClient;
 	ValidationTokenMap validationTokenMap;
 	PromiseStream<Future<Void>> addActor;
+	bool kmsStable;
+	Future<Void> kmsStabilityChecker;
 
 	RESTKmsConnectorCtx()
-	  : uid(deterministicRandom()->randomUniqueID()), lastKmsUrlsRefreshTs(0), lastKmsUrlDiscoverTS(0.0) {}
+	  : uid(deterministicRandom()->randomUniqueID()),
+	    lastKmsUrlsRefreshTs(0),
+	    lastKmsUrlDiscoverTS(0.0) {}
 	explicit RESTKmsConnectorCtx(const UID& id) : uid(id), lastKmsUrlsRefreshTs(0), lastKmsUrlDiscoverTS(0.0) {}
 };
 
@@ -314,7 +326,7 @@ ACTOR Future<Void> parseDiscoverKmsUrlFile(Reference<RESTKmsConnectorCtx> ctx, s
 	    filename, IAsyncFile::OPEN_NO_AIO | IAsyncFile::OPEN_READONLY | IAsyncFile::OPEN_UNCACHED, 0644));
 	state int64_t fSize = wait(dFile->size());
 	state Standalone<StringRef> buff = makeString(fSize);
-	int bytesRead = wait(dFile->read(mutateString(buff), fSize, 0));
+	int bytesRead = wait(uncancellable(holdWhile(buff, dFile->read(mutateString(buff), fSize, 0))));
 	if (bytesRead != fSize) {
 		TraceEvent(SevWarnAlways, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
 		    .detail("Filename", filename)
@@ -777,8 +789,11 @@ Future<T> kmsRequestImpl(
 					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS);
 				}
 
-				Reference<HTTP::IncomingResponse> resp = wait(ctx->restClient.doPost(
-				    kmsEncryptionFullUrl, requestBodyRef.toString(), RESTKmsConnectorUtils::getHTTPHeaders()));
+				HTTP::Headers headers;
+				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
+				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
+				Reference<HTTP::IncomingResponse> resp =
+				    wait(ctx->restClient.doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
 				urlCtx->nRequests++;
 
 				try {
@@ -1072,7 +1087,7 @@ ACTOR Future<Void> procureValidationTokensFromFiles(Reference<RESTKmsConnectorCt
 		}
 
 		state Standalone<StringRef> buff = makeString(fSize);
-		int bytesRead = wait(tFile->read(mutateString(buff), fSize, 0));
+		int bytesRead = wait(uncancellable(holdWhile(buff, tFile->read(mutateString(buff), fSize, 0))));
 		if (bytesRead != fSize) {
 			TraceEvent(SevError, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
 			    .detail("Filename", tokenFile)
@@ -1117,12 +1132,46 @@ ACTOR Future<Void> procureValidationTokens(Reference<RESTKmsConnectorCtx> ctx) {
 	return Void();
 }
 
+// Check if KMS is table by checking request failure count from RESTClient metrics.
+// Will clear RESTClient metrics afterward, assuming it is the only user of the metrics.
+//
+// TODO(yiwu): make RESTClient periodically report and clear the stats.
+void updateKMSStability(Reference<RESTKmsConnectorCtx> self) {
+	bool stable = true;
+	for (auto& s : self->restClient.statsMap) {
+		if (s.second->requests_failed > 0) {
+			stable = false;
+		}
+		s.second->clear();
+	}
+	self->kmsStable = stable;
+}
+
+Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSStateReq req) {
+	KmsConnGetKMSStateRep reply;
+	reply.kmsStable = self->kmsStable;
+
+	try {
+		for (const auto& url : self->kmsUrlStore.kmsUrls) {
+			reply.restKMSUrls.push_back(url.url);
+		}
+		req.reply.send(reply);
+	} catch (Error& e) {
+		TraceEvent(SevWarn, "RestKMSGetKMSStateFailed", self->uid).error(e);
+		throw e;
+	}
+
+	return Void();
+}
+
 ACTOR Future<Void> restConnectorCoreImpl(KmsConnectorInterface interf) {
 	state Reference<RESTKmsConnectorCtx> self = makeReference<RESTKmsConnectorCtx>(interf.id());
 	state Future<Void> collection = actorCollection(self->addActor.getFuture());
 
 	TraceEvent("RESTKmsConnectorInit", self->uid).log();
 
+	self->kmsStabilityChecker =
+	    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL);
 	wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
 	wait(procureValidationTokens(self));
 
@@ -1136,6 +1185,9 @@ ACTOR Future<Void> restConnectorCoreImpl(KmsConnectorInterface interf) {
 			}
 			when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
 				self->addActor.send(fetchBlobMetadata(self, req));
+			}
+			when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
+				self->addActor.send(getKMSState(self, req));
 			}
 			when(wait(collection)) {
 				// this should throw an error, not complete

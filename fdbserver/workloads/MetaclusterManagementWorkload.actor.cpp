@@ -54,7 +54,8 @@ struct MetaclusterManagementWorkload : TestWorkload {
 
 		TenantTestData() {}
 		TenantTestData(ClusterName cluster, Optional<TenantGroupName> tenantGroup)
-		  : cluster(cluster), tenantGroup(tenantGroup) {}
+		  : cluster(cluster),
+		    tenantGroup(tenantGroup) {}
 	};
 
 	struct TenantGroupData : ReferenceCounted<TenantGroupData> {
@@ -104,7 +105,8 @@ struct MetaclusterManagementWorkload : TestWorkload {
 	bool useExistingMetacluster;
 
 	MetaclusterManagementWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), metaclusterCreated(deterministicRandom()->coinflip()) {
+	  : TestWorkload(wcx),
+	    metaclusterCreated(deterministicRandom()->coinflip()) {
 		maxTenants =
 		    deterministicRandom()->randomInt(1, std::min<int>(1e8 - 1, getOption(options, "maxTenants"_sr, 100)) + 1);
 		maxTenantGroups = deterministicRandom()->randomInt(

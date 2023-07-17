@@ -33,7 +33,9 @@ uint64_t DeterministicRandom::gen64() {
 }
 
 DeterministicRandom::DeterministicRandom(uint32_t seed, bool useRandLog)
-  : random((unsigned long)seed), next((uint64_t(random()) << 32) ^ random()), useRandLog(useRandLog) {}
+  : random((unsigned long)seed),
+    next((uint64_t(random()) << 32) ^ random()),
+    useRandLog(useRandLog) {}
 
 double DeterministicRandom::random01() {
 	double d = gen64() / double(uint64_t(-1));

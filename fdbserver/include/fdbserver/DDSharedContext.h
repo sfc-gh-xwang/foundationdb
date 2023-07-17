@@ -51,7 +51,9 @@ public:
 	explicit DDSharedContext(const DataDistributorInterface& iface) : DDSharedContext(iface.id()) { interface = iface; }
 
 	explicit DDSharedContext(UID id)
-	  : ddEnabledState(new DDEnabledState), ddId(id), shardsAffectedByTeamFailure(new ShardsAffectedByTeamFailure) {}
+	  : ddEnabledState(new DDEnabledState),
+	    ddId(id),
+	    shardsAffectedByTeamFailure(new ShardsAffectedByTeamFailure) {}
 
 	UID id() const { return ddId; }
 

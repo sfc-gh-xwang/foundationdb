@@ -125,20 +125,34 @@ DataMovementReason priorityToDataMovementReason(int priority) {
 }
 
 RelocateData::RelocateData()
-  : priority(-1), boundaryPriority(-1), healthPriority(-1), reason(RelocateReason::OTHER), startTime(-1),
-    dataMoveId(anonymousShardId), workFactor(0), wantsNewServers(false), cancellable(false),
+  : priority(-1),
+    boundaryPriority(-1),
+    healthPriority(-1),
+    reason(RelocateReason::OTHER),
+    startTime(-1),
+    dataMoveId(anonymousShardId),
+    workFactor(0),
+    wantsNewServers(false),
+    cancellable(false),
     interval("QueuedRelocation"){};
 
 RelocateData::RelocateData(RelocateShard const& rs)
-  : parent_range(rs.getParentRange()), keys(rs.keys), priority(rs.priority),
+  : parent_range(rs.getParentRange()),
+    keys(rs.keys),
+    priority(rs.priority),
     boundaryPriority(isBoundaryPriority(rs.priority) ? rs.priority : -1),
-    healthPriority(isHealthPriority(rs.priority) ? rs.priority : -1), reason(rs.reason), startTime(now()),
-    randomId(rs.traceId.isValid() ? rs.traceId : deterministicRandom()->randomUniqueID()), dataMoveId(rs.dataMoveId),
+    healthPriority(isHealthPriority(rs.priority) ? rs.priority : -1),
+    reason(rs.reason),
+    startTime(now()),
+    randomId(rs.traceId.isValid() ? rs.traceId : deterministicRandom()->randomUniqueID()),
+    dataMoveId(rs.dataMoveId),
     workFactor(0),
     wantsNewServers(isDataMovementForMountainChopper(rs.moveReason) || isDataMovementForValleyFiller(rs.moveReason) ||
                     rs.moveReason == DataMovementReason::SPLIT_SHARD ||
                     rs.moveReason == DataMovementReason::TEAM_REDUNDANT),
-    cancellable(true), interval("QueuedRelocation", randomId), dataMove(rs.dataMove) {
+    cancellable(true),
+    interval("QueuedRelocation", randomId),
+    dataMove(rs.dataMove) {
 	if (dataMove != nullptr) {
 		this->src.insert(this->src.end(), dataMove->meta.src.begin(), dataMove->meta.src.end());
 	}
@@ -550,20 +564,37 @@ ACTOR Future<Void> getSourceServersForRange(DDQueue* self,
 }
 
 DDQueue::DDQueue(DDQueueInitParams const& params)
-  : IDDRelocationQueue(), distributorId(params.id), lock(params.lock), txnProcessor(params.db),
-    teamCollections(params.teamCollections), shardsAffectedByTeamFailure(params.shardsAffectedByTeamFailure),
-    physicalShardCollection(params.physicalShardCollection), getAverageShardBytes(params.getAverageShardBytes),
+  : IDDRelocationQueue(),
+    distributorId(params.id),
+    lock(params.lock),
+    txnProcessor(params.db),
+    teamCollections(params.teamCollections),
+    shardsAffectedByTeamFailure(params.shardsAffectedByTeamFailure),
+    physicalShardCollection(params.physicalShardCollection),
+    getAverageShardBytes(params.getAverageShardBytes),
     startMoveKeysParallelismLock(SERVER_KNOBS->DD_MOVE_KEYS_PARALLELISM),
     finishMoveKeysParallelismLock(SERVER_KNOBS->DD_MOVE_KEYS_PARALLELISM),
     cleanUpDataMoveParallelismLock(SERVER_KNOBS->DD_MOVE_KEYS_PARALLELISM),
-    fetchSourceLock(new FlowLock(SERVER_KNOBS->DD_FETCH_SOURCE_PARALLELISM)), activeRelocations(0),
-    queuedRelocations(0), bytesWritten(0), teamSize(params.teamSize), singleRegionTeamSize(params.singleRegionTeamSize),
-    output(params.relocationProducer), input(params.relocationConsumer), getShardMetrics(params.getShardMetrics),
-    getTopKMetrics(params.getTopKMetrics), lastInterval(0), suppressIntervals(0),
-    rawProcessingUnhealthy(new AsyncVar<bool>(false)), rawProcessingWiggle(new AsyncVar<bool>(false)),
-    unhealthyRelocations(0), movedKeyServersEventHolder(makeReference<EventCacheHolder>("MovedKeyServers")),
-    moveReusePhysicalShard(0), moveCreateNewPhysicalShard(0),
-    retryFindDstReasonCount(static_cast<int>(RetryFindDstReason::NumberOfTypes), 0), relocateTotalCount(0),
+    fetchSourceLock(new FlowLock(SERVER_KNOBS->DD_FETCH_SOURCE_PARALLELISM)),
+    activeRelocations(0),
+    queuedRelocations(0),
+    bytesWritten(0),
+    teamSize(params.teamSize),
+    singleRegionTeamSize(params.singleRegionTeamSize),
+    output(params.relocationProducer),
+    input(params.relocationConsumer),
+    getShardMetrics(params.getShardMetrics),
+    getTopKMetrics(params.getTopKMetrics),
+    lastInterval(0),
+    suppressIntervals(0),
+    rawProcessingUnhealthy(new AsyncVar<bool>(false)),
+    rawProcessingWiggle(new AsyncVar<bool>(false)),
+    unhealthyRelocations(0),
+    movedKeyServersEventHolder(makeReference<EventCacheHolder>("MovedKeyServers")),
+    moveReusePhysicalShard(0),
+    moveCreateNewPhysicalShard(0),
+    retryFindDstReasonCount(static_cast<int>(RetryFindDstReason::NumberOfTypes), 0),
+    relocateTotalCount(0),
     relocateToSourceCount(0) {}
 
 void DDQueue::startRelocation(int priority, int healthPriority) {

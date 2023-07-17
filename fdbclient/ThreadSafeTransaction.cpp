@@ -367,7 +367,8 @@ ThreadSafeTransaction::ThreadSafeTransaction(DatabaseContext* cx,
                                              ISingleThreadTransaction::Type type,
                                              Optional<TenantName> tenantName,
                                              Tenant* tenantPtr)
-  : tenantName(tenantName), initialized(std::make_shared<std::atomic_bool>(false)) {
+  : tenantName(tenantName),
+    initialized(std::make_shared<std::atomic_bool>(false)) {
 	// Allocate memory for the transaction from this thread (so the pointer is known for subsequent method calls)
 	// but run its constructor on the main thread
 
@@ -401,7 +402,8 @@ ThreadSafeTransaction::ThreadSafeTransaction(DatabaseContext* cx,
 
 // This constructor is only used while refactoring fdbcli and only called from the main thread
 ThreadSafeTransaction::ThreadSafeTransaction(ReadYourWritesTransaction* ryw)
-  : tr(ryw), initialized(std::make_shared<std::atomic_bool>(true)) {
+  : tr(ryw),
+    initialized(std::make_shared<std::atomic_bool>(true)) {
 	if (tr)
 		tr->addref();
 }

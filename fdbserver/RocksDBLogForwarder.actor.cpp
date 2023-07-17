@@ -79,7 +79,8 @@ ACTOR Future<Void> rocksDBPeriodicallyLogger(RocksDBLogger* pRecords) {
 }
 
 RocksDBLogger::RocksDBLogger()
-  : mainThreadId(std::this_thread::get_id()), periodicLogger(rocksDBPeriodicallyLogger(this)) {}
+  : mainThreadId(std::this_thread::get_id()),
+    periodicLogger(rocksDBPeriodicallyLogger(this)) {}
 
 void RocksDBLogger::inject(RocksDBLogRecord&& record) {
 	const std::thread::id threadId = std::this_thread::get_id();
@@ -111,7 +112,9 @@ void RocksDBLogger::consume() {
 } // namespace details
 
 RocksDBLogForwarder::RocksDBLogForwarder(const UID& id_, const InfoLogLevel log_level)
-  : rocksdb::Logger(log_level), id(id_), logger() {
+  : rocksdb::Logger(log_level),
+    id(id_),
+    logger() {
 	TraceEvent(SevInfo, "RocksDBLoggerStart", id);
 }
 

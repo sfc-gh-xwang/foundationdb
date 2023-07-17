@@ -189,7 +189,9 @@ struct TransactionLogInfo : public ReferenceCounted<TransactionLogInfo>, NonCopy
 	TransactionLogInfo() : logLocation(DONT_LOG), maxFieldLength(0) {}
 	TransactionLogInfo(LoggingLocation location) : logLocation(location), maxFieldLength(0) {}
 	TransactionLogInfo(std::string id, LoggingLocation location)
-	  : logLocation(location), maxFieldLength(0), identifier(id) {}
+	  : logLocation(location),
+	    maxFieldLength(0),
+	    identifier(id) {}
 
 	void setIdentifier(std::string id) { identifier = id; }
 	void logTo(LoggingLocation loc) { logLocation = logLocation | loc; }
@@ -235,7 +237,11 @@ struct Watch : public ReferenceCounted<Watch>, NonCopyable {
 	Watch() : valuePresent(false), setPresent(false), watchFuture(Never()) {}
 	Watch(Key key) : key(key), valuePresent(false), setPresent(false), watchFuture(Never()) {}
 	Watch(Key key, Optional<Value> val)
-	  : key(key), value(val), valuePresent(true), setPresent(false), watchFuture(Never()) {}
+	  : key(key),
+	    value(val),
+	    valuePresent(true),
+	    setPresent(false),
+	    watchFuture(Never()) {}
 
 	void setWatch(Future<Void> watchFuture);
 };
@@ -309,7 +315,9 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 
 	// Only available so that Transaction can have a default constructor, for use in state variables
 	TransactionState(TaskPriority taskID, SpanContext spanContext)
-	  : taskID(taskID), spanContext(spanContext), tenantSet(false) {}
+	  : taskID(taskID),
+	    spanContext(spanContext),
+	    tenantSet(false) {}
 
 	// VERSION_VECTOR changed default values of readVersionObtainedFromGrvProxy
 	TransactionState(Database cx,

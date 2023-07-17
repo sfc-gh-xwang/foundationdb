@@ -34,7 +34,9 @@ struct DetailedTSSMismatch {
 	std::string traceString;
 
 	DetailedTSSMismatch(UID mismatchId, double timestamp, std::string traceString)
-	  : mismatchId(mismatchId), timestamp(timestamp), traceString(traceString) {}
+	  : mismatchId(mismatchId),
+	    timestamp(timestamp),
+	    traceString(traceString) {}
 };
 
 struct TSSMetrics : ReferenceCounted<TSSMetrics>, NonCopyable {
@@ -103,10 +105,20 @@ struct TSSMetrics : ReferenceCounted<TSSMetrics>, NonCopyable {
 	}
 
 	TSSMetrics()
-	  : cc("TSSClientMetrics"), requests("Requests", cc), streamComparisons("StreamComparisons", cc),
-	    ssErrors("SSErrors", cc), tssErrors("TSSErrors", cc), tssTimeouts("TSSTimeouts", cc),
-	    mismatches("Mismatches", cc), SSgetValueLatency(), SSgetKeyLatency(), SSgetKeyValuesLatency(),
-	    SSgetMappedKeyValuesLatency(), TSSgetValueLatency(), TSSgetKeyLatency(), TSSgetKeyValuesLatency(),
+	  : cc("TSSClientMetrics"),
+	    requests("Requests", cc),
+	    streamComparisons("StreamComparisons", cc),
+	    ssErrors("SSErrors", cc),
+	    tssErrors("TSSErrors", cc),
+	    tssTimeouts("TSSTimeouts", cc),
+	    mismatches("Mismatches", cc),
+	    SSgetValueLatency(),
+	    SSgetKeyLatency(),
+	    SSgetKeyValuesLatency(),
+	    SSgetMappedKeyValuesLatency(),
+	    TSSgetValueLatency(),
+	    TSSgetKeyLatency(),
+	    TSSgetKeyValuesLatency(),
 	    TSSgetMappedKeyValuesLatency() {}
 };
 

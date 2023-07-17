@@ -70,7 +70,9 @@ static inline void dprint(fmt::format_string<T...> fmt, T&&... args) {
 class BlobMigrator final : public NonCopyable, public ReferenceCounted<BlobMigrator>, public IStorageMetricsService {
 public:
 	BlobMigrator(BlobMigratorInterface interf, Reference<AsyncVar<ServerDBInfo> const> dbInfo)
-	  : interf_(interf), actors_(false), dbInfo_(dbInfo) {
+	  : interf_(interf),
+	    actors_(false),
+	    dbInfo_(dbInfo) {
 		db_ = openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	}
 	~BlobMigrator() {}

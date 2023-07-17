@@ -50,7 +50,11 @@ public: // variables
 
 public: // ctor & dtor
 	SnapTestWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), numSnaps(0), maxSnapDelay(0.0), testID(0), snapUID() {
+	  : TestWorkload(wcx),
+	    numSnaps(0),
+	    maxSnapDelay(0.0),
+	    testID(0),
+	    snapUID() {
 		TraceEvent("SnapTestWorkloadConstructor").log();
 		std::string workloadName = "SnapTest";
 		maxRetryCntToRetrieveMessage = 10;
@@ -96,7 +100,12 @@ public: // workload functions
 
 	void getMetrics(std::vector<PerfMetric>& m) override { TraceEvent("SnapTestWorkloadGetMetrics"); }
 
-	void disableFailureInjectionWorkloads(std::set<std::string>& out) const override { out.insert("all"); }
+	void disableFailureInjectionWorkloads(
+	    std::set<std::string>& out) const override { // Data movement is not allowed while taking snapshot
+		// FIXME: the data movement should be delayed while taking snapshots, the workload at present doesn't know the
+		// DD is disabled by the snapshot
+		out.insert("RandomMoveKeys");
+	}
 
 	ACTOR Future<Void> _create_keys(Database cx, std::string prefix, bool even = true) {
 		state Transaction tr(cx);
@@ -183,7 +192,8 @@ public: // workload functions
 						snapFailed = true;
 						break;
 					}
-					wait(delay(SERVER_KNOBS->SNAP_MINIMUM_TIME_GAP));
+					// increase the retry wait time to avoid endless retry where DD is always disabled by snapshot
+					wait(delay(retry * SERVER_KNOBS->SNAP_MINIMUM_TIME_GAP));
 				}
 			}
 			CSimpleIni ini;

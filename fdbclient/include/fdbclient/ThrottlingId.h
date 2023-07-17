@@ -4,9 +4,10 @@
 
 #pragma once
 
-#include "fdbclient/TagThrottle.h"
+#include "fdbclient/FDBTypes.h"
 #include "fdbrpc/TenantName.h"
 #include "flow/Arena.h"
+#include <boost/unordered/unordered_flat_map.hpp>
 
 // ThrottlingId is similar to std::variant<TransactionTag, TenantGroup>
 class ThrottlingIdRef {
@@ -59,7 +60,7 @@ struct Traceable<ThrottlingIdRef> : std::true_type {
 using ThrottlingId = Standalone<ThrottlingIdRef>;
 
 template <class Value>
-using ThrottlingIdMap = std::unordered_map<ThrottlingId, Value, HashThrottlingId>;
+using ThrottlingIdMap = boost::unordered::unordered_flat_map<ThrottlingId, Value, HashThrottlingId>;
 
 template <class Value>
 using PrioritizedThrottlingIdMap = std::map<TransactionPriority, ThrottlingIdMap<Value>>;
