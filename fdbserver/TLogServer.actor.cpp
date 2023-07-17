@@ -1787,7 +1787,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	state BinaryWriter messages2(Unversioned());
 	state int sequence = -1;
 	state UID peekId;
-	state double queueStart = now();
+	state double queueStart = g_network->timer();
 
 	if (reqTag.locality == tagLocalityTxs && reqTag.id >= logData->txsTags && logData->txsTags > 0) {
 		reqTag.id = reqTag.id % logData->txsTags;
@@ -1844,7 +1844,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		}
 	}
 
-	state double blockStart = now();
+	state double blockStart = g_network->timer();
 
 	if (reqReturnIfBlocked && logData->version.get() < reqBegin) {
 		replyPromise.sendError(end_of_stream());
@@ -1901,7 +1901,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		wait(delay(0, TaskPriority::TLogSpilledPeekReply));
 	}
 
-	state double workStart = now();
+	state double workStart = g_network->timer();
 	state Version poppedVer;
 	state Version endVersion;
 	state bool onlySpilled;
@@ -1922,11 +1922,11 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR && poppedVer <= reqBegin &&
 		    reqBegin > logData->persistentDataDurableVersion && !reqOnlySpilled && reqTag.locality >= 0 &&
 		    !reqReturnIfBlocked && tagRecovered) {
-			state double startTime = now();
+			state double startTime = g_network->timer();
 			// TODO (version vector) check if this should be included in "status details" json
 			// TODO (version vector) all tags may be too many, instead,  standard deviation?
 			wait(waitForMessagesForTag(logData, reqTag, reqBegin, SERVER_KNOBS->BLOCKING_PEEK_TIMEOUT));
-			double latency = now() - startTime;
+			double latency = g_network->timer() - startTime;
 			if (logData->blockingPeekLatencies.find(reqTag) == logData->blockingPeekLatencies.end()) {
 				UID ssID = nondeterministicRandom()->randomUniqueID();
 				std::string s = "BlockingPeekLatencies-" + reqTag.toString();
@@ -2161,16 +2161,19 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			}
 		}
 
-		if (now() - blockStart > emptyVersionWaitWindow) {
+		if (g_network->timer() - blockStart > emptyVersionWaitWindow) {
 			break;
 		}
 
 		state Version waitUntilVersion = logData->version.get() + 1;
 
+		double remainingDelay = emptyVersionWaitWindow - (g_network->timer() - blockStart);
+		if (remainingDelay < 0) // force lower bound to zero otherwise simulation testing would fail
+			remainingDelay = 0;
+
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
 		// batching interval has expired.
-		wait(logData->version.whenAtLeast(waitUntilVersion) ||
-		     delay(emptyVersionWaitWindow - (now() - blockStart))); // is this not using g_network->timer() ok?
+		wait(logData->version.whenAtLeast(waitUntilVersion) || delay(remainingDelay));
 		if (logData->version.get() < waitUntilVersion) {
 			break; // We know that from `reqBegin` to logData->version are all empty messages. Skip re-executing the
 			       // peek logic.
@@ -2224,7 +2227,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 		double queueT = blockStart - queueStart;
 		double blockT = workStart - blockStart;
-		double workT = now() - workStart;
+		double workT = g_network->timer() - workStart;
 
 		trackerData.totalPeeks++;
 		trackerData.replyBytes += reply.messages.size();
