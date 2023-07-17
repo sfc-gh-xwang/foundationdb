@@ -73,7 +73,6 @@ bool canReplyWith(Error e) {
 	case error_code_value_too_large:
 	case error_code_timed_out:
 	case error_code_connection_failed:
-	case error_code_rest_malformed_response:
 		return true;
 	default:
 		return false;
