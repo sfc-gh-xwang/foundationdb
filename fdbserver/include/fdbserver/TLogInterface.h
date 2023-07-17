@@ -91,7 +91,7 @@ struct TLogInterface {
 		streams.push_back(enablePopRequest.getReceiver());
 		streams.push_back(snapRequest.getReceiver());
 		streams.push_back(peekStreamMessages.getReceiver(TaskPriority::TLogPeek));
-		streams.push_back(emptyVersionWaitRequest.getReceiver());
+		streams.push_back(emptyVersionWaitRequest.getReceiver(TaskPriority::TlogEmptyVersionWait));
 		FlowTransport::transport().addEndpoints(streams);
 	}
 
