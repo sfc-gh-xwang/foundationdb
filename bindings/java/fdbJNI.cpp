@@ -1550,8 +1550,8 @@ JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1getId(JNIE
 }
 
 JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1getClientStatus(JNIEnv* jenv,
-										      jobject,
-										      jlong tPtr) {
+                                                                                      jobject,
+                                                                                      jlong tPtr) {
 	if (!tPtr) {
 		throwParamNotNull(jenv);
 		return 0;
