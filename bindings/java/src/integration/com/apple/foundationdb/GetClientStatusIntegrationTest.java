@@ -44,4 +44,24 @@ class GetClientStatusIntegrationTest {
 				String.format("Healthy:true not found in client status: %s", statusStr));
 		}
 	}
+
+	@Test
+	public void tenantClientStatusIsHealth() throws Exception {
+		try (Database db = fdb.open()) {
+			// Run a simple transaction to make sure the database is fully initialized
+			db.run(tr -> {
+				return tr.getReadVersion().join();
+			});
+
+			// Create a tenant for test purpose
+			byte[] tenantName = "testGetTenantClientStatus".getBytes();
+			TenantManagement.createTenant(db, tenantName).join();
+			try (Tenant tenant = db.openTenant(tenantName)) {
+				String statusStr = new String(tenant.getClientStatus().join());
+				Assertions.assertTrue(statusStr.contains("\"Healthy\":true"),
+					String.format("Healthy:true not found in client status: %s", statusStr));
+	
+			}
+		}	
+	}
 }
