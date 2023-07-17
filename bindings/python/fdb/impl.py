@@ -1361,6 +1361,9 @@ class Tenant(_TransactionCreator):
             )
         )
 
+    def get_client_status(self):
+        return Key(self.capi.fdb_tenant_get_client_status(self.tpointer))
+
 
 fill_operations()
 

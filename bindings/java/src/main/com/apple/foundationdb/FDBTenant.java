@@ -251,6 +251,16 @@ class FDBTenant extends NativeObjectWrapper implements Tenant {
 		Tenant_dispose(cPtr);
 	}
 
+	@Override
+	public CompletableFuture<byte[]> getClientStatus(Executor e) {
+		pointerReadLock.lock();
+		try {
+			return new FutureBytes(Tenant_getClientStatus(getPtr()), e, eventKeeper);
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
 	private native long Tenant_createTransaction(long cPtr);
 	private native void Tenant_dispose(long cPtr);
 	private native long Tenant_purgeBlobGranules(long cPtr, byte[] beginKey, byte[] endKey, long purgeVersion, boolean force);
@@ -262,4 +272,5 @@ class FDBTenant extends NativeObjectWrapper implements Tenant {
 	private native long Tenant_verifyBlobRange(long cPtr, byte[] beginKey, byte[] endKey, long version);
 	private native long Tenant_flushBlobRange(long cPtr, byte[] beginKey, byte[] endKey, boolean compact, long version);
 	private native long Tenant_getId(long cPtr);
+	private native long Tenant_getClientStatus(long cPtr);
 }
