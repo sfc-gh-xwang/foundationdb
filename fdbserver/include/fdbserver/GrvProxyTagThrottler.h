@@ -21,7 +21,6 @@
 #pragma once
 
 #include "fdbclient/CommitProxyInterface.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/GrvTransactionRateInfo.h"
 #include "fdbserver/LatencyBandsMap.h"
