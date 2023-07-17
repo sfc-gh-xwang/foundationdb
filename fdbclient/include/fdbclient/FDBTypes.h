@@ -1903,4 +1903,13 @@ struct Traceable<Versionstamp> : std::true_type {
 	static std::string toString(const Versionstamp& v) { return v.toString(); }
 };
 
+using TransactionTagRef = StringRef;
+using TransactionTag = Standalone<TransactionTagRef>;
+
+template <class Value>
+using TransactionTagMap = boost::unordered_flat_map<TransactionTag, Value, std::hash<TransactionTagRef>>;
+
+template <class Value>
+using UIDTransactionTagMap = boost::unordered_flat_map<UID, TransactionTagMap<Value>>;
+
 #endif

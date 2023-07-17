@@ -802,13 +802,20 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( GLOBAL_TAG_THROTTLING_PROXY_LOGGING_INTERVAL,         60.0 );
 	init( GLOBAL_TAG_THROTTLING_TRACE_INTERVAL,                  5.0 );
 	init( GLOBAL_TAG_THROTTLING_REPORT_ONLY,                   false );
-	init( GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD,          4096.0 );
+	init( GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD,  4096.0 );
+	init( THROUGHPUT_QUOTA_TRACK_THRESHOLD,                   409600 );
+	init( THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,                      10 ); if(randomize && BUGGIFY) THROUGHPUT_QUOTA_CACHE_BATCH_SIZE = deterministicRandom()->randomInt(1, 20);
+	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL,      5.0 );
+	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD,          60.0 );
 	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,         409600.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL,   5.0 );
 
 	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,        10.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   2.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME,   10.0 );
 	init( GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME,               10.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,            1.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME,           10.0 );
 
 	//Storage Metrics
 	init( STORAGE_METRICS_AVERAGE_INTERVAL,                    120.0 );
@@ -1052,6 +1059,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH,                 100000 );
 
 	// encrypt key proxy
+	init( USE_REST_SIM_KMS_VAULT,                              false );
 	init( ENABLE_BLOB_GRANULE_COMPRESSION,                     false ); if ( randomize && BUGGIFY ) { ENABLE_BLOB_GRANULE_COMPRESSION = deterministicRandom()->coinflip(); }
 	init( BLOB_GRANULE_COMPRESSION_FILTER,                    "NONE" ); if ( randomize && BUGGIFY ) { BLOB_GRANULE_COMPRESSION_FILTER = CompressionUtils::toString(CompressionUtils::getRandomFilter()); }
 	init( ENCRYPTION_LOGGING_INTERVAL,                           5.0 );

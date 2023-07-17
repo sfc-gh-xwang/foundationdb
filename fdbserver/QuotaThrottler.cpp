@@ -19,7 +19,6 @@
  */
 
 #include "fdbclient/FDBTypes.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/ThrottlingId.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
@@ -253,7 +252,8 @@ public:
 	    maxFallingBehind(maxFallingBehind),
 	    limitingThreshold(limitingThreshold) {
 		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
-			clientThroughputTracker = ClientThroughputTracker();
+			clientThroughputTracker =
+			    ClientThroughputTracker(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL);
 		}
 	}
 

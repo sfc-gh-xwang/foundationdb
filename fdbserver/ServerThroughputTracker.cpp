@@ -1,9 +1,9 @@
 /**
- * RKThroughputTracker.cpp
+ * ServerThroughputTracker.cpp
  */
 
-#include "fdbserver/Knobs.h"
 #include "fdbserver/IRKThroughputTracker.h"
+#include "fdbserver/Knobs.h"
 #include <boost/unordered/unordered_flat_map.hpp>
 
 namespace {
@@ -73,7 +73,8 @@ void ServerThroughputTracker::cleanupUnseenThrottlingIds(
 		} else {
 			throughputCounters.updateThroughput(0, OpType::WRITE);
 		}
-		return !seen && throughputCounters.getThroughput() < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
+		return !seen &&
+		       throughputCounters.getThroughput() < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD;
 	});
 }
 
@@ -92,7 +93,8 @@ void ServerThroughputTracker::cleanupUnseenStorageServers(std::unordered_set<UID
 				auto& throughputCounters = kv2.second;
 				throughputCounters.updateThroughput(0, OpType::READ);
 				throughputCounters.updateThroughput(0, OpType::WRITE);
-				return throughputCounters.getThroughput() < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
+				return throughputCounters.getThroughput() <
+				       SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD;
 			});
 			return throttlingIdToThroughputCounters.empty();
 		}
@@ -143,6 +145,22 @@ double ServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId) 
 	return result;
 }
 
+std::unordered_set<ThrottlingId> ServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	ThrottlingIdMap<double> throttlingIdToThroughput;
+	for (auto const& [ss, throttlingIdToThroughputCounters] : throughput) {
+		for (auto const& [throttlingId, throughputCounters] : throttlingIdToThroughputCounters) {
+			throttlingIdToThroughput[throttlingId] += throughputCounters.getThroughput();
+		}
+	}
+	std::unordered_set<ThrottlingId> result;
+	for (auto const& [throttlingId, clusterWideThroughput] : throttlingIdToThroughput) {
+		if (clusterWideThroughput > threshold) {
+			result.insert(throttlingId);
+		}
+	}
+	return result;
+}
+
 Optional<double> ServerThroughputTracker::getThroughput(UID storageServerId) const {
 	auto throttlingIdToThroughputCounters = tryGet(throughput, storageServerId);
 	if (!throttlingIdToThroughputCounters.present()) {
@@ -159,27 +177,31 @@ int ServerThroughputTracker::storageServersTracked() const {
 	return throughput.size();
 }
 
-ClientThroughputTracker::ThroughputSmoother::ThroughputSmoother()
-  : smoother(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME,
-             SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME) {}
+MockThroughputTracker::~MockThroughputTracker() = default;
 
-ClientThroughputTracker::~ClientThroughputTracker() = default;
-
-double ClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
+double MockThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
 	auto it = throughput.find(throttlingId);
 	if (it == throughput.end()) {
 		return 0.0;
 	} else {
-		return it->second.smoother.smoothRate();
+		return it->second;
 	}
 }
 
-void ClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {
-	for (auto const& [throttlingId, newPerThrottlingIdThroughput] : newThroughput) {
-		throughput[throttlingId].smoother.addDelta(newPerThrottlingIdThroughput);
+std::unordered_set<ThrottlingId> MockThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	std::unordered_set<ThrottlingId> result;
+	for (auto const& [throttlingId, throughputValue] : throughput) {
+		if (throughputValue > threshold) {
+			result.insert(throttlingId);
+		}
 	}
+	return result;
 }
 
-void ClientThroughputTracker::removeThrottlingId(ThrottlingId const& throttlingId) {
+void MockThroughputTracker::update(ThrottlingId const& throttlingId, double newThroughput) {
+	throughput[throttlingId] = newThroughput;
+}
+
+void MockThroughputTracker::removeThrottlingId(ThrottlingId const& throttlingId) {
 	throughput.erase(throttlingId);
 }
