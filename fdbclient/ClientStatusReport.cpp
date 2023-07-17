@@ -30,19 +30,19 @@ namespace {
 
 class ClientReportGenerator {
 public:
-	ClientReportGenerator(DatabaseContext& cx) : cx(cx), numConnectionsFailed(0), healthy(true) {}
-	ClientReportGenerator(DatabaseContext& cx, ThreadFuture<TenantLookupInfo> tenantLookupInfoFuture)
+	ClientReportGenerator(DatabaseContext& cx) : cx(cx), tenant(nullptr), numConnectionsFailed(0), healthy(true) {}
+	ClientReportGenerator(DatabaseContext& cx, Tenant* tenant)
 	  : cx(cx),
+	    tenant(tenant),
 	    numConnectionsFailed(0),
-	    healthy(true),
-	    tenantLookupInfoFuture(tenantLookupInfoFuture) {}
+	    healthy(true) {}
 
 	Standalone<StringRef> generateReport() {
 		if (cx.isError()) {
 			statusObj["InitializationError"] = cx.deferredError.code();
 			healthy = false;
 		} else {
-			if (tenantLookupInfoFuture.has_value()) {
+			if (tenant) {
 				reportTenantInfo();
 			}
 			reportCoordinators();
@@ -129,19 +129,20 @@ private:
 	}
 
 	void reportTenantInfo() {
+		auto tenantLookupInfoFuture = tenant->getLookupFuture();
 		// Tenant info lookup failed
-		if (tenantLookupInfoFuture->isError()) {
-			statusObj["TenantID"] = fmt::format("Failed to find due to: {}", tenantLookupInfoFuture->getError().what());
+		if (tenantLookupInfoFuture.isError()) {
+			statusObj["TenantID"] = fmt::format("Failed to find due to: {}", tenantLookupInfoFuture.getError().what());
 			return;
 		}
 
 		// Tenant info lookup pending
-		if (!tenantLookupInfoFuture->isReady()) {
+		if (!tenantLookupInfoFuture.isReady()) {
 			statusObj["TenantID"] = "Tenant info resolution pending";
 			return;
 		}
 
-		auto tenantLookupInfo = tenantLookupInfoFuture->get();
+		auto tenantLookupInfo = tenantLookupInfoFuture.get();
 		statusObj["TenantID"] = tenantLookupInfo.id;
 		if (tenantLookupInfo.group.present()) {
 			statusObj["TenantGroup"] = tenantLookupInfo.group.get().toString();
@@ -186,11 +187,11 @@ private:
 	}
 
 	DatabaseContext& cx;
+	Tenant* tenant;
 	json_spirit::mObject statusObj;
 	std::set<NetworkAddress> serverAddresses;
 	int numConnectionsFailed;
 	bool healthy;
-	std::optional<ThreadFuture<TenantLookupInfo>> tenantLookupInfoFuture;
 };
 
 } // namespace
@@ -202,7 +203,7 @@ Standalone<StringRef> DatabaseContext::getClientStatus() {
 }
 
 // Get client-side status information from tenant level
-Standalone<StringRef> DatabaseContext::getClientStatusForTenant(ThreadFuture<TenantLookupInfo> tenantLookupInfoFuture) {
-	ClientReportGenerator generator(*this, tenantLookupInfoFuture);
+Standalone<StringRef> DatabaseContext::getClientStatusForTenant(Tenant* tenant) {
+	ClientReportGenerator generator(*this, tenant);
 	return generator.generateReport();
 }

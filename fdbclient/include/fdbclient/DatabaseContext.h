@@ -779,7 +779,7 @@ public:
 	// If the database context is initialized with an error, the JSON contains just the error code
 	// { "InitializationError" : <error code> }
 	Standalone<StringRef> getClientStatus();
-	Standalone<StringRef> getClientStatusForTenant(ThreadFuture<TenantLookupInfo> tenantLookupInfoFuture);
+	Standalone<StringRef> getClientStatusForTenant(Tenant* tenant);
 
 private:
 	using WatchMapKey = std::pair<int64_t, Key>;
