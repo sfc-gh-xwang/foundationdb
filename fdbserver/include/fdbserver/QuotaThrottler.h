@@ -46,9 +46,15 @@ public:
 	// throttling limits.
 	void updateThrottling(Map<UID, StorageQueueInfo> const&);
 
-	// For each throttling ID and priority combination, return the throughput limit for the cluster
-	// (to be shared across all GRV proxies).
-	ThrottlingIdMap<double> getProxyRates(int numProxies, IRKThroughputQuotaCache const&, IRKMetricsTracker const&);
+	// For each throttling ID and priority combination, return the throughput limit in
+	// transactions per second for the cluster (to be shared across all GRV proxies).
+	ThrottlingIdMap<double> getTargetRates(int numProxies, IRKThroughputQuotaCache const&, IRKMetricsTracker const&);
+
+	// For each throttling ID and priority combination, return the throughput limit in
+	// bytes per second for the cluster (to be shared across all GRV proxies).
+	ThrottlingIdMap<double> getTargetThroughput(int numProxies,
+	                                            IRKThroughputQuotaCache const&,
+	                                            IRKMetricsTracker const&);
 
 	// Update per-throttlingId throughput map based on new throughput statistics received
 	// from a GRV proxy.

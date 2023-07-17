@@ -172,7 +172,7 @@ public:
 	    storageServers(numSS, throughputPerSS) {}
 
 	Optional<double> getTPSLimit(ThrottlingId const& throttlingId) {
-		auto rates = quotaThrottler.getProxyRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		auto rates = quotaThrottler.getTargetRates(/*numProxies=*/1, quotaCache, metricsTracker);
 		auto it = rates.find(throttlingId);
 		if (it != rates.end()) {
 			return it->second;
@@ -190,7 +190,7 @@ public:
 
 	bool targetRateIsNear(ThrottlingId const& throttlingId, Optional<double> expected) {
 		Optional<double> rate;
-		auto const targetRates = quotaThrottler.getProxyRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		auto const targetRates = quotaThrottler.getTargetRates(/*numProxies=*/1, quotaCache, metricsTracker);
 		auto it = targetRates.find(throttlingId);
 		if (it != targetRates.end()) {
 			rate = it->second;
@@ -203,7 +203,7 @@ public:
 	}
 
 	bool totalTargetRateIsNear(double expected) {
-		auto const targetRates = quotaThrottler.getProxyRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		auto const targetRates = quotaThrottler.getTargetRates(/*numProxies=*/1, quotaCache, metricsTracker);
 		double targetRateSum = 0.0;
 		for (auto const& [_, targetRate] : targetRates) {
 			targetRateSum += targetRate;

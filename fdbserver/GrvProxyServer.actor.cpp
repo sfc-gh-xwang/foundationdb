@@ -22,6 +22,7 @@
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/Knobs.h"
 #include "fdbclient/Notified.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
 #include "fdbclient/CommitProxyInterface.h"
@@ -463,8 +464,15 @@ ACTOR Future<Void> getRate(UID myID,
 				lastDetailedReply = now();
 			}
 
-			if (rep.proxyThrottledTags.present()) {
-				proxyData->tagThrottler.updateRates(rep.proxyThrottledTags.get());
+			if (isClientAverageCostTrackingEnabled()) {
+				// track-average-cost-on-client is enabled, update the tag throttler with the
+				// target throughput in bytes per second.
+				if (rep.targetThroughput.present()) {
+					proxyData->tagThrottler.updateRates(rep.targetThroughput.get());
+				}
+			} else if (rep.targetTransactionRate.present()) {
+				// Update the tag throttler with the target rates in transactions per second
+				proxyData->tagThrottler.updateRates(rep.targetTransactionRate.get());
 			}
 		}
 		when(wait(leaseTimeout)) {
@@ -844,10 +852,12 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state int64_t batchTransactionCount = 0;
 	state GrvTransactionRateInfo normalRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
 	                                            SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                            /*rate=*/10);
+	                                            /*rate=*/10,
+	                                            SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 	state GrvTransactionRateInfo batchRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
 	                                           SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                           /*rate=*/0);
+	                                           /*rate=*/0,
+	                                           SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 
 	state Deque<GetReadVersionRequest> systemQueue;
 	state Deque<GetReadVersionRequest> defaultQueue;

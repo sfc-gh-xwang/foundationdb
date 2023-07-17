@@ -11372,6 +11372,14 @@ void DatabaseContext::addCost(ThrottlingId const& throttlingId, uint64_t bytes) 
 	throughputTracker.addCost(throttlingId, bytes);
 }
 
+void DatabaseContext::addTransaction(const ThrottlingId& throttlingId, uint64_t numTransactions) {
+	throughputTracker.addTransaction(throttlingId, numTransactions);
+}
+
+double DatabaseContext::getAverageTransactionCost(const ThrottlingId& throttlingId) const {
+	return throughputTracker.getAverageTransactionCost(throttlingId);
+}
+
 Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 	return makeReference<ReadYourWritesTransaction>(Database(Reference<DatabaseContext>::addRef(this)));
 }
