@@ -134,8 +134,6 @@ public:
 	                                                   // latency penalty for reads.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
 	                                                        // delay window.
-	double DYNAMIC_EMPTY_VERSION_WAIT_SKETCH_SHIFT; // Shift neutral position away from zero for DDSketch to account for
-	                                                // negative samples
 	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_INTERVAL; // Interval of ss checking local statistics to make a
 	                                                      // new decision of wait window.
 	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD; // If previous synced window is this amount greater than the
