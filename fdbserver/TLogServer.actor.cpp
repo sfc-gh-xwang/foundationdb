@@ -1909,7 +1909,8 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	// Dynamic Empty Version Wait
 	state bool emptyVersionWaitTransition = false;
 	state bool emptyVersionWaitRefcounted = false;
-	state bool emptyVersionWaitDynamicWindowExist = false;
+	state bool emptyVersionFirstEntry = true;
+	state double emptyVersionWaitWindow = 0;
 
 	// Run the peek logic in a loop to account for the case where there is no data to return to the caller, and we may
 	// want to wait a little bit instead of just sending back an empty message. This feature is controlled by a knob.
@@ -2126,34 +2127,38 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			break;
 		}
 
-		state double emptyVersionWaitWindow = 0;
-		switch (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT) {
-		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED:
-			emptyVersionWaitWindow = SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL;
-			break;
-		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY:
-			emptyVersionWaitWindow = 0;
-			break;
-		case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
-			auto it = self->emptyVersionWaitMetaMap.find(reqTag);
-			if (it != self->emptyVersionWaitMetaMap.end()) {
-				// snapshot transition state now and lock it for current request
-				emptyVersionWaitTransition = self->emptyVersionWaitMetaMap[reqTag].transitioning;
-				emptyVersionWaitDynamicWindowExist = true;
-				emptyVersionWaitWindow = it->second.waitWindow;
-			}
-			break;
-		}
+		if (emptyVersionFirstEntry) {
+			emptyVersionFirstEntry = false;
+			DebugTraceEvent("RequestTagDebug1").detail("Tag", reqTag).log();
 
-		// now peek batching is enabled, either static or dynamic
-		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
-		        ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT &&
-		    !emptyVersionWaitRefcounted) {
-			emptyVersionWaitRefcounted = true;
-			if (emptyVersionWaitTransition)
-				++self->emptyVersionWaitMetaMap[reqTag].newPeekRefcount;
-			else
-				++self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount;
+			switch (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT) {
+			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED:
+				emptyVersionWaitWindow = SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL;
+				break;
+			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY:
+				emptyVersionWaitWindow = 0;
+				break;
+			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
+				if (!self->emptyVersionWaitMetaMap.contains(reqTag)) {
+					self->emptyVersionWaitMetaMap[reqTag].waitWindow = -1;
+					self->emptyVersionWaitMetaMap[reqTag].transitioning = false;
+					self->emptyVersionWaitMetaMap[reqTag].replied = true;
+					self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount = 0;
+					self->emptyVersionWaitMetaMap[reqTag].newPeekRefcount = 0;
+				}
+				// snapshot transition state and wait window now and retain it for current request over it's lifetime
+				emptyVersionWaitTransition = self->emptyVersionWaitMetaMap[reqTag].transitioning;
+				emptyVersionWaitWindow = self->emptyVersionWaitMetaMap[reqTag].waitWindow;
+				if (emptyVersionWaitTransition)
+					++self->emptyVersionWaitMetaMap[reqTag].newPeekRefcount;
+				else
+					++self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount;
+				emptyVersionWaitRefcounted = true;
+				DebugTraceEvent("TlogEmptyVersionWaitWindowSanityCheck")
+				    .detail("Tag", reqTag)
+				    .detail("WaitWindow", emptyVersionWaitWindow);
+				break;
+			}
 		}
 
 		if (now() - blockStart > emptyVersionWaitWindow) {
@@ -2171,6 +2176,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		}
 	}
 
+	DebugTraceEvent("RequestTagDebug2").detail("Tag", reqTag).log();
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT &&
 	    emptyVersionWaitRefcounted) {
 		if (emptyVersionWaitTransition)
@@ -2182,10 +2188,13 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		// 2. Reply signal must be initiated by non-transitioning peek (those initiated before new window is applied)
 		// 3. All peeks with old wait window has been served (refcount = 0)
 		// 4. Haven't signaled empty version wait actor in this window update yet
-		if (emptyVersionWaitDynamicWindowExist && !emptyVersionWaitTransition &&
-		    self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount == 0 &&
+		if (!emptyVersionWaitTransition && self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount == 0 &&
 		    !self->emptyVersionWaitMetaMap[reqTag].replied) {
 			self->emptyVersionWaitMetaMap[reqTag].replied = true;
+			DebugTraceEvent("TlogEmptyVersionSyncApplied1")
+			    .detail("Tag", reqTag)
+			    .detail("Window", self->emptyVersionWaitMetaMap[reqTag].waitWindow)
+			    .log();
 			self->emptyVersionWaitMetaMap[reqTag].applied.send(Void());
 		}
 	}
@@ -2266,9 +2275,9 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 		return Void();
 
 	if (!self->emptyVersionWaitMetaMap.contains(req.tag)) {
-		self->emptyVersionWaitMetaMap[req.tag].waitWindow = 0;
+		self->emptyVersionWaitMetaMap[req.tag].waitWindow = -1;
 		self->emptyVersionWaitMetaMap[req.tag].transitioning = false;
-		self->emptyVersionWaitMetaMap[req.tag].replied = false;
+		self->emptyVersionWaitMetaMap[req.tag].replied = true;
 		self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount = 0;
 		self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount = 0;
 	}
@@ -2278,6 +2287,7 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 	// ASSERT(!self->emptyVersionWaitMetaMap[req.tag].transitioning);
 	if (self->emptyVersionWaitMetaMap[req.tag].transitioning) {
 		// discard additional requests when more-than-once delivery of the same wait window update is received
+		DebugTraceEvent("DiscardedSyncMessage").detail("Tag", req.tag).detail("WaitWindow", req.waitWindow);
 		return Void();
 	}
 
@@ -2293,14 +2303,23 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 	// 3. If we do not do this, this actor will time out waiting on next application of the window, which may never
 	// come.
 	if (self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount > 0) {
+		DebugTraceEvent("WaitStarted")
+		    .detail("Tag", req.tag)
+		    .detail("StructWindow", self->emptyVersionWaitMetaMap[req.tag].waitWindow);
 		self->emptyVersionWaitMetaMap[req.tag].applied = Promise<Void>();
 		self->emptyVersionWaitMetaMap[req.tag].replied = false;
 		wait(self->emptyVersionWaitMetaMap[req.tag].applied.getFuture());
+		DebugTraceEvent("WaitEnded");
 	}
 
 	self->emptyVersionWaitMetaMap[req.tag].transitioning = false;
 	self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount = self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount;
 	self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount = 0;
+	DebugTraceEvent("TlogEmptyVersionSyncApplied2")
+	    .detail("Tag", req.tag)
+	    .detail("StructWindow", self->emptyVersionWaitMetaMap[req.tag].waitWindow)
+	    .detail("ReqWindow", req.waitWindow)
+	    .log();
 	req.reply.send(Void());
 	return Void();
 }
