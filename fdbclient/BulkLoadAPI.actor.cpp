@@ -321,21 +321,23 @@ Future<Void> DatabaseContext::waitBulkLoadComplete(BulkLoadID id, Optional<Refer
 	return waitBulkLoadStateAtLeastActor(Reference<DatabaseContext>::addRef(this), id, BulkLoadStatus::State::DONE);
 }
 
-ACTOR Future<std::vector<BulkLoadID>> listBulkLoadsActor(Reference<DatabaseContext> db, bool onlyActive) {
+ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsActor(Reference<DatabaseContext> db, bool onlyActive) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
-	state std::vector<BulkLoadID> values;
+	state Standalone<VectorRef<BulkLoadIDRef>> values;
 	loop {
 		try {
 			SystemDBWriteLockedNow(db)->setOptions(tr);
-			values.clear();
+			values = Standalone<VectorRef<BulkLoadIDRef>>();
 			BulkLoadMetadata::StatusMap::RangeResultType result =
 			    wait(BulkLoadMetadata::statusMap().getRange(tr, {}, {}, CLIENT_KNOBS->TOO_MANY)); // TODO
 			ASSERT(!result.more);
 			for (auto& it : result.results) {
 				if (!onlyActive || (it.second.state != BulkLoadStatus::State::ABORTED &&
+				                    it.second.state != BulkLoadStatus::State::ABORTED_COMPLETE &&
 				                    it.second.state != BulkLoadStatus::State::DONE)) {
-					values.push_back(it.first);
+
+					values.push_back_deep(values.arena(), it.first);
 				}
 			}
 
@@ -347,7 +349,9 @@ ACTOR Future<std::vector<BulkLoadID>> listBulkLoadsActor(Reference<DatabaseConte
 	}
 }
 
-Future<std::vector<BulkLoadID>> DatabaseContext::listBulkLoads(bool onlyActive) {
+Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listBulkLoads(bool onlyActive,
+                                                                            Optional<Reference<Tenant>> tenant) {
+	// FIXME: use/limit to tenant
 	return listBulkLoadsActor(Reference<DatabaseContext>::addRef(this), onlyActive);
 }
 

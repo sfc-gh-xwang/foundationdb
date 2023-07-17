@@ -232,6 +232,19 @@ DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_readbg_get_descriptions_v2(F
                                                                                FDBBGFileDescriptionV2*** out_descs,
                                                                                int* out_count);
 
+DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_bulk_load_id_result(FDBFuture* f,
+                                                                            uint8_t const** out_id,
+                                                                            int* out_id_length);
+
+DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_bulk_load_status_result(FDBFuture* f,
+                                                                                FDBBulkLoadStatus* out_status);
+
+DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_bulk_load_list_result(FDBFuture* f,
+                                                                              FDBBulkLoadID const*** out_ids,
+                                                                              int* out_count);
+
+DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_void_result(FDBFuture* f);
+
 #define fdb_future_readbg_get_descriptions BLOB_GRANULE_IDENTIFIER(fdb_future_readbg_get_descriptions_v)
 
 DLLEXPORT WARN_UNUSED_RESULT FDBResult* fdb_readbg_parse_snapshot_file_v1(const uint8_t* file_data,
@@ -431,6 +444,35 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_flush_blob_range(FDBTenant* t
                                                                     int64_t version);
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_id(FDBTenant* tenant);
+
+// FIXME: create database versions of bulk load APIs too!
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_start_bulk_load(FDBTenant* tenant,
+                                                                   uint8_t const* begin_key_name,
+                                                                   int begin_key_name_length,
+                                                                   uint8_t const* end_key_name,
+                                                                   int end_key_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_all_files_registered(FDBTenant* tenant,
+                                                                                  uint8_t const* bulk_load_id_name,
+                                                                                  int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_abort_bulk_load(FDBTenant* tenant,
+                                                                   uint8_t const* bulk_load_id_name,
+                                                                   int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_cleanup_bulk_load(FDBTenant* tenant,
+                                                                     uint8_t const* bulk_load_id_name,
+                                                                     int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_wait_bulk_load_complete(FDBTenant* tenant,
+                                                                           uint8_t const* bulk_load_id_name,
+                                                                           int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_bulk_load_status(FDBTenant* tenant,
+                                                                        uint8_t const* bulk_load_id_name,
+                                                                        int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_list_bulk_loads(FDBTenant* tenant);
 
 DLLEXPORT void fdb_tenant_destroy(FDBTenant* tenant);
 

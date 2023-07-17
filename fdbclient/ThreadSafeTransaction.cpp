@@ -245,6 +245,27 @@ ThreadFuture<Standalone<StringRef>> ThreadSafeDatabase::getClientStatus() {
 	return onMainThread([db] { return Future<Standalone<StringRef>>(db->getClientStatus()); });
 }
 
+ThreadFuture<ApiResult> ThreadSafeDatabase::execAsyncRequest(ApiRequest request) {
+	// FIXME: somehow share ApiRequest sanity check code?
+	if (!request.hasValidHeader()) {
+		return client_invalid_operation();
+	}
+	if (request.getAllocatorInterface() != getAllocatorInterface()) {
+		// the request was allocated with a different client.
+		// The transaction must be retried and the request recreated.
+		return cluster_version_changed();
+	}
+	DatabaseContext* db = this->db;
+	return onMainThread([db, request]() -> Future<ApiResult> {
+		db->checkDeferredError();
+		return handleDatabaseOrTenantApiRequest(db, request);
+	});
+}
+
+FDBAllocatorIfc* ThreadSafeDatabase::getAllocatorInterface() {
+	return localAllocatorInterface();
+}
+
 ThreadSafeDatabase::~ThreadSafeDatabase() {
 	DatabaseContext* db = this->db;
 	onMainThreadVoid([db]() { db->delref(); });
@@ -276,6 +297,7 @@ ThreadFuture<Key> ThreadSafeTenant::purgeBlobGranules(const KeyRangeRef& keyRang
 	Tenant* tenantPtr = this->tenant;
 	KeyRange range = keyRange;
 	return onMainThread([db, range, purgeVersion, tenantPtr, force]() -> Future<Key> {
+		db->checkDeferredError();
 		db->addref();
 		return db->purgeBlobGranules(range, purgeVersion, Reference<Tenant>::addRef(tenantPtr), force);
 	});
@@ -357,6 +379,28 @@ ThreadFuture<Standalone<StringRef>> ThreadSafeTenant::getClientStatus() {
 	DatabaseContext* db = this->db->db;
 	Tenant* tenant = this->tenant;
 	return onMainThread([db, tenant] { return Future<Standalone<StringRef>>(db->getTenantClientStatus(tenant)); });
+}
+
+ThreadFuture<ApiResult> ThreadSafeTenant::execAsyncRequest(ApiRequest request) {
+	// FIXME: somehow share ApiRequest sanity check code?
+	if (!request.hasValidHeader()) {
+		return client_invalid_operation();
+	}
+	if (request.getAllocatorInterface() != getAllocatorInterface()) {
+		// the request was allocated with a different client.
+		// The transaction must be retried and the request recreated.
+		return cluster_version_changed();
+	}
+	DatabaseContext* db = this->db->db;
+	return onMainThread([=]() -> Future<ApiResult> {
+		db->checkDeferredError();
+		db->addref();
+		return handleDatabaseOrTenantApiRequest(db, request, Reference<Tenant>::addRef(tenant));
+	});
+}
+
+FDBAllocatorIfc* ThreadSafeTenant::getAllocatorInterface() {
+	return localAllocatorInterface();
 }
 
 ThreadSafeTenant::~ThreadSafeTenant() {
@@ -783,7 +827,7 @@ ThreadFuture<ApiResult> ThreadSafeTransaction::execAsyncRequest(ApiRequest reque
 	ISingleThreadTransaction* tr = this->tr;
 	return onMainThread([tr, request]() -> Future<ApiResult> {
 		tr->checkDeferredError();
-		return handleApiRequest(tr, request);
+		return handleTransactionApiRequest(tr, request);
 	});
 }
 

@@ -147,7 +147,7 @@ typedef struct FDBBGFileDescriptionV1_ {
 
 /* ---------------------------------------------------------------------------------
  *	New blob granule API structures
- *  (Changed to referecence extensible data structures by pointers)
+ *  (Changed to reference extensible data structures by pointers)
  */
 
 /* contains metadata necessary to derive encryption keys (for passing back to FDB) */
@@ -214,6 +214,15 @@ typedef struct readgranulecontext {
 	/* Number of granules to load in parallel */
 	int granuleParallelism;
 } FDBReadBlobGranuleContext;
+
+// bulk load APIs
+
+typedef FDBByteString FDBBulkLoadID;
+
+typedef struct FDBBulkLoadStatus_ {
+	uint8_t state;
+	// TODO: human-readable status too?
+} FDBBulkLoadStatus;
 
 #ifdef __cplusplus
 }

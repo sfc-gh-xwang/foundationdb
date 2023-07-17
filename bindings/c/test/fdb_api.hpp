@@ -33,6 +33,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <sstream>
+#include <iomanip>
 #include <vector>
 #include <fmt/format.h>
 
@@ -55,6 +57,8 @@ using Key = ByteString;
 using KeyRef = BytesRef;
 using Value = ByteString;
 using ValueRef = BytesRef;
+using BulkLoadID = ByteString;
+using BulkLoadIDRef = BytesRef;
 
 struct KeyRangeRef : native::FDBKeyRange {
 	KeyRef beginKey() const noexcept { return KeyRef(native::FDBKeyRange::begin_key, begin_key_length); }
@@ -226,6 +230,15 @@ CharsRef toCharsRef(const std::optional<StringLike<Char>>& s) noexcept {
 	} else {
 		return CharsRef("[not set]");
 	}
+}
+
+template <template <class...> class StringLike, class Char>
+std::string toHexString(const StringLike<Char>& s) noexcept {
+	std::stringstream ss;
+	for (int i = 0; i < s.size(); i++) {
+		ss << std::setw(2) << std::setfill('0') << std::hex << (int)s[i];
+	}
+	return ss.str();
 }
 
 [[maybe_unused]] constexpr const bool OverflowCheck = false;
@@ -433,6 +446,24 @@ struct ValueRef {
 		return Error(err);
 	}
 };
+
+struct BulkLoadIDResult {
+	using Type = fdb::BulkLoadID;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept {
+		uint8_t const* out_id = nullptr;
+		int out_id_length = 0;
+		auto err = Error(fdb_future_get_bulk_load_id_result(f, &out_id, &out_id_length));
+		out = fdb::BulkLoadID(out_id, out_id_length);
+		return Error(err);
+	}
+};
+
+struct Void {};
+struct VoidResult {
+	using Type = Void;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept { return Error(fdb_future_get_void_result(f)); }
+};
+
 struct StringArray {
 	using Type = std::pair<const char**, int>;
 	static Error extract(native::FDBFuture* f, Type& out) noexcept {
@@ -503,6 +534,24 @@ struct ReadBlobGranulesDescriptionResultV1 {
 		int desc_cnt;
 		auto err = native::fdb_future_readbg_get_descriptions_v1(f, &descs, &desc_cnt);
 		out = Type((GranuleDescriptionRefV1*)descs, desc_cnt);
+		return Error(err);
+	}
+};
+
+struct BulkLoadStatusResult {
+	using Type = native::FDBBulkLoadStatus;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept {
+		auto err = Error(fdb_future_get_bulk_load_status_result(f, &out));
+		return Error(err);
+	}
+};
+
+struct BulkLoadListResult {
+	using Type = std::tuple<native::FDBBulkLoadID const**, int>;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept {
+		auto& [out_ids, out_count] = out;
+		auto err = native::fdb_future_get_bulk_load_list_result(
+		    f, reinterpret_cast<native::FDBBulkLoadID const***>(&out_ids), &out_count);
 		return Error(err);
 	}
 };
@@ -1049,6 +1098,14 @@ public:
 	                                                          int64_t version,
 	                                                          bool force) = 0;
 	virtual TypedFuture<future_var::None> waitPurgeGranulesComplete(KeyRef purgeKey) = 0;
+
+	virtual TypedFuture<future_var::BulkLoadIDResult> startBulkLoad(KeyRef begin, KeyRef end) = 0;
+	virtual TypedFuture<future_var::None> bulkLoadAllFilesRegistered(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::BulkLoadStatusResult> getBulkLoadStatus(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::BulkLoadListResult> listBulkLoads() = 0;
 };
 
 class Tenant final : public IDatabaseOps {
@@ -1171,6 +1228,48 @@ public:
 	}
 
 	TypedFuture<future_var::KeyRef> getClientStatus() { return native::fdb_tenant_get_client_status(tenant.get()); }
+
+	TypedFuture<future_var::BulkLoadIDResult> startBulkLoad(KeyRef begin, KeyRef end) override {
+		if (!tenant)
+			throw std::runtime_error("startBulkLoad() from null tenant");
+		return native::fdb_tenant_start_bulk_load(tenant.get(), begin.data(), intSize(begin), end.data(), intSize(end));
+	}
+
+	TypedFuture<future_var::None> bulkLoadAllFilesRegistered(BulkLoadID id) override {
+		if (!tenant)
+			throw std::runtime_error("bulkLoadAllFilesRegistered() from null tenant");
+		return native::fdb_tenant_bulk_load_all_files_registered(tenant.get(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) override {
+		if (!tenant)
+			throw std::runtime_error("abortBulkLoad() from null tenant");
+		return native::fdb_tenant_abort_bulk_load(tenant.get(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) override {
+		if (!tenant)
+			throw std::runtime_error("cleanupBulkLoad() from null tenant");
+		return native::fdb_tenant_cleanup_bulk_load(tenant.get(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
+		if (!tenant)
+			throw std::runtime_error("waitBulkLoadComplete() from null tenant");
+		return native::fdb_tenant_wait_bulk_load_complete(tenant.get(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::BulkLoadStatusResult> getBulkLoadStatus(BulkLoadID id) override {
+		if (!tenant)
+			throw std::runtime_error("getBulkLoadStatus() from null tenant");
+		return native::fdb_tenant_get_bulk_load_status(tenant.get(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::BulkLoadListResult> listBulkLoads() override {
+		if (!tenant)
+			throw std::runtime_error("listBulkLoads() from null tenant");
+		return native::fdb_tenant_list_bulk_loads(tenant.get());
+	}
 };
 
 class Database : public IDatabaseOps {
@@ -1331,6 +1430,55 @@ public:
 			throw std::runtime_error("getServerProtocol from null database");
 		}
 		return native::fdb_database_get_server_protocol(db.get(), expected_version);
+	}
+
+	TypedFuture<future_var::BulkLoadIDResult> startBulkLoad(KeyRef begin, KeyRef end) override {
+		if (!db)
+			throw std::runtime_error("startBulkLoad() from null database");
+		// FIXME: support!
+		throw std::runtime_error("startBulkLoad() not supported for database");
+	}
+
+	TypedFuture<future_var::None> bulkLoadAllFilesRegistered(BulkLoadID id) override {
+		if (!db)
+			throw std::runtime_error("bulkLoadAllFilesRegistered() from null database");
+		// FIXME: support!
+		throw std::runtime_error("bulkLoadAllFilesRegistered() not supported for database");
+	}
+
+	TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) override {
+		if (!db)
+			throw std::runtime_error("abortBulkLoad() from null database");
+		// FIXME: support!
+		throw std::runtime_error("abortBulkLoad() not supported for database");
+	}
+
+	TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) override {
+		if (!db)
+			throw std::runtime_error("cleanupBulkLoad() from null database");
+		// FIXME: support!
+		throw std::runtime_error("cleanupBulkLoad() not supported for database");
+	}
+
+	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
+		if (!db)
+			throw std::runtime_error("waitBulkLoadComplete() from null database");
+		// FIXME: support!
+		throw std::runtime_error("waitBulkLoadComplete() not supported for database");
+	}
+
+	TypedFuture<future_var::BulkLoadStatusResult> getBulkLoadStatus(BulkLoadID id) override {
+		if (!db)
+			throw std::runtime_error("getBulkLoadStatus() from null database");
+		// FIXME: support!
+		throw std::runtime_error("getBulkLoadStatus() not supported for database");
+	}
+
+	TypedFuture<future_var::BulkLoadListResult> listBulkLoads() override {
+		if (!db)
+			throw std::runtime_error("listBulkLoads() from null database");
+		// FIXME: support!
+		throw std::runtime_error("listBulkLoads() not supported for database");
 	}
 };
 

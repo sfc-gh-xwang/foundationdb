@@ -456,8 +456,9 @@ public:
 	Future<Version> getBulkLoadVersion(BulkLoadID id);
 
 	// operational management
-	Future<std::vector<BulkLoadID>> listBulkLoads(bool onlyActive);
-	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id);
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoads(bool onlyActive,
+	                                                           Optional<Reference<Tenant>> tenant = {});
+	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// bulk data writing apis
 	// TODO: the actual file pointer + serialization APIs

@@ -19,7 +19,6 @@
  */
 
 #include "TesterUtil.h"
-#include "fmt/core.h"
 #include "fmt/chrono.h"
 #include <cstdio>
 #include <algorithm>
@@ -149,6 +148,20 @@ GranuleSummaryArray copyGranuleSummaryArray(fdb::future_var::GranuleSummaryRefAr
 		fdb::native::FDBGranuleSummary nativeSummary = *in_summaries++;
 		fdb::GranuleSummary summary(nativeSummary);
 		out.push_back(summary);
+	}
+	return out;
+};
+
+BulkLoadList copyBulkLoadList(fdb::future_var::BulkLoadListResult::Type array) {
+	auto& [in_ids, in_count] = array;
+
+	BulkLoadList out;
+
+	for (int i = 0; i < in_count; ++i) {
+		fdb::native::FDBBulkLoadID const* nativeId = *in_ids;
+		fdb::BulkLoadID id(nativeId->begin, nativeId->length);
+		out.push_back(id);
+		in_ids++;
 	}
 	return out;
 };

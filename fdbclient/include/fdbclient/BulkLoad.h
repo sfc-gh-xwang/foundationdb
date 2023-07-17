@@ -15,6 +15,7 @@
 // This file (to distinguish from BulkLoadMetadata.h) only contains struct definitions and primitives for bulk loading.
 
 using BulkLoadID = Standalone<StringRef>;
+using BulkLoadIDRef = StringRef;
 
 // Generally ordered such that valid state transitions only increase the number
 // leaving space for future states with int gaps

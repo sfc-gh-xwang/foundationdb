@@ -6,13 +6,46 @@
 
 #include "fdbclient/ApiRequestHandler.h"
 #include "fdbclient/BlobGranuleApiImpl.h"
+#include "fdbclient/BulkLoadApiImpl.h"
 
-Future<ApiResult> handleApiRequest(ISingleThreadTransaction* tr, ApiRequest req) {
+Future<ApiResult> handleTransactionApiRequest(ISingleThreadTransaction* tr, ApiRequest req) {
 	switch (req.getType()) {
 	case FDBApiRequest_ReadBGDescription:
 		return readBlobGranuleDescriptions(tr, req);
 		break;
 	default:
+		// FIXME: this should be throw? or all results have to check for error type and throw themselves?
+		return unknown_api_request();
+	}
+}
+
+Future<ApiResult> handleDatabaseOrTenantApiRequest(DatabaseContext* db,
+                                                   ApiRequest req,
+                                                   Optional<Reference<Tenant>> tenant) {
+	switch (req.getType()) {
+	case FDBApiRequest_StartBulkLoad:
+		return startBulkLoad(db, req, tenant);
+		break;
+	case FDBApiRequest_BulkLoadAllFilesRegistered:
+		return bulkLoadAllFilesRegistered(db, req, tenant);
+		break;
+	case FDBApiRequest_AbortBulkLoad:
+		return abortBulkLoad(db, req, tenant);
+		break;
+	case FDBApiRequest_CleanupBulkLoad:
+		return cleanupBulkLoad(db, req, tenant);
+		break;
+	case FDBApiRequest_WaitBulkLoadComplete:
+		return waitBulkLoadComplete(db, req, tenant);
+		break;
+	case FDBApiRequest_GetBulkLoadStatus:
+		return getBulkLoadStatus(db, req, tenant);
+		break;
+	case FDBApiRequest_ListBulkLoads:
+		return listBulkLoads(db, req, tenant);
+		break;
+	default:
+		// FIXME: this should be throw? or all results have to check for error type and throw themselves?
 		return unknown_api_request();
 	}
 }
