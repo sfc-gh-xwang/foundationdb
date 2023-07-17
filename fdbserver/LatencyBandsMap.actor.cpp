@@ -20,6 +20,7 @@
 
 #include "fdbserver/LatencyBandsMap.h"
 #include "flow/UnitTest.h"
+#include <boost/unordered/unordered_flat_map.hpp>
 #include "flow/actorcompiler.h" // must be last include
 
 class LatencyBandsMapImpl {
@@ -27,15 +28,12 @@ public:
 	ACTOR static Future<Void> expireOldTagsActor(LatencyBandsMap* self) {
 		loop {
 			wait(delay(5.0));
-			for (auto it = self->map.begin(); it != self->map.end();) {
-				const auto& [tag, expirableBands] = *it;
-				if (now() - expirableBands.lastUpdated > SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER) {
-					CODE_PROBE(true, "LatencyBandsMap erasing expired tag");
-					it = self->map.erase(it);
-				} else {
-					++it;
-				}
-			}
+
+			auto count = boost::unordered::erase_if(self->map, [](const auto& kv) {
+				return (now() - kv.second.lastUpdated > SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER);
+			});
+
+			CODE_PROBE(count > 0, "LatencyBandsMap erasing expired tag");
 		}
 	}
 };

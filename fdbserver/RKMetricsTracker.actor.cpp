@@ -366,6 +366,14 @@ Optional<double> StorageQueueInfo::getTagThrottlingRatio(int64_t storageTargetBy
 	}
 }
 
+StorageQueueInfo StorageQueueInfo::createTestInfo(UID id, int64_t storageQueueBytes) {
+	StorageQueueInfo result(id, LocalityData({}, /*zoneId=*/Value(id.toString()), {}, {}));
+	result.valid = true;
+	// Simulate a storage queue of the provided size:
+	result.lastReply.bytesInput = storageQueueBytes;
+	return result;
+}
+
 TLogQueueInfo::TLogQueueInfo(UID id)
   : smoothDurableBytes(SERVER_KNOBS->SMOOTHING_AMOUNT),
     smoothInputBytes(SERVER_KNOBS->SMOOTHING_AMOUNT),

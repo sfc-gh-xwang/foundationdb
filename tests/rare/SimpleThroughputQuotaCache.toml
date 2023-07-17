@@ -1,0 +1,5 @@
+[[test]]
+testTitle='SimpleThroughputQuotaCacheTest'
+
+  [[test.workload]]
+  testName='SimpleThroughputQuotaCache'
