@@ -27,6 +27,7 @@
 #define FDBCLIENT_IKEYVALUESTORE_ACTOR_H
 
 #include "flow/Trace.h"
+#include "fdbclient/DatabaseConfiguration.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/StorageCheckpoint.h"
 #include "fdbclient/Tenant.h"
@@ -156,6 +157,20 @@ public:
 	virtual Future<EncryptionAtRestMode> encryptionMode() = 0;
 
 	virtual ~IKeyValueStore() {}
+
+	// storage engine parameters interfaces
+	// return parameters of the storage engine
+	virtual Future<StorageEngineParamSet> getParameters() const { throw not_implemented(); }
+	// try to update the parameters according to the given parameter set
+	// result is categorized into "unchanged", "applied", "needReboot", "needReplacement", "unknown"
+	// "unchanged" : the parameter's current value is the same as the given value
+	// "applied" : the parameter supports runtime change and it has been updated after the call
+	// "needReboot" : the storage engine needs to reboot to update the parameter, the reboot will happen after the call
+	// "needReplacement" : the storage server needs to be migrated to update the parameter, it will rely on the storage
+	// wiggler to achieve the update
+	virtual Future<StorageEngineParamResult> setParameters(StorageEngineParamSet const& params) {
+		throw not_implemented();
+	}
 };
 
 ACTOR static Future<Void> replaceRange_impl(IKeyValueStore* self,

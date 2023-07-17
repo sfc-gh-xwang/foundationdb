@@ -969,3 +969,11 @@ TEST_CASE("/fdbclient/databaseConfiguration/configureStringFromJSON/storageEngin
 	          DatabaseConfiguration::configureStringFromJSON(configJSON2));
 	return Void();
 }
+
+TEST_CASE("/fdbclient/databaseConfiguration/storageEngineParamInterface/supportedEngines") {
+	auto storeType = static_cast<KeyValueStoreType::StoreType>(
+	    deterministicRandom()->randomInt(0, KeyValueStoreType::StoreType::END));
+	std::set<KeyValueStoreType::StoreType> supportedEngines = { KeyValueStoreType::StoreType::SSD_REDWOOD_V1 };
+	ASSERT_EQ(StorageEngineParamsFactory::isSupported(storeType), supportedEngines.contains(storeType));
+	return Void();
+}

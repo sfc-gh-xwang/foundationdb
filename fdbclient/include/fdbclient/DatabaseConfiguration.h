@@ -125,8 +125,7 @@ struct StorageEngineParamSet : public ReferenceCounted<StorageEngineParamSet> {
 
 	void clear(const std::string& name) { params.erase(name); }
 
-	template <class valueType>
-	valueType getOrDefault(const std::string& name, valueType defaultValue) {
+	std::string getOrDefault(const std::string& name, const std::string& defaultValue) const {
 		return params.contains(name) ? params.at(name) : defaultValue;
 	}
 
@@ -439,6 +438,9 @@ struct StorageEngineParamsFactory {
 	                                                       const std::string& name) {
 		return factories()[storeType][name].first;
 	}
+
+	// only storage engines added into the factory are supported
+	static bool isSupported(KeyValueStoreType::StoreType storeType) { return !factories()[storeType].empty(); }
 };
 
 #endif
