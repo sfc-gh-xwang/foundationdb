@@ -1,0 +1,16 @@
+[[knobs]]
+# avoid reads outside of the test
+enable_consistency_scan = false
+# the simulation does not generate enough reads to trigger the sampling effectively at normal values
+ops_read_units_per_sample = 1 
+# read sampling is needed to produce metrics about how many reads are being performed to each range
+read_sampling_enabled = true
+# system key reads interfere with the test
+read_metrics_include_system_keys = false
+
+[[test]]
+testTitle = 'ReadMetricsTest'
+
+    [[test.workload]]
+    testName = 'ReadMetrics'
+    testDuration = 300.0

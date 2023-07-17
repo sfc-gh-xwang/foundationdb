@@ -3877,11 +3877,11 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 	loop {
 		if (k.getKey() == allKeys.end) {
 			if (k.offset > 0) {
-				return allKeys.end;
+				return KeyReadResult(allKeys.end, readMetrics);
 			}
 			k.orEqual = false;
 		} else if (k.getKey() == allKeys.begin && k.offset <= 0) {
-			return Key();
+			return KeyReadResult(Key(), readMetrics);
 		}
 
 		Key locationKey(k.getKey(), k.arena());
@@ -4980,7 +4980,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					CODE_PROBE(true, "!GetKeyValuesFamilyReply.more and modifiedSelectors in getRange");
 
 					if (!rep.data.size()) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -4990,8 +4990,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -5019,7 +5021,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					                             Reverse{ reverse ? (end - 1).isBackward() : begin.isBackward() });
 
 					if (e.code() == error_code_wrong_shard_server) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -5029,8 +5031,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 

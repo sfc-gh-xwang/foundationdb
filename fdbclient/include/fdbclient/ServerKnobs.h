@@ -870,6 +870,7 @@ public:
 	// Rolling window duration over which the average bytes moved by DD is calculated for the 'MovingData' trace event.
 	double DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL;
 	int64_t MOVING_WINDOW_SAMPLE_SIZE;
+	bool READ_METRICS_INCLUDE_SYSTEM_KEYS;
 
 	// Storage Server
 	double STORAGE_LOGGING_DELAY;
@@ -1227,6 +1228,7 @@ public:
 	double KMS_LOGGING_INTERVAL;
 
 	double CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO;
+	bool ENABLE_CONSISTENCY_SCAN;
 
 	// Idempotency ids
 	double IDEMPOTENCY_ID_IN_MEMORY_LIFETIME;
