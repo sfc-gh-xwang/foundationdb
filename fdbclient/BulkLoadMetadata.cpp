@@ -43,22 +43,34 @@ bool checkValidBulkLoadStateTransition(BulkLoadState current, BulkLoadState desi
 	if (current == desired) {
 		return false;
 	}
-	if (current > desired && current != BulkLoadState::ABORTED) {
+	if (current > desired && current != BulkLoadState::ABORTED && current != BulkLoadState::ABORTED_COMPLETE) {
 		return false;
 	}
 
-	// cleanup can only be from done or aborted
+	// cleanup can only be from done or aborted_complete
 	if (desired == BulkLoadState::CLEANUP) {
-		if (current != BulkLoadState::DONE && current != BulkLoadState::ABORTED) {
+		if (current != BulkLoadState::DONE && current != BulkLoadState::ABORTED_COMPLETE) {
 			throw bulk_load_cleanup_failed();
 		}
 		return true;
 	}
 
-	// once bulk load is aborted or done, no other state transitions can take place except idempotently or to cleanup
-	// (handled above)
-	if (current == BulkLoadState::ABORTED) {
+	// once bulk load is aborted_complete or done, no other state transitions can take place except idempotently or to
+	// cleanup (handled above).
+	if (current == BulkLoadState::ABORTED_COMPLETE) {
+		if (desired == BulkLoadState::ABORTED_COMPLETE || desired == BulkLoadState::ABORTED) {
+			return false;
+		}
 		throw bulk_load_aborted();
+	}
+	if (current == BulkLoadState::ABORTED) {
+		if (desired == BulkLoadState::ABORTED_COMPLETE) {
+			return true;
+		}
+		throw bulk_load_aborted();
+	}
+	if (desired == BulkLoadState::ABORTED_COMPLETE) {
+		throw bulk_load_invalid_state_transition();
 	}
 	if (current == BulkLoadState::DONE) {
 		if (desired == BulkLoadState::ABORTED) {
@@ -152,6 +164,10 @@ TEST_CASE("/fdbclient/bulkload/stateTransitions") {
 	                            StateTransitionResult::DISALLOWED,
 	                            bulk_load_invalid_state_transition());
 	testBulkLoadStateTransition(BulkLoadState::STARTED, BulkLoadState::ABORTED, StateTransitionResult::ALLOWED);
+	testBulkLoadStateTransition(BulkLoadState::STARTED,
+	                            BulkLoadState::ABORTED_COMPLETE,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_invalid_state_transition());
 	testBulkLoadStateTransition(
 	    BulkLoadState::STARTED, BulkLoadState::CLEANUP, StateTransitionResult::DISALLOWED, bulk_load_cleanup_failed());
 
@@ -167,6 +183,10 @@ TEST_CASE("/fdbclient/bulkload/stateTransitions") {
 	testBulkLoadStateTransition(
 	    BulkLoadState::STAGING, BulkLoadState::DONE, StateTransitionResult::ALLOWED); // TODO: only allowed for testing
 	testBulkLoadStateTransition(BulkLoadState::STAGING, BulkLoadState::ABORTED, StateTransitionResult::ALLOWED);
+	testBulkLoadStateTransition(BulkLoadState::STAGING,
+	                            BulkLoadState::ABORTED_COMPLETE,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_invalid_state_transition());
 	testBulkLoadStateTransition(
 	    BulkLoadState::STAGING, BulkLoadState::CLEANUP, StateTransitionResult::DISALLOWED, bulk_load_cleanup_failed());
 
@@ -186,6 +206,10 @@ TEST_CASE("/fdbclient/bulkload/stateTransitions") {
 	testBulkLoadStateTransition(
 	    BulkLoadState::STAGING_BLOB_DONE, BulkLoadState::ABORTED, StateTransitionResult::ALLOWED);
 	testBulkLoadStateTransition(BulkLoadState::STAGING_BLOB_DONE,
+	                            BulkLoadState::ABORTED_COMPLETE,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_invalid_state_transition());
+	testBulkLoadStateTransition(BulkLoadState::STAGING_BLOB_DONE,
 	                            BulkLoadState::CLEANUP,
 	                            StateTransitionResult::DISALLOWED,
 	                            bulk_load_cleanup_failed());
@@ -203,6 +227,10 @@ TEST_CASE("/fdbclient/bulkload/stateTransitions") {
 	testBulkLoadStateTransition(
 	    BulkLoadState::STAGING_DDPREPARED, BulkLoadState::ABORTED, StateTransitionResult::ALLOWED);
 	testBulkLoadStateTransition(BulkLoadState::STAGING_DDPREPARED,
+	                            BulkLoadState::ABORTED_COMPLETE,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_invalid_state_transition());
+	testBulkLoadStateTransition(BulkLoadState::STAGING_DDPREPARED,
 	                            BulkLoadState::CLEANUP,
 	                            StateTransitionResult::DISALLOWED,
 	                            bulk_load_cleanup_failed());
@@ -217,6 +245,10 @@ TEST_CASE("/fdbclient/bulkload/stateTransitions") {
 	testBulkLoadStateTransition(BulkLoadState::DONE, BulkLoadState::DONE, StateTransitionResult::ALREADY_DONE);
 	testBulkLoadStateTransition(
 	    BulkLoadState::DONE, BulkLoadState::ABORTED, StateTransitionResult::DISALLOWED, bulk_load_abort_failed());
+	testBulkLoadStateTransition(BulkLoadState::DONE,
+	                            BulkLoadState::ABORTED_COMPLETE,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_invalid_state_transition());
 	testBulkLoadStateTransition(BulkLoadState::DONE, BulkLoadState::CLEANUP, StateTransitionResult::ALLOWED);
 
 	// ABORTED -> X
@@ -235,7 +267,36 @@ TEST_CASE("/fdbclient/bulkload/stateTransitions") {
 	testBulkLoadStateTransition(
 	    BulkLoadState::ABORTED, BulkLoadState::DONE, StateTransitionResult::DISALLOWED, bulk_load_aborted());
 	testBulkLoadStateTransition(BulkLoadState::ABORTED, BulkLoadState::ABORTED, StateTransitionResult::ALREADY_DONE);
-	testBulkLoadStateTransition(BulkLoadState::ABORTED, BulkLoadState::CLEANUP, StateTransitionResult::ALLOWED);
+	testBulkLoadStateTransition(
+	    BulkLoadState::ABORTED, BulkLoadState::ABORTED_COMPLETE, StateTransitionResult::ALLOWED);
+	testBulkLoadStateTransition(
+	    BulkLoadState::ABORTED, BulkLoadState::CLEANUP, StateTransitionResult::DISALLOWED, bulk_load_cleanup_failed());
+
+	// ABORTED_COMPLETE -> X
+	testBulkLoadStateTransition(BulkLoadState::ABORTED_COMPLETE,
+	                            BulkLoadState::STARTED,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_aborted());
+	testBulkLoadStateTransition(BulkLoadState::ABORTED_COMPLETE,
+	                            BulkLoadState::STAGING,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_aborted());
+	testBulkLoadStateTransition(BulkLoadState::ABORTED_COMPLETE,
+	                            BulkLoadState::STAGING_BLOB_DONE,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_aborted());
+	testBulkLoadStateTransition(BulkLoadState::ABORTED_COMPLETE,
+	                            BulkLoadState::STAGING_DDPREPARED,
+	                            StateTransitionResult::DISALLOWED,
+	                            bulk_load_aborted());
+	testBulkLoadStateTransition(
+	    BulkLoadState::ABORTED_COMPLETE, BulkLoadState::DONE, StateTransitionResult::DISALLOWED, bulk_load_aborted());
+	testBulkLoadStateTransition(
+	    BulkLoadState::ABORTED_COMPLETE, BulkLoadState::ABORTED, StateTransitionResult::ALREADY_DONE);
+	testBulkLoadStateTransition(
+	    BulkLoadState::ABORTED_COMPLETE, BulkLoadState::ABORTED_COMPLETE, StateTransitionResult::ALREADY_DONE);
+	testBulkLoadStateTransition(
+	    BulkLoadState::ABORTED_COMPLETE, BulkLoadState::CLEANUP, StateTransitionResult::ALLOWED);
 
 	return Void();
 }

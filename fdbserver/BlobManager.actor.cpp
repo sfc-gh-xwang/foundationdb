@@ -5850,8 +5850,19 @@ ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
 
 // FIXME: handle state transitions from STAGING to STAGING_BLOB_DONE
 ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID id, BulkLoadState state) {
-
-	if (state >= BulkLoadState::STAGING_BLOB_DONE) {
+	if (state == BulkLoadState::ABORTED) {
+		try {
+			wait(bmData->db->cleanupAbortedBulkLoad(id));
+		} catch (Error& e) {
+			if (e.code() == error_code_bulk_load_not_found) {
+				// somebody else must already have finished cleanup
+				return Void();
+			}
+			throw e;
+		}
+		return Void();
+	}
+	if (state >= BulkLoadState::DONE) {
 		return Void();
 	}
 
@@ -5866,16 +5877,30 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 		// TODO: do we also need to check manager lock as part of these transactions? should be idempotent by any
 		// manager
 
-		// FIXME: only change to STAGING_BLOB_DONE
+		// FIXME: only change to STAGING_BLOB_DONE. Still monitor for aborts until we hit DONE though
 		wait(bmData->db->updateBulkLoadState(id, BulkLoadState::DONE));
 		return Void();
 	} catch (Error& e) {
-		if (e.code() == error_code_bulk_load_aborted || e.code() == error_code_bulk_load_not_found) {
+		if (e.code() == error_code_bulk_load_not_found) {
 			// If bulk load aborted/cleaned up, stop tracking it
 			// TODO: code probe
 			return Void();
 		}
-		throw e;
+		state Error err = e;
+		if (err.code() == error_code_bulk_load_aborted) {
+			try {
+				wait(bmData->db->cleanupAbortedBulkLoad(id));
+			} catch (Error& e2) {
+				if (e2.code() == error_code_bulk_load_not_found) {
+					// somebody else must already have finished cleanup
+					return Void();
+				}
+				throw e2;
+			}
+			return Void();
+		} else {
+			throw err;
+		}
 	}
 }
 

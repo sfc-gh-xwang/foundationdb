@@ -452,6 +452,7 @@ public:
 	// internal state management - not exposed to public clients
 	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadState desiredState);
 	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadState desiredState);
+	Future<Void> cleanupAbortedBulkLoad(BulkLoadID id);
 
 	// operational management
 	Future<std::vector<BulkLoadID>> listBulkLoads(bool onlyActive);

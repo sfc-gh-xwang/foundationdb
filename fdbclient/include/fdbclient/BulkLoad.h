@@ -25,6 +25,7 @@ enum class BulkLoadState : uint8_t {
 	STAGING_DDPREPARED = 30,
 	DONE = 90,
 	ABORTED = 99,
+	ABORTED_COMPLETE = 109,
 	CLEANUP = 254, // never persisted in DB (row deleted instead), just used for state transition logic
 	UNKNOWN = 255 // dummy type used for noargs constructor, should never be seen in practice
 };

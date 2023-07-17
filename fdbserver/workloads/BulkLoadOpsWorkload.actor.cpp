@@ -117,7 +117,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	Future<Void> start(Database const& cx) override {
 		if (clientId == 0) {
 			for (int i = 0; i < concurrentLoads; i++) {
-				loadClients.push_back(bulkLoadClient(cx->clone(), this));
+				loadClients.push_back(bulkLoadClient(cx->clone(), this, i));
 			}
 			unitClient = bulkLoadUnitTests(cx->clone(), this);
 		} else {
@@ -240,11 +240,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		if (abortCompleted) {
-			ASSERT(current == BulkLoadState::ABORTED);
+			ASSERT(current == BulkLoadState::ABORTED || current == BulkLoadState::ABORTED_COMPLETE);
 		} else if (!injectedAbort) {
 			ASSERT(current == BulkLoadState::DONE);
 		} else {
-			ASSERT(current == BulkLoadState::DONE || current == BulkLoadState::ABORTED);
+			ASSERT(current == BulkLoadState::DONE || current == BulkLoadState::ABORTED ||
+			       current == BulkLoadState::ABORTED_COMPLETE);
 		}
 
 		return Void();
@@ -274,6 +275,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		// FIXME: if DONE, check data matches loaded data for range!
 
+		if (BLW_DEBUG) {
+			fmt::print("BLW {0} {1}: cleaning up\n", range.begin.printable(), id.printable());
+		}
 		// FIXME: once auto-cleanup implemented, sometimes don't clean up, especially if aborted, and ensure auto clean
 		// up gets it
 		wait(cx->cleanupBulkLoad(id, self->tenant));
@@ -285,7 +289,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Void> bulkLoadClient(Database cx, BulkLoadOpsWorkload* self) {
+	ACTOR Future<Void> bulkLoadClient(Database cx, BulkLoadOpsWorkload* self, int clientIdx) {
 		// FIXME: REENABLE!
 		/*if (deterministicRandom()->coinflip()) {
 		    cx->internal = IsInternal::False;
@@ -294,10 +298,13 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		cx->internal = IsInternal::True;
 
 		state bool completedAny = false;
+		if (BLW_DEBUG) {
+			fmt::print("BLW: client {0} workload starting\n", clientIdx);
+		}
 		loop {
 			if (completedAny && self->stopTest) {
 				if (BLW_DEBUG) {
-					fmt::print("BLW {0}: workload done\n", range.begin.printable());
+					fmt::print("BLW: client {0} workload done\n", clientIdx);
 				}
 				return Void();
 			}
@@ -306,8 +313,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			state KeyRange range(KeyRangeRef(StringRef(nextRangeKey), strinc(StringRef(nextRangeKey))));
 			bool injectAbort = deterministicRandom()->random01() < 0.2;
 			try {
-				fmt::print("BLW {0}: starting one bulk load\n", range.begin.printable());
+				fmt::print("BLW {0}: starting one bulk load (client {1})\n", range.begin.printable(), clientIdx);
 				wait(self->doOneBulkLoad(cx, self, range, injectAbort));
+				fmt::print("BLW {0}: completed one bulk load (client {1})\n", range.begin.printable(), clientIdx);
 			} catch (Error& e) {
 				if (BLW_DEBUG) {
 					fmt::print("BLW {0}: unexpected error {1}\n", range.begin.printable(), e.name());
