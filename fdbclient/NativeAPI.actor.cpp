@@ -7851,12 +7851,68 @@ ACTOR Future<StorageMetrics> extractMetrics(Future<std::pair<Optional<StorageMet
 	return x.first.get();
 }
 
+ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRangesWithLocations(
+    KeyRange keys,
+    std::vector<KeyRangeLocationInfo>* locations,
+    bool* invalidateLocationCache) {
+
+	state Standalone<VectorRef<ReadHotRangeWithMetrics>> results;
+	try {
+		// TODO: how to handle this?
+		// This function is called whenever a shard becomes read-hot. But somehow the shard was split across more
+		// than one storage server after becoming read-hot and before this function is called, i.e. a race
+		// condition. Should we abort and wait for the newly split shards to be hot again?
+		state int nLocs = locations->size();
+		// if (nLocs > 1) {
+		//	TraceEvent("RHDDebug")
+		//	    .detail("NumSSIs", nLocs)
+		//	    .detail("KeysBegin", keys.begin.printable().c_str())
+		//	    .detail("KeysEnd", keys.end.printable().c_str());
+		// }
+		state std::vector<Future<ReadHotSubRangeReply>> fReplies(nLocs);
+		KeyRef partBegin, partEnd;
+		for (int i = 0; i < nLocs; i++) {
+			partBegin = (i == 0) ? keys.begin : locations->at(i).range.begin;
+			partEnd = (i == nLocs - 1) ? keys.end : locations->at(i).range.end;
+			ReadHotSubRangeRequest req(KeyRangeRef(partBegin, partEnd));
+			fReplies[i] = loadBalance(locations->at(i).locations->locations(),
+			                          &StorageServerInterface::getReadHotRanges,
+			                          req,
+			                          TaskPriority::DataDistribution);
+		}
+
+		wait(waitForAll(fReplies));
+
+		if (nLocs == 1) {
+			CODE_PROBE(true, "Single-shard read hot range request");
+			return fReplies[0].get().readHotRanges;
+		} else {
+			CODE_PROBE(true, "Multi-shard read hot range request");
+
+			for (int i = 0; i < nLocs; i++) {
+				results.append(
+				    results.arena(), fReplies[i].get().readHotRanges.begin(), fReplies[i].get().readHotRanges.size());
+				results.arena().dependsOn(fReplies[i].get().readHotRanges.arena());
+			}
+			return results;
+		}
+	} catch (Error& e) {
+		if (e.code() != error_code_wrong_shard_server && e.code() != error_code_all_alternatives_failed) {
+			TraceEvent(SevError, "GetReadHotSubRangesError").error(e);
+			throw;
+		}
+		*invalidateLocationCache = true;
+	}
+	return results;
+}
+
 ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(Database cx, KeyRange keys) {
 	state Span span("NAPI:GetReadHotRanges"_loc);
+
 	loop {
 		int64_t shardLimit = 100; // Shard limit here does not really matter since this function is currently only used
 		                          // to find the read-hot sub ranges within a read-hot shard.
-		std::vector<KeyRangeLocationInfo> locations =
+		state std::vector<KeyRangeLocationInfo> locations =
 		    wait(getKeyRangeLocations(cx,
 		                              TenantInfo(),
 		                              keys,
@@ -7867,77 +7923,54 @@ ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(Da
 		                              Optional<UID>(),
 		                              UseProvisionalProxies::False,
 		                              latestVersion));
-		try {
-			// TODO: how to handle this?
-			// This function is called whenever a shard becomes read-hot. But somehow the shard was split across more
-			// than one storage server after becoming read-hot and before this function is called, i.e. a race
-			// condition. Should we abort and wait for the newly split shards to be hot again?
-			state int nLocs = locations.size();
-			// if (nLocs > 1) {
-			//	TraceEvent("RHDDebug")
-			//	    .detail("NumSSIs", nLocs)
-			//	    .detail("KeysBegin", keys.begin.printable().c_str())
-			//	    .detail("KeysEnd", keys.end.printable().c_str());
-			// }
-			state std::vector<Future<ReadHotSubRangeReply>> fReplies(nLocs);
-			KeyRef partBegin, partEnd;
-			for (int i = 0; i < nLocs; i++) {
-				partBegin = (i == 0) ? keys.begin : locations[i].range.begin;
-				partEnd = (i == nLocs - 1) ? keys.end : locations[i].range.end;
-				ReadHotSubRangeRequest req(KeyRangeRef(partBegin, partEnd));
-				fReplies[i] = loadBalance(locations[i].locations->locations(),
-				                          &StorageServerInterface::getReadHotRanges,
-				                          req,
-				                          TaskPriority::DataDistribution);
-			}
 
-			wait(waitForAll(fReplies));
+		state bool invalidateLocationCache = false;
+		Standalone<VectorRef<ReadHotRangeWithMetrics>> results =
+		    wait(getReadHotRangesWithLocations(keys, &locations, &invalidateLocationCache));
 
-			if (nLocs == 1) {
-				CODE_PROBE(true, "Single-shard read hot range request");
-				return fReplies[0].get().readHotRanges;
-			} else {
-				CODE_PROBE(true, "Multi-shard read hot range request");
-				Standalone<VectorRef<ReadHotRangeWithMetrics>> results;
-				for (int i = 0; i < nLocs; i++) {
-					results.append(results.arena(),
-					               fReplies[i].get().readHotRanges.begin(),
-					               fReplies[i].get().readHotRanges.size());
-					results.arena().dependsOn(fReplies[i].get().readHotRanges.arena());
-				}
-
-				return results;
-			}
-		} catch (Error& e) {
-			if (e.code() != error_code_wrong_shard_server && e.code() != error_code_all_alternatives_failed) {
-				TraceEvent(SevError, "GetReadHotSubRangesError").error(e);
-				throw;
-			}
-			cx->invalidateCache({}, keys);
-			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
+		if (!invalidateLocationCache) {
+			return results;
 		}
+
+		cx->invalidateCache({}, keys);
+		wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
 	}
 }
 
 ACTOR Future<Optional<StorageMetrics>> waitStorageMetricsWithLocation(TenantInfo tenantInfo,
                                                                       Version version,
                                                                       KeyRange keys,
-                                                                      std::vector<KeyRangeLocationInfo> locations,
+                                                                      std::vector<KeyRangeLocationInfo>* locations,
                                                                       StorageMetrics min,
                                                                       StorageMetrics max,
-                                                                      StorageMetrics permittedError) {
-	Future<StorageMetrics> fx;
-	if (locations.size() > 1) {
-		fx = waitStorageMetricsMultipleLocations(tenantInfo, version, locations, min, max, permittedError);
-	} else {
-		WaitMetricsRequest req(tenantInfo, version, keys, min, max);
-		fx = loadBalance(locations[0].locations->locations(),
-		                 &StorageServerInterface::waitMetrics,
-		                 req,
-		                 TaskPriority::DataDistribution);
+                                                                      StorageMetrics permittedError,
+                                                                      bool* invalidateCache) {
+	try {
+		Future<StorageMetrics> fx;
+		if (locations->size() > 1) {
+			fx = waitStorageMetricsMultipleLocations(tenantInfo, version, *locations, min, max, permittedError);
+		} else {
+			WaitMetricsRequest req(tenantInfo, version, keys, min, max);
+			fx = loadBalance(locations->at(0).locations->locations(),
+			                 &StorageServerInterface::waitMetrics,
+			                 req,
+			                 TaskPriority::DataDistribution);
+		}
+		StorageMetrics x = wait(fx);
+		return x;
+	} catch (Error& e) {
+		TraceEvent(SevDebug, "WaitStorageMetricsHandleError").error(e);
+		if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
+			*invalidateCache = true;
+		} else if (e.code() == error_code_future_version) {
+			wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
+		} else {
+			bool ok = e.code() == error_code_tenant_not_found;
+			TraceEvent(ok ? SevInfo : SevError, "WaitStorageMetricsError").error(e);
+			throw;
+		}
 	}
-	StorageMetrics x = wait(fx);
-	return x;
+	return Optional<StorageMetrics>();
 }
 
 ACTOR Future<std::pair<Optional<StorageMetrics>, int>> waitStorageMetrics(
@@ -7990,24 +8023,15 @@ ACTOR Future<std::pair<Optional<StorageMetrics>, int>> waitStorageMetrics(
 			continue;
 		}
 
-		try {
-			Optional<StorageMetrics> res =
-			    wait(waitStorageMetricsWithLocation(tenantInfo, version, keys, locations, min, max, permittedError));
-			if (res.present()) {
-				return std::make_pair(res, -1);
-			}
-		} catch (Error& e) {
-			TraceEvent(SevDebug, "WaitStorageMetricsHandleError").error(e);
-			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
-				cx->invalidateCache(tenantInfo.prefix, keys);
-				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
-			} else if (e.code() == error_code_future_version) {
-				wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
-			} else {
-				bool ok = e.code() == error_code_tenant_not_found;
-				TraceEvent(ok ? SevInfo : SevError, "WaitStorageMetricsError").error(e);
-				throw;
-			}
+		state bool invalidateCache = false;
+		Optional<StorageMetrics> res = wait(waitStorageMetricsWithLocation(
+		    tenantInfo, version, keys, &locations, min, max, permittedError, &invalidateCache));
+		if (res.present()) {
+			return std::make_pair(res, -1);
+		}
+		if (invalidateCache) {
+			cx->invalidateCache(tenantInfo.prefix, keys);
+			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
 		}
 	}
 }
