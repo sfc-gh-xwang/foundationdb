@@ -2129,7 +2129,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 		if (emptyVersionFirstEntry) {
 			emptyVersionFirstEntry = false;
-			DebugTraceEvent("RequestTagDebug1").detail("Tag", reqTag).log();
+			DebugLogTraceEvent("RequestTagDebug1").detail("Tag", reqTag);
 
 			switch (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT) {
 			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED:
@@ -2154,7 +2154,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 				else
 					++self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount;
 				emptyVersionWaitRefcounted = true;
-				DebugTraceEvent("TlogEmptyVersionWaitWindowSanityCheck")
+				DebugLogTraceEvent("TlogEmptyVersionWaitWindowSanityCheck")
 				    .detail("Tag", reqTag)
 				    .detail("WaitWindow", emptyVersionWaitWindow);
 				break;
@@ -2169,14 +2169,15 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
 		// batching interval has expired.
-		wait(logData->version.whenAtLeast(waitUntilVersion) || delay(emptyVersionWaitWindow - (now() - blockStart)));
+		wait(logData->version.whenAtLeast(waitUntilVersion) ||
+		     delay(emptyVersionWaitWindow - (now() - blockStart))); // is this not using g_network->timer() ok?
 		if (logData->version.get() < waitUntilVersion) {
 			break; // We know that from `reqBegin` to logData->version are all empty messages. Skip re-executing the
 			       // peek logic.
 		}
 	}
 
-	DebugTraceEvent("RequestTagDebug2").detail("Tag", reqTag).log();
+	DebugLogTraceEvent("RequestTagDebug2").detail("Tag", reqTag);
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT &&
 	    emptyVersionWaitRefcounted) {
 		if (emptyVersionWaitTransition)
@@ -2191,10 +2192,9 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		if (!emptyVersionWaitTransition && self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount == 0 &&
 		    !self->emptyVersionWaitMetaMap[reqTag].replied) {
 			self->emptyVersionWaitMetaMap[reqTag].replied = true;
-			DebugTraceEvent("TlogEmptyVersionSyncApplied1")
+			DebugLogTraceEvent("TlogEmptyVersionSyncApplied1")
 			    .detail("Tag", reqTag)
-			    .detail("Window", self->emptyVersionWaitMetaMap[reqTag].waitWindow)
-			    .log();
+			    .detail("Window", self->emptyVersionWaitMetaMap[reqTag].waitWindow);
 			self->emptyVersionWaitMetaMap[reqTag].applied.send(Void());
 		}
 	}
@@ -2287,7 +2287,7 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 	// ASSERT(!self->emptyVersionWaitMetaMap[req.tag].transitioning);
 	if (self->emptyVersionWaitMetaMap[req.tag].transitioning) {
 		// discard additional requests when more-than-once delivery of the same wait window update is received
-		DebugTraceEvent("DiscardedSyncMessage").detail("Tag", req.tag).detail("WaitWindow", req.waitWindow);
+		DebugLogTraceEvent("DiscardedSyncMessage").detail("Tag", req.tag).detail("WaitWindow", req.waitWindow);
 		return Void();
 	}
 
@@ -2303,23 +2303,22 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 	// 3. If we do not do this, this actor will time out waiting on next application of the window, which may never
 	// come.
 	if (self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount > 0) {
-		DebugTraceEvent("WaitStarted")
+		DebugLogTraceEvent("WaitStarted")
 		    .detail("Tag", req.tag)
 		    .detail("StructWindow", self->emptyVersionWaitMetaMap[req.tag].waitWindow);
 		self->emptyVersionWaitMetaMap[req.tag].applied = Promise<Void>();
 		self->emptyVersionWaitMetaMap[req.tag].replied = false;
 		wait(self->emptyVersionWaitMetaMap[req.tag].applied.getFuture());
-		DebugTraceEvent("WaitEnded");
+		DebugLogTraceEvent("WaitEnded");
 	}
 
 	self->emptyVersionWaitMetaMap[req.tag].transitioning = false;
 	self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount = self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount;
 	self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount = 0;
-	DebugTraceEvent("TlogEmptyVersionSyncApplied2")
+	DebugLogTraceEvent("TlogEmptyVersionSyncApplied2")
 	    .detail("Tag", req.tag)
 	    .detail("StructWindow", self->emptyVersionWaitMetaMap[req.tag].waitWindow)
-	    .detail("ReqWindow", req.waitWindow)
-	    .log();
+	    .detail("ReqWindow", req.waitWindow);
 	req.reply.send(Void());
 	return Void();
 }
