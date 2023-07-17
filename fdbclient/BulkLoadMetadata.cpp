@@ -12,7 +12,7 @@ namespace BulkLoadMetadata {
 const KeyRangeRef bulkLoadStatusKeys("\xff\x02/bulkLoadStatus/"_sr, "\xff\x02/bulkLoadStatus0"_sr);
 const KeyRangeRef bulkLoadInfoKeys("\xff\x02/bulkLoadInfo/"_sr, "\xff\x02/bulkLoadInfo0"_sr);
 const StringRef bulkLoadChangeKey = "\xff\x02/bulkLoadChangeKey"_sr;
-const KeyRangeRef bulkLoadRangeKeys("\xff/bulkLoadRanges/"_sr, "\xff/bulkLoadRanges0"_sr);
+const KeyRangeRef bulkLoadRangeKeys("\xff\x02/bulkLoadRanges/"_sr, "\xff\x02/bulkLoadRanges0"_sr);
 
 WatchableTrigger& onChange() {
 	static WatchableTrigger instance(bulkLoadChangeKey);
