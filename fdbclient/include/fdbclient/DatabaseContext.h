@@ -453,6 +453,7 @@ public:
 	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadState desiredState);
 	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadState desiredState);
 	Future<Void> cleanupAbortedBulkLoad(BulkLoadID id);
+	Future<Version> getBulkLoadVersion(BulkLoadID id);
 
 	// operational management
 	Future<std::vector<BulkLoadID>> listBulkLoads(bool onlyActive);

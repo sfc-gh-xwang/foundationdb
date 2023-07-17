@@ -12,6 +12,7 @@ namespace BulkLoadMetadata {
 const KeyRangeRef bulkLoadStatusKeys("\xff\x02/bulkLoadStatus/"_sr, "\xff\x02/bulkLoadStatus0"_sr);
 const KeyRangeRef bulkLoadInfoKeys("\xff\x02/bulkLoadInfo/"_sr, "\xff\x02/bulkLoadInfo0"_sr);
 const StringRef bulkLoadChangeKey = "\xff\x02/bulkLoadChangeKey"_sr;
+const KeyRangeRef bulkLoadVersionKeys("\xff\x02/bulkLoadVersion/"_sr, "\xff\x02/bulkLoadVersion0"_sr);
 const KeyRangeRef bulkLoadRangeKeys("\xff\x02/bulkLoadRanges/"_sr, "\xff\x02/bulkLoadRanges0"_sr);
 
 WatchableTrigger& onChange() {
@@ -26,6 +27,11 @@ StatusMap& statusMap() {
 
 InfoMap& infoMap() {
 	static InfoMap instance(bulkLoadInfoKeys.begin, IncludeVersion(), onChange());
+	return instance;
+}
+
+VersionMap& versionMap() {
+	static VersionMap instance(bulkLoadVersionKeys.begin);
 	return instance;
 }
 

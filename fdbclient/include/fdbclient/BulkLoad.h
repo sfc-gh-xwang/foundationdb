@@ -50,19 +50,17 @@ struct BulkLoadInfo {
 	constexpr static FileIdentifier file_identifier = 3119155;
 	int64_t tenantId;
 	KeyRange keyRange;
-	// FIXME: make versionstamp and fill it somehow?
-	Version createVersion;
 
 	// noarg for serialization
 	BulkLoadInfo() {}
 
-	BulkLoadInfo(int64_t tenantId, KeyRange keyRange) : tenantId(tenantId), keyRange(keyRange), createVersion(0) {
+	BulkLoadInfo(int64_t tenantId, KeyRange keyRange) : tenantId(tenantId), keyRange(keyRange) {
 		ASSERT(!keyRange.empty());
 	}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantId, keyRange, createVersion);
+		serializer(ar, tenantId, keyRange);
 	}
 };
 

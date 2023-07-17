@@ -335,7 +335,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		INVALID_LOAD_ID_UNIT,
 		WRITE_DURING_LOAD_UNIT,
 		READ_DURING_LOAD_UNIT,
-		OP_COUNT = 7 /* keep this last */
+		SANITY_CHECK_VERSIONSTAMP_UNIT,
+		OP_COUNT = 8 /* keep this last */
 	};
 
 	ACTOR Future<Void> abortAndCleanupAfterUnit(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
@@ -434,6 +435,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadState::STAGING)));
 		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadState::STAGING)));
 		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadStatus(id))));
+		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadVersion(id))));
 
 		return Void();
 	}
@@ -482,6 +484,38 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			// TODO: same error or new one?
 			ASSERT(e.code() == error_code_bulk_load_range_conflict);
 		}
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
+	ACTOR Future<Version> doGRV(Database cx) {
+		state Transaction tr(cx);
+		loop {
+			try {
+				Version readVersion = wait(tr.getReadVersion());
+				return readVersion;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	ACTOR Future<Void> sanityCheckVersionstampUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that client cannot clean up a bulk load before it is done or aborted
+
+		// since we can't access the transaction object used to start the bulk load and validate that it is exactly the
+		// same version, we just do a GRV before and after and make sure it matches
+		state Version start = wait(self->doGRV(cx));
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state Version end = wait(self->doGRV(cx));
+
+		Version createVersion = wait(cx->getBulkLoadVersion(id));
+
+		ASSERT(createVersion >= start);
+		ASSERT(createVersion <= end);
 
 		// cleanup
 		wait(self->abortAndCleanupAfterUnit(cx, self, id));
@@ -541,6 +575,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->writeDuringLoadUnit(cx, self, range));
 			} else if (op == READ_DURING_LOAD_UNIT) {
 				wait(self->readDuringLoadUnit(cx, self, range));
+			} else if (op == SANITY_CHECK_VERSIONSTAMP_UNIT) {
+				wait(self->sanityCheckVersionstampUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}

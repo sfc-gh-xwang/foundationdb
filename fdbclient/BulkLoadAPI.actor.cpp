@@ -69,7 +69,7 @@ ACTOR Future<BulkLoadID> startBulkLoadActor(Reference<DatabaseContext> db,
 			}
 
 			BulkLoadMetadata::statusMap().set(tr, id, BulkLoadStatus(BulkLoadState::STARTED));
-			// FIXME: atomicop for versionstamp
+			BulkLoadMetadata::versionMap().setVersionstamp(tr, id, Versionstamp(), 0);
 			BulkLoadMetadata::infoMap().set(tr, id, info);
 
 			wait(BulkLoadMetadata::rangeMap().updateRange(
@@ -172,6 +172,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 					wait(BulkLoadMetadata::rangeMap().updateRange(
 					    tr, physicalRange.begin, physicalRange.end, BulkLoadMetadata::IDValue(), true));
 					BulkLoadMetadata::infoMap().erase(tr, id);
+					BulkLoadMetadata::versionMap().erase(tr, id);
 				}
 			}
 
@@ -361,4 +362,26 @@ ACTOR Future<Void> cleanupAbortedBulkLoadActor(Reference<DatabaseContext> db, Bu
 
 Future<Void> DatabaseContext::cleanupAbortedBulkLoad(BulkLoadID id) {
 	return cleanupAbortedBulkLoadActor(Reference<DatabaseContext>::addRef(this), id);
+}
+
+ACTOR Future<Version> getBulkLoadVersionActor(Reference<DatabaseContext> db, BulkLoadID id) {
+	state Database cx(db);
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
+	loop {
+		try {
+			SystemDBWriteLockedNow(db)->setOptions(tr);
+
+			Optional<Versionstamp> status = wait(BulkLoadMetadata::versionMap().get(tr, id));
+			if (!status.present()) {
+				throw bulk_load_not_found();
+			}
+			return status.get().version;
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+}
+
+Future<Version> DatabaseContext::getBulkLoadVersion(BulkLoadID id) {
+	return getBulkLoadVersionActor(Reference<DatabaseContext>::addRef(this), id);
 }

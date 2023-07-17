@@ -55,7 +55,11 @@ typedef KeyBackedObjectMap<BulkLoadID, BulkLoadInfo, _IncludeVersion, NullCodec>
 // set whenever a new bulk load is added, or an old one is cleaned up (changed by writes to bulkLoadInfoKeys)
 extern const StringRef bulkLoadChangeKey;
 
-// no \x02 -> in transaction state store (so proxies can check it for locking)
+// 0x02 -> not in transaction state store
+// versionstamp of start for active bulk loads
+extern const KeyRangeRef bulkLoadVersionKeys;
+typedef KeyBackedMap<BulkLoadID, Versionstamp, NullCodec, BinaryCodec<Versionstamp>> VersionMap;
+
 // ranges for active (not completed or aborted) bulk loads
 extern const KeyRangeRef bulkLoadRangeKeys;
 typedef KeyBackedRangeMap<Standalone<StringRef>, IDValue, NullCodec, ObjectCodec<IDValue, _IncludeVersion>> RangeMap;
@@ -64,6 +68,7 @@ typedef RangeMap::LocalSnapshot RangeMapSnapshot;
 WatchableTrigger& onChange();
 StatusMap& statusMap();
 InfoMap& infoMap();
+VersionMap& versionMap();
 RangeMap& rangeMap();
 
 }; // namespace BulkLoadMetadata
