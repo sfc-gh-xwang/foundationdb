@@ -297,6 +297,7 @@ protected:
 		double pivotAvailableSpaceRatio = 100.0;
 		double pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
 		double lowerPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
+		double upperPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
 		int64_t pivotLoadBytes = std::numeric_limits<int64_t>::max();
 		int64_t lowerPivotBytes = std::numeric_limits<int64_t>::max();
 		int64_t upperPivotBytes = std::numeric_limits<int64_t>::max();

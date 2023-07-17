@@ -69,24 +69,24 @@ int EligibilityCounter::getCount(int combinedType) const {
 }
 
 template <class T>
-LinearFunc<T>::LinearFunc(std::pair<T, double> p1, std::pair<T, double> p2) {
-	ASSERT(p1.first != p2.first);
-	if (p1.first > p2.first) {
+LinearFunc<T>::LinearFunc(Point p1, Point p2) {
+	ASSERT(p1.x != p2.x);
+	if (p1.x > p2.x) {
 		std::swap(p1, p2);
 	}
 	leftPoint = p1;
 	rightPoint = p2;
-	a = (p2.second - p1.second) / (p2.first - p1.first);
-	b = p2.second - a * p2.first;
+	a = (p2.y - p1.y) / (p2.x - p1.x);
+	b = p2.y - a * p2.x;
 }
 
 template <class T>
 double LinearFunc<T>::getY(T x) {
 	double result;
-	if (x <= leftPoint.first) {
-		result = leftPoint.second;
-	} else if (x >= rightPoint.first) {
-		result = rightPoint.second;
+	if (x <= leftPoint.x) {
+		result = leftPoint.y;
+	} else if (x >= rightPoint.x) {
+		result = rightPoint.y;
 	} else {
 		result = a * x + b;
 	}
@@ -3374,11 +3374,16 @@ void DDTeamCollection::updateCpuPivot(std::vector<double>& teamAverageCPU) {
 		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
 			size_t lowerPivot = teamAverageCPU.size() * std::min(1.0, SERVER_KNOBS->DD_LOWER_CPU_PIVOT_RATIO);
 			std::nth_element(teamAverageCPU.begin(), teamAverageCPU.begin() + lowerPivot, teamAverageCPU.end());
+			size_t upperPivot = teamAverageCPU.size() * std::min(1.0, SERVER_KNOBS->DD_UPPER_CPU_PIVOT_RATIO);
+			std::nth_element(teamAverageCPU.begin(), teamAverageCPU.begin() + upperPivot, teamAverageCPU.end());
+
 			teamPivots.lowerPivotCPU = teamAverageCPU[lowerPivot];
+			teamPivots.upperPivotCPU = teamAverageCPU[upperPivot];
 		}
 	} else {
 		teamPivots.pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
 		teamPivots.lowerPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
+		teamPivots.upperPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
 	}
 
 	if (teamPivots.pivotCPU > SERVER_KNOBS->MAX_DEST_CPU_PERCENT) {
@@ -3634,8 +3639,9 @@ double getProbabilityWithPivot(T lowerPivot, T upperPivot, T sample) {
 			}
 		}
 	} else {
-		data_distribution::LinearFunc<T> linearFunc(std::make_pair((T)lowerPivot, (double)1.0),
-		                                            std::make_pair((T)upperPivot, (double)0.0));
+		data_distribution::LinearFunc<T> linearFunc(
+		    typename data_distribution::LinearFunc<T>::Point{ .x = lowerPivot, .y = 1.0 },
+		    typename data_distribution::LinearFunc<T>::Point{ .x = upperPivot, .y = 0.0 });
 		result = linearFunc.getY(sample);
 	}
 	return result;
@@ -3647,7 +3653,7 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(
 		// Make sure there is enough available space in source team before preventing.
 		if (sourceTeam.get()->hasHealthyAvailableSpace(teamPivots.pivotAvailableSpaceRatio)) {
 			ASSERT_LE(teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes);
-			ASSERT_LE(teamPivots.lowerPivotCPU, teamPivots.pivotCPU);
+			ASSERT_LE(teamPivots.lowerPivotCPU, teamPivots.upperPivotCPU);
 
 			int64_t sourceLoadBytes = sourceTeam.get()->getLoadBytes(true, req.inflightPenalty);
 			double sourceCPU = sourceTeam.get()->getAverageCPU();
@@ -3656,9 +3662,8 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(
 			    teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes, sourceLoadBytes);
 
 			double probabilityCPU =
-			    getProbabilityWithPivot<double>(teamPivots.lowerPivotCPU, teamPivots.pivotCPU, sourceCPU);
+			    getProbabilityWithPivot<double>(teamPivots.lowerPivotCPU, teamPivots.upperPivotCPU, sourceCPU);
 
-			// FIXME: There is some potential precision issue with double here.
 			ASSERT(probabilityLoadBytes >= 0 && probabilityLoadBytes <= 1);
 			ASSERT(probabilityCPU >= 0 && probabilityCPU <= 1);
 

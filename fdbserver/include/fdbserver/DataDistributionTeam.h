@@ -59,13 +59,18 @@ private:
 template <class T>
 class LinearFunc {
 public:
+	struct Point {
+		T x;
+		double y;
+	};
+
 	// Initialize with two points: p1, p2
-	LinearFunc(std::pair<T, double> p1, std::pair<T, double> p2);
+	LinearFunc(Point p1, Point p2);
 	double getY(T x);
 
 private:
-	std::pair<T, double> leftPoint;
-	std::pair<T, double> rightPoint;
+	Point leftPoint;
+	Point rightPoint;
 	double a;
 	double b;
 };
