@@ -72,7 +72,9 @@ public:
 	                 class QuotaThrottler&,
 	                 class IRKThroughputQuotaCache const&,
 	                 class IRKMetricsTracker const&,
-	                 class IRKRecoveryTracker&);
+	                 class IRKRecoveryTracker&,
+	                 class RKClientThroughputTracker&,
+	                 class RKServerThroughputTracker const&);
 };
 
 class MockRKRateServer : public IRKRateServer {

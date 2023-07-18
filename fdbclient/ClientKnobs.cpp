@@ -296,7 +296,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
 	// TODO: Randomly turn this knob off once throughput once
 	// RKThroughputQuotaCache is receiving throughput updates
-	// from IRKThroughputTracker:
+	// from IRKClusterThroughputTracker:
 	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true );
 
 	// busyness reporting

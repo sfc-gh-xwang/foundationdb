@@ -1,5 +1,5 @@
 /**
- * IRKThroughputTracker.h
+ * IRKClusterThroughputTracker.h
  */
 
 #pragma once
@@ -10,9 +10,9 @@
 #include <boost/unordered/unordered_flat_map.hpp>
 
 // Tracks the cluster-wide throughput (in bytes/second) of each throttlingId
-class IRKThroughputTracker {
+class IRKClusterThroughputTracker {
 public:
-	virtual ~IRKThroughputTracker() = default;
+	virtual ~IRKClusterThroughputTracker() = default;
 
 	// Returns the current cluster-wide throughput for the provided throttling ID
 	virtual double getThroughput(ThrottlingId const&) const = 0;
@@ -23,7 +23,7 @@ public:
 
 // The RKServerThroughputTracker class is responsible for tracking
 // every throttlingId's reported throughput across all storage servers
-class RKServerThroughputTracker : public IRKThroughputTracker {
+class RKServerThroughputTracker : public IRKClusterThroughputTracker {
 	enum class OpType {
 		READ,
 		WRITE,
@@ -71,7 +71,7 @@ public:
 // The RKClientThroughputTracker class is responsible for tracking
 // every throttlingId's cluster-wide throughput from statistics
 // reported originally from clients
-class RKClientThroughputTracker : public IRKThroughputTracker {
+class RKClientThroughputTracker : public IRKClusterThroughputTracker {
 	struct ThroughputSmoother {
 		HoltLinearSmoother smoother;
 		double lastUpdated;
@@ -103,7 +103,7 @@ public:
 	void update(ThrottlingIdMap<uint64_t> const& newThroughput);
 };
 
-class MockThroughputTracker : public IRKThroughputTracker {
+class MockThroughputTracker : public IRKClusterThroughputTracker {
 	ThrottlingIdMap<double> throughput;
 
 public:

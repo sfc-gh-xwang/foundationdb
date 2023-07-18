@@ -2,7 +2,7 @@
  * RKClientThroughputTracker.h
  */
 
-#include "fdbserver/IRKThroughputTracker.h"
+#include "fdbserver/IRKClusterThroughputTracker.h"
 #include "fdbserver/Knobs.h"
 
 RKClientThroughputTracker::ThroughputSmoother::ThroughputSmoother()

@@ -2,7 +2,7 @@
  * RKThroughputTrackerTesting.actor.cpp
  */
 
-#include "fdbserver/IRKThroughputTracker.h"
+#include "fdbserver/IRKClusterThroughputTracker.h"
 #include "flow/UnitTest.h"
 #include "flow/actorcompiler.h" // must be last include
 

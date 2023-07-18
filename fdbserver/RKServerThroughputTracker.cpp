@@ -2,7 +2,7 @@
  * RKServerThroughputTracker.cpp
  */
 
-#include "fdbserver/IRKThroughputTracker.h"
+#include "fdbserver/IRKClusterThroughputTracker.h"
 #include "fdbserver/Knobs.h"
 #include <boost/unordered/unordered_flat_map.hpp>
 
