@@ -18,7 +18,6 @@
  * limitations under the License.
  */
 
-#include "fdbclient/RESTUtils.h"
 #include "fdbserver/RESTKmsConnector.h"
 
 #include "fdbclient/BlobCipher.h"
@@ -226,10 +225,10 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	KmsUrlStore<KmsUrlPenaltyParams> kmsUrlStore;
 	double lastKmsUrlsRefreshTs;
 	double lastKmsUrlDiscoverTS;
+	bool kmsStable;
 	RESTClient restClient;
 	ValidationTokenMap validationTokenMap;
 	PromiseStream<Future<Void>> addActor;
-	bool kmsStable;
 	Future<Void> kmsStabilityChecker;
 
 	RESTKmsConnectorCtx()

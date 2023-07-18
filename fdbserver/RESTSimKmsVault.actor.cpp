@@ -312,7 +312,7 @@ ACTOR Future<VaultResponse> handleFetchKeysByDomainIds(std::string content) {
 	// Append 'request version'
 	if (BUGGIFY) {
 		// skip adding version to the response, translates into rest_malformed_response on the caller
-		CODE_PROBE(true, "RESTSimKMS simulate malformed response");
+		CODE_PROBE(true, "RESTSimKMS simulate KeysByDomainIds malformed response");
 	} else {
 		addVersionToDoc(result, version);
 	}
@@ -377,7 +377,7 @@ ACTOR Future<VaultResponse> handleFetchKeysByKeyIds(std::string content) {
 	// Append 'request version'
 	if (BUGGIFY) {
 		// skip adding version to the response, translates into rest_malformed_response on the caller
-		CODE_PROBE(true, "RESTSimKMS simulate malformed response");
+		CODE_PROBE(true, "RESTSimKMS simulate KeysByKeyIds malformed response");
 	} else {
 		addVersionToDoc(result, version);
 	}
@@ -508,7 +508,14 @@ ACTOR Future<Void> simKmsVaultRequestHandler(Reference<HTTP::IncomingRequest> re
 		throw http_bad_response();
 	}
 
-	response->code = HTTP::HTTP_STATUS_CODE_OK;
+	if (BUGGIFY) {
+		// Simulate KMS server returning HTTP retryable code
+		const int httpCode = getRandomHTTPRetryableCode();
+		response->code = httpCode;
+		CODE_PROBE(true, "RESTSimKms return http retryable code");
+	} else {
+		response->code = HTTP::HTTP_STATUS_CODE_OK;
+	}
 	response->data.headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 	response->data.headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 

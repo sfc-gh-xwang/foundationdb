@@ -39,6 +39,26 @@ const std::unordered_map<std::string, RESTConnectionType> RESTConnectionType::su
 	{ "https", RESTConnectionType("https", RESTConnectionType::SECURE_CONNECTION) }
 };
 
+const std::unordered_set<int> REST_RETRYABLE_HTTP_CODES = {
+	HTTP::HTTP_STATUS_CODE_INTERNAL_SERVER_ERROR, HTTP::HTTP_STATUS_CODE_BAD_GATEWAY,
+	HTTP::HTTP_STATUS_CODE_BAD_GATEWAY,           HTTP::HTTP_STATUS_CODE_SERVICE_UNAVAILABLE,
+	HTTP::HTTP_STATUS_CODE_TOO_MANY_REQUESTS,     HTTP::HTTP_STATUS_CODE_TIMEOUT
+};
+
+int getRandomHTTPRetryableCode() {
+	int randIdx = deterministicRandom()->randomInt(0, REST_RETRYABLE_HTTP_CODES.size());
+
+	// Advance the iterator to the random element
+	auto itr = REST_RETRYABLE_HTTP_CODES.begin();
+	std::advance(itr, randIdx);
+	return *itr;
+}
+
+bool isHTTPCodeRetryable(const int code) {
+	auto itr = REST_RETRYABLE_HTTP_CODES.find(code);
+	return itr != REST_RETRYABLE_HTTP_CODES.end();
+}
+
 RESTConnectionType RESTConnectionType::getConnectionType(const std::string& protocol) {
 	auto itr = RESTConnectionType::supportedConnTypes.find(protocol);
 	if (itr == RESTConnectionType::supportedConnTypes.end()) {
