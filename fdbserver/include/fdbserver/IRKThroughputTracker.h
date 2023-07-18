@@ -7,6 +7,7 @@
 #include "fdbclient/ThrottlingId.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKMetricsTracker.h"
+#include <boost/unordered/unordered_flat_map.hpp>
 
 // Tracks the cluster-wide throughput (in bytes/second) of each throttlingId
 class IRKThroughputTracker {
@@ -15,6 +16,9 @@ public:
 
 	// Returns the current cluster-wide throughput for the provided throttling ID
 	virtual double getThroughput(ThrottlingId const&) const = 0;
+
+	// Returns the set of throttlingIds reporting throughput above the specified threshold
+	virtual std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const = 0;
 };
 
 // The ServerThroughputTracker class is responsible for tracking
@@ -35,7 +39,7 @@ class ServerThroughputTracker : public IRKThroughputTracker {
 		double getThroughput() const;
 	};
 
-	std::unordered_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
+	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
 
 	void cleanupUnseenStorageServers(std::unordered_set<UID> const& seen);
 
@@ -58,12 +62,11 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
+	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+
 	// Returns the current throughput on the provided storage server, summed
 	// across all throttling IDs
 	Optional<double> getThroughput(UID storageServerId) const;
-
-	// Used to remove a throttling ID which has expired
-	void removeThrottlingId(ThrottlingId const&);
 
 	// Returns the number of storage servers currently being tracked
 	int storageServersTracked() const;
@@ -75,20 +78,46 @@ public:
 class ClientThroughputTracker : public IRKThroughputTracker {
 	struct ThroughputSmoother {
 		HoltLinearSmoother smoother;
+		double lastUpdated;
 		ThroughputSmoother();
+
+	public:
+		void addThroughput(double newThroughput);
+		double smoothRate() const;
+		bool shouldForget(double expirationCheckInterval) const;
 	};
 
 	ThrottlingIdMap<ThroughputSmoother> throughput;
+	double lastExpirationCheck;
+	double expirationCheckInterval;
+
+	void expireThrottlingIds();
 
 public:
+	explicit ClientThroughputTracker(double expirationCheckInterval);
+
 	~ClientThroughputTracker();
 
 	double getThroughput(ThrottlingId const&) const override;
 
+	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+
 	// Updates per-throttlingId throughput statistics based on newly
 	// reported throughput metrics from a GRV proxy
 	void update(ThrottlingIdMap<uint64_t> const& newThroughput);
+};
 
-	// Used to remove a throttling ID which has expired
+class MockThroughputTracker : public IRKThroughputTracker {
+	ThrottlingIdMap<double> throughput;
+
+public:
+	~MockThroughputTracker();
+
+	double getThroughput(ThrottlingId const&) const override;
+
+	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+
+	void update(ThrottlingId const&, double newThroughput);
+
 	void removeThrottlingId(ThrottlingId const&);
 };

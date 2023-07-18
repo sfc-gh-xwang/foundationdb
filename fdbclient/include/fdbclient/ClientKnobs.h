@@ -289,6 +289,25 @@ public:
 	// Interval at which clients report their per-throttlingId throughput
 	// statistics to GRV proxies
 	double CLIENT_THROUGHPUT_REPORT_INTERVAL;
+	// Used to determine which throughput quota cache implementation will be used
+	// (simple polling or update streaming). This knob should be disabled first on
+	// clients, then on servers. Otherwise, servers will miss mutations to the
+	// tag quota system keyspace.
+	bool USE_SIMPLE_THROUGHPUT_QUOTA_CACHE;
+
+	// Enables client-side tracking of average transaction costs. The clients will track and
+	// report the expected cost per ThrottlingID along with each GRV requests.
+	// The QuotaThrottler will utilize this information to throttle transactions.
+	// Note: Must be used with in conjunction with TRACK_THROUGHPUT_ON_CLIENTS.
+	bool TRACK_AVERAGE_COST_ON_CLIENT;
+	// Default expected cost of a transaction, used as a fallback value when the average cost is not available
+	double DEFAULT_EXPECTED_TRANSACTION_COST;
+	// Report DEFAULT_EXPECTED_TRANSACTION_COST for the first AVERAGE_COST_START_DELAY seconds,
+	// until sufficient data is collected for accurate tracking of average transaction costs.
+	double AVERAGE_COST_START_DELAY;
+	// Folding time parameter used by the ThroughputTracker's HoltLinearSmoother
+	// for calculating the average cost.
+	double AVERAGE_COST_FOLDING_TIME;
 
 	// busyness reporting
 	double BUSYNESS_SPIKE_START_THRESHOLD;

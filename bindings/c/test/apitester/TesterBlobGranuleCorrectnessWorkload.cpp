@@ -323,6 +323,9 @@ private:
 	template <class GranuleFilePointerRefT>
 	void checkEncryptionKeys(const GranuleFilePointerRefT* file);
 
+	template <class GranuleDescriptionRefT>
+	int64_t getIncludedVersion(const GranuleDescriptionRefT* desc, int64_t readVersion);
+
 	template <class GranuleFilePointerRefT>
 	fdb::ReadRangeResult parseSnapshotFile(fdb::Transaction tx,
 	                                       fdb::BytesRef snapshotData,
@@ -440,7 +443,8 @@ private:
 	                               GranuleDescriptionRefT* desc,
 	                               fdb::KeyRange keyRange,
 	                               std::optional<int> tenantId,
-	                               int64_t readVersion) {
+	                               int64_t readVersion,
+	                               int64_t mutationByteLimit) {
 		ASSERT(desc->beginKey() < desc->endKey());
 		ASSERT(tenantId.has_value() == desc->tenant_prefix.present);
 		// beginVersion of zero means snapshot present
@@ -454,7 +458,7 @@ private:
 		validateSnapshotData(ctx, bgCtx, desc->snapshotFile(), desc->keyRange(), &desc->tenant_prefix, prevFileVersion);
 
 		// validate delta files
-		int64_t lastDFMaxVersion = 0;
+		int64_t lastDFMaxVersion = prevFileVersion;
 		auto deltaFiles = desc->deltaFiles();
 		for (int i = 0; i < deltaFiles.size(); i++) {
 			validateDeltaData(ctx,
@@ -466,11 +470,21 @@ private:
 			                  prevFileVersion);
 		}
 
+		int64_t includedVersion = getIncludedVersion(desc, readVersion);
+		ASSERT(includedVersion <= readVersion);
+
 		// validate memory mutations
 		auto memoryMutations = desc->memoryMutations();
+		if (mutationByteLimit == 0) {
+			ASSERT(memoryMutations.size() == 0);
+		} else {
+			ASSERT(includedVersion == readVersion);
+		}
 		if (memoryMutations.size()) {
+			ASSERT(includedVersion > lastDFMaxVersion);
 			ASSERT(pointer_to(memoryMutations.front())->version > lastDFMaxVersion);
 			ASSERT(pointer_to(memoryMutations.front())->version > prevFileVersion);
+			ASSERT(pointer_to(memoryMutations.back())->version <= includedVersion);
 		}
 		int64_t lastVersion = prevFileVersion;
 		for (int i = 0; i < memoryMutations.size(); i++) {
@@ -500,7 +514,8 @@ private:
 	                                     const fdb::VectorRef<GranuleDescriptionRefT>& results,
 	                                     fdb::KeyRange keyRange,
 	                                     std::optional<int> tenantId,
-	                                     int64_t readVersion) {
+	                                     int64_t readVersion,
+	                                     int64_t mutationByteLimit) {
 		ASSERT(!results.empty());
 		if (tenantId) {
 			// all should have the same tenant prefix
@@ -523,7 +538,8 @@ private:
 		TesterGranuleContext testerContext(ctx->getBGBasePath());
 		fdb::native::FDBReadBlobGranuleContext bgCtx = createGranuleContext(&testerContext);
 		for (int i = 0; i < results.size(); i++) {
-			validateBGDescriptionData(ctx, bgCtx, pointer_to(results[i]), keyRange, tenantId, readVersion);
+			validateBGDescriptionData(
+			    ctx, bgCtx, pointer_to(results[i]), keyRange, tenantId, readVersion, mutationByteLimit);
 		}
 	}
 
@@ -533,17 +549,24 @@ private:
 
 		debugOp("ReadDesc", keyRange, tenantId, "starting");
 
+		int64_t mutationByteLimit = Random::get().randomBool(0.2) ? 0 : std::numeric_limits<int64_t>::max();
+
 		execTransaction(
-		    [this, keyRange, tenantId, results](auto ctx) {
+		    [this, keyRange, tenantId, mutationByteLimit, results](auto ctx) {
 			    ctx->tx().setOption(FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE);
 
-			    auto f = ctx->tx().readBlobGranulesDescription(keyRange.beginKey, keyRange.endKey, 0, -2);
+			    auto f =
+			        ctx->tx().readBlobGranulesDescription(keyRange.beginKey, keyRange.endKey, 0, -2, mutationByteLimit);
 			    ctx->continueAfter(
 			        f,
-			        [this, ctx, keyRange, tenantId, results, f]() {
+			        [this, ctx, keyRange, tenantId, mutationByteLimit, results, f]() {
 				        *results = f.get();
-				        this->validateBlobGranuleDescriptions(
-				            ctx, results->descs(), keyRange, tenantId, results->data()->read_version);
+				        this->validateBlobGranuleDescriptions(ctx,
+				                                              results->descs(),
+				                                              keyRange,
+				                                              tenantId,
+				                                              results->data()->read_version,
+				                                              mutationByteLimit);
 				        ctx->done();
 			        },
 			        true);
@@ -576,7 +599,8 @@ private:
 			        f,
 			        [this, ctx, keyRange, tenantId, results, readVersionOut, f]() {
 				        *results = f.get();
-				        this->validateBlobGranuleDescriptions(ctx, *results, keyRange, tenantId, *readVersionOut);
+				        this->validateBlobGranuleDescriptions(
+				            ctx, *results, keyRange, tenantId, *readVersionOut, std::numeric_limits<int64_t>::max());
 				        ctx->done();
 			        },
 			        true);
@@ -732,6 +756,20 @@ template <>
 void ApiBlobGranuleCorrectnessWorkload::checkEncryptionKeys<fdb::GranuleFilePointerRefV1>(
     const fdb::GranuleFilePointerRefV1* file) {
 	return;
+}
+
+template <>
+int64_t ApiBlobGranuleCorrectnessWorkload::getIncludedVersion<fdb::GranuleDescriptionRef>(
+    const fdb::GranuleDescriptionRef* desc,
+    int64_t readVersion) {
+	return desc->included_version;
+}
+
+template <>
+int64_t ApiBlobGranuleCorrectnessWorkload::getIncludedVersion<fdb::GranuleDescriptionRefV1>(
+    const fdb::GranuleDescriptionRefV1* desc,
+    int64_t readVersion) {
+	return readVersion;
 }
 
 WorkloadFactory<ApiBlobGranuleCorrectnessWorkload> ApiBlobGranuleCorrectnessWorkloadFactory(

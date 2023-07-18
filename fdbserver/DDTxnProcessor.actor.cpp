@@ -813,6 +813,33 @@ struct DDMockTxnProcessorImpl {
 			params.dataMovementComplete.send(Void());
 		return Void();
 	}
+
+	ACTOR static Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(
+	    std::shared_ptr<MockGlobalState> mgs,
+	    KeyRange keys) {
+		loop {
+			int64_t shardLimit = 100; // Shard limit here does not really matter since this function is currently only
+			                          // used to find the read-hot sub ranges within a read-hot shard.
+			state std::vector<KeyRangeLocationInfo> locations =
+			    wait(mgs->getKeyRangeLocations(TenantInfo(),
+			                                   keys,
+			                                   shardLimit,
+			                                   Reverse::False,
+			                                   SpanContext(),
+			                                   Optional<UID>(),
+			                                   UseProvisionalProxies::False,
+			                                   /* version = */ 0));
+
+			state bool invalidateLocationCache = false;
+			Standalone<VectorRef<ReadHotRangeWithMetrics>> results =
+			    wait(::getReadHotRangesWithLocations(keys, &locations, &invalidateLocationCache));
+
+			if (!invalidateLocationCache) {
+				return results;
+			}
+			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
+		}
+	}
 };
 
 Future<ServerWorkerInfos> DDMockTxnProcessor::getServerListAndProcessClasses() {
@@ -956,6 +983,11 @@ Future<Void> DDMockTxnProcessor::moveKeys(const MoveKeysParams& params) {
 	// Not support location metadata yet
 	ASSERT(!SERVER_KNOBS->SHARD_ENCODE_LOCATION_METADATA);
 	return DDMockTxnProcessorImpl::moveKeys(this, params);
+}
+
+Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> DDMockTxnProcessor::getReadHotRanges(
+    KeyRange const& keys) const {
+	return DDMockTxnProcessorImpl::getReadHotRanges(mgs, keys);
 }
 
 // FIXME: finish implementation

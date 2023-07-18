@@ -5,6 +5,7 @@
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/ReadVersionBatchers.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "flow/actorcompiler.h" // must be last include
 
 ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext parentSpan,
@@ -21,13 +22,21 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 		g_traceBatch.addEvent("TransactionDebug", debugID.get().first(), "NativeAPI.getConsistentReadVersion.Before");
 	loop {
 		try {
+			state Optional<double> expectedTransactionCost = {};
+			if (throttlingId.present() && isClientAverageCostTrackingEnabled()) {
+				cx->addTransaction(throttlingId.get(), transactionCount);
+
+				expectedTransactionCost = cx->getAverageTransactionCost(throttlingId.get());
+			}
+
 			state GetReadVersionRequest req(span.context,
 			                                transactionCount,
 			                                priority,
 			                                cx->ssVersionVectorCache.getMaxVersion(),
 			                                flags,
 			                                throttlingId,
-			                                debugID);
+			                                debugID,
+			                                expectedTransactionCost);
 			state Future<Void> onProxiesChanged = cx->onProxiesChanged();
 
 			choose {

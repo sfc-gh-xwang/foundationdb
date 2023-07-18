@@ -34,7 +34,6 @@
 #include "fdbclient/GrvProxyInterface.h"
 #include "fdbclient/IdempotencyId.actor.h"
 #include "fdbclient/StorageServerInterface.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/VersionVector.h"
 
 #include "fdbrpc/Stats.h"
@@ -211,6 +210,17 @@ struct CommitID {
 	    conflictingKRIndices(conflictingKRIndices) {}
 };
 
+struct ClientTrCommitCostEstimation {
+	int opsCount = 0;
+	uint64_t writeCosts = 0;
+	std::deque<std::pair<int, uint64_t>> clearIdxCosts;
+	uint32_t expensiveCostEstCount = 0;
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, opsCount, writeCosts, clearIdxCosts, expensiveCostEstCount);
+	}
+};
+
 struct CommitTransactionRequest : TimedRequest {
 	constexpr static FileIdentifier file_identifier = 93948;
 	enum { FLAG_IS_LOCK_AWARE = 0x1, FLAG_FIRST_IN_BATCH = 0x2, FLAG_BYPASS_STORAGE_QUOTA = 0x4 };
@@ -318,6 +328,7 @@ struct GetReadVersionRequest : TimedRequest {
 	TransactionPriority priority;
 
 	Optional<ThrottlingId> throttlingId;
+	Optional<double> expectedTransactionCost;
 
 	// Not serialized, because this field does not need to be sent to master.
 	// It is used for reporting to clients the amount of time spent delayed by
@@ -330,18 +341,21 @@ struct GetReadVersionRequest : TimedRequest {
 	Version maxVersion; // max version in the client's version vector cache
 
 	GetReadVersionRequest() : transactionCount(1), flags(0), maxVersion(invalidVersion) {}
+
 	GetReadVersionRequest(SpanContext spanContext,
 	                      uint32_t transactionCount,
 	                      TransactionPriority priority,
 	                      Version maxVersion,
 	                      uint32_t flags = 0,
 	                      Optional<ThrottlingId> const& throttlingId = Optional<ThrottlingId>(),
-	                      Optional<UID> debugID = Optional<UID>())
+	                      Optional<UID> debugID = Optional<UID>(),
+	                      Optional<double> expectedTransactionCost = Optional<double>())
 	  : spanContext(spanContext),
 	    transactionCount(transactionCount),
 	    flags(flags),
 	    priority(priority),
 	    throttlingId(throttlingId),
+	    expectedTransactionCost(expectedTransactionCost),
 	    debugID(debugID),
 	    maxVersion(maxVersion) {
 		flags = flags & ~FLAG_PRIORITY_MASK;
@@ -366,7 +380,15 @@ struct GetReadVersionRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, transactionCount, flags, debugID, reply, spanContext, maxVersion, throttlingId);
+		serializer(ar,
+		           transactionCount,
+		           flags,
+		           debugID,
+		           reply,
+		           spanContext,
+		           maxVersion,
+		           throttlingId,
+		           expectedTransactionCost);
 
 		if (ar.isDeserializing) {
 			if ((flags & PRIORITY_SYSTEM_IMMEDIATE) == PRIORITY_SYSTEM_IMMEDIATE) {

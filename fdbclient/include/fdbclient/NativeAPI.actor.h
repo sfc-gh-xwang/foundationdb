@@ -482,10 +482,12 @@ public:
 	Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(KeyRange const& keys, int64_t chunkSize);
 
 	Future<Standalone<VectorRef<KeyRangeRef>>> getBlobGranuleRanges(const KeyRange& range, int rangeLimit);
-	Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(const KeyRange& range,
-	                                                                    Version begin,
-	                                                                    Optional<Version> readVersion,
-	                                                                    Version* readVersionOut = nullptr);
+	Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(
+	    const KeyRange& range,
+	    Version begin,
+	    Optional<Version> readVersion,
+	    Version* readVersionOut = nullptr,
+	    int64_t mutationByteLimit = std::numeric_limits<int64_t>::max());
 
 	Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules(const KeyRange& range,
 	                                                                           Optional<Version> summaryVersion,
@@ -684,10 +686,11 @@ struct KeyRangeLocationInfo;
 ACTOR Future<Optional<StorageMetrics>> waitStorageMetricsWithLocation(TenantInfo tenantInfo,
                                                                       Version version,
                                                                       KeyRange keys,
-                                                                      std::vector<KeyRangeLocationInfo> locations,
+                                                                      std::vector<KeyRangeLocationInfo>* locations,
                                                                       StorageMetrics min,
                                                                       StorageMetrics max,
-                                                                      StorageMetrics permittedError);
+                                                                      StorageMetrics permittedError,
+                                                                      bool* invalidateCache);
 
 // Return the suggested split points from storage server.The locations tell which interface should
 // serve the request. `limit` is the current estimated storage metrics of `keys`.The returned points, if present,
@@ -700,6 +703,11 @@ ACTOR Future<Optional<Standalone<VectorRef<KeyRef>>>> splitStorageMetricsWithLoc
     Optional<int> minSplitBytes);
 
 ACTOR Future<RangeReadResult> getWorkerInterfaces(Reference<IClusterConnectionRecord> connRecord);
+
+ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRangesWithLocations(
+    KeyRange keys,
+    std::vector<KeyRangeLocationInfo>* locations,
+    bool* invalidateLocationCache);
 
 namespace NativeAPI {
 ACTOR Future<std::vector<std::pair<StorageServerInterface, ProcessClass>>> getServerListAndProcessClasses(

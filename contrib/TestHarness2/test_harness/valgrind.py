@@ -123,6 +123,8 @@ class ValgrindHandler(xml.sax.handler.ContentHandler):
         if name == "error":
             self.result.append(self.stack.pop())
             self.state_stack.pop()
+        elif len(self.stack) == 0:
+            return
         elif name == "kind":
             assert self.state() == ValgrindParseState.KIND
             self.state_stack.pop()
