@@ -152,7 +152,7 @@ class QuotaThrottlerImpl {
 	// For transactions with the provided throttling ID, returns the average cost of all transactions
 	// accross the cluster. The minimum cost is one page. If the transaction rate is too low,
 	// return an empty Optional, because no accurate estimation can be made.
-	Optional<double> getAverageTransactionCost(ThrottlingId throttlingId, TraceEvent& te) const {
+	Optional<double> getAverageTransactionCost(ThrottlingId const& throttlingId, TraceEvent& te) const {
 		auto const cost = throughputTracker().getThroughput(throttlingId);
 		auto const transactionRate = getTransactionRate(throttlingId);
 		if (!transactionRate.present()) {
@@ -238,7 +238,7 @@ class QuotaThrottlerImpl {
 		bool isBusy{ false };
 	};
 
-	TargetTpsResult getTargetTps(ThrottlingId throttlingId,
+	TargetTpsResult getTargetTps(ThrottlingId const& throttlingId,
 	                             IRKThroughputQuotaCache const& quotaCache,
 	                             IRKMetricsTracker const& metricsTracker,
 	                             TraceEvent& te) {
@@ -274,7 +274,7 @@ class QuotaThrottlerImpl {
 		bool isBusy{ false };
 	};
 
-	TargetBpsResult getTargetBps(ThrottlingId throttlingId,
+	TargetBpsResult getTargetBps(ThrottlingId const& throttlingId,
 	                             IRKThroughputQuotaCache const& quotaCache,
 	                             IRKMetricsTracker const& metricsTracker,
 	                             TraceEvent& te) {
@@ -314,7 +314,7 @@ public:
 		}
 	}
 
-	void addRequests(ThrottlingId throttlingId, int count) {
+	void addRequests(ThrottlingId const& throttlingId, int count) {
 		auto it = throttlingStatistics.find(throttlingId);
 		if (it == throttlingStatistics.end()) {
 			if (throttlingStatistics.size() == SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED) {
@@ -431,7 +431,7 @@ Future<Void> QuotaThrottler::monitorThrottlingChanges() {
 	return impl->removeExpiredThrottlingIdsActor();
 }
 
-void QuotaThrottler::addRequests(ThrottlingId throttlingId, int count) {
+void QuotaThrottler::addRequests(ThrottlingId const& throttlingId, int count) {
 	return impl->addRequests(throttlingId, count);
 }
 

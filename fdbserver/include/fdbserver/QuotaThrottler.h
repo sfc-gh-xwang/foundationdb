@@ -36,7 +36,7 @@ public:
 	Future<Void> monitorThrottlingChanges();
 
 	// Increment the number of known requests associated with the specified throttling ID
-	void addRequests(ThrottlingId, int count);
+	void addRequests(ThrottlingId const&, int count);
 
 	// Number of throttling IDs for which throttling information is a rate is being
 	// sent to GRV proxies
