@@ -132,9 +132,8 @@ private:
 		auto tenantLookupInfoFuture = tenant->getLookupFuture();
 		// Tenant info lookup failed
 		if (tenantLookupInfoFuture.isError()) {
-			statusObj["TenantResolutionStatus"] = "NotFound";
-			statusObj["TenantResolutionError"] =
-			    fmt::format("Failed to find due to: {}", tenantLookupInfoFuture.getError().what());
+			statusObj["TenantResolutionStatus"] = "Failed";
+			statusObj["TenantResolutionErrorCode"] = tenantLookupInfoFuture.getError().code();
 			return;
 		}
 

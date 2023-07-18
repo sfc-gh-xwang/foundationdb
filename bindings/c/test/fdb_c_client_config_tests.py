@@ -230,8 +230,8 @@ class ClientConfigTest:
         status = status_json["TenantResolutionStatus"]
         if self.skip_create_tenant:
             # If we skip tenant creation, the tenant resolution status will be shown as failed
-            self.tc.assertEqual(status, "NotFound")
-            self.tc.assertTrue("TenantResolutionError" in status_json)
+            self.tc.assertEqual(status, "Failed")
+            self.tc.assertEqual(status_json["TenantResolutionErrorCode"], 2131)
             return
 
         self.tc.assertEqual(status, "Resolved")
