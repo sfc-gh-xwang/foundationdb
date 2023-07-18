@@ -45,12 +45,11 @@ struct ReadMetricsWorkload : KVWorkload {
 
 		if (op.type == OperationType::GET_VALUE) {
 			op.begin = firstGreaterOrEqual(getRandomKey());
-			op.expectedAccuracy = 0.6;
+			op.expectedAccuracy = 0.85;
 		} else if (op.type == OperationType::GET_RANGE) {
 			Arena arena;
-			bool largeOffsets = deterministicRandom()->coinflip();
-			op.begin = op.disableRyw ? firstGreaterOrEqual(getRandomKey()) : randomKeySelector(largeOffsets);
-			op.end = op.disableRyw ? firstGreaterOrEqual(getRandomKey()) : randomKeySelector(largeOffsets);
+			op.begin = randomKeySelector();
+			op.end = randomKeySelector();
 
 			KeySelectorRef normalizedBegin = op.begin;
 			KeySelectorRef normalizedEnd = op.end;
@@ -66,14 +65,13 @@ struct ReadMetricsWorkload : KVWorkload {
 				std::swap(op.begin, op.end);
 			}
 
-			op.limit = deterministicRandom()->randomInt(1, largeOffsets && isPrimaryOperation ? 1000 : 10);
+			op.limit = deterministicRandom()->randomInt(1, isPrimaryOperation ? 1000 : 10);
 			op.reverse = deterministicRandom()->coinflip();
 			op.snapshot = deterministicRandom()->coinflip();
-			op.expectedAccuracy = largeOffsets ? 0.333 : 0.5;
+			op.expectedAccuracy = 0.5;
 		} else if (op.type == OperationType::GET_KEY) {
-			bool largeOffsets = deterministicRandom()->coinflip();
-			op.begin = randomKeySelector(largeOffsets);
-			op.expectedAccuracy = 0.6;
+			op.begin = randomKeySelector();
+			op.expectedAccuracy = 0.85;
 		} else {
 			ASSERT(false);
 		}
@@ -109,9 +107,8 @@ struct ReadMetricsWorkload : KVWorkload {
 		ASSERT_GE(testDuration, 2 * SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL);
 	}
 
-	KeySelector randomKeySelector(bool largeOffsets) const {
-		int maxOffset = largeOffsets ? 100 : 10;
-		int offset = deterministicRandom()->randomInt(-maxOffset, maxOffset + 1);
+	KeySelector randomKeySelector() const {
+		int offset = deterministicRandom()->randomInt(-100, 101);
 		return KeySelectorRef(getRandomKey(), deterministicRandom()->coinflip(), offset);
 	}
 
@@ -137,6 +134,7 @@ struct ReadMetricsWorkload : KVWorkload {
 	ACTOR static Future<Void> readActor(Database cx, ReadMetricsWorkload* self) {
 		state double start = now();
 		state double selectionProbability = 0.90;
+		state std::vector<double> busynessResults;
 		while (self->clientId == 0 && now() - start < self->testDuration) {
 			state Operation op;
 			state ReadMetrics readMetrics;
@@ -149,17 +147,15 @@ struct ReadMetricsWorkload : KVWorkload {
 			}
 
 			if (op.type == OperationType::GET_VALUE) {
-				fmt::print("Running op get value: {} {} {} {}\n",
-				           now(),
-				           useRepeatedOperation,
-				           op.disableRyw,
-				           printable(op.begin.getKey()));
-				Optional<ValueReadResult> read = wait(timeout(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
-					if (op.disableRyw) {
-						tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
-					}
-					return tr->get(op.begin.getKey());
-				}), 15));
+				Optional<ValueReadResult> read = wait(
+				    timeout(runRYWTransaction(cx,
+				                              [op = op](Reference<ReadYourWritesTransaction> tr) {
+					                              if (op.disableRyw) {
+						                              tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
+					                              }
+					                              return tr->get(op.begin.getKey());
+				                              }),
+				            15));
 
 				if (!read.present()) {
 					continue;
@@ -167,21 +163,16 @@ struct ReadMetricsWorkload : KVWorkload {
 
 				readMetrics = read.get().getReadMetrics();
 			} else if (op.type == OperationType::GET_RANGE) {
-				fmt::print("Running op get range: {} {} {} {} {} {} {} {}\n",
-				           now(),
-				           useRepeatedOperation,
-				           op.disableRyw,
-				           op.begin.toString(),
-				           op.end.toString(),
-				           op.reverse,
-				           op.limit,
-				           op.snapshot);
-				Optional<RangeReadResult> read = wait(timeout(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
-					if (op.disableRyw) {
-						tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
-					}
-					return tr->getRange(op.begin, op.end, op.limit, Snapshot(op.snapshot), Reverse(op.reverse));
-				}), 15));
+				Optional<RangeReadResult> read = wait(timeout(
+				    runRYWTransaction(cx,
+				                      [op = op](Reference<ReadYourWritesTransaction> tr) {
+					                      if (op.disableRyw) {
+						                      tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
+					                      }
+					                      return tr->getRange(
+					                          op.begin, op.end, op.limit, Snapshot(op.snapshot), Reverse(op.reverse));
+				                      }),
+				    15));
 
 				if (!read.present()) {
 					continue;
@@ -189,17 +180,15 @@ struct ReadMetricsWorkload : KVWorkload {
 
 				readMetrics = read.get().getReadMetrics();
 			} else {
-				fmt::print("Running op get key: {} {} {} {}\n",
-				           now(),
-				           useRepeatedOperation,
-				           op.disableRyw,
-				           op.begin.toString());
-				Optional<KeyReadResult> read = wait(timeout(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
-					if (op.disableRyw) {
-						tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
-					}
-					return tr->getKey(op.begin);
-				}), 15));
+				Optional<KeyReadResult> read = wait(
+				    timeout(runRYWTransaction(cx,
+				                              [op = op](Reference<ReadYourWritesTransaction> tr) {
+					                              if (op.disableRyw) {
+						                              tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
+					                              }
+					                              return tr->getKey(op.begin);
+				                              }),
+				            15));
 
 				if (!read.present()) {
 					continue;
@@ -219,10 +208,32 @@ struct ReadMetricsWorkload : KVWorkload {
 					    .detail("ExpectedBusyness", expectedBusyness)
 					    .detail("ActualBusyness", readMetrics.getRangeBusyness());
 				}
+
+				busynessResults.push_back(readMetrics.getRangeBusyness());
 			}
 		}
 
-		ASSERT_GE(self->successfulOps, self->totalOps * 0.9);
+		if (self->successfulOps < self->totalOps * 0.9) {
+			ASSERT(!busynessResults.empty());
+			std::sort(busynessResults.begin(), busynessResults.end());
+			TraceEvent(SevError, "TooManyReadOperationsReportedLowBusyness")
+			    .detail("SuccessfulOps", self->successfulOps)
+			    .detail("TotalOps", self->totalOps)
+			    .detail("SuccessfulFraction", self->successfulOps / std::max<double>(1, self->totalOps))
+			    .detail("OpType", self->repeatedOperation.type)
+			    .detail("Begin", self->repeatedOperation.begin.toString())
+			    .detail("End", self->repeatedOperation.end.toString())
+			    .detail("DisableRyw", self->repeatedOperation.disableRyw)
+			    .detail("Limit", self->repeatedOperation.limit)
+			    .detail("Reverse", self->repeatedOperation.reverse)
+			    .detail("Snapshot", self->repeatedOperation.snapshot)
+			    .detail("ExpectedAccuracy", self->repeatedOperation.expectedAccuracy)
+			    .detail("SelectionProbability", selectionProbability)
+			    .detail("ExpectedBusyness", self->repeatedOperation.expectedAccuracy * selectionProbability)
+			    .detail("P10Busyness", busynessResults[busynessResults.size() * 0.1]);
+			ASSERT(false);
+		}
+
 		return Void();
 	}
 
