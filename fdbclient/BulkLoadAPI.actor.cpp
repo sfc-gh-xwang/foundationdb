@@ -8,6 +8,7 @@
 #include "fmt/format.h"
 
 #include "fdbrpc/TenantInfo.h"
+#include "fdbclient/BlobGranuleRequest.actor.h"
 #include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/IKnobCollection.h"
@@ -66,6 +67,22 @@ ACTOR Future<BulkLoadID> startBulkLoadActor(Reference<DatabaseContext> db,
 					throw bulk_load_range_conflict();
 				}
 				++it;
+			}
+
+			// other sanity checks
+			state Future<RangeReadResult> keysInRangeF = tr->getRange(physicalRange, 1);
+			state Future<Standalone<VectorRef<KeyRangeRef>>> blobRangesInRangeF =
+			    getBlobRanges(&tr->getTransaction(), physicalRange, 1);
+
+			RangeReadResult keysInRange = wait(keysInRangeF);
+			ASSERT(keysInRange.size() <= 1);
+			if (!keysInRange.empty() || keysInRange.more) {
+				throw bulk_load_range_not_empty();
+			}
+
+			state Standalone<VectorRef<KeyRangeRef>> blobRangesInRange = wait(blobRangesInRangeF);
+			if (!blobRangesInRange.empty()) {
+				throw bulk_load_range_not_empty();
 			}
 
 			BulkLoadMetadata::statusMap().set(tr, id, BulkLoadStatus(BulkLoadState::STARTED));

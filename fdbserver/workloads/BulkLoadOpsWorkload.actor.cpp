@@ -115,13 +115,17 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	Future<Void> start(Database const& cx) override {
+		unitClient = Future<Void>(Void());
 		if (clientId == 0) {
-			for (int i = 0; i < concurrentLoads; i++) {
-				loadClients.push_back(bulkLoadClient(cx->clone(), this, i));
+			// sometimes don't do both unit tests and normal load tests
+			if (deterministicRandom()->random01() < 0.9) {
+				for (int i = 0; i < concurrentLoads; i++) {
+					loadClients.push_back(bulkLoadClient(cx->clone(), this, i));
+				}
 			}
-			unitClient = bulkLoadUnitTests(cx->clone(), this);
-		} else {
-			unitClient = Future<Void>(Void());
+			if (deterministicRandom()->random01() < 0.8 || loadClients.empty()) {
+				unitClient = bulkLoadUnitTests(cx->clone(), this);
+			}
 		}
 		return delay(testDuration);
 	}
@@ -336,7 +340,10 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		WRITE_DURING_LOAD_UNIT,
 		READ_DURING_LOAD_UNIT,
 		SANITY_CHECK_VERSIONSTAMP_UNIT,
-		OP_COUNT = 8 /* keep this last */
+		NON_EMPTY_RANGE_UNIT,
+		ALREADY_BLOB_RANGE_UNIT,
+		BLOBBIFY_DURING_LOAD_UNIT,
+		OP_COUNT = 10 /* keep this last */
 	};
 
 	ACTOR Future<Void> abortAndCleanupAfterUnit(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
@@ -523,6 +530,81 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR Future<Void> nonEmptyRangeUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that a bulk load cannot start to a non-empty range
+		state Transaction tr(cx, self->tenant);
+		loop {
+			try {
+				tr.set(range.begin, "foo"_sr);
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		try {
+			wait(success(cx->startBulkLoad(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_range_not_empty);
+		}
+
+		tr.reset();
+		loop {
+			try {
+				tr.clear(range.begin);
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		return Void();
+	}
+
+	ACTOR Future<Void> alreadyBlobRangeUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that a bulk load cannot start to a non-empty range
+		bool success1 = wait(cx->blobbifyRange(range, self->tenant));
+		ASSERT(success1);
+
+		try {
+			wait(success(cx->startBulkLoad(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_range_not_empty);
+		}
+
+		// cleanup
+		Version v = wait(self->doGRV(cx));
+		Key purgeKey = wait(cx->purgeBlobGranules(range, v, self->tenant, true));
+		wait(cx->waitPurgeGranulesComplete(purgeKey));
+		bool success2 = wait(cx->unblobbifyRange(range, self->tenant));
+		ASSERT(success2);
+
+		return Void();
+	}
+
+	ACTOR Future<Void> blobbifyDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that clients cannot write to the range of an active bulk load
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		// FIXME: this needs to respect write lock/tenant lock for this to work
+		try {
+			wait(success(cx->blobbifyRange(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			// FIXME: new error code
+			ASSERT(e.code() == error_code_bulk_load_range_conflict);
+		}
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
 	ACTOR Future<Void> bulkLoadUnitTests(Database cx, BulkLoadOpsWorkload* self) {
 		// FIXME: REENABLE!
 		/*if (deterministicRandom()->coinflip()) {
@@ -544,6 +626,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			// FIXME: no lock implemented yet so these succeed - unexclude when implemented!
 			excludedTypes.insert(WRITE_DURING_LOAD_UNIT);
 			excludedTypes.insert(READ_DURING_LOAD_UNIT);
+			excludedTypes.insert(BLOBBIFY_DURING_LOAD_UNIT);
 
 			// prevent infinite loop
 			int loopTries = 1000;
@@ -577,6 +660,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->readDuringLoadUnit(cx, self, range));
 			} else if (op == SANITY_CHECK_VERSIONSTAMP_UNIT) {
 				wait(self->sanityCheckVersionstampUnit(cx, self, range));
+			} else if (op == NON_EMPTY_RANGE_UNIT) {
+				wait(self->nonEmptyRangeUnit(cx, self, range));
+			} else if (op == ALREADY_BLOB_RANGE_UNIT) {
+				wait(self->alreadyBlobRangeUnit(cx, self, range));
+			} else if (op == BLOBBIFY_DURING_LOAD_UNIT) {
+				wait(self->blobbifyDuringLoadUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}
