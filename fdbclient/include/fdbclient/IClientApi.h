@@ -105,7 +105,7 @@ public:
 	virtual ThreadFuture<SpanContext> getSpanContext() = 0;
 	virtual ThreadFuture<double> getTagThrottledDuration() = 0;
 	virtual ThreadFuture<int64_t> getTotalCost() = 0;
-	virtual ThreadFuture<Void> setExpectedCost(uint64_t value) = 0;
+	virtual void setExpectedCost(uint64_t value) = 0;
 	virtual ThreadFuture<int64_t> getApproximateSize() = 0;
 
 	virtual void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) = 0;

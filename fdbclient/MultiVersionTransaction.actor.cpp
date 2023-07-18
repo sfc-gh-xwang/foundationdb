@@ -423,14 +423,10 @@ ThreadFuture<int64_t> DLTransaction::getTotalCost() {
 	});
 }
 
-ThreadFuture<Void> DLTransaction::setExpectedCost(uint64_t value) {
-	if (!api->transactionSetExpectedCost) {
-		return unsupported_operation();
+void DLTransaction::setExpectedCost(uint64_t value) {
+	if (api->transactionSetExpectedCost) {
+		api->transactionSetExpectedCost(tr, value);
 	}
-
-	FdbCApi::FDBFuture* f = api->transactionSetExpectedCost(tr, value);
-
-	return toThreadFuture<Void>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) { return Void(); });
 }
 
 ThreadFuture<int64_t> DLTransaction::getApproximateSize() {
@@ -1699,8 +1695,11 @@ ThreadFuture<int64_t> MultiVersionTransaction::getTotalCost() {
 	return executeOperation(&ITransaction::getTotalCost);
 }
 
-ThreadFuture<Void> MultiVersionTransaction::setExpectedCost(uint64_t value) {
-	return executeOperation(&ITransaction::setExpectedCost, std::forward<uint64_t>(value));
+void MultiVersionTransaction::setExpectedCost(uint64_t value) {
+	auto tr = getTransaction();
+	if (tr.transaction) {
+		tr.transaction->setExpectedCost(value);
+	}
 }
 
 ThreadFuture<int64_t> MultiVersionTransaction::getApproximateSize() {

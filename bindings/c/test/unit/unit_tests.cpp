@@ -1879,8 +1879,7 @@ TEST_CASE("fdb_transaction_get_total_cost") {
 
 TEST_CASE("fdb_transaction_set_expected_cost") {
 	auto tr = db.createTransaction();
-	auto f1 = tr.setExpectedCost(4096);
-	fdbCheck(waitFuture(f1));
+	tr.setExpectedCost(4096);
 
 	while (1) {
 		auto f1 = tr.getReadVersion();
