@@ -2123,7 +2123,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		}
 
 		// reply immediately if have message, or peek batching is disabled
-		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG) {
+		if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG) {
 			break;
 		}
 
@@ -2161,15 +2161,21 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			}
 		}
 
-		if (g_network->timer() - blockStart > emptyVersionWaitWindow) {
+		state double remainingDelay = emptyVersionWaitWindow - (g_network->timer() - blockStart);
+		if (remainingDelay <= 0)
+			break;
+
+		// We must break out the loop if messages already have something. Otherwise a new round will falsely start when
+		// last mutation is not delivered to ss.
+		// The message still have to observe the designated wait window even if it is ready to be sent now, otherwise
+		// dynamic empty version window measurements will be milead under write-intensive workloads because wait windows
+		// will effectively be ignored.
+		if (messages.getLength() > 0) {
+			wait(delay(remainingDelay));
 			break;
 		}
 
 		state Version waitUntilVersion = logData->version.get() + 1;
-
-		double remainingDelay = emptyVersionWaitWindow - (g_network->timer() - blockStart);
-		if (remainingDelay < 0) // force lower bound to zero otherwise simulation testing would fail
-			remainingDelay = 0;
 
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
 		// batching interval has expired.
