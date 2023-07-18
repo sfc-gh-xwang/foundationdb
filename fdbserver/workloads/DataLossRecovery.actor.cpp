@@ -208,6 +208,8 @@ struct DataLossRecoveryWorkload : TestWorkload {
 
 					state ErrorOr<GetStorageMetricsReply> rep = wait(metricsRequest);
 					if (rep.isError()) {
+						// Delay 1s to avoid tight spin loop in case all options fail
+						wait(delay(1.0));
 						continue;
 					}
 
