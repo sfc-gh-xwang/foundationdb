@@ -130,8 +130,8 @@ class QuotaThrottlerImpl {
 	uint32_t lastBusyThrottlingIdCount{ 0 };
 
 	ThrottlingIdMap<PerThrottlingIdStatistics> throttlingStatistics;
-	ServerThroughputTracker serverThroughputTracker;
-	Optional<ClientThroughputTracker> clientThroughputTracker;
+	RKServerThroughputTracker serverThroughputTracker;
+	Optional<RKClientThroughputTracker> clientThroughputTracker;
 
 	IRKThroughputTracker const& throughputTracker() const& {
 		if (clientThroughputTracker.present()) {
@@ -310,7 +310,7 @@ public:
 	    limitingThreshold(limitingThreshold) {
 		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
 			clientThroughputTracker =
-			    ClientThroughputTracker(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL);
+			    RKClientThroughputTracker(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL);
 		}
 	}
 

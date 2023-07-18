@@ -21,9 +21,9 @@ public:
 	virtual std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const = 0;
 };
 
-// The ServerThroughputTracker class is responsible for tracking
+// The RKServerThroughputTracker class is responsible for tracking
 // every throttlingId's reported throughput across all storage servers
-class ServerThroughputTracker : public IRKThroughputTracker {
+class RKServerThroughputTracker : public IRKThroughputTracker {
 	enum class OpType {
 		READ,
 		WRITE,
@@ -48,7 +48,7 @@ class ServerThroughputTracker : public IRKThroughputTracker {
 	                                       std::unordered_set<ThrottlingId> const& seenWriteThrottlingId);
 
 public:
-	~ServerThroughputTracker();
+	~RKServerThroughputTracker();
 
 	// Returns all throttling IDs running significant workload on the specified storage server.
 	std::vector<ThrottlingId> getThrottlingIdsAffectingStorageServer(UID storageServerId) const;
@@ -72,10 +72,10 @@ public:
 	int storageServersTracked() const;
 };
 
-// The ClientThroughputTracker class is responsible for tracking
+// The RKClientThroughputTracker class is responsible for tracking
 // every throttlingId's cluster-wide throughput from statistics
 // reported originally from clients
-class ClientThroughputTracker : public IRKThroughputTracker {
+class RKClientThroughputTracker : public IRKThroughputTracker {
 	struct ThroughputSmoother {
 		HoltLinearSmoother smoother;
 		double lastUpdated;
@@ -94,9 +94,9 @@ class ClientThroughputTracker : public IRKThroughputTracker {
 	void expireThrottlingIds();
 
 public:
-	explicit ClientThroughputTracker(double expirationCheckInterval);
+	explicit RKClientThroughputTracker(double expirationCheckInterval);
 
-	~ClientThroughputTracker();
+	~RKClientThroughputTracker();
 
 	double getThroughput(ThrottlingId const&) const override;
 

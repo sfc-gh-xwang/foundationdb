@@ -14,8 +14,8 @@ static ThrottlingId getThrottlingId(int index) {
 	return ThrottlingIdRef::fromTag(BinaryWriter::toValue(index, Unversioned()).withPrefix("tag/"_sr));
 }
 
-// Simulate a workload being reported to the provided ClientThroughputTracker
-ACTOR static Future<Void> runWorkload(ClientThroughputTracker* throughputTracker,
+// Simulate a workload being reported to the provided RKClientThroughputTracker
+ACTOR static Future<Void> runWorkload(RKClientThroughputTracker* throughputTracker,
                                       double throughput,
                                       int numThrottlingIds) {
 	state ThrottlingIdMap<uint64_t> throughputPerInterval;
@@ -28,7 +28,7 @@ ACTOR static Future<Void> runWorkload(ClientThroughputTracker* throughputTracker
 	}
 }
 
-ACTOR static Future<Void> runWorkload(ServerThroughputTracker* throughputTracker,
+ACTOR static Future<Void> runWorkload(RKServerThroughputTracker* throughputTracker,
                                       double throughput,
                                       int numStorageServers,
                                       int numThrottlingIds,
@@ -66,10 +66,10 @@ static bool checkThroughput(T* throughputTracker, double desiredThroughput, int 
 	return true;
 }
 
-TEST_CASE("/fdbserver/ClientThroughputTracker") {
+TEST_CASE("/fdbserver/RKClientThroughputTracker") {
 	state double const throughput = 4096000.0;
 	state int const numThrottlingIds = 5;
-	state ClientThroughputTracker throughputTracker(/*expirationCheckInterval=*/5.0);
+	state RKClientThroughputTracker throughputTracker(/*expirationCheckInterval=*/5.0);
 	state Future<Void> workloadFuture = runWorkload(&throughputTracker, throughput, numThrottlingIds);
 	while (!checkThroughput(&throughputTracker, throughput, numThrottlingIds)) {
 		wait(delay(1.0));
@@ -82,11 +82,11 @@ TEST_CASE("/fdbserver/ClientThroughputTracker") {
 	return Void();
 }
 
-TEST_CASE("/fdbserver/ServerThroughputTracker") {
+TEST_CASE("/fdbserver/RKServerThroughputTracker") {
 	state double const throughput = 4096000.0;
 	state int const numStorageServers = 10;
 	state int const numThrottlingIds = 5;
-	state ServerThroughputTracker throughputTracker;
+	state RKServerThroughputTracker throughputTracker;
 	state Future<Void> workloadFuture = runWorkload(&throughputTracker,
 	                                                throughput,
 	                                                numStorageServers,
