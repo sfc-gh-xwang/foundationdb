@@ -64,10 +64,6 @@ public:
 
 	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
 
-	// Returns the current throughput on the provided storage server, summed
-	// across all throttling IDs
-	Optional<double> getThroughput(UID storageServerId) const;
-
 	// Returns the number of storage servers currently being tracked
 	int storageServersTracked() const;
 };

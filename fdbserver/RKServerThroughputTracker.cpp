@@ -161,18 +161,6 @@ std::unordered_set<ThrottlingId> RKServerThroughputTracker::getActiveThrottlingI
 	return result;
 }
 
-Optional<double> RKServerThroughputTracker::getThroughput(UID storageServerId) const {
-	auto throttlingIdToThroughputCounters = tryGet(throughput, storageServerId);
-	if (!throttlingIdToThroughputCounters.present()) {
-		return {};
-	}
-	double result = 0;
-	for (const auto& [_, throughputCounters] : throttlingIdToThroughputCounters.get()) {
-		result += throughputCounters.getThroughput();
-	}
-	return result;
-}
-
 int RKServerThroughputTracker::storageServersTracked() const {
 	return throughput.size();
 }
