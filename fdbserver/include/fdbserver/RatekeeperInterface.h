@@ -26,6 +26,8 @@
 #include "fdbclient/ThrottlingId.h"
 #include "fdbrpc/fdbrpc.h"
 #include "fdbrpc/Locality.h"
+#include "flow/Optional.h"
+#include <unordered_set>
 
 struct RatekeeperInterface {
 	constexpr static FileIdentifier file_identifier = 5983305;
@@ -80,6 +82,7 @@ struct GetRateInfoReply {
 	HealthMetrics healthMetrics;
 	Optional<ThrottlingIdMap<double>> targetTransactionRate;
 	Optional<ThrottlingIdMap<double>> targetThroughput;
+	Optional<std::unordered_set<ThrottlingId>> busyTags;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -89,7 +92,8 @@ struct GetRateInfoReply {
 		           leaseDuration,
 		           healthMetrics,
 		           targetTransactionRate,
-		           targetThroughput);
+		           targetThroughput,
+		           busyTags);
 	}
 };
 

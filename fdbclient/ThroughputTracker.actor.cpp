@@ -3,6 +3,7 @@
  */
 
 #include "fdbclient/DatabaseContext.h"
+#include "fdbclient/GrvProxyInterface.h"
 #include "fdbclient/ThroughputTracker.h"
 #include "fdbrpc/LoadBalance.actor.h"
 #include "flow/actorcompiler.h" // must be last include
@@ -20,15 +21,20 @@ public:
 			try {
 				ReportThroughputRequest req(std::move(self->throughput));
 				self->throughput.clear();
-				wait(basicLoadBalance(cx->getGrvProxies(UseProvisionalProxies::False),
-				                      &GrvProxyInterface::reportThroughput,
-				                      std::move(req),
-				                      TaskPriority::DefaultPromiseEndpoint,
-				                      AtMostOnce::True) ||
-				     timer);
-				if (timer.isReady()) {
-					CODE_PROBE(true, "ReportThroughputRequest timed out");
-					TraceEvent(SevWarn, "ReportThroughputRequestTimedOut");
+				choose {
+					when(ReportThroughputReply reply =
+					         wait(basicLoadBalance(cx->getGrvProxies(UseProvisionalProxies::False),
+					                               &GrvProxyInterface::reportThroughput,
+					                               std::move(req),
+					                               TaskPriority::DefaultPromiseEndpoint,
+					                               AtMostOnce::True))) {
+						TraceEvent("ReportThroughputReply").detail("BusyTags", reply.busyTags.size());
+					}
+
+					when(wait(timer)) {
+						CODE_PROBE(true, "ReportThroughputRequest timed out");
+						TraceEvent(SevWarn, "ReportThroughputRequestTimedOut");
+					}
 				}
 			} catch (Error& e) {
 				if (e.code() == error_code_request_maybe_delivered) {

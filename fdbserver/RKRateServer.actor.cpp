@@ -69,6 +69,8 @@ public:
 						reply.targetTransactionRate = std::move(targetTransactionRate);
 					}
 				}
+
+				reply.busyTags = quotaThrottler->getBusyThrottlingIds();
 			}
 
 			reply.healthMetrics.update(normalRateUpdater->getHealthMetrics(), true, req.detailed);

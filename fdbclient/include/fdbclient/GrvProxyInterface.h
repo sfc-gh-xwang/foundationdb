@@ -27,10 +27,21 @@
 #include "fdbrpc/fdbrpc.h"
 #include "fdbclient/FDBTypes.h"
 
+struct ReportThroughputReply {
+	constexpr static FileIdentifier file_identifier = 1087923;
+
+	std::unordered_set<ThrottlingId> busyTags;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, busyTags);
+	}
+};
+
 struct ReportThroughputRequest {
 	constexpr static FileIdentifier file_identifier = 8192740;
 	ThrottlingIdMap<uint64_t> throughput;
-	ReplyPromise<Void> reply;
+	ReplyPromise<struct ReportThroughputReply> reply;
 
 	ReportThroughputRequest() = default;
 	explicit ReportThroughputRequest(ThrottlingIdMap<uint64_t>&& throughput) : throughput(std::move(throughput)) {}

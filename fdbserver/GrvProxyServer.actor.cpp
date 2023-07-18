@@ -22,6 +22,7 @@
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/Knobs.h"
 #include "fdbclient/Notified.h"
+#include "fdbclient/ThrottlingId.h"
 #include "fdbclient/ThroughputTracker.h"
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
@@ -40,6 +41,7 @@
 #include "flow/flow.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 #include "flow/genericactors.actor.h"
+#include <unordered_set>
 
 struct GrvProxyStats {
 	CounterCollection cc;
@@ -387,13 +389,18 @@ ACTOR Future<Void> globalConfigRequestServer(GrvProxyData* grvProxyData, GrvProx
 }
 
 ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRequest> stream,
-                                                 ThrottlingIdMap<uint64_t>* throttlingIdToThroughput) {
+                                                 ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
+                                                 std::unordered_set<ThrottlingId>* busyTags) {
 	loop {
 		ReportThroughputRequest req = waitNext(stream);
 		for (auto const& [throttlingId, clientThroughput] : req.throughput) {
 			(*throttlingIdToThroughput)[throttlingId] += clientThroughput;
 		}
-		req.reply.send(Void());
+
+		ReportThroughputReply reply;
+		reply.busyTags = *busyTags;
+
+		req.reply.send(reply);
 	}
 }
 
@@ -409,7 +416,8 @@ ACTOR Future<Void> getRate(UID myID,
                            ThrottlingIdMap<uint64_t>* throttlingIdTransactionCounter,
                            ThrottlingIdMap<uint64_t>* throttlingIdThroughput,
                            GrvProxyStats* stats,
-                           GrvProxyData* proxyData) {
+                           GrvProxyData* proxyData,
+                           std::unordered_set<ThrottlingId>* busyTags) {
 	state Future<Void> nextRequestTimer = Never();
 	state Future<Void> leaseTimeout = Never();
 	state Future<GetRateInfoReply> reply = Never();
@@ -473,6 +481,10 @@ ACTOR Future<Void> getRate(UID myID,
 			} else if (rep.targetTransactionRate.present()) {
 				// Update the tag throttler with the target rates in transactions per second
 				proxyData->tagThrottler.updateRates(rep.targetTransactionRate.get());
+			}
+
+			if (rep.busyTags.present()) {
+				*busyTags = rep.busyTags.get();
 			}
 		}
 		when(wait(leaseTimeout)) {
@@ -866,6 +878,8 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state ThrottlingIdMap<uint64_t> throttlingIdTransactionCounter;
 	state ThrottlingIdMap<uint64_t> throttlingIdThroughput;
 
+	state std::unordered_set<ThrottlingId> busyTags;
+
 	state PromiseStream<double> normalGRVLatency;
 
 	state int64_t midShardSize = SERVER_KNOBS->MIN_SHARD_BYTES;
@@ -874,7 +888,8 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	addActor.send(monitorDDMetricsChanges(&midShardSize, db));
 
 	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
-		addActor.send(handleClientThroughputReports(proxy.reportThroughput.getFuture(), &throttlingIdThroughput));
+		addActor.send(
+		    handleClientThroughputReports(proxy.reportThroughput.getFuture(), &throttlingIdThroughput, &busyTags));
 	}
 	addActor.send(getRate(proxy.id(),
 	                      db,
@@ -887,7 +902,8 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	                      &throttlingIdTransactionCounter,
 	                      &throttlingIdThroughput,
 	                      &grvProxyData->stats,
-	                      grvProxyData));
+	                      grvProxyData,
+	                      &busyTags));
 	addActor.send(queueGetReadVersionRequests(db,
 	                                          &systemQueue,
 	                                          &defaultQueue,
