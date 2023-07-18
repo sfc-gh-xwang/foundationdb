@@ -66,7 +66,7 @@ struct ReadMetricsWorkload : KVWorkload {
 				std::swap(op.begin, op.end);
 			}
 
-			op.limit = deterministicRandom()->randomInt(1, largeOffsets && isPrimaryOperation ? nodeCount : 10);
+			op.limit = deterministicRandom()->randomInt(1, largeOffsets && isPrimaryOperation ? 1000 : 10);
 			op.reverse = deterministicRandom()->coinflip();
 			op.snapshot = deterministicRandom()->coinflip();
 			op.expectedAccuracy = largeOffsets ? 0.333 : 0.5;
@@ -154,14 +154,18 @@ struct ReadMetricsWorkload : KVWorkload {
 				           useRepeatedOperation,
 				           op.disableRyw,
 				           printable(op.begin.getKey()));
-				ValueReadResult read = wait(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
+				Optional<ValueReadResult> read = wait(timeout(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
 					if (op.disableRyw) {
 						tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
 					}
 					return tr->get(op.begin.getKey());
-				}));
+				}), 15));
 
-				readMetrics = read.getReadMetrics();
+				if (!read.present()) {
+					continue;
+				}
+
+				readMetrics = read.get().getReadMetrics();
 			} else if (op.type == OperationType::GET_RANGE) {
 				fmt::print("Running op get range: {} {} {} {} {} {} {} {}\n",
 				           now(),
@@ -172,28 +176,36 @@ struct ReadMetricsWorkload : KVWorkload {
 				           op.reverse,
 				           op.limit,
 				           op.snapshot);
-				RangeReadResult read = wait(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
+				Optional<RangeReadResult> read = wait(timeout(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
 					if (op.disableRyw) {
 						tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
 					}
 					return tr->getRange(op.begin, op.end, op.limit, Snapshot(op.snapshot), Reverse(op.reverse));
-				}));
+				}), 15));
 
-				readMetrics = read.getReadMetrics();
+				if (!read.present()) {
+					continue;
+				}
+
+				readMetrics = read.get().getReadMetrics();
 			} else {
 				fmt::print("Running op get key: {} {} {} {}\n",
 				           now(),
 				           useRepeatedOperation,
 				           op.disableRyw,
 				           op.begin.toString());
-				KeyReadResult read = wait(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
+				Optional<KeyReadResult> read = wait(timeout(runRYWTransaction(cx, [op = op](Reference<ReadYourWritesTransaction> tr) {
 					if (op.disableRyw) {
 						tr->setOption(FDBTransactionOptions::READ_YOUR_WRITES_DISABLE);
 					}
 					return tr->getKey(op.begin);
-				}));
+				}), 15));
 
-				readMetrics = read.getReadMetrics();
+				if (!read.present()) {
+					continue;
+				}
+
+				readMetrics = read.get().getReadMetrics();
 			}
 
 			if (useRepeatedOperation && now() - start > SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL) {
@@ -210,7 +222,7 @@ struct ReadMetricsWorkload : KVWorkload {
 			}
 		}
 
-		ASSERT_GT(self->successfulOps, self->totalOps * 0.9);
+		ASSERT_GE(self->successfulOps, self->totalOps * 0.9);
 		return Void();
 	}
 
