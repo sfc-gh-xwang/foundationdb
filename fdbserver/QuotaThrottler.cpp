@@ -427,7 +427,7 @@ QuotaThrottler::QuotaThrottler(UID id, int maxFallingBehind, double limitingThre
 
 QuotaThrottler::~QuotaThrottler() = default;
 
-Future<Void> QuotaThrottler::monitorThrottlingChanges() {
+Future<Void> QuotaThrottler::expireUnusedThrottlingIds() {
 	return impl->removeExpiredThrottlingIdsActor();
 }
 

@@ -32,8 +32,8 @@ public:
 	QuotaThrottler(UID id, int maxFallingBehind, double limitingThreshold);
 	~QuotaThrottler();
 
-	// Poll the system keyspace looking for updates made through the tag throttling API
-	Future<Void> monitorThrottlingChanges();
+	// Periodically forget throttlingIds reporting low throughput
+	Future<Void> expireUnusedThrottlingIds();
 
 	// Increment the number of known requests associated with the specified throttling ID
 	void addRequests(ThrottlingId const&, int count);

@@ -105,7 +105,7 @@ public:
 		                                       self.recoveryTracker));
 
 		self.addActor.send(self.quotaCache->run());
-		self.addActor.send(self.quotaThrottler.monitorThrottlingChanges());
+		self.addActor.send(self.quotaThrottler.expireUnusedThrottlingIds());
 		if (SERVER_KNOBS->BW_THROTTLING_ENABLED) {
 			self.addActor.send(self.blobMonitor.run(self.configurationMonitor, self.recoveryTracker));
 		}
