@@ -226,16 +226,17 @@ class ClientConfigTest:
             self.tc.assertEqual(1, len(matching_clients))
             self.tc.assertEqual(expected_client, matching_clients[0])
 
-    def check_tenant_info(self, status_json):
-        tenant_id = status_json["TenantID"]
-        self.tc.assertIsNotNone(tenant_id)
+    def check_tenant_status(self, status_json):
+        status = status_json["TenantResolutionStatus"]
+        if self.skip_create_tenant:
+            # If we skip tenant creation, the tenant resolution status will be shown as failed
+            self.tc.assertEqual(status, "NotFound")
+            self.tc.assertTrue("TenantResolutionError" in status_json)
+            return
 
-        if not self.skip_create_tenant:
-            # Validate that TenantID is an integer if expected valid
-            self.tc.assertTrue(isinstance(tenant_id, int))
-        else:
-            # Otherwise, TenantID must be a string field that includes word "Failed"
-            self.tc.assertTrue("Failed" in tenant_id)
+        self.tc.assertEqual(status, "Resolved")
+        tenant_id = status_json["TenantID"]
+        self.tc.assertTrue(isinstance(tenant_id, int))
 
     def check_healthy_status_report(self):
         self.tc.assertIsNotNone(self.status_json)
@@ -264,7 +265,9 @@ class ClientConfigTest:
         }
 
         if self.enable_tenant:
-            expected_db_attributes.add("TenantID")
+            expected_db_attributes.add("TenantResolutionStatus")
+            if not self.skip_create_tenant:
+                expected_db_attributes.add("TenantID")
 
         db_status = self.status_json["DatabaseStatus"]
         self.tc.assertEqual(expected_db_attributes, set(db_status.keys()))
@@ -279,14 +282,14 @@ class ClientConfigTest:
         # If tenant mode is on, TenantID must show up in the results, even if the tenant
         # is invalid
         if self.enable_tenant:
-            self.check_tenant_info(db_status)
+            self.check_tenant_status(db_status)
 
     def check_healthy_status(self, expected_is_healthy):
         self.tc.assertIsNotNone(self.status_json)
         self.tc.assertTrue("Healthy" in self.status_json)
         self.tc.assertEqual(expected_is_healthy, self.status_json["Healthy"])
         if self.enable_tenant:
-            self.check_tenant_info(self.status_json)
+            self.check_tenant_status(self.status_json)
 
     def list_trace_files(self):
         return glob.glob(os.path.join(self.log_dir, "*"))
@@ -964,7 +967,7 @@ class TenantStatusTests(unittest.TestCase):
         test.skip_create_tenant = True
         test.expected_error = 2131  # Tenant does not exist
         test.exec()
-        test.check_tenant_info(test.status_json["DatabaseStatus"])
+        test.check_tenant_status(test.status_json["DatabaseStatus"])
         test.check_available_clients([CURRENT_VERSION])
         test.check_current_client(CURRENT_VERSION)
 

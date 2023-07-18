@@ -132,16 +132,19 @@ private:
 		auto tenantLookupInfoFuture = tenant->getLookupFuture();
 		// Tenant info lookup failed
 		if (tenantLookupInfoFuture.isError()) {
-			statusObj["TenantID"] = fmt::format("Failed to find due to: {}", tenantLookupInfoFuture.getError().what());
+			statusObj["TenantResolutionStatus"] = "NotFound";
+			statusObj["TenantResolutionError"] =
+			    fmt::format("Failed to find due to: {}", tenantLookupInfoFuture.getError().what());
 			return;
 		}
 
 		// Tenant info lookup pending
 		if (!tenantLookupInfoFuture.isReady()) {
-			statusObj["TenantID"] = "Tenant info resolution pending";
+			statusObj["TenantResolutionStatus"] = "Pending";
 			return;
 		}
 
+		statusObj["TenantResolutionStatus"] = "Resolved";
 		auto tenantLookupInfo = tenantLookupInfoFuture.get();
 		statusObj["TenantID"] = tenantLookupInfo.id;
 		if (tenantLookupInfo.group.present()) {
