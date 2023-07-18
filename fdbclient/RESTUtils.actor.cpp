@@ -39,6 +39,26 @@ const std::unordered_map<std::string, RESTConnectionType> RESTConnectionType::su
 	{ "https", RESTConnectionType("https", RESTConnectionType::SECURE_CONNECTION) }
 };
 
+const std::unordered_set<int> REST_RETRYABLE_HTTP_CODES = {
+	HTTP::HTTP_STATUS_CODE_INTERNAL_SERVER_ERROR, HTTP::HTTP_STATUS_CODE_BAD_GATEWAY,
+	HTTP::HTTP_STATUS_CODE_BAD_GATEWAY,           HTTP::HTTP_STATUS_CODE_SERVICE_UNAVAILABLE,
+	HTTP::HTTP_STATUS_CODE_TOO_MANY_REQUESTS,     HTTP::HTTP_STATUS_CODE_TIMEOUT
+};
+
+int getRandomHTTPRetryableCode() {
+	int randIdx = deterministicRandom()->randomInt(0, REST_RETRYABLE_HTTP_CODES.size());
+
+	// Advance the iterator to the random element
+	auto itr = REST_RETRYABLE_HTTP_CODES.begin();
+	std::advance(itr, randIdx);
+	return *itr;
+}
+
+bool isHTTPCodeRetryable(const int code) {
+	auto itr = REST_RETRYABLE_HTTP_CODES.find(code);
+	return itr != REST_RETRYABLE_HTTP_CODES.end();
+}
+
 RESTConnectionType RESTConnectionType::getConnectionType(const std::string& protocol) {
 	auto itr = RESTConnectionType::supportedConnTypes.find(protocol);
 	if (itr == RESTConnectionType::supportedConnTypes.end()) {
@@ -86,17 +106,15 @@ RESTClientKnobs::RESTClientKnobs() {
 }
 
 void RESTClientKnobs::set(const std::unordered_map<std::string, int>& knobSettings) {
-	TraceEvent trace = TraceEvent("RESTClientSetKnobs");
 
 	for (const auto& itr : knobSettings) {
 		const auto& kItr = RESTClientKnobs::knobMap.find(itr.first);
 		if (kItr == RESTClientKnobs::knobMap.end()) {
-			trace.detail("RESTClientInvalidKnobName", itr.first);
+			TraceEvent("RESTClientInvalidKnobName").detail("KnobName", itr.first);
 			throw rest_invalid_rest_client_knob();
 		}
 		ASSERT_EQ(itr.first.compare(kItr->first), 0);
 		*(kItr->second) = itr.second;
-		trace.detail(itr.first.c_str(), itr.second);
 	}
 }
 
@@ -305,16 +323,18 @@ void RESTUrl::parseUrl(const std::string& fullUrl) {
 				// service is empty
 			}
 		}
+
+		if (this->host.empty()) {
+			CODE_PROBE(true, "REST URI empty host");
+			throw std::string("host cannot be empty");
+		}
+
 		// URI is allowed to use canonical IPv6 address format representation
 		if (this->host[0] == '[' || this->host[this->host.size() - 1] == ']') {
 			if (this->host[0] != '[' || this->host[this->host.size() - 1] != ']' || this->host.size() <= 2) {
 				throw std::string("malformed IPv6 address");
 			}
 			this->host = this->host.substr(1, this->host.size() - 2);
-		}
-		if (this->host.empty()) {
-			CODE_PROBE(true, "REST URI empty host");
-			throw std::string("host cannot be empty");
 		}
 
 		if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {

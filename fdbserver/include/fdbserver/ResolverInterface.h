@@ -79,9 +79,13 @@ struct StateTransactionRef {
 	StateTransactionRef(const bool committed,
 	                    VectorRef<MutationRef> const& mutations,
 	                    Optional<VectorRef<int64_t>> tenantIds)
-	  : committed(committed), mutations(mutations), tenantIds(tenantIds) {}
+	  : committed(committed),
+	    mutations(mutations),
+	    tenantIds(tenantIds) {}
 	StateTransactionRef(Arena& p, const StateTransactionRef& toCopy)
-	  : committed(toCopy.committed), mutations(p, toCopy.mutations), tenantIds(p, toCopy.tenantIds) {}
+	  : committed(toCopy.committed),
+	    mutations(p, toCopy.mutations),
+	    tenantIds(p, toCopy.tenantIds) {}
 
 	size_t expectedSize() const { return mutations.expectedSize() + tenantIds.expectedSize(); }
 

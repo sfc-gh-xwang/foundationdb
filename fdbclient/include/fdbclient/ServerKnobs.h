@@ -484,11 +484,13 @@ public:
 	double START_TRANSACTION_BATCH_INTERVAL_SMOOTHER_ALPHA;
 	double START_TRANSACTION_BATCH_QUEUE_CHECK_INTERVAL;
 	double START_TRANSACTION_MAX_TRANSACTIONS_TO_START;
+	double START_TRANSACTION_MAX_BYTES_TO_START;
 	int START_TRANSACTION_MAX_REQUESTS_TO_START;
 	double START_TRANSACTION_RATE_WINDOW;
 	double TAG_THROTTLE_RATE_WINDOW;
 	double START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET;
 	double TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET;
+	double TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET;
 	int START_TRANSACTION_MAX_QUEUE_SIZE;
 	int KEY_LOCATION_MAX_QUEUE_SIZE;
 	int TENANT_ID_REQUEST_MAX_QUEUE_SIZE;
@@ -757,12 +759,32 @@ public:
 	bool GLOBAL_TAG_THROTTLING_REPORT_ONLY;
 	// Below this throughput threshold (in bytes/second), ratekeeper will forget about the
 	// throughput of a particular throttlingId on a particular storage server
-	int64_t GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD;
+	double GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD;
+	// Above this cluster-wide throughput threshold (in bytes/second), ratekeeper will monitor
+	// the quota for a particular throttlingId
+	int64_t THROUGHPUT_QUOTA_TRACK_THRESHOLD;
+	// Number of updates read in a single transaction by the throughput quota cache
+	int64_t THROUGHPUT_QUOTA_CACHE_BATCH_SIZE;
+	// Interval at which throughput quota cache will check to
+	// expire inactive throttlingIds
+	double THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL;
+	// Period of inactivity after which the throughput quota cache
+	// will expire a throttlingId.
+	double THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD;
+	// If a throttlingId's throughput on a particular storage server exceeds this threshold,
+	// this storage server's throttling ratio will contribute the calculation of the
+	// throttlingId's limiting transaction rate
+	double GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD;
+	// Interval at which to expire inactive throttlingIds from the
+	// client throughput tracker running on ratekeeper:
+	double CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME;
+	double CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME;
+	double CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME;
 
 	double MAX_TRANSACTIONS_PER_BYTE;
 
@@ -1161,6 +1183,7 @@ public:
 	int BLOB_RESTORE_MLOGS_RETENTION_SECS;
 	int BLOB_RESTORE_LOAD_KEY_VERSION_MAP_STEP_SIZE;
 	int BLOB_GRANULES_FLUSH_BATCH_SIZE;
+	bool BLOB_RESTORE_SKIP_EMPTY_RANGES;
 
 	// Blob metadata
 	int64_t BLOB_METADATA_CACHE_TTL;
@@ -1184,6 +1207,7 @@ public:
 	int REST_KMS_CURRENT_CIPHER_REQUEST_VERSION;
 	int REST_KMS_MAX_CIPHER_REQUEST_VERSION;
 	std::string REST_SIM_KMS_VAULT_DIR;
+	double REST_KMS_STABILITY_CHECK_INTERVAL;
 
 	double CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO;
 

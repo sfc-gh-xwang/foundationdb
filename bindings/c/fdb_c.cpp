@@ -23,6 +23,7 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/BlobGranuleApiImpl.h"
 #include "flow/ProtocolVersion.h"
+#include <boost/asio/bind_executor.hpp>
 #include <cstdint>
 #define FDB_USE_LATEST_API_VERSION
 #define FDB_INCLUDE_LEGACY_TYPES
@@ -259,7 +260,9 @@ extern "C" DLLEXPORT fdb_bool_t fdb_future_is_ready(FDBFuture* f) {
 class CAPICallback final : public ThreadCallback {
 public:
 	CAPICallback(void (*callbackf)(FDBFuture*, void*), FDBFuture* f, void* userdata)
-	  : callbackf(callbackf), f(f), userdata(userdata) {}
+	  : callbackf(callbackf),
+	    f(f),
+	    userdata(userdata) {}
 
 	bool canFire(int notMadeActive) const override { return true; }
 	void fire(const Void& unused, int& userParam) override {
@@ -756,6 +759,10 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_flush_blob_range
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_status(FDBDatabase* db) {
 	return (FDBFuture*)(DB(db)->getClientStatus().extractPtr());
+}
+
+extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant) {
+	return (FDBFuture*)(TENANT(tenant)->getClientStatus().extractPtr());
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_tenant_create_transaction(FDBTenant* tenant, FDBTransaction** out_transaction) {
@@ -1270,6 +1277,31 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_summarize_blob_granules(FDBTrans
 	    return (FDBFuture*)(TXN(tr)->summarizeBlobGranules(range, sv, rangeLimit).extractPtr()););
 }
 
+extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v3(FDBTransaction* tr,
+                                                                                  uint8_t const* begin_key_name,
+                                                                                  int begin_key_name_length,
+                                                                                  uint8_t const* end_key_name,
+                                                                                  int end_key_name_length,
+                                                                                  int64_t begin_version,
+                                                                                  int64_t read_version,
+                                                                                  int64_t mutation_byte_limit) {
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBReadBGDescriptionRequest* request =
+	                           createApiRequest<FDBReadBGDescriptionRequest>(tr, FDBApiRequest_ReadBGDescription);
+	                       request->read_version = read_version;
+	                       request->begin_version = begin_version;
+	                       request->key_range.begin_key =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, begin_key_name, begin_key_name_length);
+	                       request->key_range.begin_key_length = begin_key_name_length;
+	                       request->key_range.end_key =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
+	                       request->key_range.end_key_length = end_key_name_length;
+	                       request->mutation_byte_limit = mutation_byte_limit;
+	                       FDBFuture* future = executeApiRequest<FDBReadBGDescriptionRequest>(tr, request);
+	                       releaseApiRequest(request);
+	                       return future;);
+}
+
 extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v2(FDBTransaction* tr,
                                                                                   uint8_t const* begin_key_name,
                                                                                   int begin_key_name_length,
@@ -1277,17 +1309,14 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v
                                                                                   int end_key_name_length,
                                                                                   int64_t begin_version,
                                                                                   int64_t read_version) {
-	FDBReadBGDescriptionRequest* request =
-	    createApiRequest<FDBReadBGDescriptionRequest>(tr, FDBApiRequest_ReadBGDescription);
-	request->read_version = read_version;
-	request->begin_version = begin_version;
-	request->key_range.begin_key = (uint8_t*)copyBytesIntoApiRequest(request, begin_key_name, begin_key_name_length);
-	request->key_range.begin_key_length = begin_key_name_length;
-	request->key_range.end_key = (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
-	request->key_range.end_key_length = end_key_name_length;
-	FDBFuture* future = executeApiRequest<FDBReadBGDescriptionRequest>(tr, request);
-	releaseApiRequest(request);
-	return future;
+	return fdb_transaction_read_blob_granules_description_v3(tr,
+	                                                         begin_key_name,
+	                                                         begin_key_name_length,
+	                                                         end_key_name,
+	                                                         end_key_name_length,
+	                                                         begin_version,
+	                                                         read_version,
+	                                                         std::numeric_limits<int64_t>::max());
 }
 
 extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v1(FDBTransaction* tr,
@@ -1392,6 +1421,40 @@ extern "C" DLLEXPORT const char* fdb_get_client_version() {
 
 extern "C" DLLEXPORT void fdb_use_future_protocol_version() {
 	API->useFutureProtocolVersion();
+}
+
+/* -------------------------------------------------------------------------------------------
+ * The following function definitions enable removing _v2 suffix in the future while
+ * still supporting calls over the shim library
+ */
+
+#undef fdb_transaction_read_blob_granules_description
+#undef fdb_readbg_parse_snapshot_file
+#undef fdb_readbg_parse_delta_file
+
+extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description(FDBTransaction* tr,
+                                                                               uint8_t const* begin_key_name,
+                                                                               int begin_key_name_length,
+                                                                               uint8_t const* end_key_name,
+                                                                               int end_key_name_length,
+                                                                               int64_t begin_version,
+                                                                               int64_t read_version) {
+	return fdb_transaction_read_blob_granules_description_v2(
+	    tr, begin_key_name, begin_key_name_length, end_key_name, end_key_name_length, begin_version, read_version);
+}
+
+extern "C" WARN_UNUSED_RESULT FDBResult* fdb_readbg_parse_snapshot_file(const uint8_t* file_data,
+                                                                        int file_len,
+                                                                        FDBBGTenantPrefix const* tenant_prefix,
+                                                                        FDBBGEncryptionCtxV2 const* encryption_ctx) {
+	return fdb_readbg_parse_snapshot_file_v2(file_data, file_len, tenant_prefix, encryption_ctx);
+}
+
+extern "C" WARN_UNUSED_RESULT FDBResult* fdb_readbg_parse_delta_file(const uint8_t* file_data,
+                                                                     int file_len,
+                                                                     FDBBGTenantPrefix const* tenant_prefix,
+                                                                     FDBBGEncryptionCtxV2 const* encryption_ctx) {
+	return fdb_readbg_parse_delta_file_v2(file_data, file_len, tenant_prefix, encryption_ctx);
 }
 
 /* -------------------------------------------------------------------------------------------

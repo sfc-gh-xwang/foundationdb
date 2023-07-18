@@ -414,7 +414,7 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 		    .detail("BackupEpoch", epoch)
 		    .detail("StartVersion", req.startVersion);
 		initializationReplies.push_back(
-		    transformErrors(throwErrorOr(worker.backup.getReplyUnlessFailedFor(
+		    transformErrors(throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 		                        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 		                    backup_worker_failed()));
 	}
@@ -453,7 +453,7 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 			    .detail("StartVersion", req.startVersion)
 			    .detail("EndVersion", req.endVersion.get());
 			initializationReplies.push_back(transformErrors(
-			    throwErrorOr(worker.backup.getReplyUnlessFailedFor(
+			    throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 			        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 			    backup_worker_failed()));
 		}
@@ -705,8 +705,6 @@ ACTOR Future<Void> readTransactionSystemState(Reference<ClusterRecoveryData> sel
 		enableEncryptionForTxnStateStore = encryptMode.isEncryptionEnabled();
 	}
 	CODE_PROBE(enableEncryptionForTxnStateStore, "Enable encryption for txnStateStore");
-	if (self->txnStateStore)
-		self->txnStateStore->close();
 	self->txnStateLogAdapter = openDiskQueueAdapter(oldLogSystem, myLocality, txsPoppedVersion);
 	self->txnStateStore = keyValueStoreLogSystem(self->txnStateLogAdapter,
 	                                             self->dbInfo,
@@ -1466,7 +1464,7 @@ ACTOR Future<Void> clusterRecoveryCore(Reference<ClusterRecoveryData> self) {
 	                       self->dbgid,
 	                       recoveryCommitRequest.arena,
 	                       tr.mutations.slice(mmApplied, tr.mutations.size()),
-	                       self->txnStateStore);
+	                       self->txnStateStore.getPtr());
 	mmApplied = tr.mutations.size();
 
 	tr.read_snapshot = self->recoveryTransactionVersion; // lastEpochEnd would make more sense, but isn't in the initial
@@ -1482,7 +1480,7 @@ ACTOR Future<Void> clusterRecoveryCore(Reference<ClusterRecoveryData> self) {
 	self->addActor.send(reportErrors(updateRegistration(self, self->logSystem), "UpdateRegistration", self->dbgid));
 	self->registrationTrigger.trigger();
 
-	wait(discardCommit(self->txnStateStore, self->txnStateLogAdapter));
+	wait(discardCommit(self->txnStateStore.getPtr(), self->txnStateLogAdapter));
 
 	// Wait for the recovery transaction to complete.
 	// SOMEDAY: For faster recovery, do this and setDBState asynchronously and don't wait for them

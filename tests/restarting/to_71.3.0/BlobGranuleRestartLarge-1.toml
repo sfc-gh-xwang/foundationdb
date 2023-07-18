@@ -10,6 +10,9 @@ injectSSDelay = true
 storageEngineExcludeTypes = [4, 5]
 simHTTPServerEnabled=false
 
+[[knobs]]
+blob_worker_disk_enabled = false
+
 [[test]]
 testTitle = 'BlobGranuleRestartLarge'
 clearAfterTest=false

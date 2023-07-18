@@ -89,7 +89,11 @@ struct ValidationTokenCtx {
 	Optional<std::string> filePath;
 
 	explicit ValidationTokenCtx(const std::string& n, ValidationTokenSource s)
-	  : name(n), value(""), source(s), filePath(Optional<std::string>()), readTS(now()) {}
+	  : name(n),
+	    value(""),
+	    source(s),
+	    filePath(Optional<std::string>()),
+	    readTS(now()) {}
 	double getReadTS() const { return readTS; }
 
 private:

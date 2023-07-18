@@ -35,6 +35,7 @@ typedef struct FDBReadBGDescriptionRequest_ {
 	FDBKeyRange key_range;
 	int64_t begin_version;
 	int64_t read_version;
+	int64_t mutation_byte_limit;
 } FDBReadBGDescriptionRequest;
 
 typedef struct FDBErrorResult_ {

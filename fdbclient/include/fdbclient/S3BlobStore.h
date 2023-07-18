@@ -47,7 +47,10 @@ struct BlobStoreConnectionPoolKey {
 	                           const std::string& service,
 	                           const std::string& region,
 	                           bool isTLS)
-	  : host(host), service(service), region(region), isTLS(isTLS) {}
+	  : host(host),
+	    service(service),
+	    region(region),
+	    isTLS(isTLS) {}
 
 	bool operator==(const BlobStoreConnectionPoolKey& other) const {
 		return isTLS == other.isTLS && host == other.host && service == other.service && region == other.region;
@@ -100,10 +103,14 @@ public:
 		// init not in static codepath, to avoid initialization race issues and so no blob connections means no
 		// unecessary blob stats traces
 		BlobStats()
-		  : id(deterministicRandom()->randomUniqueID()), cc("BlobStoreStats", id.toString()),
-		    requestsSuccessful("RequestsSuccessful", cc), requestsFailed("RequestsFailed", cc),
-		    newConnections("NewConnections", cc), expiredConnections("ExpiredConnections", cc),
-		    reusedConnections("ReusedConnections", cc), fastRetries("FastRetries", cc),
+		  : id(deterministicRandom()->randomUniqueID()),
+		    cc("BlobStoreStats", id.toString()),
+		    requestsSuccessful("RequestsSuccessful", cc),
+		    requestsFailed("RequestsFailed", cc),
+		    newConnections("NewConnections", cc),
+		    expiredConnections("ExpiredConnections", cc),
+		    reusedConnections("ReusedConnections", cc),
+		    fastRetries("FastRetries", cc),
 		    requestLatency("BlobStoreRequestLatency",
 		                   id,
 		                   CLIENT_KNOBS->BLOBSTORE_LATENCY_LOGGING_INTERVAL,
@@ -210,18 +217,27 @@ public:
 	                    Optional<Credentials> const& creds,
 	                    BlobKnobs const& knobs = BlobKnobs(),
 	                    HTTP::Headers extraHeaders = HTTP::Headers())
-	  : host(host), service(service), region(region), proxyHost(proxyHost), proxyPort(proxyPort),
-	    useProxy(proxyHost.present() && proxyPort.present()), credentials(creds),
+	  : host(host),
+	    service(service),
+	    region(region),
+	    proxyHost(proxyHost),
+	    proxyPort(proxyPort),
+	    useProxy(proxyHost.present() && proxyPort.present()),
+	    credentials(creds),
 	    lookupKey(creds.present() && creds.get().key.empty()),
-	    lookupSecret(creds.present() && creds.get().secret.empty()), knobs(knobs), extraHeaders(extraHeaders),
+	    lookupSecret(creds.present() && creds.get().secret.empty()),
+	    knobs(knobs),
+	    extraHeaders(extraHeaders),
 	    requestRate(new SpeedLimit(knobs.requests_per_second, 1)),
 	    requestRateList(new SpeedLimit(knobs.list_requests_per_second, 1)),
 	    requestRateWrite(new SpeedLimit(knobs.write_requests_per_second, 1)),
 	    requestRateRead(new SpeedLimit(knobs.read_requests_per_second, 1)),
 	    requestRateDelete(new SpeedLimit(knobs.delete_requests_per_second, 1)),
 	    sendRate(new SpeedLimit(knobs.max_send_bytes_per_second, 1)),
-	    recvRate(new SpeedLimit(knobs.max_recv_bytes_per_second, 1)), concurrentRequests(knobs.concurrent_requests),
-	    concurrentUploads(knobs.concurrent_uploads), concurrentLists(knobs.concurrent_lists) {
+	    recvRate(new SpeedLimit(knobs.max_recv_bytes_per_second, 1)),
+	    concurrentRequests(knobs.concurrent_requests),
+	    concurrentUploads(knobs.concurrent_uploads),
+	    concurrentLists(knobs.concurrent_lists) {
 
 		if (host.empty() || (proxyHost.present() != proxyPort.present()))
 			throw connection_string_invalid();

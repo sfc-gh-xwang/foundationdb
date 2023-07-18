@@ -75,8 +75,13 @@ struct ReadConflictRange {
 	                  int indexInTx,
 	                  VectorRef<int>* cKR = nullptr,
 	                  Arena* cKRArena = nullptr)
-	  : begin(begin), end(end), version(version), transaction(transaction), indexInTx(indexInTx),
-	    conflictingKeyRange(cKR), cKRArena(cKRArena) {}
+	  : begin(begin),
+	    end(end),
+	    version(version),
+	    transaction(transaction),
+	    indexInTx(indexInTx),
+	    conflictingKeyRange(cKR),
+	    cKRArena(cKRArena) {}
 	bool operator<(const ReadConflictRange& rhs) const { return compare(begin, rhs.begin) < 0; }
 };
 
@@ -89,7 +94,11 @@ struct KeyInfo {
 
 	KeyInfo() = default;
 	KeyInfo(StringRef key, bool begin, bool write, int transaction, int* pIndex)
-	  : key(key), pIndex(pIndex), begin(begin), write(write), transaction(transaction) {}
+	  : key(key),
+	    pIndex(pIndex),
+	    begin(begin),
+	    write(write),
+	    transaction(transaction) {}
 };
 
 force_inline int extra_ordering(const KeyInfo& ki) {
@@ -804,7 +813,9 @@ void destroyConflictSet(ConflictSet* cs) {
 ConflictBatch::ConflictBatch(ConflictSet* cs,
                              std::map<int, VectorRef<int>>* conflictingKeyRangeMap,
                              Arena* resolveBatchReplyArena)
-  : cs(cs), transactionCount(0), conflictingKeyRangeMap(conflictingKeyRangeMap),
+  : cs(cs),
+    transactionCount(0),
+    conflictingKeyRangeMap(conflictingKeyRangeMap),
     resolveBatchReplyArena(resolveBatchReplyArena) {}
 
 ConflictBatch::~ConflictBatch() {}

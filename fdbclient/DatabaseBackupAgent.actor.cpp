@@ -47,9 +47,12 @@ const Key DatabaseBackupAgent::keyDatabasesInSync = "databases_in_sync"_sr;
 const int DatabaseBackupAgent::LATEST_DR_VERSION = 1;
 
 DatabaseBackupAgent::DatabaseBackupAgent()
-  : subspace(Subspace(databaseBackupPrefixRange.begin)), states(subspace.get(BackupAgentBase::keyStates)),
-    config(subspace.get(BackupAgentBase::keyConfig)), errors(subspace.get(BackupAgentBase::keyErrors)),
-    ranges(subspace.get(BackupAgentBase::keyRanges)), tagNames(subspace.get(BackupAgentBase::keyTagName)),
+  : subspace(Subspace(databaseBackupPrefixRange.begin)),
+    states(subspace.get(BackupAgentBase::keyStates)),
+    config(subspace.get(BackupAgentBase::keyConfig)),
+    errors(subspace.get(BackupAgentBase::keyErrors)),
+    ranges(subspace.get(BackupAgentBase::keyRanges)),
+    tagNames(subspace.get(BackupAgentBase::keyTagName)),
     sourceStates(subspace.get(BackupAgentBase::keySourceStates)),
     sourceTagNames(subspace.get(BackupAgentBase::keyTagName)),
     taskBucket(new TaskBucket(subspace.get(BackupAgentBase::keyTasks),
@@ -60,9 +63,12 @@ DatabaseBackupAgent::DatabaseBackupAgent()
 }
 
 DatabaseBackupAgent::DatabaseBackupAgent(Database src)
-  : subspace(Subspace(databaseBackupPrefixRange.begin)), states(subspace.get(BackupAgentBase::keyStates)),
-    config(subspace.get(BackupAgentBase::keyConfig)), errors(subspace.get(BackupAgentBase::keyErrors)),
-    ranges(subspace.get(BackupAgentBase::keyRanges)), tagNames(subspace.get(BackupAgentBase::keyTagName)),
+  : subspace(Subspace(databaseBackupPrefixRange.begin)),
+    states(subspace.get(BackupAgentBase::keyStates)),
+    config(subspace.get(BackupAgentBase::keyConfig)),
+    errors(subspace.get(BackupAgentBase::keyErrors)),
+    ranges(subspace.get(BackupAgentBase::keyRanges)),
+    tagNames(subspace.get(BackupAgentBase::keyTagName)),
     sourceStates(subspace.get(BackupAgentBase::keySourceStates)),
     sourceTagNames(subspace.get(BackupAgentBase::keyTagName)),
     taskBucket(new TaskBucket(subspace.get(BackupAgentBase::keyTasks),
@@ -77,7 +83,8 @@ DatabaseBackupAgent::DatabaseBackupAgent(Database src)
 class DRConfig {
 public:
 	DRConfig(UID uid = UID())
-	  : uid(uid), configSpace(uidPrefixKey("uid->config/"_sr.withPrefix(databaseBackupPrefixRange.begin), uid)) {}
+	  : uid(uid),
+	    configSpace(uidPrefixKey("uid->config/"_sr.withPrefix(databaseBackupPrefixRange.begin), uid)) {}
 	DRConfig(Reference<Task> task)
 	  : DRConfig(BinaryReader::fromStringRef<UID>(task->params[BackupAgentBase::keyConfigLogUid], Unversioned())) {}
 

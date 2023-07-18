@@ -55,13 +55,18 @@ struct TLogInterface {
 
 	TLogInterface() {}
 	explicit TLogInterface(const LocalityData& locality)
-	  : filteredLocality(locality), uniqueID(deterministicRandom()->randomUniqueID()) {
+	  : filteredLocality(locality),
+	    uniqueID(deterministicRandom()->randomUniqueID()) {
 		sharedTLogID = uniqueID;
 	}
 	TLogInterface(UID sharedTLogID, const LocalityData& locality)
-	  : filteredLocality(locality), uniqueID(deterministicRandom()->randomUniqueID()), sharedTLogID(sharedTLogID) {}
+	  : filteredLocality(locality),
+	    uniqueID(deterministicRandom()->randomUniqueID()),
+	    sharedTLogID(sharedTLogID) {}
 	TLogInterface(UID uniqueID, UID sharedTLogID, const LocalityData& locality)
-	  : filteredLocality(locality), uniqueID(uniqueID), sharedTLogID(sharedTLogID) {}
+	  : filteredLocality(locality),
+	    uniqueID(uniqueID),
+	    sharedTLogID(sharedTLogID) {}
 	UID id() const { return uniqueID; }
 	UID getSharedTLogID() const { return sharedTLogID; }
 	std::string toString() const { return id().shortString(); }
@@ -163,7 +168,9 @@ struct VerUpdateRef {
 
 	VerUpdateRef() : version(invalidVersion), isPrivateData(false) {}
 	VerUpdateRef(Arena& to, const VerUpdateRef& from)
-	  : version(from.version), mutations(to, from.mutations), isPrivateData(from.isPrivateData) {}
+	  : version(from.version),
+	    mutations(to, from.mutations),
+	    isPrivateData(from.isPrivateData) {}
 	int expectedSize() const { return mutations.expectedSize(); }
 
 	MutationRef push_back_deep(Arena& arena, const MutationRef& m) {
@@ -208,7 +215,11 @@ struct TLogPeekRequest {
 	                bool returnIfBlocked,
 	                bool onlySpilled,
 	                Optional<std::pair<UID, int>> sequence = Optional<std::pair<UID, int>>())
-	  : begin(begin), tag(tag), returnIfBlocked(returnIfBlocked), onlySpilled(onlySpilled), sequence(sequence) {}
+	  : begin(begin),
+	    tag(tag),
+	    returnIfBlocked(returnIfBlocked),
+	    onlySpilled(onlySpilled),
+	    sequence(sequence) {}
 	TLogPeekRequest() {}
 
 	template <class Ar>
@@ -242,7 +253,10 @@ struct TLogPeekStreamRequest {
 
 	TLogPeekStreamRequest() {}
 	TLogPeekStreamRequest(Version version, Tag tag, bool returnIfBlocked, int limitBytes)
-	  : begin(version), tag(tag), returnIfBlocked(returnIfBlocked), limitBytes(limitBytes) {}
+	  : begin(version),
+	    tag(tag),
+	    returnIfBlocked(returnIfBlocked),
+	    limitBytes(limitBytes) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -258,7 +272,9 @@ struct TLogPopRequest {
 	ReplyPromise<Void> reply;
 
 	TLogPopRequest(Version to, Version durableKnownCommittedVersion, Tag tag)
-	  : to(to), durableKnownCommittedVersion(durableKnownCommittedVersion), tag(tag) {}
+	  : to(to),
+	    durableKnownCommittedVersion(durableKnownCommittedVersion),
+	    tag(tag) {}
 	TLogPopRequest() {}
 
 	template <class Ar>
@@ -317,9 +333,15 @@ struct TLogCommitRequest : TimedRequest {
 	                  StringRef messages,
 	                  int tLogCount,
 	                  Optional<UID> debugID)
-	  : spanContext(context), arena(a), prevVersion(prevVersion), version(version),
-	    knownCommittedVersion(knownCommittedVersion), minKnownCommittedVersion(minKnownCommittedVersion),
-	    messages(messages), tLogCount(tLogCount), debugID(debugID) {}
+	  : spanContext(context),
+	    arena(a),
+	    prevVersion(prevVersion),
+	    version(version),
+	    knownCommittedVersion(knownCommittedVersion),
+	    minKnownCommittedVersion(minKnownCommittedVersion),
+	    messages(messages),
+	    tLogCount(tLogCount),
+	    debugID(debugID) {}
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar,
@@ -399,7 +421,9 @@ struct TLogSnapRequest {
 	StringRef role;
 
 	TLogSnapRequest(StringRef snapPayload, UID snapUID, StringRef role)
-	  : snapPayload(snapPayload), snapUID(snapUID), role(role) {}
+	  : snapPayload(snapPayload),
+	    snapUID(snapUID),
+	    role(role) {}
 	TLogSnapRequest() = default;
 
 	template <class Ar>

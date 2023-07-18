@@ -279,7 +279,8 @@ struct RandomStringSetGeneratorBase : IKeyGenerator {
 template <typename StringGenT>
 struct RandomStringSetGenerator : public RandomStringSetGeneratorBase {
 	RandomStringSetGenerator(RandomIntGenerator indexGen, StringGenT stringGen)
-	  : indexGen(indexGen), stringGen(stringGen) {
+	  : indexGen(indexGen),
+	    stringGen(stringGen) {
 		init(indexGen, stringGen);
 	}
 	RandomStringSetGenerator(const char* cstr) : RandomStringSetGenerator(std::string(cstr)) {}

@@ -1532,7 +1532,11 @@ struct TrackRunningStorage {
 	                    const std::string& filename,
 	                    std::set<std::pair<UID, KeyValueStoreType>>* runningStorages,
 	                    std::unordered_map<UID, StorageDiskCleaner>* storageCleaners)
-	  : self(self), storeType(storeType), locality(locality), filename(filename), runningStorages(runningStorages),
+	  : self(self),
+	    storeType(storeType),
+	    locality(locality),
+	    filename(filename),
+	    runningStorages(runningStorages),
 	    storageCleaners(storageCleaners) {
 		runningStorages->emplace(self, storeType);
 	}
@@ -1844,7 +1848,9 @@ class SharedLogsKey {
 
 public:
 	SharedLogsKey(const TLogOptions& options, KeyValueStoreType kvst)
-	  : logVersion(options.version), spillType(options.spillType), storeType(kvst) {
+	  : logVersion(options.version),
+	    spillType(options.spillType),
+	    storeType(kvst) {
 		if (logVersion >= TLogVersion::V5)
 			spillType = TLogSpillType::UNSET;
 	}
@@ -1862,7 +1868,9 @@ struct SharedLogsValue {
 
 	SharedLogsValue() = default;
 	SharedLogsValue(Future<Void> actor, UID uid, PromiseStream<InitializeTLogRequest> requests)
-	  : actor(actor), uid(uid), requests(requests) {}
+	  : actor(actor),
+	    uid(uid),
+	    requests(requests) {}
 };
 
 ACTOR Future<Void> chaosMetricsLogger() {

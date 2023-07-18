@@ -78,7 +78,9 @@ struct ConfigBroadcastSnapshotRequest {
 	ConfigBroadcastSnapshotRequest() = default;
 	template <class Snapshot>
 	explicit ConfigBroadcastSnapshotRequest(Version version, Snapshot&& snapshot, double restartDelay)
-	  : version(version), snapshot(std::forward<Snapshot>(snapshot)), restartDelay(restartDelay) {}
+	  : version(version),
+	    snapshot(std::forward<Snapshot>(snapshot)),
+	    restartDelay(restartDelay) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -108,7 +110,9 @@ struct ConfigBroadcastChangesRequest {
 	explicit ConfigBroadcastChangesRequest(Version mostRecentVersion,
 	                                       Standalone<VectorRef<VersionedConfigMutationRef>> const& changes,
 	                                       double restartDelay)
-	  : mostRecentVersion(mostRecentVersion), changes(changes), restartDelay(restartDelay) {}
+	  : mostRecentVersion(mostRecentVersion),
+	    changes(changes),
+	    restartDelay(restartDelay) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -123,7 +127,8 @@ struct ConfigBroadcastRegisteredReply {
 
 	ConfigBroadcastRegisteredReply() = default;
 	explicit ConfigBroadcastRegisteredReply(bool registered, Version lastSeenVersion)
-	  : registered(registered), lastSeenVersion(lastSeenVersion) {}
+	  : registered(registered),
+	    lastSeenVersion(lastSeenVersion) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -167,7 +172,9 @@ struct ConfigBroadcastReadyRequest {
 	                            std::map<ConfigKey, KnobValue> const& snapshot,
 	                            Version snapshotVersion,
 	                            Version liveVersion)
-	  : coordinatorsHash(coordinatorsHash), snapshot(snapshot), snapshotVersion(snapshotVersion),
+	  : coordinatorsHash(coordinatorsHash),
+	    snapshot(snapshot),
+	    snapshotVersion(snapshotVersion),
 	    liveVersion(liveVersion) {}
 
 	template <class Ar>

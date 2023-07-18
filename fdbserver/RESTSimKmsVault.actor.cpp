@@ -285,8 +285,8 @@ void addKmsUrlsToDoc(rapidjson::Document& doc) {
 }
 
 // TODO: inject faults
-VaultResponse handleFetchKeysByDomainIds(const std::string& content) {
-	VaultResponse response;
+ACTOR Future<VaultResponse> handleFetchKeysByDomainIds(std::string content) {
+	state VaultResponse response;
 	rapidjson::Document doc;
 
 	doc.Parse(content.data());
@@ -310,7 +310,12 @@ VaultResponse handleFetchKeysByDomainIds(const std::string& content) {
 	result.SetObject();
 
 	// Append 'request version'
-	addVersionToDoc(result, version);
+	if (BUGGIFY) {
+		// skip adding version to the response, translates into rest_malformed_response on the caller
+		CODE_PROBE(true, "RESTSimKMS simulate KeysByDomainIds malformed response");
+	} else {
+		addVersionToDoc(result, version);
+	}
 
 	// Append 'cipher_key_details' as json array
 	rapidjson::Value cipherDetails(rapidjson::kArrayType);
@@ -338,11 +343,14 @@ VaultResponse handleFetchKeysByDomainIds(const std::string& content) {
 	ASSERT(!response.failed);
 	response.buff = std::string(sb.GetString(), sb.GetSize());
 	//TraceEvent(SevDebug, "FetchByDomainIdsResponseStr").detail("Str", response->buff);
+
+	// Simulate network slowness - simulate FDB transaction timeout scenario
+	wait(delayJittered(deterministicRandom()->randomInt(1, 6)));
 	return response;
 }
 
-VaultResponse handleFetchKeysByKeyIds(const std::string& content) {
-	VaultResponse response;
+ACTOR Future<VaultResponse> handleFetchKeysByKeyIds(std::string content) {
+	state VaultResponse response;
 	rapidjson::Document doc;
 
 	doc.Parse(content.data());
@@ -367,7 +375,12 @@ VaultResponse handleFetchKeysByKeyIds(const std::string& content) {
 	result.SetObject();
 
 	// Append 'request version'
-	addVersionToDoc(result, version);
+	if (BUGGIFY) {
+		// skip adding version to the response, translates into rest_malformed_response on the caller
+		CODE_PROBE(true, "RESTSimKMS simulate KeysByKeyIds malformed response");
+	} else {
+		addVersionToDoc(result, version);
+	}
 
 	// Append 'cipher_key_details' as json array
 	rapidjson::Value cipherDetails(rapidjson::kArrayType);
@@ -399,11 +412,14 @@ VaultResponse handleFetchKeysByKeyIds(const std::string& content) {
 	ASSERT(!response.failed);
 	response.buff = std::string(sb.GetString(), sb.GetSize());
 	//TraceEvent(SevDebug, "FetchByKeyIdsResponseStr").detail("Str", response.buff);
+
+	// Simulate network slowness - simulate FDB txn timeout scenario
+	wait(delayJittered(deterministicRandom()->randomInt(1, 6)));
 	return response;
 }
 
-VaultResponse handleFetchBlobMetada(const std::string& content) {
-	VaultResponse response;
+ACTOR Future<VaultResponse> handleFetchBlobMetada(std::string content) {
+	state VaultResponse response;
 	rapidjson::Document doc;
 
 	doc.Parse(content.data());
@@ -451,6 +467,9 @@ VaultResponse handleFetchBlobMetada(const std::string& content) {
 	ASSERT(!response.failed);
 	response.buff = std::string(sb.GetString(), sb.GetSize());
 	//TraceEvent(SevDebug, "FetchBlobMetadataResponeStr").detail("Str", response.buff);
+
+	// Simulate network slowness
+	wait(delayJittered(deterministicRandom()->randomInt(1, 6)));
 	return response;
 }
 
@@ -466,10 +485,11 @@ namespace RestSimKms {
 
 ACTOR Future<Void> simKmsVaultRequestHandler(Reference<HTTP::IncomingRequest> request,
                                              Reference<HTTP::OutgoingResponse> response) {
+	state VaultResponse vaultResponse;
+
 	wait(delay(0.0));
 
 	ASSERT_EQ(request->verb, HTTP::HTTP_VERB_POST);
-
 	validateRequest(request);
 
 	std::string resource = request->resource[0] == '/' ? request->resource.substr(1) : request->resource;
@@ -477,19 +497,25 @@ ACTOR Future<Void> simKmsVaultRequestHandler(Reference<HTTP::IncomingRequest> re
 		TraceEvent("RESTSimKmsVaultReq").detail("Resource", resource).detail("Content", request->data.content);
 	}
 
-	state VaultResponse vaultResponse;
 	if (resource.compare(REST_SIM_KMS_VAULT_GET_ENCRYPTION_KEYS_BY_KEY_IDS_RESOURCE) == 0) {
-		vaultResponse = handleFetchKeysByKeyIds(request->data.content);
+		wait(store(vaultResponse, handleFetchKeysByKeyIds(request->data.content)));
 	} else if (resource.compare(REST_SIM_KMS_VAULT_GET_ENCRYPTION_KEYS_BY_DOMAIN_IDS_RESOURCE) == 0) {
-		vaultResponse = handleFetchKeysByDomainIds(request->data.content);
+		wait(store(vaultResponse, handleFetchKeysByDomainIds(request->data.content)));
 	} else if (resource.compare(REST_SIM_KMS_VAULT_GET_BLOB_METADATA_RESOURCE) == 0) {
-		vaultResponse = handleFetchBlobMetada(request->data.content);
+		wait(store(vaultResponse, handleFetchBlobMetada(request->data.content)));
 	} else {
 		TraceEvent("RESTSimKmsVaultUnexpectedResource").detail("Resource", resource);
 		throw http_bad_response();
 	}
 
-	response->code = HTTP::HTTP_STATUS_CODE_OK;
+	if (BUGGIFY) {
+		// Simulate KMS server returning HTTP retryable code
+		const int httpCode = getRandomHTTPRetryableCode();
+		response->code = httpCode;
+		CODE_PROBE(true, "RESTSimKms return http retryable code");
+	} else {
+		response->code = HTTP::HTTP_STATUS_CODE_OK;
+	}
 	response->data.headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 	response->data.headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 
@@ -578,19 +604,26 @@ Future<Void> registerHTTPServer() {
 ACTOR Future<Void> cleanupConfigFilesImp() {
 	state ISimulator::ProcessInfo* currentProcess = g_simulator->getCurrentProcess();
 
-	// Ensure 'testSystem' process is the 'only' writer for EaR config files
-	wait(g_simulator->onProcess(g_simulator->testSystem, TaskPriority::DefaultYield));
-	// Cancel the reaper task before cleaning up discoverUrl file to avoid race:
-	if (discoverUrlFileReaper.isValid()) {
-		discoverUrlFileReaper.cancel();
-	}
+	try {
+		// Ensure 'testSystem' process is the 'only' writer for EaR config files
+		wait(g_simulator->onProcess(g_simulator->testSystem, TaskPriority::DefaultYield));
+		// Cancel the reaper task before cleaning up discoverUrl file to avoid race:
+		if (discoverUrlFileReaper.isValid()) {
+			discoverUrlFileReaper.cancel();
+		}
 
-	if (!SERVER_KNOBS->REST_SIM_KMS_VAULT_DIR.empty()) {
-		std::filesystem::remove_all(SERVER_KNOBS->REST_SIM_KMS_VAULT_DIR);
-	}
+		if (!SERVER_KNOBS->REST_SIM_KMS_VAULT_DIR.empty()) {
+			std::filesystem::remove_all(SERVER_KNOBS->REST_SIM_KMS_VAULT_DIR);
+		}
 
-	wait(g_simulator->onProcess(currentProcess, TaskPriority::DefaultYield));
-	return Void();
+		wait(g_simulator->onProcess(currentProcess, TaskPriority::DefaultYield));
+		return Void();
+	} catch (Error& e) {
+		state Error _e = e;
+		// reinstante the currentProcess before exit
+		wait(g_simulator->onProcess(currentProcess, TaskPriority::DefaultYield));
+		throw _e;
+	}
 }
 
 Future<Void> cleanupConfigFiles() {
@@ -605,8 +638,8 @@ ACTOR Future<Void> initOrUpdateDiscoverUrlFile() {
 	state Reference<IAsyncFile> dFile;
 	state ISimulator::ProcessInfo* curProcess = g_simulator->getCurrentProcess();
 
-	wait(g_simulator->onProcess(g_simulator->testSystem, TaskPriority::DefaultYield));
 	try {
+		wait(g_simulator->onProcess(g_simulator->testSystem, TaskPriority::DefaultYield));
 		wait(store(dFile,
 		           IAsyncFileSystem::filesystem()->open(
 		               SERVER_KNOBS->REST_KMS_CONNECTOR_DISCOVER_KMS_URL_FILE, fileFlags, 0666)));
@@ -614,17 +647,20 @@ ACTOR Future<Void> initOrUpdateDiscoverUrlFile() {
 		for (i = 0; i < nServers.get(); i++) {
 			state std::string url = "http://" + getHostname(i) + ":" + getPort(i) + "\n";
 			TraceEvent("RESTSimKmsVaultDiscovery").detail("Url", url);
-			wait(uncancellable(holdWhile(dFile, dFile->write(url.data(), url.size(), offset))));
+			wait(uncancellable(holdWhile(url, dFile->write(url.data(), url.size(), offset))));
 			offset += url.size();
 		}
 		wait(dFile->sync());
 
 		TraceEvent(SevDebug, "RESTSimKmsDiscoverUrlFileUpdated").detail("NumServers", nServers.get());
 	} catch (Error& e) {
+		state Error _e = e;
 		TraceEvent(SevWarn, "RESTSimKmsDiscoverUrlFileUpdateFailed")
 		    .error(e)
 		    .detail("FilePath", SERVER_KNOBS->REST_KMS_CONNECTOR_DISCOVER_KMS_URL_FILE);
-		throw;
+		// reinstante the currentProcess before exit
+		wait(g_simulator->onProcess(curProcess, TaskPriority::DefaultYield));
+		throw _e;
 	}
 	wait(g_simulator->onProcess(curProcess, TaskPriority::DefaultYield));
 	return Void();
@@ -642,7 +678,7 @@ ACTOR Future<Void> initTokenValidationFile() {
 
 	try {
 		wait(store(tFile, IAsyncFileSystem::filesystem()->open(tokenFilePath, fileFlags, 0666)));
-		wait(uncancellable(holdWhile(tFile, tFile->write(dummyToken.data(), dummyToken.size(), 0))));
+		wait(uncancellable(holdWhile(dummyToken, tFile->write(dummyToken.data(), dummyToken.size(), 0))));
 		wait(tFile->sync());
 
 		// fmt::print("RESTSimKms config file {} created\n", tokenFilePath);
@@ -658,34 +694,32 @@ ACTOR Future<Void> initTokenValidationFile() {
 }
 
 ACTOR Future<Void> initConfigFilesImpl() {
-	state ISimulator::ProcessInfo* curProcess;
-	TraceEvent("RESTSimKmsInitConfigFilesImpl").detail("InitDone", g_simulator->initRESTSimKmsVaultConfigFilesDone);
-
-	if (g_simulator->initRESTSimKmsVaultConfigFilesDone) {
-		return Void();
-	}
-
-	ASSERT(!SERVER_KNOBS->REST_KMS_CONNECTOR_DISCOVER_KMS_URL_FILE.empty());
+	state ISimulator::ProcessInfo* curProcess = g_simulator->getCurrentProcess();
 
 	// Possible to have multiple EKP processes attempting to initialze EaR config files, given the files represent a
 	// `global file` concept and not stored in per-process directory, serialization is acheived by ensuring
 	// g_simulator->testSystem process is the only 'writer' for these files
-	curProcess = g_simulator->getCurrentProcess();
 	wait(g_simulator->onProcess(g_simulator->testSystem, TaskPriority::DefaultYield));
+	if (g_simulator->initRESTSimKmsVaultConfigFilesDone) {
+		TraceEvent("RESTSimKmsInitConfigFilesImplAlreadyInited");
+	} else {
+		ASSERT(!SERVER_KNOBS->REST_KMS_CONNECTOR_DISCOVER_KMS_URL_FILE.empty());
 
-	wait(initOrUpdateDiscoverUrlFile());
-	wait(initTokenValidationFile());
+		wait(initOrUpdateDiscoverUrlFile());
+		wait(initTokenValidationFile());
 
-	ASSERT(fileExists(SERVER_KNOBS->REST_KMS_CONNECTOR_DISCOVER_KMS_URL_FILE));
+		ASSERT(fileExists(SERVER_KNOBS->REST_KMS_CONNECTOR_DISCOVER_KMS_URL_FILE));
 
-	// Trigger a reaper task to simulate discover URL file getting updated periodically
-	const int interval = deterministicRandom()->randomInt(120, 180);
-	discoverUrlFileReaper = recurringAsync([&]() { return initOrUpdateDiscoverUrlFile(); },
-	                                       interval, /* interval */
-	                                       true, /* absoluteIntervalDelay */
-	                                       interval, /* initialDelay */
-	                                       TaskPriority::Worker);
-	g_simulator->initRESTSimKmsVaultConfigFilesDone = true;
+		// Trigger a reaper task to simulate discover URL file getting updated periodically
+		const int interval = deterministicRandom()->randomInt(120, 180);
+		discoverUrlFileReaper = recurringAsync([&]() { return initOrUpdateDiscoverUrlFile(); },
+		                                       interval, /* interval */
+		                                       true, /* absoluteIntervalDelay */
+		                                       interval, /* initialDelay */
+		                                       TaskPriority::Worker);
+		g_simulator->initRESTSimKmsVaultConfigFilesDone = true;
+		TraceEvent("RESTSimKmsInitConfigFilesImplInitDone");
+	}
 	wait(g_simulator->onProcess(curProcess, TaskPriority::DefaultYield));
 	return Void();
 }
@@ -929,9 +963,9 @@ TEST_CASE("/restSimKmsVault/invalidHeader") {
 }
 
 TEST_CASE("/restSimKmsVault/GetByDomainIds/missingVersion") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeEncryptDomainIdsRequestContent(domIds, FaultType::MISSING_VERSION);
-	VaultResponse response = handleFetchKeysByDomainIds(requestContent);
+	VaultResponse response = wait(handleFetchKeysByDomainIds(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -941,9 +975,9 @@ TEST_CASE("/restSimKmsVault/GetByDomainIds/missingVersion") {
 }
 
 TEST_CASE("/restSimKmsVault/GetByDomainIds/invalidVersion") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeEncryptDomainIdsRequestContent(domIds, FaultType::INVALID_VERSION);
-	VaultResponse response = handleFetchKeysByDomainIds(requestContent);
+	VaultResponse response = wait(handleFetchKeysByDomainIds(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -953,10 +987,10 @@ TEST_CASE("/restSimKmsVault/GetByDomainIds/invalidVersion") {
 }
 
 TEST_CASE("/restSimKmsVault/GetByDomainIds/missingValidationTokens") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeEncryptDomainIdsRequestContent(domIds, FaultType::MISSING_VALIDATION_TOKEN);
 
-	VaultResponse response = handleFetchKeysByDomainIds(requestContent);
+	VaultResponse response = wait(handleFetchKeysByDomainIds(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -966,19 +1000,19 @@ TEST_CASE("/restSimKmsVault/GetByDomainIds/missingValidationTokens") {
 }
 
 TEST_CASE("/restSimKmsVault/GetByDomainIds") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeEncryptDomainIdsRequestContent(domIds);
 
-	VaultResponse response = handleFetchKeysByDomainIds(requestContent);
+	VaultResponse response = wait(handleFetchKeysByDomainIds(requestContent));
 	validateEncryptLookup(response, domIds);
 	return Void();
 }
 
 TEST_CASE("/restSimKmsVault/GetByKeyIds/missingVersion") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBaseCipherIdsRequestContent(domIds, FaultType::MISSING_VERSION);
 
-	VaultResponse response = handleFetchKeysByKeyIds(requestContent);
+	VaultResponse response = wait(handleFetchKeysByKeyIds(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -988,10 +1022,10 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds/missingVersion") {
 }
 
 TEST_CASE("/restSimKmsVault/GetByKeyIds/invalidVersion") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBaseCipherIdsRequestContent(domIds, FaultType::INVALID_VERSION);
 
-	VaultResponse response = handleFetchKeysByKeyIds(requestContent);
+	VaultResponse response = wait(handleFetchKeysByKeyIds(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1001,10 +1035,10 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds/invalidVersion") {
 }
 
 TEST_CASE("/restSimKmsVault/GetByKeyIds/missingValidationTokens") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBaseCipherIdsRequestContent(domIds, FaultType::MISSING_VALIDATION_TOKEN);
 
-	VaultResponse response = handleFetchKeysByKeyIds(requestContent);
+	VaultResponse response = wait(handleFetchKeysByKeyIds(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1014,19 +1048,19 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds/missingValidationTokens") {
 }
 
 TEST_CASE("/restSimKmsVault/GetByKeyIds") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBaseCipherIdsRequestContent(domIds);
 
-	VaultResponse response = handleFetchKeysByKeyIds(requestContent);
+	VaultResponse response = wait(handleFetchKeysByKeyIds(requestContent));
 	validateEncryptLookup(response, domIds);
 	return Void();
 }
 
 TEST_CASE("/restSimKmsVault/GetBlobMetadata/missingVersion") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBlobDomainIdsRequestContent(domIds, FaultType::MISSING_VERSION);
 
-	VaultResponse response = handleFetchBlobMetada(requestContent);
+	VaultResponse response = wait(handleFetchBlobMetada(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1036,10 +1070,10 @@ TEST_CASE("/restSimKmsVault/GetBlobMetadata/missingVersion") {
 }
 
 TEST_CASE("/restSimKmsVault/GetBlobMetadata/invalidVersion") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBlobDomainIdsRequestContent(domIds, FaultType::INVALID_VERSION);
 
-	VaultResponse response = handleFetchBlobMetada(requestContent);
+	VaultResponse response = wait(handleFetchBlobMetada(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1049,10 +1083,10 @@ TEST_CASE("/restSimKmsVault/GetBlobMetadata/invalidVersion") {
 }
 
 TEST_CASE("/restSimKmsVault/GetByKeyIds/missingValidationTokens") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBlobDomainIdsRequestContent(domIds, FaultType::MISSING_VALIDATION_TOKEN);
 
-	VaultResponse response = handleFetchBlobMetada(requestContent);
+	VaultResponse response = wait(handleFetchBlobMetada(requestContent));
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1062,10 +1096,10 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds/missingValidationTokens") {
 }
 
 TEST_CASE("/restSimKmsVault/GetBlobMetadata/foo") {
-	EncryptCipherDomainIdVec domIds;
+	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBlobDomainIdsRequestContent(domIds);
 
-	VaultResponse response = handleFetchBlobMetada(requestContent);
+	VaultResponse response = wait(handleFetchBlobMetada(requestContent));
 	validateBlobLookup(response, domIds);
 	return Void();
 }

@@ -134,8 +134,11 @@ public:
 	FileBackupAgent();
 
 	FileBackupAgent(FileBackupAgent&& r) noexcept
-	  : subspace(std::move(r.subspace)), config(std::move(r.config)), lastRestorable(std::move(r.lastRestorable)),
-	    taskBucket(std::move(r.taskBucket)), futureBucket(std::move(r.futureBucket)) {}
+	  : subspace(std::move(r.subspace)),
+	    config(std::move(r.config)),
+	    lastRestorable(std::move(r.lastRestorable)),
+	    taskBucket(std::move(r.taskBucket)),
+	    futureBucket(std::move(r.futureBucket)) {}
 
 	void operator=(FileBackupAgent&& r) noexcept {
 		subspace = std::move(r.subspace);
@@ -488,10 +491,16 @@ public:
 	explicit DatabaseBackupAgent(Database src);
 
 	DatabaseBackupAgent(DatabaseBackupAgent&& r) noexcept
-	  : subspace(std::move(r.subspace)), states(std::move(r.states)), config(std::move(r.config)),
-	    errors(std::move(r.errors)), ranges(std::move(r.ranges)), tagNames(std::move(r.tagNames)),
-	    sourceStates(std::move(r.sourceStates)), sourceTagNames(std::move(r.sourceTagNames)),
-	    taskBucket(std::move(r.taskBucket)), futureBucket(std::move(r.futureBucket)) {}
+	  : subspace(std::move(r.subspace)),
+	    states(std::move(r.states)),
+	    config(std::move(r.config)),
+	    errors(std::move(r.errors)),
+	    ranges(std::move(r.ranges)),
+	    tagNames(std::move(r.tagNames)),
+	    sourceStates(std::move(r.sourceStates)),
+	    sourceTagNames(std::move(r.sourceTagNames)),
+	    taskBucket(std::move(r.taskBucket)),
+	    futureBucket(std::move(r.futureBucket)) {}
 
 	void operator=(DatabaseBackupAgent&& r) noexcept {
 		subspace = std::move(r.subspace);
@@ -759,7 +768,9 @@ public:
 	} TaskParams;
 
 	KeyBackedTaskConfig(StringRef prefix, UID uid = UID())
-	  : KeyBackedClass(prefix), uid(uid), configSpace(uidPrefixKey("uid->config/"_sr.withPrefix(prefix), uid)) {}
+	  : KeyBackedClass(prefix),
+	    uid(uid),
+	    configSpace(uidPrefixKey("uid->config/"_sr.withPrefix(prefix), uid)) {}
 
 	KeyBackedTaskConfig(StringRef prefix, Reference<Task> task)
 	  : KeyBackedTaskConfig(prefix, TaskParams.uid().get(task)) {}

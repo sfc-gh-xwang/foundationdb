@@ -1532,7 +1532,8 @@ private:
 };
 
 SimulationConfig::SimulationConfig(const TestConfig& testConfig)
-  : extraDatabaseMode(testConfig.extraDatabaseMode), extraDatabaseCount(testConfig.extraDatabaseCount) {
+  : extraDatabaseMode(testConfig.extraDatabaseMode),
+    extraDatabaseCount(testConfig.extraDatabaseCount) {
 	generateNormalConfig(testConfig);
 }
 

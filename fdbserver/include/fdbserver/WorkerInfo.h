@@ -43,7 +43,8 @@ struct WorkerInfo : NonCopyable {
 	Standalone<VectorRef<StringRef>> issues;
 
 	WorkerInfo()
-	  : gen(-1), reboots(0),
+	  : gen(-1),
+	    reboots(0),
 	    priorityInfo(ProcessClass::UnsetFit, false, ClusterControllerPriorityInfo::FitnessUnknown) {}
 	WorkerInfo(Future<Void> watcher,
 	           ReplyPromise<RegisterWorkerReply> reply,
@@ -55,15 +56,31 @@ struct WorkerInfo : NonCopyable {
 	           bool degraded,
 	           bool recoveredDiskFiles,
 	           Standalone<VectorRef<StringRef>> issues)
-	  : watcher(watcher), reply(reply), gen(gen), reboots(0), initialClass(initialClass), priorityInfo(priorityInfo),
-	    details(interf, processClass, degraded, recoveredDiskFiles), issues(issues) {}
+	  : watcher(watcher),
+	    reply(reply),
+	    gen(gen),
+	    reboots(0),
+	    initialClass(initialClass),
+	    priorityInfo(priorityInfo),
+	    details(interf, processClass, degraded, recoveredDiskFiles),
+	    issues(issues) {}
 
 	WorkerInfo(WorkerInfo&& r) noexcept
-	  : watcher(std::move(r.watcher)), reply(std::move(r.reply)), gen(r.gen), reboots(r.reboots),
-	    initialClass(r.initialClass), priorityInfo(r.priorityInfo), details(std::move(r.details)),
-	    haltRatekeeper(r.haltRatekeeper), haltDistributor(r.haltDistributor), haltBlobManager(r.haltBlobManager),
-	    haltEncryptKeyProxy(r.haltEncryptKeyProxy), haltConsistencyScan(r.haltConsistencyScan),
-	    haltTenantBalancer(r.haltTenantBalancer), issues(r.issues) {}
+	  : watcher(std::move(r.watcher)),
+	    reply(std::move(r.reply)),
+	    gen(r.gen),
+	    reboots(r.reboots),
+	    initialClass(r.initialClass),
+	    priorityInfo(r.priorityInfo),
+	    details(std::move(r.details)),
+	    haltRatekeeper(r.haltRatekeeper),
+	    haltDistributor(r.haltDistributor),
+	    haltBlobManager(r.haltBlobManager),
+	    haltEncryptKeyProxy(r.haltEncryptKeyProxy),
+	    haltConsistencyScan(r.haltConsistencyScan),
+		haltTenantBalancer(r.haltTenantBalancer),
+	    issues(r.issues) {}
+
 	void operator=(WorkerInfo&& r) noexcept {
 		watcher = std::move(r.watcher);
 		reply = std::move(r.reply);
@@ -88,7 +105,9 @@ struct WorkerFitnessInfo {
 
 	WorkerFitnessInfo() : fitness(ProcessClass::NeverAssign), used(0) {}
 	WorkerFitnessInfo(WorkerDetails worker, ProcessClass::Fitness fitness, int used)
-	  : worker(worker), fitness(fitness), used(used) {}
+	  : worker(worker),
+	    fitness(fitness),
+	    used(used) {}
 };
 
 struct RecruitmentInfo {
@@ -98,21 +117,23 @@ struct RecruitmentInfo {
 
 	RecruitmentInfo() {}
 	explicit RecruitmentInfo(DatabaseConfiguration const& configuration, bool recruitSeedServers, int maxOldLogRouters)
-	  : configuration(configuration), recruitSeedServers(recruitSeedServers), maxOldLogRouters(maxOldLogRouters) {}
+	  : configuration(configuration),
+	    recruitSeedServers(recruitSeedServers),
+	    maxOldLogRouters(maxOldLogRouters) {}
 };
 
-// Stores the interfaces for all the workers required for a functioning
-// transaction subsystem.
+// Stores details about all the workers required for a functioning transaction
+// subsystem.
 struct WorkerRecruitment {
-	std::vector<WorkerInterface> grvProxies;
-	std::vector<WorkerInterface> commitProxies;
-	std::vector<WorkerInterface> resolvers;
-	std::vector<WorkerInterface> tLogs;
-	std::vector<WorkerInterface> satelliteTLogs;
-	std::vector<WorkerInterface> storageServers;
+	std::vector<WorkerDetails> grvProxies;
+	std::vector<WorkerDetails> commitProxies;
+	std::vector<WorkerDetails> resolvers;
+	std::vector<WorkerDetails> tLogs;
+	std::vector<WorkerDetails> satelliteTLogs;
+	std::vector<WorkerDetails> storageServers;
 	// During recovery, log routers for older generations will be recruited.
-	std::vector<WorkerInterface> oldLogRouters;
-	std::vector<WorkerInterface> backupWorkers;
+	std::vector<WorkerDetails> oldLogRouters;
+	std::vector<WorkerDetails> backupWorkers;
 	// dcId is where the master is recruited. It prefers to be in
 	// configuration.primaryDcId, but it can be recruited from
 	// configuration.secondaryDc: The dcId will be the secondaryDcId and this
@@ -128,9 +149,12 @@ struct WorkerRecruitment {
 
 	WorkerRecruitment() : satelliteFallback(false) {}
 
-	// TODO(ljoswiak): Implement when refactoring `betterMasterExists`
-	bool operator==(WorkerRecruitment const& rhs) const { return true; }
-	bool operator<(WorkerRecruitment const& rhs) const { return true; }
+	// Returns true if `this` represents a worse recruitment when compared to
+	// `rhs`, for some definition of worse.
+	bool operator<(WorkerRecruitment const& rhs) const;
+	bool operator>(WorkerRecruitment const& rhs) const { return rhs < *this; }
+	bool operator<=(WorkerRecruitment const& rhs) const { return !(*this > rhs); }
+	bool operator>=(WorkerRecruitment const& rhs) const { return !(*this < rhs); }
 };
 
 struct RemoteRecruitmentInfo {
@@ -145,12 +169,14 @@ struct RemoteRecruitmentInfo {
 	                      Optional<Key> const& dcId,
 	                      int logRouterCount,
 	                      const std::vector<UID>& exclusionWorkerIds)
-	  : configuration(configuration), dcId(dcId), logRouterCount(logRouterCount),
+	  : configuration(configuration),
+	    dcId(dcId),
+	    logRouterCount(logRouterCount),
 	    exclusionWorkerIds(exclusionWorkerIds) {}
 };
 
 struct RemoteWorkerRecruitment {
-	std::vector<WorkerInterface> remoteTLogs;
-	std::vector<WorkerInterface> logRouters;
+	std::vector<WorkerDetails> remoteTLogs;
+	std::vector<WorkerDetails> logRouters;
 	Optional<UID> dbgId;
 };

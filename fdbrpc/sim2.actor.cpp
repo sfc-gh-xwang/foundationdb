@@ -70,10 +70,21 @@ ISimulator* g_simulator = nullptr;
 thread_local ISimulator::ProcessInfo* ISimulator::currentProcess = nullptr;
 
 ISimulator::ISimulator()
-  : desiredCoordinators(1), physicalDatacenters(1), processesPerMachine(0), listenersPerProcess(1), usableRegions(1),
-    allowLogSetKills(true), tssMode(TSSMode::Disabled), configDBType(ConfigDBType::DISABLED),
-    blobGranulesEnabled(false), isStopped(false), lastConnectionFailure(0), connectionFailuresDisableDuration(0),
-    speedUpSimulation(false), backupAgents(BackupAgentType::WaitForType), drAgents(BackupAgentType::WaitForType),
+  : desiredCoordinators(1),
+    physicalDatacenters(1),
+    processesPerMachine(0),
+    listenersPerProcess(1),
+    usableRegions(1),
+    allowLogSetKills(true),
+    tssMode(TSSMode::Disabled),
+    configDBType(ConfigDBType::DISABLED),
+    blobGranulesEnabled(false),
+    isStopped(false),
+    lastConnectionFailure(0),
+    connectionFailuresDisableDuration(0),
+    speedUpSimulation(false),
+    backupAgents(BackupAgentType::WaitForType),
+    drAgents(BackupAgentType::WaitForType),
     allSwapsDisabled(false) {}
 ISimulator::~ISimulator() = default;
 
@@ -308,8 +319,13 @@ SimClogging g_clogging;
 
 struct Sim2Conn final : IConnection, ReferenceCounted<Sim2Conn> {
 	Sim2Conn(ISimulator::ProcessInfo* process)
-	  : opened(false), closedByCaller(false), stableConnection(false), trustedPeer(true), process(process),
-	    dbgid(deterministicRandom()->randomUniqueID()), stopReceive(Never()) {
+	  : opened(false),
+	    closedByCaller(false),
+	    stableConnection(false),
+	    trustedPeer(true),
+	    process(process),
+	    dbgid(deterministicRandom()->randomUniqueID()),
+	    stopReceive(Never()) {
 		pipes = sender(this) && receiver(this);
 	}
 
@@ -712,8 +728,13 @@ private:
 	           const std::string& filename,
 	           const std::string& actualFilename,
 	           int flags)
-	  : h(h), diskParameters(diskParameters), filename(filename), actualFilename(actualFilename), flags(flags),
-	    dbgId(deterministicRandom()->randomUniqueID()), delayOnWrite(delayOnWrite) {}
+	  : h(h),
+	    diskParameters(diskParameters),
+	    filename(filename),
+	    actualFilename(actualFilename),
+	    flags(flags),
+	    dbgId(deterministicRandom()->randomUniqueID()),
+	    delayOnWrite(delayOnWrite) {}
 
 	static int flagConversion(int flags) {
 		int outFlags = O_BINARY | O_CLOEXEC;
@@ -957,7 +978,8 @@ void doReboot(ISimulator::ProcessInfo* const& p, ISimulator::KillType const& kt)
 
 struct Sim2Listener final : IListener, ReferenceCounted<Sim2Listener> {
 	explicit Sim2Listener(ISimulator::ProcessInfo* process, const NetworkAddress& listenAddr)
-	  : process(process), address(listenAddr) {}
+	  : process(process),
+	    address(listenAddr) {}
 
 	void incomingConnection(double seconds, Reference<IConnection> conn) { // Called by another process!
 		incoming(Reference<Sim2Listener>::addRef(this), seconds, conn);
@@ -2515,7 +2537,11 @@ public:
 	}
 
 	Sim2(bool printSimTime)
-	  : time(0.0), timerTime(0.0), currentTaskID(TaskPriority::Zero), yielded(false), yield_limit(0),
+	  : time(0.0),
+	    timerTime(0.0),
+	    currentTaskID(TaskPriority::Zero),
+	    yielded(false),
+	    yield_limit(0),
 	    printSimTime(printSimTime) {
 		// Not letting currentProcess be nullptr eliminates some annoying special cases
 		currentProcess =
@@ -2674,8 +2700,11 @@ class UDPSimSocket : public IUDPSocket, ReferenceCounted<UDPSimSocket> {
 
 public:
 	UDPSimSocket(NetworkAddress const& localAddress, Optional<NetworkAddress> const& peerAddress)
-	  : id(deterministicRandom()->randomUniqueID()), process(g_simulator->getCurrentProcess()),
-	    peerAddress(peerAddress), actors(false), _localAddress(localAddress) {
+	  : id(deterministicRandom()->randomUniqueID()),
+	    process(g_simulator->getCurrentProcess()),
+	    peerAddress(peerAddress),
+	    actors(false),
+	    _localAddress(localAddress) {
 		g_sim2.addressMap.emplace(_localAddress, process);
 		ASSERT(process->boundUDPSockets.find(localAddress) == process->boundUDPSockets.end());
 		process->boundUDPSockets.emplace(localAddress, this);

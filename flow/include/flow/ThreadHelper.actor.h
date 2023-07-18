@@ -125,7 +125,10 @@ struct ThreadCallback {
 		                    int index,
 		                    MultiCallbackHolder* prev,
 		                    MultiCallbackHolder* next)
-		  : multiCallback(multiCallback), index(0), previous(prev), next(next) {}
+		  : multiCallback(multiCallback),
+		    index(0),
+		    previous(prev),
+		    next(next) {}
 
 		ThreadMultiCallback* multiCallback;
 		int index;

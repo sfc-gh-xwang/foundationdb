@@ -87,6 +87,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( CHANGE_FEED_CACHE_FLUSH_BYTES,          10e6 ); if( randomize && BUGGIFY ) CHANGE_FEED_CACHE_FLUSH_BYTES = deterministicRandom()->randomInt64(1, 1e6);
 	init( CHANGE_FEED_CACHE_EXPIRE_TIME,          60.0 ); if( randomize && BUGGIFY ) CHANGE_FEED_CACHE_EXPIRE_TIME = 1.0;
 	init( CHANGE_FEED_CACHE_LIMIT_BYTES,        500000 ); if( randomize && BUGGIFY ) CHANGE_FEED_CACHE_LIMIT_BYTES = 50000;
+	init( CHANGE_FEED_DESIRED_VERSION_JUMP_MAX, 1000000 ); if( randomize && BUGGIFY ) { CHANGE_FEED_DESIRED_VERSION_JUMP_MAX = deterministicRandom()->randomSkewedUInt32(100000, 10000000); }
+	init( CHANGE_FEED_EMPTY_BATCH_TIME,          0.005 );
 
 	init( MAX_BATCH_SIZE,                         1000 ); if( randomize && BUGGIFY ) MAX_BATCH_SIZE = 1;
 	init( GRV_BATCH_TIMEOUT,                     0.005 ); if( randomize && BUGGIFY ) GRV_BATCH_TIMEOUT = 0.1;
@@ -111,7 +113,6 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( RANGESTREAM_FRAGMENT_SIZE,               1e6 );
 	init( RANGESTREAM_BUFFERED_FRAGMENTS_LIMIT,     20 );
 	init( QUARANTINE_TSS_ON_MISMATCH,             true ); if( randomize && BUGGIFY ) QUARANTINE_TSS_ON_MISMATCH = false; // if true, a tss mismatch will put the offending tss in quarantine. If false, it will just be killed
-	init( CHANGE_FEED_EMPTY_BATCH_TIME,          0.005 );
 
 	//KeyRangeMap
 	init( KRM_GET_RANGE_LIMIT,                     1e5 ); if( randomize && BUGGIFY ) KRM_GET_RANGE_LIMIT = 10;
@@ -289,6 +290,14 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( GRV_BATCHER_CLEANING_INTERVAL,            5.0 );
 	init( TRACK_THROUGHPUT_ON_CLIENTS,            false ); if( randomize && BUGGIFY ) TRACK_THROUGHPUT_ON_CLIENTS = true;
 	init( CLIENT_THROUGHPUT_REPORT_INTERVAL,        1.0 );
+	init( TRACK_AVERAGE_COST_ON_CLIENT,           false ); if( randomize && BUGGIFY ) TRACK_AVERAGE_COST_ON_CLIENT = true;
+	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
+	init( AVERAGE_COST_START_DELAY,                10.0 );
+	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
+	// TODO: Randomly turn this knob off once throughput once
+	// RKThroughputQuotaCache is receiving throughput updates
+	// from IRKThroughputTracker:
+	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true );
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );

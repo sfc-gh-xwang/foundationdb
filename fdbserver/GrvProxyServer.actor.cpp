@@ -22,6 +22,7 @@
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/Knobs.h"
 #include "fdbclient/Notified.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
 #include "fdbclient/CommitProxyInterface.h"
@@ -103,19 +104,34 @@ struct GrvProxyStats {
 	explicit GrvProxyStats(UID id)
 	  : cc("GrvProxyStats", id.toString()),
 
-	    txnRequestIn("TxnRequestIn", cc), txnRequestOut("TxnRequestOut", cc), txnRequestErrors("TxnRequestErrors", cc),
-	    txnStartIn("TxnStartIn", cc), txnStartOut("TxnStartOut", cc), txnStartBatch("TxnStartBatch", cc),
+	    txnRequestIn("TxnRequestIn", cc),
+	    txnRequestOut("TxnRequestOut", cc),
+	    txnRequestErrors("TxnRequestErrors", cc),
+	    txnStartIn("TxnStartIn", cc),
+	    txnStartOut("TxnStartOut", cc),
+	    txnStartBatch("TxnStartBatch", cc),
 	    txnSystemPriorityStartIn("TxnSystemPriorityStartIn", cc),
 	    txnSystemPriorityStartOut("TxnSystemPriorityStartOut", cc),
 	    txnBatchPriorityStartIn("TxnBatchPriorityStartIn", cc),
 	    txnBatchPriorityStartOut("TxnBatchPriorityStartOut", cc),
 	    txnDefaultPriorityStartIn("TxnDefaultPriorityStartIn", cc),
-	    txnDefaultPriorityStartOut("TxnDefaultPriorityStartOut", cc), txnThrottled("TxnThrottled", cc),
-	    updatesFromRatekeeper("UpdatesFromRatekeeper", cc), leaseTimeouts("LeaseTimeouts", cc), systemGRVQueueSize(0),
-	    defaultGRVQueueSize(0), batchGRVQueueSize(0), transactionRateAllowed(0), batchTransactionRateAllowed(0),
-	    transactionLimit(0), batchTransactionLimit(0), percentageOfDefaultGRVQueueProcessed(0),
-	    percentageOfBatchGRVQueueProcessed(0), lastBatchQueueThrottled(false), lastDefaultQueueThrottled(false),
-	    batchThrottleStartTime(0.0), defaultThrottleStartTime(0.0),
+	    txnDefaultPriorityStartOut("TxnDefaultPriorityStartOut", cc),
+	    txnThrottled("TxnThrottled", cc),
+	    updatesFromRatekeeper("UpdatesFromRatekeeper", cc),
+	    leaseTimeouts("LeaseTimeouts", cc),
+	    systemGRVQueueSize(0),
+	    defaultGRVQueueSize(0),
+	    batchGRVQueueSize(0),
+	    transactionRateAllowed(0),
+	    batchTransactionRateAllowed(0),
+	    transactionLimit(0),
+	    batchTransactionLimit(0),
+	    percentageOfDefaultGRVQueueProcessed(0),
+	    percentageOfBatchGRVQueueProcessed(0),
+	    lastBatchQueueThrottled(false),
+	    lastDefaultQueueThrottled(false),
+	    batchThrottleStartTime(0.0),
+	    defaultThrottleStartTime(0.0),
 	    defaultTxnGRVTimeInQueue("DefaultTxnGRVTimeInQueue",
 	                             id,
 	                             SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
@@ -133,7 +149,8 @@ struct GrvProxyStats {
 	                          id,
 	                          SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
 	                          SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
-	    recentRequests(0), lastBucketBegin(now()),
+	    recentRequests(0),
+	    lastBucketBegin(now()),
 	    bucketInterval(FLOW_KNOBS->BASIC_LOAD_BALANCE_UPDATE_RATE / FLOW_KNOBS->BASIC_LOAD_BALANCE_BUCKETS),
 	    grvConfirmEpochLiveDist(
 	        Histogram::getHistogram("GrvProxy"_sr, "GrvConfirmEpochLive"_sr, Histogram::Unit::milliseconds)),
@@ -211,14 +228,22 @@ struct GrvProxyData {
 	             MasterInterface master,
 	             PublicRequestStream<GetReadVersionRequest> getConsistentReadVersion,
 	             Reference<AsyncVar<ServerDBInfo> const> db)
-	  : dbgid(dbgid), stats(dbgid), master(master), getConsistentReadVersion(getConsistentReadVersion),
-	    cx(openDBOnServer(db, TaskPriority::DefaultEndpoint, LockAware::True)), db(db), lastStartCommit(0),
+	  : dbgid(dbgid),
+	    stats(dbgid),
+	    master(master),
+	    getConsistentReadVersion(getConsistentReadVersion),
+	    cx(openDBOnServer(db, TaskPriority::DefaultEndpoint, LockAware::True)),
+	    db(db),
+	    lastStartCommit(0),
 	    lastCommitLatency(SERVER_KNOBS->REQUIRED_MIN_RECOVERY_DURATION),
 	    versionVectorSizeOnGRVReply("VersionVectorSizeOnGRVReply",
 	                                dbgid,
 	                                SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
 	                                SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
-	    updateCommitRequests(0), lastCommitTime(0), version(0), minKnownCommittedVersion(invalidVersion),
+	    updateCommitRequests(0),
+	    lastCommitTime(0),
+	    version(0),
+	    minKnownCommittedVersion(invalidVersion),
 	    tagThrottler(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION) {}
 };
 
@@ -439,8 +464,15 @@ ACTOR Future<Void> getRate(UID myID,
 				lastDetailedReply = now();
 			}
 
-			if (rep.proxyThrottledTags.present()) {
-				proxyData->tagThrottler.updateRates(rep.proxyThrottledTags.get());
+			if (isClientAverageCostTrackingEnabled()) {
+				// track-average-cost-on-client is enabled, update the tag throttler with the
+				// target throughput in bytes per second.
+				if (rep.targetThroughput.present()) {
+					proxyData->tagThrottler.updateRates(rep.targetThroughput.get());
+				}
+			} else if (rep.targetTransactionRate.present()) {
+				// Update the tag throttler with the target rates in transactions per second
+				proxyData->tagThrottler.updateRates(rep.targetTransactionRate.get());
 			}
 		}
 		when(wait(leaseTimeout)) {
@@ -820,10 +852,12 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state int64_t batchTransactionCount = 0;
 	state GrvTransactionRateInfo normalRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
 	                                            SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                            /*rate=*/10);
+	                                            /*rate=*/10,
+	                                            SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 	state GrvTransactionRateInfo batchRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
 	                                           SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                           /*rate=*/0);
+	                                           /*rate=*/0,
+	                                           SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 
 	state Deque<GetReadVersionRequest> systemQueue;
 	state Deque<GetReadVersionRequest> defaultQueue;

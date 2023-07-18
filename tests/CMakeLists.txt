@@ -169,7 +169,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES fast/EncryptKeyProxyTest.toml)
   add_fdb_test(TEST_FILES fast/FuzzApiCorrectness.toml)
   add_fdb_test(TEST_FILES fast/FuzzApiCorrectnessClean.toml)
-  add_fdb_test(TEST_FILES fast/HTTPKeyValueStore.toml)
+  add_fdb_test(TEST_FILES fast/HTTPKeyValueStore.toml IGNORE)
   add_fdb_test(TEST_FILES fast/IncrementalBackup.toml)
   add_fdb_test(TEST_FILES fast/IncrementalBackupWithEKPKeyFetchFailures.toml)
   add_fdb_test(TEST_FILES fast/IncrementalBackupWithTenantDeletion.toml)
@@ -275,6 +275,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES rare/SwizzledLargeApiCorrectness.toml)
   add_fdb_test(TEST_FILES rare/RedwoodCorrectnessBTree.toml)
   add_fdb_test(TEST_FILES rare/RedwoodDeltaTree.toml)
+  add_fdb_test(TEST_FILES rare/SimpleThroughputQuotaCache.toml)
   add_fdb_test(TEST_FILES rare/TagThroughputQuota.toml)
   add_fdb_test(TEST_FILES rare/TenantGroupThroughputQuota.toml)
   add_fdb_test(TEST_FILES rare/Throttling.toml)
@@ -284,6 +285,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES rare/AllSimUnitTests.toml IGNORE)
   add_fdb_test(TEST_FILES rare/StatusBuilderPerf.toml)
   add_fdb_test(TEST_FILES rare/TLogVersionMessagesOverheadFactor.toml)
+  add_fdb_test(TEST_FILES rare/UpdateStream.toml)
   add_fdb_test(
     TEST_FILES restarting/from_5.0.0_until_6.3.0/CycleTestRestart-1.txt
     restarting/from_5.0.0_until_6.3.0/CycleTestRestart-2.txt)
@@ -370,8 +372,8 @@ if(WITH_PYTHON)
     restarting/from_71.3.0/CycleTestRestart-2.txt)
   #TODO: Reenable this test once knob issue is fixed (FDBCORE-5417):
   add_fdb_test(
-    TEST_FILES restarting/from_71.3.0/BlobGranuleRestartCorrectness-1.toml
-    restarting/from_71.3.0/BlobGranuleRestartCorrectness-2.toml IGNORE)
+    TEST_FILES restarting/from_71.3.1/BlobGranuleRestartCorrectness-1.toml
+    restarting/from_71.3.1/BlobGranuleRestartCorrectness-2.toml)
   add_fdb_test(
     TEST_FILES restarting/from_71.3.0/SnapCycleRestart-1.toml
     restarting/from_71.3.0/SnapCycleRestart-2.toml)
@@ -394,8 +396,14 @@ if(WITH_PYTHON)
     TEST_FILES restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-1.toml
     restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-2.toml)
   add_fdb_test(
+    TEST_FILES restarting/to_71.3.1/ConfigureStorageMigrationTestRestart-1.toml
+	restarting/to_71.3.1/ConfigureStorageMigrationTestRestart-2.toml)
+  add_fdb_test(
     TEST_FILES restarting/to_71.3.0/CycleTestRestart-1.toml
     restarting/to_71.3.0/CycleTestRestart-2.toml)
+  add_fdb_test(
+    TEST_FILES restarting/to_71.3.1/CycleTestRestart-1.toml
+	restarting/to_71.3.1/CycleTestRestart-2.toml)
   add_fdb_test(
     TEST_FILES restarting/to_71.3.0/BlobGranuleRestartCycle-1.toml
     restarting/to_71.3.0/BlobGranuleRestartCycle-2.toml)

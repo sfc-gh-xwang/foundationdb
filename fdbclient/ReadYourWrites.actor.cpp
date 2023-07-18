@@ -70,7 +70,9 @@ public:
 	template <bool reverse>
 	struct GetRangeReq {
 		GetRangeReq(KeySelector begin, KeySelector end, GetRangeLimits limits)
-		  : begin(begin), end(end), limits(limits) {}
+		  : begin(begin),
+		    end(end),
+		    limits(limits) {}
 		KeySelector begin, end;
 		GetRangeLimits limits;
 		using Result = RangeReadResult;
@@ -79,7 +81,11 @@ public:
 	template <bool reverse>
 	struct GetMappedRangeReq {
 		GetMappedRangeReq(KeySelector begin, KeySelector end, Key mapper, int matchIndex, GetRangeLimits limits)
-		  : begin(begin), end(end), mapper(mapper), limits(limits), matchIndex(matchIndex) {}
+		  : begin(begin),
+		    end(end),
+		    mapper(mapper),
+		    limits(limits),
+		    matchIndex(matchIndex) {}
 		KeySelector begin, end;
 		Key mapper;
 		GetRangeLimits limits;
@@ -1583,9 +1589,17 @@ public:
 };
 
 ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx, Optional<Reference<Tenant>> const& tenant)
-  : ISingleThreadTransaction(cx->deferredError), tr(cx, tenant), cache(&arena), writes(&arena), retries(0),
-    approximateSize(0), creationTime(now()), commitStarted(false), versionStampFuture(tr.getVersionstamp()),
-    specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end), options(tr) {
+  : ISingleThreadTransaction(cx->deferredError),
+    tr(cx, tenant),
+    cache(&arena),
+    writes(&arena),
+    retries(0),
+    approximateSize(0),
+    creationTime(now()),
+    commitStarted(false),
+    versionStampFuture(tr.getVersionstamp()),
+    specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
+    options(tr) {
 	std::copy(
 	    cx.getTransactionDefaults().begin(), cx.getTransactionDefaults().end(), std::back_inserter(persistentOptions));
 	applyPersistentOptions();
@@ -1906,7 +1920,8 @@ Future<Standalone<VectorRef<BlobGranuleChunkRef>>> ReadYourWritesTransaction::re
     const KeyRange& range,
     Version begin,
     Optional<Version> readVersion,
-    Version* readVersionOut) {
+    Version* readVersionOut,
+    int64_t mutationByteLimit) {
 	if (!options.readYourWritesDisabled) {
 		return blob_granule_no_ryw();
 	}
@@ -1922,7 +1937,8 @@ Future<Standalone<VectorRef<BlobGranuleChunkRef>>> ReadYourWritesTransaction::re
 	if (range.begin > maxKey || range.end > maxKey)
 		return key_outside_legal_range();
 
-	return waitOrError(tr.readBlobGranules(range, begin, readVersion, readVersionOut), resetPromise.getFuture());
+	return waitOrError(tr.readBlobGranules(range, begin, readVersion, readVersionOut, mutationByteLimit),
+	                   resetPromise.getFuture());
 }
 
 Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> ReadYourWritesTransaction::summarizeBlobGranules(
@@ -2658,10 +2674,18 @@ void ReadYourWritesTransaction::operator=(ReadYourWritesTransaction&& r) noexcep
 }
 
 ReadYourWritesTransaction::ReadYourWritesTransaction(ReadYourWritesTransaction&& r) noexcept
-  : ISingleThreadTransaction(std::move(r.deferredError)), arena(std::move(r.arena)), cache(std::move(r.cache)),
-    writes(std::move(r.writes)), resetPromise(std::move(r.resetPromise)), reading(std::move(r.reading)),
-    retries(r.retries), approximateSize(r.approximateSize), timeoutActor(std::move(r.timeoutActor)),
-    creationTime(r.creationTime), commitStarted(r.commitStarted), transactionDebugInfo(r.transactionDebugInfo),
+  : ISingleThreadTransaction(std::move(r.deferredError)),
+    arena(std::move(r.arena)),
+    cache(std::move(r.cache)),
+    writes(std::move(r.writes)),
+    resetPromise(std::move(r.resetPromise)),
+    reading(std::move(r.reading)),
+    retries(r.retries),
+    approximateSize(r.approximateSize),
+    timeoutActor(std::move(r.timeoutActor)),
+    creationTime(r.creationTime),
+    commitStarted(r.commitStarted),
+    transactionDebugInfo(r.transactionDebugInfo),
     options(r.options) {
 	cache.arena = &arena;
 	writes.arena = &arena;

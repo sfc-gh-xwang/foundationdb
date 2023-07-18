@@ -94,9 +94,13 @@ struct RestoreClusterImpl {
 	                   ForceJoin forceJoin,
 	                   ForceReuseTenantIdPrefix forceReuseTenantIdPrefix,
 	                   std::vector<std::string>& messages)
-	  : ctx(managementDb, {}, { DataClusterState::RESTORING }), clusterName(clusterName),
-	    connectionString(connectionString), applyManagementClusterUpdates(applyManagementClusterUpdates),
-	    restoreDryRun(restoreDryRun), forceJoin(forceJoin), forceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
+	  : ctx(managementDb, {}, { DataClusterState::RESTORING }),
+	    clusterName(clusterName),
+	    connectionString(connectionString),
+	    applyManagementClusterUpdates(applyManagementClusterUpdates),
+	    restoreDryRun(restoreDryRun),
+	    forceJoin(forceJoin),
+	    forceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
 	    messages(messages) {}
 
 	ACTOR template <class Transaction>

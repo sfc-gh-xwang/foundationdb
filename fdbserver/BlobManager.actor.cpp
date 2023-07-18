@@ -248,7 +248,11 @@ struct BoundaryEvaluation {
 	                   BoundaryEvalType type,
 	                   int64_t originalEpoch,
 	                   int64_t originalSeqno)
-	  : epoch(epoch), seqno(seqno), type(type), originalEpoch(originalEpoch), originalSeqno(originalSeqno) {
+	  : epoch(epoch),
+	    seqno(seqno),
+	    type(type),
+	    originalEpoch(originalEpoch),
+	    originalSeqno(originalSeqno) {
 		ASSERT(type != UNKNOWN);
 	}
 
@@ -311,14 +315,27 @@ struct BlobManagerStats {
 	                          std::unordered_map<UID, BlobWorkerInterface>* workers,
 	                          std::map<Key, bool>* mergeHardBoundaries,
 	                          std::unordered_map<Key, BlobGranuleMergeBoundary>* mergeBoundaries)
-	  : cc("BlobManagerStats", id.toString()), granuleSplits("GranuleSplits", cc),
-	    granuleWriteHotSplits("GranuleWriteHotSplits", cc), granuleMerges("GranuleMerges", cc),
-	    ccGranulesChecked("CCGranulesChecked", cc), ccRowsChecked("CCRowsChecked", cc),
-	    ccBytesChecked("CCBytesChecked", cc), ccMismatches("CCMismatches", cc), ccTimeouts("CCTimeouts", cc),
-	    ccErrors("CCErrors", cc), purgesProcessed("PurgesProcessed", cc),
-	    granulesFullyPurged("GranulesFullyPurged", cc), granulesPartiallyPurged("GranulesPartiallyPurged", cc),
-	    filesPurged("FilesPurged", cc), activeMerges(0), blockedAssignments(0), lastFlushVersion(0),
-	    lastMLogTruncationVersion(0), lastManifestSeqNo(0), lastManifestDumpTs(0), manifestSizeInBytes(0) {
+	  : cc("BlobManagerStats", id.toString()),
+	    granuleSplits("GranuleSplits", cc),
+	    granuleWriteHotSplits("GranuleWriteHotSplits", cc),
+	    granuleMerges("GranuleMerges", cc),
+	    ccGranulesChecked("CCGranulesChecked", cc),
+	    ccRowsChecked("CCRowsChecked", cc),
+	    ccBytesChecked("CCBytesChecked", cc),
+	    ccMismatches("CCMismatches", cc),
+	    ccTimeouts("CCTimeouts", cc),
+	    ccErrors("CCErrors", cc),
+	    purgesProcessed("PurgesProcessed", cc),
+	    granulesFullyPurged("GranulesFullyPurged", cc),
+	    granulesPartiallyPurged("GranulesPartiallyPurged", cc),
+	    filesPurged("FilesPurged", cc),
+	    activeMerges(0),
+	    blockedAssignments(0),
+	    lastFlushVersion(0),
+	    lastMLogTruncationVersion(0),
+	    lastManifestSeqNo(0),
+	    lastManifestDumpTs(0),
+	    manifestSizeInBytes(0) {
 		specialCounter(cc, "WorkerCount", [workers]() { return workers->size(); });
 		specialCounter(cc, "Epoch", [epoch]() { return epoch; });
 		specialCounter(cc, "ActiveMerges", [this]() { return this->activeMerges; });
@@ -365,7 +382,10 @@ struct MergeCandidateInfo {
 		ASSERT(st != MergeCandidateCanMerge);
 	}
 	MergeCandidateInfo(UID granuleID, Version startVersion)
-	  : st(MergeCandidateCanMerge), granuleID(granuleID), startVersion(startVersion), seen(false) {}
+	  : st(MergeCandidateCanMerge),
+	    granuleID(granuleID),
+	    startVersion(startVersion),
+	    seen(false) {}
 
 	bool canMerge() const { return st == MergeCandidateCanMerge; }
 
@@ -436,14 +456,21 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	                Database db,
 	                Optional<Key> dcId,
 	                int64_t epoch)
-	  : id(id), db(db), dcId(dcId),
+	  : id(id),
+	    db(db),
+	    dcId(dcId),
 	    stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, epoch, &workersById, &mergeHardBoundaries, &mergeBoundaries),
-	    knownBlobRanges(false, normalKeys.end), tenantData(BGTenantMap(dbInfo)),
+	    knownBlobRanges(false, normalKeys.end),
+	    tenantData(BGTenantMap(dbInfo)),
 	    mergeCandidates(MergeCandidateInfo(MergeCandidateUnknown), normalKeys.end),
-	    activeGranuleMerges(invalidVersion, normalKeys.end), forcePurgingRanges(false, normalKeys.end),
+	    activeGranuleMerges(invalidVersion, normalKeys.end),
+	    forcePurgingRanges(false, normalKeys.end),
 	    concurrentMergeChecks(SERVER_KNOBS->BLOB_MANAGER_CONCURRENT_MERGE_CHECKS),
-	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY), recruitingStream(0), exclusionTracker(db),
-	    epoch(epoch), dbInfo(dbInfo) {}
+	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
+	    recruitingStream(0),
+	    exclusionTracker(db),
+	    epoch(epoch),
+	    dbInfo(dbInfo) {}
 
 	// only initialize blob store if actually needed
 	void initBStore() {
@@ -606,7 +633,6 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 
 	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), splits.front());
 
-	state Transaction tr = Transaction(bmData->db);
 	state int idx = 1;
 	state Reference<GranuleTenantData> tenantData;
 	wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange)));
@@ -616,28 +642,41 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 		wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange)));
 	}
 	for (; idx < splits.size() - 1; idx++) {
+		alignKeyBoundary(bmData, tenantData, splits[idx], offset, splitPoints);
+	}
+
+	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), splits.back());
+
+	return splitPoints;
+}
+
+// Find the next full db key for each split point
+ACTOR Future<Standalone<VectorRef<KeyRef>>> nextFullKeys(Reference<BlobManagerData> bmData,
+                                                         Standalone<VectorRef<KeyRef>> keys) {
+	state Standalone<VectorRef<KeyRef>> result;
+	result.push_back_deep(result.arena(), keys.front()); // keep the begin key as is
+
+	state Transaction tr = Transaction(bmData->db);
+	state int i = 1;
+	for (; i < keys.size() - 1; ++i) {
 		loop {
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 			try {
-				// Get the next full key in the granule.
-				RangeReadResult nextKeyRes = wait(
-				    tr.getRange(firstGreaterOrEqual(splits[idx]), lastLessThan(splits[idx + 1]), GetRangeLimits(1)));
+				RangeReadResult nextKeyRes =
+				    wait(tr.getRange(firstGreaterOrEqual(keys[i]), lastLessThan(keys[i + 1]), GetRangeLimits(1)));
 				if (nextKeyRes.size() == 0) {
 					break;
 				}
-
-				alignKeyBoundary(bmData, tenantData, nextKeyRes[0].key, offset, splitPoints);
+				result.push_back_deep(result.arena(), nextKeyRes[0].key);
 				break;
 			} catch (Error& e) {
 				wait(tr.onError(e));
 			}
 		}
 	}
-
-	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), splits.back());
-
-	return splitPoints;
+	result.push_back_deep(result.arena(), keys.back()); // keep the end key as is
+	return result;
 }
 
 ACTOR Future<BlobGranuleSplitPoints> splitRange(Reference<BlobManagerData> bmData,
@@ -714,7 +753,8 @@ ACTOR Future<BlobGranuleSplitPoints> splitRange(Reference<BlobManagerData> bmDat
 
 			// We only need to align the keys if there is a proposed split.
 			if (keys.size() > 2) {
-				BlobGranuleSplitPoints _splitPoints = wait(alignKeys(bmData, range, keys));
+				Standalone<VectorRef<KeyRef>> fullKeys = wait(nextFullKeys(bmData, keys));
+				BlobGranuleSplitPoints _splitPoints = wait(alignKeys(bmData, range, fullKeys));
 				splitPoints = _splitPoints;
 			} else {
 				splitPoints.keys = keys;
@@ -1674,17 +1714,19 @@ ACTOR Future<Void> reevaluateInitialSplit(Reference<BlobManagerData> bmData,
 	ASSERT(splitFirst.keys.size() >= 2);
 	ASSERT(splitFirst.keys.front() == granuleRange.begin);
 	ASSERT(splitFirst.keys.back() == proposedSplitKey);
-	for (int i = 0; i < splitFirst.keys.size(); i++) {
-		newRanges.push_back_deep(newRanges.arena(), splitFirst.keys[i]);
+	Standalone<VectorRef<KeyRef>> splitFirstFullKeys = wait(nextFullKeys(bmData, splitFirst.keys));
+	for (int i = 0; i < splitFirstFullKeys.size(); i++) {
+		newRanges.push_back_deep(newRanges.arena(), splitFirstFullKeys[i]);
 	}
 
 	BlobGranuleSplitPoints splitSecond = wait(fSplitSecond);
 	ASSERT(splitSecond.keys.size() >= 2);
 	ASSERT(splitSecond.keys.front() == proposedSplitKey);
 	ASSERT(splitSecond.keys.back() == granuleRange.end);
+	Standalone<VectorRef<KeyRef>> splitSecondFullKeys = wait(nextFullKeys(bmData, splitSecond.keys));
 	// i=1 to skip proposedSplitKey, since above already added it
-	for (int i = 1; i < splitSecond.keys.size(); i++) {
-		newRanges.push_back_deep(newRanges.arena(), splitSecond.keys[i]);
+	for (int i = 1; i < splitSecondFullKeys.size(); i++) {
+		newRanges.push_back_deep(newRanges.arena(), splitSecondFullKeys[i]);
 	}
 
 	if (BM_DEBUG) {
@@ -5659,7 +5701,7 @@ ACTOR Future<Void> truncateMutations(Reference<BlobManagerData> bmData, Version 
 	state std::string timestamp = BackupAgentBase::formatTime(epochs);
 	state Version truncVersion = wait(timeKeeperVersionFromDatetime(timestamp, bmData->db));
 
-	if (truncVersion > 0) {
+	if (truncVersion > 0 && truncVersion < flushVersion) {
 		state std::string mlogsUrl =
 		    wait(BlobGranuleBackupConfig().mutationLogsUrl().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
 		state Reference<IBackupContainer> bc = IBackupContainer::openContainer(mlogsUrl, {}, {});
@@ -5667,6 +5709,8 @@ ACTOR Future<Void> truncateMutations(Reference<BlobManagerData> bmData, Version 
 		bmData->stats.lastMLogTruncationVersion = truncVersion;
 		TraceEvent("TruncateMutationLogs").detail("Version", truncVersion).detail("Timestamp", timestamp);
 		CODE_PROBE(true, "Flush blob granules and truncate mutation logs");
+	} else {
+		TraceEvent("SkipTruncateMutations").detail("Version", truncVersion).detail("FlushVer", flushVersion);
 	}
 	return Void();
 }
@@ -5681,12 +5725,11 @@ ACTOR Future<Void> backupManifest(Reference<BlobManagerData> bmData) {
 	                                  bmData->dbInfo,
 	                                  manifestStore,
 	                                  bmData->epoch,
-	                                  bmData->manifestDumperSeqNo,
+	                                  bmData->manifestDumperSeqNo++,
 	                                  bmData->enableManifestEncryption));
 	bmData->stats.lastManifestSeqNo = bmData->manifestDumperSeqNo;
 	bmData->stats.manifestSizeInBytes += bytes;
 	bmData->stats.lastManifestDumpTs = now();
-	bmData->manifestDumperSeqNo++;
 	bmData->manifestCompletitionTrigger.trigger();
 	return Void();
 }

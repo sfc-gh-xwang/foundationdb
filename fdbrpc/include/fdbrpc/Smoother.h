@@ -91,7 +91,8 @@ class HoltLinearSmootherImpl {
 
 protected:
 	explicit HoltLinearSmootherImpl(double eDataFoldingTime, double eTrendFoldingTime)
-	  : eDataFoldingTime(eDataFoldingTime), eTrendFoldingTime(eTrendFoldingTime) {
+	  : eDataFoldingTime(eDataFoldingTime),
+	    eTrendFoldingTime(eTrendFoldingTime) {
 		reset(0);
 	}
 
