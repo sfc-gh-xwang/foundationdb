@@ -136,6 +136,8 @@ void nativeToApiBGFileDescription(FDBBGFileDescriptionV2* dest, const BlobGranul
 		dest->tenant_prefix.present = false;
 	}
 
+	dest->included_version = source.includedVersion;
+
 	// snapshot file
 	dest->snapshot_file_pointer = nullptr;
 	if (source.snapshotFile.present()) {
@@ -266,10 +268,7 @@ void apiToNativeBGMutations(GranuleDeltas& deltas,
 	ASSERT(beginIdx == mutationCount);
 }
 
-void apiToNativeBGFileDescription(BlobGranuleChunkRef& dest,
-                                  FDBBGFileDescriptionV2* source,
-                                  Version version,
-                                  Arena& ar) {
+void apiToNativeBGFileDescription(BlobGranuleChunkRef& dest, FDBBGFileDescriptionV2* source, Arena& ar) {
 	apiToNativeBGTenantPrefix(dest.tenantPrefix, &source->tenant_prefix);
 
 	dest.keyRange = KeyRangeRef(
@@ -294,18 +293,17 @@ void apiToNativeBGFileDescription(BlobGranuleChunkRef& dest,
 	apiToNativeBGMutations(
 	    dest.newDeltas, source->memory_mutations, source->memory_mutation_count, dest.tenantPrefix, ar);
 
-	dest.includedVersion = version;
+	dest.includedVersion = source->included_version;
 }
 
 Standalone<VectorRef<BlobGranuleChunkRef>> apiToNativeBGFileDescriptions(FDBBGFileDescriptionV2** desc_arr,
                                                                          int desc_count,
-                                                                         Version version,
                                                                          const Arena& srcAr) {
 	Standalone<VectorRef<BlobGranuleChunkRef>> res;
 	res.arena().dependsOn(srcAr);
 	res.resize(res.arena(), desc_count);
 	for (int i = 0; i < desc_count; i++) {
-		apiToNativeBGFileDescription(res[i], desc_arr[i], version, res.arena());
+		apiToNativeBGFileDescription(res[i], desc_arr[i], res.arena());
 	}
 	return res;
 }
@@ -449,8 +447,11 @@ ACTOR Future<ApiResult> readBlobGranuleDescriptionsImpl(ISingleThreadTransaction
 	if (input->read_version != latestVersion) {
 		readVersion = input->read_version;
 	}
-	Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-	    wait(tr->readBlobGranules((KeyRangeRef&)input->key_range, input->begin_version, readVersion, &readVersionOut));
+	Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr->readBlobGranules((KeyRangeRef&)input->key_range,
+	                                                                              input->begin_version,
+	                                                                              readVersion,
+	                                                                              &readVersionOut,
+	                                                                              input->mutation_byte_limit));
 
 	auto res = TypedApiResult<FDBReadBGDescriptionResult>::create(FDBApiResult_ReadBGDescription);
 	Arena& arena = res.arena();
@@ -520,8 +521,8 @@ ReadRangeApiResult loadAndMaterializeBlobGranules(const ReadBGDescriptionsApiRes
                                                   Version beginVersion,
                                                   const FDBReadBlobGranuleContext* granuleContext) {
 	auto descrData = blobGranuleDescr.getData();
-	Standalone<VectorRef<BlobGranuleChunkRef>> fileRefs = apiToNativeBGFileDescriptions(
-	    descrData->desc_arr, descrData->desc_count, descrData->read_version, blobGranuleDescr.arena());
+	Standalone<VectorRef<BlobGranuleChunkRef>> fileRefs =
+	    apiToNativeBGFileDescriptions(descrData->desc_arr, descrData->desc_count, blobGranuleDescr.arena());
 	GranuleMaterializeStats stats;
 	auto rangeResult = loadAndMaterializeBlobGranulesImpl(
 	    fileRefs, keyRange, beginVersion, descrData->read_version, granuleContext, stats);

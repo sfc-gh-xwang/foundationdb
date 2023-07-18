@@ -482,10 +482,12 @@ public:
 	Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(KeyRange const& keys, int64_t chunkSize);
 
 	Future<Standalone<VectorRef<KeyRangeRef>>> getBlobGranuleRanges(const KeyRange& range, int rangeLimit);
-	Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(const KeyRange& range,
-	                                                                    Version begin,
-	                                                                    Optional<Version> readVersion,
-	                                                                    Version* readVersionOut = nullptr);
+	Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(
+	    const KeyRange& range,
+	    Version begin,
+	    Optional<Version> readVersion,
+	    Version* readVersionOut = nullptr,
+	    int64_t mutationByteLimit = std::numeric_limits<int64_t>::max());
 
 	Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules(const KeyRange& range,
 	                                                                           Optional<Version> summaryVersion,

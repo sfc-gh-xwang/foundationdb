@@ -1277,13 +1277,14 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_summarize_blob_granules(FDBTrans
 	    return (FDBFuture*)(TXN(tr)->summarizeBlobGranules(range, sv, rangeLimit).extractPtr()););
 }
 
-extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v2(FDBTransaction* tr,
+extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v3(FDBTransaction* tr,
                                                                                   uint8_t const* begin_key_name,
                                                                                   int begin_key_name_length,
                                                                                   uint8_t const* end_key_name,
                                                                                   int end_key_name_length,
                                                                                   int64_t begin_version,
-                                                                                  int64_t read_version) {
+                                                                                  int64_t read_version,
+                                                                                  int64_t mutation_byte_limit) {
 	RETURN_FUTURE_ON_ERROR(ApiResult,
 	                       FDBReadBGDescriptionRequest* request =
 	                           createApiRequest<FDBReadBGDescriptionRequest>(tr, FDBApiRequest_ReadBGDescription);
@@ -1295,9 +1296,27 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v
 	                       request->key_range.end_key =
 	                           (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
 	                       request->key_range.end_key_length = end_key_name_length;
+	                       request->mutation_byte_limit = mutation_byte_limit;
 	                       FDBFuture* future = executeApiRequest<FDBReadBGDescriptionRequest>(tr, request);
 	                       releaseApiRequest(request);
 	                       return future;);
+}
+
+extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v2(FDBTransaction* tr,
+                                                                                  uint8_t const* begin_key_name,
+                                                                                  int begin_key_name_length,
+                                                                                  uint8_t const* end_key_name,
+                                                                                  int end_key_name_length,
+                                                                                  int64_t begin_version,
+                                                                                  int64_t read_version) {
+	return fdb_transaction_read_blob_granules_description_v3(tr,
+	                                                         begin_key_name,
+	                                                         begin_key_name_length,
+	                                                         end_key_name,
+	                                                         end_key_name_length,
+	                                                         begin_version,
+	                                                         read_version,
+	                                                         std::numeric_limits<int64_t>::max());
 }
 
 extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v1(FDBTransaction* tr,

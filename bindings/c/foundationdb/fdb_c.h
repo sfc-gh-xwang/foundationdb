@@ -624,6 +624,15 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_read_blob_granules_descr
                                                                                           int64_t begin_version,
                                                                                           int64_t read_version);
 
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_read_blob_granules_description_v3(FDBTransaction* tr,
+                                                                                          uint8_t const* begin_key_name,
+                                                                                          int begin_key_name_length,
+                                                                                          uint8_t const* end_key_name,
+                                                                                          int end_key_name_length,
+                                                                                          int64_t begin_version,
+                                                                                          int64_t read_version,
+                                                                                          int64_t mutation_byte_limit);
+
 #define fdb_transaction_read_blob_granules_description                                                                 \
 	BLOB_GRANULE_IDENTIFIER(fdb_transaction_read_blob_granules_description_v)
 
