@@ -134,7 +134,7 @@ class ClientConfigTest:
         # When set true, the tester creates a tenant and generates the client status at the
         # tenant level
         self.enable_tenant = False
-        self.allow_nonexisting_tenant = False
+        self.skip_create_tenant = False
 
     # ----------------------------
     # Configuration methods
@@ -230,7 +230,7 @@ class ClientConfigTest:
         tenant_id = status_json["TenantID"]
         self.tc.assertIsNotNone(tenant_id)
 
-        if not self.allow_nonexisting_tenant:
+        if not self.skip_create_tenant:
             # Validate that TenantID is an integer if expected valid
             self.tc.assertTrue(isinstance(tenant_id, int))
         else:
@@ -365,8 +365,8 @@ class ClientConfigTest:
         if self.enable_tenant:
             cmd_args += ["--enable-tenant"]
 
-        if self.allow_nonexisting_tenant:
-            cmd_args += ["--allow-nonexisting-tenant"]
+        if self.skip_create_tenant:
+            cmd_args += ["--skip-create-tenant"]
 
         print(
             "\nExecuting test command: {}".format(" ".join([str(c) for c in cmd_args])),
@@ -939,7 +939,7 @@ class TenantStatusTests(unittest.TestCase):
         test = ClientConfigTest(self)
         test.print_status = True
         test.enable_tenant = True
-        test.allow_nonexisting_tenant = True
+        test.skip_create_tenant = True
         test.expected_error = 2131  # Tenant does not exist
         test.exec()
         test.check_healthy_status(True)
@@ -961,7 +961,7 @@ class TenantStatusTests(unittest.TestCase):
         test.print_status = True
         test.disable_client_bypass = True
         test.enable_tenant = True
-        test.allow_nonexisting_tenant = True
+        test.skip_create_tenant = True
         test.expected_error = 2131  # Tenant does not exist
         test.exec()
         test.check_tenant_info(test.status_json["DatabaseStatus"])

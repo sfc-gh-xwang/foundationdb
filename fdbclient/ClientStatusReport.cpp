@@ -203,7 +203,7 @@ Standalone<StringRef> DatabaseContext::getClientStatus() {
 }
 
 // Get client-side status information from tenant level
-Standalone<StringRef> DatabaseContext::getClientStatusForTenant(Tenant* tenant) {
+Standalone<StringRef> DatabaseContext::getTenantClientStatus(Tenant* tenant) {
 	ClientReportGenerator generator(*this, tenant);
 	return generator.generateReport();
 }

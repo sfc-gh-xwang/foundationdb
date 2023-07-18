@@ -63,7 +63,7 @@ enum TesterOptionId {
 	OPT_PRINT_STATUS,
 	OPT_NETWORK_OPTION,
 	OPT_ENABLE_TENANT,
-	OPT_ALLOW_NONEXISTING_TENANT
+	OPT_SKIP_CREATE_TENANT
 };
 
 const int MIN_TESTABLE_API_VERSION = 400;
@@ -84,7 +84,7 @@ CSimpleOpt::SOption TesterOptionDefs[] = //
 	  { OPT_PRINT_STATUS, "--print-status", SO_NONE },
 	  { OPT_NETWORK_OPTION, "--network-option-", SO_REQ_SEP },
 	  { OPT_ENABLE_TENANT, "--enable-tenant", SO_NONE },
-	  { OPT_ALLOW_NONEXISTING_TENANT, "--allow-nonexisting-tenant", SO_NONE },
+	  { OPT_SKIP_CREATE_TENANT, "--skip-create-tenant", SO_NONE },
 	  SO_END_OF_OPTIONS };
 
 class TesterOptions {
@@ -104,7 +104,7 @@ public:
 	bool printStatus = false;
 	std::vector<std::pair<std::string, std::string>> networkOptions;
 	bool enableTenant = false;
-	bool allowNonexistingTenant = false;
+	bool skipCreateTenant = false;
 };
 
 namespace {
@@ -144,7 +144,7 @@ void printProgramUsage(const char* execName) {
 	       "  --enable-tenant\n"
 	       "                 Enable the tester in tenant mode. When set true, it creates \n"
 	       "                 a tenant and prints the client status from the tenant level.\n"
-	       "  --allow-nonexisting-tenant\n"
+	       "  --skip-create-tenant\n"
 	       "                 When set true, it skips the tenant creation step when the tester \n"
 	       "                 is under tenant mode, testing the status report when opening \n"
 	       "                 a nonexisting tenant.\n"
@@ -231,8 +231,8 @@ bool processArg(const CSimpleOpt& args) {
 	case OPT_ENABLE_TENANT:
 		options.enableTenant = true;
 		break;
-	case OPT_ALLOW_NONEXISTING_TENANT:
-		options.allowNonexistingTenant = true;
+	case OPT_SKIP_CREATE_TENANT:
+		options.skipCreateTenant = true;
 		break;
 	}
 	return true;
@@ -336,7 +336,7 @@ class Tester {
 public:
 	Tester(const TesterOptions options) : useTenant(options.enableTenant), db(fdb::Database(options.clusterFile)) {
 		if (options.enableTenant) {
-			if (options.allowNonexistingTenant) {
+			if (options.skipCreateTenant) {
 				tenantName = randomString(10);
 			} else {
 				createTenant();
