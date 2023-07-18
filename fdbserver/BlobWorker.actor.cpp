@@ -5849,7 +5849,7 @@ ACTOR Future<UID> restorePersistentState(Reference<BlobWorkerData> self) {
 	wait(waitForAll(std::vector{ fID, fEncryptionAtRestMode }));
 
 	if (!SERVER_KNOBS->BLOB_WORKER_DISK_ENABLED || !fID.get().present()) {
-		CODE_PROBE(true, "Restored uninitialized blob worker");
+		CODE_PROBE(true, "Restored uninitialized blob worker", probe::decoration::rare);
 		throw worker_removed();
 	}
 	UID recoveredID = BinaryReader::fromStringRef<UID>(fID.get().get(), Unversioned());

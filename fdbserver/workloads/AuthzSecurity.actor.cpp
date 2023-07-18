@@ -216,7 +216,9 @@ struct AuthzSecurityWorkload : TestWorkload {
 		CODE_PROBE(crossTenantBGLocNegative.getValue(), "AuthzSecurity crossTenantBGLocNegative > 0");
 		CODE_PROBE(crossTenantBGReqPositive.getValue(), "AuthzSecurity crossTenantBGReqPositive > 0");
 		CODE_PROBE(crossTenantBGStreamNegative.getValue(), "AuthzSecurity crossTenantBGStreamNegative > 0");
-		CODE_PROBE(crossTenantBGStreamPositive.getValue(), "AuthzSecurity crossTenantBGStreamPositive > 0");
+		CODE_PROBE(crossTenantBGStreamPositive.getValue(),
+		           "AuthzSecurity crossTenantBGStreamPositive > 0",
+		           probe::decoration::rare);
 		CODE_PROBE(crossTenantBGReqNegative.getValue(), "AuthzSecurity crossTenantBGReqNegative > 0");
 		CODE_PROBE(crossTenantBGReadPositive.getValue(), "AuthzSecurity crossTenantBGReadPositive > 0");
 		CODE_PROBE(crossTenantBGReadNegative.getValue(), "AuthzSecurity crossTenantBGReadNegative > 0");
