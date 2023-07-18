@@ -401,8 +401,12 @@ struct P2PNetworkTest {
 	               RandomIntRange idleMilliseconds,
 	               RandomIntRange waitReadMilliseconds,
 	               RandomIntRange waitWriteMilliseconds)
-	  : connectionsOut(connectionsOut), requestBytes(sendMsgBytes), replyBytes(recvMsgBytes), requests(requests),
-	    idleMilliseconds(idleMilliseconds), waitReadMilliseconds(waitReadMilliseconds),
+	  : connectionsOut(connectionsOut),
+	    requestBytes(sendMsgBytes),
+	    replyBytes(recvMsgBytes),
+	    requests(requests),
+	    idleMilliseconds(idleMilliseconds),
+	    waitReadMilliseconds(waitReadMilliseconds),
 	    waitWriteMilliseconds(waitWriteMilliseconds) {
 		bytesSent = 0;
 		bytesReceived = 0;

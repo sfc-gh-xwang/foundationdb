@@ -38,7 +38,8 @@ class KeyRangeMap : public RangeMap<Key, Val, KeyRangeRef, Metric, MetricFunc>,
                     public ReferenceCounted<KeyRangeMap<Val>> {
 public:
 	explicit KeyRangeMap(Val v = Val(), Key endKey = allKeys.end)
-	  : RangeMap<Key, Val, KeyRangeRef, Metric, MetricFunc>(endKey, v), mapEnd(endKey) {}
+	  : RangeMap<Key, Val, KeyRangeRef, Metric, MetricFunc>(endKey, v),
+	    mapEnd(endKey) {}
 	void operator=(KeyRangeMap&& r) noexcept {
 		mapEnd = std::move(r.mapEnd);
 		RangeMap<Key, Val, KeyRangeRef, Metric, MetricFunc>::operator=(std::move(r));
@@ -85,7 +86,8 @@ template <class Val, class Metric = int, class MetricFunc = ConstantMetric<Metri
 class CoalescedKeyRefRangeMap : public RangeMap<KeyRef, Val, KeyRangeRef, Metric, MetricFunc>, NonCopyable {
 public:
 	explicit CoalescedKeyRefRangeMap(Val v = Val(), Key endKey = allKeys.end)
-	  : RangeMap<KeyRef, Val, KeyRangeRef, Metric, MetricFunc>(endKey, v), mapEnd(endKey) {}
+	  : RangeMap<KeyRef, Val, KeyRangeRef, Metric, MetricFunc>(endKey, v),
+	    mapEnd(endKey) {}
 
 	void operator=(CoalescedKeyRefRangeMap&& r) noexcept {
 		mapEnd = std::move(r.mapEnd);
@@ -100,7 +102,8 @@ template <class Val, class Metric = int, class MetricFunc = ConstantMetric<Metri
 class CoalescedKeyRangeMap : public RangeMap<Key, Val, KeyRangeRef, Metric, MetricFunc>, NonCopyable {
 public:
 	explicit CoalescedKeyRangeMap(Val v = Val(), Key endKey = allKeys.end)
-	  : RangeMap<Key, Val, KeyRangeRef, Metric, MetricFunc>(endKey, v), mapEnd(endKey) {}
+	  : RangeMap<Key, Val, KeyRangeRef, Metric, MetricFunc>(endKey, v),
+	    mapEnd(endKey) {}
 
 	void operator=(CoalescedKeyRangeMap&& r) noexcept {
 		mapEnd = std::move(r.mapEnd);

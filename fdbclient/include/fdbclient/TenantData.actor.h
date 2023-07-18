@@ -136,7 +136,8 @@ private:
 public:
 	TenantData() {}
 	TenantData(Reference<DB> db, TenantMetadataSpecification<TenantTypes>* tenantMetadata)
-	  : db(db), tenantMetadata(tenantMetadata) {}
+	  : db(db),
+	    tenantMetadata(tenantMetadata) {}
 
 	Future<Void> load() {
 		return runTransactionVoid(db, [this](Reference<typename DB::TransactionT> tr) {

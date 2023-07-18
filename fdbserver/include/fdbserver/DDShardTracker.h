@@ -93,7 +93,8 @@ public:
 
 	public:
 		SafeAccessor(DataDistributionTracker* tracker)
-		  : trackerCancelled(*tracker->trackerCancelled), tracker(*tracker) {
+		  : trackerCancelled(*tracker->trackerCancelled),
+		    tracker(*tracker) {
 			ASSERT(!trackerCancelled);
 		}
 

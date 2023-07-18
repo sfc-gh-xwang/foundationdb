@@ -297,9 +297,7 @@ public:
 	                                                          StorageMetrics const& estimated,
 	                                                          Optional<int> const& minSplitBytes = {}) const override;
 
-	Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(KeyRange const& keys) const override {
-		UNREACHABLE();
-	}
+	Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(KeyRange const& keys) const override;
 
 	Future<HealthMetrics> getHealthMetrics(bool detailed = false) const override;
 

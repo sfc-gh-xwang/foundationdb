@@ -256,7 +256,9 @@ public:
 	                             std::vector<ConfigTransactionInterface> const& ctis,
 	                             Future<Void> coordinatorsChangedFuture,
 	                             Optional<Version> const& lastSeenLiveVersion = {})
-	  : coordinatorsHash(coordinatorsHash), ctis(ctis), coordinatorsChangedFuture(coordinatorsChangedFuture),
+	  : coordinatorsHash(coordinatorsHash),
+	    ctis(ctis),
+	    coordinatorsChangedFuture(coordinatorsChangedFuture),
 	    lastSeenLiveVersion(lastSeenLiveVersion) {}
 	Future<ConfigGeneration> getGeneration() {
 		if (!getGenerationFuture.isValid()) {
@@ -521,7 +523,9 @@ public:
 	PaxosConfigTransactionImpl(Database const& cx) : cx(cx) { reset(); }
 
 	PaxosConfigTransactionImpl(std::vector<ConfigTransactionInterface> const& ctis)
-	  : ctis(ctis), getGenerationQuorum(0, ctis, Future<Void>()), commitQuorum(ctis) {}
+	  : ctis(ctis),
+	    getGenerationQuorum(0, ctis, Future<Void>()),
+	    commitQuorum(ctis) {}
 };
 
 Future<Version> PaxosConfigTransaction::getReadVersion() {

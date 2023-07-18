@@ -372,6 +372,8 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_flush_blob_range(FDBDatabas
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_status(FDBDatabase* db);
 
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant);
+
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_tenant_create_transaction(FDBTenant* tenant,
                                                                        FDBTransaction** out_transaction);
 
@@ -621,6 +623,15 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_read_blob_granules_descr
                                                                                           int end_key_name_length,
                                                                                           int64_t begin_version,
                                                                                           int64_t read_version);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_read_blob_granules_description_v3(FDBTransaction* tr,
+                                                                                          uint8_t const* begin_key_name,
+                                                                                          int begin_key_name_length,
+                                                                                          uint8_t const* end_key_name,
+                                                                                          int end_key_name_length,
+                                                                                          int64_t begin_version,
+                                                                                          int64_t read_version,
+                                                                                          int64_t mutation_byte_limit);
 
 #define fdb_transaction_read_blob_granules_description                                                                 \
 	BLOB_GRANULE_IDENTIFIER(fdb_transaction_read_blob_granules_description_v)

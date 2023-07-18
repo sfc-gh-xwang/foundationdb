@@ -81,7 +81,9 @@ struct SimEncryptKeyDetails {
 	                              EncryptCipherBaseKeyId keyId,
 	                              StringRef key,
 	                              Arena& arena)
-	  : encryptDomainId(domainId), encryptKeyId(keyId), encryptKey(StringRef(arena, key)) {}
+	  : encryptDomainId(domainId),
+	    encryptKeyId(keyId),
+	    encryptKey(StringRef(arena, key)) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

@@ -252,6 +252,9 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 	                                   int64_t version);
 
 	FDBFuture* (*tenantGetId)(FDBTenant* tenant);
+
+	FDBFuture* (*tenantGetClientStatus)(FDBTenant* tenant);
+
 	void (*tenantDestroy)(FDBTenant* tenant);
 
 	// Transaction
@@ -527,6 +530,9 @@ public:
 	ThreadFuture<Version> verifyBlobRange(const KeyRangeRef& keyRange, Optional<Version> version) override;
 	ThreadFuture<bool> flushBlobRange(const KeyRangeRef& keyRange, bool compact, Optional<Version> version) override;
 
+	// Return a JSON string containing tenant client-side status information
+	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
+
 	void addref() override { ThreadSafeReferenceCounted<DLTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<DLTenant>::delref(); }
 
@@ -788,7 +794,9 @@ struct ClientDesc {
 	bool const useFutureVersion;
 
 	ClientDesc(std::string libPath, bool external, bool useFutureVersion)
-	  : libPath(libPath), external(external), useFutureVersion(useFutureVersion) {}
+	  : libPath(libPath),
+	    external(external),
+	    useFutureVersion(useFutureVersion) {}
 };
 
 struct ClientInfo : ClientDesc, ThreadSafeReferenceCounted<ClientInfo> {
@@ -801,13 +809,25 @@ struct ClientInfo : ClientDesc, ThreadSafeReferenceCounted<ClientInfo> {
 	std::vector<std::pair<void (*)(void*), void*>> threadCompletionHooks;
 
 	ClientInfo()
-	  : ClientDesc(std::string(), false, false), protocolVersion(0), api(nullptr), failed(true), initialized(false),
+	  : ClientDesc(std::string(), false, false),
+	    protocolVersion(0),
+	    api(nullptr),
+	    failed(true),
+	    initialized(false),
 	    threadIndex(0) {}
 	ClientInfo(IClientApi* api)
-	  : ClientDesc("internal", false, false), protocolVersion(0), api(api), failed(false), initialized(false),
+	  : ClientDesc("internal", false, false),
+	    protocolVersion(0),
+	    api(api),
+	    failed(false),
+	    initialized(false),
 	    threadIndex(0) {}
 	ClientInfo(IClientApi* api, std::string libPath, bool useFutureVersion, int threadIndex)
-	  : ClientDesc(libPath, true, useFutureVersion), protocolVersion(0), api(api), failed(false), initialized(false),
+	  : ClientDesc(libPath, true, useFutureVersion),
+	    protocolVersion(0),
+	    api(api),
+	    failed(false),
+	    initialized(false),
 	    threadIndex(threadIndex) {}
 
 	void loadVersion();
@@ -844,6 +864,9 @@ public:
 
 	void addref() override { ThreadSafeReferenceCounted<MultiVersionTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<MultiVersionTenant>::delref(); }
+
+	// Return a JSON string containing tenant client-side status information
+	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
 	// A struct that manages the current connection state of the MultiVersionDatabase. This wraps the underlying
 	// IDatabase object that is currently interacting with the cluster.

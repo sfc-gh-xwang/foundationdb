@@ -28,7 +28,10 @@ template <class T>
 class AbortableSingleAssignmentVar final : public ThreadSingleAssignmentVar<T>, public ThreadCallback {
 public:
 	AbortableSingleAssignmentVar(ThreadFuture<T> future, ThreadFuture<Void> abortSignal)
-	  : future(future), abortSignal(abortSignal), hasBeenSet(false), callbacksCleared(true) {
+	  : future(future),
+	    abortSignal(abortSignal),
+	    hasBeenSet(false),
+	    callbacksCleared(true) {
 		int userParam;
 
 		ThreadSingleAssignmentVar<T>::addref();
@@ -154,7 +157,10 @@ public:
 	DLThreadSingleAssignmentVar(Reference<FdbCApi> api,
 	                            FdbCApi::FDBFuture* f,
 	                            std::function<T(FdbCApi::FDBFuture*, FdbCApi*)> extractValue)
-	  : api(api), f(f), extractValue(extractValue), futureRefCount(1) {
+	  : api(api),
+	    f(f),
+	    extractValue(extractValue),
+	    futureRefCount(1) {
 		ThreadSingleAssignmentVar<T>::addref();
 		api->futureSetCallback(f, &futureCallback, this);
 	}
@@ -254,7 +260,8 @@ template <class S, class T>
 class MapSingleAssignmentVar final : public ThreadSingleAssignmentVar<T>, ThreadCallback {
 public:
 	MapSingleAssignmentVar(ThreadFuture<S> source, std::function<ErrorOr<T>(ErrorOr<S>)> mapValue)
-	  : source(source), mapValue(mapValue) {
+	  : source(source),
+	    mapValue(mapValue) {
 		ThreadSingleAssignmentVar<T>::addref();
 
 		int userParam;
@@ -314,7 +321,10 @@ template <class S, class T>
 class FlatMapSingleAssignmentVar final : public ThreadSingleAssignmentVar<T>, ThreadCallback {
 public:
 	FlatMapSingleAssignmentVar(ThreadFuture<S> source, std::function<ErrorOr<ThreadFuture<T>>(ErrorOr<S>)> mapValue)
-	  : source(source), cancelled(false), released(false), mapValue(mapValue) {
+	  : source(source),
+	    cancelled(false),
+	    released(false),
+	    mapValue(mapValue) {
 		ThreadSingleAssignmentVar<T>::addref();
 
 		int userParam;

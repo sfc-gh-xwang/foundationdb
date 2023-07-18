@@ -594,8 +594,14 @@ private:
 
 		uint32_t opsIssued;
 		Context()
-		  : iocx(0), evfd(-1), outstanding(0), ioStallBegin(0), fallocateSupported(true), fallocateZeroSupported(true),
-		    submittedRequestList(nullptr), opsIssued(0) {
+		  : iocx(0),
+		    evfd(-1),
+		    outstanding(0),
+		    ioStallBegin(0),
+		    fallocateSupported(true),
+		    fallocateZeroSupported(true),
+		    submittedRequestList(nullptr),
+		    opsIssued(0) {
 			setIOTimeout(0);
 		}
 
@@ -645,7 +651,10 @@ private:
 	static Context ctx;
 
 	explicit AsyncFileKAIO(int fd, int flags, std::string const& filename)
-	  : failed(false), fd(fd), flags(flags), filename(filename) {
+	  : failed(false),
+	    fd(fd),
+	    flags(flags),
+	    filename(filename) {
 		ASSERT(!FLOW_KNOBS->DISABLE_POSIX_KERNEL_AIO);
 		if (!g_network->isSimulated()) {
 			countFileLogicalWrites.init("AsyncFile.CountFileLogicalWrites"_sr, filename);

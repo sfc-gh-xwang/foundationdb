@@ -83,7 +83,10 @@ struct AlternativeInfo {
 	double lastUpdate;
 
 	AlternativeInfo(T const& interf, double probability, double cumulativeProbability)
-	  : interf(interf), probability(probability), cumulativeProbability(cumulativeProbability), processBusyTime(-1),
+	  : interf(interf),
+	    probability(probability),
+	    cumulativeProbability(cumulativeProbability),
+	    processBusyTime(-1),
 	    lastUpdate(0) {}
 
 	bool operator<(double const& r) const { return cumulativeProbability < r; }

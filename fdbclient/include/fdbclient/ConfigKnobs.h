@@ -105,9 +105,11 @@ struct ConfigKeyRef {
 
 	ConfigKeyRef() = default;
 	explicit ConfigKeyRef(Optional<KeyRef> configClass, KeyRef knobName)
-	  : configClass(configClass), knobName(knobName) {}
+	  : configClass(configClass),
+	    knobName(knobName) {}
 	explicit ConfigKeyRef(Arena& arena, Optional<KeyRef> configClass, KeyRef knobName)
-	  : configClass(arena, configClass), knobName(arena, knobName) {}
+	  : configClass(arena, configClass),
+	    knobName(arena, knobName) {}
 	explicit ConfigKeyRef(Arena& arena, ConfigKeyRef const& rhs) : ConfigKeyRef(arena, rhs.configClass, rhs.knobName) {}
 
 	static Standalone<ConfigKeyRef> decodeKey(KeyRef const&);
@@ -147,7 +149,8 @@ public:
 	ConfigMutationRef() = default;
 
 	explicit ConfigMutationRef(Arena& arena, ConfigKeyRef key, Optional<KnobValueRef> value)
-	  : key(arena, key), value(arena, value) {}
+	  : key(arena, key),
+	    value(arena, value) {}
 
 	explicit ConfigMutationRef(ConfigKeyRef key, Optional<KnobValueRef> value) : key(key), value(value) {}
 
@@ -188,9 +191,11 @@ struct ConfigCommitAnnotationRef {
 
 	ConfigCommitAnnotationRef() = default;
 	explicit ConfigCommitAnnotationRef(KeyRef description, double timestamp)
-	  : description(description), timestamp(timestamp) {}
+	  : description(description),
+	    timestamp(timestamp) {}
 	explicit ConfigCommitAnnotationRef(Arena& arena, ConfigCommitAnnotationRef& rhs)
-	  : description(arena, rhs.description), timestamp(rhs.timestamp) {}
+	  : description(arena, rhs.description),
+	    timestamp(rhs.timestamp) {}
 
 	size_t expectedSize() const { return description.expectedSize(); }
 

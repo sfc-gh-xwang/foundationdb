@@ -1063,7 +1063,7 @@ public:
 			auto primaryStorageServers = getWorkersForSeedServers(
 			    self, clusterControllerData, info.configuration, info.configuration.storagePolicy, dcId);
 			for (int i = 0; i < primaryStorageServers.size(); i++) {
-				recruitment.storageServers.push_back(primaryStorageServers[i].interf);
+				recruitment.storageServers.push_back(primaryStorageServers[i]);
 			}
 		}
 
@@ -1076,7 +1076,7 @@ public:
 		                                      false,
 		                                      primaryDC);
 		for (int i = 0; i < tLogs.size(); i++) {
-			recruitment.tLogs.push_back(tLogs[i].interf);
+			recruitment.tLogs.push_back(tLogs[i]);
 		}
 
 		std::vector<WorkerDetails> satelliteLogs;
@@ -1088,7 +1088,7 @@ public:
 			                                                 id_used,
 			                                                 recruitment.satelliteFallback);
 			for (int i = 0; i < satelliteLogs.size(); i++) {
-				recruitment.satelliteTLogs.push_back(satelliteLogs[i].interf);
+				recruitment.satelliteTLogs.push_back(satelliteLogs[i]);
 			}
 		}
 
@@ -1150,19 +1150,19 @@ public:
 		                                                     preferredSharing,
 		                                                     first_resolver);
 		for (int i = 0; i < commit_proxies.size(); i++)
-			recruitment.commitProxies.push_back(commit_proxies[i].interf);
+			recruitment.commitProxies.push_back(commit_proxies[i]);
 		for (int i = 0; i < grv_proxies.size(); i++)
-			recruitment.grvProxies.push_back(grv_proxies[i].interf);
+			recruitment.grvProxies.push_back(grv_proxies[i]);
 		for (int i = 0; i < resolvers.size(); i++)
-			recruitment.resolvers.push_back(resolvers[i].interf);
+			recruitment.resolvers.push_back(resolvers[i]);
 
 		if (info.maxOldLogRouters > 0) {
 			if (tLogs.size() == 1) {
-				recruitment.oldLogRouters.push_back(tLogs[0].interf);
+				recruitment.oldLogRouters.push_back(tLogs[0]);
 			} else {
 				for (int i = 0; i < tLogs.size(); i++) {
 					if (tLogs[i].interf.locality.processId() != clusterControllerData->clusterControllerProcessId) {
-						recruitment.oldLogRouters.push_back(tLogs[i].interf);
+						recruitment.oldLogRouters.push_back(tLogs[i]);
 					}
 				}
 			}
@@ -1175,10 +1175,7 @@ public:
 			                  info.maxOldLogRouters);
 			auto backupWorkers = self->getWorkersForRoleInDatacenter(
 			    clusterControllerData, dcId, ProcessClass::Backup, nBackup, info.configuration, id_used);
-			std::transform(backupWorkers.begin(),
-			               backupWorkers.end(),
-			               std::back_inserter(recruitment.backupWorkers),
-			               [](const WorkerDetails& w) { return w.interf; });
+			std::copy(backupWorkers.begin(), backupWorkers.end(), std::back_inserter(recruitment.backupWorkers));
 		}
 
 		if (!clusterControllerData->goodRecruitmentTime.isReady() && checkGoodRecruitment &&
@@ -1325,16 +1322,16 @@ public:
 		                                      info.configuration.tLogPolicy,
 		                                      id_used);
 		for (int i = 0; i < tLogs.size(); i++) {
-			recruitment.tLogs.push_back(tLogs[i].interf);
+			recruitment.tLogs.push_back(tLogs[i]);
 		}
 
 		if (info.maxOldLogRouters > 0) {
 			if (tLogs.size() == 1) {
-				recruitment.oldLogRouters.push_back(tLogs[0].interf);
+				recruitment.oldLogRouters.push_back(tLogs[0]);
 			} else {
 				for (int i = 0; i < tLogs.size(); i++) {
 					if (tLogs[i].interf.locality.processId() != clusterControllerData->clusterControllerProcessId) {
-						recruitment.oldLogRouters.push_back(tLogs[i].interf);
+						recruitment.oldLogRouters.push_back(tLogs[i]);
 					}
 				}
 			}
@@ -1344,7 +1341,7 @@ public:
 			auto primaryStorageServers = getWorkersForSeedServers(
 			    self, clusterControllerData, info.configuration, info.configuration.storagePolicy);
 			for (int i = 0; i < primaryStorageServers.size(); i++)
-				recruitment.storageServers.push_back(primaryStorageServers[i].interf);
+				recruitment.storageServers.push_back(primaryStorageServers[i]);
 		}
 
 		auto datacenters = getDatacenters(self, clusterControllerData, info.configuration);
@@ -1426,23 +1423,21 @@ public:
 					bestFitness = fitness;
 					bestDC = dcId;
 					for (int i = 0; i < resolvers.size(); i++) {
-						recruitment.resolvers.push_back(resolvers[i].interf);
+						recruitment.resolvers.push_back(resolvers[i]);
 					}
 					for (int i = 0; i < commit_proxies.size(); i++) {
-						recruitment.commitProxies.push_back(commit_proxies[i].interf);
+						recruitment.commitProxies.push_back(commit_proxies[i]);
 					}
 					for (int i = 0; i < grv_proxies.size(); i++) {
-						recruitment.grvProxies.push_back(grv_proxies[i].interf);
+						recruitment.grvProxies.push_back(grv_proxies[i]);
 					}
 
 					if (info.configuration.backupWorkerEnabled) {
 						const int nBackup = std::max<int>(tLogs.size(), info.maxOldLogRouters);
 						auto backupWorkers = self->getWorkersForRoleInDatacenter(
 						    clusterControllerData, dcId, ProcessClass::Backup, nBackup, info.configuration, used);
-						std::transform(backupWorkers.begin(),
-						               backupWorkers.end(),
-						               std::back_inserter(recruitment.backupWorkers),
-						               [](const WorkerDetails& w) { return w.interf; });
+						std::copy(
+						    backupWorkers.begin(), backupWorkers.end(), std::back_inserter(recruitment.backupWorkers));
 					}
 
 					break;
@@ -1531,7 +1526,7 @@ public:
 		                                           remoteDC,
 		                                           info.exclusionWorkerIds);
 		for (int i = 0; i < remoteLogs.size(); i++) {
-			recruitment.remoteTLogs.push_back(remoteLogs[i].interf);
+			recruitment.remoteTLogs.push_back(remoteLogs[i]);
 		}
 
 		auto logRouters = self->getWorkersForRoleInDatacenter(clusterControllerData,
@@ -1541,7 +1536,7 @@ public:
 		                                                      info.configuration,
 		                                                      id_used);
 		for (int i = 0; i < logRouters.size(); i++) {
-			recruitment.logRouters.push_back(logRouters[i].interf);
+			recruitment.logRouters.push_back(logRouters[i]);
 		}
 
 		if (!clusterControllerData->goodRemoteRecruitmentTime.isReady() &&
@@ -1578,11 +1573,11 @@ public:
 			TraceEvent(
 			    getRecoveryEventName(ClusterRecoveryEventType::CLUSTER_RECOVERY_SS_RECRUITMENT_EVENT_NAME).c_str(),
 			    clusterRecoveryData->dbgid)
-			    .detail("CandidateWorker", recruitment.storageServers[idx].locality.toString());
+			    .detail("CandidateWorker", recruitment.storageServers[idx].interf.locality.toString());
 
 			InitializeStorageRequest isr;
-			isr.seedTag = dcId_tags.count(recruitment.storageServers[idx].locality.dcId())
-			                  ? dcId_tags[recruitment.storageServers[idx].locality.dcId()]
+			isr.seedTag = dcId_tags.count(recruitment.storageServers[idx].interf.locality.dcId())
+			                  ? dcId_tags[recruitment.storageServers[idx].interf.locality.dcId()]
 			                  : Tag(nextLocality, 0);
 			isr.storeType = clusterRecoveryData->configuration.storageServerStoreType;
 			isr.reqId = deterministicRandom()->randomUniqueID();
@@ -1590,7 +1585,8 @@ public:
 			isr.initialClusterVersion = clusterRecoveryData->recoveryTransactionVersion;
 			isr.encryptMode = clusterRecoveryData->configuration.encryptionAtRestMode;
 
-			ErrorOr<InitializeStorageReply> newServer = wait(recruitment.storageServers[idx].storage.tryGetReply(isr));
+			ErrorOr<InitializeStorageReply> newServer =
+			    wait(recruitment.storageServers[idx].interf.storage.tryGetReply(isr));
 
 			if (newServer.isError()) {
 				if (!newServer.isError(error_code_recruitment_failed) &&
@@ -1600,12 +1596,12 @@ public:
 				CODE_PROBE(true, "initial storage recuitment loop failed to get new server");
 				wait(delay(SERVER_KNOBS->STORAGE_RECRUITMENT_DELAY));
 			} else {
-				if (!dcId_tags.count(recruitment.storageServers[idx].locality.dcId())) {
-					dcId_tags[recruitment.storageServers[idx].locality.dcId()] = Tag(nextLocality, 0);
+				if (!dcId_tags.count(recruitment.storageServers[idx].interf.locality.dcId())) {
+					dcId_tags[recruitment.storageServers[idx].interf.locality.dcId()] = Tag(nextLocality, 0);
 					nextLocality++;
 				}
 
-				Tag& tag = dcId_tags[recruitment.storageServers[idx].locality.dcId()];
+				Tag& tag = dcId_tags[recruitment.storageServers[idx].interf.locality.dcId()];
 				tag.id++;
 				idx++;
 
@@ -1637,12 +1633,12 @@ public:
 			req.firstProxy = i == 0;
 			req.encryptMode = Recruiter::getEncryptionAtRest(clusterRecoveryData->configuration);
 			TraceEvent("CommitProxyReplies", clusterRecoveryData->dbgid)
-			    .detail("WorkerID", recr.commitProxies[i].id())
+			    .detail("WorkerID", recr.commitProxies[i].interf.id())
 			    .detail("RecoveryTxnVersion", clusterRecoveryData->recoveryTransactionVersion)
 			    .detail("EncryptMode", req.encryptMode.toString())
 			    .detail("FirstProxy", req.firstProxy ? "True" : "False");
 			initializationReplies.push_back(transformErrors(
-			    throwErrorOr(recr.commitProxies[i].commitProxy.getReplyUnlessFailedFor(
+			    throwErrorOr(recr.commitProxies[i].interf.commitProxy.getReplyUnlessFailedFor(
 			        req, SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 			    commit_proxy_failed()));
 		}
@@ -1664,9 +1660,10 @@ public:
 			req.master = clusterRecoveryData->masterInterface;
 			req.masterLifetime = clusterRecoveryData->masterLifetime;
 			req.recoveryCount = clusterRecoveryData->cstate.myDBState.recoveryCount + 1;
-			TraceEvent("GrvProxyReplies", clusterRecoveryData->dbgid).detail("WorkerID", recr.grvProxies[i].id());
+			TraceEvent("GrvProxyReplies", clusterRecoveryData->dbgid)
+			    .detail("WorkerID", recr.grvProxies[i].interf.id());
 			initializationReplies.push_back(transformErrors(
-			    throwErrorOr(recr.grvProxies[i].grvProxy.getReplyUnlessFailedFor(
+			    throwErrorOr(recr.grvProxies[i].interf.grvProxy.getReplyUnlessFailedFor(
 			        req, SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 			    grv_proxy_failed()));
 		}
@@ -1686,9 +1683,9 @@ public:
 			req.commitProxyCount = recr.commitProxies.size();
 			req.resolverCount = recr.resolvers.size();
 			req.encryptMode = Recruiter::getEncryptionAtRest(clusterRecoveryData->configuration);
-			TraceEvent("ResolverReplies", clusterRecoveryData->dbgid).detail("WorkerID", recr.resolvers[i].id());
+			TraceEvent("ResolverReplies", clusterRecoveryData->dbgid).detail("WorkerID", recr.resolvers[i].interf.id());
 			initializationReplies.push_back(transformErrors(
-			    throwErrorOr(recr.resolvers[i].resolver.getReplyUnlessFailedFor(
+			    throwErrorOr(recr.resolvers[i].interf.resolver.getReplyUnlessFailedFor(
 			        req, SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 			    resolver_failed()));
 		}
@@ -1734,11 +1731,11 @@ public:
 			std::transform(recr.tLogs.begin(),
 			               recr.tLogs.end(),
 			               std::back_inserter(exclusionWorkerIds),
-			               [](const WorkerInterface& in) { return in.id(); });
+			               [](const WorkerDetails& wd) { return wd.interf.id(); });
 			std::transform(recr.satelliteTLogs.begin(),
 			               recr.satelliteTLogs.end(),
 			               std::back_inserter(exclusionWorkerIds),
-			               [](const WorkerInterface& in) { return in.id(); });
+			               [](const WorkerDetails& wd) { return wd.interf.id(); });
 
 			RemoteRecruitmentInfo remoteRecruitmentInfo(
 			    clusterRecoveryData->configuration,

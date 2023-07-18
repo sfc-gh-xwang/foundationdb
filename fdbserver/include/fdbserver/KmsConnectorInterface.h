@@ -37,6 +37,7 @@ struct KmsConnectorInterface {
 	RequestStream<struct KmsConnLookupEKsByKeyIdsReq> ekLookupByIds;
 	RequestStream<struct KmsConnLookupEKsByDomainIdsReq> ekLookupByDomainIds;
 	RequestStream<struct KmsConnBlobMetadataReq> blobMetadataReq;
+	RequestStream<struct KmsConnGetKMSStateReq> getKMSStateReq;
 
 	KmsConnectorInterface() {}
 
@@ -54,6 +55,8 @@ struct KmsConnectorInterface {
 			    RequestStream<struct KmsConnLookupEKsByDomainIdsReq>(waitFailure.getEndpoint().getAdjustedEndpoint(2));
 			blobMetadataReq =
 			    RequestStream<struct KmsConnBlobMetadataReq>(waitFailure.getEndpoint().getAdjustedEndpoint(3));
+			getKMSStateReq =
+			    RequestStream<struct KmsConnGetKMSStateReq>(waitFailure.getEndpoint().getAdjustedEndpoint(4));
 		}
 	}
 
@@ -63,6 +66,7 @@ struct KmsConnectorInterface {
 		streams.push_back(ekLookupByIds.getReceiver(TaskPriority::Worker));
 		streams.push_back(ekLookupByDomainIds.getReceiver(TaskPriority::Worker));
 		streams.push_back(blobMetadataReq.getReceiver(TaskPriority::Worker));
+		streams.push_back(getKMSStateReq.getReceiver(TaskPriority::Worker));
 		FlowTransport::transport().addEndpoints(streams);
 	}
 };
@@ -77,15 +81,20 @@ struct EncryptCipherKeyDetailsRef {
 	Optional<int64_t> expireAfterSec;
 
 	EncryptCipherKeyDetailsRef()
-	  : encryptDomainId(INVALID_ENCRYPT_DOMAIN_ID), encryptKeyId(INVALID_ENCRYPT_CIPHER_KEY_ID),
+	  : encryptDomainId(INVALID_ENCRYPT_DOMAIN_ID),
+	    encryptKeyId(INVALID_ENCRYPT_CIPHER_KEY_ID),
 	    encryptKey(StringRef()) {}
 	explicit EncryptCipherKeyDetailsRef(Arena& arena,
 	                                    EncryptCipherDomainId dId,
 	                                    EncryptCipherBaseKeyId keyId,
 	                                    StringRef key,
 	                                    EncryptCipherKeyCheckValue keyKCV)
-	  : encryptDomainId(dId), encryptKeyId(keyId), encryptKey(StringRef(arena, key)), encryptKCV(keyKCV),
-	    refreshAfterSec(Optional<int64_t>()), expireAfterSec(Optional<int64_t>()) {}
+	  : encryptDomainId(dId),
+	    encryptKeyId(keyId),
+	    encryptKey(StringRef(arena, key)),
+	    encryptKCV(keyKCV),
+	    refreshAfterSec(Optional<int64_t>()),
+	    expireAfterSec(Optional<int64_t>()) {}
 	explicit EncryptCipherKeyDetailsRef(Arena& arena,
 	                                    EncryptCipherDomainId dId,
 	                                    EncryptCipherBaseKeyId keyId,
@@ -93,8 +102,12 @@ struct EncryptCipherKeyDetailsRef {
 	                                    EncryptCipherKeyCheckValue keyKCV,
 	                                    Optional<int64_t> refAfterSec,
 	                                    Optional<int64_t> expAfterSec)
-	  : encryptDomainId(dId), encryptKeyId(keyId), encryptKey(StringRef(arena, key)), encryptKCV(keyKCV),
-	    refreshAfterSec(refAfterSec), expireAfterSec(expAfterSec) {}
+	  : encryptDomainId(dId),
+	    encryptKeyId(keyId),
+	    encryptKey(StringRef(arena, key)),
+	    encryptKCV(keyKCV),
+	    refreshAfterSec(refAfterSec),
+	    expireAfterSec(expAfterSec) {}
 
 	bool operator==(const EncryptCipherKeyDetailsRef& toCompare) {
 		return encryptDomainId == toCompare.encryptDomainId && encryptKeyId == toCompare.encryptKeyId &&
@@ -130,7 +143,8 @@ struct KmsConnLookupKeyIdsReqInfo {
 
 	KmsConnLookupKeyIdsReqInfo() : domainId(INVALID_ENCRYPT_DOMAIN_ID), baseCipherId(INVALID_ENCRYPT_CIPHER_KEY_ID) {}
 	explicit KmsConnLookupKeyIdsReqInfo(const Optional<EncryptCipherDomainId> dId, const EncryptCipherBaseKeyId bCId)
-	  : domainId(dId), baseCipherId(bCId) {}
+	  : domainId(dId),
+	    baseCipherId(bCId) {}
 
 	bool operator==(const KmsConnLookupKeyIdsReqInfo& info) const {
 		if (domainId.present()) {
@@ -156,7 +170,8 @@ struct KmsConnLookupEKsByKeyIdsReq {
 
 	KmsConnLookupEKsByKeyIdsReq() {}
 	explicit KmsConnLookupEKsByKeyIdsReq(const std::vector<KmsConnLookupKeyIdsReqInfo>& keyInfos, Optional<UID> dbgId)
-	  : encryptKeyInfos(keyInfos), debugId(dbgId) {}
+	  : encryptKeyInfos(keyInfos),
+	    debugId(dbgId) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -186,7 +201,8 @@ struct KmsConnLookupEKsByDomainIdsReq {
 
 	KmsConnLookupEKsByDomainIdsReq() {}
 	explicit KmsConnLookupEKsByDomainIdsReq(std::vector<EncryptCipherDomainId>& ids, Optional<UID> dbgId)
-	  : encryptDomainIds(ids), debugId(dbgId) {}
+	  : encryptDomainIds(ids),
+	    debugId(dbgId) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -218,6 +234,31 @@ struct KmsConnBlobMetadataReq {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, domainIds, debugId, reply, arena);
+	}
+};
+
+struct KmsConnGetKMSStateRep {
+	constexpr static FileIdentifier file_identifier = 111862;
+	std::vector<std::string> restKMSUrls;
+	bool kmsStable;
+
+	KmsConnGetKMSStateRep() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, restKMSUrls, kmsStable);
+	}
+};
+
+struct KmsConnGetKMSStateReq {
+	constexpr static FileIdentifier file_identifier = 2349929;
+	ReplyPromise<KmsConnGetKMSStateRep> reply;
+
+	KmsConnGetKMSStateReq() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reply);
 	}
 };
 

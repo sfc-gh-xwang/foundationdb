@@ -113,10 +113,23 @@ struct ConfigureAutoResult {
 	int32_t desired_logs;
 
 	ConfigureAutoResult()
-	  : processes(-1), machines(-1), old_commit_proxies(-1), old_grv_proxies(-1), old_resolvers(-1), old_logs(-1),
-	    old_processes_with_transaction(-1), old_machines_with_transaction(-1), auto_commit_proxies(-1),
-	    auto_grv_proxies(-1), auto_resolvers(-1), auto_logs(-1), auto_processes_with_transaction(-1),
-	    auto_machines_with_transaction(-1), desired_commit_proxies(-1), desired_grv_proxies(-1), desired_resolvers(-1),
+	  : processes(-1),
+	    machines(-1),
+	    old_commit_proxies(-1),
+	    old_grv_proxies(-1),
+	    old_resolvers(-1),
+	    old_logs(-1),
+	    old_processes_with_transaction(-1),
+	    old_machines_with_transaction(-1),
+	    auto_commit_proxies(-1),
+	    auto_grv_proxies(-1),
+	    auto_resolvers(-1),
+	    auto_logs(-1),
+	    auto_processes_with_transaction(-1),
+	    auto_machines_with_transaction(-1),
+	    desired_commit_proxies(-1),
+	    desired_grv_proxies(-1),
+	    desired_resolvers(-1),
 	    desired_logs(-1) {}
 
 	bool isValid() const { return processes != -1; }
@@ -137,6 +150,14 @@ bool isEncryptionAtRestModeConfigValid(Optional<DatabaseConfiguration> oldConfig
                                        std::map<std::string, std::string> newConfig,
                                        bool creating);
 bool isTenantModeModeConfigValid(DatabaseConfiguration oldConfiguration, DatabaseConfiguration newConfiguration);
+
+// Check if there's any storage engine params change for the specified engine
+// engine_prefix will tell whether it's storage engine, tss engine or others
+// paramsChange will be set to true if we find any related changes
+bool checkForStorageEngineParamsChange(const std::map<std::string, std::string>& m,
+                                       const std::string& engine_type,
+                                       KeyRef engine_prefix,
+                                       bool& paramsChange);
 
 // Management API written in template code to support both IClientAPI and NativeAPI
 namespace ManagementAPI {
@@ -276,6 +297,19 @@ Future<ConfigurationResult> changeConfig(Reference<DB> db, std::map<std::string,
 			m.erase(iter);
 		}
 	}
+
+	state bool storageEngineParamsChange = false;
+	if (!checkForStorageEngineParamsChange(m, "storage_engine", storageEngineParamsPrefix, storageEngineParamsChange)) {
+		fmt::print("Error: Invalid configuration for storage engine params\n");
+		return ConfigurationResult::INVALID_CONFIGURATION;
+	}
+	state bool tssStorageEngineParamsChange = false;
+	if (!checkForStorageEngineParamsChange(
+	        m, "tss_storage_engine", tssStorageEngineParamsPrefix, tssStorageEngineParamsChange)) {
+		fmt::print("Error: Invalid configuration for tss storage engine params\n");
+		return ConfigurationResult::INVALID_CONFIGURATION;
+	}
+
 	if (creating) {
 		m[initIdKey.toString()] = deterministicRandom()->randomUniqueID().toString();
 		if (!isCompleteConfiguration(m)) {

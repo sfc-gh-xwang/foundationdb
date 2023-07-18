@@ -869,13 +869,23 @@ TaskBucket::TaskBucket(const Subspace& subspace,
                        AccessSystemKeys sysAccess,
                        PriorityBatch priorityBatch,
                        LockAware lockAware)
-  : dbgid(deterministicRandom()->randomUniqueID()), cc("TaskBucket", dbgid.toString()),
-    dispatchSlotChecksStarted("DispatchSlotChecksStarted", cc), dispatchErrors("DispatchErrors", cc),
-    dispatchDoTasks("DispatchDoTasks", cc), dispatchEmptyTasks("DispatchEmptyTasks", cc),
-    dispatchSlotChecksComplete("DispatchSlotChecksComplete", cc), prefix(subspace), active(prefix.get("ac"_sr)),
-    pauseKey(prefix.pack("pause"_sr)), available(prefix.get("av"_sr)), available_prioritized(prefix.get("avp"_sr)),
-    timeouts(prefix.get("to"_sr)), timeout(CLIENT_KNOBS->TASKBUCKET_TIMEOUT_VERSIONS), system_access(sysAccess),
-    priority_batch(priorityBatch), lockAware(lockAware) {}
+  : dbgid(deterministicRandom()->randomUniqueID()),
+    cc("TaskBucket", dbgid.toString()),
+    dispatchSlotChecksStarted("DispatchSlotChecksStarted", cc),
+    dispatchErrors("DispatchErrors", cc),
+    dispatchDoTasks("DispatchDoTasks", cc),
+    dispatchEmptyTasks("DispatchEmptyTasks", cc),
+    dispatchSlotChecksComplete("DispatchSlotChecksComplete", cc),
+    prefix(subspace),
+    active(prefix.get("ac"_sr)),
+    pauseKey(prefix.pack("pause"_sr)),
+    available(prefix.get("av"_sr)),
+    available_prioritized(prefix.get("avp"_sr)),
+    timeouts(prefix.get("to"_sr)),
+    timeout(CLIENT_KNOBS->TASKBUCKET_TIMEOUT_VERSIONS),
+    system_access(sysAccess),
+    priority_batch(priorityBatch),
+    lockAware(lockAware) {}
 
 TaskBucket::~TaskBucket() {}
 
@@ -1041,7 +1051,9 @@ public:
 };
 
 FutureBucket::FutureBucket(const Subspace& subspace, AccessSystemKeys sysAccess, LockAware lockAware)
-  : prefix(subspace), system_access(sysAccess), lockAware(lockAware) {}
+  : prefix(subspace),
+    system_access(sysAccess),
+    lockAware(lockAware) {}
 
 FutureBucket::~FutureBucket() {}
 

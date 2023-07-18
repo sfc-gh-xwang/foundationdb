@@ -40,7 +40,6 @@
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBOptions.g.h"
 #include "fdbclient/SystemData.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/TenantManagement.actor.h"
 #include "fdbclient/Tuple.h"
 
@@ -249,7 +248,8 @@ private:
 
 		OptionGroup() {}
 		OptionGroup(OptionGroup<T>& base)
-		  : options(base.options.begin(), base.options.end()), legalOptions(base.legalOptions) {}
+		  : options(base.options.begin(), base.options.end()),
+		    legalOptions(base.legalOptions) {}
 
 		// Enable or disable an option. Returns true if option value changed
 		bool setOption(typename T::Option option, bool enabled, Optional<StringRef> arg) {

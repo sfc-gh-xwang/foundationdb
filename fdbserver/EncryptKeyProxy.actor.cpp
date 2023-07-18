@@ -22,14 +22,19 @@
 #include "fdbclient/EncryptKeyProxyInterface.h"
 
 #include "fdbrpc/Locality.h"
+#include "fdbrpc/simulator.h"
+
 #include "fdbserver/KmsConnector.h"
 #include "fdbserver/KmsConnectorInterface.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/RESTKmsConnector.h"
+#include "fdbserver/RESTSimKmsVault.h"
+#include "fdbserver/ServerDBInfo.h"
 #include "fdbserver/ServerDBInfo.actor.h"
 #include "fdbserver/SimKmsConnector.h"
+#include "fdbserver/WaitFailure.h"
 #include "fdbserver/WorkerInterface.actor.h"
-#include "fdbserver/ServerDBInfo.h"
+
 #include "flow/Arena.h"
 #include "flow/CodeProbe.h"
 #include "flow/EncryptUtils.h"
@@ -171,14 +176,23 @@ struct EncryptBaseCipherKey {
 	int64_t expireAt;
 
 	EncryptBaseCipherKey()
-	  : domainId(0), baseCipherId(0), baseCipherKey(StringRef()), baseCipherKCV(0), refreshAt(0), expireAt(0) {}
+	  : domainId(0),
+	    baseCipherId(0),
+	    baseCipherKey(StringRef()),
+	    baseCipherKCV(0),
+	    refreshAt(0),
+	    expireAt(0) {}
 	explicit EncryptBaseCipherKey(EncryptCipherDomainId dId,
 	                              EncryptCipherBaseKeyId cipherId,
 	                              Standalone<StringRef> cipherKey,
 	                              EncryptCipherKeyCheckValue cipherKCV,
 	                              int64_t refAtTS,
 	                              int64_t expAtTS)
-	  : domainId(dId), baseCipherId(cipherId), baseCipherKey(cipherKey), baseCipherKCV(cipherKCV), refreshAt(refAtTS),
+	  : domainId(dId),
+	    baseCipherId(cipherId),
+	    baseCipherKey(cipherKey),
+	    baseCipherKCV(cipherKCV),
+	    refreshAt(refAtTS),
 	    expireAt(expAtTS) {}
 
 	bool needsRefresh() const {
@@ -201,7 +215,8 @@ struct BlobMetadataCacheEntry {
 
 	BlobMetadataCacheEntry() : creationTimeSec(0) {}
 	explicit BlobMetadataCacheEntry(Standalone<BlobMetadataDetailsRef> metadataDetails)
-	  : metadataDetails(metadataDetails), creationTimeSec(now()) {}
+	  : metadataDetails(metadataDetails),
+	    creationTimeSec(now()) {}
 
 	bool isValid() const { return (now() - creationTimeSec) < SERVER_KNOBS->BLOB_METADATA_CACHE_TTL; }
 };
@@ -231,7 +246,8 @@ public:
 
 	std::unique_ptr<KmsConnector> kmsConnector;
 
-	KMSHealthStatus kmsConnectorHealthStatus;
+	bool canConnectToKms = true;
+	double canConnectToKmsLastUpdatedTS = 0;
 
 	CounterCollection ekpCacheMetrics;
 
@@ -254,7 +270,8 @@ public:
 	LatencySample kmsBlobMetadataReqLatency;
 
 	explicit EncryptKeyProxyData(UID id)
-	  : myId(id), ekpCacheMetrics("EKPMetrics", myId.toString()),
+	  : myId(id),
+	    ekpCacheMetrics("EKPMetrics", myId.toString()),
 	    baseCipherKeyIdCacheMisses("EKPCipherIdCacheMisses", ekpCacheMetrics),
 	    baseCipherKeyIdCacheHits("EKPCipherIdCacheHits", ekpCacheMetrics),
 	    baseCipherDomainIdCacheMisses("EKPCipherDomainIdCacheMisses", ekpCacheMetrics),
@@ -282,6 +299,11 @@ public:
 	                              SERVER_KNOBS->LATENCY_SKETCH_ACCURACY) {
 		logger = ekpCacheMetrics.traceCounters(
 		    "EncryptKeyProxyMetrics", id, SERVER_KNOBS->ENCRYPTION_LOGGING_INTERVAL, "EncryptKeyProxyMetrics");
+	}
+
+	void setKMSHealthiness(bool canConnect) {
+		canConnectToKms = canConnect;
+		canConnectToKmsLastUpdatedTS = now();
 	}
 
 	static EncryptBaseCipherDomainIdKeyIdCacheKey getBaseCipherDomainIdKeyIdCacheKey(
@@ -493,11 +515,11 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 				}
 			}
 			if (keysByIdsRep.cipherKeyDetails.size() > 0) {
-				ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ true, true, now() };
+				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
 			if (isKmsConnectionError(e)) {
-				ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ false, true, now() };
+				ekpProxyData->setKMSHealthiness(false);
 			}
 
 			if (!canReplyWith(e)) {
@@ -641,11 +663,11 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 				}
 			}
 			if (keysByDomainIdRep.cipherKeyDetails.size() > 0) {
-				ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ true, true, now() };
+				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
 			if (isKmsConnectionError(e)) {
-				ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ false, true, now() };
+				ekpProxyData->setKMSHealthiness(false);
 			}
 			if (!canReplyWith(e)) {
 				TraceEvent("GetLatestCipherKeys", ekpProxyData->myId).error(e);
@@ -684,8 +706,8 @@ bool isBlobMetadataEligibleForRefresh(const BlobMetadataDetailsRef& blobMetadata
 	return nextRefreshCycleTS > blobMetadata.expireAt || nextRefreshCycleTS > blobMetadata.refreshAt;
 }
 
-ACTOR Future<KMSHealthStatus> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyData,
-                                                  KmsConnectorInterface kmsConnectorInf) {
+ACTOR Future<bool> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyData,
+                                       KmsConnectorInterface kmsConnectorInf) {
 	state UID debugId = deterministicRandom()->randomUniqueID();
 	if (DEBUG_ENCRYPT_KEY_PROXY) {
 		TraceEvent(SevDebug, "KMSHealthCheckStart", ekpProxyData->myId);
@@ -716,31 +738,54 @@ ACTOR Future<KMSHealthStatus> getHealthStatusImpl(Reference<EncryptKeyProxyData>
 		                                          cipherDetails.encryptKCV,
 		                                          validityTS.refreshAtTS,
 		                                          validityTS.expAtTS);
-		return KMSHealthStatus{ true, true, now() };
+		return true;
 	} catch (Error& e) {
 		TraceEvent(SevWarn, "KMSHealthCheckError").error(e);
 		if (!canReplyWith(e)) {
 			throw;
 		}
 		++ekpProxyData->numHealthCheckErrors;
-		return KMSHealthStatus{ false, true, now() };
 	}
+	return false;
 }
 
 ACTOR Future<Void> updateHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyData,
                                           KmsConnectorInterface kmsConnectorInf) {
 	// If the health check status has been updated recently avoid doing another refresh
-	if (now() - ekpProxyData->kmsConnectorHealthStatus.lastUpdatedTS < FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL) {
+	if (now() - ekpProxyData->canConnectToKmsLastUpdatedTS < FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL) {
 		return Void();
 	}
 
-	KMSHealthStatus status = wait(getHealthStatusImpl(ekpProxyData, kmsConnectorInf));
-	if (status != ekpProxyData->kmsConnectorHealthStatus) {
+	bool canConnectToKms = wait(getHealthStatusImpl(ekpProxyData, kmsConnectorInf));
+	if (canConnectToKms != ekpProxyData->canConnectToKms) {
 		TraceEvent("KmsConnectorHealthStatusChange")
-		    .detail("OldStatus", ekpProxyData->kmsConnectorHealthStatus.toString())
-		    .detail("NewStatus", status.toString());
+		    .detail("OldStatus", ekpProxyData->canConnectToKms)
+		    .detail("NewStatus", canConnectToKms);
 	}
-	ekpProxyData->kmsConnectorHealthStatus = status;
+	ekpProxyData->setKMSHealthiness(canConnectToKms);
+	return Void();
+}
+
+ACTOR Future<Void> getEKPStatus(Reference<EncryptKeyProxyData> ekpProxyData,
+                                KmsConnectorInterface kmsConnectorInf,
+                                EncryptKeyProxyHealthStatusRequest req) {
+	state KMSHealthStatus status;
+	status.canConnectToEKP = true;
+	status.canConnectToKms = ekpProxyData->canConnectToKms;
+	status.lastUpdatedTS = ekpProxyData->canConnectToKmsLastUpdatedTS;
+	status.kmsConnectorType = ekpProxyData->kmsConnector->getConnectorStr();
+
+	KmsConnGetKMSStateReq getKMSStateReq;
+	try {
+		KmsConnGetKMSStateRep getKMSStateRep = wait(kmsConnectorInf.getKMSStateReq.getReply(getKMSStateReq));
+		status.restKMSUrls = getKMSStateRep.restKMSUrls;
+		status.kmsStable = getKMSStateRep.kmsStable;
+		req.reply.send(status);
+	} catch (Error& e) {
+		TraceEvent("EKPGetKMSStateFailed", ekpProxyData->myId).error(e);
+		throw e;
+	}
+
 	return Void();
 }
 
@@ -810,13 +855,13 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 
 		ekpProxyData->baseCipherKeysRefreshed += rep.cipherKeyDetails.size();
 		if (rep.cipherKeyDetails.size() > 0) {
-			ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ true, true, now() };
+			ekpProxyData->setKMSHealthiness(true);
 		}
 		t.detail("NumKeys", rep.cipherKeyDetails.size());
 		CODE_PROBE(!rep.cipherKeyDetails.empty(), "EKP refresh cipherKeys");
 	} catch (Error& e) {
 		if (isKmsConnectionError(e)) {
-			ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ false, true, now() };
+			ekpProxyData->setKMSHealthiness(false);
 		}
 		if (!canReplyWith(e)) {
 			TraceEvent(SevWarn, "RefreshEKsError").error(e);
@@ -905,11 +950,11 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 				}
 			}
 			if (kmsRep.metadataDetails.size() > 0) {
-				ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ true, true, now() };
+				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
 			if (isKmsConnectionError(e)) {
-				ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ false, true, now() };
+				ekpProxyData->setKMSHealthiness(false);
 			}
 
 			if (!canReplyWith(e)) {
@@ -969,12 +1014,12 @@ ACTOR Future<Void> refreshBlobMetadataCore(Reference<EncryptKeyProxyData> ekpPro
 
 		ekpProxyData->blobMetadataRefreshed += rep.metadataDetails.size();
 		if (rep.metadataDetails.size() > 0) {
-			ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ true, true, now() };
+			ekpProxyData->setKMSHealthiness(true);
 		}
 		t.detail("nKeys", rep.metadataDetails.size());
 	} catch (Error& e) {
 		if (isKmsConnectionError(e)) {
-			ekpProxyData->kmsConnectorHealthStatus = KMSHealthStatus{ false, true, now() };
+			ekpProxyData->setKMSHealthiness(false);
 		}
 
 		if (!canReplyWith(e)) {
@@ -992,12 +1037,18 @@ void refreshBlobMetadata(Reference<EncryptKeyProxyData> ekpProxyData, KmsConnect
 	Future<Void> ignored = refreshBlobMetadataCore(ekpProxyData, kmsConnectorInf);
 }
 
-void activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyData, KmsConnectorInterface kmsConnectorInf) {
-	if (g_network->isSimulated()) {
+ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyData,
+                                        KmsConnectorInterface kmsConnectorInf) {
+	if (g_network->isSimulated() && !SERVER_KNOBS->USE_REST_SIM_KMS_VAULT) {
+		// support restart tests
 		ekpProxyData->kmsConnector = std::make_unique<SimKmsConnector>(FDB_SIM_KMS_CONNECTOR_TYPE_STR);
 	} else if (SERVER_KNOBS->KMS_CONNECTOR_TYPE.compare(FDB_PREF_KMS_CONNECTOR_TYPE_STR) == 0) {
 		ekpProxyData->kmsConnector = std::make_unique<SimKmsConnector>(FDB_PREF_KMS_CONNECTOR_TYPE_STR);
 	} else if (SERVER_KNOBS->KMS_CONNECTOR_TYPE.compare(REST_KMS_CONNECTOR_TYPE_STR) == 0) {
+		if (g_network->isSimulated()) {
+			// advertise KMS discovery files in simulated environment
+			wait(RestSimKms::initConfigFiles());
+		}
 		ekpProxyData->kmsConnector = std::make_unique<RESTKmsConnector>(REST_KMS_CONNECTOR_TYPE_STR);
 	} else {
 		throw not_implemented();
@@ -1008,49 +1059,52 @@ void activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyData, KmsConnec
 	    .detail("InfId", kmsConnectorInf.id());
 
 	ekpProxyData->addActor.send(ekpProxyData->kmsConnector->connectorCore(kmsConnectorInf));
+	return Void();
 }
 
 ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
                                          Reference<AsyncVar<ServerDBInfo>> db,
                                          EncryptionAtRestMode encryptMode) {
+
 	state Reference<EncryptKeyProxyData> self = makeReference<EncryptKeyProxyData>(ekpInterface.id());
 	state Future<Void> collection = actorCollection(self->addActor.getFuture());
-	self->addActor.send(traceRole(Role::ENCRYPT_KEY_PROXY, ekpInterface.id()));
-
 	state KmsConnectorInterface kmsConnectorInf;
-	kmsConnectorInf.initEndpoints();
 
-	TraceEvent("EKPStart", self->myId).detail("KmsConnectorInf", kmsConnectorInf.id());
-
-	activateKmsConnector(self, kmsConnectorInf);
-
-	// Register a recurring task to refresh the cached Encryption keys and blob metadata.
-	// Approach avoids external RPCs due to EncryptionKey refreshes for the inline write encryption codepath such as:
-	// CPs, Redwood Storage Server node flush etc. The process doing the encryption refresh the cached cipher keys based
-	// on FLOW_KNOB->ENCRYPTION_CIPHER_KEY_CACHE_TTL_SEC interval which is intentionally kept longer than
-	// FLOW_KNOB->ENCRRYPTION_KEY_REFRESH_INTERVAL_SEC, allowing the interactions with external Encryption Key Manager
-	// mostly not co-inciding with FDB process encryption key refresh attempts.
-
-	self->encryptionKeyRefresher = recurringAsync([&]() { return refreshEncryptionKeys(self, kmsConnectorInf); },
-	                                              FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* interval */
-	                                              true, /* absoluteIntervalDelay */
-	                                              FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* initialDelay */
-	                                              TaskPriority::Worker);
-
-	self->blobMetadataRefresher = recurring([&]() { refreshBlobMetadata(self, kmsConnectorInf); },
-	                                        CLIENT_KNOBS->BLOB_METADATA_REFRESH_INTERVAL,
-	                                        TaskPriority::Worker);
-
-	self->healthChecker = recurringAsync([&]() { return updateHealthStatus(self, kmsConnectorInf); },
-	                                     FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
-	                                     true,
-	                                     FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
-	                                     TaskPriority::Worker,
-	                                     true);
-
-	CODE_PROBE(!encryptMode.isEncryptionEnabled() && SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION,
-	           "Encryption disabled and EKP Recruited");
 	try {
+
+		kmsConnectorInf.initEndpoints();
+		TraceEvent("EKPStart", self->myId).detail("KmsConnectorInf", kmsConnectorInf.id());
+		self->addActor.send(waitFailureServer(ekpInterface.waitFailure.getFuture()));
+		self->addActor.send(traceRole(Role::ENCRYPT_KEY_PROXY, ekpInterface.id()));
+
+		wait(activateKmsConnector(self, kmsConnectorInf));
+
+		// Register a recurring task to refresh the cached Encryption keys and blob metadata.
+		// Approach avoids external RPCs due to EncryptionKey refreshes for the inline write encryption codepath such
+		// as: CPs, Redwood Storage Server node flush etc. The process doing the encryption refresh the cached cipher
+		// keys based on FLOW_KNOB->ENCRYPTION_CIPHER_KEY_CACHE_TTL_SEC interval which is intentionally kept longer than
+		// FLOW_KNOB->ENCRRYPTION_KEY_REFRESH_INTERVAL_SEC, allowing the interactions with external Encryption Key
+		// Manager mostly not co-inciding with FDB process encryption key refresh attempts.
+
+		self->encryptionKeyRefresher = recurringAsync([&]() { return refreshEncryptionKeys(self, kmsConnectorInf); },
+		                                              FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* interval */
+		                                              true, /* absoluteIntervalDelay */
+		                                              FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* initialDelay */
+		                                              TaskPriority::Worker);
+
+		self->blobMetadataRefresher = recurring([&]() { refreshBlobMetadata(self, kmsConnectorInf); },
+		                                        CLIENT_KNOBS->BLOB_METADATA_REFRESH_INTERVAL,
+		                                        TaskPriority::Worker);
+
+		self->healthChecker = recurringAsync([&]() { return updateHealthStatus(self, kmsConnectorInf); },
+		                                     FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
+		                                     true,
+		                                     FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
+		                                     TaskPriority::Worker,
+		                                     true);
+
+		CODE_PROBE(!encryptMode.isEncryptionEnabled() && SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION,
+		           "Encryption disabled and EKP Recruited");
 		loop choose {
 			when(EKPGetBaseCipherKeysByIdsRequest req = waitNext(ekpInterface.getBaseCipherKeysByIds.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled());
@@ -1072,7 +1126,7 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 			}
 			when(EncryptKeyProxyHealthStatusRequest req = waitNext(ekpInterface.getHealthStatus.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
-				req.reply.send(self->kmsConnectorHealthStatus);
+				self->addActor.send(getEKPStatus(self, kmsConnectorInf, req));
 			}
 			when(wait(collection)) {
 				ASSERT(false);
@@ -1081,8 +1135,10 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 		}
 	} catch (Error& e) {
 		TraceEvent("EKPTerminated", self->myId).errorUnsuppressed(e);
+		throw;
 	}
 
+	TraceEvent("EKPStopped", self->myId);
 	return Void();
 }
 

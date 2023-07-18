@@ -340,8 +340,11 @@ const std::unordered_map<int, std::string> BlobCipherMetrics::usageTypeNames = {
 };
 
 BlobCipherMetrics::BlobCipherMetrics()
-  : cc("BlobCipher"), cipherKeyCacheHit("CipherKeyCacheHit", cc), cipherKeyCacheMiss("CipherKeyCacheMiss", cc),
-    cipherKeyCacheExpired("CipherKeyCacheExpired", cc), latestCipherKeyCacheHit("LatestCipherKeyCacheHit", cc),
+  : cc("BlobCipher"),
+    cipherKeyCacheHit("CipherKeyCacheHit", cc),
+    cipherKeyCacheMiss("CipherKeyCacheMiss", cc),
+    cipherKeyCacheExpired("CipherKeyCacheExpired", cc),
+    latestCipherKeyCacheHit("LatestCipherKeyCacheHit", cc),
     latestCipherKeyCacheMiss("LatestCipherKeyCacheMiss", cc),
     latestCipherKeyCacheNeedsRefresh("LatestCipherKeyCacheNeedsRefresh", cc),
     getBlobMetadataLatency("GetBlobMetadataLatency",
@@ -501,7 +504,10 @@ void BlobCipherKey::reset() {
 // BlobKeyIdCache class methods
 
 BlobCipherKeyIdCache::BlobCipherKeyIdCache(EncryptCipherDomainId dId, size_t* sizeStat)
-  : domainId(dId), latestBaseCipherKeyId(), latestRandomSalt(), sizeStat(sizeStat) {
+  : domainId(dId),
+    latestBaseCipherKeyId(),
+    latestRandomSalt(),
+    sizeStat(sizeStat) {
 	ASSERT(sizeStat != nullptr);
 	TraceEvent(SevInfo, "BlobCipherKeyIdCacheInit").detail("DomainId", domainId);
 }
@@ -892,7 +898,10 @@ EncryptBlobCipherAes265Ctr::EncryptBlobCipherAes265Ctr(Reference<BlobCipherKey> 
                                                        const int ivLen,
                                                        const EncryptAuthTokenMode mode,
                                                        BlobCipherMetrics::UsageType usageType)
-  : ctx(EVP_CIPHER_CTX_new()), textCipherKey(tCipherKey), headerCipherKeyOpt(hCipherKeyOpt), authTokenMode(mode) {
+  : ctx(EVP_CIPHER_CTX_new()),
+    textCipherKey(tCipherKey),
+    headerCipherKeyOpt(hCipherKeyOpt),
+    authTokenMode(mode) {
 	ASSERT_EQ(ivLen, AES_256_IV_LENGTH);
 	authTokenAlgo = getAuthTokenAlgoFromMode(authTokenMode);
 	memcpy(&iv[0], cipherIV, ivLen);
@@ -906,7 +915,10 @@ EncryptBlobCipherAes265Ctr::EncryptBlobCipherAes265Ctr(Reference<BlobCipherKey> 
                                                        const EncryptAuthTokenMode mode,
                                                        const EncryptAuthTokenAlgo algo,
                                                        BlobCipherMetrics::UsageType usageType)
-  : ctx(EVP_CIPHER_CTX_new()), textCipherKey(tCipherKey), headerCipherKeyOpt(hCipherKeyOpt), authTokenMode(mode),
+  : ctx(EVP_CIPHER_CTX_new()),
+    textCipherKey(tCipherKey),
+    headerCipherKeyOpt(hCipherKeyOpt),
+    authTokenMode(mode),
     authTokenAlgo(algo) {
 	ASSERT_EQ(ivLen, AES_256_IV_LENGTH);
 	memcpy(&iv[0], cipherIV, ivLen);
@@ -917,7 +929,10 @@ EncryptBlobCipherAes265Ctr::EncryptBlobCipherAes265Ctr(Reference<BlobCipherKey> 
                                                        Optional<Reference<BlobCipherKey>> hCipherKeyOpt,
                                                        const EncryptAuthTokenMode mode,
                                                        BlobCipherMetrics::UsageType usageType)
-  : ctx(EVP_CIPHER_CTX_new()), textCipherKey(tCipherKey), headerCipherKeyOpt(hCipherKeyOpt), authTokenMode(mode) {
+  : ctx(EVP_CIPHER_CTX_new()),
+    textCipherKey(tCipherKey),
+    headerCipherKeyOpt(hCipherKeyOpt),
+    authTokenMode(mode) {
 	authTokenAlgo = getAuthTokenAlgoFromMode(authTokenMode);
 	deterministicRandom()->randomBytes(iv, AES_256_IV_LENGTH);
 	init();
@@ -928,7 +943,10 @@ EncryptBlobCipherAes265Ctr::EncryptBlobCipherAes265Ctr(Reference<BlobCipherKey> 
                                                        const EncryptAuthTokenMode mode,
                                                        const EncryptAuthTokenAlgo algo,
                                                        BlobCipherMetrics::UsageType usageType)
-  : ctx(EVP_CIPHER_CTX_new()), textCipherKey(tCipherKey), headerCipherKeyOpt(hCipherKeyOpt), authTokenMode(mode),
+  : ctx(EVP_CIPHER_CTX_new()),
+    textCipherKey(tCipherKey),
+    headerCipherKeyOpt(hCipherKeyOpt),
+    authTokenMode(mode),
     authTokenAlgo(algo) {
 	deterministicRandom()->randomBytes(iv, AES_256_IV_LENGTH);
 	init();
@@ -1292,7 +1310,9 @@ DecryptBlobCipherAes256Ctr::DecryptBlobCipherAes256Ctr(Reference<BlobCipherKey> 
                                                        Optional<Reference<BlobCipherKey>> hCipherKeyOpt,
                                                        const uint8_t* iv,
                                                        BlobCipherMetrics::UsageType usageType)
-  : ctx(EVP_CIPHER_CTX_new()), textCipherKey(tCipherKey), headerCipherKeyOpt(hCipherKeyOpt),
+  : ctx(EVP_CIPHER_CTX_new()),
+    textCipherKey(tCipherKey),
+    headerCipherKeyOpt(hCipherKeyOpt),
     authTokensValidationDone(false) {
 	if (ctx == nullptr) {
 		throw encrypt_ops_error();
@@ -1918,8 +1938,12 @@ public:
 	           const EncryptCipherBaseKeyId& kId,
 	           const int64_t rAt,
 	           const int64_t eAt)
-	  : domainId(dId), len(deterministicRandom()->randomInt(4, MAX_BASE_CIPHER_LEN + 1)), keyId(kId),
-	    key(std::make_unique<uint8_t[]>(len)), refreshAt(rAt), expireAt(eAt) {
+	  : domainId(dId),
+	    len(deterministicRandom()->randomInt(4, MAX_BASE_CIPHER_LEN + 1)),
+	    keyId(kId),
+	    key(std::make_unique<uint8_t[]>(len)),
+	    refreshAt(rAt),
+	    expireAt(eAt) {
 		deterministicRandom()->randomBytes(key.get(), len);
 		kcv = Sha256KCV().computeKCV(key.get(), len);
 	}

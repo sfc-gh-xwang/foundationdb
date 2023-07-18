@@ -128,7 +128,10 @@ public:
 }; // class RKBlobMonitorImpl
 
 RKBlobMonitor::RKBlobMonitor(Database db, Reference<AsyncVar<ServerDBInfo> const> dbInfo)
-  : db(db), dbInfo(dbInfo), anyBlobRanges(false), unblockedAssignmentTime(now()) {}
+  : db(db),
+    dbInfo(dbInfo),
+    anyBlobRanges(false),
+    unblockedAssignmentTime(now()) {}
 
 RKBlobMonitor::~RKBlobMonitor() = default;
 

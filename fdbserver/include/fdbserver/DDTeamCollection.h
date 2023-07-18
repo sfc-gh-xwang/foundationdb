@@ -68,7 +68,9 @@ struct TSSPairState : ReferenceCounted<TSSPairState>, NonCopyable {
 	TSSPairState() : active(false) {}
 
 	TSSPairState(const LocalityData& locality)
-	  : dcId(locality.dcId()), dataHallId(locality.dataHallId()), active(true) {}
+	  : dcId(locality.dcId()),
+	    dataHallId(locality.dataHallId()),
+	    active(true) {}
 
 	bool inDataZone(const LocalityData& locality) const {
 		return locality.dcId() == dcId && locality.dataHallId() == dataHallId;
@@ -145,11 +147,19 @@ public:
 	bool initialized; // AsyncMap erases default constructed objects
 	LocalityData locality;
 	ServerStatus()
-	  : isWiggling(false), isFailed(true), isUndesired(false), isWrongConfiguration(false), initialized(false) {}
+	  : isWiggling(false),
+	    isFailed(true),
+	    isUndesired(false),
+	    isWrongConfiguration(false),
+	    initialized(false) {}
 	ServerStatus(LocalityData const& locality) : ServerStatus(false, false, false, locality) {}
 	ServerStatus(bool isFailed, bool isUndesired, bool isWiggling, LocalityData const& locality)
-	  : isWiggling(isWiggling), isFailed(isFailed), isUndesired(isUndesired), isWrongConfiguration(false),
-	    initialized(true), locality(locality) {}
+	  : isWiggling(isWiggling),
+	    isFailed(isFailed),
+	    isUndesired(isUndesired),
+	    isWrongConfiguration(false),
+	    initialized(true),
+	    locality(locality) {}
 	bool isUnhealthy() const { return isFailed || isUndesired; }
 	std::string toString() const {
 		return fmt::format("Failed: {}, Undesired: {}, Wiggling: {}", isFailed, isUndesired, isWiggling);

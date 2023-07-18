@@ -50,7 +50,8 @@ public:
 
 	public:
 		Fragment(Reference<BoundedFlowLock> semaphore, int64_t permitNumber, FragmentConstructorTag)
-		  : semaphore(semaphore), releaser(semaphore.getPtr(), permitNumber) {}
+		  : semaphore(semaphore),
+		    releaser(semaphore.getPtr(), permitNumber) {}
 		template <class U>
 		void send(U&& value) {
 			stream.send(std::forward<U>(value));

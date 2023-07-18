@@ -6,7 +6,6 @@
 
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/StorageServerInterface.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbrpc/Locality.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/RatekeeperInterface.h"
@@ -56,6 +55,10 @@ public:
 
 	// Determine the ratio (limit / current throughput) for throttling based on write queue size
 	Optional<double> getTagThrottlingRatio(int64_t storageTargetBytes, int64_t storageSpringBytes) const;
+
+	// Testing:
+public:
+	static StorageQueueInfo createTestInfo(UID id, int64_t storageQueueBytes);
 };
 
 // Stores statistics for an individual tlog that are relevant for ratekeeper throttling

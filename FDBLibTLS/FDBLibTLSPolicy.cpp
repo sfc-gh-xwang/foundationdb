@@ -42,8 +42,14 @@
 #include <limits.h>
 
 FDBLibTLSPolicy::FDBLibTLSPolicy(Reference<FDBLibTLSPlugin> plugin)
-  : plugin(plugin), tls_cfg(nullptr), roots(nullptr), session_created(false), ca_data_set(false), cert_data_set(false),
-    key_data_set(false), verify_peers_set(false) {
+  : plugin(plugin),
+    tls_cfg(nullptr),
+    roots(nullptr),
+    session_created(false),
+    ca_data_set(false),
+    cert_data_set(false),
+    key_data_set(false),
+    verify_peers_set(false) {
 
 	if ((tls_cfg = tls_config_new()) == nullptr) {
 		TraceEvent(SevError, "FDBLibTLSConfigError").log();

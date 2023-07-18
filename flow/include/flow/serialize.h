@@ -443,11 +443,16 @@ public:
 	Standalone<StringRef> toValue() const { return Standalone<StringRef>(StringRef(data, size), arena); }
 	StringRef toValue(Arena& arena) const { return StringRef(arena, StringRef(data, size)); }
 	template <class VersionOptions>
-	explicit BinaryWriter(VersionOptions vo) : data(nullptr), size(0), allocated(0) {
+	explicit BinaryWriter(VersionOptions vo) : data(nullptr),
+	                                           size(0),
+	                                           allocated(0) {
 		vo.write(*this);
 	}
 	BinaryWriter(BinaryWriter&& rhs)
-	  : arena(std::move(rhs.arena)), data(rhs.data), size(rhs.size), allocated(rhs.allocated),
+	  : arena(std::move(rhs.arena)),
+	    data(rhs.data),
+	    size(rhs.size),
+	    allocated(rhs.allocated),
 	    m_protocolVersion(rhs.m_protocolVersion) {
 		rhs.size = 0;
 		rhs.allocated = 0;
@@ -593,7 +598,8 @@ public:
 	typedef OverWriter WRITER;
 
 	template <class VersionOptions>
-	explicit OverWriter(SplitBuffer buf, VersionOptions vo) : len(std::numeric_limits<int>::max()), buf(buf) {
+	explicit OverWriter(SplitBuffer buf, VersionOptions vo) : len(std::numeric_limits<int>::max()),
+	                                                          buf(buf) {
 		vo.write(*this);
 	}
 
@@ -821,7 +827,10 @@ public:
 
 private:
 	explicit PacketBuffer(size_t size)
-	  : reference_count(1), size_(size), wipe_begin(std::numeric_limits<decltype(wipe_begin)>::max()), wipe_len(0),
+	  : reference_count(1),
+	    size_(size),
+	    wipe_begin(std::numeric_limits<decltype(wipe_begin)>::max()),
+	    wipe_len(0),
 	    enqueue_time(g_network->now()) {
 		next = nullptr;
 		bytes_written = bytes_sent = 0;

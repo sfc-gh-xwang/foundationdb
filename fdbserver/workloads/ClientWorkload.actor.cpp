@@ -229,7 +229,8 @@ struct WorkloadProcess {
 };
 
 ClientWorkload::ClientWorkload(CreateWorkload const& childCreator, WorkloadContext const& wcx)
-  : TestWorkload(wcx), impl(new WorkloadProcess(childCreator, wcx)) {}
+  : TestWorkload(wcx),
+    impl(new WorkloadProcess(childCreator, wcx)) {}
 
 ClientWorkload::~ClientWorkload() {
 	TraceEvent(SevDebug, "DestroyClientWorkload").backtrace();

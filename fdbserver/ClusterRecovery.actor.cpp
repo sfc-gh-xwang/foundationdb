@@ -414,7 +414,7 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 		    .detail("BackupEpoch", epoch)
 		    .detail("StartVersion", req.startVersion);
 		initializationReplies.push_back(
-		    transformErrors(throwErrorOr(worker.backup.getReplyUnlessFailedFor(
+		    transformErrors(throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 		                        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 		                    backup_worker_failed()));
 	}
@@ -453,7 +453,7 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 			    .detail("StartVersion", req.startVersion)
 			    .detail("EndVersion", req.endVersion.get());
 			initializationReplies.push_back(transformErrors(
-			    throwErrorOr(worker.backup.getReplyUnlessFailedFor(
+			    throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 			        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 			    backup_worker_failed()));
 		}

@@ -151,9 +151,14 @@ TLSConfig tlsConfig(TLSEndpointType::CLIENT);
 
 // The default values, TRACE_DEFAULT_ROLL_SIZE and TRACE_DEFAULT_MAX_LOGS_SIZE are located in Trace.h.
 NetworkOptions::NetworkOptions()
-  : traceRollSize(TRACE_DEFAULT_ROLL_SIZE), traceMaxLogsSize(TRACE_DEFAULT_MAX_LOGS_SIZE), traceLogGroup("default"),
-    traceFormat("xml"), traceClockSource("now"), traceInitializeOnSetup(false),
-    supportedVersions(new ReferencedObject<Standalone<VectorRef<ClientVersionRef>>>()), runLoopProfilingEnabled(false),
+  : traceRollSize(TRACE_DEFAULT_ROLL_SIZE),
+    traceMaxLogsSize(TRACE_DEFAULT_MAX_LOGS_SIZE),
+    traceLogGroup("default"),
+    traceFormat("xml"),
+    traceClockSource("now"),
+    traceInitializeOnSetup(false),
+    supportedVersions(new ReferencedObject<Standalone<VectorRef<ClientVersionRef>>>()),
+    runLoopProfilingEnabled(false),
     primaryClient(true) {}
 
 static const Key CLIENT_LATENCY_INFO_PREFIX = "client_latency/"_sr;
@@ -1391,7 +1396,10 @@ struct SingleSpecialKeyImpl : SpecialKeyRangeReadImpl {
 	SingleSpecialKeyImpl(KeyRef k,
 	                     const std::function<Future<ValueReadResult>(ReadYourWritesTransaction*)>& f,
 	                     bool supportsTenants = false)
-	  : SpecialKeyRangeReadImpl(singleKeyRange(k)), k(k), f(f), tenantSupport(supportsTenants) {}
+	  : SpecialKeyRangeReadImpl(singleKeyRange(k)),
+	    k(k),
+	    f(f),
+	    tenantSupport(supportsTenants) {}
 
 	bool supportsTenants() const override {
 		CODE_PROBE(tenantSupport, "Single special key in tenant");
@@ -1520,13 +1528,20 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
                                  int _apiVersion,
                                  IsSwitchable switchable,
                                  Optional<TenantName> defaultTenant)
-  : lockAware(lockAware), switchable(switchable), dbId(deterministicRandom()->randomUniqueID()),
-    connectionRecord(connectionRecord), proxyProvisional(false), clientLocality(clientLocality),
-    enableLocalityLoadBalance(enableLocalityLoadBalance), defaultTenant(defaultTenant),
+  : lockAware(lockAware),
+    switchable(switchable),
+    dbId(deterministicRandom()->randomUniqueID()),
+    connectionRecord(connectionRecord),
+    proxyProvisional(false),
+    clientLocality(clientLocality),
+    enableLocalityLoadBalance(enableLocalityLoadBalance),
+    defaultTenant(defaultTenant),
     readVersionBatchers(CLIENT_KNOBS->MAX_GRV_BATCHERS,
                         CLIENT_KNOBS->GRV_BATCHER_EXPIRATION_TIMEOUT,
                         CLIENT_KNOBS->GRV_BATCHER_CLEANING_INTERVAL),
-    internal(internal), cc("TransactionMetrics", dbId.toString()), transactionReadVersions("ReadVersions", cc),
+    internal(internal),
+    cc("TransactionMetrics", dbId.toString()),
+    transactionReadVersions("ReadVersions", cc),
     transactionReadVersionsThrottled("ReadVersionsThrottled", cc),
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
@@ -1536,43 +1551,86 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
-    transactionLogicalReads("LogicalUncachedReads", cc), transactionPhysicalReads("PhysicalReadRequests", cc),
+    transactionLogicalReads("LogicalUncachedReads", cc),
+    transactionPhysicalReads("PhysicalReadRequests", cc),
     transactionPhysicalReadsCompleted("PhysicalReadRequestsCompleted", cc),
-    transactionGetKeyRequests("GetKeyRequests", cc), transactionGetValueRequests("GetValueRequests", cc),
+    transactionGetKeyRequests("GetKeyRequests", cc),
+    transactionGetValueRequests("GetValueRequests", cc),
     transactionGetRangeRequests("GetRangeRequests", cc),
     transactionGetMappedRangeRequests("GetMappedRangeRequests", cc),
-    transactionGetRangeStreamRequests("GetRangeStreamRequests", cc), transactionWatchRequests("WatchRequests", cc),
-    transactionGetAddressesForKeyRequests("GetAddressesForKeyRequests", cc), transactionBytesRead("BytesRead", cc),
-    transactionKeysRead("KeysRead", cc), transactionMetadataVersionReads("MetadataVersionReads", cc),
+    transactionGetRangeStreamRequests("GetRangeStreamRequests", cc),
+    transactionWatchRequests("WatchRequests", cc),
+    transactionGetAddressesForKeyRequests("GetAddressesForKeyRequests", cc),
+    transactionBytesRead("BytesRead", cc),
+    transactionKeysRead("KeysRead", cc),
+    transactionMetadataVersionReads("MetadataVersionReads", cc),
     transactionCommittedMutations("CommittedMutations", cc),
-    transactionCommittedMutationBytes("CommittedMutationBytes", cc), transactionSetMutations("SetMutations", cc),
-    transactionClearMutations("ClearMutations", cc), transactionAtomicMutations("AtomicMutations", cc),
-    transactionsCommitStarted("CommitStarted", cc), transactionsCommitCompleted("CommitCompleted", cc),
+    transactionCommittedMutationBytes("CommittedMutationBytes", cc),
+    transactionSetMutations("SetMutations", cc),
+    transactionClearMutations("ClearMutations", cc),
+    transactionAtomicMutations("AtomicMutations", cc),
+    transactionsCommitStarted("CommitStarted", cc),
+    transactionsCommitCompleted("CommitCompleted", cc),
     transactionKeyServerLocationRequests("KeyServerLocationRequests", cc),
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
-    transactionStatusRequests("StatusRequests", cc), transactionTenantLookupRequests("TenantLookupRequests", cc),
-    transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc), transactionsTooOld("TooOld", cc),
-    transactionsFutureVersions("FutureVersions", cc), transactionsNotCommitted("NotCommitted", cc),
-    transactionsMaybeCommitted("MaybeCommitted", cc), transactionsResourceConstrained("ResourceConstrained", cc),
-    transactionsProcessBehind("ProcessBehind", cc), transactionsThrottled("Throttled", cc),
+    transactionStatusRequests("StatusRequests", cc),
+    transactionTenantLookupRequests("TenantLookupRequests", cc),
+    transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
+    transactionsTooOld("TooOld", cc),
+    transactionsFutureVersions("FutureVersions", cc),
+    transactionsNotCommitted("NotCommitted", cc),
+    transactionsMaybeCommitted("MaybeCommitted", cc),
+    transactionsResourceConstrained("ResourceConstrained", cc),
+    transactionsProcessBehind("ProcessBehind", cc),
+    transactionsThrottled("Throttled", cc),
     transactionsExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
-    transactionGrvFullBatches("NumGrvFullBatches", cc), transactionGrvTimedOutBatches("NumGrvTimedOutBatches", cc),
-    transactionCommitVersionNotFoundForSS("CommitVersionNotFoundForSS", cc), anyBGReads(false),
-    ccBG("BlobGranuleReadMetrics", dbId.toString()), bgReadInputBytes("BGReadInputBytes", ccBG),
-    bgReadOutputBytes("BGReadOutputBytes", ccBG), bgReadSnapshotRows("BGReadSnapshotRows", ccBG),
-    bgReadRowsCleared("BGReadRowsCleared", ccBG), bgReadRowsInserted("BGReadRowsInserted", ccBG),
-    bgReadRowsUpdated("BGReadRowsUpdated", ccBG), bgLatencies(), bgGranulesPerRequest(), usedAnyChangeFeeds(false),
-    ccFeed("ChangeFeedClientMetrics", dbId.toString()), feedStreamStarts("FeedStreamStarts", ccFeed),
-    feedMergeStreamStarts("FeedMergeStreamStarts", ccFeed), feedErrors("FeedErrors", ccFeed),
-    feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed), feedPops("FeedPops", ccFeed),
-    feedPopsFallback("FeedPopsFallback", ccFeed), latencies(), readLatencies(), readRangeLatencies(), commitLatencies(),
-    GRVLatencies(), keyLocationLatencies(), mutationsPerCommit(), bytesPerCommit(), outstandingWatches(0),
-    sharedStatePtr(nullptr), lastGrvTime(0.0), cachedReadVersion(0), lastRkBatchThrottleTime(0.0),
-    lastRkDefaultThrottleTime(0.0), lastProxyRequestTime(0.0), transactionTracingSample(false), taskID(taskID),
-    clientInfo(clientInfo), clientInfoMonitor(clientInfoMonitor), coordinator(coordinator), apiVersion(_apiVersion),
-    mvCacheInsertLocation(0), healthMetricsLastUpdated(0), detailedHealthMetricsLastUpdated(0),
+    transactionGrvFullBatches("NumGrvFullBatches", cc),
+    transactionGrvTimedOutBatches("NumGrvTimedOutBatches", cc),
+    transactionCommitVersionNotFoundForSS("CommitVersionNotFoundForSS", cc),
+    anyBGReads(false),
+    ccBG("BlobGranuleReadMetrics", dbId.toString()),
+    bgReadInputBytes("BGReadInputBytes", ccBG),
+    bgReadOutputBytes("BGReadOutputBytes", ccBG),
+    bgReadSnapshotRows("BGReadSnapshotRows", ccBG),
+    bgReadRowsCleared("BGReadRowsCleared", ccBG),
+    bgReadRowsInserted("BGReadRowsInserted", ccBG),
+    bgReadRowsUpdated("BGReadRowsUpdated", ccBG),
+    bgLatencies(),
+    bgGranulesPerRequest(),
+    usedAnyChangeFeeds(false),
+    ccFeed("ChangeFeedClientMetrics", dbId.toString()),
+    feedStreamStarts("FeedStreamStarts", ccFeed),
+    feedMergeStreamStarts("FeedMergeStreamStarts", ccFeed),
+    feedErrors("FeedErrors", ccFeed),
+    feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
+    feedPops("FeedPops", ccFeed),
+    feedPopsFallback("FeedPopsFallback", ccFeed),
+    latencies(),
+    readLatencies(),
+    readRangeLatencies(),
+    commitLatencies(),
+    GRVLatencies(),
+    keyLocationLatencies(),
+    mutationsPerCommit(),
+    bytesPerCommit(),
+    outstandingWatches(0),
+    sharedStatePtr(nullptr),
+    lastGrvTime(0.0),
+    cachedReadVersion(0),
+    lastRkBatchThrottleTime(0.0),
+    lastRkDefaultThrottleTime(0.0),
+    lastProxyRequestTime(0.0),
+    transactionTracingSample(false),
+    taskID(taskID),
+    clientInfo(clientInfo),
+    clientInfoMonitor(clientInfoMonitor),
+    coordinator(coordinator),
+    apiVersion(_apiVersion),
+    mvCacheInsertLocation(0),
+    healthMetricsLastUpdated(0),
+    detailedHealthMetricsLastUpdated(0),
     smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
     specialKeySpace(std::make_unique<SpecialKeySpace>(specialKeys.begin, specialKeys.end, /* test */ false)),
     connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())) {
@@ -1835,10 +1893,13 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 }
 
 DatabaseContext::DatabaseContext(const Error& err)
-  : deferredError(err), readVersionBatchers(CLIENT_KNOBS->MAX_GRV_BATCHERS,
-                                            CLIENT_KNOBS->GRV_BATCHER_EXPIRATION_TIMEOUT,
-                                            CLIENT_KNOBS->GRV_BATCHER_CLEANING_INTERVAL),
-    internal(IsInternal::False), cc("TransactionMetrics"), transactionReadVersions("ReadVersions", cc),
+  : deferredError(err),
+    readVersionBatchers(CLIENT_KNOBS->MAX_GRV_BATCHERS,
+                        CLIENT_KNOBS->GRV_BATCHER_EXPIRATION_TIMEOUT,
+                        CLIENT_KNOBS->GRV_BATCHER_CLEANING_INTERVAL),
+    internal(IsInternal::False),
+    cc("TransactionMetrics"),
+    transactionReadVersions("ReadVersions", cc),
     transactionReadVersionsThrottled("ReadVersionsThrottled", cc),
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
@@ -1848,40 +1909,73 @@ DatabaseContext::DatabaseContext(const Error& err)
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
-    transactionLogicalReads("LogicalUncachedReads", cc), transactionPhysicalReads("PhysicalReadRequests", cc),
+    transactionLogicalReads("LogicalUncachedReads", cc),
+    transactionPhysicalReads("PhysicalReadRequests", cc),
     transactionPhysicalReadsCompleted("PhysicalReadRequestsCompleted", cc),
-    transactionGetKeyRequests("GetKeyRequests", cc), transactionGetValueRequests("GetValueRequests", cc),
+    transactionGetKeyRequests("GetKeyRequests", cc),
+    transactionGetValueRequests("GetValueRequests", cc),
     transactionGetRangeRequests("GetRangeRequests", cc),
     transactionGetMappedRangeRequests("GetMappedRangeRequests", cc),
-    transactionGetRangeStreamRequests("GetRangeStreamRequests", cc), transactionWatchRequests("WatchRequests", cc),
-    transactionGetAddressesForKeyRequests("GetAddressesForKeyRequests", cc), transactionBytesRead("BytesRead", cc),
-    transactionKeysRead("KeysRead", cc), transactionMetadataVersionReads("MetadataVersionReads", cc),
+    transactionGetRangeStreamRequests("GetRangeStreamRequests", cc),
+    transactionWatchRequests("WatchRequests", cc),
+    transactionGetAddressesForKeyRequests("GetAddressesForKeyRequests", cc),
+    transactionBytesRead("BytesRead", cc),
+    transactionKeysRead("KeysRead", cc),
+    transactionMetadataVersionReads("MetadataVersionReads", cc),
     transactionCommittedMutations("CommittedMutations", cc),
-    transactionCommittedMutationBytes("CommittedMutationBytes", cc), transactionSetMutations("SetMutations", cc),
-    transactionClearMutations("ClearMutations", cc), transactionAtomicMutations("AtomicMutations", cc),
-    transactionsCommitStarted("CommitStarted", cc), transactionsCommitCompleted("CommitCompleted", cc),
+    transactionCommittedMutationBytes("CommittedMutationBytes", cc),
+    transactionSetMutations("SetMutations", cc),
+    transactionClearMutations("ClearMutations", cc),
+    transactionAtomicMutations("AtomicMutations", cc),
+    transactionsCommitStarted("CommitStarted", cc),
+    transactionsCommitCompleted("CommitCompleted", cc),
     transactionKeyServerLocationRequests("KeyServerLocationRequests", cc),
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
-    transactionStatusRequests("StatusRequests", cc), transactionTenantLookupRequests("TenantLookupRequests", cc),
-    transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc), transactionsTooOld("TooOld", cc),
-    transactionsFutureVersions("FutureVersions", cc), transactionsNotCommitted("NotCommitted", cc),
-    transactionsMaybeCommitted("MaybeCommitted", cc), transactionsResourceConstrained("ResourceConstrained", cc),
-    transactionsProcessBehind("ProcessBehind", cc), transactionsThrottled("Throttled", cc),
+    transactionStatusRequests("StatusRequests", cc),
+    transactionTenantLookupRequests("TenantLookupRequests", cc),
+    transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
+    transactionsTooOld("TooOld", cc),
+    transactionsFutureVersions("FutureVersions", cc),
+    transactionsNotCommitted("NotCommitted", cc),
+    transactionsMaybeCommitted("MaybeCommitted", cc),
+    transactionsResourceConstrained("ResourceConstrained", cc),
+    transactionsProcessBehind("ProcessBehind", cc),
+    transactionsThrottled("Throttled", cc),
     transactionsExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
-    transactionGrvFullBatches("NumGrvFullBatches", cc), transactionGrvTimedOutBatches("NumGrvTimedOutBatches", cc),
-    transactionCommitVersionNotFoundForSS("CommitVersionNotFoundForSS", cc), anyBGReads(false),
-    ccBG("BlobGranuleReadMetrics"), bgReadInputBytes("BGReadInputBytes", ccBG),
-    bgReadOutputBytes("BGReadOutputBytes", ccBG), bgReadSnapshotRows("BGReadSnapshotRows", ccBG),
-    bgReadRowsCleared("BGReadRowsCleared", ccBG), bgReadRowsInserted("BGReadRowsInserted", ccBG),
-    bgReadRowsUpdated("BGReadRowsUpdated", ccBG), bgLatencies(), bgGranulesPerRequest(), usedAnyChangeFeeds(false),
-    ccFeed("ChangeFeedClientMetrics"), feedStreamStarts("FeedStreamStarts", ccFeed),
-    feedMergeStreamStarts("FeedMergeStreamStarts", ccFeed), feedErrors("FeedErrors", ccFeed),
-    feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed), feedPops("FeedPops", ccFeed),
-    feedPopsFallback("FeedPopsFallback", ccFeed), latencies(), readLatencies(), readRangeLatencies(), commitLatencies(),
-    GRVLatencies(), keyLocationLatencies(), mutationsPerCommit(), bytesPerCommit(), outstandingWatches(0),
-    sharedStatePtr(nullptr), transactionTracingSample(false),
+    transactionGrvFullBatches("NumGrvFullBatches", cc),
+    transactionGrvTimedOutBatches("NumGrvTimedOutBatches", cc),
+    transactionCommitVersionNotFoundForSS("CommitVersionNotFoundForSS", cc),
+    anyBGReads(false),
+    ccBG("BlobGranuleReadMetrics"),
+    bgReadInputBytes("BGReadInputBytes", ccBG),
+    bgReadOutputBytes("BGReadOutputBytes", ccBG),
+    bgReadSnapshotRows("BGReadSnapshotRows", ccBG),
+    bgReadRowsCleared("BGReadRowsCleared", ccBG),
+    bgReadRowsInserted("BGReadRowsInserted", ccBG),
+    bgReadRowsUpdated("BGReadRowsUpdated", ccBG),
+    bgLatencies(),
+    bgGranulesPerRequest(),
+    usedAnyChangeFeeds(false),
+    ccFeed("ChangeFeedClientMetrics"),
+    feedStreamStarts("FeedStreamStarts", ccFeed),
+    feedMergeStreamStarts("FeedMergeStreamStarts", ccFeed),
+    feedErrors("FeedErrors", ccFeed),
+    feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
+    feedPops("FeedPops", ccFeed),
+    feedPopsFallback("FeedPopsFallback", ccFeed),
+    latencies(),
+    readLatencies(),
+    readRangeLatencies(),
+    commitLatencies(),
+    GRVLatencies(),
+    keyLocationLatencies(),
+    mutationsPerCommit(),
+    bytesPerCommit(),
+    outstandingWatches(0),
+    sharedStatePtr(nullptr),
+    transactionTracingSample(false),
     smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
     connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())) {
 	initializeSpecialCounters();
@@ -2891,7 +2985,8 @@ AddressExclusion AddressExclusion::parse(StringRef const& key) {
 Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)) {}
 Tenant::Tenant(int64_t id) : lookupFuture(id) {}
 Tenant::Tenant(Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
-  : name(name), lookupFuture(tenantLookupInfo) {}
+  : name(name),
+    lookupFuture(tenantLookupInfo) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
@@ -3447,8 +3542,14 @@ TransactionState::TransactionState(Database cx,
                                    TaskPriority taskID,
                                    SpanContext spanContext,
                                    Reference<TransactionLogInfo> trLogInfo)
-  : cx(cx), trLogInfo(trLogInfo), options(cx), taskID(taskID), spanContext(spanContext),
-    readVersionObtainedFromGrvProxy(true), tenant_(tenant), tenantSet(tenant.present()) {}
+  : cx(cx),
+    trLogInfo(trLogInfo),
+    options(cx),
+    taskID(taskID),
+    spanContext(spanContext),
+    readVersionObtainedFromGrvProxy(true),
+    tenant_(tenant),
+    tenantSet(tenant.present()) {}
 
 TransactionState::~TransactionState() {
 	// Need to cancel the actors, because otherwise they may access already destroyed
@@ -4131,7 +4232,10 @@ public:
 	WatchRefCountUpdater() = default;
 
 	WatchRefCountUpdater(const Database& cx_, const int64_t tenantID_, KeyRef key_, const Version& ver)
-	  : cx(cx_), tenantID(tenantID_), key(key_), version(ver) {}
+	  : cx(cx_),
+	    tenantID(tenantID_),
+	    key(key_),
+	    version(ver) {}
 
 	WatchRefCountUpdater& operator=(WatchRefCountUpdater&& other) {
 		if (cx.getReference()) {
@@ -5490,7 +5594,9 @@ Transaction::Transaction(Database const& cx, Optional<Reference<Tenant>> const& 
                                             cx->taskID,
                                             generateSpanID(cx->transactionTracingSample),
                                             createTrLogInfoProbabilistically(cx))),
-    span(trState->spanContext, "Transaction"_loc), backoff(CLIENT_KNOBS->DEFAULT_BACKOFF), tr(trState->spanContext) {
+    span(trState->spanContext, "Transaction"_loc),
+    backoff(CLIENT_KNOBS->DEFAULT_BACKOFF),
+    tr(trState->spanContext) {
 	if (cx->debugUseTag) {
 		debugAddTag(trState);
 	}
@@ -7745,12 +7851,68 @@ ACTOR Future<StorageMetrics> extractMetrics(Future<std::pair<Optional<StorageMet
 	return x.first.get();
 }
 
+ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRangesWithLocations(
+    KeyRange keys,
+    std::vector<KeyRangeLocationInfo>* locations,
+    bool* invalidateLocationCache) {
+
+	state Standalone<VectorRef<ReadHotRangeWithMetrics>> results;
+	try {
+		// TODO: how to handle this?
+		// This function is called whenever a shard becomes read-hot. But somehow the shard was split across more
+		// than one storage server after becoming read-hot and before this function is called, i.e. a race
+		// condition. Should we abort and wait for the newly split shards to be hot again?
+		state int nLocs = locations->size();
+		// if (nLocs > 1) {
+		//	TraceEvent("RHDDebug")
+		//	    .detail("NumSSIs", nLocs)
+		//	    .detail("KeysBegin", keys.begin.printable().c_str())
+		//	    .detail("KeysEnd", keys.end.printable().c_str());
+		// }
+		state std::vector<Future<ReadHotSubRangeReply>> fReplies(nLocs);
+		KeyRef partBegin, partEnd;
+		for (int i = 0; i < nLocs; i++) {
+			partBegin = (i == 0) ? keys.begin : locations->at(i).range.begin;
+			partEnd = (i == nLocs - 1) ? keys.end : locations->at(i).range.end;
+			ReadHotSubRangeRequest req(KeyRangeRef(partBegin, partEnd));
+			fReplies[i] = loadBalance(locations->at(i).locations->locations(),
+			                          &StorageServerInterface::getReadHotRanges,
+			                          req,
+			                          TaskPriority::DataDistribution);
+		}
+
+		wait(waitForAll(fReplies));
+
+		if (nLocs == 1) {
+			CODE_PROBE(true, "Single-shard read hot range request");
+			return fReplies[0].get().readHotRanges;
+		} else {
+			CODE_PROBE(true, "Multi-shard read hot range request");
+
+			for (int i = 0; i < nLocs; i++) {
+				results.append(
+				    results.arena(), fReplies[i].get().readHotRanges.begin(), fReplies[i].get().readHotRanges.size());
+				results.arena().dependsOn(fReplies[i].get().readHotRanges.arena());
+			}
+			return results;
+		}
+	} catch (Error& e) {
+		if (e.code() != error_code_wrong_shard_server && e.code() != error_code_all_alternatives_failed) {
+			TraceEvent(SevError, "GetReadHotSubRangesError").error(e);
+			throw;
+		}
+		*invalidateLocationCache = true;
+	}
+	return results;
+}
+
 ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(Database cx, KeyRange keys) {
 	state Span span("NAPI:GetReadHotRanges"_loc);
+
 	loop {
 		int64_t shardLimit = 100; // Shard limit here does not really matter since this function is currently only used
 		                          // to find the read-hot sub ranges within a read-hot shard.
-		std::vector<KeyRangeLocationInfo> locations =
+		state std::vector<KeyRangeLocationInfo> locations =
 		    wait(getKeyRangeLocations(cx,
 		                              TenantInfo(),
 		                              keys,
@@ -7761,77 +7923,54 @@ ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(Da
 		                              Optional<UID>(),
 		                              UseProvisionalProxies::False,
 		                              latestVersion));
-		try {
-			// TODO: how to handle this?
-			// This function is called whenever a shard becomes read-hot. But somehow the shard was split across more
-			// than one storage server after becoming read-hot and before this function is called, i.e. a race
-			// condition. Should we abort and wait for the newly split shards to be hot again?
-			state int nLocs = locations.size();
-			// if (nLocs > 1) {
-			//	TraceEvent("RHDDebug")
-			//	    .detail("NumSSIs", nLocs)
-			//	    .detail("KeysBegin", keys.begin.printable().c_str())
-			//	    .detail("KeysEnd", keys.end.printable().c_str());
-			// }
-			state std::vector<Future<ReadHotSubRangeReply>> fReplies(nLocs);
-			KeyRef partBegin, partEnd;
-			for (int i = 0; i < nLocs; i++) {
-				partBegin = (i == 0) ? keys.begin : locations[i].range.begin;
-				partEnd = (i == nLocs - 1) ? keys.end : locations[i].range.end;
-				ReadHotSubRangeRequest req(KeyRangeRef(partBegin, partEnd));
-				fReplies[i] = loadBalance(locations[i].locations->locations(),
-				                          &StorageServerInterface::getReadHotRanges,
-				                          req,
-				                          TaskPriority::DataDistribution);
-			}
 
-			wait(waitForAll(fReplies));
+		state bool invalidateLocationCache = false;
+		Standalone<VectorRef<ReadHotRangeWithMetrics>> results =
+		    wait(getReadHotRangesWithLocations(keys, &locations, &invalidateLocationCache));
 
-			if (nLocs == 1) {
-				CODE_PROBE(true, "Single-shard read hot range request");
-				return fReplies[0].get().readHotRanges;
-			} else {
-				CODE_PROBE(true, "Multi-shard read hot range request");
-				Standalone<VectorRef<ReadHotRangeWithMetrics>> results;
-				for (int i = 0; i < nLocs; i++) {
-					results.append(results.arena(),
-					               fReplies[i].get().readHotRanges.begin(),
-					               fReplies[i].get().readHotRanges.size());
-					results.arena().dependsOn(fReplies[i].get().readHotRanges.arena());
-				}
-
-				return results;
-			}
-		} catch (Error& e) {
-			if (e.code() != error_code_wrong_shard_server && e.code() != error_code_all_alternatives_failed) {
-				TraceEvent(SevError, "GetReadHotSubRangesError").error(e);
-				throw;
-			}
-			cx->invalidateCache({}, keys);
-			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
+		if (!invalidateLocationCache) {
+			return results;
 		}
+
+		cx->invalidateCache({}, keys);
+		wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
 	}
 }
 
 ACTOR Future<Optional<StorageMetrics>> waitStorageMetricsWithLocation(TenantInfo tenantInfo,
                                                                       Version version,
                                                                       KeyRange keys,
-                                                                      std::vector<KeyRangeLocationInfo> locations,
+                                                                      std::vector<KeyRangeLocationInfo>* locations,
                                                                       StorageMetrics min,
                                                                       StorageMetrics max,
-                                                                      StorageMetrics permittedError) {
-	Future<StorageMetrics> fx;
-	if (locations.size() > 1) {
-		fx = waitStorageMetricsMultipleLocations(tenantInfo, version, locations, min, max, permittedError);
-	} else {
-		WaitMetricsRequest req(tenantInfo, version, keys, min, max);
-		fx = loadBalance(locations[0].locations->locations(),
-		                 &StorageServerInterface::waitMetrics,
-		                 req,
-		                 TaskPriority::DataDistribution);
+                                                                      StorageMetrics permittedError,
+                                                                      bool* invalidateCache) {
+	try {
+		Future<StorageMetrics> fx;
+		if (locations->size() > 1) {
+			fx = waitStorageMetricsMultipleLocations(tenantInfo, version, *locations, min, max, permittedError);
+		} else {
+			WaitMetricsRequest req(tenantInfo, version, keys, min, max);
+			fx = loadBalance(locations->at(0).locations->locations(),
+			                 &StorageServerInterface::waitMetrics,
+			                 req,
+			                 TaskPriority::DataDistribution);
+		}
+		StorageMetrics x = wait(fx);
+		return x;
+	} catch (Error& e) {
+		TraceEvent(SevDebug, "WaitStorageMetricsHandleError").error(e);
+		if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
+			*invalidateCache = true;
+		} else if (e.code() == error_code_future_version) {
+			wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
+		} else {
+			bool ok = e.code() == error_code_tenant_not_found;
+			TraceEvent(ok ? SevInfo : SevError, "WaitStorageMetricsError").error(e);
+			throw;
+		}
 	}
-	StorageMetrics x = wait(fx);
-	return x;
+	return Optional<StorageMetrics>();
 }
 
 ACTOR Future<std::pair<Optional<StorageMetrics>, int>> waitStorageMetrics(
@@ -7884,24 +8023,15 @@ ACTOR Future<std::pair<Optional<StorageMetrics>, int>> waitStorageMetrics(
 			continue;
 		}
 
-		try {
-			Optional<StorageMetrics> res =
-			    wait(waitStorageMetricsWithLocation(tenantInfo, version, keys, locations, min, max, permittedError));
-			if (res.present()) {
-				return std::make_pair(res, -1);
-			}
-		} catch (Error& e) {
-			TraceEvent(SevDebug, "WaitStorageMetricsHandleError").error(e);
-			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
-				cx->invalidateCache(tenantInfo.prefix, keys);
-				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
-			} else if (e.code() == error_code_future_version) {
-				wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
-			} else {
-				bool ok = e.code() == error_code_tenant_not_found;
-				TraceEvent(ok ? SevInfo : SevError, "WaitStorageMetricsError").error(e);
-				throw;
-			}
+		state bool invalidateCache = false;
+		Optional<StorageMetrics> res = wait(waitStorageMetricsWithLocation(
+		    tenantInfo, version, keys, &locations, min, max, permittedError, &invalidateCache));
+		if (res.present()) {
+			return std::make_pair(res, -1);
+		}
+		if (invalidateCache) {
+			cx->invalidateCache(tenantInfo.prefix, keys);
+			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
 		}
 	}
 }
@@ -8194,7 +8324,9 @@ ACTOR Future<Void> streamRemainingGranuleMutations(BlobWorkerInterface bwInterf,
 	return Void();
 }
 
-ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileRequest req, BlobWorkerInterface bwInterf) {
+ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileRequest req,
+                                                           BlobWorkerInterface bwInterf,
+                                                           bool streamRemainingMutations) {
 	std::vector<Reference<ReferencedInterface<BlobWorkerInterface>>> v;
 	v.push_back(makeReference<ReferencedInterface<BlobWorkerInterface>>(bwInterf));
 	state Reference<MultiInterface<ReferencedInterface<BlobWorkerInterface>>> location =
@@ -8214,7 +8346,7 @@ ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileReques
 
 		ASSERT(!rep.chunks.empty());
 
-		if (req.summarize) {
+		if (req.summarize || !streamRemainingMutations) {
 			return rep;
 		}
 
@@ -8254,9 +8386,11 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
     Optional<Version> read,
     Version* readVersionOut,
     int chunkLimit,
-    bool summarize) { // read not present is "use transaction version"
+    bool summarize,
+    int64_t mutationByteLimit) { // read not present is "use transaction version"
 
 	ASSERT(chunkLimit > 0);
+	ASSERT(mutationByteLimit >= 0);
 	state KeyRange keyRange = range;
 	state int i;
 	state Version rv;
@@ -8276,12 +8410,14 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 	// Cache misses could still read from the DB, or we could add it to the Transaction State Store and
 	// have proxies serve it from memory.
 	if (BG_REQUEST_DEBUG) {
-		fmt::print("Doing blob granule request [{0} - {1}) @ {2}{3}\n",
-		           range.begin.printable(),
-		           range.end.printable(),
-		           rv,
-		           self->getTenant().present() ? " for tenant " + printable(self->getTenant().get()->description())
-		                                       : "");
+		fmt::print(
+		    "Doing blob granule request [{0} - {1}) @ {2}{3}{4}\n",
+		    range.begin.printable(),
+		    range.end.printable(),
+		    rv,
+		    self->getTenant().present() ? " for tenant " + printable(self->getTenant().get()->description()) : "",
+		    mutationByteLimit < std::numeric_limits<int64_t>::max() ? fmt::format("( byteLimit={0})", mutationByteLimit)
+		                                                            : "");
 	}
 
 	if (self->getTenant().present()) {
@@ -8374,7 +8510,11 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		req.canCollapseBegin = true; // TODO make this a parameter once we support it
 		req.summarize = summarize;
 
-		if (BUGGIFY_WITH_PROB(0.1)) {
+		state bool streamRemainingMutations = true;
+		if (mutationByteLimit < req.granuleMutationBytesLimit) {
+			req.granuleMutationBytesLimit = mutationByteLimit;
+			streamRemainingMutations = false;
+		} else if (BUGGIFY_WITH_PROB(0.1)) {
 			req.granuleMutationBytesLimit = 0;
 		} else if (BUGGIFY_WITH_PROB(0.1)) {
 			req.granuleMutationBytesLimit = deterministicRandom()->randomSkewedUInt32(1, 1000000);
@@ -8383,7 +8523,8 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		// use load balance with one option for now for retry and error handling
 		try {
 			choose {
-				when(BlobGranuleFileReply rep = wait(getFullGranuleFileReply(req, bwInterf))) {
+				when(BlobGranuleFileReply rep =
+				         wait(getFullGranuleFileReply(req, bwInterf, streamRemainingMutations))) {
 					if (BG_REQUEST_DEBUG) {
 						fmt::print("Blob granule request for [{0} - {1}) @ {2} - {3} got reply from {4}:\n",
 						           granule.begin.printable(),
@@ -8489,9 +8630,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 Future<Standalone<VectorRef<BlobGranuleChunkRef>>> Transaction::readBlobGranules(const KeyRange& range,
                                                                                  Version begin,
                                                                                  Optional<Version> readVersion,
-                                                                                 Version* readVersionOut) {
+                                                                                 Version* readVersionOut,
+                                                                                 int64_t mutationByteLimit) {
 	return readBlobGranulesActor(
-	    this, range, begin, readVersion, readVersionOut, std::numeric_limits<int>::max(), false);
+	    this, range, begin, readVersion, readVersionOut, std::numeric_limits<int>::max(), false, mutationByteLimit);
 }
 
 ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranulesActor(Transaction* self,
@@ -8502,7 +8644,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules
 
 	state Version readVersionOut;
 	Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-	    wait(readBlobGranulesActor(self, range, 0, summaryVersion, &readVersionOut, rangeLimit, true));
+	    wait(readBlobGranulesActor(self, range, 0, summaryVersion, &readVersionOut, rangeLimit, true, 0));
 	ASSERT(chunks.size() <= rangeLimit);
 	ASSERT(!summaryVersion.present() || readVersionOut == summaryVersion.get());
 	Standalone<VectorRef<BlobGranuleSummaryRef>> summaries;
@@ -9924,7 +10066,10 @@ ChangeFeedStorageData::~ChangeFeedStorageData() {
 }
 
 ChangeFeedData::ChangeFeedData(DatabaseContext* context)
-  : dbgid(deterministicRandom()->randomUniqueID()), context(context), notAtLatest(1), created(now()) {
+  : dbgid(deterministicRandom()->randomUniqueID()),
+    context(context),
+    notAtLatest(1),
+    created(now()) {
 	if (context) {
 		context->notAtLatestChangeFeeds[dbgid] = this;
 	}
@@ -11261,6 +11406,14 @@ Future<Void> DatabaseContext::popChangeFeedMutations(Key rangeID, Version versio
 
 void DatabaseContext::addCost(ThrottlingId const& throttlingId, uint64_t bytes) {
 	throughputTracker.addCost(throttlingId, bytes);
+}
+
+void DatabaseContext::addTransaction(const ThrottlingId& throttlingId, uint64_t numTransactions) {
+	throughputTracker.addTransaction(throttlingId, numTransactions);
+}
+
+double DatabaseContext::getAverageTransactionCost(const ThrottlingId& throttlingId) const {
+	return throughputTracker.getAverageTransactionCost(throttlingId);
 }
 
 Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
