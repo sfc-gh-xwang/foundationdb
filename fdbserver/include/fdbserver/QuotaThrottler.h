@@ -24,6 +24,7 @@
 #include "fdbclient/ThrottlingId.h"
 #include "fdbserver/IRKMetricsTracker.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
+#include <unordered_set>
 
 class QuotaThrottler {
 	PImpl<class QuotaThrottlerImpl> impl;
@@ -59,6 +60,8 @@ public:
 	// Update per-throttlingId throughput map based on new throughput statistics received
 	// from a GRV proxy.
 	void updateThroughput(ThrottlingIdMap<uint64_t> const& newThroughput);
+
+	std::unordered_set<ThrottlingId> getBusyThrottlingIds() const;
 
 	// Testing only:
 public:

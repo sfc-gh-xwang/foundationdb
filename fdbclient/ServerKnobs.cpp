@@ -819,6 +819,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,            1.0 );
 	init( CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME,           10.0 );
 
+	init( THROTTLING_ID_BUSY_THRESHOLD,                           0.8 );
+	init( THROTTLING_ID_FORGET_THRESHOLD,                         0.5 );
+
 	//Storage Metrics
 	init( STORAGE_METRICS_AVERAGE_INTERVAL,                    120.0 );
 	init( STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS,        1000.0 / STORAGE_METRICS_AVERAGE_INTERVAL );  // milliHz!
