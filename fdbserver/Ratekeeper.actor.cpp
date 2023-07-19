@@ -228,6 +228,11 @@ Ratekeeper::Ratekeeper(UID id,
 
 void Ratekeeper::updateTagThrottling() {
 	serverThroughputTracker.update(metricsTracker.getStorageQueueInfo());
+	IRKClusterThroughputTracker const* clusterThroughputTracker = &serverThroughputTracker;
+	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+		clusterThroughputTracker = &clientThroughputTracker;
+	}
+	quotaCache->updateThroughput(*clusterThroughputTracker);
 }
 
 ACTOR Future<Void> ratekeeper(RatekeeperInterface rkInterf, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
