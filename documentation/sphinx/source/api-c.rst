@@ -575,6 +575,19 @@ Tenant
    ``*out_transaction``
       Set to point to the newly created :type:`FDBTransaction`.
 
+.. function:: FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant)
+
+   Returns a JSON string containing tenant client-side status information. The report includes the database status information, and the tenant's ID and group name if set. The report schema is:
+
+   .. code-block::
+
+      {  "TenantResolutionStatus": <Pending|Failed|Resolved>,
+         "TenantResolutionErrorCode": <error code if tenant resolution failed>,
+         "TenantID": <int64>,
+         "TenantGroup": <tenant's group name>
+         ...
+      }
+
 Transaction
 ===========
 
