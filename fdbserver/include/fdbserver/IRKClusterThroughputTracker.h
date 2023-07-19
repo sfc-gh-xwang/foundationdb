@@ -30,23 +30,38 @@ class RKServerThroughputTracker : public IRKClusterThroughputTracker {
 		WRITE,
 	};
 
+	// Tracks the read and write throughput for a particular
+	// combination of storage server and throuttlingId.
 	class ThroughputCounters {
 		Smoother readThroughput;
 		Smoother writeThroughput;
 
 	public:
 		ThroughputCounters();
-		void updateThroughput(double newThroughput, OpType);
+		// Returns the change in throughput for the provided operation type
+		[[nodiscard]] double updateThroughput(double newThroughput, OpType);
+		double getThroughput() const;
+	};
+
+	// Tracks the total throughput for a particular throttlingId,
+	// aggregated across reads and writes, and across the entire cluster.
+	class ThrottlingIdThroughput {
+		Smoother smoother;
+
+	public:
+		ThrottlingIdThroughput();
+		void addDelta(double);
 		double getThroughput() const;
 	};
 
 	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
+	ThrottlingIdMap<ThrottlingIdThroughput> throughputByThrottlingId;
 
 	void cleanupUnseenStorageServers(boost::unordered_flat_set<UID> const& seen);
 
-	static void cleanupUnseenThrottlingIds(ThrottlingIdMap<ThroughputCounters>&,
-	                                       boost::unordered_flat_set<ThrottlingId> const& seenReadThrottlingId,
-	                                       boost::unordered_flat_set<ThrottlingId> const& seenWriteThrottlingId);
+	void cleanupUnseenThrottlingIds(ThrottlingIdMap<ThroughputCounters>&,
+	                                boost::unordered_flat_set<ThrottlingId> const& seenReadThrottlingId,
+	                                boost::unordered_flat_set<ThrottlingId> const& seenWriteThrottlingId);
 
 public:
 	~RKServerThroughputTracker();
