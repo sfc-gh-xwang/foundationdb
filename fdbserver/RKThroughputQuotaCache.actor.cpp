@@ -206,7 +206,7 @@ void RKThroughputQuotaCache::applyUpdate(Key const& key, Optional<Value> const& 
 	}
 }
 
-void RKThroughputQuotaCache::updateThroughput(IRKThroughputTracker const& throughputTracker) {
+void RKThroughputQuotaCache::updateThroughput(IRKClusterThroughputTracker const& throughputTracker) {
 	auto const activeThrottlingIds = throughputTracker.getActiveThrottlingIds(throughputThreshold);
 	for (auto const& throttlingId : activeThrottlingIds) {
 		activeThrottlingIdStream.send(throttlingId);

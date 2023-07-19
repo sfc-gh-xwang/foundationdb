@@ -18,7 +18,6 @@
  * limitations under the License.
  */
 
-#include "fdbclient/RESTUtils.h"
 #include "fdbserver/RESTKmsConnector.h"
 
 #include "fdbclient/BlobCipher.h"
@@ -226,17 +225,22 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	KmsUrlStore<KmsUrlPenaltyParams> kmsUrlStore;
 	double lastKmsUrlsRefreshTs;
 	double lastKmsUrlDiscoverTS;
+	bool kmsStable;
 	RESTClient restClient;
 	ValidationTokenMap validationTokenMap;
 	PromiseStream<Future<Void>> addActor;
-	bool kmsStable;
 	Future<Void> kmsStabilityChecker;
 
 	RESTKmsConnectorCtx()
 	  : uid(deterministicRandom()->randomUniqueID()),
 	    lastKmsUrlsRefreshTs(0),
-	    lastKmsUrlDiscoverTS(0.0) {}
-	explicit RESTKmsConnectorCtx(const UID& id) : uid(id), lastKmsUrlsRefreshTs(0), lastKmsUrlDiscoverTS(0.0) {}
+	    lastKmsUrlDiscoverTS(0.0),
+	    kmsStable(true) {}
+	explicit RESTKmsConnectorCtx(const UID& id)
+	  : uid(id),
+	    lastKmsUrlsRefreshTs(0),
+	    lastKmsUrlDiscoverTS(0.0),
+	    kmsStable(true) {}
 };
 
 std::string getFullRequestUrl(Reference<RESTKmsConnectorCtx> ctx, const std::string& url, const std::string& suffix) {

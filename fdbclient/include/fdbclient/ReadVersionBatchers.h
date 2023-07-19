@@ -35,5 +35,6 @@ public:
 	                                           Optional<TenantGroupName> const&,
 	                                           SpanContext,
 	                                           Optional<TransactionTag> const&,
-	                                           Optional<UID> debugID);
+	                                           Optional<UID> debugID,
+	                                           Optional<uint64_t> const& expectedCost);
 };

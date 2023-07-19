@@ -70,7 +70,8 @@ struct AutomaticIdempotencyWorkload : TestWorkload {
 	SharedConfiguration sharedConfig;
 
 	AutomaticIdempotencyWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), sharedConfigProperty("/testConfig"_sr) {
+	  : TestWorkload(wcx),
+	    sharedConfigProperty("/testConfig"_sr) {
 		numTransactions = getOption(options, "numTransactions"_sr, 500);
 		keyPrefix = KeyRef(getOption(options, "keyPrefix"_sr, "/autoIdempotency/"_sr));
 		minMinAgeSeconds = getOption(options, "minMinAgeSeconds"_sr, 15);

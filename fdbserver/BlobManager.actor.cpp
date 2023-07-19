@@ -41,6 +41,8 @@
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BlobGranuleRequest.actor.h"
 #include "fdbclient/BlobWorkerInterface.h"
+#include "fdbclient/BulkLoad.h"
+#include "fdbclient/BulkLoadTracker.h"
 #include "fdbclient/KeyRangeMap.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/ManagementAPI.actor.h"
@@ -5701,7 +5703,7 @@ ACTOR Future<Void> truncateMutations(Reference<BlobManagerData> bmData, Version 
 	state std::string timestamp = BackupAgentBase::formatTime(epochs);
 	state Version truncVersion = wait(timeKeeperVersionFromDatetime(timestamp, bmData->db));
 
-	if (truncVersion > 0) {
+	if (truncVersion > 0 && truncVersion < flushVersion) {
 		state std::string mlogsUrl =
 		    wait(BlobGranuleBackupConfig().mutationLogsUrl().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
 		state Reference<IBackupContainer> bc = IBackupContainer::openContainer(mlogsUrl, {}, {});
@@ -5709,6 +5711,8 @@ ACTOR Future<Void> truncateMutations(Reference<BlobManagerData> bmData, Version 
 		bmData->stats.lastMLogTruncationVersion = truncVersion;
 		TraceEvent("TruncateMutationLogs").detail("Version", truncVersion).detail("Timestamp", timestamp);
 		CODE_PROBE(true, "Flush blob granules and truncate mutation logs");
+	} else {
+		TraceEvent("SkipTruncateMutations").detail("Version", truncVersion).detail("FlushVer", flushVersion);
 	}
 	return Void();
 }
@@ -5723,12 +5727,11 @@ ACTOR Future<Void> backupManifest(Reference<BlobManagerData> bmData) {
 	                                  bmData->dbInfo,
 	                                  manifestStore,
 	                                  bmData->epoch,
-	                                  bmData->manifestDumperSeqNo,
+	                                  bmData->manifestDumperSeqNo++,
 	                                  bmData->enableManifestEncryption));
 	bmData->stats.lastManifestSeqNo = bmData->manifestDumperSeqNo;
 	bmData->stats.manifestSizeInBytes += bytes;
 	bmData->stats.lastManifestDumpTs = now();
-	bmData->manifestDumperSeqNo++;
 	bmData->manifestCompletitionTrigger.trigger();
 	return Void();
 }
@@ -5845,6 +5848,37 @@ ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
 	}
 }
 
+// FIXME: handle state transitions from STAGING to STAGING_BLOB_DONE
+ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID id, BulkLoadState state) {
+
+	if (state >= BulkLoadState::STAGING_BLOB_DONE) {
+		return Void();
+	}
+
+	try {
+		if (state < BulkLoadState::STAGING) {
+			wait(bmData->db->waitBulkLoadStateAtLeast(id, BulkLoadState::STAGING));
+		}
+
+		// FIXME: ACTUALLY IMPLEMENT BLOB STAGING!
+		wait(delay(deterministicRandom()->random01()));
+
+		// TODO: do we also need to check manager lock as part of these transactions? should be idempotent by any
+		// manager
+
+		// FIXME: only change to STAGING_BLOB_DONE
+		wait(bmData->db->updateBulkLoadState(id, BulkLoadState::DONE));
+		return Void();
+	} catch (Error& e) {
+		if (e.code() == error_code_bulk_load_aborted || e.code() == error_code_bulk_load_not_found) {
+			// If bulk load aborted/cleaned up, stop tracking it
+			// TODO: code probe
+			return Void();
+		}
+		throw e;
+	}
+}
+
 // Simulation validation that multiple blob managers aren't started with the same epoch within same cluster
 static std::map<std::pair<UID, int64_t>, UID> managerEpochsSeen;
 
@@ -5941,6 +5975,12 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 		}
 
 		self->addActor.send(watchBackupEnabled(self));
+
+		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadID& id, const BulkLoadState& state) {
+			return trackBulkLoad(self, id, state);
+		};
+		state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);
+		self->addActor.send(bulkLoadTracker.start());
 
 		loop choose {
 			when(wait(self->iAmReplaced.getFuture())) {

@@ -19,6 +19,7 @@
  */
 
 #include "fdbserver/RESTKmsConnectorUtils.h"
+#include "fdbclient/RESTUtils.h"
 #include "fdbrpc/HTTP.h"
 #include "flow/EncryptUtils.h"
 

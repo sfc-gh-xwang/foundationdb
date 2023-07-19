@@ -586,6 +586,8 @@ int64_t PaxosConfigTransaction::getTotalCost() const {
 	return 0;
 }
 
+void PaxosConfigTransaction::setExpectedCost(uint64_t value) {}
+
 int64_t PaxosConfigTransaction::getApproximateSize() const {
 	return impl->getApproximateSize();
 }
