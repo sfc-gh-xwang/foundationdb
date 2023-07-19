@@ -1844,7 +1844,7 @@ Future<Reference<IConnection>> Net2::connect(NetworkAddress toAddr, tcp::socket*
 
 	if (tlsConfig.getDisablePlainTextConnection()) {
 		TraceEvent(SevError, "PlainTextConnectionDisabled").detail("toAddr", toAddr);
-		throw connection_failed();
+		throw tls_required_error();
 	}
 
 	return Connection::connect(&this->reactor.ios, toAddr);
@@ -2004,7 +2004,7 @@ Reference<IListener> Net2::listen(NetworkAddress localAddr) {
 
 		if (tlsConfig.getDisablePlainTextConnection()) {
 			TraceEvent(SevError, "PlainTextConnectionDisabled").detail("localAddr", localAddr);
-			throw connection_failed();
+			throw tls_required_error();
 		}
 		return Reference<IListener>(new Listener(reactor.ios, localAddr));
 	} catch (boost::system::system_error const& e) {
