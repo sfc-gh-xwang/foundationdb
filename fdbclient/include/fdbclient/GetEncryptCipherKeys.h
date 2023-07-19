@@ -77,10 +77,6 @@ public:
 	                                                                        BlobCipherMetrics::UsageType usageType);
 
 	static Future<TextAndHeaderCipherKeys> getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
-	                                                            BlobCipherEncryptHeader header,
-	                                                            BlobCipherMetrics::UsageType usageType);
-
-	static Future<TextAndHeaderCipherKeys> getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
 	                                                            BlobCipherEncryptHeaderRef header,
 	                                                            BlobCipherMetrics::UsageType usageType);
 };

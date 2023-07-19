@@ -403,17 +403,11 @@ public:
 	struct AESEncryptionEncoder {
 		struct AESEncryptionEncodingHeader {
 			XXH64_hash_t checksum;
-			union {
-				BlobCipherEncryptHeader encryption;
-				uint8_t encryptionHeaderBuf[0]; // for configurable encryption
-			};
+			uint8_t encryptionHeaderBuf[BlobCipherEncryptHeaderRef::maxHeaderSize]; // for configurable encryption
 		};
 
 		struct AESEncryptionWithAuthEncodingHeader {
-			union {
-				BlobCipherEncryptHeader encryption;
-				uint8_t encryptionHeaderBuf[0]; // for configurable encryption
-			};
+			uint8_t encryptionHeaderBuf[BlobCipherEncryptHeaderRef::maxHeaderSize]; // for configurable encryption
 		};
 
 		using Header = typename std::conditional<encodingType == AESEncryption,
@@ -428,22 +422,32 @@ public:
 		                   int len,
 		                   PhysicalPageID seed) {
 			Header* h = reinterpret_cast<Header*>(header);
-			EncryptBlobCipherAes265Ctr cipher(cipherKeys.cipherTextKey,
-			                                  cipherKeys.cipherHeaderKey,
-			                                  getEncryptAuthTokenMode(ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-			                                  BlobCipherMetrics::KV_REDWOOD);
+			Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
+			    cipherKeys.cipherTextKey,
+			    cipherKeys.cipherHeaderKey,
+			    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
+			    getAuthTokenAlgoFromMode(
+			        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
+			    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
+			    BlobCipherMetrics::KV_REDWOOD);
 			Arena arena;
 
 			BlobCipherEncryptHeaderRef headerRef;
-			cipher.encryptInplace(payload, len, &headerRef);
+			if (cipher->supportsInplaceEncryption()) {
+				cipher->encryptInplace(payload, len, &headerRef);
+			} else {
+				StringRef ciphertext = cipher->encrypt(payload, len, &headerRef, arena);
+				ASSERT_EQ(len, ciphertext.size());
+				memcpy(payload, ciphertext.begin(), len);
+			}
 
 			Standalone<StringRef> serializedHeader = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
-			ASSERT(serializedHeader.size() <= BlobCipherEncryptHeader::headerSize);
+			ASSERT(serializedHeader.size() <= BlobCipherEncryptHeaderRef::maxHeaderSize);
 			memcpy(h->encryptionHeaderBuf, serializedHeader.begin(), serializedHeader.size());
-			if (serializedHeader.size() < BlobCipherEncryptHeader::headerSize) {
+			if (serializedHeader.size() < BlobCipherEncryptHeaderRef::maxHeaderSize) {
 				memset(h->encryptionHeaderBuf + serializedHeader.size(),
 				       0,
-				       BlobCipherEncryptHeader::headerSize - serializedHeader.size());
+				       BlobCipherEncryptHeaderRef::maxHeaderSize - serializedHeader.size());
 			}
 
 			if constexpr (encodingType == AESEncryption) {
@@ -471,9 +475,18 @@ public:
 			}
 			Arena arena;
 			BlobCipherEncryptHeaderRef headerRef = getEncryptionHeaderRef(header);
-			DecryptBlobCipherAes256Ctr cipher(
-			    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, headerRef.getIV(), BlobCipherMetrics::KV_REDWOOD);
-			cipher.decryptInplace(payload, len, headerRef, decryptTime);
+			Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
+			                                                                      cipherKeys.cipherHeaderKey,
+			                                                                      headerRef.getIV(),
+			                                                                      headerRef.getEncryptMode(),
+			                                                                      BlobCipherMetrics::KV_REDWOOD);
+			if (cipher->supportsInplaceDecryption()) {
+				cipher->decryptInplace(payload, len, headerRef, decryptTime);
+			} else {
+				StringRef plaintext = cipher->decrypt(payload, len, headerRef, arena);
+				ASSERT_EQ(len, plaintext.size());
+				memcpy(payload, plaintext.begin(), len);
+			}
 		}
 	};
 

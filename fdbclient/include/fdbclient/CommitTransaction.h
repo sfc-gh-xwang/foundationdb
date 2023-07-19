@@ -142,11 +142,6 @@ struct MutationRef {
 	// decryption via decrypt().
 	bool isEncrypted() const { return type == Encrypted; }
 
-	const BlobCipherEncryptHeader* encryptionHeader() const {
-		ASSERT(isEncrypted());
-		return reinterpret_cast<const BlobCipherEncryptHeader*>(param1.begin());
-	}
-
 	const BlobCipherEncryptHeaderRef configurableEncryptionHeader() const {
 		ASSERT(isEncrypted());
 		return BlobCipherEncryptHeaderRef::fromStringRef(param1);
@@ -179,19 +174,22 @@ struct MutationRef {
 		BinaryWriter bw(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
 		bw << *this;
 
-		EncryptBlobCipherAes265Ctr cipher(
+		Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
 		    cipherKeys.cipherTextKey,
 		    cipherKeys.cipherHeaderKey,
 		    iv,
 		    AES_256_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
+		    getAuthTokenAlgoFromMode(
+		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
+		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
 		    usageType);
 
 		StringRef serializedHeader;
 		StringRef payload;
 		BlobCipherEncryptHeaderRef header;
 		payload =
-		    cipher.encrypt(static_cast<const uint8_t*>(bw.getData()), bw.getLength(), &header, arena, encryptTime);
+		    cipher->encrypt(static_cast<const uint8_t*>(bw.getData()), bw.getLength(), &header, arena, encryptTime);
 		Standalone<StringRef> headerStr = BlobCipherEncryptHeaderRef::toStringRef(header);
 		arena.dependsOn(headerStr.arena());
 		serializedHeader = headerStr;
@@ -219,17 +217,20 @@ struct MutationRef {
 		BinaryWriter bw(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
 		bw << *this;
 
-		EncryptBlobCipherAes265Ctr cipher(
+		Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
 		    textCipherKey,
 		    headerCipherKey,
 		    iv,
 		    AES_256_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
+		    getAuthTokenAlgoFromMode(
+		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
+		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
 		    usageType);
 
 		BlobCipherEncryptHeaderRef header;
 		auto payload =
-		    cipher.encrypt(static_cast<const uint8_t*>(bw.getData()), bw.getLength(), &header, arena, encryptionTime);
+		    cipher->encrypt(static_cast<const uint8_t*>(bw.getData()), bw.getLength(), &header, arena, encryptionTime);
 		Standalone<StringRef> serializedHeader = BlobCipherEncryptHeaderRef::toStringRef(header);
 		arena.dependsOn(serializedHeader.arena());
 		return MutationRef(Encrypted, serializedHeader, payload);
@@ -249,9 +250,9 @@ struct MutationRef {
 	                    double* decryptTime = nullptr) const {
 		StringRef plaintext;
 		const BlobCipherEncryptHeaderRef header = configurableEncryptionHeader();
-		DecryptBlobCipherAes256Ctr cipher(
-		    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, header.getIV(), usageType);
-		plaintext = cipher.decrypt(param2.begin(), param2.size(), header, arena, decryptTime);
+		Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(
+		    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, header.getIV(), header.getEncryptMode(), usageType);
+		plaintext = cipher->decrypt(param2.begin(), param2.size(), header, arena, decryptTime);
 		if (buf != nullptr) {
 			*buf = plaintext;
 		}

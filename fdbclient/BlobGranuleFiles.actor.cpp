@@ -213,40 +213,6 @@ struct ChildBlockPointerRef {
 namespace {
 
 void validateEncryptionHeaderDetails(const BlobGranuleFileEncryptionKeys& eKeys,
-                                     const BlobCipherEncryptHeader& header,
-                                     const StringRef& ivRef) {
-	// Validate encryption header 'cipherHeader' details sanity
-	if (header.cipherHeaderDetails.isValid() && header.cipherHeaderDetails != eKeys.headerCipherKey->details()) {
-		TraceEvent(SevError, "EncryptionHeader_CipherHeaderMismatch")
-		    .detail("HeaderDomainId", eKeys.headerCipherKey->getDomainId())
-		    .detail("ExpectedHeaderDomainId", header.cipherHeaderDetails.encryptDomainId)
-		    .detail("HeaderBaseCipherId", eKeys.headerCipherKey->getBaseCipherId())
-		    .detail("ExpectedHeaderBaseCipherId", header.cipherHeaderDetails.baseCipherId)
-		    .detail("HeaderSalt", eKeys.headerCipherKey->getSalt())
-		    .detail("ExpectedHeaderSalt", header.cipherHeaderDetails.salt);
-		throw encrypt_header_metadata_mismatch();
-	}
-	// Validate encryption header 'cipherText' details sanity
-	if (!header.cipherTextDetails.isValid() || header.cipherTextDetails != eKeys.textCipherKey->details()) {
-		TraceEvent(SevError, "EncryptionHeader_CipherTextMismatch")
-		    .detail("TextDomainId", eKeys.textCipherKey->getDomainId())
-		    .detail("ExpectedTextDomainId", header.cipherTextDetails.encryptDomainId)
-		    .detail("TextBaseCipherId", eKeys.textCipherKey->getBaseCipherId())
-		    .detail("ExpectedTextBaseCipherId", header.cipherTextDetails.baseCipherId)
-		    .detail("TextSalt", eKeys.textCipherKey->getSalt())
-		    .detail("ExpectedTextSalt", header.cipherTextDetails.salt);
-		throw encrypt_header_metadata_mismatch();
-	}
-	// Validate 'Initialization Vector' sanity
-	if (memcmp(ivRef.begin(), &header.iv[0], AES_256_IV_LENGTH) != 0) {
-		TraceEvent(SevError, "EncryptionHeader_IVMismatch")
-		    .detail("IVChecksum", XXH3_64bits(ivRef.begin(), ivRef.size()))
-		    .detail("ExpectedIVChecksum", XXH3_64bits(&header.iv[0], AES_256_IV_LENGTH));
-		throw encrypt_header_metadata_mismatch();
-	}
-}
-
-void validateEncryptionHeaderDetails(const BlobGranuleFileEncryptionKeys& eKeys,
                                      const BlobCipherEncryptHeaderRef& headerRef,
                                      const StringRef& ivRef) {
 	ASSERT(eKeys.textCipherKey.isValid());
@@ -298,17 +264,26 @@ struct IndexBlockRef {
 		}
 
 		Value serializedBuff = ObjectWriter::toValue(block, IncludeVersion(ProtocolVersion::withBlobGranuleFile()));
-		EncryptBlobCipherAes265Ctr encryptor(
+		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
 		    eKeys.textCipherKey,
 		    eKeys.headerCipherKey,
 		    cipherKeysCtx.ivRef.begin(),
 		    AES_256_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
+		    getAuthTokenAlgoFromMode(
+		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
+		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
 		    BlobCipherMetrics::BLOB_GRANULE);
+
 		BlobCipherEncryptHeaderRef headerRef;
-		buffer = serializedBuff;
-		arena.dependsOn(serializedBuff.arena());
-		encryptor.encryptInplace(mutateString(buffer), buffer.size(), &headerRef);
+		if (encryptor->supportsInplaceEncryption()) {
+			buffer = serializedBuff;
+			arena.dependsOn(serializedBuff.arena());
+			encryptor->encryptInplace(mutateString(buffer), buffer.size(), &headerRef);
+		} else {
+			buffer = encryptor->encrypt(
+			    serializedBuff.contents().begin(), serializedBuff.contents().size(), &headerRef, arena);
+		}
 		Standalone<StringRef> serialized = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
 		arena.dependsOn(serialized.arena());
 		encryptHeaderRef = serialized;
@@ -332,10 +307,17 @@ struct IndexBlockRef {
 		StringRef decrypted;
 		BlobCipherEncryptHeaderRef headerRef = BlobCipherEncryptHeaderRef::fromStringRef(idxRef.encryptHeaderRef.get());
 		validateEncryptionHeaderDetails(eKeys, headerRef, cipherKeysCtx.ivRef);
-		DecryptBlobCipherAes256Ctr decryptor(
-		    eKeys.textCipherKey, eKeys.headerCipherKey, cipherKeysCtx.ivRef.begin(), BlobCipherMetrics::BLOB_GRANULE);
-		decrypted = StringRef(idxRef.buffer.begin(), idxRef.buffer.size());
-		decryptor.decryptInplace(mutateString(decrypted), decrypted.size(), headerRef);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(eKeys.textCipherKey,
+		                                                                         eKeys.headerCipherKey,
+		                                                                         cipherKeysCtx.ivRef.begin(),
+		                                                                         headerRef.getEncryptMode(),
+		                                                                         BlobCipherMetrics::BLOB_GRANULE);
+		if (decryptor->supportsInplaceDecryption()) {
+			decrypted = StringRef(idxRef.buffer.begin(), idxRef.buffer.size());
+			decryptor->decryptInplace(mutateString(decrypted), decrypted.size(), headerRef);
+		} else {
+			decrypted = decryptor->decrypt(idxRef.buffer.begin(), idxRef.buffer.size(), headerRef, arena);
+		}
 
 		if (BG_ENCRYPT_COMPRESS_DEBUG) {
 			XXH64_hash_t chksum = XXH3_64bits(decrypted.begin(), decrypted.size());
@@ -421,15 +403,22 @@ struct IndexBlobGranuleFileChunkRef {
 			TraceEvent(SevDebug, "BlobChunkEncrypt_Before").detail("Chksum", chksum);
 		}
 
-		EncryptBlobCipherAes265Ctr encryptor(
+		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
 		    eKeys.textCipherKey,
 		    eKeys.headerCipherKey,
 		    cipherKeysCtx.ivRef.begin(),
 		    AES_256_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
+		    getAuthTokenAlgoFromMode(
+		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
+		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
 		    BlobCipherMetrics::BLOB_GRANULE);
 		BlobCipherEncryptHeaderRef headerRef;
-		encryptor.encryptInplace(mutateString(chunkRef.buffer), chunkRef.buffer.size(), &headerRef);
+		if (encryptor->supportsInplaceEncryption()) {
+			encryptor->encryptInplace(mutateString(chunkRef.buffer), chunkRef.buffer.size(), &headerRef);
+		} else {
+			chunkRef.buffer = encryptor->encrypt(chunkRef.buffer.begin(), chunkRef.buffer.size(), &headerRef, arena);
+		}
 		Standalone<StringRef> serialized = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
 		arena.dependsOn(serialized.arena());
 		chunkRef.encryptHeaderRef = serialized;
@@ -457,10 +446,17 @@ struct IndexBlobGranuleFileChunkRef {
 		BlobCipherEncryptHeaderRef headerRef =
 		    BlobCipherEncryptHeaderRef::fromStringRef(chunkRef.encryptHeaderRef.get());
 		validateEncryptionHeaderDetails(eKeys, headerRef, cipherKeysCtx.ivRef);
-		DecryptBlobCipherAes256Ctr decryptor(
-		    eKeys.textCipherKey, eKeys.headerCipherKey, cipherKeysCtx.ivRef.begin(), BlobCipherMetrics::BLOB_GRANULE);
-		decrypted = StringRef(chunkRef.buffer.begin(), chunkRef.buffer.size());
-		decryptor.decryptInplace(mutateString(decrypted), decrypted.size(), headerRef);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(eKeys.textCipherKey,
+		                                                                         eKeys.headerCipherKey,
+		                                                                         cipherKeysCtx.ivRef.begin(),
+		                                                                         headerRef.getEncryptMode(),
+		                                                                         BlobCipherMetrics::BLOB_GRANULE);
+		if (decryptor->supportsInplaceDecryption()) {
+			decrypted = StringRef(chunkRef.buffer.begin(), chunkRef.buffer.size());
+			decryptor->decryptInplace(mutateString(decrypted), decrypted.size(), headerRef);
+		} else {
+			decrypted = decryptor->decrypt(chunkRef.buffer.begin(), chunkRef.buffer.size(), headerRef, arena);
+		}
 
 		if (BG_ENCRYPT_COMPRESS_DEBUG) {
 			XXH64_hash_t chksum = XXH3_64bits(decrypted.begin(), decrypted.size());

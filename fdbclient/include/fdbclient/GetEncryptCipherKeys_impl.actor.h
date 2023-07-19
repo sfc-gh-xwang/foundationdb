@@ -329,40 +329,6 @@ Future<TextAndHeaderCipherKeys> _getLatestSystemEncryptCipherKeys(const Referenc
 
 ACTOR template <class T>
 Future<TextAndHeaderCipherKeys> _getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
-                                                      BlobCipherEncryptHeader header,
-                                                      BlobCipherMetrics::UsageType usageType) {
-	state bool authenticatedEncryption = header.flags.authTokenMode != ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
-
-	ASSERT(header.cipherTextDetails.isValid());
-	ASSERT(!authenticatedEncryption || header.cipherHeaderDetails.isValid());
-
-	std::unordered_set<BlobCipherDetails> cipherDetails{ header.cipherTextDetails };
-	if (authenticatedEncryption) {
-		cipherDetails.insert(header.cipherHeaderDetails);
-	}
-
-	std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> cipherKeys =
-	    wait(_getEncryptCipherKeys(db, cipherDetails, usageType));
-
-	TextAndHeaderCipherKeys result;
-	auto setCipherKey = [&](const BlobCipherDetails& details, TextAndHeaderCipherKeys& result) {
-		ASSERT(details.isValid());
-		auto iter = cipherKeys.find(details);
-		ASSERT(iter != cipherKeys.end() && iter->second.isValid());
-		isEncryptHeaderDomain(details.encryptDomainId) ? result.cipherHeaderKey = iter->second
-		                                               : result.cipherTextKey = iter->second;
-	};
-	setCipherKey(header.cipherTextDetails, result);
-	if (authenticatedEncryption) {
-		setCipherKey(header.cipherHeaderDetails, result);
-	}
-	ASSERT(result.cipherTextKey.isValid() && (!authenticatedEncryption || result.cipherHeaderKey.isValid()));
-
-	return result;
-}
-
-ACTOR template <class T>
-Future<TextAndHeaderCipherKeys> _getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
                                                       BlobCipherEncryptHeaderRef header,
                                                       BlobCipherMetrics::UsageType usageType) {
 	state bool authenticatedEncryption = header.getAuthTokenMode() != ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
@@ -434,13 +400,6 @@ Future<TextAndHeaderCipherKeys> GetEncryptCipherKeys<T>::getLatestSystemEncryptC
     const Reference<AsyncVar<T> const>& db,
     BlobCipherMetrics::UsageType usageType) {
 	return _getLatestSystemEncryptCipherKeys(db, usageType);
-}
-
-template <class T>
-Future<TextAndHeaderCipherKeys> GetEncryptCipherKeys<T>::getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
-                                                                              BlobCipherEncryptHeader header,
-                                                                              BlobCipherMetrics::UsageType usageType) {
-	return _getEncryptCipherKeys(db, header, usageType);
 }
 
 template <class T>
