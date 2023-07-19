@@ -12,7 +12,6 @@
 struct RKGrvProxyInfo {
 	int64_t totalTransactions{ 0 };
 	int64_t batchTransactions{ 0 };
-	uint64_t lastThrottledTagChangeId{ 0 };
 
 	double lastUpdateTime{ 0.0 };
 	double lastTagPushTime{ 0.0 };
