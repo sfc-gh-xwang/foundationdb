@@ -36,7 +36,7 @@ VersionMap& versionMap() {
 }
 
 RangeMap& rangeMap() {
-	static RangeMap instance(bulkLoadRangeKeys.begin, {}, ObjectCodec<IDValue, _IncludeVersion>(IncludeVersion()));
+	static RangeMap instance(bulkLoadRangeKeys.begin, {}, ObjectCodec<BulkLoadID, _IncludeVersion>(IncludeVersion()));
 	return instance;
 }
 

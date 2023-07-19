@@ -58,13 +58,13 @@ ACTOR Future<BulkLoadID> startBulkLoadActor(Reference<DatabaseContext> db,
 			auto ranges = existingRanges->ranges();
 			auto it = ranges.begin();
 			while (it != ranges.end()) {
-				if (!it.value().id.empty() && it.value().id == id && it.range().begin == physicalRange.begin &&
+				if (!it.value().empty() && it.value() == id && it.range().begin == physicalRange.begin &&
 				    it.range().end == physicalRange.end) {
 					// idempotency - already set this exact bulk load and retried
 					CODE_PROBE(true, "start bulk load idempotent on retry");
 					return id;
 				}
-				if (!it.value().id.empty()) {
+				if (!it.value().empty()) {
 					throw bulk_load_range_conflict();
 				}
 				++it;
@@ -90,8 +90,7 @@ ACTOR Future<BulkLoadID> startBulkLoadActor(Reference<DatabaseContext> db,
 			BulkLoadMetadata::versionMap().setVersionstamp(tr, id, Versionstamp(), 0);
 			BulkLoadMetadata::infoMap().set(tr, id, info);
 
-			wait(BulkLoadMetadata::rangeMap().updateRange(
-			    tr, physicalRange.begin, physicalRange.end, BulkLoadMetadata::IDValue(id), true));
+			wait(BulkLoadMetadata::rangeMap().updateRange(tr, physicalRange.begin, physicalRange.end, id, true));
 
 			wait(tr->commit());
 
@@ -177,12 +176,12 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 					    wait(BulkLoadMetadata::rangeMap().getRangeForKey(tr, physicalRange.begin));
 					ASSERT(range.present());
 					ASSERT(range.get().range.begin == physicalRange.begin &&
-					       range.get().range.end == physicalRange.end && range.get().value.id == id);
+					       range.get().range.end == physicalRange.end && range.get().value == id);
 
 					// set range to inactive when complete and clear info
 					// FIXME: any way to make this coalescing?
 					wait(BulkLoadMetadata::rangeMap().updateRange(
-					    tr, physicalRange.begin, physicalRange.end, BulkLoadMetadata::IDValue(), true));
+					    tr, physicalRange.begin, physicalRange.end, ""_sr, true));
 					BulkLoadMetadata::infoMap().erase(tr, id);
 					BulkLoadMetadata::versionMap().erase(tr, id);
 				}
