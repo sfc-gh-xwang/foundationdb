@@ -203,6 +203,7 @@ public:
 	ThreadFuture<SpanContext> getSpanContext() override;
 	ThreadFuture<double> getTagThrottledDuration() override;
 	ThreadFuture<int64_t> getTotalCost() override;
+	void setExpectedCost(uint64_t value) override;
 	ThreadFuture<int64_t> getApproximateSize() override;
 
 	ThreadFuture<uint64_t> getProtocolVersion();

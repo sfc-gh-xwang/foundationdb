@@ -30,13 +30,21 @@ namespace {
 
 class ClientReportGenerator {
 public:
-	ClientReportGenerator(DatabaseContext& cx) : cx(cx), numConnectionsFailed(0), healthy(true) {}
+	ClientReportGenerator(DatabaseContext& cx) : cx(cx), tenant(nullptr), numConnectionsFailed(0), healthy(true) {}
+	ClientReportGenerator(DatabaseContext& cx, Tenant* tenant)
+	  : cx(cx),
+	    tenant(tenant),
+	    numConnectionsFailed(0),
+	    healthy(true) {}
 
 	Standalone<StringRef> generateReport() {
 		if (cx.isError()) {
 			statusObj["InitializationError"] = cx.deferredError.code();
 			healthy = false;
 		} else {
+			if (tenant) {
+				reportTenantInfo();
+			}
 			reportCoordinators();
 			reportClientInfo();
 			reportStorageServers();
@@ -120,6 +128,29 @@ private:
 		}
 	}
 
+	void reportTenantInfo() {
+		auto tenantLookupInfoFuture = tenant->getLookupFuture();
+		// Tenant info lookup failed
+		if (tenantLookupInfoFuture.isError()) {
+			statusObj["TenantResolutionStatus"] = "Failed";
+			statusObj["TenantResolutionErrorCode"] = tenantLookupInfoFuture.getError().code();
+			return;
+		}
+
+		// Tenant info lookup pending
+		if (!tenantLookupInfoFuture.isReady()) {
+			statusObj["TenantResolutionStatus"] = "Pending";
+			return;
+		}
+
+		statusObj["TenantResolutionStatus"] = "Resolved";
+		auto tenantLookupInfo = tenantLookupInfoFuture.get();
+		statusObj["TenantID"] = tenantLookupInfo.id;
+		if (tenantLookupInfo.group.present()) {
+			statusObj["TenantGroup"] = tenantLookupInfo.group.get().toString();
+		}
+	}
+
 	json_spirit::mObject connectionStatusReport(const NetworkAddress& address) {
 		json_spirit::mObject connStatus;
 		connStatus["Address"] = address.toString();
@@ -158,6 +189,7 @@ private:
 	}
 
 	DatabaseContext& cx;
+	Tenant* tenant;
 	json_spirit::mObject statusObj;
 	std::set<NetworkAddress> serverAddresses;
 	int numConnectionsFailed;
@@ -169,5 +201,11 @@ private:
 // Get client-side status information
 Standalone<StringRef> DatabaseContext::getClientStatus() {
 	ClientReportGenerator generator(*this);
+	return generator.generateReport();
+}
+
+// Get client-side status information from tenant level
+Standalone<StringRef> DatabaseContext::getTenantClientStatus(Tenant* tenant) {
+	ClientReportGenerator generator(*this, tenant);
 	return generator.generateReport();
 }

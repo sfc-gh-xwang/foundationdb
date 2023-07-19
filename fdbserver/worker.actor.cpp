@@ -2367,7 +2367,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					blobWorkerFuture = bw;
 					errorForwarders.add(forwardError(errors, Role::BLOB_WORKER, recruited.id(), bw));
 				} else {
-					CODE_PROBE(true, "Multiple blob workers after reboot", probe::decoration::rare);
+					CODE_PROBE(true, "Multiple blob workers after reboot");
 					recoveries.push_back(deleteStorageFile(s.storeType, s.filename, s.storeID, memoryLimit, dbInfo));
 				}
 			}

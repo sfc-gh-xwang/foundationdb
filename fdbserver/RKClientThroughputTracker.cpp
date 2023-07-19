@@ -1,43 +1,43 @@
 /**
- * ClientThroughputTracker.h
+ * RKClientThroughputTracker.h
  */
 
-#include "fdbserver/IRKThroughputTracker.h"
+#include "fdbserver/IRKClusterThroughputTracker.h"
 #include "fdbserver/Knobs.h"
 
-ClientThroughputTracker::ThroughputSmoother::ThroughputSmoother()
+RKClientThroughputTracker::ThroughputSmoother::ThroughputSmoother()
   : smoother(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,
              SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME),
     lastUpdated(now()) {}
 
-void ClientThroughputTracker::ThroughputSmoother::addThroughput(double newThroughput) {
+void RKClientThroughputTracker::ThroughputSmoother::addThroughput(double newThroughput) {
 	smoother.addDelta(newThroughput);
 	lastUpdated = now();
 }
 
-double ClientThroughputTracker::ThroughputSmoother::smoothRate() const {
+double RKClientThroughputTracker::ThroughputSmoother::smoothRate() const {
 	return smoother.smoothRate();
 }
 
-bool ClientThroughputTracker::ThroughputSmoother::shouldForget(double expirationCheckInterval) const {
+bool RKClientThroughputTracker::ThroughputSmoother::shouldForget(double expirationCheckInterval) const {
 	return (now() > lastUpdated + expirationCheckInterval &&
 	        smoother.smoothRate() < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD);
 }
 
-void ClientThroughputTracker::expireThrottlingIds() {
+void RKClientThroughputTracker::expireThrottlingIds() {
 	boost::unordered::erase_if(throughput, [expirationCheckInterval = this->expirationCheckInterval](auto const& kv) {
 		return kv.second.shouldForget(expirationCheckInterval);
 	});
 	lastExpirationCheck = now();
 }
 
-ClientThroughputTracker::ClientThroughputTracker(double expirationCheckInterval)
+RKClientThroughputTracker::RKClientThroughputTracker(double expirationCheckInterval)
   : lastExpirationCheck(now()),
     expirationCheckInterval(expirationCheckInterval) {}
 
-ClientThroughputTracker::~ClientThroughputTracker() = default;
+RKClientThroughputTracker::~RKClientThroughputTracker() = default;
 
-double ClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
+double RKClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
 	auto it = throughput.find(throttlingId);
 	if (it == throughput.end()) {
 		return 0.0;
@@ -46,7 +46,7 @@ double ClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId) 
 	}
 }
 
-std::unordered_set<ThrottlingId> ClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
+std::unordered_set<ThrottlingId> RKClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
 	std::unordered_set<ThrottlingId> result;
 	for (auto const& [throttlingId, throughputSmoother] : throughput) {
 		if (throughputSmoother.smoother.smoothRate() > threshold) {
@@ -56,7 +56,7 @@ std::unordered_set<ThrottlingId> ClientThroughputTracker::getActiveThrottlingIds
 	return result;
 }
 
-void ClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {
+void RKClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {
 	for (auto const& [throttlingId, newPerThrottlingIdThroughput] : newThroughput) {
 		throughput[throttlingId].addThroughput(newPerThrottlingIdThroughput);
 	}

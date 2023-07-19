@@ -70,7 +70,13 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 	if (throughputIt == smoothThroughput.end() || transactionRateIt == smoothTransactionRate.end()) {
 		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
 	} else {
-		return throughputIt->second.smoother.smoothTotal() / transactionRateIt->second.smoother.smoothTotal();
+		auto throughput = throughputIt->second.smoother.smoothTotal();
+		auto transactionRate = transactionRateIt->second.smoother.smoothTotal();
+
+		if (throughput <= 0 || transactionRate <= 0) {
+			return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+		}
+		return throughput / transactionRate;
 	}
 }
 

@@ -1153,6 +1153,10 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_get_total_cost(FDBTransaction* t
 	return (FDBFuture*)TXN(tr)->getTotalCost().extractPtr();
 }
 
+extern "C" DLLEXPORT void fdb_transaction_set_expected_cost(FDBTransaction* tr, uint64_t value) {
+	CATCH_AND_DIE(TXN(tr)->setExpectedCost(value););
+}
+
 extern "C" DLLEXPORT FDBFuture* fdb_transaction_get_approximate_size(FDBTransaction* tr) {
 	return (FDBFuture*)TXN(tr)->getApproximateSize().extractPtr();
 }
