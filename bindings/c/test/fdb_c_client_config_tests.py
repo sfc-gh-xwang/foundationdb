@@ -239,6 +239,17 @@ class ClientConfigTest:
 
     def check_tenant_status(self):
         status_json = self.status_json
+        # Make sure that the Tenant fields do not show up in the "DatabaseStatus" field.
+        if "DatabaseStatus" in self.status_json:
+            for tenantFieldName in [
+                "TenantResolutionStatus",
+                "TenantResolutionErrorCode",
+                "TenantID",
+            ]:
+                self.tc.assertFalse(
+                    tenantFieldName in self.status_json["DatabaseStatus"]
+                )
+
         if self.expected_error:
             self.check_tenant_status_failed(status_json, self.expected_error)
         else:
