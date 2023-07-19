@@ -12,8 +12,8 @@
 #include <iostream>
 #include <iomanip>
 #include <map>
-#include <variant>
 #include <string>
+#include <variant>
 #include <vector>
 #include <type_traits>
 #include <fmt/format.h>
@@ -208,6 +208,11 @@ std::string demangle_symbol(const std::string& mangled) {
 	if (demangled) {
 		std::string ret(demangled, length);
 		free(demangled);
+		auto const rule_pos = ret.rfind("x3::rule");
+		if (rule_pos != std::string::npos) {
+			// dump from the rule part.
+			ret = ret.substr(rule_pos);
+		}
 		return ret;
 	} else {
 		return mangled;
@@ -242,8 +247,8 @@ x3::uint_parser<uint64_t, 16> const hex_uint64;
 #error "DEFINE_RULE macro clashes with existing definition"
 #endif
 #define DEFINE_RULE(NAME, RULE, RESOLVED_TYPE) \
-	x3::rule<struct NAME##_class, RESOLVED_TYPE> const NAME = #NAME; \
-	auto const NAME##_def = RULE; \
+	[[maybe_unused]] x3::rule<struct NAME##_class, RESOLVED_TYPE> const NAME = #NAME; \
+	[[maybe_unused]] auto const NAME##_def = RULE; \
 	struct NAME##_class : error_handler, x3::annotate_on_success {}; \
 	BOOST_SPIRIT_DEFINE(NAME)
 
@@ -844,10 +849,10 @@ input_set_type<ast::table_decl> table_decl_input_set = []() {
 	using namespace std::string_literals;
 	return input_set_type<ast::table_decl>{
 		{
-			"table Object (id: 10) {\n"
-			"  name : string (required);\n"
-			"  points : [Point];\n"
-			"  shape : Shape = Rectangle (required);\n"
+			"table Object (id: 10) {"                    "\n"
+			"  name : string (required, priority: 1);"   "\n"
+			"  points : [Point];"                        "\n"
+			"  shape : Shape = Rectangle (required);"    "\n"
 			"}",
 			ast::table_decl{
 				"Object",
@@ -861,7 +866,10 @@ input_set_type<ast::table_decl> table_decl_input_set = []() {
 							ast::object_typeinfo{
 								ast::type_tag<std::string>{}},
 						},
-						ast::metadata{ { "required", boost::none } }
+						ast::metadata{
+							{ "required", boost::none },
+							{ "priority", ast::single_value(ast::scalar(uint64_t(1))) },
+						},
 					},
 					ast::field_decl{
 						"points",
