@@ -226,17 +226,22 @@ class ClientConfigTest:
             self.tc.assertEqual(1, len(matching_clients))
             self.tc.assertEqual(expected_client, matching_clients[0])
 
-    def check_tenant_status(self, status_json):
+    def check_tenant_status_resolved(self, status_json):
         status = status_json["TenantResolutionStatus"]
-        if self.skip_create_tenant:
-            # If we skip tenant creation, the tenant resolution status will be shown as failed
-            self.tc.assertEqual(status, "Failed")
-            self.tc.assertEqual(status_json["TenantResolutionErrorCode"], 2131)
-            return
-
         self.tc.assertEqual(status, "Resolved")
         tenant_id = status_json["TenantID"]
         self.tc.assertTrue(isinstance(tenant_id, int))
+
+    def check_tenant_status_failed(self, status_json, error_code):
+        status = status_json["TenantResolutionStatus"]
+        self.tc.assertEqual(status, "Failed")
+        self.tc.assertEqual(status_json["TenantResolutionErrorCode"], error_code)
+
+    def check_tenant_status(self, status_json):
+        if self.expected_error:
+            self.check_tenant_status_failed(status_json, self.expected_error)
+        else:
+            self.check_tenant_status_resolved(status_json)
 
     def check_healthy_status_report(self):
         self.tc.assertIsNotNone(self.status_json)
