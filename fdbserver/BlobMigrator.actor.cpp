@@ -112,7 +112,7 @@ private:
 			TraceEvent("RestorableGranule", self->interf_.id()).detail("Size", self->blobGranules_.size());
 			if (granules.empty()) {
 				TraceEvent("EmptyBlobGranules", self->interf_.id()).log();
-				CODE_PROBE(true, "Blob restore with no blob granules", probe::decoration::rare);
+				CODE_PROBE(true, "Blob restore with no blob granules");
 				wait(BlobRestoreController::setError(controller, "No blob granules"));
 				return Void();
 			}

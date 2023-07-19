@@ -326,7 +326,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					}
 				}
 
-				CODE_PROBE(!successfulRestore, "Simultaneous restores all failed", probe::decoration::rare);
+				CODE_PROBE(!successfulRestore, "Simultaneous restores all failed");
 				ASSERT(successfulRestore || restoreFutures.size() > 1);
 				numRestores = 1;
 			}

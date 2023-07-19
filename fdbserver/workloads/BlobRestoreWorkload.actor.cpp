@@ -167,7 +167,7 @@ struct BlobRestoreWorkload : TestWorkload {
 			state Standalone<VectorRef<KeyValueRef>> src_ = wait(readFromBlob(cx, targetVersion, self));
 		} catch (Error& e) {
 			fmt::print("Couldn't read blob data at version {}\n", targetVersion);
-			CODE_PROBE(true, "Skip blob restore test because of missing blob data", probe::decoration::rare);
+			CODE_PROBE(true, "Skip blob restore test because of missing blob data");
 			return invalidVersion;
 		}
 		return targetVersion;

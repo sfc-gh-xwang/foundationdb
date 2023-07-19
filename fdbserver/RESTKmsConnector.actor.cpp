@@ -1360,7 +1360,7 @@ ACTOR Future<Void> testMultiValidationFileTokenFiles(Reference<RESTKmsConnectorC
 		ASSERT_NE(tokenCtx.getReadTS(), 0);
 	}
 
-	CODE_PROBE(newLineAppended, "RESTKmsConnector remove trailing newline", probe::decoration::rare);
+	CODE_PROBE(newLineAppended, "RESTKmsConnector remove trailing newline");
 
 	return Void();
 }
