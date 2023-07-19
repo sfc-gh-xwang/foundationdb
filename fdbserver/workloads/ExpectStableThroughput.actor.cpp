@@ -36,6 +36,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	double warmupTime;
 	int opsPerTransaction;
 	bool provideExpectedCost;
+	bool useGrvCache;
 
 	double startTime;
 
@@ -55,12 +56,14 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 			try {
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag);
 
-				if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+				if (self->useGrvCache && CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
 					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
 				}
+
 				if (self->provideExpectedCost) {
 					tr.setExpectedCost(self->opsPerTransaction * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 				}
+				
 				futures.clear();
 				futures.reserve(self->opsPerTransaction);
 				for (int i = 0; i < self->opsPerTransaction; ++i) {
@@ -98,6 +101,7 @@ public:
 		warmupTime = getOption(options, "warmupTime"_sr, 10.0);
 		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, 5);
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
+		useGrvCache = getOption(options, "useGrvCache"_sr, deterministicRandom()->coinflip());
 	}
 
 	Future<Void> setup(Database const& cx) override { return Void(); }
