@@ -147,10 +147,10 @@ using singular_types_variant = x3::variant<
 		type_tag<uint8_t>,
 		type_tag<int16_t>,
 		type_tag<uint16_t>,
-		type_tag<int32_t>,
-		type_tag<uint32_t>,
 		type_tag<int64_t>,
 		type_tag<uint64_t>,
+		type_tag<int32_t>,
+		type_tag<uint32_t>,
 		type_tag<float>,
 		type_tag<double>,
 		type_tag<std::string>,
@@ -183,6 +183,7 @@ BOOST_FUSION_ADAPT_STRUCT(ast::include, filename);
 BOOST_FUSION_ADAPT_STRUCT(ast::namespace_decl, ns);
 BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name);
 BOOST_FUSION_ADAPT_STRUCT(ast::typeref, name);
+BOOST_FUSION_ADAPT_STRUCT(ast::field_decl, name, typeinfo, meta);
 
 BOOST_FUSION_ADAPT_TPL_STRUCT(
                (T), (ast::scalar_type) (T),
@@ -360,6 +361,8 @@ DEFINE_RULE(
 		float64_field_part,
 		ast::scalar_typeinfo);
 
+auto const bool_type_part = x3::lit("bool") > x3::attr(ast::type_tag<bool>{});
+
 auto const int8_type_part = (x3::lit("byte") | "int8") > x3::attr(ast::type_tag<int8_t>{});
 
 auto const uint8_type_part = (x3::lit("ubyte") | "uint8") > x3::attr(ast::type_tag<uint8_t>{});
@@ -368,9 +371,9 @@ auto const int16_type_part = (x3::lit("short") | "int16") > x3::attr(ast::type_t
 
 auto const uint16_type_part = (x3::lit("ushort") | "uint16") > x3::attr(ast::type_tag<uint16_t>{});
 
-auto const int32_type_part = (x3::lit("int") | "int32") > x3::attr(ast::type_tag<int32_t>{});
+auto const int32_type_part = (x3::lit("int32") | "int") > x3::attr(ast::type_tag<int32_t>{});
 
-auto const uint32_type_part = (x3::lit("uint") | "uint32") > x3::attr(ast::type_tag<uint32_t>{});
+auto const uint32_type_part = (x3::lit("uint32") | "uint") > x3::attr(ast::type_tag<uint32_t>{});
 
 auto const int64_type_part = (x3::lit("long") | "int64") > x3::attr(ast::type_tag<int64_t>{});
 
@@ -384,17 +387,20 @@ auto const string_type_part = x3::lit("string") > x3::attr(ast::type_tag<std::st
 
 DEFINE_RULE(typeref_type_part, ident, ast::typeref);
 
+// [u]int32 must be placed at the last of the integer rules because of the alias "[u]int":
+// e.g. parsing "[uint64]" may be parsed as "[uint" and throw an error because there's '6' instead of ']'
 DEFINE_RULE(
 		vector_typeinfo,
 		(x3::lit('[') >
-			(int8_type_part |
+			(bool_type_part |
+			 int8_type_part |
 			 uint8_type_part |
 			 int16_type_part |
 			 uint16_type_part |
-			 int32_type_part |
-			 uint32_type_part |
 			 int64_type_part |
 			 uint64_type_part |
+			 int32_type_part |
+			 uint32_type_part |
 			 float32_type_part |
 			 float64_type_part |
 			 string_type_part |
@@ -408,7 +414,7 @@ DEFINE_RULE(
 
 DEFINE_RULE(
 		field_decl,
-		(ident > ':' > (scalar_typeinfo | vector_typeinfo | object_typeinfo) > -metadata > ';'),
+		(ident > ':' > (scalar_typeinfo | object_typeinfo | vector_typeinfo) > -metadata > ';'),
 		ast::field_decl);
 
 #undef DEFINE_RULE
@@ -693,17 +699,122 @@ bool object_typeinfo() {
 	return run_ast_test(rule::object_typeinfo, object_typeinfo_input_set);
 }
 
+input_set_type<ast::vector_typeinfo> vector_typeinfo_input_set = []() {
+	return input_set_type<ast::vector_typeinfo>{
+		{
+			"[string]",
+			ast::vector_typeinfo{ast::type_tag<std::string>{}},
+		},
+		{
+			"[def]",
+			ast::vector_typeinfo{ast::typeref{"def"}},
+		},
+		{
+			"[someType]",
+			ast::vector_typeinfo{ast::typeref{"someType"}},
+		},
+		{
+			"[1someType]", // identifiers cannot start with a number
+			boost::none,
+		},
+		{
+			"[uint]",
+			ast::vector_typeinfo{ast::type_tag<uint32_t>{}},
+		},
+		{
+			"[uint32]",
+			ast::vector_typeinfo{ast::type_tag<uint32_t>{}},
+		},
+		{
+			"[int]",
+			ast::vector_typeinfo{ast::type_tag<int32_t>{}},
+		},
+		{
+			"[int32]",
+			ast::vector_typeinfo{ast::type_tag<int32_t>{}},
+		},
+		{
+			"[uint64]",
+			ast::vector_typeinfo{ast::type_tag<uint64_t>{}},
+		},
+		{
+			"[ulong]",
+			ast::vector_typeinfo{ast::type_tag<uint64_t>{}},
+		},
+		{
+			"[int64]",
+			ast::vector_typeinfo{ast::type_tag<int64_t>{}},
+		},
+		{
+			"[long]",
+			ast::vector_typeinfo{ast::type_tag<int64_t>{}},
+		},
+		{
+			"[uint16]",
+			ast::vector_typeinfo{ast::type_tag<uint16_t>{}},
+		},
+		{
+			"[ushort]",
+			ast::vector_typeinfo{ast::type_tag<uint16_t>{}},
+		},
+		{
+			"[int16]",
+			ast::vector_typeinfo{ast::type_tag<int16_t>{}},
+		},
+		{
+			"[short]",
+			ast::vector_typeinfo{ast::type_tag<int16_t>{}},
+		},
+		{
+			"[uint8]",
+			ast::vector_typeinfo{ast::type_tag<uint8_t>{}},
+		},
+		{
+			"[ubyte]",
+			ast::vector_typeinfo{ast::type_tag<uint8_t>{}},
+		},
+		{
+			"[int8]",
+			ast::vector_typeinfo{ast::type_tag<int8_t>{}},
+		},
+		{
+			"[byte]",
+			ast::vector_typeinfo{ast::type_tag<int8_t>{}},
+		},
+		{
+			"[bool]",
+			ast::vector_typeinfo{ast::type_tag<bool>{}},
+		},
+	};
+}();
 
-/*
+bool vector_typeinfo() {
+	return run_ast_test(rule::vector_typeinfo, vector_typeinfo_input_set);
+}
+
 input_set_type<ast::field_decl> field_decl_input_set = []() {
 	using namespace std::string_literals;
 	return input_set_type<ast::field_decl>{
 		{
 			"a : int = 10;",
-			ast::field_decl{"a",
-							ast::scalar_typeinfo{
-								ast::scalar_type<int32_t>{10}},
-							boost::none
+			ast::field_decl{
+				"a",
+				ast::typeinfo_variant{
+					ast::scalar_typeinfo{
+						ast::scalar_type<int32_t>{10}}},
+				boost::none,
+			},
+		},
+		{
+			"Names: [string] (required);",
+			ast::field_decl{
+				"Names",
+				ast::typeinfo_variant{
+					ast::vector_typeinfo{
+						ast::type_tag<std::string>{}}},
+				ast::metadata{
+					{ "required", boost::none }
+				},
 			},
 		},
 	};
@@ -712,7 +823,7 @@ input_set_type<ast::field_decl> field_decl_input_set = []() {
 bool field_decl() {
 	return run_ast_test(rule::field_decl, field_decl_input_set);
 }
-*/
+
 } // namespace test
 
 int main() {
@@ -724,7 +835,8 @@ int main() {
 	ok = ok && test::metadata();
 	ok = ok && test::scalar_typeinfo();
 	ok = ok && test::object_typeinfo();
-	//ok = ok && test::field_decl();
+	ok = ok && test::vector_typeinfo();
+	ok = ok && test::field_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
