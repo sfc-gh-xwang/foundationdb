@@ -399,16 +399,13 @@ bool Tester::checkTenantIDReadiness(const std::string& statusJsonStr) const {
 	// Helper function to check if TenantID is ready
 	rapidjson::Document statusJson;
 	statusJson.Parse(statusJsonStr.c_str());
-	// Local client case, "TenantResolutionStatus" is on the top-level
+	// "TenantResolutionStatus" is on the top-level, and if its status is "Pending", it means the resolution is not yet
+	// ready
 	if (statusJson.HasMember("TenantResolutionStatus") &&
 	    std::strcmp(statusJson["TenantResolutionStatus"].GetString(), "Pending") == 0) {
 		return false;
 	}
 
-	// The MVC case, "TenantResolutionStatus" is in the "DatabaseStatus" field
-	if (statusJson.HasMember("DatabaseStatus") && statusJson["DatabaseStatus"].HasMember("TenantResolutionStatus")) {
-		return std::strcmp(statusJson["DatabaseStatus"]["TenantResolutionStatus"].GetString(), "Pending") != 0;
-	}
 	return true;
 }
 

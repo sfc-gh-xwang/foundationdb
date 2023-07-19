@@ -2019,6 +2019,7 @@ ThreadFuture<bool> MultiVersionTenant::flushBlobRange(const KeyRangeRef& keyRang
 }
 
 ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
+	auto tenantStateRef = tenantState;
 	auto stateRef = tenantState->db->dbState;
 	auto tenant = tenantState->tenantVar->get();
 
@@ -2029,9 +2030,10 @@ ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
 	auto f = tenant.value->getClientStatus();
 	auto statusFuture = abortableFuture(f, tenant.onChange);
 	return flatMapThreadFuture<Standalone<StringRef>, Standalone<StringRef>>(
-	    statusFuture, [stateRef](ErrorOr<Standalone<StringRef>> tenantContextStatus) {
-		    return onMainThread([stateRef, tenantContextStatus] {
-			    return Future<Standalone<StringRef>>(stateRef->getClientStatus(tenantContextStatus));
+	    statusFuture, [stateRef, tenantStateRef](ErrorOr<Standalone<StringRef>> tenantContextStatus) {
+		    return onMainThread([stateRef, tenantStateRef, tenantContextStatus] {
+			    return Future<Standalone<StringRef>>(
+			        tenantStateRef->getClientStatus(stateRef->getClientStatus(tenantContextStatus)));
 		    });
 	    });
 }
@@ -2078,6 +2080,36 @@ void MultiVersionTenant::TenantState::close() {
 	if (tenantUpdater.isValid()) {
 		tenantUpdater.cancel();
 	}
+}
+
+// Generate the client-side status report for the Multi-Version Tenant
+//
+// This function takes the status report generated for the Multi-Version Database, and moves the
+// Tenant related fields, namely "TenantResolutionStatus", "TenantResolutionErrorCode", and "TenantID"
+// from its "DatabaseStatus" field to the top-level.
+Standalone<StringRef> MultiVersionTenant::TenantState::getClientStatus(Standalone<StringRef> tenantContextStatus) {
+	json_spirit::mValue tenantContextStatusVal;
+	if (!json_spirit::read_string(tenantContextStatus.toString(), tenantContextStatusVal)) {
+		TraceEvent(SevError, "MalformedTenantClientStatusJSON").error(json_malformed());
+		return tenantContextStatus;
+	}
+
+	auto& tenantContextStatusObj = tenantContextStatusVal.get_obj();
+	if (!tenantContextStatusObj.count("DatabaseStatus")) {
+		return tenantContextStatus;
+	}
+
+	auto dbStatusObj = tenantContextStatusObj["DatabaseStatus"].get_obj();
+	for (auto const& tenantKey : { "TenantResolutionStatus", "TenantResolutionErrorCode", "TenantID" }) {
+		if (!dbStatusObj.count(tenantKey)) {
+			continue;
+		}
+
+		tenantContextStatusObj[tenantKey] = dbStatusObj[tenantKey];
+		tenantContextStatusObj["DatabaseStatus"].get_obj().erase(tenantKey);
+	}
+
+	return StringRef(json_spirit::write_string(json_spirit::mValue(tenantContextStatusObj)));
 }
 
 // MultiVersionDatabase
