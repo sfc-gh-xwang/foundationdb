@@ -23,6 +23,7 @@ pipeline {
                                          'yajin']
                     user_id = ""
                     labels = []
+                    run_ci = true
                     if (env.BRANCH_NAME.startsWith("PR-")) {
                         //Aborting previous runs if any in progress to avoid running multiple runs for same PR
                         abortPreviousBuilds()
@@ -90,13 +91,14 @@ pipeline {
                             createCheck("github_comment", triggerMessage, triggerMessage, "completed", "failure");
                             println("FDB_Precommit build job execution is skipped. Please comment: ${trigger_comment}")
                             currentBuild.result = 'FAILURE'
-                            error("Aborting the build.")
+                            run_ci = false
                         }
                     }
                 }
             }
         }
         stage('FDB Build Image') {
+            when { expression { run_ci } }
             steps {
                 script {
                     def dryrun = "true"
@@ -149,6 +151,7 @@ pipeline {
             }
         }
         stage('Build and Test') {
+            when { expression { run_ci } }
             parallel {
                 stage('Build and Test - PRERELEASE') {
                     steps {
