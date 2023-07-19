@@ -1877,6 +1877,22 @@ TEST_CASE("fdb_transaction_get_total_cost") {
 	}
 }
 
+TEST_CASE("fdb_transaction_set_expected_cost") {
+	auto tr = db.createTransaction();
+	tr.setExpectedCost(4096);
+
+	while (1) {
+		auto f1 = tr.getReadVersion();
+		auto err = waitFuture(f1);
+		if (err) {
+			auto f2 = tr.onError(err);
+			fdbCheck(waitFuture(f2));
+			continue;
+		}
+		break;
+	}
+}
+
 TEST_CASE("fdb_transaction_get_approximate_size") {
 	auto tr = db.createTransaction();
 	while (1) {

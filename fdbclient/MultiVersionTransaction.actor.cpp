@@ -19,6 +19,7 @@
  */
 
 #include <fcntl.h>
+#include <utility>
 
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/json_spirit/json_spirit_reader_template.h"
@@ -420,6 +421,12 @@ ThreadFuture<int64_t> DLTransaction::getTotalCost() {
 		ASSERT(!error);
 		return size;
 	});
+}
+
+void DLTransaction::setExpectedCost(uint64_t value) {
+	if (api->transactionSetExpectedCost) {
+		api->transactionSetExpectedCost(tr, value);
+	}
 }
 
 ThreadFuture<int64_t> DLTransaction::getApproximateSize() {
@@ -1148,6 +1155,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_transaction_get_total_cost",
 	                   headerVersion >= ApiVersion::withGetTotalCost().version());
+	loadClientFunction(&api->transactionSetExpectedCost,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_transaction_set_expected_cost",
+	                   headerVersion >= ApiVersion::withSetExpectedCost().version());
 	loadClientFunction(&api->transactionGetApproximateSize,
 	                   lib,
 	                   fdbCPath,
@@ -1681,6 +1693,13 @@ ThreadFuture<double> MultiVersionTransaction::getTagThrottledDuration() {
 
 ThreadFuture<int64_t> MultiVersionTransaction::getTotalCost() {
 	return executeOperation(&ITransaction::getTotalCost);
+}
+
+void MultiVersionTransaction::setExpectedCost(uint64_t value) {
+	auto tr = getTransaction();
+	if (tr.transaction) {
+		tr.transaction->setExpectedCost(value);
+	}
 }
 
 ThreadFuture<int64_t> MultiVersionTransaction::getApproximateSize() {

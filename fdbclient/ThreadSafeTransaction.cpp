@@ -681,6 +681,11 @@ ThreadFuture<int64_t> ThreadSafeTransaction::getTotalCost() {
 	});
 }
 
+void ThreadSafeTransaction::setExpectedCost(uint64_t value) {
+	ISingleThreadTransaction* tr = this->tr;
+	onMainThreadVoid([tr, value]() { tr->setExpectedCost(value); }, tr, &ISingleThreadTransaction::deferredError);
+}
+
 ThreadFuture<int64_t> ThreadSafeTransaction::getApproximateSize() {
 	ISingleThreadTransaction* tr = this->tr;
 	return onMainThread([tr]() -> Future<int64_t> {
