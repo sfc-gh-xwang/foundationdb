@@ -462,6 +462,8 @@ bool run_ast_test(
 				if (!value_match)
 					std::cout << "[value_mismatch] ";
 			}
+		} else if (!expected) {
+			std::cout << "[parse_failed_as_expected] ";
 		}
 		std::cout << std::quoted(input) << '\n';
 		failures += !test_ok;
@@ -665,6 +667,33 @@ bool scalar_typeinfo() {
 	return run_ast_test(rule::scalar_typeinfo, scalar_typeinfo_input_set);
 }
 
+input_set_type<ast::object_typeinfo> object_typeinfo_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::object_typeinfo>{
+		{
+			"string",
+			ast::object_typeinfo{ast::type_tag<std::string>{}},
+		},
+		{
+			"def",
+			ast::object_typeinfo{ast::typeref{"def"}},
+		},
+		{
+			"someType",
+			ast::object_typeinfo{ast::typeref{"someType"}},
+		},
+		{
+			"1someType", // identifiers cannot start with a number
+			boost::none,
+		},
+	};
+}();
+
+bool object_typeinfo() {
+	return run_ast_test(rule::object_typeinfo, object_typeinfo_input_set);
+}
+
+
 /*
 input_set_type<ast::field_decl> field_decl_input_set = []() {
 	using namespace std::string_literals;
@@ -694,6 +723,7 @@ int main() {
 	ok = ok && test::metadatum();
 	ok = ok && test::metadata();
 	ok = ok && test::scalar_typeinfo();
+	ok = ok && test::object_typeinfo();
 	//ok = ok && test::field_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
