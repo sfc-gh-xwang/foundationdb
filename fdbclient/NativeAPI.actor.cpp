@@ -7419,7 +7419,8 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 	                                                               tenantGroup,
 	                                                               span.context,
 	                                                               trState->options.throttlingTag,
-	                                                               versionDebugID);
+	                                                               versionDebugID,
+	                                                               trState->getExpectedTransactionCost());
 	trState->startTime = now();
 	GetReadVersionReply rep = wait(f);
 	double replyTime = now();
@@ -7533,6 +7534,14 @@ ACTOR Future<Version> Transaction_getReadVersion(Reference<TransactionState> trS
 
 Future<Version> Transaction::getReadVersion() {
 	return Transaction_getReadVersion(trState);
+}
+
+void TransactionState::setExpectedCost(uint64_t bytes) {
+	expectedTransactionCost = bytes;
+}
+
+Optional<uint64_t> TransactionState::getExpectedTransactionCost() const {
+	return expectedTransactionCost;
 }
 
 Optional<Version> Transaction::getCachedReadVersion() const {
@@ -11788,6 +11797,8 @@ int64_t getMaxWriteKeySize(KeyRef const& key, bool hasRawAccess) {
 int64_t getMaxClearKeySize(KeyRef const& key) {
 	return getMaxKeySize(key);
 }
+
+// TODO: file writing APIs
 
 namespace NativeAPI {
 

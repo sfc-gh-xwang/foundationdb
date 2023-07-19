@@ -351,6 +351,9 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 
 	Optional<ThrottlingId> getThrottlingId();
 
+	void setExpectedCost(uint64_t bytes);
+	Optional<uint64_t> getExpectedTransactionCost() const;
+
 private:
 	Optional<Reference<Tenant>> tenant_;
 	bool tenantSet;
@@ -363,6 +366,9 @@ private:
 	// after rounding up to the nearest page size and applying a write penalty
 	int64_t writeCost = 0;
 	bool flushedWriteCost = false;
+
+	// Expected transaction cost provided by the client
+	Optional<uint64_t> expectedTransactionCost;
 
 };
 
@@ -514,6 +520,8 @@ public:
 	Version getCommittedVersion() const { return trState->committedVersion; }
 
 	int64_t getTotalCost() const { return trState->getTotalCost(); }
+
+	void setExpectedCost(uint64_t bytes) { trState->setExpectedCost(bytes); }
 
 	double getTagThrottledDuration() const;
 

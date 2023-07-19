@@ -34,6 +34,7 @@
 #include "SimpleOpt/SimpleOpt.h"
 #include <thread>
 #include <random>
+#include <rapidjson/document.h>
 #include <string_view>
 #include <unordered_map>
 #include "fdbclient/FDBOptions.g.h"
@@ -61,7 +62,8 @@ enum TesterOptionId {
 	OPT_EXPECTED_ERROR,
 	OPT_PRINT_STATUS,
 	OPT_NETWORK_OPTION,
-	OPT_ENABLE_TENANT
+	OPT_ENABLE_TENANT,
+	OPT_SKIP_CREATE_TENANT
 };
 
 const int MIN_TESTABLE_API_VERSION = 400;
@@ -82,6 +84,7 @@ CSimpleOpt::SOption TesterOptionDefs[] = //
 	  { OPT_PRINT_STATUS, "--print-status", SO_NONE },
 	  { OPT_NETWORK_OPTION, "--network-option-", SO_REQ_SEP },
 	  { OPT_ENABLE_TENANT, "--enable-tenant", SO_NONE },
+	  { OPT_SKIP_CREATE_TENANT, "--skip-create-tenant", SO_NONE },
 	  SO_END_OF_OPTIONS };
 
 class TesterOptions {
@@ -91,8 +94,6 @@ public:
 	std::string clusterFile;
 	std::string externalClientLibrary;
 	std::string externalClientDir;
-	bool disableLocalClient = false;
-	bool disableClientBypass = false;
 	int transactionTimeout = 0;
 	bool trace = false;
 	std::string traceDir;
@@ -103,6 +104,7 @@ public:
 	bool printStatus = false;
 	std::vector<std::pair<std::string, std::string>> networkOptions;
 	bool enableTenant = false;
+	bool skipCreateTenant = false;
 };
 
 namespace {
@@ -142,6 +144,10 @@ void printProgramUsage(const char* execName) {
 	       "  --enable-tenant\n"
 	       "                 Enable the tester in tenant mode. When set true, it creates \n"
 	       "                 a tenant and prints the client status from the tenant level.\n"
+	       "  --skip-create-tenant\n"
+	       "                 When set true, it skips the tenant creation step when the tester \n"
+	       "                 is under tenant mode, testing the status report when opening \n"
+	       "                 a nonexisting tenant.\n"
 	       "  -h, --help     Display this help and exit.\n",
 	       FDB_API_VERSION);
 }
@@ -224,6 +230,9 @@ bool processArg(const CSimpleOpt& args) {
 	}
 	case OPT_ENABLE_TENANT:
 		options.enableTenant = true;
+		break;
+	case OPT_SKIP_CREATE_TENANT:
+		options.skipCreateTenant = true;
 		break;
 	}
 	return true;
@@ -327,13 +336,18 @@ class Tester {
 public:
 	Tester(const TesterOptions options) : useTenant(options.enableTenant), db(fdb::Database(options.clusterFile)) {
 		if (options.enableTenant) {
-			createTenant();
+			if (options.skipCreateTenant) {
+				tenantName = randomString(10);
+			} else {
+				createTenant();
+			}
 		}
 	}
 
 	void testTransaction();
 
 private:
+	bool checkTenantIDReadiness(const std::string& statusJsonStr) const;
 	void createTenant();
 	void handleTransactionError(fdb::Transaction& tx, const fdb::Error& err);
 	void printDatabaseStatus();
@@ -381,13 +395,47 @@ void Tester::handleTransactionError(fdb::Transaction& tx, const fdb::Error& err)
 	}
 }
 
+bool Tester::checkTenantIDReadiness(const std::string& statusJsonStr) const {
+	// Helper function to check if TenantID is ready
+	rapidjson::Document statusJson;
+	statusJson.Parse(statusJsonStr.c_str());
+	// Local client case, "TenantResolutionStatus" is on the top-level
+	if (statusJson.HasMember("TenantResolutionStatus") &&
+	    std::strcmp(statusJson["TenantResolutionStatus"].GetString(), "Pending") == 0) {
+		return false;
+	}
+
+	// The MVC case, "TenantResolutionStatus" is in the "DatabaseStatus" field
+	if (statusJson.HasMember("DatabaseStatus") && statusJson["DatabaseStatus"].HasMember("TenantResolutionStatus")) {
+		return std::strcmp(statusJson["DatabaseStatus"]["TenantResolutionStatus"].GetString(), "Pending") != 0;
+	}
+	return true;
+}
+
 void Tester::printDatabaseStatus() {
 	if (options.printStatus) {
 		auto tenant = useTenant ? db.openTenant(fdb::toBytesRef(tenantName)) : fdb::Tenant();
-		auto statusFuture = useTenant ? tenant.getClientStatus() : db.getClientStatus();
-		fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
-		fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
-		fflush(stdout);
+		while (true) {
+			auto statusFuture = useTenant ? tenant.getClientStatus() : db.getClientStatus();
+			fdb_check(statusFuture.blockUntilReady(), "Wait on getClientStatus failed");
+			if (!useTenant) {
+				// For Database Status, there's no pending state to poll, thus print
+				// out the status json and return
+				fmt::print("{}\n", fdb::toCharsRef(statusFuture.get()));
+				fflush(stdout);
+				return;
+			}
+
+			std::string statusJsonStr(statusFuture.get().begin(), statusFuture.get().end());
+			// If TenantID is not ready, we try again
+			if (!checkTenantIDReadiness(statusJsonStr)) {
+				continue;
+			}
+
+			fmt::print("{}\n", statusJsonStr);
+			fflush(stdout);
+			return;
+		}
 	}
 }
 

@@ -5,6 +5,7 @@
 #include "fdbclient/Knobs.h"
 #include "fdbserver/workloads/workloads.actor.h"
 
+#include "flow/IRandom.h"
 #include "flow/actorcompiler.h" // This must be the last include
 
 // This workload is meant to be run with the ThroughputQuotaWorklaod.
@@ -34,6 +35,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	double attemptedTransactionRatePerActor;
 	double warmupTime;
 	int opsPerTransaction;
+	bool provideExpectedCost;
 
 	double startTime;
 
@@ -51,10 +53,13 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		state std::vector<Future<Void>> futures;
 		loop {
 			try {
-				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag); 
-				
+				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag);
+
 				if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
 					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
+				}
+				if (self->provideExpectedCost) {
+					tr.setExpectedCost(self->opsPerTransaction * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 				}
 				futures.clear();
 				futures.reserve(self->opsPerTransaction);
@@ -92,6 +97,7 @@ public:
 		attemptedTransactionRatePerActor = getOption(options, "attemptedTransactionRatePerActor"_sr, 0.4);
 		warmupTime = getOption(options, "warmupTime"_sr, 10.0);
 		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, 5);
+		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
 	}
 
 	Future<Void> setup(Database const& cx) override { return Void(); }

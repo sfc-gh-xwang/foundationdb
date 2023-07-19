@@ -126,6 +126,8 @@ public:
 class TestEnv {
 	MockRKThroughputQuotaCache quotaCache;
 	MockRKMetricsTracker metricsTracker;
+	Optional<RKClientThroughputTracker> clientThroughputTracker;
+	RKServerThroughputTracker serverThroughputTracker;
 	QuotaThrottler quotaThrottler;
 	StorageServerCollection storageServers;
 
@@ -134,9 +136,11 @@ class TestEnv {
 		if (opType == OpType::WRITE) {
 			cost *= CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO;
 		}
-		ThrottlingIdMap<uint64_t> newThroughput;
-		newThroughput[throttlingId] = cost;
-		quotaThrottler.updateThroughput(newThroughput);
+		if (clientThroughputTracker.present()) {
+			ThrottlingIdMap<uint64_t> newThroughput;
+			newThroughput[throttlingId] = cost;
+			clientThroughputTracker.get().update(newThroughput);
+		}
 	}
 
 	ACTOR static Future<Void> _runClient(TestEnv* self,
@@ -159,20 +163,34 @@ class TestEnv {
 		loop {
 			wait(delay(1.0));
 			auto const storageQueueInfos = self->storageServers.getStorageQueueInfos();
-			self->quotaThrottler.updateThrottling(storageQueueInfos);
+			self->serverThroughputTracker.update(storageQueueInfos);
 			for (auto it = storageQueueInfos.begin(); it != storageQueueInfos.end(); ++it) {
 				self->metricsTracker.updateStorageQueueInfo(it->value);
 			}
 		}
 	}
 
+	ThrottlingIdMap<double> getTargetRates() {
+		if (clientThroughputTracker.present()) {
+			return quotaThrottler.getTargetRates(
+			    /*numProxies=*/1, quotaCache, metricsTracker, clientThroughputTracker.get(), serverThroughputTracker);
+		} else {
+			return quotaThrottler.getTargetRates(
+			    /*numProxies=*/1, quotaCache, metricsTracker, serverThroughputTracker, serverThroughputTracker);
+		}
+	}
+
 public:
 	TestEnv(int numSS, int throughputPerSS, int maxFallingBehind = 0)
 	  : quotaThrottler(UID{}, maxFallingBehind, /*limitingThreshold=*/CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
-	    storageServers(numSS, throughputPerSS) {}
+	    storageServers(numSS, throughputPerSS) {
+		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+			clientThroughputTracker = RKClientThroughputTracker(/*expirationCheckInterval=*/5.0);
+		}
+	}
 
 	Optional<double> getTPSLimit(ThrottlingId const& throttlingId) {
-		auto rates = quotaThrottler.getTargetRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		auto rates = getTargetRates();
 		auto it = rates.find(throttlingId);
 		if (it != rates.end()) {
 			return it->second;
@@ -190,7 +208,7 @@ public:
 
 	bool targetRateIsNear(ThrottlingId const& throttlingId, Optional<double> expected) {
 		Optional<double> rate;
-		auto const targetRates = quotaThrottler.getTargetRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		auto const targetRates = getTargetRates();
 		auto it = targetRates.find(throttlingId);
 		if (it != targetRates.end()) {
 			rate = it->second;
@@ -203,7 +221,7 @@ public:
 	}
 
 	bool totalTargetRateIsNear(double expected) {
-		auto const targetRates = quotaThrottler.getTargetRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		auto const targetRates = getTargetRates();
 		double targetRateSum = 0.0;
 		for (auto const& [_, targetRate] : targetRates) {
 			targetRateSum += targetRate;

@@ -4348,7 +4348,7 @@ Reference<TCTeamInfo> DDTeamCollection::buildLargeTeam(int teamSize) {
 		candidateTeam.push_back(server_info[it]);
 	}
 	Optional<Reference<TCTenantInfo>> no_tenant = {};
-	auto teamInfo = makeReference<TCTeamInfo>(candidateTeam, no_tenant);
+	auto teamInfo = makeLeakyReference<TCTeamInfo>(candidateTeam, no_tenant);
 	teamInfo->tracker = teamTracker(teamInfo, IsBadTeam::False, IsRedundantTeam::False);
 	largeTeams.push_back(teamInfo);
 	return teamInfo;
@@ -4358,7 +4358,7 @@ void DDTeamCollection::addTeam(const std::vector<Reference<TCServerInfo>>& newTe
                                IsInitialTeam isInitialTeam,
                                IsRedundantTeam redundantTeam) {
 	Optional<Reference<TCTenantInfo>> no_tenant = {};
-	auto teamInfo = makeReference<TCTeamInfo>(newTeamServers, no_tenant);
+	auto teamInfo = makeLeakyReference<TCTeamInfo>(newTeamServers, no_tenant);
 
 	// Move satisfiesPolicy to the end for performance benefit
 	auto badTeam = IsBadTeam{ redundantTeam || !satisfiesPolicy(teamInfo->getServers()) ||
@@ -4417,7 +4417,7 @@ void DDTeamCollection::addTeam(const std::vector<Reference<TCServerInfo>>& newTe
 }
 
 Reference<TCMachineTeamInfo> DDTeamCollection::addMachineTeam(std::vector<Reference<TCMachineInfo>> machines) {
-	auto machineTeamInfo = makeReference<TCMachineTeamInfo>(machines);
+	auto machineTeamInfo = makeLeakyReference<TCMachineTeamInfo>(machines);
 	machineTeams.push_back(machineTeamInfo);
 
 	// Assign machine teams to machine
@@ -5256,7 +5256,7 @@ void DDTeamCollection::addServer(StorageServerInterface newServer,
 	    .detail("WaitFailureToken", newServer.waitFailure.getEndpoint().token)
 	    .detail("Address", newServer.waitFailure.getEndpoint().getPrimaryAddress());
 
-	auto& r = server_and_tss_info[newServer.id()] = makeReference<TCServerInfo>(
+	auto& r = server_and_tss_info[newServer.id()] = makeLeakyReference<TCServerInfo>(
 	    newServer,
 	    this,
 	    processClass,
@@ -5335,7 +5335,7 @@ Reference<TCMachineInfo> DDTeamCollection::checkAndCreateMachine(Reference<TCSer
 		CODE_PROBE(true, "First storage server in process on the machine");
 		// For each machine, store the first server's localityEntry into machineInfo for later use.
 		LocalityEntry localityEntry = machineLocalityMap.add(locality, &server->getId());
-		machineInfo = makeReference<TCMachineInfo>(server, localityEntry);
+		machineInfo = makeLeakyReference<TCMachineInfo>(server, localityEntry);
 		machine_info.insert(std::make_pair(machine_id, machineInfo));
 	} else {
 		machineInfo = machine_info.find(machine_id)->second;

@@ -19,6 +19,7 @@
  */
 
 #include <fcntl.h>
+#include <utility>
 
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/json_spirit/json_spirit_reader_template.h"
@@ -422,6 +423,12 @@ ThreadFuture<int64_t> DLTransaction::getTotalCost() {
 	});
 }
 
+void DLTransaction::setExpectedCost(uint64_t value) {
+	if (api->transactionSetExpectedCost) {
+		api->transactionSetExpectedCost(tr, value);
+	}
+}
+
 ThreadFuture<int64_t> DLTransaction::getApproximateSize() {
 	if (!api->transactionGetApproximateSize) {
 		return unsupported_operation();
@@ -646,9 +653,19 @@ ThreadFuture<bool> DLTenant::flushBlobRange(const KeyRangeRef& keyRange, bool co
 }
 
 ThreadFuture<Standalone<StringRef>> DLTenant::getClientStatus() {
-	// Currently no code path uses this function, so we simply assert and throw a not_implemented error
-	ASSERT(false);
-	throw not_implemented();
+	if (!api->databaseGetClientStatus) {
+		return unsupported_operation();
+	}
+	FdbCApi::FDBFuture* f = api->tenantGetClientStatus(tenant);
+	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
+		const uint8_t* str;
+		int strLength;
+		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		ASSERT(!error);
+
+		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
+		return Standalone<StringRef>(StringRef(str, strLength), Arena());
+	});
 }
 
 // DLDatabase
@@ -1148,6 +1165,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_transaction_get_total_cost",
 	                   headerVersion >= ApiVersion::withGetTotalCost().version());
+	loadClientFunction(&api->transactionSetExpectedCost,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_transaction_set_expected_cost",
+	                   headerVersion >= ApiVersion::withSetExpectedCost().version());
 	loadClientFunction(&api->transactionGetApproximateSize,
 	                   lib,
 	                   fdbCPath,
@@ -1683,6 +1705,13 @@ ThreadFuture<int64_t> MultiVersionTransaction::getTotalCost() {
 	return executeOperation(&ITransaction::getTotalCost);
 }
 
+void MultiVersionTransaction::setExpectedCost(uint64_t value) {
+	auto tr = getTransaction();
+	if (tr.transaction) {
+		tr.transaction->setExpectedCost(value);
+	}
+}
+
 ThreadFuture<int64_t> MultiVersionTransaction::getApproximateSize() {
 	return executeOperation(&ITransaction::getApproximateSize);
 }
@@ -1990,7 +2019,21 @@ ThreadFuture<bool> MultiVersionTenant::flushBlobRange(const KeyRangeRef& keyRang
 }
 
 ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
-	return tenantState->db->getClientStatus();
+	auto stateRef = tenantState->db->dbState;
+	auto tenant = tenantState->tenantVar->get();
+
+	if (!tenant.value.isValid()) {
+		return onMainThread([stateRef] { return Future<Standalone<StringRef>>(stateRef->getClientStatus(""_sr)); });
+	}
+
+	auto f = tenant.value->getClientStatus();
+	auto statusFuture = abortableFuture(f, tenant.onChange);
+	return flatMapThreadFuture<Standalone<StringRef>, Standalone<StringRef>>(
+	    statusFuture, [stateRef](ErrorOr<Standalone<StringRef>> tenantContextStatus) {
+		    return onMainThread([stateRef, tenantContextStatus] {
+			    return Future<Standalone<StringRef>>(stateRef->getClientStatus(tenantContextStatus));
+		    });
+	    });
 }
 
 MultiVersionTenant::TenantState::TenantState(Reference<MultiVersionDatabase> db, TenantNameRef tenantName)

@@ -980,6 +980,10 @@ public:
 
 	TypedFuture<future_var::Int64> getTotalCost() const { return native::fdb_transaction_get_total_cost(tr.get()); }
 
+	void setExpectedCost(uint64_t value) {
+		native::fdb_transaction_set_expected_cost(tr.get(), value);
+	}
+
 	TypedFuture<future_var::Double> getTagThrottledDuration() const {
 		return native::fdb_transaction_get_tag_throttled_duration(tr.get());
 	}

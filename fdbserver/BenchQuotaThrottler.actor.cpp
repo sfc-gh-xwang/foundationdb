@@ -31,15 +31,16 @@ static MockRKMetricsTracker getMetricsTracker(int numStorageServers, int busyThr
 	return result;
 }
 
-ACTOR static Future<Void> prepareQuotaThrottler(QuotaThrottler* quotaThrottler,
-                                                MockRKMetricsTracker const* metricsTracker,
-                                                int numThrottlingIds) {
+ACTOR static Future<Void> simulateWorkload(QuotaThrottler* quotaThrottler,
+                                           RKServerThroughputTracker* serverThroughputTracker,
+                                           MockRKMetricsTracker const* metricsTracker,
+                                           int numThrottlingIds) {
 	state int i = 0;
 	while (i < 10) {
 		for (int j = 0; j < numThrottlingIds; ++j) {
 			quotaThrottler->addRequests(getThrottlingId(j), 1000);
 		}
-		quotaThrottler->updateThrottling(metricsTracker->getStorageQueueInfo());
+		serverThroughputTracker->update(metricsTracker->getStorageQueueInfo());
 		wait(delay(0.1));
 		++i;
 	}
@@ -59,12 +60,14 @@ ACTOR static Future<Void> benchQuotaThrottlerActor(benchmark::State* benchState)
 	state int const numThrottlingIds = benchState->range(1);
 	state int const busyThrottlingIdsPerSS = benchState->range(2);
 	state MockRKMetricsTracker const metricsTracker = getMetricsTracker(numStorageServers, busyThrottlingIdsPerSS);
+	state RKServerThroughputTracker serverThroughputTracker;
 	state QuotaThrottler quotaThrottler(
 	    UID{}, SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND, SERVER_KNOBS->GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD);
-	wait(prepareQuotaThrottler(&quotaThrottler, &metricsTracker, numThrottlingIds));
+	wait(simulateWorkload(&quotaThrottler, &serverThroughputTracker, &metricsTracker, numThrottlingIds));
 	MockRKThroughputQuotaCache quotaCache = getQuotaCache(numThrottlingIds);
 	while (benchState->KeepRunning()) {
-		auto const rates = quotaThrottler.getTargetRates(/*numProxies=*/1, quotaCache, metricsTracker);
+		auto const rates = quotaThrottler.getTargetRates(
+		    /*numProxies=*/1, quotaCache, metricsTracker, serverThroughputTracker, serverThroughputTracker);
 		ASSERT_GT(rates.size(), 0);
 	}
 	benchState->SetItemsProcessed(static_cast<long>(benchState->iterations()));

@@ -354,6 +354,10 @@ public:
 	bool REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 	int SIM_KMS_VAULT_MAX_KEYS;
 
+	// Bulk Loading
+	// knob guard to disallow starting bulk loads until implementation is completed
+	bool ALLOW_BULK_LOADS;
+
 	ClientKnobs(Randomize randomize);
 	void initialize(Randomize randomize);
 };
