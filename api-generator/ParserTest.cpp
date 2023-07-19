@@ -72,48 +72,109 @@ using metadata = std::map<std::string, boost::optional<single_value>>;
 
 struct include {
 	std::string filename;
+	bool operator==(const include& other) const noexcept = default;
 };
 
 struct namespace_decl {
 	std::vector<std::string> ns;
+	bool operator==(const namespace_decl& other) const noexcept = default;
 };
 
 struct attribute_decl {
 	std::string name;
+	bool operator==(const attribute_decl& other) const noexcept = default;
 };
 
-// non-scalars cannot have default values, but I can't find a way to work around that with fusion at the moment.
-template <typename T>
-struct field {
-	std::string name;
-	boost::optional<T> default_;
-	boost::optional<metadata> metadata;
-};
-
-// when a table member is another table/struct or a struct member is another struct
+// when a table member is another table/struct/union or a struct member is another struct
 struct typeref {
 	std::string name;
+	bool operator==(const typeref& other) const noexcept = default;
 };
 
-using nonvector_field_variant = x3::variant<
-	field<int8_t>, 
-	field<uint8_t>,
-	field<int16_t>,
-	field<uint16_t>,
-	field<int32_t>,
-	field<uint32_t>,
-	field<int64_t>,
-	field<uint64_t>,
-	field<float>,
-	field<double>,
-	field<std::string>,
-	field<typeref>
->;
+template <class T>
+struct scalar_type {
+	boost::optional<T> default_;
+	bool operator==(const scalar_type& other) const noexcept = default;
+};
 
-struct field_decl : nonvector_field_variant {
+using scalar_types_variant = x3::variant<
+		scalar_type<bool>, 
+		scalar_type<int8_t>, 
+		scalar_type<uint8_t>,
+		scalar_type<int16_t>,
+		scalar_type<uint16_t>,
+		scalar_type<int64_t>,
+		scalar_type<uint64_t>,
+		scalar_type<int32_t>,
+		scalar_type<uint32_t>,
+		scalar_type<float>,
+		scalar_type<double>>;
+
+struct scalar_typeinfo : scalar_types_variant {
 	using base_type::base_type;
 	using base_type::operator=;
-	bool is_vector;
+
+	bool operator==(const scalar_typeinfo& other) const noexcept {
+		return get() == other.get();
+	}
+};
+
+template <typename T>
+struct type_tag {
+	// If T is scalar, it's always a vector (non-vector case is covered by scalar_type)
+	using type = T;
+	bool operator==(const type_tag& other) const noexcept {
+		return true;
+	}
+};
+
+using object_types_variant = x3::variant<
+		type_tag<std::string>,
+		typeref>;
+
+struct object_typeinfo : object_types_variant {
+	using base_type::base_type;
+	using base_type::operator=;
+
+	bool operator==(const object_typeinfo& other) const noexcept {
+		return get() == other.get();
+	}
+};
+
+using singular_types_variant = x3::variant<
+		type_tag<bool>, 
+		type_tag<int8_t>, 
+		type_tag<uint8_t>,
+		type_tag<int16_t>,
+		type_tag<uint16_t>,
+		type_tag<int32_t>,
+		type_tag<uint32_t>,
+		type_tag<int64_t>,
+		type_tag<uint64_t>,
+		type_tag<float>,
+		type_tag<double>,
+		type_tag<std::string>,
+		typeref>;
+
+struct vector_typeinfo : singular_types_variant {
+	using base_type::base_type;
+	using base_type::operator=;
+
+	bool operator==(const vector_typeinfo& other) const noexcept {
+		return get() == other.get();
+	}
+};
+
+using typeinfo_variant = x3::variant<scalar_typeinfo, object_typeinfo, vector_typeinfo>;
+
+struct field_decl {
+	std::string name;
+	typeinfo_variant typeinfo;
+	boost::optional<metadata> meta;
+
+	bool operator==(const field_decl& other) const noexcept {
+		return name == other.name && typeinfo.get() == other.typeinfo.get() && meta == other.meta;
+	}
 };
 
 } // namespace ast
@@ -124,10 +185,8 @@ BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name);
 BOOST_FUSION_ADAPT_STRUCT(ast::typeref, name);
 
 BOOST_FUSION_ADAPT_TPL_STRUCT(
-		(T), (ast::field) (T),
-		(std::string, name)
-		(boost::optional<T>, default_)
-		(boost::optional<ast::metadata>, metadata))
+               (T), (ast::scalar_type) (T),
+               (boost::optional<T>, default_))
 
 namespace detail {
 
@@ -164,7 +223,8 @@ struct error_handler
 
 // require doubles to have a decimal point to prefer ints over doubles
 x3::real_parser<double, x3::strict_real_policies<double>> const strict_double;
-x3::int_parser<int64_t, 16> const hex_int64;
+x3::real_parser<float, x3::strict_real_policies<float>> const strict_float;
+//x3::int_parser<int64_t, 16> const hex_int64;
 x3::uint_parser<uint64_t, 16> const hex_uint64;
 
 #ifdef DEFINE_RULE
@@ -216,7 +276,7 @@ DEFINE_RULE(metadata,
 
 // includes, namespaces, attributes, root
 DEFINE_RULE(include,
-			x3::lit("include") > string_constant > ";",
+			x3::lit("include") > string_constant > ';',
 			ast::include);
 DEFINE_RULE(namespace_decl,
 			x3::lit("namespace") > ident > *(x3::lit('.') > ident) >> ';',
@@ -227,55 +287,129 @@ DEFINE_RULE(attribute_decl,
 				ident
 			),
 			ast::attribute_decl);
-/*
-// field declarations; currently missing hex default value support for scalars
-#ifdef DEFINE_FIELD_RULE
-#error "DEFINE_FIELD_RULE macro clashes with existing definition"
-#endif
 
-#define DEFINE_FIELD_RULE(FB_TYPE, CPP_TYPE, DEFAULT_VALUE_RULE) \
-	DEFINE_RULE(FB_TYPE##_fieldtype_part, \
-				ident >> ':' >> #FB_TYPE >> -(x3::lit('=') >> DEFAULT_VALUE_RULE) >> -metadata >> ';', \
-				CPP_TYPE);
-DEFINE_FIELD_RULE(bool, bool, x3::bool_);
-DEFINE_FIELD_RULE(int16, int16_t, x3::int16);
-DEFINE_FIELD_RULE(uint16, uint16_t, x3::uint16);
-DEFINE_FIELD_RULE(int32, int32_t, x3::int32);
-DEFINE_FIELD_RULE(uint32, uint32_t, x3::uint32);
-DEFINE_FIELD_RULE(int64, int64_t, x3::int64);
-DEFINE_FIELD_RULE(uint64, uint64_t, x3::uint64);
-DEFINE_FIELD_RULE(string, std::string, string_constant);
-#undef DEFINE_FIELD_RULE
+DEFINE_RULE(
+		bool_field_part,
+		x3::lit("bool") > -(x3::lit('=') > x3::bool_),
+		ast::scalar_type<bool>);
 
-// Special handling: parse both [u]byte and [u]int8 as [u]int8_t
-DEFINE_RULE(byte_field_decl,
-			ident >> ':' >> (x3::lit("int8") | "byte") >> -(x3::lit('=') >> x3::int8) >> -metadata >> ';',
-			ast::field<int8_t>);
-DEFINE_RULE(ubyte_field_decl,
-			ident >> ':' >> (x3::lit("uint8") | "ubyte") >> -(x3::lit('=') >> x3::uint8) >> -metadata >> ';',
-			ast::field<uint8_t>);
+DEFINE_RULE(
+		int8_field_part,
+		(x3::lit("byte") | "int8") > -(x3::lit('=') > x3::int8),
+		ast::scalar_type<int8_t>);
 
-// field refering other types
-DEFINE_RULE(typeref_field_decl,
-			ident >> ':' >> typeref >> x3::attr(boost::optional<typeref>()) >> -metadata >> ';',
-			ast::field<ast::typeref>);
+DEFINE_RULE(
+		uint8_field_part,
+		(x3::lit("ubyte") | "uint8") > -(x3::lit('=') > x3::uint8),
+		ast::scalar_type<uint8_t>);
 
-DEFINE_RULE(nonvector_field_decl,
-			byte_field_decl |
-			ubyte_field_decl |
-			int16_field_decl |
-			uint16_field_decl |
-			int32_field_decl |
-			uint32_field_decl |
-			int64_field_decl |
-			uint64_field_decl |
-			string_field_decl |
-			typeref_field_decl,
-			ast::nonvector_field_decl);
+DEFINE_RULE(
+		int16_field_part,
+		(x3::lit("short") | "int16") > -(x3::lit('=') > x3::int16),
+		ast::scalar_type<int16_t>);
 
-DEFINE_RULE(vector_field_decl,
-			x3::lit('[') >> nonvector_field_decl >> ']',
-*/
+DEFINE_RULE(
+		uint16_field_part,
+		(x3::lit("ushort") | "uint16") > -(x3::lit('=') > x3::uint16),
+		ast::scalar_type<uint16_t>);
+
+DEFINE_RULE(
+		int32_field_part,
+		(x3::lit("int") | "int32") > -(x3::lit('=') > x3::int32),
+		ast::scalar_type<int32_t>);
+
+DEFINE_RULE(
+		uint32_field_part,
+		(x3::lit("uint") | "uint32") > -(x3::lit('=') > x3::uint32),
+		ast::scalar_type<uint32_t>);
+
+DEFINE_RULE(
+		int64_field_part,
+		(x3::lit("long") | "int64") > -(x3::lit('=') > x3::int64),
+		ast::scalar_type<int64_t>);
+
+DEFINE_RULE(
+		uint64_field_part,
+		(x3::lit("ulong") | "uint64") > -(x3::lit('=') > x3::uint64),
+		ast::scalar_type<uint64_t>);
+
+DEFINE_RULE(
+		float32_field_part,
+		(x3::lit("float") | "float32") > -(x3::lit('=') > strict_float),
+		ast::scalar_type<float>);
+
+DEFINE_RULE(
+		float64_field_part,
+		(x3::lit("double") | "float64") > -(x3::lit('=') > strict_double),
+		ast::scalar_type<double>);
+
+// [u]int32 must be placed at the last of the integer rules because of the alias "[u]int":
+// e.g. parsing "uint64" may be parsed as "uint" and left partially parsed.
+DEFINE_RULE(
+		scalar_typeinfo,
+		bool_field_part |
+		int8_field_part |
+		uint8_field_part |
+		int16_field_part |
+		uint16_field_part |
+		int64_field_part |
+		uint64_field_part |
+		int32_field_part |
+		uint32_field_part |
+		float32_field_part |
+		float64_field_part,
+		ast::scalar_typeinfo);
+
+auto const int8_type_part = (x3::lit("byte") | "int8") > x3::attr(ast::type_tag<int8_t>{});
+
+auto const uint8_type_part = (x3::lit("ubyte") | "uint8") > x3::attr(ast::type_tag<uint8_t>{});
+
+auto const int16_type_part = (x3::lit("short") | "int16") > x3::attr(ast::type_tag<int16_t>{});
+
+auto const uint16_type_part = (x3::lit("ushort") | "uint16") > x3::attr(ast::type_tag<uint16_t>{});
+
+auto const int32_type_part = (x3::lit("int") | "int32") > x3::attr(ast::type_tag<int32_t>{});
+
+auto const uint32_type_part = (x3::lit("uint") | "uint32") > x3::attr(ast::type_tag<uint32_t>{});
+
+auto const int64_type_part = (x3::lit("long") | "int64") > x3::attr(ast::type_tag<int64_t>{});
+
+auto const uint64_type_part = (x3::lit("ulong") | "uint64") > x3::attr(ast::type_tag<uint64_t>{});
+
+auto const float32_type_part = (x3::lit("float") | "float32") > x3::attr(ast::type_tag<float>{});
+
+auto const float64_type_part = (x3::lit("double") | "float64") > x3::attr(ast::type_tag<double>{});
+
+auto const string_type_part = x3::lit("string") > x3::attr(ast::type_tag<std::string>{});
+
+DEFINE_RULE(typeref_type_part, ident, ast::typeref);
+
+DEFINE_RULE(
+		vector_typeinfo,
+		(x3::lit('[') >
+			(int8_type_part |
+			 uint8_type_part |
+			 int16_type_part |
+			 uint16_type_part |
+			 int32_type_part |
+			 uint32_type_part |
+			 int64_type_part |
+			 uint64_type_part |
+			 float32_type_part |
+			 float64_type_part |
+			 string_type_part |
+			 typeref_type_part) > ']'),
+		ast::vector_typeinfo);
+
+DEFINE_RULE(
+		object_typeinfo,
+		(string_type_part | typeref_type_part),
+		ast::object_typeinfo);
+
+DEFINE_RULE(
+		field_decl,
+		(ident > ':' > (scalar_typeinfo | vector_typeinfo | object_typeinfo) > -metadata > ';'),
+		ast::field_decl);
 
 #undef DEFINE_RULE
 
@@ -304,21 +438,31 @@ bool run_ast_test(
 		using error_handler_type = x3::error_handler<decltype(bg)>;
 		error_handler_type error_handler(bg, ed, std::cerr);
 		auto const parser = x3::with<x3::error_handler_tag>(std::ref(error_handler))[r];
-		auto const parse_ok = x3::phrase_parse(bg, ed, parser, x3::space, output) && bg == ed;
+		auto const parse_ok = x3::phrase_parse(bg, ed, parser, x3::space, output);
+		auto const parse_complete = (bg == ed);
 		auto test_ok = true;
 		auto value_match = true;
 		if (!expected) {
 			// parse should fail
-			test_ok = !parse_ok;
+			test_ok = !parse_ok || !parse_complete;
 		} else {
-			if (parse_ok)
+			if (parse_ok && parse_complete)
 				value_match = equals_fn(*expected, output);
-			test_ok = parse_ok && value_match;
+			test_ok = parse_ok && parse_complete && value_match;
 		}
 		std::cout << "  "  << (test_ok ? "O " : "X ");
-		if (!test_ok)
-			std::cout << (!parse_ok ? "[parse_error] " : "")
-				  << (!value_match ? "[value_mismatch] " : "");
+		if (!test_ok) {
+			if (!expected) {
+				std::cout << "[parse_unexpectedly_succeeded] ";
+			} else {
+				if (!parse_ok)
+					std::cout << "[parse_error] ";
+				if (!parse_complete)
+					std::cout << "[parse_incomplete_at_pos_" << (bg - input.begin()) << "_of_length_" << input.size() << "] ";
+				if (!value_match)
+					std::cout << "[value_mismatch] ";
+			}
+		}
 		std::cout << std::quoted(input) << '\n';
 		failures += !test_ok;
 	}
@@ -474,6 +618,7 @@ input_set_type<ast::metadata> const metadata_input_set = []() {
 				{ "a", ast::single_value(ast::scalar(true)) },
 			},
 		},
+		{ "()", boost::none }, // empty metadata fails x3::list parser rule
 	};
 	return ret;
 }();
@@ -482,6 +627,63 @@ bool metadata() {
 	return run_ast_test(rule::metadata, metadata_input_set);
 }
 
+input_set_type<ast::scalar_typeinfo> scalar_typeinfo_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::scalar_typeinfo>{
+		{
+			"int = 10",
+			ast::scalar_typeinfo{ast::scalar_type<int32_t>{10}},
+		},
+		{
+			"bool",
+			ast::scalar_typeinfo{ast::scalar_type<bool>{boost::none}},
+		},
+		{
+			"bool = true",
+			ast::scalar_typeinfo{ast::scalar_type<bool>{true}},
+		},
+		{
+			"ulong",
+			ast::scalar_typeinfo{ast::scalar_type<uint64_t>{boost::none}},
+		},
+		{
+			"int64 = -5",
+			ast::scalar_typeinfo{ast::scalar_type<int64_t>{-5}},
+		},
+		{
+			"double = -3.14",
+			ast::scalar_typeinfo{ast::scalar_type<double>{-3.14}},
+		},
+		{
+			"double",
+			ast::scalar_typeinfo{ast::scalar_type<double>{boost::none}},
+		},
+	};
+}();
+
+bool scalar_typeinfo() {
+	return run_ast_test(rule::scalar_typeinfo, scalar_typeinfo_input_set);
+}
+
+/*
+input_set_type<ast::field_decl> field_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::field_decl>{
+		{
+			"a : int = 10;",
+			ast::field_decl{"a",
+							ast::scalar_typeinfo{
+								ast::scalar_type<int32_t>{10}},
+							boost::none
+			},
+		},
+	};
+}();
+
+bool field_decl() {
+	return run_ast_test(rule::field_decl, field_decl_input_set);
+}
+*/
 } // namespace test
 
 int main() {
@@ -491,6 +693,8 @@ int main() {
 	ok = ok && test::single_value();
 	ok = ok && test::metadatum();
 	ok = ok && test::metadata();
+	ok = ok && test::scalar_typeinfo();
+	//ok = ok && test::field_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
