@@ -100,7 +100,7 @@ public:
 	}
 
 	ACTOR static Future<Void> trackEachStorageServer(RKMetricsTracker* self) {
-		state std::unordered_map<UID, Future<Void>> storageServerTrackers;
+		state boost::unordered_flat_map<UID, Future<Void>> storageServerTrackers;
 		state Promise<Void> err;
 
 		loop choose {
