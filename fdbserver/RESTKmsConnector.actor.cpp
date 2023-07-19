@@ -18,7 +18,6 @@
  * limitations under the License.
  */
 
-#include "fdbclient/RESTUtils.h"
 #include "fdbserver/RESTKmsConnector.h"
 
 #include "fdbclient/BlobCipher.h"
@@ -73,7 +72,6 @@ bool canReplyWith(Error e) {
 	case error_code_value_too_large:
 	case error_code_timed_out:
 	case error_code_connection_failed:
-	case error_code_rest_malformed_response:
 		return true;
 	default:
 		return false;
@@ -227,17 +225,22 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	KmsUrlStore<KmsUrlPenaltyParams> kmsUrlStore;
 	double lastKmsUrlsRefreshTs;
 	double lastKmsUrlDiscoverTS;
+	bool kmsStable;
 	RESTClient restClient;
 	ValidationTokenMap validationTokenMap;
 	PromiseStream<Future<Void>> addActor;
-	bool kmsStable;
 	Future<Void> kmsStabilityChecker;
 
 	RESTKmsConnectorCtx()
 	  : uid(deterministicRandom()->randomUniqueID()),
 	    lastKmsUrlsRefreshTs(0),
-	    lastKmsUrlDiscoverTS(0.0) {}
-	explicit RESTKmsConnectorCtx(const UID& id) : uid(id), lastKmsUrlsRefreshTs(0), lastKmsUrlDiscoverTS(0.0) {}
+	    lastKmsUrlDiscoverTS(0.0),
+	    kmsStable(true) {}
+	explicit RESTKmsConnectorCtx(const UID& id)
+	  : uid(id),
+	    lastKmsUrlsRefreshTs(0),
+	    lastKmsUrlDiscoverTS(0.0),
+	    kmsStable(true) {}
 };
 
 std::string getFullRequestUrl(Reference<RESTKmsConnectorCtx> ctx, const std::string& url, const std::string& suffix) {
@@ -326,7 +329,7 @@ ACTOR Future<Void> parseDiscoverKmsUrlFile(Reference<RESTKmsConnectorCtx> ctx, s
 	    filename, IAsyncFile::OPEN_NO_AIO | IAsyncFile::OPEN_READONLY | IAsyncFile::OPEN_UNCACHED, 0644));
 	state int64_t fSize = wait(dFile->size());
 	state Standalone<StringRef> buff = makeString(fSize);
-	int bytesRead = wait(dFile->read(mutateString(buff), fSize, 0));
+	int bytesRead = wait(uncancellable(holdWhile(buff, dFile->read(mutateString(buff), fSize, 0))));
 	if (bytesRead != fSize) {
 		TraceEvent(SevWarnAlways, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
 		    .detail("Filename", filename)
@@ -789,8 +792,11 @@ Future<T> kmsRequestImpl(
 					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS);
 				}
 
-				Reference<HTTP::IncomingResponse> resp = wait(ctx->restClient.doPost(
-				    kmsEncryptionFullUrl, requestBodyRef.toString(), RESTKmsConnectorUtils::getHTTPHeaders()));
+				HTTP::Headers headers;
+				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
+				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
+				Reference<HTTP::IncomingResponse> resp =
+				    wait(ctx->restClient.doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
 				urlCtx->nRequests++;
 
 				try {
@@ -1084,7 +1090,7 @@ ACTOR Future<Void> procureValidationTokensFromFiles(Reference<RESTKmsConnectorCt
 		}
 
 		state Standalone<StringRef> buff = makeString(fSize);
-		int bytesRead = wait(tFile->read(mutateString(buff), fSize, 0));
+		int bytesRead = wait(uncancellable(holdWhile(buff, tFile->read(mutateString(buff), fSize, 0))));
 		if (bytesRead != fSize) {
 			TraceEvent(SevError, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
 			    .detail("Filename", tokenFile)
@@ -1149,9 +1155,8 @@ Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSState
 	reply.kmsStable = self->kmsStable;
 
 	try {
-		reply.restKMSUrls.reserve(reply.arena, self->kmsUrlStore.kmsUrls.size());
 		for (const auto& url : self->kmsUrlStore.kmsUrls) {
-			reply.restKMSUrls.emplace_back(reply.arena, url.toString());
+			reply.restKMSUrls.push_back(url.url);
 		}
 		req.reply.send(reply);
 	} catch (Error& e) {

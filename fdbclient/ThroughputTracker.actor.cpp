@@ -44,9 +44,43 @@ public:
 }; // class ThroughputTrackersImpl
 
 Future<Void> ThroughputTracker::run(DatabaseContext& cx) {
+	startTime = now();
 	return ThroughputTrackerImpl::run(this, &cx);
 }
 
 void ThroughputTracker::addCost(ThrottlingId const& throttlingId, uint64_t cost) {
 	throughput[throttlingId] += cost;
+	if (isClientAverageCostTrackingEnabled()) {
+		smoothThroughput[throttlingId].smoother.addDelta(cost);
+	}
+}
+
+void ThroughputTracker::addTransaction(ThrottlingId const& throttlingId, uint64_t numTransactions) {
+	smoothTransactionRate[throttlingId].smoother.addDelta(numTransactions);
+}
+
+double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttlingId) const {
+	if (now() - startTime < CLIENT_KNOBS->AVERAGE_COST_START_DELAY) {
+		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+	}
+
+	auto throughputIt = smoothThroughput.find(throttlingId);
+	auto transactionRateIt = smoothTransactionRate.find(throttlingId);
+
+	if (throughputIt == smoothThroughput.end() || transactionRateIt == smoothTransactionRate.end()) {
+		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+	} else {
+		auto throughput = throughputIt->second.smoother.smoothTotal();
+		auto transactionRate = transactionRateIt->second.smoother.smoothTotal();
+
+		if (throughput <= 0 || transactionRate <= 0) {
+			return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+		}
+		return throughput / transactionRate;
+	}
+}
+
+bool isClientAverageCostTrackingEnabled() {
+	// TRACK_AVERAGE_COST_ON_CLIENT depends on TRACK_THROUGHPUT_ON_CLIENTS
+	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT;
 }

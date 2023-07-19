@@ -4,7 +4,9 @@
 
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseContext.h"
+#include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ReadVersionBatchers.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "flow/actorcompiler.h" // must be last include
 
 ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext parentSpan,
@@ -13,7 +15,9 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
                                                                   TransactionPriority priority,
                                                                   uint32_t flags,
                                                                   Optional<ThrottlingId> throttlingId,
-                                                                  Optional<UID> debugID) {
+                                                                  Optional<UID> debugID,
+                                                                  uint64_t expectedCosts,
+                                                                  uint64_t expectedCostsCount) {
 	state Span span("NAPI:getConsistentReadVersion"_loc, parentSpan);
 
 	++cx->transactionReadVersionBatches;
@@ -21,13 +25,23 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 		g_traceBatch.addEvent("TransactionDebug", debugID.get().first(), "NativeAPI.getConsistentReadVersion.Before");
 	loop {
 		try {
+			state Optional<double> expectedTotalCost = {};
+			if (throttlingId.present() && isClientAverageCostTrackingEnabled()) {
+				cx->addTransaction(throttlingId.get(), transactionCount);
+
+				auto averageCost = cx->getAverageTransactionCost(throttlingId.get());
+
+				expectedTotalCost = averageCost * (transactionCount - expectedCostsCount) + expectedCosts;
+			}
+
 			state GetReadVersionRequest req(span.context,
 			                                transactionCount,
 			                                priority,
 			                                cx->ssVersionVectorCache.getMaxVersion(),
 			                                flags,
 			                                throttlingId,
-			                                debugID);
+			                                debugID,
+			                                expectedTotalCost);
 			state Future<Void> onProxiesChanged = cx->onProxiesChanged();
 
 			choose {
@@ -80,10 +94,12 @@ class Batcher {
 		SpanContext spanContext;
 		Promise<GetReadVersionReply> reply;
 		Optional<UID> debugID;
+		Optional<uint64_t> expectedCost;
 
-		VersionRequest(SpanContext spanContext, Optional<UID> debugID = {})
+		VersionRequest(SpanContext spanContext, Optional<UID> debugID = {}, Optional<uint64_t> expectedCost = {})
 		  : spanContext(spanContext),
-		    debugID(debugID) {}
+		    debugID(debugID),
+		    expectedCost(expectedCost) {}
 	};
 
 	int outstandingRequests = 0;
@@ -97,6 +113,13 @@ class Batcher {
 	                                             uint32_t flags,
 	                                             Optional<ThrottlingId> throttlingId) {
 		state std::vector<Promise<GetReadVersionReply>> requests;
+
+		// The total transaction cost, provided by the client as an optional API.
+		// If the client does not specify an expected cost, the average cost will be utilized instead.
+		state uint64_t expectedCost = 0;
+		// How many transactions provided the expected cost.
+		state uint expectedCostCount = 0;
+
 		state PromiseStream<Future<Void>> addActor;
 		state Future<Void> collection = actorCollection(addActor.getFuture(), &self->outstandingRequests);
 		state Future<Void> timeout;
@@ -134,6 +157,11 @@ class Batcher {
 					span.addLink(req.spanContext);
 					requests.push_back(req.reply);
 
+					if (req.expectedCost.present()) {
+						expectedCost += req.expectedCost.get();
+						expectedCostCount++;
+					}
+
 					if (requests.size() == CLIENT_KNOBS->MAX_BATCH_SIZE) {
 						send_batch = true;
 						++cx->transactionGrvFullBatches;
@@ -167,15 +195,23 @@ class Batcher {
 				requests.push_back(GRVReply);
 				addActor.send(ready(timeReply(GRVReply.getFuture(), replyTimes)));
 
-				Future<Void> batch = incrementalBroadcastWithError(
-				    getConsistentReadVersion(
-				        span.context, cx, count, priority, flags, throttlingId, std::move(debugID)),
-				    std::move(requests),
-				    CLIENT_KNOBS->BROADCAST_BATCH_SIZE);
+				Future<Void> batch = incrementalBroadcastWithError(getConsistentReadVersion(span.context,
+				                                                                            cx,
+				                                                                            count,
+				                                                                            priority,
+				                                                                            flags,
+				                                                                            throttlingId,
+				                                                                            std::move(debugID),
+				                                                                            expectedCost,
+				                                                                            expectedCostCount),
+				                                                   std::move(requests),
+				                                                   CLIENT_KNOBS->BROADCAST_BATCH_SIZE);
 
 				span = Span("NAPI:readVersionBatcher"_loc);
 				debugID = Optional<UID>();
 				requests.clear();
+				expectedCost = 0;
+				expectedCostCount = 0;
 				addActor.send(batch);
 				timeout = Future<Void>();
 			}
@@ -183,9 +219,11 @@ class Batcher {
 	}
 
 public:
-	Future<GetReadVersionReply> getReadVersion(SpanContext spanContext, Optional<UID> debugId) {
+	Future<GetReadVersionReply> getReadVersion(SpanContext spanContext,
+	                                           Optional<UID> debugId,
+	                                           Optional<uint64_t> const& expectedCost) {
 		lastRequestTime = now();
-		auto const req = VersionRequest(spanContext, debugId);
+		auto const req = VersionRequest(spanContext, debugId, expectedCost);
 		stream.send(req);
 		return req.reply.getFuture();
 	}
@@ -254,7 +292,8 @@ public:
 	                                           Optional<TenantGroupName> const& tenantGroup,
 	                                           SpanContext spanContext,
 	                                           Optional<TransactionTag> tag,
-	                                           Optional<UID> debugID) {
+	                                           Optional<UID> debugID,
+	                                           Optional<uint64_t> const& expectedCost) {
 		Optional<ThrottlingId> throttlingId;
 		if (tenantGroup.present()) {
 			throttlingId = ThrottlingIdRef::fromTenantGroup(tenantGroup.get());
@@ -272,7 +311,7 @@ public:
 		}
 		auto& batcher = it->second;
 		batcher.startActor(cx, priority, flags, throttlingId);
-		return batcher.getReadVersion(spanContext, debugID);
+		return batcher.getReadVersion(spanContext, debugID, expectedCost);
 	}
 };
 
@@ -282,8 +321,9 @@ Future<GetReadVersionReply> ReadVersionBatchers::getReadVersion(Database cx,
                                                                 Optional<TenantGroupName> const& tenantGroup,
                                                                 SpanContext context,
                                                                 Optional<TransactionTag> const& tag,
-                                                                Optional<UID> debugID) {
-	return impl->getReadVersion(cx, priority, flags, tenantGroup, context, tag, debugID);
+                                                                Optional<UID> debugID,
+                                                                Optional<uint64_t> const& expectedCost) {
+	return impl->getReadVersion(cx, priority, flags, tenantGroup, context, tag, debugID, expectedCost);
 }
 
 ReadVersionBatchers::ReadVersionBatchers(int capacity, double expirationTimeout, double expirationCheckInterval)

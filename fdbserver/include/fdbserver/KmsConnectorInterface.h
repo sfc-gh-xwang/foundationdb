@@ -239,15 +239,14 @@ struct KmsConnBlobMetadataReq {
 
 struct KmsConnGetKMSStateRep {
 	constexpr static FileIdentifier file_identifier = 111862;
-	Arena arena;
-	VectorRef<StringRef> restKMSUrls;
+	std::vector<std::string> restKMSUrls;
 	bool kmsStable;
 
 	KmsConnGetKMSStateRep() = default;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, restKMSUrls, kmsStable, arena);
+		serializer(ar, restKMSUrls, kmsStable);
 	}
 };
 

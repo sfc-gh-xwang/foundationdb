@@ -3,6 +3,7 @@ extraMachineCountDC = 2
 maxTLogVersion=6
 disableHostname=true
 storageEngineExcludeTypes=[4]
+simHTTPServerEnabled = false
 
 [[test]]
 testTitle = 'CloggedConfigureDatabaseTest'

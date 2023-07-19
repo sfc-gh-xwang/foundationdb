@@ -130,6 +130,10 @@ Future<Reference<IConnection>> proxyConnect(const std::string& remoteHost,
 
 // HTTP server stuff
 
+// Registers an http handler that just asserts false if it ever gets an http request.
+// This is used to validate that clients only talk to the http servers they're supposed to talk to
+Future<Void> registerAlwaysFailHTTPHandler();
+
 // Implementation of http server that handles http requests
 // TODO: could change to factory pattern instead of clone pattern
 struct IRequestHandler {
@@ -155,11 +159,16 @@ struct SimRegisteredHandlerContext : ReferenceCounted<SimRegisteredHandlerContex
 public:
 	std::string hostname;
 	std::string service;
+	int port;
 	Reference<IRequestHandler> requestHandler;
 
-	SimRegisteredHandlerContext(std::string hostname, std::string service, Reference<IRequestHandler> requestHandler)
+	SimRegisteredHandlerContext(std::string hostname,
+	                            std::string service,
+	                            int port,
+	                            Reference<IRequestHandler> requestHandler)
 	  : hostname(hostname),
 	    service(service),
+	    port(port),
 	    requestHandler(requestHandler) {}
 
 	void addAddress(NetworkAddress addr);
@@ -173,15 +182,13 @@ private:
 struct SimServerContext : ReferenceCounted<SimServerContext>, NonCopyable {
 	UID dbgid;
 	bool running;
-	int nextPort;
 	ActorCollection actors;
 	std::vector<NetworkAddress> listenAddresses;
 	std::vector<Future<Void>> listenBinds;
 	std::vector<Reference<IListener>> listeners;
 
-	SimServerContext() : dbgid(deterministicRandom()->randomUniqueID()), running(true), nextPort(5000), actors(false) {}
+	SimServerContext() : dbgid(deterministicRandom()->randomUniqueID()), running(true), actors(false) {}
 
-	NetworkAddress newAddress();
 	void registerNewServer(NetworkAddress addr, Reference<IRequestHandler> server);
 
 	void stop() {

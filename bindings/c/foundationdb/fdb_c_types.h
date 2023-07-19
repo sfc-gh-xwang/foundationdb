@@ -198,6 +198,7 @@ typedef struct FDBBGFileDescriptionV2_ {
 	int memory_mutation_count;
 	FDBBGMutation** memory_mutations;
 	FDBBGTenantPrefix tenant_prefix;
+	int64_t included_version;
 } FDBBGFileDescriptionV2;
 
 #pragma pack(pop)

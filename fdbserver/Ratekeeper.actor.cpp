@@ -29,6 +29,22 @@
 
 #include "flow/actorcompiler.h" // must be last include
 
+namespace {
+
+std::unique_ptr<IRKThroughputQuotaCache> createThroughputQuotaCache(UID id, Database db) {
+	if (CLIENT_KNOBS->USE_SIMPLE_THROUGHPUT_QUOTA_CACHE) {
+		return std::make_unique<RKSimpleThroughputQuotaCache>(id, db);
+	} else {
+		return std::make_unique<RKThroughputQuotaCache>(id,
+		                                                db,
+		                                                SERVER_KNOBS->THROUGHPUT_QUOTA_TRACK_THRESHOLD,
+		                                                SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL,
+		                                                SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD);
+	}
+}
+
+} // namespace
+
 const char* limitReasonName[] = { "workload",
 	                              "storage_server_write_queue_size",
 	                              "storage_server_write_bandwidth_mvcc",
@@ -84,12 +100,14 @@ public:
 		self.addActor.send(self.rateServer.run(self.normalRateUpdater,
 		                                       self.batchRateUpdater,
 		                                       self.quotaThrottler,
-		                                       self.quotaCache,
+		                                       *self.quotaCache,
 		                                       self.metricsTracker,
-		                                       self.recoveryTracker));
+		                                       self.recoveryTracker,
+		                                       self.clientThroughputTracker,
+		                                       self.serverThroughputTracker));
 
-		self.addActor.send(self.quotaCache.run());
-		self.addActor.send(self.quotaThrottler.monitorThrottlingChanges());
+		self.addActor.send(self.quotaCache->run());
+		self.addActor.send(self.quotaThrottler.expireUnusedThrottlingIds());
 		if (SERVER_KNOBS->BW_THROTTLING_ENABLED) {
 			self.addActor.send(self.blobMonitor.run(self.configurationMonitor, self.recoveryTracker));
 		}
@@ -202,13 +220,19 @@ Ratekeeper::Ratekeeper(UID id,
                                       SERVER_KNOBS->MAX_TL_SS_VERSION_DIFFERENCE_BATCH,
                                       SERVER_KNOBS->TARGET_DURABILITY_LAG_VERSIONS_BATCH,
                                       SERVER_KNOBS->TARGET_BW_LAG_BATCH)),
-    quotaCache(id, db),
+    quotaCache(createThroughputQuotaCache(id, db)),
+    clientThroughputTracker(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL),
     quotaThrottler(id,
                    SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND,
                    SERVER_KNOBS->GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD) {}
 
 void Ratekeeper::updateTagThrottling() {
-	quotaThrottler.updateThrottling(metricsTracker.getStorageQueueInfo());
+	serverThroughputTracker.update(metricsTracker.getStorageQueueInfo());
+	IRKClusterThroughputTracker const* clusterThroughputTracker = &serverThroughputTracker;
+	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+		clusterThroughputTracker = &clientThroughputTracker;
+	}
+	quotaCache->updateThroughput(*clusterThroughputTracker);
 }
 
 ACTOR Future<Void> ratekeeper(RatekeeperInterface rkInterf, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {

@@ -347,6 +347,14 @@ class ResourceMonitor(threading.Thread):
     def time(self):
         return self.end_time - self.start_time
 
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        self.stop()
+        self.join()
+
 
 class TestRun:
     def __init__(
@@ -478,32 +486,29 @@ class TestRun:
         self.temp_path.mkdir(parents=True, exist_ok=True)
 
         # self.log_test_plan(out)
-        resources = ResourceMonitor()
-        resources.start()
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            cwd=self.temp_path,
-            text=True,
-            env=env,
-        )
-        did_kill = False
-        # No timeout for long running tests
-        timeout = (
-            20 * config.kill_seconds
-            if self.use_valgrind
-            else (None if config.long_running else config.kill_seconds)
-        )
-        err_out: str
-        try:
-            _, err_out = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            _, err_out = process.communicate()
-            did_kill = True
-        resources.stop()
-        resources.join()
+        with ResourceMonitor() as resources:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                cwd=self.temp_path,
+                text=True,
+                env=env,
+            )
+            did_kill = False
+            # No timeout for long running tests
+            timeout = (
+                20 * config.kill_seconds
+                if self.use_valgrind
+                else (None if config.long_running else config.kill_seconds)
+            )
+            err_out: str
+            try:
+                _, err_out = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                _, err_out = process.communicate()
+                did_kill = True
         # we're rounding times up, otherwise we will prefer running very short tests (<1s)
         self.run_time = math.ceil(resources.time())
         self.summary.is_negative_test = is_negative(self.test_file)

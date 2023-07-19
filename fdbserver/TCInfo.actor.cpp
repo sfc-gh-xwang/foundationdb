@@ -21,8 +21,13 @@
 #include "fdbclient/ServerKnobs.h"
 #include "fdbserver/DDTeamCollection.h"
 #include "fdbserver/TCInfo.h"
-#include "flow/actorcompiler.h" // This must be the last #include.
+
+#ifdef ADDRESS_SANITIZER
+#include <sanitizer/lsan_interface.h>
+#endif
 #include <unordered_set>
+
+#include "flow/actorcompiler.h" // This must be the last #include.
 
 class TCServerInfoImpl {
 public:
@@ -269,7 +274,13 @@ bool TCMachineTeamInfo::removeServerTeam(Reference<TCTeamInfo> team) {
 }
 
 Reference<TCMachineInfo> TCMachineInfo::clone() const {
+#ifdef ADDRESS_SANITIZER
+	__lsan_disable();
+#endif
 	auto result = Reference<TCMachineInfo>(new TCMachineInfo);
+#ifdef ADDRESS_SANITIZER
+	__lsan_enable();
+#endif
 	result->serversOnMachine = serversOnMachine;
 	result->machineID = machineID;
 	result->machineTeams = machineTeams;

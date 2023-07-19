@@ -145,9 +145,12 @@ struct WorkerRecruitment {
 
 	WorkerRecruitment() : satelliteFallback(false) {}
 
-	// TODO(ljoswiak): Implement when refactoring `betterMasterExists`
-	bool operator==(WorkerRecruitment const& rhs) const { return true; }
-	bool operator<(WorkerRecruitment const& rhs) const { return true; }
+	// Returns true if `this` represents a worse recruitment when compared to
+	// `rhs`, for some definition of worse.
+	bool operator<(WorkerRecruitment const& rhs) const;
+	bool operator>(WorkerRecruitment const& rhs) const { return rhs < *this; }
+	bool operator<=(WorkerRecruitment const& rhs) const { return !(*this > rhs); }
+	bool operator>=(WorkerRecruitment const& rhs) const { return !(*this < rhs); }
 };
 
 struct RemoteRecruitmentInfo {

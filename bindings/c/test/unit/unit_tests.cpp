@@ -265,6 +265,17 @@ void deleteTenant(fdb::BytesRef name) {
 	tenantHelper(name, TenantOp::DELETE);
 }
 
+void checkClientStatusFuture(fdb::TypedFuture<fdb::future_var::KeyRef> f) {
+	// Sanity check of the client status.
+	fdbCheck(waitFuture(f));
+	auto value = f.get();
+	std::string statusJsonStr(value.begin(), value.end());
+	rapidjson::Document statusJson;
+	statusJson.Parse(statusJsonStr.c_str());
+	CHECK(statusJson.HasMember("Healthy"));
+	CHECK(statusJson["Healthy"].GetBool());
+}
+
 } // namespace
 
 TEST_CASE("strinc_str") {
@@ -1866,6 +1877,22 @@ TEST_CASE("fdb_transaction_get_total_cost") {
 	}
 }
 
+TEST_CASE("fdb_transaction_set_expected_cost") {
+	auto tr = db.createTransaction();
+	tr.setExpectedCost(4096);
+
+	while (1) {
+		auto f1 = tr.getReadVersion();
+		auto err = waitFuture(f1);
+		if (err) {
+			auto f2 = tr.onError(err);
+			fdbCheck(waitFuture(f2));
+			continue;
+		}
+		break;
+	}
+}
+
 TEST_CASE("fdb_transaction_get_approximate_size") {
 	auto tr = db.createTransaction();
 	while (1) {
@@ -2626,15 +2653,13 @@ TEST_CASE("Tenant create, access, and delete") {
 	}
 }
 
-void checkClientStatusFuture(fdb::TypedFuture<fdb::future_var::KeyRef> f) {
-	// Sanity check of the client status.
-	fdbCheck(waitFuture(f));
-	auto value = f.get();
-	std::string statusJsonStr(value.begin(), value.end());
-	rapidjson::Document statusJson;
-	statusJson.Parse(statusJsonStr.c_str());
-	CHECK(statusJson.HasMember("Healthy"));
-	CHECK(statusJson["Healthy"].GetBool());
+TEST_CASE("Tenant create twice") {
+	auto tenantName = "testTenantNameDup"_br;
+	createTenant(tenantName);
+	// The second create call is a no-op
+	createTenant(tenantName);
+
+	deleteTenant(tenantName);
 }
 
 TEST_CASE("Database get client status") {
@@ -2651,6 +2676,15 @@ TEST_CASE("Tenant get client status") {
 	checkClientStatusFuture(statusFuture);
 
 	deleteTenant(tenantName);
+}
+
+TEST_CASE("Non-existing tenant get client status") {
+	auto tenantName = "testTenantNonExist"_br;
+	auto tenant = db.openTenant(tenantName);
+	// Currently, we are able to open a on-existing tenant and call get client status
+	// on the handle. This may change in the future.
+	auto statusFuture = tenant.getClientStatus();
+	checkClientStatusFuture(statusFuture);
 }
 
 int64_t granule_start_load_fail(const char* filename,

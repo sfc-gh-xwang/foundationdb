@@ -290,6 +290,11 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( GRV_BATCHER_CLEANING_INTERVAL,            5.0 );
 	init( TRACK_THROUGHPUT_ON_CLIENTS,            false ); if( randomize && BUGGIFY ) TRACK_THROUGHPUT_ON_CLIENTS = true;
 	init( CLIENT_THROUGHPUT_REPORT_INTERVAL,        1.0 );
+	init( TRACK_AVERAGE_COST_ON_CLIENT,           false ); if( randomize && BUGGIFY ) TRACK_AVERAGE_COST_ON_CLIENT = true;
+	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
+	init( AVERAGE_COST_START_DELAY,                10.0 );
+	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
+	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); if ( randomize && BUGGIFY ) USE_SIMPLE_THROUGHPUT_QUOTA_CACHE = false;
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
@@ -326,6 +331,9 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 	init( REST_KMS_ALLOW_NOT_SECURE_CONNECTION,     false ); if ( randomize && BUGGIFY ) REST_KMS_ALLOW_NOT_SECURE_CONNECTION = !REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 	init( SIM_KMS_VAULT_MAX_KEYS,                    4096 );
+
+	// Bulk Loading
+	init( ALLOW_BULK_LOADS,                         false );
 
 	// clang-format on
 }
