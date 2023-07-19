@@ -88,6 +88,8 @@ struct attribute_decl {
 // when a table member is another table/struct/union or a struct member is another struct
 struct typeref {
 	std::string name;
+	// support for when *name* refers to an enum type and the field has a default value
+	boost::optional<std::string> default_;
 	bool operator==(const typeref& other) const noexcept = default;
 };
 
@@ -177,13 +179,20 @@ struct field_decl {
 	}
 };
 
+struct table_decl {
+	std::string name;
+	boost::optional<metadata> meta;
+	std::vector<field_decl> fields;
+};
+
 } // namespace ast
 
 BOOST_FUSION_ADAPT_STRUCT(ast::include, filename);
 BOOST_FUSION_ADAPT_STRUCT(ast::namespace_decl, ns);
 BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name);
-BOOST_FUSION_ADAPT_STRUCT(ast::typeref, name);
+BOOST_FUSION_ADAPT_STRUCT(ast::typeref, name, default_);
 BOOST_FUSION_ADAPT_STRUCT(ast::field_decl, name, typeinfo, meta);
+BOOST_FUSION_ADAPT_STRUCT(ast::table_decl, name, meta, fields);
 
 BOOST_FUSION_ADAPT_TPL_STRUCT(
                (T), (ast::scalar_type) (T),
@@ -385,7 +394,8 @@ auto const float64_type_part = (x3::lit("double") | "float64") > x3::attr(ast::t
 
 auto const string_type_part = x3::lit("string") > x3::attr(ast::type_tag<std::string>{});
 
-DEFINE_RULE(typeref_type_part, ident, ast::typeref);
+DEFINE_RULE(typeref_type_part, ident > x3::attr(boost::none), ast::typeref);
+DEFINE_RULE(typeref_field_part, ident > -(x3::lit('=') > ident), ast::typeref);
 
 // [u]int32 must be placed at the last of the integer rules because of the alias "[u]int":
 // e.g. parsing "[uint64]" may be parsed as "[uint" and throw an error because there's '6' instead of ']'
@@ -409,13 +419,18 @@ DEFINE_RULE(
 
 DEFINE_RULE(
 		object_typeinfo,
-		(string_type_part | typeref_type_part),
+		(string_type_part | typeref_field_part),
 		ast::object_typeinfo);
 
 DEFINE_RULE(
 		field_decl,
 		(ident > ':' > (scalar_typeinfo | object_typeinfo | vector_typeinfo) > -metadata > ';'),
 		ast::field_decl);
+
+DEFINE_RULE(
+		table_decl,
+		(x3::lit("table") > ident > -metadata > '{' > +field_decl > '}'),
+		ast::table_decl);
 
 #undef DEFINE_RULE
 
@@ -682,11 +697,11 @@ input_set_type<ast::object_typeinfo> object_typeinfo_input_set = []() {
 		},
 		{
 			"def",
-			ast::object_typeinfo{ast::typeref{"def"}},
+			ast::object_typeinfo{ast::typeref{"def", boost::none}},
 		},
 		{
 			"someType",
-			ast::object_typeinfo{ast::typeref{"someType"}},
+			ast::object_typeinfo{ast::typeref{"someType", boost::none}},
 		},
 		{
 			"1someType", // identifiers cannot start with a number
@@ -707,11 +722,11 @@ input_set_type<ast::vector_typeinfo> vector_typeinfo_input_set = []() {
 		},
 		{
 			"[def]",
-			ast::vector_typeinfo{ast::typeref{"def"}},
+			ast::vector_typeinfo{ast::typeref{"def", boost::none}},
 		},
 		{
 			"[someType]",
-			ast::vector_typeinfo{ast::typeref{"someType"}},
+			ast::vector_typeinfo{ast::typeref{"someType", boost::none}},
 		},
 		{
 			"[1someType]", // identifiers cannot start with a number
