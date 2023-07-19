@@ -926,7 +926,6 @@ bool DatabaseConfiguration::isOverridden(std::string key) const {
 }
 
 void DatabaseConfiguration::test_setDefaultReplicationPolicy() {
-	ASSERT(g_network->isSimulated());
 	setDefaultReplicationPolicy();
 }
 
