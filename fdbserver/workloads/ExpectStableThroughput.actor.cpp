@@ -2,6 +2,7 @@
  * ExpectStableThroughput.actor.cpp
  */
 
+#include "fdbclient/Knobs.h"
 #include "fdbserver/workloads/workloads.actor.h"
 
 #include "flow/actorcompiler.h" // This must be the last include
@@ -50,7 +51,11 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		state std::vector<Future<Void>> futures;
 		loop {
 			try {
-				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag);
+				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag); 
+				
+				if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
+				}
 				futures.clear();
 				futures.reserve(self->opsPerTransaction);
 				for (int i = 0; i < self->opsPerTransaction; ++i) {
@@ -95,6 +100,7 @@ public:
 		if (clientId != 0) {
 			return Void();
 		}
+		cx->initSharedState();
 		startTime = now();
 		std::vector<Future<Void>> clients;
 		for (int i = 0; i < numActors; ++i) {

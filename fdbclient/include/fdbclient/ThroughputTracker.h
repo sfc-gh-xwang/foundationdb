@@ -7,6 +7,7 @@
 #include "fdbclient/Knobs.h"
 #include "fdbclient/ThrottlingId.h"
 #include "fdbrpc/Smoother.h"
+#include <unordered_set>
 
 // The ThroughputTracker class is responsible for periodically reporting each
 // throttlingId's throughput to GRV proxies.
@@ -28,11 +29,14 @@ class ThroughputTracker {
 	ThrottlingIdMap<ThroughputSmoother> smoothThroughput;
 	ThrottlingIdMap<ThroughputSmoother> smoothTransactionRate;
 
+	std::unordered_set<ThrottlingId> busyTags;
+
 public:
 	Future<Void> run(class DatabaseContext& cx);
 	void addCost(ThrottlingId const&, uint64_t cost);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
+	bool isThrottlingIdBusy(ThrottlingId const&) const;
 };
 
 bool isClientAverageCostTrackingEnabled();

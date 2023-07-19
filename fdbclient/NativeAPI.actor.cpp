@@ -34,6 +34,7 @@
 
 #include "boost/algorithm/string.hpp"
 
+#include "fdbclient/Knobs.h"
 #include "flow/CodeProbe.h"
 #include "fmt/format.h"
 
@@ -7362,11 +7363,18 @@ bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority prior
 	return false;
 }
 
+bool useGrvCache(TransactionState* trState) {
+	return !CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !trState->options.skipGrvCache &&
+	       (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE ||
+	        trState->options.useGrvCache) &&
+	       rkThrottlingCooledDown(trState->cx.getPtr(), trState->options.priority) &&
+	       // skip cache if tag is busy, busy tags depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
+	       !(CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && trState->getThrottlingId().present() &&
+	         trState->cx->isThrottlingIdBusy(trState->getThrottlingId().get()));
+}
+
 ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
-	if (!CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !trState->options.skipGrvCache &&
-	    (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE ||
-	     trState->options.useGrvCache) &&
-	    rkThrottlingCooledDown(trState->cx.getPtr(), trState->options.priority)) {
+	if (useGrvCache(trState)) {
 		// Upon our first request to use cached RVs, start the background updater
 		if (!trState->cx->grvUpdateHandler.isValid()) {
 			trState->cx->grvUpdateHandler = backgroundGrvUpdater(trState->cx.getPtr());
@@ -11414,6 +11422,10 @@ void DatabaseContext::addTransaction(const ThrottlingId& throttlingId, uint64_t 
 
 double DatabaseContext::getAverageTransactionCost(const ThrottlingId& throttlingId) const {
 	return throughputTracker.getAverageTransactionCost(throttlingId);
+}
+
+bool DatabaseContext::isThrottlingIdBusy(const ThrottlingId& throttlingId) const {
+	return throughputTracker.isThrottlingIdBusy(throttlingId);
 }
 
 Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {

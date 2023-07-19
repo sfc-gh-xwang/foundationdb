@@ -29,6 +29,7 @@ public:
 					                               TaskPriority::DefaultPromiseEndpoint,
 					                               AtMostOnce::True))) {
 						TraceEvent("ReportThroughputReply").detail("BusyTags", reply.busyTags.size());
+						self->busyTags = std::move(reply.busyTags);
 					}
 
 					when(wait(timer)) {
@@ -83,4 +84,8 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 bool isClientAverageCostTrackingEnabled() {
 	// TRACK_AVERAGE_COST_ON_CLIENT depends on TRACK_THROUGHPUT_ON_CLIENTS
 	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT;
+}
+
+bool ThroughputTracker::isThrottlingIdBusy(ThrottlingId const& throttlingId) const {
+	return busyTags.contains(throttlingId);
 }

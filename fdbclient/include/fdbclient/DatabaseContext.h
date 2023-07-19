@@ -741,6 +741,8 @@ public:
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
 
+	bool isThrottlingIdBusy(ThrottlingId const&) const;
+
 	// used in template functions to create a transaction
 	using TransactionT = ReadYourWritesTransaction;
 	Reference<TransactionT> createTransaction();

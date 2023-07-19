@@ -349,6 +349,8 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	void flushWriteCost();
 	int64_t getTotalCost() const;
 
+	Optional<ThrottlingId> getThrottlingId();
+
 private:
 	Optional<Reference<Tenant>> tenant_;
 	bool tenantSet;
@@ -362,7 +364,6 @@ private:
 	int64_t writeCost = 0;
 	bool flushedWriteCost = false;
 
-	Optional<ThrottlingId> getThrottlingId();
 };
 
 class Transaction : NonCopyable {
