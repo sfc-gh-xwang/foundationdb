@@ -45,11 +45,12 @@ struct ReadMetricsWorkload : KVWorkload {
 
 		if (op.type == OperationType::GET_VALUE) {
 			op.begin = firstGreaterOrEqual(getRandomKey());
-			op.expectedAccuracy = 0.85;
+			op.expectedAccuracy = 0.8;
 		} else if (op.type == OperationType::GET_RANGE) {
 			Arena arena;
-			op.begin = randomKeySelector();
-			op.end = randomKeySelector();
+			bool singleKeyRead = deterministicRandom()->coinflip();
+			op.begin = singleKeyRead ? firstGreaterOrEqual(getRandomKey()) : randomKeySelector(100);
+			op.end = singleKeyRead ? firstGreaterOrEqual(getRandomKey()) : randomKeySelector(100);
 
 			KeySelectorRef normalizedBegin = op.begin;
 			KeySelectorRef normalizedEnd = op.end;
@@ -65,13 +66,14 @@ struct ReadMetricsWorkload : KVWorkload {
 				std::swap(op.begin, op.end);
 			}
 
-			op.limit = deterministicRandom()->randomInt(1, isPrimaryOperation ? 1000 : 10);
+			op.limit = singleKeyRead ? 1 : deterministicRandom()->randomInt(1, isPrimaryOperation ? 1000 : 10);
 			op.reverse = deterministicRandom()->coinflip();
 			op.snapshot = deterministicRandom()->coinflip();
-			op.expectedAccuracy = 0.5;
+			op.expectedAccuracy = singleKeyRead ? 0.8 : 0.4;
 		} else if (op.type == OperationType::GET_KEY) {
-			op.begin = randomKeySelector();
-			op.expectedAccuracy = 0.85;
+			// Get key with RYW is implemented with range reads
+			op.begin = randomKeySelector(op.disableRyw ? 100 : 10);
+			op.expectedAccuracy = op.disableRyw ? 0.8 : 0.4;
 		} else {
 			ASSERT(false);
 		}
@@ -107,8 +109,8 @@ struct ReadMetricsWorkload : KVWorkload {
 		ASSERT_GE(testDuration, 2 * SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL);
 	}
 
-	KeySelector randomKeySelector() const {
-		int offset = deterministicRandom()->randomInt(-100, 101);
+	KeySelector randomKeySelector(int maxOffset) const {
+		int offset = deterministicRandom()->randomInt(-maxOffset, maxOffset + 1);
 		return KeySelectorRef(getRandomKey(), deterministicRandom()->coinflip(), offset);
 	}
 
