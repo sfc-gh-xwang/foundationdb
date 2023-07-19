@@ -344,25 +344,44 @@ Future<Void> CompoundWorkload::start(Database const& cx) {
 	std::vector<Future<Void>> all;
 	all.reserve(workloads.size() + failureInjection.size());
 	auto wCount = std::make_shared<unsigned>(0);
+	auto remainingWorkloads = std::make_shared<std::map<std::string, int>>();
 	auto startWorkload = [&](TestWorkload& workload) -> Future<Void> {
 		auto workloadName = workload.description();
 		++(*wCount);
 		TraceEvent("WorkloadRunStatus").detail("Name", workloadName).detail("Count", *wCount).detail("Phase", "Start");
 		return fmap(
-		    [workloadName, wCount](Void value) {
+		    [workloadName, wCount, remainingWorkloads](Void value) {
 			    --(*wCount);
+			    auto it = remainingWorkloads->find(workloadName);
+			    ASSERT(it != remainingWorkloads->end());
+			    ASSERT_GT(it->second, 0);
+			    --it->second;
+			    std::string remainingWorkloadsStr("[");
+			    for (const auto& [w, cnt] : *remainingWorkloads) {
+				    if (cnt > 0) {
+					    remainingWorkloadsStr.append(w + "x" + std::to_string(cnt) + " ");
+				    }
+			    }
+			    if (remainingWorkloadsStr.back() == ' ') {
+				    remainingWorkloadsStr.back() = ']';
+			    } else {
+				    remainingWorkloadsStr.push_back(']');
+			    }
 			    TraceEvent("WorkloadRunStatus")
 			        .detail("Name", workloadName)
 			        .detail("Remaining", *wCount)
+			        .detail("RemainingWorkloads", remainingWorkloadsStr)
 			        .detail("Phase", "End");
 			    return Void();
 		    },
 		    workload.start(cx));
 	};
 	for (auto& workload : workloads) {
+		++(*remainingWorkloads)[workload->description()];
 		all.push_back(startWorkload(*workload));
 	}
 	for (auto& workload : failureInjection) {
+		++(*remainingWorkloads)[workload->description()];
 		all.push_back(startWorkload(*workload));
 	}
 	return waitForAll(all);
@@ -372,6 +391,7 @@ Future<bool> CompoundWorkload::check(Database const& cx) {
 	std::vector<Future<bool>> all;
 	all.reserve(workloads.size() + failureInjection.size());
 	auto wCount = std::make_shared<unsigned>(0);
+	auto remainingWorkloads = std::make_shared<std::map<std::string, int>>();
 	auto starter = [&](TestWorkload& workload) -> Future<bool> {
 		++(*wCount);
 		std::string workloadName = workload.description();
@@ -380,11 +400,27 @@ Future<bool> CompoundWorkload::check(Database const& cx) {
 		    .detail("Count", *wCount)
 		    .detail("Phase", "Start");
 		return fmap(
-		    [workloadName, wCount](bool ret) {
+		    [workloadName, wCount, remainingWorkloads](bool ret) {
 			    --(*wCount);
+			    auto it = remainingWorkloads->find(workloadName);
+			    ASSERT(it != remainingWorkloads->end());
+			    ASSERT_GT(it->second, 0);
+			    --it->second;
+			    std::string remainingWorkloadsStr("[");
+			    for (const auto& [w, cnt] : *remainingWorkloads) {
+				    if (cnt > 0) {
+					    remainingWorkloadsStr.append(w + "x" + std::to_string(cnt) + " ");
+				    }
+			    }
+			    if (remainingWorkloadsStr.back() == ' ') {
+				    remainingWorkloadsStr.back() = ']';
+			    } else {
+				    remainingWorkloadsStr.push_back(']');
+			    }
 			    TraceEvent("WorkloadCheckStatus")
 			        .detail("Name", workloadName)
 			        .detail("Remaining", *wCount)
+			        .detail("RemainingWorkloads", remainingWorkloadsStr)
 			        .detail("Phase", "End")
 			        .detail("Success", ret);
 			    return ret;
@@ -392,9 +428,11 @@ Future<bool> CompoundWorkload::check(Database const& cx) {
 		    workload.check(cx));
 	};
 	for (auto& workload : workloads) {
+		++(*remainingWorkloads)[workload->description()];
 		all.push_back(starter(*workload));
 	}
 	for (auto& workload : failureInjection) {
+		++(*remainingWorkloads)[workload->description()];
 		all.push_back(starter(*workload));
 	}
 	return allTrue(all);
