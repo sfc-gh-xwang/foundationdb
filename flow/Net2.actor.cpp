@@ -2001,6 +2001,11 @@ Reference<IListener> Net2::listen(NetworkAddress localAddr) {
 			initTLS(ETLSInitState::LISTEN);
 			return Reference<IListener>(new SSLListener(reactor.ios, &this->sslContextVar, localAddr));
 		}
+
+		if (tlsConfig.getDisablePlainTextConnection()) {
+			TraceEvent(SevError, "PlainTextConnectionDisabled").detail("localAddr", localAddr);
+			throw connection_failed();
+		}
 		return Reference<IListener>(new Listener(reactor.ios, localAddr));
 	} catch (boost::system::system_error const& e) {
 		Error x;

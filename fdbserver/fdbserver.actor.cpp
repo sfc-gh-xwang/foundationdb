@@ -1615,7 +1615,7 @@ private:
 				tlsConfig.addVerifyPeers(args.OptionArg());
 				break;
 			case TLSConfig::OPT_TLS_DISABLE_PLAINTEXT_CONNECTION:
-				tlsConfig.setDisablePlainTextConnection(true);
+				tlsConfig.setDisablePlainTextConnection(args.OptionArg());
 				break;
 			case OPT_KMS_CONN_DISCOVERY_URL_FILE: {
 				knobs.emplace_back("rest_kms_connector_discover_kms_url_file", args.OptionArg());

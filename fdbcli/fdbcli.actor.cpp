@@ -1089,7 +1089,7 @@ struct CLIOptions {
 			tlsVerifyPeers = args.OptionArg();
 			break;
 		case TLSConfig::OPT_TLS_DISABLE_PLAINTEXT_CONNECTION:
-			tlsDisablePlainTextConnection = true;
+			tlsDisablePlainTextConnection = args.OptionArg();
 			break;
 
 		case OPT_HELP:
