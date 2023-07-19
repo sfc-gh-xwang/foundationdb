@@ -183,6 +183,7 @@ struct table_decl {
 	std::string name;
 	boost::optional<metadata> meta;
 	std::vector<field_decl> fields;
+	bool operator==(const table_decl& other) const noexcept = default;
 };
 
 } // namespace ast
@@ -839,6 +840,55 @@ bool field_decl() {
 	return run_ast_test(rule::field_decl, field_decl_input_set);
 }
 
+input_set_type<ast::table_decl> table_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::table_decl>{
+		{
+			"table Object (id: 10) {\n"
+			"  name : string (required);\n"
+			"  points : [Point];\n"
+			"  shape : Shape = Rectangle (required);\n"
+			"}",
+			ast::table_decl{
+				"Object",
+				ast::metadata{
+					{ "id", ast::single_value(ast::scalar(uint64_t(10))) },
+				},
+				{
+					ast::field_decl{
+						"name",
+						ast::typeinfo_variant{
+							ast::object_typeinfo{
+								ast::type_tag<std::string>{}},
+						},
+						ast::metadata{ { "required", boost::none } }
+					},
+					ast::field_decl{
+						"points",
+						ast::typeinfo_variant{
+							ast::vector_typeinfo{
+							ast::typeref{ "Point", boost::none }},
+						},
+						boost::none,
+					},
+					ast::field_decl{
+						"shape",
+						ast::typeinfo_variant{
+							ast::object_typeinfo{
+								ast::typeref{ "Shape", "Rectangle"s }},
+						},
+						ast::metadata{ { "required", boost::none } },
+					},
+				},
+			},
+		},
+	};
+}();
+
+bool table_decl() {
+	return run_ast_test(rule::table_decl, table_decl_input_set);
+}
+
 } // namespace test
 
 int main() {
@@ -852,6 +902,7 @@ int main() {
 	ok = ok && test::object_typeinfo();
 	ok = ok && test::vector_typeinfo();
 	ok = ok && test::field_decl();
+	ok = ok && test::table_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
