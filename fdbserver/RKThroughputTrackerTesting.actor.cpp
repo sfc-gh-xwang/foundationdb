@@ -66,7 +66,7 @@ static bool checkThroughput(T* throughputTracker, double desiredThroughput, int 
 	return true;
 }
 
-TEST_CASE("/fdbserver/RKClientThroughputTracker") {
+TEST_CASE("/fdbserver/ratekeeper/RKClientThroughputTracker") {
 	state double const throughput = 4096000.0;
 	state int const numThrottlingIds = 5;
 	state RKClientThroughputTracker throughputTracker(/*expirationCheckInterval=*/5.0);
@@ -82,7 +82,7 @@ TEST_CASE("/fdbserver/RKClientThroughputTracker") {
 	return Void();
 }
 
-TEST_CASE("/fdbserver/RKServerThroughputTracker") {
+TEST_CASE("/fdbserver/ratekeeper/RKServerThroughputTracker") {
 	state double const throughput = 4096000.0;
 	state int const numStorageServers = 10;
 	state int const numThrottlingIds = 5;
