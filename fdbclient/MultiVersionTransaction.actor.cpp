@@ -653,9 +653,19 @@ ThreadFuture<bool> DLTenant::flushBlobRange(const KeyRangeRef& keyRange, bool co
 }
 
 ThreadFuture<Standalone<StringRef>> DLTenant::getClientStatus() {
-	// Currently no code path uses this function, so we simply assert and throw a not_implemented error
-	ASSERT(false);
-	throw not_implemented();
+	if (!api->databaseGetClientStatus) {
+		return unsupported_operation();
+	}
+	FdbCApi::FDBFuture* f = api->tenantGetClientStatus(tenant);
+	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
+		const uint8_t* str;
+		int strLength;
+		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		ASSERT(!error);
+
+		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
+		return Standalone<StringRef>(StringRef(str, strLength), Arena());
+	});
 }
 
 // DLDatabase
@@ -2009,7 +2019,21 @@ ThreadFuture<bool> MultiVersionTenant::flushBlobRange(const KeyRangeRef& keyRang
 }
 
 ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
-	return tenantState->db->getClientStatus();
+	auto stateRef = tenantState->db->dbState;
+	auto tenant = tenantState->tenantVar->get();
+
+	if (!tenant.value.isValid()) {
+		return onMainThread([stateRef] { return Future<Standalone<StringRef>>(stateRef->getClientStatus(""_sr)); });
+	}
+
+	auto f = tenant.value->getClientStatus();
+	auto statusFuture = abortableFuture(f, tenant.onChange);
+	return flatMapThreadFuture<Standalone<StringRef>, Standalone<StringRef>>(
+	    statusFuture, [stateRef](ErrorOr<Standalone<StringRef>> tenantContextStatus) {
+		    return onMainThread([stateRef, tenantContextStatus] {
+			    return Future<Standalone<StringRef>>(stateRef->getClientStatus(tenantContextStatus));
+		    });
+	    });
 }
 
 MultiVersionTenant::TenantState::TenantState(Reference<MultiVersionDatabase> db, TenantNameRef tenantName)

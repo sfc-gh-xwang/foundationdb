@@ -354,7 +354,9 @@ ThreadFuture<bool> ThreadSafeTenant::flushBlobRange(const KeyRangeRef& keyRange,
 }
 
 ThreadFuture<Standalone<StringRef>> ThreadSafeTenant::getClientStatus() {
-	return this->db->getClientStatus();
+	DatabaseContext* db = this->db->db;
+	Tenant* tenant = this->tenant;
+	return onMainThread([db, tenant] { return Future<Standalone<StringRef>>(db->getTenantClientStatus(tenant)); });
 }
 
 ThreadSafeTenant::~ThreadSafeTenant() {
