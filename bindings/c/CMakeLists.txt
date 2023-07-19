@@ -118,7 +118,6 @@ set(UNIT_TEST_SRCS
   test/unit/unit_tests.cpp
 )
 
-set(UNIT_TEST_VERSION_510_SRCS test/unit/unit_tests_version_510.cpp)
 set(TRACE_PARTIAL_FILE_SUFFIX_TEST_SRCS test/unit/trace_partial_file_suffix_test.cpp)
 set(DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS
   test/unit/disconnected_timeout_tests.cpp)
@@ -166,7 +165,6 @@ if(OPEN_FOR_IDE)
   add_library(fdb_c_client_memory_test OBJECT test/client_memory_test.cpp)
   add_library(mako OBJECT ${MAKO_SRCS})
   add_library(fdb_c_setup_tests OBJECT test/unit/setup_tests.cpp)
-  add_library(fdb_c_unit_tests_version_510 OBJECT ${UNIT_TEST_VERSION_510_SRCS})
   add_library(trace_partial_file_suffix_test OBJECT ${TRACE_PARTIAL_FILE_SUFFIX_TEST_SRCS})
   add_library(disconnected_timeout_unit_tests OBJECT ${DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS})
   add_library(fdb_c_client_config_tester OBJECT test/client_config_tester.cpp)
@@ -179,7 +177,6 @@ else()
   add_executable(fdb_c_setup_tests test/unit/setup_tests.cpp)
   add_executable(fdb_c_unit_tests)
   target_link_libraries(fdb_c_unit_tests PRIVATE fdb_c fdb_c_unit_tests_impl)
-  add_executable(fdb_c_unit_tests_version_510 ${UNIT_TEST_VERSION_510_SRCS})
   add_executable(trace_partial_file_suffix_test ${TRACE_PARTIAL_FILE_SUFFIX_TEST_SRCS})
   add_executable(disconnected_timeout_unit_tests ${DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS})
   add_executable(fdb_c_api_tester)
@@ -204,10 +201,8 @@ endif()
 target_link_libraries(fdb_c_api_tester_impl PRIVATE SimpleOpt)
 
 target_include_directories(fdb_c_unit_tests_impl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/foundationdb/)
-target_include_directories(fdb_c_unit_tests_version_510 PUBLIC ${CMAKE_BINARY_DIR}/flow/include)
 target_link_libraries(fdb_c_setup_tests PRIVATE fdb_c Threads::Threads doctest)
 target_link_libraries(fdb_c_unit_tests_impl PRIVATE fdb_c Threads::Threads fdbclient rapidjson doctest)
-target_link_libraries(fdb_c_unit_tests_version_510 PRIVATE fdb_c Threads::Threads doctest)
 target_link_libraries(trace_partial_file_suffix_test PRIVATE fdb_c Threads::Threads flow doctest)
 target_link_libraries(disconnected_timeout_unit_tests PRIVATE fdb_c fdb_cpp Threads::Threads doctest)
 target_link_libraries(fdb_c_client_config_tester PRIVATE SimpleOpt fdb_cpp fdb_c fdbclient Threads::Threads fmt::fmt rapidjson)
@@ -249,11 +244,6 @@ else()
   add_fdbclient_test(
     NAME fdb_c_unit_tests
     COMMAND $<TARGET_FILE:fdb_c_unit_tests>
-    @CLUSTER_FILE@
-    fdb)
-  add_fdbclient_test(
-    NAME fdb_c_unit_tests_version_510
-    COMMAND $<TARGET_FILE:fdb_c_unit_tests_version_510>
     @CLUSTER_FILE@
     fdb)
   add_fdbclient_test(

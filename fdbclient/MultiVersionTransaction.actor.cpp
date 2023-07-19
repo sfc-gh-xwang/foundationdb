@@ -985,7 +985,7 @@ void DLApi::init() {
 	}
 
 	loadClientFunction(&api->selectApiVersion, lib, fdbCPath, "fdb_select_api_version_impl", headerVersion >= 0);
-	loadClientFunction(&api->getClientVersion, lib, fdbCPath, "fdb_get_client_version", headerVersion >= 410);
+	loadClientFunction(&api->getClientVersion, lib, fdbCPath, "fdb_get_client_version", headerVersion >= 0);
 	loadClientFunction(&api->useFutureProtocolVersion,
 	                   lib,
 	                   fdbCPath,
@@ -995,7 +995,7 @@ void DLApi::init() {
 	loadClientFunction(&api->setupNetwork, lib, fdbCPath, "fdb_setup_network", headerVersion >= 0);
 	loadClientFunction(&api->runNetwork, lib, fdbCPath, "fdb_run_network", headerVersion >= 0);
 	loadClientFunction(&api->stopNetwork, lib, fdbCPath, "fdb_stop_network", headerVersion >= 0);
-	loadClientFunction(&api->createDatabase, lib, fdbCPath, "fdb_create_database", headerVersion >= 610);
+	loadClientFunction(&api->createDatabase, lib, fdbCPath, "fdb_create_database", headerVersion >= 0);
 	loadClientFunction(&api->createDatabaseFromConnectionString,
 	                   lib,
 	                   fdbCPath,
@@ -1007,11 +1007,11 @@ void DLApi::init() {
 	                   "fdb_get_allocator_interface",
 	                   headerVersion >= ApiVersion::withEvolvableApi().version());
 
-	loadClientFunction(&api->databaseOpenTenant, lib, fdbCPath, "fdb_database_open_tenant", headerVersion >= 710);
+	loadClientFunction(&api->databaseOpenTenant, lib, fdbCPath, "fdb_database_open_tenant", headerVersion >= 0);
 	loadClientFunction(
-	    &api->databaseCreateSharedState, lib, fdbCPath, "fdb_database_create_shared_state", headerVersion >= 710);
+	    &api->databaseCreateSharedState, lib, fdbCPath, "fdb_database_create_shared_state", headerVersion >= 0);
 	loadClientFunction(
-	    &api->databaseSetSharedState, lib, fdbCPath, "fdb_database_set_shared_state", headerVersion >= 710);
+	    &api->databaseSetSharedState, lib, fdbCPath, "fdb_database_set_shared_state", headerVersion >= 0);
 	loadClientFunction(
 	    &api->databaseCreateTransaction, lib, fdbCPath, "fdb_database_create_transaction", headerVersion >= 0);
 	loadClientFunction(&api->databaseSetOption, lib, fdbCPath, "fdb_database_set_option", headerVersion >= 0);
@@ -1019,25 +1019,24 @@ void DLApi::init() {
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_database_get_main_thread_busyness",
-	                   headerVersion >= 700);
+	                   headerVersion >= 0);
 	loadClientFunction(
-	    &api->databaseGetServerProtocol, lib, fdbCPath, "fdb_database_get_server_protocol", headerVersion >= 700);
+	    &api->databaseGetServerProtocol, lib, fdbCPath, "fdb_database_get_server_protocol", headerVersion >= 0);
 	loadClientFunction(&api->databaseDestroy, lib, fdbCPath, "fdb_database_destroy", headerVersion >= 0);
-	loadClientFunction(&api->databaseRebootWorker, lib, fdbCPath, "fdb_database_reboot_worker", headerVersion >= 700);
+	loadClientFunction(&api->databaseRebootWorker, lib, fdbCPath, "fdb_database_reboot_worker", headerVersion >= 0);
 	loadClientFunction(&api->databaseForceRecoveryWithDataLoss,
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_database_force_recovery_with_data_loss",
-	                   headerVersion >= 700);
+	                   headerVersion >= 0);
+	loadClientFunction(&api->databaseCreateSnapshot, lib, fdbCPath, "fdb_database_create_snapshot", headerVersion >= 0);
 	loadClientFunction(
-	    &api->databaseCreateSnapshot, lib, fdbCPath, "fdb_database_create_snapshot", headerVersion >= 700);
-	loadClientFunction(
-	    &api->databasePurgeBlobGranules, lib, fdbCPath, "fdb_database_purge_blob_granules", headerVersion >= 710);
+	    &api->databasePurgeBlobGranules, lib, fdbCPath, "fdb_database_purge_blob_granules", headerVersion >= 0);
 	loadClientFunction(&api->databaseWaitPurgeGranulesComplete,
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_database_wait_purge_granules_complete",
-	                   headerVersion >= 710);
+	                   headerVersion >= 0);
 	loadClientFunction(&api->databaseBlobbifyRange,
 	                   lib,
 	                   fdbCPath,
@@ -1074,7 +1073,7 @@ void DLApi::init() {
 	                   "fdb_database_get_client_status",
 	                   headerVersion >= ApiVersion::withGetClientStatus().version());
 	loadClientFunction(
-	    &api->tenantCreateTransaction, lib, fdbCPath, "fdb_tenant_create_transaction", headerVersion >= 710);
+	    &api->tenantCreateTransaction, lib, fdbCPath, "fdb_tenant_create_transaction", headerVersion >= 0);
 	loadClientFunction(&api->tenantPurgeBlobGranules,
 	                   lib,
 	                   fdbCPath,
@@ -1125,7 +1124,7 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_tenant_get_client_status",
 	                   headerVersion >= ApiVersion::withTenantGetClientStatus().version());
-	loadClientFunction(&api->tenantDestroy, lib, fdbCPath, "fdb_tenant_destroy", headerVersion >= 710);
+	loadClientFunction(&api->tenantDestroy, lib, fdbCPath, "fdb_tenant_destroy", headerVersion >= 0);
 
 	loadClientFunction(&api->transactionSetOption, lib, fdbCPath, "fdb_transaction_set_option", headerVersion >= 0);
 	loadClientFunction(&api->transactionDestroy, lib, fdbCPath, "fdb_transaction_destroy", headerVersion >= 0);
@@ -1142,9 +1141,9 @@ void DLApi::init() {
 	                   headerVersion >= 0);
 	loadClientFunction(&api->transactionGetRange, lib, fdbCPath, "fdb_transaction_get_range", headerVersion >= 0);
 	loadClientFunction(
-	    &api->transactionGetMappedRange, lib, fdbCPath, "fdb_transaction_get_mapped_range", headerVersion >= 710);
+	    &api->transactionGetMappedRange, lib, fdbCPath, "fdb_transaction_get_mapped_range", headerVersion >= 0);
 	loadClientFunction(
-	    &api->transactionGetVersionstamp, lib, fdbCPath, "fdb_transaction_get_versionstamp", headerVersion >= 410);
+	    &api->transactionGetVersionstamp, lib, fdbCPath, "fdb_transaction_get_versionstamp", headerVersion >= 0);
 	loadClientFunction(&api->transactionSet, lib, fdbCPath, "fdb_transaction_set", headerVersion >= 0);
 	loadClientFunction(&api->transactionClear, lib, fdbCPath, "fdb_transaction_clear", headerVersion >= 0);
 	loadClientFunction(&api->transactionClearRange, lib, fdbCPath, "fdb_transaction_clear_range", headerVersion >= 0);
@@ -1185,18 +1184,18 @@ void DLApi::init() {
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_transaction_get_estimated_range_size_bytes",
-	                   headerVersion >= 630);
+	                   headerVersion >= 0);
 	loadClientFunction(&api->transactionGetRangeSplitPoints,
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_transaction_get_range_split_points",
-	                   headerVersion >= 700);
+	                   headerVersion >= 0);
 
 	loadClientFunction(&api->transactionGetBlobGranuleRanges,
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_transaction_get_blob_granule_ranges",
-	                   headerVersion >= 710);
+	                   headerVersion >= 0);
 	loadClientFunction(&api->transactionSummarizeBlobGranules,
 	                   lib,
 	                   fdbCPath,
@@ -1212,34 +1211,30 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_future_get_double",
 	                   headerVersion >= ApiVersion::withFutureGetDouble().version());
-	loadClientFunction(&api->futureGetInt64,
-	                   lib,
-	                   fdbCPath,
-	                   headerVersion >= 620 ? "fdb_future_get_int64" : "fdb_future_get_version",
-	                   headerVersion >= 0);
+	loadClientFunction(&api->futureGetInt64, lib, fdbCPath, "fdb_future_get_int64", headerVersion >= 0);
 	loadClientFunction(&api->futureGetBool,
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_future_get_bool",
 	                   headerVersion >= ApiVersion::withFutureGetBool().version());
-	loadClientFunction(&api->futureGetUInt64, lib, fdbCPath, "fdb_future_get_uint64", headerVersion >= 700);
+	loadClientFunction(&api->futureGetUInt64, lib, fdbCPath, "fdb_future_get_uint64", headerVersion >= 0);
 	loadClientFunction(&api->futureGetError, lib, fdbCPath, "fdb_future_get_error", headerVersion >= 0);
 	loadClientFunction(&api->futureGetKey, lib, fdbCPath, "fdb_future_get_key", headerVersion >= 0);
 	loadClientFunction(&api->futureGetValue, lib, fdbCPath, "fdb_future_get_value", headerVersion >= 0);
 	loadClientFunction(&api->futureGetStringArray, lib, fdbCPath, "fdb_future_get_string_array", headerVersion >= 0);
 	loadClientFunction(
-	    &api->futureGetKeyRangeArray, lib, fdbCPath, "fdb_future_get_keyrange_array", headerVersion >= 710);
-	loadClientFunction(&api->futureGetKeyArray, lib, fdbCPath, "fdb_future_get_key_array", headerVersion >= 700);
+	    &api->futureGetKeyRangeArray, lib, fdbCPath, "fdb_future_get_keyrange_array", headerVersion >= 0);
+	loadClientFunction(&api->futureGetKeyArray, lib, fdbCPath, "fdb_future_get_key_array", headerVersion >= 0);
 	loadClientFunction(
 	    &api->futureGetKeyValueArray, lib, fdbCPath, "fdb_future_get_keyvalue_array", headerVersion >= 0);
 	loadClientFunction(
-	    &api->futureGetMappedKeyValueArray, lib, fdbCPath, "fdb_future_get_mappedkeyvalue_array", headerVersion >= 710);
+	    &api->futureGetMappedKeyValueArray, lib, fdbCPath, "fdb_future_get_mappedkeyvalue_array", headerVersion >= 0);
 	loadClientFunction(&api->futureGetGranuleSummaryArray,
 	                   lib,
 	                   fdbCPath,
 	                   "fdb_future_get_granule_summary_array",
 	                   headerVersion >= ApiVersion::withBlobRangeApi().version());
-	loadClientFunction(&api->futureGetSharedState, lib, fdbCPath, "fdb_future_get_shared_state", headerVersion >= 710);
+	loadClientFunction(&api->futureGetSharedState, lib, fdbCPath, "fdb_future_get_shared_state", headerVersion >= 0);
 	loadClientFunction(&api->futureGetResult,
 	                   lib,
 	                   fdbCPath,
@@ -1252,14 +1247,8 @@ void DLApi::init() {
 	loadClientFunction(&api->futureDestroy, lib, fdbCPath, "fdb_future_destroy", headerVersion >= 0);
 
 	loadClientFunction(
-	    &api->resultGetKeyValueArray, lib, fdbCPath, "fdb_result_get_keyvalue_array", headerVersion >= 710);
-	loadClientFunction(&api->resultDestroy, lib, fdbCPath, "fdb_result_destroy", headerVersion >= 710);
-
-	loadClientFunction(&api->futureGetDatabase, lib, fdbCPath, "fdb_future_get_database", headerVersion < 610);
-	loadClientFunction(&api->createCluster, lib, fdbCPath, "fdb_create_cluster", headerVersion < 610);
-	loadClientFunction(&api->clusterCreateDatabase, lib, fdbCPath, "fdb_cluster_create_database", headerVersion < 610);
-	loadClientFunction(&api->clusterDestroy, lib, fdbCPath, "fdb_cluster_destroy", headerVersion < 610);
-	loadClientFunction(&api->futureGetCluster, lib, fdbCPath, "fdb_future_get_cluster", headerVersion < 610);
+	    &api->resultGetKeyValueArray, lib, fdbCPath, "fdb_result_get_keyvalue_array", headerVersion >= 0);
+	loadClientFunction(&api->resultDestroy, lib, fdbCPath, "fdb_result_destroy", headerVersion >= 0);
 }
 
 void DLApi::selectApiVersion(int apiVersion) {
@@ -1323,50 +1312,10 @@ void DLApi::stopNetwork() {
 	}
 }
 
-Reference<IDatabase> DLApi::createDatabase609(const char* clusterFilePath) {
-	FdbCApi::FDBFuture* f = api->createCluster(clusterFilePath);
-
-	auto clusterFuture = toThreadFuture<FdbCApi::FDBCluster*>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
-		FdbCApi::FDBCluster* cluster;
-		api->futureGetCluster(f, &cluster);
-		return cluster;
-	});
-
-	Reference<FdbCApi> innerApi = api;
-	auto dbFuture = flatMapThreadFuture<FdbCApi::FDBCluster*, FdbCApi::FDBDatabase*>(
-	    clusterFuture, [innerApi](ErrorOr<FdbCApi::FDBCluster*> cluster) {
-		    if (cluster.isError()) {
-			    return ErrorOr<ThreadFuture<FdbCApi::FDBDatabase*>>(cluster.getError());
-		    }
-
-		    auto innerDbFuture =
-		        toThreadFuture<FdbCApi::FDBDatabase*>(innerApi,
-		                                              innerApi->clusterCreateDatabase(cluster.get(), (uint8_t*)"DB", 2),
-		                                              [](FdbCApi::FDBFuture* f, FdbCApi* api) {
-			                                              FdbCApi::FDBDatabase* db;
-			                                              api->futureGetDatabase(f, &db);
-			                                              return db;
-		                                              });
-
-		    return ErrorOr<ThreadFuture<FdbCApi::FDBDatabase*>>(
-		        mapThreadFuture<FdbCApi::FDBDatabase*, FdbCApi::FDBDatabase*>(
-		            innerDbFuture, [cluster, innerApi](ErrorOr<FdbCApi::FDBDatabase*> db) {
-			            innerApi->clusterDestroy(cluster.get());
-			            return db;
-		            }));
-	    });
-
-	return makeReference<DLDatabase>(api, dbFuture);
-}
-
 Reference<IDatabase> DLApi::createDatabase(const char* clusterFilePath) {
-	if (headerVersion >= 610) {
-		FdbCApi::FDBDatabase* db;
-		throwIfError(api->createDatabase(clusterFilePath, &db));
-		return Reference<IDatabase>(new DLDatabase(api, db));
-	} else {
-		return DLApi::createDatabase609(clusterFilePath);
-	}
+	FdbCApi::FDBDatabase* db;
+	throwIfError(api->createDatabase(clusterFilePath, &db));
+	return Reference<IDatabase>(new DLDatabase(api, db));
 }
 
 Reference<IDatabase> DLApi::createDatabaseFromConnectionString(const char* connectionString) {
