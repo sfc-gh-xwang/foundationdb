@@ -198,10 +198,20 @@ struct TLogPeekReply {
 	Version minKnownCommittedVersion;
 	Optional<Version> begin;
 	bool onlySpilled = false;
+	double timeWaited = -1;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, messages, end, popped, maxKnownVersion, minKnownCommittedVersion, begin, onlySpilled, arena);
+		serializer(ar,
+		           messages,
+		           end,
+		           popped,
+		           maxKnownVersion,
+		           minKnownCommittedVersion,
+		           begin,
+		           onlySpilled,
+		           timeWaited,
+		           arena);
 	}
 };
 

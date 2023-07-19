@@ -1911,6 +1911,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	state bool emptyVersionWaitRefcounted = false;
 	state bool emptyVersionFirstEntry = true;
 	state double emptyVersionWaitWindow = 0;
+	state bool requestWaited = false;
 
 	// Run the peek logic in a loop to account for the case where there is no data to return to the caller, and we may
 	// want to wait a little bit instead of just sending back an empty message. This feature is controlled by a knob.
@@ -2165,6 +2166,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		if (remainingDelay <= 0)
 			break;
 
+		requestWaited = true;
 		state Version waitUntilVersion = logData->version.get() + 1;
 
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
@@ -2209,6 +2211,10 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	reply.messages = messagesValue;
 	reply.end = endVersion;
 	reply.onlySpilled = onlySpilled;
+	reply.timeWaited = requestWaited ? 1 : 0;
+
+	// TODO: we need to stamp every single version if we want accurate elapsed wait time
+	// reply.timeWaited = g_network->timer() - ? ;
 
 	DebugLogTraceEvent("TLogPeekMessages4", self->dbgid)
 	    .detail("LogId", logData->logId)

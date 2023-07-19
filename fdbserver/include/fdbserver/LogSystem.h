@@ -190,6 +190,10 @@ struct ILogSystem {
 		// always a possible result!)
 		virtual Version getMaxKnownVersion() const { return 0; }
 
+		virtual int getPeekReplySize() const { return -1; }
+
+		virtual double getTlogWaitTime() const { return -1; }
+
 		virtual Version getMinKnownCommittedVersion() const = 0;
 
 		virtual Optional<UID> getPrimaryPeekLocation() const = 0;
@@ -269,6 +273,10 @@ struct ILogSystem {
 		void delref() override { ReferenceCounted<ServerPeekCursor>::delref(); }
 
 		Version getMaxKnownVersion() const override { return results.maxKnownVersion; }
+
+		int getPeekReplySize() const override { return results.messages.size(); }
+
+		double getTlogWaitTime() const override { return results.timeWaited; }
 	};
 
 	struct MergedPeekCursor final : IPeekCursor, ReferenceCounted<MergedPeekCursor> {
