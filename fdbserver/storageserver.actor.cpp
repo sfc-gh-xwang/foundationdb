@@ -9634,11 +9634,11 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 		// 1. peekReply is nonempty + tlog reported no wait: must be mutation with no wait
 		// 2. peekReply is empty: must be Non-mutation and fully waited
 		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED) {
-			ASSERT(cursor->getPeekReplySize() != -1);
+			ASSERT(cursor->getPeekReplySize() != -1); // disabled to let upgrade possible?
 			ASSERT(cursor->getTlogWaitTime() != -1);
 			double peekReplyRecvTime = g_network->timer();
 			if (cursor->getPeekReplySize() > 0 && cursor->getTlogWaitTime() == 0) {
-				TraceEvent(SevDebug, "NewMutationFromTlog", data->thisServerID);
+				// TraceEvent(SevDebug, "NewMutationFromTlog", data->thisServerID);
 				// nonempty peeks with zero wait time, consider it as one datapoint in mutation queue, accurate because
 				// it is short-circuited on tlog and we're sure it did not wait
 				if (data->emptyVersionWaitMutationStats.tlogVersionQueue.size() >=
@@ -9653,8 +9653,8 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				}
 				data->emptyVersionWaitMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
 				                                                                  peekReplyRecvTime);
-			} else {
-				TraceEvent(SevDebug, "NewNonMutationFromTlog", data->thisServerID);
+			} else if (cursor->getPeekReplySize() == 0) {
+				// TraceEvent(SevDebug, "NewNonMutationFromTlog", data->thisServerID);
 				// empty peeks, must have fully waited
 				// TODO: use first non-empty sample in batch as timing? if we ever timestamp every single version
 				if (data->emptyVersionWaitNonMutationStats.tlogVersionQueue.size() >=
