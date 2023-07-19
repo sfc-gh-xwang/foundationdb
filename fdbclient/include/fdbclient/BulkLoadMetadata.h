@@ -12,6 +12,9 @@
 #import "fdbclient/KeyBackedTypes.actor.h"
 #import "fdbclient/KeyBackedRangeMap.actor.h"
 
+// This file (to distinguish from BulkLoad.h) contains the system keyspace data and namespaces and methods for
+// interacting with them.
+
 namespace BulkLoadMetadata {
 
 // for use in range map. Can't just be BulkLoadID because it needs apply() function

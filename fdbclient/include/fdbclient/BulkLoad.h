@@ -12,6 +12,8 @@
 #include "flow/Arena.h"
 #include "fdbclient/FDBTypes.h"
 
+// This file (to distinguish from BulkLoadMetadata.h) only contains struct definitions and primitives for bulk loading.
+
 using BulkLoadID = Standalone<StringRef>;
 
 // Generally ordered such that valid state transitions only increase the number
@@ -26,7 +28,7 @@ enum class BulkLoadState : uint8_t {
 	DONE = 90,
 	ABORTED = 99,
 	ABORTED_COMPLETE = 109,
-	CLEANUP = 254, // never persisted in DB (row deleted instead), just used for state transition logic
+	CLEANUP = 250, // never persisted in DB (row deleted instead), just used for state transition logic
 	UNKNOWN = 255 // dummy type used for noargs constructor, should never be seen in practice
 };
 
@@ -66,7 +68,8 @@ struct BulkLoadInfo {
 
 template <>
 struct Traceable<BulkLoadState> : std::true_type {
-	static std::string toString(const BulkLoadState& idv) { return std::to_string(static_cast<int>(idv)); }
+	// FIXME: more human-readable string for debugging
+	static std::string toString(const BulkLoadState& st) { return std::to_string(static_cast<int>(st)); }
 };
 
 template <>

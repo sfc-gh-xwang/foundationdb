@@ -17,7 +17,7 @@
 
 #define BULKLOAD_DEBUG false
 
-Standalone<StringRef> newBulkLoadID() {
+BulkLoadID newBulkLoadID() {
 	// for now just generate UID and convert to string - we assume no 128-bit UID collisions
 	UID randomUID = deterministicRandom()->randomUniqueID();
 	// TODO this is the same as granuleIDToCFKey - make common function?
@@ -53,7 +53,8 @@ ACTOR Future<BulkLoadID> startBulkLoadActor(Reference<DatabaseContext> db,
 			state Reference<BulkLoadMetadata::RangeMapSnapshot> existingRanges =
 			    wait(BulkLoadMetadata::rangeMap().getSnapshot(tr, physicalRange.begin, physicalRange.end));
 
-			// detect conflicts but exempt this load already existing for idempotency
+			// detect conflicts but exempt this load already existing for idempotency. Do this before the updateRange
+			// call to avoid conflicts/issues
 			auto ranges = existingRanges->ranges();
 			auto it = ranges.begin();
 			while (it != ranges.end()) {
@@ -120,8 +121,8 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 			if (BULKLOAD_DEBUG) {
 				fmt::print("UpdateBulkLoadState {0}: get current\n", id.printable());
 			}
-			Optional<BulkLoadStatus> currentState = wait(BulkLoadMetadata::statusMap().get(tr, id));
-			if (!currentState.present()) {
+			Optional<BulkLoadStatus> currentStatus = wait(BulkLoadMetadata::statusMap().get(tr, id));
+			if (!currentStatus.present()) {
 				// idempotency
 				if (desiredState == BulkLoadState::CLEANUP) {
 					return Void();
@@ -129,20 +130,14 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 				throw bulk_load_not_found();
 			}
 
-			if (BULKLOAD_DEBUG) {
-				fmt::print("UpdateBulkLoadState {0}:got current {1}\n",
-				           id.printable(),
-				           static_cast<int>(currentState.get().state));
-			}
-
 			// throw an error if invalid state transition, otherwise if current state already meets desired, return
 			if (BULKLOAD_DEBUG) {
-				fmt::print("CheckBulkLoadStateTransition {0}: {1} -> {2}\n",
+				fmt::print("UpdateBulkLoadState {0}: {1} -> {2}\n",
 				           id.printable(),
-				           static_cast<int>(currentState.get().state),
+				           static_cast<int>(currentStatus.get().state),
 				           static_cast<int>(desiredState));
 			}
-			if (!checkValidBulkLoadStateTransition(currentState.get().state, desiredState)) {
+			if (!checkValidBulkLoadStateTransition(currentStatus.get().state, desiredState)) {
 				if (BULKLOAD_DEBUG) {
 					fmt::print("UpdateBulkLoadState {0}: already in desired state\n", id.printable());
 				}
@@ -159,7 +154,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 				}
 				BulkLoadMetadata::statusMap().erase(tr, id);
 			} else {
-				BulkLoadStatus newStatus = currentState.get();
+				BulkLoadStatus newStatus = currentStatus.get();
 				newStatus.state = desiredState;
 				BulkLoadMetadata::statusMap().set(tr, id, newStatus);
 
