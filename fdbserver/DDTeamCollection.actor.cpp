@@ -67,32 +67,6 @@ int EligibilityCounter::getCount(int combinedType) const {
 	}
 	return minCount;
 }
-
-template <class T>
-LinearFunc<T>::LinearFunc(Point p1, Point p2) {
-	ASSERT(p1.x != p2.x);
-	if (p1.x > p2.x) {
-		std::swap(p1, p2);
-	}
-	leftPoint = p1;
-	rightPoint = p2;
-	a = (p2.y - p1.y) / (p2.x - p1.x);
-	b = p2.y - a * p2.x;
-}
-
-template <class T>
-double LinearFunc<T>::getY(T x) {
-	double result;
-	if (x <= leftPoint.x) {
-		result = leftPoint.y;
-	} else if (x >= rightPoint.x) {
-		result = rightPoint.y;
-	} else {
-		result = a * x + b;
-	}
-	return result;
-}
-
 } // namespace data_distribution
 
 class DDTeamCollectionImpl {
@@ -3619,34 +3593,6 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::findTeamFromServers
 	return Optional<Reference<IDataDistributionTeam>>();
 }
 
-template <typename T>
-double getProbabilityWithPivot(T lowerPivot, T upperPivot, T sample) {
-	double result;
-	if (lowerPivot == upperPivot) {
-		// Deal with special case at first
-		if (sample < upperPivot) {
-			result = 1;
-		} else if (sample > upperPivot) {
-			result = 0;
-		} else {
-			// sample == lowerPivot == upperPivot
-			// In simulation, we would be optimistic to set the probability to be 1, and allow prevention.
-			// In production, on the other side, be pessimistic and not to prevent movements.
-			if (g_network->isSimulated()) {
-				result = 1;
-			} else {
-				result = 0;
-			}
-		}
-	} else {
-		data_distribution::LinearFunc<T> linearFunc(
-		    typename data_distribution::LinearFunc<T>::Point{ .x = lowerPivot, .y = 1.0 },
-		    typename data_distribution::LinearFunc<T>::Point{ .x = upperPivot, .y = 0.0 });
-		result = linearFunc.getY(sample);
-	}
-	return result;
-}
-
 Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(GetTeamRequest& req) {
 	Optional<Reference<IDataDistributionTeam>> sourceTeam = findTeamFromServers(req.src, /* wantHealthy=*/true);
 	if (sourceTeam.present()) {
@@ -3658,11 +3604,11 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(
 			int64_t sourceLoadBytes = sourceTeam.get()->getLoadBytes(true, req.inflightPenalty);
 			double sourceCPU = sourceTeam.get()->getAverageCPU();
 
-			double probabilityLoadBytes = getProbabilityWithPivot<int64_t>(
+			double probabilityLoadBytes = data_distribution::getProbabilityWithPivot<int64_t>(
 			    teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes, sourceLoadBytes);
 
-			double probabilityCPU =
-			    getProbabilityWithPivot<double>(teamPivots.lowerPivotCPU, teamPivots.upperPivotCPU, sourceCPU);
+			double probabilityCPU = data_distribution::getProbabilityWithPivot<double>(
+			    teamPivots.lowerPivotCPU, teamPivots.upperPivotCPU, sourceCPU);
 
 			ASSERT(probabilityLoadBytes >= 0 && probabilityLoadBytes <= 1);
 			ASSERT(probabilityCPU >= 0 && probabilityCPU <= 1);

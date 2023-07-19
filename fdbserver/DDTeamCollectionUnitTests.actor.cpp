@@ -18,16 +18,18 @@
  * limitations under the License.
  */
 
+#include "fdbserver/DataDistributionTeam.h"
 #include "fdbserver/DDTeamCollection.h"
 #include "fdbserver/ExclusionTracker.actor.h"
-#include "fdbserver/DataDistributionTeam.h"
 #include "flow/Trace.h"
-#include "flow/actorcompiler.h" // This must be the last #include.
 #include <climits>
 #include <unordered_set>
+#include "flow/actorcompiler.h" // This must be the last #include.
 
 class DDTeamCollectionUnitTest {
 public:
+	constexpr static double Epsilon = 1e-10; // smaller numbers are considered as 0
+
 	static std::unique_ptr<DDTeamCollection> testTeamCollection(int teamSize,
 	                                                            Reference<IReplicationPolicy> policy,
 	                                                            int processCount) {
@@ -959,9 +961,13 @@ public:
 
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_reevaluation_enabled",
 		                                                          KnobValueRef::create(bool{ true }));
-		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_lower_cpu_pivot_ratio",
+		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_lower_load_bytes_pivot_ratio",
+		                                                          KnobValueRef::create(double{ 0.5 }));
+		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_upper_load_bytes_pivot_ratio",
 		                                                          KnobValueRef::create(double{ 0.6 }));
-		IKnobCollection::getMutableGlobalKnobCollection().setKnob("cpu_pivot_ratio",
+		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_lower_cpu_pivot_ratio",
+		                                                          KnobValueRef::create(double{ 0.7 }));
+		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_upper_cpu_pivot_ratio",
 		                                                          KnobValueRef::create(double{ 0.9 }));
 
 		HealthMetrics::StorageStats low_cpu, mid_cpu, high_cpu;
@@ -1032,6 +1038,22 @@ public:
 		ASSERT(anyTeam.present());
 		ASSERT_NE(anyTeam.get()->getServerIDs(), std::vector<UID>{ UID(3, 0) });
 
+		return Void();
+	}
+
+	ACTOR static Future<Void> GetProbabilityWithPivot() {
+		double p;
+		p = data_distribution::getProbabilityWithPivot<int64_t>(0, 10, 5);
+		ASSERT(fabs(p - 0.5) < Epsilon);
+		p = data_distribution::getProbabilityWithPivot<int64_t>(0, 10, 0);
+		ASSERT(fabs(p - 1) < Epsilon);
+
+		p = data_distribution::getProbabilityWithPivot<double>(1.0, 2.0, 0.0);
+		ASSERT(fabs(p - 1) < Epsilon);
+		p = data_distribution::getProbabilityWithPivot<double>(1.0, 2.0, 3.0);
+		ASSERT(fabs(p - 0) < Epsilon);
+		p = data_distribution::getProbabilityWithPivot<double>(1.0, 2.0, 1.1);
+		ASSERT(fabs(p - 0.9) < Epsilon);
 		return Void();
 	}
 };
@@ -1123,5 +1145,10 @@ TEST_CASE("/DataDistribution/GetTeam/CutOffByCpu") {
 
 TEST_CASE("/DataDistribution/GetTeam/EvaluateSourceTeam") {
 	wait(DDTeamCollectionUnitTest::GetTeam_EvaluateSourceTeam());
+	return Void();
+}
+
+TEST_CASE("/DataDistribution/GetProbabilityWithPivot") {
+	wait(DDTeamCollectionUnitTest::GetProbabilityWithPivot());
 	return Void();
 }
