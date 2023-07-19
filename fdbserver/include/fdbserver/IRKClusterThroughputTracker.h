@@ -1,5 +1,5 @@
 /**
- * IRKThroughputTracker.h
+ * IRKClusterThroughputTracker.h
  */
 
 #pragma once
@@ -10,9 +10,9 @@
 #include <boost/unordered/unordered_flat_map.hpp>
 
 // Tracks the cluster-wide throughput (in bytes/second) of each throttlingId
-class IRKThroughputTracker {
+class IRKClusterThroughputTracker {
 public:
-	virtual ~IRKThroughputTracker() = default;
+	virtual ~IRKClusterThroughputTracker() = default;
 
 	// Returns the current cluster-wide throughput for the provided throttling ID
 	virtual double getThroughput(ThrottlingId const&) const = 0;
@@ -21,9 +21,9 @@ public:
 	virtual std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const = 0;
 };
 
-// The ServerThroughputTracker class is responsible for tracking
+// The RKServerThroughputTracker class is responsible for tracking
 // every throttlingId's reported throughput across all storage servers
-class ServerThroughputTracker : public IRKThroughputTracker {
+class RKServerThroughputTracker : public IRKClusterThroughputTracker {
 	enum class OpType {
 		READ,
 		WRITE,
@@ -48,7 +48,7 @@ class ServerThroughputTracker : public IRKThroughputTracker {
 	                                       std::unordered_set<ThrottlingId> const& seenWriteThrottlingId);
 
 public:
-	~ServerThroughputTracker();
+	~RKServerThroughputTracker();
 
 	// Returns all throttling IDs running significant workload on the specified storage server.
 	std::vector<ThrottlingId> getThrottlingIdsAffectingStorageServer(UID storageServerId) const;
@@ -64,18 +64,14 @@ public:
 
 	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
 
-	// Returns the current throughput on the provided storage server, summed
-	// across all throttling IDs
-	Optional<double> getThroughput(UID storageServerId) const;
-
 	// Returns the number of storage servers currently being tracked
 	int storageServersTracked() const;
 };
 
-// The ClientThroughputTracker class is responsible for tracking
+// The RKClientThroughputTracker class is responsible for tracking
 // every throttlingId's cluster-wide throughput from statistics
 // reported originally from clients
-class ClientThroughputTracker : public IRKThroughputTracker {
+class RKClientThroughputTracker : public IRKClusterThroughputTracker {
 	struct ThroughputSmoother {
 		HoltLinearSmoother smoother;
 		double lastUpdated;
@@ -94,9 +90,9 @@ class ClientThroughputTracker : public IRKThroughputTracker {
 	void expireThrottlingIds();
 
 public:
-	explicit ClientThroughputTracker(double expirationCheckInterval);
+	explicit RKClientThroughputTracker(double expirationCheckInterval);
 
-	~ClientThroughputTracker();
+	~RKClientThroughputTracker();
 
 	double getThroughput(ThrottlingId const&) const override;
 
@@ -107,7 +103,7 @@ public:
 	void update(ThrottlingIdMap<uint64_t> const& newThroughput);
 };
 
-class MockThroughputTracker : public IRKThroughputTracker {
+class MockThroughputTracker : public IRKClusterThroughputTracker {
 	ThrottlingIdMap<double> throughput;
 
 public:

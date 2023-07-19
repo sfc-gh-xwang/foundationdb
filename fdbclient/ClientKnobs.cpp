@@ -294,10 +294,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
 	init( AVERAGE_COST_START_DELAY,                10.0 );
 	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
-	// TODO: Randomly turn this knob off once throughput once
-	// RKThroughputQuotaCache is receiving throughput updates
-	// from IRKThroughputTracker:
-	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true );
+	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); if ( randomize && BUGGIFY ) USE_SIMPLE_THROUGHPUT_QUOTA_CACHE = false;
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
@@ -336,6 +333,9 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( SIM_KMS_VAULT_MAX_KEYS,                    4096 );
 
 	init( TENANT_BALANCER_REQUEST_TIMEOUT,             20 );
+
+	// Bulk Loading
+	init( ALLOW_BULK_LOADS,                         false );
 
 	// clang-format on
 }

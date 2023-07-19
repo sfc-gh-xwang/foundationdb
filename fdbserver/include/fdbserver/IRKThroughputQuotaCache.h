@@ -5,7 +5,7 @@
 #pragma once
 
 #include "fdbclient/NativeAPI.actor.h"
-#include "fdbserver/IRKThroughputTracker.h"
+#include "fdbserver/IRKClusterThroughputTracker.h"
 #include "flow/flow.h"
 #include "flow/Optional.h"
 
@@ -31,7 +31,7 @@ public:
 
 	// Update per-throttlingId throughput statistics. Depending on the
 	// implementation, this may cause quotas to be tracked or forgotten.
-	virtual void updateThroughput(IRKThroughputTracker const&) = 0;
+	virtual void updateThroughput(IRKClusterThroughputTracker const&) = 0;
 };
 
 // Uses UpdateStream to monitor the throughput quotas of sufficiently busy throttlingIds
@@ -65,7 +65,7 @@ public:
 	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;
 	int size() const override;
 	Future<Void> run() override;
-	void updateThroughput(IRKThroughputTracker const&) override;
+	void updateThroughput(IRKClusterThroughputTracker const&) override;
 
 	// Returns the number of active throttling IDs with quotas
 	// currently being tracked. These quotas may or may not
@@ -87,7 +87,7 @@ public:
 	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;
 	int size() const override;
 	Future<Void> run() override;
-	void updateThroughput(IRKThroughputTracker const&) override {}
+	void updateThroughput(IRKClusterThroughputTracker const&) override {}
 };
 
 // Cache is updated by a test client that manually sets and removes quotas
@@ -100,7 +100,7 @@ public:
 	Optional<int64_t> getReservedQuota(ThrottlingId const&) const override;
 	int size() const override;
 	Future<Void> run() override;
-	void updateThroughput(IRKThroughputTracker const&) override {}
+	void updateThroughput(IRKClusterThroughputTracker const&) override {}
 
 	void setQuota(ThrottlingId const&, int64_t totalQuota, int64_t reservedQuota);
 	void removeQuota(ThrottlingId const&);

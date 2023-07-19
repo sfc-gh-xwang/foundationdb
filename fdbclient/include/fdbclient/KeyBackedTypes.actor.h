@@ -793,6 +793,11 @@ public:
 		           [=](Optional<ValueType> val) -> ValueType { return val.orDefault(defaultValue); });
 	}
 
+	template <class Transaction>
+	Future<Void> watch(Transaction tr, KeyType const& key) {
+		return safeThreadFutureToFuture(tr->watch(packKey(key)));
+	}
+
 	// Returns a Property that can be get/set that represents key's entry in this this.
 	SingleRecordProperty getProperty(KeyType const& key) const { return { packKey(key), trigger, valueCodec }; }
 

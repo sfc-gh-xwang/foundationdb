@@ -109,19 +109,18 @@ void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {
 }
 
 uint32_t GrvProxyTagThrottler::getCost(GetReadVersionRequest const& req) const {
-	uint32_t cost = req.transactionCount;
 
 	if (isClientAverageCostTrackingEnabled()) {
-		// track-average-cost-on-client is enabled, the total cost
-		// will be (transactionCount * expectedTransactionCost).
-		if (req.expectedTransactionCost.present()) {
-			cost *= req.expectedTransactionCost.get();
+		// track-average-cost-on-client is enabled use the expectedTransactionCost.
+		if (req.expectedTotalCost.present()) {
+			return req.expectedTotalCost.get();
 		} else {
-			cost *= CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+			// expectedTransactionCost not provided, use req.transactionCount * DEFAULT_EXPECTED_TRANSACTION_COST
+			return req.transactionCount * CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
 		}
+	} else {
+		return req.transactionCount;
 	}
-
-	return cost;
 }
 
 void GrvProxyTagThrottler::releaseTransactions(double elapsed,

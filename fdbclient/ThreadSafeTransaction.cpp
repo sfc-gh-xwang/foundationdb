@@ -354,7 +354,9 @@ ThreadFuture<bool> ThreadSafeTenant::flushBlobRange(const KeyRangeRef& keyRange,
 }
 
 ThreadFuture<Standalone<StringRef>> ThreadSafeTenant::getClientStatus() {
-	return this->db->getClientStatus();
+	DatabaseContext* db = this->db->db;
+	Tenant* tenant = this->tenant;
+	return onMainThread([db, tenant] { return Future<Standalone<StringRef>>(db->getTenantClientStatus(tenant)); });
 }
 
 ThreadSafeTenant::~ThreadSafeTenant() {
@@ -679,6 +681,11 @@ ThreadFuture<int64_t> ThreadSafeTransaction::getTotalCost() {
 		tr->checkDeferredError();
 		return tr->getTotalCost();
 	});
+}
+
+void ThreadSafeTransaction::setExpectedCost(uint64_t value) {
+	ISingleThreadTransaction* tr = this->tr;
+	onMainThreadVoid([tr, value]() { tr->setExpectedCost(value); }, tr, &ISingleThreadTransaction::deferredError);
 }
 
 ThreadFuture<int64_t> ThreadSafeTransaction::getApproximateSize() {

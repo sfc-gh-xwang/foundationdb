@@ -67,6 +67,8 @@ class Ratekeeper {
 	RKRateServer rateServer;
 	RKRateUpdater normalRateUpdater, batchRateUpdater;
 	std::unique_ptr<IRKThroughputQuotaCache> quotaCache;
+	RKClientThroughputTracker clientThroughputTracker;
+	RKServerThroughputTracker serverThroughputTracker;
 	QuotaThrottler quotaThrottler;
 
 	PromiseStream<Future<Void>> addActor;
