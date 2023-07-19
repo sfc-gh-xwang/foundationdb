@@ -5849,8 +5849,8 @@ ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
 }
 
 // FIXME: handle state transitions from STAGING to STAGING_BLOB_DONE
-ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID id, BulkLoadState state) {
-	if (state == BulkLoadState::ABORTED) {
+ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID id, BulkLoadStatus::State state) {
+	if (state == BulkLoadStatus::State::ABORTED) {
 		try {
 			wait(bmData->db->cleanupAbortedBulkLoad(id));
 		} catch (Error& e) {
@@ -5862,13 +5862,13 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 		}
 		return Void();
 	}
-	if (state >= BulkLoadState::DONE) {
+	if (state >= BulkLoadStatus::State::DONE) {
 		return Void();
 	}
 
 	try {
-		if (state < BulkLoadState::STAGING) {
-			wait(bmData->db->waitBulkLoadStateAtLeast(id, BulkLoadState::STAGING));
+		if (state < BulkLoadStatus::State::STAGING) {
+			wait(bmData->db->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING));
 		}
 
 		// FIXME: ACTUALLY IMPLEMENT BLOB STAGING!
@@ -5878,7 +5878,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 		// manager
 
 		// FIXME: only change to STAGING_BLOB_DONE. Still monitor for aborts until we hit DONE though
-		wait(bmData->db->updateBulkLoadState(id, BulkLoadState::DONE));
+		wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
 		return Void();
 	} catch (Error& e) {
 		if (e.code() == error_code_bulk_load_not_found) {
@@ -6001,7 +6001,8 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 
 		self->addActor.send(watchBackupEnabled(self));
 
-		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadID& id, const BulkLoadState& state) {
+		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadID& id,
+		                                                         const BulkLoadStatus::State& state) {
 			return trackBulkLoad(self, id, state);
 		};
 		state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);

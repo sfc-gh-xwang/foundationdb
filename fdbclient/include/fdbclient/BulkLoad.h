@@ -20,27 +20,29 @@ using BulkLoadID = Standalone<StringRef>;
 // leaving space for future states with int gaps
 // Everything after STAGING are internal states of staging that are controlled by FDB. STARTED -> STAGING is done by the
 // client once they're done staging data.
-enum class BulkLoadState : uint8_t {
-	STARTED = 0,
-	STAGING = 10,
-	STAGING_BLOB_DONE = 20,
-	STAGING_DDPREPARED = 30,
-	DONE = 90,
-	ABORTED = 99,
-	ABORTED_COMPLETE = 109,
-	CLEANUP = 250, // never persisted in DB (row deleted instead), just used for state transition logic
-	UNKNOWN = 255 // dummy type used for noargs constructor, should never be seen in practice
-};
 
 // defined as struct and serialized with flatbuffers to be evolvable
-struct BulkLoadStatus {
+class BulkLoadStatus {
+public:
 	constexpr static FileIdentifier file_identifier = 1934635;
-	BulkLoadState state;
+	enum class State : uint8_t {
+		STARTED = 0,
+		STAGING = 10,
+		STAGING_BLOB_DONE = 20,
+		STAGING_DDPREPARED = 30,
+		DONE = 90,
+		ABORTED = 99,
+		ABORTED_COMPLETE = 109,
+		CLEANUP = 250, // never persisted in DB (row deleted instead), just used for state transition logic
+		UNKNOWN = 255 // dummy type used for noargs constructor, should never be seen in practice
+	};
+
+	State state;
 
 	// noarg for serialization
-	BulkLoadStatus() : state(BulkLoadState::UNKNOWN) {}
+	BulkLoadStatus() : state(State::UNKNOWN) {}
 
-	BulkLoadStatus(BulkLoadState state) : state(state) { ASSERT(state != BulkLoadState::UNKNOWN); }
+	BulkLoadStatus(State state) : state(state) { ASSERT(state != State::UNKNOWN); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -67,12 +69,12 @@ struct BulkLoadInfo {
 };
 
 template <>
-struct Traceable<BulkLoadState> : std::true_type {
+struct Traceable<BulkLoadStatus::State> : std::true_type {
 	// FIXME: more human-readable string for debugging
-	static std::string toString(const BulkLoadState& st) { return std::to_string(static_cast<int>(st)); }
+	static std::string toString(const BulkLoadStatus::State& st) { return std::to_string(static_cast<int>(st)); }
 };
 
 template <>
-struct fmt::formatter<BulkLoadState> : FormatUsingTraceable<BulkLoadState> {};
+struct fmt::formatter<BulkLoadStatus::State> : FormatUsingTraceable<BulkLoadStatus::State> {};
 
 #endif

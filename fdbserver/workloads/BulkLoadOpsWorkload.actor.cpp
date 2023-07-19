@@ -236,7 +236,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// Validate bulk load state at end.
 
 		BulkLoadStatus status = wait(cx->getBulkLoadStatus(id));
-		BulkLoadState current = status.state;
+		BulkLoadStatus::State current = status.state;
 
 		if (BLW_DEBUG) {
 			fmt::print(
@@ -244,12 +244,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		if (abortCompleted) {
-			ASSERT(current == BulkLoadState::ABORTED || current == BulkLoadState::ABORTED_COMPLETE);
+			ASSERT(current == BulkLoadStatus::State::ABORTED || current == BulkLoadStatus::State::ABORTED_COMPLETE);
 		} else if (!injectedAbort) {
-			ASSERT(current == BulkLoadState::DONE);
+			ASSERT(current == BulkLoadStatus::State::DONE);
 		} else {
-			ASSERT(current == BulkLoadState::DONE || current == BulkLoadState::ABORTED ||
-			       current == BulkLoadState::ABORTED_COMPLETE);
+			ASSERT(current == BulkLoadStatus::State::DONE || current == BulkLoadStatus::State::ABORTED ||
+			       current == BulkLoadStatus::State::ABORTED_COMPLETE);
 		}
 
 		return Void();
@@ -394,7 +394,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->abortBulkLoad(id, self->tenant));
 
 		try {
-			wait(cx->updateBulkLoadState(id, BulkLoadState::DONE));
+			wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
 			ASSERT(false);
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_aborted);
@@ -439,8 +439,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->checkCorrectInvalidIDError(cx->abortBulkLoad(id, self->tenant)));
 		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadComplete(id, self->tenant)));
 		// don't test cleanup because it's idempotent if it was already cleaned up
-		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadState::STAGING)));
-		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadState::STAGING)));
+		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING)));
+		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadStatus::State::STAGING)));
 		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadStatus(id))));
 		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadVersion(id))));
 

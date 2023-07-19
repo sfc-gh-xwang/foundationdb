@@ -86,7 +86,7 @@ ACTOR Future<BulkLoadID> startBulkLoadActor(Reference<DatabaseContext> db,
 				throw bulk_load_range_not_empty();
 			}
 
-			BulkLoadMetadata::statusMap().set(tr, id, BulkLoadStatus(BulkLoadState::STARTED));
+			BulkLoadMetadata::statusMap().set(tr, id, BulkLoadStatus(BulkLoadStatus::State::STARTED));
 			BulkLoadMetadata::versionMap().setVersionstamp(tr, id, Versionstamp(), 0);
 			BulkLoadMetadata::infoMap().set(tr, id, info);
 
@@ -105,11 +105,13 @@ Future<BulkLoadID> DatabaseContext::startBulkLoad(KeyRange range, Optional<Refer
 	return startBulkLoadActor(Reference<DatabaseContext>::addRef(this), range, tenant);
 }
 
-ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkLoadID id, BulkLoadState desiredState) {
+ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
+                                            BulkLoadID id,
+                                            BulkLoadStatus::State desiredState) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
 	state KeyRange physicalRange;
-	ASSERT(desiredState != BulkLoadState::UNKNOWN);
+	ASSERT(desiredState != BulkLoadStatus::State::UNKNOWN);
 	if (BULKLOAD_DEBUG) {
 		fmt::print("UpdateBulkLoadState {0}: {1}\n", id.printable(), static_cast<int>(desiredState));
 	}
@@ -123,7 +125,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 			Optional<BulkLoadStatus> currentStatus = wait(BulkLoadMetadata::statusMap().get(tr, id));
 			if (!currentStatus.present()) {
 				// idempotency
-				if (desiredState == BulkLoadState::CLEANUP) {
+				if (desiredState == BulkLoadStatus::State::CLEANUP) {
 					return Void();
 				}
 				throw bulk_load_not_found();
@@ -147,7 +149,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 				fmt::print("UpdateBulkLoadState {0}: transition ok\n", id.printable());
 			}
 
-			if (desiredState == BulkLoadState::CLEANUP) {
+			if (desiredState == BulkLoadStatus::State::CLEANUP) {
 				if (BULKLOAD_DEBUG) {
 					fmt::print("UpdateBulkLoadState {0}: erasing on cleanup\n", id.printable());
 				}
@@ -158,7 +160,8 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 				BulkLoadMetadata::statusMap().set(tr, id, newStatus);
 
 				// if cleaning up after abort or completed, clean up other metadata since it is no longer active
-				if (desiredState == BulkLoadState::DONE || desiredState == BulkLoadState::ABORTED_COMPLETE) {
+				if (desiredState == BulkLoadStatus::State::DONE ||
+				    desiredState == BulkLoadStatus::State::ABORTED_COMPLETE) {
 					// load bulk load info to get range for load
 					Optional<BulkLoadInfo> info = wait(BulkLoadMetadata::infoMap().get(tr, id));
 					ASSERT(info.present());
@@ -202,25 +205,25 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db, BulkL
 	}
 }
 
-Future<Void> DatabaseContext::updateBulkLoadState(BulkLoadID id, BulkLoadState desiredState) {
+Future<Void> DatabaseContext::updateBulkLoadState(BulkLoadID id, BulkLoadStatus::State desiredState) {
 	// right now we don't need tenant, we will likely need it for authz though
 	return updateBulkLoadStateActor(Reference<DatabaseContext>::addRef(this), id, desiredState);
 }
 
 Future<Void> DatabaseContext::abortBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
 	// right now we don't need tenant, we will likely need it for authz though
-	return updateBulkLoadStateActor(Reference<DatabaseContext>::addRef(this), id, BulkLoadState::ABORTED);
+	return updateBulkLoadStateActor(Reference<DatabaseContext>::addRef(this), id, BulkLoadStatus::State::ABORTED);
 }
 
 Future<Void> DatabaseContext::bulkLoadAllFilesRegistered(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
 	// right now we don't need tenant, we will likely need it for authz though
-	return updateBulkLoadStateActor(Reference<DatabaseContext>::addRef(this), id, BulkLoadState::STAGING);
+	return updateBulkLoadStateActor(Reference<DatabaseContext>::addRef(this), id, BulkLoadStatus::State::STAGING);
 }
 
 ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
                                                  BulkLoadID id,
-                                                 BulkLoadState desiredState) {
-	ASSERT(desiredState != BulkLoadState::UNKNOWN);
+                                                 BulkLoadStatus::State desiredState) {
+	ASSERT(desiredState != BulkLoadStatus::State::UNKNOWN);
 	state Database cx(db);
 	loop {
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
@@ -232,14 +235,15 @@ ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
 
 				if (!status.present()) {
 					CODE_PROBE(true, "bulk load cleaned up while waiting for state at least");
-					if (desiredState == BulkLoadState::CLEANUP) {
+					if (desiredState == BulkLoadStatus::State::CLEANUP) {
 						return Void();
 					}
 					throw bulk_load_not_found();
 				}
 				auto st = status.get().state;
-				if (st == BulkLoadState::ABORTED_COMPLETE || st == BulkLoadState::ABORTED) {
-					if (desiredState != BulkLoadState::ABORTED && desiredState != BulkLoadState::ABORTED_COMPLETE) {
+				if (st == BulkLoadStatus::State::ABORTED_COMPLETE || st == BulkLoadStatus::State::ABORTED) {
+					if (desiredState != BulkLoadStatus::State::ABORTED &&
+					    desiredState != BulkLoadStatus::State::ABORTED_COMPLETE) {
 						throw bulk_load_aborted();
 					}
 				}
@@ -287,16 +291,16 @@ ACTOR Future<Void> cleanupBulkLoadActor(Reference<DatabaseContext> db, BulkLoadI
 		fmt::print("CleanUpBulkLoad {0}: status {1}\n", id.printable(), static_cast<int>(startStatus.state));
 	}
 	// if bulk load is aborted, wait for internal server cleanup to happen before client can do final clean up
-	if (startStatus.state == BulkLoadState::ABORTED) {
+	if (startStatus.state == BulkLoadStatus::State::ABORTED) {
 		if (BULKLOAD_DEBUG) {
 			fmt::print("CleanUpBulkLoad {0}: waiting abort complete\n", id.printable());
 		}
-		wait(waitBulkLoadStateAtLeastActor(db, id, BulkLoadState::ABORTED_COMPLETE));
+		wait(waitBulkLoadStateAtLeastActor(db, id, BulkLoadStatus::State::ABORTED_COMPLETE));
 	}
 	if (BULKLOAD_DEBUG) {
 		fmt::print("CleanUpBulkLoad {0}: finalizing\n", id.printable());
 	}
-	wait(updateBulkLoadStateActor(db, id, BulkLoadState::CLEANUP));
+	wait(updateBulkLoadStateActor(db, id, BulkLoadStatus::State::CLEANUP));
 	if (BULKLOAD_DEBUG) {
 		fmt::print("CleanUpBulkLoad {0}: done\n", id.printable());
 	}
@@ -308,13 +312,13 @@ Future<Void> DatabaseContext::cleanupBulkLoad(BulkLoadID id, Optional<Reference<
 	return cleanupBulkLoadActor(Reference<DatabaseContext>::addRef(this), id);
 }
 
-Future<Void> DatabaseContext::waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadState desiredState) {
+Future<Void> DatabaseContext::waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadStatus::State desiredState) {
 	return waitBulkLoadStateAtLeastActor(Reference<DatabaseContext>::addRef(this), id, desiredState);
 }
 
 Future<Void> DatabaseContext::waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
 	// right now we don't need tenant, we will likely need it for authz though
-	return waitBulkLoadStateAtLeastActor(Reference<DatabaseContext>::addRef(this), id, BulkLoadState::DONE);
+	return waitBulkLoadStateAtLeastActor(Reference<DatabaseContext>::addRef(this), id, BulkLoadStatus::State::DONE);
 }
 
 ACTOR Future<std::vector<BulkLoadID>> listBulkLoadsActor(Reference<DatabaseContext> db, bool onlyActive) {
@@ -329,8 +333,8 @@ ACTOR Future<std::vector<BulkLoadID>> listBulkLoadsActor(Reference<DatabaseConte
 			    wait(BulkLoadMetadata::statusMap().getRange(tr, {}, {}, CLIENT_KNOBS->TOO_MANY)); // TODO
 			ASSERT(!result.more);
 			for (auto& it : result.results) {
-				if (!onlyActive ||
-				    (it.second.state != BulkLoadState::ABORTED && it.second.state != BulkLoadState::DONE)) {
+				if (!onlyActive || (it.second.state != BulkLoadStatus::State::ABORTED &&
+				                    it.second.state != BulkLoadStatus::State::DONE)) {
 					values.push_back(it.first);
 				}
 			}
@@ -355,7 +359,7 @@ ACTOR Future<Void> cleanupAbortedBulkLoadActor(Reference<DatabaseContext> db, Bu
 	BulkLoadStatus startStatus = wait(getBulkLoadStatusActor(db, id));
 
 	// ensure load was in aborted state before starting cleanup
-	if (!checkValidBulkLoadStateTransition(startStatus.state, BulkLoadState::ABORTED_COMPLETE)) {
+	if (!checkValidBulkLoadStateTransition(startStatus.state, BulkLoadStatus::State::ABORTED_COMPLETE)) {
 		if (BULKLOAD_DEBUG) {
 			fmt::print("CleanupAbortedBulkLoadActor {0}: already cleaned up\n", id.printable());
 		}
@@ -366,7 +370,7 @@ ACTOR Future<Void> cleanupAbortedBulkLoadActor(Reference<DatabaseContext> db, Bu
 	// TODO: implement actual cleanup!
 
 	// change bulk load state to ABORTED_COMPLETE
-	wait(updateBulkLoadStateActor(db, id, BulkLoadState::ABORTED_COMPLETE));
+	wait(updateBulkLoadStateActor(db, id, BulkLoadStatus::State::ABORTED_COMPLETE));
 
 	return Void();
 }

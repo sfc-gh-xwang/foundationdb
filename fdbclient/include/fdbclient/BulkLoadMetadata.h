@@ -50,6 +50,6 @@ RangeMap& rangeMap();
 
 }; // namespace BulkLoadMetadata
 
-bool checkValidBulkLoadStateTransition(BulkLoadState current, BulkLoadState desired);
+bool checkValidBulkLoadStateTransition(BulkLoadStatus::State current, BulkLoadStatus::State desired);
 
 #endif

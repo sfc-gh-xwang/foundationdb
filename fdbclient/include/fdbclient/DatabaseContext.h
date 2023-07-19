@@ -450,8 +450,8 @@ public:
 	Future<Void> waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// internal state management - not exposed to public clients
-	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadState desiredState);
-	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadState desiredState);
+	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadStatus::State desiredState);
+	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadStatus::State desiredState);
 	Future<Void> cleanupAbortedBulkLoad(BulkLoadID id);
 	Future<Version> getBulkLoadVersion(BulkLoadID id);
 
