@@ -977,15 +977,31 @@ public:
 		}
 	};
 
-	std::deque<StorageServer::EmptyVersionQueueEntry> emptyVersionQueue;
-	DDSketch<double> emptyVersionWaitWindowLatency;
-	DDSketch<double> emptyVersionWaitWindowSketchPositive;
-	DDSketch<double> emptyVersionWaitWindowSketchNegative;
-	ContinuousSample<double> emptyVersionWaitWindowContSample;
-	double minWaitWindow;
-	double minSafeWaitWindow;
-	uint64_t positiveSampleNum;
-	uint64_t negativeSampleNum;
+	struct EmptyVersionStats {
+		constexpr static FileIdentifier file_identifier = 15292782;
+
+		std::deque<StorageServer::EmptyVersionQueueEntry> tlogVersionQueue;
+		ContinuousSample<double> safeWaitWindow =
+		    ContinuousSample<double>(2 * SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT);
+		double minWaitWindow = INT_MAX;
+		double minSafeWaitWindow = INT_MAX;
+		uint64_t positiveSampleNum = 0;
+		uint64_t negativeSampleNum = 0;
+
+		// DDSketch<double> emptyVersionWaitWindowLatency = DDSketch<double>(0.00001); // deprecated for now
+		// DDSketch<double> emptyVersionWaitWindowSketchPositive = DDSketch<double>(0.00001); // deprecated for now
+		// DDSketch<double> emptyVersionWaitWindowSketchNegative = DDSketch<double>(0.00001); // deprecated for now
+
+		void resetExceptQueue() {
+			safeWaitWindow.clear();
+			minWaitWindow = INT_MAX;
+			minSafeWaitWindow = INT_MAX;
+			positiveSampleNum = 0;
+			negativeSampleNum = 0;
+		}
+	};
+	EmptyVersionStats emptyVersionWaitMutationStats;
+	EmptyVersionStats emptyVersionWaitNonMutationStats;
 
 	std::map<Version, Standalone<VerUpdateRef>> const& getMutationLog() const { return mutationLog; }
 	std::map<Version, Standalone<VerUpdateRef>>& getMutableMutationLog() { return mutationLog; }
@@ -1535,14 +1551,8 @@ public:
 	    poppedAllAfter(std::numeric_limits<Version>::max()),
 	    cpuUsage(0.0),
 	    diskUsage(0.0),
-	    emptyVersionWaitWindowLatency(0.00001),
-	    emptyVersionWaitWindowSketchPositive(0.00001),
-	    emptyVersionWaitWindowSketchNegative(0.00001),
-	    emptyVersionWaitWindowContSample(2 * SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT),
-	    minWaitWindow(INT_MAX),
-	    minSafeWaitWindow(INT_MAX),
-	    positiveSampleNum(0),
-	    negativeSampleNum(0),
+	    emptyVersionWaitMutationStats(),
+	    emptyVersionWaitNonMutationStats(),
 	    storage(this, storage),
 	    shardChangeCounter(0),
 	    lastTLogVersion(0),
@@ -2066,56 +2076,43 @@ void updateProcessStats(StorageServer* self) {
 #endif
 
 // Lightweight blocking function that samples request and log positive safe wait window.
-// Return if a negative sample need to be considered following this function.
-inline void samplePositiveWaitWindow(StorageServer* self, Version version, double versionArrivalTimestamp) {
+inline void samplePositiveWaitWindowStats(StorageServer::EmptyVersionStats& stats,
+                                          Version version,
+                                          double versionArrivalTime) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return;
 
 	bool popped = false;
-	while (!self->emptyVersionQueue.empty() && self->emptyVersionQueue.front().version <= version) {
-		self->emptyVersionQueue.pop_front();
+	while (!stats.tlogVersionQueue.empty() && stats.tlogVersionQueue.front().version <= version) {
+		stats.tlogVersionQueue.pop_front();
 		popped = true;
 	}
-
 	// NOTE: This current approach collects pessimistic statistics
-	if (!self->emptyVersionQueue.empty() && (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
-		double emptyVersionSafeWait = versionArrivalTimestamp - self->emptyVersionQueue.front().timestamp;
+	if (!stats.tlogVersionQueue.empty() && (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
+		double emptyVersionSafeWait = versionArrivalTime - stats.tlogVersionQueue.front().timestamp;
 		ASSERT(emptyVersionSafeWait >= 0);
-		// TraceEvent("EmptyVersionWaitWindow", self->thisServerID)
-		//     .suppressFor(5)
-		//     .detail("QueueSize", self->emptyVersionQueue.size())
-		//     .detail("WaitWindow", emptyVersionSafeWait);
-		// TraceEvent("PositiveEmptyVersionSample", self->thisServerID)
-		//     .suppressFor(1)
-		//     .detail("Duration", emptyVersionSafeWait); // remove before merge
 		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
-			self->emptyVersionWaitWindowContSample.addSample(emptyVersionSafeWait);
-			self->emptyVersionWaitWindowSketchPositive.addSample(emptyVersionSafeWait);
+			stats.safeWaitWindow.addSample(emptyVersionSafeWait);
 		}
-		self->minWaitWindow = std::min(emptyVersionSafeWait, self->minWaitWindow);
-		self->minSafeWaitWindow = std::min(emptyVersionSafeWait, self->minSafeWaitWindow);
-		++self->positiveSampleNum;
+		stats.minWaitWindow = std::min(emptyVersionSafeWait, stats.minWaitWindow);
+		stats.minSafeWaitWindow = std::min(emptyVersionSafeWait, stats.minSafeWaitWindow);
+		++stats.positiveSampleNum;
 	}
 }
 
 // Lightweight blocking function that samples request and log negative wait window adjustments.
-inline void sampleNegativeWaitWindow(StorageServer* self, double versionArrivalTime) {
+inline void sampleNegativeWaitWindowStats(StorageServer::EmptyVersionStats& stats, double versionArrivalTime) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return;
 
 	double waitTime = g_network->timer() - versionArrivalTime;
-	// TraceEvent("NegativeEmptyVersionSample", self->thisServerID)
-	//     .suppressFor(1)
-	//     .detail("Duration", waitTime); // remove before merge
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
-		self->emptyVersionWaitWindowLatency.addSample(waitTime);
-		self->emptyVersionWaitWindowContSample.addSample(-waitTime);
-		self->emptyVersionWaitWindowSketchNegative.addSample(waitTime);
+		stats.safeWaitWindow.addSample(-waitTime);
 	}
-	self->minWaitWindow = std::min(-waitTime, self->minWaitWindow);
-	++self->negativeSampleNum;
+	stats.minWaitWindow = std::min(-waitTime, stats.minWaitWindow);
+	++stats.negativeSampleNum;
 }
 
 ACTOR Future<Version> waitForVersionActor(StorageServer* data,
@@ -2129,12 +2126,15 @@ ACTOR Future<Version> waitForVersionActor(StorageServer* data,
 			// wait( delay(0) );  // don't do a whole bunch of these at once
 			if (version < data->oldestVersion.get())
 				throw transaction_too_old(); // just in case
-			// Wait ended, collect wait timing statistics
-			sampleNegativeWaitWindow(data, versionArrivalTimestamp);
+			DisabledTraceEvent("VersionWaitedSuccess");
+			sampleNegativeWaitWindowStats(data->emptyVersionWaitMutationStats, versionArrivalTimestamp);
+			sampleNegativeWaitWindowStats(data->emptyVersionWaitNonMutationStats, versionArrivalTimestamp);
 			return version;
 		}
 		when(wait(delay(SERVER_KNOBS->FUTURE_VERSION_DELAY))) {
-			sampleNegativeWaitWindow(data, versionArrivalTimestamp);
+			DisabledTraceEvent("VersionWaitedTimeout");
+			sampleNegativeWaitWindowStats(data->emptyVersionWaitMutationStats, versionArrivalTimestamp);
+			sampleNegativeWaitWindowStats(data->emptyVersionWaitNonMutationStats, versionArrivalTimestamp);
 			if (deterministicRandom()->random01() < 0.001)
 				TraceEvent(SevWarn, "ShardServerFutureVersion1000x", data->thisServerID)
 				    .detail("Version", version)
@@ -2165,7 +2165,7 @@ Version getLatestCommitVersion(VersionVector& ssLatestCommitVersions, Tag& tag) 
 Future<Version> waitForVersion(StorageServer* data,
                                Version version,
                                SpanContext spanContext,
-                               double versionArrivalTimestamp) {
+                               double versionArrivalTime) {
 	if (version == latestVersion) {
 		version = std::max(Version(1), data->version.get());
 	}
@@ -2175,7 +2175,24 @@ Future<Version> waitForVersion(StorageServer* data,
 		return transaction_too_old();
 	} else if (version <= data->version.get()) {
 		// No need to wait for version
-		samplePositiveWaitWindow(data, version, versionArrivalTimestamp);
+		if (deterministicRandom()->random01() < 0.001) {
+			DisabledTraceEvent(SevDebug, "EnteredSamplePositiveWaitWindowStats1000x", data->thisServerID)
+			    .detail("Version", version)
+			    .detail("ArrivalTime", versionArrivalTime)
+			    .detail("QueueSize", data->emptyVersionWaitMutationStats.tlogVersionQueue.size())
+			    .detail("SampleSize", data->emptyVersionWaitMutationStats.safeWaitWindow.getPopulationSize());
+		}
+
+		samplePositiveWaitWindowStats(data->emptyVersionWaitMutationStats, version, versionArrivalTime);
+		samplePositiveWaitWindowStats(data->emptyVersionWaitNonMutationStats, version, versionArrivalTime);
+
+		if (deterministicRandom()->random01() < 0.001) {
+			DisabledTraceEvent(SevDebug, "FinishedSamplePositiveWaitWindowStats1000x", data->thisServerID)
+			    .detail("Version", version)
+			    .detail("ArrivalTime", versionArrivalTime)
+			    .detail("QueueSize", data->emptyVersionWaitMutationStats.tlogVersionQueue.size())
+			    .detail("SampleSize", data->emptyVersionWaitMutationStats.safeWaitWindow.getPopulationSize());
+		}
 		return version;
 	}
 
@@ -2186,7 +2203,7 @@ Future<Version> waitForVersion(StorageServer* data,
 	if (deterministicRandom()->random01() < 0.001) {
 		TraceEvent("WaitForVersion1000x").log();
 	}
-	return waitForVersionActor(data, version, spanContext, versionArrivalTimestamp);
+	return waitForVersionActor(data, version, spanContext, versionArrivalTime);
 }
 
 Future<Version> waitForVersion(StorageServer* data,
@@ -9496,21 +9513,6 @@ ACTOR Future<Void> tssDelayForever() {
 	}
 }
 
-inline void sampleTlogUpdateVersions(StorageServer* self, const Version& version, const double& timestamp) {
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
-		return;
-	DisabledTraceEvent("EmptyVersionTlogRecv", self->thisServerID).detail("Timestamp", timestamp);
-	// If queue piles up it means that there's not enough reads, so the queue is useless in this time
-	// window anyway, we do a cheap clear() and let it build up again
-	if (self->emptyVersionQueue.size() >= SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
-		TraceEvent("VersionQueueTlogCleared", self->thisServerID)
-		    .detail("QueueTimewindow",
-		            self->emptyVersionQueue.back().timestamp - self->emptyVersionQueue.front().timestamp);
-		self->emptyVersionQueue.clear();
-	}
-	self->emptyVersionQueue.emplace_back(version, timestamp);
-}
-
 ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 	state double updateStart = g_network->timer();
 	state double decryptionTime = 0;
@@ -9603,8 +9605,46 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 		}
 
 		// Track tlog sync version recv time right before we update local version
-		// log tlog identifier
-		sampleTlogUpdateVersions(data, cursor->getMaxKnownVersion(), now());
+		// log tlog identifier.
+		// We keep two queues at each SS to track empty version wait window
+		// 1. peekReply is nonempty + tlog reported no wait: must be mutation with no wait
+		// 2. peekReply is empty: must be Non-mutation and fully waited
+		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED) {
+			ASSERT(cursor->getPeekReplySize() != -1);
+			ASSERT(cursor->getTlogWaitTime() != -1);
+			double peekReplyRecvTime = g_network->timer();
+			if (cursor->getPeekReplySize() > 0 && cursor->getTlogWaitTime() == 0) {
+				TraceEvent(SevDebug, "NewMutationFromTlog", data->thisServerID);
+				// nonempty peeks with zero wait time, consider it as one datapoint in mutation queue, accurate because
+				// it is short-circuited on tlog and we're sure it did not wait
+				if (data->emptyVersionWaitMutationStats.tlogVersionQueue.size() >=
+				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
+					// If queue piles up it means that there's not enough reads, so the queue is useless in this time
+					// window anyway, we do a cheap clear() and let it build up again
+					data->emptyVersionWaitMutationStats.tlogVersionQueue.clear();
+					TraceEvent("EmptyVersionMutationQueueCleared", data->thisServerID)
+					    .detail("QueueTimewindow",
+					            data->emptyVersionWaitMutationStats.tlogVersionQueue.back().timestamp -
+					                data->emptyVersionWaitMutationStats.tlogVersionQueue.front().timestamp);
+				}
+				data->emptyVersionWaitMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
+				                                                                  peekReplyRecvTime);
+			} else {
+				TraceEvent(SevDebug, "NewNonMutationFromTlog", data->thisServerID);
+				// empty peeks, must have fully waited
+				// TODO: use first non-empty sample in batch as timing? if we ever timestamp every single version
+				if (data->emptyVersionWaitNonMutationStats.tlogVersionQueue.size() >=
+				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
+					data->emptyVersionWaitNonMutationStats.tlogVersionQueue.clear();
+					TraceEvent("EmptyVersionNonMutationQueueCleared", data->thisServerID)
+					    .detail("QueueTimewindow",
+					            data->emptyVersionWaitNonMutationStats.tlogVersionQueue.back().timestamp -
+					                data->emptyVersionWaitNonMutationStats.tlogVersionQueue.front().timestamp);
+				}
+				data->emptyVersionWaitNonMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
+				                                                                     peekReplyRecvTime);
+			}
+		}
 
 		++data->counters.updateBatches;
 		data->lastTLogVersion = cursor->getMaxKnownVersion();
@@ -11909,17 +11949,35 @@ ACTOR Future<Void> reportStorageServerState(StorageServer* self) {
 	}
 }
 
+void inline traceWaitWindowDecision(StorageServer* self, double targetWaitWindow, double lastWaitWindow) {
+	TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
+	    // Decision
+	    .detail("Sacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
+	    .detail("MutationSampleSize", self->emptyVersionWaitMutationStats.safeWaitWindow.getPopulationSize())
+	    .detail("NonMutationSampleSize", self->emptyVersionWaitNonMutationStats.safeWaitWindow.getPopulationSize())
+	    .detail("WaitWindowDecision", targetWaitWindow)
+	    .detail("WaitWindowLast", lastWaitWindow)
+	    // Mutations
+	    .detail("MutationPositiveNum", self->emptyVersionWaitMutationStats.positiveSampleNum)
+	    .detail("MutationNegativeNum", self->emptyVersionWaitMutationStats.negativeSampleNum)
+	    .detail("MutationMinWaitWindow", self->emptyVersionWaitMutationStats.minWaitWindow)
+	    .detail("MutationMinSafeWaitWindow", self->emptyVersionWaitMutationStats.minSafeWaitWindow)
+	    .detail("MutationPercentileWaitWindow",
+	            self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
+	                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE))
+	    // Non mutations
+	    .detail("NonMutationPositiveNum", self->emptyVersionWaitNonMutationStats.positiveSampleNum)
+	    .detail("NonMutationNegativeNum", self->emptyVersionWaitNonMutationStats.negativeSampleNum)
+	    .detail("NonMutationMinWaitWindow", self->emptyVersionWaitNonMutationStats.minWaitWindow)
+	    .detail("NonMutationMinSafeWaitWindow", self->emptyVersionWaitNonMutationStats.minSafeWaitWindow)
+	    .detail("NonMutationPercentileWaitWindow",
+	            self->emptyVersionWaitNonMutationStats.safeWaitWindow.percentile(
+	                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE));
+}
+
 void inline resetWaitWindowStatistics(StorageServer* self) {
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
-		self->emptyVersionWaitWindowLatency.clear();
-		self->emptyVersionWaitWindowContSample.clear();
-		self->emptyVersionWaitWindowSketchPositive.clear();
-		self->emptyVersionWaitWindowSketchNegative.clear();
-	}
-	self->positiveSampleNum = 0;
-	self->negativeSampleNum = 0;
-	self->minWaitWindow = INT_MAX;
-	self->minSafeWaitWindow = INT_MAX;
+	self->emptyVersionWaitMutationStats.resetExceptQueue();
+	self->emptyVersionWaitNonMutationStats.resetExceptQueue();
 }
 
 ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
@@ -11927,7 +11985,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return Void();
 
-	state double lastSyncTime = now();
+	state double lastSyncTime = g_network->timer();
 	state double lastWaitWindow = 0;
 
 	loop {
@@ -11937,69 +11995,51 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					continue;
 				}
 
-				state uint64_t sampleCount = self->positiveSampleNum + self->negativeSampleNum;
+				state uint64_t mutationSize = self->emptyVersionWaitMutationStats.safeWaitWindow.getPopulationSize();
+				state uint64_t nonMutationSize =
+				    self->emptyVersionWaitNonMutationStats.safeWaitWindow.getPopulationSize();
+				state uint64_t sampleCount = mutationSize + nonMutationSize;
+				state double targetWaitWindow = 0;
+
+				// Skip round if not enough samples are accumulated
 				if (sampleCount < SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT) {
 					TraceEvent("EmptyVersionWaitWindowSkip", self->thisServerID)
 					    .suppressFor(20)
 					    .detail("SketchSize", sampleCount);
-					if (now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_INTERVAL) {
-						wait(self->logSystem->pushEmptyVersionWaitWindow(
-						    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WINDOW, self->tag));
-						lastWaitWindow = SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WINDOW;
+					if (g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_INTERVAL) {
+						targetWaitWindow = SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WINDOW;
+						traceWaitWindowDecision(self, targetWaitWindow, lastWaitWindow);
+						wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag));
 						resetWaitWindowStatistics(self);
-						lastSyncTime = now();
+						lastWaitWindow = targetWaitWindow;
+						lastSyncTime = g_network->timer();
 					}
 					continue;
 				}
 
-				// The sketch is flipped for accuracy reasons? DDSketch may not be suitable for our distribution. We
-				// have very thick tails...
-				// double deltaCont = self->emptyVersionWaitWindowContSample.percentile(
-				//     SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
-
-				// double cut = 0.1 * (self->negativeSampleNum + self->positiveSampleNum);
-				// double deltaSeparate =
-				//     cut <= self->negativeSampleNum
-				//         ? -self->emptyVersionWaitWindowSketchNegative.percentile(1 - cut / self->negativeSampleNum)
-				//         : self->emptyVersionWaitWindowSketchPositive.percentile((cut - self->negativeSampleNum) /
-				//                                                                 self->positiveSampleNum);
-				// double criteria = self->emptyVersionWaitWindowSketchNegative.percentile(0.90);
-				// state double waitWindowTarget =
-				//     criteria > 0.001 ? lastWaitWindow - criteria : lastWaitWindow + deltaSeparate;
-
-				// double latency_cut = self->emptyVersionWaitWindowLatency.percentile(0.95);
-				// state double waitWindowTarget =
-				//     latency_cut > 0.010 ? lastWaitWindow - latency_cut
-				//                         : lastWaitWindow + self->emptyVersionWaitWindowContSample.percentile(0.01);
-
-				state double waitWindowTarget = 0;
+				// Decide wait window:
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE == 0) {
-					waitWindowTarget = (lastWaitWindow + self->minWaitWindow) * 0.95;
+					targetWaitWindow =
+					    mutationSize > 0.1 * (mutationSize + nonMutationSize)
+					        ? 0 + self->emptyVersionWaitMutationStats.minWaitWindow * 0.95
+					        : (lastWaitWindow + self->emptyVersionWaitNonMutationStats.minWaitWindow) * 0.95;
 				} else {
-					waitWindowTarget =
-					    lastWaitWindow + self->emptyVersionWaitWindowContSample.percentile(
-					                         SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
+					targetWaitWindow =
+					    mutationSize > 0.1 * (mutationSize + nonMutationSize)
+					        ? 0 + self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
+					                  SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
+					        : lastWaitWindow + self->emptyVersionWaitNonMutationStats.safeWaitWindow.percentile(
+					                               SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
 				}
 
+				// Log-only mode reporting
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
 				    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY) {
-					if (now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
-						// TODO: Update log-only mode to reflect correct traces once final algo choice is made
-						TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
-						    .detail("SketchSize", sampleCount)
-						    .detail("PercentileSacrifice",
-						            SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
-						    .detail("WaitWindowDecision", waitWindowTarget)
-						    .detail("WaitWindowLast", lastWaitWindow)
-						    .detail("MinWaitWindow", self->minWaitWindow)
-						    .detail("PercentileSafeWaitWindow",
-						            self->emptyVersionWaitWindowContSample.percentile(
-						                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE))
-						    .detail("MinSafeWaitWindow", self->minSafeWaitWindow) // sanity check for safe delay window
-						    .detail("PositiveSampleNum", self->positiveSampleNum)
-						    .detail("NegativeSampleNum", self->negativeSampleNum);
+					if (g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
+						traceWaitWindowDecision(self, targetWaitWindow, lastWaitWindow);
 						resetWaitWindowStatistics(self);
-						lastSyncTime = now();
+						lastWaitWindow = targetWaitWindow;
+						lastSyncTime = g_network->timer();
 					}
 					continue;
 				}
@@ -12007,49 +12047,41 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				// Under read bursts, it is possible the sketch gives negative results because of requests waiting
 				// for versions even if we have already set waitWindow to zero. We keep sending the minimum wait
 				// window possible to tlog (zero)
-				if (waitWindowTarget < 0)
-					waitWindowTarget = 0;
+				if (targetWaitWindow < 0)
+					targetWaitWindow = 0;
 
 				// Cap delay window growth to be below maximum allowed version wait. Beyond this waitForVersionActor()
-				// will fail to wait for version and throw error
-				if (waitWindowTarget > SERVER_KNOBS->FUTURE_VERSION_DELAY / 2)
-					waitWindowTarget = SERVER_KNOBS->FUTURE_VERSION_DELAY / 2;
+				// will fail to wait for version and throw error. We don't want this to happen because we set
+				// targetWaitWindow too large.
+				if (targetWaitWindow > SERVER_KNOBS->FUTURE_VERSION_DELAY / 2)
+					targetWaitWindow = SERVER_KNOBS->FUTURE_VERSION_DELAY / 2;
 
 				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval
 				// knob
-				// 1. Rising edge client request: Last window much bigger than new window.
+				// 1. Falling wait window decision edge: Last window much bigger than new window.
 				bool emergencyRewrite = false;
-				if (lastWaitWindow - waitWindowTarget > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD)
+				if (lastWaitWindow - targetWaitWindow > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD)
 					emergencyRewrite = true;
 
-				if (emergencyRewrite || now() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
-					TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
-					    .detail("SketchSize", sampleCount)
-					    .detail("PercentileSacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
-					    .detail("WaitWindowDecision", waitWindowTarget)
-					    .detail("WaitWindowLast", lastWaitWindow)
-					    .detail("MinWaitWindow", self->minWaitWindow)
-					    .detail("PercentileSafeWaitWindow",
-					            self->emptyVersionWaitWindowContSample.percentile(
-					                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE))
-					    .detail("MinSafeWaitWindow", self->minSafeWaitWindow) // sanity check for safe delay window
-					    .detail("PositiveSampleNum", self->positiveSampleNum)
-					    .detail("NegativeSampleNum", self->negativeSampleNum);
+				// Boradcast wait window decision to all tlog and wait for reply
+				if (emergencyRewrite ||
+				    g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
+					traceWaitWindowDecision(self, targetWaitWindow, lastWaitWindow);
 
 					// Skip sending wait window if new decision is the same as the last one sent.
-					if (waitWindowTarget != lastWaitWindow) {
-						DisabledTraceEvent("PushedWaitWindowForTag")
+					if (targetWaitWindow != lastWaitWindow) {
+						TraceEvent("PushedWaitWindowForTag")
 						    .detail("Tag", self->tag)
-						    .detail("WaitWindow", waitWindowTarget);
-						wait(self->logSystem->pushEmptyVersionWaitWindow(waitWindowTarget, self->tag));
-						DisabledTraceEvent("CompletedWaitWindowForTag")
+						    .detail("WaitWindow", targetWaitWindow);
+						wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag));
+						TraceEvent("CompletedWaitWindowForTag")
 						    .detail("Tag", self->tag)
-						    .detail("WaitWindow", waitWindowTarget);
+						    .detail("WaitWindow", targetWaitWindow);
 					}
 
 					resetWaitWindowStatistics(self);
-					lastWaitWindow = waitWindowTarget;
-					lastSyncTime = now();
+					lastWaitWindow = targetWaitWindow;
+					lastSyncTime = g_network->timer();
 				}
 			}
 		}
