@@ -139,8 +139,11 @@ Optional<double> RKServerThroughputTracker::getThroughput(UID storageServerId, T
 
 double RKServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
 	double result{ 0.0 };
-	for (auto const& [ssId, _] : throughput) {
-		result += getThroughput(ssId, throttlingId).orDefault(0);
+	for (auto const& [_, throttlingIdToThroughputCounters] : throughput) {
+		auto const throughputCounters = tryGet(throttlingIdToThroughputCounters, throttlingId);
+		if (throughputCounters.present()) {
+			result += throughputCounters.get().getThroughput();
+		}
 	}
 	return result;
 }
