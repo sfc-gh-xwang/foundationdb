@@ -565,7 +565,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> alreadyBlobRangeUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
-		// Test that a bulk load cannot start to a non-empty range
+		// Test that a bulk load cannot start if a blobbified range already overlaps the start range
 		bool success1 = wait(cx->blobbifyRange(range, self->tenant));
 		ASSERT(success1);
 
@@ -587,7 +587,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> blobbifyDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
-		// Test that clients cannot write to the range of an active bulk load
+		// Test that clients cannot blobbify a range intersecting with an active bulk load
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 
 		// FIXME: this needs to respect write lock/tenant lock for this to work

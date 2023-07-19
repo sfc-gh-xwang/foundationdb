@@ -17,21 +17,17 @@
 
 namespace BulkLoadMetadata {
 
-// 0x02 - not in transaction state store
 // bulk load status keys - updated every time the state of a bulk load changes
 extern const KeyRangeRef bulkLoadStatusKeys;
 typedef KeyBackedObjectMap<BulkLoadID, BulkLoadStatus, _IncludeVersion, NullCodec> StatusMap;
 
-// 0x02 - not in transaction state store
 // metadata for active (not completed or aborted) bulk loads
-// FIXME: make these versionstamped!
 extern const KeyRangeRef bulkLoadInfoKeys;
 typedef KeyBackedObjectMap<BulkLoadID, BulkLoadInfo, _IncludeVersion, NullCodec> InfoMap;
 
 // set whenever a new bulk load is added, or an old one is cleaned up (changed by writes to bulkLoadInfoKeys)
 extern const StringRef bulkLoadChangeKey;
 
-// 0x02 -> not in transaction state store
 // versionstamp of start for active bulk loads
 extern const KeyRangeRef bulkLoadVersionKeys;
 typedef KeyBackedMap<BulkLoadID, Versionstamp, NullCodec, BinaryCodec<Versionstamp>> VersionMap;
