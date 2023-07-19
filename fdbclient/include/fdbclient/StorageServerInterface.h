@@ -1313,7 +1313,7 @@ struct GetStorageEngineParamsReply {
 	StorageEngineParamSet params;
 
 	GetStorageEngineParamsReply() = default;
-	GetStorageEngineParamsReply(StorageEngineParamSet const& params) : params(params) {}
+	explicit GetStorageEngineParamsReply(StorageEngineParamSet const& params) : params(params) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

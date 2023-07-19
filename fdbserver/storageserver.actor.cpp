@@ -11911,9 +11911,14 @@ ACTOR Future<Void> reportStorageServerState(StorageServer* self) {
 ACTOR Future<Void> getStorageEngineParamsActor(StorageServer* self, GetStorageEngineParamsRequest req) {
 	if (StorageEngineParamsFactory::isSupported(self->storage.getKeyValueStoreType())) {
 		ASSERT(self->isUsingStorageEngineParams());
-		StorageEngineParamSet params = wait(self->storage.getStorageEngineParams());
-		GetStorageEngineParamsReply _reply(params);
-		req.reply.send(_reply);
+		try {
+			StorageEngineParamSet params = wait(self->storage.getStorageEngineParams());
+			GetStorageEngineParamsReply _reply(params);
+			req.reply.send(_reply);
+		} catch (Error& e) {
+			TraceEvent(SevWarn, "StorageEngineGetParamsCallFailed").errorUnsuppressed(e);
+			req.reply.sendError(e);
+		}
 	} else {
 		TraceEvent(SevWarn, "StorageEngineParamInterfaceNotSupprted")
 		    .detail("RequestType", "Get")
@@ -11927,9 +11932,15 @@ ACTOR Future<Void> getStorageEngineParamsActor(StorageServer* self, GetStorageEn
 ACTOR Future<Void> setStorageEngineParamsActor(StorageServer* self, SetStorageEngineParamsRequest req) {
 	if (StorageEngineParamsFactory::isSupported(self->storage.getKeyValueStoreType())) {
 		ASSERT(self->isUsingStorageEngineParams());
-		StorageEngineParamResult res = wait(self->storage.setStorageEngineParams(req.params));
-		SetStorageEngineParamsReply _reply(res);
-		req.reply.send(_reply);
+		state SetStorageEngineParamsReply _reply;
+		try {
+			StorageEngineParamResult res = wait(self->storage.setStorageEngineParams(req.params));
+			_reply = SetStorageEngineParamsReply(res);
+			req.reply.send(_reply);
+		} catch (Error& e) {
+			TraceEvent(SevWarn, "StorageEngineSetParamsCallFailed").errorUnsuppressed(e);
+			req.reply.sendError(e);
+		}
 		if (self->isTss() && _reply.result.needReplacement.size()) {
 			// needReplacement changes will destroy the TSS and a new one will be recruited
 			TraceEvent(SevInfo, "TSSNeedReplacementParamChange")

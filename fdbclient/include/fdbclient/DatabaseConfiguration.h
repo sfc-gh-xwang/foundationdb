@@ -440,7 +440,9 @@ struct StorageEngineParamsFactory {
 	}
 
 	// only storage engines added into the factory are supported
-	static bool isSupported(KeyValueStoreType::StoreType storeType) { return !factories()[storeType].empty(); }
+	static bool isSupported(KeyValueStoreType::StoreType storeType) {
+		return CLIENT_KNOBS->ENABLE_STORAGE_ENGINE_PARAM_INTERFACE && !factories()[storeType].empty();
+	}
 };
 
 #endif
