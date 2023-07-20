@@ -190,9 +190,15 @@ struct ILogSystem {
 		// always a possible result!)
 		virtual Version getMaxKnownVersion() const { return 0; }
 
-		virtual int getPeekReplySize() const { return -1; }
+		virtual int getPeekReplySize() const {
+			// NOTE: for now some IPeekCursor do not support getPeekReplySize(), they ouput -1 by default
+			return -1;
+		}
 
-		virtual double getTlogWaitTime() const { return -1; }
+		virtual double getTlogWaitTime() const {
+			// FIXME: -1 is used as default value at tlog side for debug reasons, change this when debug is done
+			return -2;
+		}
 
 		virtual Version getMinKnownCommittedVersion() const = 0;
 
