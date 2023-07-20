@@ -167,25 +167,27 @@ class QuotaThrottlerImpl {
 	Optional<double> getLimitingThrottlingRatio(ThrottlingId const& throttlingId,
 	                                            IRKMetricsTracker const& metricsTracker,
 	                                            RKServerThroughputTracker const& serverThroughputTracker) const {
-		std::unordered_map<Optional<Standalone<StringRef>>, double> zoneThrottlingRatios;
+		boost::unordered_flat_map<Optional<Standalone<StringRef>>, double> zoneThrottlingRatios;
 		auto const& storageQueueInfo = metricsTracker.getStorageQueueInfo();
 		for (auto const& [id, ssInfo] : storageQueueInfo) {
+			auto const throttlingRatio =
+			    ssInfo.getTagThrottlingRatio(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER);
+			if (!throttlingRatio.present()) {
+				continue;
+			}
+
 			// Ignore storage servers where throttlingId is not significantly contributing
 			auto const throughput = serverThroughputTracker.getThroughput(id, throttlingId);
 			if (!throughput.present() || throughput.get() < limitingThreshold) {
 				continue;
 			}
 
-			auto const throttlingRatio =
-			    ssInfo.getTagThrottlingRatio(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER);
-			if (throttlingRatio.present()) {
-				auto const [it, inserted] =
-				    zoneThrottlingRatios.try_emplace(ssInfo.locality.zoneId(), throttlingRatio.get());
-				if (!inserted) {
-					auto& zoneThrottlingRatio = it->second;
-					zoneThrottlingRatio = std::min<double>(zoneThrottlingRatio, throttlingRatio.get());
-				}
+			auto const [it, inserted] =
+			    zoneThrottlingRatios.try_emplace(ssInfo.locality.zoneId(), throttlingRatio.get());
+			if (!inserted) {
+				auto& zoneThrottlingRatio = it->second;
+				zoneThrottlingRatio = std::min<double>(zoneThrottlingRatio, throttlingRatio.get());
 			}
 		}
 		if (zoneThrottlingRatios.size() <= maxFallingBehind) {

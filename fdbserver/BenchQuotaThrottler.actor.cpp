@@ -78,4 +78,18 @@ static void bench_quota_throttler(benchmark::State& benchState) {
 	onMainThread([&benchState] { return benchQuotaThrottlerActor(&benchState); }).blockUntilReady();
 }
 
+static void bench_server_throughput_tracker(benchmark::State& benchState) {
+	int const numStorageServers = benchState.range(0);
+	int const busyThrottlingIdsPerSS = benchState.range(1);
+	auto const metricsTracker = getMetricsTracker(numStorageServers, busyThrottlingIdsPerSS);
+	RKServerThroughputTracker serverThroughputTracker;
+	for (auto _ : benchState) {
+		serverThroughputTracker.update(metricsTracker.getStorageQueueInfo());
+		ASSERT_GT(serverThroughputTracker.storageServersTracked(), 0);
+	}
+	benchState.SetItemsProcessed(static_cast<long>(benchState.iterations()));
+}
+
 BENCHMARK(bench_quota_throttler)->Ranges({ { 1, 1000 }, { 1, 100 }, { 1, 5 } })->ReportAggregatesOnly(true);
+
+BENCHMARK(bench_server_throughput_tracker)->Ranges({ { 1, 1000 }, { 1, 10 } })->ReportAggregatesOnly(true);
