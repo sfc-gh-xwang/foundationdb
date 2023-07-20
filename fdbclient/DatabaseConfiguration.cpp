@@ -971,6 +971,8 @@ TEST_CASE("/fdbclient/databaseConfiguration/configureStringFromJSON/storageEngin
 }
 
 TEST_CASE("/fdbclient/databaseConfiguration/storageEngineParamInterface/supportedEngines") {
+	IKnobCollection::getMutableGlobalKnobCollection().setKnob("enable_storage_engine_param_interface",
+	                                                          KnobValueRef::create(bool{ true }));
 	auto storeType = static_cast<KeyValueStoreType::StoreType>(
 	    deterministicRandom()->randomInt(0, KeyValueStoreType::StoreType::END));
 	std::set<KeyValueStoreType::StoreType> supportedEngines = { KeyValueStoreType::StoreType::SSD_REDWOOD_V1 };
