@@ -584,7 +584,7 @@ Tenant
       {  "TenantResolutionStatus": <Pending|Failed|Resolved>,
          "TenantResolutionErrorCode": <error code if tenant resolution failed>,
          "TenantID": <int64>,
-         "TenantGroup": <tenant's group name>,
+         "TenantGroup": <tenant group name>,
          ...
       }
 
