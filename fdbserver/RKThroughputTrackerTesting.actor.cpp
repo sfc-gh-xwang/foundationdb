@@ -71,12 +71,17 @@ TEST_CASE("/fdbserver/ratekeeper/RKClientThroughputTracker") {
 	state int const numThrottlingIds = 5;
 	state RKClientThroughputTracker throughputTracker(/*expirationCheckInterval=*/5.0);
 	state Future<Void> workloadFuture = runWorkload(&throughputTracker, throughput, numThrottlingIds);
-	while (!checkThroughput(throughputTracker, throughput, numThrottlingIds)) {
+	while (!checkThroughput(throughputTracker, throughput, numThrottlingIds) &&
+	       (throughputTracker.throttlingIdsTracked() != numThrottlingIds)) {
 		wait(delay(1.0));
 	}
-	// Stop all workload, but continue reporting:
+
+	// Stop all workload, but continue reporting. Eventually,
+	// the throughput tracker will report a throughput of 0 for all throttlingIds,
+	// and stop tracking all thorttlingIds.
 	workloadFuture = runWorkload(&throughputTracker, throughput, /*numThrottlingIds=*/0);
-	while (!checkThroughput(throughputTracker, /*desiredThroughput=*/0.0, numThrottlingIds)) {
+	while (!checkThroughput(throughputTracker, /*desiredThroughput=*/0.0, numThrottlingIds) &&
+	       (throughputTracker.throttlingIdsTracked() > 0)) {
 		wait(delay(1.0));
 	}
 	return Void();

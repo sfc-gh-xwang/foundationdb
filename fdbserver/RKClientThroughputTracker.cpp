@@ -56,6 +56,10 @@ boost::unordered_flat_set<ThrottlingId> RKClientThroughputTracker::getActiveThro
 	return result;
 }
 
+int RKClientThroughputTracker::throttlingIdsTracked() const {
+	return throughput.size();
+}
+
 void RKClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {
 	for (auto const& [throttlingId, newPerThrottlingIdThroughput] : newThroughput) {
 		throughput[throttlingId].addThroughput(newPerThrottlingIdThroughput);

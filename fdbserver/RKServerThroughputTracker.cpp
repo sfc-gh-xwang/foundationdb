@@ -227,6 +227,10 @@ boost::unordered_flat_set<ThrottlingId> MockThroughputTracker::getActiveThrottli
 	return result;
 }
 
+int MockThroughputTracker::throttlingIdsTracked() const {
+	return throughput.size();
+}
+
 void MockThroughputTracker::update(ThrottlingId const& throttlingId, double newThroughput) {
 	throughput[throttlingId] = newThroughput;
 }
