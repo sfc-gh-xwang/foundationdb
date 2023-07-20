@@ -12019,9 +12019,10 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					continue;
 				}
 
-				state uint64_t mutationSize = self->emptyVersionWaitMutationStats.safeWaitWindow.getPopulationSize();
-				state uint64_t nonMutationSize =
-				    self->emptyVersionWaitNonMutationStats.safeWaitWindow.getPopulationSize();
+				state uint64_t mutationSize = self->emptyVersionWaitMutationStats.positiveSampleNum +
+				                              self->emptyVersionWaitMutationStats.negativeSampleNum;
+				state uint64_t nonMutationSize = self->emptyVersionWaitNonMutationStats.positiveSampleNum +
+				                                 self->emptyVersionWaitNonMutationStats.negativeSampleNum;
 				state uint64_t sampleCount = mutationSize + nonMutationSize;
 				state double targetWaitWindow = 0;
 
