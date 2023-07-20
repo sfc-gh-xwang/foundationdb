@@ -2689,8 +2689,6 @@ void testConfigurableEncryptionNoAuthMode(const int minDomainId) {
 // HMAC_SHA authToken algorithm
 template <class Params>
 void testConfigurableEncryptionHeaderSingleAuthMode(int minDomainId) {
-	IKnobCollection::getMutableGlobalKnobCollection().setKnob("encrypt_header_auth_token_enabled",
-	                                                          KnobValueRef::create(bool{ true }));
 	TraceEvent("TestEncryptionHeaderStart").detail("Mode", getEncryptModeStr<Params>());
 
 	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
@@ -2757,8 +2755,6 @@ void testConfigurableEncryptionHeaderSingleAuthMode(int minDomainId) {
 // validate basic encrypt followed by decrypt operation for AUTH_TOKEN_MODE_SINGLE
 template <class Params>
 void testConfigurableEncryptionSingleAuthMode(const int minDomainId) {
-	IKnobCollection::getMutableGlobalKnobCollection().setKnob("encrypt_header_auth_token_enabled",
-	                                                          KnobValueRef::create(bool{ true }));
 	const EncryptCipherMode encryptMode = getEncryptMode<Params>();
 	const EncryptAuthTokenAlgo authAlgo = getAuthTokenAlgo<Params>();
 	const std::string authAlgoStr = getEncryptModeStr<Params>();
