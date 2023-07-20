@@ -3055,7 +3055,8 @@ ACTOR Future<StatusReply> clusterGetStatus(
     Version datacenterVersionDifference,
     ConfigBroadcaster const* configBroadcaster,
     Optional<UnversionedMetaclusterRegistrationEntry> metaclusterRegistration,
-    metacluster::MetaclusterMetrics metaclusterMetrics) {
+    metacluster::MetaclusterMetrics metaclusterMetrics,
+    std::unordered_set<NetworkAddress> excludedProcesses) {
 	state double tStart = timer();
 
 	state JsonBuilderArray messages;
@@ -3069,6 +3070,15 @@ ACTOR Future<StatusReply> clusterGetStatus(
 	try {
 
 		state JsonBuilderObject statusObj;
+
+		// gray failure detection, the info is local on CC
+		JsonBuilderObject grayFailureDetectionStatusObj;
+		JsonBuilderArray excludedProcessesArr;
+		for (const auto& addr : excludedProcesses) {
+			excludedProcessesArr.push_back(addr.toString());
+		}
+		grayFailureDetectionStatusObj["excluded_processes"] = excludedProcessesArr;
+		statusObj["gray_failure_detection"] = grayFailureDetectionStatusObj;
 
 		// Get EKP Health
 		if (db->get().client.encryptKeyProxy.present()) {
