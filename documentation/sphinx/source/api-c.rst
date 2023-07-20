@@ -579,12 +579,12 @@ Tenant
 
    Returns a JSON string containing tenant client-side status information. The report includes the database status information, and the tenant's ID and group name if set. The report schema is:
 
-   .. code-block::
+   .. code-block:: json
 
       {  "TenantResolutionStatus": <Pending|Failed|Resolved>,
          "TenantResolutionErrorCode": <error code if tenant resolution failed>,
          "TenantID": <int64>,
-         "TenantGroup": <tenant's group name>
+         "TenantGroup": <tenant's group name>,
          ...
       }
 
