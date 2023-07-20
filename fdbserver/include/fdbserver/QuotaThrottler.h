@@ -59,7 +59,7 @@ public:
 	                                            IRKClusterThroughputTracker const&,
 	                                            RKServerThroughputTracker const&);
 
-	std::unordered_set<ThrottlingId> getBusyThrottlingIds() const;
+	boost::unordered::unordered_flat_set<ThrottlingId> getBusyThrottlingIds() const;
 
 	// Testing only:
 public:

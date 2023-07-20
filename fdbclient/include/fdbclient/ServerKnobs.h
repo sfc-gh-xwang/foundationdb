@@ -783,7 +783,10 @@ public:
 	double CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME;
 	double CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME;
 
+	// If the throughput exceeds the THROTTLING_ID_BUSY_THRESHOLD * effective quota, it will be recognized as a busy
+	// throttling ID. The client will utilize this ID to bypass the grv cache
 	double THROTTLING_ID_BUSY_THRESHOLD;
+	// When the throughput of a busy tag falls below this threshold, it will no longer be classified as busy.
 	double THROTTLING_ID_FORGET_THRESHOLD;
 
 	double MAX_TRANSACTIONS_PER_BYTE;

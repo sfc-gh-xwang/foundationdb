@@ -27,10 +27,12 @@
 #include "fdbrpc/fdbrpc.h"
 #include "fdbclient/FDBTypes.h"
 
+#include <boost/unordered/unordered_flat_set.hpp>
+
 struct ReportThroughputReply {
 	constexpr static FileIdentifier file_identifier = 1087923;
 
-	std::unordered_set<ThrottlingId> busyTags;
+	boost::unordered::unordered_flat_set<ThrottlingId> busyTags;
 
 	template <class Ar>
 	void serialize(Ar& ar) {

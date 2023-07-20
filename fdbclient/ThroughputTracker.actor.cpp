@@ -28,7 +28,6 @@ public:
 					                               std::move(req),
 					                               TaskPriority::DefaultPromiseEndpoint,
 					                               AtMostOnce::True))) {
-						TraceEvent("ReportThroughputReply").detail("BusyTags", reply.busyTags.size());
 						self->busyTags = std::move(reply.busyTags);
 					}
 

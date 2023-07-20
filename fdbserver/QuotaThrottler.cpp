@@ -19,7 +19,6 @@
  */
 
 #include "fdbclient/FDBTypes.h"
-#include "fdbclient/ServerKnobs.h"
 #include "fdbclient/ThrottlingId.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
@@ -133,7 +132,7 @@ class QuotaThrottlerImpl {
 
 	ThrottlingIdMap<PerThrottlingIdStatistics> throttlingStatistics;
 
-	std::unordered_set<ThrottlingId> busyThrottlingIds;
+	boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 
 	Optional<double> getTransactionRate(ThrottlingId const& throttlingId) const {
 		auto it = throttlingStatistics.find(throttlingId);
@@ -366,11 +365,9 @@ public:
 
 				auto rate = stats.getTransactionRate();
 
-				if (rate > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyRate) &&
-				    !busyThrottlingIds.contains(throttlingId)) {
+				if (rate > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyRate)) {
 					busyThrottlingIds.emplace(throttlingId);
-				} else if (rate < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyRate) &&
-				           busyThrottlingIds.contains(throttlingId)) {
+				} else if (rate < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyRate)) {
 					busyThrottlingIds.erase(throttlingId);
 				}
 
@@ -418,11 +415,9 @@ public:
 
 				auto throughput = clusterThroughputTracker.getThroughput(throttlingId);
 
-				if (throughput > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyThroughput) &&
-				    !busyThrottlingIds.contains(throttlingId)) {
+				if (throughput > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyThroughput)) {
 					busyThrottlingIds.emplace(throttlingId);
-				} else if (throughput < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyThroughput) &&
-				           busyThrottlingIds.contains(throttlingId)) {
+				} else if (throughput < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyThroughput)) {
 					busyThrottlingIds.erase(throttlingId);
 				}
 
@@ -439,7 +434,7 @@ public:
 		return result;
 	}
 
-	std::unordered_set<ThrottlingId> getBusyThrottlingIds() const { return busyThrottlingIds; }
+	boost::unordered::unordered_flat_set<ThrottlingId> getBusyThrottlingIds() const { return busyThrottlingIds; }
 
 	int64_t throttleCount() const { return lastBusyThrottlingIdCount; }
 	int64_t manualThrottleCount() const { return 0; }
@@ -491,7 +486,7 @@ int64_t QuotaThrottler::throttleCount() const {
 	return impl->throttleCount();
 }
 
-std::unordered_set<ThrottlingId> QuotaThrottler::getBusyThrottlingIds() const {
+boost::unordered::unordered_flat_set<ThrottlingId> QuotaThrottler::getBusyThrottlingIds() const {
 	return impl->getBusyThrottlingIds();
 }
 

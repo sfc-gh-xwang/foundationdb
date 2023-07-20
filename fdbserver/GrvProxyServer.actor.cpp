@@ -41,6 +41,7 @@
 #include "flow/flow.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 #include "flow/genericactors.actor.h"
+#include <boost/unordered/unordered_flat_set.hpp>
 #include <unordered_set>
 
 struct GrvProxyStats {
@@ -390,7 +391,7 @@ ACTOR Future<Void> globalConfigRequestServer(GrvProxyData* grvProxyData, GrvProx
 
 ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRequest> stream,
                                                  ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
-                                                 std::unordered_set<ThrottlingId>* busyTags) {
+                                                 boost::unordered::unordered_flat_set<ThrottlingId>* busyTags) {
 	loop {
 		ReportThroughputRequest req = waitNext(stream);
 		for (auto const& [throttlingId, clientThroughput] : req.throughput) {
@@ -417,7 +418,7 @@ ACTOR Future<Void> getRate(UID myID,
                            ThrottlingIdMap<uint64_t>* throttlingIdThroughput,
                            GrvProxyStats* stats,
                            GrvProxyData* proxyData,
-                           std::unordered_set<ThrottlingId>* busyTags) {
+                           boost::unordered::unordered_flat_set<ThrottlingId>* busyTags) {
 	state Future<Void> nextRequestTimer = Never();
 	state Future<Void> leaseTimeout = Never();
 	state Future<GetRateInfoReply> reply = Never();
@@ -484,7 +485,7 @@ ACTOR Future<Void> getRate(UID myID,
 			}
 
 			if (rep.busyTags.present()) {
-				*busyTags = rep.busyTags.get();
+				*busyTags = std::move(rep.busyTags.get());
 			}
 		}
 		when(wait(leaseTimeout)) {
@@ -878,7 +879,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state ThrottlingIdMap<uint64_t> throttlingIdTransactionCounter;
 	state ThrottlingIdMap<uint64_t> throttlingIdThroughput;
 
-	state std::unordered_set<ThrottlingId> busyTags;
+	state boost::unordered::unordered_flat_set<ThrottlingId> busyTags;
 
 	state PromiseStream<double> normalGRVLatency;
 

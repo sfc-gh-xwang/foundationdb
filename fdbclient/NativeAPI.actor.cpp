@@ -7363,18 +7363,8 @@ bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority prior
 	return false;
 }
 
-bool useGrvCache(TransactionState* trState) {
-	return !CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !trState->options.skipGrvCache &&
-	       (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE ||
-	        trState->options.useGrvCache) &&
-	       rkThrottlingCooledDown(trState->cx.getPtr(), trState->options.priority) &&
-	       // skip cache if tag is busy, busy tags depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
-	       !(CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && trState->getThrottlingId().present() &&
-	         trState->cx->isThrottlingIdBusy(trState->getThrottlingId().get()));
-}
-
 ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
-	if (useGrvCache(trState)) {
+	if (trState->canUseGrvCache()) {
 		// Upon our first request to use cached RVs, start the background updater
 		if (!trState->cx->grvUpdateHandler.isValid()) {
 			trState->cx->grvUpdateHandler = backgroundGrvUpdater(trState->cx.getPtr());
@@ -7482,6 +7472,15 @@ Future<Version> TransactionState::getReadVersion(uint32_t flags) {
 	ASSERT(!readVersionFuture.isValid());
 
 	return getReadVersion_internal(this, flags);
+}
+
+bool TransactionState::canUseGrvCache() {
+	return !CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !options.skipGrvCache &&
+	       (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE || options.useGrvCache) &&
+	       rkThrottlingCooledDown(cx.getPtr(), options.priority) &&
+	       // skip cache if tag is busy, busy tags depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
+	       !(CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && getThrottlingId().present() &&
+	         cx->isThrottlingIdBusy(getThrottlingId().get()));
 }
 
 Optional<ThrottlingId> TransactionState::getThrottlingId() {

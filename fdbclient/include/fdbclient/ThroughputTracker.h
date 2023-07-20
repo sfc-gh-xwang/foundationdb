@@ -7,7 +7,7 @@
 #include "fdbclient/Knobs.h"
 #include "fdbclient/ThrottlingId.h"
 #include "fdbrpc/Smoother.h"
-#include <unordered_set>
+#include <boost/unordered/unordered_flat_set.hpp>
 
 // The ThroughputTracker class is responsible for periodically reporting each
 // throttlingId's throughput to GRV proxies.
@@ -29,7 +29,7 @@ class ThroughputTracker {
 	ThrottlingIdMap<ThroughputSmoother> smoothThroughput;
 	ThrottlingIdMap<ThroughputSmoother> smoothTransactionRate;
 
-	std::unordered_set<ThrottlingId> busyTags;
+	boost::unordered::unordered_flat_set<ThrottlingId> busyTags;
 
 public:
 	Future<Void> run(class DatabaseContext& cx);

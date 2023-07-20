@@ -63,7 +63,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 				if (self->provideExpectedCost) {
 					tr.setExpectedCost(self->opsPerTransaction * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 				}
-				
+
 				futures.clear();
 				futures.reserve(self->opsPerTransaction);
 				for (int i = 0; i < self->opsPerTransaction; ++i) {
@@ -110,6 +110,11 @@ public:
 		if (clientId != 0) {
 			return Void();
 		}
+
+		// Required for GRV Cache to work in simulation.
+		// Normally, MVC would set the shared state and it is verified upon setting the
+		// transaction option for GRV Cache.
+		// In simulation, explicitly initialize it when used for tests.
 		cx->initSharedState();
 		startTime = now();
 		std::vector<Future<Void>> clients;

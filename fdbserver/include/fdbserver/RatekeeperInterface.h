@@ -82,7 +82,7 @@ struct GetRateInfoReply {
 	HealthMetrics healthMetrics;
 	Optional<ThrottlingIdMap<double>> targetTransactionRate;
 	Optional<ThrottlingIdMap<double>> targetThroughput;
-	Optional<std::unordered_set<ThrottlingId>> busyTags;
+	Optional<boost::unordered::unordered_flat_set<ThrottlingId>> busyTags;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
