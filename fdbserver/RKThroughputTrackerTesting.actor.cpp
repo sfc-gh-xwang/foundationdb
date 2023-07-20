@@ -101,7 +101,7 @@ TEST_CASE("/fdbserver/ratekeeper/RKServerThroughputTracker") {
 	                             numStorageServers,
 	                             /*numThrottlingIds=*/0,
 	                             /*isRead=*/deterministicRandom()->coinflip());
-	while (!checkThroughput(&throughputTracker, /*desiredThroughput=*/throughput, numThrottlingIds)) {
+	while (!checkThroughput(&throughputTracker, /*desiredThroughput=*/0.0, numThrottlingIds)) {
 		wait(delay(1.0));
 	}
 	return Void();
