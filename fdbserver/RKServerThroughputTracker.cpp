@@ -69,7 +69,7 @@ RKServerThroughputTracker::~RKServerThroughputTracker() = default;
 // Exponentially decay throughput statistics for throttlingIds that were not reported.
 // If reported throughput for a particular throttlingId is too low, stop tracking this
 // throttlingId.
-void RKServerThroughputTracker::cleanupUnseenThrottlingIds(
+void RKServerThroughputTracker::cleanupStorageServer(
     ThrottlingIdMap<ThroughputCounters>& throttlingIdToThroughputCounters,
     boost::unordered_flat_set<ThrottlingId> const& seenReadThrottlingIds,
     boost::unordered_flat_set<ThrottlingId> const& seenWriteThrottlingIds) {
@@ -97,12 +97,14 @@ void RKServerThroughputTracker::cleanupUnseenThrottlingIds(
 // For unseen storage servers, exponentially decay throughput statistics for every throttlingId.
 // If the reported throughput for a particular throttlingId is too low, stop tracking this
 // throttlingId. If no more throttlingIds are being tracked for a particular storage server,
-// stop tracking this storage server altogether.
-void RKServerThroughputTracker::cleanupUnseenStorageServers(boost::unordered_flat_set<UID> const& seen) {
+// stop tracking this storage server altogether. Stop tracking throttling IDs that are reporting
+// insufficient throughput cluster-wide.
+void RKServerThroughputTracker::cleanup(boost::unordered_flat_set<UID> const& seenStorageServers,
+                                        boost::unordered_flat_set<ThrottlingId> const& seenThrottlingIds) {
 
 	// Set throughput to 0 for storage servers that didn't report throughput.
 	for (auto& [ssId, throttlingIdToThroughputCounters] : throughput) {
-		if (!seen.count(ssId)) {
+		if (!seenStorageServers.count(ssId)) {
 			for (auto& [throttlingId, throughputCounters] : throttlingIdToThroughputCounters) {
 				auto const delta = throughputCounters.updateThroughput(0, OpType::READ) +
 				                   throughputCounters.updateThroughput(0, OpType::WRITE);
@@ -113,9 +115,9 @@ void RKServerThroughputTracker::cleanupUnseenStorageServers(boost::unordered_fla
 
 	// Erase statistics for combinations of throttlingIds and storage servers reporting
 	// insufficient throughput.
-	boost::unordered::erase_if(throughput, [&seen](auto& kv) {
+	boost::unordered::erase_if(throughput, [&seenStorageServers](auto& kv) {
 		auto& [ssId, throttlingIdToThroughputCounters] = kv;
-		if (seen.count(ssId)) {
+		if (seenStorageServers.count(ssId)) {
 			return false;
 		} else {
 			boost::unordered::erase_if(throttlingIdToThroughputCounters, [](auto& kv2) {
@@ -124,10 +126,19 @@ void RKServerThroughputTracker::cleanupUnseenStorageServers(boost::unordered_fla
 			return throttlingIdToThroughputCounters.empty();
 		}
 	});
+
+	// Erase cluster-wide throughput statistics for throttlingIds reporting insufficient throughput.
+	boost::unordered::erase_if(throughputByThrottlingId, [&seenThrottlingIds](auto const& kv) {
+		auto const& [throttlingId, throttlingIdThroughput] = kv;
+		return !seenThrottlingIds.count(throttlingId) &&
+		       (throttlingIdThroughput.getThroughput() <
+		        SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD);
+	});
 }
 
 void RKServerThroughputTracker::update(Map<UID, StorageQueueInfo> const& sqInfos) {
 	boost::unordered_flat_set<UID> seenStorageServerIds;
+	boost::unordered_flat_set<ThrottlingId> seenThrottlingIds;
 	for (auto it = sqInfos.begin(); it != sqInfos.end(); ++it) {
 		auto const& ss = it->value;
 		if (!ss.valid) {
@@ -138,20 +149,22 @@ void RKServerThroughputTracker::update(Map<UID, StorageQueueInfo> const& sqInfos
 		auto& throttlingIdToThroughputCounters = throughput[ss.id];
 		for (const auto& busyReader : ss.busiestReaders) {
 			seenReadThrottlingIds.insert(busyReader.throttlingId);
+			seenThrottlingIds.insert(busyReader.throttlingId);
 			auto const delta = throttlingIdToThroughputCounters[busyReader.throttlingId].updateThroughput(
 			    busyReader.rate, OpType::READ);
 			throughputByThrottlingId[busyReader.throttlingId].addDelta(delta);
 		}
 		for (const auto& busyWriter : ss.busiestWriters) {
 			seenWriteThrottlingIds.insert(busyWriter.throttlingId);
+			seenThrottlingIds.insert(busyWriter.throttlingId);
 			auto const delta = throttlingIdToThroughputCounters[busyWriter.throttlingId].updateThroughput(
 			    busyWriter.rate, OpType::WRITE);
 			throughputByThrottlingId[busyWriter.throttlingId].addDelta(delta);
 		}
 
-		cleanupUnseenThrottlingIds(throttlingIdToThroughputCounters, seenReadThrottlingIds, seenWriteThrottlingIds);
+		cleanupStorageServer(throttlingIdToThroughputCounters, seenReadThrottlingIds, seenWriteThrottlingIds);
 	}
-	cleanupUnseenStorageServers(seenStorageServerIds);
+	cleanup(seenStorageServerIds, seenThrottlingIds);
 }
 
 Optional<double> RKServerThroughputTracker::getThroughput(UID storageServerId, ThrottlingId const& throttlingId) const {
@@ -187,6 +200,10 @@ boost::unordered_flat_set<ThrottlingId> RKServerThroughputTracker::getActiveThro
 
 int RKServerThroughputTracker::storageServersTracked() const {
 	return throughput.size();
+}
+
+int RKServerThroughputTracker::throttlingIdsTracked() const {
+	return throughputByThrottlingId.size();
 }
 
 MockThroughputTracker::~MockThroughputTracker() = default;

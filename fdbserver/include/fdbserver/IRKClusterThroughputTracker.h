@@ -57,11 +57,14 @@ class RKServerThroughputTracker : public IRKClusterThroughputTracker {
 	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
 	ThrottlingIdMap<ThrottlingIdThroughput> throughputByThrottlingId;
 
-	void cleanupUnseenStorageServers(boost::unordered_flat_set<UID> const& seen);
+	// Cluster-wide cleanup
+	void cleanup(boost::unordered_flat_set<UID> const& seenStorageServers,
+	             boost::unordered_flat_set<ThrottlingId> const& seenThrottlingIds);
 
-	void cleanupUnseenThrottlingIds(ThrottlingIdMap<ThroughputCounters>&,
-	                                boost::unordered_flat_set<ThrottlingId> const& seenReadThrottlingId,
-	                                boost::unordered_flat_set<ThrottlingId> const& seenWriteThrottlingId);
+	// Cleanup for a single storage server
+	void cleanupStorageServer(ThrottlingIdMap<ThroughputCounters>&,
+	                          boost::unordered_flat_set<ThrottlingId> const& seenReadThrottlingId,
+	                          boost::unordered_flat_set<ThrottlingId> const& seenWriteThrottlingId);
 
 public:
 	~RKServerThroughputTracker();
@@ -80,8 +83,9 @@ public:
 
 	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
 
-	// Returns the number of storage servers currently being tracked
 	int storageServersTracked() const;
+
+	int throttlingIdsTracked() const;
 };
 
 // The RKClientThroughputTracker class is responsible for tracking
