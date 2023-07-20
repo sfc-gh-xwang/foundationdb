@@ -8,12 +8,12 @@
 namespace {
 
 template <class K, class V, class H>
-static Optional<V> tryGet(boost::unordered_flat_map<K, V, H> const& m, K const& k) {
+static V const* tryGet(boost::unordered_flat_map<K, V, H> const& m, K const& k) {
 	auto it = m.find(k);
 	if (it == m.end()) {
-		return {};
+		return nullptr;
 	} else {
-		return it->second;
+		return &it->second;
 	}
 }
 
@@ -26,11 +26,11 @@ RKServerThroughputTracker::ThroughputCounters::ThroughputCounters()
 std::vector<ThrottlingId> RKServerThroughputTracker::getThrottlingIdsAffectingStorageServer(UID storageServerId) const {
 	std::vector<ThrottlingId> result;
 	auto const throttlingIdToThroughputCounters = tryGet(throughputBySS, storageServerId);
-	if (!throttlingIdToThroughputCounters.present()) {
+	if (!throttlingIdToThroughputCounters) {
 		return {};
 	} else {
-		result.reserve(throttlingIdToThroughputCounters.get().size());
-		for (const auto& [throttlingId, _] : throttlingIdToThroughputCounters.get()) {
+		result.reserve(throttlingIdToThroughputCounters->size());
+		for (const auto& [throttlingId, _] : *throttlingIdToThroughputCounters) {
 			result.push_back(throttlingId);
 		}
 	}
@@ -169,20 +169,20 @@ void RKServerThroughputTracker::update(Map<UID, StorageQueueInfo> const& sqInfos
 
 Optional<double> RKServerThroughputTracker::getThroughput(UID storageServerId, ThrottlingId const& throttlingId) const {
 	auto const throttlingIdToThroughputCounters = tryGet(throughputBySS, storageServerId);
-	if (!throttlingIdToThroughputCounters.present()) {
+	if (!throttlingIdToThroughputCounters) {
 		return {};
 	}
-	auto const throughputCounter = tryGet(throttlingIdToThroughputCounters.get(), throttlingId);
-	if (!throughputCounter.present()) {
+	auto const throughputCounter = tryGet(*throttlingIdToThroughputCounters, throttlingId);
+	if (!throughputCounter) {
 		return {};
 	}
-	return throughputCounter.get().getThroughput();
+	return throughputCounter->getThroughput();
 }
 
 double RKServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
 	auto const throttlingIdThroughput = tryGet(throughputByThrottlingId, throttlingId);
-	if (throttlingIdThroughput.present()) {
-		return throttlingIdThroughput.get().getThroughput();
+	if (throttlingIdThroughput) {
+		return throttlingIdThroughput->getThroughput();
 	} else {
 		return 0.0;
 	}
