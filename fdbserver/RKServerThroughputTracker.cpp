@@ -4,7 +4,6 @@
 
 #include "fdbserver/IRKClusterThroughputTracker.h"
 #include "fdbserver/Knobs.h"
-#include <boost/unordered/unordered_flat_map.hpp>
 
 namespace {
 
@@ -57,8 +56,8 @@ RKServerThroughputTracker::~RKServerThroughputTracker() = default;
 // throttlingId.
 void RKServerThroughputTracker::cleanupUnseenThrottlingIds(
     ThrottlingIdMap<ThroughputCounters>& throttlingIdToThroughputCounters,
-    std::unordered_set<ThrottlingId> const& seenReadThrottlingIds,
-    std::unordered_set<ThrottlingId> const& seenWriteThrottlingIds) {
+    boost::unordered_flat_set<ThrottlingId> const& seenReadThrottlingIds,
+    boost::unordered_flat_set<ThrottlingId> const& seenWriteThrottlingIds) {
 
 	boost::unordered::erase_if(throttlingIdToThroughputCounters, [&](auto& kv) {
 		auto& [throttlingId, throughputCounters] = kv;
@@ -82,7 +81,7 @@ void RKServerThroughputTracker::cleanupUnseenThrottlingIds(
 // If the reported throughput for a particular throttlingId is too low, stop tracking this
 // throttlingId. If no more throttlingIds are being tracked for a particular storage server,
 // stop tracking this storage server altogether.
-void RKServerThroughputTracker::cleanupUnseenStorageServers(std::unordered_set<UID> const& seen) {
+void RKServerThroughputTracker::cleanupUnseenStorageServers(boost::unordered_flat_set<UID> const& seen) {
 	boost::unordered::erase_if(throughput, [&](auto& kv) {
 		auto& [ssId, throttlingIdToThroughputCounters] = kv;
 
@@ -102,14 +101,14 @@ void RKServerThroughputTracker::cleanupUnseenStorageServers(std::unordered_set<U
 }
 
 void RKServerThroughputTracker::update(Map<UID, StorageQueueInfo> const& sqInfos) {
-	std::unordered_set<UID> seenStorageServerIds;
+	boost::unordered_flat_set<UID> seenStorageServerIds;
 	for (auto it = sqInfos.begin(); it != sqInfos.end(); ++it) {
 		auto const& ss = it->value;
 		if (!ss.valid) {
 			continue;
 		}
 		seenStorageServerIds.insert(ss.id);
-		std::unordered_set<ThrottlingId> seenReadThrottlingIds, seenWriteThrottlingIds;
+		boost::unordered_flat_set<ThrottlingId> seenReadThrottlingIds, seenWriteThrottlingIds;
 		auto& throttlingIdToThroughputCounters = throughput[ss.id];
 		for (const auto& busyReader : ss.busiestReaders) {
 			seenReadThrottlingIds.insert(busyReader.throttlingId);
@@ -139,20 +138,23 @@ Optional<double> RKServerThroughputTracker::getThroughput(UID storageServerId, T
 
 double RKServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
 	double result{ 0.0 };
-	for (auto const& [ssId, _] : throughput) {
-		result += getThroughput(ssId, throttlingId).orDefault(0);
+	for (auto const& [_, throttlingIdToThroughputCounters] : throughput) {
+		auto const throughputCounters = tryGet(throttlingIdToThroughputCounters, throttlingId);
+		if (throughputCounters.present()) {
+			result += throughputCounters.get().getThroughput();
+		}
 	}
 	return result;
 }
 
-std::unordered_set<ThrottlingId> RKServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
+boost::unordered_flat_set<ThrottlingId> RKServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
 	ThrottlingIdMap<double> throttlingIdToThroughput;
 	for (auto const& [ss, throttlingIdToThroughputCounters] : throughput) {
 		for (auto const& [throttlingId, throughputCounters] : throttlingIdToThroughputCounters) {
 			throttlingIdToThroughput[throttlingId] += throughputCounters.getThroughput();
 		}
 	}
-	std::unordered_set<ThrottlingId> result;
+	boost::unordered_flat_set<ThrottlingId> result;
 	for (auto const& [throttlingId, clusterWideThroughput] : throttlingIdToThroughput) {
 		if (clusterWideThroughput > threshold) {
 			result.insert(throttlingId);
@@ -176,8 +178,8 @@ double MockThroughputTracker::getThroughput(ThrottlingId const& throttlingId) co
 	}
 }
 
-std::unordered_set<ThrottlingId> MockThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	std::unordered_set<ThrottlingId> result;
+boost::unordered_flat_set<ThrottlingId> MockThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	boost::unordered_flat_set<ThrottlingId> result;
 	for (auto const& [throttlingId, throughputValue] : throughput) {
 		if (throughputValue > threshold) {
 			result.insert(throttlingId);

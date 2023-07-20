@@ -8,6 +8,7 @@
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKMetricsTracker.h"
 #include <boost/unordered/unordered_flat_map.hpp>
+#include <boost/unordered/unordered_flat_set.hpp>
 
 // Tracks the cluster-wide throughput (in bytes/second) of each throttlingId
 class IRKClusterThroughputTracker {
@@ -18,7 +19,7 @@ public:
 	virtual double getThroughput(ThrottlingId const&) const = 0;
 
 	// Returns the set of throttlingIds reporting throughput above the specified threshold
-	virtual std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const = 0;
+	virtual boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const = 0;
 };
 
 // The RKServerThroughputTracker class is responsible for tracking
@@ -41,11 +42,11 @@ class RKServerThroughputTracker : public IRKClusterThroughputTracker {
 
 	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
 
-	void cleanupUnseenStorageServers(std::unordered_set<UID> const& seen);
+	void cleanupUnseenStorageServers(boost::unordered_flat_set<UID> const& seen);
 
 	static void cleanupUnseenThrottlingIds(ThrottlingIdMap<ThroughputCounters>&,
-	                                       std::unordered_set<ThrottlingId> const& seenReadThrottlingId,
-	                                       std::unordered_set<ThrottlingId> const& seenWriteThrottlingId);
+	                                       boost::unordered_flat_set<ThrottlingId> const& seenReadThrottlingId,
+	                                       boost::unordered_flat_set<ThrottlingId> const& seenWriteThrottlingId);
 
 public:
 	~RKServerThroughputTracker();
@@ -62,7 +63,7 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
 
 	// Returns the number of storage servers currently being tracked
 	int storageServersTracked() const;
@@ -96,7 +97,7 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
 
 	// Updates per-throttlingId throughput statistics based on newly
 	// reported throughput metrics from a GRV proxy
@@ -111,7 +112,7 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
 
 	void update(ThrottlingId const&, double newThroughput);
 
