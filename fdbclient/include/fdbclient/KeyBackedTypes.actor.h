@@ -355,8 +355,10 @@ Future<Version> WatchableTrigger::onChangeActor(WatchableTrigger self,
 
 // Convenient read/write access to a single value of type T stored at key
 // Even though 'this' is not actually mutated, methods that change the db key are not const.
-template <typename T, typename Codec = TupleCodec<T>, bool SystemAccess = true>
+template <typename T, typename Codec = TupleCodec<T>, bool SystemAccess = true, bool RawAccess = true>
 class KeyBackedProperty {
+	static_assert(!SystemAccess || RawAccess);
+
 public:
 	KeyBackedProperty(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {}, Codec codec = {})
 	  : key(key),
@@ -482,10 +484,10 @@ public:
 
 // KeyBackedObjectProperty is a convenience wrapper of KeyBackedProperty which uses ObjectCodec<T, VersionOptions> as
 // the codec
-template <typename T, typename VersionOptions>
-class KeyBackedObjectProperty : public KeyBackedProperty<T, ObjectCodec<T, VersionOptions>> {
+template <typename T, typename VersionOptions, bool SystemAccess = true, bool RawAccess = true>
+class KeyBackedObjectProperty : public KeyBackedProperty<T, ObjectCodec<T, VersionOptions>, SystemAccess, RawAccess> {
 	typedef ObjectCodec<T, VersionOptions> TCodec;
-	typedef KeyBackedProperty<T, TCodec> Base;
+	typedef KeyBackedProperty<T, TCodec, SystemAccess, RawAccess> Base;
 
 public:
 	KeyBackedObjectProperty(KeyRef key, VersionOptions vo, Optional<WatchableTrigger> trigger = {})
@@ -494,9 +496,9 @@ public:
 
 // KeyBackedBinaryValue is a convenience wrapper of KeyBackedProperty but using BinaryCodec<T> as the codec and adds
 // atomic ops and version stamp operations.
-template <typename T>
+template <typename T, bool SystemAccess = true, bool RawAccess = true>
 class KeyBackedBinaryValue : public KeyBackedProperty<T, BinaryCodec<T>> {
-	typedef KeyBackedProperty<T, BinaryCodec<T>> Base;
+	typedef KeyBackedProperty<T, BinaryCodec<T>, SystemAccess, RawAccess> Base;
 
 public:
 	KeyBackedBinaryValue(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {}) : Base(key, trigger) {}
@@ -562,8 +564,12 @@ struct TypedKeySelector {
 template <typename _KeyType,
           typename _ValueType,
           typename KeyCodec = TupleCodec<_KeyType>,
-          typename ValueCodec = TupleCodec<_ValueType>>
+          typename ValueCodec = TupleCodec<_ValueType>,
+          bool SystemAccess = true,
+          bool RawAccess = true>
 class KeyBackedMap {
+	static_assert(!SystemAccess || RawAccess);
+
 public:
 	KeyBackedMap(KeyRef prefix = invalidKey, Optional<WatchableTrigger> trigger = {}, ValueCodec valueCodec = {})
 	  : subspace(prefixRange(prefix)),
@@ -575,7 +581,7 @@ public:
 	typedef std::pair<KeyType, ValueType> PairType;
 	typedef KeyBackedRangeResult<PairType> RangeResultType;
 	typedef TypedKVPair<KeyType, ValueType> KVType;
-	typedef KeyBackedProperty<ValueType, ValueCodec> SingleRecordProperty;
+	typedef KeyBackedProperty<ValueType, ValueCodec, SystemAccess, RawAccess> SingleRecordProperty;
 	typedef TypedKeySelector<KeyType, KeyCodec> KeySelector;
 
 	// If end is not present one key past the end of the map is used.
@@ -894,19 +900,30 @@ public:
 
 // KeyBackedObjectMap is a convenience wrapper of KeyBackedMap which uses ObjectCodec<_ValueType, VersionOptions> as
 // the value codec
-template <typename _KeyType, typename _ValueType, typename VersionOptions, typename KeyCodec = TupleCodec<_KeyType>>
-class KeyBackedObjectMap
-  : public KeyBackedMap<_KeyType, _ValueType, KeyCodec, ObjectCodec<_ValueType, VersionOptions>> {
+template <typename _KeyType,
+          typename _ValueType,
+          typename VersionOptions,
+          typename KeyCodec = TupleCodec<_KeyType>,
+          bool SystemAccess = true,
+          bool RawAccess = true>
+class KeyBackedObjectMap : public KeyBackedMap<_KeyType,
+                                               _ValueType,
+                                               KeyCodec,
+                                               ObjectCodec<_ValueType, VersionOptions>,
+                                               SystemAccess,
+                                               RawAccess> {
 	typedef ObjectCodec<_ValueType, VersionOptions> ValueCodec;
-	typedef KeyBackedMap<_KeyType, _ValueType, KeyCodec, ValueCodec> Base;
+	typedef KeyBackedMap<_KeyType, _ValueType, KeyCodec, ValueCodec, SystemAccess, RawAccess> Base;
 
 public:
 	KeyBackedObjectMap(KeyRef key, VersionOptions vo, Optional<WatchableTrigger> trigger = {})
 	  : Base(key, trigger, ValueCodec(vo)) {}
 };
 
-template <typename _ValueType, typename Codec = TupleCodec<_ValueType>>
+template <typename _ValueType, typename Codec = TupleCodec<_ValueType>, bool SystemAccess = true, bool RawAccess = true>
 class KeyBackedSet {
+	static_assert(!SystemAccess || RawAccess);
+
 public:
 	KeyBackedSet(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {})
 	  : subspace(prefixRange(key)),
