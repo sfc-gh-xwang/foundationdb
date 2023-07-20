@@ -2086,7 +2086,8 @@ void MultiVersionTenant::TenantState::close() {
 //
 // This function takes the status report generated for the Multi-Version Database, and moves the
 // Tenant related fields, namely "TenantResolutionStatus", "TenantResolutionErrorCode", and "TenantID"
-// from its "DatabaseStatus" field to the top-level.
+// from its "DatabaseStatus" field to the top-level. If in case the database is still initializing,
+// TenantResolutionStatus is set to pending.
 Standalone<StringRef> MultiVersionTenant::TenantState::getClientStatus(Standalone<StringRef> tenantContextStatus) {
 	json_spirit::mValue tenantContextStatusVal;
 	if (!json_spirit::read_string(tenantContextStatus.toString(), tenantContextStatusVal)) {
@@ -2095,18 +2096,22 @@ Standalone<StringRef> MultiVersionTenant::TenantState::getClientStatus(Standalon
 	}
 
 	auto& tenantContextStatusObj = tenantContextStatusVal.get_obj();
-	if (!tenantContextStatusObj.count("DatabaseStatus")) {
-		return tenantContextStatus;
+
+	if (tenantContextStatusObj.count("DatabaseStatus")) {
+		auto& dbStatusObj = tenantContextStatusObj["DatabaseStatus"].get_obj();
+		for (auto const& tenantKey : { "TenantResolutionStatus", "TenantResolutionErrorCode", "TenantID" }) {
+			if (!dbStatusObj.count(tenantKey)) {
+				continue;
+			}
+
+			tenantContextStatusObj[tenantKey] = dbStatusObj[tenantKey];
+			dbStatusObj.erase(tenantKey);
+		}
 	}
 
-	auto dbStatusObj = tenantContextStatusObj["DatabaseStatus"].get_obj();
-	for (auto const& tenantKey : { "TenantResolutionStatus", "TenantResolutionErrorCode", "TenantID" }) {
-		if (!dbStatusObj.count(tenantKey)) {
-			continue;
-		}
-
-		tenantContextStatusObj[tenantKey] = dbStatusObj[tenantKey];
-		tenantContextStatusObj["DatabaseStatus"].get_obj().erase(tenantKey);
+	// If the database is still initializing, set TenantResolutionStatus to be pending explicitly
+	if (db->dbState->initializationState == MultiVersionDatabase::InitializationState::INITIALIZING) {
+		tenantContextStatusObj["TenantResolutionStatus"] = "Pending";
 	}
 
 	return StringRef(json_spirit::write_string(json_spirit::mValue(tenantContextStatusObj)));

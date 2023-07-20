@@ -577,14 +577,14 @@ Tenant
 
 .. function:: FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant)
 
-   Returns a JSON string containing tenant client-side status information. The report includes the database status information, and the tenant's ID and group name if set. The report schema is:
+   Returns a JSON string containing tenant client-side status information. The tenant status report schema extends the database status schema (see `fdb_database_get_client_status`) with the following attributes:
 
    .. code-block::
 
       {  "TenantResolutionStatus": <Pending|Failed|Resolved>,
          "TenantResolutionErrorCode": <error code if tenant resolution failed>,
-         "TenantID": <int64>,
-         "TenantGroup": <tenant group name>,
+         "TenantID": <int64, present if resolved>,
+         "TenantGroup": <tenant group name, present if set>,
          ...
       }
 
