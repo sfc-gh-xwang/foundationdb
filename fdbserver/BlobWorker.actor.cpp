@@ -380,8 +380,8 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<Blob
 	ASSERT(systemCipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(systemCipherKeys.cipherHeaderKey, *arena);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_IV_LENGTH, *arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_IV_LENGTH);
+	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, *arena);
+	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
 		TraceEvent(SevDebug, "GetLatestGranuleCipherKey")
@@ -436,7 +436,7 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
-	ASSERT_EQ(ivRef.size(), AES_256_IV_LENGTH);
+	ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
 	cipherKeysCtx.ivRef = StringRef(*arena, ivRef);
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {

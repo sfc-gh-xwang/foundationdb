@@ -160,8 +160,8 @@ static void blob_cipher_encrypt(benchmark::State& state) {
 	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	Reference<BlobCipherKey> headerCipherKey = cipherKeyCache->getLatestCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
-	uint8_t iv[AES_256_IV_LENGTH];
-	deterministicRandom()->randomBytes(&iv[0], AES_256_IV_LENGTH);
+	uint8_t iv[AES_256_CTR_IV_LENGTH];
+	deterministicRandom()->randomBytes(&iv[0], AES_256_CTR_IV_LENGTH);
 	uint8_t orgData[pageLen];
 	deterministicRandom()->randomBytes(&orgData[0], pageLen);
 
@@ -172,7 +172,7 @@ static void blob_cipher_encrypt(benchmark::State& state) {
 		    EncryptBlobCipher::getEncryptor(cipherKey,
 		                                    headerCipherKey,
 		                                    iv,
-		                                    AES_256_IV_LENGTH,
+		                                    AES_256_CTR_IV_LENGTH,
 		                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
 		                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE,
 		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
@@ -198,8 +198,8 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	Reference<BlobCipherKey> headerCipherKey = cipherKeyCache->getLatestCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
-	uint8_t iv[AES_256_IV_LENGTH];
-	deterministicRandom()->randomBytes(&iv[0], AES_256_IV_LENGTH);
+	uint8_t iv[AES_256_CTR_IV_LENGTH];
+	deterministicRandom()->randomBytes(&iv[0], AES_256_CTR_IV_LENGTH);
 	uint8_t orgData[pageLen];
 	deterministicRandom()->randomBytes(&orgData[0], pageLen);
 	Arena encryptArena;
@@ -208,7 +208,7 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 	    EncryptBlobCipher::getEncryptor(cipherKey,
 	                                    headerCipherKey,
 	                                    iv,
-	                                    AES_256_IV_LENGTH,
+	                                    AES_256_CTR_IV_LENGTH,
 	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
 	                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE,
 	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,

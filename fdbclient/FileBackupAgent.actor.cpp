@@ -652,7 +652,7 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		    self->cipherKeys.textCipherKey,
 		    self->cipherKeys.headerCipherKey,
 		    self->cipherKeys.ivRef.begin(),
-		    AES_256_IV_LENGTH,
+		    AES_256_CTR_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
 		    getAuthTokenAlgoFromMode(
 		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
@@ -687,8 +687,8 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		self->cipherKeys.headerCipherKey = textAndHeaderCipherKeys.cipherHeaderKey;
 
 		// Set ivRef
-		self->cipherKeys.ivRef = makeString(AES_256_IV_LENGTH, *self->arena);
-		deterministicRandom()->randomBytes(mutateString(self->cipherKeys.ivRef), AES_256_IV_LENGTH);
+		self->cipherKeys.ivRef = makeString(AES_256_CTR_IV_LENGTH, *self->arena);
+		deterministicRandom()->randomBytes(mutateString(self->cipherKeys.ivRef), AES_256_CTR_IV_LENGTH);
 		return Void();
 	}
 

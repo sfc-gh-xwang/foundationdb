@@ -297,13 +297,13 @@ struct EncryptionOpsWorkload : TestWorkload {
 	                       const EncryptAuthTokenAlgo authAlgo,
 	                       BlobCipherEncryptHeaderRef* headerRef,
 	                       Arena& arena) {
-		uint8_t iv[AES_256_IV_LENGTH];
-		deterministicRandom()->randomBytes(&iv[0], AES_256_IV_LENGTH);
+		uint8_t iv[AES_256_CTR_IV_LENGTH];
+		deterministicRandom()->randomBytes(&iv[0], AES_256_CTR_IV_LENGTH);
 		Reference<EncryptBlobCipher> encryptor =
 		    EncryptBlobCipher::getEncryptor(textCipherKey,
 		                                    headerCipherKey,
 		                                    &iv[0],
-		                                    AES_256_IV_LENGTH,
+		                                    AES_256_CTR_IV_LENGTH,
 		                                    authMode,
 		                                    authAlgo,
 		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
@@ -315,7 +315,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 
 		// validate encrypted buffer size and contents (not matching with plaintext)
 		const uint8_t* headerIV = headerRef->getIV();
-		ASSERT_EQ(memcmp(&headerIV[0], &iv[0], AES_256_IV_LENGTH), 0);
+		ASSERT_EQ(memcmp(&headerIV[0], &iv[0], AES_256_CTR_IV_LENGTH), 0);
 
 		EncryptHeaderCipherDetails validateDetails = headerRef->getCipherDetails();
 		ASSERT(validateDetails.textCipherDetails.isValid() &&
@@ -353,21 +353,21 @@ struct EncryptionOpsWorkload : TestWorkload {
 		// validate flags
 		BlobCipherDetails textCipherDetails;
 		BlobCipherDetails headerCipherDetails;
-		uint8_t iv[AES_256_IV_LENGTH];
+		uint8_t iv[AES_256_CTR_IV_LENGTH];
 		if (std::holds_alternative<AesCtrNoAuth>(headerRef.algoHeader)) {
 			AesCtrNoAuth noAuth = std::get<AesCtrNoAuth>(headerRef.algoHeader);
-			memcpy(&iv[0], &noAuth.v1.iv[0], AES_256_IV_LENGTH);
+			memcpy(&iv[0], &noAuth.v1.iv[0], AES_256_CTR_IV_LENGTH);
 			textCipherDetails = noAuth.v1.cipherTextDetails;
 			headerCipherDetails = BlobCipherDetails();
 		} else if (std::holds_alternative<AesCtrWithHmac>(headerRef.algoHeader)) {
 			AesCtrWithHmac hmacSha = std::get<AesCtrWithHmac>(headerRef.algoHeader);
-			memcpy(&iv[0], &hmacSha.v1.iv[0], AES_256_IV_LENGTH);
+			memcpy(&iv[0], &hmacSha.v1.iv[0], AES_256_CTR_IV_LENGTH);
 			textCipherDetails = hmacSha.v1.cipherTextDetails;
 			headerCipherDetails = hmacSha.v1.cipherHeaderDetails;
 		} else {
 			ASSERT(std::holds_alternative<AesCtrWithCmac>(headerRef.algoHeader));
 			AesCtrWithCmac aesCmac = std::get<AesCtrWithCmac>(headerRef.algoHeader);
-			memcpy(&iv[0], &aesCmac.v1.iv[0], AES_256_IV_LENGTH);
+			memcpy(&iv[0], &aesCmac.v1.iv[0], AES_256_CTR_IV_LENGTH);
 			textCipherDetails = aesCmac.v1.cipherTextDetails;
 			headerCipherDetails = aesCmac.v1.cipherHeaderDetails;
 		}

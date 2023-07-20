@@ -70,7 +70,8 @@ static const std::unordered_set<EncryptCipherDomainId> ENCRYPT_CIPHER_DETAULT_DO
 typedef enum {
 	ENCRYPT_CIPHER_MODE_NONE = 0,
 	ENCRYPT_CIPHER_MODE_AES_256_CTR = 1,
-	ENCRYPT_CIPHER_MODE_LAST = 2
+	ENCRYPT_CIPHER_MODE_AES_256_GCM = 2,
+	ENCRYPT_CIPHER_MODE_LAST = 3
 } EncryptCipherMode;
 
 static_assert(EncryptCipherMode::ENCRYPT_CIPHER_MODE_LAST <= std::numeric_limits<uint8_t>::max(),
@@ -98,7 +99,8 @@ typedef enum {
 	ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE = 0,
 	ENCRYPT_HEADER_AUTH_TOKEN_ALGO_HMAC_SHA = 1,
 	ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC = 2,
-	ENCRYPT_HEADER_AUTH_TOKEN_ALGO_LAST = 3 // Always the last element
+	ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM = 3,
+	ENCRYPT_HEADER_AUTH_TOKEN_ALGO_LAST = 4 // Always the last element
 } EncryptAuthTokenAlgo;
 
 static_assert(EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_LAST <= std::numeric_limits<uint8_t>::max(),

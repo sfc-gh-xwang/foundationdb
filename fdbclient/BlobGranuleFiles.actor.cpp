@@ -268,7 +268,7 @@ struct IndexBlockRef {
 		    eKeys.textCipherKey,
 		    eKeys.headerCipherKey,
 		    cipherKeysCtx.ivRef.begin(),
-		    AES_256_IV_LENGTH,
+		    AES_256_CTR_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
 		    getAuthTokenAlgoFromMode(
 		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
@@ -407,7 +407,7 @@ struct IndexBlobGranuleFileChunkRef {
 		    eKeys.textCipherKey,
 		    eKeys.headerCipherKey,
 		    cipherKeysCtx.ivRef.begin(),
-		    AES_256_IV_LENGTH,
+		    AES_256_CTR_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
 		    getAuthTokenAlgoFromMode(
 		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
@@ -1763,8 +1763,8 @@ BlobGranuleCipherKeysCtx getCipherKeysCtx(Arena& arena) {
 	cipherKeysCtx.headerCipherKey.salt = encryptSalt;
 	cipherKeysCtx.headerCipherKey.baseCipher = StringRef(arena, encryptBaseCipher);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_IV_LENGTH, arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_IV_LENGTH);
+	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, arena);
+	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
 
 	return cipherKeysCtx;
 }
