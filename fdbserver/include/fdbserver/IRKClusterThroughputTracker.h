@@ -57,7 +57,7 @@ class RKServerThroughputTracker : public IRKClusterThroughputTracker {
 		double getThroughput() const;
 	};
 
-	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
+	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughputBySS;
 	ThrottlingIdMap<ThrottlingIdThroughput> throughputByThrottlingId;
 
 	// Cluster-wide cleanup
