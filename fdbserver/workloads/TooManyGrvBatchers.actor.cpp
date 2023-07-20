@@ -11,13 +11,18 @@ class TooManyGrvBatchersWorkload : public TestWorkload {
 	static TransactionTag getTag(int index) { return TransactionTag(format("tag/%06d", index)); }
 
 	ACTOR static Future<Void> getReadVersion(Database cx, int index) {
+		state Transaction tr(cx);
+		state UID debugId = deterministicRandom()->randomUniqueID();
+		TraceEvent("StartingReadVersionFetcherTransaction", debugId);
+		tr.debugTransaction(debugId);
 		loop {
 			try {
-				state Transaction tr(cx);
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, getTag(index));
 				wait(success(tr.getReadVersion()));
+				TraceEvent("ReadVersionFetcherGotReadVersion", debugId);
 				return Void();
 			} catch (Error& e) {
+				TraceEvent("ReadVersionFetcherTransactionError", debugId).error(e);
 				wait(tr.onError(e));
 			}
 		}
