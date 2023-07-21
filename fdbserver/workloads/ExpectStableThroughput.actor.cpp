@@ -163,8 +163,13 @@ public:
 		}
 		auto const expectedTotalCost =
 		    testDuration * expectedThroughputPagesRate * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
-		bool const passed = (static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance) <= totalCost) &&
-		                    (totalCost <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
+		bool passed = (totalCost <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
+		// For write workloads, unrelated availability issues are known to
+		// cause throughput to be lower than the total quota. Therefore, only put
+		// a lower bound on throughput for read workloads:
+		if (performReads) {
+			passed = passed && (static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance) <= totalCost);
+		}
 		auto const severity = passed ? SevInfo : SevError;
 		TraceEvent(severity, "CheckingStableThroughput")
 		    .detail("ExpectedTotalCost", expectedTotalCost)
