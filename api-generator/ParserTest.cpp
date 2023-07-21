@@ -85,6 +85,11 @@ struct include {
 	bool operator==(const include& other) const noexcept = default;
 };
 
+struct file_identifier_decl {
+	std::string id;
+	bool operator==(const file_identifier_decl& other) const noexcept = default;
+};
+
 struct namespace_decl {
 	std::vector<std::string> ns;
 	bool operator==(const namespace_decl& other) const noexcept = default;
@@ -266,6 +271,7 @@ struct union_decl {
 
 } // namespace ast
 
+BOOST_FUSION_ADAPT_STRUCT(ast::file_identifier_decl, id)
 BOOST_FUSION_ADAPT_STRUCT(ast::include, filename)
 BOOST_FUSION_ADAPT_STRUCT(ast::namespace_decl, ns)
 BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name)
@@ -292,7 +298,7 @@ std::string demangle_symbol(const std::string& mangled) {
 	if (demangled) {
 		std::string ret(demangled, length);
 		free(demangled);
-		// each compounding of parsers (by operator >, +, |, etc) adds to the parser type, which could grow to
+		// each compounding of parsers (by operator >, +, |, etc) adds to the parser type, whose C++ type id could grow to
 		// hundreds of characters. Try to simplify this by trying to find a rule type that the parser type maps to.
 		auto const rule_pos = ret.rfind("boost::spirit::x3::rule");
 		if (rule_pos != std::string::npos) {
@@ -339,6 +345,7 @@ x3::uint_parser<uint64_t, 16> const hex_uint64;
 	struct NAME##_class : error_handler, x3::annotate_on_success {}; \
 	BOOST_SPIRIT_DEFINE(NAME)
 
+
 // identifiers: names of namespaces, attributes, types, and fields
 DEFINE_RULE(ident,
 			(x3::ascii::alpha | x3::ascii::char_('_')) >> *(x3::ascii::alnum | x3::ascii::char_('_')),
@@ -347,9 +354,8 @@ DEFINE_RULE(ident,
 // parses references to other types in field declarations (parsed as identifiers) into ast::typeref
 DEFINE_RULE(typeref, ident, ast::typeref);
 
-// quoted string constants with escapes. missing feature: "\uXXXX" which should parses into utf8
-DEFINE_RULE(string_constant,
-			(x3::lexeme['"' > *(
+DEFINE_RULE(char_in_quoted_string,
+			(
 				 "\\n" > x3::attr('\n')
 			   | "\\t" > x3::attr('\t')
 			   | "\\r" > x3::attr('\r')
@@ -358,7 +364,19 @@ DEFINE_RULE(string_constant,
 			   | "\\x" > x3::uint_parser<uint8_t, 16, 2, 2>() // bytes in hex: e.g. "\xff"; always two digits
 			   | "\\"  > x3::char_("\"\\/") // escaped double-quote, backslash, and slash
 			   | ~x3::char_('"')
-		   ) > '"']),
+		   ), char);
+
+// quoted string constants with escapes. missing feature: "\uXXXX" which should parses into utf8
+DEFINE_RULE(string_constant,
+			(x3::lexeme['"' > *(char_in_quoted_string) > '"']),
+			std::string);
+
+DEFINE_RULE(four_quoted_string_chars,
+			x3::repeat(4)[char_in_quoted_string],
+			std::string);
+
+DEFINE_RULE(file_identifier_constant,
+			(x3::lexeme['"' > four_quoted_string_chars > '"']),
 			std::string);
 
 // constants and metadata
@@ -380,10 +398,11 @@ DEFINE_RULE(metadata,
 			x3::lit('(') > (metadatum % ',') > ')',
 			ast::metadata);
 
-// includes, namespaces, attributes, root
+// includes, file identifiers, namespaces, attributes, root
 DEFINE_RULE(include,
 			x3::lit("include") > string_constant > ';',
 			ast::include);
+DEFINE_RULE(file_identifier_decl, x3::lit("file_identifier") > file_identifier_constant > ';', ast::file_identifier_decl);
 DEFINE_RULE(namespace_decl,
 			x3::lit("namespace") > ident > *(x3::lit('.') > ident) >> ';',
 			ast::namespace_decl);
@@ -586,7 +605,6 @@ DEFINE_RULE(
 		union_decl,
 		(x3::lit("union") > ident > -metadata > '{' > (union_subtype_decl % ',') > '}'),
 		ast::union_decl);
-
 
 #undef DEFINE_RULE
 
@@ -1226,6 +1244,36 @@ bool union_decl() {
 	return run_ast_test(rule::union_decl, union_decl_input_set);
 }
 
+input_set_type<ast::include> include_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::include>{
+		{ "include \"schema.fbs\";", ast::include{"schema.fbs"}},
+		{ "include schema.fbs;", boost::none },
+		{ "include \"\";", ast::include{""}}, // empty include file is not filtered out at parser level
+	};
+}();
+
+bool include() {
+	return run_ast_test(rule::include, include_input_set);
+}
+
+input_set_type<ast::file_identifier_decl> file_identifier_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::file_identifier_decl>{
+		{ "file_identifier \"Zxvf\";", ast::file_identifier_decl{"Zxvf"}},
+		{ "file_identifier \"Zxf\";", boost::none }, // file id must be exactly 4 characters
+		{ "file_identifier \"Zxvfr\";", boost::none }, // file id must be exactly 4 characters
+		{ "file_identifier \"Zx\\xacv\";", ast::file_identifier_decl{"Zx\xacv"} }, // hex bytes allowed
+		{ "file_identifier \"\";", boost::none },
+		{ "file_identifier \"T\";", boost::none },
+		{ "file_identifier \"xU\";", boost::none },
+	};
+}();
+
+bool file_identifier_decl() {
+	return run_ast_test(rule::file_identifier_decl, file_identifier_decl_input_set);
+}
+
 } // namespace test
 
 int main() {
@@ -1246,6 +1294,8 @@ int main() {
 	ok = ok && test::enum_decl();
 	ok = ok && test::union_subtype_decl();
 	ok = ok && test::union_decl();
+	ok = ok && test::include();
+	ok = ok && test::file_identifier_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
