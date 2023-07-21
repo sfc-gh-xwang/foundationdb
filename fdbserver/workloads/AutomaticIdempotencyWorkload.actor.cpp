@@ -66,7 +66,7 @@ struct AutomaticIdempotencyWorkload : TestWorkload {
 		}
 	};
 
-	KeyBackedProperty<SharedConfiguration, TupleCodec<SharedConfiguration>, false> sharedConfigProperty;
+	KeyBackedProperty<SharedConfiguration, TupleCodec<SharedConfiguration>, false, false> sharedConfigProperty;
 	SharedConfiguration sharedConfig;
 
 	AutomaticIdempotencyWorkload(WorkloadContext const& wcx)
