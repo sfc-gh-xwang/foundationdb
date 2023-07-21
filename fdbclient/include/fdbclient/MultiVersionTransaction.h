@@ -884,7 +884,7 @@ public:
 		void close();
 
 		// Return a JSON string containing tenant client-side status information
-		Standalone<StringRef> getClientStatus(Standalone<StringRef> tenantContextStatus);
+		Standalone<StringRef> getClientStatus(ErrorOr<Standalone<StringRef>> tenantContextStatus);
 
 		Reference<ThreadSafeAsyncVar<Reference<ITenant>>> tenantVar;
 		const TenantName tenantName;

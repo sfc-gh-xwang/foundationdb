@@ -2020,20 +2020,19 @@ ThreadFuture<bool> MultiVersionTenant::flushBlobRange(const KeyRangeRef& keyRang
 
 ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
 	auto tenantStateRef = tenantState;
-	auto stateRef = tenantState->db->dbState;
 	auto tenant = tenantState->tenantVar->get();
 
 	if (!tenant.value.isValid()) {
-		return onMainThread([stateRef] { return Future<Standalone<StringRef>>(stateRef->getClientStatus(""_sr)); });
+		return onMainThread(
+		    [tenantStateRef] { return Future<Standalone<StringRef>>(tenantStateRef->getClientStatus(""_sr)); });
 	}
 
 	auto f = tenant.value->getClientStatus();
 	auto statusFuture = abortableFuture(f, tenant.onChange);
 	return flatMapThreadFuture<Standalone<StringRef>, Standalone<StringRef>>(
-	    statusFuture, [stateRef, tenantStateRef](ErrorOr<Standalone<StringRef>> tenantContextStatus) {
-		    return onMainThread([stateRef, tenantStateRef, tenantContextStatus] {
-			    return Future<Standalone<StringRef>>(
-			        tenantStateRef->getClientStatus(stateRef->getClientStatus(tenantContextStatus)));
+	    statusFuture, [tenantStateRef](ErrorOr<Standalone<StringRef>> tenantContextStatus) {
+		    return onMainThread([tenantStateRef, tenantContextStatus] {
+			    return Future<Standalone<StringRef>>(tenantStateRef->getClientStatus(tenantContextStatus));
 		    });
 	    });
 }
@@ -2088,7 +2087,10 @@ void MultiVersionTenant::TenantState::close() {
 // Tenant related fields, namely "TenantResolutionStatus", "TenantResolutionErrorCode", and "TenantID"
 // from its "DatabaseStatus" field to the top-level. If in case the database is still initializing,
 // TenantResolutionStatus is set to pending.
-Standalone<StringRef> MultiVersionTenant::TenantState::getClientStatus(Standalone<StringRef> tenantContextStatus) {
+Standalone<StringRef> MultiVersionTenant::TenantState::getClientStatus(
+    ErrorOr<Standalone<StringRef>> tenantContextStatusNative) {
+	auto tenantContextStatus = db->dbState->getClientStatus(tenantContextStatusNative);
+
 	json_spirit::mValue tenantContextStatusVal;
 	if (!json_spirit::read_string(tenantContextStatus.toString(), tenantContextStatusVal)) {
 		TraceEvent(SevError, "MalformedTenantClientStatusJSON").error(json_malformed());
