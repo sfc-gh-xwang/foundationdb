@@ -106,6 +106,30 @@ struct WorkerFitnessInfo {
 	    used(used) {}
 };
 
+struct RemoteRecruitmentInfo {
+	DatabaseConfiguration configuration;
+	Optional<Key> dcId;
+	int logRouterCount;
+	std::vector<UID> exclusionWorkerIds;
+	Optional<UID> dbgId;
+
+	RemoteRecruitmentInfo() {}
+	RemoteRecruitmentInfo(DatabaseConfiguration const& configuration,
+	                      Optional<Key> const& dcId,
+	                      int logRouterCount,
+	                      const std::vector<UID>& exclusionWorkerIds)
+	  : configuration(configuration),
+	    dcId(dcId),
+	    logRouterCount(logRouterCount),
+	    exclusionWorkerIds(exclusionWorkerIds) {}
+};
+
+struct RemoteWorkerRecruitment {
+	std::vector<WorkerDetails> remoteTLogs;
+	std::vector<WorkerDetails> logRouters;
+	Optional<UID> dbgId;
+};
+
 struct RecruitmentInfo {
 	DatabaseConfiguration configuration;
 	bool recruitSeedServers;
@@ -137,6 +161,7 @@ struct WorkerRecruitment {
 	// generation's primaryDC in memory is different from
 	// configuration.primaryDcId.
 	Optional<Key> dcId;
+	Optional<Future<RemoteWorkerRecruitment>> remoteWorkerRecruitment;
 
 	// Satellite fallback mode is automatically enabled when one of two
 	// satellite datacenters become unavailable. In satellite fallback mode,
@@ -152,28 +177,4 @@ struct WorkerRecruitment {
 	bool operator>(WorkerRecruitment const& rhs) const { return rhs < *this; }
 	bool operator<=(WorkerRecruitment const& rhs) const { return !(*this > rhs); }
 	bool operator>=(WorkerRecruitment const& rhs) const { return !(*this < rhs); }
-};
-
-struct RemoteRecruitmentInfo {
-	DatabaseConfiguration configuration;
-	Optional<Key> dcId;
-	int logRouterCount;
-	std::vector<UID> exclusionWorkerIds;
-	Optional<UID> dbgId;
-
-	RemoteRecruitmentInfo() {}
-	RemoteRecruitmentInfo(DatabaseConfiguration const& configuration,
-	                      Optional<Key> const& dcId,
-	                      int logRouterCount,
-	                      const std::vector<UID>& exclusionWorkerIds)
-	  : configuration(configuration),
-	    dcId(dcId),
-	    logRouterCount(logRouterCount),
-	    exclusionWorkerIds(exclusionWorkerIds) {}
-};
-
-struct RemoteWorkerRecruitment {
-	std::vector<WorkerDetails> remoteTLogs;
-	std::vector<WorkerDetails> logRouters;
-	Optional<UID> dbgId;
 };
