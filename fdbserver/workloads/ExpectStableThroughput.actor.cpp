@@ -26,11 +26,11 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	// Parameters:
 	double testDuration;
 	uint64_t expectedThroughputPagesRate;
+	uint64_t attemptedThroughputPagesRate;
 	TransactionTag throttlingTag;
 	double errorTolerance;
 	Key keyPrefix;
 	int numActors;
-	double attemptedTransactionRatePerActor;
 	double warmupTime;
 	int opsPerTransaction;
 	bool provideExpectedCost;
@@ -111,8 +111,16 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 
 	ACTOR static Future<Void> runClient(ExpectStableThroughputWorkload* self, Database cx) {
 		loop {
-			wait(delay(1 / self->attemptedTransactionRatePerActor) && self->runTransaction(cx));
+			wait(delay(1 / self->getAttemptedTransactionRatePerActor()) && self->runTransaction(cx));
 		}
+	}
+
+	double getAttemptedTransactionRatePerActor() const {
+		double transactionCostInPages = opsPerTransaction;
+		if (!performReads) {
+			transactionCostInPages *= CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO;
+		}
+		return attemptedThroughputPagesRate / (transactionCostInPages * numActors);
 	}
 
 public:
@@ -121,10 +129,10 @@ public:
 		testDuration = getOption(options, "testDuration"_sr, 1200.0);
 		throttlingTag = getOption(options, "throttlingTag"_sr, "testTag"_sr);
 		expectedThroughputPagesRate = getOption(options, "expectedThroughputPagesRate"_sr, 1);
+		attemptedThroughputPagesRate = getOption(options, "attemptedThroughputPagesRate"_sr, 2);
 		errorTolerance = getOption(options, "errorTolerance"_sr, 0.2);
 		keyPrefix = getOption(options, "keyPrefix"_sr, "testKey"_sr);
 		numActors = getOption(options, "numActors"_sr, 100);
-		attemptedTransactionRatePerActor = getOption(options, "attemptedTransactionRatePerActor"_sr, 0.4);
 		warmupTime = getOption(options, "warmupTime"_sr, 10.0);
 		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, 5);
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
@@ -141,10 +149,10 @@ public:
 		    .detail("TestDuration", testDuration)
 		    .detail("ThrottlingTag", throttlingTag)
 		    .detail("ExpectedThroughputPagesRate", expectedThroughputPagesRate)
+		    .detail("AttemptedThroughputPagesRate", attemptedThroughputPagesRate)
 		    .detail("ErrorTolerance", errorTolerance)
 		    .detail("KeyPrefix", keyPrefix)
 		    .detail("NumActors", numActors)
-		    .detail("AttemptedTransactionRatePerActor", attemptedTransactionRatePerActor)
 		    .detail("WarmupTime", warmupTime)
 		    .detail("OpsPerTranaction", opsPerTransaction)
 		    .detail("ProvideExpectedCost", provideExpectedCost)
