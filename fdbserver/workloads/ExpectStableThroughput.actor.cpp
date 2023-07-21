@@ -45,7 +45,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		}
 	}
 
-	Key getKey(int index) { return Key(format("%06d", index)).withPrefix(keyPrefix); }
+	Key getKey(int index) const { return Key(format("%06d", index)).withPrefix(keyPrefix); }
 
 	ACTOR static Future<Void> runReadTransaction(ExpectStableThroughputWorkload* self, Database cx) {
 		state Transaction tr(cx);
