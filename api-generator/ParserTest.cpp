@@ -403,14 +403,15 @@ DEFINE_RULE(include,
 			x3::lit("include") > string_constant > ';',
 			ast::include);
 DEFINE_RULE(file_identifier_decl, x3::lit("file_identifier") > file_identifier_constant > ';', ast::file_identifier_decl);
+DEFINE_RULE(namespace_path, (ident % '.'), std::vector<std::string>);
 DEFINE_RULE(namespace_decl,
-			x3::lit("namespace") > ident > *(x3::lit('.') > ident) >> ';',
+			x3::lit("namespace") > namespace_path > ';',
 			ast::namespace_decl);
 DEFINE_RULE(attribute_decl,
-			x3::lit("attribute") >> (
+			(x3::lit("attribute") > (
 				(x3::lit('"') > ident > x3::lit('"')) |
 				ident
-			),
+			) > ';'),
 			ast::attribute_decl);
 
 DEFINE_RULE(
@@ -1274,6 +1275,42 @@ bool file_identifier_decl() {
 	return run_ast_test(rule::file_identifier_decl, file_identifier_decl_input_set);
 }
 
+input_set_type<ast::namespace_decl> namespace_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::namespace_decl>{
+		{ "namespace FlatBuffers;", ast::namespace_decl{{"FlatBuffers"}}},
+		{ "namespace FlatBuffers.Schema;", ast::namespace_decl{{"FlatBuffers", "Schema"}}},
+		{ "namespace A.B.C;", ast::namespace_decl{{"A", "B", "C"}}},
+		{ "namespace 1A.B.C;", boost::none }, // namespace elements are identifiers, which can only start with alphabet or _
+		{ "namespace ;", boost::none }, // namespace elements cannot be empty
+		{ "namespace a", boost::none }, // namespace declaration must end with a semicolon
+		{ "namespace a.b.;", boost::none }, // namespace string cannot end with a period
+		{ "namespace a.", boost::none }, // namespace declaration must end with a semicolon and namespace name cannot end with a period
+	};
+}();
+
+bool namespace_decl() {
+	return run_ast_test(rule::namespace_decl, namespace_decl_input_set);
+}
+
+input_set_type<ast::attribute_decl> attribute_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::attribute_decl>{
+		{ "attribute \"attr\";", ast::attribute_decl{"attr"}},
+		{ "attribute attr;", ast::attribute_decl{"attr"}},
+		{ "attribute \"_Attr\";", ast::attribute_decl{"_Attr"}},
+		{ "attribute _Attr;", ast::attribute_decl{"_Attr"}},
+		{ "attribute \"1_Attr\";", boost::none },
+		{ "attribute 1_Attr;", boost::none },
+		{ "attribute A#ttr;", boost::none },
+		{ "attribute \"A#ttr\";", boost::none },
+	};
+}();
+
+bool attribute_decl() {
+	return run_ast_test(rule::attribute_decl, attribute_decl_input_set);
+}
+
 } // namespace test
 
 int main() {
@@ -1296,6 +1333,8 @@ int main() {
 	ok = ok && test::union_decl();
 	ok = ok && test::include();
 	ok = ok && test::file_identifier_decl();
+	ok = ok && test::namespace_decl();
+	ok = ok && test::attribute_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
