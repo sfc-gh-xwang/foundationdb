@@ -78,11 +78,11 @@ struct WorkloadMetrics {
 		TraceEvent("EncryptionOpsWorkload")
 		    .detail("Mode", mode)
 		    .detail("RunType", runType)
-		    .detail("EncryptTimeMS", totalEncryptTimeNS / 1000)
-		    .detail("DecryptTimeMS", totalDecryptTimeNS / 1000)
+		    .detail("EncryptTimeMS", totalEncryptTimeNS / numIterations)
+		    .detail("DecryptTimeMS", totalDecryptTimeNS / numIterations)
 		    .detail("EncryptMBPS", computeEncryptThroughputMBPS())
 		    .detail("DecryptMBPS", computeDecryptThroughputMBPS())
-		    .detail("KeyDerivationTimeMS", totalKeyDerivationTimeNS / 1000)
+		    .detail("KeyDerivationTimeMS", totalKeyDerivationTimeNS / numIterations)
 		    .detail("TotalBytes", totalBytes)
 		    .detail("AvgCommitSize", totalBytes / numIterations);
 	}
@@ -597,7 +597,12 @@ struct EncryptionOpsWorkload : TestWorkload {
 
 	Future<Void> setup(Database const& ctx) override { return Void(); }
 
-	Future<Void> start(Database const& cx) override { return _start(cx, this); }
+	Future<Void> start(Database const& cx) override {
+		if (clientId == 0) {
+			return _start(cx, this);
+		}
+		return Void();
+	}
 
 	ACTOR Future<Void> _start(Database cx, EncryptionOpsWorkload* self) {
 		self->testBlobCipherKeyCacheOps();
@@ -609,7 +614,11 @@ struct EncryptionOpsWorkload : TestWorkload {
 
 	Future<bool> check(Database const& cx) override { return true; }
 
-	void getMetrics(std::vector<PerfMetric>& m) override { metrics->recordMetrics(getModeStr(), numIterations); }
+	void getMetrics(std::vector<PerfMetric>& m) override {
+		if (clientId == 0) {
+			metrics->recordMetrics(getModeStr(), numIterations);
+		}
+	}
 };
 
 WorkloadFactory<EncryptionOpsWorkload> EncryptionOpsWorkloadFactory;
