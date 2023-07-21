@@ -549,7 +549,9 @@ private:
 
 		debugOp("ReadDesc", keyRange, tenantId, "starting");
 
-		int64_t mutationByteLimit = Random::get().randomBool(0.2) ? 0 : std::numeric_limits<int64_t>::max();
+		int64_t mutationByteLimit = Random::get().randomBool(0.2) && ApiWorkload::apiVersion >= 800000
+		                                ? 0
+		                                : std::numeric_limits<int64_t>::max();
 
 		execTransaction(
 		    [this, keyRange, tenantId, mutationByteLimit, results](auto ctx) {
@@ -762,7 +764,11 @@ template <>
 int64_t ApiBlobGranuleCorrectnessWorkload::getIncludedVersion<fdb::GranuleDescriptionRef>(
     const fdb::GranuleDescriptionRef* desc,
     int64_t readVersion) {
-	return desc->included_version;
+	if (ApiWorkload::apiVersion >= 800000) {
+		return desc->included_version;
+	} else {
+		return readVersion;
+	}
 }
 
 template <>

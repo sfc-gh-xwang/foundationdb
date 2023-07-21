@@ -1261,7 +1261,9 @@ extern "C" DLLEXPORT FDBResult* fdb_transaction_read_blob_granules(FDBTransactio
 	RETURN_RESULT_ON_ERROR(
 	    KeyRangeRef range(KeyRef(begin_key_name, begin_key_name_length), KeyRef(end_key_name, end_key_name_length));
 	    auto bgDescrRes = ReadBGDescriptionsApiResult(ApiResult::fromPtr(result));
-	    return loadAndMaterializeBlobGranules(bgDescrRes, range, beginVersion, &granule_context).extractPtr(););
+	    return loadAndMaterializeBlobGranules(
+	               bgDescrRes, range, beginVersion, &granule_context, ApiVersion(g_api_version))
+	        .extractPtr(););
 }
 
 extern "C" DLLEXPORT FDBFuture* fdb_transaction_summarize_blob_granules(FDBTransaction* tr,
@@ -1300,7 +1302,8 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v
 	                       request->key_range.end_key =
 	                           (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
 	                       request->key_range.end_key_length = end_key_name_length;
-	                       request->mutation_byte_limit = mutation_byte_limit;
+	                       request->mutation_byte_limit =
+	                           (g_api_version >= 800000) ? mutation_byte_limit : std::numeric_limits<int64_t>::max();
 	                       FDBFuture* future = executeApiRequest<FDBReadBGDescriptionRequest>(tr, request);
 	                       releaseApiRequest(request);
 	                       return future;);
