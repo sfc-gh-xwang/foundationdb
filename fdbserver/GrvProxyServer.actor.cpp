@@ -520,7 +520,6 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
                                                FutureStream<double> normalGRVLatency,
                                                GrvProxyStats* stats,
                                                GrvTransactionRateInfo* batchRateInfo,
-                                               ThrottlingIdMap<uint64_t>* throttlingIdTransactionCounter,
                                                GrvProxyTagThrottler* tagThrottler) {
 	getCurrentLineage()->modify(&TransactionLineage::operation) =
 	    TransactionLineage::Operation::GetConsistentReadVersion;
@@ -560,9 +559,6 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 				proxyGRVThresholdExceeded(&req, stats);
 			} else {
 				stats->addRequest(req.transactionCount);
-				if (req.throttlingId.present()) {
-					(*throttlingIdTransactionCounter)[req.throttlingId.get()] += req.transactionCount;
-				}
 
 				if (req.debugID.present())
 					g_traceBatch.addEvent("TransactionDebug",
@@ -899,7 +895,6 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	                                          normalGRVLatency.getFuture(),
 	                                          &grvProxyData->stats,
 	                                          &batchRateInfo,
-	                                          &throttlingIdTransactionCounter,
 	                                          &grvProxyData->tagThrottler));
 
 	while (std::find(db->get().client.grvProxies.begin(), db->get().client.grvProxies.end(), proxy) ==
@@ -986,6 +981,9 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 				batchPriTransactionsStarted[req.flags & 1] += tc;
 				grvProxyData->stats.batchTxnGRVTimeInQueue.addMeasurement(currentTime - req.requestTime());
 				--grvProxyData->stats.batchGRVQueueSize;
+			}
+			if (req.throttlingId.present()) {
+				throttlingIdTransactionCounter[req.throttlingId.get()] += req.transactionCount;
 			}
 			start[req.flags & 1].push_back(std::move(req));
 			static_assert(GetReadVersionRequest::FLAG_CAUSAL_READ_RISKY == 1, "Implementation dependent on flag value");
