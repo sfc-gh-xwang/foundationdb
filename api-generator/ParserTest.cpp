@@ -19,6 +19,16 @@
 #include <fmt/format.h>
 #include <cxxabi.h>
 
+namespace boost::spirit::x3 {
+
+// utility for AST comparisons in tests
+template <typename ... Types>
+bool operator==(const variant<Types...>& lhs, const variant<Types...>& rhs) {
+	return lhs.get() == rhs.get();
+}
+
+}
+
 namespace x3 = boost::spirit::x3;
 
 namespace ast {
@@ -116,9 +126,7 @@ struct scalar_typeinfo : scalar_types_variant {
 	using base_type::base_type;
 	using base_type::operator=;
 
-	bool operator==(const scalar_typeinfo& other) const noexcept {
-		return get() == other.get();
-	}
+	bool operator==(const scalar_typeinfo& other) const noexcept = default;
 };
 
 template <typename T>
@@ -216,16 +224,59 @@ struct struct_decl {
 	bool operator==(const struct_decl& other) const noexcept = default;
 };
 
+using enumval_variant = x3::variant<uint64_t, int64_t>;
+
+struct enumval_decl {
+	std::string name;
+	boost::optional<enumval_variant> value;
+	bool operator==(const enumval_decl& other) const noexcept = default;
+};
+
+using enum_type_variant = x3::variant<
+						type_tag<int8_t>,
+						type_tag<uint8_t>,
+						type_tag<int16_t>,
+						type_tag<uint16_t>,
+						type_tag<int64_t>,
+						type_tag<uint64_t>,
+						type_tag<int32_t>,
+						type_tag<uint32_t>>;
+
+struct enum_decl {
+	std::string name;
+	enum_type_variant typeinfo;
+	boost::optional<metadata> meta;
+	std::vector<enumval_decl> values;
+	bool operator==(const enum_decl& other) const noexcept = default;
+};
+
+struct union_subtype_decl {
+	std::string name;
+	boost::optional<std::string> alias;
+	bool operator==(const union_subtype_decl& other) const noexcept = default;
+};
+
+struct union_decl {
+	std::string name;
+	boost::optional<metadata> meta;
+	std::vector<union_subtype_decl> subtypes;
+	bool operator==(const union_decl& other) const noexcept = default;
+};
+
 } // namespace ast
 
-BOOST_FUSION_ADAPT_STRUCT(ast::include, filename);
-BOOST_FUSION_ADAPT_STRUCT(ast::namespace_decl, ns);
-BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name);
-BOOST_FUSION_ADAPT_STRUCT(ast::typeref, name, default_);
-BOOST_FUSION_ADAPT_STRUCT(ast::table_field_decl, name, typeinfo, meta);
-BOOST_FUSION_ADAPT_STRUCT(ast::table_decl, name, meta, fields);
-BOOST_FUSION_ADAPT_STRUCT(ast::struct_field_decl, name, typeinfo, meta);
-BOOST_FUSION_ADAPT_STRUCT(ast::struct_decl, name, meta, fields);
+BOOST_FUSION_ADAPT_STRUCT(ast::include, filename)
+BOOST_FUSION_ADAPT_STRUCT(ast::namespace_decl, ns)
+BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name)
+BOOST_FUSION_ADAPT_STRUCT(ast::typeref, name, default_)
+BOOST_FUSION_ADAPT_STRUCT(ast::table_field_decl, name, typeinfo, meta)
+BOOST_FUSION_ADAPT_STRUCT(ast::table_decl, name, meta, fields)
+BOOST_FUSION_ADAPT_STRUCT(ast::struct_field_decl, name, typeinfo, meta)
+BOOST_FUSION_ADAPT_STRUCT(ast::struct_decl, name, meta, fields)
+BOOST_FUSION_ADAPT_STRUCT(ast::enumval_decl, name, value)
+BOOST_FUSION_ADAPT_STRUCT(ast::enum_decl, name, typeinfo, meta, values)
+BOOST_FUSION_ADAPT_STRUCT(ast::union_subtype_decl, alias, name) // member order reversed to accommodate the parse order
+BOOST_FUSION_ADAPT_STRUCT(ast::union_decl, name, meta, subtypes)
 
 BOOST_FUSION_ADAPT_TPL_STRUCT(
                (T), (ast::scalar_type) (T),
@@ -240,13 +291,16 @@ std::string demangle_symbol(const std::string& mangled) {
 	if (demangled) {
 		std::string ret(demangled, length);
 		free(demangled);
-		auto const rule_pos = ret.rfind("x3::rule");
+		// each compounding of parsers (by operator >, +, |, etc) adds to the parser type, which could grow to
+		// hundreds of characters. Try to simplify this by trying to find a rule type that the parser type maps to.
+		auto const rule_pos = ret.rfind("boost::spirit::x3::rule");
 		if (rule_pos != std::string::npos) {
 			// dump from the rule part.
-			ret = ret.substr(rule_pos);
+			ret = ret.substr(rule_pos + 15);
 		}
 		return ret;
 	} else {
+		// exception.which() may not be a mangled C++ type id, in which case we just return as-is.
 		return mangled;
 	}
 }
@@ -308,11 +362,14 @@ DEFINE_RULE(string_constant,
 
 // constants and metadata
 DEFINE_RULE(boolean_constant, x3::bool_, bool);
+DEFINE_RULE(unsigned_constant,
+			((x3::lit("0x") > hex_uint64) | x3::uint64),
+			uint64_t);
 DEFINE_RULE(scalar,
-			boolean_constant | strict_double | ((x3::lit("0x") > hex_uint64) | x3::uint64) | x3::int64,
+			boolean_constant | strict_double | unsigned_constant | x3::int64,
 			// as the parser evaluates rules from left-to-right, strict double must come before ints
 			// to prevent parsing e.g. "1.0" as an unsigned_constant 1 and leaving ".0" behind.
-			// unsigned_constant must come before int64 to parse "3" as unsigned int
+			// unsigned_constant must come before int64 to parse "3" as unsigned int and not int
 			ast::scalar);
 DEFINE_RULE(single_value, scalar | string_constant, ast::single_value);
 DEFINE_RULE(metadatum,
@@ -496,6 +553,38 @@ DEFINE_RULE(
 		struct_decl,
 		(x3::lit("struct") > ident > -metadata > '{' > +struct_field_decl > '}'),
 		ast::struct_decl);
+
+DEFINE_RULE(
+		enumval_decl,
+		(ident > -(x3::lit('=') > (unsigned_constant | x3::int64))),
+		ast::enumval_decl);
+
+DEFINE_RULE(
+		enum_decl,
+		(
+			x3::lit("enum") > ident > ':' > (
+				int8_type_part |
+				uint8_type_part |
+				int16_type_part |
+				uint16_type_part |
+				int64_type_part |
+				uint64_type_part |
+				int32_type_part |
+				uint32_type_part) >
+			-metadata >
+			'{' > (enumval_decl % ',') > '}'
+		),
+		ast::enum_decl);
+
+DEFINE_RULE(
+		union_subtype_decl,
+		-(ident >> ':') > ident,
+		ast::union_subtype_decl);
+
+DEFINE_RULE(
+		union_decl,
+		(x3::lit("union") > ident > -metadata > '{' > (union_subtype_decl % ',') > '}'),
+		ast::union_decl);
 
 
 #undef DEFINE_RULE
@@ -1039,6 +1128,52 @@ bool struct_decl() {
 	return run_ast_test(rule::struct_decl, struct_decl_input_set);
 }
 
+input_set_type<ast::enumval_decl> enumval_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::enumval_decl>{
+		{ "Red = 1", ast::enumval_decl{ "Red", ast::enumval_variant(uint64_t(1)) }},
+		{ "Blue", ast::enumval_decl{ "Blue", boost::none }},
+		{ "Yellow = -3", ast::enumval_decl{ "Yellow", ast::enumval_variant(int64_t(-3)) }},
+	};
+}();
+
+bool enumval_decl() {
+	return run_ast_test(rule::enumval_decl, enumval_decl_input_set);
+}
+
+input_set_type<ast::enum_decl> enum_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::enum_decl>{
+		
+	};
+}();
+
+bool enum_decl() {
+	return run_ast_test(rule::enum_decl, enum_decl_input_set);
+}
+
+input_set_type<ast::union_subtype_decl> union_subtype_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::union_subtype_decl>{
+		
+	};
+}();
+
+bool union_subtype_decl() {
+	return run_ast_test(rule::union_subtype_decl, union_subtype_decl_input_set);
+}
+
+input_set_type<ast::union_decl> union_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::union_decl>{
+		
+	};
+}();
+
+bool union_decl() {
+	return run_ast_test(rule::union_decl, union_decl_input_set);
+}
+
 } // namespace test
 
 int main() {
@@ -1055,6 +1190,7 @@ int main() {
 	ok = ok && test::table_decl();
 	ok = ok && test::struct_field_decl();
 	ok = ok && test::struct_decl();
+	ok = ok && test::enumval_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
