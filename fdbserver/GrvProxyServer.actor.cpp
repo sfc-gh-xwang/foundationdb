@@ -399,7 +399,9 @@ ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRe
 		}
 
 		ReportThroughputReply reply;
-		reply.busyTags = *busyTags;
+		if (isBusyThrottlingIDsTrackingEnabled()) {
+			reply.busyTags = *busyTags;
+		}
 
 		req.reply.send(reply);
 	}

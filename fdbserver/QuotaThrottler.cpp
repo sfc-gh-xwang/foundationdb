@@ -20,6 +20,7 @@
 
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/ThrottlingId.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbserver/IRKClusterThroughputTracker.h"
@@ -364,20 +365,24 @@ public:
 				}
 
 				auto rate = stats.getTransactionRate();
+				if (isBusyThrottlingIDsTrackingEnabled()) {
+					if (rate > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyRate)) {
+						busyThrottlingIds.emplace(throttlingId);
+					} else if (rate < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyRate)) {
+						busyThrottlingIds.erase(throttlingId);
+					}
 
-				if (rate > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyRate)) {
-					busyThrottlingIds.emplace(throttlingId);
-				} else if (rate < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyRate)) {
-					busyThrottlingIds.erase(throttlingId);
-				}
-
-				// Only report busy throttling IDs to the proxy
-				if (busyThrottlingIds.contains(throttlingId)) {
+					// Only report busy throttling IDs to the proxy
+					if (busyThrottlingIds.contains(throttlingId)) {
+						result[throttlingId] = targetPerProxyRate;
+					}
+				} else {
 					result[throttlingId] = targetPerProxyRate;
 				}
 
 			} else {
 				te.disable();
+				busyThrottlingIds.erase(throttlingId);
 			}
 		}
 
@@ -415,19 +420,24 @@ public:
 
 				auto throughput = clusterThroughputTracker.getThroughput(throttlingId);
 
-				if (throughput > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyThroughput)) {
-					busyThrottlingIds.emplace(throttlingId);
-				} else if (throughput < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyThroughput)) {
-					busyThrottlingIds.erase(throttlingId);
-				}
+				if (isBusyThrottlingIDsTrackingEnabled()) {
+					if (throughput > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyThroughput)) {
+						busyThrottlingIds.emplace(throttlingId);
+					} else if (throughput < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyThroughput)) {
+						busyThrottlingIds.erase(throttlingId);
+					}
 
-				// Only report busy throttling IDs to the proxy
-				if (busyThrottlingIds.contains(throttlingId)) {
+					// Only report busy throttling IDs to the proxy
+					if (busyThrottlingIds.contains(throttlingId)) {
+						result[throttlingId] = targetPerProxyThroughput;
+					}
+				} else {
 					result[throttlingId] = targetPerProxyThroughput;
 				}
 
 			} else {
 				te.disable();
+				busyThrottlingIds.erase(throttlingId);
 			}
 		}
 
@@ -440,8 +450,14 @@ public:
 	int64_t manualThrottleCount() const { return 0; }
 
 	void removeExpiredThrottlingIds() {
-		boost::unordered::erase_if(throttlingStatistics,
-		                           [](auto const& kv) { return !kv.second.recentTransactionsAdded(); });
+		boost::unordered::erase_if(throttlingStatistics, [&](auto const& kv) {
+			if (!kv.second.recentTransactionsAdded()) {
+				busyThrottlingIds.erase(kv.first);
+				return true;
+			} else {
+				return false;
+			}
+		});
 	}
 
 	Future<Void> removeExpiredThrottlingIdsActor() {

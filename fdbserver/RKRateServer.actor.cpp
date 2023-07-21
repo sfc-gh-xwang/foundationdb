@@ -85,7 +85,9 @@ public:
 					}
 				}
 
-				reply.busyTags = quotaThrottler->getBusyThrottlingIds();
+				if (isBusyThrottlingIDsTrackingEnabled()) {
+					reply.busyTags = quotaThrottler->getBusyThrottlingIds();
+				}
 			}
 
 			reply.healthMetrics.update(normalRateUpdater->getHealthMetrics(), true, req.detailed);

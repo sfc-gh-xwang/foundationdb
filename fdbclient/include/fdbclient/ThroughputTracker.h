@@ -40,3 +40,4 @@ public:
 };
 
 bool isClientAverageCostTrackingEnabled();
+bool isBusyThrottlingIDsTrackingEnabled();

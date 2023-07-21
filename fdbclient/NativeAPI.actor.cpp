@@ -7479,7 +7479,7 @@ bool TransactionState::canUseGrvCache() {
 	       (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE || options.useGrvCache) &&
 	       rkThrottlingCooledDown(cx.getPtr(), options.priority) &&
 	       // skip cache if tag is busy, busy tags depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
-	       !(CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && getThrottlingId().present() &&
+	       !(isBusyThrottlingIDsTrackingEnabled() && getThrottlingId().present() &&
 	         cx->isThrottlingIdBusy(getThrottlingId().get()));
 }
 

@@ -783,10 +783,13 @@ public:
 	double CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME;
 	double CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME;
 
-	// If the throughput exceeds the THROTTLING_ID_BUSY_THRESHOLD * effective quota, it will be recognized as a busy
-	// throttling ID. The client will utilize this ID to bypass the grv cache
+	// Enabled by CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS
+	// // A throttling ID will be classified as a busy throttling ID if its throughput exceeds
+	// (THROTTLING_ID_BUSY_THRESHOLD * effective quota).
 	double THROTTLING_ID_BUSY_THRESHOLD;
-	// When the throughput of a busy tag falls below this threshold, it will no longer be classified as busy.
+	// // These two parameters work in tandem to configure the hysteresis for busy IDs. When the throughput of a busy ID
+	// drops below this threshold, it will transition to a non-busy state. This prevents the ID from continuously
+	// oscillating between busy and not busy.
 	double THROTTLING_ID_FORGET_THRESHOLD;
 
 	double MAX_TRANSACTIONS_PER_BYTE;
