@@ -213,6 +213,7 @@ struct struct_decl {
 	std::string name;
 	boost::optional<metadata> meta;
 	std::vector<struct_field_decl> fields;
+	bool operator==(const struct_decl& other) const noexcept = default;
 };
 
 } // namespace ast
@@ -992,6 +993,52 @@ bool struct_field_decl() {
 	return run_ast_test(rule::struct_field_decl, struct_field_decl_input_set);
 }
 
+input_set_type<ast::struct_decl> struct_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::struct_decl>{
+		{
+			"struct SomeStruct (id: 10) {"         "\n"
+			"  x : int (priority: 1);"             "\n"
+			"  Y : float;"                         "\n"
+			"  shape : Shape;"                     "\n"
+			"}",
+			ast::struct_decl{
+				"SomeStruct",
+				ast::metadata{
+					{ "id", ast::single_value(ast::scalar(uint64_t(10))) },
+				},
+				{
+					ast::struct_field_decl{
+						"x",
+						ast::struct_fieldtype_variant{
+							ast::type_tag<int>{}},
+						ast::metadata{
+							{ "priority", ast::single_value(ast::scalar(uint64_t(1))) },
+						},
+					},
+					ast::struct_field_decl{
+						"Y",
+						ast::struct_fieldtype_variant{
+							ast::type_tag<float>{}},
+						boost::none,
+					},
+					ast::struct_field_decl{
+						"shape",
+						ast::struct_fieldtype_variant{
+							ast::typeref{ "Shape", boost::none }
+						},
+						boost::none,
+					},
+				},
+			},
+		},
+	};
+}();
+
+bool struct_decl() {
+	return run_ast_test(rule::struct_decl, struct_decl_input_set);
+}
+
 } // namespace test
 
 int main() {
@@ -1007,6 +1054,7 @@ int main() {
 	ok = ok && test::table_field_decl();
 	ok = ok && test::table_decl();
 	ok = ok && test::struct_field_decl();
+	ok = ok && test::struct_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
