@@ -14,7 +14,6 @@
 // verifies that the achieved throughput is near the total quota.
 //
 // TODO:
-//   - Randomize the number of operations per transaction
 //   - Test multi-page operations
 //   - Test using tenant groups rather than tags
 class ExpectStableThroughputWorkload : public TestWorkload {
@@ -148,7 +147,7 @@ public:
 		keyPrefix = getOption(options, "keyPrefix"_sr, "testKey"_sr);
 		numActors = getOption(options, "numActors"_sr, 100);
 		warmupTime = getOption(options, "warmupTime"_sr, 10.0);
-		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, 5);
+		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, deterministicRandom()->randomInt(1, 11));
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
 		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
 	}

@@ -21,4 +21,3 @@ testTitle='ExpectStableThroughput'
   # TODO: Reduce this error tolerance
   errorTolerance=0.3
   numActors=100
-  opsPerTransaction=5
