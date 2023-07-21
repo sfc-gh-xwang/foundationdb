@@ -372,11 +372,16 @@ public:
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
 				if constexpr (SystemAccess) {
 					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				} else if constexpr (RawAccess) {
+					tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 				}
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				return self.get(tr, snapshot);
 			});
 		} else {
+			if constexpr (RawAccess) {
+				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+			}
 			typename transaction_future_type<Transaction, ValueReadResult>::type getFuture = tr->get(key, snapshot);
 
 			return holdWhile(
@@ -396,11 +401,16 @@ public:
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
 				if constexpr (SystemAccess) {
 					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				} else if constexpr (RawAccess) {
+					tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 				}
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				return self.getD(tr, snapshot, defaultValue);
 			});
 		} else {
+			if constexpr (RawAccess) {
+				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+			}
 			return map(get(tr, snapshot),
 			           [=](Optional<T> val) -> T { return val.present() ? val.get() : defaultValue; });
 		}
@@ -413,11 +423,16 @@ public:
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
 				if constexpr (SystemAccess) {
 					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				} else if constexpr (RawAccess) {
+					tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 				}
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				return self.getOrThrow(tr, snapshot, err);
 			});
 		} else {
+			if constexpr (RawAccess) {
+				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+			}
 			return map(get(tr, snapshot), [=](Optional<T> val) -> T {
 				if (!val.present()) {
 					throw err;
@@ -434,6 +449,8 @@ public:
 		return runTransaction(tcx, [this, val](decltype(tcx->createTransaction()) tr) {
 			if constexpr (SystemAccess) {
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			} else if constexpr (RawAccess) {
+				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 			}
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 			set(tr, val);
@@ -443,6 +460,9 @@ public:
 
 	template <class Transaction>
 	std::enable_if_t<!is_transaction_creator<Transaction>, void> set(Transaction tr, T const& val) {
+		if constexpr (RawAccess) {
+			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+		}
 		tr->set(key, packValue(val));
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -454,6 +474,8 @@ public:
 		return runTransaction(tcx, [this](decltype(tcx->createTransaction()) tr) {
 			if constexpr (SystemAccess) {
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			} else if constexpr (RawAccess) {
+				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 			}
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 			clear(tr);
@@ -463,6 +485,9 @@ public:
 
 	template <class Transaction>
 	std::enable_if_t<!is_transaction_creator<Transaction>, void> clear(Transaction tr) {
+		if constexpr (RawAccess) {
+			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+		}
 		tr->clear(key);
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -471,6 +496,9 @@ public:
 
 	template <class Transaction>
 	Future<Void> watch(Transaction tr) {
+		if constexpr (RawAccess) {
+			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+		}
 		return tr->watch(key);
 	}
 
@@ -505,6 +533,9 @@ public:
 
 	template <class Transaction>
 	void atomicOp(Transaction tr, T const& val, MutationRef::Type type) {
+		if constexpr (RawAccess) {
+			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+		}
 		tr->atomicOp(this->key, BinaryWriter::toValue<T>(val, Unversioned()), type);
 		if (this->trigger.present()) {
 			this->trigger->update(tr);
@@ -513,6 +544,9 @@ public:
 
 	template <class Transaction>
 	void setVersionstamp(Transaction tr, T const& val, int offset) {
+		if constexpr (RawAccess) {
+			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+		}
 		tr->atomicOp(
 		    this->key,
 		    BinaryWriter::toValue<T>(val, Unversioned()).withSuffix(StringRef(reinterpret_cast<uint8_t*>(&offset), 4)),
