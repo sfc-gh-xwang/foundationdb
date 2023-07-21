@@ -344,7 +344,7 @@ public:
 
 		for (auto& [throttlingId, stats] : throttlingStatistics) {
 			// Currently there is no differentiation between batch priority and default priority transactions
-			TraceEvent te("QuotaThrottler_GotRate", id);
+			TraceEvent te("QuotaThrottler_GotTargetTransactionRate", id);
 			bool const traceEnabled = stats.canLog();
 			if (!traceEnabled) {
 				te.disable();
@@ -379,7 +379,7 @@ public:
 
 		for (auto& [throttlingId, stats] : throttlingStatistics) {
 			// Currently there is no differentiation between batch priority and default priority transactions
-			TraceEvent te("QuotaThrottler_GotRate", id);
+			TraceEvent te("QuotaThrottler_GotTargetThroughput", id);
 			bool const traceEnabled = stats.canLog();
 			if (!traceEnabled) {
 				te.disable();
