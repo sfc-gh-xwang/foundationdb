@@ -2,8 +2,7 @@
 testTitle='TagThroughputQuotaTest'
 
   [[test.workload]]
-  testName='ThroughputQuota'
-  nameRepresentsTenantGroup=false
+  testName='TagThroughputQuota'
   name='a'
   totalQuotaInPages=4
 

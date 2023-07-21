@@ -8,8 +8,7 @@ grvProxyCount = 1
 testTitle='ExpectStableThroughput'
 
   [[test.workload]]
-  testName='ThroughputQuota'
-  nameRepresentsTenantGroup=false
+  testName='TagThroughputQuota'
   name='testTag'
   totalQuotaInPages=1000
 

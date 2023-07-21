@@ -1,5 +1,5 @@
 /*
- * ThroughputQuota.actor.cpp
+ * TagThroughputQuota.actor.cpp
  *
  * This source file is part of the FoundationDB open source project
  *
@@ -25,37 +25,18 @@
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 // This workload sets the throughput quota of a tag during the setup phase
-class ThroughputQuotaWorkload : public TestWorkload {
-	bool nameRepresentsTenantGroup{ false };
+class TagThroughputQuotaWorkload : public TestWorkload {
 	Standalone<StringRef> name;
 	int64_t reservedQuotaInPages{ 0 };
 	int64_t totalQuotaInPages{ 0 };
 
 	int64_t getReservedQuota() const { return reservedQuotaInPages * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
-
 	int64_t getTotalQuota() const { return totalQuotaInPages * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 
-	Future<Void> setTagQuota(Database const& db) {
-		TraceEvent("ThroughputQuotaWorkload_SettingTagQuota")
-		    .detail("Tag", printable(name))
-		    .detail("ReservedQuota", getReservedQuota())
-		    .detail("TotalQuota", getTotalQuota());
-		return ThroughputQuotaUtil::setTagQuota(db, name, getReservedQuota(), getTotalQuota());
-	}
-
-	Future<Void> setTenantGroupQuota(Database const& db) {
-		TraceEvent("ThroughputQuotaWorkload_SettingTenantGroupQuota")
-		    .detail("TenantGroup", printable(name))
-		    .detail("ReservedQuota", getReservedQuota())
-		    .detail("TotalQuota", getTotalQuota());
-		return ThroughputQuotaUtil::setTenantGroupQuota(db, name, getReservedQuota(), getTotalQuota());
-	}
-
 public:
-	static constexpr auto NAME = "ThroughputQuota";
-	explicit ThroughputQuotaWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
-		nameRepresentsTenantGroup = getOption(options, "nameRepresentsTenantGroup"_sr, false);
-		name = getOption(options, "name"_sr, nameRepresentsTenantGroup ? "sampleTenantGroup"_sr : "sampleTag"_sr);
+	static constexpr auto NAME = "TagThroughputQuota";
+	explicit TagThroughputQuotaWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
+		name = getOption(options, "name"_sr, "sampleTag"_sr);
 		reservedQuotaInPages = getOption(options, "reservedQuotaInPages"_sr, 0);
 		totalQuotaInPages = getOption(options, "totalQuotaInPages"_sr, 0);
 	}
@@ -64,15 +45,15 @@ public:
 		if (clientId != 0) {
 			return Void();
 		}
-		if (nameRepresentsTenantGroup) {
-			return setTenantGroupQuota(db);
-		} else {
-			return setTagQuota(db);
-		}
+		TraceEvent("TagThroughputQuotaWorkload_SettingQuota")
+		    .detail("Tag", printable(name))
+		    .detail("ReservedQuota", getReservedQuota())
+		    .detail("TotalQuota", getTotalQuota());
+		return ThroughputQuotaUtil::setTagQuota(db, name, getReservedQuota(), getTotalQuota());
 	}
 	Future<Void> start(Database const& cx) override { return Void(); }
 	Future<bool> check(Database const& cx) override { return true; }
 	void getMetrics(std::vector<PerfMetric>& m) override {}
 };
 
-WorkloadFactory<ThroughputQuotaWorkload> ThroughputQuotaWorkloadFactory;
+WorkloadFactory<TagThroughputQuotaWorkload> TagThroughputQuotaWorkloadFactory;
