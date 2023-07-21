@@ -228,6 +228,7 @@ using enumval_variant = x3::variant<uint64_t, int64_t>;
 
 struct enumval_decl {
 	std::string name;
+	// whether the assigned value fits in the type that backs enum is deferred to code generator
 	boost::optional<enumval_variant> value;
 	bool operator==(const enumval_decl& other) const noexcept = default;
 };
@@ -251,7 +252,7 @@ struct enum_decl {
 };
 
 struct union_subtype_decl {
-	std::string name;
+	std::string type;
 	boost::optional<std::string> alias;
 	bool operator==(const union_subtype_decl& other) const noexcept = default;
 };
@@ -275,7 +276,7 @@ BOOST_FUSION_ADAPT_STRUCT(ast::struct_field_decl, name, typeinfo, meta)
 BOOST_FUSION_ADAPT_STRUCT(ast::struct_decl, name, meta, fields)
 BOOST_FUSION_ADAPT_STRUCT(ast::enumval_decl, name, value)
 BOOST_FUSION_ADAPT_STRUCT(ast::enum_decl, name, typeinfo, meta, values)
-BOOST_FUSION_ADAPT_STRUCT(ast::union_subtype_decl, alias, name) // member order reversed to accommodate the parse order
+BOOST_FUSION_ADAPT_STRUCT(ast::union_subtype_decl, alias, type) // member order reversed to accommodate the parse order
 BOOST_FUSION_ADAPT_STRUCT(ast::union_decl, name, meta, subtypes)
 
 BOOST_FUSION_ADAPT_TPL_STRUCT(
@@ -1134,6 +1135,7 @@ input_set_type<ast::enumval_decl> enumval_decl_input_set = []() {
 		{ "Red = 1", ast::enumval_decl{ "Red", ast::enumval_variant(uint64_t(1)) }},
 		{ "Blue", ast::enumval_decl{ "Blue", boost::none }},
 		{ "Yellow = -3", ast::enumval_decl{ "Yellow", ast::enumval_variant(int64_t(-3)) }},
+		{ "Yellow = -3 (deprecated)", boost::none }, // no metadata allowed for enum values
 	};
 }();
 
@@ -1144,7 +1146,34 @@ bool enumval_decl() {
 input_set_type<ast::enum_decl> enum_decl_input_set = []() {
 	using namespace std::string_literals;
 	return input_set_type<ast::enum_decl>{
-		
+		{
+			"enum Colors : int (deprecated) {"    "\n"
+			"  Red = 1,"                    "\n"
+			"  Blue = 0xab,"                "\n"
+			"  Yellow = -5,"                "\n"
+			"  Green"                       "\n"
+			"}",
+			ast::enum_decl{
+				"Colors",
+				ast::enum_type_variant{ast::type_tag<int>{}},
+				ast::metadata{{"deprecated", boost::none}},
+				{
+					ast::enumval_decl{"Red", ast::enumval_variant(uint64_t(1))},
+					ast::enumval_decl{"Blue", ast::enumval_variant(uint64_t(0xab))},
+					ast::enumval_decl{"Yellow", ast::enumval_variant(int64_t(-5))},
+					ast::enumval_decl{"Green", boost::none},
+				},
+			},
+		},
+		{
+			"enum Colors (deprecated) {"    "\n"
+			"  Red = 1,"                    "\n"
+			"  Blue = 0xab,"                "\n"
+			"  Yellow = -5,"                "\n"
+			"  Green"                       "\n"
+			"}",
+			boost::none // enum type information (e.g. (: int) is required
+		},
 	};
 }();
 
@@ -1155,7 +1184,10 @@ bool enum_decl() {
 input_set_type<ast::union_subtype_decl> union_subtype_decl_input_set = []() {
 	using namespace std::string_literals;
 	return input_set_type<ast::union_subtype_decl>{
-		
+		{ "SomeAlias: SomeType", ast::union_subtype_decl{"SomeType", "SomeAlias"s}},
+		{ "SomeType", ast::union_subtype_decl{"SomeType", boost::none}},
+		{ "SomeAlias: SomeType = SomeValue", boost::none }, // union subtypes cannot default to a value
+		{ "SomeAlias: SomeType (deprecated)", boost::none }, // union subtypes are not allowed metadata
 	};
 }();
 
@@ -1166,7 +1198,27 @@ bool union_subtype_decl() {
 input_set_type<ast::union_decl> union_decl_input_set = []() {
 	using namespace std::string_literals;
 	return input_set_type<ast::union_decl>{
-		
+		{
+			"union U (priority: 1, deprecated) {"    "\n"
+			"  Start: MarkerPosition,"               "\n"
+			"  Point: PointPosition,"                "\n"
+			"  Direction,"                           "\n"
+			"  Finish: MarkerPosition"               "\n"
+			"}",
+			ast::union_decl{
+				"U",
+				ast::metadata{
+					{ "priority", ast::single_value(ast::scalar(uint64_t(1))) },
+					{ "deprecated", boost::none },
+				},
+				{
+					ast::union_subtype_decl{"MarkerPosition", "Start"s},
+					ast::union_subtype_decl{"PointPosition", "Point"s},
+					ast::union_subtype_decl{"Direction", boost::none},
+					ast::union_subtype_decl{"MarkerPosition", "Finish"s},
+				},
+			},
+		},
 	};
 }();
 
@@ -1191,6 +1243,9 @@ int main() {
 	ok = ok && test::struct_field_decl();
 	ok = ok && test::struct_decl();
 	ok = ok && test::enumval_decl();
+	ok = ok && test::enum_decl();
+	ok = ok && test::union_subtype_decl();
+	ok = ok && test::union_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
