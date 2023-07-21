@@ -361,6 +361,16 @@ else()
       --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
+    
+    # FIXME: re-enable after 71.3.2 is published and prev_release_version is changed to it
+    # add_python_venv_test(NAME fdb_c_upgrade_from_prev_blob_granule
+    #  COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
+    #  --build-dir ${CMAKE_BINARY_DIR}
+    #  --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/ApiBlobGranulesCorrectness.toml
+    #  --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}" "${FDB_PREV_RELEASE_VERSION}"
+    #  --blob-granules-enabled
+    #  --process-number 3
+    #  )
 
     add_python_venv_test(NAME fdb_c_wiggle_only
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
