@@ -14,7 +14,6 @@
 // verifies that the achieved throughput is near the total quota.
 //
 // TODO:
-//   - Test write workloads
 //   - Randomize the number of operations per transaction
 //   - Test multi-page operations
 //   - Test using tenant groups rather than tags
@@ -35,6 +34,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	double warmupTime;
 	int opsPerTransaction;
 	bool provideExpectedCost;
+	bool performReads;
 
 	double startTime;
 
@@ -47,7 +47,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 
 	Key getKey(int index) { return Key(format("%06d", index)).withPrefix(keyPrefix); }
 
-	ACTOR static Future<Void> runTransaction(ExpectStableThroughputWorkload* self, Database cx) {
+	ACTOR static Future<Void> runReadTransaction(ExpectStableThroughputWorkload* self, Database cx) {
 		state Transaction tr(cx);
 		state std::vector<Future<Void>> futures;
 		loop {
@@ -74,9 +74,44 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		}
 	}
 
+	ACTOR static Future<Void> runWriteTransaction(ExpectStableThroughputWorkload* self, Database cx) {
+		state Transaction tr(cx);
+		loop {
+			try {
+				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag);
+				if (self->provideExpectedCost) {
+					tr.setExpectedCost(self->opsPerTransaction * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE *
+					                   CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO);
+				}
+				// Get read version in order to enforce throttling
+				wait(success(tr.getReadVersion()));
+				for (int i = 0; i < self->opsPerTransaction; ++i) {
+					tr.set(self->getKey(i), ""_sr);
+				}
+				wait(tr.commit());
+				self->finishTransaction(tr);
+				return Void();
+			} catch (Error& e) {
+				self->finishTransaction(tr);
+				if (e.code() == error_code_proxy_tag_throttled && now() > self->startTime + self->warmupTime) {
+					++self->tagThrottledErrors;
+				}
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	Future<Void> runTransaction(Database const& cx) {
+		if (performReads) {
+			return runReadTransaction(this, cx);
+		} else {
+			return runWriteTransaction(this, cx);
+		}
+	}
+
 	ACTOR static Future<Void> runClient(ExpectStableThroughputWorkload* self, Database cx) {
 		loop {
-			wait(delay(1 / self->attemptedTransactionRatePerActor) && runTransaction(self, cx));
+			wait(delay(1 / self->attemptedTransactionRatePerActor) && self->runTransaction(cx));
 		}
 	}
 
@@ -93,6 +128,7 @@ public:
 		warmupTime = getOption(options, "warmupTime"_sr, 10.0);
 		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, 5);
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
+		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
 	}
 
 	Future<Void> setup(Database const& cx) override { return Void(); }
@@ -101,6 +137,18 @@ public:
 		if (clientId != 0) {
 			return Void();
 		}
+		TraceEvent("StartingExpectStableThroughputWorkload")
+		    .detail("TestDuration", testDuration)
+		    .detail("ThrottlingTag", throttlingTag)
+		    .detail("ExpectedThroughputPagesRate", expectedThroughputPagesRate)
+		    .detail("ErrorTolerance", errorTolerance)
+		    .detail("KeyPrefix", keyPrefix)
+		    .detail("NumActors", numActors)
+		    .detail("AttemptedTransactionRatePerActor", attemptedTransactionRatePerActor)
+		    .detail("WarmupTime", warmupTime)
+		    .detail("OpsPerTranaction", opsPerTransaction)
+		    .detail("ProvideExpectedCost", provideExpectedCost)
+		    .detail("PerformReads", performReads);
 		startTime = now();
 		std::vector<Future<Void>> clients;
 		for (int i = 0; i < numActors; ++i) {
