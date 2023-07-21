@@ -1914,7 +1914,6 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 
 					// In the case of merge, rd.completeSources would be the intersection set of two source server
 					// lists, while rd.src would be the union set.
-					// FIXME. It is a bit over-estimated here with rd.completeSources.
 					const int nonOverlappingCount = nonOverlappedServerCount(rd.completeSources, destIds);
 					self->relocateTotalCount++;
 					if (nonOverlappingCount == 0) {

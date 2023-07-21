@@ -46,14 +46,18 @@ double RKClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId
 	}
 }
 
-std::unordered_set<ThrottlingId> RKClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	std::unordered_set<ThrottlingId> result;
+boost::unordered_flat_set<ThrottlingId> RKClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	boost::unordered_flat_set<ThrottlingId> result;
 	for (auto const& [throttlingId, throughputSmoother] : throughput) {
 		if (throughputSmoother.smoother.smoothRate() > threshold) {
 			result.insert(throttlingId);
 		}
 	}
 	return result;
+}
+
+int RKClientThroughputTracker::throttlingIdsTracked() const {
+	return throughput.size();
 }
 
 void RKClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {

@@ -124,7 +124,7 @@ class RKMetricsTracker : public IRKMetricsTracker {
 	double lastSSListFetchedTimestamp;
 	PromiseStream<std::pair<UID, Optional<StorageServerInterface>>> serverChanges;
 	// Maps storage server ID to storage server interface
-	std::unordered_map<UID, StorageServerInterface> storageServerInterfaces;
+	boost::unordered_flat_map<UID, StorageServerInterface> storageServerInterfaces;
 	Map<UID, StorageQueueInfo> storageQueueInfo;
 	Map<UID, TLogQueueInfo> tlogQueueInfo;
 	Smoother smoothTotalDurableBytes;
