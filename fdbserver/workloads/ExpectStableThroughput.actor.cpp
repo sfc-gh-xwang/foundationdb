@@ -19,9 +19,9 @@
 //   - Test using tenant groups rather than tags
 class ExpectStableThroughputWorkload : public TestWorkload {
 	// Metrics:
-	uint64_t totalCost{ 0 };
-	double throttledDuration{ 0.0 };
-	int tagThrottledErrors{ 0 };
+	HoltLinearSmoother totalCost;
+	HoltLinearSmoother throttledDuration;
+	HoltLinearSmoother tagThrottledErrors;
 
 	// Parameters:
 	double testDuration;
@@ -40,8 +40,18 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 
 	void finishTransaction(Transaction const& tr) {
 		if (now() > startTime + warmupTime) {
-			totalCost += tr.getTotalCost();
-			throttledDuration += tr.getTagThrottledDuration();
+			totalCost.addDelta(tr.getTotalCost());
+			throttledDuration.addDelta(tr.getTagThrottledDuration());
+		}
+	}
+
+	ACTOR static Future<Void> loggerActor(ExpectStableThroughputWorkload* self) {
+		loop {
+			wait(delay(5.0));
+			TraceEvent("ExpectStableThroughputWorkloadMetrics")
+			    .detail("ThroughputRate", self->totalCost.smoothRate())
+			    .detail("ThrottledDurationRate", self->throttledDuration.smoothRate())
+			    .detail("TagThrottledErrorRate", self->tagThrottledErrors.smoothRate());
 		}
 	}
 
@@ -67,7 +77,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 			} catch (Error& e) {
 				self->finishTransaction(tr);
 				if (e.code() == error_code_proxy_tag_throttled && now() > self->startTime + self->warmupTime) {
-					++self->tagThrottledErrors;
+					self->tagThrottledErrors.addDelta(1.0);
 				}
 				wait(tr.onError(e));
 			}
@@ -94,7 +104,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 			} catch (Error& e) {
 				self->finishTransaction(tr);
 				if (e.code() == error_code_proxy_tag_throttled && now() > self->startTime + self->warmupTime) {
-					++self->tagThrottledErrors;
+					self->tagThrottledErrors.addDelta(1.0);
 				}
 				wait(tr.onError(e));
 			}
@@ -125,7 +135,11 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 
 public:
 	static constexpr auto NAME = "ExpectStableThroughput";
-	explicit ExpectStableThroughputWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
+	explicit ExpectStableThroughputWorkload(WorkloadContext const& wcx)
+	  : TestWorkload(wcx),
+	    totalCost(1.0, 5.0),
+	    throttledDuration(1.0, 5.0),
+	    tagThrottledErrors(1.0, 5.0) {
 		testDuration = getOption(options, "testDuration"_sr, 1200.0);
 		throttlingTag = getOption(options, "throttlingTag"_sr, "testTag"_sr);
 		expectedThroughputPagesRate = getOption(options, "expectedThroughputPagesRate"_sr, 1);
@@ -162,7 +176,7 @@ public:
 		for (int i = 0; i < numActors; ++i) {
 			clients.push_back(runClient(this, cx));
 		}
-		return success(timeout(waitForAll(clients), warmupTime + testDuration));
+		return loggerActor(this) || success(timeout(waitForAll(clients), warmupTime + testDuration));
 	}
 
 	Future<bool> check(Database const& cx) override {
@@ -171,24 +185,25 @@ public:
 		}
 		auto const expectedTotalCost =
 		    testDuration * expectedThroughputPagesRate * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
-		bool passed = (totalCost <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
+		bool passed = (totalCost.getTotal() <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
 		// For write workloads, unrelated availability issues are known to
 		// cause throughput to be lower than the total quota. Therefore, only put
 		// a lower bound on throughput for read workloads:
 		if (performReads) {
-			passed = passed && (static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance) <= totalCost);
+			passed =
+			    passed && (static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance) <= totalCost.getTotal());
 		}
 		auto const severity = passed ? SevInfo : SevError;
 		TraceEvent(severity, "CheckingStableThroughput")
 		    .detail("ExpectedTotalCost", expectedTotalCost)
 		    .detail("ErrorTolerance", errorTolerance)
-		    .detail("TotalCost", totalCost);
+		    .detail("TotalCost", totalCost.getTotal());
 		return passed;
 	}
 	void getMetrics(std::vector<PerfMetric>& m) override {
-		m.emplace_back("Total Cost", totalCost, Averaged::False);
-		m.emplace_back("TagThrottled Errors", tagThrottledErrors, Averaged::False);
-		m.emplace_back("Total Throttling Duration", throttledDuration, Averaged::False);
+		m.emplace_back("Total Cost", totalCost.getTotal(), Averaged::False);
+		m.emplace_back("TagThrottled Errors", tagThrottledErrors.getTotal(), Averaged::False);
+		m.emplace_back("Total Throttling Duration", throttledDuration.getTotal(), Averaged::False);
 	}
 };
 
