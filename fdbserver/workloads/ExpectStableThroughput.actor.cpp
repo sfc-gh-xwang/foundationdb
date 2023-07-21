@@ -129,11 +129,6 @@ public:
 		m.emplace_back("TagThrottled Errors", tagThrottledErrors, Averaged::False);
 		m.emplace_back("Total Throttling Duration", throttledDuration, Averaged::False);
 	}
-
-	void disableFailureInjectionWorkloads(std::set<std::string>& out) const override {
-		out.insert("Attrition");
-		out.insert("RandomClogging");
-	}
 };
 
 WorkloadFactory<ExpectStableThroughputWorkload> ExpectStableThroughputWorkloadFactory;
