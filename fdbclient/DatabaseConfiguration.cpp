@@ -926,7 +926,6 @@ bool DatabaseConfiguration::isOverridden(std::string key) const {
 }
 
 void DatabaseConfiguration::test_setDefaultReplicationPolicy() {
-	ASSERT(g_network->isSimulated());
 	setDefaultReplicationPolicy();
 }
 
@@ -967,5 +966,15 @@ TEST_CASE("/fdbclient/databaseConfiguration/configureStringFromJSON/storageEngin
 	// log_engine=ssd-2 is by default added by the function
 	ASSERT_EQ(" storage_engine=redwood:page_size=4096:remote_kv_store=true log_engine=ssd-2",
 	          DatabaseConfiguration::configureStringFromJSON(configJSON2));
+	return Void();
+}
+
+TEST_CASE("/fdbclient/databaseConfiguration/storageEngineParamInterface/supportedEngines") {
+	IKnobCollection::getMutableGlobalKnobCollection().setKnob("enable_storage_engine_param_interface",
+	                                                          KnobValueRef::create(bool{ true }));
+	auto storeType = static_cast<KeyValueStoreType::StoreType>(
+	    deterministicRandom()->randomInt(0, KeyValueStoreType::StoreType::END));
+	std::set<KeyValueStoreType::StoreType> supportedEngines = { KeyValueStoreType::StoreType::SSD_REDWOOD_V1 };
+	ASSERT_EQ(StorageEngineParamsFactory::isSupported(storeType), supportedEngines.contains(storeType));
 	return Void();
 }

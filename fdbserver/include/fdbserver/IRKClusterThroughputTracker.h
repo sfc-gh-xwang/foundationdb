@@ -8,6 +8,7 @@
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKMetricsTracker.h"
 #include <boost/unordered/unordered_flat_map.hpp>
+#include <boost/unordered/unordered_flat_set.hpp>
 
 // Tracks the cluster-wide throughput (in bytes/second) of each throttlingId
 class IRKClusterThroughputTracker {
@@ -18,7 +19,10 @@ public:
 	virtual double getThroughput(ThrottlingId const&) const = 0;
 
 	// Returns the set of throttlingIds reporting throughput above the specified threshold
-	virtual std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const = 0;
+	virtual boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const = 0;
+
+	// Returns the number of throttlingIds for which metrics are currently being stored
+	virtual int throttlingIdsTracked() const = 0;
 };
 
 // The RKServerThroughputTracker class is responsible for tracking
@@ -29,23 +33,41 @@ class RKServerThroughputTracker : public IRKClusterThroughputTracker {
 		WRITE,
 	};
 
+	// Tracks the read and write throughput for a particular
+	// combination of storage server and throuttlingId.
 	class ThroughputCounters {
 		Smoother readThroughput;
 		Smoother writeThroughput;
 
 	public:
 		ThroughputCounters();
-		void updateThroughput(double newThroughput, OpType);
+		// Returns the change in throughput for the provided operation type
+		[[nodiscard]] double updateThroughput(double newThroughput, OpType);
 		double getThroughput() const;
 	};
 
-	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughput;
+	// Tracks the total throughput for a particular throttlingId,
+	// aggregated across reads and writes, and across the entire cluster.
+	class ThrottlingIdThroughput {
+		Smoother smoother;
 
-	void cleanupUnseenStorageServers(std::unordered_set<UID> const& seen);
+	public:
+		ThrottlingIdThroughput();
+		void addDelta(double);
+		double getThroughput() const;
+	};
 
-	static void cleanupUnseenThrottlingIds(ThrottlingIdMap<ThroughputCounters>&,
-	                                       std::unordered_set<ThrottlingId> const& seenReadThrottlingId,
-	                                       std::unordered_set<ThrottlingId> const& seenWriteThrottlingId);
+	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughputBySS;
+	ThrottlingIdMap<ThrottlingIdThroughput> throughputByThrottlingId;
+
+	// Cluster-wide cleanup
+	void cleanup(boost::unordered_flat_set<UID> const& seenStorageServers,
+	             boost::unordered_flat_set<ThrottlingId> const& seenThrottlingIds);
+
+	// Cleanup for a single storage server
+	void cleanupStorageServer(ThrottlingIdMap<ThroughputCounters>&,
+	                          boost::unordered_flat_set<ThrottlingId> const& seenReadThrottlingId,
+	                          boost::unordered_flat_set<ThrottlingId> const& seenWriteThrottlingId);
 
 public:
 	~RKServerThroughputTracker();
@@ -62,9 +84,10 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
 
-	// Returns the number of storage servers currently being tracked
+	int throttlingIdsTracked() const override;
+
 	int storageServersTracked() const;
 };
 
@@ -96,7 +119,9 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+
+	int throttlingIdsTracked() const override;
 
 	// Updates per-throttlingId throughput statistics based on newly
 	// reported throughput metrics from a GRV proxy
@@ -111,7 +136,9 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	std::unordered_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+
+	int throttlingIdsTracked() const override;
 
 	void update(ThrottlingId const&, double newThroughput);
 

@@ -209,7 +209,7 @@ ACTOR static Future<RateAndReason> testIgnoreWorstZones(int numBadStorageServers
 
 // No processes are reporting any metrics to the rate updater. The default ratekeeper limit
 // is applied.
-TEST_CASE("/fdbserver/RKRateUpdater/Simple") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/Simple") {
 	RKRateUpdaterTestEnvironment env;
 	env.update();
 	ASSERT(checkApproximatelyEqual(env.rateUpdater.getTpsLimit(), SERVER_KNOBS->RATEKEEPER_DEFAULT_LIMIT));
@@ -220,7 +220,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/Simple") {
 // Currently, a workload of 1000 transactions per second is using up half of the storage queue
 // spring bytes (950MB SQ, with a 1GB target and 100MB of spring). The rate updater estimates
 // that the cluster can handle double the current transaction rate, or 2000 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/HighSQ") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/HighSQ") {
 	StorageQueueInfo ss =
 	    wait(getMockStorageQueueInfo(UID(1, 1), LocalityData{}, testTargetQueueBytes - testSpringBytes / 2));
 	RKRateUpdaterTestEnvironment env;
@@ -235,7 +235,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/HighSQ") {
 // size by half of the spring bytes limit (1050MB SQ, with a 1GB target and 100MB of spring).
 // The rate updater estimates that the cluster can handle 2/3 of the current transaction rate,
 // or ~667 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/HighSQ2") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/HighSQ2") {
 	StorageQueueInfo ss =
 	    wait(getMockStorageQueueInfo(UID(1, 1), LocalityData{}, testTargetQueueBytes + testSpringBytes / 2));
 	RKRateUpdaterTestEnvironment env;
@@ -250,7 +250,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/HighSQ2") {
 // storage queue bytes and spring bytes. The rate updater applies the maximum possible throttling
 // based on storage queue, limiting throughput to half the current transaction rate, or 500
 // transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/HighSQ3") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/HighSQ3") {
 	StorageQueueInfo ss =
 	    wait(getMockStorageQueueInfo(UID(1, 1), LocalityData{}, testTargetQueueBytes + 5 * testSpringBytes));
 	RKRateUpdaterTestEnvironment env;
@@ -265,7 +265,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/HighSQ3") {
 // the spring bytes. Therefore, throttling is enforced to ensure that at the current write rate
 // per transaction, an MVCC window worth of writes does not cause storage queue to rise above
 // the target bytes minus spring bytes.
-TEST_CASE("/fdbserver/RKRateUpdater/StorageWriteBandwidthMVCC") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/StorageWriteBandwidthMVCC") {
 	StorageQueueInfo ss =
 	    wait(getMockStorageQueueInfo(UID(1, 1), LocalityData{}, testTargetQueueBytes - 5 * testSpringBytes));
 	RKRateUpdaterTestEnvironment env;
@@ -280,7 +280,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/StorageWriteBandwidthMVCC") {
 // MAX_MACHINES_FALLING_BEHIND servers, but not saturating the storage queue of the other storage
 // servers in different zones. The rate updater does not throttle based on the worst
 // storage servers' queues.
-TEST_CASE("/fdbserver/RKRateUpdater/IgnoreWorstZones") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/IgnoreWorstZones") {
 	RateAndReason rateAndReason = wait(testIgnoreWorstZones(SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND));
 
 	// Even though some storage servers won't allow more than the current transaction rate, the
@@ -299,7 +299,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/IgnoreWorstZones") {
 // (MAX_MACHINES_FALLING_BEHIND + 1) servers, but not saturating the storage queue of the other
 // storage servers in different zones. The rate updater throttles based on the worst storage
 // servers' queues.
-TEST_CASE("/fdbserver/RKRateUpdater/DontIgnoreWorstZones") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/DontIgnoreWorstZones") {
 	RateAndReason rateAndReason = wait(testIgnoreWorstZones(SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND + 1));
 
 	// The storage queues with high storage queue cannot be ignored, so the
@@ -311,7 +311,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/DontIgnoreWorstZones") {
 
 // The durability lag on the single storage server exceeds the configured durability lag limit.
 // Therefore, the rate updated throttles based on storage server durability lag.
-TEST_CASE("/fdbserver/RKRateUpdater/HighNDV") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/HighNDV") {
 	StorageQueueInfo ss = wait(getMockStorageQueueInfo(
 	    UID(1, 1), LocalityData{}, testTargetQueueBytes - 5 * testSpringBytes, 2 * testTargetVersionDifference));
 	RKRateUpdaterTestEnvironment env;
@@ -323,7 +323,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/HighNDV") {
 
 // The rate updater was unable to fetch the list of storage servers. Therefore, the tps limit
 // is set to 0.
-TEST_CASE("/fdbserver/RKRateUpdater/ServerListFetchFailed") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/ServerListFetchFailed") {
 	RKRateUpdaterTestEnvironment env;
 	env.metricsTracker.failSSListFetch();
 	env.update();
@@ -335,7 +335,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/ServerListFetchFailed") {
 // Though the storage queue is only 300MB (less than the threshold for throttling on storage queue alone),
 // the storage server only has 300MB of space to spare before hitting the MIN_AVAILABLE_SPACE threshold.
 // As a result, the rate updater throttles at the current transaction rate of 1000 TPS.
-TEST_CASE("/fdbserver/RKRateUpdater/SSFreeSpace") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/SSFreeSpace") {
 	int64_t totalSpace = 1e9;
 	int64_t storageQueueBytes = 3 * testSpringBytes;
 	int64_t availableSpace = SERVER_KNOBS->MIN_AVAILABLE_SPACE + storageQueueBytes;
@@ -352,7 +352,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/SSFreeSpace") {
 // Though the storage queue is only 600MB (less than the threshold for throttling on storage queue alone),
 // the storage server only has 300MB of space to spare before hitting the MIN_AVAILABLE_SPACE threshold.
 // As a result, the rate updater throttles at half the current transaction rate, or 500 TPS.
-TEST_CASE("/fdbserver/RKRateUpdater/SSFreeSpace2") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/SSFreeSpace2") {
 	int64_t totalSpace = 1e9;
 	int64_t availableSpace = SERVER_KNOBS->MIN_AVAILABLE_SPACE + 3 * testSpringBytes;
 	StorageQueueInfo ss =
@@ -368,7 +368,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/SSFreeSpace2") {
 // Though the storage queue is only 300MB (less than the threshold for throttling on storage queue alone),
 // the storage server only has 300MB of space to spare before hitting the MIN_AVAILABLE_SPACE_RATIO threshold.
 // As a result, the rate updater throttles at the current transaction rate of 1000 TPS.
-TEST_CASE("/fdbserver/RKRateUpdater/SSFreeSpaceRatio") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/SSFreeSpaceRatio") {
 	int64_t totalSpace = 1e15;
 	int64_t storageQueueBytes = 3 * testSpringBytes;
 	int64_t availableSpace = (totalSpace * SERVER_KNOBS->MIN_AVAILABLE_SPACE_RATIO) + storageQueueBytes;
@@ -385,7 +385,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/SSFreeSpaceRatio") {
 // Though the storage queue is only 600MB (less than the threshold for throttling on storage queue alone),
 // the storage server only has 300MB of space to spare before hitting the MIN_AVAILABLE_SPACE_RATIO threshold.
 // As a result, the rate updater throttles at half the current transaction rate, or 500 TPS.
-TEST_CASE("/fdbserver/RKRateUpdater/SSFreeSpaceRatio2") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/SSFreeSpaceRatio2") {
 	int64_t totalSpace = 1e15;
 	int64_t availableSpace = (totalSpace * SERVER_KNOBS->MIN_AVAILABLE_SPACE_RATIO) + 3 * testSpringBytes;
 	StorageQueueInfo ss =
@@ -401,7 +401,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/SSFreeSpaceRatio2") {
 // Currently, a workload of 1000 transactions per second is using up half of the tlog queue
 // spring bytes (950MB queue, with a 1GB target and 100MB of spring). The rate updater estimates
 // that the cluster can handle double the current transaction rate, or 2000 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/TLogQueue") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/TLogQueue") {
 	TLogQueueInfo tl = wait(getMockTLogQueueInfo(UID(1, 1), testTargetQueueBytes - testSpringBytes / 2));
 	RKRateUpdaterTestEnvironment env;
 	env.metricsTracker.updateTLogQueueInfo(tl);
@@ -415,7 +415,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/TLogQueue") {
 // by half of the spring bytes limit (1050MB queue, with a 1GB target and 100MB of spring).
 // The rate updater estimates that the cluster can handle 2/3 of the current transaction rate,
 // or ~667 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/TLogQueue2") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/TLogQueue2") {
 	TLogQueueInfo tl = wait(getMockTLogQueueInfo(UID(1, 1), testTargetQueueBytes + testSpringBytes / 2));
 	RKRateUpdaterTestEnvironment env;
 	env.metricsTracker.updateTLogQueueInfo(tl);
@@ -428,7 +428,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/TLogQueue2") {
 // Currently, a workload of 1000 transactions per second is exceeding the sum of the target
 // tlog queue bytes and spring bytes. The rate updater applies the maximum possible throttling based on
 // tlog queue, limiting throughput to half the current transaction rate, or 500 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/TLogQueue3") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/TLogQueue3") {
 	TLogQueueInfo tl = wait(getMockTLogQueueInfo(UID(1, 1), testTargetQueueBytes + 5 * testSpringBytes));
 	RKRateUpdaterTestEnvironment env;
 	env.metricsTracker.updateTLogQueueInfo(tl);
@@ -442,7 +442,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/TLogQueue3") {
 // the spring bytes. Therefore, throttling is enforced to ensure that at the current write
 // rate per transaction, an MVCC window worth of writes does not cause tlog queue to rise
 // above the target bytes minues spring bytes.
-TEST_CASE("/fdbserver/RKRateUpdater/TLogWriteBandwidthMVCC") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/TLogWriteBandwidthMVCC") {
 	TLogQueueInfo tl = wait(getMockTLogQueueInfo(UID(1, 1), testTargetQueueBytes - 5 * testSpringBytes));
 	RKRateUpdaterTestEnvironment env;
 	env.metricsTracker.updateTLogQueueInfo(tl);
@@ -455,7 +455,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/TLogWriteBandwidthMVCC") {
 // The tlog queue plus currently used disk space add to leave only MIN_AVAILABLE_SPACE
 // bytes left on the tlog disk. The rate updater reacts by throttling at the current
 // transaction rate of 1000 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/TLogFreeSpace") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/TLogFreeSpace") {
 	int64_t totalSpace = 1e9;
 	int64_t tlogQueueBytes = 3 * testSpringBytes;
 	int64_t availableSpace = SERVER_KNOBS->MIN_AVAILABLE_SPACE + tlogQueueBytes;
@@ -470,7 +470,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/TLogFreeSpace") {
 
 // The tlog queue plus currently used disk space add to leave less than MIN_AVAILABLE_SPACE / 2
 // bytes on disk. In response, the rate updater throttles throughput to 0.
-TEST_CASE("/fdbserver/RKRateUpdater/TLogFreeSpace2") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/TLogFreeSpace2") {
 	int64_t totalSpace = 1e9;
 	int64_t tlogQueueBytes = (SERVER_KNOBS->MIN_AVAILABLE_SPACE * 3) / 2;
 	int64_t availableSpace = SERVER_KNOBS->MIN_AVAILABLE_SPACE + tlogQueueBytes / 2;
@@ -489,7 +489,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/TLogFreeSpace2") {
 // The tlog queue plus currently used disk space add to leave only the available
 // space ratio of total disk space. The rate updater reacts by throttling at the current
 // transaction rate of 1000 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/TLogFreeSpaceRatio") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/TLogFreeSpaceRatio") {
 	int64_t totalSpace = 1e15;
 	int64_t tlogQueueBytes = 3 * testSpringBytes;
 	int64_t availableSpace = (totalSpace * SERVER_KNOBS->MIN_AVAILABLE_SPACE_RATIO) + tlogQueueBytes;
@@ -505,7 +505,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/TLogFreeSpaceRatio") {
 // The tlog queue plus currently used disk space add to exceed the minimum available disk
 // space ratio of total disk space plus spring bytes. In response, the rate updater throttles
 // at half the current transaction rate, or 500 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/TLogFreeSpaceRatio2") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/TLogFreeSpaceRatio2") {
 	int64_t totalSpace = 1e15;
 	int64_t tlogQueueBytes = 6 * testSpringBytes;
 	int64_t availableSpace = (totalSpace * SERVER_KNOBS->MIN_AVAILABLE_SPACE_RATIO) + 3 * testSpringBytes;
@@ -520,7 +520,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/TLogFreeSpaceRatio2") {
 
 // The tlog is 4e9 versions ahead of the storage server, but the target max version difference is only
 // 2e9. Therefore, the rate updater throttles based on the storage server readable version being behind.
-TEST_CASE("/fdbserver/RKRateUpdater/StorageReadableBehind") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/StorageReadableBehind") {
 	state Future<StorageQueueInfo> ssFuture =
 	    getMockStorageQueueInfo(UID(1, 1), LocalityData{}, testTargetQueueBytes - 5 * testSpringBytes);
 	state Future<TLogQueueInfo> tlFuture = getMockTLogQueueInfo(UID(1, 1),
@@ -542,7 +542,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/StorageReadableBehind") {
 // After TARGET_BW_LAG*4 seconds, the lag is equal to TARGET_BW_LAG*2.
 // At this point, the ratekeeper throttles to a rate BW_LAG_DECREASE_AMOUNT
 // times the blob worker rate.
-TEST_CASE("/fdbserver/RKRateUpdater/BlobWorkerLag1") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/BlobWorkerLag1") {
 	state RKRateUpdaterTestEnvironment env;
 	state int64_t i = 0;
 
@@ -567,7 +567,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/BlobWorkerLag1") {
 // After TARGET_BW_LAG * 1.5 seconds, the lag is equal to TARGET_BW_LAG * 0.75.
 // At this point, the ratekeeper throttles to a rate BW_LAG_INCREASE_AMOUNT
 // times the blob worker rate.
-TEST_CASE("/fdbserver/RKRateUpdater/BlobWorkerLag2") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/BlobWorkerLag2") {
 	state RKRateUpdaterTestEnvironment env;
 	state int64_t i = 0;
 
@@ -591,7 +591,7 @@ TEST_CASE("/fdbserver/RKRateUpdater/BlobWorkerLag2") {
 // Blob worker is updating its versions at half the speed of the GRV proxy.
 // After TARGET_BW_LAG * 8 seconds, the lag is equal to TARGET_BW_LAG * 4.
 // At this point, the ratekeeper throttles to 0 transactions per second.
-TEST_CASE("/fdbserver/RKRateUpdater/BlobWorkerLag3") {
+TEST_CASE("/fdbserver/ratekeeper/RKRateUpdater/BlobWorkerLag3") {
 	state RKRateUpdaterTestEnvironment env;
 	state int64_t i = 0;
 

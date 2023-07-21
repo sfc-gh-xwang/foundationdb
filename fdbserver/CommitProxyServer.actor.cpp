@@ -3255,10 +3255,10 @@ ACTOR Future<Void> reportTxnTagCommitCost(UID myID,
 	loop choose {
 		when(wait(db->onChange())) {
 			if (db->get().ratekeeper.present()) {
-				TraceEvent("ProxyRatekeeperChanged", myID).detail("RKID", db->get().ratekeeper.get().id());
+				TraceEvent("CommitProxyRatekeeperChanged", myID).detail("RKID", db->get().ratekeeper.get().id());
 				nextRequestTimer = Void();
 			} else {
-				TraceEvent("ProxyRatekeeperDied", myID).log();
+				TraceEvent("CommitProxyRatekeeperDied", myID).log();
 				nextRequestTimer = Never();
 			}
 		}
