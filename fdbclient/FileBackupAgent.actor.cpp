@@ -3743,14 +3743,8 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 			}
 			throw;
 		}
-		state Optional<Reference<TenantEntryCache<Void>>> tenantCache;
-		state std::vector<Future<Void>> validTenantCheckFutures;
 		state Arena arena;
 		state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
-		if (config.tenantMode == TenantMode::REQUIRED && g_network && g_network->isSimulated()) {
-			tenantCache = makeReference<TenantEntryCache<Void>>(cx, TenantEntryCacheRefreshMode::WATCH);
-			wait(tenantCache.get()->init());
-		}
 
 		// First and last key are the range for this file
 		state KeyRange fileRange = KeyRangeRef(blockData.front().key, blockData.back().key);
@@ -3828,12 +3822,6 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 
 					for (; i < iend; ++i) {
 						tr->setOption(FDBTransactionOptions::NEXT_WRITE_NO_WRITE_CONFLICT_RANGE);
-						if (tenantCache.present()) {
-							validTenantCheckFutures.push_back(_validTenantAccess(
-							    StringRef(arena,
-							              data[i].key.removePrefix(removePrefix.get()).withPrefix(addPrefix.get())),
-							    tenantCache.get()));
-						}
 						tr->set(data[i].key.removePrefix(removePrefix.get()).withPrefix(addPrefix.get()),
 						        data[i].value);
 					}
@@ -3848,11 +3836,6 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 					wait(checkLock);
 
 					wait(tr->commit());
-
-					if (!validTenantCheckFutures.empty()) {
-						waitForAll(validTenantCheckFutures);
-						validTenantCheckFutures.clear();
-					}
 
 					TraceEvent("FileRestoreCommittedRange")
 					    .suppressFor(60)

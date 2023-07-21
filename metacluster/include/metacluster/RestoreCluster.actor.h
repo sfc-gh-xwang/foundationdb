@@ -559,6 +559,7 @@ struct RestoreClusterImpl {
 			} else {
 				CODE_PROBE(true, "Delete tenant during restore");
 				wait(self->runRestoreDataClusterTransaction([tenantEntry = tenantEntry](Reference<ITransaction> tr) {
+					tr->clear(prefixRange(tenantEntry.prefix));
 					return TenantAPI::deleteTenantTransaction(tr, tenantEntry.id, ClusterType::METACLUSTER_DATA);
 				}));
 			}

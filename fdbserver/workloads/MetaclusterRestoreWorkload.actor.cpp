@@ -322,7 +322,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					if (!f.get().isError()) {
 						successfulRestore = true;
 					} else {
-						ASSERT(f.get().getError().code() == error_code_conflicting_restore);
+						ASSERT_EQ(f.get().getError().code(), error_code_conflicting_restore);
 					}
 				}
 
@@ -358,6 +358,39 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		}
 	}
 
+	ACTOR static Future<Void> writeTenantData(Database db, Reference<Tenant> tenant) {
+		state ReadYourWritesTransaction tr(db, tenant);
+		loop {
+			try {
+				tr.set("sampleKey"_sr, "sampleValue"_sr);
+				wait(tr.commit());
+				return Void();
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	ACTOR template <class TenantIdentifier>
+	static Future<Void> metaclusterDeleteTenant(MetaclusterRestoreWorkload* self, TenantIdentifier tenant) {
+		state metacluster::MetaclusterTenantMapEntry entry = wait(metacluster::getTenant(self->managementDb, tenant));
+		state Database db = self->dataDbs[entry.assignedCluster].db;
+
+		state ReadYourWritesTransaction tr(db, makeReference<Tenant>(entry.id));
+		loop {
+			try {
+				tr.clear(normalKeys);
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		wait(metacluster::deleteTenant(self->managementDb, tenant));
+		return Void();
+	}
+
 	// A map from tenant name to a pair of IDs. The first ID is from the data cluster, and the second is from the
 	// management cluster.
 	using TenantCollisions = std::unordered_map<TenantName, std::pair<int64_t, int64_t>>;
@@ -371,6 +404,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		TraceEvent("MetaclusterRestoreWorkloadDeleteTenantCollisions")
 		    .detail("FromCluster", clusterName)
 		    .detail("TenantCollisions", tenantCollisions.size());
+
 		std::vector<Future<Void>> deleteFutures;
 		for (auto const& t : tenantCollisions) {
 			// If the data cluster tenant is expected, then remove the management tenant
@@ -378,13 +412,18 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 			if (self->createdTenants.count(t.second.first)) {
 				CODE_PROBE(true, "Remove management tenant in restore collision");
 				removeTrackedTenant(t.second.second);
-				deleteFutures.push_back(metacluster::deleteTenant(self->managementDb, t.second.second));
+				deleteFutures.push_back(metaclusterDeleteTenant(self, t.second.second));
 			}
 			// We don't expect the data cluster tenant, so delete it
 			else {
 				CODE_PROBE(true, "Remove data cluster tenant in restore collision");
 				removeTrackedTenant(t.second.first);
-				deleteFutures.push_back(TenantAPI::deleteTenant(dataDb.getReference(), t.first, t.second.first));
+				deleteFutures.push_back(
+				    runTransaction(dataDb.getReference(), [t](Reference<ReadYourWritesTransaction> tr) {
+					    tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+					    tr->clear(prefixRange(TenantAPI::idToPrefix(t.second.first)));
+					    return TenantAPI::deleteTenantTransaction(tr, t.second.first);
+				    }));
 			}
 		}
 
@@ -438,7 +477,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 
 				for (auto const& t : tenantsInGroup) {
 					self->removeTrackedTenant(t);
-					deleteFutures.push_back(metacluster::deleteTenant(self->managementDb, t));
+					deleteFutures.push_back(metaclusterDeleteTenant(self, t));
 				}
 			}
 			// The tenant group from the management cluster is what we expect
@@ -459,6 +498,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					    std::vector<Future<Void>> groupDeletions;
 					    for (auto const& t : tenantsInGroup) {
 						    self->removeTrackedTenant(t);
+						    tr->clear(prefixRange(TenantAPI::idToPrefix(t)));
 						    groupDeletions.push_back(TenantAPI::deleteTenantTransaction(tr, t));
 					    }
 					    return waitForAll(groupDeletions);
@@ -798,6 +838,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 				    .detail("Tenant", tenantName)
 				    .detail("TenantId", createdEntry.id)
 				    .detail("AccessTime", createTime);
+				bool hasTenantData = deterministicRandom()->coinflip();
 				self->createdTenants[createdEntry.id] =
 				    RestoreTenantData(tenantName, createdEntry.assignedCluster, createdEntry.tenantGroup, createTime);
 				self->tenantNameIndex[tenantName] = createdEntry.id;
@@ -809,6 +850,11 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					tenantGroupData.tenants.insert(createdEntry.id);
 					dataDb.tenantGroups.insert(createdEntry.tenantGroup.get());
 				}
+
+				if (hasTenantData) {
+					wait(writeTenantData(dataDb.db, makeReference<Tenant>(createdEntry.id)));
+				}
+
 				return Void();
 			} catch (Error& e) {
 				if (e.code() != error_code_metacluster_no_capacity) {
@@ -839,17 +885,20 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		    .detail("Tenant", tenantName)
 		    .detail("TenantId", tenantId)
 		    .detail("AccessTime", accessTime);
-		wait(metacluster::deleteTenant(self->managementDb, tenantName));
-		auto const& tenantData = self->createdTenants[tenantId];
 
-		auto& dataDb = self->dataDbs[tenantData.cluster];
-		dataDb.tenants.erase(tenantId);
-		if (tenantData.tenantGroup.present()) {
-			auto groupItr = self->tenantGroups.find(tenantData.tenantGroup.get());
+		auto const& tenantData = self->createdTenants[tenantId];
+		state DataClusterData* dataDb = &self->dataDbs[tenantData.cluster];
+		state Optional<TenantGroupName> tenantGroup = tenantData.tenantGroup;
+
+		wait(metaclusterDeleteTenant(self, tenantName));
+
+		dataDb->tenants.erase(tenantId);
+		if (tenantGroup.present()) {
+			auto groupItr = self->tenantGroups.find(tenantGroup.get());
 			groupItr->second.tenants.erase(tenantId);
 			if (groupItr->second.tenants.empty()) {
 				self->tenantGroups.erase(groupItr);
-				dataDb.tenantGroups.erase(tenantData.tenantGroup.get());
+				dataDb->tenantGroups.erase(tenantGroup.get());
 			}
 		}
 
