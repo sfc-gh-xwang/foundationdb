@@ -167,14 +167,14 @@ struct vector_typeinfo : singular_types_variant {
 	}
 };
 
-using typeinfo_variant = x3::variant<scalar_typeinfo, object_typeinfo, vector_typeinfo>;
+using table_fieldtype_variant = x3::variant<scalar_typeinfo, object_typeinfo, vector_typeinfo>;
 
-struct field_decl {
+struct table_field_decl {
 	std::string name;
-	typeinfo_variant typeinfo;
+	table_fieldtype_variant typeinfo;
 	boost::optional<metadata> meta;
 
-	bool operator==(const field_decl& other) const noexcept {
+	bool operator==(const table_field_decl& other) const noexcept {
 		return name == other.name && typeinfo.get() == other.typeinfo.get() && meta == other.meta;
 	}
 };
@@ -182,8 +182,37 @@ struct field_decl {
 struct table_decl {
 	std::string name;
 	boost::optional<metadata> meta;
-	std::vector<field_decl> fields;
+	std::vector<table_field_decl> fields;
 	bool operator==(const table_decl& other) const noexcept = default;
+};
+
+using struct_fieldtype_variant = x3::variant<
+		type_tag<bool>, 
+		type_tag<int8_t>, 
+		type_tag<uint8_t>,
+		type_tag<int16_t>,
+		type_tag<uint16_t>,
+		type_tag<int64_t>,
+		type_tag<uint64_t>,
+		type_tag<int32_t>,
+		type_tag<uint32_t>,
+		type_tag<float>,
+		type_tag<double>,
+		typeref>;
+
+struct struct_field_decl {
+	std::string name;
+	struct_fieldtype_variant typeinfo;
+	boost::optional<metadata> meta;
+	bool operator==(const struct_field_decl& other) const noexcept {
+		return name == other.name && typeinfo.get() == other.typeinfo.get() && meta == other.meta;
+	}
+};
+
+struct struct_decl {
+	std::string name;
+	boost::optional<metadata> meta;
+	std::vector<struct_field_decl> fields;
 };
 
 } // namespace ast
@@ -192,8 +221,10 @@ BOOST_FUSION_ADAPT_STRUCT(ast::include, filename);
 BOOST_FUSION_ADAPT_STRUCT(ast::namespace_decl, ns);
 BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name);
 BOOST_FUSION_ADAPT_STRUCT(ast::typeref, name, default_);
-BOOST_FUSION_ADAPT_STRUCT(ast::field_decl, name, typeinfo, meta);
+BOOST_FUSION_ADAPT_STRUCT(ast::table_field_decl, name, typeinfo, meta);
 BOOST_FUSION_ADAPT_STRUCT(ast::table_decl, name, meta, fields);
+BOOST_FUSION_ADAPT_STRUCT(ast::struct_field_decl, name, typeinfo, meta);
+BOOST_FUSION_ADAPT_STRUCT(ast::struct_decl, name, meta, fields);
 
 BOOST_FUSION_ADAPT_TPL_STRUCT(
                (T), (ast::scalar_type) (T),
@@ -402,6 +433,7 @@ auto const string_type_part = x3::lit("string") > x3::attr(ast::type_tag<std::st
 
 DEFINE_RULE(typeref_type_part, ident > x3::attr(boost::none), ast::typeref);
 DEFINE_RULE(typeref_field_part, ident > -(x3::lit('=') > ident), ast::typeref);
+DEFINE_RULE(no_string_field_in_struct, !(x3::lit("string") >> ';'), x3::unused_type);
 
 // [u]int32 must be placed at the last of the integer rules because of the alias "[u]int":
 // e.g. parsing "[uint64]" may be parsed as "[uint" and throw an error because there's '6' instead of ']'
@@ -429,14 +461,41 @@ DEFINE_RULE(
 		ast::object_typeinfo);
 
 DEFINE_RULE(
-		field_decl,
+		table_field_decl,
 		(ident > ':' > (scalar_typeinfo | object_typeinfo | vector_typeinfo) > -metadata > ';'),
-		ast::field_decl);
+		ast::table_field_decl);
 
 DEFINE_RULE(
 		table_decl,
-		(x3::lit("table") > ident > -metadata > '{' > +field_decl > '}'),
+		(x3::lit("table") > ident > -metadata > '{' > +table_field_decl > '}'),
 		ast::table_decl);
+
+// Only scalars or other structs allowed, no defaults
+DEFINE_RULE(
+		struct_field_decl,
+		(ident > ':' >
+			no_string_field_in_struct >
+			(
+				bool_type_part |
+				int8_type_part |
+				uint8_type_part |
+				int16_type_part |
+				uint16_type_part |
+				int64_type_part |
+				uint64_type_part |
+				int32_type_part |
+				uint32_type_part |
+				float32_type_part |
+				float64_type_part |
+				typeref_type_part
+			) > -metadata > ';'),
+		ast::struct_field_decl);
+
+DEFINE_RULE(
+		struct_decl,
+		(x3::lit("struct") > ident > -metadata > '{' > +struct_field_decl > '}'),
+		ast::struct_decl);
+
 
 #undef DEFINE_RULE
 
@@ -813,14 +872,14 @@ bool vector_typeinfo() {
 	return run_ast_test(rule::vector_typeinfo, vector_typeinfo_input_set);
 }
 
-input_set_type<ast::field_decl> field_decl_input_set = []() {
+input_set_type<ast::table_field_decl> table_field_decl_input_set = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::field_decl>{
+	return input_set_type<ast::table_field_decl>{
 		{
 			"a : int = 10;",
-			ast::field_decl{
+			ast::table_field_decl{
 				"a",
-				ast::typeinfo_variant{
+				ast::table_fieldtype_variant{
 					ast::scalar_typeinfo{
 						ast::scalar_type<int32_t>{10}}},
 				boost::none,
@@ -828,9 +887,9 @@ input_set_type<ast::field_decl> field_decl_input_set = []() {
 		},
 		{
 			"Names: [string] (required);",
-			ast::field_decl{
+			ast::table_field_decl{
 				"Names",
-				ast::typeinfo_variant{
+				ast::table_fieldtype_variant{
 					ast::vector_typeinfo{
 						ast::type_tag<std::string>{}}},
 				ast::metadata{
@@ -841,8 +900,8 @@ input_set_type<ast::field_decl> field_decl_input_set = []() {
 	};
 }();
 
-bool field_decl() {
-	return run_ast_test(rule::field_decl, field_decl_input_set);
+bool table_field_decl() {
+	return run_ast_test(rule::table_field_decl, table_field_decl_input_set);
 }
 
 input_set_type<ast::table_decl> table_decl_input_set = []() {
@@ -860,9 +919,9 @@ input_set_type<ast::table_decl> table_decl_input_set = []() {
 					{ "id", ast::single_value(ast::scalar(uint64_t(10))) },
 				},
 				{
-					ast::field_decl{
+					ast::table_field_decl{
 						"name",
-						ast::typeinfo_variant{
+						ast::table_fieldtype_variant{
 							ast::object_typeinfo{
 								ast::type_tag<std::string>{}},
 						},
@@ -871,17 +930,17 @@ input_set_type<ast::table_decl> table_decl_input_set = []() {
 							{ "priority", ast::single_value(ast::scalar(uint64_t(1))) },
 						},
 					},
-					ast::field_decl{
+					ast::table_field_decl{
 						"points",
-						ast::typeinfo_variant{
+						ast::table_fieldtype_variant{
 							ast::vector_typeinfo{
 							ast::typeref{ "Point", boost::none }},
 						},
 						boost::none,
 					},
-					ast::field_decl{
+					ast::table_field_decl{
 						"shape",
-						ast::typeinfo_variant{
+						ast::table_fieldtype_variant{
 							ast::object_typeinfo{
 								ast::typeref{ "Shape", "Rectangle"s }},
 						},
@@ -897,6 +956,42 @@ bool table_decl() {
 	return run_ast_test(rule::table_decl, table_decl_input_set);
 }
 
+input_set_type<ast::struct_field_decl> struct_field_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::struct_field_decl>{
+		{
+			"a : int = 10;",
+			boost::none, // struct fields cannot have defaults
+		},
+		{
+			"a : int;",
+			ast::struct_field_decl{
+				"a",
+				ast::struct_fieldtype_variant{
+					ast::type_tag<int>{}},
+				boost::none,
+			},
+		},
+		{
+			"s : string;",
+			boost::none, // string should not be allowed as type
+		},
+		{
+			"s : string_;",
+			ast::struct_field_decl{
+				"s",
+				ast::struct_fieldtype_variant{
+					ast::typeref{"string_", boost::none}},
+				boost::none,
+			}, // string_ could technically be another struct or an enum
+		},
+	};
+}();
+
+bool struct_field_decl() {
+	return run_ast_test(rule::struct_field_decl, struct_field_decl_input_set);
+}
+
 } // namespace test
 
 int main() {
@@ -909,8 +1004,9 @@ int main() {
 	ok = ok && test::scalar_typeinfo();
 	ok = ok && test::object_typeinfo();
 	ok = ok && test::vector_typeinfo();
-	ok = ok && test::field_decl();
+	ok = ok && test::table_field_decl();
 	ok = ok && test::table_decl();
+	ok = ok && test::struct_field_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
