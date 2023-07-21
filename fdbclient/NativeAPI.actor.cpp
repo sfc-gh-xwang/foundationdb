@@ -1575,6 +1575,8 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
+    transactionBulkLoaderRequests("BulkLoaderRequests", cc),
+    transactionBulkLoaderRequestsCompleted("BulkLoaderRequestsCompleted", cc),
     transactionStatusRequests("StatusRequests", cc),
     transactionTenantLookupRequests("TenantLookupRequests", cc),
     transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
@@ -1927,6 +1929,8 @@ DatabaseContext::DatabaseContext(const Error& err)
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
+    transactionBulkLoaderRequests("BulkLoaderRequests", cc),
+    transactionBulkLoaderRequestsCompleted("BulkLoaderRequestsCompleted", cc),
     transactionStatusRequests("StatusRequests", cc),
     transactionTenantLookupRequests("TenantLookupRequests", cc),
     transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
@@ -2883,6 +2887,46 @@ ACTOR Future<Reference<CommitProxyInfo>> getCommitProxiesFuture(DatabaseContext*
 Future<Reference<CommitProxyInfo>> DatabaseContext::getCommitProxiesFuture(
     UseProvisionalProxies useProvisionalProxies) {
 	return ::getCommitProxiesFuture(this, useProvisionalProxies);
+}
+
+ACTOR Future<Reference<BulkLoaderInfo>> getBulkLoadersActor(DatabaseContext* cx,
+                                                            UseProvisionalProxies useProvisionalProxies) {
+	// FIXME: cache results somehow
+	loop {
+		++cx->transactionBulkLoaderRequests;
+		try {
+			choose {
+				when(wait(cx->onProxiesChanged())) {}
+				when(GetBulkLoaderInterfacesReply rep =
+				         wait(basicLoadBalance(cx->getCommitProxies(useProvisionalProxies),
+				                               &CommitProxyInterface::getBulkLoaderInterfaces,
+				                               GetBulkLoaderInterfacesRequest(SpanContext()),
+				                               TaskPriority::DefaultPromiseEndpoint))) {
+					++cx->transactionBulkLoaderRequestsCompleted;
+
+					std::vector<Reference<ReferencedInterface<BulkLoaderInterface>>> interfs;
+					for (auto interf : rep.blInterfs) {
+						interfs.push_back(makeReference<ReferencedInterface<BulkLoaderInterface>>(interf));
+					}
+					return makeReference<BulkLoaderInfo>(interfs);
+				}
+			}
+		} catch (Error& e) {
+			if (e.code() == error_code_commit_proxy_memory_limit_exceeded) {
+				// Commit Proxy returns an error
+				wait(delayJittered(CLIENT_KNOBS->GRV_ERROR_RETRY_DELAY));
+			} else {
+				++cx->transactionBulkLoaderRequestsCompleted;
+				throw e;
+			}
+		}
+	}
+}
+
+// Returns a future which will not be set until the CommitProxyInfo of this DatabaseContext is not nullptr
+// TODO: allow provisional proxies? don't think there's any need for it
+Future<Reference<BulkLoaderInfo>> DatabaseContext::getBulkLoaders() {
+	return ::getBulkLoadersActor(this, UseProvisionalProxies::False);
 }
 
 void GetRangeLimits::decrement(VectorRef<KeyValueRef> const& data) {
