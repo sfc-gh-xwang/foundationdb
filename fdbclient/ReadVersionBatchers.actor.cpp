@@ -27,10 +27,7 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 		try {
 			state Optional<double> expectedTotalCost = {};
 			if (throttlingId.present() && isClientAverageCostTrackingEnabled()) {
-
-				auto averageCost = cx->getAverageTransactionCost(throttlingId.get());
-				TraceEvent("HERE_AverageCost").detail("Value", averageCost);
-
+				auto const averageCost = cx->getAverageTransactionCost(throttlingId.get());
 				expectedTotalCost = averageCost * (transactionCount - expectedCostsCount) + expectedCosts;
 			}
 
