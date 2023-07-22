@@ -49,12 +49,12 @@ public:
 		}
 		std::vector<Future<Void>> futures;
 		for (int index = 0; index < count; ++index) {
-			auto const name = ThroughputQuotaUtil::getThrottlingIdName(prefix, index);
+			auto const throttlingTag = ThroughputQuotaUtil::getTransactionTag(prefix, index);
 			TraceEvent("TagThroughputQuotaWorkload_SettingQuota")
-			    .detail("Name", printable(name))
+			    .detail("Tag", printable(throttlingTag))
 			    .detail("ReservedQuota", getReservedQuota())
 			    .detail("TotalQuota", getTotalQuota());
-			futures.push_back(ThroughputQuotaUtil::setTagQuota(db, name, getReservedQuota(), getTotalQuota()));
+			futures.push_back(ThroughputQuotaUtil::setTagQuota(db, throttlingTag, getReservedQuota(), getTotalQuota()));
 		}
 		return waitForAll(futures);
 	}

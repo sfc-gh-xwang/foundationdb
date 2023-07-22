@@ -104,8 +104,8 @@ Future<Void> removeTenantGroupQuota(Database const& db, TenantGroupName const& t
 	return _removeTenantGroupQuota(db, tenantGroup);
 }
 
-Standalone<StringRef> getThrottlingIdName(StringRef const& prefix, int index) {
-	return Standalone<StringRef>(fmt::format("{}", index)).withPrefix(prefix);
+TransactionTag getTransactionTag(StringRef const& prefix, int index) {
+	return TransactionTag(fmt::format("{}", index)).withPrefix(prefix);
 }
 
 } // namespace ThroughputQuotaUtil

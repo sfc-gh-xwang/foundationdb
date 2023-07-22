@@ -15,7 +15,8 @@ testTitle='ExpectStableThroughput'
 
   [[test.workload]]
   testName='ExpectStableThroughput'
-  throttlingTag='testTag0'
+  tagPrefix='testTag'
+  numTags=1
   expectedThroughputPagesRate=1000
   attemptedThroughputPagesRate=2000
   # TODO: Reduce this error tolerance
