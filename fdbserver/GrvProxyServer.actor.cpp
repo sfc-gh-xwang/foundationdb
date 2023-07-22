@@ -100,6 +100,16 @@ struct GrvProxyStats {
 		       (FLOW_KNOBS->BASIC_LOAD_BALANCE_UPDATE_RATE - (lastBucketBegin + bucketInterval - now()));
 	}
 
+	void update(GrvProxyTagThrottler::ReleaseTransactionsResult const& releaseStats) {
+		txnRequestIn += releaseStats.batchPriorityRequestsReleased + releaseStats.defaultPriorityRequestsReleased;
+		txnStartIn += releaseStats.batchPriorityTransactionsReleased + releaseStats.defaultPriorityTransactionsReleased;
+		txnBatchPriorityStartIn += releaseStats.batchPriorityTransactionsReleased;
+		txnDefaultPriorityStartIn += releaseStats.defaultPriorityTransactionsReleased;
+		batchGRVQueueSize += releaseStats.batchPriorityRequestsReleased;
+		defaultGRVQueueSize += releaseStats.defaultPriorityRequestsReleased;
+		txnRequestErrors += releaseStats.rejectedRequests;
+	}
+
 	// Current stats maintained for a given grv proxy server
 	explicit GrvProxyStats(UID id)
 	  : cc("GrvProxyStats", id.toString()),
@@ -578,13 +588,13 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 					++stats->systemGRVQueueSize;
 					systemQueue->push_back(req);
 				} else if (req.priority >= TransactionPriority::DEFAULT) {
-					++stats->txnRequestIn;
-					stats->txnStartIn += req.transactionCount;
-					stats->txnDefaultPriorityStartIn += req.transactionCount;
-					++stats->defaultGRVQueueSize;
 					if (req.throttlingId.present()) {
 						tagThrottler->addRequest(req);
 					} else {
+						++stats->txnRequestIn;
+						stats->txnStartIn += req.transactionCount;
+						stats->txnDefaultPriorityStartIn += req.transactionCount;
+						++stats->defaultGRVQueueSize;
 						defaultQueue->push_back(req);
 					}
 				} else {
@@ -594,13 +604,13 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 						req.reply.sendError(batch_transaction_throttled());
 						stats->txnThrottled += req.transactionCount;
 					} else {
-						++stats->txnRequestIn;
-						stats->txnStartIn += req.transactionCount;
-						stats->txnBatchPriorityStartIn += req.transactionCount;
-						++stats->batchGRVQueueSize;
 						if (req.throttlingId.present()) {
 							tagThrottler->addRequest(req);
 						} else {
+							++stats->txnRequestIn;
+							stats->txnStartIn += req.transactionCount;
+							stats->txnBatchPriorityStartIn += req.transactionCount;
+							++stats->batchGRVQueueSize;
 							batchQueue->push_back(req);
 						}
 					}
@@ -918,7 +928,8 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 			elapsed = 1e-15;
 		}
 
-		grvProxyData->tagThrottler.releaseTransactions(elapsed, defaultQueue, batchQueue);
+		grvProxyData->stats.update(grvProxyData->tagThrottler.releaseTransactions(elapsed, defaultQueue, batchQueue));
+
 		normalRateInfo.startReleaseWindow();
 		batchRateInfo.startReleaseWindow();
 
