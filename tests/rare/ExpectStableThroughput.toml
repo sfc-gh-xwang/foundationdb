@@ -1,8 +1,8 @@
 [configuration]
 tenantModes = ['disabled']
+generateFearless = false
 # TODO: Support multiple GRV proxies
 grvProxyCount = 1
-generateFearless = false
 
 [[test]]
 testTitle='ExpectStableThroughput'
