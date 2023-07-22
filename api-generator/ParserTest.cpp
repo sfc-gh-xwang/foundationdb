@@ -90,6 +90,11 @@ struct file_identifier_decl {
 	bool operator==(const file_identifier_decl& other) const noexcept = default;
 };
 
+struct file_extension_decl {
+	std::string ext;
+	bool operator==(const file_extension_decl& other) const noexcept = default;
+};
+
 struct namespace_decl {
 	std::vector<std::string> ns;
 	bool operator==(const namespace_decl& other) const noexcept = default;
@@ -98,6 +103,25 @@ struct namespace_decl {
 struct attribute_decl {
 	std::string name;
 	bool operator==(const attribute_decl& other) const noexcept = default;
+};
+
+struct root_type_decl {
+	std::string name;
+	bool operator==(const root_type_decl& other) const noexcept = default;
+};
+
+struct rpc_method_decl {
+	std::string name;
+	std::string request_type;
+	std::string response_type;
+	boost::optional<metadata> meta;
+	bool operator==(const rpc_method_decl& other) const noexcept = default;
+};
+
+struct rpc_decl {
+	std::string name;
+	std::vector<rpc_method_decl> methods;
+	bool operator==(const rpc_decl& other) const noexcept = default;
 };
 
 // when a table member is another table/struct/union or a struct member is another struct
@@ -136,7 +160,7 @@ struct scalar_typeinfo : scalar_types_variant {
 
 template <typename T>
 struct type_tag {
-	// If T is scalar, it's always a vector (non-vector case is covered by scalar_type)
+	// If T is scalar, it's always used in the context of a vector_typeinfo (non-vector case is covered by scalar_type)
 	using type = T;
 	bool operator==(const type_tag& other) const noexcept {
 		return true;
@@ -272,6 +296,7 @@ struct union_decl {
 } // namespace ast
 
 BOOST_FUSION_ADAPT_STRUCT(ast::file_identifier_decl, id)
+BOOST_FUSION_ADAPT_STRUCT(ast::file_extension_decl, ext)
 BOOST_FUSION_ADAPT_STRUCT(ast::include, filename)
 BOOST_FUSION_ADAPT_STRUCT(ast::namespace_decl, ns)
 BOOST_FUSION_ADAPT_STRUCT(ast::attribute_decl, name)
@@ -284,6 +309,9 @@ BOOST_FUSION_ADAPT_STRUCT(ast::enumval_decl, name, value)
 BOOST_FUSION_ADAPT_STRUCT(ast::enum_decl, name, typeinfo, meta, values)
 BOOST_FUSION_ADAPT_STRUCT(ast::union_subtype_decl, alias, type) // member order reversed to accommodate the parse order
 BOOST_FUSION_ADAPT_STRUCT(ast::union_decl, name, meta, subtypes)
+BOOST_FUSION_ADAPT_STRUCT(ast::root_type_decl, name)
+BOOST_FUSION_ADAPT_STRUCT(ast::rpc_method_decl, name, request_type, response_type, meta)
+BOOST_FUSION_ADAPT_STRUCT(ast::rpc_decl, name, methods)
 
 BOOST_FUSION_ADAPT_TPL_STRUCT(
                (T), (ast::scalar_type) (T),
@@ -403,6 +431,10 @@ DEFINE_RULE(include,
 			x3::lit("include") > string_constant > ';',
 			ast::include);
 DEFINE_RULE(file_identifier_decl, x3::lit("file_identifier") > file_identifier_constant > ';', ast::file_identifier_decl);
+DEFINE_RULE(file_extension_decl, x3::lit("file_extension") > string_constant > ';', ast::file_extension_decl);
+DEFINE_RULE(root_type_decl, x3::lit("root_type") > ident > ';', ast::root_type_decl);
+DEFINE_RULE(rpc_method_decl, (ident > '(' > ident > ')' > ':' > ident > -metadata > ';'), ast::rpc_method_decl);
+DEFINE_RULE(rpc_decl, (x3::lit("rpc_service") > ident > '{' > +rpc_method_decl > '}'), ast::rpc_decl);
 DEFINE_RULE(namespace_path, (ident % '.'), std::vector<std::string>);
 DEFINE_RULE(namespace_decl,
 			x3::lit("namespace") > namespace_path > ';',
@@ -1275,6 +1307,19 @@ bool file_identifier_decl() {
 	return run_ast_test(rule::file_identifier_decl, file_identifier_decl_input_set);
 }
 
+input_set_type<ast::file_extension_decl> file_extension_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::file_extension_decl>{
+		{ "file_extension \"fbs\";", ast::file_extension_decl{"fbs"}},
+		{ "file_extension \"bin\";", ast::file_extension_decl{"bin"} },
+		{ "file_extension fbs;", boost::none }, // needs double quote
+	};
+}();
+
+bool file_extension_decl() {
+	return run_ast_test(rule::file_extension_decl, file_extension_decl_input_set);
+}
+
 input_set_type<ast::namespace_decl> namespace_decl_input_set = []() {
 	using namespace std::string_literals;
 	return input_set_type<ast::namespace_decl>{
@@ -1311,6 +1356,74 @@ bool attribute_decl() {
 	return run_ast_test(rule::attribute_decl, attribute_decl_input_set);
 }
 
+input_set_type<ast::root_type_decl> root_type_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::root_type_decl>{
+		{ "root_type MyRoot;", ast::root_type_decl{"MyRoot"}},
+		{ "root_type _MyRoot;", ast::root_type_decl{"_MyRoot"}},
+		{ "root_type 1Root;", boost::none },
+		{ "root_type R#oot;", boost::none },
+	};
+}();
+
+bool root_type_decl() {
+	return run_ast_test(rule::root_type_decl, root_type_decl_input_set);
+}
+
+input_set_type<ast::rpc_method_decl> rpc_method_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::rpc_method_decl>{
+		{
+			"Service(Request): Response;",
+			ast::rpc_method_decl{
+				"Service", "Request", "Response", boost::none },
+		},
+		{
+			"Service(Request): Response (id: 7);",
+			ast::rpc_method_decl{
+				"Service",
+				"Request",
+				"Response",
+				ast::metadata{
+					{"id", ast::single_value(ast::scalar(uint64_t(7))) }
+				},
+			},
+		},
+	};
+}();
+
+bool rpc_method_decl() {
+	return run_ast_test(rule::rpc_method_decl, rpc_method_decl_input_set);
+}
+
+input_set_type<ast::rpc_decl> rpc_decl_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::rpc_decl>{
+		{
+			"rpc_service Service {"                          "\n"
+			"  Store(Monster): StoreResponse;"               "\n"
+			"  Retrieve(MonsterId):Monster (deprecated);"    "\n"
+			"}",
+			ast::rpc_decl{
+				"Service",
+				{
+					ast::rpc_method_decl{
+						"Store", "Monster", "StoreResponse",
+						boost::none},
+					ast::rpc_method_decl{
+						"Retrieve", "MonsterId", "Monster",
+						ast::metadata{{"deprecated", boost::none}},
+					},
+				},
+			},
+		},
+	};
+}();
+
+bool rpc_decl() {
+	return run_ast_test(rule::rpc_decl, rpc_decl_input_set);
+}
+
 } // namespace test
 
 int main() {
@@ -1333,8 +1446,12 @@ int main() {
 	ok = ok && test::union_decl();
 	ok = ok && test::include();
 	ok = ok && test::file_identifier_decl();
+	ok = ok && test::file_extension_decl();
 	ok = ok && test::namespace_decl();
 	ok = ok && test::attribute_decl();
+	ok = ok && test::root_type_decl();
+	ok = ok && test::rpc_method_decl();
+	ok = ok && test::rpc_decl();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
