@@ -293,6 +293,26 @@ struct union_decl {
 	bool operator==(const union_decl& other) const noexcept = default;
 };
 
+using schema_elements_variant = x3::variant<
+		namespace_decl,
+		table_decl,
+		struct_decl,
+		enum_decl,
+		union_decl,
+		root_type_decl,
+		file_extension_decl,
+		file_identifier_decl,
+		attribute_decl,
+		rpc_decl
+	>;
+
+
+struct schema {
+	std::vector<include> includes;
+	std::vector<schema_elements_variant> elements;
+	bool operator==(const schema& other) const noexcept = default;
+};
+
 } // namespace ast
 
 BOOST_FUSION_ADAPT_STRUCT(ast::file_identifier_decl, id)
@@ -312,6 +332,7 @@ BOOST_FUSION_ADAPT_STRUCT(ast::union_decl, name, meta, subtypes)
 BOOST_FUSION_ADAPT_STRUCT(ast::root_type_decl, name)
 BOOST_FUSION_ADAPT_STRUCT(ast::rpc_method_decl, name, request_type, response_type, meta)
 BOOST_FUSION_ADAPT_STRUCT(ast::rpc_decl, name, methods)
+BOOST_FUSION_ADAPT_STRUCT(ast::schema, includes, elements)
 
 BOOST_FUSION_ADAPT_TPL_STRUCT(
                (T), (ast::scalar_type) (T),
@@ -638,6 +659,21 @@ DEFINE_RULE(
 		union_decl,
 		(x3::lit("union") > ident > -metadata > '{' > (union_subtype_decl % ',') > '}'),
 		ast::union_decl);
+
+DEFINE_RULE(
+		schema,
+		*include > *(
+			namespace_decl |
+			table_decl |
+			struct_decl |
+			enum_decl |
+			union_decl |
+			root_type_decl |
+			file_extension_decl |
+			file_identifier_decl |
+			attribute_decl |
+			rpc_decl),
+		ast::schema);
 
 #undef DEFINE_RULE
 
@@ -1424,6 +1460,179 @@ bool rpc_decl() {
 	return run_ast_test(rule::rpc_decl, rpc_decl_input_set);
 }
 
+input_set_type<ast::schema> schema_input_set = []() {
+	using namespace std::string_literals;
+	return input_set_type<ast::schema>{
+		{
+R"(
+include "common.fbs";
+
+namespace MyGame;
+
+attribute "priority";
+
+enum Color : byte { Red = 1, Green, Blue }
+
+union Any { Monster, Weapon, Pickup }
+
+struct Vec3 {
+  x:float;
+  y:float;
+  z:float;
+}
+
+table Monster {
+  pos:Vec3;
+  mana:short = 150;
+  hp:short = 100;
+  name:string;
+  friendly:bool = false (deprecated, priority: 1);
+  inventory:[ubyte];
+  color:Color = Blue;
+  test:Any;
+}
+
+root_type Monster;
+)",
+			ast::schema{
+				// includes
+				{
+					ast::include{"common.fbs"}
+				},
+				// elements
+				{
+					ast::schema_elements_variant{
+						ast::namespace_decl{{"MyGame"}},
+					},
+					ast::schema_elements_variant{
+						ast::attribute_decl{"priority"},
+					},
+					ast::schema_elements_variant{
+						ast::enum_decl{
+							"Color",
+							ast::enum_type_variant{ast::type_tag<int8_t>{}},
+							boost::none, // metadata
+							{
+								ast::enumval_decl{"Red", ast::enumval_variant{uint64_t(1)}},
+								ast::enumval_decl{"Green", boost::none},
+								ast::enumval_decl{"Blue", boost::none},
+							},
+						},
+					},
+					ast::schema_elements_variant{
+						ast::union_decl{
+							"Any",
+							boost::none, // metadata
+							{
+								ast::union_subtype_decl{"Monster", boost::none /*no alias*/},
+								ast::union_subtype_decl{"Weapon", boost::none /*no alias*/},
+								ast::union_subtype_decl{"Pickup", boost::none /*no alias*/},
+							},
+						},
+					},
+					ast::schema_elements_variant{
+						ast::struct_decl{
+							"Vec3",
+							boost::none, // metadata
+							{
+								ast::struct_field_decl{
+									"x",
+									ast::struct_fieldtype_variant{ast::type_tag<float>{}},
+									boost::none, // metadata
+								},
+								ast::struct_field_decl{
+									"y",
+									ast::struct_fieldtype_variant{ast::type_tag<float>{}},
+									boost::none, // metadata
+								},
+								ast::struct_field_decl{
+									"z",
+									ast::struct_fieldtype_variant{ast::type_tag<float>{}},
+									boost::none, // metadata
+								},
+							},
+						},
+					},
+					ast::schema_elements_variant{
+						ast::table_decl{
+							"Monster",
+							boost::none, // metadata
+							{
+								ast::table_field_decl{
+									"pos",
+									ast::table_fieldtype_variant{
+										ast::object_typeinfo{
+											ast::typeref{"Vec3", boost::none}}},
+									boost::none, // metadata
+								},
+								ast::table_field_decl{
+									"mana",
+									ast::table_fieldtype_variant{
+										ast::scalar_typeinfo{
+											ast::scalar_type<int16_t>{150}}},
+									boost::none, // metadata
+								},
+								ast::table_field_decl{
+									"hp",
+									ast::table_fieldtype_variant{
+										ast::scalar_typeinfo{
+											ast::scalar_type<int16_t>{100}}},
+									boost::none, // metadata
+								},
+								ast::table_field_decl{
+									"name",
+									ast::table_fieldtype_variant{
+										ast::object_typeinfo{
+											ast::type_tag<std::string>{}}},
+									boost::none, // metadata
+								},
+								ast::table_field_decl{
+									"friendly",
+									ast::table_fieldtype_variant{
+										ast::scalar_typeinfo{
+											ast::scalar_type<bool>{false}}},
+									ast::metadata{
+										{"deprecated", boost::none},
+										{"priority", ast::single_value(ast::scalar(uint64_t(1)))},
+									},
+								},
+								ast::table_field_decl{
+									"inventory",
+									ast::table_fieldtype_variant{
+										ast::vector_typeinfo{
+											ast::type_tag<uint8_t>{}}},
+									boost::none, // metadata
+								},
+								ast::table_field_decl{
+									"color",
+									ast::table_fieldtype_variant{
+										ast::object_typeinfo{
+											ast::typeref{"Color", "Blue"s}}},
+									boost::none, // metadata
+								},
+								ast::table_field_decl{
+									"test",
+									ast::table_fieldtype_variant{
+										ast::object_typeinfo{
+											ast::typeref{"Any", boost::none}}},
+									boost::none, // metadata
+								},
+							}, // vector<table_field_decl>
+						}, // table_decl
+					},
+					ast::schema_elements_variant{
+						ast::root_type_decl{"Monster"},
+					},
+				}, // schema elements
+			}, // schema
+		},
+	};
+}();
+
+bool schema() {
+	return run_ast_test(rule::schema, schema_input_set);
+}
+
 } // namespace test
 
 int main() {
@@ -1452,6 +1661,7 @@ int main() {
 	ok = ok && test::root_type_decl();
 	ok = ok && test::rpc_method_decl();
 	ok = ok && test::rpc_decl();
+	ok = ok && test::schema();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
 		return 1;
