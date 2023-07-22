@@ -26,7 +26,8 @@
 
 // This workload sets the throughput quota of a tag during the setup phase
 class TagThroughputQuotaWorkload : public TestWorkload {
-	Standalone<StringRef> name;
+	Standalone<StringRef> prefix;
+	int count{ 0 };
 	int64_t reservedQuotaInPages{ 0 };
 	int64_t totalQuotaInPages{ 0 };
 
@@ -36,7 +37,8 @@ class TagThroughputQuotaWorkload : public TestWorkload {
 public:
 	static constexpr auto NAME = "TagThroughputQuota";
 	explicit TagThroughputQuotaWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
-		name = getOption(options, "name"_sr, "sampleTag"_sr);
+		prefix = getOption(options, "prefix"_sr, "sampleTag"_sr);
+		count = getOption(options, "count"_sr, 1);
 		reservedQuotaInPages = getOption(options, "reservedQuotaInPages"_sr, 0);
 		totalQuotaInPages = getOption(options, "totalQuotaInPages"_sr, 0);
 	}
@@ -45,11 +47,16 @@ public:
 		if (clientId != 0) {
 			return Void();
 		}
-		TraceEvent("TagThroughputQuotaWorkload_SettingQuota")
-		    .detail("Tag", printable(name))
-		    .detail("ReservedQuota", getReservedQuota())
-		    .detail("TotalQuota", getTotalQuota());
-		return ThroughputQuotaUtil::setTagQuota(db, name, getReservedQuota(), getTotalQuota());
+		std::vector<Future<Void>> futures;
+		for (int index = 0; index < count; ++index) {
+			auto const name = ThroughputQuotaUtil::getThrottlingIdName(prefix, index);
+			TraceEvent("TagThroughputQuotaWorkload_SettingQuota")
+			    .detail("Name", printable(name))
+			    .detail("ReservedQuota", getReservedQuota())
+			    .detail("TotalQuota", getTotalQuota());
+			futures.push_back(ThroughputQuotaUtil::setTagQuota(db, name, getReservedQuota(), getTotalQuota()));
+		}
+		return waitForAll(futures);
 	}
 	Future<Void> start(Database const& cx) override { return Void(); }
 	Future<bool> check(Database const& cx) override { return true; }

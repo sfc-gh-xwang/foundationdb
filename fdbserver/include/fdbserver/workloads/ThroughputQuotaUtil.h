@@ -22,4 +22,6 @@ Future<Void> setTenantGroupQuota(Database const&, TenantGroupName const&, int64_
 
 Future<Void> removeTenantGroupQuota(Database const&, TenantGroupName const&);
 
+Standalone<StringRef> getThrottlingIdName(StringRef const& prefix, int index);
+
 } // namespace ThroughputQuotaUtil
