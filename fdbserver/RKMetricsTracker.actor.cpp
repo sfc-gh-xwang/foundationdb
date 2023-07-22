@@ -322,18 +322,30 @@ UpdateCommitCostRequest StorageQueueInfo::refreshCommitCost(double elapsed) {
 	TransactionTag busiestTag;
 	TransactionCommitCostEstimation maxCost;
 	double maxRate = 0;
+	std::priority_queue<BusyThrottlingIdInfo, std::vector<BusyThrottlingIdInfo>, std::greater<BusyThrottlingIdInfo>>
+	    topKWriters;
 	for (const auto& [tag, cost] : tagCostEst) {
-		double rate = cost.getCostSum() / elapsed;
+		double const rate = cost.getCostSum() / elapsed;
+		if (rate < SERVER_KNOBS->MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE) {
+			continue;
+		}
+		if (topKWriters.size() < SERVER_KNOBS->SS_THROTTLE_TAGS_TRACKED) {
+			topKWriters.emplace(ThrottlingId::fromTag(tag), rate);
+		} else if (topKWriters.top().rate < rate) {
+			topKWriters.pop();
+			topKWriters.emplace(ThrottlingId::fromTag(tag), rate);
+		}
+
 		if (rate > maxRate) {
 			busiestTag = tag;
 			maxRate = rate;
 			maxCost = cost;
 		}
 	}
-	if (maxRate > SERVER_KNOBS->MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE) {
-		// TraceEvent("RefreshSSCommitCost").detail("TotalWriteCost", totalWriteCost).detail("TotalWriteOps",totalWriteOps);
-		ASSERT_GT(totalWriteCosts, 0);
-		busiestWriters.emplace_back(ThrottlingId::fromTag(busiestTag), maxRate);
+
+	while (!topKWriters.empty()) {
+		busiestWriters.push_back(std::move(topKWriters.top()));
+		topKWriters.pop();
 	}
 
 	UpdateCommitCostRequest updateCommitCostRequest{ ratekeeperID,
