@@ -10,13 +10,13 @@ testTitle='ExpectStableThroughput'
   [[test.workload]]
   testName='TagThroughputQuota'
   prefix='testTag'
-  count=1
+  count=2
   totalQuotaInPages=1000
 
   [[test.workload]]
   testName='ExpectStableThroughput'
   tagPrefix='testTag'
-  numTags=1
+  numTags=2
   expectedThroughputPagesRate=1000
   attemptedThroughputPagesRate=2000
   # TODO: Reduce this error tolerance

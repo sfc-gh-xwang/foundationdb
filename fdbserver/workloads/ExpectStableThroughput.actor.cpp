@@ -204,6 +204,7 @@ public:
 
 			auto const severity = tagPassed ? SevInfo : SevError;
 			TraceEvent(severity, "CheckingStableThroughput")
+			    .detail("Tag", tag)
 			    .detail("ExpectedTotalCost", expectedTotalCost)
 			    .detail("ErrorTolerance", errorTolerance)
 			    .detail("TotalCost", metrics.totalCost.getTotal());
