@@ -1,5 +1,6 @@
 [configuration]
 tenantModes = ['disabled']
+generateFearless = false
 # TODO: Support multiple GRV proxies
 grvProxyCount = 1
 
@@ -16,8 +17,8 @@ testTitle='ExpectStableThroughput'
   testName='ExpectStableThroughput'
   throttlingTag='testTag'
   expectedThroughputPagesRate=1000
+  attemptedThroughputPagesRate=2000
   # TODO: Reduce this error tolerance
   errorTolerance=0.3
   numActors=100
-  attemptedTransactionRatePerActor=4
   opsPerTransaction=5
