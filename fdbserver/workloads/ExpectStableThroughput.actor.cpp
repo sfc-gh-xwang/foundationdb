@@ -6,6 +6,7 @@
 #include "fdbserver/workloads/workloads.actor.h"
 
 #include "flow/IRandom.h"
+#include "flow/Knobs.h"
 #include "flow/actorcompiler.h" // This must be the last include
 
 // This workload is meant to be run with the ThroughputQuotaWorklaod.
@@ -152,8 +153,14 @@ public:
 		errorTolerance = getOption(options, "errorTolerance"_sr, 0.2);
 		keyPrefix = getOption(options, "keyPrefix"_sr, "testKey"_sr);
 		numActors = getOption(options, "numActors"_sr, 100);
-		warmupTime = getOption(options, "warmupTime"_sr, 10.0);
-		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, deterministicRandom()->randomInt(1, 11));
+		// When simulation is not sped up, there are known, unrelated, rare availability issues that cause
+		// throughput to be significantly lower than the total quota. To avoid these failure cases, we
+		// don't measure throughput until after simulation has been sped up.
+		warmupTime = getOption(options, "warmupTime"_sr, FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS);
+		// Even with sped-up simulation, ratekeeper can drop to a limit of 100 TPS with enough buggification.
+		// To avoid this, the number of operations per transaction should be high enough to keep the
+		// total target TPS at or below 100 TPS.
+		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, deterministicRandom()->randomInt(5, 10));
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
 		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
 	}
@@ -197,10 +204,16 @@ public:
 
 		bool passed = true;
 		for (auto const& [tag, metrics] : metricsMap) {
-			// Unrelated rare availability issues are known to cause throughput to be significantly lower
-			// the total quota. Therefore only enforce an upper bound on write throughput:
 			bool tagPassed =
 			    (metrics.totalCost.getTotal() <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
+
+			// Global ratekeeper throttling is known to restrict throughput independent of quota-based throttling
+			// if certain knobs are buggified and the workload performs writes. We work around this by only enforcing a
+			// throughput lower bound if the workload is only performing reads.
+			if (performReads) {
+				tagPassed = tagPassed && (metrics.totalCost.getTotal() >=
+				                          static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance));
+			}
 
 			auto const severity = tagPassed ? SevInfo : SevError;
 			TraceEvent(severity, "CheckingStableThroughput")
