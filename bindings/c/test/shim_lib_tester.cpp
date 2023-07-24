@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
 		// in all recent API versions
 		testBasicApi(options);
 
-		// Try calling 710-specific API. This enables testing what
+		// Try calling 71.3-specific API. This enables testing what
 		// happens if a library is missing a function
 		test713Api(options);
 
