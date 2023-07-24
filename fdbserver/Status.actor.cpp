@@ -824,7 +824,9 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
 
 	state RolesInfo roles;
 
-	roles.addRole("master", db->get().master);
+	if (db->get().master.present()) {
+		roles.addRole("master", db->get().master.get());
+	}
 	roles.addRole("cluster_controller", db->get().clusterInterface.clientInterface);
 
 	if (db->get().distributor.present()) {
@@ -3055,7 +3057,8 @@ ACTOR Future<StatusReply> clusterGetStatus(
     Version datacenterVersionDifference,
     ConfigBroadcaster const* configBroadcaster,
     Optional<UnversionedMetaclusterRegistrationEntry> metaclusterRegistration,
-    metacluster::MetaclusterMetrics metaclusterMetrics) {
+    metacluster::MetaclusterMetrics metaclusterMetrics,
+    std::unordered_set<NetworkAddress> excludedProcesses) {
 	state double tStart = timer();
 
 	state JsonBuilderArray messages;
@@ -3069,6 +3072,15 @@ ACTOR Future<StatusReply> clusterGetStatus(
 	try {
 
 		state JsonBuilderObject statusObj;
+
+		// gray failure detection, the info is local on CC
+		JsonBuilderObject grayFailureDetectionStatusObj;
+		JsonBuilderArray excludedProcessesArr;
+		for (const auto& addr : excludedProcesses) {
+			excludedProcessesArr.push_back(addr.toString());
+		}
+		grayFailureDetectionStatusObj["excluded_processes"] = excludedProcessesArr;
+		statusObj["gray_failure_detection"] = grayFailureDetectionStatusObj;
 
 		// Get EKP Health
 		if (db->get().client.encryptKeyProxy.present()) {
@@ -3099,7 +3111,10 @@ ACTOR Future<StatusReply> clusterGetStatus(
 		}
 
 		// Get the master Worker interface
-		Optional<WorkerDetails> _mWorker = getWorker(workers, db->get().master.address());
+		Optional<WorkerDetails> _mWorker;
+		if (db->get().master.present()) {
+			_mWorker = getWorker(workers, db->get().master.get().address());
+		}
 		if (_mWorker.present()) {
 			mWorker = _mWorker.get();
 		} else {

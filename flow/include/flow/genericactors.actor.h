@@ -919,11 +919,13 @@ ACTOR template <class T>
 Future<Void> setWhenDoneOrError(Future<Void> condition, Reference<AsyncVar<T>> var, T val) {
 	try {
 		wait(condition);
+		var->set(val);
 	} catch (Error& e) {
-		if (e.code() == error_code_actor_cancelled)
-			throw;
+		if (e.code() != error_code_actor_cancelled) {
+			var->set(val);
+		}
+		throw;
 	}
-	var->set(val);
 	return Void();
 }
 
