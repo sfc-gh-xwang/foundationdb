@@ -703,15 +703,16 @@ struct MetaclusterManagementWorkload : TestWorkload {
 					}
 				}
 
-				Future<Void> restoreFuture =
-				    metacluster::restoreCluster(self->managementDb,
-				                                clusterName,
-				                                dataDb->db->getConnectionRecord()->getConnectionString(),
-				                                metacluster::ApplyManagementClusterUpdates(!dataDb->detached),
-				                                metacluster::RestoreDryRun(dryRun),
-				                                metacluster::ForceJoin(forceJoin),
-				                                metacluster::ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
-				                                &messages);
+				Future<Void> restoreFuture = metacluster::restoreCluster(
+				    self->managementDb,
+				    clusterName,
+				    dataDb->db->getConnectionRecord()->getConnectionString(),
+				    metacluster::ApplyManagementClusterUpdates(!dataDb->detached),
+				    metacluster::RestoreDryRun(dryRun),
+				    metacluster::ForceJoin(forceJoin),
+				    metacluster::ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
+				    metacluster::ForceDeleteMissingTenants(deterministicRandom()->coinflip()),
+				    &messages);
 				Optional<Void> result = wait(timeout(restoreFuture, deterministicRandom()->randomInt(1, 30)));
 				if (!result.present()) {
 					retried = true;

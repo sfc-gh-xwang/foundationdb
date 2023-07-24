@@ -45,6 +45,7 @@ FDB_BOOLEAN_PARAM(ApplyManagementClusterUpdates);
 FDB_BOOLEAN_PARAM(RestoreDryRun);
 FDB_BOOLEAN_PARAM(ForceJoin);
 FDB_BOOLEAN_PARAM(ForceReuseTenantIdPrefix);
+FDB_BOOLEAN_PARAM(ForceDeleteMissingTenants);
 
 namespace internal {
 template <class DB>
@@ -66,6 +67,7 @@ struct RestoreClusterImpl {
 	RestoreDryRun restoreDryRun;
 	ForceJoin forceJoin;
 	ForceReuseTenantIdPrefix forceReuseTenantIdPrefix;
+	ForceDeleteMissingTenants forceDeleteMissingTenants;
 	std::vector<std::string>& messages;
 
 	// Unique ID generated for this restore. Used to avoid concurrent restores
@@ -93,6 +95,7 @@ struct RestoreClusterImpl {
 	                   RestoreDryRun restoreDryRun,
 	                   ForceJoin forceJoin,
 	                   ForceReuseTenantIdPrefix forceReuseTenantIdPrefix,
+	                   ForceDeleteMissingTenants forceDeleteMissingTenants,
 	                   std::vector<std::string>& messages)
 	  : ctx(managementDb, {}, { DataClusterState::RESTORING }),
 	    clusterName(clusterName),
@@ -101,6 +104,7 @@ struct RestoreClusterImpl {
 	    restoreDryRun(restoreDryRun),
 	    forceJoin(forceJoin),
 	    forceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
+	    forceDeleteMissingTenants(forceDeleteMissingTenants),
 	    messages(messages) {}
 
 	ACTOR template <class Transaction>
@@ -539,7 +543,16 @@ struct RestoreClusterImpl {
 		if (managementEntry == self->mgmtClusterTenantMap.end() ||
 		    managementEntry->second.assignedCluster != self->clusterName ||
 		    managementEntry->second.tenantState == TenantState::REMOVING) {
-			if (self->restoreDryRun) {
+			if (!self->forceDeleteMissingTenants) {
+				self->messages.push_back(fmt::format("Tenant `{}' with ID {} does not match a tenant on the management "
+				                                     "cluster. Use `force_delete_missing_tenants' to delete it.",
+				                                     printable(tenantEntry.tenantName),
+				                                     tenantEntry.id));
+				if (!self->restoreDryRun) {
+					CODE_PROBE(true, "Tenant could not be deleted during restore");
+					throw tenant_not_found();
+				}
+			} else if (self->restoreDryRun) {
 				if (managementEntry == self->mgmtClusterTenantMap.end()) {
 					self->messages.push_back(fmt::format("Delete missing tenant `{}' with ID {} on data cluster",
 					                                     printable(tenantEntry.tenantName),
@@ -556,7 +569,7 @@ struct RestoreClusterImpl {
 					                printable(tenantEntry.tenantName),
 					                tenantEntry.id));
 				}
-			} else {
+			} else if (self->forceDeleteMissingTenants) {
 				CODE_PROBE(true, "Delete tenant during restore");
 				wait(self->runRestoreDataClusterTransaction([tenantEntry = tenantEntry](Reference<ITransaction> tr) {
 					tr->clear(prefixRange(tenantEntry.prefix));
@@ -1027,6 +1040,8 @@ struct RestoreClusterImpl {
 	ACTOR static Future<Void> runDataClusterRestore(RestoreClusterImpl* self) {
 		CODE_PROBE(self->restoreDryRun, "Data cluster restore dry-run");
 		CODE_PROBE(self->forceJoin, "Data cluster restore force join");
+		CODE_PROBE(self->forceDeleteMissingTenants, "Data cluster forcing delete of missing tenants");
+		CODE_PROBE(!self->forceDeleteMissingTenants, "Data cluster not forcing delete of missing tenants");
 
 		// Run a management transaction to populate the data cluster metadata
 		wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
@@ -1155,6 +1170,7 @@ Future<Void> restoreCluster(Reference<DB> db,
                             RestoreDryRun restoreDryRun,
                             ForceJoin forceJoin,
                             ForceReuseTenantIdPrefix forceReuseTenantIdPrefix,
+                            ForceDeleteMissingTenants forceDeleteMissingTenants,
                             std::vector<std::string>* messages) {
 	state internal::RestoreClusterImpl<DB> impl(db,
 	                                            name,
@@ -1163,6 +1179,7 @@ Future<Void> restoreCluster(Reference<DB> db,
 	                                            restoreDryRun,
 	                                            forceJoin,
 	                                            forceReuseTenantIdPrefix,
+	                                            forceDeleteMissingTenants,
 	                                            *messages);
 	wait(impl.run());
 	return Void();

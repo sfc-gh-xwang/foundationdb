@@ -232,7 +232,8 @@ ACTOR Future<bool> metaclusterRemoveCommand(Reference<IDatabase> db, std::vector
 void printRestoreUsage() {
 	fmt::print(
 	    "Usage: metacluster restore <NAME> [dryrun] connection_string=<CONNECTION_STRING>\n"
-	    "<restore_known_data_cluster|repopulate_from_data_cluster> [force_join|force_reuse_tenant_id_prefix] ...\n\n");
+	    "<restore_known_data_cluster|repopulate_from_data_cluster>\n"
+		"[force_join|force_reuse_tenant_id_prefix|force_delete_missing_tenants] ...\n\n");
 
 	fmt::print("Add a restored data cluster back to a metacluster.\n\n");
 
@@ -246,7 +247,10 @@ void printRestoreUsage() {
 	fmt::print("data clusters will be resolved using the management cluster metadata.\n");
 	fmt::print("If `force_join' is specified, the cluster will try to restore to a different\n");
 	fmt::print("metacluster than it was originally registered to or with a different ID than\n");
-	fmt::print("is associated with the given cluster name.\n\n");
+	fmt::print("is associated with the given cluster name. If `force_delete_missing_tenant' is\n");
+	fmt::print("specified, any tenants not present on the management cluster will be deleted\n");
+	fmt::print("from the restored cluster. Otherwise, the restore will fail if there are any\n");
+	fmt::print("such tenants.\n");
 
 	fmt::print("Use `repopulate_from_data_cluster' to rebuild a lost management cluster from the\n");
 	fmt::print("data clusters in a metacluster. This mode should be used if the management\n");
@@ -273,12 +277,15 @@ ACTOR Future<bool> metaclusterRestoreCommand(Reference<IDatabase> db, std::vecto
 	state bool dryRun = tokens[3] == "dryrun"_sr;
 	state bool forceJoin = false;
 	state bool forceReuseTenantIdPrefix = false;
+	state bool forceDeleteMissingTenants = false;
 
 	loop {
 		if (tokens.back() == "force_join"_sr) {
 			forceJoin = true;
 		} else if (tokens.back() == "force_reuse_tenant_id_prefix"_sr) {
 			forceReuseTenantIdPrefix = true;
+		} else if (tokens.back() == "force_delete_missing_tenants"_sr) {
+			forceDeleteMissingTenants = true;
 		} else {
 			break;
 		}
@@ -317,6 +324,7 @@ ACTOR Future<bool> metaclusterRestoreCommand(Reference<IDatabase> db, std::vecto
 			                                 metacluster::RestoreDryRun(dryRun),
 			                                 metacluster::ForceJoin(forceJoin),
 			                                 metacluster::ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
+											 metacluster::ForceDeleteMissingTenants(forceDeleteMissingTenants),
 			                                 &messages));
 		} else if (restoreType == "repopulate_from_data_cluster"_sr) {
 			wait(metacluster::restoreCluster(db,
@@ -326,6 +334,7 @@ ACTOR Future<bool> metaclusterRestoreCommand(Reference<IDatabase> db, std::vecto
 			                                 metacluster::RestoreDryRun(dryRun),
 			                                 metacluster::ForceJoin(forceJoin),
 			                                 metacluster::ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
+											 metacluster::ForceDeleteMissingTenants(forceDeleteMissingTenants),
 			                                 &messages));
 		} else {
 			fmt::print(stderr, "ERROR: unrecognized restore mode `{}'\n", printable(restoreType));

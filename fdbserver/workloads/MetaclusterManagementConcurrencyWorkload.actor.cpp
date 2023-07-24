@@ -379,14 +379,16 @@ struct MetaclusterManagementConcurrencyWorkload : TestWorkload {
 					    .detail("ClusterName", clusterName)
 					    .detail("ApplyManagementClusterUpdates", applyManagementClusterUpdates);
 
-					wait(metacluster::restoreCluster(self->simMetacluster.managementDb,
-					                                 clusterName,
-					                                 db->getConnectionRecord()->getConnectionString(),
-					                                 applyManagementClusterUpdates,
-					                                 metacluster::RestoreDryRun::True,
-					                                 forceJoin,
-					                                 metacluster::ForceReuseTenantIdPrefix::True,
-					                                 &messages));
+					wait(metacluster::restoreCluster(
+					    self->simMetacluster.managementDb,
+					    clusterName,
+					    db->getConnectionRecord()->getConnectionString(),
+					    applyManagementClusterUpdates,
+					    metacluster::RestoreDryRun::True,
+					    forceJoin,
+					    metacluster::ForceReuseTenantIdPrefix::True,
+					    metacluster::ForceDeleteMissingTenants(deterministicRandom()->coinflip()),
+					    &messages));
 
 					TraceEvent(SevDebug, "MetaclusterManagementConcurrencyRestoreDryRunDone", debugId)
 					    .detail("ClusterName", clusterName)
@@ -396,14 +398,16 @@ struct MetaclusterManagementConcurrencyWorkload : TestWorkload {
 				}
 
 				Optional<Void> result =
-				    wait(timeout(metacluster::restoreCluster(self->simMetacluster.managementDb,
-				                                             clusterName,
-				                                             db->getConnectionRecord()->getConnectionString(),
-				                                             applyManagementClusterUpdates,
-				                                             metacluster::RestoreDryRun::False,
-				                                             forceJoin,
-				                                             metacluster::ForceReuseTenantIdPrefix::True,
-				                                             &messages),
+				    wait(timeout(metacluster::restoreCluster(
+				                     self->simMetacluster.managementDb,
+				                     clusterName,
+				                     db->getConnectionRecord()->getConnectionString(),
+				                     applyManagementClusterUpdates,
+				                     metacluster::RestoreDryRun::False,
+				                     forceJoin,
+				                     metacluster::ForceReuseTenantIdPrefix::True,
+				                     metacluster::ForceDeleteMissingTenants(deterministicRandom()->coinflip()),
+				                     &messages),
 				                 30.0));
 
 				if (result.present()) {
