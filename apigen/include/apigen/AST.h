@@ -21,237 +21,237 @@ namespace ast {
 
 namespace x3 = boost::spirit::x3;
 
-struct scalar : x3::variant<bool, double, uint64_t, int64_t> {
+struct Scalar : x3::variant<bool, double, uint64_t, int64_t> {
 	using base_type::base_type;
 	using base_type::operator=;
 
 	static constexpr double EPS = 1e-10;
 
-	bool operator==(const scalar& other) const noexcept = default;
+	bool operator==(const Scalar& other) const noexcept = default;
 };
 
-struct single_value : x3::variant<scalar, std::string> {
+struct SingleValue : x3::variant<Scalar, std::string> {
 	using base_type::base_type;
 	using base_type::operator=;
 
-	bool operator==(const single_value& other) const noexcept = default;
+	bool operator==(const SingleValue& other) const noexcept = default;
 };
 
-using metadatum = std::pair<std::string, boost::optional<single_value>>;
-using metadata = std::map<std::string, boost::optional<single_value>>;
+using Metadatum = std::pair<std::string, boost::optional<SingleValue>>;
+using Metadata = std::map<std::string, boost::optional<SingleValue>>;
 
-struct include {
+struct Include {
 	std::string filename;
-	bool operator==(const include& other) const noexcept = default;
+	bool operator==(const Include& other) const noexcept = default;
 };
 
-struct file_identifier_decl {
+struct FileIdentifierDecl {
 	std::string id;
-	bool operator==(const file_identifier_decl& other) const noexcept = default;
+	bool operator==(const FileIdentifierDecl& other) const noexcept = default;
 };
 
-struct file_extension_decl {
+struct FileExtensionDecl {
 	std::string ext;
-	bool operator==(const file_extension_decl& other) const noexcept = default;
+	bool operator==(const FileExtensionDecl& other) const noexcept = default;
 };
 
-struct namespace_decl {
+struct NamespaceDecl {
 	std::vector<std::string> ns;
-	bool operator==(const namespace_decl& other) const noexcept = default;
+	bool operator==(const NamespaceDecl& other) const noexcept = default;
 };
 
-struct attribute_decl {
+struct AttributeDecl {
 	std::string name;
-	bool operator==(const attribute_decl& other) const noexcept = default;
+	bool operator==(const AttributeDecl& other) const noexcept = default;
 };
 
-struct root_type_decl {
+struct RootTypeDecl {
 	std::string name;
-	bool operator==(const root_type_decl& other) const noexcept = default;
+	bool operator==(const RootTypeDecl& other) const noexcept = default;
 };
 
-struct rpc_method_decl {
+struct RpcMethodDecl {
 	std::string name;
-	std::string request_type;
-	std::string response_type;
-	boost::optional<metadata> meta;
-	bool operator==(const rpc_method_decl& other) const noexcept = default;
+	std::string requestType;
+	std::string responseType;
+	boost::optional<Metadata> meta;
+	bool operator==(const RpcMethodDecl& other) const noexcept = default;
 };
 
-struct rpc_decl {
+struct RpcDecl {
 	std::string name;
-	std::vector<rpc_method_decl> methods;
-	bool operator==(const rpc_decl& other) const noexcept = default;
+	std::vector<RpcMethodDecl> methods;
+	bool operator==(const RpcDecl& other) const noexcept = default;
 };
 
 // when a table member is another table/struct/union or a struct member is another struct
-struct typeref {
+struct TypeRef {
 	std::string name;
 	// support for when *name* refers to an enum type and the field has a default value
 	boost::optional<std::string> default_;
-	bool operator==(const typeref& other) const noexcept = default;
+	bool operator==(const TypeRef& other) const noexcept = default;
 };
 
 template <class T>
-struct scalar_type {
+struct ScalarType {
 	boost::optional<T> default_;
-	bool operator==(const scalar_type& other) const noexcept = default;
+	bool operator==(const ScalarType& other) const noexcept = default;
 };
 
-using scalar_types_variant = x3::variant<scalar_type<bool>,
-                                         scalar_type<int8_t>,
-                                         scalar_type<uint8_t>,
-                                         scalar_type<int16_t>,
-                                         scalar_type<uint16_t>,
-                                         scalar_type<int64_t>,
-                                         scalar_type<uint64_t>,
-                                         scalar_type<int32_t>,
-                                         scalar_type<uint32_t>,
-                                         scalar_type<float>,
-                                         scalar_type<double>>;
+using ScalarTypesVariant = x3::variant<ScalarType<bool>,
+                                       ScalarType<int8_t>,
+                                       ScalarType<uint8_t>,
+                                       ScalarType<int16_t>,
+                                       ScalarType<uint16_t>,
+                                       ScalarType<int64_t>,
+                                       ScalarType<uint64_t>,
+                                       ScalarType<int32_t>,
+                                       ScalarType<uint32_t>,
+                                       ScalarType<float>,
+                                       ScalarType<double>>;
 
-struct scalar_typeinfo : scalar_types_variant {
+struct ScalarTypeInfo : ScalarTypesVariant {
 	using base_type::base_type;
 	using base_type::operator=;
 
-	bool operator==(const scalar_typeinfo& other) const noexcept = default;
+	bool operator==(const ScalarTypeInfo& other) const noexcept = default;
 };
 
 template <typename T>
-struct type_tag {
-	// If T is scalar, it's always used in the context of a vector_typeinfo (non-vector case is covered by scalar_type)
+struct TypeTag {
+	// If T is scalar, it's always used in the context of a VectorTypeInfo (non-vector case is covered by ScalarType)
 	using type = T;
-	bool operator==(const type_tag& other) const noexcept { return true; }
+	bool operator==(const TypeTag& other) const noexcept { return true; }
 };
 
-using object_types_variant = x3::variant<type_tag<std::string>, typeref>;
+using ObjectTypesVariant = x3::variant<TypeTag<std::string>, TypeRef>;
 
-struct object_typeinfo : object_types_variant {
+struct ObjectTypeInfo : ObjectTypesVariant {
 	using base_type::base_type;
 	using base_type::operator=;
 
-	bool operator==(const object_typeinfo& other) const noexcept = default;
+	bool operator==(const ObjectTypeInfo& other) const noexcept = default;
 };
 
-using singular_types_variant = x3::variant<type_tag<bool>,
-                                           type_tag<int8_t>,
-                                           type_tag<uint8_t>,
-                                           type_tag<int16_t>,
-                                           type_tag<uint16_t>,
-                                           type_tag<int64_t>,
-                                           type_tag<uint64_t>,
-                                           type_tag<int32_t>,
-                                           type_tag<uint32_t>,
-                                           type_tag<float>,
-                                           type_tag<double>,
-                                           type_tag<std::string>,
-                                           typeref>;
+using SingularTypesVariant = x3::variant<TypeTag<bool>,
+                                         TypeTag<int8_t>,
+                                         TypeTag<uint8_t>,
+                                         TypeTag<int16_t>,
+                                         TypeTag<uint16_t>,
+                                         TypeTag<int64_t>,
+                                         TypeTag<uint64_t>,
+                                         TypeTag<int32_t>,
+                                         TypeTag<uint32_t>,
+                                         TypeTag<float>,
+                                         TypeTag<double>,
+                                         TypeTag<std::string>,
+                                         TypeRef>;
 
-struct vector_typeinfo : singular_types_variant {
+struct VectorTypeInfo : SingularTypesVariant {
 	using base_type::base_type;
 	using base_type::operator=;
 
-	bool operator==(const vector_typeinfo& other) const noexcept = default;
+	bool operator==(const VectorTypeInfo& other) const noexcept = default;
 };
 
-using table_fieldtype_variant = x3::variant<scalar_typeinfo, object_typeinfo, vector_typeinfo>;
+using TableFieldTypesVariant = x3::variant<ScalarTypeInfo, ObjectTypeInfo, VectorTypeInfo>;
 
-struct table_field_decl {
+struct TableFieldDecl {
 	std::string name;
-	table_fieldtype_variant typeinfo;
-	boost::optional<metadata> meta;
+	TableFieldTypesVariant typeinfo;
+	boost::optional<Metadata> meta;
 
-	bool operator==(const table_field_decl& other) const noexcept = default;
+	bool operator==(const TableFieldDecl& other) const noexcept = default;
 };
 
-struct table_decl {
+struct TableDecl {
 	std::string name;
-	boost::optional<metadata> meta;
-	std::vector<table_field_decl> fields;
-	bool operator==(const table_decl& other) const noexcept = default;
+	boost::optional<Metadata> meta;
+	std::vector<TableFieldDecl> fields;
+	bool operator==(const TableDecl& other) const noexcept = default;
 };
 
-using struct_fieldtype_variant = x3::variant<type_tag<bool>,
-                                             type_tag<int8_t>,
-                                             type_tag<uint8_t>,
-                                             type_tag<int16_t>,
-                                             type_tag<uint16_t>,
-                                             type_tag<int64_t>,
-                                             type_tag<uint64_t>,
-                                             type_tag<int32_t>,
-                                             type_tag<uint32_t>,
-                                             type_tag<float>,
-                                             type_tag<double>,
-                                             typeref>;
+using StructFieldTypesVariant = x3::variant<TypeTag<bool>,
+                                            TypeTag<int8_t>,
+                                            TypeTag<uint8_t>,
+                                            TypeTag<int16_t>,
+                                            TypeTag<uint16_t>,
+                                            TypeTag<int64_t>,
+                                            TypeTag<uint64_t>,
+                                            TypeTag<int32_t>,
+                                            TypeTag<uint32_t>,
+                                            TypeTag<float>,
+                                            TypeTag<double>,
+                                            TypeRef>;
 
-struct struct_field_decl {
+struct StructFieldDecl {
 	std::string name;
-	struct_fieldtype_variant typeinfo;
-	boost::optional<metadata> meta;
-	bool operator==(const struct_field_decl& other) const noexcept = default;
+	StructFieldTypesVariant typeinfo;
+	boost::optional<Metadata> meta;
+	bool operator==(const StructFieldDecl& other) const noexcept = default;
 };
 
-struct struct_decl {
+struct StructDecl {
 	std::string name;
-	boost::optional<metadata> meta;
-	std::vector<struct_field_decl> fields;
-	bool operator==(const struct_decl& other) const noexcept = default;
+	boost::optional<Metadata> meta;
+	std::vector<StructFieldDecl> fields;
+	bool operator==(const StructDecl& other) const noexcept = default;
 };
 
-using enumval_variant = x3::variant<uint64_t, int64_t>;
+using EnumValVariant = x3::variant<uint64_t, int64_t>;
 
-struct enumval_decl {
+struct EnumValDecl {
 	std::string name;
 	// whether the assigned value fits in the type that backs enum is deferred to code generator
-	boost::optional<enumval_variant> value;
-	bool operator==(const enumval_decl& other) const noexcept = default;
+	boost::optional<EnumValVariant> value;
+	bool operator==(const EnumValDecl& other) const noexcept = default;
 };
 
-using enum_type_variant = x3::variant<type_tag<int8_t>,
-                                      type_tag<uint8_t>,
-                                      type_tag<int16_t>,
-                                      type_tag<uint16_t>,
-                                      type_tag<int64_t>,
-                                      type_tag<uint64_t>,
-                                      type_tag<int32_t>,
-                                      type_tag<uint32_t>>;
+using EnumTypesVariant = x3::variant<TypeTag<int8_t>,
+                                     TypeTag<uint8_t>,
+                                     TypeTag<int16_t>,
+                                     TypeTag<uint16_t>,
+                                     TypeTag<int64_t>,
+                                     TypeTag<uint64_t>,
+                                     TypeTag<int32_t>,
+                                     TypeTag<uint32_t>>;
 
-struct enum_decl {
+struct EnumDecl {
 	std::string name;
-	enum_type_variant typeinfo;
-	boost::optional<metadata> meta;
-	std::vector<enumval_decl> values;
-	bool operator==(const enum_decl& other) const noexcept = default;
+	EnumTypesVariant typeinfo;
+	boost::optional<Metadata> meta;
+	std::vector<EnumValDecl> values;
+	bool operator==(const EnumDecl& other) const noexcept = default;
 };
 
-struct union_subtype_decl {
+struct UnionSubTypeDecl {
 	std::string type;
 	boost::optional<std::string> alias;
-	bool operator==(const union_subtype_decl& other) const noexcept = default;
+	bool operator==(const UnionSubTypeDecl& other) const noexcept = default;
 };
 
-struct union_decl {
+struct UnionDecl {
 	std::string name;
-	boost::optional<metadata> meta;
-	std::vector<union_subtype_decl> subtypes;
-	bool operator==(const union_decl& other) const noexcept = default;
+	boost::optional<Metadata> meta;
+	std::vector<UnionSubTypeDecl> subtypes;
+	bool operator==(const UnionDecl& other) const noexcept = default;
 };
 
-using schema_elements_variant = x3::variant<namespace_decl,
-                                            table_decl,
-                                            struct_decl,
-                                            enum_decl,
-                                            union_decl,
-                                            root_type_decl,
-                                            file_extension_decl,
-                                            file_identifier_decl,
-                                            attribute_decl,
-                                            rpc_decl>;
+using SchemaElementsVariant = x3::variant<NamespaceDecl,
+                                          TableDecl,
+                                          StructDecl,
+                                          EnumDecl,
+                                          UnionDecl,
+                                          RootTypeDecl,
+                                          FileExtensionDecl,
+                                          FileIdentifierDecl,
+                                          AttributeDecl,
+                                          RpcDecl>;
 
-struct schema {
-	std::vector<include> includes;
-	std::vector<schema_elements_variant> elements;
-	bool operator==(const schema& other) const noexcept = default;
+struct Schema {
+	std::vector<Include> includes;
+	std::vector<SchemaElementsVariant> elements;
+	bool operator==(const Schema& other) const noexcept = default;
 };
 
 } // namespace ast

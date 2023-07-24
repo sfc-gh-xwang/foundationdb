@@ -90,33 +90,33 @@ InputSet<std::string> const StringConstantInputSet = []() -> InputSet<std::strin
 }();
 
 bool stringConstant() {
-	return runAstTest(rule::string_constant, StringConstantInputSet);
+	return runAstTest(rule::StringConstant, StringConstantInputSet);
 }
 
-InputSet<ast::scalar> const scalarInputSet = {
-	{ "1.0", ast::scalar(1.0) }, // double
-	{ "10", ast::scalar(uint64_t(10)) }, // uint64
-	{ "-10.0", ast::scalar(-10.0) }, // double
-	{ "-10", ast::scalar(int64_t(-10)) }, // int64
-	{ "-3", ast::scalar(int64_t(-3)) }, // int64
-	{ "0xfe", ast::scalar(uint64_t(0xfe)) }, // uint64
-	{ "0xDeadBeefDeadBeef", ast::scalar(uint64_t(0xdeadbeefdeadbeefUL)) }, // uint64
-	{ "0xdeadbeefdeadbeef", ast::scalar(uint64_t(0xdeadbeefdeadbeefUL)) }, // uint64
+InputSet<ast::Scalar> const scalarInputSet = {
+	{ "1.0", ast::Scalar(1.0) }, // double
+	{ "10", ast::Scalar(uint64_t(10)) }, // uint64
+	{ "-10.0", ast::Scalar(-10.0) }, // double
+	{ "-10", ast::Scalar(int64_t(-10)) }, // int64
+	{ "-3", ast::Scalar(int64_t(-3)) }, // int64
+	{ "0xfe", ast::Scalar(uint64_t(0xfe)) }, // uint64
+	{ "0xDeadBeefDeadBeef", ast::Scalar(uint64_t(0xdeadbeefdeadbeefUL)) }, // uint64
+	{ "0xdeadbeefdeadbeef", ast::Scalar(uint64_t(0xdeadbeefdeadbeefUL)) }, // uint64
 	{ "-0xdeadbeefdeadbeef",
 	  boost::none }, // negative hex int64 not supported yet TODO: make this throw a parse error with message
-	{ "true", ast::scalar(true) }, // bool
-	{ "false", ast::scalar(false) }, // bool
-	{ "1", ast::scalar(uint64_t(1)) }, // uint64
-	{ "0", ast::scalar(uint64_t(0)) }, // uint64
+	{ "true", ast::Scalar(true) }, // bool
+	{ "false", ast::Scalar(false) }, // bool
+	{ "1", ast::Scalar(uint64_t(1)) }, // uint64
+	{ "0", ast::Scalar(uint64_t(0)) }, // uint64
 };
 
 bool scalar() {
-	return runAstTest(rule::scalar, scalarInputSet);
+	return runAstTest(rule::Scalar, scalarInputSet);
 }
 
 // reuse scalar/string_constant test input for single value test
-InputSet<ast::single_value> const singleValueInputSet = []() -> InputSet<ast::single_value> {
-	auto ret = InputSet<ast::single_value>();
+InputSet<ast::SingleValue> const singleValueInputSet = []() -> InputSet<ast::SingleValue> {
+	auto ret = InputSet<ast::SingleValue>();
 	for (auto const& [input, expected] : StringConstantInputSet) {
 		if (expected) {
 			ret.emplace_back(input, *expected);
@@ -135,50 +135,50 @@ InputSet<ast::single_value> const singleValueInputSet = []() -> InputSet<ast::si
 }();
 
 bool singleValue() {
-	return runAstTest(rule::single_value, singleValueInputSet);
+	return runAstTest(rule::SingleValue, singleValueInputSet);
 }
 
-InputSet<ast::metadatum> const metadatumInputSet = []() {
+InputSet<ast::Metadatum> const metadatumInputSet = []() {
 	using namespace std::string_literals;
-	auto ret = InputSet<ast::metadatum>{
-		{ "attr", ast::metadatum{ "attr", boost::none } },
-		{ "abc: \"def\"", ast::metadatum{ "abc", ast::single_value("def"s) } },
-		{ "id: 42", ast::metadatum{ "id", ast::single_value(ast::scalar(uint64_t(42))) } },
-		{ "deprecated", ast::metadatum{ "deprecated", boost::none } },
-		{ "required", ast::metadatum{ "required", boost::none } },
-		{ "force_align: 16", ast::metadatum{ "force_align", ast::single_value(ast::scalar(uint64_t(16))) } },
-		{ "nested_flatbuffer: \"someTable\"", ast::metadatum{ "nested_flatbuffer", ast::single_value("someTable"s) } },
+	auto ret = InputSet<ast::Metadatum>{
+		{ "attr", ast::Metadatum{ "attr", boost::none } },
+		{ "abc: \"def\"", ast::Metadatum{ "abc", ast::SingleValue("def"s) } },
+		{ "id: 42", ast::Metadatum{ "id", ast::SingleValue(ast::Scalar(uint64_t(42))) } },
+		{ "deprecated", ast::Metadatum{ "deprecated", boost::none } },
+		{ "required", ast::Metadatum{ "required", boost::none } },
+		{ "force_align: 16", ast::Metadatum{ "force_align", ast::SingleValue(ast::Scalar(uint64_t(16))) } },
+		{ "nested_flatbuffer: \"someTable\"", ast::Metadatum{ "nested_flatbuffer", ast::SingleValue("someTable"s) } },
 	};
 	return ret;
 }();
 
 bool metadatum() {
-	return runAstTest(rule::metadatum, metadatumInputSet);
+	return runAstTest(rule::Metadatum, metadatumInputSet);
 }
 
-InputSet<ast::metadata> const metadataInputSet = []() {
+InputSet<ast::Metadata> const metadataInputSet = []() {
 	using namespace std::string_literals;
-	InputSet<ast::metadata> ret = {
+	InputSet<ast::Metadata> ret = {
 		{
 		    "(a: 10, b: \"c\", d, e: true)"s,
-		    ast::metadata{ { "a", ast::single_value(ast::scalar(uint64_t(10))) },
-		                   { "b", ast::single_value("c"s) },
+		    ast::Metadata{ { "a", ast::SingleValue(ast::Scalar(uint64_t(10))) },
+		                   { "b", ast::SingleValue("c"s) },
 		                   { "d", boost::none },
-		                   { "e", ast::single_value(ast::scalar(true)) } },
+		                   { "e", ast::SingleValue(ast::Scalar(true)) } },
 		},
 		{
 		    // because x3 parser's parse-into-container class/function template uses map.insert() which does not
 		    // update entries in-place, any insertions to the existing key are silently ignored, which isn't great.
 		    "(a, b: 4, a: 3)",
-		    ast::metadata{
+		    ast::Metadata{
 		        { "a", boost::none },
-		        { "b", ast::single_value(ast::scalar(uint64_t(4))) },
+		        { "b", ast::SingleValue(ast::Scalar(uint64_t(4))) },
 		    },
 		},
 		{
 		    "(a: true, a: \"def\")",
-		    ast::metadata{
-		        { "a", ast::single_value(ast::scalar(true)) },
+		    ast::Metadata{
+		        { "a", ast::SingleValue(ast::Scalar(true)) },
 		    },
 		},
 		{ "()", boost::none }, // empty metadata fails x3::list parser rule
@@ -187,61 +187,61 @@ InputSet<ast::metadata> const metadataInputSet = []() {
 }();
 
 bool metadata() {
-	return runAstTest(rule::metadata, metadataInputSet);
+	return runAstTest(rule::Metadata, metadataInputSet);
 }
 
-InputSet<ast::scalar_typeinfo> scalarTypeInfoInputSet = []() {
+InputSet<ast::ScalarTypeInfo> scalarTypeInfoInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::scalar_typeinfo>{
+	return InputSet<ast::ScalarTypeInfo>{
 		{
 		    "int = 10",
-		    ast::scalar_typeinfo{ ast::scalar_type<int32_t>{ 10 } },
+		    ast::ScalarTypeInfo{ ast::ScalarType<int32_t>{ 10 } },
 		},
 		{
 		    "bool",
-		    ast::scalar_typeinfo{ ast::scalar_type<bool>{ boost::none } },
+		    ast::ScalarTypeInfo{ ast::ScalarType<bool>{ boost::none } },
 		},
 		{
 		    "bool = true",
-		    ast::scalar_typeinfo{ ast::scalar_type<bool>{ true } },
+		    ast::ScalarTypeInfo{ ast::ScalarType<bool>{ true } },
 		},
 		{
 		    "ulong",
-		    ast::scalar_typeinfo{ ast::scalar_type<uint64_t>{ boost::none } },
+		    ast::ScalarTypeInfo{ ast::ScalarType<uint64_t>{ boost::none } },
 		},
 		{
 		    "int64 = -5",
-		    ast::scalar_typeinfo{ ast::scalar_type<int64_t>{ -5 } },
+		    ast::ScalarTypeInfo{ ast::ScalarType<int64_t>{ -5 } },
 		},
 		{
 		    "double = -3.14",
-		    ast::scalar_typeinfo{ ast::scalar_type<double>{ -3.14 } },
+		    ast::ScalarTypeInfo{ ast::ScalarType<double>{ -3.14 } },
 		},
 		{
 		    "double",
-		    ast::scalar_typeinfo{ ast::scalar_type<double>{ boost::none } },
+		    ast::ScalarTypeInfo{ ast::ScalarType<double>{ boost::none } },
 		},
 	};
 }();
 
 bool scalarTypeInfo() {
-	return runAstTest(rule::scalar_typeinfo, scalarTypeInfoInputSet);
+	return runAstTest(rule::ScalarTypeInfo, scalarTypeInfoInputSet);
 }
 
-InputSet<ast::object_typeinfo> objectTypeInfoInputSet = []() {
+InputSet<ast::ObjectTypeInfo> objectTypeInfoInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::object_typeinfo>{
+	return InputSet<ast::ObjectTypeInfo>{
 		{
 		    "string",
-		    ast::object_typeinfo{ ast::type_tag<std::string>{} },
+		    ast::ObjectTypeInfo{ ast::TypeTag<std::string>{} },
 		},
 		{
 		    "def",
-		    ast::object_typeinfo{ ast::typeref{ "def", boost::none } },
+		    ast::ObjectTypeInfo{ ast::TypeRef{ "def", boost::none } },
 		},
 		{
 		    "someType",
-		    ast::object_typeinfo{ ast::typeref{ "someType", boost::none } },
+		    ast::ObjectTypeInfo{ ast::TypeRef{ "someType", boost::none } },
 		},
 		{
 		    "1someType", // identifiers cannot start with a number
@@ -251,22 +251,22 @@ InputSet<ast::object_typeinfo> objectTypeInfoInputSet = []() {
 }();
 
 bool objectTypeInfo() {
-	return runAstTest(rule::object_typeinfo, objectTypeInfoInputSet);
+	return runAstTest(rule::ObjectTypeInfo, objectTypeInfoInputSet);
 }
 
-InputSet<ast::vector_typeinfo> vectorTypeInfoInputSet = []() {
-	return InputSet<ast::vector_typeinfo>{
+InputSet<ast::VectorTypeInfo> vectorTypeInfoInputSet = []() {
+	return InputSet<ast::VectorTypeInfo>{
 		{
 		    "[string]",
-		    ast::vector_typeinfo{ ast::type_tag<std::string>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<std::string>{} },
 		},
 		{
 		    "[def]",
-		    ast::vector_typeinfo{ ast::typeref{ "def", boost::none } },
+		    ast::VectorTypeInfo{ ast::TypeRef{ "def", boost::none } },
 		},
 		{
 		    "[someType]",
-		    ast::vector_typeinfo{ ast::typeref{ "someType", boost::none } },
+		    ast::VectorTypeInfo{ ast::TypeRef{ "someType", boost::none } },
 		},
 		{
 		    "[1someType]", // identifiers cannot start with a number
@@ -274,108 +274,108 @@ InputSet<ast::vector_typeinfo> vectorTypeInfoInputSet = []() {
 		},
 		{
 		    "[uint]",
-		    ast::vector_typeinfo{ ast::type_tag<uint32_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<uint32_t>{} },
 		},
 		{
 		    "[uint32]",
-		    ast::vector_typeinfo{ ast::type_tag<uint32_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<uint32_t>{} },
 		},
 		{
 		    "[int]",
-		    ast::vector_typeinfo{ ast::type_tag<int32_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<int32_t>{} },
 		},
 		{
 		    "[int32]",
-		    ast::vector_typeinfo{ ast::type_tag<int32_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<int32_t>{} },
 		},
 		{
 		    "[uint64]",
-		    ast::vector_typeinfo{ ast::type_tag<uint64_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<uint64_t>{} },
 		},
 		{
 		    "[ulong]",
-		    ast::vector_typeinfo{ ast::type_tag<uint64_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<uint64_t>{} },
 		},
 		{
 		    "[int64]",
-		    ast::vector_typeinfo{ ast::type_tag<int64_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<int64_t>{} },
 		},
 		{
 		    "[long]",
-		    ast::vector_typeinfo{ ast::type_tag<int64_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<int64_t>{} },
 		},
 		{
 		    "[uint16]",
-		    ast::vector_typeinfo{ ast::type_tag<uint16_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<uint16_t>{} },
 		},
 		{
 		    "[ushort]",
-		    ast::vector_typeinfo{ ast::type_tag<uint16_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<uint16_t>{} },
 		},
 		{
 		    "[int16]",
-		    ast::vector_typeinfo{ ast::type_tag<int16_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<int16_t>{} },
 		},
 		{
 		    "[short]",
-		    ast::vector_typeinfo{ ast::type_tag<int16_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<int16_t>{} },
 		},
 		{
 		    "[uint8]",
-		    ast::vector_typeinfo{ ast::type_tag<uint8_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<uint8_t>{} },
 		},
 		{
 		    "[ubyte]",
-		    ast::vector_typeinfo{ ast::type_tag<uint8_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<uint8_t>{} },
 		},
 		{
 		    "[int8]",
-		    ast::vector_typeinfo{ ast::type_tag<int8_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<int8_t>{} },
 		},
 		{
 		    "[byte]",
-		    ast::vector_typeinfo{ ast::type_tag<int8_t>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<int8_t>{} },
 		},
 		{
 		    "[bool]",
-		    ast::vector_typeinfo{ ast::type_tag<bool>{} },
+		    ast::VectorTypeInfo{ ast::TypeTag<bool>{} },
 		},
 	};
 }();
 
 bool vectorTypeInfo() {
-	return runAstTest(rule::vector_typeinfo, vectorTypeInfoInputSet);
+	return runAstTest(rule::VectorTypeInfo, vectorTypeInfoInputSet);
 }
 
-InputSet<ast::table_field_decl> tableFieldDeclInputSet = []() {
+InputSet<ast::TableFieldDecl> tableFieldDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::table_field_decl>{
+	return InputSet<ast::TableFieldDecl>{
 		{
 		    "a : int = 10;",
-		    ast::table_field_decl{
+		    ast::TableFieldDecl{
 		        "a",
-		        ast::table_fieldtype_variant{ ast::scalar_typeinfo{ ast::scalar_type<int32_t>{ 10 } } },
+		        ast::TableFieldTypesVariant{ ast::ScalarTypeInfo{ ast::ScalarType<int32_t>{ 10 } } },
 		        boost::none,
 		    },
 		},
 		{
 		    "Names: [string] (required);",
-		    ast::table_field_decl{
+		    ast::TableFieldDecl{
 		        "Names",
-		        ast::table_fieldtype_variant{ ast::vector_typeinfo{ ast::type_tag<std::string>{} } },
-		        ast::metadata{ { "required", boost::none } },
+		        ast::TableFieldTypesVariant{ ast::VectorTypeInfo{ ast::TypeTag<std::string>{} } },
+		        ast::Metadata{ { "required", boost::none } },
 		    },
 		},
 	};
 }();
 
 bool tableFieldDecl() {
-	return runAstTest(rule::table_field_decl, tableFieldDeclInputSet);
+	return runAstTest(rule::TableFieldDecl, tableFieldDeclInputSet);
 }
 
-InputSet<ast::table_decl> tableDeclInputSet = []() {
+InputSet<ast::TableDecl> tableDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::table_decl>{
+	return InputSet<ast::TableDecl>{
 		{
 		    "table Object (id: 10) {"
 		    "\n"
@@ -386,35 +386,35 @@ InputSet<ast::table_decl> tableDeclInputSet = []() {
 		    "  shape : Shape = Rectangle (required);"
 		    "\n"
 		    "}",
-		    ast::table_decl{
+		    ast::TableDecl{
 		        "Object",
-		        ast::metadata{
-		            { "id", ast::single_value(ast::scalar(uint64_t(10))) },
+		        ast::Metadata{
+		            { "id", ast::SingleValue(ast::Scalar(uint64_t(10))) },
 		        },
 		        {
-		            ast::table_field_decl{
+		            ast::TableFieldDecl{
 		                "name",
-		                ast::table_fieldtype_variant{
-		                    ast::object_typeinfo{ ast::type_tag<std::string>{} },
+		                ast::TableFieldTypesVariant{
+		                    ast::ObjectTypeInfo{ ast::TypeTag<std::string>{} },
 		                },
-		                ast::metadata{
+		                ast::Metadata{
 		                    { "required", boost::none },
-		                    { "priority", ast::single_value(ast::scalar(uint64_t(1))) },
+		                    { "priority", ast::SingleValue(ast::Scalar(uint64_t(1))) },
 		                },
 		            },
-		            ast::table_field_decl{
+		            ast::TableFieldDecl{
 		                "points",
-		                ast::table_fieldtype_variant{
-		                    ast::vector_typeinfo{ ast::typeref{ "Point", boost::none } },
+		                ast::TableFieldTypesVariant{
+		                    ast::VectorTypeInfo{ ast::TypeRef{ "Point", boost::none } },
 		                },
 		                boost::none,
 		            },
-		            ast::table_field_decl{
+		            ast::TableFieldDecl{
 		                "shape",
-		                ast::table_fieldtype_variant{
-		                    ast::object_typeinfo{ ast::typeref{ "Shape", "Rectangle"s } },
+		                ast::TableFieldTypesVariant{
+		                    ast::ObjectTypeInfo{ ast::TypeRef{ "Shape", "Rectangle"s } },
 		                },
-		                ast::metadata{ { "required", boost::none } },
+		                ast::Metadata{ { "required", boost::none } },
 		            },
 		        },
 		    },
@@ -423,21 +423,21 @@ InputSet<ast::table_decl> tableDeclInputSet = []() {
 }();
 
 bool tableDecl() {
-	return runAstTest(rule::table_decl, tableDeclInputSet);
+	return runAstTest(rule::TableDecl, tableDeclInputSet);
 }
 
-InputSet<ast::struct_field_decl> structFieldDeclInputSet = []() {
+InputSet<ast::StructFieldDecl> structFieldDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::struct_field_decl>{
+	return InputSet<ast::StructFieldDecl>{
 		{
 		    "a : int = 10;",
 		    boost::none, // struct fields cannot have defaults
 		},
 		{
 		    "a : int;",
-		    ast::struct_field_decl{
+		    ast::StructFieldDecl{
 		        "a",
-		        ast::struct_fieldtype_variant{ ast::type_tag<int>{} },
+		        ast::StructFieldTypesVariant{ ast::TypeTag<int>{} },
 		        boost::none,
 		    },
 		},
@@ -447,9 +447,9 @@ InputSet<ast::struct_field_decl> structFieldDeclInputSet = []() {
 		},
 		{
 		    "s : string_;",
-		    ast::struct_field_decl{
+		    ast::StructFieldDecl{
 		        "s",
-		        ast::struct_fieldtype_variant{ ast::typeref{ "string_", boost::none } },
+		        ast::StructFieldTypesVariant{ ast::TypeRef{ "string_", boost::none } },
 		        boost::none,
 		    }, // string_ could technically be another struct or an enum
 		},
@@ -457,12 +457,12 @@ InputSet<ast::struct_field_decl> structFieldDeclInputSet = []() {
 }();
 
 bool structFieldDecl() {
-	return runAstTest(rule::struct_field_decl, structFieldDeclInputSet);
+	return runAstTest(rule::StructFieldDecl, structFieldDeclInputSet);
 }
 
-InputSet<ast::struct_decl> structDeclInputSet = []() {
+InputSet<ast::StructDecl> structDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::struct_decl>{
+	return InputSet<ast::StructDecl>{
 		{
 		    "struct SomeStruct (id: 10) {"
 		    "\n"
@@ -473,27 +473,27 @@ InputSet<ast::struct_decl> structDeclInputSet = []() {
 		    "  shape : Shape;"
 		    "\n"
 		    "}",
-		    ast::struct_decl{
+		    ast::StructDecl{
 		        "SomeStruct",
-		        ast::metadata{
-		            { "id", ast::single_value(ast::scalar(uint64_t(10))) },
+		        ast::Metadata{
+		            { "id", ast::SingleValue(ast::Scalar(uint64_t(10))) },
 		        },
 		        {
-		            ast::struct_field_decl{
+		            ast::StructFieldDecl{
 		                "x",
-		                ast::struct_fieldtype_variant{ ast::type_tag<int>{} },
-		                ast::metadata{
-		                    { "priority", ast::single_value(ast::scalar(uint64_t(1))) },
+		                ast::StructFieldTypesVariant{ ast::TypeTag<int>{} },
+		                ast::Metadata{
+		                    { "priority", ast::SingleValue(ast::Scalar(uint64_t(1))) },
 		                },
 		            },
-		            ast::struct_field_decl{
+		            ast::StructFieldDecl{
 		                "Y",
-		                ast::struct_fieldtype_variant{ ast::type_tag<float>{} },
+		                ast::StructFieldTypesVariant{ ast::TypeTag<float>{} },
 		                boost::none,
 		            },
-		            ast::struct_field_decl{
+		            ast::StructFieldDecl{
 		                "shape",
-		                ast::struct_fieldtype_variant{ ast::typeref{ "Shape", boost::none } },
+		                ast::StructFieldTypesVariant{ ast::TypeRef{ "Shape", boost::none } },
 		                boost::none,
 		            },
 		        },
@@ -503,26 +503,26 @@ InputSet<ast::struct_decl> structDeclInputSet = []() {
 }();
 
 bool structDecl() {
-	return runAstTest(rule::struct_decl, structDeclInputSet);
+	return runAstTest(rule::StructDecl, structDeclInputSet);
 }
 
-InputSet<ast::enumval_decl> enumValDeclInputSet = []() {
+InputSet<ast::EnumValDecl> enumValDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::enumval_decl>{
-		{ "Red = 1", ast::enumval_decl{ "Red", ast::enumval_variant(uint64_t(1)) } },
-		{ "Blue", ast::enumval_decl{ "Blue", boost::none } },
-		{ "Yellow = -3", ast::enumval_decl{ "Yellow", ast::enumval_variant(int64_t(-3)) } },
+	return InputSet<ast::EnumValDecl>{
+		{ "Red = 1", ast::EnumValDecl{ "Red", ast::EnumValVariant(uint64_t(1)) } },
+		{ "Blue", ast::EnumValDecl{ "Blue", boost::none } },
+		{ "Yellow = -3", ast::EnumValDecl{ "Yellow", ast::EnumValVariant(int64_t(-3)) } },
 		{ "Yellow = -3 (deprecated)", boost::none }, // no metadata allowed for enum values
 	};
 }();
 
 bool enumValDecl() {
-	return runAstTest(rule::enumval_decl, enumValDeclInputSet);
+	return runAstTest(rule::EnumValDecl, enumValDeclInputSet);
 }
 
-InputSet<ast::enum_decl> enumDeclInputSet = []() {
+InputSet<ast::EnumDecl> enumDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::enum_decl>{
+	return InputSet<ast::EnumDecl>{
 		{
 		    "enum Colors : int (deprecated) {"
 		    "\n"
@@ -535,15 +535,15 @@ InputSet<ast::enum_decl> enumDeclInputSet = []() {
 		    "  Green"
 		    "\n"
 		    "}",
-		    ast::enum_decl{
+		    ast::EnumDecl{
 		        "Colors",
-		        ast::enum_type_variant{ ast::type_tag<int>{} },
-		        ast::metadata{ { "deprecated", boost::none } },
+		        ast::EnumTypesVariant{ ast::TypeTag<int>{} },
+		        ast::Metadata{ { "deprecated", boost::none } },
 		        {
-		            ast::enumval_decl{ "Red", ast::enumval_variant(uint64_t(1)) },
-		            ast::enumval_decl{ "Blue", ast::enumval_variant(uint64_t(0xab)) },
-		            ast::enumval_decl{ "Yellow", ast::enumval_variant(int64_t(-5)) },
-		            ast::enumval_decl{ "Green", boost::none },
+		            ast::EnumValDecl{ "Red", ast::EnumValVariant(uint64_t(1)) },
+		            ast::EnumValDecl{ "Blue", ast::EnumValVariant(uint64_t(0xab)) },
+		            ast::EnumValDecl{ "Yellow", ast::EnumValVariant(int64_t(-5)) },
+		            ast::EnumValDecl{ "Green", boost::none },
 		        },
 		    },
 		},
@@ -565,26 +565,26 @@ InputSet<ast::enum_decl> enumDeclInputSet = []() {
 }();
 
 bool enumDecl() {
-	return runAstTest(rule::enum_decl, enumDeclInputSet);
+	return runAstTest(rule::EnumDecl, enumDeclInputSet);
 }
 
-InputSet<ast::union_subtype_decl> unionSubTypeDeclInputSet = []() {
+InputSet<ast::UnionSubTypeDecl> unionSubTypeDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::union_subtype_decl>{
-		{ "SomeAlias: SomeType", ast::union_subtype_decl{ "SomeType", "SomeAlias"s } },
-		{ "SomeType", ast::union_subtype_decl{ "SomeType", boost::none } },
+	return InputSet<ast::UnionSubTypeDecl>{
+		{ "SomeAlias: SomeType", ast::UnionSubTypeDecl{ "SomeType", "SomeAlias"s } },
+		{ "SomeType", ast::UnionSubTypeDecl{ "SomeType", boost::none } },
 		{ "SomeAlias: SomeType = SomeValue", boost::none }, // union subtypes cannot default to a value
 		{ "SomeAlias: SomeType (deprecated)", boost::none }, // union subtypes are not allowed metadata
 	};
 }();
 
 bool unionSubTypeDecl() {
-	return runAstTest(rule::union_subtype_decl, unionSubTypeDeclInputSet);
+	return runAstTest(rule::UnionSubTypeDecl, unionSubTypeDeclInputSet);
 }
 
-InputSet<ast::union_decl> unionDeclInputSet = []() {
+InputSet<ast::UnionDecl> unionDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::union_decl>{
+	return InputSet<ast::UnionDecl>{
 		{
 		    "union U (priority: 1, deprecated) {"
 		    "\n"
@@ -597,17 +597,17 @@ InputSet<ast::union_decl> unionDeclInputSet = []() {
 		    "  Finish: MarkerPosition"
 		    "\n"
 		    "}",
-		    ast::union_decl{
+		    ast::UnionDecl{
 		        "U",
-		        ast::metadata{
-		            { "priority", ast::single_value(ast::scalar(uint64_t(1))) },
+		        ast::Metadata{
+		            { "priority", ast::SingleValue(ast::Scalar(uint64_t(1))) },
 		            { "deprecated", boost::none },
 		        },
 		        {
-		            ast::union_subtype_decl{ "MarkerPosition", "Start"s },
-		            ast::union_subtype_decl{ "PointPosition", "Point"s },
-		            ast::union_subtype_decl{ "Direction", boost::none },
-		            ast::union_subtype_decl{ "MarkerPosition", "Finish"s },
+		            ast::UnionSubTypeDecl{ "MarkerPosition", "Start"s },
+		            ast::UnionSubTypeDecl{ "PointPosition", "Point"s },
+		            ast::UnionSubTypeDecl{ "Direction", boost::none },
+		            ast::UnionSubTypeDecl{ "MarkerPosition", "Finish"s },
 		        },
 		    },
 		},
@@ -615,29 +615,29 @@ InputSet<ast::union_decl> unionDeclInputSet = []() {
 }();
 
 bool unionDecl() {
-	return runAstTest(rule::union_decl, unionDeclInputSet);
+	return runAstTest(rule::UnionDecl, unionDeclInputSet);
 }
 
-InputSet<ast::include> includeInputSet = []() {
+InputSet<ast::Include> includeInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::include>{
-		{ "include \"schema.fbs\";", ast::include{ "schema.fbs" } },
+	return InputSet<ast::Include>{
+		{ "include \"schema.fbs\";", ast::Include{ "schema.fbs" } },
 		{ "include schema.fbs;", boost::none },
-		{ "include \"\";", ast::include{ "" } }, // empty include file is not filtered out at parser level
+		{ "include \"\";", ast::Include{ "" } }, // empty include file is not filtered out at parser level
 	};
 }();
 
 bool include() {
-	return runAstTest(rule::include, includeInputSet);
+	return runAstTest(rule::Include, includeInputSet);
 }
 
-InputSet<ast::file_identifier_decl> fileIdentifierDeclInputSet = []() {
+InputSet<ast::FileIdentifierDecl> fileIdentifierDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::file_identifier_decl>{
-		{ "file_identifier \"Zxvf\";", ast::file_identifier_decl{ "Zxvf" } },
+	return InputSet<ast::FileIdentifierDecl>{
+		{ "file_identifier \"Zxvf\";", ast::FileIdentifierDecl{ "Zxvf" } },
 		{ "file_identifier \"Zxf\";", boost::none }, // file id must be exactly 4 characters
 		{ "file_identifier \"Zxvfr\";", boost::none }, // file id must be exactly 4 characters
-		{ "file_identifier \"Zx\\xacv\";", ast::file_identifier_decl{ "Zx\xacv" } }, // hex bytes allowed
+		{ "file_identifier \"Zx\\xacv\";", ast::FileIdentifierDecl{ "Zx\xacv" } }, // hex bytes allowed
 		{ "file_identifier \"\";", boost::none },
 		{ "file_identifier \"T\";", boost::none },
 		{ "file_identifier \"xU\";", boost::none },
@@ -645,28 +645,28 @@ InputSet<ast::file_identifier_decl> fileIdentifierDeclInputSet = []() {
 }();
 
 bool fileIdentifierDecl() {
-	return runAstTest(rule::file_identifier_decl, fileIdentifierDeclInputSet);
+	return runAstTest(rule::FileIdentifierDecl, fileIdentifierDeclInputSet);
 }
 
-InputSet<ast::file_extension_decl> fileExtensionDeclInputSet = []() {
+InputSet<ast::FileExtensionDecl> fileExtensionDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::file_extension_decl>{
-		{ "file_extension \"fbs\";", ast::file_extension_decl{ "fbs" } },
-		{ "file_extension \"bin\";", ast::file_extension_decl{ "bin" } },
+	return InputSet<ast::FileExtensionDecl>{
+		{ "file_extension \"fbs\";", ast::FileExtensionDecl{ "fbs" } },
+		{ "file_extension \"bin\";", ast::FileExtensionDecl{ "bin" } },
 		{ "file_extension fbs;", boost::none }, // needs double quote
 	};
 }();
 
 bool fileExtensionDecl() {
-	return runAstTest(rule::file_extension_decl, fileExtensionDeclInputSet);
+	return runAstTest(rule::FileExtensionDecl, fileExtensionDeclInputSet);
 }
 
-InputSet<ast::namespace_decl> namespaceDeclInputSet = []() {
+InputSet<ast::NamespaceDecl> namespaceDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::namespace_decl>{
-		{ "namespace FlatBuffers;", ast::namespace_decl{ { "FlatBuffers" } } },
-		{ "namespace FlatBuffers.Schema;", ast::namespace_decl{ { "FlatBuffers", "Schema" } } },
-		{ "namespace A.B.C;", ast::namespace_decl{ { "A", "B", "C" } } },
+	return InputSet<ast::NamespaceDecl>{
+		{ "namespace FlatBuffers;", ast::NamespaceDecl{ { "FlatBuffers" } } },
+		{ "namespace FlatBuffers.Schema;", ast::NamespaceDecl{ { "FlatBuffers", "Schema" } } },
+		{ "namespace A.B.C;", ast::NamespaceDecl{ { "A", "B", "C" } } },
 		{ "namespace 1A.B.C;",
 		  boost::none }, // namespace elements are identifiers, which can only start with alphabet or _
 		{ "namespace ;", boost::none }, // namespace elements cannot be empty
@@ -678,16 +678,16 @@ InputSet<ast::namespace_decl> namespaceDeclInputSet = []() {
 }();
 
 bool namespaceDecl() {
-	return runAstTest(rule::namespace_decl, namespaceDeclInputSet);
+	return runAstTest(rule::NamespaceDecl, namespaceDeclInputSet);
 }
 
-InputSet<ast::attribute_decl> attributeDeclInputSet = []() {
+InputSet<ast::AttributeDecl> attributeDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::attribute_decl>{
-		{ "attribute \"attr\";", ast::attribute_decl{ "attr" } },
-		{ "attribute attr;", ast::attribute_decl{ "attr" } },
-		{ "attribute \"_Attr\";", ast::attribute_decl{ "_Attr" } },
-		{ "attribute _Attr;", ast::attribute_decl{ "_Attr" } },
+	return InputSet<ast::AttributeDecl>{
+		{ "attribute \"attr\";", ast::AttributeDecl{ "attr" } },
+		{ "attribute attr;", ast::AttributeDecl{ "attr" } },
+		{ "attribute \"_Attr\";", ast::AttributeDecl{ "_Attr" } },
+		{ "attribute _Attr;", ast::AttributeDecl{ "_Attr" } },
 		{ "attribute \"1_Attr\";", boost::none },
 		{ "attribute 1_Attr;", boost::none },
 		{ "attribute A#ttr;", boost::none },
@@ -696,49 +696,49 @@ InputSet<ast::attribute_decl> attributeDeclInputSet = []() {
 }();
 
 bool attributeDecl() {
-	return runAstTest(rule::attribute_decl, attributeDeclInputSet);
+	return runAstTest(rule::AttributeDecl, attributeDeclInputSet);
 }
 
-InputSet<ast::root_type_decl> rootTypeDeclInputSet = []() {
+InputSet<ast::RootTypeDecl> rootTypeDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::root_type_decl>{
-		{ "root_type MyRoot;", ast::root_type_decl{ "MyRoot" } },
-		{ "root_type _MyRoot;", ast::root_type_decl{ "_MyRoot" } },
+	return InputSet<ast::RootTypeDecl>{
+		{ "root_type MyRoot;", ast::RootTypeDecl{ "MyRoot" } },
+		{ "root_type _MyRoot;", ast::RootTypeDecl{ "_MyRoot" } },
 		{ "root_type 1Root;", boost::none },
 		{ "root_type R#oot;", boost::none },
 	};
 }();
 
 bool rootTypeDecl() {
-	return runAstTest(rule::root_type_decl, rootTypeDeclInputSet);
+	return runAstTest(rule::RootTypeDecl, rootTypeDeclInputSet);
 }
 
-InputSet<ast::rpc_method_decl> rpcMethodDeclInputSet = []() {
+InputSet<ast::RpcMethodDecl> rpcMethodDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::rpc_method_decl>{
+	return InputSet<ast::RpcMethodDecl>{
 		{
 		    "Service(Request): Response;",
-		    ast::rpc_method_decl{ "Service", "Request", "Response", boost::none },
+		    ast::RpcMethodDecl{ "Service", "Request", "Response", boost::none },
 		},
 		{
 		    "Service(Request): Response (id: 7);",
-		    ast::rpc_method_decl{
+		    ast::RpcMethodDecl{
 		        "Service",
 		        "Request",
 		        "Response",
-		        ast::metadata{ { "id", ast::single_value(ast::scalar(uint64_t(7))) } },
+		        ast::Metadata{ { "id", ast::SingleValue(ast::Scalar(uint64_t(7))) } },
 		    },
 		},
 	};
 }();
 
 bool rpcMethodDecl() {
-	return runAstTest(rule::rpc_method_decl, rpcMethodDeclInputSet);
+	return runAstTest(rule::RpcMethodDecl, rpcMethodDeclInputSet);
 }
 
-InputSet<ast::rpc_decl> rpcDeclInputSet = []() {
+InputSet<ast::RpcDecl> rpcDeclInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::rpc_decl>{
+	return InputSet<ast::RpcDecl>{
 		{
 		    "rpc_service Service {"
 		    "\n"
@@ -747,15 +747,15 @@ InputSet<ast::rpc_decl> rpcDeclInputSet = []() {
 		    "  Retrieve(MonsterId):Monster (deprecated);"
 		    "\n"
 		    "}",
-		    ast::rpc_decl{
+		    ast::RpcDecl{
 		        "Service",
 		        {
-		            ast::rpc_method_decl{ "Store", "Monster", "StoreResponse", boost::none },
-		            ast::rpc_method_decl{
+		            ast::RpcMethodDecl{ "Store", "Monster", "StoreResponse", boost::none },
+		            ast::RpcMethodDecl{
 		                "Retrieve",
 		                "MonsterId",
 		                "Monster",
-		                ast::metadata{ { "deprecated", boost::none } },
+		                ast::Metadata{ { "deprecated", boost::none } },
 		            },
 		        },
 		    },
@@ -764,12 +764,12 @@ InputSet<ast::rpc_decl> rpcDeclInputSet = []() {
 }();
 
 bool rpcDecl() {
-	return runAstTest(rule::rpc_decl, rpcDeclInputSet);
+	return runAstTest(rule::RpcDecl, rpcDeclInputSet);
 }
 
-InputSet<ast::schema> schemaInputSet = []() {
+InputSet<ast::Schema> schemaInputSet = []() {
 	using namespace std::string_literals;
-	return InputSet<ast::schema>{
+	return InputSet<ast::Schema>{
 		{
 		    R"(
 include "common.fbs";
@@ -801,123 +801,122 @@ table Monster {
 
 root_type Monster;
 )",
-		    ast::schema{
+		    ast::Schema{
 		        // includes
-		        { ast::include{ "common.fbs" } },
+		        { ast::Include{ "common.fbs" } },
 		        // elements
 		        {
-		            ast::schema_elements_variant{
-		                ast::namespace_decl{ { "MyGame" } },
+		            ast::SchemaElementsVariant{
+		                ast::NamespaceDecl{ { "MyGame" } },
 		            },
-		            ast::schema_elements_variant{
-		                ast::attribute_decl{ "priority" },
+		            ast::SchemaElementsVariant{
+		                ast::AttributeDecl{ "priority" },
 		            },
-		            ast::schema_elements_variant{
-		                ast::enum_decl{
+		            ast::SchemaElementsVariant{
+		                ast::EnumDecl{
 		                    "Color",
-		                    ast::enum_type_variant{ ast::type_tag<int8_t>{} },
+		                    ast::EnumTypesVariant{ ast::TypeTag<int8_t>{} },
 		                    boost::none, // metadata
 		                    {
-		                        ast::enumval_decl{ "Red", ast::enumval_variant{ uint64_t(1) } },
-		                        ast::enumval_decl{ "Green", boost::none },
-		                        ast::enumval_decl{ "Blue", boost::none },
+		                        ast::EnumValDecl{ "Red", ast::EnumValVariant{ uint64_t(1) } },
+		                        ast::EnumValDecl{ "Green", boost::none },
+		                        ast::EnumValDecl{ "Blue", boost::none },
 		                    },
 		                },
 		            },
-		            ast::schema_elements_variant{
-		                ast::union_decl{
+		            ast::SchemaElementsVariant{
+		                ast::UnionDecl{
 		                    "Any",
 		                    boost::none, // metadata
 		                    {
-		                        ast::union_subtype_decl{ "Monster", boost::none /*no alias*/ },
-		                        ast::union_subtype_decl{ "Weapon", boost::none /*no alias*/ },
-		                        ast::union_subtype_decl{ "Pickup", boost::none /*no alias*/ },
+		                        ast::UnionSubTypeDecl{ "Monster", boost::none /*no alias*/ },
+		                        ast::UnionSubTypeDecl{ "Weapon", boost::none /*no alias*/ },
+		                        ast::UnionSubTypeDecl{ "Pickup", boost::none /*no alias*/ },
 		                    },
 		                },
 		            },
-		            ast::schema_elements_variant{
-		                ast::struct_decl{
+		            ast::SchemaElementsVariant{
+		                ast::StructDecl{
 		                    "Vec3",
 		                    boost::none, // metadata
 		                    {
-		                        ast::struct_field_decl{
+		                        ast::StructFieldDecl{
 		                            "x",
-		                            ast::struct_fieldtype_variant{ ast::type_tag<float>{} },
+		                            ast::StructFieldTypesVariant{ ast::TypeTag<float>{} },
 		                            boost::none, // metadata
 		                        },
-		                        ast::struct_field_decl{
+		                        ast::StructFieldDecl{
 		                            "y",
-		                            ast::struct_fieldtype_variant{ ast::type_tag<float>{} },
+		                            ast::StructFieldTypesVariant{ ast::TypeTag<float>{} },
 		                            boost::none, // metadata
 		                        },
-		                        ast::struct_field_decl{
+		                        ast::StructFieldDecl{
 		                            "z",
-		                            ast::struct_fieldtype_variant{ ast::type_tag<float>{} },
+		                            ast::StructFieldTypesVariant{ ast::TypeTag<float>{} },
 		                            boost::none, // metadata
 		                        },
 		                    },
 		                },
 		            },
-		            ast::schema_elements_variant{
-		                ast::table_decl{
+		            ast::SchemaElementsVariant{
+		                ast::TableDecl{
 		                    "Monster",
 		                    boost::none, // metadata
 		                    {
-		                        ast::table_field_decl{
+		                        ast::TableFieldDecl{
 		                            "pos",
-		                            ast::table_fieldtype_variant{
-		                                ast::object_typeinfo{ ast::typeref{ "Vec3", boost::none } } },
+		                            ast::TableFieldTypesVariant{
+		                                ast::ObjectTypeInfo{ ast::TypeRef{ "Vec3", boost::none } } },
 		                            boost::none, // metadata
 		                        },
-		                        ast::table_field_decl{
+		                        ast::TableFieldDecl{
 		                            "mana",
-		                            ast::table_fieldtype_variant{
-		                                ast::scalar_typeinfo{ ast::scalar_type<int16_t>{ 150 } } },
+		                            ast::TableFieldTypesVariant{
+		                                ast::ScalarTypeInfo{ ast::ScalarType<int16_t>{ 150 } } },
 		                            boost::none, // metadata
 		                        },
-		                        ast::table_field_decl{
+		                        ast::TableFieldDecl{
 		                            "hp",
-		                            ast::table_fieldtype_variant{
-		                                ast::scalar_typeinfo{ ast::scalar_type<int16_t>{ 100 } } },
+		                            ast::TableFieldTypesVariant{
+		                                ast::ScalarTypeInfo{ ast::ScalarType<int16_t>{ 100 } } },
 		                            boost::none, // metadata
 		                        },
-		                        ast::table_field_decl{
+		                        ast::TableFieldDecl{
 		                            "name",
-		                            ast::table_fieldtype_variant{
-		                                ast::object_typeinfo{ ast::type_tag<std::string>{} } },
+		                            ast::TableFieldTypesVariant{ ast::ObjectTypeInfo{ ast::TypeTag<std::string>{} } },
 		                            boost::none, // metadata
 		                        },
-		                        ast::table_field_decl{
+		                        ast::TableFieldDecl{
 		                            "friendly",
-		                            ast::table_fieldtype_variant{
-		                                ast::scalar_typeinfo{ ast::scalar_type<bool>{ false } } },
-		                            ast::metadata{
+		                            ast::TableFieldTypesVariant{
+		                                ast::ScalarTypeInfo{ ast::ScalarType<bool>{ false } } },
+		                            ast::Metadata{
 		                                { "deprecated", boost::none },
-		                                { "priority", ast::single_value(ast::scalar(uint64_t(1))) },
+		                                { "priority", ast::SingleValue(ast::Scalar(uint64_t(1))) },
 		                            },
 		                        },
-		                        ast::table_field_decl{
+		                        ast::TableFieldDecl{
 		                            "inventory",
-		                            ast::table_fieldtype_variant{ ast::vector_typeinfo{ ast::type_tag<uint8_t>{} } },
+		                            ast::TableFieldTypesVariant{ ast::VectorTypeInfo{ ast::TypeTag<uint8_t>{} } },
 		                            boost::none, // metadata
 		                        },
-		                        ast::table_field_decl{
+		                        ast::TableFieldDecl{
 		                            "color",
-		                            ast::table_fieldtype_variant{
-		                                ast::object_typeinfo{ ast::typeref{ "Color", "Blue"s } } },
+		                            ast::TableFieldTypesVariant{
+		                                ast::ObjectTypeInfo{ ast::TypeRef{ "Color", "Blue"s } } },
 		                            boost::none, // metadata
 		                        },
-		                        ast::table_field_decl{
+		                        ast::TableFieldDecl{
 		                            "test",
-		                            ast::table_fieldtype_variant{
-		                                ast::object_typeinfo{ ast::typeref{ "Any", boost::none } } },
+		                            ast::TableFieldTypesVariant{
+		                                ast::ObjectTypeInfo{ ast::TypeRef{ "Any", boost::none } } },
 		                            boost::none, // metadata
 		                        },
 		                    }, // vector<table_field_decl>
 		                }, // table_decl
 		            },
-		            ast::schema_elements_variant{
-		                ast::root_type_decl{ "Monster" },
+		            ast::SchemaElementsVariant{
+		                ast::RootTypeDecl{ "Monster" },
 		            },
 		        }, // schema elements
 		    }, // schema
@@ -926,7 +925,7 @@ root_type Monster;
 }();
 
 bool schema() {
-	return runAstTest(rule::schema, schemaInputSet);
+	return runAstTest(rule::Schema, schemaInputSet);
 }
 
 } // namespace test
