@@ -114,18 +114,13 @@ double RKRateServer::getSmoothBatchReleasedTransactionRate() const {
 	return smoothBatchReleasedTransactions.smoothRate();
 }
 
-std::unordered_map<UID, RKGrvProxyInfo> const& RKRateServer::getGrvProxyInfo() const& {
+boost::unordered_flat_map<UID, RKGrvProxyInfo> const& RKRateServer::getGrvProxyInfo() const& {
 	return grvProxyInfo;
 }
 
 void RKRateServer::cleanupExpiredGrvProxies() {
 	double tooOld = now() - 1.0;
-	for (auto p = grvProxyInfo.begin(); p != grvProxyInfo.end();) {
-		if (p->second.lastUpdateTime < tooOld)
-			p = grvProxyInfo.erase(p);
-		else
-			++p;
-	}
+	boost::unordered::erase_if(grvProxyInfo, [tooOld](auto const& kv) { return kv.second.lastUpdateTime < tooOld; });
 }
 
 void RKRateServer::updateLastLimited(double batchTpsLimit) {

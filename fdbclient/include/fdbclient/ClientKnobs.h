@@ -364,6 +364,8 @@ public:
 	// knob guard to disallow starting bulk loads until implementation is completed
 	bool ALLOW_BULK_LOADS;
 
+	bool ENABLE_STORAGE_ENGINE_PARAM_INTERFACE;
+
 	ClientKnobs(Randomize randomize);
 	void initialize(Randomize randomize);
 };

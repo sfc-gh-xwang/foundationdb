@@ -284,7 +284,7 @@ Future<Void> monitorActor(TestEnv* env, Check check) {
 // Client attempts 5 6-byte read transactions per second.
 // Limit should adjust to allow 100/6 transactions per second.
 // Client is only using about 30% of its quota, not busy.
-TEST_CASE("/QuotaThrottler/Simple") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/Simple") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
@@ -306,7 +306,7 @@ TEST_CASE("/QuotaThrottler/Simple") {
 // Client attempts 5 6-byte write transactions per second.
 // Limit should adjust to allow 100/(6*<fungibility_ratio>) transactions per second.
 // Client using more than 100% of its quota, should be tracked as busy and should be throttled.
-TEST_CASE("/QuotaThrottler/WriteThrottling") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/WriteThrottling") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
@@ -327,7 +327,7 @@ TEST_CASE("/QuotaThrottler/WriteThrottling") {
 // 2 clients each attempt 5 6-byte read transactions per second.
 // Both limits should adjust to allow 100/6 transactions per second.
 // Each client using about 30% of its quota, they are not busy and no target rate should be reported.
-TEST_CASE("/QuotaThrottler/MultiTagThrottling") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagThrottling") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag1 = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	auto testTag2 = ThrottlingIdRef::fromTag("sampleTag2"_sr);
@@ -356,7 +356,7 @@ TEST_CASE("/QuotaThrottler/MultiTagThrottling") {
 // Client attempts 20 10-page read transactions per second.
 // Limit should adjust to allow 100/10 transactions per second.
 // Client should be tracked as busy.
-TEST_CASE("/QuotaThrottler/AttemptWorkloadAboveQuota") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/AttemptWorkloadAboveQuota") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
@@ -379,7 +379,7 @@ TEST_CASE("/QuotaThrottler/AttemptWorkloadAboveQuota") {
 // Total quota is modified to 30 pages/second.
 // Target rate should adjust to allow 30/6 transactions per second.
 // Throttling ID should now be tracked as busy.
-TEST_CASE("/QuotaThrottler/UpdateQuota") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/UpdateQuota") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
@@ -412,7 +412,7 @@ TEST_CASE("/QuotaThrottler/UpdateQuota") {
 // Throttling ID not considered busy, and target rate will not be reported.
 // Then Quota is removed.
 // Target limit is removed as a result.
-TEST_CASE("/QuotaThrottler/RemoveQuota") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuota") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
@@ -444,7 +444,7 @@ TEST_CASE("/QuotaThrottler/RemoveQuota") {
 // Throttling ID should be reported as busy
 // Then Quota is removed.
 // Target limit is removed as a result. Throttling id should also be removed from the busy set.
-TEST_CASE("/QuotaThrottler/RemoveQuota2") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuota2") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/30);
@@ -473,7 +473,7 @@ TEST_CASE("/QuotaThrottler/RemoveQuota2") {
 // Total quota is set to 100 pages/second.
 // Client attempts 10 6-page transactions per second
 // Target is adjusted to 50/6 transactions per second, to match the total capacity all storage servers.
-TEST_CASE("/QuotaThrottler/ActiveThrottling") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottling") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
@@ -493,7 +493,7 @@ TEST_CASE("/QuotaThrottler/ActiveThrottling") {
 // Target rates are adjusted to utilize the full 50 pages/second capacity of the
 // storage servers. The two tags' total target rate will stabilize at 50 / 6.0
 // transactions per second.
-TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling1") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling1") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag1 = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	auto testTag2 = ThrottlingIdRef::fromTag("sampleTag2"_sr);
@@ -519,7 +519,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling1") {
 // This workload is sent to 2 storage servers per client (with an overlap of one storage server).
 // Target rates for both tags are adjusted to 50/6 transactions per second to match the throughput
 //   that the busiest server can handle.
-TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling2") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling2") {
 	state TestEnv env(/*numSS=*/3, /*throughputPerSS=*/50);
 	auto testTag1 = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	auto testTag2 = ThrottlingIdRef::fromTag("sampleTag2"_sr);
@@ -545,7 +545,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling2") {
 // Another client, using a different tag, attempts 10 6-page read transactions split across the other two storage
 // servers. Target rates adjust to 50/6 and 100/6 transactions per second for the two clients, based on the capacities
 // of the storage servers being accessed.
-TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling3") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling3") {
 	state TestEnv env(/*numSS=*/3, /*throughputPerSS=*/50);
 	auto testTag1 = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	auto testTag2 = ThrottlingIdRef::fromTag("sampleTag2"_sr);
@@ -574,7 +574,7 @@ TEST_CASE("/QuotaThrottler/MultiTagActiveThrottling3") {
 // A client attempts to execute 10 6-page read transactions per second.
 // Despite the storage server only having capacity to serve 50/6 transactions per second,
 // the reserved quota will ensure the target rate adjusts to 70/6 transactions per second.
-TEST_CASE("/QuotaThrottler/ReservedQuota") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ReservedQuota") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100, /*reservedQuotaInPages=*/70);
@@ -594,7 +594,7 @@ TEST_CASE("/QuotaThrottler/ReservedQuota") {
 // A client attempts to execute 10 6-page read transactions per second.
 // Despite the storage server only having capacity to serve 50/6 transactions per second,
 // the reserved quota will ensure the target rate adjusts to 70/6 transactions per second.
-TEST_CASE("/QuotaThrottler/ReservedQuota") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ReservedQuota") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100, /*reservedQuotaInPages=*/70);
@@ -610,7 +610,7 @@ TEST_CASE("/QuotaThrottler/ReservedQuota") {
 
 // Test that tags are expired iff a sufficient amount of time has passed since the
 // last transaction with that tag
-TEST_CASE("/QuotaThrottler/ExpireTags") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ExpireTags") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 
@@ -640,7 +640,7 @@ TEST_CASE("/QuotaThrottler/ExpireTags") {
 }
 
 // Test that the number of tags tracked does not grow beyond SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED
-TEST_CASE("/QuotaThrottler/TagLimit") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TagLimit") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	std::vector<Future<Void>> futures;
 	for (int i = 0; i < 2 * SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED; ++i) {
@@ -664,7 +664,7 @@ TEST_CASE("/QuotaThrottler/TagLimit") {
 // Target rate adjusts to 100/6 transactions per second, ignoring the worst storage server.
 // Then, a second storage server becomes unhealthy and can only handle 1 page/second.
 // Target rate adjusts down to 10/6 transactions per second, because only one bad zone can be ignored.
-TEST_CASE("/QuotaThrottler/IgnoreWorstZone") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/IgnoreWorstZone") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100, /*maxFallingBehind=*/1);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setCapacity(/*index=*/0, /*pagesPerSecond=*/1);

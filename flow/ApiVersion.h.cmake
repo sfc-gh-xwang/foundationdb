@@ -86,6 +86,7 @@ public: // introduced features
     API_VERSION_FEATURE(@FDB_AV_TENANT_GET_ID@, TenantGetId);
     API_VERSION_FEATURE(@FDB_AV_EVOLVABLE_API@, EvolvableApi);
     API_VERSION_FEATURE(@FDB_AV_SET_EXPECTED_COST@, SetExpectedCost);
+    API_VERSION_FEATURE(@FDB_AV_COLUMNAR_CACHE_SKEW_HANDLING@, ColumnarCacheSkewHandling);
 };
 
 #endif // FLOW_CODE_API_VERSION_H

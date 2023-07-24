@@ -3,6 +3,7 @@
  */
 
 #include "fdbclient/Knobs.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/workloads/workloads.actor.h"
 
 #include "flow/IRandom.h"
@@ -15,48 +16,58 @@
 // verifies that the achieved throughput is near the total quota.
 //
 // TODO:
-//   - Test write workloads
 //   - Randomize the number of operations per transaction
 //   - Test multi-page operations
 //   - Test using tenant groups rather than tags
 class ExpectStableThroughputWorkload : public TestWorkload {
 	// Metrics:
-	uint64_t totalCost{ 0 };
-	double throttledDuration{ 0.0 };
-	int tagThrottledErrors{ 0 };
+	HoltLinearSmoother totalCost;
+	HoltLinearSmoother throttledDuration;
+	HoltLinearSmoother tagThrottledErrors;
 
 	// Parameters:
 	double testDuration;
 	uint64_t expectedThroughputPagesRate;
+	uint64_t attemptedThroughputPagesRate;
 	TransactionTag throttlingTag;
 	double errorTolerance;
 	Key keyPrefix;
 	int numActors;
-	double attemptedTransactionRatePerActor;
 	double warmupTime;
 	int opsPerTransaction;
 	bool provideExpectedCost;
 	bool useGrvCache;
+	bool performReads;
 
 	double startTime;
 
 	void finishTransaction(Transaction const& tr) {
 		if (now() > startTime + warmupTime) {
-			totalCost += tr.getTotalCost();
-			throttledDuration += tr.getTagThrottledDuration();
+			totalCost.addDelta(tr.getTotalCost());
+			throttledDuration.addDelta(tr.getTagThrottledDuration());
 		}
 	}
 
-	Key getKey(int index) { return Key(format("%06d", index)).withPrefix(keyPrefix); }
+	ACTOR static Future<Void> loggerActor(ExpectStableThroughputWorkload* self) {
+		loop {
+			wait(delay(5.0));
+			TraceEvent("ExpectStableThroughputWorkloadMetrics")
+			    .detail("ThroughputRate", self->totalCost.smoothRate())
+			    .detail("ThrottledDurationRate", self->throttledDuration.smoothRate())
+			    .detail("TagThrottledErrorRate", self->tagThrottledErrors.smoothRate());
+		}
+	}
 
-	ACTOR static Future<Void> runTransaction(ExpectStableThroughputWorkload* self, Database cx) {
+	Key getKey(int index) const { return Key(format("%06d", index)).withPrefix(keyPrefix); }
+
+	ACTOR static Future<Void> runReadTransaction(ExpectStableThroughputWorkload* self, Database cx) {
 		state Transaction tr(cx);
 		state std::vector<Future<Void>> futures;
 		loop {
 			try {
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag);
 
-				if (self->useGrvCache && CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+				if (self->useGrvCache && isBusyThrottlingIDsTrackingEnabled()) {
 					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
 				}
 
@@ -75,33 +86,86 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 			} catch (Error& e) {
 				self->finishTransaction(tr);
 				if (e.code() == error_code_proxy_tag_throttled && now() > self->startTime + self->warmupTime) {
-					++self->tagThrottledErrors;
+					self->tagThrottledErrors.addDelta(1.0);
 				}
 				wait(tr.onError(e));
 			}
 		}
 	}
 
+	ACTOR static Future<Void> runWriteTransaction(ExpectStableThroughputWorkload* self, Database cx) {
+		state Transaction tr(cx);
+		loop {
+			try {
+				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag);
+
+				if (self->useGrvCache && isBusyThrottlingIDsTrackingEnabled()) {
+					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
+				}
+
+				if (self->provideExpectedCost) {
+					tr.setExpectedCost(self->opsPerTransaction * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE *
+					                   CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO);
+				}
+				// Get read version in order to enforce throttling
+				wait(success(tr.getReadVersion()));
+				for (int i = 0; i < self->opsPerTransaction; ++i) {
+					tr.set(self->getKey(i), ""_sr);
+				}
+				wait(tr.commit());
+				self->finishTransaction(tr);
+				return Void();
+			} catch (Error& e) {
+				self->finishTransaction(tr);
+				if (e.code() == error_code_proxy_tag_throttled && now() > self->startTime + self->warmupTime) {
+					self->tagThrottledErrors.addDelta(1.0);
+				}
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	Future<Void> runTransaction(Database const& cx) {
+		if (performReads) {
+			return runReadTransaction(this, cx);
+		} else {
+			return runWriteTransaction(this, cx);
+		}
+	}
+
 	ACTOR static Future<Void> runClient(ExpectStableThroughputWorkload* self, Database cx) {
 		loop {
-			wait(delay(1 / self->attemptedTransactionRatePerActor) && runTransaction(self, cx));
+			wait(delay(1 / self->getAttemptedTransactionRatePerActor()) && self->runTransaction(cx));
 		}
+	}
+
+	double getAttemptedTransactionRatePerActor() const {
+		double transactionCostInPages = opsPerTransaction;
+		if (!performReads) {
+			transactionCostInPages *= CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO;
+		}
+		return attemptedThroughputPagesRate / (transactionCostInPages * numActors);
 	}
 
 public:
 	static constexpr auto NAME = "ExpectStableThroughput";
-	explicit ExpectStableThroughputWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
+	explicit ExpectStableThroughputWorkload(WorkloadContext const& wcx)
+	  : TestWorkload(wcx),
+	    totalCost(1.0, 5.0),
+	    throttledDuration(1.0, 5.0),
+	    tagThrottledErrors(1.0, 5.0) {
 		testDuration = getOption(options, "testDuration"_sr, 1200.0);
 		throttlingTag = getOption(options, "throttlingTag"_sr, "testTag"_sr);
 		expectedThroughputPagesRate = getOption(options, "expectedThroughputPagesRate"_sr, 1);
+		attemptedThroughputPagesRate = getOption(options, "attemptedThroughputPagesRate"_sr, 2);
 		errorTolerance = getOption(options, "errorTolerance"_sr, 0.2);
 		keyPrefix = getOption(options, "keyPrefix"_sr, "testKey"_sr);
 		numActors = getOption(options, "numActors"_sr, 100);
-		attemptedTransactionRatePerActor = getOption(options, "attemptedTransactionRatePerActor"_sr, 0.4);
 		warmupTime = getOption(options, "warmupTime"_sr, 10.0);
 		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, 5);
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
 		useGrvCache = getOption(options, "useGrvCache"_sr, deterministicRandom()->coinflip());
+		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
 	}
 
 	Future<Void> setup(Database const& cx) override { return Void(); }
@@ -116,12 +180,24 @@ public:
 		// transaction option for GRV Cache.
 		// In simulation, explicitly initialize it when used for tests.
 		cx->initSharedState();
+		TraceEvent("StartingExpectStableThroughputWorkload")
+		    .detail("TestDuration", testDuration)
+		    .detail("ThrottlingTag", throttlingTag)
+		    .detail("ExpectedThroughputPagesRate", expectedThroughputPagesRate)
+		    .detail("AttemptedThroughputPagesRate", attemptedThroughputPagesRate)
+		    .detail("ErrorTolerance", errorTolerance)
+		    .detail("KeyPrefix", keyPrefix)
+		    .detail("NumActors", numActors)
+		    .detail("WarmupTime", warmupTime)
+		    .detail("OpsPerTranaction", opsPerTransaction)
+		    .detail("ProvideExpectedCost", provideExpectedCost)
+		    .detail("PerformReads", performReads);
 		startTime = now();
 		std::vector<Future<Void>> clients;
 		for (int i = 0; i < numActors; ++i) {
 			clients.push_back(runClient(this, cx));
 		}
-		return success(timeout(waitForAll(clients), warmupTime + testDuration));
+		return loggerActor(this) || success(timeout(waitForAll(clients), warmupTime + testDuration));
 	}
 
 	Future<bool> check(Database const& cx) override {
@@ -130,24 +206,22 @@ public:
 		}
 		auto const expectedTotalCost =
 		    testDuration * expectedThroughputPagesRate * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
-		bool const passed = (static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance) <= totalCost) &&
-		                    (totalCost <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
+
+		// Unrelated rare availability issues are known to cause throughput to be significantly lower
+		// the total quota. Therefore only enforce an upper bound on write throughput:
+		bool passed = (totalCost.getTotal() <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
+
 		auto const severity = passed ? SevInfo : SevError;
 		TraceEvent(severity, "CheckingStableThroughput")
 		    .detail("ExpectedTotalCost", expectedTotalCost)
 		    .detail("ErrorTolerance", errorTolerance)
-		    .detail("TotalCost", totalCost);
+		    .detail("TotalCost", totalCost.getTotal());
 		return passed;
 	}
 	void getMetrics(std::vector<PerfMetric>& m) override {
-		m.emplace_back("Total Cost", totalCost, Averaged::False);
-		m.emplace_back("TagThrottled Errors", tagThrottledErrors, Averaged::False);
-		m.emplace_back("Total Throttling Duration", throttledDuration, Averaged::False);
-	}
-
-	void disableFailureInjectionWorkloads(std::set<std::string>& out) const override {
-		out.insert("Attrition");
-		out.insert("RandomClogging");
+		m.emplace_back("Total Cost", totalCost.getTotal(), Averaged::False);
+		m.emplace_back("TagThrottled Errors", tagThrottledErrors.getTotal(), Averaged::False);
+		m.emplace_back("Total Throttling Duration", throttledDuration.getTotal(), Averaged::False);
 	}
 };
 

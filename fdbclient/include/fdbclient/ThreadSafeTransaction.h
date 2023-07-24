@@ -257,6 +257,8 @@ public:
 	void addNetworkThreadCompletionHook(void (*hook)(void*), void* hookParameter) override;
 	FDBAllocatorIfc* getAllocatorInterface() override;
 
+	ApiVersion getApiVersion() { return apiVersion; }
+
 private:
 	friend IClientApi* getLocalClientAPI();
 	ThreadSafeApi();

@@ -53,6 +53,75 @@ private:
 	std::unordered_map<Type, int> type_count;
 };
 
+// Implement y = ax + b where x in (leftPoint.first, rightPoint.first).
+// If x <= leftPoint.first, y = leftPoint.second;
+// If x >= rightPoint.first, y = rightPoint.second;
+template <class T>
+class LinearFunc {
+public:
+	struct Point {
+		T x;
+		double y;
+	};
+
+	// Initialize with two points: p1, p2
+	LinearFunc(Point p1, Point p2) {
+		ASSERT(p1.x != p2.x);
+		if (p1.x > p2.x) {
+			std::swap(p1, p2);
+		}
+		leftPoint = p1;
+		rightPoint = p2;
+		a = (p2.y - p1.y) / (p2.x - p1.x);
+		b = p2.y - a * p2.x;
+	}
+
+	double getY(T x) {
+		double result;
+		if (x <= leftPoint.x) {
+			result = leftPoint.y;
+		} else if (x >= rightPoint.x) {
+			result = rightPoint.y;
+		} else {
+			result = a * x + b;
+		}
+		return result;
+	}
+
+private:
+	Point leftPoint;
+	Point rightPoint;
+	double a;
+	double b;
+};
+
+template <typename T>
+double getProbabilityWithPivot(T lowerPivot, T upperPivot, T sample) {
+	double result;
+	if (lowerPivot == upperPivot) {
+		// Deal with special case at first
+		if (sample < upperPivot) {
+			result = 1;
+		} else if (sample > upperPivot) {
+			result = 0;
+		} else {
+			// sample == lowerPivot == upperPivot
+			// In simulation, we would be optimistic to set the probability to be 1, and allow prevention.
+			// In production, on the other side, be pessimistic and not to prevent movements.
+			if (g_network->isSimulated()) {
+				result = 1;
+			} else {
+				result = 0;
+			}
+		}
+	} else {
+		LinearFunc<T> linearFunc(typename LinearFunc<T>::Point{ .x = lowerPivot, .y = 1.0 },
+		                         typename LinearFunc<T>::Point{ .x = upperPivot, .y = 0.0 });
+		result = linearFunc.getY(sample);
+	}
+	return result;
+}
+
 } // namespace data_distribution
 
 struct IDataDistributionTeam {
