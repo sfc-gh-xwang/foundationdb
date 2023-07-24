@@ -514,9 +514,7 @@ public:
 	KeyBackedBinaryValue(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {}) : Base(key, trigger) {}
 
 	template <class Transaction>
-	std::enable_if_t<!is_transaction_creator<Transaction>, void> atomicOp(Transaction tr,
-	                                                                      T const& val,
-	                                                                      MutationRef::Type type) {
+	void atomicOp(Transaction tr, T const& val, MutationRef::Type type) {
 		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->atomicOp(this->key, BinaryWriter::toValue<T>(val, Unversioned()), type);
 		if (this->trigger.present()) {
@@ -525,9 +523,7 @@ public:
 	}
 
 	template <class Transaction>
-	std::enable_if_t<!is_transaction_creator<Transaction>, void> setVersionstamp(Transaction tr,
-	                                                                             T const& val,
-	                                                                             int offset) {
+	void setVersionstamp(Transaction tr, T const& val, int offset) {
 		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->atomicOp(
 		    this->key,
