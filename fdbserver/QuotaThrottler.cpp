@@ -28,7 +28,6 @@
 #include "fdbserver/QuotaThrottler.h"
 
 #include <boost/unordered/unordered_flat_map.hpp>
-#include <unordered_set>
 
 // In the function names below, several terms are used repeatedly. The context-specific are defined here:
 //

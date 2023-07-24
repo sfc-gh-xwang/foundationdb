@@ -34,7 +34,6 @@
 
 #include "boost/algorithm/string.hpp"
 
-#include "fdbclient/Knobs.h"
 #include "flow/CodeProbe.h"
 #include "fmt/format.h"
 

@@ -22,7 +22,6 @@
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/Knobs.h"
 #include "fdbclient/Notified.h"
-#include "fdbclient/ThrottlingId.h"
 #include "fdbclient/ThroughputTracker.h"
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
@@ -42,7 +41,6 @@
 #include "flow/actorcompiler.h" // This must be the last #include.
 #include "flow/genericactors.actor.h"
 #include <boost/unordered/unordered_flat_set.hpp>
-#include <unordered_set>
 
 struct GrvProxyStats {
 	CounterCollection cc;

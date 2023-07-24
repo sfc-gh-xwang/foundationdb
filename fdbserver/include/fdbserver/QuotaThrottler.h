@@ -24,7 +24,6 @@
 #include "fdbclient/ThrottlingId.h"
 #include "fdbserver/IRKMetricsTracker.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
-#include <unordered_set>
 
 class QuotaThrottler {
 	PImpl<class QuotaThrottlerImpl> impl;
