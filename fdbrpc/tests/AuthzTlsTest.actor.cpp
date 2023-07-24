@@ -33,6 +33,7 @@
 #include "flow/Arena.h"
 #include "flow/Error.h"
 #include "flow/MkCert.h"
+#include "flow/ObjectSerializer.h"
 #include "flow/ScopeExit.h"
 #include "flow/TLSConfig.actor.h"
 #include "fdbrpc/fdbrpc.h"
@@ -222,17 +223,16 @@ struct SessionProbeReceiver final : NetworkMessageReceiver {
 };
 
 void runServer(const Endpoint& endpoint, int addrPipe, int completionPipe) {
-	auto realAddr = FlowTransport::transport().getLocalAddresses().address;
-	logs("Listening at {}", realAddr.toString());
+	logs("Listening at {}", endpoint.addresses.address.toString());
 	logs("Endpoint token is {}", endpoint.token.toString());
-	static_assert(std::is_trivially_destructible_v<NetworkAddress>,
-	              "NetworkAddress cannot be directly put on wire; need proper (de-)serialization");
+	Standalone<StringRef> serializedEndpoint = ObjectWriter::toValue(endpoint, Unversioned());
+	auto const len = serializedEndpoint.size();
 	// below writes/reads would block, but this is good enough for a test.
-	if (sizeof(realAddr) != ::write(addrPipe, &realAddr, sizeof(realAddr))) {
-		logs("Failed to write server addr to pipe: {}", strerror(errno));
+	if (sizeof(len) != ::write(addrPipe, &len, sizeof(len))) {
+		logs("Failed to write server endpoint length to pipe: {}", strerror(errno));
 		return;
 	}
-	if (sizeof(endpoint.token) != ::write(addrPipe, &endpoint.token, sizeof(endpoint.token))) {
+	if (len != ::write(addrPipe, serializedEndpoint.begin(), len)) {
 		logs("Failed to write server endpoint to pipe: {}", strerror(errno));
 		return;
 	}
@@ -280,6 +280,7 @@ int runHost(TLSCreds creds, int addrPipe, int completionPipe, Result expect) {
 		auto receiver = SessionProbeReceiver();
 		auto listenFuture = transport.bind(addr, addr);
 		transport.addEndpoint(endpoint, &receiver, TaskPriority::ReadSocket);
+		endpoint.addresses = FlowTransport::transport().getLocalAddresses();
 		auto thread = std::thread([]() {
 			g_network->run();
 			flushTraceFileVoid();
@@ -291,23 +292,25 @@ int runHost(TLSCreds creds, int addrPipe, int completionPipe, Result expect) {
 		});
 		return 0;
 	} else {
-		auto dest = Endpoint();
-		auto& serverAddr = dest.addresses.address;
-		if (sizeof(serverAddr) != ::read(addrPipe, &serverAddr, sizeof(serverAddr))) {
-			logc("Failed to read server addr from pipe: {}", strerror(errno));
+		auto len = decltype(std::declval<StringRef>().size()){ 0 };
+		if (sizeof(len) != ::read(addrPipe, &len, sizeof(len))) {
+			logc("Failed to read server endpoint length from pipe: {}", strerror(errno));
 			return 1;
 		}
+		Standalone<StringRef> serializedEndpoint;
+		serializedEndpoint.contents() = StringRef(new (serializedEndpoint.arena()) uint8_t[len], len);
+		if (len != ::read(addrPipe, mutateString(serializedEndpoint), len)) {
+			logc("Failed to read server endpoint length from pipe: {}", strerror(errno));
+			return 1;
+		}
+		auto dest = ObjectReader::fromStringRef<Endpoint>(serializedEndpoint, Unversioned());
+		auto& serverAddr = dest.addresses.address;
 		if (noTls)
 			serverAddr.flags &= ~NetworkAddress::FLAG_TLS;
 		else
 			serverAddr.flags |= NetworkAddress::FLAG_TLS;
-		auto& token = dest.token;
-		if (sizeof(token) != ::read(addrPipe, &token, sizeof(token))) {
-			logc("Failed to read server endpoint token from pipe: {}", strerror(errno));
-			return 2;
-		}
 		logc("Server address is {}{}", serverAddr.toString(), noTls ? " (TLS suffix removed)" : "");
-		logc("Server endpoint token is {}", token.toString());
+		logc("Server endpoint token is {}", dest.token.toString());
 		auto sessionProbeReq = SessionProbeRequest{};
 		transport.sendUnreliable(SerializeSource(sessionProbeReq), dest, true /*openConnection*/);
 		logc("Request is sent");
