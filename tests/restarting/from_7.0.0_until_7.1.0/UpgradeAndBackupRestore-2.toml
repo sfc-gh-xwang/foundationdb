@@ -1,3 +1,6 @@
+[configuration]
+simHTTPServerEnabled = false
+
 [[test]]
 testTitle = 'SecondCycleTest'
 simBackupAgents = 'BackupToFile'

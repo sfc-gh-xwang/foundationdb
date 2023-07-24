@@ -1529,7 +1529,10 @@ std::map<std::string, std::function<void(const std::string&)>> testSpecGlobalKey
 	{ "disableRemoteKVS",
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedRemoteKVS", ""); } },
 	{ "allowDefaultTenant",
-	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedDefaultTenant", ""); } }
+	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedDefaultTenant", ""); } },
+	{ "simHTTPServerEnabled",
+	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedSimHTTPServerEnabled", ""); } }
+
 };
 
 std::map<std::string, std::function<void(const std::string& value, TestSpec* spec)>> testSpecTestKeys = {

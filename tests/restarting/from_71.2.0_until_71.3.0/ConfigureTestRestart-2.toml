@@ -1,5 +1,6 @@
 [configuration]
 randomlyRenameZoneId=true
+simHTTPServerEnabled=false
 
 [[test]]
 testTitle='CloggedConfigureDatabaseTest'
