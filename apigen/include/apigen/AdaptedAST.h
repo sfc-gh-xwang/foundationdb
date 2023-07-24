@@ -23,8 +23,6 @@ BOOST_FUSION_ADAPT_STRUCT(ast::rpc_method_decl, name, request_type, response_typ
 BOOST_FUSION_ADAPT_STRUCT(ast::rpc_decl, name, methods)
 BOOST_FUSION_ADAPT_STRUCT(ast::schema, includes, elements)
 
-BOOST_FUSION_ADAPT_TPL_STRUCT(
-               (T), (ast::scalar_type) (T),
-               (boost::optional<T>, default_))
+BOOST_FUSION_ADAPT_TPL_STRUCT((T), (ast::scalar_type)(T), (boost::optional<T>, default_))
 
 #endif /*FLATBUFFERS_ADAPTED_AST_H*/
