@@ -353,6 +353,26 @@ Future<Version> WatchableTrigger::onChangeActor(WatchableTrigger self,
 	}
 }
 
+// Caller responsible for retrying
+template <typename Transaction, bool SystemAccess, bool RawAccess>
+static std::enable_if_t<!is_transaction_creator<Transaction>, void> setTransactionAccessOptionsForKbt(Transaction tr) {
+	if constexpr (RawAccess) {
+		tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+	}
+}
+
+// Caller responsible for retrying
+template <typename TransactionContext, bool SystemAccess, bool RawAccess>
+static std::enable_if_t<is_transaction_creator<TransactionContext>, void> setTransactionAccessOptionsForKbt(
+    decltype(std::declval<TransactionContext>()->createTransaction()) tr) {
+	if constexpr (SystemAccess) {
+		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+	} else if constexpr (RawAccess) {
+		tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+	}
+	tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+}
+
 // Convenient read/write access to a single value of type T stored at key
 // Even though 'this' is not actually mutated, methods that change the db key are not const.
 template <typename T, typename Codec = TupleCodec<T>, bool SystemAccess = true, bool RawAccess = true>
@@ -370,18 +390,11 @@ public:
 
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				if constexpr (SystemAccess) {
-					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				} else if constexpr (RawAccess) {
-					tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-				}
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 				return self.get(tr, snapshot);
 			});
 		} else {
-			if constexpr (RawAccess) {
-				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			}
+			setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 			typename transaction_future_type<Transaction, ValueReadResult>::type getFuture = tr->get(key, snapshot);
 
 			return holdWhile(
@@ -399,18 +412,11 @@ public:
 	Future<T> getD(Transaction tr, Snapshot snapshot = Snapshot::False, T defaultValue = T()) const {
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				if constexpr (SystemAccess) {
-					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				} else if constexpr (RawAccess) {
-					tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-				}
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 				return self.getD(tr, snapshot, defaultValue);
 			});
 		} else {
-			if constexpr (RawAccess) {
-				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			}
+			setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 			return map(get(tr, snapshot),
 			           [=](Optional<T> val) -> T { return val.present() ? val.get() : defaultValue; });
 		}
@@ -421,18 +427,11 @@ public:
 	Future<T> getOrThrow(Transaction tr, Snapshot snapshot = Snapshot::False, Error err = key_not_found()) const {
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				if constexpr (SystemAccess) {
-					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				} else if constexpr (RawAccess) {
-					tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-				}
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 				return self.getOrThrow(tr, snapshot, err);
 			});
 		} else {
-			if constexpr (RawAccess) {
-				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			}
+			setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 			return map(get(tr, snapshot), [=](Optional<T> val) -> T {
 				if (!val.present()) {
 					throw err;
@@ -447,12 +446,7 @@ public:
 	std::enable_if_t<is_transaction_creator<TransactionContext>, Future<Void>> set(TransactionContext tcx,
 	                                                                               T const& val) {
 		return runTransaction(tcx, [this, val](decltype(tcx->createTransaction()) tr) {
-			if constexpr (SystemAccess) {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			} else if constexpr (RawAccess) {
-				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			}
-			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+			setTransactionAccessOptionsForKbt<TransactionContext, SystemAccess, RawAccess>(tr);
 			set(tr, val);
 			return Future<Void>(Void());
 		});
@@ -460,9 +454,7 @@ public:
 
 	template <class Transaction>
 	std::enable_if_t<!is_transaction_creator<Transaction>, void> set(Transaction tr, T const& val) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->set(key, packValue(val));
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -472,12 +464,7 @@ public:
 	template <class TransactionContext>
 	std::enable_if_t<is_transaction_creator<TransactionContext>, Future<Void>> clear(TransactionContext tcx) {
 		return runTransaction(tcx, [this](decltype(tcx->createTransaction()) tr) {
-			if constexpr (SystemAccess) {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			} else if constexpr (RawAccess) {
-				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			}
-			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+			setTransactionAccessOptionsForKbt<TransactionContext, SystemAccess, RawAccess>(tr);
 			clear(tr);
 			return Future<Void>(Void());
 		});
@@ -485,9 +472,7 @@ public:
 
 	template <class Transaction>
 	std::enable_if_t<!is_transaction_creator<Transaction>, void> clear(Transaction tr) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->clear(key);
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -495,10 +480,8 @@ public:
 	}
 
 	template <class Transaction>
-	Future<Void> watch(Transaction tr) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+	std::enable_if_t<!is_transaction_creator<Transaction>, Future<Void>> watch(Transaction tr) {
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		return tr->watch(key);
 	}
 
@@ -532,10 +515,10 @@ public:
 	KeyBackedBinaryValue(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {}) : Base(key, trigger) {}
 
 	template <class Transaction>
-	void atomicOp(Transaction tr, T const& val, MutationRef::Type type) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+	std::enable_if_t<!is_transaction_creator<Transaction>, void> atomicOp(Transaction tr,
+	                                                                      T const& val,
+	                                                                      MutationRef::Type type) {
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->atomicOp(this->key, BinaryWriter::toValue<T>(val, Unversioned()), type);
 		if (this->trigger.present()) {
 			this->trigger->update(tr);
@@ -543,10 +526,10 @@ public:
 	}
 
 	template <class Transaction>
-	void setVersionstamp(Transaction tr, T const& val, int offset) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+	std::enable_if_t<!is_transaction_creator<Transaction>, void> setVersionstamp(Transaction tr,
+	                                                                             T const& val,
+	                                                                             int offset) {
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->atomicOp(
 		    this->key,
 		    BinaryWriter::toValue<T>(val, Unversioned()).withSuffix(StringRef(reinterpret_cast<uint8_t*>(&offset), 4)),
@@ -629,21 +612,14 @@ public:
 
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				if constexpr (SystemAccess) {
-					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				} else if constexpr (RawAccess) {
-					tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-				}
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 				return self.getRange(tr, begin, end, limit, snapshot, reverse);
 			});
 		} else {
 			Key beginKey = begin.present() ? packKey(begin.get()) : subspace.begin;
 			Key endKey = end.present() ? packKey(end.get()) : subspace.end;
 
-			if constexpr (RawAccess) {
-				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			}
+			setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 			typename transaction_future_type<Transaction, RangeReadResult>::type getRangeFuture =
 			    tr->getRange(KeyRangeRef(beginKey, endKey), GetRangeLimits(limit), snapshot, reverse);
@@ -680,9 +656,7 @@ public:
 		state ::KeySelector ksBegin = begin.pack(self.subspace.begin);
 		state ::KeySelector ksEnd = end.pack(self.subspace.begin);
 
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 		state typename transaction_future_type<Transaction, RangeReadResult>::type getRangeFuture =
 		    tr->getRange(ksBegin, ksEnd, limits, snapshot, reverse);
@@ -738,10 +712,7 @@ public:
 				ksBegin = ::firstGreaterThan(kvs.back().key);
 			}
 
-			if constexpr (RawAccess) {
-				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			}
-
+			setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 			getRangeFuture = tr->getRange(ksBegin, ksEnd, limits, snapshot, reverse);
 		}
 
@@ -792,10 +763,7 @@ public:
 			end = self.subspace.end;
 		}
 
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
-
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		state typename transaction_future_type<Transaction, RangeReadResult>::type getRangeFuture =
 		    tr->getRange(KeyRangeRef(begin, end), 1, snapshot, Reverse{ lessThan });
 
@@ -831,9 +799,7 @@ public:
 
 	template <class Transaction>
 	Future<Optional<ValueType>> get(Transaction tr, KeyType const& key, Snapshot snapshot = Snapshot::False) const {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		typename transaction_future_type<Transaction, ValueReadResult>::type getFuture =
 		    tr->get(packKey(key), snapshot);
 
@@ -858,9 +824,7 @@ public:
 
 	template <class Transaction>
 	Future<Void> watch(Transaction tr, KeyType const& key) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		return safeThreadFutureToFuture(tr->watch(packKey(key)));
 	}
 
@@ -870,9 +834,7 @@ public:
 	// Returns the expectedSize of the set key
 	template <class Transaction>
 	int set(Transaction tr, KeyType const& key, ValueType const& val) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 		Key k = packKey(key);
 		Value v = packValue(val);
@@ -886,9 +848,7 @@ public:
 
 	template <class Transaction>
 	void atomicOp(Transaction tr, KeyType const& key, ValueType const& val, MutationRef::Type type) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 		Key k = packKey(key);
 		Value v = packValue(val);
@@ -900,9 +860,7 @@ public:
 
 	template <class Transaction>
 	void setVersionstamp(Transaction tr, KeyType const& key, ValueType const& val, int offset = 0) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 		Key k = packKey(key);
 		Value v = packValue(val).withSuffix(StringRef(reinterpret_cast<uint8_t*>(&offset), 4));
@@ -914,9 +872,7 @@ public:
 
 	template <class Transaction>
 	void erase(Transaction tr, KeyType const& key) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 		kbt_debug("MAP ERASE {}\n", packKey(key).printable());
 		tr->clear(packKey(key));
@@ -927,9 +883,7 @@ public:
 
 	template <class Transaction>
 	void erase(Transaction tr, KeyType const& begin, KeyType const& end) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 		tr->clear(KeyRangeRef(packKey(begin), packKey(end)));
 		if (trigger.present()) {
@@ -939,9 +893,7 @@ public:
 
 	template <class Transaction>
 	void clear(Transaction tr) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 		tr->clear(subspace);
 		if (trigger.present()) {
@@ -951,9 +903,7 @@ public:
 
 	template <class Transaction>
 	void addReadConflictKey(Transaction tr, KeyType const& key) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 
 		Key k = packKey(key);
 		tr->addReadConflictRange(singleKeyRange(k));
@@ -961,29 +911,20 @@ public:
 
 	template <class Transaction>
 	void addReadConflictRange(Transaction tr, KeyType const& begin, KeyType const& end) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
-
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->addReadConflictRange(packKey(begin), packKey(end));
 	}
 
 	template <class Transaction>
 	void addWriteConflictKey(Transaction tr, KeyType const& key) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
-
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		Key k = packKey(key);
 		tr->addWriteConflictRange(singleKeyRange(k));
 	}
 
 	template <class Transaction>
 	void addWriteConflictRange(Transaction tr, KeyType const& begin, KeyType const& end) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
-
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->addWriteConflictRange(packKey(begin), packKey(end));
 	}
 
@@ -1042,9 +983,8 @@ public:
 	                                 int limit,
 	                                 Snapshot snapshot = Snapshot::False,
 	                                 Reverse reverse = Reverse::False) const {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
+
 		Key beginKey = begin.present() ? packKey(begin.get()) : subspace.begin;
 		Key endKey = end.present() ? packKey(end.get()) : subspace.end;
 
@@ -1072,9 +1012,7 @@ public:
 	                                             GetRangeLimits limits,
 	                                             Snapshot snapshot,
 	                                             Reverse reverse) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		kbt_debug("MAP GETRANGE KeySelectors {} - {}\n",
 		          begin.pack(self.subspace.begin).toString(),
 		          end.pack(self.subspace.begin).toString());
@@ -1132,9 +1070,7 @@ public:
 				// The last key is the exclusive begin of the new getRange
 				ksBegin = ::firstGreaterThan(kvs.back().key);
 			}
-			if constexpr (RawAccess) {
-				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			}
+			setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 			getRangeFuture = tr->getRange(ksBegin, ksEnd, limits, snapshot, reverse);
 		}
 
@@ -1184,9 +1120,7 @@ public:
 			}
 			end = self.subspace.end;
 		}
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		state typename transaction_future_type<Transaction, RangeReadResult>::type getRangeFuture =
 		    tr->getRange(KeyRangeRef(begin, end), 1, snapshot, Reverse{ lessThan });
 
@@ -1228,9 +1162,7 @@ public:
 
 	template <class Transaction>
 	Future<bool> exists(Transaction tr, ValueType const& val, Snapshot snapshot = Snapshot::False) const {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		typename transaction_future_type<Transaction, ValueReadResult>::type getFuture =
 		    tr->get(packKey(val), snapshot);
 
@@ -1242,9 +1174,7 @@ public:
 	// Returns the expectedSize of the set key
 	template <class Transaction>
 	int insert(Transaction tr, ValueType const& val) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		Key k = packKey(val);
 		tr->set(k, StringRef());
 		if (trigger.present()) {
@@ -1255,9 +1185,7 @@ public:
 
 	template <class Transaction>
 	void erase(Transaction tr, ValueType const& val) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->clear(packKey(val));
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -1266,9 +1194,7 @@ public:
 
 	template <class Transaction>
 	void erase(Transaction tr, ValueType const& begin, ValueType const& end) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->clear(KeyRangeRef(packKey(begin), packKey(end)));
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -1277,9 +1203,7 @@ public:
 
 	template <class Transaction>
 	void clear(Transaction tr) {
-		if constexpr (RawAccess) {
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-		}
+		setTransactionAccessOptionsForKbt<Transaction, SystemAccess, RawAccess>(tr);
 		tr->clear(subspace);
 		if (trigger.present()) {
 			trigger->update(tr);
