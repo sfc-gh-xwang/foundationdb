@@ -7,10 +7,15 @@ set(APIGEN_PARSER_SRCS
 )
 
 if(OPEN_FOR_IDE)
-    add_library(parser_test OBJECT ParserTest.cpp)
+  add_library(parser_test OBJECT ParserTest.cpp)
 else()
-    add_executable(parser_test ParserTest.cpp)
+  add_executable(parser_test ParserTest.cpp)
 endif()
 
 target_link_libraries(parser_test PRIVATE boost_target)
 target_include_directories(parser_test PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+if(NOT OPEN_FOR_IDE)
+  add_test(NAME apigen_parser_test
+    COMMAND $<TARGET_FILE:parser_test>)
+  set_tests_properties(apigen_parser_test PROPERTIES TIMEOUT 30)
+endif()
