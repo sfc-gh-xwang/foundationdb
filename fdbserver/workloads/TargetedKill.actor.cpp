@@ -104,7 +104,8 @@ struct TargetedKillWorkload : TestWorkload {
 		state int s = 0;
 		state int j = 0;
 		if (self->machineToKill == "master") {
-			machine = self->dbInfo->get().master.address();
+			ASSERT(self->dbInfo->get().master.present());
+			machine = self->dbInfo->get().master.get().address();
 		} else if (self->machineToKill == "commitproxy") {
 			auto commitProxies = cx->getCommitProxies(UseProvisionalProxies::False);
 			int o = deterministicRandom()->randomInt(0, commitProxies->size());

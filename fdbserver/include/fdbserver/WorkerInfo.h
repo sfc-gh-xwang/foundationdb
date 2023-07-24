@@ -121,6 +121,7 @@ struct RecruitmentInfo {
 // Stores details about all the workers required for a functioning transaction
 // subsystem.
 struct WorkerRecruitment {
+	Optional<WorkerDetails> sequencer;
 	std::vector<WorkerDetails> grvProxies;
 	std::vector<WorkerDetails> commitProxies;
 	std::vector<WorkerDetails> resolvers;

@@ -188,7 +188,9 @@ struct MoveKeysWorkload : FailureInjectionWorkload {
 			TraceEvent(relocateShardInterval.end()).detail("Result", "Success");
 			return Void();
 		} catch (Error& e) {
-			TraceEvent(relocateShardInterval.end(), self->dbInfo->get().master.id()).errorUnsuppressed(e);
+			TraceEvent(relocateShardInterval.end(),
+			           self->dbInfo->get().master.present() ? self->dbInfo->get().master.get().id() : UID())
+			    .errorUnsuppressed(e);
 			throw;
 		}
 	}
@@ -211,7 +213,9 @@ struct MoveKeysWorkload : FailureInjectionWorkload {
 	ACTOR Future<Void> forceMasterFailure(Database cx, MoveKeysWorkload* self) {
 		ASSERT(g_network->isSimulated());
 		loop {
-			if (g_simulator->killZone(self->dbInfo->get().master.locality.zoneId(), ISimulator::KillType::Reboot, true))
+			ASSERT(self->dbInfo->get().master.present());
+			if (g_simulator->killZone(
+			        self->dbInfo->get().master.get().locality.zoneId(), ISimulator::KillType::Reboot, true))
 				return Void();
 			wait(delay(1.0));
 		}
