@@ -33,48 +33,20 @@ namespace x3 = boost::spirit::x3;
 
 namespace ast {
 
-struct scalar : x3::variant<bool, double, uint64_t, int64_t>, x3::position_tagged {
+struct scalar : x3::variant<bool, double, uint64_t, int64_t> {
 	using base_type::base_type;
 	using base_type::operator=;
 
 	static constexpr double EPS = 1e-10;
 
-	bool operator==(const scalar& other) const {
-		auto const* lhs = boost::get<double>(this);
-		auto const* rhs = boost::get<double>(&other);
-		if (lhs && rhs) {
-			if (*lhs == *rhs)
-				return true;
-			// as parser should be producing something close to the expected value, we use "essentially equal" semantics
-			if (std::fabs(*lhs - *rhs) < std::min(std::fabs(*lhs), std::fabs(*rhs)) * EPS) {
-				return true;
-			} else {
-				std::cout << "scalar double mismatch: left-hand (" << *lhs << ") is not equal to right-hand (" << *rhs << ") within margin " << EPS << "\n";
-				return false;
-			}
-		} else {
-			if (get() != other.get()) {
-				std::cout << "scalar mismatch: which = " << get().which() << " vs " << other.get().which() << "\n";
-				return false;
-			} else {
-				return true;
-			}
-		}
-	}
+	bool operator==(const scalar& other) const noexcept = default;
 };
 
-struct single_value : x3::variant<scalar, std::string>, x3::position_tagged {
+struct single_value : x3::variant<scalar, std::string> {
 	using base_type::base_type;
 	using base_type::operator=;
 
-	bool operator==(const single_value& other) const {
-		if (get() != other.get()) {
-			std::cout << "unmatched single_value: which = " << get().which() << " vs " << other.get().which() << "\n";
-			return false;
-		} else {
-			return true;
-		}
-	}
+	bool operator==(const single_value& other) const noexcept = default;
 };
 
 using metadatum = std::pair<std::string, boost::optional<single_value>>;
@@ -175,9 +147,7 @@ struct object_typeinfo : object_types_variant {
 	using base_type::base_type;
 	using base_type::operator=;
 
-	bool operator==(const object_typeinfo& other) const noexcept {
-		return get() == other.get();
-	}
+	bool operator==(const object_typeinfo& other) const noexcept = default;
 };
 
 using singular_types_variant = x3::variant<
@@ -199,9 +169,7 @@ struct vector_typeinfo : singular_types_variant {
 	using base_type::base_type;
 	using base_type::operator=;
 
-	bool operator==(const vector_typeinfo& other) const noexcept {
-		return get() == other.get();
-	}
+	bool operator==(const vector_typeinfo& other) const noexcept = default;
 };
 
 using table_fieldtype_variant = x3::variant<scalar_typeinfo, object_typeinfo, vector_typeinfo>;
@@ -211,9 +179,7 @@ struct table_field_decl {
 	table_fieldtype_variant typeinfo;
 	boost::optional<metadata> meta;
 
-	bool operator==(const table_field_decl& other) const noexcept {
-		return name == other.name && typeinfo.get() == other.typeinfo.get() && meta == other.meta;
-	}
+	bool operator==(const table_field_decl& other) const noexcept = default;
 };
 
 struct table_decl {
@@ -241,9 +207,7 @@ struct struct_field_decl {
 	std::string name;
 	struct_fieldtype_variant typeinfo;
 	boost::optional<metadata> meta;
-	bool operator==(const struct_field_decl& other) const noexcept {
-		return name == other.name && typeinfo.get() == other.typeinfo.get() && meta == other.meta;
-	}
+	bool operator==(const struct_field_decl& other) const noexcept = default;
 };
 
 struct struct_decl {
