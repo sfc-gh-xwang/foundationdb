@@ -22,52 +22,52 @@ namespace test {
 
 // default optional indicates that we expect parse to fail (i.e. a parse error or a partial match)
 template <class AST>
-using case_type = std::pair<std::string, boost::optional<AST>>;
+using Case = std::pair<std::string, boost::optional<AST>>;
 
 template <class AST>
-using input_set_type = std::vector<case_type<AST>>;
+using InputSet = std::vector<Case<AST>>;
 
-template <class Rule, class AST, class EQUALS_FN>
-bool run_ast_test(const Rule& r, const input_set_type<AST>& cases, EQUALS_FN&& equals_fn) {
+template <class Rule, class AST, class EqualsFn>
+bool runAstTest(const Rule& r, const InputSet<AST>& cases, EqualsFn&& equalsFn) {
 	std::cout << "Testing " << r.name << " parser...\n";
 	unsigned failures = 0;
 	for (const auto& [input, expected] : cases) {
 		auto bg = input.begin();
 		auto ed = input.end();
 		auto output = AST();
-		using error_handler_type = x3::error_handler<decltype(bg)>;
-		error_handler_type error_handler(bg, ed, std::cerr);
-		auto const parser = x3::with<x3::error_handler_tag>(std::ref(error_handler))[r];
-		auto const parse_ok = x3::phrase_parse(bg, ed, parser, x3::space, output);
-		auto const parse_complete = (bg == ed);
-		auto test_ok = true;
-		auto value_match = true;
+		using ErrorHandler = x3::error_handler<decltype(bg)>;
+		ErrorHandler errorHandler(bg, ed, std::cerr);
+		auto const parser = x3::with<x3::error_handler_tag>(std::ref(errorHandler))[r];
+		auto const parseOk = x3::phrase_parse(bg, ed, parser, x3::space, output);
+		auto const parseComplete = (bg == ed);
+		auto testOk = true;
+		auto valueMatch = true;
 		if (!expected) {
 			// parse should fail
-			test_ok = !parse_ok || !parse_complete;
+			testOk = !parseOk || !parseComplete;
 		} else {
-			if (parse_ok && parse_complete)
-				value_match = equals_fn(*expected, output);
-			test_ok = parse_ok && parse_complete && value_match;
+			if (parseOk && parseComplete)
+				valueMatch = equalsFn(*expected, output);
+			testOk = parseOk && parseComplete && valueMatch;
 		}
-		std::cout << "  " << (test_ok ? "O " : "X ");
-		if (!test_ok) {
+		std::cout << "  " << (testOk ? "O " : "X ");
+		if (!testOk) {
 			if (!expected) {
 				std::cout << "[parse_unexpectedly_succeeded] ";
 			} else {
-				if (!parse_ok)
+				if (!parseOk)
 					std::cout << "[parse_error] ";
-				if (!parse_complete)
+				if (!parseComplete)
 					std::cout << "[parse_incomplete_at_pos_" << (bg - input.begin()) << "_of_length_" << input.size()
 					          << "] ";
-				if (!value_match)
+				if (!valueMatch)
 					std::cout << "[value_mismatch] ";
 			}
 		} else if (!expected) {
 			std::cout << "[parse_failed_as_expected] ";
 		}
 		std::cout << std::quoted(input) << '\n';
-		failures += !test_ok;
+		failures += !testOk;
 	}
 	if (failures)
 		std::cout << failures << " cases failed\n";
@@ -75,13 +75,13 @@ bool run_ast_test(const Rule& r, const input_set_type<AST>& cases, EQUALS_FN&& e
 }
 
 template <class Rule, class AST>
-bool run_ast_test(const Rule& r, const input_set_type<AST>& cases) {
-	return run_ast_test(r, cases, [](const AST& lhs, const AST& rhs) { return lhs == rhs; });
+bool runAstTest(const Rule& r, const InputSet<AST>& cases) {
+	return runAstTest(r, cases, [](const AST& lhs, const AST& rhs) { return lhs == rhs; });
 }
 
-input_set_type<std::string> const string_constant_input_set = []() -> input_set_type<std::string> {
+InputSet<std::string> const StringConstantInputSet = []() -> InputSet<std::string> {
 	using namespace std::string_literals;
-	return input_set_type<std::string>{
+	return InputSet<std::string>{
 		{ "\"\\n\"", "\n"s }, { "\"\\t\"", "\t"s },  { "\"\\r\"", "\r"s },
 		{ "\"\\b\"", "\b"s }, { "\"\\f\"", "\f"s },  { "\"\\\\\"", "\\"s },
 		{ "\"\\/\"", "/"s },  { "\"\\\"\"", "\""s }, { "\"\\x13\\xdc\"", "\x13\xdc"s },
@@ -89,11 +89,11 @@ input_set_type<std::string> const string_constant_input_set = []() -> input_set_
 	};
 }();
 
-bool string_constant() {
-	return run_ast_test(rule::string_constant, string_constant_input_set);
+bool stringConstant() {
+	return runAstTest(rule::string_constant, StringConstantInputSet);
 }
 
-input_set_type<ast::scalar> const scalar_input_set = {
+InputSet<ast::scalar> const scalarInputSet = {
 	{ "1.0", ast::scalar(1.0) }, // double
 	{ "10", ast::scalar(uint64_t(10)) }, // uint64
 	{ "-10.0", ast::scalar(-10.0) }, // double
@@ -111,20 +111,20 @@ input_set_type<ast::scalar> const scalar_input_set = {
 };
 
 bool scalar() {
-	return run_ast_test(rule::scalar, scalar_input_set);
+	return runAstTest(rule::scalar, scalarInputSet);
 }
 
 // reuse scalar/string_constant test input for single value test
-input_set_type<ast::single_value> const single_value_input_set = []() -> input_set_type<ast::single_value> {
-	auto ret = input_set_type<ast::single_value>();
-	for (auto const& [input, expected] : string_constant_input_set) {
+InputSet<ast::single_value> const singleValueInputSet = []() -> InputSet<ast::single_value> {
+	auto ret = InputSet<ast::single_value>();
+	for (auto const& [input, expected] : StringConstantInputSet) {
 		if (expected) {
 			ret.emplace_back(input, *expected);
 		} else {
 			ret.emplace_back(input, boost::none);
 		}
 	}
-	for (auto const& [input, expected] : scalar_input_set) {
+	for (auto const& [input, expected] : scalarInputSet) {
 		if (expected) {
 			ret.emplace_back(input, *expected);
 		} else {
@@ -134,13 +134,13 @@ input_set_type<ast::single_value> const single_value_input_set = []() -> input_s
 	return ret;
 }();
 
-bool single_value() {
-	return run_ast_test(rule::single_value, single_value_input_set);
+bool singleValue() {
+	return runAstTest(rule::single_value, singleValueInputSet);
 }
 
-input_set_type<ast::metadatum> const metadatum_input_set = []() {
+InputSet<ast::metadatum> const metadatumInputSet = []() {
 	using namespace std::string_literals;
-	auto ret = input_set_type<ast::metadatum>{
+	auto ret = InputSet<ast::metadatum>{
 		{ "attr", ast::metadatum{ "attr", boost::none } },
 		{ "abc: \"def\"", ast::metadatum{ "abc", ast::single_value("def"s) } },
 		{ "id: 42", ast::metadatum{ "id", ast::single_value(ast::scalar(uint64_t(42))) } },
@@ -153,41 +153,12 @@ input_set_type<ast::metadatum> const metadatum_input_set = []() {
 }();
 
 bool metadatum() {
-	return run_ast_test(rule::metadatum, metadatum_input_set, [](const ast::metadatum& lhs, const ast::metadatum& rhs) {
-		auto const& [l_name, l_value] = lhs;
-		auto const& [r_name, r_value] = rhs;
-		if (l_name != r_name) {
-			std::cout << "attribute names mismatch: " << std::quoted(l_name) << " vs " << std::quoted(r_name) << "\n";
-			return false;
-		}
-		// not C++ parlance "lvalue", just left-hand value.
-		auto const l_value_set = bool(l_value);
-		auto const r_value_set = bool(r_value);
-		if (l_value_set != r_value_set) {
-			std::cout << "value availability mismatch: " << l_value_set << " vs " << r_value_set << "\n";
-			return false;
-		}
-		if (!l_value_set && !r_value_set) {
-			return true;
-		}
-		auto const& l_value_actual = *l_value;
-		auto const& r_value_actual = *r_value;
-		if (l_value_actual.get().which() != r_value_actual.get().which()) {
-			std::cout << "value variant type mismatch: " << l_value_actual.get().which() << " vs "
-			          << r_value_actual.get().which() << "\n";
-			return false;
-		}
-		if (l_value_actual.get() != r_value_actual.get()) {
-			std::cout << "unmatched variant values\n";
-			return false;
-		}
-		return true;
-	});
+	return runAstTest(rule::metadatum, metadatumInputSet);
 }
 
-input_set_type<ast::metadata> const metadata_input_set = []() {
+InputSet<ast::metadata> const metadataInputSet = []() {
 	using namespace std::string_literals;
-	input_set_type<ast::metadata> ret = {
+	InputSet<ast::metadata> ret = {
 		{
 		    "(a: 10, b: \"c\", d, e: true)"s,
 		    ast::metadata{ { "a", ast::single_value(ast::scalar(uint64_t(10))) },
@@ -216,12 +187,12 @@ input_set_type<ast::metadata> const metadata_input_set = []() {
 }();
 
 bool metadata() {
-	return run_ast_test(rule::metadata, metadata_input_set);
+	return runAstTest(rule::metadata, metadataInputSet);
 }
 
-input_set_type<ast::scalar_typeinfo> scalar_typeinfo_input_set = []() {
+InputSet<ast::scalar_typeinfo> scalarTypeInfoInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::scalar_typeinfo>{
+	return InputSet<ast::scalar_typeinfo>{
 		{
 		    "int = 10",
 		    ast::scalar_typeinfo{ ast::scalar_type<int32_t>{ 10 } },
@@ -253,13 +224,13 @@ input_set_type<ast::scalar_typeinfo> scalar_typeinfo_input_set = []() {
 	};
 }();
 
-bool scalar_typeinfo() {
-	return run_ast_test(rule::scalar_typeinfo, scalar_typeinfo_input_set);
+bool scalarTypeInfo() {
+	return runAstTest(rule::scalar_typeinfo, scalarTypeInfoInputSet);
 }
 
-input_set_type<ast::object_typeinfo> object_typeinfo_input_set = []() {
+InputSet<ast::object_typeinfo> objectTypeInfoInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::object_typeinfo>{
+	return InputSet<ast::object_typeinfo>{
 		{
 		    "string",
 		    ast::object_typeinfo{ ast::type_tag<std::string>{} },
@@ -279,12 +250,12 @@ input_set_type<ast::object_typeinfo> object_typeinfo_input_set = []() {
 	};
 }();
 
-bool object_typeinfo() {
-	return run_ast_test(rule::object_typeinfo, object_typeinfo_input_set);
+bool objectTypeInfo() {
+	return runAstTest(rule::object_typeinfo, objectTypeInfoInputSet);
 }
 
-input_set_type<ast::vector_typeinfo> vector_typeinfo_input_set = []() {
-	return input_set_type<ast::vector_typeinfo>{
+InputSet<ast::vector_typeinfo> vectorTypeInfoInputSet = []() {
+	return InputSet<ast::vector_typeinfo>{
 		{
 		    "[string]",
 		    ast::vector_typeinfo{ ast::type_tag<std::string>{} },
@@ -372,13 +343,13 @@ input_set_type<ast::vector_typeinfo> vector_typeinfo_input_set = []() {
 	};
 }();
 
-bool vector_typeinfo() {
-	return run_ast_test(rule::vector_typeinfo, vector_typeinfo_input_set);
+bool vectorTypeInfo() {
+	return runAstTest(rule::vector_typeinfo, vectorTypeInfoInputSet);
 }
 
-input_set_type<ast::table_field_decl> table_field_decl_input_set = []() {
+InputSet<ast::table_field_decl> tableFieldDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::table_field_decl>{
+	return InputSet<ast::table_field_decl>{
 		{
 		    "a : int = 10;",
 		    ast::table_field_decl{
@@ -398,13 +369,13 @@ input_set_type<ast::table_field_decl> table_field_decl_input_set = []() {
 	};
 }();
 
-bool table_field_decl() {
-	return run_ast_test(rule::table_field_decl, table_field_decl_input_set);
+bool tableFieldDecl() {
+	return runAstTest(rule::table_field_decl, tableFieldDeclInputSet);
 }
 
-input_set_type<ast::table_decl> table_decl_input_set = []() {
+InputSet<ast::table_decl> tableDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::table_decl>{
+	return InputSet<ast::table_decl>{
 		{
 		    "table Object (id: 10) {"
 		    "\n"
@@ -451,13 +422,13 @@ input_set_type<ast::table_decl> table_decl_input_set = []() {
 	};
 }();
 
-bool table_decl() {
-	return run_ast_test(rule::table_decl, table_decl_input_set);
+bool tableDecl() {
+	return runAstTest(rule::table_decl, tableDeclInputSet);
 }
 
-input_set_type<ast::struct_field_decl> struct_field_decl_input_set = []() {
+InputSet<ast::struct_field_decl> structFieldDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::struct_field_decl>{
+	return InputSet<ast::struct_field_decl>{
 		{
 		    "a : int = 10;",
 		    boost::none, // struct fields cannot have defaults
@@ -485,13 +456,13 @@ input_set_type<ast::struct_field_decl> struct_field_decl_input_set = []() {
 	};
 }();
 
-bool struct_field_decl() {
-	return run_ast_test(rule::struct_field_decl, struct_field_decl_input_set);
+bool structFieldDecl() {
+	return runAstTest(rule::struct_field_decl, structFieldDeclInputSet);
 }
 
-input_set_type<ast::struct_decl> struct_decl_input_set = []() {
+InputSet<ast::struct_decl> structDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::struct_decl>{
+	return InputSet<ast::struct_decl>{
 		{
 		    "struct SomeStruct (id: 10) {"
 		    "\n"
@@ -531,13 +502,13 @@ input_set_type<ast::struct_decl> struct_decl_input_set = []() {
 	};
 }();
 
-bool struct_decl() {
-	return run_ast_test(rule::struct_decl, struct_decl_input_set);
+bool structDecl() {
+	return runAstTest(rule::struct_decl, structDeclInputSet);
 }
 
-input_set_type<ast::enumval_decl> enumval_decl_input_set = []() {
+InputSet<ast::enumval_decl> enumValDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::enumval_decl>{
+	return InputSet<ast::enumval_decl>{
 		{ "Red = 1", ast::enumval_decl{ "Red", ast::enumval_variant(uint64_t(1)) } },
 		{ "Blue", ast::enumval_decl{ "Blue", boost::none } },
 		{ "Yellow = -3", ast::enumval_decl{ "Yellow", ast::enumval_variant(int64_t(-3)) } },
@@ -545,13 +516,13 @@ input_set_type<ast::enumval_decl> enumval_decl_input_set = []() {
 	};
 }();
 
-bool enumval_decl() {
-	return run_ast_test(rule::enumval_decl, enumval_decl_input_set);
+bool enumValDecl() {
+	return runAstTest(rule::enumval_decl, enumValDeclInputSet);
 }
 
-input_set_type<ast::enum_decl> enum_decl_input_set = []() {
+InputSet<ast::enum_decl> enumDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::enum_decl>{
+	return InputSet<ast::enum_decl>{
 		{
 		    "enum Colors : int (deprecated) {"
 		    "\n"
@@ -593,13 +564,13 @@ input_set_type<ast::enum_decl> enum_decl_input_set = []() {
 	};
 }();
 
-bool enum_decl() {
-	return run_ast_test(rule::enum_decl, enum_decl_input_set);
+bool enumDecl() {
+	return runAstTest(rule::enum_decl, enumDeclInputSet);
 }
 
-input_set_type<ast::union_subtype_decl> union_subtype_decl_input_set = []() {
+InputSet<ast::union_subtype_decl> unionSubTypeDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::union_subtype_decl>{
+	return InputSet<ast::union_subtype_decl>{
 		{ "SomeAlias: SomeType", ast::union_subtype_decl{ "SomeType", "SomeAlias"s } },
 		{ "SomeType", ast::union_subtype_decl{ "SomeType", boost::none } },
 		{ "SomeAlias: SomeType = SomeValue", boost::none }, // union subtypes cannot default to a value
@@ -607,13 +578,13 @@ input_set_type<ast::union_subtype_decl> union_subtype_decl_input_set = []() {
 	};
 }();
 
-bool union_subtype_decl() {
-	return run_ast_test(rule::union_subtype_decl, union_subtype_decl_input_set);
+bool unionSubTypeDecl() {
+	return runAstTest(rule::union_subtype_decl, unionSubTypeDeclInputSet);
 }
 
-input_set_type<ast::union_decl> union_decl_input_set = []() {
+InputSet<ast::union_decl> unionDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::union_decl>{
+	return InputSet<ast::union_decl>{
 		{
 		    "union U (priority: 1, deprecated) {"
 		    "\n"
@@ -643,13 +614,13 @@ input_set_type<ast::union_decl> union_decl_input_set = []() {
 	};
 }();
 
-bool union_decl() {
-	return run_ast_test(rule::union_decl, union_decl_input_set);
+bool unionDecl() {
+	return runAstTest(rule::union_decl, unionDeclInputSet);
 }
 
-input_set_type<ast::include> include_input_set = []() {
+InputSet<ast::include> includeInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::include>{
+	return InputSet<ast::include>{
 		{ "include \"schema.fbs\";", ast::include{ "schema.fbs" } },
 		{ "include schema.fbs;", boost::none },
 		{ "include \"\";", ast::include{ "" } }, // empty include file is not filtered out at parser level
@@ -657,12 +628,12 @@ input_set_type<ast::include> include_input_set = []() {
 }();
 
 bool include() {
-	return run_ast_test(rule::include, include_input_set);
+	return runAstTest(rule::include, includeInputSet);
 }
 
-input_set_type<ast::file_identifier_decl> file_identifier_decl_input_set = []() {
+InputSet<ast::file_identifier_decl> fileIdentifierDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::file_identifier_decl>{
+	return InputSet<ast::file_identifier_decl>{
 		{ "file_identifier \"Zxvf\";", ast::file_identifier_decl{ "Zxvf" } },
 		{ "file_identifier \"Zxf\";", boost::none }, // file id must be exactly 4 characters
 		{ "file_identifier \"Zxvfr\";", boost::none }, // file id must be exactly 4 characters
@@ -673,26 +644,26 @@ input_set_type<ast::file_identifier_decl> file_identifier_decl_input_set = []() 
 	};
 }();
 
-bool file_identifier_decl() {
-	return run_ast_test(rule::file_identifier_decl, file_identifier_decl_input_set);
+bool fileIdentifierDecl() {
+	return runAstTest(rule::file_identifier_decl, fileIdentifierDeclInputSet);
 }
 
-input_set_type<ast::file_extension_decl> file_extension_decl_input_set = []() {
+InputSet<ast::file_extension_decl> fileExtensionDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::file_extension_decl>{
+	return InputSet<ast::file_extension_decl>{
 		{ "file_extension \"fbs\";", ast::file_extension_decl{ "fbs" } },
 		{ "file_extension \"bin\";", ast::file_extension_decl{ "bin" } },
 		{ "file_extension fbs;", boost::none }, // needs double quote
 	};
 }();
 
-bool file_extension_decl() {
-	return run_ast_test(rule::file_extension_decl, file_extension_decl_input_set);
+bool fileExtensionDecl() {
+	return runAstTest(rule::file_extension_decl, fileExtensionDeclInputSet);
 }
 
-input_set_type<ast::namespace_decl> namespace_decl_input_set = []() {
+InputSet<ast::namespace_decl> namespaceDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::namespace_decl>{
+	return InputSet<ast::namespace_decl>{
 		{ "namespace FlatBuffers;", ast::namespace_decl{ { "FlatBuffers" } } },
 		{ "namespace FlatBuffers.Schema;", ast::namespace_decl{ { "FlatBuffers", "Schema" } } },
 		{ "namespace A.B.C;", ast::namespace_decl{ { "A", "B", "C" } } },
@@ -706,13 +677,13 @@ input_set_type<ast::namespace_decl> namespace_decl_input_set = []() {
 	};
 }();
 
-bool namespace_decl() {
-	return run_ast_test(rule::namespace_decl, namespace_decl_input_set);
+bool namespaceDecl() {
+	return runAstTest(rule::namespace_decl, namespaceDeclInputSet);
 }
 
-input_set_type<ast::attribute_decl> attribute_decl_input_set = []() {
+InputSet<ast::attribute_decl> attributeDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::attribute_decl>{
+	return InputSet<ast::attribute_decl>{
 		{ "attribute \"attr\";", ast::attribute_decl{ "attr" } },
 		{ "attribute attr;", ast::attribute_decl{ "attr" } },
 		{ "attribute \"_Attr\";", ast::attribute_decl{ "_Attr" } },
@@ -724,13 +695,13 @@ input_set_type<ast::attribute_decl> attribute_decl_input_set = []() {
 	};
 }();
 
-bool attribute_decl() {
-	return run_ast_test(rule::attribute_decl, attribute_decl_input_set);
+bool attributeDecl() {
+	return runAstTest(rule::attribute_decl, attributeDeclInputSet);
 }
 
-input_set_type<ast::root_type_decl> root_type_decl_input_set = []() {
+InputSet<ast::root_type_decl> rootTypeDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::root_type_decl>{
+	return InputSet<ast::root_type_decl>{
 		{ "root_type MyRoot;", ast::root_type_decl{ "MyRoot" } },
 		{ "root_type _MyRoot;", ast::root_type_decl{ "_MyRoot" } },
 		{ "root_type 1Root;", boost::none },
@@ -738,13 +709,13 @@ input_set_type<ast::root_type_decl> root_type_decl_input_set = []() {
 	};
 }();
 
-bool root_type_decl() {
-	return run_ast_test(rule::root_type_decl, root_type_decl_input_set);
+bool rootTypeDecl() {
+	return runAstTest(rule::root_type_decl, rootTypeDeclInputSet);
 }
 
-input_set_type<ast::rpc_method_decl> rpc_method_decl_input_set = []() {
+InputSet<ast::rpc_method_decl> rpcMethodDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::rpc_method_decl>{
+	return InputSet<ast::rpc_method_decl>{
 		{
 		    "Service(Request): Response;",
 		    ast::rpc_method_decl{ "Service", "Request", "Response", boost::none },
@@ -761,13 +732,13 @@ input_set_type<ast::rpc_method_decl> rpc_method_decl_input_set = []() {
 	};
 }();
 
-bool rpc_method_decl() {
-	return run_ast_test(rule::rpc_method_decl, rpc_method_decl_input_set);
+bool rpcMethodDecl() {
+	return runAstTest(rule::rpc_method_decl, rpcMethodDeclInputSet);
 }
 
-input_set_type<ast::rpc_decl> rpc_decl_input_set = []() {
+InputSet<ast::rpc_decl> rpcDeclInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::rpc_decl>{
+	return InputSet<ast::rpc_decl>{
 		{
 		    "rpc_service Service {"
 		    "\n"
@@ -792,13 +763,13 @@ input_set_type<ast::rpc_decl> rpc_decl_input_set = []() {
 	};
 }();
 
-bool rpc_decl() {
-	return run_ast_test(rule::rpc_decl, rpc_decl_input_set);
+bool rpcDecl() {
+	return runAstTest(rule::rpc_decl, rpcDeclInputSet);
 }
 
-input_set_type<ast::schema> schema_input_set = []() {
+InputSet<ast::schema> schemaInputSet = []() {
 	using namespace std::string_literals;
-	return input_set_type<ast::schema>{
+	return InputSet<ast::schema>{
 		{
 		    R"(
 include "common.fbs";
@@ -955,37 +926,37 @@ root_type Monster;
 }();
 
 bool schema() {
-	return run_ast_test(rule::schema, schema_input_set);
+	return runAstTest(rule::schema, schemaInputSet);
 }
 
 } // namespace test
 
 int main() {
 	auto ok = true;
-	ok = ok && test::string_constant();
+	ok = ok && test::stringConstant();
 	ok = ok && test::scalar();
-	ok = ok && test::single_value();
+	ok = ok && test::singleValue();
 	ok = ok && test::metadatum();
 	ok = ok && test::metadata();
-	ok = ok && test::scalar_typeinfo();
-	ok = ok && test::object_typeinfo();
-	ok = ok && test::vector_typeinfo();
-	ok = ok && test::table_field_decl();
-	ok = ok && test::table_decl();
-	ok = ok && test::struct_field_decl();
-	ok = ok && test::struct_decl();
-	ok = ok && test::enumval_decl();
-	ok = ok && test::enum_decl();
-	ok = ok && test::union_subtype_decl();
-	ok = ok && test::union_decl();
+	ok = ok && test::scalarTypeInfo();
+	ok = ok && test::objectTypeInfo();
+	ok = ok && test::vectorTypeInfo();
+	ok = ok && test::tableFieldDecl();
+	ok = ok && test::tableDecl();
+	ok = ok && test::structFieldDecl();
+	ok = ok && test::structDecl();
+	ok = ok && test::enumValDecl();
+	ok = ok && test::enumDecl();
+	ok = ok && test::unionSubTypeDecl();
+	ok = ok && test::unionDecl();
 	ok = ok && test::include();
-	ok = ok && test::file_identifier_decl();
-	ok = ok && test::file_extension_decl();
-	ok = ok && test::namespace_decl();
-	ok = ok && test::attribute_decl();
-	ok = ok && test::root_type_decl();
-	ok = ok && test::rpc_method_decl();
-	ok = ok && test::rpc_decl();
+	ok = ok && test::fileIdentifierDecl();
+	ok = ok && test::fileExtensionDecl();
+	ok = ok && test::namespaceDecl();
+	ok = ok && test::attributeDecl();
+	ok = ok && test::rootTypeDecl();
+	ok = ok && test::rpcMethodDecl();
+	ok = ok && test::rpcDecl();
 	ok = ok && test::schema();
 	if (!ok) {
 		std::cout << "TEST FAILED\n";
