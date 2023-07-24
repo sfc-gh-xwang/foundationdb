@@ -175,7 +175,7 @@ set(SEED "0x${SEED_}" CACHE STRING "Random seed for testing")
 
 include(CompileBoost)
 include(GetMsgpack)
-add_subdirectory(api-generator)
+add_subdirectory(apigen)
 add_subdirectory(contrib)
 add_subdirectory(flow)
 add_subdirectory(fdbrpc)
