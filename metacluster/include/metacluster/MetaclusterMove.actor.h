@@ -809,17 +809,16 @@ struct SwitchTenantMovementImpl {
 		return false;
 	}
 
-	ACTOR static Future<RangeReadResult> readTenantData(Reference<ITenant> tenant,
+	ACTOR static Future<RangeReadResult> readTenantData(Reference<ITransaction> tr,
 	                                                    KeyRef begin,
 	                                                    KeyRef end,
 	                                                    int64_t limit,
-	                                                    ThreadFuture<RangeReadResult> resultFuture) {
-		state Reference<ITransaction> tr = tenant->createTransaction();
+	                                                    ThreadFuture<RangeReadResult>* resultFuture) {
 		loop {
 			try {
 				tr->setOption(FDBTransactionOptions::Option::LOCK_AWARE);
-				resultFuture = tr->getRange(KeyRangeRef(begin, end), limit);
-				RangeReadResult result = wait(safeThreadFutureToFuture(resultFuture));
+				*resultFuture = tr->getRange(KeyRangeRef(begin, end), limit);
+				RangeReadResult result = wait(safeThreadFutureToFuture(*resultFuture));
 				return result;
 			} catch (Error& e) {
 				wait(safeThreadFutureToFuture(tr->onError(e)));
@@ -827,9 +826,12 @@ struct SwitchTenantMovementImpl {
 		}
 	}
 
-	ACTOR static Future<Void> checkTenantData(SwitchTenantMovementImpl* self, TenantName tName) {
+	ACTOR static Future<Void> checkTenantData(SwitchTenantMovementImpl* self, TenantName tenantName) {
+		state TenantName tName = tenantName;
 		state Reference<ITenant> srcTenant = self->srcCtx.dataClusterDb->openTenant(tName);
 		state Reference<ITenant> dstTenant = self->dstCtx.dataClusterDb->openTenant(tName);
+		state Reference<ITransaction> srcTr = srcTenant->createTransaction();
+		state Reference<ITransaction> dstTr = dstTenant->createTransaction();
 
 		state KeyRef begin = ""_sr;
 		state KeyRef end = "\xff"_sr;
@@ -842,8 +844,10 @@ struct SwitchTenantMovementImpl {
 		state RangeReadResult dstRange;
 
 		loop {
-			wait(store(srcRange, readTenantData(srcTenant, begin, end, limit, resultFutureSrc)) &&
-			     store(dstRange, readTenantData(dstTenant, begin, end, limit, resultFutureDst)));
+			srcTr->reset();
+			dstTr->reset();
+			wait(store(srcRange, readTenantData(srcTr, begin, end, limit, &resultFutureSrc)) &&
+			     store(dstRange, readTenantData(dstTr, begin, end, limit, &resultFutureDst)));
 			if (srcRange != dstRange) {
 				TraceEvent("TenantMoveSwitchDataMismatch")
 				    .detail("TenantName", tName)
@@ -867,8 +871,12 @@ struct SwitchTenantMovementImpl {
 
 	ACTOR static Future<Void> checkAllTenantData(SwitchTenantMovementImpl* self) {
 		std::vector<Future<Void>> checkFutures;
-		for (const auto& tenantPair : self->tenantsInGroup) {
-			checkFutures.push_back(checkTenantData(self, tenantPair.first));
+		std::vector<TenantName> tNames(self->tenantsInGroup.size());
+		int index = 0;
+		int len = self->tenantsInGroup.size();
+		for (; index < len; index++) {
+			tNames[index] = self->tenantsInGroup[index].first;
+			checkFutures.push_back(checkTenantData(self, tNames[index]));
 		}
 		wait(waitForAll(checkFutures));
 		return Void();
