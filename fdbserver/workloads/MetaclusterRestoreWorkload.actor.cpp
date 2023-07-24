@@ -253,23 +253,34 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 	                                             int simultaneousRestoreCount,
 	                                             MetaclusterRestoreWorkload* self) {
 		state FileBackupAgent backupAgent;
-		state Standalone<VectorRef<KeyRangeRef>> backupRanges;
 		state metacluster::ForceReuseTenantIdPrefix forceReuseTenantIdPrefix(deterministicRandom()->coinflip());
 		state metacluster::ForceDeleteMissingTenants forceDeleteMissingTenants(deterministicRandom()->coinflip());
-		addDefaultBackupRanges(backupRanges);
+
+		Standalone<VectorRef<KeyRangeRef>> allBackupRanges;
+		addDefaultBackupRanges(allBackupRanges);
 
 		TraceEvent("MetaclusterRestoreWorkloadClearDatabase").detail("ClusterName", clusterName);
-		wait(runTransaction(dataDb.getReference(),
-		                    [backupRanges = backupRanges](Reference<ReadYourWritesTransaction> tr) {
-			                    tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			                    for (auto range : backupRanges) {
-				                    tr->clear(range);
-			                    }
-			                    return Future<Void>(Void());
-		                    }));
+		wait(runTransaction(dataDb.getReference(), [allBackupRanges](Reference<ReadYourWritesTransaction> tr) {
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			for (auto range : allBackupRanges) {
+				tr->clear(range);
+			}
+			return Future<Void>(Void());
+		}));
 
 		TraceEvent("MetaclusterRestoreWorkloadRestoreCluster").detail("ClusterName", clusterName);
-		wait(success(backupAgent.restore(dataDb, dataDb, clusterName, StringRef(backupUrl), {}, backupRanges)));
+		wait(success(backupAgent.restore(
+		    dataDb, dataDb, clusterName.withSuffix("_system"_sr), StringRef(backupUrl), {}, getSystemBackupRanges())));
+
+		wait(success(backupAgent.restore(dataDb,
+		                                 dataDb,
+		                                 clusterName,
+		                                 StringRef(backupUrl),
+		                                 {},
+		                                 WaitForComplete::True,
+		                                 ::invalidVersion,
+		                                 Verbose::True,
+		                                 normalKeys)));
 
 		state std::vector<std::string> messages;
 		if (addToMetacluster) {
