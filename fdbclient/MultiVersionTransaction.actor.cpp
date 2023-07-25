@@ -1672,7 +1672,7 @@ void MultiVersionTransaction::setOption(FDBTransactionOptions::Option option, Op
 		throw invalid_option();
 	}
 
-	if (MultiVersionApi::api->getApiVersion().hasPersistentOptions() && itr->second.persistent) {
+	if (itr->second.persistent) {
 		if (itr->second.sensitive)
 			sensitivePersistentOptions.emplace_back(option, value.castTo<WipedString>());
 		else
@@ -2428,7 +2428,7 @@ void MultiVersionDatabase::DatabaseState::protocolVersionChanged(ProtocolVersion
 	    .detail("OldProtocolVersion", dbProtocolVersion);
 	// When the protocol version changes, clear the corresponding entry in the shared state map
 	// so it can be re-initialized. Only do so if there was a valid previous protocol version.
-	if (dbProtocolVersion.present() && MultiVersionApi::api->getApiVersion().hasClusterSharedStateMap()) {
+	if (dbProtocolVersion.present()) {
 		MultiVersionApi::api->clearClusterSharedStateMapEntry(clusterId, dbProtocolVersion.get());
 	}
 
@@ -2458,22 +2458,7 @@ void MultiVersionDatabase::DatabaseState::protocolVersionChanged(ProtocolVersion
 		ASSERT(false);
 	}
 
-	if (client->external && !MultiVersionApi::api->getApiVersion().hasInlineUpdateDatabase()) {
-		// Old API versions return a future when creating the database, so we need to wait for it
-		Reference<DatabaseState> self = Reference<DatabaseState>::addRef(this);
-		dbReady = mapThreadFuture<Void, Void>(
-		    newDb.castTo<DLDatabase>()->onReady(), [self, newDb, client](ErrorOr<Void> ready) {
-			    if (!ready.isError()) {
-				    onMainThreadVoid([self, newDb, client]() { self->updateDatabase(newDb, client); });
-			    } else {
-				    onMainThreadVoid(
-				        [self, client]() { self->updateDatabase(Reference<IDatabase>(), Reference<ClientInfo>()); });
-			    }
-			    return ready;
-		    });
-	} else {
-		updateDatabase(newDb, client);
-	}
+	updateDatabase(newDb, client);
 }
 
 // Replaces the active database connection with a new one. Must be called from the main thread.
@@ -2529,7 +2514,7 @@ void MultiVersionDatabase::DatabaseState::updateDatabase(Reference<IDatabase> ne
 	// state. Avoid updating the shared state if the database is a
 	// configuration database, because a configuration database does not have
 	// access to typical system keys and does not need to be updated.
-	if (newDb && MultiVersionApi::api->getApiVersion().hasClusterSharedStateMap() && !isConfigDB) {
+	if (newDb && !isConfigDB) {
 		Future<std::string> updateResult =
 		    MultiVersionApi::api->updateClusterSharedStateMap(connectionRecord, dbProtocolVersion.get(), newDb);
 		sharedStateUpdater = map(errorOr(updateResult), [this, newDb](ErrorOr<std::string> result) {
@@ -3174,10 +3159,7 @@ void MultiVersionApi::setupNetwork() {
 			    !ignoreExternalClientFailures);
 
 			std::string baseTraceFileId;
-			if (apiVersion.hasTraceFileIdentifier()) {
-				// TRACE_FILE_IDENTIFIER option is supported since 6.3
-				baseTraceFileId = traceFileIdentifier.empty() ? format("%d", getpid()) : traceFileIdentifier;
-			}
+			baseTraceFileId = traceFileIdentifier.empty() ? format("%d", getpid()) : traceFileIdentifier;
 
 			MutexHolder holder(lock);
 			runOnExternalClientsAllThreads(

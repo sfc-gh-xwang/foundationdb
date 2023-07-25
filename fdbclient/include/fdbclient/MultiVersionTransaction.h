@@ -1067,7 +1067,6 @@ public:
 		Error initializationError;
 
 		ThreadFuture<Void> changed;
-		ThreadFuture<Void> dbReady;
 		ThreadFuture<Void> protocolVersionMonitor;
 
 		Future<Void> sharedStateUpdater;
