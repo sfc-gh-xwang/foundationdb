@@ -24,7 +24,6 @@
 #include "fdbserver/workloads/BulkSetup.actor.h"
 #include "fdbclient/ReadYourWrites.h"
 #include "fdbserver/workloads/workloads.actor.h"
-#include "flow/ApiVersion.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 struct VersionStampWorkload : TestWorkload {
@@ -42,9 +41,7 @@ struct VersionStampWorkload : TestWorkload {
 	bool validateExtraDB;
 	std::map<Key, std::vector<std::pair<Version, Standalone<StringRef>>>> key_commit;
 	std::map<Key, std::vector<std::pair<Version, Standalone<StringRef>>>> versionStampKey_commit;
-	int apiVersion;
 	bool soleOwnerOfMetadataVersionKey;
-	bool allowMetadataVersionKey;
 
 	VersionStampWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
 		testDuration = getOption(options, "testDuration"_sr, 60.0);
@@ -62,30 +59,13 @@ struct VersionStampWorkload : TestWorkload {
 	Future<Void> setup(Database const& cx) override { return Void(); }
 
 	Future<Void> start(Database const& cx) override {
-		// Versionstamp behavior changed starting with API version 520, so
-		// choose a version to check compatibility.
-		double choice = deterministicRandom()->random01();
-		if (choice < 0.1) {
-			apiVersion = 500;
-		} else if (choice < 0.2) {
-			apiVersion = 510;
-		} else if (choice < 0.3) {
-			apiVersion = 520;
-		} else {
-			apiVersion = ApiVersion::LATEST_VERSION;
-		}
-		TraceEvent("VersionStampApiVersion").detail("ApiVersion", apiVersion);
-
-		allowMetadataVersionKey = apiVersion >= 610 || apiVersion == ApiVersion::LATEST_VERSION;
-
-		cx->apiVersion = ApiVersion(apiVersion);
 		if (clientId == 0)
 			return _start(cx, this, 1 / transactionsPerSecond);
 		return Void();
 	}
 
 	Key keyForIndex(uint64_t index) {
-		if (allowMetadataVersionKey && index == 0) {
+		if (index == 0) {
 			return metadataVersionKey;
 		}
 
@@ -99,8 +79,8 @@ struct VersionStampWorkload : TestWorkload {
 		return result.withPrefix(vsValuePrefix);
 	}
 
-	Key versionStampKeyForIndex(uint64_t index, bool oldVSFormat) {
-		const size_t keySize = 38 + (oldVSFormat ? 0 : 2);
+	Key versionStampKeyForIndex(uint64_t index) {
+		const size_t keySize = 40;
 		Key result = makeString(keySize);
 		uint8_t* data = mutateString(result);
 		memset(&data[0], 'V', keySize);
@@ -108,15 +88,11 @@ struct VersionStampWorkload : TestWorkload {
 		double d = double(index) / nodeCount;
 		emplaceIndex(data, 4, *(int64_t*)&d);
 
-		if (oldVSFormat) {
-			data[keySize - 2] = 24 + vsKeyPrefix.size();
-			data[keySize - 1] = 0;
-		} else {
-			data[keySize - 4] = 24 + vsKeyPrefix.size();
-			data[keySize - 3] = 0;
-			data[keySize - 2] = 0;
-			data[keySize - 1] = 0;
-		}
+		data[keySize - 4] = 24 + vsKeyPrefix.size();
+		data[keySize - 3] = 0;
+		data[keySize - 2] = 0;
+		data[keySize - 1] = 0;
+
 		return result.withPrefix(vsKeyPrefix);
 	}
 
@@ -195,7 +171,7 @@ struct VersionStampWorkload : TestWorkload {
 				RangeReadResult result_ = wait(tr.getRange(
 				    KeyRangeRef(self->vsValuePrefix, endOfRange(self->vsValuePrefix)), self->nodeCount + 1));
 				result = result_;
-				if (self->allowMetadataVersionKey && self->key_commit.count(metadataVersionKey)) {
+				if (self->key_commit.count(metadataVersionKey)) {
 					ValueReadResult mVal = wait(tr.get(metadataVersionKey));
 					if (mVal.present()) {
 						result.push_back_deep(result.arena(), KeyValueRef(metadataVersionKey, mVal.get()));
@@ -320,14 +296,13 @@ struct VersionStampWorkload : TestWorkload {
 		state Future<Void> metadataWatch = Void();
 		loop {
 			wait(poisson(&lastTime, delay));
-			bool oldVSFormat = !cx->apiVersionAtLeast(520);
 
 			state bool cx_is_primary = true;
 			state ReadYourWritesTransaction tr(cx);
 			state Key key = self->keyForIndex(deterministicRandom()->randomInt(0, self->nodeCount));
 			state Value value(std::string(deterministicRandom()->randomInt(10, 100), 'x'));
 			state Key versionStampKey =
-			    self->versionStampKeyForIndex(deterministicRandom()->randomInt(0, self->nodeCount), oldVSFormat);
+			    self->versionStampKeyForIndex(deterministicRandom()->randomInt(0, self->nodeCount));
 			state StringRef prefix = versionStampKey.substr(0, 20 + self->vsKeyPrefix.size());
 			state Key endOfRange = self->endOfRange(prefix);
 			state KeyRangeRef range(prefix, endOfRange);
@@ -338,8 +313,6 @@ struct VersionStampWorkload : TestWorkload {
 
 			if (key == metadataVersionKey) {
 				value = metadataVersionRequiredValue;
-				versionStampValue = value;
-			} else if (oldVSFormat) {
 				versionStampValue = value;
 			} else {
 				versionStampValue = value.withSuffix("\x00\x00\x00\x00"_sr);
