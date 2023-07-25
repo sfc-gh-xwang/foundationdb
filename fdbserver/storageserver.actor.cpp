@@ -2089,39 +2089,48 @@ void updateProcessStats(StorageServer* self) {
 #endif
 
 // Lightweight blocking function that samples request and log positive safe wait window.
-inline void samplePositiveWaitWindowStats(StorageServer::EmptyVersionStats& stats,
-                                          Version version,
-                                          double versionDecisionTime) {
+inline void sampleNoWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& stats,
+                                               Version version,
+                                               double versionArrivalTime) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return;
 
 	bool popped = false;
-	while (!stats.tlogVersionQueue.empty() && stats.tlogVersionQueue.front().version <= version) {
+	while (!stats.tlogVersionQueue.empty() && stats.tlogVersionQueue.front().version <= version &&
+	       stats.tlogVersionQueue.front().timestamp < versionArrivalTime) {
 		stats.tlogVersionQueue.pop_front();
 		popped = true;
 	}
-	// NOTE: This current approach collects pessimistic statistics
+
+	// It is possible that version queue will append more tlog versions after a client request version came in
+	// In that case, we need to handle the following:
+	// tlog version       100  110  120  130  140       150  160
+	//  req version                                155   |
+	//  req version wait finish                     |    |        155
+	//  sample interval                             |----| (negative)
 	if (!stats.tlogVersionQueue.empty() && (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
-		double emptyVersionSafeWait = versionDecisionTime - stats.tlogVersionQueue.front().timestamp;
-		ASSERT(emptyVersionSafeWait >= 0);
+		double interval = versionArrivalTime - stats.tlogVersionQueue.front().timestamp;
 		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
-			stats.safeWaitWindow.addSample(emptyVersionSafeWait);
+			stats.safeWaitWindow.addSample(interval);
 		}
-		stats.minWaitWindow = std::min(emptyVersionSafeWait, stats.minWaitWindow);
-		stats.minSafeWaitWindow = std::min(emptyVersionSafeWait, stats.minSafeWaitWindow);
-		++stats.positiveSampleNum;
+		stats.minWaitWindow = std::min(interval, stats.minWaitWindow);
+		if (interval > 0) {
+			stats.minSafeWaitWindow = std::min(interval, stats.minSafeWaitWindow);
+			++stats.positiveSampleNum;
+		} else {
+			++stats.negativeSampleNum;
+		}
 	}
 }
 
 // Lightweight blocking function that samples request and log negative wait window adjustments.
-inline void sampleNegativeWaitWindowStats(StorageServer::EmptyVersionStats& stats, double versionArrivalTime) {
+inline void sampleWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& stats, double versionArrivalTime) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return;
 
 	double waitTime = g_network->timer() - versionArrivalTime;
-	ASSERT(waitTime >= 0);
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
 		stats.safeWaitWindow.addSample(-waitTime);
 	}
@@ -2129,22 +2138,24 @@ inline void sampleNegativeWaitWindowStats(StorageServer::EmptyVersionStats& stat
 	++stats.negativeSampleNum;
 }
 
-ACTOR Future<Version> waitForVersionActor(StorageServer* data, Version version, SpanContext spanContext) {
+ACTOR Future<Version> waitForVersionActor(StorageServer* data,
+                                          Version version,
+                                          SpanContext spanContext,
+                                          double versionArrivalTimestamp) {
 	state Span span("SS:WaitForVersion"_loc, spanContext);
-	state double versionDecisionTime = g_network->timer();
 	choose {
 		when(wait(data->version.whenAtLeast(version))) {
 			// FIXME: A bunch of these can block with or without the following delay 0.
 			// wait( delay(0) );  // don't do a whole bunch of these at once
 			if (version < data->oldestVersion.get())
 				throw transaction_too_old(); // just in case
-			sampleNegativeWaitWindowStats(data->emptyVersionWaitMutationStats, versionDecisionTime);
-			sampleNegativeWaitWindowStats(data->emptyVersionWaitNonMutationStats, versionDecisionTime);
+			sampleWaitRequestWaitWindowStats(data->emptyVersionWaitMutationStats, versionArrivalTimestamp);
+			sampleWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, versionArrivalTimestamp);
 			return version;
 		}
 		when(wait(delay(SERVER_KNOBS->FUTURE_VERSION_DELAY))) {
-			sampleNegativeWaitWindowStats(data->emptyVersionWaitMutationStats, versionDecisionTime);
-			sampleNegativeWaitWindowStats(data->emptyVersionWaitNonMutationStats, versionDecisionTime);
+			sampleWaitRequestWaitWindowStats(data->emptyVersionWaitMutationStats, versionArrivalTimestamp);
+			sampleWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, versionArrivalTimestamp);
 			if (deterministicRandom()->random01() < 0.001)
 				TraceEvent(SevWarn, "ShardServerFutureVersion1000x", data->thisServerID)
 				    .detail("Version", version)
@@ -2172,7 +2183,10 @@ Version getLatestCommitVersion(VersionVector& ssLatestCommitVersions, Tag& tag) 
 	return commitVersion;
 }
 
-Future<Version> waitForVersion(StorageServer* data, Version version, SpanContext spanContext) {
+Future<Version> waitForVersion(StorageServer* data,
+                               Version version,
+                               SpanContext spanContext,
+                               double versionArrivalTime) {
 	if (version == latestVersion) {
 		version = std::max(Version(1), data->version.get());
 	}
@@ -2181,25 +2195,8 @@ Future<Version> waitForVersion(StorageServer* data, Version version, SpanContext
 		// TraceEvent(SevDebug, "WFVThrow", data->thisServerID).detail("Version", version).detail("OldestVersion", data->oldestVersion.get());
 		return transaction_too_old();
 	} else if (version <= data->version.get()) {
-		// No need to wait for version
-		double versionDecisionTime = g_network->timer();
-		if (deterministicRandom()->random01() < 0.001) {
-			DisabledTraceEvent(SevDebug, "EnteredSamplePositiveWaitWindowStats1000x", data->thisServerID)
-			    .detail("Version", version)
-			    .detail("ArrivalTime", versionDecisionTime)
-			    .detail("QueueSize", data->emptyVersionWaitMutationStats.tlogVersionQueue.size())
-			    .detail("SampleSize", data->emptyVersionWaitMutationStats.safeWaitWindow.getPopulationSize());
-		}
-		samplePositiveWaitWindowStats(data->emptyVersionWaitMutationStats, version, versionDecisionTime);
-		samplePositiveWaitWindowStats(data->emptyVersionWaitNonMutationStats, version, versionDecisionTime);
-
-		if (deterministicRandom()->random01() < 0.001) {
-			DisabledTraceEvent(SevDebug, "FinishedSamplePositiveWaitWindowStats1000x", data->thisServerID)
-			    .detail("Version", version)
-			    .detail("ArrivalTime", versionDecisionTime)
-			    .detail("QueueSize", data->emptyVersionWaitMutationStats.tlogVersionQueue.size())
-			    .detail("SampleSize", data->emptyVersionWaitMutationStats.safeWaitWindow.getPopulationSize());
-		}
+		sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitMutationStats, version, versionArrivalTime);
+		sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, version, versionArrivalTime);
 		return version;
 	}
 
@@ -2210,17 +2207,18 @@ Future<Version> waitForVersion(StorageServer* data, Version version, SpanContext
 	if (deterministicRandom()->random01() < 0.001) {
 		TraceEvent("WaitForVersion1000x").log();
 	}
-	return waitForVersionActor(data, version, spanContext);
+	return waitForVersionActor(data, version, spanContext, versionArrivalTime);
 }
 
 Future<Version> waitForVersion(StorageServer* data,
                                Version commitVersion,
                                Version readVersion,
-                               SpanContext spanContext) {
+                               SpanContext spanContext,
+                               double versionArrivalTime) {
 	ASSERT(commitVersion == invalidVersion || commitVersion < readVersion);
 
 	if (commitVersion == invalidVersion) {
-		return waitForVersion(data, readVersion, spanContext);
+		return waitForVersion(data, readVersion, spanContext, versionArrivalTime);
 	}
 
 	// This feature should already be disabled everywhere
@@ -2257,7 +2255,8 @@ Future<Version> waitForVersion(StorageServer* data,
 	if (deterministicRandom()->random01() < 0.001) {
 		TraceEvent("WaitForVersion1000x");
 	}
-	return waitForVersionActor(data, std::max(commitVersion, data->oldestVersion.get()), spanContext);
+	return waitForVersionActor(
+	    data, std::max(commitVersion, data->oldestVersion.get()), spanContext, versionArrivalTime);
 }
 
 ACTOR Future<Version> waitForVersionNoTooOld(StorageServer* data, Version version) {
@@ -2382,7 +2381,7 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 
 		state Optional<Value> v;
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext));
+		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext, queueWaitEnd));
 		double versionWaitTime = g_network->timer() - queueWaitEnd;
 
 		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
@@ -4547,7 +4546,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getKeyValues.Before");
 
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context));
+		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context, queueWaitEnd));
 		DisabledTraceEvent("VVV", data->thisServerID)
 		    .detail("Version", version)
 		    .detail("ReqVersion", req.version)
@@ -5732,7 +5731,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getMappedKeyValues.Before");
 		// VERSION_VECTOR change
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context));
+		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context, queueWaitEnd));
 		state double versionWaitTime = g_network->timer() - queueWaitEnd;
 		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
 
@@ -5935,7 +5934,8 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getKeyValuesStream.Before");
 
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context));
+		state Version version =
+		    wait(waitForVersion(data, commitVersion, req.version, span.context, g_network->timer()));
 
 		data->checkTenantEntry(version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
 		if (req.tenantInfo.hasTenant()) {
@@ -6144,7 +6144,7 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 
 	try {
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext));
+		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext, queueWaitEnd));
 		state double versionWaitTime = g_network->timer() - queueWaitEnd;
 		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
 
