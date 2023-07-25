@@ -338,7 +338,7 @@ std::tuple<optional<string>, string, string> runForked(Fn&& fn) {
 			    WIFSIGNALED(status),
 			    WTERMSIG(status)));
 		} else {
-			fmt::print("[DEBUG] CHILD PROCESS RETURNED WITHOUT CRASH\n");
+			// fmt::print("[DEBUG] CHILD PROCESS RETURNED WITHOUT CRASH\n");
 		}
 		// parent process: read back optional<string> whose value is set if something went wrong.
 		auto out = drainPipeFd(childStdout[0]);
@@ -363,11 +363,6 @@ void TestEnv::populateTenants() {
 	tenants.resize(tenantCount);
 	for (auto i = 0; i < tenantCount; i++)
 		tenants[i].first = randomAlnumString<fdb::ByteString>(10, 24);
-	fmt::print(stderr,
-	           "[DEBUG] SETTING UP {} TENANTS FOR TEST {} WITH CONFIG {}\n",
-	           tenantCount,
-	           currentTestCase->name,
-	           shortSummary());
 	boost::process::pstream tenantIdPipe; ///< Child writes, parent reads.
 	auto [exc, out, err] = runForked([this, &tenantIdPipe]() {
 		setNetworkOptionsForAdmin();
@@ -383,7 +378,6 @@ void TestEnv::populateTenants() {
 			    return tr.commit();
 		    },
 		    "PopulateTenants");
-		fmt::print(stderr, "[DEBUG] SUCCESSFULLY CREATED TENANTS\n");
 		for (auto& [tenantName, tenantId] : tenants) {
 			while (true) {
 				auto tenant = db.openTenant(tenantName);
@@ -393,7 +387,6 @@ void TestEnv::populateTenants() {
 				}
 				if (auto err = tenantIdFuture.error()) {
 					if (err.retryable()) {
-						fmt::print("[DEBUG] RETRYABLE ERROR DURING TENANT ID GET: {}\n", err.what());
 						std::this_thread::sleep_for(std::chrono::milliseconds(50));
 						continue;
 					}
@@ -424,8 +417,6 @@ void TestEnv::populateTenants() {
 }
 
 void TestEnv::cleanupDatabase() {
-	fmt::print(
-	    stderr, "[DEBUG] CLEANING UP DATABASE AFTER TEST {} WITH CONFIG {}\n", currentTestCase->name, shortSummary());
 	auto [exc, out, err] = runForked([this]() {
 		setNetworkOptionsForAdmin();
 		auto networkThread = setupAndStartNetworkGuarded();
@@ -474,13 +465,15 @@ bool TestEnv::runTest(const TestCase& t) {
 
 	auto dbCleanupGuard = ScopeExit([this]() { cleanupDatabase(); });
 	if (exc) {
-		fmt::print("TEST FAILED WITH EXCEPTION {}\n", *exc);
+		std::cout << "TEST FAILED WITH FOLLOWING EXCEPTION: " << std::quoted(*exc) << "\n";
 	}
 
-	fmt::print("[[[ BEGIN TEST STDOUT ]]]\n{}\n[[[ END TEST STDOUT ]]]\n"
-	           "[[[ BEGIN TEST STDERR ]]]\n{}\n[[[ END TEST STDERR ]]]\n",
-	           out,
-	           err);
+	if (exc) {
+		if (!out.empty())
+			std::cout << "Test standard output:\n" << std::quoted(out) << "\n";
+		if (!err.empty())
+			std::cout << "Test standard error:\n" << std::quoted(err) << "\n";
+	}
 	return !exc.has_value();
 }
 
@@ -506,7 +499,7 @@ int main(int argc, char** argv) {
 		fmt::print("usage: {} [CONFIG_JSON_STRING] (or feed JSON config through stdin)\n", argv[0]);
 		return 1;
 	}
-	fmt::print(stderr, "[DEBUG]: Starting in {} mode", argc == 1 ? "STDIN" : "CLI_ARG");
+	fmt::print("Starting in {} mode\n", argc == 1 ? "STDIN" : "CLI_ARG");
 	std::string jsonConfig;
 	if (argc == 1) {
 		// take whole stdin as config JSON
@@ -530,14 +523,13 @@ int main(int argc, char** argv) {
 	auto randomSeed = std::time(nullptr);
 	if (env->staticOptions.randomSeed) {
 		randomSeed = *env->staticOptions.randomSeed;
-		fmt::print("RANDOM SEED SET BY OPTION TO {}\n", randomSeed);
+		fmt::print("Random seed set by option to {}\n", randomSeed);
 	} else {
-		fmt::print("RANDOM SEED SET BY CURRENT TIME TO {}\n", randomSeed);
+		fmt::print("Random seed set by current time to {}\n", randomSeed);
 	}
-	fmt::print("{} TEST CASES FOUND{}\n", cbt::testCases.size(), cbt::testCases.empty() ? "" : ":");
+	fmt::print("{} test cases found{}\n", cbt::testCases.size(), cbt::testCases.empty() ? "" : ":");
 	for (const auto& [name, _, __] : cbt::testCases) {
-		fmt::print("    {}\n", name);
-		// fmt::print(stderr, "### {}\n", name);
+		fmt::print("  {}\n", name);
 	}
 
 	std::srand(randomSeed);
@@ -545,14 +537,11 @@ int main(int argc, char** argv) {
 	std::vector<std::pair<const cbt::TestCase*, cbt::TestOptions>> failedCases;
 	do {
 		auto cases = cbt::collectTestCases(*env);
+		fmt::print("Configuration {} [{} cases]\n", env->shortSummaryIterable(), cases.size());
 		if (cases.empty()) {
-			fmt::print("NO TESTS MATCHING CONFIGURATION: {}", env->shortSummary());
 			continue;
-		} else {
-			fmt::print("{} TEST CASES FOUND FOR CONFIGURATION: {}\n", cases.size(), env->shortSummary());
 		}
 		for (auto testCasePtr : cases) {
-			fmt::print("[ RUN      ]\n[ TESTCASE ] {}\n[ CONFIG   ] {}\n", testCasePtr->name, env->shortSummary());
 			auto const timeBegin = std::chrono::steady_clock::now();
 			auto timeEnd = timeBegin;
 			bool ok = true;
@@ -564,25 +553,15 @@ int main(int argc, char** argv) {
 				fmt::print("!!! EXCEPTION DURING TEST: {}\n", e.what());
 				ok = false;
 			}
-			if (!ok) {
-				fmt::print("[   FAILED ] {}: {} ({} ms)\n",
-				           testCasePtr->name,
-				           env->shortSummary(),
-				           diffMillis(timeEnd - timeBegin));
+			fmt::print("  {} {} ({} ms)\n", (ok ? "O" : "X"), testCasePtr->name, diffMillis(timeEnd - timeBegin));
+			if (!ok)
 				failedCases.emplace_back(testCasePtr, *env);
-			} else {
-				fmt::print("[       OK ] {}: {} ({} ms)\n",
-				           testCasePtr->name,
-				           env->shortSummary(),
-				           diffMillis(timeEnd - timeBegin));
-			}
 		}
 	} while ((shiftedTier = env->next()));
 
-	fmt::print(
-	    "TEST {} FOR STATIC CONFIGURATION {}\n", failedCases.empty() ? "OK" : "FAILED", env->shortSummaryStatic());
+	fmt::print("Test {}\n", failedCases.empty() ? "OK" : "FAILED");
 	if (!failedCases.empty()) {
-		fmt::print("FAILED TEST CASES AND CONFIGURATIONS:\n");
+		fmt::print("Failed tests and configurations:\n");
 		for (const auto& [casePtr, options] : failedCases) {
 			fmt::print("  {} {}\n", casePtr->name, options.shortSummaryIterable());
 		}
