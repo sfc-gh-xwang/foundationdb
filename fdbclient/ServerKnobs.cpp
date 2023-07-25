@@ -192,7 +192,14 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 		DD_UPPER_CPU_PIVOT_RATIO = DD_LOWER_CPU_PIVOT_RATIO + (0.999 - DD_LOWER_CPU_PIVOT_RATIO) * deterministicRandom()->random01();
 	}
 	ASSERT_LE(DD_LOWER_CPU_PIVOT_RATIO, DD_UPPER_CPU_PIVOT_RATIO);
-	init( DD_REEVALUATION_ENABLED,                             false); if( isSimulated ) DD_REEVALUATION_ENABLED = deterministicRandom()->coinflip();
+	init( DD_LOWER_WRITE_PIVOT_RATIO,                             0.7 );
+	init( DD_UPPER_WRITE_PIVOT_RATIO,                             0.9 );
+	ASSERT_LE(DD_LOWER_WRITE_PIVOT_RATIO, DD_UPPER_WRITE_PIVOT_RATIO);
+	if (randomize && BUGGIFY) {
+		DD_LOWER_WRITE_PIVOT_RATIO = deterministicRandom()->random01() * 0.4 + 0.5;
+		DD_UPPER_WRITE_PIVOT_RATIO = DD_LOWER_WRITE_PIVOT_RATIO + (0.999 - DD_LOWER_WRITE_PIVOT_RATIO) * deterministicRandom()->random01();
+	}
+	init( DD_REEVALUATION_ENABLED,                               false); if( isSimulated ) DD_REEVALUATION_ENABLED = deterministicRandom()->coinflip();
 
 	// In simulation, the CPU percent of every storage server is hard-coded as 100.0%. It is difficult to test pivot CPU in normal simulation. TODO: add mock DD Test case for it.
 	// TODO: choose a meaning value for real cluster
