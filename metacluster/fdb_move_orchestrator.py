@@ -13,6 +13,7 @@ import uuid
 from collections import defaultdict
 import multiprocessing
 from datetime import datetime
+import ast
 
 fdb.api_version(720)
 
@@ -311,12 +312,30 @@ def clear_stored_split_point(tr, tenantGroup, runId, tenantName, key):
     tr.clear(packKey)
 
 
-def process_queue(mgmtDbName, tenantGroup):
+def process_queue(mgmtDbName, tenantGroup, srcClusterName, dstClusterName):
     print("Process Queue Started")
     mgmtDb = fdb.open(mgmtDbName)
     mgmtDb.options.set_transaction_timeout(timeoutLen)
-    moveRecord = get_move_record(mgmtDb, args.tenant_group)
+    moveRecord = get_move_record(mgmtDb, tenantGroup)
+    # Validate move record with parameters
     runId = moveRecord[0]
+    mrSrc = moveRecord[1]
+    if not isinstance(srcClusterName, bytes):
+        srcClusterName = srcClusterName.encode("utf-8")
+    if not isinstance(dstClusterName, bytes):
+        dstClusterName = dstClusterName.encode("utf-8")
+    if mrSrc != srcClusterName:
+        print("Mismatch between move record and provided source cluster name:")
+        print("  Provided: {}".format(srcClusterName))
+        print("  Move Record: {}".format(mrSrc))
+        return -1
+    mrDst = moveRecord[2]
+    if mrDst != dstClusterName:
+        print("Mismatch between move record and provided source cluster name:")
+        print("  Provided: {}".format(dstClusterName))
+        print("  Move Record: {}".format(mrDst))
+        return -1
+
     while True:
         currentTenant, begin, end = get_and_update_queue_head(
             mgmtDb, tenantGroup, runId
@@ -384,7 +403,7 @@ if __name__ == "__main__":
     #   Also add cert files and other args needed for AuthZ
     # mgmt fdbcli command template
     command_template_mgmt = [
-        "/home/jfu/fdbcli",
+        "fdbcli",
         "-C",
         args.cluster,
         "--exec",
@@ -431,14 +450,13 @@ if __name__ == "__main__":
         print("Error creating temporary cluster files.")
         print(e)
         exit(0)
-
-    poolArgs = (
-        args.cluster,
-        args.tenant_group,
-    )
+    tenantGroup = ast.literal_eval("'%s'" % args.tenant_group)
+    poolArgs = (args.cluster, tenantGroup, args.src_name, args.dst_name)
     multiArgs = [poolArgs for i in range(args.num_procs)]
     start = datetime.now()
-    # TODO: handle fdb error and maybe retry if split points are left over
     with multiprocessing.Pool(processes=args.num_procs) as pool:
         pool.starmap(process_queue, multiArgs)
     print("Time Elapsed for Copy: ", (datetime.now() - start).total_seconds())
+    # delete tmp cluster files
+    os.remove(tmpSrcClusterFileName)
+    os.remove(tmpDstClusterFileName)
