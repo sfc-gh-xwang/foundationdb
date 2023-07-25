@@ -201,6 +201,8 @@ struct TenantIdCodec {
 	}
 };
 
+KeyBackedBinaryValue<Versionstamp>& lastTenantMoveAbort();
+
 template <class TenantTypes>
 struct TenantMetadataSpecification {
 	Key subspace;
