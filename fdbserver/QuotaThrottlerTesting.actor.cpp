@@ -591,7 +591,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ExpireTags") {
 	wait(delay(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER + 1.0));
 	ASSERT_EQ(env.throttlingIdsTracked(), 1);
 	if (isBusyThrottlingIdsTrackingEnabled()) {
-		ASSERT(env.isThrottlingIdBusy(testTag));
+		// Client has been stopped, no throughput for a while. ID should no longer be busy.
+		ASSERT(!env.isThrottlingIdBusy(testTag));
 	}
 
 	env.removeExpiredThrottlingIds();
