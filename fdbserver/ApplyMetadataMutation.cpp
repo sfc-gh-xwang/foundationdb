@@ -536,7 +536,7 @@ private:
 		auto& p = (*uid_applyMutationsData)[uid];
 		p.endVersion = BinaryReader::fromStringRef<Version>(m.param2, Unversioned());
 		if (p.keyVersion == Reference<KeyRangeMap<Version>>())
-			p.keyVersion = makeReference<KeyRangeMap<Version>>(invalidVersion);
+			p.keyVersion = makeReference<KeyRangeMap<Version>>();
 		if (p.worker.isValid() && !p.worker.isReady()) {
 			return;
 		}
@@ -572,7 +572,7 @@ private:
 			Key k = m.param1.substr(applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID));
 			auto& p = (*uid_applyMutationsData)[uid];
 			if (p.keyVersion == Reference<KeyRangeMap<Version>>())
-				p.keyVersion = makeReference<KeyRangeMap<Version>>(invalidVersion);
+				p.keyVersion = makeReference<KeyRangeMap<Version>>();
 			p.keyVersion->rawInsert(k, BinaryReader::fromStringRef<Version>(m.param2, Unversioned()));
 		}
 	}
@@ -1012,7 +1012,7 @@ private:
 			if (m.param2 <= endRange) {
 				auto& p = (*uid_applyMutationsData)[uid];
 				if (p.keyVersion == Reference<KeyRangeMap<Version>>())
-					p.keyVersion = makeReference<KeyRangeMap<Version>>(invalidVersion);
+					p.keyVersion = makeReference<KeyRangeMap<Version>>();
 
 				KeyRef begin = m.param1.substr(prefixSize);
 				KeyRef end = (m.param2 == endRange) ? p.keyVersion->mapEnd : m.param2.substr(prefixSize);
