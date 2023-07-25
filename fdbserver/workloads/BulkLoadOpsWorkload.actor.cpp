@@ -343,7 +343,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		NON_EMPTY_RANGE_UNIT,
 		ALREADY_BLOB_RANGE_UNIT,
 		BLOBBIFY_DURING_LOAD_UNIT,
-		OP_COUNT = 10 /* keep this last */
+		OP_COUNT = 11 /* keep this last */
 	};
 
 	ACTOR Future<Void> abortAndCleanupAfterUnit(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {

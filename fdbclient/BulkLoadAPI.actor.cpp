@@ -367,7 +367,7 @@ ACTOR Future<Void> cleanupAbortedBulkLoadActor(Reference<DatabaseContext> db, Bu
 		return Void();
 	}
 
-	// TODO: implement actual cleanup!
+	// TODO: implement actual cleanup! Must be idempotent to handle retries/multiple concurrent cleanup callers
 
 	// change bulk load state to ABORTED_COMPLETE
 	wait(updateBulkLoadStateActor(db, id, BulkLoadStatus::State::ABORTED_COMPLETE));

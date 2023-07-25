@@ -65,7 +65,7 @@ bool checkValidBulkLoadStateTransition(BulkLoadStatus::State current, BulkLoadSt
 	// once bulk load is aborted_complete or done, no other state transitions can take place except idempotently or to
 	// cleanup (handled above).
 	if (current == BulkLoadStatus::State::ABORTED_COMPLETE) {
-		if (desired == BulkLoadStatus::State::ABORTED_COMPLETE || desired == BulkLoadStatus::State::ABORTED) {
+		if (desired == BulkLoadStatus::State::ABORTED) {
 			return false;
 		}
 		throw bulk_load_aborted();
