@@ -7373,6 +7373,10 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 		double requestTime = now();
 		if (requestTime - lastTime <= CLIENT_KNOBS->MAX_VERSION_CACHE_LAG && rv != Version(0)) {
 			ASSERT(!debug_checkVersionTime(rv, requestTime, "CheckStaleness"));
+			// client side average cost tracking should be enabled, account for this transaction.
+			if (trState->getThrottlingId().present()) {
+				trState->cx->addTransaction(trState->getThrottlingId().get(), 1);
+			}
 			return rv;
 		} // else go through regular GRV path
 	}
