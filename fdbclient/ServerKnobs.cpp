@@ -118,7 +118,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( TLOG_PULL_ASYNC_DATA_WARNING_TIMEOUT_SECS,             120 );
 
 	// Dynamic Empty Version Wait
-	init( PEEK_BATCHING_EMPTY_MSG,                              true ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG = true;
+	init( PEEK_BATCHING_EMPTY_MSG,                             false ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG = true;
 	init( PEEK_BATCHING_EMPTY_MSG_INTERVAL,                    0.001 ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG_INTERVAL = 0.01;
 	init( DYNAMIC_EMPTY_VERSION_WAIT,             EMPTY_VERSION_WAIT );
 	// Dynamic Empty Version Wait: Sampling
