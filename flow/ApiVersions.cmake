@@ -3,7 +3,6 @@ set(FDB_AV_LATEST_VERSION                   "800000")
 set(FDB_AV_LATEST_BINDINGS_VERSION          "800000")
 
 # Features
-set(FDB_AV_SNAPSHOT_RYW                     "300")
 set(FDB_AV_INLINE_UPDATE_DATABASE           "610")
 set(FDB_AV_PERSISTENT_OPTIONS               "610")
 set(FDB_AV_TRACE_FILE_IDENTIFIER            "630")

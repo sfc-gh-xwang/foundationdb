@@ -1644,7 +1644,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	metadataVersionCache.resize(CLIENT_KNOBS->METADATA_VERSION_CACHE_SIZE);
 	maxOutstandingWatches = CLIENT_KNOBS->DEFAULT_MAX_OUTSTANDING_WATCHES;
 
-	snapshotRywEnabled = apiVersion.hasSnapshotRYW() ? 1 : 0;
+	snapshotRywEnabled = 1;
 
 	logger = databaseLogger(this) && tssLogger(this);
 	locationCacheSize = g_network->isSimulated() ? CLIENT_KNOBS->LOCATION_CACHE_EVICTION_SIZE_SIM
@@ -1664,226 +1664,220 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	smoothMidShardSize.reset(CLIENT_KNOBS->INIT_MID_SHARD_BYTES);
 	globalConfig = std::make_unique<GlobalConfig>(this);
 
-	if (apiVersion.version() >= 700) {
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::ERRORMSG,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<SingleSpecialKeyImpl>(
-		                            SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ERRORMSG).begin,
-		                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
-			                            if (ryw->getSpecialKeySpaceErrorMsg().present()) {
-				                            return ValueReadResult(
-				                                Optional<Value>(ryw->getSpecialKeySpaceErrorMsg().get()));
-			                            } else {
-				                            return ValueReadResult();
-			                            }
-		                            },
-		                            true));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ManagementCommandsOptionsImpl>(
-		        KeyRangeRef("options/"_sr, "options0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ExcludeServersRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("exclude")));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<FailedServersRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("failed")));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
-		                        SpecialKeySpace::IMPLTYPE::READWRITE,
-		                        std::make_unique<ExcludedLocalitiesRangeImpl>(
-		                            SpecialKeySpace::getManagementApiCommandRange("excludedlocality")));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
-		                        SpecialKeySpace::IMPLTYPE::READWRITE,
-		                        std::make_unique<FailedLocalitiesRangeImpl>(
-		                            SpecialKeySpace::getManagementApiCommandRange("failedlocality")));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<ExclusionInProgressRangeImpl>(
-		        KeyRangeRef("in_progress_exclusion/"_sr, "in_progress_exclusion0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::CONFIGURATION,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ProcessClassRangeImpl>(
-		        KeyRangeRef("process/class_type/"_sr, "process/class_type0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::CONFIGURATION,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<ProcessClassSourceRangeImpl>(
-		        KeyRangeRef("process/class_source/"_sr, "process/class_source0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<LockDatabaseImpl>(
-		        singleKeyRange("db_locked"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ConsistencyCheckImpl>(
-		        singleKeyRange("consistency_check_suspended"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::GLOBALCONFIG,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<GlobalConfigImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::GLOBALCONFIG)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::TRACING,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<TracingOptionsImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::TRACING)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::CONFIGURATION,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<CoordinatorsImpl>(
-		        KeyRangeRef("coordinators/"_sr, "coordinators0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<CoordinatorsAutoImpl>(
-		        singleKeyRange("auto_coordinators"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<AdvanceVersionImpl>(
-		        singleKeyRange("min_required_commit_version"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<VersionEpochImpl>(
-		        singleKeyRange("version_epoch"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ClientProfilingImpl>(
-		        KeyRangeRef("profiling/"_sr, "profiling0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)),
-		    /* deprecated */ ApiVersion::withClientProfilingDeprecated().version());
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<MaintenanceImpl>(
-		        KeyRangeRef("maintenance/"_sr, "maintenance0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<DataDistributionImpl>(
-		        KeyRangeRef("data_distribution/"_sr, "data_distribution0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::ACTORLINEAGE,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<ActorLineageImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ACTORLINEAGE)));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF,
-		                        SpecialKeySpace::IMPLTYPE::READWRITE,
-		                        std::make_unique<ActorProfilerConf>(
-		                            SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF)));
-	}
-	if (apiVersion.version() >= 630) {
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<ConflictingKeysImpl>(conflictingKeysRange));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<ReadConflictRangeImpl>(readConflictRangeKeysRange));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<WriteConflictRangeImpl>(writeConflictRangeKeysRange));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::METRICS,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<DDStatsRangeImpl>(ddStatsRange));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::METRICS,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<HealthMetricsRangeImpl>(
-		                            KeyRangeRef("\xff\xff/metrics/health/"_sr, "\xff\xff/metrics/health0"_sr)));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::WORKERINTERFACE,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<WorkerInterfacesSpecialKeyImpl>(
-		                            KeyRangeRef("\xff\xff/worker_interfaces/"_sr, "\xff\xff/worker_interfaces0"_sr)));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::STATUSJSON,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<SingleSpecialKeyImpl>(
-		                            "\xff\xff/status/json"_sr,
-		                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ERRORMSG,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ERRORMSG).begin,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            if (ryw->getSpecialKeySpaceErrorMsg().present()) {
+			                            return ValueReadResult(
+			                                Optional<Value>(ryw->getSpecialKeySpaceErrorMsg().get()));
+		                            } else {
+			                            return ValueReadResult();
+		                            }
+	                            },
+	                            true));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ManagementCommandsOptionsImpl>(
+	        KeyRangeRef("options/"_sr, "options0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ExcludeServersRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("exclude")));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<FailedServersRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("failed")));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
+	                        SpecialKeySpace::IMPLTYPE::READWRITE,
+	                        std::make_unique<ExcludedLocalitiesRangeImpl>(
+	                            SpecialKeySpace::getManagementApiCommandRange("excludedlocality")));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<FailedLocalitiesRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("failedlocality")));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READONLY,
+	    std::make_unique<ExclusionInProgressRangeImpl>(
+	        KeyRangeRef("in_progress_exclusion/"_sr, "in_progress_exclusion0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::CONFIGURATION,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ProcessClassRangeImpl>(
+	        KeyRangeRef("process/class_type/"_sr, "process/class_type0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::CONFIGURATION,
+	    SpecialKeySpace::IMPLTYPE::READONLY,
+	    std::make_unique<ProcessClassSourceRangeImpl>(
+	        KeyRangeRef("process/class_source/"_sr, "process/class_source0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<LockDatabaseImpl>(
+	        singleKeyRange("db_locked"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ConsistencyCheckImpl>(
+	        singleKeyRange("consistency_check_suspended"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::GLOBALCONFIG,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<GlobalConfigImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::GLOBALCONFIG)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::TRACING,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<TracingOptionsImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::TRACING)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::CONFIGURATION,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<CoordinatorsImpl>(
+	        KeyRangeRef("coordinators/"_sr, "coordinators0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READONLY,
+	    std::make_unique<CoordinatorsAutoImpl>(
+	        singleKeyRange("auto_coordinators"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<AdvanceVersionImpl>(
+	        singleKeyRange("min_required_commit_version"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<VersionEpochImpl>(
+	        singleKeyRange("version_epoch"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ClientProfilingImpl>(
+	        KeyRangeRef("profiling/"_sr, "profiling0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)),
+	    /* deprecated */ ApiVersion::withClientProfilingDeprecated().version());
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<MaintenanceImpl>(
+	        KeyRangeRef("maintenance/"_sr, "maintenance0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<DataDistributionImpl>(
+	        KeyRangeRef("data_distribution/"_sr, "data_distribution0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::ACTORLINEAGE,
+	    SpecialKeySpace::IMPLTYPE::READONLY,
+	    std::make_unique<ActorLineageImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ACTORLINEAGE)));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF,
+	                        SpecialKeySpace::IMPLTYPE::READWRITE,
+	                        std::make_unique<ActorProfilerConf>(
+	                            SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF)));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<ConflictingKeysImpl>(conflictingKeysRange));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<ReadConflictRangeImpl>(readConflictRangeKeysRange));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<WriteConflictRangeImpl>(writeConflictRangeKeysRange));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::METRICS,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<DDStatsRangeImpl>(ddStatsRange));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::METRICS,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<HealthMetricsRangeImpl>(
+	                            KeyRangeRef("\xff\xff/metrics/health/"_sr, "\xff\xff/metrics/health0"_sr)));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::WORKERINTERFACE,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<WorkerInterfacesSpecialKeyImpl>(
+	                            KeyRangeRef("\xff\xff/worker_interfaces/"_sr, "\xff\xff/worker_interfaces0"_sr)));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::STATUSJSON,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            "\xff\xff/status/json"_sr,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            if (ryw->getDatabase().getPtr() && ryw->getDatabase()->getConnectionRecord()) {
+			                            ++ryw->getDatabase()->transactionStatusRequests;
+			                            return getJSON(ryw->getDatabase());
+		                            } else {
+			                            return ValueReadResult();
+		                            }
+	                            },
+	                            true));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::CLUSTERFILEPATH,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            "\xff\xff/cluster_file_path"_sr,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            try {
 			                            if (ryw->getDatabase().getPtr() && ryw->getDatabase()->getConnectionRecord()) {
-				                            ++ryw->getDatabase()->transactionStatusRequests;
-				                            return getJSON(ryw->getDatabase());
-			                            } else {
-				                            return ValueReadResult();
+				                            Optional<Value> output =
+				                                StringRef(ryw->getDatabase()->getConnectionRecord()->getLocation());
+				                            return ValueReadResult(output);
 			                            }
-		                            },
-		                            true));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::CLUSTERFILEPATH,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<SingleSpecialKeyImpl>(
-		                            "\xff\xff/cluster_file_path"_sr,
-		                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
-			                            try {
-				                            if (ryw->getDatabase().getPtr() &&
-				                                ryw->getDatabase()->getConnectionRecord()) {
-					                            Optional<Value> output =
-					                                StringRef(ryw->getDatabase()->getConnectionRecord()->getLocation());
-					                            return ValueReadResult(output);
-				                            }
-			                            } catch (Error& e) {
-				                            return e;
-			                            }
-			                            return ValueReadResult();
-		                            },
-		                            true));
+		                            } catch (Error& e) {
+			                            return e;
+		                            }
+		                            return ValueReadResult();
+	                            },
+	                            true));
 
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::CONNECTIONSTRING,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<SingleSpecialKeyImpl>(
-		        "\xff\xff/connection_string"_sr,
-		        [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
-			        try {
-				        if (ryw->getDatabase().getPtr() && ryw->getDatabase()->getConnectionRecord()) {
-					        Reference<IClusterConnectionRecord> f = ryw->getDatabase()->getConnectionRecord();
-					        Optional<Value> output = StringRef(f->getConnectionString().toString());
-					        return ValueReadResult(output);
-				        }
-			        } catch (Error& e) {
-				        return e;
-			        }
-			        return ValueReadResult();
-		        },
-		        true));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::CLUSTERID,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<SingleSpecialKeyImpl>(
-		                            "\xff\xff/cluster_id"_sr,
-		                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
-			                            try {
-				                            if (ryw->getDatabase().getPtr()) {
-					                            return map(getClusterId(ryw->getDatabase()), [](UID id) {
-						                            return ValueReadResult(Optional<Value>(StringRef(id.toString())));
-					                            });
-				                            }
-			                            } catch (Error& e) {
-				                            return e;
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::CONNECTIONSTRING,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            "\xff\xff/connection_string"_sr,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            try {
+			                            if (ryw->getDatabase().getPtr() && ryw->getDatabase()->getConnectionRecord()) {
+				                            Reference<IClusterConnectionRecord> f =
+				                                ryw->getDatabase()->getConnectionRecord();
+				                            Optional<Value> output = StringRef(f->getConnectionString().toString());
+				                            return ValueReadResult(output);
 			                            }
-			                            return ValueReadResult();
-		                            },
-		                            true));
+		                            } catch (Error& e) {
+			                            return e;
+		                            }
+		                            return ValueReadResult();
+	                            },
+	                            true));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::CLUSTERID,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            "\xff\xff/cluster_id"_sr,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            try {
+			                            if (ryw->getDatabase().getPtr()) {
+				                            return map(getClusterId(ryw->getDatabase()), [](UID id) {
+					                            return ValueReadResult(Optional<Value>(StringRef(id.toString())));
+				                            });
+			                            }
+		                            } catch (Error& e) {
+			                            return e;
+		                            }
+		                            return ValueReadResult();
+	                            },
+	                            true));
 
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<TenantRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("tenant")));
-	}
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
+	                        SpecialKeySpace::IMPLTYPE::READWRITE,
+	                        std::make_unique<TenantRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("tenant")));
 
 	if (BUGGIFY) {
 		debugUseTag = true;
@@ -3564,10 +3558,6 @@ Reference<TransactionState> TransactionState::cloneAndReset(Reference<Transactio
 	SpanContext newSpanContext = generateNewSpan ? generateSpanID(cx->transactionTracingSample) : spanContext;
 	Reference<TransactionState> newState =
 	    makeReference<TransactionState>(cx, tenant_, cx->taskID, newSpanContext, newTrLogInfo);
-
-	if (!cx->apiVersionAtLeast(16)) {
-		newState->options = options;
-	}
 
 	newState->readVersionFuture = Future<Version>();
 	newState->metadataVersion = Promise<Optional<Key>>();
@@ -6109,12 +6099,10 @@ void Transaction::atomicOp(const KeyRef& key,
 	if (operand.size() > CLIENT_KNOBS->VALUE_SIZE_LIMIT)
 		throw value_too_large();
 
-	if (apiVersionAtLeast(510)) {
-		if (operationType == MutationRef::Min)
-			operationType = MutationRef::MinV2;
-		else if (operationType == MutationRef::And)
-			operationType = MutationRef::AndV2;
-	}
+	if (operationType == MutationRef::Min)
+		operationType = MutationRef::MinV2;
+	else if (operationType == MutationRef::And)
+		operationType = MutationRef::AndV2;
 
 	auto& req = tr;
 	auto& t = req.transaction;
@@ -6261,9 +6249,7 @@ TransactionOptions::TransactionOptions() {
 void TransactionOptions::reset(Database const& cx) {
 	clear();
 	lockAware = cx->lockAware;
-	if (cx->apiVersionAtLeast(630)) {
-		includePort = true;
-	}
+	includePort = true;
 }
 
 void Transaction::resetImpl(bool generateNewSpan) {
@@ -6940,12 +6926,6 @@ Future<Void> Transaction::commitMutations() {
 			    .detail("DebugIdentifier", trState->trLogInfo ? trState->trLogInfo->identifier : "");
 		}
 
-		if (!apiVersionAtLeast(300)) {
-			transactionSize =
-			    tr.transaction.mutations.expectedSize(); // Old API versions didn't account for conflict ranges when
-			                                             // determining whether to throw transaction_too_large
-		}
-
 		if (transactionSize > trState->options.sizeLimit) {
 			return transaction_too_large();
 		}
@@ -7031,10 +7011,6 @@ ACTOR Future<Void> commitAndWatch(Transaction* self) {
 			self->setupWatches();
 		}
 
-		if (!self->apiVersionAtLeast(700)) {
-			self->reset();
-		}
-
 		return Void();
 	} catch (Error& e) {
 		if (e.code() != error_code_actor_cancelled) {
@@ -7043,10 +7019,6 @@ ACTOR Future<Void> commitAndWatch(Transaction* self) {
 			}
 
 			self->trState->versionstampPromise.sendError(transaction_invalid_version());
-
-			if (!self->apiVersionAtLeast(700)) {
-				self->reset();
-			}
 		}
 
 		throw;

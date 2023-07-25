@@ -61,7 +61,6 @@ public:
 	constexpr bool operator>(const ApiVersion other) const { return version() > other.version(); }
 
 public: // introduced features
-    API_VERSION_FEATURE(@FDB_AV_SNAPSHOT_RYW@, SnapshotRYW);
     API_VERSION_FEATURE(@FDB_AV_INLINE_UPDATE_DATABASE@, InlineUpdateDatabase);
     API_VERSION_FEATURE(@FDB_AV_PERSISTENT_OPTIONS@, PersistentOptions);
     API_VERSION_FEATURE(@FDB_AV_TRACE_FILE_IDENTIFIER@, TraceFileIdentifier);
