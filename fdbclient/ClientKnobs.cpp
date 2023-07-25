@@ -337,6 +337,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	// Bulk Loading
 	init( ALLOW_BULK_LOADS,                         false );
 
+	init( ENABLE_STORAGE_ENGINE_PARAM_INTERFACE,    false );
+
 	// clang-format on
 }
 

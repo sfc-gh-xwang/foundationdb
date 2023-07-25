@@ -61,7 +61,6 @@ public:
 		DatabaseConfiguration config; // Asynchronously updated via master registration
 		DatabaseConfiguration fullyRecoveredConfig;
 		Database db;
-		int unfinishedRecoveries;
 		int logGenerations;
 		bool cachePopulated;
 		std::map<NetworkAddress, std::pair<double, OpenDatabaseRequest>> clientStatus;
@@ -87,7 +86,6 @@ public:
 		                               EnableLocalityLoadBalance::True,
 		                               TaskPriority::DefaultEndpoint,
 		                               LockAware::True)), // SOMEDAY: Locality!
-		    unfinishedRecoveries(0),
 		    logGenerations(0),
 		    cachePopulated(false),
 		    clientCount(0),
@@ -292,6 +290,10 @@ public:
 			return false;
 		}
 
+		if (!dbi.master.present()) {
+			return false;
+		}
+
 		// Do not trigger better master exists if the cluster controller is excluded, since the master will change
 		// anyways once the cluster controller is moved
 		if (id_worker[clusterControllerProcessId].priorityInfo.isExcluded) {
@@ -306,11 +308,11 @@ public:
 		}
 
 		// Get master process
-		auto masterWorker = id_worker.find(dbi.master.locality.processId());
+		auto masterWorker = id_worker.find(dbi.master.get().locality.processId());
 		if (masterWorker == id_worker.end()) {
 			TraceEvent("NewRecruitmentIsWorse", id)
 			    .detail("Reason", "CannotFindMaster")
-			    .detail("ProcessID", dbi.master.locality.processId());
+			    .detail("ProcessID", dbi.master.get().locality.processId());
 			return false;
 		}
 
@@ -450,7 +452,7 @@ public:
 		// still need master for recovery.
 		ProcessClass::Fitness oldMasterFit =
 		    masterWorker->second.details.processClass.machineClassFitness(ProcessClass::Master);
-		if (db.config.isExcludedServer(dbi.master.addresses())) {
+		if (db.config.isExcludedServer(dbi.master.get().addresses())) {
 			oldMasterFit = std::max(oldMasterFit, ProcessClass::ExcludeFit);
 		}
 
@@ -470,17 +472,17 @@ public:
 			TraceEvent("NewRecruitmentIsWorse", id)
 			    .detail("OldMasterFit", oldMasterFit)
 			    .detail("NewMasterFit", newMasterFit)
-			    .detail("OldIsCC", dbi.master.locality.processId() == clusterControllerProcessId)
+			    .detail("OldIsCC", dbi.master.get().locality.processId() == clusterControllerProcessId)
 			    .detail("NewIsCC", mworker.worker.interf.locality.processId() == clusterControllerProcessId);
 			;
 			return false;
 		}
-		if (oldMasterFit > newMasterFit || (dbi.master.locality.processId() == clusterControllerProcessId &&
+		if (oldMasterFit > newMasterFit || (dbi.master.get().locality.processId() == clusterControllerProcessId &&
 		                                    mworker.worker.interf.locality.processId() != clusterControllerProcessId)) {
 			TraceEvent("BetterMasterExists", id)
 			    .detail("OldMasterFit", oldMasterFit)
 			    .detail("NewMasterFit", newMasterFit)
-			    .detail("OldIsCC", dbi.master.locality.processId() == clusterControllerProcessId)
+			    .detail("OldIsCC", dbi.master.get().locality.processId() == clusterControllerProcessId)
 			    .detail("NewIsCC", mworker.worker.interf.locality.processId() == clusterControllerProcessId);
 			return true;
 		}
@@ -1106,7 +1108,7 @@ public:
 		auto transactionWorkerInList =
 		    [&dbi](const std::unordered_set<NetworkAddress>& serverList, bool skipSatellite, bool skipRemote) -> bool {
 			for (const auto& server : serverList) {
-				if (dbi.master.addresses().contains(server)) {
+				if (dbi.master.present() && dbi.master.get().addresses().contains(server)) {
 					return true;
 				}
 
@@ -1396,7 +1398,7 @@ public:
 	    recruitBlobMigrator(false),
 	    recruitEncryptKeyProxy(false),
 	    recruitConsistencyScan(false),
-		recruitTenantBalancer(false),
+	    recruitTenantBalancer(false),
 	    clusterControllerMetrics("ClusterController", id.toString()),
 	    openDatabaseRequests("OpenDatabaseRequests", clusterControllerMetrics),
 	    registerWorkerRequests("RegisterWorkerRequests", clusterControllerMetrics),

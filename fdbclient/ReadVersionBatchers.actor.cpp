@@ -27,10 +27,7 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 		try {
 			state Optional<double> expectedTotalCost = {};
 			if (throttlingId.present() && isClientAverageCostTrackingEnabled()) {
-				cx->addTransaction(throttlingId.get(), transactionCount);
-
-				auto averageCost = cx->getAverageTransactionCost(throttlingId.get());
-
+				auto const averageCost = cx->getAverageTransactionCost(throttlingId.get());
 				expectedTotalCost = averageCost * (transactionCount - expectedCostsCount) + expectedCosts;
 			}
 
@@ -56,6 +53,10 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 				                               cx->taskID))) {
 					CODE_PROBE(v.proxyTagThrottledDuration > 0.0,
 					           "getConsistentReadVersion received GetReadVersionReply delayed by proxy tag throttling");
+
+					if (throttlingId.present() && isClientAverageCostTrackingEnabled()) {
+						cx->addTransaction(throttlingId.get(), transactionCount);
+					}
 
 					if (debugID.present())
 						g_traceBatch.addEvent(

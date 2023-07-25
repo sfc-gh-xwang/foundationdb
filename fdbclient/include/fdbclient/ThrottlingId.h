@@ -43,7 +43,7 @@ struct hash<ThrottlingIdRef> {
 
 template <>
 struct hash<Standalone<ThrottlingIdRef>> {
-	size_t operator()(Standalone<ThrottlingIdRef> const throttlingId) const { return throttlingId.hash(); }
+	size_t operator()(Standalone<ThrottlingIdRef> const& throttlingId) const { return throttlingId.hash(); }
 };
 
 } // namespace std

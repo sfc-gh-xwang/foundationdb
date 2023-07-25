@@ -510,6 +510,10 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
          "lock_uid": "00000000000000000000000000000000"
       },
       "generation":2,
+      "gray_failure_detection" : {
+         "excluded_processes":[
+         ]
+      },
       "latency_probe":{
          "read_seconds":7,
          "immediate_priority_transaction_start_seconds":0.0,

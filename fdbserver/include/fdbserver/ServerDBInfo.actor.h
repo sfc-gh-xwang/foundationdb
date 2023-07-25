@@ -48,7 +48,7 @@ struct ServerDBInfo {
 	ClusterControllerFullInterface clusterInterface;
 	ClientDBInfo client; // After a successful recovery, eventually proxies that communicate with it
 	Optional<DataDistributorInterface> distributor; // The best guess of current data distributor.
-	MasterInterface master; // The best guess as to the most recent master, which might still be recovering
+	Optional<MasterInterface> master; // The best guess as to the most recent master, which might still be recovering
 	Optional<RatekeeperInterface> ratekeeper;
 	Optional<BlobManagerInterface> blobManager;
 	Optional<BlobMigratorInterface> blobMigrator;

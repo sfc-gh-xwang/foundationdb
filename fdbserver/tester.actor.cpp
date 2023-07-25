@@ -1529,7 +1529,10 @@ std::map<std::string, std::function<void(const std::string&)>> testSpecGlobalKey
 	{ "disableRemoteKVS",
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedRemoteKVS", ""); } },
 	{ "allowDefaultTenant",
-	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedDefaultTenant", ""); } }
+	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedDefaultTenant", ""); } },
+	{ "simHTTPServerEnabled",
+	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedSimHTTPServerEnabled", ""); } }
+
 };
 
 std::map<std::string, std::function<void(const std::string& value, TestSpec* spec)>> testSpecTestKeys = {
@@ -1881,9 +1884,9 @@ ACTOR Future<Void> monitorServerDBInfo(Reference<AsyncVar<Optional<ClusterContro
 			                  ? brokenPromiseToNever(ccInterface->get().get().getServerDBInfo.getReply(req))
 			                  : Never())) {
 				ServerDBInfo localInfo = _localInfo;
-				TraceEvent("GotServerDBInfoChange")
+				TraceEvent("TesterGotServerDBInfoChange")
 				    .detail("ChangeID", localInfo.id)
-				    .detail("MasterID", localInfo.master.id())
+				    .detail("MasterID", localInfo.master.present() ? localInfo.master.get().id() : UID())
 				    .detail("RatekeeperID", localInfo.ratekeeper.present() ? localInfo.ratekeeper.get().id() : UID())
 				    .detail("DataDistributorID",
 				            localInfo.distributor.present() ? localInfo.distributor.get().id() : UID());

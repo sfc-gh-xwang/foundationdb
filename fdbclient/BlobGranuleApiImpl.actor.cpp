@@ -136,6 +136,7 @@ void nativeToApiBGFileDescription(FDBBGFileDescriptionV2* dest, const BlobGranul
 		dest->tenant_prefix.present = false;
 	}
 
+	// this is called in the thread-safe client, so effectively assume the api version is latest
 	dest->included_version = source.includedVersion;
 
 	// snapshot file
@@ -268,7 +269,13 @@ void apiToNativeBGMutations(GranuleDeltas& deltas,
 	ASSERT(beginIdx == mutationCount);
 }
 
-void apiToNativeBGFileDescription(BlobGranuleChunkRef& dest, FDBBGFileDescriptionV2* source, Arena& ar) {
+// this can be called by the primary client directly as part of loadAndMaterializeBlobGranules, so the api version could
+// be older
+void apiToNativeBGFileDescription(BlobGranuleChunkRef& dest,
+                                  FDBBGFileDescriptionV2* source,
+                                  Version readVersion,
+                                  Arena& ar,
+                                  ApiVersion apiVersion) {
 	apiToNativeBGTenantPrefix(dest.tenantPrefix, &source->tenant_prefix);
 
 	dest.keyRange = KeyRangeRef(
@@ -293,17 +300,23 @@ void apiToNativeBGFileDescription(BlobGranuleChunkRef& dest, FDBBGFileDescriptio
 	apiToNativeBGMutations(
 	    dest.newDeltas, source->memory_mutations, source->memory_mutation_count, dest.tenantPrefix, ar);
 
-	dest.includedVersion = source->included_version;
+	if (apiVersion >= ApiVersion::withColumnarCacheSkewHandling()) {
+		dest.includedVersion = source->included_version;
+	} else {
+		dest.includedVersion = readVersion;
+	}
 }
 
 Standalone<VectorRef<BlobGranuleChunkRef>> apiToNativeBGFileDescriptions(FDBBGFileDescriptionV2** desc_arr,
                                                                          int desc_count,
-                                                                         const Arena& srcAr) {
+                                                                         Version readVersion,
+                                                                         const Arena& srcAr,
+                                                                         ApiVersion apiVersion) {
 	Standalone<VectorRef<BlobGranuleChunkRef>> res;
 	res.arena().dependsOn(srcAr);
 	res.resize(res.arena(), desc_count);
 	for (int i = 0; i < desc_count; i++) {
-		apiToNativeBGFileDescription(res[i], desc_arr[i], res.arena());
+		apiToNativeBGFileDescription(res[i], desc_arr[i], readVersion, res.arena(), apiVersion);
 	}
 	return res;
 }
@@ -519,10 +532,11 @@ ReadBGMutationsApiResult parseBlobGranulesDeltaFileV2(StringRef fileName,
 ReadRangeApiResult loadAndMaterializeBlobGranules(const ReadBGDescriptionsApiResult& blobGranuleDescr,
                                                   const KeyRangeRef& keyRange,
                                                   Version beginVersion,
-                                                  const FDBReadBlobGranuleContext* granuleContext) {
+                                                  const FDBReadBlobGranuleContext* granuleContext,
+                                                  ApiVersion apiVersion) {
 	auto descrData = blobGranuleDescr.getData();
-	Standalone<VectorRef<BlobGranuleChunkRef>> fileRefs =
-	    apiToNativeBGFileDescriptions(descrData->desc_arr, descrData->desc_count, blobGranuleDescr.arena());
+	Standalone<VectorRef<BlobGranuleChunkRef>> fileRefs = apiToNativeBGFileDescriptions(
+	    descrData->desc_arr, descrData->desc_count, descrData->read_version, blobGranuleDescr.arena(), apiVersion);
 	GranuleMaterializeStats stats;
 	auto rangeResult = loadAndMaterializeBlobGranulesImpl(
 	    fileRefs, keyRange, beginVersion, descrData->read_version, granuleContext, stats);

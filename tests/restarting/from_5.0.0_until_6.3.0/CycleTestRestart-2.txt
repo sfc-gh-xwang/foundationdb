@@ -1,3 +1,5 @@
+simHTTPServerEnabled=false
+
 testTitle=Clogged
 runSetup=false
 

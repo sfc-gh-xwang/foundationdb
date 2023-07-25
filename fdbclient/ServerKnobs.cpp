@@ -178,8 +178,22 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// In order to make sure GetTeam has enough eligible destination team:
 	ASSERT_GT(LOAD_BYTES_PIVOT_RATIO + CPU_PIVOT_RATIO, 1.0 );
 	// For dd re-evaluatioin
-	init( DD_STRICT_CPU_PIVOT_RATIO,                             0.9 ); if( randomize && BUGGIFY ) DD_STRICT_CPU_PIVOT_RATIO = deterministicRandom()->random01() * 0.45 + 0.5;
-	init( DD_REEVALUATION_ENABLED,                              false); if( isSimulated ) DD_REEVALUATION_ENABLED = deterministicRandom()->coinflip();
+	init( DD_LOWER_LOAD_BYTES_PIVOT_RATIO,                      0.4 );
+	init( DD_UPPER_LOAD_BYTES_PIVOT_RATIO,                      0.6 );
+	if( randomize && BUGGIFY ) {
+		DD_LOWER_LOAD_BYTES_PIVOT_RATIO = deterministicRandom()->random01() * 0.4 + 0.3;
+		DD_UPPER_LOAD_BYTES_PIVOT_RATIO = DD_LOWER_LOAD_BYTES_PIVOT_RATIO + (0.9 - DD_LOWER_LOAD_BYTES_PIVOT_RATIO) * deterministicRandom()->random01();
+	}
+	ASSERT_LE(DD_LOWER_LOAD_BYTES_PIVOT_RATIO, DD_UPPER_LOAD_BYTES_PIVOT_RATIO);
+	init( DD_LOWER_CPU_PIVOT_RATIO,                             0.7 );
+	init( DD_UPPER_CPU_PIVOT_RATIO,                             0.9 );
+	if (randomize && BUGGIFY) {
+		DD_LOWER_CPU_PIVOT_RATIO = deterministicRandom()->random01() * 0.4 + 0.5;
+		DD_UPPER_CPU_PIVOT_RATIO = DD_LOWER_CPU_PIVOT_RATIO + (0.999 - DD_LOWER_CPU_PIVOT_RATIO) * deterministicRandom()->random01();
+	}
+	ASSERT_LE(DD_LOWER_CPU_PIVOT_RATIO, DD_UPPER_CPU_PIVOT_RATIO);
+	init( DD_REEVALUATION_ENABLED,                             false); if( isSimulated ) DD_REEVALUATION_ENABLED = deterministicRandom()->coinflip();
+
 	// In simulation, the CPU percent of every storage server is hard-coded as 100.0%. It is difficult to test pivot CPU in normal simulation. TODO: add mock DD Test case for it.
 	// TODO: choose a meaning value for real cluster
 	init( MAX_DEST_CPU_PERCENT,                                 100.0);
@@ -533,7 +547,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,             10.0 );
 	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,                1000.0 );
 	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET,        40960000 );
-	init( START_TRANSACTION_MAX_QUEUE_SIZE,                      1e6 );
+	init( START_TRANSACTION_MAX_QUEUE_SIZE,                      1e6 ); if ( randomize && BUGGIFY ) START_TRANSACTION_MAX_QUEUE_SIZE = 1000;
 	init( KEY_LOCATION_MAX_QUEUE_SIZE,                           1e6 );
 	init( TENANT_ID_REQUEST_MAX_QUEUE_SIZE,                      1e6 );
 	init( BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE,                  1e5 ); if ( randomize && BUGGIFY ) BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE = 100;
@@ -887,7 +901,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BEHIND_CHECK_VERSIONS,             5 * VERSIONS_PER_SECOND );
 	init( WAIT_METRICS_WRONG_SHARD_CHANCE,   isSimulated ? 1.0 : 0.1 );
 	init( MIN_TAG_READ_PAGES_RATE,                               100 ); if( randomize && BUGGIFY ) MIN_TAG_READ_PAGES_RATE = 0;
-	init( MIN_TAG_WRITE_PAGES_RATE,                              100 ); if( randomize && BUGGIFY ) MIN_TAG_WRITE_PAGES_RATE = 0;
+	// In simulation, we cannot efficiently simulate a very large workload, so using the
+	// default MIN_TAG_WRITE_PAGES_RATE value of 100 causes undercounting of write throughput
+	// that is substantial. To work around this, set MIN_TAG_WRITE_PAGES_RATE to 1 in simulation.
+	init( MIN_TAG_WRITE_PAGES_RATE,                              100 ); if( isSimulated ) MIN_TAG_WRITE_PAGES_RATE = 1;
 	init( TAG_MEASUREMENT_INTERVAL,                              5.0 ); if( randomize && BUGGIFY ) TAG_MEASUREMENT_INTERVAL = 10.0;
 	init( PREFIX_COMPRESS_KVS_MEM_SNAPSHOTS,                    true ); if( randomize && BUGGIFY ) PREFIX_COMPRESS_KVS_MEM_SNAPSHOTS = false;
 	init( REPORT_DD_METRICS,                                    true );
