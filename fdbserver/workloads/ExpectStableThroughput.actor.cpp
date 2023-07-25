@@ -67,7 +67,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 			try {
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag);
 
-				if (self->useGrvCache && isBusyThrottlingIDsTrackingEnabled()) {
+				if (self->useGrvCache && isBusyThrottlingIdsTrackingEnabled()) {
 					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
 				}
 
@@ -99,7 +99,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 			try {
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, self->throttlingTag);
 
-				if (self->useGrvCache && isBusyThrottlingIDsTrackingEnabled()) {
+				if (self->useGrvCache && isBusyThrottlingIdsTrackingEnabled()) {
 					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
 				}
 

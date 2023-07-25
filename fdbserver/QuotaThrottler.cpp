@@ -311,6 +311,17 @@ class QuotaThrottlerImpl {
 		return result;
 	}
 
+	// Update the busy ThrottlingId set and returns whether the throttlingId is busy
+	bool isThrottlingIdsBusy(ThrottlingId const& throttlingId, double metric, double effectiveLimit) {
+		if (metric > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * effectiveLimit)) {
+			busyThrottlingIds.emplace(throttlingId);
+		} else if (metric < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * effectiveLimit)) {
+			busyThrottlingIds.erase(throttlingId);
+		}
+
+		return busyThrottlingIds.contains(throttlingId);
+	}
+
 public:
 	QuotaThrottlerImpl(UID id, int maxFallingBehind, double limitingThreshold)
 	  : id(id),
@@ -360,21 +371,15 @@ public:
 			if (targetTps.present()) {
 				auto const smoothedTargetTps = stats.updateAndGetTargetRateLimit(targetTps.get());
 				te.detail("SmoothedTargetTps", smoothedTargetTps).detail("NumProxies", numProxies);
-				auto targetPerProxyRate = std::max(1.0, smoothedTargetTps / numProxies);
+				auto const targetPerProxyRate = std::max(1.0, smoothedTargetTps / numProxies);
 				if (traceEnabled) {
 					stats.updateLastLogged();
 				}
 
 				auto rate = stats.getTransactionRate();
-				if (isBusyThrottlingIDsTrackingEnabled()) {
-					if (rate > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyRate)) {
-						busyThrottlingIds.emplace(throttlingId);
-					} else if (rate < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyRate)) {
-						busyThrottlingIds.erase(throttlingId);
-					}
-
-					// Only report busy throttling IDs to the proxy
-					if (busyThrottlingIds.contains(throttlingId)) {
+				if (isBusyThrottlingIdsTrackingEnabled()) {
+					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
+					if (isThrottlingIdsBusy(throttlingId, rate, targetPerProxyRate)) {
 						result[throttlingId] = targetPerProxyRate;
 					}
 				} else {
@@ -413,7 +418,7 @@ public:
 			if (targetBps.present()) {
 				auto const smoothedTargetBps = stats.updateAndGetTargetThroughputLimit(targetBps.get());
 				te.detail("SmoothedTargetBps", smoothedTargetBps).detail("NumProxies", numProxies);
-				auto targetPerProxyThroughput =
+				auto const targetPerProxyThroughput =
 				    std::max(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE, (int64_t)smoothedTargetBps / numProxies);
 				if (traceEnabled) {
 					stats.updateLastLogged();
@@ -421,15 +426,9 @@ public:
 
 				auto throughput = clusterThroughputTracker.getThroughput(throttlingId);
 
-				if (isBusyThrottlingIDsTrackingEnabled()) {
-					if (throughput > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * targetPerProxyThroughput)) {
-						busyThrottlingIds.emplace(throttlingId);
-					} else if (throughput < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * targetPerProxyThroughput)) {
-						busyThrottlingIds.erase(throttlingId);
-					}
-
-					// Only report busy throttling IDs to the proxy
-					if (busyThrottlingIds.contains(throttlingId)) {
+				if (isBusyThrottlingIdsTrackingEnabled()) {
+					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
+					if (isThrottlingIdsBusy(throttlingId, throughput, targetPerProxyThroughput)) {
 						result[throttlingId] = targetPerProxyThroughput;
 					}
 				} else {
@@ -444,8 +443,6 @@ public:
 
 		return result;
 	}
-
-	boost::unordered::unordered_flat_set<ThrottlingId> getBusyThrottlingIds() const { return busyThrottlingIds; }
 
 	int64_t throttleCount() const { return lastBusyThrottlingIdCount; }
 	int64_t manualThrottleCount() const { return 0; }
@@ -501,10 +498,6 @@ ThrottlingIdMap<double> QuotaThrottler::getTargetThroughput(int numProxies,
 
 int64_t QuotaThrottler::throttleCount() const {
 	return impl->throttleCount();
-}
-
-boost::unordered::unordered_flat_set<ThrottlingId> QuotaThrottler::getBusyThrottlingIds() const {
-	return impl->getBusyThrottlingIds();
 }
 
 uint32_t QuotaThrottler::throttlingIdsTracked() const {

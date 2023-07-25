@@ -58,8 +58,6 @@ public:
 	                                            IRKClusterThroughputTracker const&,
 	                                            RKServerThroughputTracker const&);
 
-	boost::unordered::unordered_flat_set<ThrottlingId> getBusyThrottlingIds() const;
-
 	// Testing only:
 public:
 	void removeExpiredThrottlingIds();

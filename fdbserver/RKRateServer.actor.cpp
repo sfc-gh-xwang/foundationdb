@@ -84,10 +84,6 @@ public:
 						reply.targetTransactionRate = std::move(targetTransactionRate);
 					}
 				}
-
-				if (isBusyThrottlingIDsTrackingEnabled()) {
-					reply.busyTags = quotaThrottler->getBusyThrottlingIds();
-				}
 			}
 
 			reply.healthMetrics.update(normalRateUpdater->getHealthMetrics(), true, req.detailed);

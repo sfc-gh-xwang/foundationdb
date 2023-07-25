@@ -29,7 +29,7 @@ class ThroughputTracker {
 	ThrottlingIdMap<ThroughputSmoother> smoothThroughput;
 	ThrottlingIdMap<ThroughputSmoother> smoothTransactionRate;
 
-	boost::unordered::unordered_flat_set<ThrottlingId> busyTags;
+	boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 
 public:
 	Future<Void> run(class DatabaseContext& cx);
@@ -40,4 +40,4 @@ public:
 };
 
 bool isClientAverageCostTrackingEnabled();
-bool isBusyThrottlingIDsTrackingEnabled();
+bool isBusyThrottlingIdsTrackingEnabled();

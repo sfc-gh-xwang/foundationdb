@@ -410,9 +410,10 @@ ACTOR Future<Void> globalConfigRequestServer(GrvProxyData* grvProxyData, GrvProx
 	}
 }
 
-ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRequest> stream,
-                                                 ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
-                                                 boost::unordered::unordered_flat_set<ThrottlingId>* busyTags) {
+ACTOR Future<Void> handleClientThroughputReports(
+    FutureStream<ReportThroughputRequest> stream,
+    ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
+    boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds) {
 	loop {
 		ReportThroughputRequest req = waitNext(stream);
 		for (auto const& [throttlingId, clientThroughput] : req.throughput) {
@@ -420,8 +421,8 @@ ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRe
 		}
 
 		ReportThroughputReply reply;
-		if (isBusyThrottlingIDsTrackingEnabled()) {
-			reply.busyTags = *busyTags;
+		if (isBusyThrottlingIdsTrackingEnabled()) {
+			reply.busyThrottlingIds = *busyThrottlingIds;
 		}
 
 		req.reply.send(reply);
@@ -441,7 +442,7 @@ ACTOR Future<Void> getRate(UID myID,
                            ThrottlingIdMap<uint64_t>* throttlingIdThroughput,
                            GrvProxyStats* stats,
                            GrvProxyData* proxyData,
-                           boost::unordered::unordered_flat_set<ThrottlingId>* busyTags) {
+                           boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds) {
 	state Future<Void> nextRequestTimer = Never();
 	state Future<Void> leaseTimeout = Never();
 	state Future<GetRateInfoReply> reply = Never();
@@ -501,14 +502,22 @@ ACTOR Future<Void> getRate(UID myID,
 				// target throughput in bytes per second.
 				if (rep.targetThroughput.present()) {
 					proxyData->tagThrottler.updateRates(rep.targetThroughput.get());
+
+					// The quota throttler only reports rates for busy throttlingIds
+					busyThrottlingIds->clear();
+					for (const auto& [k, _] : rep.targetThroughput.get()) {
+						busyThrottlingIds->emplace(k);
+					}
 				}
 			} else if (rep.targetTransactionRate.present()) {
 				// Update the tag throttler with the target rates in transactions per second
 				proxyData->tagThrottler.updateRates(rep.targetTransactionRate.get());
-			}
 
-			if (rep.busyTags.present()) {
-				*busyTags = std::move(rep.busyTags.get());
+				// The quota throttler only reports rates for busy throttlingIds
+				busyThrottlingIds->clear();
+				for (const auto& [k, _] : rep.targetTransactionRate.get()) {
+					busyThrottlingIds->emplace(k);
+				}
 			}
 		}
 		when(wait(leaseTimeout)) {
@@ -902,7 +911,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state ThrottlingIdMap<uint64_t> throttlingIdTransactionCounter;
 	state ThrottlingIdMap<uint64_t> throttlingIdThroughput;
 
-	state boost::unordered::unordered_flat_set<ThrottlingId> busyTags;
+	state boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 
 	state PromiseStream<double> normalGRVLatency;
 
@@ -912,8 +921,8 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	addActor.send(monitorDDMetricsChanges(&midShardSize, db));
 
 	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
-		addActor.send(
-		    handleClientThroughputReports(proxy.reportThroughput.getFuture(), &throttlingIdThroughput, &busyTags));
+		addActor.send(handleClientThroughputReports(
+		    proxy.reportThroughput.getFuture(), &throttlingIdThroughput, &busyThrottlingIds));
 	}
 	addActor.send(getRate(proxy.id(),
 	                      db,
@@ -927,7 +936,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	                      &throttlingIdThroughput,
 	                      &grvProxyData->stats,
 	                      grvProxyData,
-	                      &busyTags));
+	                      &busyThrottlingIds));
 	addActor.send(queueGetReadVersionRequests(db,
 	                                          &systemQueue,
 	                                          &defaultQueue,

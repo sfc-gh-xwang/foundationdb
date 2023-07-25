@@ -27,8 +27,8 @@ public:
 					                               std::move(req),
 					                               TaskPriority::DefaultPromiseEndpoint,
 					                               AtMostOnce::True))) {
-						if (isBusyThrottlingIDsTrackingEnabled()) {
-							self->busyTags = std::move(reply.busyTags);
+						if (isBusyThrottlingIdsTrackingEnabled()) {
+							self->busyThrottlingIds = std::move(reply.busyThrottlingIds);
 						}
 					}
 
@@ -92,11 +92,11 @@ bool isClientAverageCostTrackingEnabled() {
 	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT;
 }
 
-bool isBusyThrottlingIDsTrackingEnabled() {
+bool isBusyThrottlingIdsTrackingEnabled() {
 	// TRACK_BUSY_THROTTLING_IDS depends on TRACK_THROUGHPUT_ON_CLIENTS
 	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS;
 }
 
 bool ThroughputTracker::isThrottlingIdBusy(ThrottlingId const& throttlingId) const {
-	return busyTags.contains(throttlingId);
+	return busyThrottlingIds.contains(throttlingId);
 }

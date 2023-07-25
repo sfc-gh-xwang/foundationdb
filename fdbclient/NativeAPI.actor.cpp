@@ -7477,8 +7477,8 @@ bool TransactionState::canUseGrvCache() {
 	return !CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !options.skipGrvCache &&
 	       (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE || options.useGrvCache) &&
 	       rkThrottlingCooledDown(cx.getPtr(), options.priority) &&
-	       // skip cache if tag is busy, busy tags depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
-	       !(isBusyThrottlingIDsTrackingEnabled() && getThrottlingId().present() &&
+	       // skip cache if throttlingId is busy, busy throttlingId depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
+	       !(isBusyThrottlingIdsTrackingEnabled() && getThrottlingId().present() &&
 	         cx->isThrottlingIdBusy(getThrottlingId().get()));
 }
 

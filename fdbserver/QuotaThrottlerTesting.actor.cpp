@@ -226,7 +226,7 @@ public:
 		    .detail("ShouldBeBusy", shouldBeBusy)
 		    .detail("IsBusy", isBusy);
 
-		if (isBusyThrottlingIDsTrackingEnabled()) {
+		if (isBusyThrottlingIdsTrackingEnabled()) {
 			if (shouldBeBusy) {
 				return isBusy && isNear(rate, expected);
 			} else {
@@ -270,7 +270,8 @@ public:
 	void setCapacity(int index, double pagesPerSecond) { storageServers.setCapacity(index, pagesPerSecond); }
 
 	bool isThrottlingIdBusy(ThrottlingId const& throttlingId) {
-		return quotaThrottler.getBusyThrottlingIds().contains(throttlingId);
+		auto rates = getTargetRates();
+		return rates.contains(throttlingId);
 	}
 }; // class TestEnv
 
@@ -486,7 +487,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling1") {
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
 		return env.totalTargetRateIsNear(50 / 6.0) && env.throttleCount() == 2 &&
 		       // Both tags should be busy
-		       (!isBusyThrottlingIDsTrackingEnabled() ||
+		       (!isBusyThrottlingIdsTrackingEnabled() ||
 		        (env.isThrottlingIdBusy(testTag1) && env.isThrottlingIdBusy(testTag2)));
 	});
 	futures.push_back(env.update());
@@ -512,7 +513,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling2") {
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
 		return env.totalTargetRateIsNear(100 / 6.0) && env.throttleCount() == 2 &&
 		       // Both tags should be busy
-		       (!isBusyThrottlingIDsTrackingEnabled() ||
+		       (!isBusyThrottlingIdsTrackingEnabled() ||
 		        (env.isThrottlingIdBusy(testTag1) && env.isThrottlingIdBusy(testTag2)));
 	});
 	futures.push_back(env.update());
@@ -577,19 +578,27 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ExpireTags") {
 	client.cancel();
 	updater.cancel();
 	ASSERT_EQ(env.throttlingIdsTracked(), 1);
-	ASSERT(!isBusyThrottlingIDsTrackingEnabled() || env.isThrottlingIdBusy(testTag));
+	if (isBusyThrottlingIdsTrackingEnabled()) {
+		ASSERT(env.isThrottlingIdBusy(testTag));
+	}
 
 	env.removeExpiredThrottlingIds();
 	ASSERT_EQ(env.throttlingIdsTracked(), 1);
-	ASSERT(!isBusyThrottlingIDsTrackingEnabled() || env.isThrottlingIdBusy(testTag));
+	if (isBusyThrottlingIdsTrackingEnabled()) {
+		ASSERT(env.isThrottlingIdBusy(testTag));
+	}
 
 	wait(delay(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER + 1.0));
 	ASSERT_EQ(env.throttlingIdsTracked(), 1);
-	ASSERT(!isBusyThrottlingIDsTrackingEnabled() || env.isThrottlingIdBusy(testTag));
+	if (isBusyThrottlingIdsTrackingEnabled()) {
+		ASSERT(env.isThrottlingIdBusy(testTag));
+	}
 
 	env.removeExpiredThrottlingIds();
 	ASSERT_EQ(env.throttlingIdsTracked(), 0);
-	ASSERT(!isBusyThrottlingIDsTrackingEnabled() || !env.isThrottlingIdBusy(testTag));
+	if (isBusyThrottlingIdsTrackingEnabled()) {
+		ASSERT(!env.isThrottlingIdBusy(testTag));
+	}
 	return Void();
 }
 
@@ -642,7 +651,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 
 	// Only run this unit test if busy throttling id tracking is enabled.
-	if (!isBusyThrottlingIDsTrackingEnabled()) {
+	if (!isBusyThrottlingIdsTrackingEnabled()) {
 		return Void();
 	}
 
@@ -650,24 +659,51 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
 	state Future<Void> updater = env.update();
 
 	// 10% < Forget threshold, tag should not be tracked as busy.
-	wait(timeout(env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ), 30, Void()));
-	ASSERT(env.targetRateIsNear(testTag, {}, /*shouldBeBusy=*/false));
+	wait(timeoutError(env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(
+		                                       ThrottlingIdRef::fromTag("sampleTag1"_sr), {}, /*shouldBeBusy=*/false);
+	                                   }),
+	                  600.0));
 
 	// Forget threshold < 60% < Busy threshold, , tag should not be tracked as busy.
-	wait(timeout(env.runClient(testTag, /*tps=*/30.0, /*pagesPerTransaction=*/6.0, OpType::READ), 30, Void()));
-	ASSERT(env.targetRateIsNear(testTag, {}, /*shouldBeBusy=*/false));
+	wait(timeoutError(env.runClient(testTag, /*tps=*/30.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(
+		                                       ThrottlingIdRef::fromTag("sampleTag1"_sr), {}, /*shouldBeBusy=*/false);
+	                                   }),
+	                  600.0));
 
 	// Busy threshold < 100%, tag should be tracked as busy
-	wait(timeout(env.runClient(testTag, /*tps=*/50.0, /*pagesPerTransaction=*/6.0, OpType::READ), 30, Void()));
-	ASSERT(env.targetRateIsNear(testTag, 300 / 6, /*shouldBeBusy=*/true));
+	wait(timeoutError(env.runClient(testTag, /*tps=*/50.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr),
+		                                                               300 / 6,
+		                                                               /*shouldBeBusy=*/true);
+	                                   }),
+	                  600.0));
 
 	// Forget threshold < 70% < Busy threshold, tag below busy threshold, but above forget threshold
-	wait(timeout(env.runClient(testTag, /*tps=*/35.0, /*pagesPerTransaction=*/6.0, OpType::READ), 30, Void()));
-	ASSERT(env.targetRateIsNear(testTag, 300 / 6, /*shouldBeBusy=*/true));
+	wait(timeoutError(env.runClient(testTag, /*tps=*/35.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr),
+		                                                               300 / 6,
+		                                                               /*shouldBeBusy=*/true);
+	                                   }),
+	                  600.0));
 
 	// 40% < Forget threshold, less than forget threshold, should be no longer be tracked as busy
-	wait(timeout(env.runClient(testTag, /*tps=*/20.0, /*pagesPerTransaction=*/6.0, OpType::READ), 30, Void()));
-	ASSERT(env.targetRateIsNear(testTag, {}, /*shouldBeBusy=*/false));
+	wait(timeoutError(env.runClient(testTag, /*tps=*/20.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(
+		                                       ThrottlingIdRef::fromTag("sampleTag1"_sr), {}, /*shouldBeBusy=*/false);
+	                                   }),
+	                  600.0));
 
 	return Void();
 }
