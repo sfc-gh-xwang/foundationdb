@@ -41,6 +41,9 @@ void addWorkers(ClusterControllerData& data,
 // on.
 int uniqueProcesses(WorkerRecruitment const& workers) {
 	std::unordered_set<UID> ids;
+	if (workers.sequencer.present()) {
+		ids.insert(workers.sequencer.get().interf.id());
+	}
 	std::transform(workers.grvProxies.begin(),
 	               workers.grvProxies.end(),
 	               std::inserter(ids, ids.end()),
@@ -211,17 +214,19 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/All") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 6);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 7);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	auto workers = recruiter.findWorkers(&data, info, false);
+	ASSERT(workers.sequencer.present());
+	ASSERT_EQ(workers.grvProxies.size(), 1);
 	ASSERT_EQ(workers.grvProxies.size(), 1);
 	ASSERT_EQ(workers.commitProxies.size(), 3);
 	ASSERT_EQ(workers.resolvers.size(), 2);
 
 	// Make sure all roles were recruited on separate processes.
-	ASSERT_EQ(uniqueProcesses(workers), 6);
+	ASSERT_EQ(uniqueProcesses(workers), 7);
 
 	return Void();
 }
@@ -244,6 +249,7 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/Zero") {
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	auto workers = recruiter.findWorkers(&data, info, false);
+	ASSERT(workers.sequencer.present());
 	ASSERT_EQ(workers.grvProxies.size(), 1);
 	ASSERT_EQ(workers.commitProxies.size(), 1);
 	ASSERT_EQ(workers.resolvers.size(), 1);
@@ -265,6 +271,8 @@ TEST_CASE("/fdbserver/Recruiter/TLogs") {
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
 	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 5);
+	// Add an explicit sequencer process to avoid a `no_more_servers` error.
+	addWorkers(data, ProcessClass::ClassType::MasterClass, "1"_sr, {}, "1"_sr, 1);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -284,6 +292,8 @@ TEST_CASE("/fdbserver/Recruiter/TLogs/NotEnoughDesired") {
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
 	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 4);
+	// Add an explicit sequencer process to avoid a `no_more_servers` error.
+	addWorkers(data, ProcessClass::ClassType::MasterClass, "1"_sr, {}, "1"_sr, 1);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -303,6 +313,9 @@ TEST_CASE("/fdbserver/Recruiter/TLogs/NotEnoughRequired") {
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
 	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 2);
+	// Add an explicit sequencer process to ensure the `no_more_servers` error
+	// is not thrown from a failure to find a sequencer.
+	addWorkers(data, ProcessClass::ClassType::MasterClass, "1"_sr, {}, "1"_sr, 1);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -334,6 +347,8 @@ TEST_CASE("/fdbserver/Recruiter/TLogs/NoReplicationPolicy") {
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
 	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 5);
+	// Add an explicit sequencer process to avoid a `no_more_servers` error.
+	addWorkers(data, ProcessClass::ClassType::MasterClass, "1"_sr, {}, "1"_sr, 1);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
@@ -353,17 +368,17 @@ TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/Noop") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 4);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	auto recruitment1 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment1), 3);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 4);
 
 	// Adding another stateless process shouldn't trigger a recovery.
 	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 1);
 	auto recruitment2 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment2), 3);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 4);
 
 	ASSERT(!(recruitment1 < recruitment2));
 	ASSERT(!(recruitment2 < recruitment1));
@@ -411,16 +426,16 @@ TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/AddGrvProxy") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 4);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	auto recruitment1 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment1), 3);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 4);
 
 	addWorkers(data, ProcessClass::ClassType::GrvProxyClass, "1"_sr, {}, "1"_sr, 1);
 	auto recruitment2 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment2), 3);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 4);
 
 	ASSERT(recruitment1 < recruitment2);
 
@@ -438,16 +453,16 @@ TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/AddCommitProxy") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 4);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	auto recruitment1 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment1), 3);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 4);
 
 	addWorkers(data, ProcessClass::ClassType::CommitProxyClass, "1"_sr, {}, "1"_sr, 1);
 	auto recruitment2 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment2), 3);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 4);
 
 	ASSERT(recruitment1 < recruitment2);
 
@@ -465,16 +480,16 @@ TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/AddResolver") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 4);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	auto recruitment1 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment1), 3);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 4);
 
 	addWorkers(data, ProcessClass::ClassType::ResolutionClass, "1"_sr, {}, "1"_sr, 1);
 	auto recruitment2 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment2), 3);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 4);
 
 	ASSERT(recruitment1 < recruitment2);
 
@@ -494,17 +509,17 @@ TEST_CASE("/fdbserver/Recruiter/BetterMasterExists/AddTLog") {
 	                           LocalityData({}, {}, {}, "1"_sr),
 	                           ServerCoordinators(),
 	                           makeReference<AsyncVar<Optional<UID>>>());
-	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 3);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, {}, "1"_sr, 4);
 	addWorkers(data, ProcessClass::ClassType::StorageClass, "1"_sr, {}, "1"_sr, 1);
 
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	auto recruitment1 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment1), 4);
+	ASSERT_EQ(uniqueProcesses(recruitment1), 5);
 
 	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, {}, "1"_sr, 1);
 	auto recruitment2 = recruiter.findWorkers(&data, info, false);
-	ASSERT_EQ(uniqueProcesses(recruitment2), 4);
+	ASSERT_EQ(uniqueProcesses(recruitment2), 5);
 
 	ASSERT(recruitment1 < recruitment2);
 

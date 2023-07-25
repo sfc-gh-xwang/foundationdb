@@ -35,20 +35,49 @@ bool isExcludedDegradedServer(ClusterControllerData const* clusterControllerData
 	return false;
 }
 
-bool isLongLivedStateless(ClusterControllerData const* clusterControllerData, Optional<Key> const& processId) {
+// Simple helper function which returns true if `processRole` is present and
+// matches `role`.
+bool isRole(ProcessClass::ClusterRole role, Optional<ProcessClass::ClusterRole> processRole) {
+	return processRole.present() && processRole.get() == role;
+}
+
+// Returns true if the given processId is running one of the following
+// singletons:
+//
+//   * Data distributor
+//   * Ratekeeper
+//   * Blob manager
+//   * Blob migrator
+//   * Encrypt key proxy
+//   * Consistency scanner
+//
+// and if the process is not currently running that singleton (we want to be
+// able to re-recruit a singleton on its currently running process).
+//
+// These roles are not re-recruited on each recovery, henche the "long-lived"
+// description.
+bool isLongLivedStateless(ClusterControllerData const* clusterControllerData,
+                          Optional<Key> const& processId,
+                          Optional<ProcessClass::ClusterRole> role = Optional<ProcessClass::ClusterRole>()) {
 	return (clusterControllerData->db.serverInfo->get().distributor.present() &&
-	        clusterControllerData->db.serverInfo->get().distributor.get().locality.processId() == processId) ||
+	        clusterControllerData->db.serverInfo->get().distributor.get().locality.processId() == processId &&
+	        !isRole(ProcessClass::ClusterRole::DataDistributor, role)) ||
 	       (clusterControllerData->db.serverInfo->get().ratekeeper.present() &&
-	        clusterControllerData->db.serverInfo->get().ratekeeper.get().locality.processId() == processId) ||
+	        clusterControllerData->db.serverInfo->get().ratekeeper.get().locality.processId() == processId &&
+	        !isRole(ProcessClass::ClusterRole::Ratekeeper, role)) ||
 	       (clusterControllerData->db.serverInfo->get().blobManager.present() &&
-	        clusterControllerData->db.serverInfo->get().blobManager.get().locality.processId() == processId) ||
+	        clusterControllerData->db.serverInfo->get().blobManager.get().locality.processId() == processId &&
+	        !isRole(ProcessClass::ClusterRole::BlobManager, role)) ||
 	       (clusterControllerData->db.serverInfo->get().blobMigrator.present() &&
-	        clusterControllerData->db.serverInfo->get().blobMigrator.get().locality.processId() == processId) ||
+	        clusterControllerData->db.serverInfo->get().blobMigrator.get().locality.processId() == processId &&
+	        !isRole(ProcessClass::ClusterRole::BlobMigrator, role)) ||
 	       (clusterControllerData->db.serverInfo->get().client.encryptKeyProxy.present() &&
 	        clusterControllerData->db.serverInfo->get().client.encryptKeyProxy.get().locality.processId() ==
-	            processId) ||
+	            processId &&
+	        !isRole(ProcessClass::ClusterRole::EncryptKeyProxy, role)) ||
 	       (clusterControllerData->db.serverInfo->get().consistencyScan.present() &&
-	        clusterControllerData->db.serverInfo->get().consistencyScan.get().locality.processId() == processId);
+	        clusterControllerData->db.serverInfo->get().consistencyScan.get().locality.processId() == processId &&
+	        !isRole(ProcessClass::ClusterRole::ConsistencyScan, role));
 }
 
 // Log the reason why the worker is considered as unavailable.
@@ -1049,7 +1078,9 @@ public:
 	    bool checkGoodRecruitment) {
 		WorkerRecruitment recruitment;
 		std::map<Optional<Standalone<StringRef>>, int> id_used;
-		Recruiter::updateKnownIds(clusterControllerData, &id_used);
+		id_used[clusterControllerData->clusterControllerProcessId]++;
+
+		recruitment.sequencer = findSequencer(self, clusterControllerData, info, id_used);
 
 		ASSERT(dcId.present());
 
@@ -1178,6 +1209,32 @@ public:
 			std::copy(backupWorkers.begin(), backupWorkers.end(), std::back_inserter(recruitment.backupWorkers));
 		}
 
+		// Find remote tlogs and log routers for multi-region deployments.
+		if (info.configuration.usableRegions > 1) {
+			Key remoteDcId = dcId == info.configuration.regions[0].dcId ? info.configuration.regions[1].dcId
+			                                                            : info.configuration.regions[0].dcId;
+
+			std::vector<UID> exclusionWorkerIds;
+			std::transform(recruitment.tLogs.begin(),
+			               recruitment.tLogs.end(),
+			               std::back_inserter(exclusionWorkerIds),
+			               [](const WorkerDetails& wd) { return wd.interf.id(); });
+			std::transform(recruitment.satelliteTLogs.begin(),
+			               recruitment.satelliteTLogs.end(),
+			               std::back_inserter(exclusionWorkerIds),
+			               [](const WorkerDetails& wd) { return wd.interf.id(); });
+
+			RemoteRecruitmentInfo remoteRecruitmentInfo(
+			    info.configuration,
+			    remoteDcId,
+			    recruitment.tLogs.size() *
+			        std::max<int>(
+			            1, info.configuration.desiredLogRouterCount / std::max<int>(1, recruitment.tLogs.size())),
+			    exclusionWorkerIds);
+			recruitment.remoteWorkerRecruitment =
+			    clusterRecruitRemoteFromConfiguration(self, clusterControllerData, remoteRecruitmentInfo);
+		}
+
 		if (!clusterControllerData->goodRecruitmentTime.isReady() && checkGoodRecruitment &&
 		    (RoleFitness(SERVER_KNOBS->EXPECTED_TLOG_FITNESS, info.configuration.getDesiredLogs(), ProcessClass::TLog)
 		         .betterCount(RoleFitness(tLogs, ProcessClass::TLog, id_used)) ||
@@ -1202,6 +1259,34 @@ public:
 		}
 
 		return recruitment;
+	}
+
+	static WorkerDetails findSequencer(Recruiter* self,
+	                                   ClusterControllerData const* clusterControllerData,
+	                                   RecruitmentInfo const& info,
+	                                   std::map<Optional<Standalone<StringRef>>, int>& id_used) {
+		// We must recruit the sequencer in the same data center as the cluster
+		// controller which is what identifies the primary region. This should
+		// always be possible, because we can recruit the sequencer on the same
+		// process as the cluster controller. Stateless role recruitment should
+		// be avoided in the secondary region due to latency concerns.
+		WorkerDetails sequencer = self->getWorkerForRoleInDatacenter(clusterControllerData,
+		                                                             clusterControllerData->clusterControllerDcId,
+		                                                             ProcessClass::Master,
+		                                                             ProcessClass::NeverAssign,
+		                                                             info.configuration,
+		                                                             id_used)
+		                              .worker;
+		auto pid = sequencer.interf.locality.processId();
+		if ((sequencer.processClass.machineClassFitness(ProcessClass::Master) > SERVER_KNOBS->EXPECTED_MASTER_FITNESS ||
+		     sequencer.interf.locality.processId() == clusterControllerData->clusterControllerProcessId) &&
+		    !clusterControllerData->goodRecruitmentTime.isReady()) {
+			TraceEvent("RecruitNewMaster", self->id)
+			    .detail("Fitness", sequencer.processClass.machineClassFitness(ProcessClass::Master));
+			throw operation_failed();
+		}
+
+		return sequencer;
 	}
 
 	static WorkerRecruitment findWorkersForMultiRegion(Recruiter* self,
@@ -1314,7 +1399,10 @@ public:
 	                                                  bool checkGoodRecruitment) {
 		WorkerRecruitment recruitment;
 		std::map<Optional<Standalone<StringRef>>, int> id_used;
-		Recruiter::updateKnownIds(clusterControllerData, &id_used);
+		id_used[clusterControllerData->clusterControllerProcessId]++;
+
+		recruitment.sequencer = findSequencer(self, clusterControllerData, info, id_used);
+
 		auto tLogs = self->getWorkersForTLogs(clusterControllerData,
 		                                      info.configuration,
 		                                      info.configuration.tLogReplicationFactor,
@@ -1558,6 +1646,42 @@ public:
 		return recruitment;
 	}
 
+	// Attempts to recruit `sequencer` by sending it a message. Throws
+	// `master_failed` if the recruitment attempt fails.
+	ACTOR static Future<Void> recruitSequencer(Recruiter const* self,
+	                                           Reference<ClusterRecoveryData> clusterRecoveryData,
+	                                           WorkerDetails sequencer) {
+		state Future<MasterInterface> sequencerInterface;
+
+		clusterRecoveryData->controllerData->masterProcessId = sequencer.interf.locality.processId();
+
+		RecruitMasterRequest rmq;
+		rmq.lifetime = clusterRecoveryData->controllerData->db.serverInfo->get().masterLifetime;
+		rmq.forceRecovery = clusterRecoveryData->controllerData->db.forceRecovery;
+
+		sequencerInterface =
+		    transformErrors(throwErrorOr(sequencer.interf.master.getReplyUnlessFailedFor(
+		                        rmq, SERVER_KNOBS->TLOG_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
+		                    master_failed());
+		wait(ready(sequencerInterface));
+		TraceEvent("RecruitNewMaster", self->id).detail("Recruited", sequencerInterface.get().id());
+
+		// for status tool
+		TraceEvent("RecruitedMasterWorker", self->id)
+		    .detail("Address", sequencerInterface.get().address())
+		    .trackLatest(clusterRecoveryData->controllerData->recruitedMasterWorkerEventHolder->trackingKey);
+
+		clusterRecoveryData->masterInterface = sequencerInterface.get();
+
+		auto serverInfo = clusterRecoveryData->controllerData->db.serverInfo->get();
+		serverInfo.id = deterministicRandom()->randomUniqueID();
+		serverInfo.infoGeneration = ++clusterRecoveryData->controllerData->db.dbInfoCount;
+		serverInfo.master = sequencerInterface.get();
+		clusterRecoveryData->controllerData->db.serverInfo->set(serverInfo);
+
+		return Void();
+	}
+
 	ACTOR static Future<Void> newSeedServers(Reference<ClusterRecoveryData> clusterRecoveryData,
 	                                         WorkerRecruitment recruitment,
 	                                         std::vector<StorageServerInterface>* servers) {
@@ -1626,7 +1750,7 @@ public:
 		std::vector<Future<CommitProxyInterface>> initializationReplies;
 		for (int i = 0; i < recr.commitProxies.size(); i++) {
 			InitializeCommitProxyRequest req;
-			req.master = clusterRecoveryData->masterInterface;
+			req.master = clusterRecoveryData->masterInterface.get();
 			req.masterLifetime = clusterRecoveryData->masterLifetime;
 			req.recoveryCount = clusterRecoveryData->cstate.myDBState.recoveryCount + 1;
 			req.recoveryTransactionVersion = clusterRecoveryData->recoveryTransactionVersion;
@@ -1657,7 +1781,7 @@ public:
 		std::vector<Future<GrvProxyInterface>> initializationReplies;
 		for (int i = 0; i < recr.grvProxies.size(); i++) {
 			InitializeGrvProxyRequest req;
-			req.master = clusterRecoveryData->masterInterface;
+			req.master = clusterRecoveryData->masterInterface.get();
 			req.masterLifetime = clusterRecoveryData->masterLifetime;
 			req.recoveryCount = clusterRecoveryData->cstate.myDBState.recoveryCount + 1;
 			TraceEvent("GrvProxyReplies", clusterRecoveryData->dbgid)
@@ -1727,32 +1851,12 @@ public:
 				    .detail("Loc", loc);
 			}
 
-			std::vector<UID> exclusionWorkerIds;
-			std::transform(recr.tLogs.begin(),
-			               recr.tLogs.end(),
-			               std::back_inserter(exclusionWorkerIds),
-			               [](const WorkerDetails& wd) { return wd.interf.id(); });
-			std::transform(recr.satelliteTLogs.begin(),
-			               recr.satelliteTLogs.end(),
-			               std::back_inserter(exclusionWorkerIds),
-			               [](const WorkerDetails& wd) { return wd.interf.id(); });
-
-			RemoteRecruitmentInfo remoteRecruitmentInfo(
-			    clusterRecoveryData->configuration,
-			    remoteDcId,
-			    recr.tLogs.size() * std::max<int>(1,
-			                                      clusterRecoveryData->configuration.desiredLogRouterCount /
-			                                          std::max<int>(1, recr.tLogs.size())),
-			    exclusionWorkerIds);
-			remoteRecruitmentInfo.dbgId = clusterRecoveryData->dbgid;
-			Future<RemoteWorkerRecruitment> fRemoteWorkers =
-			    clusterRecruitRemoteFromConfiguration(self, clusterRecoveryData->controllerData, remoteRecruitmentInfo);
-
+			ASSERT(recr.remoteWorkerRecruitment.present());
 			clusterRecoveryData->primaryLocality = clusterRecoveryData->dcId_locality[recr.dcId];
 			clusterRecoveryData->logSystem = Reference<ILogSystem>(); // Cancels the actors in the previous log system.
 			Reference<ILogSystem> newLogSystem =
 			    wait(oldLogSystem->newEpoch(recr,
-			                                fRemoteWorkers,
+			                                recr.remoteWorkerRecruitment.get(),
 			                                clusterRecoveryData->configuration,
 			                                clusterRecoveryData->cstate.myDBState.recoveryCount + 1,
 			                                clusterRecoveryData->recoveryTransactionVersion,
@@ -1781,7 +1885,7 @@ public:
 
 	ACTOR static Future<RemoteWorkerRecruitment> clusterRecruitRemoteFromConfiguration(
 	    Recruiter* self,
-	    ClusterControllerData* clusterControllerData,
+	    ClusterControllerData const* clusterControllerData,
 	    RemoteRecruitmentInfo info) {
 		CODE_PROBE(true, "ClusterController RecruitTLogsRequest Remote");
 		loop {
@@ -1808,6 +1912,9 @@ public:
 	    WorkerRecruitment recruitment,
 	    std::vector<StorageServerInterface>* seedServers,
 	    Reference<ILogSystem> oldLogSystem) {
+		ASSERT(recruitment.sequencer.present());
+		wait(RecruiterImpl::recruitSequencer(self, clusterRecoveryData, recruitment.sequencer.get()));
+
 		// Actually, newSeedServers does both the recruiting and initialization of the seed servers; so if this is a
 		// brand new database we are sort of lying that we are past the recruitment phase.  In a perfect world we would
 		// split that up so that the recruitment part happens above (in parallel with recruiting the transaction
@@ -2015,7 +2122,7 @@ WorkerFitnessInfo Recruiter::getWorkerForRoleInDatacenter(
 			auto sharing = preferredSharing.find(it.first);
 			fitness_workers[std::make_tuple(fitness,
 			                                id_used[it.first],
-			                                isLongLivedStateless(clusterControllerData, it.first),
+			                                isLongLivedStateless(clusterControllerData, it.first, role),
 			                                sharing != preferredSharing.end() ? sharing->second : 1e6)]
 			    .push_back(it.second.details);
 		}

@@ -1,4 +1,5 @@
 extraDatabaseMode=Local
+simHTTPServerEnabled=false
 
 testTitle=DrUpgrade
 runSetup=false
