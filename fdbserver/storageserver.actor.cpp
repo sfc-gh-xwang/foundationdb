@@ -909,6 +909,7 @@ public:
 	Optional<TenantGroupName> getTenantGroup(Version, TenantInfo, bool lockAware) const;
 
 	std::vector<StorageServerShard> getStorageServerShards(KeyRangeRef range);
+	void insertShardsIntoRangeMap(CoalescedKeyRangeMap<bool>& ranges, KeyRangeRef range);
 	ReadMetrics getReadMetrics(CoalescedKeyRangeMap<bool> const& ranges);
 	ReadMetrics getReadMetrics(KeyRef const& key);
 
@@ -2269,55 +2270,70 @@ std::vector<StorageServerShard> StorageServer::getStorageServerShards(KeyRangeRe
 	return res;
 }
 
-ReadMetrics StorageServer::getReadMetrics(CoalescedKeyRangeMap<bool> const& ranges) {
-	int64_t rangeBusyness = 0;
-
-	for (auto const& range : ranges.ranges()) {
-		if (range.cvalue()) {
-			if (SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
-				rangeBusyness += metrics.opsReadSample.getEstimate(range.range());
-			} else {
-				KeyRangeRef modifiedRange = range.range();
-				if (modifiedRange.begin.startsWith(systemKeys.begin)) {
-					continue;
-				} else if (modifiedRange.end.startsWith(systemKeys.begin)) {
-					modifiedRange = KeyRangeRef(modifiedRange.begin, normalKeys.end);
-				}
-				rangeBusyness += metrics.opsReadSample.getEstimate(modifiedRange);
-			}
+void StorageServer::insertShardsIntoRangeMap(CoalescedKeyRangeMap<bool>& ranges, KeyRangeRef range) {
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		for (auto shard : shards.intersectingRanges(range)) {
+			ranges.insert(shard->value()->keys, true);
 		}
 	}
+}
 
-	double overallRate = std::max<double>(
-	    1.0, metrics.opsReadSample.getEstimate(SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS ? allKeys : normalKeys));
+ReadMetrics StorageServer::getReadMetrics(CoalescedKeyRangeMap<bool> const& ranges) {
+	double rangeBusyness = 0;
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		int64_t rangeEstimate = 0;
+		for (auto const& range : ranges.ranges()) {
+			if (range.cvalue()) {
+				if (SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
+					rangeEstimate += metrics.opsReadSample.getEstimate(range.range());
+				} else {
+					KeyRangeRef modifiedRange = range.range();
+					if (modifiedRange.begin.startsWith(systemKeys.begin)) {
+						continue;
+					} else if (modifiedRange.end.startsWith(systemKeys.begin)) {
+						modifiedRange = KeyRangeRef(modifiedRange.begin, normalKeys.end);
+					}
+					rangeEstimate += metrics.opsReadSample.getEstimate(modifiedRange);
+				}
+			}
+		}
 
-	ASSERT_LE(rangeBusyness, overallRate);
-	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness,
-	                               std::min<double>(1.0, rangeBusyness / overallRate));
+		double overallEstimate = std::max<double>(
+		    1.0,
+		    metrics.opsReadSample.getEstimate(SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS ? allKeys : normalKeys));
+
+		ASSERT_LE(rangeEstimate, overallEstimate);
+		rangeBusyness = rangeEstimate / overallEstimate;
+	}
+
+	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
 }
 
 ReadMetrics StorageServer::getReadMetrics(KeyRef const& key) {
-	Reference<ShardInfo> shard = shards[key];
+	double rangeBusyness = 0;
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		Reference<ShardInfo> shard = shards[key];
 
-	double overallRate;
-	KeyRangeRef range = shard->keys;
-	if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
-		if (key.startsWith(systemKeys.begin)) {
-			return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
+		double overallEstimate;
+		KeyRangeRef range = shard->keys;
+		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
+			if (key.startsWith(systemKeys.begin)) {
+				return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
+			}
+
+			overallEstimate = std::max<double>(1.0, metrics.opsReadSample.getEstimate(normalKeys));
+			if (range.end.startsWith(systemKeys.begin)) {
+				range = KeyRangeRef(range.begin, normalKeys.end);
+			}
+		} else {
+			overallEstimate = std::max<double>(1.0, metrics.opsReadSample.getEstimate(allKeys));
 		}
 
-		overallRate = std::max<double>(1.0, metrics.opsReadSample.getEstimate(normalKeys));
-		if (range.end.startsWith(systemKeys.begin)) {
-			range = KeyRangeRef(range.begin, normalKeys.end);
-		}
-	} else {
-		overallRate = std::max<double>(1.0, metrics.opsReadSample.getEstimate(allKeys));
+		int64_t rangeEstimate = metrics.opsReadSample.getEstimate(range);
+		ASSERT_LE(rangeEstimate, overallEstimate);
+		rangeBusyness = rangeEstimate / overallEstimate;
 	}
-
-	int64_t rangeBusyness = metrics.opsReadSample.getEstimate(range);
-
-	ASSERT_LE(rangeBusyness, overallRate);
-	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness / overallRate);
+	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
 }
 
 // Lightweight blocking function that updates requested version to version queue for statistics
@@ -4386,10 +4402,8 @@ ACTOR Future<Key> findKey(StorageServer* data,
 		returnKey = more ? rep.data.back().key : range.begin;
 	}
 
-	for (auto shard : data->shards.intersectingRanges(forward ? KeyRangeRef(sel.getKey(), returnKey)
-	                                                          : KeyRangeRef(returnKey, sel.getKey()))) {
-		shards->insert(shard->value()->keys, true);
-	}
+	data->insertShardsIntoRangeMap(
+	    *shards, forward ? KeyRangeRef(sel.getKey(), returnKey) : KeyRangeRef(returnKey, sel.getKey()));
 
 	if (index < rep.data.size()) {
 		*pOffset = 0;
@@ -4713,9 +4727,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 			                     ? keyAfterWithPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
 			                     : end;
 
-			for (auto r : data->shards.intersectingRanges(KeyRangeRef(readBegin, readEnd))) {
-				readShards.insert(r->value()->keys, true);
-			}
+			data->insertShardsIntoRangeMap(readShards, KeyRangeRef(readBegin, readEnd));
 
 			r.penalty = data->getPenalty();
 			r.readMetrics = data->getReadMetrics(readShards);
@@ -5912,9 +5924,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 			        ? keyAfterWithPrefix(getKeyValuesReply.data.back().key, req.tenantInfo.prefix, req.arena)
 			        : end;
 
-			for (auto r : data->shards.intersectingRanges(KeyRangeRef(readBegin, readEnd))) {
-				readShards.insert(r->value()->keys, true);
-			}
+			data->insertShardsIntoRangeMap(readShards, KeyRangeRef(readBegin, readEnd));
 
 			r.penalty = data->getPenalty();
 			// Note: this does not include metrics for the mapped keys
@@ -6100,10 +6110,7 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 				                     ? keyAfterWithPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
 				                     : end;
 
-				for (auto r : data->shards.intersectingRanges(KeyRangeRef(readBegin, readEnd))) {
-					readShards.insert(r->value()->keys, true);
-				}
-
+				data->insertShardsIntoRangeMap(readShards, KeyRangeRef(readBegin, readEnd));
 				r.readMetrics = data->getReadMetrics(readShards);
 
 				if (req.options.present() && req.options.get().debugID.present())

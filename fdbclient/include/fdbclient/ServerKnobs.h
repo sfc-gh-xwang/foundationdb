@@ -894,6 +894,8 @@ public:
 	int STORAGE_COMMIT_BYTES;
 	int STORAGE_FETCH_BYTES;
 	double STORAGE_COMMIT_INTERVAL;
+	bool ENABLE_READ_RANGE_BUSYNESS_REPORTING;
+
 	int BYTE_SAMPLING_FACTOR;
 	int BYTE_SAMPLING_OVERHEAD;
 	double MIN_BYTE_SAMPLING_PROBABILITY; // Adjustable only for test of PhysicalShardMove. Should always be 0 for other
