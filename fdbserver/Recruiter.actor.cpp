@@ -1209,6 +1209,32 @@ public:
 			std::copy(backupWorkers.begin(), backupWorkers.end(), std::back_inserter(recruitment.backupWorkers));
 		}
 
+		// Find remote tlogs and log routers for multi-region deployments.
+		if (info.configuration.usableRegions > 1) {
+			Key remoteDcId = dcId == info.configuration.regions[0].dcId ? info.configuration.regions[1].dcId
+			                                                            : info.configuration.regions[0].dcId;
+
+			std::vector<UID> exclusionWorkerIds;
+			std::transform(recruitment.tLogs.begin(),
+			               recruitment.tLogs.end(),
+			               std::back_inserter(exclusionWorkerIds),
+			               [](const WorkerDetails& wd) { return wd.interf.id(); });
+			std::transform(recruitment.satelliteTLogs.begin(),
+			               recruitment.satelliteTLogs.end(),
+			               std::back_inserter(exclusionWorkerIds),
+			               [](const WorkerDetails& wd) { return wd.interf.id(); });
+
+			RemoteRecruitmentInfo remoteRecruitmentInfo(
+			    info.configuration,
+			    remoteDcId,
+			    recruitment.tLogs.size() *
+			        std::max<int>(
+			            1, info.configuration.desiredLogRouterCount / std::max<int>(1, recruitment.tLogs.size())),
+			    exclusionWorkerIds);
+			recruitment.remoteWorkerRecruitment =
+			    clusterRecruitRemoteFromConfiguration(self, clusterControllerData, remoteRecruitmentInfo);
+		}
+
 		if (!clusterControllerData->goodRecruitmentTime.isReady() && checkGoodRecruitment &&
 		    (RoleFitness(SERVER_KNOBS->EXPECTED_TLOG_FITNESS, info.configuration.getDesiredLogs(), ProcessClass::TLog)
 		         .betterCount(RoleFitness(tLogs, ProcessClass::TLog, id_used)) ||
@@ -1825,32 +1851,12 @@ public:
 				    .detail("Loc", loc);
 			}
 
-			std::vector<UID> exclusionWorkerIds;
-			std::transform(recr.tLogs.begin(),
-			               recr.tLogs.end(),
-			               std::back_inserter(exclusionWorkerIds),
-			               [](const WorkerDetails& wd) { return wd.interf.id(); });
-			std::transform(recr.satelliteTLogs.begin(),
-			               recr.satelliteTLogs.end(),
-			               std::back_inserter(exclusionWorkerIds),
-			               [](const WorkerDetails& wd) { return wd.interf.id(); });
-
-			RemoteRecruitmentInfo remoteRecruitmentInfo(
-			    clusterRecoveryData->configuration,
-			    remoteDcId,
-			    recr.tLogs.size() * std::max<int>(1,
-			                                      clusterRecoveryData->configuration.desiredLogRouterCount /
-			                                          std::max<int>(1, recr.tLogs.size())),
-			    exclusionWorkerIds);
-			remoteRecruitmentInfo.dbgId = clusterRecoveryData->dbgid;
-			Future<RemoteWorkerRecruitment> fRemoteWorkers =
-			    clusterRecruitRemoteFromConfiguration(self, clusterRecoveryData->controllerData, remoteRecruitmentInfo);
-
+			ASSERT(recr.remoteWorkerRecruitment.present());
 			clusterRecoveryData->primaryLocality = clusterRecoveryData->dcId_locality[recr.dcId];
 			clusterRecoveryData->logSystem = Reference<ILogSystem>(); // Cancels the actors in the previous log system.
 			Reference<ILogSystem> newLogSystem =
 			    wait(oldLogSystem->newEpoch(recr,
-			                                fRemoteWorkers,
+			                                recr.remoteWorkerRecruitment.get(),
 			                                clusterRecoveryData->configuration,
 			                                clusterRecoveryData->cstate.myDBState.recoveryCount + 1,
 			                                clusterRecoveryData->recoveryTransactionVersion,
@@ -1879,7 +1885,7 @@ public:
 
 	ACTOR static Future<RemoteWorkerRecruitment> clusterRecruitRemoteFromConfiguration(
 	    Recruiter* self,
-	    ClusterControllerData* clusterControllerData,
+	    ClusterControllerData const* clusterControllerData,
 	    RemoteRecruitmentInfo info) {
 		CODE_PROBE(true, "ClusterController RecruitTLogsRequest Remote");
 		loop {
