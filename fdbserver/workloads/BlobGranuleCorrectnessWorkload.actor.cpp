@@ -455,7 +455,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		// ignore tenants that aren't blobbified, might be default tenants created for other workloads
 		state std::vector<std::pair<int64_t, TenantMapEntry>> blobbifiedTenants;
 		for (i = 0; i < allTenants.size(); i++) {
-			Reference<Tenant> tenant = makeReference<Tenant>(allTenants[i].first);
+			Reference<Tenant> tenant = makeReference<Tenant>(cx, allTenants[i].first);
 			Standalone<VectorRef<KeyRangeRef>> blobbifiedRanges = wait(cx->listBlobbifiedRanges(normalKeys, 1, tenant));
 			if (!blobbifiedRanges.empty()) {
 				blobbifiedTenants.push_back(allTenants[i]);

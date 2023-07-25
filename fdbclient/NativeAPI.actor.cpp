@@ -2982,11 +2982,12 @@ AddressExclusion AddressExclusion::parse(StringRef const& key) {
 	}
 }
 
-Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)) {}
-Tenant::Tenant(int64_t id) : lookupFuture(id) {}
-Tenant::Tenant(Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
+Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)), db(cx) {}
+Tenant::Tenant(Database cx, int64_t id) : lookupFuture(id), db(cx) {}
+Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
   : name(name),
-    lookupFuture(tenantLookupInfo) {}
+    lookupFuture(tenantLookupInfo),
+	db(cx) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
@@ -3630,7 +3631,7 @@ Optional<Reference<Tenant>> const& TransactionState::tenant() {
 bool TransactionState::hasTenant(ResolveDefaultTenant resolveDefaultTenant) {
 	if (!tenantSet && resolveDefaultTenant) {
 		if (!options.rawAccess && cx->defaultTenant.present()) {
-			tenant_ = makeReference<Tenant>(cx->lookupTenant(cx->defaultTenant.get()), cx->defaultTenant);
+			tenant_ = makeReference<Tenant>(cx, cx->lookupTenant(cx->defaultTenant.get()), cx->defaultTenant);
 		}
 		tenantSet = true;
 	}
@@ -4126,7 +4127,7 @@ ACTOR Future<Void> watchStorageServerResp(int64_t tenantId, Key key, Database cx
 ACTOR Future<Void> sameVersionDiffValue(Database cx, Reference<WatchParameters> parameters) {
 	state ReadYourWritesTransaction tr(cx,
 	                                   parameters->tenant.hasTenant()
-	                                       ? makeReference<Tenant>(parameters->tenant.tenantId)
+	                                       ? makeReference<Tenant>(cx, parameters->tenant.tenantId)
 	                                       : Optional<Reference<Tenant>>());
 
 	loop {

@@ -164,7 +164,7 @@ ACTOR Future<bool> blobKeyCommandActor(Database localDb,
 
 	Optional<Reference<Tenant>> tenant;
 	if (tenantEntry.present()) {
-		tenant = Reference<Tenant>(new Tenant(tenantEntry.get().id));
+		tenant = Reference<Tenant>(new Tenant(localDb, tenantEntry.get().id));
 	}
 
 	ASSERT(tokens[1] == "history"_sr);

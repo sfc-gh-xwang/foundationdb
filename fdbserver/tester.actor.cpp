@@ -973,7 +973,7 @@ ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
 		std::vector<Future<Void>> deleteDataFutures;
 		for (auto const& [id, entry] : tenants.results) {
 			if (entry.tenantName != defaultTenant) {
-				deleteDataFutures.push_back(clearTenantData(cx, makeReference<Tenant>(id)));
+				deleteDataFutures.push_back(clearTenantData(cx, makeReference<Tenant>(cx, id)));
 			}
 		}
 

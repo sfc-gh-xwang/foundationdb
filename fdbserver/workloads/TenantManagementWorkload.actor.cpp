@@ -61,12 +61,12 @@ struct TenantManagementWorkload : TestWorkload {
 		bool empty;
 
 		TenantTestData() : empty(true) {}
-		TenantTestData(int64_t id, Optional<TenantGroupName> tenantGroup, bool empty)
-		  : tenant(makeReference<Tenant>(id)),
+		TenantTestData(Database cx, int64_t id, Optional<TenantGroupName> tenantGroup, bool empty)
+		  : tenant(makeReference<Tenant>(cx, id)),
 		    tenantGroup(tenantGroup),
 		    empty(empty) {}
-		TenantTestData(int64_t id, Optional<TenantName> tName, Optional<TenantGroupName> tenantGroup, bool empty)
-		  : tenant(makeReference<Tenant>(TenantLookupInfo(id, tenantGroup), tName)),
+		TenantTestData(Database cx, int64_t id, Optional<TenantName> tName, Optional<TenantGroupName> tenantGroup, bool empty)
+		  : tenant(makeReference<Tenant>(cx, TenantLookupInfo(id, tenantGroup), tName)),
 		    tenantGroup(tenantGroup),
 		    empty(empty) {}
 	};
@@ -454,7 +454,7 @@ struct TenantManagementWorkload : TestWorkload {
 
 		// Update our local tenant state to include the newly created one
 		self->maxId = entry.get().id;
-		TenantTestData tData = TenantTestData(entry.get().id, itrName, tGroup, true);
+		TenantTestData tData = TenantTestData(self->dataDb, entry.get().id, itrName, tGroup, true);
 		self->createdTenants[itrName] = tData;
 		self->allTestTenants.push_back(tData.tenant);
 		return Void();
@@ -1932,7 +1932,7 @@ struct TenantManagementWorkload : TestWorkload {
 		if (!self->allTestTenants.empty() && deterministicRandom()->random01() < 0.90) {
 			tenant = deterministicRandom()->randomChoice(self->allTestTenants);
 		} else if (deterministicRandom()->coinflip()) {
-			tenant = makeReference<Tenant>(std::numeric_limits<int64_t>::max());
+			tenant = makeReference<Tenant>(self->dataDb, std::numeric_limits<int64_t>::max());
 		}
 
 		state bool useManagementCluster = self->useMetacluster && deterministicRandom()->random01() < 0.05;
