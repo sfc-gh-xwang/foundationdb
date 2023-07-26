@@ -28,6 +28,7 @@
 #include "fdbclient/Tenant.h"
 #include "fdbclient/Tracing.h"
 #include "fdbclient/ApiRequest.h"
+#include "flow/EncryptUtils.h"
 #include "flow/ProtocolVersion.h"
 #include "flow/ThreadHelper.actor.h"
 
@@ -216,6 +217,11 @@ public:
 
 	// Return a JSON string containing database client-side status information
 	virtual ThreadFuture<Standalone<StringRef>> getClientStatus() = 0;
+
+	// Return a JSON string containing list of latest cipher key for each encryption domain (tenant) and their
+	// information.
+	virtual ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
+	    Optional<EncryptCipherDomainId> domainId) = 0;
 
 	// used in template functions as the Transaction type that can be created through createTransaction()
 	using TransactionT = ITransaction;

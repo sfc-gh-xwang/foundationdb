@@ -806,6 +806,9 @@ public:
 	Standalone<StringRef> getClientStatus();
 	Standalone<StringRef> getTenantClientStatus(Tenant* tenant);
 
+	// TODO(yiwu): add comment
+	Future<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(Optional<EncryptCipherDomainId> domainId);
+
 private:
 	using WatchMapKey = std::pair<int64_t, Key>;
 	using WatchMapKeyHasher = boost::hash<WatchMapKey>;

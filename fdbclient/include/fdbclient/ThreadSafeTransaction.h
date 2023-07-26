@@ -78,6 +78,9 @@ public:
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
+	ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
+	    Optional<EncryptCipherDomainId> domainId) override;
+
 private:
 	friend class ThreadSafeTenant;
 	friend class ThreadSafeTransaction;

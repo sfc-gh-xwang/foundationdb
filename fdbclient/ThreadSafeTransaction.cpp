@@ -245,6 +245,12 @@ ThreadFuture<Standalone<StringRef>> ThreadSafeDatabase::getClientStatus() {
 	return onMainThread([db] { return Future<Standalone<StringRef>>(db->getClientStatus()); });
 }
 
+ThreadFuture<Standalone<StringRef>> ThreadSafeDatabase::getLatestEncryptCipherKeysStatus(
+    Optional<EncryptCipherDomainId> domainId) {
+	DatabaseContext* db = this->db;
+	return onMainThread([db, domainId] { return db->getLatestEncryptCipherKeysStatus(domainId); });
+}
+
 ThreadSafeDatabase::~ThreadSafeDatabase() {
 	DatabaseContext* db = this->db;
 	onMainThreadVoid([db]() { db->delref(); });

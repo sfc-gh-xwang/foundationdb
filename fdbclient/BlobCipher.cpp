@@ -470,6 +470,7 @@ void BlobCipherKey::initKey(const EncryptCipherDomainId& domainId,
 	// update cipher 'refresh' and 'expire' TS
 	refreshAtTS = refreshAt;
 	expireAtTS = expireAt;
+	accessAtTS = now();
 
 #if BLOB_CIPHER_DEBUG
 	TraceEvent(SevDebug, "BlobCipherKeyInit")
@@ -860,6 +861,17 @@ std::vector<Reference<BlobCipherKey>> BlobCipherKeyCache::getAllCiphers(const En
 
 	Reference<BlobCipherKeyIdCache> keyIdCache = domainItr->second;
 	return keyIdCache->getAllCipherKeys();
+}
+
+std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> BlobCipherKeyCache::getAllLatestCiphers() {
+	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> result;
+	for (const auto& domain : domainCacheMap) {
+		Reference<BlobCipherKey> cipherKey = domain.second->getLatestCipherKey();
+		if (cipherKey.isValid()) {
+			result[domain.first] = cipherKey;
+		}
+	}
+	return result;
 }
 
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo) {

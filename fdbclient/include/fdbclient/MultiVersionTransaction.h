@@ -196,6 +196,8 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 
 	FDBFuture* (*databaseGetClientStatus)(FDBDatabase* db);
 
+	FDBFuture* (*databaseGetLatestEncryptCipherKeysStatus)(FDBDatabase* db, int64_t const* domainId);
+
 	// Tenant
 	fdb_error_t (*tenantCreateTransaction)(FDBTenant* tenant, FDBTransaction** outTransaction);
 
@@ -592,6 +594,9 @@ public:
 
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
+
+	ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
+	    Optional<EncryptCipherDomainId> domainId) override;
 
 private:
 	const Reference<FdbCApi> api;
@@ -1006,6 +1011,9 @@ public:
 
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
+
+	ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
+	    Optional<EncryptCipherDomainId> domainId) override;
 
 	// Database initialization state
 	enum class InitializationState { INITIALIZING, INITIALIZATION_FAILED, CREATED, INCOMPATIBLE, CLOSED };

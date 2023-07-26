@@ -35,6 +35,7 @@ struct ClientWorkerInterface {
 	RequestStream<struct RebootRequest> reboot;
 	RequestStream<struct ProfilerRequest> profiler;
 	RequestStream<struct SetFailureInjection> setFailureInjection;
+	RequestStream<struct GetLatestEncryptCipherKeysStatusRequest> getLatestEncryptCipherKeysStatus;
 
 	bool operator==(ClientWorkerInterface const& r) const { return id() == r.id(); }
 	bool operator!=(ClientWorkerInterface const& r) const { return id() != r.id(); }
@@ -45,7 +46,7 @@ struct ClientWorkerInterface {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, reboot, profiler, setFailureInjection);
+		serializer(ar, reboot, profiler, setFailureInjection, getLatestEncryptCipherKeysStatus);
 	}
 };
 
@@ -125,6 +126,31 @@ struct SetFailureInjection {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, reply, diskFailure, flipBits);
+	}
+};
+
+struct GetLatestEncryptCipherKeysStatusReply {
+	constexpr static FileIdentifier file_identifier = 2141414;
+	LatestEncryptCipherKeysStatus statuses;
+
+	GetLatestEncryptCipherKeysStatusReply() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, statuses);
+	}
+};
+
+struct GetLatestEncryptCipherKeysStatusRequest {
+	constexpr static FileIdentifier file_identifier = 1026949;
+	Optional<EncryptCipherDomainId> domainId;
+	ReplyPromise<GetLatestEncryptCipherKeysStatusReply> reply;
+
+	GetLatestEncryptCipherKeysStatusRequest() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, domainId, reply);
 	}
 };
 #endif

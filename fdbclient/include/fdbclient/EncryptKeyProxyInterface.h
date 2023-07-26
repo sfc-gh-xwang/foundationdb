@@ -20,6 +20,7 @@
 
 #ifndef FDBSERVER_ENCRYPTKEYPROXYINTERFACE_H
 #define FDBSERVER_ENCRYPTKEYPROXYINTERFACE_H
+#include "flow/TaskPriority.h"
 #pragma once
 
 #include "fdbclient/BlobMetadataUtils.h"
@@ -91,6 +92,7 @@ struct EncryptKeyProxyInterface {
 	RequestStream<struct EKPGetLatestBaseCipherKeysRequest> getLatestBaseCipherKeys;
 	RequestStream<struct EKPGetLatestBlobMetadataRequest> getLatestBlobMetadata;
 	RequestStream<struct EncryptKeyProxyHealthStatusRequest> getHealthStatus;
+	RequestStream<struct EKPGetLatestEncryptCipherKeysStatusRequest> getLatestEncryptCipherKeysStatus;
 
 	EncryptKeyProxyInterface() {}
 	explicit EncryptKeyProxyInterface(const struct LocalityData& loc, UID id) : locality(loc), myId(id) {}
@@ -120,6 +122,8 @@ struct EncryptKeyProxyInterface {
 			    RequestStream<struct EKPGetLatestBlobMetadataRequest>(waitFailure.getEndpoint().getAdjustedEndpoint(4));
 			getHealthStatus = RequestStream<struct EncryptKeyProxyHealthStatusRequest>(
 			    waitFailure.getEndpoint().getAdjustedEndpoint(5));
+			getLatestEncryptCipherKeysStatus = RequestStream<struct EKPGetLatestEncryptCipherKeysStatusRequest>(
+			    waitFailure.getEndpoint().getAdjustedEndpoint(6));
 		}
 	}
 
@@ -131,6 +135,7 @@ struct EncryptKeyProxyInterface {
 		streams.push_back(getLatestBaseCipherKeys.getReceiver(TaskPriority::Worker));
 		streams.push_back(getLatestBlobMetadata.getReceiver(TaskPriority::Worker));
 		streams.push_back(getHealthStatus.getReceiver(TaskPriority::Worker));
+		streams.push_back(getLatestEncryptCipherKeysStatus.getReceiver(TaskPriority::Worker));
 		FlowTransport::transport().addEndpoints(streams);
 	}
 };
@@ -329,6 +334,46 @@ struct EKPGetLatestBlobMetadataRequest {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, domainIds, debugId, reply);
+	}
+};
+
+struct EncryptCipherKeyStatus {
+	constexpr static FileIdentifier file_identifier = 2820955;
+	double lastAccessTime = 0;
+
+	EncryptCipherKeyStatus() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, lastAccessTime);
+	}
+};
+
+using LatestEncryptCipherKeysStatus =
+    std::map<EncryptCipherDomainId, std::map<EncryptCipherBaseKeyId, EncryptCipherKeyStatus>>;
+
+struct EKPGetLatestEncryptCipherKeysStatusReply {
+	constexpr static FileIdentifier file_identifier = 2141414;
+	LatestEncryptCipherKeysStatus statuses;
+
+	EKPGetLatestEncryptCipherKeysStatusReply() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, statuses);
+	}
+};
+
+struct EKPGetLatestEncryptCipherKeysStatusRequest {
+	constexpr static FileIdentifier file_identifier = 1026949;
+	Optional<EncryptCipherDomainId> domainId;
+	ReplyPromise<EKPGetLatestEncryptCipherKeysStatusReply> reply;
+
+	EKPGetLatestEncryptCipherKeysStatusRequest() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, domainId, reply);
 	}
 };
 

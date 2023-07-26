@@ -940,6 +940,26 @@ ThreadFuture<Standalone<StringRef>> DLDatabase::getClientStatus() {
 	});
 }
 
+ThreadFuture<Standalone<StringRef>> DLDatabase::getLatestEncryptCipherKeysStatus(
+    Optional<EncryptCipherDomainId> domainIdOpt) {
+	if (!api->databaseGetLatestEncryptCipherKeysStatus) {
+		return unsupported_operation();
+	}
+	int64_t domainId = domainIdOpt.orDefault(0);
+	FdbCApi::FDBFuture* f =
+	    api->databaseGetLatestEncryptCipherKeysStatus(db, domainIdOpt.present() ? &domainId : nullptr);
+	return toThreadFuture<Standalone<StringRef>>(
+	    api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) -> Standalone<StringRef> {
+		    const uint8_t* str;
+		    int strLength;
+		    FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		    ASSERT(!error);
+
+		    // The memory for this is stored in the FDBFuture and is released when the future gets destroyed
+		    return Standalone<StringRef>(StringRef(str, strLength), Arena());
+	    });
+}
+
 // DLApi
 
 // Loads the specified function from a dynamic library
@@ -1072,6 +1092,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_database_get_client_status",
 	                   headerVersion >= ApiVersion::withGetClientStatus().version());
+	loadClientFunction(&api->databaseGetLatestEncryptCipherKeysStatus,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_database_get_latest_encrypt_cipher_keys_status",
+	                   headerVersion >= ApiVersion::withGetLatestEncryptCipherKeysStatus().version());
 	loadClientFunction(
 	    &api->tenantCreateTransaction, lib, fdbCPath, "fdb_tenant_create_transaction", headerVersion >= 0);
 	loadClientFunction(&api->tenantPurgeBlobGranules,
@@ -2284,6 +2309,12 @@ ThreadFuture<Standalone<StringRef>> MultiVersionDatabase::getClientStatus() {
 			    });
 		    });
 	}
+}
+
+ThreadFuture<Standalone<StringRef>> MultiVersionDatabase::getLatestEncryptCipherKeysStatus(
+    Optional<EncryptCipherDomainId> domainId) {
+	return executeOperation(&IDatabase::getLatestEncryptCipherKeysStatus,
+	                        std::forward<Optional<EncryptCipherDomainId>>(domainId));
 }
 
 MultiVersionDatabase::DatabaseState::DatabaseState(ClusterConnectionRecord const& connectionRecord,
