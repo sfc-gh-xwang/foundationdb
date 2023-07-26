@@ -118,7 +118,7 @@ if __name__ == "__main__":
         args.process_number,
         blob_granules_enabled=args.blob_granules_enabled,
         tls_config=tls_config,
-        enable_tenants=enable_tenants,
+        tenant_mode="optional_experimental" if enable_tenants else None,
         authorization_kty=args.authorization_kty,
         authorization_keypair_id=args.authorization_keypair_id,
         remove_at_exit=not args.no_remove_at_exit,
