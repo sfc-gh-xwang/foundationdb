@@ -50,7 +50,7 @@ import fdb
 ## This fails (unsupported configuration):
 # ../tests/loopback_cluster/run_cluster.sh . 3 '../tests/python_tests/multithreaded_client.py loopback-cluster-*/fdb.cluster --threads 2 --skip-so-files'
 
-fdb.api_version(630)
+fdb.api_version(800000)
 
 if not os.path.exists(args.client_log_dir):
     os.mkdir(args.client_log_dir)
