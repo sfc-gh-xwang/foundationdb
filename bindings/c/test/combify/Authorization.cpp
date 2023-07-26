@@ -1,4 +1,5 @@
-#include "combinatorial.hpp"
+#include "Combify.hpp"
+#include "TestHelpers.hpp"
 #include <fmt/format.h>
 #ifdef NDEBUG
 #undef NDEBUG
@@ -7,7 +8,7 @@
 // Prevent ODR clash between sources
 namespace {
 
-using namespace cbt;
+using namespace combify;
 using namespace fdb::literals;
 
 AddTest test1("AuthZCrossTenantDisallowed", AND(withAuthZ, withTls, withTenantsMoreThan(1)), [](const TestEnv& env) {

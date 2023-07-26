@@ -1,14 +1,17 @@
 import itertools
-from tmp_cluster import TempCluster
-from local_cluster import TLSConfig
-import sys
 import json
 import os
 import platform
 import subprocess
+import sys
+
+from local_cluster import TLSConfig
+from tmp_cluster import TempCluster
 
 if __name__ == "__main__":
-    assert len(sys.argv) == 2
+    if len(sys.argv) != 2:
+        print("Usage: {} [BUILD_DIRECTORY_PATH]".format(sys.argv[0]))
+        sys.exit(1)
     # tlsEnabled = [True, False]
     # authzEnabled = [True, False]
     # tenantModes = ["disabled", "optional_experimental", "required_experimental"]
@@ -19,6 +22,11 @@ if __name__ == "__main__":
     tenant_modes = ["optional_experimental"]
     tenant_counts = [3]
     test_ok = True
+    binary_rel_path = "bin/fdb_c_combify_test"
+    binary_abs_path = os.path.join(build_dir, binary_rel_path)
+    if not os.path.isfile(binary_abs_path):
+        print("Cannot find {} in build directory {}".format(binary_rel_path, build_dir))
+        sys.exit(2)
     for [tls_on, authz_on, tenant_mode, tenant_count] in itertools.product(
         tls_options, authz_options, tenant_modes, tenant_counts
     ):
@@ -58,7 +66,7 @@ if __name__ == "__main__":
             env[libpath_env_key] = os.path.join(build_dir, "lib")
             this_run = subprocess.run(
                 [
-                    os.path.join(build_dir, "bin/fdb_c_combinatorial_test"),
+                    binary_abs_path,
                     json.dumps(test_config),
                 ],
                 stdout=sys.stdout,

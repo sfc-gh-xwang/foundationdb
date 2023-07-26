@@ -1,35 +1,57 @@
-#include <chrono>
-#include <fstream>
+/*
+ * Combify.cpp
+ *
+ * Copyright (c) 2023 Snowflake Computing
+ */
 
-#include <rapidjson/document.h>
-#include <rapidjson/error/en.h>
-#include <fmt/format.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+#include <chrono>
+#include <cstdlib>
+#include <ctime>
+#include <iostream>
+#include <optional>
+#include <sstream>
+#include <thread>
+#include <type_traits>
+#include <utility>
+
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/optional.hpp>
 #include <boost/process.hpp>
 #include <boost/serialization/optional.hpp>
 #include <boost/serialization/string.hpp>
-#include <unistd.h>
-#include <cstdlib>
-#include <ctime>
-#include <chrono>
-#include <iostream>
-#include <thread>
-#include <sys/wait.h>
 
-#include "combinatorial.hpp"
+#include <rapidjson/document.h>
+#include <rapidjson/error/en.h>
+#include <fmt/format.h>
+
+#include "Combify.hpp"
+#include "TestHelpers.hpp"
 #include "fdbrpc/TokenSignStdTypes.h"
 
 namespace {
-std::optional<cbt::TestEnv> env;
+std::optional<combify::TestEnv> env;
 }
 
-namespace cbt {
+namespace combify {
+
+// Network or database option can have a transaction implication:
+// e.g. trustedClient option affects whether AuthZ token transaction option should be set.
+template <class Opt>
+concept HasTransactionImplication = requires(const Opt& o) {
+	                                    { o.apply(std::declval<fdb::Transaction>()) } -> std::same_as<void>;
+                                    };
 
 using namespace fdb::literals;
 
 std::list<TestCase> testCases;
+
+void AddTest::doAddTest(TestCase&& tc) {
+	testCases.push_back(std::move(tc));
+}
 
 auto nextIterationImpl = [](auto&... opts) -> optional<IterableOptionTier> {
 	// shift set of iterable options into the next iteration
@@ -87,8 +109,8 @@ bool TestOptions::allOptionsValid() const {
 				        // tester automatically explores both trusted and untrusted client mode,
 				        // but if the static configuration does not have authorization enabled,
 				        // that option value is unfit to be tested.
-				        // This case can be removed if we also move the temporary cluster provisioning into the C++ CBT
-				        // code. Skip this iteration by not incrementing count.
+				        // This case can be removed if we also move the temporary cluster provisioning into the C++
+				        // combify code. Skip this iteration by not incrementing count.
 			        } else {
 				        count++;
 			        }
@@ -150,8 +172,9 @@ void TestEnv::setNetworkOptionsForAdmin() {
 }
 
 fdb::Database TestEnv::adminDatabase() {
-	if (!adminDb)
+	if (!adminDb) {
 		adminDb = fdb::Database(*staticOptions.clusterFilePath);
+	}
 	return adminDb;
 }
 
@@ -193,9 +216,10 @@ fdb::Transaction TestEnv::newTenantTransaction(fdb::Database db, fdb::BytesRef t
 				break;
 			}
 		}
-		if (!knownTenantFound)
+		if (!knownTenantFound) {
 			throw std::runtime_error(
 			    "AUTHZ-ENABLED, UNTRUSTED_CLIENT newTenantTransaction() WITH AD-HOC TENANT IS NOT SUPPORTED YET");
+		}
 	}
 	return tr;
 }
@@ -207,8 +231,9 @@ fdb::Transaction TestEnv::newTransaction(fdb::Database db) const {
 }
 
 void TestEnv::assertNonZeroTenantCount() const {
-	if (!staticOptions.tenantCount)
+	if (!staticOptions.tenantCount) {
 		throw std::runtime_error(fmt::format("ATTEMPTED TENANT ACCESS IN TENANTLESS CONFIG: {}", shortSummary()));
+	}
 	assert(*staticOptions.tenantCount == tenants.size()); // By now tenant names and IDs should have been filled out.
 	if (tenants.size() == 0) {
 		throw std::runtime_error(fmt::format("ATTEMPTED TENANT ACCESS IN ZERO-TENANT CONFIG: {}", shortSummary()));
@@ -221,15 +246,17 @@ const std::pair<fdb::ByteString, int64_t>& TestEnv::anyTenant() const {
 }
 
 unsigned TestEnv::numTenants() const {
-	if (staticOptions.tenantCount)
+	if (staticOptions.tenantCount) {
 		assert(*staticOptions.tenantCount == tenants.size());
+	}
 	return staticOptions.tenantCount ? tenants.size() : 0;
 }
 
 const std::pair<fdb::ByteString, int64_t>& TestEnv::tenantByIndex(unsigned index) const {
 	assertNonZeroTenantCount();
-	if (index >= tenants.size())
+	if (index >= tenants.size()) {
 		throw std::out_of_range(fmt::format("TENANT INDEX OUT OF RANGE: {} of [0,{})", index, tenants.size()));
+	}
 	return tenants[index];
 }
 
@@ -239,7 +266,7 @@ string AuthZConfig::signToken(std::vector<int64_t> tenantIds) const {
 	auto const now = std::chrono::duration_cast<std::chrono::duration<uint64_t>>(timeSinceEpoch).count();
 	t.algorithm = authz::Algorithm::ES256;
 	t.keyId = *keyName;
-	t.issuer = "cbt";
+	t.issuer = "combify";
 	t.subject = "client-test";
 	t.audience = std::vector<string>{ "aud" };
 	t.issuedAtUnixTime = now;
@@ -248,10 +275,6 @@ string AuthZConfig::signToken(std::vector<int64_t> tenantIds) const {
 	t.tokenId = randomAlnumString<string>(10, 20);
 	t.tenants = std::move(tenantIds);
 	return authz::jwt::stdtypes::signToken(t, *privateKeyPem);
-}
-
-const TestEnv& TestEnv::instance() {
-	return *env;
 }
 
 std::string drainPipeFd(int pipeFd) {
@@ -337,8 +360,6 @@ std::tuple<optional<string>, string, string> runForked(Fn&& fn) {
 			    WEXITSTATUS(status),
 			    WIFSIGNALED(status),
 			    WTERMSIG(status)));
-		} else {
-			// fmt::print("[DEBUG] CHILD PROCESS RETURNED WITHOUT CRASH\n");
 		}
 		// parent process: read back optional<string> whose value is set if something went wrong.
 		auto out = drainPipeFd(childStdout[0]);
@@ -487,7 +508,7 @@ std::vector<const TestCase*> collectTestCases(const TestOptions& options) {
 	return ret;
 }
 
-} // namespace cbt
+} // namespace combify
 
 template <class Duration>
 int diffMillis(Duration tdiff) {
@@ -527,17 +548,17 @@ int main(int argc, char** argv) {
 	} else {
 		fmt::print("Random seed set by current time to {}\n", randomSeed);
 	}
-	fmt::print("{} test cases found{}\n", cbt::testCases.size(), cbt::testCases.empty() ? "" : ":");
-	for (const auto& [name, _, __] : cbt::testCases) {
+	fmt::print("{} test cases found{}\n", combify::testCases.size(), combify::testCases.empty() ? "" : ":");
+	for (const auto& [name, _, __] : combify::testCases) {
 		fmt::print("  {}\n", name);
 	}
 
 	std::srand(randomSeed);
-	cbt::optional<cbt::IterableOptionTier> shiftedTier;
-	std::vector<std::pair<const cbt::TestCase*, cbt::TestOptions>> failedCases;
+	combify::optional<combify::IterableOptionTier> shiftedTier;
+	std::vector<std::pair<const combify::TestCase*, combify::TestOptions>> failedCases;
 	do {
-		auto cases = cbt::collectTestCases(*env);
-		fmt::print("Configuration {} [{} cases]\n", env->shortSummaryIterable(), cases.size());
+		auto cases = combify::collectTestCases(*env);
+		fmt::print("\n{} [{} cases]\n", env->shortSummaryIterable(), cases.size());
 		if (cases.empty()) {
 			continue;
 		}
@@ -554,8 +575,9 @@ int main(int argc, char** argv) {
 				ok = false;
 			}
 			fmt::print("  {} {} ({} ms)\n", (ok ? "O" : "X"), testCasePtr->name, diffMillis(timeEnd - timeBegin));
-			if (!ok)
+			if (!ok) {
 				failedCases.emplace_back(testCasePtr, *env);
+			}
 		}
 	} while ((shiftedTier = env->next()));
 
