@@ -1127,10 +1127,12 @@ struct FinishTenantMovementImpl {
 			try {
 				state ThreadFuture<Version> resultFuture = tr->getReadVersion();
 				Version version = wait(safeThreadFutureToFuture(resultFuture));
+				TraceEvent("BreakpointCheckDestVersion")
+				    .detail("MRVersion", self->moveRecord.version)
+				    .detail("ActualVersion", version);
 				if (version > self->moveRecord.version) {
 					return true;
 				}
-				wait(delay(1.0));
 				return false;
 			} catch (Error& e) {
 				wait(safeThreadFutureToFuture(tr->onError(e)));
@@ -1265,12 +1267,24 @@ struct FinishTenantMovementImpl {
 			state std::vector<TenantMapEntry> dstEntries = wait(self->dstCtx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return getTenantEntries(self->tenantsInGroup, tr); }));
 			TraceEvent("Breakpoint3");
+			state int tries = 0;
+			state int retryLimit = 25;
 			loop {
 				bool versionReady = wait(self->dstCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return checkDestinationVersion(self, tr); }));
 				if (versionReady) {
 					break;
 				}
+				if (++tries >= retryLimit) {
+					TraceEvent("MetaclusterMoveFinishVersionsTooFar")
+					    .detail("DstCluster", self->dstCtx.clusterName.get());
+					self->messages.push_back(
+					    fmt::format("Tenant move finish: destination cluster {} has a version that is too far behind\n"
+					                "	Use `versionepoch commit` on the destination cluster to advance the version.\n",
+					                self->dstCtx.clusterName.get()));
+					throw tenant_move_failed();
+				}
+				wait(delay(1.0));
 			}
 			TraceEvent("Breakpoint4");
 			wait(runMoveManagementTransaction(self->tenantGroup,
