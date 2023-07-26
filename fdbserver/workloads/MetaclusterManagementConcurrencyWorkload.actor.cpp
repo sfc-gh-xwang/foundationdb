@@ -349,6 +349,7 @@ struct MetaclusterManagementConcurrencyWorkload : TestWorkload {
 		    deterministicRandom()->coinflip());
 		state metacluster::ForceJoin forceJoin(deterministicRandom()->coinflip());
 		state bool removeFirst = !applyManagementClusterUpdates && deterministicRandom()->coinflip();
+		state bool forceDeleteMissingTenants = deterministicRandom()->coinflip();
 
 		state UID debugId = deterministicRandom()->randomUniqueID();
 
@@ -397,18 +398,17 @@ struct MetaclusterManagementConcurrencyWorkload : TestWorkload {
 					messages.clear();
 				}
 
-				Optional<Void> result =
-				    wait(timeout(metacluster::restoreCluster(
-				                     self->simMetacluster.managementDb,
-				                     clusterName,
-				                     db->getConnectionRecord()->getConnectionString(),
-				                     applyManagementClusterUpdates,
-				                     metacluster::RestoreDryRun::False,
-				                     forceJoin,
-				                     metacluster::ForceReuseTenantIdPrefix::True,
-				                     metacluster::ForceDeleteMissingTenants(deterministicRandom()->coinflip()),
-				                     &messages),
-				                 30.0));
+				Optional<Void> result = wait(timeout(
+				    metacluster::restoreCluster(self->simMetacluster.managementDb,
+				                                clusterName,
+				                                db->getConnectionRecord()->getConnectionString(),
+				                                applyManagementClusterUpdates,
+				                                metacluster::RestoreDryRun::False,
+				                                forceJoin,
+				                                metacluster::ForceReuseTenantIdPrefix::True,
+				                                metacluster::ForceDeleteMissingTenants(forceDeleteMissingTenants),
+				                                &messages),
+				    30.0));
 
 				if (result.present()) {
 					TraceEvent(SevDebug, "MetaclusterManagementConcurrencyRestoreComplete", debugId)
@@ -434,8 +434,10 @@ struct MetaclusterManagementConcurrencyWorkload : TestWorkload {
 			           (e.code() == error_code_cluster_already_exists || e.code() == error_code_tenant_already_exists ||
 			            e.code() == error_code_invalid_tenant_configuration)) {
 				// Repopulating a management cluster can fail if the cluster is already in the metacluster
+			} else if (e.code() == error_code_tenant_not_found) {
+				ASSERT(!forceDeleteMissingTenants);
 			} else if (e.code() != error_code_cluster_not_found && e.code() != error_code_cluster_removed &&
-			           e.code() != error_code_conflicting_restore) {
+			           e.code() != error_code_conflicting_restore && e.code() != error_code_tenant_not_found) {
 				TraceEvent(SevError, "MetaclusterManagementConcurrencyRestoreFailure", debugId)
 				    .error(e)
 				    .detail("ClusterName", clusterName)
