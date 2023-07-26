@@ -126,12 +126,15 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT,            true ); 
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL,              0 ); 
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE,         0 );
+	// Dynamic Empty Version Wait: Decision
+	init( DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE,        0.1 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR, 0.95 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_CAP,                      0.020 );
 	// Dynamic Empty Version Wait: Syncing
 	init( DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_INTERVAL,       0.010 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD,      0.005 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL,                1 );
-	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT,  10000 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT,   2000 );
 
 	// disk snapshot max timeout, to be put in TLog, storage and coordinator nodes
 	init( MAX_FORKED_PROCESS_OUTPUT,                            1024 );

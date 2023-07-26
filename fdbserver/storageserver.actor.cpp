@@ -12128,7 +12128,6 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				state uint64_t sampleCount = mutationSize + nonMutationSize;
 				state double targetWaitWindow = 0;
 
-				// Skip round if not enough samples are accumulated
 				if (sampleCount < SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT) {
 					TraceEvent("EmptyVersionWaitWindowSkip", self->thisServerID)
 					    .suppressFor(20)
@@ -12136,15 +12135,18 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					continue;
 				}
 
-				// Decide wait window:
+				// Decide wait window
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE == 0) {
-					targetWaitWindow =
-					    mutationSize > 0.1 * (mutationSize + nonMutationSize)
-					        ? 0 + self->emptyVersionWaitMutationStats.minWaitWindow * 0.95
-					        : (lastWaitWindow + self->emptyVersionWaitNonMutationStats.minWaitWindow) * 0.95;
+					targetWaitWindow = mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE *
+					                                      (mutationSize + nonMutationSize)
+					                       ? 0 + self->emptyVersionWaitMutationStats.minWaitWindow *
+					                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR
+					                       : (lastWaitWindow + self->emptyVersionWaitNonMutationStats.minWaitWindow) *
+					                             SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
 				} else {
 					targetWaitWindow =
-					    mutationSize > 0.1 * (mutationSize + nonMutationSize)
+					    mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE *
+					                       (mutationSize + nonMutationSize)
 					        ? 0 + self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
 					                  SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
 					        : lastWaitWindow + self->emptyVersionWaitNonMutationStats.safeWaitWindow.percentile(
@@ -12166,8 +12168,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				// Under read bursts, it is possible the sketch gives negative results because of requests waiting
 				// for versions even if we have already set waitWindow to zero. We keep sending the minimum wait
 				// window possible to tlog (zero)
-				if (targetWaitWindow < 0)
-					targetWaitWindow = 0;
+				targetWaitWindow = std::max(targetWaitWindow, .0);
 
 				// Cap delay window growth to be below maximum allowed version wait.
 				targetWaitWindow = std::min(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_CAP, targetWaitWindow);
@@ -12183,12 +12184,10 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				if (emergencyRewrite ||
 				    g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
 					traceWaitWindowDecision(self, targetWaitWindow, lastWaitWindow);
-
 					// Skip sending wait window if new decision is the same as the last one sent.
 					if (targetWaitWindow != lastWaitWindow) {
 						wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag));
 					}
-
 					resetWaitWindowStatistics(self);
 					lastWaitWindow = targetWaitWindow;
 					lastSyncTime = g_network->timer();

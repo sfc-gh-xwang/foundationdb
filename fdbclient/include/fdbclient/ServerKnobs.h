@@ -134,6 +134,8 @@ public:
 	                                                   // latency penalty for reads.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
 	                                                        // delay window.
+	double DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE;
+	double DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
 	double DYNAMIC_EMPTY_VERSION_WAIT_CAP; // Hard cap for largest safe delay window to limit damage to P999
 	                                       // read/version wait latency
 	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_INTERVAL; // Interval of ss checking local statistics to make a
