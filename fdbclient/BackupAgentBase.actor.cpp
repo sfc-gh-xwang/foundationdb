@@ -389,7 +389,8 @@ ACTOR static Future<Void> decodeBackupLogValue(Arena* arena,
 				for (auto r : ranges) {
 					bool includeRange = version > r.value() && r.value() != invalidVersion;
 					KeyRangeRef intersectingSubRange = r.range();
-					if (!includeRange && range.contains(metadataVersionKey) && intersectingSubRange.contains(metadataVersionKey)) {
+					if (!includeRange && range.contains(metadataVersionKey) &&
+					    intersectingSubRange.contains(metadataVersionKey)) {
 						intersectingSubRange = KeyRangeRef(metadataVersionKey, metadataVersionKeyEnd);
 						includeRange = true;
 					}

@@ -230,10 +230,9 @@ ACTOR Future<bool> metaclusterRemoveCommand(Reference<IDatabase> db, std::vector
 }
 
 void printRestoreUsage() {
-	fmt::print(
-	    "Usage: metacluster restore <NAME> [dryrun] connection_string=<CONNECTION_STRING>\n"
-	    "<restore_known_data_cluster|repopulate_from_data_cluster>\n"
-		"[force_join|force_reuse_tenant_id_prefix|force_delete_missing_tenants] ...\n\n");
+	fmt::print("Usage: metacluster restore <NAME> [dryrun] connection_string=<CONNECTION_STRING>\n"
+	           "<restore_known_data_cluster|repopulate_from_data_cluster>\n"
+	           "[force_join|force_reuse_tenant_id_prefix|force_delete_missing_tenants] ...\n\n");
 
 	fmt::print("Add a restored data cluster back to a metacluster.\n\n");
 
@@ -324,7 +323,7 @@ ACTOR Future<bool> metaclusterRestoreCommand(Reference<IDatabase> db, std::vecto
 			                                 metacluster::RestoreDryRun(dryRun),
 			                                 metacluster::ForceJoin(forceJoin),
 			                                 metacluster::ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
-											 metacluster::ForceDeleteMissingTenants(forceDeleteMissingTenants),
+			                                 metacluster::ForceDeleteMissingTenants(forceDeleteMissingTenants),
 			                                 &messages));
 		} else if (restoreType == "repopulate_from_data_cluster"_sr) {
 			wait(metacluster::restoreCluster(db,
@@ -334,7 +333,7 @@ ACTOR Future<bool> metaclusterRestoreCommand(Reference<IDatabase> db, std::vecto
 			                                 metacluster::RestoreDryRun(dryRun),
 			                                 metacluster::ForceJoin(forceJoin),
 			                                 metacluster::ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
-											 metacluster::ForceDeleteMissingTenants(forceDeleteMissingTenants),
+			                                 metacluster::ForceDeleteMissingTenants(forceDeleteMissingTenants),
 			                                 &messages));
 		} else {
 			fmt::print(stderr, "ERROR: unrecognized restore mode `{}'\n", printable(restoreType));
