@@ -14,7 +14,11 @@ from test_harness.summarize import SummaryTree, Coverage
 # Before increasing this, make sure that all Joshua clusters (at Apple and Snowflake) have been upgraded.
 # This version needs to be changed if we either need newer features from FDB or the current API version is
 # getting retired.
-fdb.api_version(630)
+try:
+    fdb.api_version(710)
+except Exception:
+    # FIXME: Remove this after upgrading all Joshua clusters to a newer version
+    fdb.api_version(630)
 
 
 def str_to_tuple(s: str | None):
