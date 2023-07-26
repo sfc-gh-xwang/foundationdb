@@ -134,6 +134,8 @@ public:
 	                                                   // latency penalty for reads.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
 	                                                        // delay window.
+	double DYNAMIC_EMPTY_VERSION_WAIT_CAP; // Hard cap for largest safe delay window to limit damage to P999
+	                                       // read/version wait latency
 	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_INTERVAL; // Interval of ss checking local statistics to make a
 	                                                      // new decision of wait window.
 	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD; // If previous synced window is this amount greater than the
@@ -146,11 +148,6 @@ public:
 	                                                 // 10000 more sync messages per second!
 	int DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT; // Minimum amount of collected samples required to make a
 	                                                        // new window decision.
-	double DYNAMIC_EMPTY_VERSION_WAIT_IDLE_INTERVAL; // After this amount of time with no sufficient samples, force set
-	                                                 // wait window to DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WAIT_WINDOW
-	double
-	    DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WINDOW; // Wait window to set to when DYNAMIC_EMPTY_VERSION_WAIT_IDLE_INTERVAL
-	                                            // passed and no sufficient amount of samples were collected.
 
 	// Data distribution queue
 	double HEALTH_POLL_TIME;

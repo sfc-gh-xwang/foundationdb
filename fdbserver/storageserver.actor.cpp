@@ -12133,14 +12133,6 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					TraceEvent("EmptyVersionWaitWindowSkip", self->thisServerID)
 					    .suppressFor(20)
 					    .detail("SketchSize", sampleCount);
-					if (g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_INTERVAL) {
-						targetWaitWindow = SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_IDLE_WINDOW;
-						traceWaitWindowDecision(self, targetWaitWindow, lastWaitWindow);
-						wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag));
-						resetWaitWindowStatistics(self);
-						lastWaitWindow = targetWaitWindow;
-						lastSyncTime = g_network->timer();
-					}
 					continue;
 				}
 
