@@ -5714,6 +5714,7 @@ ACTOR Future<Void> blobWorkerCore(BlobWorkerInterface bwInterf, Reference<BlobWo
 	self->shuttingDown = true;
 
 	wait(self->granuleMetadata.clearAsync());
+	TraceEvent("BlobWorkerCoreRemovingSelf", self->id);
 	throw worker_removed();
 }
 
@@ -5850,6 +5851,7 @@ ACTOR Future<UID> restorePersistentState(Reference<BlobWorkerData> self) {
 
 	if (!SERVER_KNOBS->BLOB_WORKER_DISK_ENABLED || !fID.get().present()) {
 		CODE_PROBE(true, "Restored uninitialized blob worker");
+		TraceEvent("BlobWorkerRestorePersistentStateRemovingSeld", self->id);
 		throw worker_removed();
 	}
 	UID recoveredID = BinaryReader::fromStringRef<UID>(fID.get().get(), Unversioned());
