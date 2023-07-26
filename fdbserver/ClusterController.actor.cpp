@@ -2267,8 +2267,8 @@ ACTOR Future<Void> startTenantBalancer(ClusterControllerData* self) {
 	loop {
 		try {
 			state bool noTenantBalancer = !self->db.serverInfo->get().tenantBalancer.present();
-			while (!self->masterProcessId.present() ||
-			       self->masterProcessId != self->db.serverInfo->get().master.locality.processId() ||
+			while (!self->masterProcessId.present() || !self->db.serverInfo->get().master.present() ||
+			       self->masterProcessId != self->db.serverInfo->get().master->locality.processId() ||
 			       self->db.serverInfo->get().recoveryState < RecoveryState::ACCEPTING_COMMITS) {
 				wait(self->db.serverInfo->onChange() || delay(SERVER_KNOBS->WAIT_FOR_GOOD_RECRUITMENT_DELAY));
 			}
