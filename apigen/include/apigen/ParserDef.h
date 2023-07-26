@@ -1,5 +1,11 @@
-#ifndef FLATBUFFERS_PARSER_DEFINITIONS
-#define FLATBUFFERS_PARSER_DEFINITIONS
+/*
+ * ParserDef.h
+ *
+ * Copyright (c) 2023 Snowflake Computing
+ */
+
+#ifndef APIGEN_PARSER_DEFINITIONS
+#define APIGEN_PARSER_DEFINITIONS
 
 #include <boost/spirit/home/x3.hpp>
 #include <boost/spirit/home/x3/numeric/real.hpp>
@@ -222,4 +228,4 @@ DEFINE_RULE(Schema,
 
 } // namespace rule
 
-#endif /*FLATBUFFERS_PARSER_DEFINITIONS*/
+#endif /*APIGEN_PARSER_DEFINITIONS*/

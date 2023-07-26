@@ -1,3 +1,9 @@
+/*
+ * ParserTest.cpp
+ *
+ * Copyright (c) 2023 Snowflake Computing
+ */
+
 #include <boost/spirit/home/x3.hpp>
 #include <boost/spirit/home/x3/support/utility/error_reporting.hpp>
 #include "apigen/AST.h"

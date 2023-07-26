@@ -1,5 +1,11 @@
-#ifndef FLATBUFFERS_ADAPTED_AST_H
-#define FLATBUFFERS_ADAPTED_AST_H
+/*
+ * AdaptedAST.h
+ *
+ * Copyright (c) 2023 Snowflake Computing
+ */
+
+#ifndef APIGEN_ADAPTED_AST_H
+#define APIGEN_ADAPTED_AST_H
 
 #include "apigen/AST.h"
 #include <boost/fusion/include/adapt_struct.hpp>
@@ -25,4 +31,4 @@ BOOST_FUSION_ADAPT_STRUCT(ast::Schema, includes, elements)
 
 BOOST_FUSION_ADAPT_TPL_STRUCT((T), (ast::ScalarType)(T), (boost::optional<T>, default_))
 
-#endif /*FLATBUFFERS_ADAPTED_AST_H*/
+#endif /*APIGEN_ADAPTED_AST_H*/

@@ -1,5 +1,11 @@
-#ifndef FLATBUFFERS_AST_H
-#define FLATBUFFERS_AST_H
+/*
+ * AST.h
+ *
+ * Copyright (c) 2023 Snowflake Computing
+ */
+
+#ifndef APIGEN_AST_H
+#define APIGEN_AST_H
 
 #include <map>
 #include <string>
@@ -256,4 +262,4 @@ struct Schema {
 
 } // namespace ast
 
-#endif /*FLATBUFFERS_AST_H*/
+#endif /*APIGEN_AST_H*/
