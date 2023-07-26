@@ -8,17 +8,17 @@ grvProxyCount = 1
 testTitle='ExpectStableThroughput'
 
   [[test.workload]]
-  testName='ThroughputQuota'
-  nameRepresentsTenantGroup=false
-  name='testTag'
+  testName='TagThroughputQuota'
+  prefix='testTag'
+  count=2
   totalQuotaInPages=1000
 
   [[test.workload]]
   testName='ExpectStableThroughput'
-  throttlingTag='testTag'
+  tagPrefix='testTag'
+  numTags=2
   expectedThroughputPagesRate=1000
   attemptedThroughputPagesRate=2000
   # TODO: Reduce this error tolerance
   errorTolerance=0.3
   numActors=100
-  opsPerTransaction=5
