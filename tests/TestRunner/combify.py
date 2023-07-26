@@ -63,7 +63,9 @@ if __name__ == "__main__":
             libpath_env_key = "LD_LIBRARY_PATH"
             if platform.system() == "Darwin":
                 libpath_env_key = "DY" + libpath_env_key
-            env[libpath_env_key] = os.path.join(build_dir, "lib")
+            env[libpath_env_key] = "{}:{}".format(
+                env[libpath_env_key], os.path.join(build_dir, "lib")
+            )
             this_run = subprocess.run(
                 [
                     binary_abs_path,
