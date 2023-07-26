@@ -12177,11 +12177,8 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				if (targetWaitWindow < 0)
 					targetWaitWindow = 0;
 
-				// Cap delay window growth to be below maximum allowed version wait. Beyond this waitForVersionActor()
-				// will fail to wait for version and throw error. We don't want this to happen because we set
-				// targetWaitWindow too large.
-				if (targetWaitWindow > SERVER_KNOBS->FUTURE_VERSION_DELAY / 2)
-					targetWaitWindow = SERVER_KNOBS->FUTURE_VERSION_DELAY / 2;
+				// Cap delay window growth to be below maximum allowed version wait.
+				targetWaitWindow = std::min(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_CAP, targetWaitWindow);
 
 				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval
 				// knob
@@ -12197,13 +12194,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 					// Skip sending wait window if new decision is the same as the last one sent.
 					if (targetWaitWindow != lastWaitWindow) {
-						TraceEvent("PushedWaitWindowForTag")
-						    .detail("Tag", self->tag)
-						    .detail("WaitWindow", targetWaitWindow);
 						wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag));
-						TraceEvent("CompletedWaitWindowForTag")
-						    .detail("Tag", self->tag)
-						    .detail("WaitWindow", targetWaitWindow);
 					}
 
 					resetWaitWindowStatistics(self);
