@@ -422,29 +422,6 @@ TEST_CASE("fdb_future_get_keyvalue_array") {
 	}
 }
 
-TEST_CASE("write system key") {
-	auto tr = db.createTransaction();
-	auto syskey = "\xff\x02"_br;
-
-	while (1) {
-		tr.setOption(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
-		tr.set(syskey, "bar"_br);
-		auto f1 = tr.commit();
-
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-		break;
-	}
-
-	auto value = getValue(syskey, /* snapshot */ false, { FDB_TR_OPTION_READ_SYSTEM_KEYS });
-	REQUIRE(value.has_value());
-	CHECK(value->compare("bar") == 0);
-}
-
 TEST_CASE("fdb_transaction_set_option read_your_writes_disable") {
 	clear_data(db);
 

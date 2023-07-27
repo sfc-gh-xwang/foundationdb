@@ -130,4 +130,32 @@ AddTest testWriteSystemKeyDisallowed("WriteSystemKeyDisallowed",
 	                                     }
                                      });
 
+AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newTransaction(db);
+	auto syskey = "\xff\x02"_br;
+
+	// Write a system key
+	runToCompletion(
+	    tr,
+	    [syskey](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
+		    tr.set(syskey, "bar"_br);
+		    return tr.commit();
+	    },
+	    "WriteSystemKey");
+
+	// Read and verify the system key value
+	tr = env.newTransaction(db);
+	auto f = runToCompletion(
+	    tr,
+	    [syskey](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+		    return tr.get(syskey, /* snapshot */ false);
+	    },
+	    "ReadBackSystemKey");
+
+	ASSERT(f.get() == "bar"_br);
+});
+
 } // anonymous namespace
