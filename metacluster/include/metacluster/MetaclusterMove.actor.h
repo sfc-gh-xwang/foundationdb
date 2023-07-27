@@ -525,7 +525,6 @@ struct StartTenantMovementImpl {
 				    fmt::format("Tenant move start: destination cluster {} has no more capacity.\n", dstName));
 				throw cluster_no_capacity();
 			}
-			updatedEntry.clusterState = DataClusterState::READY;
 			updatedEntry.allocated.numTenantGroups++;
 			TraceEvent("BreakpointUpdateAllocated1", self->srcCtx.debugId).detail("DstName", dstName);
 			updateClusterMetadata(tr,
@@ -543,10 +542,6 @@ struct StartTenantMovementImpl {
 		} else {
 			self->moveRecord = movementRecord.get();
 			wait(storeReadVersion<DB>(&self->mgmtStartVersion, tr));
-			// state ThreadFuture<Version> threadFuture = tr->getReadVersion();
-			// state Version result = wait(safeThreadFutureToFuture(threadFuture));
-			// state Versionstamp vs(result, 0);
-			// self->mgmtStartVersion = vs;
 		}
 
 		return Void();
@@ -1140,7 +1135,10 @@ struct FinishTenantMovementImpl {
 		return Void();
 	}
 
-	ACTOR static Future<bool> checkDestinationVersion(FinishTenantMovementImpl* self, Reference<ITransaction> tr) {
+	// If positive, version has caught up.
+	// If negative, continue waiting.
+	// If VERY negative (lagging behind drastically) throw error in outer function
+	ACTOR static Future<int64_t> checkDestinationVersion(FinishTenantMovementImpl* self, Reference<ITransaction> tr) {
 		loop {
 			try {
 				state ThreadFuture<Version> resultFuture = tr->getReadVersion();
@@ -1148,10 +1146,7 @@ struct FinishTenantMovementImpl {
 				TraceEvent("BreakpointCheckDestVersion")
 				    .detail("MRVersion", self->moveRecord.version)
 				    .detail("ActualVersion", version);
-				if (version > self->moveRecord.version) {
-					return true;
-				}
-				return false;
+				return (version - self->moveRecord.version);
 			} catch (Error& e) {
 				wait(safeThreadFutureToFuture(tr->onError(e)));
 			}
@@ -1207,7 +1202,6 @@ struct FinishTenantMovementImpl {
 		// clusterCapacityIndex() reduce allocated capacity of source
 		DataClusterMetadata clusterMetadata = srcCtx.dataClusterMetadata.get();
 		DataClusterEntry updatedEntry = clusterMetadata.entry;
-		updatedEntry.clusterState = DataClusterState::READY;
 		updatedEntry.allocated.numTenantGroups--;
 		updateClusterMetadata(tr, srcName, clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry);
 
@@ -1285,17 +1279,16 @@ struct FinishTenantMovementImpl {
 			state std::vector<TenantMapEntry> dstEntries = wait(self->dstCtx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return getTenantEntries(self->tenantsInGroup, tr); }));
 			TraceEvent("Breakpoint3");
-			state int tries = 0;
-			state int retryLimit = 25;
 			loop {
-				bool versionReady = wait(self->dstCtx.runDataClusterTransaction(
+				int64_t versionDiff = wait(self->dstCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return checkDestinationVersion(self, tr); }));
-				if (versionReady) {
+				if (versionDiff >= 0) {
 					break;
 				}
-				if (++tries >= retryLimit) {
+				if (versionDiff <= -1e8) {
 					TraceEvent("MetaclusterMoveFinishVersionsTooFar")
-					    .detail("DstCluster", self->dstCtx.clusterName.get());
+					    .detail("DstCluster", self->dstCtx.clusterName.get())
+					    .detail("VersionDiff", versionDiff);
 					self->messages.push_back(
 					    fmt::format("Tenant move finish: destination cluster {} has a version that is too far behind\n"
 					                "	Use `versionepoch commit` on the destination cluster to advance the version.\n",
@@ -1481,7 +1474,6 @@ struct AbortTenantMovementImpl {
 
 		DataClusterMetadata clusterMetadata = wait(getClusterTransaction(tr, self->dstCtx.clusterName.get()));
 		DataClusterEntry updatedEntry = clusterMetadata.entry;
-		updatedEntry.clusterState = DataClusterState::READY;
 		updatedEntry.allocated.numTenantGroups--;
 		TraceEvent("BreakpointUpdateAllocated2", self->srcCtx.debugId).detail("DstName", dstName);
 		updateClusterMetadata(tr,

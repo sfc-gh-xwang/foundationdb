@@ -191,7 +191,7 @@ KeyBackedMap<Tuple, Key>& splitPointsMap() {
 }
 
 KeyBackedBinaryValue<Versionstamp>& lastTenantMoveAbort() {
-	static KeyBackedBinaryValue<Versionstamp> instance("\xff/emergency_movement/lastTenantMoveAbort/"_sr);
+	static KeyBackedBinaryValue<Versionstamp> instance("\xff/emergency_movement_data/lastTenantMoveAbort/"_sr);
 	return instance;
 }
 
