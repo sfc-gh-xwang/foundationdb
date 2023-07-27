@@ -500,7 +500,6 @@ bool TestEnv::runTest(const TestCase& t) {
 }
 
 void TestEnv::clearAndPopulateDBData(const std::string& prefix, const std::map<std::string, std::string>& data) const {
-
 	auto db = newDatabase();
 	auto tr = newTransaction(db);
 

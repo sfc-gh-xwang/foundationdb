@@ -87,4 +87,16 @@ AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 	assert(fdb::toCharsRef(f.get()) == prefix + "bar");
 });
 
+AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
+	const std::string prefix("combify-basic-get-value");
+	env.clearAndPopulateDBData(prefix, { { "foo", "bar" } });
+
+	auto db = env.newDatabase();
+	auto tr = env.newTransaction(db);
+	auto f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), /* snapshot */ false); }, "GetValue");
+
+	assert(fdb::toCharsRef(f.get()) == "bar");
+});
+
 } // anonymous namespace
