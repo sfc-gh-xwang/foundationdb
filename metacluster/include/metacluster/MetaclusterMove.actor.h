@@ -452,6 +452,15 @@ static Future<Void> checkValidDelete(Reference<typename DB::TransactionT> tr,
 	return Void();
 }
 
+ACTOR template <class DB>
+static Future<Void> storeReadVersion(Versionstamp* version, Reference<typename DB::TransactionT> tr) {
+	state ThreadFuture<Version> threadFuture = tr->getReadVersion();
+	state Version result = wait(safeThreadFutureToFuture(threadFuture));
+	state Versionstamp vs(result, 0);
+	*version = vs;
+	return Void();
+}
+
 template <class DB>
 struct StartTenantMovementImpl {
 	MetaclusterOperationContext<DB> srcCtx;
@@ -533,10 +542,11 @@ struct StartTenantMovementImpl {
 			self->vsFuture = tr->getVersionstamp();
 		} else {
 			self->moveRecord = movementRecord.get();
-			state ThreadFuture<Version> threadFuture = tr->getReadVersion();
-			state Version result = wait(safeThreadFutureToFuture(threadFuture));
-			state Versionstamp vs(result, 0);
-			self->mgmtStartVersion = vs;
+			wait(storeReadVersion<DB>(&self->mgmtStartVersion, tr));
+			// state ThreadFuture<Version> threadFuture = tr->getReadVersion();
+			// state Version result = wait(safeThreadFutureToFuture(threadFuture));
+			// state Versionstamp vs(result, 0);
+			// self->mgmtStartVersion = vs;
 		}
 
 		return Void();
@@ -745,11 +755,14 @@ struct StartTenantMovementImpl {
 				Versionstamp vs(result);
 				self->mgmtStartVersion = vs;
 			} catch (Error& e) {
-				// This can happen because of commit_unknown_result. Throw a retryable error
+				// This can happen because of commit_unknown_result. Use the read version instead
 				if (e.code() == error_code_transaction_invalid_version) {
-					throw tenant_move_failed();
+					wait(self->srcCtx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
+						return storeReadVersion<DB>(&self->mgmtStartVersion, tr);
+					}));
+				} else {
+					throw;
 				}
-				throw;
 			}
 		}
 		TraceEvent("BreakpointStart2");
@@ -1616,11 +1629,14 @@ struct AbortTenantMovementImpl {
 			Versionstamp vs(result);
 			self->abortVersion = vs;
 		} catch (Error& e) {
-			// This can happen because of commit_unknown_result. Throw a retryable error
+			// This can happen because of commit_unknown_result. Use the read version instead
 			if (e.code() == error_code_transaction_invalid_version) {
-				throw tenant_move_failed();
+				wait(self->srcCtx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
+					return storeReadVersion<DB>(&self->abortVersion, tr);
+				}));
+			} else {
+				throw;
 			}
-			throw;
 		}
 		metadata::management::emergency_movement::lastTenantMoveAbort().setVersionstamp(tr, self->abortVersion, 0);
 		return Void();
