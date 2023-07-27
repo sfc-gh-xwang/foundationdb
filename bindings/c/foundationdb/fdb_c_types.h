@@ -215,14 +215,7 @@ typedef struct readgranulecontext {
 	int granuleParallelism;
 } FDBReadBlobGranuleContext;
 
-// bulk load APIs
-
 typedef FDBByteString FDBBulkLoadID;
-
-typedef struct FDBBulkLoadStatus_ {
-	uint8_t state;
-	// TODO: human-readable status too?
-} FDBBulkLoadStatus;
 
 #ifdef __cplusplus
 }

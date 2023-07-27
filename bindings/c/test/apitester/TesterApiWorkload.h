@@ -25,6 +25,7 @@
 #include "TesterKeyValueStore.h"
 #include <atomic>
 #include <set>
+#include <unordered_set>
 
 namespace FdbApiTester {
 
@@ -147,8 +148,7 @@ private:
 	void clearTenantData(TTaskFct cont, std::optional<int> tenantId);
 
 	void randomOperations();
-	// FIXME: change to unordered_set for performance
-	std::set<fdb::Key> usedPrefixRanges;
+	std::unordered_set<fdb::Key> usedPrefixRanges;
 };
 
 } // namespace FdbApiTester

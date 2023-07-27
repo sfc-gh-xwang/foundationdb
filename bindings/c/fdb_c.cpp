@@ -427,52 +427,6 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_get_bulk_load_id_result(FDBFuture* f
 	return 0;
 }
 
-extern "C" DLLEXPORT fdb_error_t fdb_future_get_void_result(FDBFuture* f) {
-
-	FDBResult* result;
-	fdb_error_t err = fdb_future_get_result(f, &result);
-	if (err) {
-		return err;
-	}
-	FDBVoidResult* data = (FDBVoidResult*)result;
-	ASSERT(data->header->result_type == FDBApiResultType::FDBApiResult_Void);
-	// Reference count was increased by fdb_future_get_result
-	ApiResult::release(result);
-	return 0;
-}
-
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_bulk_load_status_result(FDBFuture* f,
-                                                                                FDBBulkLoadStatus* out_status) {
-	FDBResult* result;
-	fdb_error_t err = fdb_future_get_result(f, &result);
-	if (err) {
-		return err;
-	}
-	FDBBulkLoadStatusResult* data = (FDBBulkLoadStatusResult*)result;
-	ASSERT(data->header->result_type == FDBApiResultType::FDBApiResult_BulkLoadStatus);
-	*out_status = data->status;
-	// Reference count was increased by fdb_future_get_result
-	ApiResult::release(result);
-	return 0;
-}
-
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_bulk_load_list_result(FDBFuture* f,
-                                                                              FDBBulkLoadID const*** out_ids,
-                                                                              int* out_count) {
-	FDBResult* result;
-	fdb_error_t err = fdb_future_get_result(f, &result);
-	if (err) {
-		return err;
-	}
-	FDBBulkLoadListResult* data = (FDBBulkLoadListResult*)result;
-	ASSERT(data->header->result_type == FDBApiResultType::FDBApiResult_BulkLoadList);
-	*out_ids = (FDBBulkLoadID const**)data->ids_arr;
-	*out_count = data->ids_count;
-	// Reference count was increased by fdb_future_get_result
-	ApiResult::release(result);
-	return 0;
-}
-
 extern "C" DLLEXPORT fdb_error_t fdb_future_readbg_get_descriptions_v1(FDBFuture* f,
                                                                        FDBBGFileDescriptionV1** out_descs,
                                                                        int* out_count) {
@@ -933,29 +887,6 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_wait_bulk_load_complete(FDBTe
 	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	                       request->id.length = bulk_load_id_name_length;
 	                       FDBFuture* future = tenantExecuteApiRequest<FDBWaitBulkLoadCompleteRequest>(tenant, request);
-	                       releaseApiRequest(request);
-	                       return future;);
-}
-
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_bulk_load_status(FDBTenant* tenant,
-                                                                        uint8_t const* bulk_load_id_name,
-                                                                        int bulk_load_id_name_length) {
-	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBGetBulkLoadStatusRequest* request = createApiRequest<FDBGetBulkLoadStatusRequest>(
-	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_GetBulkLoadStatus);
-	                       request->id.begin =
-	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
-	                       request->id.length = bulk_load_id_name_length;
-	                       FDBFuture* future = tenantExecuteApiRequest<FDBGetBulkLoadStatusRequest>(tenant, request);
-	                       releaseApiRequest(request);
-	                       return future;);
-}
-
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_list_bulk_loads(FDBTenant* tenant) {
-	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBListBulkLoadsRequest* request = createApiRequest<FDBListBulkLoadsRequest>(
-	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_ListBulkLoads);
-	                       FDBFuture* future = tenantExecuteApiRequest<FDBListBulkLoadsRequest>(tenant, request);
 	                       releaseApiRequest(request);
 	                       return future;);
 }

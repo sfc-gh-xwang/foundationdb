@@ -1,5 +1,5 @@
 /*
- * TesterBulkLoadCorrectnessWorkload.h
+ * TesterBulkLoadCorrectnessWorkload.cpp
  *
  * Copyright (c) 2023 Snowflake Computing
  */
@@ -35,16 +35,7 @@ private:
 	// FIXME: support non-tenant loads
 	// FIXME: register files
 	// FIXME: also add expect-error ops? re-load same range, already done abort failed, cleanup failed, invalid id
-	enum OpType {
-		OP_START,
-		OP_REGISTER_COMPLETE,
-		OP_WAIT_COMPLETE,
-		OP_ABORT,
-		OP_CLEANUP,
-		OP_GET_STATUS,
-		OP_LIST,
-		OP_LAST = OP_LIST
-	};
+	enum OpType { OP_START, OP_REGISTER_COMPLETE, OP_WAIT_COMPLETE, OP_ABORT, OP_CLEANUP, OP_LAST = OP_CLEANUP };
 
 	struct State {
 		fdb::KeyRange keyRange;
@@ -208,48 +199,6 @@ private:
 		    /* failOnError = */ false);
 	}
 
-	void randomOpGetStatus(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
-		// FIXME: pick from known status maps and verify status returned matches
-		// waiting on other PR for new states though so i don't want to it by conflicting yet
-		fdb::BulkLoadID id = randomLoadIDFromSet(metadata->loadsWaiting);
-		execOperation(
-		    [this, metadata, id](auto ctx) {
-			    fdb::Future f = ctx->dbOps()->getBulkLoadStatus(id).eraseType();
-			    ctx->continueAfter(f, [this, ctx, metadata, id, f]() {
-				    fdb::native::FDBBulkLoadStatus status = f.get<fdb::future_var::BulkLoadStatusResult>();
-				    info("Bulk Load {0} Got Status in state {1}", fdb::toHexString(id), status.state);
-				    ctx->done();
-			    });
-		    },
-		    [this, cont]() { schedule(cont); },
-		    getTenant(tenantId),
-		    /* failOnError = */ false);
-	}
-
-	void randomOpList(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
-		execOperation(
-		    [this, metadata](auto ctx) {
-			    fdb::Future f = ctx->dbOps()->listBulkLoads().eraseType();
-			    ctx->continueAfter(f, [this, ctx, metadata, f]() {
-				    BulkLoadList ids = copyBulkLoadList(f.get<fdb::future_var::BulkLoadListResult>());
-				    info("Bulk Load List Complete ({0})", ids.size());
-				    for (auto& id : ids) {
-					    info("    {0}", fdb::toHexString(id));
-				    }
-
-				    // FIXME: validate that list contains all of the bulk loads from this tenant.
-
-				    // FIXME: once implemented, also check that it ONLY contains the bulk loads from this tenant. right
-				    // now we're not filtering
-
-				    ctx->done();
-			    });
-		    },
-		    [this, cont]() { schedule(cont); },
-		    getTenant(tenantId),
-		    /* failOnError = */ false);
-	}
-
 	void randomOperation(TTaskFct cont) override {
 		std::optional<int> tenantId = randomTenant();
 		std::shared_ptr<BulkLoadMetadata> metadata(new BulkLoadMetadata());
@@ -298,16 +247,6 @@ private:
 					return;
 				}
 				break;
-			case OP_GET_STATUS:
-				// FIXME: pick from all active states
-				if (!metadata->loadsWaiting.empty()) {
-					randomOpGetStatus(cont, metadata, tenantId);
-					return;
-				}
-				break;
-			case OP_LIST:
-				randomOpList(cont, metadata, tenantId);
-				return;
 			}
 		}
 	}

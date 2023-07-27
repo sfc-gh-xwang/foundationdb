@@ -8,17 +8,18 @@
 #include "fdbclient/BlobGranuleApiImpl.h"
 #include "fdbclient/BulkLoadApiImpl.h"
 
+// this one fuction requires returning the error instead of throwing because it ends up as an FDBResult
 Future<ApiResult> handleTransactionApiRequest(ISingleThreadTransaction* tr, ApiRequest req) {
 	switch (req.getType()) {
 	case FDBApiRequest_ReadBGDescription:
 		return readBlobGranuleDescriptions(tr, req);
 		break;
 	default:
-		// FIXME: this should be throw? or all results have to check for error type and throw themselves?
 		return unknown_api_request();
 	}
 }
 
+// all of these functions (so far) require throwing the error instead of returning because they end up as FDBFutures
 Future<ApiResult> handleDatabaseOrTenantApiRequest(DatabaseContext* db,
                                                    ApiRequest req,
                                                    Optional<Reference<Tenant>> tenant) {
@@ -38,15 +39,8 @@ Future<ApiResult> handleDatabaseOrTenantApiRequest(DatabaseContext* db,
 	case FDBApiRequest_WaitBulkLoadComplete:
 		return waitBulkLoadComplete(db, req, tenant);
 		break;
-	case FDBApiRequest_GetBulkLoadStatus:
-		return getBulkLoadStatus(db, req, tenant);
-		break;
-	case FDBApiRequest_ListBulkLoads:
-		return listBulkLoads(db, req, tenant);
-		break;
 	default:
-		// FIXME: this should be throw? or all results have to check for error type and throw themselves?
-		return unknown_api_request();
+		throw unknown_api_request();
 	}
 }
 

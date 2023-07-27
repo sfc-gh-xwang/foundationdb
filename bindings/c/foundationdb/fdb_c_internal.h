@@ -107,9 +107,9 @@ DLLEXPORT FDBFuture* fdb_transaction_exec_async(FDBTransaction* tx, FDBRequest* 
 // The request must be allocated using the allocator interface of the same client instance
 DLLEXPORT FDBFuture* fdb_database_exec_async(FDBDatabase* db, FDBRequest* request);
 
-// Execute an asynchronous request on a FDB tenatn. Returns a future providing FDBResult
+// Execute an asynchronous request on a FDB tenant. Returns a future providing FDBResult
 // The request must be allocated using the allocator interface of the same client instance
-DLLEXPORT FDBFuture* fdb_transactiontenant_exec_async(FDBTenant* tenant, FDBRequest* request);
+DLLEXPORT FDBFuture* fdb_tenant_exec_async(FDBTenant* tenant, FDBRequest* request);
 
 // Extract FDBResult from the future. Returns an error if the future is not ready
 // or resulted in an error. The returned FDBResult maintains a reference to its memory,

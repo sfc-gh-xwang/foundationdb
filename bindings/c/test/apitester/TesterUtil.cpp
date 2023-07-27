@@ -152,20 +152,6 @@ GranuleSummaryArray copyGranuleSummaryArray(fdb::future_var::GranuleSummaryRefAr
 	return out;
 };
 
-BulkLoadList copyBulkLoadList(fdb::future_var::BulkLoadListResult::Type array) {
-	auto& [in_ids, in_count] = array;
-
-	BulkLoadList out;
-
-	for (int i = 0; i < in_count; ++i) {
-		fdb::native::FDBBulkLoadID const* nativeId = *in_ids;
-		fdb::BulkLoadID id(nativeId->begin, nativeId->length);
-		out.push_back(id);
-		in_ids++;
-	}
-	return out;
-};
-
 TmpFile::~TmpFile() {
 	if (!filename.empty()) {
 		remove();

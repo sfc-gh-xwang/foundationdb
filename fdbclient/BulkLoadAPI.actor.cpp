@@ -355,7 +355,7 @@ Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listBulkLoads(bool
 	return listBulkLoadsActor(Reference<DatabaseContext>::addRef(this), onlyActive);
 }
 
-Future<BulkLoadStatus> DatabaseContext::getBulkLoadStatus(BulkLoadID id) {
+Future<BulkLoadStatus> DatabaseContext::getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
 	return getBulkLoadStatusActor(Reference<DatabaseContext>::addRef(this), id);
 }
 
