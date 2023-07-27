@@ -58,12 +58,27 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		}
 	}
 
+	void traceParameters(TraceEvent& te) {
+		te.detail("TestDuration", testDuration)
+		    .detail("TagPrefix", tagPrefix)
+		    .detail("NumTags", numTags)
+		    .detail("ExpectedThroughputPagesRate", expectedThroughputPagesRate)
+		    .detail("AttemptedThroughputPagesRate", attemptedThroughputPagesRate)
+		    .detail("ErrorTolerance", errorTolerance)
+		    .detail("KeyPrefix", keyPrefix)
+		    .detail("NumActors", numActors)
+		    .detail("WarmupTime", warmupTime)
+		    .detail("OpsPerTranaction", opsPerTransaction)
+		    .detail("ProvideExpectedCost", provideExpectedCost)
+		    .detail("PerformReads", performReads);
+	}
+
 	ACTOR static Future<Void> loggerActor(ExpectStableThroughputWorkload* self) {
 		loop {
 			wait(delay(5.0));
 			for (auto const& [tag, metrics] : self->metricsMap) {
-				TraceEvent("ExpectStableThroughputWorkloadMetrics")
-				    .detail("TransactionTag", tag)
+				TraceEvent te("ExpectStableThroughputWorkloadMetrics");
+				te.detail("TransactionTag", tag)
 				    .detail("ThroughputRate", metrics.totalCost.smoothRate())
 				    .detail("ThrottledDurationRate", metrics.throttledDuration.smoothRate())
 				    .detail("TagThrottledErrorRate", metrics.tagThrottledErrors.smoothRate());
@@ -191,19 +206,9 @@ public:
 		// transaction option for GRV Cache.
 		// In simulation, explicitly initialize it when used for tests.
 		cx->initSharedState();
-		TraceEvent("StartingExpectStableThroughputWorkload")
-		    .detail("TestDuration", testDuration)
-		    .detail("TagPrefix", tagPrefix)
-		    .detail("NumTags", numTags)
-		    .detail("ExpectedThroughputPagesRate", expectedThroughputPagesRate)
-		    .detail("AttemptedThroughputPagesRate", attemptedThroughputPagesRate)
-		    .detail("ErrorTolerance", errorTolerance)
-		    .detail("KeyPrefix", keyPrefix)
-		    .detail("NumActors", numActors)
-		    .detail("WarmupTime", warmupTime)
-		    .detail("OpsPerTranaction", opsPerTransaction)
-		    .detail("ProvideExpectedCost", provideExpectedCost)
-		    .detail("PerformReads", performReads);
+		TraceEvent te("StartingExpectStableThroughputWorkload");
+		traceParameters(te);
+		te.log();
 		startTime = now();
 		std::vector<Future<Void>> clients;
 		for (int actorIndex = 0; actorIndex < numActors; ++actorIndex) {
@@ -236,11 +241,12 @@ public:
 			}
 
 			auto const severity = tagPassed ? SevInfo : SevError;
-			TraceEvent(severity, "CheckingStableThroughput")
-			    .detail("Tag", tag)
+			TraceEvent te(severity, "CheckingStableThroughput");
+			te.detail("Tag", tag)
 			    .detail("ExpectedTotalCost", expectedTotalCost)
 			    .detail("ErrorTolerance", errorTolerance)
 			    .detail("TotalCost", metrics.totalCost.getTotal());
+			traceParameters(te);
 			passed = passed && tagPassed;
 		}
 		return passed;
