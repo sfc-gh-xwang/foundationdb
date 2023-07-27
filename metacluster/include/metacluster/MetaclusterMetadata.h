@@ -176,6 +176,8 @@ KeyBackedMap<std::pair<TenantGroupName, std::string>, std::pair<TenantName, Key>
 // emergency_movement/split_points(tenantGroup, runId, tenant, startKey) = endKey
 KeyBackedMap<Tuple, Key>& splitPointsMap();
 
+KeyBackedBinaryValue<Versionstamp>& lastTenantMoveAbort();
+
 }; // namespace emergency_movement
 
 } // namespace management

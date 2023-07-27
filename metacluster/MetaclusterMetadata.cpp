@@ -190,6 +190,11 @@ KeyBackedMap<Tuple, Key>& splitPointsMap() {
 	return instance;
 }
 
+KeyBackedBinaryValue<Versionstamp>& lastTenantMoveAbort() {
+	static KeyBackedBinaryValue<Versionstamp> instance("\xff/emergency_movement/lastTenantMoveAbort/"_sr);
+	return instance;
+}
+
 }; // namespace emergency_movement
 
 TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata() {
