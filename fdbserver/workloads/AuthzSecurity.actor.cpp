@@ -274,7 +274,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                               WipedString token,
 	                                                               StringRef key,
 	                                                               StringRef value) {
-		state Transaction tr(cx, tenant);
+		state Transaction tr(tenant);
 		loop {
 			try {
 				self->setAuthToken(tr, token);
@@ -292,7 +292,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                                      Reference<Tenant> tenant,
 	                                                                      WipedString token,
 	                                                                      StringRef key) {
-		state Transaction tr(cx, tenant);
+		state Transaction tr(tenant);
 		loop {
 			try {
 				// trigger GetKeyServerLocationsRequest and subsequent cache update
@@ -470,7 +470,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 
 	ACTOR static Future<Void> testPublicNonTenantRequestsAllowedWithoutTokens(AuthzSecurityWorkload* self,
 	                                                                          Database cx) {
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr(self->tenant);
 		loop {
 			try {
 				Version version = wait(tr.getReadVersion());
@@ -488,7 +488,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 		state Value value = self->randomString();
 		state Version committedVersion =
 		    wait(setAndCommitKeyValueAndGetVersion(self, cx, self->tenant, self->signedToken, key, value));
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr(self->tenant);
 		state Optional<Value> tLogConfigString;
 		loop {
 			try {
@@ -745,7 +745,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                        Key key,
 	                                                        WipedString token,
 	                                                        Version committedVersion) {
-		state Transaction tr(cx, tenant);
+		state Transaction tr(tenant);
 		self->setAuthToken(tr, token);
 		KeyRange range(KeyRangeRef(key, keyAfter(key)));
 		try {
@@ -865,7 +865,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                    Reference<Tenant> tenant,
 	                                                    Key key,
 	                                                    WipedString token) {
-		state Transaction tr(cx, tenant);
+		state Transaction tr(tenant);
 		self->setAuthToken(tr, token);
 		KeyRange range(KeyRangeRef(key, keyAfter(key)));
 		try {
@@ -971,7 +971,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	ACTOR static Future<Void> checkGetOrSetValueWithoutAuthTokenNegative(AuthzSecurityWorkload* self,
 	                                                                     Database cx,
 	                                                                     TestGetMethod isGet) {
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr(self->tenant);
 		state Key key = self->randomString();
 		state Value value = self->randomString();
 		loop {

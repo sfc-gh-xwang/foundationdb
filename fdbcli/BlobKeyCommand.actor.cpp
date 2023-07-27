@@ -43,7 +43,7 @@ ACTOR Future<bool> printBlobHistory(Database db,
 	}
 	fmt::print("\n");
 
-	state Transaction tr(db, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 	state KeyRange activeGranule;
 	state KeyRange queryRange(KeyRangeRef(key, keyAfter(key)));
 	loop {

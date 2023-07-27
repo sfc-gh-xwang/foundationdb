@@ -375,9 +375,11 @@ private:
 
 class Transaction : NonCopyable {
 public:
-	explicit Transaction(Database const& cx, Optional<Reference<Tenant>> const& tenant = Optional<Reference<Tenant>>());
+	explicit Transaction(Database const& cx);
+	explicit Transaction(Reference<Tenant> const& tenant);
 	~Transaction();
 
+	static Transaction fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx);
 	void setVersion(Version v);
 	Future<Version> getReadVersion();
 	Future<Version> getRawReadVersion();

@@ -918,8 +918,8 @@ ACTOR Future<Void> testerServerCore(TesterInterface interf,
 	}
 }
 
-ACTOR Future<Void> clearTenantData(Database db, Reference<Tenant> tenant) {
-	state Transaction tr(db, tenant);
+ACTOR Future<Void> clearTenantData(Reference<Tenant> tenant) {
+	state Transaction tr(tenant);
 	loop {
 		try {
 			tr.debugTransaction(debugRandom()->randomUniqueID());
@@ -973,7 +973,7 @@ ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
 		std::vector<Future<Void>> deleteDataFutures;
 		for (auto const& [id, entry] : tenants.results) {
 			if (entry.tenantName != defaultTenant) {
-				deleteDataFutures.push_back(clearTenantData(cx, makeReference<Tenant>(cx, id)));
+				deleteDataFutures.push_back(clearTenantData(makeReference<Tenant>(cx, id)));
 			}
 		}
 
@@ -2027,7 +2027,7 @@ ACTOR Future<Void> disableConnectionFailuresAfter(double seconds, std::string co
 }
 
 ACTOR Future<Void> writeTenantKey(Database db, Reference<Tenant> tenant) {
-	state ReadYourWritesTransaction tr(db, tenant);
+	state ReadYourWritesTransaction tr = ReadYourWritesTransaction::fromTenantOrDefault(tenant, db);
 	loop {
 		try {
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);

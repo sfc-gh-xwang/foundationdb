@@ -1588,9 +1588,9 @@ public:
 	}
 };
 
-ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx, Optional<Reference<Tenant>> const& tenant)
+ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx)
   : ISingleThreadTransaction(cx->deferredError),
-    tr(cx, tenant),
+    tr(cx),
     cache(&arena),
     writes(&arena),
     retries(0),
@@ -1605,12 +1605,37 @@ ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx, Optiona
 	applyPersistentOptions();
 }
 
+ReadYourWritesTransaction::ReadYourWritesTransaction(Reference<Tenant> const& tenant)
+  : ISingleThreadTransaction(tenant->database()->deferredError),
+    tr(tenant),
+    cache(&arena),
+    writes(&arena),
+    retries(0),
+    approximateSize(0),
+    creationTime(now()),
+    commitStarted(false),
+    versionStampFuture(tr.getVersionstamp()),
+    specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
+    options(tr) {
+	std::copy(
+	    tenant->database().getTransactionDefaults().begin(), tenant->database().getTransactionDefaults().end(), std::back_inserter(persistentOptions));
+	applyPersistentOptions();
+}
+
+ReadYourWritesTransaction ReadYourWritesTransaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx) {
+	if (tenant.present()) {
+		return ReadYourWritesTransaction(tenant.get());
+	} else {
+		return ReadYourWritesTransaction(cx);
+	}
+}
+
 void ReadYourWritesTransaction::construct(Database const& cx) {
 	*this = ReadYourWritesTransaction(cx);
 }
 
-void ReadYourWritesTransaction::construct(Database const& cx, Reference<Tenant> const& tenant) {
-	*this = ReadYourWritesTransaction(cx, tenant);
+void ReadYourWritesTransaction::construct(Reference<Tenant> const& tenant) {
+	*this = ReadYourWritesTransaction(tenant);
 }
 
 ACTOR Future<Void> timebomb(double endTime, Promise<Void> resetPromise) {

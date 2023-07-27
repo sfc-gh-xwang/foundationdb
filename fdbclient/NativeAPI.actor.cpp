@@ -2994,6 +2994,11 @@ int64_t Tenant::id() const {
 	return lookupFuture.get().id;
 }
 
+Database Tenant::database() const {
+	ASSERT(db.isReady());
+	return db.get();
+}
+
 Optional<TenantGroupName> Tenant::tenantGroup() const {
 	if (!lookupFuture.isReady()) {
 		return {};
@@ -3486,7 +3491,7 @@ ACTOR Future<Void> warmRange_impl(Reference<TransactionState> trState, KeyRange 
 
 		if (totalRequests % 20 == 0) {
 			// To avoid blocking the proxies from starting other transactions, occasionally get a read version.
-			state Transaction tr(trState->cx, trState->tenant());
+			state Transaction tr = Transaction::fromTenantOrDefault(trState->tenant(), trState->cx);
 			loop {
 				try {
 					tr.setOption(FDBTransactionOptions::LOCK_AWARE);
@@ -4125,10 +4130,9 @@ ACTOR Future<Void> watchStorageServerResp(int64_t tenantId, Key key, Database cx
 }
 
 ACTOR Future<Void> sameVersionDiffValue(Database cx, Reference<WatchParameters> parameters) {
-	state ReadYourWritesTransaction tr(cx,
-	                                   parameters->tenant.hasTenant()
-	                                       ? makeReference<Tenant>(cx, parameters->tenant.tenantId)
-	                                       : Optional<Reference<Tenant>>());
+	state ReadYourWritesTransaction tr = parameters->tenant.hasTenant()
+	                                       ? ReadYourWritesTransaction(makeReference<Tenant>(cx, parameters->tenant.tenantId))
+										   : ReadYourWritesTransaction(cx);
 
 	loop {
 		try {
@@ -5589,9 +5593,9 @@ void debugAddTag(Reference<TransactionState> trState) {
 Transaction::Transaction()
   : trState(makeReference<TransactionState>(TaskPriority::DefaultEndpoint, generateSpanID(false))) {}
 
-Transaction::Transaction(Database const& cx, Optional<Reference<Tenant>> const& tenant)
+Transaction::Transaction(Database const& cx)
   : trState(makeReference<TransactionState>(cx,
-                                            tenant,
+                                            Optional<Reference<Tenant>>(),
                                             cx->taskID,
                                             generateSpanID(cx->transactionTracingSample),
                                             createTrLogInfoProbabilistically(cx))),
@@ -5603,9 +5607,31 @@ Transaction::Transaction(Database const& cx, Optional<Reference<Tenant>> const& 
 	}
 }
 
+Transaction::Transaction(Reference<Tenant> const& tenant)
+  : trState(makeReference<TransactionState>(tenant->database(),
+                                            tenant,
+                                            tenant->database()->taskID,
+                                            generateSpanID(tenant->database()->transactionTracingSample),
+                                            createTrLogInfoProbabilistically(tenant->database()))),
+    span(trState->spanContext, "Transaction"_loc),
+    backoff(CLIENT_KNOBS->DEFAULT_BACKOFF),
+    tr(trState->spanContext) {
+	if (tenant->database()->debugUseTag) {
+		debugAddTag(trState);
+	}
+}
+
 Transaction::~Transaction() {
 	flushTrLogsIfEnabled();
 	cancelWatches();
+}
+
+Transaction Transaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx) {
+	if (tenant.present()) {
+		return Transaction(tenant.get());
+	} else {
+		return Transaction(cx);
+	}
 }
 
 void Transaction::operator=(Transaction&& r) noexcept {
@@ -6410,7 +6436,7 @@ FDB_BOOLEAN_PARAM(TenantPrefixPrepended);
 ACTOR static Future<Void> commitDummyTransaction(Reference<TransactionState> trState,
                                                  KeyRange range,
                                                  TenantPrefixPrepended tenantPrefixPrepended) {
-	state Transaction tr(trState->cx, trState->tenant());
+	state Transaction tr = Transaction::fromTenantOrDefault(trState->tenant(), trState->cx);
 	state int retries = 0;
 	state Span span("NAPI:dummyTransaction"_loc, trState->spanContext);
 	tr.span.setParent(span.context);
@@ -8707,7 +8733,7 @@ ACTOR Future<Version> checkBlobSubrange(Database db,
                                         KeyRange keyRange,
                                         Optional<Version> version,
                                         UseRawAccess useRawAccess) {
-	state Transaction tr(db, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 	state Optional<Version> summaryVersion;
 	if (version.present()) {
 		summaryVersion = version.get();
@@ -8738,7 +8764,7 @@ ACTOR Future<Version> verifyBlobRangeActor(Reference<DatabaseContext> cx,
                                            Optional<Reference<Tenant>> tenant,
                                            UseRawAccess useRawAccess) {
 	state Database db(cx);
-	state Transaction tr(db, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 	state Standalone<VectorRef<KeyRangeRef>> allRanges;
 	state KeyRange curRegion = KeyRangeRef(range.begin, range.begin);
 	state Version readVersionOut = invalidVersion;
