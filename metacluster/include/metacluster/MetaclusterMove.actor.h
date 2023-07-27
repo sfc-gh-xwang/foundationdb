@@ -1857,29 +1857,6 @@ struct AbortTenantMovementImpl {
 	Future<Void> run() { return run(this); }
 };
 
-template <class DB>
-struct StatusImpl {
-	MetaclusterOperationContext<DB> ctx;
-
-	// Initialization parameters
-	TenantGroupName tenantGroup;
-
-	// Parameters filled in during the run
-	metadata::management::MovementRecord moveRecord;
-
-	StatusImpl(Reference<DB> managementDb, TenantGroupName tenantGroup) : ctx(managementDb), tenantGroup(tenantGroup) {}
-
-	ACTOR static Future<Void> run(StatusImpl* self) {
-		wait(store(self->moveRecord,
-		           self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
-			           return internal::getMovementRecordNoValidation<DB>(tr, self->tenantGroup);
-		           })));
-		return Void();
-	}
-
-	Future<Void> run() { return run(this); }
-};
-
 } // namespace internal
 
 ACTOR template <class DB>
@@ -1948,9 +1925,12 @@ Future<Void> abortTenantMovement(Reference<DB> db,
 
 ACTOR template <class DB>
 Future<metadata::management::MovementRecord> moveStatus(Reference<DB> db, TenantGroupName tenantGroup) {
-	state internal::StatusImpl<DB> impl(db, tenantGroup);
-	wait(impl.run());
-	return impl.moveRecord;
+	state MetaclusterOperationContext<DB> ctx(db);
+	metadata::management::MovementRecord mr =
+	    wait(ctx.runManagementTransaction([tenantGroup = tenantGroup](Reference<typename DB::TransactionT> tr) {
+		    internal::getMovementRecordNoValidation(tr, tenantGroup);
+	    }));
+	return mr;
 }
 
 } // namespace metacluster
