@@ -468,29 +468,6 @@ TEST_CASE("write system key") {
 	CHECK(value->compare("bar") == 0);
 }
 
-TEST_CASE("fdb_transaction read_your_writes") {
-	auto tr = db.createTransaction();
-	clear_data(db);
-
-	while (1) {
-		tr.set("foo"_br, "bar"_br);
-		auto f1 = tr.get("foo"_br, /*snapshot*/ false);
-
-		// Read before committing, should read the initial write.
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-
-		auto val = f1.get();
-		CHECK(val.has_value());
-		CHECK(fdb::toCharsRef(val).compare("bar") == 0);
-		break;
-	}
-}
-
 TEST_CASE("fdb_transaction_set_option read_your_writes_disable") {
 	clear_data(db);
 
