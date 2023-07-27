@@ -1806,18 +1806,16 @@ struct AbortTenantMovementImpl {
 		wait(self->dstCtx.initializeContext());
 		loop {
 			try {
-				state bool exitSignal;
-				wait(store(exitSignal,
-				           runMoveManagementTransaction(
-				               self->tenantGroup,
-				               self->srcCtx,
-				               self->dstCtx,
-				               Aborting::True,
-				               {},
-				               [self = self](Reference<typename DB::TransactionT> tr,
-				                             Optional<metadata::management::MovementRecord> movementRecord) {
-					               return initAbort(self, tr, movementRecord);
-				               })));
+				state bool exitSignal = wait(runMoveManagementTransaction(
+				    self->tenantGroup,
+				    self->srcCtx,
+				    self->dstCtx,
+				    Aborting::True,
+				    {},
+				    [self = self](Reference<typename DB::TransactionT> tr,
+				                  Optional<metadata::management::MovementRecord> movementRecord) {
+					    return initAbort(self, tr, movementRecord);
+				    }));
 				wait(self->dstCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return writeDataAbortVersion(self, tr); }));
 				if (exitSignal) {
