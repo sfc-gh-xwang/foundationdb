@@ -119,10 +119,14 @@ struct KeyRangeMapSnapshot : public ReferenceCounted<KeyRangeMapSnapshot<KeyType
 template <typename KeyType,
           typename ValueType,
           typename KeyCodec = TupleCodec<KeyType>,
-          typename ValueCodec = TupleCodec<ValueType>>
+          typename ValueCodec = TupleCodec<ValueType>,
+          bool SystemAccess = true,
+          bool RawAccess = true>
 class KeyBackedRangeMap {
+	static_assert(!SystemAccess || RawAccess);
+
 public:
-	typedef KeyBackedMap<KeyType, ValueType, KeyCodec, ValueCodec> Map;
+	typedef KeyBackedMap<KeyType, ValueType, KeyCodec, ValueCodec, SystemAccess, RawAccess> Map;
 	typedef typename Map::KeySelector KeySelector;
 	typedef typename Map::RangeResultType RangeResultType;
 	typedef KeyRangeMapSnapshot<KeyType, ValueType> LocalSnapshot;

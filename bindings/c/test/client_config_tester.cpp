@@ -66,7 +66,7 @@ enum TesterOptionId {
 	OPT_SKIP_CREATE_TENANT
 };
 
-const int MIN_TESTABLE_API_VERSION = 400;
+const int MIN_TESTABLE_API_VERSION = 710;
 
 CSimpleOpt::SOption TesterOptionDefs[] = //
     { { OPT_HELP, "-h", SO_NONE },

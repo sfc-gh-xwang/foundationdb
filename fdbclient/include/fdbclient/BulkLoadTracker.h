@@ -18,7 +18,7 @@
 // caller can know for sure whether it was successful or not)
 //        and/or allow client to explicitly clean up bulk loads when it knows for sure the load is complete
 struct BulkLoadTracker {
-	typedef std::function<Future<Void>(const BulkLoadID&, const BulkLoadState&)> Handler;
+	typedef std::function<Future<Void>(const BulkLoadID&, const BulkLoadStatus::State&)> Handler;
 
 	Database db;
 	Handler handler;

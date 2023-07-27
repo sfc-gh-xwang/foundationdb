@@ -110,7 +110,7 @@ class FdbCShimTests:
         self.test_prev_versions = not args.disable_prev_version_tests
         if self.test_prev_versions:
             self.downloader.download_old_binaries(PREV_RELEASE_VERSION)
-            self.downloader.download_old_binaries("7.0.1")
+            self.downloader.download_old_binaries("71.2.9")
 
     def build_c_api_tester_args(self, test_env, test_file):
         test_file_path = self.api_test_dir.joinpath(test_file)
@@ -267,7 +267,7 @@ class FdbCShimTests:
 
             # Test calling a function that exists in the loaded library, but not for the selected API version
             self.run_c_shim_lib_tester(
-                CURRENT_VERSION, test_env, call_set_path=True, api_version=700
+                CURRENT_VERSION, test_env, call_set_path=True, api_version=710200
             )
 
         if self.test_prev_versions:
@@ -296,10 +296,10 @@ class FdbCShimTests:
 
                 # Test calling a function that does not exist in the loaded library
                 self.run_c_shim_lib_tester(
-                    "7.0.1",
+                    "71.2.9",
                     test_env,
                     call_set_path=True,
-                    api_version=700,
+                    api_version=710200,
                     expected_ret_code=IMPLIBSO_ERROR_CODE,
                 )
 
