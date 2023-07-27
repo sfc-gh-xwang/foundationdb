@@ -41,10 +41,14 @@ namespace combify {
 
 // Network or database option can have a transaction implication:
 // e.g. trustedClient option affects whether AuthZ token transaction option should be set.
+// Clang-format is disabled for the concept definition below as it is currently lacking
+// concepts syntax support: https://stackoverflow.com/questions/62219221/using-clang-format-with-c20-concepts
+// clang-format off
 template <class Opt>
 concept HasTransactionImplication = requires(const Opt& o) {
 	{ o.apply(std::declval<fdb::Transaction>()) } -> std::same_as<void>;
 };
+// clang-format on
 
 using namespace fdb::literals;
 
