@@ -2982,12 +2982,12 @@ AddressExclusion AddressExclusion::parse(StringRef const& key) {
 	}
 }
 
-Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)), db(cx) {}
-Tenant::Tenant(Database cx, int64_t id) : lookupFuture(id), db(cx) {}
+Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)), dbFuture(cx) {}
+Tenant::Tenant(Database cx, int64_t id) : lookupFuture(id), dbFuture(cx) {}
 Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
   : name(name),
     lookupFuture(tenantLookupInfo),
-	db(cx) {}
+	dbFuture(cx) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
@@ -2995,8 +2995,8 @@ int64_t Tenant::id() const {
 }
 
 Database Tenant::database() const {
-	ASSERT(db.isReady());
-	return db.get();
+	ASSERT(dbFuture.isReady());
+	return dbFuture.get();
 }
 
 Optional<TenantGroupName> Tenant::tenantGroup() const {

@@ -267,7 +267,7 @@ public:
 private:
 	mutable int64_t bigEndianId = -1;
 	Future<TenantLookupInfo> lookupFuture;
-	Future<Database> db;
+	Future<Database> dbFuture;
 };
 
 template <>
