@@ -19,7 +19,7 @@ public:
 	virtual double getThroughput(ThrottlingId const&) const = 0;
 
 	// Returns the set of throttlingIds reporting throughput above the specified threshold
-	virtual boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const = 0;
+	virtual ThrottlingIdMap<double> getActiveThrottlingIds(double threshold) const = 0;
 
 	// Returns the number of throttlingIds for which metrics are currently being stored
 	virtual int throttlingIdsTracked() const = 0;
@@ -84,7 +84,7 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	ThrottlingIdMap<double> getActiveThrottlingIds(double threshold) const override;
 
 	int throttlingIdsTracked() const override;
 
@@ -119,7 +119,7 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	ThrottlingIdMap<double> getActiveThrottlingIds(double threshold) const override;
 
 	int throttlingIdsTracked() const override;
 
@@ -136,7 +136,7 @@ public:
 
 	double getThroughput(ThrottlingId const&) const override;
 
-	boost::unordered_flat_set<ThrottlingId> getActiveThrottlingIds(double threshold) const override;
+	ThrottlingIdMap<double> getActiveThrottlingIds(double threshold) const override;
 
 	int throttlingIdsTracked() const override;
 

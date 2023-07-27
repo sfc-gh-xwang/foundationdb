@@ -86,7 +86,6 @@ class QuotaThrottlerImpl {
 	class PerThrottlingIdStatistics {
 		HoltLinearSmoother transactionCounter;
 		Smoother targetRate;
-		Smoother targetThroughput;
 		double transactionsLastAdded;
 		double lastLogged;
 
@@ -95,7 +94,6 @@ class QuotaThrottlerImpl {
 		  : transactionCounter(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,
 		                       SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME),
 		    targetRate(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
-		    targetThroughput(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
 		    transactionsLastAdded(now()),
 		    lastLogged(0) {}
 
@@ -111,13 +109,34 @@ class QuotaThrottlerImpl {
 			return targetRate.smoothTotal();
 		}
 
+		bool recentTransactionsAdded() const {
+			return now() - transactionsLastAdded < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER;
+		}
+
+		bool canLog() const { return now() - lastLogged > SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRACE_INTERVAL; }
+
+		void updateLastLogged() { lastLogged = now(); }
+	};
+
+	class ThroughputStatistics {
+		Smoother targetThroughput;
+		double throughputLastAdded;
+		double lastLogged;
+
+	public:
+		explicit ThroughputStatistics()
+		  : targetThroughput(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
+		    throughputLastAdded(now()),
+		    lastLogged(0) {}
+
 		double updateAndGetTargetThroughputLimit(double targetBps) {
+			throughputLastAdded = now();
 			targetThroughput.setTotal(targetBps);
 			return targetThroughput.smoothTotal();
 		}
 
 		bool recentTransactionsAdded() const {
-			return now() - transactionsLastAdded < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER;
+			return now() - throughputLastAdded < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER;
 		}
 
 		bool canLog() const { return now() - lastLogged > SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRACE_INTERVAL; }
@@ -131,6 +150,7 @@ class QuotaThrottlerImpl {
 	uint32_t lastBusyThrottlingIdCount{ 0 };
 
 	ThrottlingIdMap<PerThrottlingIdStatistics> throttlingStatistics;
+	ThrottlingIdMap<ThroughputStatistics> throughputStatistics;
 
 	boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 
@@ -401,22 +421,27 @@ public:
 	                                            IRKClusterThroughputTracker const& clusterThroughputTracker,
 	                                            RKServerThroughputTracker const& serverThroughputTracker) {
 		ThrottlingIdMap<double> result;
-		lastBusyThrottlingIdCount = 0;
 
-		for (auto& [throttlingId, stats] : throttlingStatistics) {
-			// Currently there is no differentiation between batch priority and default priority transactions
+		for (const auto& [throttlingId, throughput] :
+		     clusterThroughputTracker.getActiveThrottlingIds(SERVER_KNOBS->THROUGHPUT_QUOTA_TRACK_THRESHOLD)) {
+
+			auto& stats = throughputStatistics[throttlingId];
+
 			TraceEvent te("QuotaThrottler_GotTargetThroughput", id);
+
 			bool const traceEnabled = stats.canLog();
 			if (!traceEnabled) {
 				te.disable();
 			}
-			auto const [targetBps, isBusy] = getTargetBps(
+
+			auto const [targetBps, isThrottled] = getTargetBps(
 			    throttlingId, quotaCache, metricsTracker, clusterThroughputTracker, serverThroughputTracker, te);
-			if (isBusy) {
+			if (isThrottled) {
 				++lastBusyThrottlingIdCount;
 			}
 			if (targetBps.present()) {
 				auto const smoothedTargetBps = stats.updateAndGetTargetThroughputLimit(targetBps.get());
+
 				te.detail("SmoothedTargetBps", smoothedTargetBps).detail("NumProxies", numProxies);
 				auto const targetPerProxyThroughput =
 				    std::max(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE, (int64_t)smoothedTargetBps / numProxies);
@@ -424,7 +449,7 @@ public:
 					stats.updateLastLogged();
 				}
 
-				auto throughput = clusterThroughputTracker.getThroughput(throttlingId);
+				te.detail("Throughput", throughput);
 
 				if (isBusyThrottlingIdsTrackingEnabled()) {
 					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
@@ -440,7 +465,6 @@ public:
 				busyThrottlingIds.erase(throttlingId);
 			}
 		}
-
 		return result;
 	}
 
@@ -449,6 +473,15 @@ public:
 
 	void removeExpiredThrottlingIds() {
 		boost::unordered::erase_if(throttlingStatistics, [&](auto const& kv) {
+			if (!kv.second.recentTransactionsAdded()) {
+				busyThrottlingIds.erase(kv.first);
+				return true;
+			} else {
+				return false;
+			}
+		});
+
+		boost::unordered::erase_if(throughputStatistics, [&](auto const& kv) {
 			if (!kv.second.recentTransactionsAdded()) {
 				busyThrottlingIds.erase(kv.first);
 				return true;
