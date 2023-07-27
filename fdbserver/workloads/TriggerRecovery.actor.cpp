@@ -123,11 +123,8 @@ struct TriggerRecoveryLoopWorkload : TestWorkload {
 					address_interface[ip_port] = it.value;
 				}
 				for (auto it : address_interface) {
-					if (cx->apiVersionAtLeast(700))
-						BinaryReader::fromStringRef<ClientWorkerInterface>(it.second, IncludeVersion())
-						    .reboot.send(RebootRequest());
-					else
-						tr.set("\xff\xff/reboot_worker"_sr, it.second);
+					BinaryReader::fromStringRef<ClientWorkerInterface>(it.second, IncludeVersion())
+					    .reboot.send(RebootRequest());
 				}
 				TraceEvent(SevInfo, "TriggerRecoveryLoop_AttempedKillAll").log();
 				return Void();

@@ -257,8 +257,7 @@ def test_client_app(linux_container: Container):
 set -euxo pipefail
 
 cat > app.c << EOF
-// FDB_API_VERSION doesn't necessarily need to be kept up to date here
-#define FDB_API_VERSION 700
+#define FDB_USE_LATEST_API_VERSION
 #include <foundationdb/fdb_c.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -279,7 +278,7 @@ static void callback(FDBFuture* f, void* _ignored) {
 }
 
 int main() {
-    check(fdb_select_api_version(700));
+    check(fdb_select_api_version(FDB_API_VERSION));
     check(fdb_setup_network());
     FDBDatabase* db;
     check(fdb_create_database(NULL, &db));

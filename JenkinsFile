@@ -29,6 +29,8 @@ pipeline {
                         abortPreviousBuilds()
                         labels = getLabels()
                     }
+                    build_trigger_cause = "${currentBuild.getBuildCauses()[0].shortDescription}"
+                    println("Build Trigger Cause : ${build_trigger_cause}")
                 }
             }
         }
@@ -62,8 +64,6 @@ pipeline {
                     // Checking github comment is only needed if branch is PR-*
                     if (env.BRANCH_NAME.startsWith("PR-")) {
                         def trigger_comment = "@fdb-ci precommit start"
-                        def build_trigger_cause = "${currentBuild.getBuildCauses()[0].shortDescription}"
-                        println("Build Trigger Cause : ${build_trigger_cause}")
 
                         if ("${build_trigger_cause}" == "GitHub pull request comment" &&
                                 "${currentBuild.getBuildCauses()[0].commentBody}".contains("${trigger_comment}")) {
@@ -117,10 +117,12 @@ pipeline {
                         git_branch = env.BRANCH_NAME
                         dryrun = "false"
                     }
-                    // if any changes detected in path "/contrib/build_image/" run FDB_ECR/Build_Image job
+
                     def changedFiles = getChangedFiles()
                     println(changedFiles)
-                    if (changedFiles.contains("contrib/build_image/")) {
+
+                    // if any changes detected in path "/contrib/build_image/" or in case of new branch creation run FDB_ECR/Build_Image job
+                    if (changedFiles.contains("contrib/build_image/") || checkNewBranchCreation()) {
                         println("**** Starting FDB Build Image Job  **** ")
                         createCheck("FDB Build Image", "FDB Build Image", "In Progress", "in_progress", "");
                         def j = build job: "FDB_ECR/Build_Image",
@@ -316,6 +318,14 @@ void createCheck(context, title, summary, jobStatus, jobConclusion) {
 def getChangedFiles() {
     def git_dff = sh(script:"git diff `git log --first-parent --merges -1 --format=%H` HEAD --name-only", returnStdout: true)
     return git_dff
+}
+
+def checkNewBranchCreation() {
+    //In case of new branch GIT_PREVIOUS_COMMIT is null
+    if (("${scmInfo.GIT_PREVIOUS_COMMIT}" == "null") && "${build_trigger_cause}".startsWith("Push event to branch release")) {
+        return true
+    }
+    return false
 }
 
 def getLabels() {

@@ -1087,8 +1087,11 @@ public:
 
 		// For degraded server that are complained by more than SERVER_KNOBS->CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE, we
 		// don't know if it is a hot server, or the network is bad. We remove from the returned degraded server list.
+		// The check is likely unnecessary as we have not seen cases where a hot server instead of a degraded server
+		// gets complained by a large number of peers. Set the knob value to -1(negative) will disable this check.
 		for (const auto& badServer : currentDegradedServers) {
-			if (degradedLinkDst2Src[badServer].size() <= SERVER_KNOBS->CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE) {
+			if (SERVER_KNOBS->CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE < 0 ||
+			    degradedLinkDst2Src[badServer].size() <= SERVER_KNOBS->CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE) {
 				currentDegradationInfo.degradedServers.insert(badServer);
 			}
 		}

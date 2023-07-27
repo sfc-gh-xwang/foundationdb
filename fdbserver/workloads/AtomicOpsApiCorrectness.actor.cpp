@@ -30,10 +30,6 @@ struct AtomicOpsApiCorrectnessWorkload : TestWorkload {
 	uint32_t opType;
 
 private:
-	static int getApiVersion(const Database& cx) { return cx->apiVersion.version(); }
-
-	static void setApiVersion(Database* cx, int version) { (*cx)->apiVersion = ApiVersion(version); }
-
 	Key getTestKey(std::string prefix) {
 		std::string key = prefix + std::to_string(clientId);
 		return StringRef(key);
@@ -473,28 +469,11 @@ public:
 	}
 
 	ACTOR Future<Void> testMin(Database cx, AtomicOpsApiCorrectnessWorkload* self) {
-		state int currentApiVersion = getApiVersion(cx);
 		state Key key = self->getTestKey("test_key_min_");
 
 		TraceEvent("AtomicOpCorrectnessApiWorkload").detail("OpType", "MIN");
-		// API Version 500
-		setApiVersion(&cx, 500);
-		TraceEvent(SevInfo, "Running Atomic Op Min Correctness Test Api Version 500").log();
-		wait(self->testAtomicOpUnsetOnNonExistingKey(cx, self, MutationRef::Min, key));
-		wait(self->testAtomicOpApi(
-		    cx, self, MutationRef::Min, key, [](uint64_t val1, uint64_t val2) { return val1 < val2 ? val1 : val2; }));
-		wait(self->testAtomicOpOnEmptyValue(cx, self, MutationRef::Min, key, [](Value v1, Value v2) -> Value {
-			uint64_t zeroVal = 0;
-			if (v2.size() == 0)
-				return StringRef();
-			else
-				return StringRef((const uint8_t*)&zeroVal, sizeof(zeroVal));
-		}));
 
-		// Current API Version
-		setApiVersion(&cx, currentApiVersion);
-		TraceEvent(SevInfo, "Running Atomic Op Min Correctness Current Api Version")
-		    .detail("Version", currentApiVersion);
+		TraceEvent(SevInfo, "Running Atomic Op Min Correctness");
 		wait(self->testAtomicOpSetOnNonExistingKey(cx, self, MutationRef::Min, key));
 		wait(self->testAtomicOpApi(
 		    cx, self, MutationRef::Min, key, [](uint64_t val1, uint64_t val2) { return val1 < val2 ? val1 : val2; }));
@@ -523,28 +502,11 @@ public:
 	}
 
 	ACTOR Future<Void> testAnd(Database cx, AtomicOpsApiCorrectnessWorkload* self) {
-		state int currentApiVersion = getApiVersion(cx);
 		state Key key = self->getTestKey("test_key_and_");
 
 		TraceEvent("AtomicOpCorrectnessApiWorkload").detail("OpType", "AND");
-		// API Version 500
-		setApiVersion(&cx, 500);
-		TraceEvent(SevInfo, "Running Atomic Op AND Correctness Test Api Version 500").log();
-		wait(self->testAtomicOpUnsetOnNonExistingKey(cx, self, MutationRef::And, key));
-		wait(self->testAtomicOpApi(
-		    cx, self, MutationRef::And, key, [](uint64_t val1, uint64_t val2) { return val1 & val2; }));
-		wait(self->testAtomicOpOnEmptyValue(cx, self, MutationRef::And, key, [](Value v1, Value v2) -> Value {
-			uint64_t zeroVal = 0;
-			if (v2.size() == 0)
-				return StringRef();
-			else
-				return StringRef((const uint8_t*)&zeroVal, sizeof(zeroVal));
-		}));
 
-		// Current API Version
-		setApiVersion(&cx, currentApiVersion);
-		TraceEvent(SevInfo, "Running Atomic Op AND Correctness Current Api Version")
-		    .detail("Version", currentApiVersion);
+		TraceEvent(SevInfo, "Running Atomic Op AND Correctness");
 		wait(self->testAtomicOpSetOnNonExistingKey(cx, self, MutationRef::And, key));
 		wait(self->testAtomicOpApi(
 		    cx, self, MutationRef::And, key, [](uint64_t val1, uint64_t val2) { return val1 & val2; }));

@@ -230,17 +230,32 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	ValidationTokenMap validationTokenMap;
 	PromiseStream<Future<Void>> addActor;
 	Future<Void> kmsStabilityChecker;
+	Future<Void> logger;
+
+	CounterCollection kmsConnectorMetrics;
+
+	Counter numMalformedResponses;
 
 	RESTKmsConnectorCtx()
 	  : uid(deterministicRandom()->randomUniqueID()),
 	    lastKmsUrlsRefreshTs(0),
 	    lastKmsUrlDiscoverTS(0.0),
-	    kmsStable(true) {}
+	    kmsStable(true),
+	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
+	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
+		logger = kmsConnectorMetrics.traceCounters(
+		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics");
+	}
 	explicit RESTKmsConnectorCtx(const UID& id)
 	  : uid(id),
 	    lastKmsUrlsRefreshTs(0),
 	    lastKmsUrlDiscoverTS(0.0),
-	    kmsStable(true) {}
+	    kmsStable(true),
+	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
+	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
+		logger = kmsConnectorMetrics.traceCounters(
+		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics");
+	}
 };
 
 std::string getFullRequestUrl(Reference<RESTKmsConnectorCtx> ctx, const std::string& url, const std::string& suffix) {
@@ -417,6 +432,7 @@ void checkResponseForError(Reference<RESTKmsConnectorCtx> ctx,
 	if (!doc.HasMember(REQUEST_VERSION_TAG) || !doc[REQUEST_VERSION_TAG].IsInt()) {
 		TraceEvent(SevWarnAlways, "RESTKMSResponseMissingVersion", ctx->uid).log();
 		CODE_PROBE(true, "KMS response missing version");
+		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
 	}
 
@@ -428,6 +444,7 @@ void checkResponseForError(Reference<RESTKmsConnectorCtx> ctx,
 		    .detail("Version", version)
 		    .detail("MaxSupportedVersion", maxSupportedVersion);
 		CODE_PROBE(true, "KMS response invalid version");
+		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
 	}
 
@@ -502,6 +519,7 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 		TraceEvent(SevWarn, "RESTParseEncryptCipherResponseFailed", ctx->uid)
 		    .detail("Reason", "MissingCipherKeyDetails");
 		CODE_PROBE(true, "REST CipherKeyDetails not array");
+		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
 	}
 
@@ -511,6 +529,7 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 			    .detail("CipherDetailType", cipherDetail.GetType())
 			    .detail("Reason", "EncryptKeyDetailsNotObject");
 			CODE_PROBE(true, "REST CipherKeyDetail not object");
+			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
 		}
 
@@ -524,6 +543,7 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 			    .detail("BaseCipherPresent", isBaseCipherPresent)
 			    .detail("EncryptDomainIdPresent", isEncryptDomainIdPresent);
 			CODE_PROBE(true, "REST CipherKeyDetail malformed");
+			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
 		}
 
@@ -630,6 +650,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 	if (!doc.HasMember(BLOB_METADATA_DETAILS_TAG) || !doc[BLOB_METADATA_DETAILS_TAG].IsArray()) {
 		TraceEvent(SevWarn, "ParseBlobMetadataResponseFailureMissingDetails", ctx->uid).log();
 		CODE_PROBE(true, "REST BlobMetadata details missing or not-array");
+		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
 	}
 
@@ -638,6 +659,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 			TraceEvent(SevWarn, "ParseBlobMetadataResponseFailureDetailsNotObject", ctx->uid)
 			    .detail("CipherDetailType", detail.GetType());
 			CODE_PROBE(true, "REST BlobMetadata detail not-object");
+			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
 		}
 
@@ -649,6 +671,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 			    .detail("DomainIdPresent", isDomainIdPresent)
 			    .detail("LocationsPresent", isLocationsPresent);
 			CODE_PROBE(true, "REST BlobMetadata detail malformed", probe::decoration::rare);
+			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
 		}
 
@@ -660,6 +683,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 			if (!location.IsObject()) {
 				TraceEvent("ParseBlobMetadataResponseFailureLocationNotObject", ctx->uid)
 				    .detail("LocationType", location.GetType());
+				++ctx->numMalformedResponses;
 				throw rest_malformed_response();
 			}
 			const bool isLocationIdPresent = location.HasMember(BLOB_METADATA_LOCATION_ID_TAG);
@@ -669,6 +693,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 				    .detail("LocationIdPresent", isLocationIdPresent)
 				    .detail("PathPresent", isPathPresent);
 				CODE_PROBE(true, "REST BlobMetadata location malformed", probe::decoration::rare);
+				++ctx->numMalformedResponses;
 				throw rest_malformed_response();
 			}
 

@@ -450,8 +450,10 @@ public:
 	Future<Void> waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// internal state management - not exposed to public clients
-	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadState desiredState);
-	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadState desiredState);
+	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadStatus::State desiredState);
+	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadStatus::State desiredState);
+	Future<Void> cleanupAbortedBulkLoad(BulkLoadID id);
+	Future<Version> getBulkLoadVersion(BulkLoadID id);
 
 	// operational management
 	Future<std::vector<BulkLoadID>> listBulkLoads(bool onlyActive);
@@ -761,6 +763,8 @@ public:
 	void addCost(ThrottlingId const&, uint64_t bytes);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
+
+	bool isThrottlingIdBusy(ThrottlingId const&) const;
 
 	// used in template functions to create a transaction
 	using TransactionT = ReadYourWritesTransaction;

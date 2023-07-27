@@ -87,6 +87,15 @@ struct MappedKeyValueRef : native::FDBMappedKeyValue {
 	}
 };
 
+// Trivially construct a BytesRef out of string literals
+namespace literals {
+
+inline BytesRef operator""_br(const char* str, size_t len) {
+	return BytesRef(reinterpret_cast<const uint8_t*>(str), len);
+}
+
+} // namespace literals
+
 struct KeyValue {
 	Key key;
 	Value value;
@@ -980,9 +989,7 @@ public:
 
 	TypedFuture<future_var::Int64> getTotalCost() const { return native::fdb_transaction_get_total_cost(tr.get()); }
 
-	void setExpectedCost(uint64_t value) {
-		native::fdb_transaction_set_expected_cost(tr.get(), value);
-	}
+	void setExpectedCost(uint64_t value) { native::fdb_transaction_set_expected_cost(tr.get(), value); }
 
 	TypedFuture<future_var::Double> getTagThrottledDuration() const {
 		return native::fdb_transaction_get_tag_throttled_duration(tr.get());
@@ -1060,6 +1067,10 @@ public:
 	Tenant(const Tenant&) noexcept = default;
 	Tenant& operator=(const Tenant&) noexcept = default;
 	Tenant() noexcept : tenant(nullptr) {}
+
+	bool valid() const noexcept { return tenant.get() != nullptr; }
+
+	explicit operator bool() const noexcept { return valid(); }
 
 	void atomic_store(Tenant other) { std::atomic_store(&tenant, other.tenant); }
 
@@ -1178,6 +1189,8 @@ public:
 	Database() noexcept : db(nullptr) {}
 
 	bool valid() const noexcept { return db != nullptr; }
+
+	explicit operator bool() const noexcept { return valid(); }
 
 	void atomic_store(Database other) { std::atomic_store(&db, other.db); }
 
@@ -1354,10 +1367,5 @@ template <>
 struct std::hash<fdb::Future> {
 	size_t operator()(const fdb::Future& f) const { return std::hash<fdb::native::FDBFuture*>{}(f.nativeHandle()); }
 };
-
-// Trivially construct a BytesRef out of a string literal
-inline fdb::BytesRef operator""_br(const char* str, size_t len) {
-	return fdb::BytesRef(reinterpret_cast<const uint8_t*>(str), len);
-}
 
 #endif /*FDB_API_HPP*/

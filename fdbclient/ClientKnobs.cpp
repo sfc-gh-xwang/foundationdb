@@ -295,6 +295,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( AVERAGE_COST_START_DELAY,                10.0 );
 	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
 	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); if ( randomize && BUGGIFY ) USE_SIMPLE_THROUGHPUT_QUOTA_CACHE = false;
+	init( TRACK_BUSY_THROTTLING_IDS,              false ); if ( randomize && BUGGIFY ) TRACK_BUSY_THROTTLING_IDS = true;
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );

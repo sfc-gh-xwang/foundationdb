@@ -2781,7 +2781,8 @@ ACTOR Future<Void> workerHealthMonitor(ClusterControllerData* self) {
 							self->excludedDegradedServers.insert(self->degradationInfo.disconnectedServers.begin(),
 							                                     self->degradationInfo.disconnectedServers.end());
 							TraceEvent("DegradedServerDetectedAndTriggerRecovery")
-							    .detail("RecentRecoveryCountDueToHealth", self->recentRecoveryCountDueToHealth());
+							    .detail("RecentRecoveryCountDueToHealth", self->recentRecoveryCountDueToHealth())
+							    .detail("ExcludedDegradedServers", describe(self->excludedDegradedServers));
 							self->db.forceMasterFailure.trigger();
 						}
 					} else {

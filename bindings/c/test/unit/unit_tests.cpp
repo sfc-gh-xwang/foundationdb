@@ -51,6 +51,8 @@
 
 #include "test/fdb_api.hpp"
 
+using namespace fdb::literals; // use "[key]"_br shorthand for fdb::BytesRef
+
 namespace {
 
 void fdbCheck(const fdb::Error& err) {

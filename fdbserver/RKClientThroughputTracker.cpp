@@ -46,11 +46,12 @@ double RKClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId
 	}
 }
 
-boost::unordered_flat_set<ThrottlingId> RKClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	boost::unordered_flat_set<ThrottlingId> result;
+ThrottlingIdMap<double> RKClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	ThrottlingIdMap<double> result;
 	for (auto const& [throttlingId, throughputSmoother] : throughput) {
-		if (throughputSmoother.smoother.smoothRate() > threshold) {
-			result.insert(throttlingId);
+		auto const smoothThroughput = throughputSmoother.smoother.smoothRate();
+		if (smoothThroughput > threshold) {
+			result.emplace(throttlingId, smoothThroughput);
 		}
 	}
 	return result;
