@@ -190,11 +190,6 @@ KeyBackedMap<Tuple, Key>& splitPointsMap() {
 	return instance;
 }
 
-KeyBackedBinaryValue<Versionstamp>& lastTenantMoveAbort() {
-	static KeyBackedBinaryValue<Versionstamp> instance("\xff/emergency_movement_data/lastTenantMoveAbort/"_sr);
-	return instance;
-}
-
 }; // namespace emergency_movement
 
 TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata() {
@@ -203,4 +198,12 @@ TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata() {
 }
 
 } // namespace management
+namespace data::emergency_movement {
+
+KeyBackedBinaryValue<Versionstamp>& lastTenantMoveAbort() {
+	static KeyBackedBinaryValue<Versionstamp> instance("\xff/emergency_movement_data/lastTenantMoveAbort/"_sr);
+	return instance;
+}
+
+} // namespace data::emergency_movement
 } // namespace metacluster::metadata

@@ -700,8 +700,8 @@ struct StartTenantMovementImpl {
 
 		state Optional<int64_t> optionalMaxId = wait(TenantMetadata::lastTenantId().get(tr));
 		state int64_t maxId = optionalMaxId.present() ? optionalMaxId.get() : 0;
-		state Versionstamp lastAbortVersion = wait(
-		    metadata::management::emergency_movement::lastTenantMoveAbort().getD(tr, Snapshot::False, Versionstamp()));
+		state Versionstamp lastAbortVersion =
+		    wait(metadata::data::emergency_movement::lastTenantMoveAbort().getD(tr, Snapshot::False, Versionstamp()));
 		if (self->mgmtStartVersion <= lastAbortVersion) {
 			// If create happened before the abort, fail with an error
 			TraceEvent("TenantMoveStartAbortSerialization")
@@ -1630,7 +1630,7 @@ struct AbortTenantMovementImpl {
 				throw;
 			}
 		}
-		metadata::management::emergency_movement::lastTenantMoveAbort().setVersionstamp(tr, self->abortVersion, 0);
+		metadata::data::emergency_movement::lastTenantMoveAbort().setVersionstamp(tr, self->abortVersion, 0);
 		return Void();
 	}
 
