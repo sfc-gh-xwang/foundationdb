@@ -2,6 +2,8 @@
  * ExpectStableThroughput.actor.cpp
  */
 
+#include "fdbclient/Knobs.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/workloads/ThroughputQuotaUtil.h"
 #include "fdbserver/workloads/workloads.actor.h"
 
@@ -40,6 +42,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	double warmupTime;
 	int opsPerTransaction;
 	bool provideExpectedCost;
+	bool useGrvCache;
 	bool performReads;
 
 	double startTime;
@@ -77,9 +80,15 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		loop {
 			try {
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, throttlingTag);
+
+				if (self->useGrvCache && isBusyThrottlingIdsTrackingEnabled()) {
+					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
+				}
+
 				if (self->provideExpectedCost) {
 					tr.setExpectedCost(self->opsPerTransaction * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 				}
+
 				futures.clear();
 				futures.reserve(self->opsPerTransaction);
 				for (int i = 0; i < self->opsPerTransaction; ++i) {
@@ -100,7 +109,11 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		state TransactionTag throttlingTag = ThroughputQuotaUtil::getTransactionTag(self->tagPrefix, tagIndex);
 		loop {
 			try {
+
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, throttlingTag);
+				if (self->useGrvCache && isBusyThrottlingIdsTrackingEnabled()) {
+					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
+				}
 				if (self->provideExpectedCost) {
 					tr.setExpectedCost(self->opsPerTransaction * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE *
 					                   CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO);
@@ -162,6 +175,7 @@ public:
 		// total target TPS at or below 100 TPS.
 		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, deterministicRandom()->randomInt(5, 10));
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
+		useGrvCache = getOption(options, "useGrvCache"_sr, deterministicRandom()->coinflip());
 		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
 	}
 
@@ -171,6 +185,12 @@ public:
 		if (clientId != 0) {
 			return Void();
 		}
+
+		// Required for GRV Cache to work in simulation.
+		// Normally, MVC would set the shared state and it is verified upon setting the
+		// transaction option for GRV Cache.
+		// In simulation, explicitly initialize it when used for tests.
+		cx->initSharedState();
 		TraceEvent("StartingExpectStableThroughputWorkload")
 		    .detail("TestDuration", testDuration)
 		    .detail("TagPrefix", tagPrefix)
