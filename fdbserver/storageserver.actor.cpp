@@ -3971,9 +3971,9 @@ ACTOR Future<GetValueReqAndResultRef> quickGetValue(StorageServer* data,
 
 	++data->counters.quickGetValueMiss;
 	if (SERVER_KNOBS->QUICK_GET_VALUE_FALLBACK) {
-		state Transaction tr = pOriginalReq->tenantInfo.hasTenant() 
-		                           ? Transaction(makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)) 
-								   : Transaction(data->cx);
+		state Transaction tr = pOriginalReq->tenantInfo.hasTenant()
+		                           ? Transaction(makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId))
+		                           : Transaction(data->cx);
 		tr.setVersion(version);
 		// TODO: is DefaultPromiseEndpoint the best priority for this?
 		tr.trState->taskID = TaskPriority::DefaultPromiseEndpoint;

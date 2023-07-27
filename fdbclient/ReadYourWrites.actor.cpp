@@ -1617,12 +1617,14 @@ ReadYourWritesTransaction::ReadYourWritesTransaction(Reference<Tenant> const& te
     versionStampFuture(tr.getVersionstamp()),
     specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
     options(tr) {
-	std::copy(
-	    tenant->database().getTransactionDefaults().begin(), tenant->database().getTransactionDefaults().end(), std::back_inserter(persistentOptions));
+	std::copy(tenant->database().getTransactionDefaults().begin(),
+	          tenant->database().getTransactionDefaults().end(),
+	          std::back_inserter(persistentOptions));
 	applyPersistentOptions();
 }
 
-ReadYourWritesTransaction ReadYourWritesTransaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx) {
+ReadYourWritesTransaction ReadYourWritesTransaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant,
+                                                                         Database const& cx) {
 	if (tenant.present()) {
 		return ReadYourWritesTransaction(tenant.get());
 	} else {

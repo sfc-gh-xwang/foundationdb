@@ -65,7 +65,11 @@ struct TenantManagementWorkload : TestWorkload {
 		  : tenant(makeReference<Tenant>(cx, id)),
 		    tenantGroup(tenantGroup),
 		    empty(empty) {}
-		TenantTestData(Database cx, int64_t id, Optional<TenantName> tName, Optional<TenantGroupName> tenantGroup, bool empty)
+		TenantTestData(Database cx,
+		               int64_t id,
+		               Optional<TenantName> tName,
+		               Optional<TenantGroupName> tenantGroup,
+		               bool empty)
 		  : tenant(makeReference<Tenant>(cx, TenantLookupInfo(id, tenantGroup), tName)),
 		    tenantGroup(tenantGroup),
 		    empty(empty) {}
@@ -1938,7 +1942,9 @@ struct TenantManagementWorkload : TestWorkload {
 		state bool useManagementCluster = self->useMetacluster && deterministicRandom()->random01() < 0.05;
 		state Database db = useManagementCluster ? self->managementDbInternal : self->dataDb;
 
-		state Reference<ReadYourWritesTransaction> tr = (tenant.present() && !useManagementCluster) ? makeReference<ReadYourWritesTransaction>(tenant.get()) : makeReference<ReadYourWritesTransaction>(db);
+		state Reference<ReadYourWritesTransaction> tr = (tenant.present() && !useManagementCluster)
+		                                                    ? makeReference<ReadYourWritesTransaction>(tenant.get())
+		                                                    : makeReference<ReadYourWritesTransaction>(db);
 		state Optional<TenantName> tName = tenant.flatMapRef(&Tenant::name);
 		state bool tenantExists = false;
 		state TenantTestData tData = TenantTestData();

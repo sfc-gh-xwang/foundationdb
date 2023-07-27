@@ -2987,7 +2987,7 @@ Tenant::Tenant(Database cx, int64_t id) : lookupFuture(id), dbFuture(cx) {}
 Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
   : name(name),
     lookupFuture(tenantLookupInfo),
-	dbFuture(cx) {}
+    dbFuture(cx) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
@@ -4130,9 +4130,10 @@ ACTOR Future<Void> watchStorageServerResp(int64_t tenantId, Key key, Database cx
 }
 
 ACTOR Future<Void> sameVersionDiffValue(Database cx, Reference<WatchParameters> parameters) {
-	state ReadYourWritesTransaction tr = parameters->tenant.hasTenant()
-	                                       ? ReadYourWritesTransaction(makeReference<Tenant>(cx, parameters->tenant.tenantId))
-										   : ReadYourWritesTransaction(cx);
+	state ReadYourWritesTransaction tr =
+	    parameters->tenant.hasTenant()
+	        ? ReadYourWritesTransaction(makeReference<Tenant>(cx, parameters->tenant.tenantId))
+	        : ReadYourWritesTransaction(cx);
 
 	loop {
 		try {
