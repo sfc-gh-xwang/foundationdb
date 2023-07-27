@@ -98,4 +98,36 @@ AddTest testReadSystemKeyDisallowed(
 	    }
     });
 
+AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newTransaction(db);
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+		    return tr.get("\xff/coordinators"_br, /* snapshot */ false);
+	    },
+	    "ReadSystemKey");
+	ASSERT(f.get().has_value());
+});
+
+AddTest testWriteSystemKeyDisallowed("WriteSystemKeyDisallowed",
+                                     AND(withoutMultiVersion, withoutGrvCache, asTrustedClient),
+                                     [](const TestEnv& env) {
+	                                     auto db = env.newDatabase();
+	                                     auto tr = env.newTransaction(db);
+	                                     try {
+		                                     auto f = runToCompletion(
+		                                         tr,
+		                                         [](auto tr) {
+			                                         tr.set("\xff\x02"_br, "bar"_br);
+			                                         return tr.commit();
+		                                         },
+		                                         "WriteSystemKeyFail");
+		                                     ASSERT(false);
+	                                     } catch (fdb::Error e) {
+		                                     ASSERT(e.code() == 2004); // key_outside_legal_range
+	                                     }
+                                     });
+
 } // anonymous namespace

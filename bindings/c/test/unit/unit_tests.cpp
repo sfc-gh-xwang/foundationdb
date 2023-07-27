@@ -422,21 +422,6 @@ TEST_CASE("fdb_future_get_keyvalue_array") {
 	}
 }
 
-TEST_CASE("read system key") {
-	auto value = getValue("\xff/coordinators"_br, /* snapshot */ false, { FDB_TR_OPTION_READ_SYSTEM_KEYS });
-	REQUIRE(value.has_value());
-}
-
-TEST_CASE("cannot write system key") {
-	auto tr = db.createTransaction();
-
-	tr.set("\xff\x02"_br, "bar"_br);
-
-	auto f1 = tr.commit();
-	auto err = waitFuture(f1);
-	CHECK(err.code() == 2004); // key_outside_legal_range
-}
-
 TEST_CASE("write system key") {
 	auto tr = db.createTransaction();
 	auto syskey = "\xff\x02"_br;
