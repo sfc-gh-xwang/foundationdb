@@ -173,6 +173,7 @@ set(COMBIFY_CORE_SRCS
 
 set(COMBIFY_TEST_SRCS
   test/combify/Authorization.cpp
+  test/combify/Transaction.cpp
 )
 
 if(OPEN_FOR_IDE)
