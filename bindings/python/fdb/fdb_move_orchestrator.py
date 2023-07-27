@@ -15,7 +15,7 @@ import multiprocessing
 from datetime import datetime
 import ast
 
-fdb.api_version(720)
+fdb.api_version(713000)
 
 # Reserved keyrange on management cluster to store info for data movement
 moveDataPrefix = "emergency_movement"
