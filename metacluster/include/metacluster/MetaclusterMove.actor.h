@@ -697,7 +697,10 @@ struct StartTenantMovementImpl {
 		state int64_t maxId = optionalMaxId.present() ? optionalMaxId.get() : 0;
 		state Versionstamp lastAbortVersion = wait(lastTenantMoveAbort().getD(tr, Snapshot::False, Versionstamp()));
 		if (self->mgmtStartVersion <= lastAbortVersion) {
-			// Prevent creating new tenants when our version is not caught up
+			// If create happened before the abort, fail with an error
+			TraceEvent("TenantMoveStartAbortSerialization")
+			    .detail("StartVersion", self->mgmtStartVersion)
+			    .detail("AbortVersion", lastAbortVersion);
 			throw tenant_move_failed();
 		}
 
@@ -706,7 +709,8 @@ struct StartTenantMovementImpl {
 			TenantMapEntry entry(tenantPair.second, tenantPair.first, self->tenantGroup);
 			entry.tenantLockState = TenantAPI::TenantLockState::LOCKED;
 			entry.tenantLockId = self->moveRecord.runId;
-			createFutures.push_back(TenantAPI::createTenantTransaction(tr, entry, ClusterType::METACLUSTER_DATA, true));
+			createFutures.push_back(TenantAPI::createTenantTransaction(
+			    tr, entry, ClusterType::METACLUSTER_DATA, TenantAPI::CheckTenantTombstone::False));
 		}
 
 		wait(waitForAll(createFutures));
