@@ -192,6 +192,12 @@ public:
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
 		useGrvCache = getOption(options, "useGrvCache"_sr, deterministicRandom()->coinflip());
 		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
+
+		// To avoid timeouts:
+#ifdef ADDRESS_SANITIZER
+		testDuration = 60.0;
+		warmupTime = 10.0;
+#endif
 	}
 
 	Future<Void> setup(Database const& cx) override { return Void(); }
@@ -220,6 +226,13 @@ public:
 	}
 
 	Future<bool> check(Database const&) override {
+		// When running with ASAN, we purposefully shorten the duration to avoid timeouts.
+		// Therefore, we cannot make strong assumptions about the achieved throughput, so
+		// we skip the check phase
+#ifdef ADDRESS_SANITIZER
+		return true;
+#endif
+
 		if (clientId != 0) {
 			return true;
 		}
