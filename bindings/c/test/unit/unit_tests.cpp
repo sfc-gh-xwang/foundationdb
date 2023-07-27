@@ -422,14 +422,6 @@ TEST_CASE("fdb_future_get_keyvalue_array") {
 	}
 }
 
-TEST_CASE("cannot read system key") {
-	auto tr = db.createTransaction();
-	auto f1 = tr.get("\xff/coordinators"_br, /* snapshot */ false);
-
-	auto err = waitFuture(f1);
-	CHECK(err.code() == 2004); // key_outside_legal_range
-}
-
 TEST_CASE("read system key") {
 	auto value = getValue("\xff/coordinators"_br, /* snapshot */ false, { FDB_TR_OPTION_READ_SYSTEM_KEYS });
 	REQUIRE(value.has_value());

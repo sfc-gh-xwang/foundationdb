@@ -112,4 +112,19 @@ AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& 
 	}
 });
 
+AddTest testReadSystemKeyDisallowed(
+    "ReadSystemKeyDisallowed",
+    AND(withoutMultiVersion, withoutGrvCache, asTrustedClient),
+    [](const TestEnv& env) {
+	    auto db = env.newDatabase();
+	    auto tr = env.newTransaction(db);
+	    try {
+		    auto f = runToCompletion(
+		        tr, [](auto tr) { return tr.get("\xff/coordinators"_br, /* snapshot */ false); }, "ReadSystemKeyFail");
+		    ASSERT(false);
+	    } catch (fdb::Error e) {
+		    ASSERT(e.code() == 2004); // key_outside_legal_range
+	    }
+    });
+
 } // anonymous namespace
