@@ -1,5 +1,6 @@
 #include "Combify.hpp"
 #include "TestHelpers.hpp"
+#include <optional>
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -10,22 +11,50 @@ namespace {
 using namespace combify;
 using namespace fdb::literals;
 
+// getValue is a helper function to set options to a transaction and get the value of a given key
+auto getValue(fdb::Transaction tr,
+              fdb::KeyRef key,
+              bool snapshot = false,
+              string_view what = "",
+              const std::vector<FDBTransactionOption>& options = {}) {
+
+	return runToCompletion(
+	    tr,
+	    [key, snapshot, options](auto tr) {
+		    for (const auto& opt : options) {
+			    tr.setOption(opt);
+		    }
+		    return tr.get(key, snapshot);
+	    },
+	    what);
+}
+
+// setValue is a helper function to set options to a transaction and set a key value
+auto setValue(fdb::Transaction tr,
+              fdb::KeyRef key,
+              fdb::ValueRef val,
+              string_view what = "",
+              const std::vector<FDBTransactionOption>& options = {}) {
+	return runToCompletion(
+	    tr,
+	    [key, val, options](auto tr) {
+		    for (const auto& opt : options) {
+			    tr.setOption(opt);
+		    }
+		    tr.set(key, val);
+		    return tr.commit();
+	    },
+	    what);
+}
+
 AddTest testWriteAndRead("BasicWriteAndReadBack", asTrustedClient, [](const TestEnv& env) {
 	auto db = env.newDatabase();
 
 	auto tr = env.newTransaction(db);
-
-	runToCompletion(
-	    tr,
-	    [](auto tr) {
-		    tr.set("abc"_br, "def"_br);
-		    return tr.commit();
-	    },
-	    "WriteSomeValue");
+	setValue(tr, "abc"_br, "def"_br, "WriteSomeValue");
 
 	tr = env.newTransaction(db);
-	auto f = runToCompletion(
-	    tr, [](auto tr) { return tr.get("abc"_br, false); }, "ReadBackValue");
+	auto f = getValue(tr, "abc"_br, false, "ReadBackValue");
 	ASSERT(f.get() == "def"_br);
 });
 
@@ -62,10 +91,9 @@ AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 
 	auto db = env.newDatabase();
 	auto tr = env.newTransaction(db);
-	auto f = runToCompletion(
-	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), /* snapshot */ false); }, "GetValue");
+	auto f = getValue(tr, fdb::toBytesRef(prefix + "foo"), false, "GetValue");
 
-	ASSERT(fdb::toCharsRef(f.get()) == "bar");
+	ASSERT(f.get() == "bar"_br);
 });
 
 AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& env) {
@@ -83,31 +111,23 @@ AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& 
 	}
 });
 
-AddTest testReadSystemKeyDisallowed(
-    "ReadSystemKeyDisallowed",
-    AND(withoutMultiVersion, withoutGrvCache, asTrustedClient),
-    [](const TestEnv& env) {
-	    auto db = env.newDatabase();
-	    auto tr = env.newTransaction(db);
-	    try {
-		    auto f = runToCompletion(
-		        tr, [](auto tr) { return tr.get("\xff/coordinators"_br, /* snapshot */ false); }, "ReadSystemKeyFail");
-		    ASSERT(false);
-	    } catch (fdb::Error e) {
-		    ASSERT(e.code() == 2004); // key_outside_legal_range
-	    }
-    });
+AddTest testReadSystemKeyDisallowed("ReadSystemKeyDisallowed",
+                                    AND(withoutMultiVersion, withoutGrvCache, asTrustedClient),
+                                    [](const TestEnv& env) {
+	                                    auto db = env.newDatabase();
+	                                    auto tr = env.newTransaction(db);
+	                                    try {
+		                                    getValue(tr, "\xff/coordinators"_br, false, "ReadSystemKeyFail");
+		                                    ASSERT(false);
+	                                    } catch (fdb::Error e) {
+		                                    ASSERT(e.code() == 2004); // key_outside_legal_range
+	                                    }
+                                    });
 
 AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& env) {
 	auto db = env.newDatabase();
 	auto tr = env.newTransaction(db);
-	auto f = runToCompletion(
-	    tr,
-	    [](auto tr) {
-		    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
-		    return tr.get("\xff/coordinators"_br, /* snapshot */ false);
-	    },
-	    "ReadSystemKey");
+	auto f = getValue(tr, "\xff/coordinators"_br, false, "ReadSystemKey", { FDB_TR_OPTION_READ_SYSTEM_KEYS });
 	ASSERT(f.get().has_value());
 });
 
@@ -117,13 +137,7 @@ AddTest testWriteSystemKeyDisallowed("WriteSystemKeyDisallowed",
 	                                     auto db = env.newDatabase();
 	                                     auto tr = env.newTransaction(db);
 	                                     try {
-		                                     auto f = runToCompletion(
-		                                         tr,
-		                                         [](auto tr) {
-			                                         tr.set("\xff\x02"_br, "bar"_br);
-			                                         return tr.commit();
-		                                         },
-		                                         "WriteSystemKeyFail");
+		                                     auto f = setValue(tr, "\xff\x02"_br, "bar"_br, "WriteSystemKeyFail");
 		                                     ASSERT(false);
 	                                     } catch (fdb::Error e) {
 		                                     ASSERT(e.code() == 2004); // key_outside_legal_range
@@ -136,24 +150,11 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 	auto syskey = "\xff\x02"_br;
 
 	// Write a system key
-	runToCompletion(
-	    tr,
-	    [syskey](auto tr) {
-		    tr.setOption(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
-		    tr.set(syskey, "bar"_br);
-		    return tr.commit();
-	    },
-	    "WriteSystemKey");
+	setValue(tr, syskey, "bar"_br, "WriteSystemKey", { FDB_TR_OPTION_ACCESS_SYSTEM_KEYS });
 
 	// Read and verify the system key value
 	tr = env.newTransaction(db);
-	auto f = runToCompletion(
-	    tr,
-	    [syskey](auto tr) {
-		    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
-		    return tr.get(syskey, /* snapshot */ false);
-	    },
-	    "ReadBackSystemKey");
+	auto f = getValue(tr, syskey, false, "ReadBackSystemKey", { FDB_TR_OPTION_READ_SYSTEM_KEYS });
 
 	ASSERT(f.get() == "bar"_br);
 });
