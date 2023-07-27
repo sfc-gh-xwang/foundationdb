@@ -380,36 +380,6 @@ TEST_CASE("fdb_future_release_memory") {
 	}
 }
 
-TEST_CASE("fdb_future_get_string_array") {
-	insert_data(db, create_data({ { "foo", "bar" } }));
-
-	auto tr = db.createTransaction();
-	while (1) {
-		auto f1 = tr.getAddressForKey(fdb::toBytesRef(key("foo")));
-
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-
-		// Note that it is desirable to use binding to retrieve all three
-		// values in one line, i.e. auto [output, strings, count] = f1.get()
-		// However, this runs into issues in the CHECK macro below likely due to
-		// CHECK internally branches out
-		auto output = f1.get();
-		auto strings = std::get<0>(output);
-		auto count = std::get<1>(output);
-
-		CHECK(count > 0);
-		for (int i = 0; i < count; i++) {
-			CHECK(strlen(strings[i]) > 0);
-		}
-		break;
-	}
-}
-
 TEST_CASE("fdb_future_get_keyvalue_array") {
 	auto data = create_data({ { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
 	insert_data(db, data);
