@@ -32,9 +32,9 @@ AddTest test1("AuthZCrossTenantDisallowed", AND(withAuthZ, withTls, withTenantsM
 	try {
 		runToCompletion(
 		    trA, [](auto trA) { return trA.get("abc"_br, false); }, "GetValueUsingTokenForTenantB");
-		assert(false && "expected exception upon cross-tenant get");
+		ASSERT(false);
 	} catch (fdb::Error e) {
-		assert(e.code() == 6000);
+		ASSERT(e.code() == 6000);
 	}
 });
 
@@ -54,10 +54,7 @@ AddTest test2("BasicWriteAndReadBack", asTrustedClient, [](const TestEnv& env) {
 	tr = env.newTransaction(db);
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.get("abc"_br, false); }, "ReadBackValue");
-	if (f.get() != "def"_br) {
-		fmt::print(stderr, "UNMATCHED READ BACK VALUE: expected=def actual={}\n", fdb::toCharsRef(f.get()));
-		throw std::runtime_error("assertion failure");
-	}
+	ASSERT(f.get() == "def"_br);
 });
 
 AddTest testGetReadVersion("BasicGetReadVersion", asTrustedClient, [](const TestEnv& env) {
@@ -67,7 +64,7 @@ AddTest testGetReadVersion("BasicGetReadVersion", asTrustedClient, [](const Test
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
 
-	assert(f.get() > 0);
+	ASSERT(f.get() > 0);
 });
 
 AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
@@ -84,7 +81,7 @@ AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 	    },
 	    "GetKey");
 
-	assert(fdb::toCharsRef(f.get()) == prefix + "bar");
+	ASSERT(fdb::toCharsRef(f.get()) == prefix + "bar");
 });
 
 AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
@@ -96,7 +93,7 @@ AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 	auto f = runToCompletion(
 	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), /* snapshot */ false); }, "GetValue");
 
-	assert(fdb::toCharsRef(f.get()) == "bar");
+	ASSERT(fdb::toCharsRef(f.get()) == "bar");
 });
 
 } // anonymous namespace

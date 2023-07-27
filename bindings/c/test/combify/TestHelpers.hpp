@@ -39,8 +39,8 @@ concept AnyFuture = TemplateInstance<T, fdb::TypedFuture> || std::same_as<T, fdb
 
 template <class Func>
 concept TransactionLambda = requires(Func&& fn) {
-	                            { fn(std::declval<fdb::Transaction>()) } -> AnyFuture;
-                            };
+	{ fn(std::declval<fdb::Transaction>()) } -> AnyFuture;
+};
 
 // Utility function to avoid having to repeatedly write transaction retry loops.
 // Function shall take a transaction object as parameter and return some future.
@@ -106,6 +106,12 @@ inline std::string strincStr(const std::string& s) {
 	p[r.size() - 1]++;
 	return r;
 }
+
+#define ASSERT(condition)                                                                                              \
+	if (!(condition)) {                                                                                                \
+		fmt::print(stderr, "Assertion {} failed @ {}:{}", #condition, __FILE__, __LINE__);                             \
+		throw std::runtime_error("assertion failure");                                                                 \
+	}
 
 } // namespace combify
 
