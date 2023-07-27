@@ -43,8 +43,8 @@ namespace combify {
 // e.g. trustedClient option affects whether AuthZ token transaction option should be set.
 template <class Opt>
 concept HasTransactionImplication = requires(const Opt& o) {
-	                                    { o.apply(std::declval<fdb::Transaction>()) } -> std::same_as<void>;
-                                    };
+	{ o.apply(std::declval<fdb::Transaction>()) } -> std::same_as<void>;
+};
 
 using namespace fdb::literals;
 
@@ -497,6 +497,26 @@ bool TestEnv::runTest(const TestCase& t) {
 			std::cout << "Test standard error:\n" << std::quoted(err) << "\n";
 	}
 	return !exc.has_value();
+}
+
+void TestEnv::clearAndPopulateDBData(const std::string& prefix, const std::map<std::string, std::string>& data) const {
+
+	auto db = newDatabase();
+	auto tr = newTransaction(db);
+
+	runToCompletion(
+	    tr,
+	    [&prefix, &data](auto tr) {
+		    // Clear the range
+		    auto endKey = strincStr(prefix);
+		    tr.clearRange(fdb::toBytesRef(prefix), fdb::toBytesRef(endKey));
+		    // Insert data
+		    for (const auto& [key, val] : data) {
+			    tr.set(fdb::toBytesRef(prefix + key), fdb::toBytesRef(val));
+		    }
+		    return tr.commit();
+	    },
+	    "ClearRangeAndPopulateDBData");
 }
 
 std::vector<const TestCase*> collectTestCases(const TestOptions& options) {

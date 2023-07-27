@@ -60,4 +60,31 @@ AddTest test2("BasicWriteAndReadBack", asTrustedClient, [](const TestEnv& env) {
 	}
 });
 
+AddTest testGetReadVersion("BasicGetReadVersion", asTrustedClient, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newTransaction(db);
+
+	auto f = runToCompletion(
+	    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
+
+	assert(f.get() > 0);
+});
+
+AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
+	const std::string prefix("combify-basic-get-key");
+	env.clearAndPopulateDBData(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } });
+
+	auto db = env.newDatabase();
+	auto tr = env.newTransaction(db);
+
+	auto f = runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    return tr.getKey(fdb::key_select::firstGreaterThan(fdb::toBytesRef(prefix + "a")), /* snapshot */ false);
+	    },
+	    "GetKey");
+
+	assert(fdb::toCharsRef(f.get()) == prefix + "bar");
+});
+
 } // anonymous namespace

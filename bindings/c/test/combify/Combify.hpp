@@ -17,6 +17,7 @@
 #include <cctype>
 #include <concepts>
 #include <list>
+#include <map>
 #include <string>
 #include <string_view>
 #include <optional>
@@ -155,12 +156,16 @@ public:
 	// Will throw if authorization is not enabled in test options or tenantName is not among the elements of
 	// tenantNames().
 	string tokenForTenant(fdb::BytesRef tenantName) const;
+
+	// Clear all data in the database for the given prefix, and populate data for the given
+	// key value pairs. The prefix is prepended to all the keys used for this action
+	void clearAndPopulateDBData(const std::string& prefix, const std::map<std::string, std::string>& data) const;
 };
 
 template <class PredicateFunc>
 concept Predicate = requires(PredicateFunc&& fn) {
-	                    { fn(std::declval<const TestOptions&>()) } -> std::same_as<bool>;
-                    };
+	{ fn(std::declval<const TestOptions&>()) } -> std::same_as<bool>;
+};
 
 // Returns whether server/client options under which the testcase is expected to run
 using AffinityPredicateType = std::function<bool(const TestOptions&)>;
@@ -226,8 +231,8 @@ constexpr auto asUntrustedClient = [](const TestOptions& o) -> bool { return !*o
 
 template <class TestFn>
 concept TestFunction = requires(TestFn&& testFn) {
-	                       { testFn(std::declval<const TestEnv&>()) } -> std::same_as<void>;
-                       };
+	{ testFn(std::declval<const TestEnv&>()) } -> std::same_as<void>;
+};
 
 using TestFunctionType = std::function<void(const TestEnv&)>;
 

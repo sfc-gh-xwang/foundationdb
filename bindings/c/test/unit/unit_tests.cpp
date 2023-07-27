@@ -380,44 +380,6 @@ TEST_CASE("fdb_future_release_memory") {
 	}
 }
 
-TEST_CASE("fdb_future_get_int64") {
-	auto tr = db.createTransaction();
-	while (1) {
-		auto f1 = tr.getReadVersion();
-
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-
-		int64_t rv = f1.get();
-		CHECK(rv > 0);
-		break;
-	}
-}
-
-TEST_CASE("fdb_future_get_key") {
-	insert_data(db, create_data({ { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
-
-	auto tr = db.createTransaction();
-	while (1) {
-		auto f1 = tr.getKey(fdb::key_select::firstGreaterThan(fdb::toBytesRef(key("a"))),
-		                    /* snapshot */ false);
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-
-		auto dbKey = f1.get();
-		CHECK(fdb::toCharsRef(dbKey) == prefix + "bar");
-		break;
-	}
-}
-
 TEST_CASE("fdb_future_get_value") {
 	insert_data(db, create_data({ { "foo", "bar" } }));
 
