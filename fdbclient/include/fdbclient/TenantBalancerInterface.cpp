@@ -13,7 +13,7 @@ std::string TenantMovementStatus::toJson() const {
 
 	// Insert tenantMoveInfo into JSON
 	statusRoot.create("movementId") = tenantMovementInfo.movementId.toString();
-	statusRoot.create("tenantId") = printable(tenantMovementInfo.tenantId);
+	statusRoot.create("tenantGroupName") = printable(tenantMovementInfo.tenantGroupName);
 
 	// Insert movement status into JSON
 	if (databaseVersionLag.present()) {
@@ -25,5 +25,6 @@ std::string TenantMovementStatus::toJson() const {
 	if (switchVersion.present()) {
 		statusRoot.create("switchVersion") = switchVersion.get();
 	}
+	statusRoot.create("abortRequested") = abortRequested;
 	return json_spirit::write_string(statusRootValue);
 }

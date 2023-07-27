@@ -12,6 +12,7 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbrpc/fdbrpc.h"
 #include "fdbrpc/Locality.h"
+#include "fdbrpc/TenantName.h"
 
 enum class MovementState { INITIALIZING, STARTED, READY_FOR_SWITCH, SWITCHING, COMPLETED, ERROR };
 enum class AbortState { UNKNOWN, ROLLED_BACK, COMPLETED };
@@ -21,14 +22,23 @@ struct TenantMovementInfo {
 	Arena arena;
 
 	UID movementId;
-	Key tenantId;
+	TenantGroupNameRef tenantGroupName;
+	ClusterNameRef sourceCluster;
+	ClusterNameRef destinationCluster;
 
 	explicit TenantMovementInfo() = default;
-	explicit TenantMovementInfo(UID moveId, Key tid) : movementId(moveId), tenantId(tid) {}
+	explicit TenantMovementInfo(UID moveId,
+	                            TenantGroupName tenantGroupName,
+	                            ClusterName sourceCluster,
+	                            ClusterName destinationCluster)
+	  : movementId(moveId),
+	    tenantGroupName(arena, tenantGroupName),
+	    sourceCluster(arena, sourceCluster),
+	    destinationCluster(arena, destinationCluster) {}
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, movementId, tenantId, arena);
+		serializer(ar, movementId, tenantGroupName, sourceCluster, destinationCluster, arena);
 	}
 };
 
@@ -40,6 +50,7 @@ struct TenantMovementStatus {
 	Optional<double> databaseVersionLag;
 	Optional<double> mutationLag;
 	Optional<Version> switchVersion;
+	bool abortRequested = false;
 
 	explicit TenantMovementStatus() = default;
 	std::string toJson() const;
@@ -68,25 +79,24 @@ struct GetMovementStatusRequest {
 	constexpr static FileIdentifier file_identifier = 11494877;
 	Arena arena;
 
-	Key tenantName;
+	TenantGroupNameRef tenantGroupName;
 	ReplyPromise<GetMovementStatusReply> reply;
 
 	GetMovementStatusRequest() = default;
-	GetMovementStatusRequest(Key name) : tenantName(name) {}
+	GetMovementStatusRequest(TenantGroupName tenantGroupName) : tenantGroupName(arena, tenantGroupName) {}
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantName, reply, arena);
+		serializer(ar, tenantGroupName, reply, arena);
 	}
 };
 
-struct MoveTenantsToClusterReply {
+struct MoveTenantGroupReply {
 	constexpr static FileIdentifier file_identifier = 3708530;
-
 	UID movementId;
 
-	MoveTenantsToClusterReply() = default;
-	explicit MoveTenantsToClusterReply(UID id) : movementId(id) {}
+	MoveTenantGroupReply() = default;
+	explicit MoveTenantGroupReply(UID id) : movementId(id) {}
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
@@ -94,22 +104,23 @@ struct MoveTenantsToClusterReply {
 	}
 };
 
-struct MoveTenantsToClusterRequest {
+struct MoveTenantGroupRequest {
 	constexpr static FileIdentifier file_identifier = 3571712;
 	Arena arena;
 
-	KeyRef tenantName;
-	KeyRef dstCluster;
+	TenantGroupNameRef tenantGroupName;
+	ClusterNameRef destinationCluster;
 
-	ReplyPromise<MoveTenantsToClusterReply> reply;
+	ReplyPromise<MoveTenantGroupReply> reply;
 
-	MoveTenantsToClusterRequest() = default;
-	explicit MoveTenantsToClusterRequest(KeyRef tenantName, KeyRef name)
-	  : tenantName(arena, tenantName), dstCluster(arena, name) {}
+	MoveTenantGroupRequest() = default;
+	explicit MoveTenantGroupRequest(TenantGroupName tenantGroupName, ClusterName destinationCluster)
+	  : tenantGroupName(arena, tenantGroupName),
+	    destinationCluster(arena, destinationCluster) {}
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantName, dstCluster, reply, arena);
+		serializer(ar, tenantGroupName, destinationCluster, reply, arena);
 	}
 };
 
@@ -159,16 +170,16 @@ struct AbortMovementRequest {
 	constexpr static FileIdentifier file_identifier = 14058403;
 	Arena arena;
 
-	Key tenantName;
+	TenantGroupNameRef tenantGroupName;
 
 	ReplyPromise<AbortMovementReply> reply;
 
 	AbortMovementRequest() = default;
-	AbortMovementRequest(Key tenantName) : tenantName(tenantName) {}
+	AbortMovementRequest(TenantGroupName tenantGroupName) : tenantGroupName(arena, tenantGroupName) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantName, reply, arena);
+		serializer(ar, tenantGroupName, reply, arena);
 	}
 };
 
@@ -209,7 +220,7 @@ struct TenantBalancerInterface {
 	RequestStream<HaltTenantBalancerRequest> haltTenantBalancer;
 	RequestStream<GetMovementStatusRequest> getMovementStatus;
 	RequestStream<GetActiveMovementsRequest> getActiveMovements;
-	RequestStream<MoveTenantsToClusterRequest> moveTenantsToCluster;
+	RequestStream<MoveTenantGroupRequest> moveTenantsToCluster;
 	RequestStream<AbortMovementRequest> abortMovement;
 	RequestStream<PersistInterfaceRequest> persistInterface;
 	RequestStream<ReplyPromise<Void>> waitFailure;

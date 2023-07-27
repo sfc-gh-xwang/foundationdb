@@ -33,7 +33,8 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 
 		TenantTestData() {}
 		TenantTestData(ClusterName cluster, Optional<TenantGroupName> tenantGroup)
-		  : cluster(cluster), tenantGroup(tenantGroup) {}
+		  : cluster(cluster),
+		    tenantGroup(tenantGroup) {}
 	};
 
 	struct TenantGroupData : ReferenceCounted<TenantGroupData> {
@@ -1043,16 +1044,22 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		return Void();
 	}
 
-	ACTOR static Future<Void> moveTenant(OnlineTenantMovementWorkload* self) {
-		state TenantName tenant = self->chooseTenantName();
-		state bool tenantExists = self->createdTenants.contains(tenant);
-		state ClusterName dstClusterName = "management"_sr;
+	ACTOR static Future<Void> moveTenantGroup(OnlineTenantMovementWorkload* self) {
+		state Optional<TenantGroupName> tenantGroup = self->chooseTenantGroup();
+		int count = 0;
+		while (!tenantGroup.present() && count < 100) {
+			tenantGroup = self->chooseTenantGroup();
+			++count;
+		}
+		if (!tenantGroup.present()) {
+			return Void();
+		}
+		ASSERT(tenantGroup.present());
+		state ClusterName dstClusterName = self->chooseClusterName();
 		try {
-			wait(MetaclusterAPI::moveTenant(self->managementDb, tenant, dstClusterName));
+			wait(MetaclusterAPI::moveTenantGroup(self->managementDb, tenantGroup.get(), dstClusterName));
 		} catch (Error& e) {
-			if (e.code() == error_code_tenant_not_found) {
-				ASSERT(!tenantExists);
-			} else if (e.code() == error_code_actor_cancelled) {
+			if (e.code() == error_code_actor_cancelled) {
 				throw;
 			}
 		}
@@ -1131,7 +1138,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 			state Future<Void> logger = delayedTrace();
 			state int operation = deterministicRandom()->randomInt(0, 10);
 			if (operation == 0) {
-				wait(moveTenant(self));
+				wait(moveTenantGroup(self));
 			} else if (operation == 1) {
 				wait(abortTenantMovement(self));
 			} else if (operation == 2) {

@@ -23,7 +23,10 @@ struct TenantBalancer {
 	explicit TenantBalancer(TenantBalancerInterface tbi,
 	                        Reference<AsyncVar<ServerDBInfo> const> dbInfo,
 	                        Reference<IClusterConnectionRecord> connRecord)
-	  : tbi(tbi), dbInfo(dbInfo), connRecord(connRecord), tenantBalancerMetrics("TenantBalancer", tbi.id().toString()),
+	  : tbi(tbi),
+	    dbInfo(dbInfo),
+	    connRecord(connRecord),
+	    tenantBalancerMetrics("TenantBalancer", tbi.id().toString()),
 	    getMovementStatusRequests("GetMovementStatusRequests", tenantBalancerMetrics),
 	    getActiveMovementsRequests("GetActiveMovementsRequests", tenantBalancerMetrics),
 	    moveTenantsToClusterRequests("MoveTenantsToClusterRequests", tenantBalancerMetrics),
@@ -48,7 +51,7 @@ struct TenantBalancer {
 
 ACTOR Future<Void> getMovementStatus(TenantBalancer* self, GetMovementStatusRequest req) {
 	++self->getMovementStatusRequests;
-	TraceEvent(SevDebug, "TenantBalancerGetMovementStatus", self->tbi.id()).detail("Tenant", req.tenantName);
+	TraceEvent(SevDebug, "TenantBalancerGetMovementStatus", self->tbi.id()).detail("TenantGroup", req.tenantGroupName);
 
 	try {
 		GetMovementStatusReply reply;
@@ -56,7 +59,7 @@ ACTOR Future<Void> getMovementStatus(TenantBalancer* self, GetMovementStatusRequ
 	} catch (Error& e) {
 		TraceEvent(SevDebug, "TenantBalancerGetMovementStatusError", self->tbi.id())
 		    .error(e)
-		    .detail("Tenant", req.tenantName);
+		    .detail("TenantGroup", req.tenantGroupName);
 		req.reply.sendError(e);
 	}
 	return Void();
@@ -76,18 +79,18 @@ ACTOR Future<Void> getActiveMovements(TenantBalancer* self, GetActiveMovementsRe
 	return Void();
 }
 
-ACTOR Future<Void> moveTenantsToCluster(TenantBalancer* self, MoveTenantsToClusterRequest req) {
+ACTOR Future<Void> moveTenantGroup(TenantBalancer* self, MoveTenantGroupRequest req) {
 	++self->moveTenantsToClusterRequests;
 	TraceEvent("TenantBalancerMoveTenantsToCluster", self->tbi.id()).log();
 	wait(delay(0.1));
-	MoveTenantsToClusterReply reply;
+	MoveTenantGroupReply reply;
 	req.reply.send(reply);
 	return Void();
 }
 
 ACTOR Future<Void> abortMovement(TenantBalancer* self, AbortMovementRequest req) {
 	++self->abortMovementRequests;
-	TraceEvent(SevDebug, "TenantBalancerAbortMovement", self->tbi.id()).detail("Tenant", req.tenantName);
+	TraceEvent(SevDebug, "TenantBalancerAbortMovement", self->tbi.id()).detail("Tenant", req.tenantGroupName);
 
 	try {
 		AbortMovementReply reply;
@@ -95,7 +98,7 @@ ACTOR Future<Void> abortMovement(TenantBalancer* self, AbortMovementRequest req)
 	} catch (Error& e) {
 		TraceEvent(SevDebug, "TenantBalancerAbortMovementError", self->tbi.id())
 		    .error(e)
-		    .detail("Tenant", req.tenantName);
+		    .detail("TenantGroup", req.tenantGroupName);
 		req.reply.sendError(e);
 	}
 	return Void();
@@ -116,8 +119,8 @@ ACTOR Future<Void> tenantBalancerCore(TenantBalancer* self) {
 		when(GetActiveMovementsRequest req = waitNext(self->tbi.getActiveMovements.getFuture())) {
 			self->actors.add(getActiveMovements(self, req));
 		}
-		when(MoveTenantsToClusterRequest req = waitNext(self->tbi.moveTenantsToCluster.getFuture())) {
-			self->actors.add(moveTenantsToCluster(self, req));
+		when(MoveTenantGroupRequest req = waitNext(self->tbi.moveTenantsToCluster.getFuture())) {
+			self->actors.add(moveTenantGroup(self, req));
 		}
 		when(AbortMovementRequest req = waitNext(self->tbi.abortMovement.getFuture())) {
 			self->actors.add(abortMovement(self, req));

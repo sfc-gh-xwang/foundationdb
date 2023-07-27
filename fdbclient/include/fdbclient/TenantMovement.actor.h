@@ -55,14 +55,14 @@ namespace MetaclusterAPI {
 
 ACTOR
 template <typename IDatabase>
-static Future<Void> moveTenant(IDatabase managementDb, TenantName tenant, ClusterName dstClusterName) {
-	state MoveTenantsToClusterRequest req(tenant, dstClusterName);
+static Future<Void> moveTenantGroup(IDatabase managementDb, TenantGroupName tenantGroup, ClusterName dstClusterName) {
+	state MoveTenantGroupRequest req(tenantGroup, dstClusterName);
 	state Future<Void> init = Void();
-	state Future<ErrorOr<MoveTenantsToClusterReply>> replyFuture = Never();
+	state Future<ErrorOr<MoveTenantGroupReply>> replyFuture = Never();
 	try {
 		state Future<Void> onTbiChanged = wait(getTbiChangedFuture(managementDb));
 		loop choose {
-			when(ErrorOr<MoveTenantsToClusterReply> reply =
+			when(ErrorOr<MoveTenantGroupReply> reply =
 			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
 				if (reply.isError()) {
 					throw reply.getError();
@@ -87,8 +87,8 @@ static Future<Void> moveTenant(IDatabase managementDb, TenantName tenant, Cluste
 
 ACTOR
 template <typename IDatabase>
-static Future<TenantMovementStatus> getTenantMovementStatus(IDatabase managementDb, TenantName tenant) {
-	state GetMovementStatusRequest req(tenant);
+static Future<TenantMovementStatus> getTenantMovementStatus(IDatabase managementDb, TenantGroupName tenantGroup) {
+	state GetMovementStatusRequest req(tenantGroup);
 	state Future<Void> init = Void();
 	state Future<ErrorOr<GetMovementStatusReply>> replyFuture = Never();
 	state TenantMovementStatus status;
@@ -155,8 +155,8 @@ static Future<std::vector<TenantMovementInfo>> getActiveMovements(IDatabase mana
 
 ACTOR
 template <typename IDatabase>
-static Future<Void> abortTenantMovement(IDatabase managementDb, TenantName tenant) {
-	state AbortMovementRequest req;
+static Future<Void> abortTenantMovement(IDatabase managementDb, TenantGroupName tenantGroup) {
+	state AbortMovementRequest req(tenantGroup);
 	state Future<Void> init = Void();
 	state Future<ErrorOr<AbortMovementReply>> replyFuture = Never();
 	try {
