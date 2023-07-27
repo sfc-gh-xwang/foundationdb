@@ -1080,7 +1080,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("Src", srcCluster)
 				    .detail("Dst", dstCluster)
 				    .detail("TenantGroup", tenantGroup)
-				    .detail("TenantsInGroup", self->tenantGroups[srcCluster].tenants.size())
+				    .detail("TenantsInGroup", self->tenantGroups[tenantGroup].tenants.size())
 				    .detail("GroupsOnSrc", self->dataDbs[srcCluster].tenantGroups.size())
 				    .detail("GroupsOnDst", self->dataDbs[dstCluster].tenantGroups.size());
 				cmdChoice = deterministicRandom()->randomChoice(initFailCmds);

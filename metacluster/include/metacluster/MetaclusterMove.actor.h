@@ -1928,7 +1928,7 @@ Future<metadata::management::MovementRecord> moveStatus(Reference<DB> db, Tenant
 	state MetaclusterOperationContext<DB> ctx(db);
 	metadata::management::MovementRecord mr =
 	    wait(ctx.runManagementTransaction([tenantGroup = tenantGroup](Reference<typename DB::TransactionT> tr) {
-		    internal::getMovementRecordNoValidation(tr, tenantGroup);
+		    return internal::getMovementRecordNoValidation<DB>(tr, tenantGroup);
 	    }));
 	return mr;
 }
