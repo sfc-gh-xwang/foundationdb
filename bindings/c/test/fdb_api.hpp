@@ -281,6 +281,8 @@ public:
 
 	static Error success() { return Error(); }
 
+	bool operator<(const Error& other) const noexcept { return err < other.err; }
+
 private:
 	CodeType err;
 };
