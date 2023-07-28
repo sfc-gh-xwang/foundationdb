@@ -231,8 +231,7 @@ public:
 		// we skip the check phase
 #ifdef ADDRESS_SANITIZER
 		return true;
-#endif
-
+#else
 		if (clientId != 0) {
 			return true;
 		}
@@ -257,12 +256,12 @@ public:
 			TraceEvent te(severity, "CheckingStableThroughput");
 			te.detail("Tag", tag)
 			    .detail("ExpectedTotalCost", expectedTotalCost)
-			    .detail("ErrorTolerance", errorTolerance)
 			    .detail("TotalCost", metrics.totalCost.getTotal());
 			traceParameters(te);
 			passed = passed && tagPassed;
 		}
 		return passed;
+#endif // #ifdef ADDRESS_SANITIZER
 	}
 
 	void getMetrics(std::vector<PerfMetric>& m) override {
