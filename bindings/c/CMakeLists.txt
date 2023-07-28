@@ -138,6 +138,7 @@ set(API_TESTER_SRCS
   test/apitester/TesterBlobGranuleErrorsWorkload.cpp
   test/apitester/TesterBlobGranuleUtil.cpp
   test/apitester/TesterBlobGranuleUtil.h
+  test/apitester/TesterBulkLoadCorrectnessWorkload.cpp
   test/apitester/TesterCancelTransactionWorkload.cpp
   test/apitester/TesterCorrectnessWorkload.cpp
   test/apitester/TesterExampleWorkload.cpp

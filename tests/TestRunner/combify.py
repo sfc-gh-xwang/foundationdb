@@ -55,7 +55,7 @@ if __name__ == "__main__":
                     "privateKeyPath": str(cluster.authorization_private_key_pem_file),
                     "keyName": cluster.authorization_keypair_id,
                 }
-            iter_desc = f"TLS:{tls_on} AuthZ:{authz_on} TenantMode:{tenant_mode} TenantCount:{tenant_count}"
+            iter_desc = f"tls:{tls_on} authz:{authz_on} tenant_mode:{tenant_mode} tenant_count:{tenant_count}"
             print("===============================")
             print(f"Iteration: {iter_desc}")
             print("Static Configuration:\n{}".format(json.dumps(test_config, indent=2)))

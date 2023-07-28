@@ -271,7 +271,7 @@ int runHost(TLSCreds creds, int addrPipe, int completionPipe, Result expect) {
 		tlsConfig.setKeyBytes(creds.keyBytes);
 	}
 	g_network = newNet2(tlsConfig);
-	openTraceFile({}, 10 << 20, 10 << 20, ".", IsServer ? "authz_tls_unittest_server" : "authz_tls_unittest_client");
+	// openTraceFile({}, 10 << 20, 10 << 20, ".", IsServer ? "authz_tls_unittest_server" : "authz_tls_unittest_client");
 	FlowTransport::createInstance(!IsServer, 1, WLTOKEN_RESERVED_COUNT);
 	auto& transport = FlowTransport::transport();
 	if constexpr (IsServer) {
@@ -283,7 +283,7 @@ int runHost(TLSCreds creds, int addrPipe, int completionPipe, Result expect) {
 		endpoint.addresses = FlowTransport::transport().getLocalAddresses();
 		auto thread = std::thread([]() {
 			g_network->run();
-			flushTraceFileVoid();
+			// flushTraceFileVoid();
 		});
 		runServer(endpoint, addrPipe, completionPipe);
 		auto cleanupGuard = ScopeExit([&thread]() {
@@ -391,6 +391,10 @@ int runTlsTest(ChainLength serverChainLen, ChainLength clientChainLen) {
 		logm("Pipe open failed: {}", strerror(errno));
 		return 1;
 	}
+	// flush standard output/error buffers before forking such that the buffer contents
+	// don't duplicate and end up printing in child process upon exit
+	fflush(stdout);
+	fflush(stderr);
 	auto ok = true;
 	{
 		serverPid = fork();
@@ -458,13 +462,17 @@ int runTlsTest(ChainLength serverChainLen, ChainLength clientChainLen) {
 		::close(clientStdoutPipe[0]);
 	});
 	std::string const clientStdout = drainPipe(clientStdoutPipe[0]);
-	logm("/// Begin Client STDOUT ///");
-	logRaw(fmt::runtime(clientStdout));
-	logm("/// End Client STDOUT ///");
+	if (!clientStdout.empty()) {
+		logm("=== Begin Client STDOUT ===");
+		logRaw(fmt::runtime(clientStdout));
+		logm("===  End  Client STDOUT ===");
+	}
 	std::string const serverStdout = drainPipe(serverStdoutPipe[0]);
-	logm("/// Begin Server STDOUT ///");
-	logRaw(fmt::runtime(serverStdout));
-	logm("/// End Server STDOUT ///");
+	if (!serverStdout.empty()) {
+		logm("=== Begin Server STDOUT ===");
+		logRaw(fmt::runtime(serverStdout));
+		logm("=== End Server STDOUT ===");
+	}
 	logm(fmt::runtime(ok ? "OK" : "FAILED"));
 	return !ok;
 }

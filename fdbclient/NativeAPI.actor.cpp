@@ -7335,10 +7335,7 @@ bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority prior
 }
 
 ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
-	if (!CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !trState->options.skipGrvCache &&
-	    (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE ||
-	     trState->options.useGrvCache) &&
-	    rkThrottlingCooledDown(trState->cx.getPtr(), trState->options.priority)) {
+	if (trState->canUseGrvCache()) {
 		// Upon our first request to use cached RVs, start the background updater
 		if (!trState->cx->grvUpdateHandler.isValid()) {
 			trState->cx->grvUpdateHandler = backgroundGrvUpdater(trState->cx.getPtr());
@@ -7348,6 +7345,10 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 		double requestTime = now();
 		if (requestTime - lastTime <= CLIENT_KNOBS->MAX_VERSION_CACHE_LAG && rv != Version(0)) {
 			ASSERT(!debug_checkVersionTime(rv, requestTime, "CheckStaleness"));
+			// client side average cost tracking should be enabled, account for this transaction.
+			if (trState->getThrottlingId().present()) {
+				trState->cx->addTransaction(trState->getThrottlingId().get(), 1);
+			}
 			return rv;
 		} // else go through regular GRV path
 	}
@@ -7446,6 +7447,15 @@ Future<Version> TransactionState::getReadVersion(uint32_t flags) {
 	ASSERT(!readVersionFuture.isValid());
 
 	return getReadVersion_internal(this, flags);
+}
+
+bool TransactionState::canUseGrvCache() {
+	return !CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !options.skipGrvCache &&
+	       (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE || options.useGrvCache) &&
+	       rkThrottlingCooledDown(cx.getPtr(), options.priority) &&
+	       // skip cache if throttlingId is busy, busy throttlingId depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
+	       !(isBusyThrottlingIdsTrackingEnabled() && getThrottlingId().present() &&
+	         cx->isThrottlingIdBusy(getThrottlingId().get()));
 }
 
 Optional<ThrottlingId> TransactionState::getThrottlingId() {
@@ -11395,6 +11405,10 @@ void DatabaseContext::addTransaction(const ThrottlingId& throttlingId, uint64_t 
 
 double DatabaseContext::getAverageTransactionCost(const ThrottlingId& throttlingId) const {
 	return throughputTracker.getAverageTransactionCost(throttlingId);
+}
+
+bool DatabaseContext::isThrottlingIdBusy(const ThrottlingId& throttlingId) const {
+	return throughputTracker.isThrottlingIdBusy(throttlingId);
 }
 
 Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {

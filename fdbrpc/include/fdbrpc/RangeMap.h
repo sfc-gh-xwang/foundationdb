@@ -142,6 +142,7 @@ public:
 	Val const& operator[](const Key& k) const { return rangeContaining(k).value(); }
 	Val& operator[](const Key& k) { return rangeContaining(k).value(); }
 
+	// from the begin to the last valid item, not include the end iterator;
 	Ranges ranges() { return Ranges(iterator(map.begin()), iterator(map.lastItem())); }
 	ConstRanges ranges() const { return ConstRanges(const_iterator(map.begin()), const_iterator(map.lastItem())); }
 	// intersectingRanges returns [begin, end] where begin <= r.begin and end >= r.end

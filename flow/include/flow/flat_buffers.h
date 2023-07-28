@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <boost/container/flat_map.hpp>
 #include <boost/unordered/unordered_flat_map.hpp>
+#include <boost/unordered/unordered_flat_set.hpp>
 #include <iterator>
 #include <cstring>
 #include <functional>
@@ -342,6 +343,33 @@ struct vector_like_traits<std::set<Key, Compare, Allocator>> : std::true_type {
 template <class Key, class Hash, class KeyEqual, class Allocator>
 struct vector_like_traits<std::unordered_set<Key, Hash, KeyEqual, Allocator>> : std::true_type {
 	using Vec = std::unordered_set<Key, Hash, KeyEqual, Allocator>;
+	using value_type = Key;
+	using iterator = typename Vec::const_iterator;
+	using insert_iterator = std::insert_iterator<Vec>;
+
+	template <class Context>
+	static size_t num_entries(const Vec& v, Context&) {
+		return v.size();
+	}
+
+	// Return an insert_iterator starting with an empty vector. |size| is the
+	// number of elements to be inserted. Implementations may want to allocate
+	// enough memory up front to hold |size| elements.
+	template <class Context>
+	static insert_iterator insert(Vec& v, size_t size, Context&) {
+		v.reserve(size);
+		return std::inserter(v, v.end());
+	}
+
+	template <class Context>
+	static iterator begin(const Vec& v, Context&) {
+		return v.begin();
+	}
+};
+
+template <class Key, class Hash, class KeyEqual, class Allocator>
+struct vector_like_traits<boost::unordered::unordered_flat_set<Key, Hash, KeyEqual, Allocator>> : std::true_type {
+	using Vec = boost::unordered::unordered_flat_set<Key, Hash, KeyEqual, Allocator>;
 	using value_type = Key;
 	using iterator = typename Vec::const_iterator;
 	using insert_iterator = std::insert_iterator<Vec>;

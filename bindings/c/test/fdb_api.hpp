@@ -33,6 +33,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <sstream>
+#include <iomanip>
 #include <vector>
 #include <fmt/format.h>
 
@@ -55,6 +57,8 @@ using Key = ByteString;
 using KeyRef = BytesRef;
 using Value = ByteString;
 using ValueRef = BytesRef;
+using BulkLoadID = ByteString;
+using BulkLoadIDRef = BytesRef;
 
 struct KeyRangeRef : native::FDBKeyRange {
 	KeyRef beginKey() const noexcept { return KeyRef(native::FDBKeyRange::begin_key, begin_key_length); }
@@ -228,6 +232,15 @@ CharsRef toCharsRef(const std::optional<StringLike<Char>>& s) noexcept {
 	}
 }
 
+template <template <class...> class StringLike, class Char>
+std::string toHexString(const StringLike<Char>& s) noexcept {
+	std::stringstream ss;
+	for (int i = 0; i < s.size(); i++) {
+		ss << std::setw(2) << std::setfill('0') << std::hex << (int)s[i];
+	}
+	return ss.str();
+}
+
 [[maybe_unused]] constexpr const bool OverflowCheck = false;
 
 inline int intSize(BytesRef b) {
@@ -280,6 +293,8 @@ public:
 	}
 
 	static Error success() { return Error(); }
+
+	bool operator<(const Error& other) const noexcept { return err < other.err; }
 
 private:
 	CodeType err;
@@ -433,6 +448,24 @@ struct ValueRef {
 		return Error(err);
 	}
 };
+
+struct BulkLoadIDResult {
+	using Type = fdb::BulkLoadID;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept {
+		uint8_t const* out_id = nullptr;
+		int out_id_length = 0;
+		auto err = Error(fdb_future_get_bulk_load_id_result(f, &out_id, &out_id_length));
+		out = fdb::BulkLoadID(out_id, out_id_length);
+		return Error(err);
+	}
+};
+
+struct Void {};
+struct VoidResult {
+	using Type = Void;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept { return Error(fdb_future_get_error(f)); }
+};
+
 struct StringArray {
 	using Type = std::pair<const char**, int>;
 	static Error extract(native::FDBFuture* f, Type& out) noexcept {
@@ -1049,6 +1082,12 @@ public:
 	                                                          int64_t version,
 	                                                          bool force) = 0;
 	virtual TypedFuture<future_var::None> waitPurgeGranulesComplete(KeyRef purgeKey) = 0;
+
+	virtual TypedFuture<future_var::BulkLoadIDResult> startBulkLoad(KeyRef begin, KeyRef end) = 0;
+	virtual TypedFuture<future_var::None> bulkLoadAllFilesRegistered(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) = 0;
 };
 
 class Tenant final : public IDatabaseOps {
@@ -1080,6 +1119,13 @@ public:
 		return retVal;
 	}
 
+	native::FDBTenant* getTenant() const {
+		if (!tenant) {
+			throw std::runtime_error("null tenant");
+		}
+		return tenant.get();
+	}
+
 	static void createTenant(Transaction tr, BytesRef name) {
 		tr.setOption(FDBTransactionOption::FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES, BytesRef());
 		tr.setOption(FDBTransactionOption::FDB_TR_OPTION_LOCK_AWARE, BytesRef());
@@ -1103,74 +1149,73 @@ public:
 
 	Transaction createTransaction() override {
 		auto tx_native = static_cast<native::FDBTransaction*>(nullptr);
-		auto err = Error(native::fdb_tenant_create_transaction(tenant.get(), &tx_native));
+		auto err = Error(native::fdb_tenant_create_transaction(getTenant(), &tx_native));
 		if (err)
 			throwError("Failed to create transaction: ", err);
 		return Transaction(tx_native);
 	}
 
 	TypedFuture<future_var::Bool> blobbifyRange(KeyRef begin, KeyRef end) override {
-		if (!tenant)
-			throw std::runtime_error("blobbifyRange() from null tenant");
-		return native::fdb_tenant_blobbify_range(tenant.get(), begin.data(), intSize(begin), end.data(), intSize(end));
+		return native::fdb_tenant_blobbify_range(getTenant(), begin.data(), intSize(begin), end.data(), intSize(end));
 	}
 
 	TypedFuture<future_var::Bool> blobbifyRangeBlocking(KeyRef begin, KeyRef end) override {
-		if (!tenant)
-			throw std::runtime_error("blobbifyRangeBlocking() from null tenant");
 		return native::fdb_tenant_blobbify_range_blocking(
-		    tenant.get(), begin.data(), intSize(begin), end.data(), intSize(end));
+		    getTenant(), begin.data(), intSize(begin), end.data(), intSize(end));
 	}
 
 	TypedFuture<future_var::Bool> unblobbifyRange(KeyRef begin, KeyRef end) override {
-		if (!tenant)
-			throw std::runtime_error("unblobbifyRange() from null tenant");
-		return native::fdb_tenant_unblobbify_range(
-		    tenant.get(), begin.data(), intSize(begin), end.data(), intSize(end));
+		return native::fdb_tenant_unblobbify_range(getTenant(), begin.data(), intSize(begin), end.data(), intSize(end));
 	}
 
 	TypedFuture<future_var::KeyRangeRefArray> listBlobbifiedRanges(KeyRef begin, KeyRef end, int rangeLimit) override {
-		if (!tenant)
-			throw std::runtime_error("listBlobbifiedRanges() from null tenant");
 		return native::fdb_tenant_list_blobbified_ranges(
-		    tenant.get(), begin.data(), intSize(begin), end.data(), intSize(end), rangeLimit);
+		    getTenant(), begin.data(), intSize(begin), end.data(), intSize(end), rangeLimit);
 	}
 
 	TypedFuture<future_var::Int64> verifyBlobRange(KeyRef begin, KeyRef end, int64_t version) override {
-		if (!tenant)
-			throw std::runtime_error("verifyBlobRange() from null tenant");
 		return native::fdb_tenant_verify_blob_range(
-		    tenant.get(), begin.data(), intSize(begin), end.data(), intSize(end), version);
+		    getTenant(), begin.data(), intSize(begin), end.data(), intSize(end), version);
 	}
 
 	TypedFuture<future_var::Bool> flushBlobRange(KeyRef begin, KeyRef end, bool compact, int64_t version) override {
-		if (!tenant)
-			throw std::runtime_error("flushBlobRange() from null tenant");
 		return native::fdb_tenant_flush_blob_range(
-		    tenant.get(), begin.data(), intSize(begin), end.data(), intSize(end), compact, version);
+		    getTenant(), begin.data(), intSize(begin), end.data(), intSize(end), compact, version);
 	}
 
-	TypedFuture<future_var::Int64> getId() {
-		if (!tenant)
-			throw std::runtime_error("getId() from null tenant");
-		return native::fdb_tenant_get_id(tenant.get());
-	}
+	TypedFuture<future_var::Int64> getId() { return native::fdb_tenant_get_id(getTenant()); }
 
 	TypedFuture<future_var::KeyRef> purgeBlobGranules(KeyRef begin, KeyRef end, int64_t version, bool force) override {
-		if (!tenant)
-			throw std::runtime_error("purgeBlobGranules() from null tenant");
 		native::fdb_bool_t forceBool = force;
 		return native::fdb_tenant_purge_blob_granules(
-		    tenant.get(), begin.data(), intSize(begin), end.data(), intSize(end), version, forceBool);
+		    getTenant(), begin.data(), intSize(begin), end.data(), intSize(end), version, forceBool);
 	}
 
 	TypedFuture<future_var::None> waitPurgeGranulesComplete(KeyRef purgeKey) override {
-		if (!tenant)
-			throw std::runtime_error("waitPurgeGranulesComplete() from null tenant");
-		return native::fdb_tenant_wait_purge_granules_complete(tenant.get(), purgeKey.data(), intSize(purgeKey));
+		return native::fdb_tenant_wait_purge_granules_complete(getTenant(), purgeKey.data(), intSize(purgeKey));
 	}
 
-	TypedFuture<future_var::KeyRef> getClientStatus() { return native::fdb_tenant_get_client_status(tenant.get()); }
+	TypedFuture<future_var::KeyRef> getClientStatus() { return native::fdb_tenant_get_client_status(getTenant()); }
+
+	TypedFuture<future_var::BulkLoadIDResult> startBulkLoad(KeyRef begin, KeyRef end) override {
+		return native::fdb_tenant_start_bulk_load(getTenant(), begin.data(), intSize(begin), end.data(), intSize(end));
+	}
+
+	TypedFuture<future_var::None> bulkLoadAllFilesRegistered(BulkLoadID id) override {
+		return native::fdb_tenant_bulk_load_all_files_registered(getTenant(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) override {
+		return native::fdb_tenant_abort_bulk_load(getTenant(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) override {
+		return native::fdb_tenant_cleanup_bulk_load(getTenant(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
+		return native::fdb_tenant_wait_bulk_load_complete(getTenant(), id.data(), intSize(id));
+	}
 };
 
 class Database : public IDatabaseOps {
@@ -1200,13 +1245,19 @@ public:
 		return retVal;
 	}
 
+	native::FDBDatabase* getDB() const {
+		if (!db)
+			throw std::runtime_error("null database");
+		return db.get();
+	}
+
 	[[nodiscard]] Error setOptionNothrow(FDBDatabaseOption option, int64_t value) noexcept {
 		return Error(native::fdb_database_set_option(
-		    db.get(), option, reinterpret_cast<const uint8_t*>(&value), static_cast<int>(sizeof(value))));
+		    getDB(), option, reinterpret_cast<const uint8_t*>(&value), static_cast<int>(sizeof(value))));
 	}
 
 	[[nodiscard]] Error setOptionNothrow(FDBDatabaseOption option, BytesRef str) noexcept {
-		return Error(native::fdb_database_set_option(db.get(), option, str.data(), intSize(str)));
+		return Error(native::fdb_database_set_option(getDB(), option, str.data(), intSize(str)));
 	}
 
 	void setOption(FDBDatabaseOption option, int64_t value) {
@@ -1227,20 +1278,16 @@ public:
 	}
 
 	Tenant openTenant(BytesRef name) {
-		if (!db)
-			throw std::runtime_error("openTenant from null database");
 		auto tenant_native = static_cast<native::FDBTenant*>(nullptr);
-		if (auto err = Error(native::fdb_database_open_tenant(db.get(), name.data(), name.size(), &tenant_native))) {
+		if (auto err = Error(native::fdb_database_open_tenant(getDB(), name.data(), name.size(), &tenant_native))) {
 			throwError(fmt::format("Failed to open tenant with name '{}': ", toCharsRef(name)), err);
 		}
 		return Tenant(tenant_native);
 	}
 
 	Transaction createTransaction() override {
-		if (!db)
-			throw std::runtime_error("create_transaction from null database");
 		auto tx_native = static_cast<native::FDBTransaction*>(nullptr);
-		auto err = Error(native::fdb_database_create_transaction(db.get(), &tx_native));
+		auto err = Error(native::fdb_database_create_transaction(getDB(), &tx_native));
 		if (err)
 			throwError("Failed to create transaction: ", err);
 		return Transaction(tx_native);
@@ -1249,88 +1296,85 @@ public:
 	double getMainThreadBusyness() const noexcept { return native::fdb_database_get_main_thread_busyness(db.get()); }
 
 	TypedFuture<future_var::KeyRangeRefArray> listBlobbifiedRanges(KeyRef begin, KeyRef end, int rangeLimit) override {
-		if (!db)
-			throw std::runtime_error("listBlobbifiedRanges from null database");
 		return native::fdb_database_list_blobbified_ranges(
-		    db.get(), begin.data(), intSize(begin), end.data(), intSize(end), rangeLimit);
+		    getDB(), begin.data(), intSize(begin), end.data(), intSize(end), rangeLimit);
 	}
 
 	TypedFuture<future_var::Int64> verifyBlobRange(KeyRef begin, KeyRef end, int64_t version) override {
-		if (!db)
-			throw std::runtime_error("verifyBlobRange from null database");
 		return native::fdb_database_verify_blob_range(
-		    db.get(), begin.data(), intSize(begin), end.data(), intSize(end), version);
+		    getDB(), begin.data(), intSize(begin), end.data(), intSize(end), version);
 	}
 
 	TypedFuture<future_var::Bool> flushBlobRange(KeyRef begin, KeyRef end, bool compact, int64_t version) override {
-		if (!db)
-			throw std::runtime_error("flushBlobRange from null database");
 		return native::fdb_database_flush_blob_range(
-		    db.get(), begin.data(), intSize(begin), end.data(), intSize(end), compact, version);
+		    getDB(), begin.data(), intSize(begin), end.data(), intSize(end), compact, version);
 	}
 
 	TypedFuture<future_var::Bool> blobbifyRange(KeyRef begin, KeyRef end) override {
-		if (!db)
-			throw std::runtime_error("blobbifyRange from null database");
-		return native::fdb_database_blobbify_range(db.get(), begin.data(), intSize(begin), end.data(), intSize(end));
+		return native::fdb_database_blobbify_range(getDB(), begin.data(), intSize(begin), end.data(), intSize(end));
 	}
 
 	TypedFuture<future_var::Bool> blobbifyRangeBlocking(KeyRef begin, KeyRef end) override {
-		if (!db)
-			throw std::runtime_error("blobbifyRangeBlocking from null database");
 		return native::fdb_database_blobbify_range_blocking(
-		    db.get(), begin.data(), intSize(begin), end.data(), intSize(end));
+		    getDB(), begin.data(), intSize(begin), end.data(), intSize(end));
 	}
 
 	TypedFuture<future_var::Bool> unblobbifyRange(KeyRef begin, KeyRef end) override {
-		if (!db)
-			throw std::runtime_error("unblobbifyRange from null database");
-		return native::fdb_database_unblobbify_range(db.get(), begin.data(), intSize(begin), end.data(), intSize(end));
+		return native::fdb_database_unblobbify_range(getDB(), begin.data(), intSize(begin), end.data(), intSize(end));
 	}
 
 	TypedFuture<future_var::KeyRef> purgeBlobGranules(KeyRef begin, KeyRef end, int64_t version, bool force) override {
-		if (!db)
-			throw std::runtime_error("purgeBlobGranules from null database");
 		native::fdb_bool_t forceBool = force;
 		return native::fdb_database_purge_blob_granules(
-		    db.get(), begin.data(), intSize(begin), end.data(), intSize(end), version, forceBool);
+		    getDB(), begin.data(), intSize(begin), end.data(), intSize(end), version, forceBool);
 	}
 
 	TypedFuture<future_var::None> waitPurgeGranulesComplete(KeyRef purgeKey) override {
-		if (!db)
-			throw std::runtime_error("purgeBlobGranules from null database");
-		return native::fdb_database_wait_purge_granules_complete(db.get(), purgeKey.data(), intSize(purgeKey));
+		return native::fdb_database_wait_purge_granules_complete(getDB(), purgeKey.data(), intSize(purgeKey));
 	}
 
-	TypedFuture<future_var::KeyRef> getClientStatus() { return native::fdb_database_get_client_status(db.get()); }
+	TypedFuture<future_var::KeyRef> getClientStatus() { return native::fdb_database_get_client_status(getDB()); }
 
 	TypedFuture<future_var::None> createSnapshot(ValueRef uid, ValueRef snapCommand) {
-		if (!db) {
-			throw std::runtime_error("createSnapshot from null database");
-		}
 		return native::fdb_database_create_snapshot(
-		    db.get(), uid.data(), intSize(uid), snapCommand.data(), intSize(snapCommand));
+		    getDB(), uid.data(), intSize(uid), snapCommand.data(), intSize(snapCommand));
 	}
 
 	TypedFuture<future_var::None> forceRecoveryWithDataLoss(ValueRef dcid) {
-		if (!db) {
-			throw std::runtime_error("forceRecoveryWithDataLoss from null database");
-		}
-		return native::fdb_database_force_recovery_with_data_loss(db.get(), dcid.data(), intSize(dcid));
+		return native::fdb_database_force_recovery_with_data_loss(getDB(), dcid.data(), intSize(dcid));
 	}
 
 	TypedFuture<future_var::Int64> rebootWorker(ValueRef address, bool check, int duration) {
-		if (!db) {
-			throw std::runtime_error("rebootWorker from null database");
-		}
-		return native::fdb_database_reboot_worker(db.get(), address.data(), intSize(address), check, duration);
+		return native::fdb_database_reboot_worker(getDB(), address.data(), intSize(address), check, duration);
 	}
 
 	TypedFuture<future_var::Uint64> getServerProtocol(uint64_t expected_version) const {
-		if (!db) {
-			throw std::runtime_error("getServerProtocol from null database");
-		}
-		return native::fdb_database_get_server_protocol(db.get(), expected_version);
+		return native::fdb_database_get_server_protocol(getDB(), expected_version);
+	}
+
+	TypedFuture<future_var::BulkLoadIDResult> startBulkLoad(KeyRef begin, KeyRef end) override {
+		// FIXME: support!
+		throw std::runtime_error("startBulkLoad() not supported for database");
+	}
+
+	TypedFuture<future_var::None> bulkLoadAllFilesRegistered(BulkLoadID id) override {
+		// FIXME: support!
+		throw std::runtime_error("bulkLoadAllFilesRegistered() not supported for database");
+	}
+
+	TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) override {
+		// FIXME: support!
+		throw std::runtime_error("abortBulkLoad() not supported for database");
+	}
+
+	TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) override {
+		// FIXME: support!
+		throw std::runtime_error("cleanupBulkLoad() not supported for database");
+	}
+
+	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
+		// FIXME: support!
+		throw std::runtime_error("waitBulkLoadComplete() not supported for database");
 	}
 };
 

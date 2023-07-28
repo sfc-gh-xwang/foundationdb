@@ -235,6 +235,7 @@ if(WITH_PYTHON)
     # Mock DD Tests
     add_fdb_test(TEST_FILES fast/IDDTxnProcessorMoveKeys.toml IGNORE)
     add_fdb_test(TEST_FILES fast/MockDDReadWrite.toml IGNORE)
+    add_fdb_test(TEST_FILES fast/MockDDShardTrack.toml IGNORE)
   else()
     add_fdb_test(TEST_FILES fast/ValidateStorage.toml IGNORE)
     add_fdb_test(TEST_FILES noSim/KeyValueStoreRocksDBTest.toml IGNORE)
@@ -245,6 +246,7 @@ if(WITH_PYTHON)
     # Mock DD Tests
     add_fdb_test(TEST_FILES fast/IDDTxnProcessorMoveKeys.toml)
     add_fdb_test(TEST_FILES fast/MockDDReadWrite.toml)
+    add_fdb_test(TEST_FILES fast/MockDDShardTrack.toml)
   endif()
 
   add_fdb_test(TEST_FILES rare/BlobGranuleRanges.toml)
