@@ -152,8 +152,7 @@ extern "C" DLLEXPORT fdb_bool_t fdb_error_predicate(int predicate_test, fdb_erro
 namespace {
 
 template <class RequestType>
-RequestType* createApiRequest(FDBTransaction* tr, int32_t request_type) {
-	FDBAllocatorIfc* allocIfc = ((ITransaction*)tr)->getAllocatorInterface();
+RequestType* createApiRequest(FDBAllocatorIfc* allocIfc, int32_t request_type) {
 	void* alloc = nullptr;
 	RequestType* request = reinterpret_cast<RequestType*>(allocIfc->allocate(&alloc, sizeof(RequestType)));
 	request->header = reinterpret_cast<FDBRequestHeader*>(allocIfc->allocate(&alloc, sizeof(FDBRequestHeader)));
@@ -164,8 +163,18 @@ RequestType* createApiRequest(FDBTransaction* tr, int32_t request_type) {
 }
 
 template <class RequestType>
-FDBFuture* executeApiRequest(FDBTransaction* tr, RequestType* request) {
-	return (FDBFuture*)((ITransaction*)tr)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+FDBFuture* transactionExecuteApiRequest(FDBTransaction* tr, RequestType* request) {
+	return (FDBFuture*)TXN(tr)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+}
+
+template <class RequestType>
+FDBFuture* databaseExecuteApiRequest(FDBDatabase* db, RequestType* request) {
+	return (FDBFuture*)DB(db)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+}
+
+template <class RequestType>
+FDBFuture* tenantExecuteApiRequest(FDBTenant* tenant, RequestType* request) {
+	return (FDBFuture*)TENANT(tenant)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
 }
 
 template <class RequestType>
@@ -392,8 +401,27 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_readbg_get_descriptions_v2(FDBFuture
 		return err;
 	}
 	FDBReadBGDescriptionResult* data = (FDBReadBGDescriptionResult*)result;
+	ASSERT(data->header->result_type == FDBApiResultType::FDBApiResult_ReadBGDescription);
 	*out_descs = data->desc_arr;
 	*out_count = data->desc_count;
+	// Reference count was increased by fdb_future_get_result
+	ApiResult::release(result);
+	return 0;
+}
+
+extern "C" DLLEXPORT fdb_error_t fdb_future_get_bulk_load_id_result(FDBFuture* f,
+                                                                    uint8_t const** out_id,
+                                                                    int* out_id_length) {
+
+	FDBResult* result;
+	fdb_error_t err = fdb_future_get_result(f, &result);
+	if (err) {
+		return err;
+	}
+	FDBBulkLoadIDResult* data = (FDBBulkLoadIDResult*)result;
+	ASSERT(data->header->result_type == FDBApiResultType::FDBApiResult_BulkLoadID);
+	*out_id = data->id.begin;
+	*out_id_length = data->id.length;
 	// Reference count was increased by fdb_future_get_result
 	ApiResult::release(result);
 	return 0;
@@ -788,6 +816,81 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_id(FDBTenant* 
 	return (FDBFuture*)(TENANT(tenant)->getId().extractPtr());
 }
 
+extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_start_bulk_load(FDBTenant* tenant,
+                                                                              uint8_t const* begin_key_name,
+                                                                              int begin_key_name_length,
+                                                                              uint8_t const* end_key_name,
+                                                                              int end_key_name_length) {
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBStartBulkLoadRequest* request = createApiRequest<FDBStartBulkLoadRequest>(
+	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_StartBulkLoad);
+	                       request->key_range.begin_key =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, begin_key_name, begin_key_name_length);
+	                       request->key_range.begin_key_length = begin_key_name_length;
+	                       request->key_range.end_key =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
+	                       request->key_range.end_key_length = end_key_name_length;
+	                       FDBFuture* future = tenantExecuteApiRequest<FDBStartBulkLoadRequest>(tenant, request);
+	                       releaseApiRequest(request);
+	                       return future;);
+}
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_all_files_registered(FDBTenant* tenant,
+                                                                                  uint8_t const* bulk_load_id_name,
+                                                                                  int bulk_load_id_name_length) {
+	RETURN_FUTURE_ON_ERROR(
+	    ApiResult,
+	    FDBBulkLoadAllFilesRegisteredRequest* request = createApiRequest<FDBBulkLoadAllFilesRegisteredRequest>(
+	        TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_BulkLoadAllFilesRegistered);
+	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	    request->id.length = bulk_load_id_name_length;
+	    FDBFuture* future = tenantExecuteApiRequest<FDBBulkLoadAllFilesRegisteredRequest>(tenant, request);
+	    releaseApiRequest(request);
+	    return future;);
+}
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_abort_bulk_load(FDBTenant* tenant,
+                                                                   uint8_t const* bulk_load_id_name,
+                                                                   int bulk_load_id_name_length) {
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBAbortBulkLoadRequest* request = createApiRequest<FDBAbortBulkLoadRequest>(
+	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_AbortBulkLoad);
+	                       request->id.begin =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	                       request->id.length = bulk_load_id_name_length;
+	                       FDBFuture* future = tenantExecuteApiRequest<FDBAbortBulkLoadRequest>(tenant, request);
+	                       releaseApiRequest(request);
+	                       return future;);
+}
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_cleanup_bulk_load(FDBTenant* tenant,
+                                                                     uint8_t const* bulk_load_id_name,
+                                                                     int bulk_load_id_name_length) {
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBCleanupBulkLoadRequest* request = createApiRequest<FDBCleanupBulkLoadRequest>(
+	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_CleanupBulkLoad);
+	                       request->id.begin =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	                       request->id.length = bulk_load_id_name_length;
+	                       FDBFuture* future = tenantExecuteApiRequest<FDBCleanupBulkLoadRequest>(tenant, request);
+	                       releaseApiRequest(request);
+	                       return future;);
+}
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_wait_bulk_load_complete(FDBTenant* tenant,
+                                                                           uint8_t const* bulk_load_id_name,
+                                                                           int bulk_load_id_name_length) {
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBWaitBulkLoadCompleteRequest* request = createApiRequest<FDBWaitBulkLoadCompleteRequest>(
+	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_WaitBulkLoadComplete);
+	                       request->id.begin =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	                       request->id.length = bulk_load_id_name_length;
+	                       FDBFuture* future = tenantExecuteApiRequest<FDBWaitBulkLoadCompleteRequest>(tenant, request);
+	                       releaseApiRequest(request);
+	                       return future;);
+}
+
 extern "C" DLLEXPORT void fdb_tenant_destroy(FDBTenant* tenant) {
 	try {
 		TENANT(tenant)->delref();
@@ -1141,8 +1244,8 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v
                                                                                   int64_t mutation_byte_limit) {
 	RETURN_FUTURE_ON_ERROR(
 	    ApiResult,
-	    FDBReadBGDescriptionRequest* request =
-	        createApiRequest<FDBReadBGDescriptionRequest>(tr, FDBApiRequest_ReadBGDescription);
+	    FDBReadBGDescriptionRequest* request = createApiRequest<FDBReadBGDescriptionRequest>(
+	        TXN(tr)->getAllocatorInterface(), FDBApiRequest_ReadBGDescription);
 	    request->read_version = read_version;
 	    request->begin_version = begin_version;
 	    request->key_range.begin_key =
@@ -1154,7 +1257,7 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v
 	    if (g_api_version < 800000 && mutation_byte_limit != std::numeric_limits<int64_t>::max()) {
 		    throw unsupported_operation();
 	    };
-	    FDBFuture* future = executeApiRequest<FDBReadBGDescriptionRequest>(tr, request);
+	    FDBFuture* future = transactionExecuteApiRequest<FDBReadBGDescriptionRequest>(tr, request);
 	    releaseApiRequest(request);
 	    return future;);
 }
@@ -1298,6 +1401,14 @@ extern "C" DLLEXPORT FDBAllocatorIfc* fdb_get_allocator_interface() {
 
 extern "C" DLLEXPORT FDBFuture* fdb_transaction_exec_async(FDBTransaction* tx, FDBRequest* request) {
 	return (FDBFuture*)((TXN(tx))->execAsyncRequest(ApiRequest::addRef(request)).extractPtr());
+}
+
+extern "C" DLLEXPORT FDBFuture* fdb_database_exec_async(FDBDatabase* db, FDBRequest* request) {
+	return (FDBFuture*)((DB(db))->execAsyncRequest(ApiRequest::addRef(request)).extractPtr());
+}
+
+extern "C" DLLEXPORT FDBFuture* fdb_tenant_exec_async(FDBTenant* tenant, FDBRequest* request) {
+	return (FDBFuture*)((TENANT(tenant))->execAsyncRequest(ApiRequest::addRef(request)).extractPtr());
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_future_get_result(FDBFuture* f, FDBResult** result) {

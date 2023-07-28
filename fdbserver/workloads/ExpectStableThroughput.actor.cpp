@@ -58,12 +58,27 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		}
 	}
 
+	void traceParameters(TraceEvent& te) {
+		te.detail("TestDuration", testDuration)
+		    .detail("TagPrefix", tagPrefix)
+		    .detail("NumTags", numTags)
+		    .detail("ExpectedThroughputPagesRate", expectedThroughputPagesRate)
+		    .detail("AttemptedThroughputPagesRate", attemptedThroughputPagesRate)
+		    .detail("ErrorTolerance", errorTolerance)
+		    .detail("KeyPrefix", keyPrefix)
+		    .detail("NumActors", numActors)
+		    .detail("WarmupTime", warmupTime)
+		    .detail("OpsPerTranaction", opsPerTransaction)
+		    .detail("ProvideExpectedCost", provideExpectedCost)
+		    .detail("PerformReads", performReads);
+	}
+
 	ACTOR static Future<Void> loggerActor(ExpectStableThroughputWorkload* self) {
 		loop {
 			wait(delay(5.0));
 			for (auto const& [tag, metrics] : self->metricsMap) {
-				TraceEvent("ExpectStableThroughputWorkloadMetrics")
-				    .detail("TransactionTag", tag)
+				TraceEvent te("ExpectStableThroughputWorkloadMetrics");
+				te.detail("TransactionTag", tag)
 				    .detail("ThroughputRate", metrics.totalCost.smoothRate())
 				    .detail("ThrottledDurationRate", metrics.throttledDuration.smoothRate())
 				    .detail("TagThrottledErrorRate", metrics.tagThrottledErrors.smoothRate());
@@ -177,6 +192,12 @@ public:
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
 		useGrvCache = getOption(options, "useGrvCache"_sr, deterministicRandom()->coinflip());
 		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
+
+		// To avoid timeouts:
+#ifdef ADDRESS_SANITIZER
+		testDuration = 60.0;
+		warmupTime = 10.0;
+#endif
 	}
 
 	Future<Void> setup(Database const& cx) override { return Void(); }
@@ -191,19 +212,9 @@ public:
 		// transaction option for GRV Cache.
 		// In simulation, explicitly initialize it when used for tests.
 		cx->initSharedState();
-		TraceEvent("StartingExpectStableThroughputWorkload")
-		    .detail("TestDuration", testDuration)
-		    .detail("TagPrefix", tagPrefix)
-		    .detail("NumTags", numTags)
-		    .detail("ExpectedThroughputPagesRate", expectedThroughputPagesRate)
-		    .detail("AttemptedThroughputPagesRate", attemptedThroughputPagesRate)
-		    .detail("ErrorTolerance", errorTolerance)
-		    .detail("KeyPrefix", keyPrefix)
-		    .detail("NumActors", numActors)
-		    .detail("WarmupTime", warmupTime)
-		    .detail("OpsPerTranaction", opsPerTransaction)
-		    .detail("ProvideExpectedCost", provideExpectedCost)
-		    .detail("PerformReads", performReads);
+		TraceEvent te("StartingExpectStableThroughputWorkload");
+		traceParameters(te);
+		te.log();
 		startTime = now();
 		std::vector<Future<Void>> clients;
 		for (int actorIndex = 0; actorIndex < numActors; ++actorIndex) {
@@ -215,6 +226,12 @@ public:
 	}
 
 	Future<bool> check(Database const&) override {
+		// When running with ASAN, we purposefully shorten the duration to avoid timeouts.
+		// Therefore, we cannot make strong assumptions about the achieved throughput, so
+		// we skip the check phase
+#ifdef ADDRESS_SANITIZER
+		return true;
+#else
 		if (clientId != 0) {
 			return true;
 		}
@@ -236,14 +253,15 @@ public:
 			}
 
 			auto const severity = tagPassed ? SevInfo : SevError;
-			TraceEvent(severity, "CheckingStableThroughput")
-			    .detail("Tag", tag)
+			TraceEvent te(severity, "CheckingStableThroughput");
+			te.detail("Tag", tag)
 			    .detail("ExpectedTotalCost", expectedTotalCost)
-			    .detail("ErrorTolerance", errorTolerance)
 			    .detail("TotalCost", metrics.totalCost.getTotal());
+			traceParameters(te);
 			passed = passed && tagPassed;
 		}
 		return passed;
+#endif // #ifdef ADDRESS_SANITIZER
 	}
 
 	void getMetrics(std::vector<PerfMetric>& m) override {
