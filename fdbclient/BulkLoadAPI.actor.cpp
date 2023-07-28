@@ -42,6 +42,15 @@ bool newLoadersDifferentAndValid(Reference<BulkLoaderInfo> oldLoaders, Reference
 	return false;
 }
 
+bool requestCanRetry(const Error& e) {
+	switch (e.code()) {
+	case error_code_bulk_load_cannot_validate_file:
+		return true;
+	default:
+		return false;
+	};
+}
+
 ACTOR template <class Request, bool P>
 Future<REPLY_TYPE(Request)> doBulkLoadRequest(Reference<DatabaseContext> db,
                                               Optional<Reference<Tenant>> tenant,
@@ -111,9 +120,17 @@ Future<REPLY_TYPE(Request)> doBulkLoadRequest(Reference<DatabaseContext> db,
 			}
 			wait(delayJittered(1.0));
 		} catch (Error& e) {
-			// FIXME: any errors to retry?
-			TraceEvent("BulkLoadRequestError").errorUnsuppressed(e);
-			throw e;
+			if (requestCanRetry(e)) {
+				CODE_PROBE(true, "Bulk load request retrying on retryable error");
+				// FIXME: add exponential backoff specifically in error case
+				wait(delayJittered(1.0));
+				// clear loaders to make sure we get new ones and restart request
+				bulkLoaders.clear();
+			} else {
+				// FIXME: any errors to retry?
+				TraceEvent("BulkLoadRequestError").errorUnsuppressed(e);
+				throw e;
+			}
 		}
 	}
 }

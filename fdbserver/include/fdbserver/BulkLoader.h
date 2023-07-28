@@ -22,11 +22,13 @@ struct BulkLoaderStats {
 	Counter filesToWriteRequests;
 	Counter filesWrittenRequests;
 	Counter filesToWriteCreated;
-	Counter filesWritten;
+	Counter filesWrittenValidated;
+	Counter fileValidationErrors;
+	Counter filesWrittenRegistered;
 	Counter startRequests;
 	Counter stateChangeRequests;
 	Counter waitCompleteRequests;
-
+	
 	Counter errors;
 
 	int activeRequests;
@@ -36,7 +38,9 @@ struct BulkLoaderStats {
 	    filesToWriteRequests("FilesToWriteRequests", cc),
 	    filesWrittenRequests("FilesWrittenRequests", cc),
 	    filesToWriteCreated("FilesToWriteCreated", cc),
-	    filesWritten("FilesWritten", cc),
+		filesWrittenValidated("FilesWrittenValidated", cc),
+	    fileValidationErrors("FileValidationErrors", cc),
+	    filesWrittenRegistered("FilesWrittenRegistered", cc),
 	    startRequests("StartRequests", cc),
 	    stateChangeRequests("StateChangeRequests", cc),
 	    waitCompleteRequests("WaitCompleteRequests", cc),
@@ -52,8 +56,13 @@ struct BulkLoaderData : NonCopyable, ReferenceCounted<BulkLoaderData> {
 	Database db;
 	PromiseStream<Future<Void>> addActor;
 	BulkLoaderStats stats;
+	FlowLock fileValidationLock;
 
-	BulkLoaderData(UID id, Database db) : id(id), db(db), stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL) {}
+	BulkLoaderData(UID id, Database db)
+	  : id(id),
+	    db(db),
+	    stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL),
+	    fileValidationLock(SERVER_KNOBS->BULK_LOAD_PARALLEL_FILE_VALIDATIONS) {}
 };
 
 Future<Void> bulkLoader(const BulkLoaderInterface& self,
