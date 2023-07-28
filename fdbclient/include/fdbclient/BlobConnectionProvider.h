@@ -31,7 +31,7 @@ struct BlobConnectionProvider : NonCopyable, ReferenceCounted<BlobConnectionProv
 
 	// given a file, return the backup container and full file path necessary to access it. File path should be
 	// something returned from createForWrite
-	virtual Reference<BackupContainerFileSystem> getForRead(std::string filePath) = 0;
+	virtual Reference<BackupContainerFileSystem> getForAccess(std::string filePath) = 0;
 
 	virtual bool isExpired() const = 0;
 	virtual bool needsRefresh() const = 0;

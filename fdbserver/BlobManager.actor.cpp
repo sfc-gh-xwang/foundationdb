@@ -4476,7 +4476,7 @@ ACTOR Future<bool> canDeleteFullGranule(Reference<BlobManagerData> self, UID gra
 }
 
 static Future<Void> deleteFile(Reference<BlobConnectionProvider> bstoreProvider, std::string filePath) {
-	Reference<BackupContainerFileSystem> bstore = bstoreProvider->getForRead(filePath);
+	Reference<BackupContainerFileSystem> bstore = bstoreProvider->getForAccess(filePath);
 	return bstore->deleteFile(filePath);
 }
 

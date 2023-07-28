@@ -8,13 +8,16 @@
 #include "flow/IRandom.h"
 #include "flow/Trace.h"
 #include "flow/Util.h"
+#include "fdbclient/BlobGranuleFiles.actor.h"
 #include "fdbclient/BulkLoad.h"
 #include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/TenantManagement.actor.h"
+#include "fdbserver/BlobGranuleServerCommon.actor.h"
 #include "fdbserver/workloads/workloads.actor.h"
+#include "fdbserver/workloads/BGCorrectnessUtils.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -34,6 +37,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	bool stopTest;
 	Optional<TenantName> tenantName;
 	Optional<Reference<Tenant>> tenant;
+	Reference<BlobConnectionProvider> bstore;
 
 	int32_t nextKey;
 
@@ -84,6 +88,13 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return entry.get();
 	}
 
+	// randomly reopen tenant and do not wait for it to be ready, to test races
+	void maybeReopenTenant(Database const& cx) {
+		if (tenantName.present() && BUGGIFY_WITH_PROB(0.01)) {
+			makeReference<Tenant>(cx, tenantName.get());
+		}
+	}
+
 	ACTOR Future<Void> _setup(Database cx, BulkLoadOpsWorkload* self) {
 		if (self->clientId != 0) {
 			return Void();
@@ -98,11 +109,25 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			self->tenantName.reset();
 		}
 
+		state BGTenantMap tenantData(self->dbInfo);
 		if (self->tenantName.present()) {
-			wait(success(self->setupTenant(cx, self->tenantName.get())));
+			state std::vector<std::pair<int64_t, TenantMapEntry>> tenants;
+			state TenantMapEntry entry = wait(self->setupTenant(cx, self->tenantName.get()));
 
 			self->tenant = makeReference<Tenant>(cx, self->tenantName.get());
+			wait(self->tenant.get()->ready());
+
+			tenants.push_back({ self->tenant.get()->id(), entry });
+			tenantData.addTenants(tenants);
 		}
+
+		KeyRange range = normalKeys;
+		if (self->tenant.present()) {
+			range = range.withPrefix(self->tenant.get()->prefix());
+		}
+
+		wait(store(self->bstore, loadBStoreForTenant(&tenantData, range)));
+		ASSERT(self->bstore.isValid());
 
 		TraceEvent("BulkLoadOpsSetupComplete").detail("UseTenant", self->tenant.present());
 		return Void();
@@ -176,14 +201,56 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	void getMetrics(std::vector<PerfMetric>& m) override {}
 
-	ACTOR Future<Void> stageSingleFile(Database cx, BulkLoadID id, KeyRange range, Optional<Reference<Tenant>> tenant) {
+	ACTOR Future<Value> createOneFile(BulkLoadFileToWriteRef toWrite,
+	                                  Standalone<StringRef> filePrefix,
+	                                  int rowCount,
+	                                  int valueSize) {
+		state Standalone<GranuleSnapshot> snapshot;
+		snapshot.reserve(snapshot.arena(), rowCount);
+		for (int i = 0; i < rowCount; i++) {
+			Key k = filePrefix.withSuffix(format("%08x", i));
+			Value val = genVal(i, valueSize);
+			snapshot.push_back_deep(snapshot.arena(), KeyValueRef(k, val));
+		}
+
+		Value serialized = wait(serializeChunkedSnapshot(
+		    toWrite.filename, &snapshot, 16 * 1024, toWrite.compression, toWrite.cipherKeysCtx, true));
+		return serialized;
+	}
+
+	ACTOR Future<Void> writeOneFileToBlob(BulkLoadOpsWorkload* self,
+	                                      BulkLoadFileToWriteRef toWrite,
+	                                      Standalone<StringRef> filePrefix,
+	                                      int rowCount,
+	                                      int valueSize) {
+		ASSERT(toWrite.type == BulkLoadFileType::SNAPSHOT);
+		ASSERT(toWrite.format == BulkLoadFileFormat::ROW_V1);
+
+		Value serialized = wait(self->createOneFile(toWrite, filePrefix, rowCount, valueSize));
+
+		std::string fname = toWrite.filename.toString();
+		// filename and volume is already predetermined, so just access it instead of doing createForWrite
+		Reference<BackupContainerFileSystem> blobConn = self->bstore->getForAccess(fname);
+		state std::string fileContents = serialized.toString();
+		wait(blobConn->writeEntireFile(fname, fileContents));
+		return Void();
+	}
+
+	ACTOR Future<Void> stageSingleFile(Database cx,
+	                                   BulkLoadOpsWorkload* self,
+	                                   BulkLoadID id,
+	                                   KeyRange range,
+	                                   Optional<Reference<Tenant>> tenant) {
 		// sometimes request extra pointers
 		int count = deterministicRandom()->randomInt(1, 3);
-		Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
+		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
 		    wait(cx->getBulkLoadFilesToWrite(id, count, tenant));
 
 		state Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
 		filesWritten.arena().dependsOn(filesToWrite.arena());
+
+		// write tiny file
+		wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin, 1, 32));
 
 		// FIXME: actually write file to blob storage and stuff
 		BulkLoadWrittenFileRef writtenFile;
@@ -252,6 +319,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		state bool abortCompleted = false;
 		state bool loadCompleted = false;
 
+		self->maybeReopenTenant(cx);
+
 		// wait for bulk load to finish, and maybe try to inject an abort while waiting
 		// if we do inject an abort, we wait to verify that either:
 		//  - bulk load completes and the abort injection gets bulk_load_abort_failed
@@ -304,6 +373,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			batchSize = std::min(targetFilesToStage, batchSize);
 			targetFilesToStage -= batchSize;
 
+			self->maybeReopenTenant(cx);
+
 			Standalone<VectorRef<BulkLoadFileToWriteRef>> thisBatch =
 			    wait(cx->getBulkLoadFilesToWrite(id, batchSize, self->tenant));
 			filesToWrite.arena().dependsOn(thisBatch.arena());
@@ -312,6 +383,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		ASSERT(filesToWrite.size() == targetFiles);
 
+		state std::vector<Future<Void>> blobWrites;
 		state int targetFilesToWrite = targetFiles;
 		state int prefix = 0;
 		while (targetFilesToWrite > 0) {
@@ -319,7 +391,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			batchSize = std::min(targetFilesToWrite, batchSize);
 			targetFilesToWrite -= batchSize;
 
-			Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+			state Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
 			for (int i = 0; i < batchSize; i++, prefix++) {
 				// sometimes skip file to make non-contiguous
 				if (filesWritten.empty() || deterministicRandom()->random01() < 0.8) {
@@ -336,8 +408,14 @@ struct BulkLoadOpsWorkload : TestWorkload {
 					writtenFile.logicalSize = deterministicRandom()->randomInt(1, 10000000);
 
 					filesWritten.push_back(filesWritten.arena(), writtenFile);
+					// FIXME: actually use target value size sometimes
+					blobWrites.push_back(self->writeOneFileToBlob(self, filesToWrite[prefix], filePrefix, 10, 100));
 				}
 			}
+
+			wait(waitForAll(blobWrites));
+
+			self->maybeReopenTenant(cx);
 
 			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
 		}
@@ -350,6 +428,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			fmt::print("BLW {0}: starting\n", range.begin.printable());
 		}
 		// set up bulk load
+		self->maybeReopenTenant(cx);
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 
 		if (BLW_DEBUG) {
@@ -360,6 +439,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		// FIXME: also do aborting during staging/all files registered. already handled by unit tests some
 
+		self->maybeReopenTenant(cx);
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 
 		if (BLW_DEBUG) {
@@ -375,6 +455,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 		// FIXME: once auto-cleanup implemented, sometimes don't clean up, especially if aborted, and ensure auto clean
 		// up gets it
+		self->maybeReopenTenant(cx);
 		wait(cx->cleanupBulkLoad(id, self->tenant));
 
 		if (BLW_DEBUG) {
@@ -510,7 +591,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	ACTOR Future<Void> doneThenAbortUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that client cannot abort an already completed bulk load
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(self->stageSingleFile(cx, id, range, self->tenant));
+		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 		wait(cx->waitBulkLoadComplete(id, self->tenant));
 
@@ -773,8 +854,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> duplicateFilesMultipleRegisterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(self->stageSingleFile(cx, id, range, self->tenant));
-		wait(self->stageSingleFile(cx, id, range, self->tenant));
+		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
+		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
 
 		wait(self->expectAbortedBySystem(cx, self, id));
 		return Void();
@@ -818,8 +899,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> overlappingFilesMultipleRegisterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(self->stageSingleFile(cx, id, range, self->tenant));
-		wait(self->stageSingleFile(cx, id, range, self->tenant));
+		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
+		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
 
 		wait(self->expectAbortedBySystem(cx, self, id));
 		return Void();
@@ -827,7 +908,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> registerFilesAlreadyLoadingUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(self->stageSingleFile(cx, id, singleKeyRange(range.begin), self->tenant));
+		wait(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin), self->tenant));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 
 		try {
@@ -921,6 +1002,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				fmt::print(
 				    "Selected range [{0} - {1}) for unit {2}.\n", range.begin.printable(), range.end.printable(), op);
 			}
+
+			self->maybeReopenTenant(cx);
 
 			if (op == OVERLAPPING_LOADS_UNIT) {
 				wait(self->overlappingLoadsUnit(cx, self, range));
