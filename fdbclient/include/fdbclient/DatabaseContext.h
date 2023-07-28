@@ -464,7 +464,6 @@ public:
 	Future<Void> updateBulkLoadState(BulkLoadID id,
 	                                 BulkLoadStatus::State desiredState,
 	                                 Optional<int64_t> tenantIdToVerify = {});
-	Future<Void> cleanupAbortedBulkLoad(BulkLoadID id);
 	Future<Version> getBulkLoadVersion(BulkLoadID id);
 
 	// operational management

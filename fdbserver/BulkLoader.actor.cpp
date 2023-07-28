@@ -209,7 +209,7 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 			tr->reset();
 		}
 
-		state KeyRange physicalRange = info.keyRange.withPrefix(TenantAPI::idToPrefix(info.tenantId));
+		state KeyRange physicalRange = info.getPhysicalKeyRange();
 
 		// before creating file pointers, load metadata and encryption keys for tenant
 		state Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
@@ -418,7 +418,7 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 			}
 		}
 
-		state KeyRange physicalRange = info.keyRange.withPrefix(TenantAPI::idToPrefix(info.tenantId));
+		state KeyRange physicalRange = info.getPhysicalKeyRange();
 
 		// load volume info as well
 		state Reference<BlobConnectionProvider> bstore;

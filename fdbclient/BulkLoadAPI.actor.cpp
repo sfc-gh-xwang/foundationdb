@@ -683,47 +683,6 @@ Future<BulkLoadStatus> DatabaseContext::getBulkLoadStatus(BulkLoadID id, Optiona
 	return getBulkLoadStatusActor(Reference<DatabaseContext>::addRef(this), id);
 }
 
-ACTOR Future<Void> cleanupAbortedBulkLoadActor(Reference<DatabaseContext> db, BulkLoadID id) {
-	BulkLoadStatus startStatus = wait(getBulkLoadStatusActor(db, id));
-
-	// ensure load was in aborted state before starting cleanup
-	if (!checkValidBulkLoadStateTransition(startStatus.state, BulkLoadStatus::State::ABORTED_COMPLETE)) {
-		if (BULKLOAD_DEBUG) {
-			fmt::print("CleanupAbortedBulkLoadActor {0}: already cleaned up\n", id.printable());
-		}
-		CODE_PROBE(true, "cleanup aborted bulk load already done");
-		return Void();
-	}
-
-	state Database cx(db);
-	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
-	// TODO: implement actual cleanup! Must be idempotent to handle retries/multiple concurrent cleanup callers
-	// remaining: actually delete blob files, purge hybrid data, clear range, unblobbify/clean up purged range
-	loop {
-		try {
-			// clean up file pointers if deleted in staging phase
-			SystemDBWriteLockedNow(db)->setOptions(tr);
-			auto idRange = BulkLoadMetadata::allFilePointersForLoadRange(id);
-			BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
-			BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
-
-			wait(tr->commit());
-			break;
-		} catch (Error& e) {
-			wait(tr->onError(e));
-		}
-	}
-
-	// change bulk load state to ABORTED_COMPLETE
-	wait(updateBulkLoadStateActor(db, id, BulkLoadStatus::State::ABORTED_COMPLETE, {}));
-
-	return Void();
-}
-
-Future<Void> DatabaseContext::cleanupAbortedBulkLoad(BulkLoadID id) {
-	return cleanupAbortedBulkLoadActor(Reference<DatabaseContext>::addRef(this), id);
-}
-
 ACTOR Future<Version> getBulkLoadVersionActor(Reference<DatabaseContext> db, BulkLoadID id) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);

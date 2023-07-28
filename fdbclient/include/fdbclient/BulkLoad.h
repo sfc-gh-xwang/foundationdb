@@ -13,6 +13,7 @@
 #include "flow/CompressionUtils.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/BlobGranuleCommon.h"
+#include "fdbclient/Tenant.h"
 
 // This file (to distinguish from BulkLoadMetadata.h) only contains struct definitions and primitives for bulk loading.
 
@@ -83,6 +84,13 @@ struct BulkLoadInfo {
 	constexpr static FileIdentifier file_identifier = 3119155;
 	int64_t tenantId;
 	KeyRange keyRange;
+
+	KeyRange getPhysicalKeyRange() {
+		if (tenantId == TenantInfo::INVALID_TENANT) {
+			return keyRange;
+		}
+		return keyRange.withPrefix(TenantAPI::idToPrefix(tenantId));
+	}
 
 	// noarg for serialization
 	BulkLoadInfo() {}
