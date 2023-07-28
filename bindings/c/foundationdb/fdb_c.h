@@ -436,7 +436,7 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_flush_blob_range(FDBTenant* t
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_id(FDBTenant* tenant);
 
-// FIXME: create database versions of bulk load APIs too!
+/* FIXME: create database versions of bulk load APIs too! */
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_start_bulk_load(FDBTenant* tenant,
                                                                    uint8_t const* begin_key_name,
                                                                    int begin_key_name_length,
