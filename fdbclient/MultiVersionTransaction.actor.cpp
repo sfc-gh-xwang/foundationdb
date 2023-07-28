@@ -668,6 +668,26 @@ ThreadFuture<Standalone<StringRef>> DLTenant::getClientStatus() {
 	});
 }
 
+ThreadFuture<ApiResult> DLTenant::execAsyncRequest(ApiRequest request) {
+	if (!api->tenantExecAsync) {
+		return unsupported_operation();
+	}
+	FdbCApi::FDBFuture* f = api->tenantExecAsync(tenant, request.getFDBRequest());
+	return toThreadFuture<ApiResult>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
+		FDBResult* result;
+		FdbCApi::fdb_error_t error = api->futureGetResult(f, &result);
+		ASSERT(!error);
+		return ApiResult::fromPtr(result);
+	});
+}
+
+FDBAllocatorIfc* DLTenant::getAllocatorInterface() {
+	if (!api->getAllocatorInterface) {
+		throw unsupported_operation();
+	}
+	return api->getAllocatorInterface();
+}
+
 // DLDatabase
 DLDatabase::DLDatabase(Reference<FdbCApi> api, ThreadFuture<FdbCApi::FDBDatabase*> dbFuture) : api(api), db(nullptr) {
 	addref();
@@ -940,6 +960,26 @@ ThreadFuture<Standalone<StringRef>> DLDatabase::getClientStatus() {
 	});
 }
 
+ThreadFuture<ApiResult> DLDatabase::execAsyncRequest(ApiRequest request) {
+	if (!api->databaseExecAsync) {
+		return unsupported_operation();
+	}
+	FdbCApi::FDBFuture* f = api->databaseExecAsync(db, request.getFDBRequest());
+	return toThreadFuture<ApiResult>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
+		FDBResult* result;
+		FdbCApi::fdb_error_t error = api->futureGetResult(f, &result);
+		ASSERT(!error);
+		return ApiResult::fromPtr(result);
+	});
+}
+
+FDBAllocatorIfc* DLDatabase::getAllocatorInterface() {
+	if (!api->getAllocatorInterface) {
+		throw unsupported_operation();
+	}
+	return api->getAllocatorInterface();
+}
+
 // DLApi
 
 // Loads the specified function from a dynamic library
@@ -1072,6 +1112,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_database_get_client_status",
 	                   headerVersion >= ApiVersion::withGetClientStatus().version());
+	loadClientFunction(&api->databaseExecAsync,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_database_exec_async",
+	                   headerVersion >= ApiVersion::withEvolvableApi().version());
 	loadClientFunction(
 	    &api->tenantCreateTransaction, lib, fdbCPath, "fdb_tenant_create_transaction", headerVersion >= 0);
 	loadClientFunction(&api->tenantPurgeBlobGranules,
@@ -1124,6 +1169,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_tenant_get_client_status",
 	                   headerVersion >= ApiVersion::withTenantGetClientStatus().version());
+	loadClientFunction(&api->tenantExecAsync,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_tenant_exec_async",
+	                   headerVersion >= ApiVersion::withEvolvableApi().version());
 	loadClientFunction(&api->tenantDestroy, lib, fdbCPath, "fdb_tenant_destroy", headerVersion >= 0);
 
 	loadClientFunction(&api->transactionSetOption, lib, fdbCPath, "fdb_transaction_set_option", headerVersion >= 0);
@@ -1986,6 +2036,19 @@ ThreadFuture<Standalone<StringRef>> MultiVersionTenant::getClientStatus() {
 	    });
 }
 
+ThreadFuture<ApiResult> MultiVersionTenant::execAsyncRequest(ApiRequest request) {
+	return executeOperation<ApiResult>(&ITenant::execAsyncRequest, std::forward<ApiRequest>(request));
+}
+
+FDBAllocatorIfc* MultiVersionTenant::getAllocatorInterface() {
+	auto tenantDb = tenantState->tenantVar->get();
+	if (tenantDb.value) {
+		return tenantDb.value->getAllocatorInterface();
+	}
+
+	return MultiVersionApi::api->getAllocatorInterface();
+}
+
 MultiVersionTenant::TenantState::TenantState(Reference<MultiVersionDatabase> db, TenantNameRef tenantName)
   : tenantVar(new ThreadSafeAsyncVar<Reference<ITenant>>(Reference<ITenant>(nullptr))),
     tenantName(tenantName),
@@ -2284,6 +2347,19 @@ ThreadFuture<Standalone<StringRef>> MultiVersionDatabase::getClientStatus() {
 			    });
 		    });
 	}
+}
+
+ThreadFuture<ApiResult> MultiVersionDatabase::execAsyncRequest(ApiRequest request) {
+	return executeOperation<ApiResult>(&IDatabase::execAsyncRequest, std::forward<ApiRequest>(request));
+}
+
+FDBAllocatorIfc* MultiVersionDatabase::getAllocatorInterface() {
+	auto db = dbState->dbVar->get();
+	if (db.value) {
+		return db.value->getAllocatorInterface();
+	}
+
+	return MultiVersionApi::api->getAllocatorInterface();
 }
 
 MultiVersionDatabase::DatabaseState::DatabaseState(ClusterConnectionRecord const& connectionRecord,

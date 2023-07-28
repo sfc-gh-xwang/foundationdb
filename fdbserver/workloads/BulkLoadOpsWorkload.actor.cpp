@@ -155,7 +155,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->unitClient);
 		TraceEvent("BulkLoadOpsUnitsComplete");
 
-		std::vector<BulkLoadID> loadsNotCleanedUp = wait(cx->listBulkLoads(false));
+		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp = wait(cx->listBulkLoads(false, self->tenant));
 		fmt::print("{0} running loads\n", loadsNotCleanedUp.size());
 		for (auto& it : loadsNotCleanedUp) {
 			fmt::print("    {0}\n", it.printable());

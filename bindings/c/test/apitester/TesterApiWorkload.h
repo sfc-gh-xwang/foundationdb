@@ -24,6 +24,8 @@
 #include "TesterWorkload.h"
 #include "TesterKeyValueStore.h"
 #include <atomic>
+#include <set>
+#include <unordered_set>
 
 namespace FdbApiTester {
 
@@ -114,6 +116,7 @@ protected:
 	fdb::Key randomExistingKey(std::optional<int> tenantId);
 	fdb::Key randomKey(double existingKeyRatio, std::optional<int> tenantId);
 	fdb::KeyRange randomNonEmptyKeyRange();
+	fdb::KeyRange randomUniquePrefixKeyRange();
 
 	// Chooses a random tenant from the available tenants (or an empty optional if tenants aren't used in the test)
 	std::optional<int> randomTenant();
@@ -145,6 +148,8 @@ private:
 	void clearTenantData(TTaskFct cont, std::optional<int> tenantId);
 
 	void randomOperations();
+	// FIXME: implement hash function and then change to unordered_set
+	std::set<fdb::Key> usedPrefixRanges;
 };
 
 } // namespace FdbApiTester
