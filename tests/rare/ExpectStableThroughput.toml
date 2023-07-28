@@ -19,6 +19,10 @@ testTitle='ExpectStableThroughput'
   numTags=2
   expectedThroughputPagesRate=1000
   attemptedThroughputPagesRate=2000
-  # TODO: Reduce this error tolerance
-  errorTolerance=0.3
+  # The error tolerance has to be this high because
+  # frequent injected failures can cause repeated spikes in
+  # throttling behavior. We should only very rarely need
+  # the full error tolerance to be 0.5, but it is set this
+  # high to avoid spurious failures.
+  errorTolerance=0.5
   numActors=100
