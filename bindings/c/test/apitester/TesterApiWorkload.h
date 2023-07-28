@@ -148,7 +148,8 @@ private:
 	void clearTenantData(TTaskFct cont, std::optional<int> tenantId);
 
 	void randomOperations();
-	std::unordered_set<fdb::Key> usedPrefixRanges;
+	// FIXME: implement hash function and then change to unordered_set
+	std::set<fdb::Key> usedPrefixRanges;
 };
 
 } // namespace FdbApiTester
