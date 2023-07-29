@@ -121,23 +121,26 @@ public:
 
 	void start() { reqGenerator = generateRequests(this); }
 
-	void releaseReq() {
-		ASSERT_GT(reqsToRelease, 0);
-		--reqsToRelease;
+	void releaseReqs(int count) {
+		ASSERT_GE(reqsToRelease, count);
+		reqsToRelease -= count;
 	}
+
+	bool hasReqs(int count) { return reqsToRelease >= count; }
 
 	bool isEmpty() const { return (reqsToRelease == 0); }
 };
 
 ACTOR static Future<Void> runThrottlingTest(GrvTransactionRateInfo* rateInfo, MockClient* client, int64_t* counter) {
+	state int batchSize = deterministicRandom()->randomInt(1, 11);
 	loop {
 		state double elapsed = 0.009 + 0.002 * deterministicRandom()->random01();
 		wait(delay(elapsed));
 		rateInfo->startReleaseWindow();
 		int numReleased = 0;
-		while (!client->isEmpty() && rateInfo->canStart(numReleased, /*count=*/1)) {
-			client->releaseReq();
-			++numReleased;
+		while (client->hasReqs(batchSize) && rateInfo->canStart(numReleased, /*count=*/batchSize)) {
+			client->releaseReqs(batchSize);
+			numReleased += batchSize;
 		}
 		*counter += numReleased;
 		rateInfo->endReleaseWindow(numReleased, client->isEmpty(), elapsed);
