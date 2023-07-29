@@ -111,7 +111,7 @@ struct MockClient {
 
 	ACTOR static Future<Void> generateRequests(MockClient* self) {
 		loop {
-			wait(delay((0.9 + 0.2 * deterministicRandom()->random01()) / self->rate));
+			wait(delayJittered(1.0 / self->rate));
 			++(self->reqsToRelease);
 		}
 	}
@@ -134,7 +134,7 @@ public:
 ACTOR static Future<Void> runThrottlingTest(GrvTransactionRateInfo* rateInfo, MockClient* client, int64_t* counter) {
 	state int batchSize = deterministicRandom()->randomInt(1, 11);
 	loop {
-		state double elapsed = 0.009 + 0.002 * deterministicRandom()->random01();
+		state double elapsed = 0.1 * deterministicRandom()->random01();
 		wait(delay(elapsed));
 		rateInfo->startReleaseWindow();
 		int numReleased = 0;
