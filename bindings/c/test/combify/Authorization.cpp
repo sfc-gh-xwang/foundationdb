@@ -39,23 +39,4 @@ AddTest test1("AuthZCrossTenantDisallowed",
 	              }
               });
 
-AddTest test2("BasicWriteAndReadBack", asTrustedClient, [](const TestEnv& env) {
-	auto db = env.newDatabase();
-
-	auto tr = env.newTransaction(db);
-
-	runToCompletion(
-	    tr,
-	    [](auto tr) {
-		    tr.set("abc"_br, "def"_br);
-		    return tr.commit();
-	    },
-	    "WriteSomeValue");
-
-	tr = env.newTransaction(db);
-	auto f = runToCompletion(
-	    tr, [](auto tr) { return tr.get("abc"_br, false); }, "ReadBackValue");
-	ASSERT(f.get() == "def"_br, "unmatched read back value: expected=def actual={}", fdb::toCharsRef(f.get()));
-});
-
 } // anonymous namespace

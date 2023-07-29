@@ -1,9 +1,6 @@
 #include "Combify.hpp"
 #include "TestHelpers.hpp"
 #include <optional>
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
 
 // Prevent ODR clash between sources
 namespace {
@@ -55,7 +52,7 @@ AddTest testWriteAndRead("BasicWriteAndReadBack", asTrustedClient, [](const Test
 
 	tr = env.newTransaction(db);
 	auto f = getValue(tr, "abc"_br, false, "ReadBackValue");
-	ASSERT(f.get() == "def"_br);
+	ASSERT(f.get() == "def"_br, "unmatched read back value: expected=def actual={}", fdb::toCharsRef(f.get()));
 });
 
 AddTest testGetReadVersion("BasicGetReadVersion", asTrustedClient, [](const TestEnv& env) {
@@ -65,7 +62,7 @@ AddTest testGetReadVersion("BasicGetReadVersion", asTrustedClient, [](const Test
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
 
-	ASSERT(f.get() > 0);
+	ASSERT(f.get() > 0, "unmatched read version value: expected > 0");
 });
 
 AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
@@ -82,7 +79,10 @@ AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 	    },
 	    "GetKey");
 
-	ASSERT(fdb::toCharsRef(f.get()) == prefix + "bar");
+	ASSERT(fdb::toCharsRef(f.get()) == prefix + "bar",
+	       "unmatched read value: expected={} actual={}",
+	       prefix + "bar",
+	       fdb::toCharsRef(f.get()));
 });
 
 AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
@@ -93,7 +93,7 @@ AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 	auto tr = env.newTransaction(db);
 	auto f = getValue(tr, fdb::toBytesRef(prefix + "foo"), false, "GetValue");
 
-	ASSERT(f.get() == "bar"_br);
+	ASSERT(f.get() == "bar"_br, "unmatched read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
 });
 
 AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& env) {
@@ -107,7 +107,7 @@ AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& 
 	auto const& [strings, count] = f.get();
 	ASSERT(count > 0);
 	for (int i = 0; i < count; ++i) {
-		ASSERT(strlen(strings[i]) > 0);
+		ASSERT(strlen(strings[i]) > 0, "unexpected empty string");
 	}
 });
 
@@ -128,7 +128,7 @@ AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& en
 	auto db = env.newDatabase();
 	auto tr = env.newTransaction(db);
 	auto f = getValue(tr, "\xff/coordinators"_br, false, "ReadSystemKey", { FDB_TR_OPTION_READ_SYSTEM_KEYS });
-	ASSERT(f.get().has_value());
+	ASSERT(f.get().has_value(), "Unexpected null value from read");
 });
 
 AddTest testWriteSystemKeyDisallowed("WriteSystemKeyDisallowed",
@@ -156,7 +156,7 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 	tr = env.newTransaction(db);
 	auto f = getValue(tr, syskey, false, "ReadBackSystemKey", { FDB_TR_OPTION_READ_SYSTEM_KEYS });
 
-	ASSERT(f.get() == "bar"_br);
+	ASSERT(f.get() == "bar"_br, "unexpected read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
 });
 
 } // anonymous namespace
