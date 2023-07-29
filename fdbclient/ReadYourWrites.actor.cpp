@@ -1589,37 +1589,26 @@ public:
 };
 
 ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx)
-  : ISingleThreadTransaction(cx->deferredError),
-    tr(cx),
-    cache(&arena),
-    writes(&arena),
-    retries(0),
-    approximateSize(0),
-    creationTime(now()),
-    commitStarted(false),
-    versionStampFuture(tr.getVersionstamp()),
-    specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
-    options(tr) {
-	std::copy(
-	    cx.getTransactionDefaults().begin(), cx.getTransactionDefaults().end(), std::back_inserter(persistentOptions));
-	applyPersistentOptions();
-}
+  : ReadYourWritesTransaction(Transaction(cx), cx->deferredError, cx.getTransactionDefaults()) {}
 
 ReadYourWritesTransaction::ReadYourWritesTransaction(Reference<Tenant> const& tenant)
-  : ISingleThreadTransaction(tenant->database()->deferredError),
-    tr(tenant),
+  : ReadYourWritesTransaction(Transaction(tenant),
+                              tenant->database()->deferredError,
+                              tenant->database().getTransactionDefaults()) {}
+
+ReadYourWritesTransaction::ReadYourWritesTransaction(Transaction&& transaction,
+                                                     Error const& deferredError,
+                                                     UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList)
+  : ISingleThreadTransaction(deferredError),
+    tr(std::move(transaction)),
+
     cache(&arena),
     writes(&arena),
-    retries(0),
-    approximateSize(0),
     creationTime(now()),
-    commitStarted(false),
     versionStampFuture(tr.getVersionstamp()),
     specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
     options(tr) {
-	std::copy(tenant->database().getTransactionDefaults().begin(),
-	          tenant->database().getTransactionDefaults().end(),
-	          std::back_inserter(persistentOptions));
+	std::copy(trOptionList.begin(), trOptionList.end(), std::back_inserter(persistentOptions));
 	applyPersistentOptions();
 }
 

@@ -377,6 +377,7 @@ class Transaction : NonCopyable {
 public:
 	explicit Transaction(Database const& cx);
 	explicit Transaction(Reference<Tenant> const& tenant);
+	explicit Transaction(Transaction&& tr);
 	~Transaction();
 
 	static Transaction fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx);

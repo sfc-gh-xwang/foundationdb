@@ -3971,9 +3971,10 @@ ACTOR Future<GetValueReqAndResultRef> quickGetValue(StorageServer* data,
 
 	++data->counters.quickGetValueMiss;
 	if (SERVER_KNOBS->QUICK_GET_VALUE_FALLBACK) {
-		state Transaction tr = pOriginalReq->tenantInfo.hasTenant()
-		                           ? Transaction(makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId))
-		                           : Transaction(data->cx);
+		Optional<Reference<Tenant>> tenant = pOriginalReq->tenantInfo.hasTenant()
+		                                         ? makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)
+		                                         : Optional<Reference<Tenant>>();
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, data->cx);
 		tr.setVersion(version);
 		// TODO: is DefaultPromiseEndpoint the best priority for this?
 		tr.trState->taskID = TaskPriority::DefaultPromiseEndpoint;
@@ -4722,9 +4723,10 @@ ACTOR Future<GetRangeReqAndResultRef> quickGetKeyValues(
 
 	++data->counters.quickGetKeyValuesMiss;
 	if (SERVER_KNOBS->QUICK_GET_KEY_VALUES_FALLBACK) {
-		state Transaction tr = pOriginalReq->tenantInfo.hasTenant()
-		                           ? Transaction(makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId))
-		                           : Transaction(data->cx);
+		Optional<Reference<Tenant>> tenant = pOriginalReq->tenantInfo.hasTenant()
+		                                         ? makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)
+		                                         : Optional<Reference<Tenant>>();
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, data->cx);
 		tr.setVersion(version);
 		if (pOriginalReq->options.present() && pOriginalReq->options.get().debugID.present()) {
 			tr.debugTransaction(pOriginalReq->options.get().debugID.get());

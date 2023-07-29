@@ -4130,10 +4130,10 @@ ACTOR Future<Void> watchStorageServerResp(int64_t tenantId, Key key, Database cx
 }
 
 ACTOR Future<Void> sameVersionDiffValue(Database cx, Reference<WatchParameters> parameters) {
-	state ReadYourWritesTransaction tr =
-	    parameters->tenant.hasTenant()
-	        ? ReadYourWritesTransaction(makeReference<Tenant>(cx, parameters->tenant.tenantId))
-	        : ReadYourWritesTransaction(cx);
+	Optional<Reference<Tenant>> tenant = parameters->tenant.hasTenant()
+	                                         ? makeReference<Tenant>(cx, parameters->tenant.tenantId)
+	                                         : Optional<Reference<Tenant>>();
+	state ReadYourWritesTransaction tr = ReadYourWritesTransaction::fromTenantOrDefault(tenant, cx);
 
 	loop {
 		try {
@@ -5620,6 +5620,10 @@ Transaction::Transaction(Reference<Tenant> const& tenant)
 	if (tenant->database()->debugUseTag) {
 		debugAddTag(trState);
 	}
+}
+
+Transaction::Transaction(Transaction&& tr) {
+	*this = std::move(tr);
 }
 
 Transaction::~Transaction() {
