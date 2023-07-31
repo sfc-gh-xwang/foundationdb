@@ -519,7 +519,7 @@ void TestEnv::clearAndPopulateDBData(const std::string& prefix, const std::map<s
 		    tr.clearRange(fdb::toBytesRef(prefix), fdb::toBytesRef(endKey));
 		    // Insert data
 		    for (const auto& [key, val] : data) {
-			    tr.set(fdb::toBytesRef(prefix + key), fdb::toBytesRef(val));
+			    tr.set(fdb::toBytesRef(key), fdb::toBytesRef(val));
 		    }
 		    return tr.commit();
 	    },

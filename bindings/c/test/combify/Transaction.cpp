@@ -8,6 +8,15 @@ namespace {
 using namespace combify;
 using namespace fdb::literals;
 
+// Helper function to add `prefix` to all keys in the given map. Returns a new map
+auto createData(const std::string& prefix, std::map<std::string, std::string>&& map) {
+	std::map<std::string, std::string> out;
+	for (const auto& [key, val] : map) {
+		out[prefix + key] = val;
+	}
+	return out;
+}
+
 // getValue is a helper function to set options to a transaction and get the value of a given key
 auto getValue(fdb::Transaction tr,
               fdb::KeyRef key,
@@ -67,7 +76,7 @@ AddTest testGetReadVersion("BasicGetReadVersion", asTrustedClient, [](const Test
 
 AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-key");
-	env.clearAndPopulateDBData(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } });
+	env.clearAndPopulateDBData(prefix, createData(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
 
 	auto db = env.newDatabase();
 	auto tr = env.newTransaction(db);
@@ -87,7 +96,7 @@ AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 
 AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-value");
-	env.clearAndPopulateDBData(prefix, { { "foo", "bar" } });
+	env.clearAndPopulateDBData(prefix, createData(prefix, { { "foo", "bar" } }));
 
 	auto db = env.newDatabase();
 	auto tr = env.newTransaction(db);
@@ -98,7 +107,7 @@ AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 
 AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-get-string-array");
-	env.clearAndPopulateDBData(prefix, { { "foo", "bar" } });
+	env.clearAndPopulateDBData(prefix, createData(prefix, { { "foo", "bar" } }));
 	auto db = env.newDatabase();
 	auto tr = env.newTransaction(db);
 	auto f = runToCompletion(
@@ -126,7 +135,7 @@ AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& en
 			// Only when enableReadSystemKeys is set we hit this line
 			ASSERT(f.get().has_value(), "Unexpected null value from read");
 		} catch (fdb::Error e) {
-			ASSERT(!enableReadSystemKeys, "Can only hit this assert when FDB_TR_OPTION_READ_SYSTEM_KEYS is disabled");
+			ASSERT(!enableReadSystemKeys, "FDB_TR_OPTION_READ_SYSTEM_KEYS must be disabled");
 			ASSERT(e.code() == 2004); // key_outside_legal_range
 		}
 	}
@@ -153,13 +162,13 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 			ASSERT(enableWriteSystemKeys);
 			ASSERT(f.get() == "bar"_br, "unexpected read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
 		} catch (fdb::Error e) {
-			ASSERT(!enableWriteSystemKeys, "Can only hit this assert when FDB_TR_OPTION_READ_SYSTEM_KEYS is disabled");
+			ASSERT(!enableWriteSystemKeys, "FDB_TR_OPTION_ACCESS_SYSTEM_KEYS must be disabled");
 			ASSERT(e.code() == 2004); // key_outside_legal_range
 		}
 	}
 });
 
-AddTest testReadYourWritesDisable("ReadYourWrites", asTrustedClient, [](const TestEnv& env) {
+AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-read-your-writes");
 	env.clearAndPopulateDBData(prefix, {});
 
@@ -196,6 +205,41 @@ AddTest testReadYourWritesDisable("ReadYourWrites", asTrustedClient, [](const Te
 			ASSERT(false, "Unexpected option value: {}", option);
 			break;
 		}
+	}
+});
+
+AddTest testGetKeyValueArray("GetKeyValueArray", asTrustedClient, [](const TestEnv& env) {
+	const std::string prefix("combify-get-key-value-array");
+	auto data = createData(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
+	env.clearAndPopulateDBData(prefix, data);
+
+	auto db = env.newDatabase();
+	auto tr = env.newTransaction(db);
+	auto f = runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(prefix + "a")),
+		                       fdb::key_select::lastLessOrEqual(fdb::toBytesRef(prefix + "c"), 1),
+		                       /* limit */ 0,
+		                       /* target_bytes */ 0,
+		                       /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
+		                       /* iteration */ 0,
+		                       /* snapshot */ false,
+		                       /* reverse */ false);
+	    },
+	    "GetKeyValueArray");
+
+	auto [kvs, count, more] = f.get();
+	ASSERT(count > 0, "count is expected to be larger than zero");
+	ASSERT(count <= 3, "count is expected to be less or equan to 3");
+	if (count < 3) {
+		ASSERT(more, "more is expected to be true if count < 3");
+	}
+	for (int i = 0; i < count; i++) {
+		auto kv = *kvs++;
+		auto key = std::string(kv.key().begin(), kv.key().end());
+		auto value = std::string(kv.value().begin(), kv.value().end());
+		ASSERT(data[key] == value);
 	}
 });
 

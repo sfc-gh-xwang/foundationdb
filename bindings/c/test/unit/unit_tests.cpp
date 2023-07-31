@@ -380,48 +380,6 @@ TEST_CASE("fdb_future_release_memory") {
 	}
 }
 
-TEST_CASE("fdb_future_get_keyvalue_array") {
-	auto data = create_data({ { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
-	insert_data(db, data);
-
-	auto tr = db.createTransaction();
-	while (1) {
-		auto f1 = tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(key("a"))),
-		                      fdb::key_select::lastLessOrEqual(fdb::toBytesRef(key("c")), 1),
-		                      /* limit */ 0,
-		                      /* target_bytes */ 0,
-		                      /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
-		                      /* iteration */ 0,
-		                      /* snapshot */ false,
-		                      /* reverse */ false);
-
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-
-		auto output = f1.get();
-		auto out_kv = std::get<0>(output);
-		auto out_count = std::get<1>(output);
-		auto out_more = std::get<2>(output);
-		CHECK(out_count > 0);
-		CHECK(out_count <= 3);
-		if (out_count < 3) {
-			CHECK(out_more);
-		}
-
-		for (int i = 0; i < out_count; ++i) {
-			auto kv = *out_kv++;
-			auto key = std::string(kv.key().begin(), kv.key().end());
-			auto value = std::string(kv.value().begin(), kv.value().end());
-			CHECK(data[key].compare(value) == 0);
-		}
-		break;
-	}
-}
-
 TEST_CASE("fdb_transaction_set_option timeout") {
 	auto tr = db.createTransaction();
 	// Set smallest possible timeout, retry until a timeout occurs.
