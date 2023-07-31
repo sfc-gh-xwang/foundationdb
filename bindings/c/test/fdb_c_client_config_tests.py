@@ -345,7 +345,7 @@ class ClientConfigTest:
             cmd_args += ["--network-option-tls_ca_path", self.tls_client_ca_file]
 
         if self.tls_client_tls_required:
-            cmd_args += ["--network-option-tls_required", ""]
+            cmd_args += ["--network-option-tls_required", "true"]
 
         if self.external_lib_path is not None:
             cmd_args += ["--external-client-library", self.external_lib_path]

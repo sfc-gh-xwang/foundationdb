@@ -415,7 +415,7 @@ tracer = log_file
                 self.server_ca_file,
             ]
             if self.tls_config.client_tls_required:
-                args += ["--tls-required"]
+                args += ["--tls-required", "true"]
         if self.use_future_protocol_version:
             args += ["--use-future-protocol-version"]
         res = subprocess.run(
