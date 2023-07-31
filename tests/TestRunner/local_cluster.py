@@ -83,12 +83,12 @@ class TLSConfig:
         server_chain_len: int = 3,
         client_chain_len: int = 2,
         verify_peers: str = "Check.Valid=1",
-        client_disable_plaintext_connection: bool = False,
+        client_tls_required: bool = False,
     ):
         self.server_chain_len = server_chain_len
         self.client_chain_len = client_chain_len
         self.verify_peers = verify_peers
-        self.client_disable_plaintext_connection = client_disable_plaintext_connection
+        self.client_tls_required = client_tls_required
 
 
 class LocalCluster:
@@ -414,8 +414,8 @@ tracer = log_file
                 "--tls-ca-file",
                 self.server_ca_file,
             ]
-            if self.tls_config.client_disable_plaintext_connection:
-                args += ["--tls-disable-plaintext-connection"]
+            if self.tls_config.client_tls_required:
+                args += ["--tls-required"]
         if self.use_future_protocol_version:
             args += ["--use-future-protocol-version"]
         res = subprocess.run(

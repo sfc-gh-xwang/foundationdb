@@ -68,8 +68,8 @@ std::vector<std::string> LoadedTLSConfig::getVerifyPeers() const {
 	return { "Check.Valid=1" };
 }
 
-bool LoadedTLSConfig::getDisablePlainTextConnection() const {
-	return tlsDisablePlainTextConnection;
+bool LoadedTLSConfig::getTlsRequired() const {
+	return tlsRequired;
 }
 
 std::string LoadedTLSConfig::getPassword() const {
@@ -219,20 +219,20 @@ std::string TLSConfig::getCAPathSync() const {
 	return envCAPath;
 }
 
-bool TLSConfig::getDisablePlainTextConnection() const {
-	std::string envDisablePlainTextConnection;
-	if (platform::getEnvironmentVar("FDB_TLS_DISABLE_PLAINTEXT_CONNECTION", envDisablePlainTextConnection)) {
+bool TLSConfig::getTlsRequired() const {
+	std::string envTlsRequired;
+	if (platform::getEnvironmentVar("FDB_TLS_REQUIRED", envTlsRequired)) {
 		try {
-			return boost::lexical_cast<bool>(envDisablePlainTextConnection);
+			return boost::lexical_cast<bool>(envTlsRequired);
 		} catch (boost::bad_lexical_cast& e) {
 			fprintf(stderr,
-			        "Warning: Ignoring invalid FDB_TLS_DISABLE_PLAINTEXT_CONNECTION [%s]: %s\n",
-			        envDisablePlainTextConnection.c_str(),
+			        "Warning: Ignoring invalid FDB_TLS_REQUIRED [%s]: %s\n",
+			        envTlsRequired.c_str(),
 			        e.what());
 		}
 	}
 
-	return tlsDisablePlainTextConnection;
+	return tlsRequired;
 }
 
 LoadedTLSConfig TLSConfig::loadSync() const {
@@ -277,7 +277,7 @@ LoadedTLSConfig TLSConfig::loadSync() const {
 	loaded.tlsPassword = tlsPassword;
 	loaded.tlsVerifyPeers = tlsVerifyPeers;
 	loaded.endpointType = endpointType;
-	loaded.tlsDisablePlainTextConnection = tlsDisablePlainTextConnection;
+	loaded.tlsRequired = tlsRequired;
 
 	return loaded;
 }
@@ -354,7 +354,7 @@ ACTOR Future<LoadedTLSConfig> TLSConfig::loadAsync(const TLSConfig* self) {
 	loaded.tlsPassword = self->tlsPassword;
 	loaded.tlsVerifyPeers = self->tlsVerifyPeers;
 	loaded.endpointType = self->endpointType;
-	loaded.tlsDisablePlainTextConnection = self->tlsDisablePlainTextConnection;
+	loaded.tlsRequired = self->tlsRequired;
 
 	return loaded;
 }
