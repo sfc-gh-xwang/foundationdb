@@ -159,4 +159,44 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 	}
 });
 
+AddTest testReadYourWritesDisable("ReadYourWrites", asTrustedClient, [](const TestEnv& env) {
+	const std::string prefix("combify-read-your-writes");
+	env.clearAndPopulateDBData(prefix, {});
+
+	auto db = env.newDatabase();
+	for (auto const option : { FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
+	                           FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE,
+	                           FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE }) {
+		auto tr = env.newTransaction(db);
+		tr.setOption(option);
+		tr.set("foo"_br, "bar"_br);
+
+		// Read before committing. Herer we test 3 different cases:
+		// 1) If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false
+		// 2) If FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE is set, read with snapshot = true
+		// 3) If FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE is set, read with both
+		auto snapshot = option != FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE;
+
+		auto f1 = getValue(tr, "foo"_br, snapshot, "ReadValue");
+		switch (option) {
+		case FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE:
+			ASSERT(!f1.get().has_value(), "Expect null value");
+			break;
+		case FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE:
+			ASSERT(f1.get() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f1.get()));
+			break;
+		case FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE: {
+			ASSERT(!f1.get().has_value(), "Expect null value");
+			// Non-snapshot reads should still read writes in the transaction
+			auto f2 = getValue(tr, "foo"_br, false, "ReadValueNonSnapshot");
+			ASSERT(f2.get() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f2.get()));
+			break;
+		}
+		default:
+			ASSERT(false, "Unexpected option value: {}", option);
+			break;
+		}
+	}
+});
+
 } // anonymous namespace
