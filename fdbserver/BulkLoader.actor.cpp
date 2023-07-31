@@ -26,6 +26,11 @@ bool canReplyWith(const Error& e) {
 	case error_code_bulk_load_tenant_mismatch:
 	case error_code_bulk_load_file_id_not_found:
 	case error_code_bulk_load_invalid_file_metadata:
+	case error_code_bulk_load_aborted:
+	case error_code_bulk_load_abort_failed:
+	case error_code_bulk_load_range_conflict:
+	case error_code_bulk_load_cleanup_failed:
+	case error_code_bulk_load_range_not_empty:
 		return true;
 	default:
 		return false;
@@ -150,8 +155,8 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 
 	// downgrade priority since this is likely LoadBalancedEndpoint
 	wait(delay(0, TaskPriority::DefaultEndpoint));
-
 	++self->stats.filesToWriteRequests;
+	++self->stats.activeRequests;
 	rep.filePointers.reserve(rep.arena, req.count);
 
 	if (DBG_BL_REQUEST) {
@@ -231,6 +236,7 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 					    "BL {0}: {1} HandleFilesToWriteRequest: Done\n", self->id.shortString(), req.id.printable());
 				}
 				req.reply.send(rep);
+				--self->stats.activeRequests;
 				return Void();
 			}
 
@@ -293,6 +299,7 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 			self->stats.filesToWriteCreated += candidateFilePointers.size();
 		}
 	} catch (Error& e) {
+		--self->stats.activeRequests;
 		if (DBG_BL_REQUEST) {
 			fmt::print("BL {0}: {1} HandleFilesToWriteRequest: Error {2}\n",
 			           self->id.shortString(),
@@ -300,12 +307,15 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 			           e.name());
 		}
 		if (canReplyWith(e)) {
-			TraceEvent("BulkLoaderFilesToWriteError", self->id).errorUnsuppressed(e).suppressFor(10.0);
+			TraceEvent("BulkLoaderFilesToWriteError", self->id)
+			    .errorUnsuppressed(e)
+			    .suppressFor(10.0)
+			    .detail("BulkLoadID", req.id);
 			++self->stats.errors;
 			req.reply.sendError(e);
 			return Void();
 		}
-		TraceEvent(SevError, "BulkLoaderFilesToWriteUnexpectedError", self->id).error(e);
+		TraceEvent(SevError, "BulkLoaderFilesToWriteUnexpectedError", self->id).error(e).detail("BulkLoadID", req.id);
 		throw e;
 	}
 }
@@ -318,6 +328,7 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 	// downgrade priority since this is likely LoadBalancedEndpoint
 	wait(delay(0, TaskPriority::DefaultEndpoint));
 	++self->stats.filesWrittenRequests;
+	++self->stats.activeRequests;
 
 	if (DBG_BL_REQUEST) {
 		fmt::print("BL {0}: {1} HandleFilesWrittenRequest: start\n", self->id.shortString(), req.id.printable());
@@ -364,6 +375,7 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 					    "BL {0}: {1} HandleFilesWrittenRequest: Done\n", self->id.shortString(), req.id.printable());
 				}
 				req.reply.send(Void());
+				--self->stats.activeRequests;
 				return Void();
 			}
 
@@ -473,6 +485,7 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 			idx += batchSize;
 		}
 	} catch (Error& e) {
+		--self->stats.activeRequests;
 		if (DBG_BL_REQUEST) {
 			fmt::print("BL {0}: {1} HandleFilesWrittenRequest: Error {2}\n",
 			           self->id.shortString(),
@@ -480,12 +493,117 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 			           e.name());
 		}
 		if (canReplyWith(e)) {
-			TraceEvent("BulkLoaderFilesWrittenError", self->id).errorUnsuppressed(e).suppressFor(10.0);
+			TraceEvent("BulkLoaderFilesWrittenError", self->id)
+			    .errorUnsuppressed(e)
+			    .suppressFor(10.0)
+			    .detail("BulkLoadID", req.id);
 			++self->stats.errors;
 			req.reply.sendError(e);
 			return Void();
 		}
-		TraceEvent(SevError, "BulkLoaderFilesWrittenUnexpectedError", self->id).error(e);
+		TraceEvent(SevError, "BulkLoaderFilesWrittenUnexpectedError", self->id).error(e).detail("BulkLoadID", req.id);
+		throw e;
+	}
+}
+
+ACTOR Future<Void> handleStartRequest(Reference<BulkLoaderData> self,
+                                      Reference<BlobWorkerData> bwData,
+                                      BulkLoadStartRequest req) {
+	wait(delay(0, TaskPriority::DefaultEndpoint));
+	++self->stats.startRequests;
+	++self->stats.activeRequests;
+	try {
+		Optional<Reference<Tenant>> tenant;
+		if (req.tenantInfo.hasTenant()) {
+			tenant = makeReference<Tenant>(req.tenantInfo.tenantId);
+		}
+		wait(self->db->startBulkLoadInternal(req.id, req.keyRange, tenant));
+		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
+			wait(Never());
+		}
+		req.reply.send(Void());
+		--self->stats.activeRequests;
+		return Void();
+	} catch (Error& e) {
+		--self->stats.activeRequests;
+		if (canReplyWith(e)) {
+			TraceEvent("BulkLoaderStartError", self->id)
+			    .errorUnsuppressed(e)
+			    .suppressFor(10.0)
+			    .detail("BulkLoadID", req.id);
+			++self->stats.errors;
+			req.reply.sendError(e);
+			return Void();
+		}
+		TraceEvent(SevError, "BulkLoaderStartUnexpectedError", self->id).error(e).detail("BulkLoadID", req.id);
+		throw e;
+	}
+}
+
+ACTOR Future<Void> handleStateChangeRequest(Reference<BulkLoaderData> self,
+                                            Reference<BlobWorkerData> bwData,
+                                            BulkLoadStateChangeRequest req) {
+	wait(delay(0, TaskPriority::DefaultEndpoint));
+	++self->stats.stateChangeRequests;
+	++self->stats.activeRequests;
+	try {
+		if (req.desired == BulkLoadStatus::State::CLEANUP) {
+			wait(self->db->cleanupBulkLoadInternal(req.id, req.tenantInfo.tenantId));
+		} else {
+			wait(self->db->updateBulkLoadState(req.id, req.desired, req.tenantInfo.tenantId));
+		}
+		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
+			wait(Never());
+		}
+		req.reply.send(Void());
+		--self->stats.activeRequests;
+		return Void();
+	} catch (Error& e) {
+		--self->stats.activeRequests;
+		if (canReplyWith(e)) {
+			TraceEvent("BulkLoaderStateChangeError", self->id)
+			    .errorUnsuppressed(e)
+			    .suppressFor(10.0)
+			    .detail("BulkLoadID", req.id)
+			    .detail("Desired", req.desired);
+			++self->stats.errors;
+			req.reply.sendError(e);
+			return Void();
+		}
+		TraceEvent(SevError, "BulkLoaderStateChangeUnexpectedError", self->id)
+		    .error(e)
+		    .detail("BulkLoadID", req.id)
+		    .detail("Desired", req.desired);
+		throw e;
+	}
+}
+
+ACTOR Future<Void> handleWaitCompleteRequest(Reference<BulkLoaderData> self,
+                                             Reference<BlobWorkerData> bwData,
+                                             BulkLoadWaitCompleteRequest req) {
+	wait(delay(0, TaskPriority::DefaultEndpoint));
+	++self->stats.waitCompleteRequests;
+	++self->stats.activeRequests;
+	try {
+		wait(self->db->waitBulkLoadStateAtLeast(req.id, BulkLoadStatus::State::DONE, req.tenantInfo.tenantId));
+		req.reply.send(Void());
+		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
+			wait(Never());
+		}
+		--self->stats.activeRequests;
+		return Void();
+	} catch (Error& e) {
+		--self->stats.activeRequests;
+		if (canReplyWith(e)) {
+			TraceEvent("BulkLoaderWaitCompleteError", self->id)
+			    .errorUnsuppressed(e)
+			    .suppressFor(10.0)
+			    .detail("BulkLoadID", req.id);
+			++self->stats.errors;
+			req.reply.sendError(e);
+			return Void();
+		}
+		TraceEvent(SevError, "BulkLoaderWaitCompleteError", self->id).error(e).detail("BulkLoadID", req.id);
 		throw e;
 	}
 }
@@ -504,6 +622,15 @@ ACTOR Future<Void> bulkLoader(BulkLoaderInterface interf,
 			}
 			when(BulkLoadFilesWrittenRequest req = waitNext(interf.filesWrittenRequest.getFuture())) {
 				self->addActor.send(handleFilesWrittenRequest(self, bwData, req));
+			}
+			when(BulkLoadStartRequest req = waitNext(interf.startRequest.getFuture())) {
+				self->addActor.send(handleStartRequest(self, bwData, req));
+			}
+			when(BulkLoadStateChangeRequest req = waitNext(interf.stateChangeRequest.getFuture())) {
+				self->addActor.send(handleStateChangeRequest(self, bwData, req));
+			}
+			when(BulkLoadWaitCompleteRequest req = waitNext(interf.waitCompleteRequest.getFuture())) {
+				self->addActor.send(handleWaitCompleteRequest(self, bwData, req));
 			}
 
 			when(wait(collection)) {

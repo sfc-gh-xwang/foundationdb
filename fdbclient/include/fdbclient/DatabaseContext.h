@@ -445,16 +445,22 @@ public:
 
 	// bulk load functions
 
-	// state management
+	// external state management apis - exposed to clients, go through interface/authz
 	Future<BulkLoadID> startBulkLoad(KeyRange range, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> bulkLoadAllFilesRegistered(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> abortBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> cleanupBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
-	// internal state management - not exposed to public clients
-	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadStatus::State desiredState);
-	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadStatus::State desiredState);
+	// internal state management helper functions - not exposed to public clients at all
+	Future<Void> startBulkLoadInternal(BulkLoadID id, KeyRange range, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> cleanupBulkLoadInternal(BulkLoadID id, Optional<int64_t> tenantIdToVerify = {});
+	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id,
+	                                      BulkLoadStatus::State desiredState,
+	                                      Optional<int64_t> tenantIdToVerify = {});
+	Future<Void> updateBulkLoadState(BulkLoadID id,
+	                                 BulkLoadStatus::State desiredState,
+	                                 Optional<int64_t> tenantIdToVerify = {});
 	Future<Void> cleanupAbortedBulkLoad(BulkLoadID id);
 	Future<Version> getBulkLoadVersion(BulkLoadID id);
 

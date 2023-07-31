@@ -20,6 +20,9 @@ struct BulkLoaderInterface {
 	RequestStream<ReplyPromise<Void>> waitFailure;
 	PublicRequestStream<struct BulkLoadFilesToWriteRequest> filesToWriteRequest;
 	PublicRequestStream<struct BulkLoadFilesWrittenRequest> filesWrittenRequest;
+	PublicRequestStream<struct BulkLoadStartRequest> startRequest;
+	PublicRequestStream<struct BulkLoadStateChangeRequest> stateChangeRequest;
+	PublicRequestStream<struct BulkLoadWaitCompleteRequest> waitCompleteRequest;
 
 	struct LocalityData locality;
 	UID myId;
@@ -33,6 +36,9 @@ struct BulkLoaderInterface {
 		streams.push_back(waitFailure.getReceiver());
 		streams.push_back(filesToWriteRequest.getReceiver());
 		streams.push_back(filesWrittenRequest.getReceiver());
+		streams.push_back(startRequest.getReceiver());
+		streams.push_back(stateChangeRequest.getReceiver());
+		streams.push_back(waitCompleteRequest.getReceiver());
 		FlowTransport::transport().addEndpoints(streams);
 	}
 	UID id() const { return myId; }
@@ -51,6 +57,12 @@ struct BulkLoaderInterface {
 			    waitFailure.getEndpoint().getAdjustedEndpoint(1));
 			filesWrittenRequest = PublicRequestStream<struct BulkLoadFilesWrittenRequest>(
 			    waitFailure.getEndpoint().getAdjustedEndpoint(2));
+			startRequest =
+			    PublicRequestStream<struct BulkLoadStartRequest>(waitFailure.getEndpoint().getAdjustedEndpoint(3));
+			stateChangeRequest = PublicRequestStream<struct BulkLoadStateChangeRequest>(
+			    waitFailure.getEndpoint().getAdjustedEndpoint(4));
+			waitCompleteRequest = PublicRequestStream<struct BulkLoadWaitCompleteRequest>(
+			    waitFailure.getEndpoint().getAdjustedEndpoint(5));
 		}
 	}
 };
@@ -108,6 +120,74 @@ struct BulkLoadFilesWrittenRequest : TimedRequest {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, tenantInfo, id, filesWritten, reply, arena);
+	}
+};
+
+struct BulkLoadStartRequest : TimedRequest {
+	constexpr static FileIdentifier file_identifier = 7208020;
+
+	TenantInfo tenantInfo;
+	Arena arena;
+	BulkLoadIDRef id;
+	KeyRangeRef keyRange;
+
+	// just an acknowledgement or error
+	ReplyPromise<Void> reply;
+
+	BulkLoadStartRequest() {}
+
+	// FIXME: add authorization once we can get tenant info from tenant!!
+	// bool verify() const noexcept { return tenantInfo.isAuthorized(); }
+	bool verify() const noexcept { return true; }
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, tenantInfo, id, keyRange, reply, arena);
+	}
+};
+
+struct BulkLoadStateChangeRequest : TimedRequest {
+	constexpr static FileIdentifier file_identifier = 1861282;
+
+	TenantInfo tenantInfo;
+	Arena arena;
+	BulkLoadIDRef id;
+	BulkLoadStatus::State desired;
+
+	// just an acknowledgement or error
+	ReplyPromise<Void> reply;
+
+	BulkLoadStateChangeRequest() {}
+
+	// FIXME: add authorization once we can get tenant info from tenant!!
+	// bool verify() const noexcept { return tenantInfo.isAuthorized(); }
+	bool verify() const noexcept { return true; }
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, tenantInfo, id, desired, reply, arena);
+	}
+};
+
+struct BulkLoadWaitCompleteRequest : TimedRequest {
+	constexpr static FileIdentifier file_identifier = 3425035;
+
+	TenantInfo tenantInfo;
+	Arena arena;
+	BulkLoadIDRef id;
+
+	// just an acknowledgement or error
+	ReplyPromise<Void> reply;
+
+	BulkLoadWaitCompleteRequest() {}
+
+	// FIXME: add authorization once we can get tenant info from tenant!!
+	// bool verify() const noexcept { return tenantInfo.isAuthorized(); }
+	bool verify() const noexcept { return true; }
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, tenantInfo, id, reply, arena);
 	}
 };
 
