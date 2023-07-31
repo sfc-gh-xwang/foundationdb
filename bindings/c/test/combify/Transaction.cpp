@@ -1,6 +1,5 @@
 #include "Combify.hpp"
 #include "TestHelpers.hpp"
-#include <optional>
 
 // Prevent ODR clash between sources
 namespace {
