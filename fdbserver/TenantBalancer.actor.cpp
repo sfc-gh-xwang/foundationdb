@@ -9,9 +9,9 @@
 #include "fdbclient/FDBOptions.g.h"
 #include "fdbclient/ReadYourWrites.h"
 #include "fdbclient/Tenant.h"
+#include "fdbclient/TenantBalancer.h"
 #include "fdbclient/TenantBalancerInterface.h"
 #include "fdbserver/ServerDBInfo.h"
-#include "fdbserver/TenantBalancer.actor.h"
 #include "fdbserver/WaitFailure.h"
 #include "flow/ApiVersion.h"
 #include "flow/TaskPriority.h"
@@ -49,6 +49,15 @@ struct TenantBalancer {
 	Counter abortMovementRequests;
 };
 
+static Future<Void> writeTenantBalancerInterfaceToDb(Database db, TenantBalancerInterface tbi) {
+	return runRYWTransactionVoid(db, [=](Reference<ReadYourWritesTransaction> tr) -> Future<Void> {
+		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+		tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+		TenantBalancerMetadata::getTenantBalancerInterface().set(tr, tbi);
+		return Void();
+	});
+}
+
 ACTOR Future<Void> getMovementStatus(TenantBalancer* self, GetMovementStatusRequest req) {
 	++self->getMovementStatusRequests;
 	TraceEvent(SevDebug, "TenantBalancerGetMovementStatus", self->tbi.id()).detail("TenantGroup", req.tenantGroupName);
@@ -83,8 +92,16 @@ ACTOR Future<Void> moveTenantGroup(TenantBalancer* self, MoveTenantGroupRequest 
 	++self->moveTenantsToClusterRequests;
 	TraceEvent("TenantBalancerMoveTenantsToCluster", self->tbi.id()).log();
 	wait(delay(0.1));
-	MoveTenantGroupReply reply;
-	req.reply.send(reply);
+
+	try {
+		MoveTenantGroupReply reply;
+		req.reply.send(reply);
+	} catch (Error& e) {
+		TraceEvent("TenantBalancerMoveTenantGroupError", self->tbi.id())
+		    .error(e)
+		    .detail("TenantGroup", req.tenantGroupName);
+		req.reply.sendError(e);
+	}
 	return Void();
 }
 
