@@ -236,11 +236,11 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Void> stageSingleFile(Database cx,
-	                                   BulkLoadOpsWorkload* self,
-	                                   BulkLoadID id,
-	                                   KeyRange range,
-	                                   Optional<Reference<Tenant>> tenant) {
+	ACTOR Future<std::string> stageSingleFile(Database cx,
+	                                          BulkLoadOpsWorkload* self,
+	                                          BulkLoadID id,
+	                                          KeyRange range,
+	                                          Optional<Reference<Tenant>> tenant) {
 		// sometimes request extra pointers
 		int count = deterministicRandom()->randomInt(1, 3);
 		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
@@ -252,7 +252,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// write tiny file
 		wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin, 1, 32));
 
-		// FIXME: actually write file to blob storage and stuff
 		BulkLoadWrittenFileRef writtenFile;
 		writtenFile.fileId = filesToWrite[0].fileId;
 		writtenFile.keyRange = range;
@@ -268,7 +267,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			wait(cx->markBulkLoadFilesWritten(id, filesWritten, tenant));
 		}
 
-		return Void();
+		return filesToWrite[0].filename.toString();
 	}
 
 	ACTOR Future<Void> doInjectAbort(Database cx,
@@ -521,8 +520,11 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		OVERLAPPING_FILES_SAME_REGISTER_UNIT,
 		OVERLAPPING_FILES_MULTIPLE_REGISTER_UNIT,
 		REGISTER_FILES_ALREADY_LOADING_UNIT,
+		REGISTER_NONEXISTENT_FILE_ID_UNIT,
 		REGISTER_NONEXISTENT_FILE_UNIT,
-		OP_COUNT = 18 /* keep this last */
+		UNUSED_POINTER_CLEANUP_UNIT,
+		ABORTED_POINTER_CLEANUP_UNIT,
+		OP_COUNT = 21 /* keep this last */
 	};
 
 	ACTOR Future<Void> expectAbortedBySystem(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
@@ -591,7 +593,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	ACTOR Future<Void> doneThenAbortUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that client cannot abort an already completed bulk load
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
+		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 		wait(cx->waitBulkLoadComplete(id, self->tenant));
 
@@ -854,8 +856,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> duplicateFilesMultipleRegisterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
-		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
+		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
+		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
 
 		wait(self->expectAbortedBySystem(cx, self, id));
 		return Void();
@@ -899,8 +901,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> overlappingFilesMultipleRegisterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
-		wait(self->stageSingleFile(cx, self, id, range, self->tenant));
+		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
+		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
 
 		wait(self->expectAbortedBySystem(cx, self, id));
 		return Void();
@@ -908,7 +910,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> registerFilesAlreadyLoadingUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin), self->tenant));
+		wait(success(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin), self->tenant)));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 
 		try {
@@ -941,7 +943,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Void> registerNonexistentFileUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+	ACTOR Future<Void> registerNonexistentFileIdUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 
 		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
@@ -961,6 +963,92 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		return Void();
+	}
+
+	ACTOR Future<Void> expectFileDeleted(BulkLoadOpsWorkload* self, std::string filename) {
+		try {
+			state Reference<BackupContainerFileSystem> blobConn = self->bstore->getForAccess(filename);
+			state Reference<IAsyncFile> reader = wait(blobConn->readFile(filename));
+			// read 1 byte from file to make sure it exists
+			state uint8_t data;
+			int readSize = wait(reader->read(&data, 1, 0));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_file_not_found);
+		}
+		return Void();
+	}
+
+	ACTOR Future<Void> registerNonexistentFileUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
+		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
+
+		state Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+		filesWritten.arena().dependsOn(filesToWrite.arena());
+
+		// don't actually write file to blob!
+
+		BulkLoadWrittenFileRef writtenFile;
+		writtenFile.fileId = filesToWrite[0].fileId;
+		writtenFile.keyRange = range;
+		writtenFile.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile);
+
+		try {
+			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_file_missing);
+		}
+
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		return Void();
+	}
+
+	ACTOR Future<Void> unusedPointerCleanupUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state std::string stagedFile =
+		    wait(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin.withSuffix("a"_sr)), self->tenant));
+
+		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
+		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
+
+		// write file but DON'T register it
+		wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin.withSuffix("b"_sr), 1, 32));
+
+		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
+		wait(cx->waitBulkLoadComplete(id, self->tenant));
+
+		wait(self->expectFileDeleted(self, filesToWrite[0].filename.toString()));
+		// FIXME: once load actually keeps granules this needs to be inverted, we should check that the file is kept
+		wait(self->expectFileDeleted(self, stagedFile));
+
+		// cleanup
+		wait(cx->cleanupBulkLoad(id, self->tenant));
+		return Void();
+	}
+
+	ACTOR Future<Void> abortedPointerCleanupUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state std::string stagedFile =
+		    wait(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin.withSuffix("a"_sr)), self->tenant));
+
+		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
+		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
+
+		// write file but DON'T register it
+		wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin.withSuffix("b"_sr), 1, 32));
+
+		wait(cx->abortBulkLoad(id, self->tenant));
+		wait(self->expectAbortedBySystem(cx, self, id));
+
+		wait(self->expectFileDeleted(self, stagedFile));
+		wait(self->expectFileDeleted(self, filesToWrite[0].filename.toString()));
+
 		return Void();
 	}
 
@@ -1039,8 +1127,14 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->overlappingFilesSameRegisterUnit(cx, self, range));
 			} else if (op == REGISTER_FILES_ALREADY_LOADING_UNIT) {
 				wait(self->registerFilesAlreadyLoadingUnit(cx, self, range));
+			} else if (op == REGISTER_NONEXISTENT_FILE_ID_UNIT) {
+				wait(self->registerNonexistentFileIdUnit(cx, self, range));
 			} else if (op == REGISTER_NONEXISTENT_FILE_UNIT) {
 				wait(self->registerNonexistentFileUnit(cx, self, range));
+			} else if (op == UNUSED_POINTER_CLEANUP_UNIT) {
+				wait(self->unusedPointerCleanupUnit(cx, self, range));
+			} else if (op == ABORTED_POINTER_CLEANUP_UNIT) {
+				wait(self->abortedPointerCleanupUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}
