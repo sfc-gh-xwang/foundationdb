@@ -16,7 +16,7 @@ const KeyRangeRef bulkLoadVersionKeys("\xff\x02/bulkLoadVersion/"_sr, "\xff\x02/
 const KeyRangeRef bulkLoadRangeKeys("\xff\x02/bulkLoadRanges/"_sr, "\xff\x02/bulkLoadRanges0"_sr);
 // put in the transaction state store in case we eventually want the commit proxies to be able to serve this directly
 // without reading the db for changes
-const KeyRangeRef bulkLoaderListKeys("\xff\x02/bulkLoaderList/"_sr, "\xff\x02/bulkLoaderList0"_sr);
+const KeyRangeRef bulkLoaderListKeys("\xff/bulkLoaderList/"_sr, "\xff/bulkLoaderList0"_sr);
 
 const KeyRangeRef bulkLoadCreatedFilePointersKeys("\xff\x02/bulkLoadCreatedFiles/"_sr,
                                                   "\xff\x02/bulkLoadCreatedFiles0"_sr);

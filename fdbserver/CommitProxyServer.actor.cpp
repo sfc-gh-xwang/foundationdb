@@ -2967,8 +2967,8 @@ ACTOR static Future<Void> bgReadRequestServer(CommitProxyInterface proxy,
 // Right now this just proxies a call to read the system keyspace to allow untrusted clients to bypass the system
 // keyspace.
 ACTOR static Future<Void> doBulkLoadersRequest(GetBulkLoaderInterfacesRequest req, ProxyCommitData* commitData) {
-	// FIXME: data is already in transaction state store, just add it there and use that instead
-	// We can't respond to these requests until we have valid txnStateStore
+	// FIXME: data is already in transaction state store, just add it there and use that instead or cache result for
+	// small time period We can't respond to these requests until we have valid txnStateStore
 	wait(commitData->validState.getFuture());
 
 	wait(delay(0, TaskPriority::DefaultEndpoint));
