@@ -1,3 +1,8 @@
+[configuration]
+storageEngineExcludeTypes = [4, 5]
+buggify = false
+disableAesGcm = true
+
 [[test]]
 testTitle = 'SecondCycleTest'
 simBackupAgents = 'BackupToFile'

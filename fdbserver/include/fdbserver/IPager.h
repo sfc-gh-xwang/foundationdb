@@ -428,7 +428,7 @@ public:
 			    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
 			    getAuthTokenAlgoFromMode(
 			        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-			    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
+			    encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE),
 			    BlobCipherMetrics::KV_REDWOOD);
 			Arena arena;
 

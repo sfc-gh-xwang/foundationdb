@@ -1,5 +1,6 @@
 [configuration]
 extraMachineCountDC = 2
+disableAesGcm = true
 
 [[test]]
 testTitle = 'CloggedConfigureDatabaseTest'

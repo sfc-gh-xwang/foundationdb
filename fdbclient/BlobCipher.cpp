@@ -946,6 +946,16 @@ int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const En
 	}
 }
 
+int getIVLengthFromEncryptMode(EncryptCipherMode mode) {
+	if (mode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
+		return AES_256_CTR_IV_LENGTH;
+	} else if (mode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
+		return AES_256_GCM_IV_LENGTH;
+	}
+	TraceEvent(SevWarn, "GetIVLengthModeUnsupported").detail("Mode", mode);
+	throw not_implemented();
+}
+
 void BlobCipherDetails::validateCipherDetailsWithCipherKey(Reference<BlobCipherKey> cipherKey) {
 	if (!(baseCipherId == cipherKey->getBaseCipherId() && encryptDomainId == cipherKey->getDomainId() &&
 	      salt == cipherKey->getSalt())) {

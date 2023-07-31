@@ -51,6 +51,7 @@
 #include "flow/CompressionUtils.h"
 #include "flow/EncryptUtils.h"
 #include "flow/Error.h"
+#include "flow/Knobs.h"
 #include "flow/flow.h"
 #include "flow/IRandom.h"
 #include "flow/network.h"
@@ -380,8 +381,9 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<Blob
 	ASSERT(systemCipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(systemCipherKeys.cipherHeaderKey, *arena);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, *arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
+	int ivLength = getIVLengthFromEncryptMode(encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE));
+	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
+	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), ivLength);
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
 		TraceEvent(SevDebug, "GetLatestGranuleCipherKey")
@@ -436,7 +438,11 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
-	ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
+	if (encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE) == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
+		ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
+	} else {
+		ASSERT_EQ(ivRef.size(), AES_256_GCM_IV_LENGTH);
+	}
 	cipherKeysCtx.ivRef = StringRef(*arena, ivRef);
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {

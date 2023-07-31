@@ -402,8 +402,9 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestManifestCipherKeys(Reference<Asy
 	ASSERT(cipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(cipherKeys.cipherHeaderKey, *arena);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, *arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
+	int ivLength = getIVLengthFromEncryptMode(encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE));
+	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
+	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), ivLength);
 
 	return cipherKeysCtx;
 }

@@ -523,7 +523,7 @@ private:
 			    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
 			    getAuthTokenAlgoFromMode(
 			        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-			    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
+			    encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE),
 			    BlobCipherMetrics::KV_MEMORY);
 			uint16_t encryptHeaderSize;
 			// TODO: If possible we want to avoid memcpy to the disk log by using the same arena used by IDiskQueue

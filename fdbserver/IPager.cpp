@@ -27,6 +27,7 @@
 
 TEST_CASE("/fdbserver/IPager/ArenaPage/PageContentChecksum") {
 	auto& g_knobs = IKnobCollection::getMutableGlobalKnobCollection();
+	g_knobs.setKnob("encrypt_mode", KnobValueRef::create(std::string{ "AES-256-CTR" }));
 	for (uint8_t et = 0; et < EncodingType::MAX_ENCODING_TYPE; et++) {
 		constexpr int PAGE_SIZE = 8 * 1024;
 		EncodingType encodingType = (EncodingType)et;

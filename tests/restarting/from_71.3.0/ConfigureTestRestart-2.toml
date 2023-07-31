@@ -1,5 +1,6 @@
 [configuration]
 randomlyRenameZoneId=true
+disableAesGcm = true
 
 [[test]]
 testTitle='CloggedConfigureDatabaseTest'

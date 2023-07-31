@@ -1181,5 +1181,6 @@ void computeAuthToken(const std::vector<std::pair<const uint8_t*, size_t>>& payl
 
 EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptAuthTokenMode mode);
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo);
+int getIVLengthFromEncryptMode(EncryptCipherMode mode);
 
 #endif // FDBCLIENT_BLOB_CIPHER_H

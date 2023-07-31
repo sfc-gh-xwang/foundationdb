@@ -2196,6 +2196,9 @@ int main(int argc, char* argv[]) {
 				g_knobs.setKnob("encrypt_header_auth_token_algo",
 				                KnobValue::create((int)ini.GetLongValue(
 				                    "META", "encryptHeaderAuthTokenAlgo", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ALGO)));
+				g_knobs.setKnob("encrypt_mode",
+				                KnobValue::create((std::string)ini.GetValue(
+				                    "META", "encryptMode", FLOW_KNOBS->ENCRYPT_MODE.c_str())));
 
 				g_knobs.setKnob(
 				    "shard_encode_location_metadata",

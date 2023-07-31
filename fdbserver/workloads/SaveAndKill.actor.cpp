@@ -82,6 +82,7 @@ struct SaveAndKillWorkload : TestWorkload {
 		ini.SetBoolValue("META", "enableShardEncodeLocationMetadata", SERVER_KNOBS->SHARD_ENCODE_LOCATION_METADATA);
 		ini.SetBoolValue("META", "encryptHeaderAuthTokenEnabled", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED);
 		ini.SetLongValue("META", "encryptHeaderAuthTokenAlgo", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ALGO);
+		ini.SetValue("META", "encryptMode", FLOW_KNOBS->ENCRYPT_MODE.c_str());
 
 		std::vector<ISimulator::ProcessInfo*> processes = g_simulator->getAllProcesses();
 		std::map<NetworkAddress, ISimulator::ProcessInfo*> rebootingProcesses =

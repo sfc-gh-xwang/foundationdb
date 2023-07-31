@@ -533,7 +533,6 @@ public:
 struct SnapshotFileBackupEncryptionKeys {
 	Reference<BlobCipherKey> textCipherKey;
 	Optional<Reference<BlobCipherKey>> headerCipherKey;
-	StringRef ivRef;
 };
 
 // File Format handlers.
@@ -651,12 +650,10 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
 		    self->cipherKeys.textCipherKey,
 		    self->cipherKeys.headerCipherKey,
-		    self->cipherKeys.ivRef.begin(),
-		    AES_256_CTR_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
 		    getAuthTokenAlgoFromMode(
 		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
+		    encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE),
 		    BlobCipherMetrics::BACKUP);
 		int64_t payloadSize = self->wPtr - self->dataPayloadStart;
 		StringRef encryptedData;
@@ -686,9 +683,6 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		self->cipherKeys.textCipherKey = textAndHeaderCipherKeys.cipherTextKey;
 		self->cipherKeys.headerCipherKey = textAndHeaderCipherKeys.cipherHeaderKey;
 
-		// Set ivRef
-		self->cipherKeys.ivRef = makeString(AES_256_CTR_IV_LENGTH, *self->arena);
-		deterministicRandom()->randomBytes(mutateString(self->cipherKeys.ivRef), AES_256_CTR_IV_LENGTH);
 		return Void();
 	}
 
