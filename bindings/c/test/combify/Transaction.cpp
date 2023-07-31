@@ -111,52 +111,52 @@ AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& 
 	}
 });
 
-AddTest testReadSystemKeyDisallowed("ReadSystemKeyDisallowed",
-                                    AND(withoutGrvCache, asTrustedClient),
-                                    [](const TestEnv& env) {
-	                                    auto db = env.newDatabase();
-	                                    auto tr = env.newTransaction(db);
-	                                    try {
-		                                    getValue(tr, "\xff/coordinators"_br, false, "ReadSystemKeyFail");
-		                                    ASSERT(false);
-	                                    } catch (fdb::Error e) {
-		                                    ASSERT(e.code() == 2004); // key_outside_legal_range
-	                                    }
-                                    });
-
 AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& env) {
 	auto db = env.newDatabase();
-	auto tr = env.newTransaction(db);
-	auto f = getValue(tr, "\xff/coordinators"_br, false, "ReadSystemKey", { FDB_TR_OPTION_READ_SYSTEM_KEYS });
-	ASSERT(f.get().has_value(), "Unexpected null value from read");
-});
 
-AddTest testWriteSystemKeyDisallowed("WriteSystemKeyDisallowed",
-                                     AND(withoutGrvCache, asTrustedClient),
-                                     [](const TestEnv& env) {
-	                                     auto db = env.newDatabase();
-	                                     auto tr = env.newTransaction(db);
-	                                     try {
-		                                     auto f = setValue(tr, "\xff\x02"_br, "bar"_br, "WriteSystemKeyFail");
-		                                     ASSERT(false);
-	                                     } catch (fdb::Error e) {
-		                                     ASSERT(e.code() == 2004); // key_outside_legal_range
-	                                     }
-                                     });
+	for (auto const enableReadSystemKeys : { false, true }) {
+		auto tr = env.newTransaction(db);
+		try {
+			std::vector<FDBTransactionOption> options;
+			if (enableReadSystemKeys) {
+				options.push_back(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+			}
+			auto f = getValue(tr, "\xff/coordinators"_br, false, "ReadSystemKey", options);
+			ASSERT(enableReadSystemKeys);
+			// Only when enableReadSystemKeys is set we hit this line
+			ASSERT(f.get().has_value(), "Unexpected null value from read");
+		} catch (fdb::Error e) {
+			ASSERT(!enableReadSystemKeys, "Can only hit this assert when FDB_TR_OPTION_READ_SYSTEM_KEYS is disabled");
+			ASSERT(e.code() == 2004); // key_outside_legal_range
+		}
+	}
+});
 
 AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& env) {
 	auto db = env.newDatabase();
-	auto tr = env.newTransaction(db);
 	auto syskey = "\xff\x02"_br;
 
-	// Write a system key
-	setValue(tr, syskey, "bar"_br, "WriteSystemKey", { FDB_TR_OPTION_ACCESS_SYSTEM_KEYS });
+	for (auto const enableWriteSystemKeys : { false, true }) {
+		auto tr = env.newTransaction(db);
+		try {
+			// Write a system key
+			std::vector<FDBTransactionOption> options;
+			if (enableWriteSystemKeys) {
+				options.push_back(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
+			}
+			setValue(tr, syskey, "bar"_br, "WriteSystemKey", options);
 
-	// Read and verify the system key value
-	tr = env.newTransaction(db);
-	auto f = getValue(tr, syskey, false, "ReadBackSystemKey", { FDB_TR_OPTION_READ_SYSTEM_KEYS });
+			// Read and verify the system key value
+			tr = env.newTransaction(db);
+			auto f = getValue(tr, syskey, false, "ReadBackSystemKey", { FDB_TR_OPTION_READ_SYSTEM_KEYS });
 
-	ASSERT(f.get() == "bar"_br, "unexpected read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
+			ASSERT(enableWriteSystemKeys);
+			ASSERT(f.get() == "bar"_br, "unexpected read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
+		} catch (fdb::Error e) {
+			ASSERT(!enableWriteSystemKeys, "Can only hit this assert when FDB_TR_OPTION_READ_SYSTEM_KEYS is disabled");
+			ASSERT(e.code() == 2004); // key_outside_legal_range
+		}
+	}
 });
 
 } // anonymous namespace
