@@ -220,7 +220,7 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 	Version initialClusterVersion = -1;
 	Standalone<StringRef> dbId;
 
-	MasterInterface masterInterface;
+	Optional<MasterInterface> masterInterface;
 	LifetimeToken masterLifetime;
 	const ClusterControllerFullInterface
 	    clusterController; // If the cluster controller changes, this master will die, so this is immutable.
@@ -231,6 +231,7 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 	Reference<AsyncVar<ServerDBInfo> const> dbInfo;
 	int64_t registrationCount; // Number of different MasterRegistrationRequests sent to clusterController
 
+	double recoveryStart;
 	RecoveryState recoveryState;
 
 	PromiseStream<Future<Void>> addActor;
@@ -261,16 +262,17 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 
 	ClusterRecoveryData(ClusterControllerData* controllerData,
 	                    Reference<AsyncVar<ServerDBInfo> const> const& dbInfo,
-	                    MasterInterface const& masterInterface,
 	                    LifetimeToken const& masterLifetimeToken,
 	                    ServerCoordinators const& coordinators,
 	                    ClusterControllerFullInterface const& clusterController,
 	                    Standalone<StringRef> const& dbId,
 	                    PromiseStream<Future<Void>> const& addActor,
-	                    bool forceRecovery)
+	                    bool forceRecovery,
+	                    double recoveryStart,
+	                    UID const& dbgid)
 
 	  : controllerData(controllerData),
-	    dbgid(masterInterface.id()),
+	    dbgid(dbgid),
 	    lastEpochEnd(invalidVersion),
 	    recoveryTransactionVersion(invalidVersion),
 	    lastCommitTime(0),
@@ -282,12 +284,12 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 	    lastVersionTime(0),
 	    memoryLimit(2e9),
 	    dbId(dbId),
-	    masterInterface(masterInterface),
 	    masterLifetime(masterLifetimeToken),
 	    clusterController(clusterController),
 	    cstate(coordinators, addActor, dbgid),
 	    dbInfo(dbInfo),
 	    registrationCount(0),
+	    recoveryStart(recoveryStart),
 	    addActor(addActor),
 	    recruitmentStalled(makeReference<AsyncVar<bool>>(false)),
 	    forceRecovery(forceRecovery),

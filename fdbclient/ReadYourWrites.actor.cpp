@@ -1391,54 +1391,29 @@ public:
 	}
 
 	ACTOR static Future<Void> commit(ReadYourWritesTransaction* ryw) {
-		try {
-			ryw->commitStarted = true;
+		ryw->commitStarted = true;
 
-			if (ryw->options.specialKeySpaceChangeConfiguration)
-				wait(ryw->getDatabase()->specialKeySpace->commit(ryw));
+		if (ryw->options.specialKeySpaceChangeConfiguration)
+			wait(ryw->getDatabase()->specialKeySpace->commit(ryw));
 
-			Future<Void> ready = ryw->reading;
-			wait(ryw->resetPromise.getFuture() || ready);
+		Future<Void> ready = ryw->reading;
+		wait(ryw->resetPromise.getFuture() || ready);
 
-			if (ryw->options.readYourWritesDisabled) {
+		if (ryw->options.readYourWritesDisabled) {
 
-				// Stash away conflict ranges to read after commit
-				ryw->nativeReadRanges = ryw->tr.readConflictRanges();
-				ryw->nativeWriteRanges = ryw->tr.writeConflictRanges();
-				for (const auto& f : ryw->tr.getExtraReadConflictRanges()) {
-					if (f.isReady() && f.get().first < f.get().second)
-						ryw->nativeReadRanges.push_back(
-						    ryw->nativeReadRanges.arena(),
-						    KeyRangeRef(f.get().first, f.get().second)
-						        .withPrefix(readConflictRangeKeysRange.begin, ryw->nativeReadRanges.arena()));
-				}
-
-				if (ryw->resetPromise.isSet())
-					throw ryw->resetPromise.getFuture().getError();
-				if (CLIENT_BUGGIFY && ryw->options.timeoutInSeconds > 0) {
-					simulateTimeoutInFlightCommit(ryw);
-					throw transaction_timed_out();
-				}
-				wait(ryw->resetPromise.getFuture() || ryw->tr.commit());
-
-				ryw->debugLogRetries();
-
-				if (!ryw->tr.apiVersionAtLeast(410)) {
-					ryw->reset();
-				}
-
-				return Void();
+			// Stash away conflict ranges to read after commit
+			ryw->nativeReadRanges = ryw->tr.readConflictRanges();
+			ryw->nativeWriteRanges = ryw->tr.writeConflictRanges();
+			for (const auto& f : ryw->tr.getExtraReadConflictRanges()) {
+				if (f.isReady() && f.get().first < f.get().second)
+					ryw->nativeReadRanges.push_back(
+					    ryw->nativeReadRanges.arena(),
+					    KeyRangeRef(f.get().first, f.get().second)
+					        .withPrefix(readConflictRangeKeysRange.begin, ryw->nativeReadRanges.arena()));
 			}
 
-			ryw->writeRangeToNativeTransaction(KeyRangeRef(StringRef(), allKeys.end));
-
-			auto conflictRanges = ryw->readConflicts.ranges();
-			for (auto iter = conflictRanges.begin(); iter != conflictRanges.end(); ++iter) {
-				if (iter->value()) {
-					ryw->tr.addReadConflictRange(iter->range());
-				}
-			}
-
+			if (ryw->resetPromise.isSet())
+				throw ryw->resetPromise.getFuture().getError();
 			if (CLIENT_BUGGIFY && ryw->options.timeoutInSeconds > 0) {
 				simulateTimeoutInFlightCommit(ryw);
 				throw transaction_timed_out();
@@ -1446,22 +1421,28 @@ public:
 			wait(ryw->resetPromise.getFuture() || ryw->tr.commit());
 
 			ryw->debugLogRetries();
-			if (!ryw->tr.apiVersionAtLeast(410)) {
-				ryw->reset();
-			}
 
 			return Void();
-		} catch (Error& e) {
-			if (!ryw->tr.apiVersionAtLeast(410)) {
-				ryw->commitStarted = false;
-				if (!ryw->resetPromise.isSet()) {
-					ryw->tr.reset();
-					ryw->resetRyow();
-				}
-			}
-
-			throw;
 		}
+
+		ryw->writeRangeToNativeTransaction(KeyRangeRef(StringRef(), allKeys.end));
+
+		auto conflictRanges = ryw->readConflicts.ranges();
+		for (auto iter = conflictRanges.begin(); iter != conflictRanges.end(); ++iter) {
+			if (iter->value()) {
+				ryw->tr.addReadConflictRange(iter->range());
+			}
+		}
+
+		if (CLIENT_BUGGIFY && ryw->options.timeoutInSeconds > 0) {
+			simulateTimeoutInFlightCommit(ryw);
+			throw transaction_timed_out();
+		}
+		wait(ryw->resetPromise.getFuture() || ryw->tr.commit());
+
+		ryw->debugLogRetries();
+
+		return Void();
 	}
 
 	// This function must not block unless a non-empty commitFuture is passed in
@@ -1563,11 +1544,7 @@ public:
 			return Void();
 		} catch (Error& e) {
 			if (!ryw->resetPromise.isSet()) {
-				if (ryw->tr.apiVersionAtLeast(610)) {
-					ryw->resetPromise.sendError(transaction_cancelled());
-				} else {
-					ryw->resetRyow();
-				}
+				ryw->resetPromise.sendError(transaction_cancelled());
 			}
 			if (e.code() == error_code_broken_promise)
 				throw transaction_cancelled();
@@ -1644,11 +1621,9 @@ void ReadYourWritesTransaction::resetTimeout() {
 }
 
 Future<Version> ReadYourWritesTransaction::getReadVersion() {
-	if (tr.apiVersionAtLeast(101)) {
-		if (resetPromise.isSet())
-			return resetPromise.getFuture().getError();
-		return RYWImpl::getReadVersion(this);
-	}
+	if (resetPromise.isSet())
+		return resetPromise.getFuture().getError();
+	return RYWImpl::getReadVersion(this);
 	return tr.getReadVersion();
 }
 
@@ -1671,45 +1646,9 @@ ACTOR Future<ValueReadResult> getJSON(Database db) {
 Future<ValueReadResult> ReadYourWritesTransaction::get(const Key& key, Snapshot snapshot) {
 	CODE_PROBE(true, "ReadYourWritesTransaction::get");
 
-	if (getDatabase()->apiVersionAtLeast(630)) {
-		if (specialKeys.contains(key)) {
-			CODE_PROBE(true, "Special keys get");
-			return getDatabase()->specialKeySpace->get(this, key);
-		}
-	} else {
-		if (key == "\xff\xff/status/json"_sr) {
-			if (tr.getDatabase().getPtr() && tr.getDatabase()->getConnectionRecord()) {
-				++tr.getDatabase()->transactionStatusRequests;
-				return getJSON(tr.getDatabase());
-			} else {
-				return ValueReadResult();
-			}
-		}
-
-		if (key == "\xff\xff/cluster_file_path"_sr) {
-			try {
-				if (tr.getDatabase().getPtr() && tr.getDatabase()->getConnectionRecord()) {
-					Optional<Value> output = StringRef(tr.getDatabase()->getConnectionRecord()->getLocation());
-					return ValueReadResult(std::move(output));
-				}
-			} catch (Error& e) {
-				return e;
-			}
-			return ValueReadResult();
-		}
-
-		if (key == "\xff\xff/connection_string"_sr) {
-			try {
-				if (tr.getDatabase().getPtr() && tr.getDatabase()->getConnectionRecord()) {
-					Reference<IClusterConnectionRecord> f = tr.getDatabase()->getConnectionRecord();
-					Optional<Value> output = StringRef(f->getConnectionString().toString());
-					return ValueReadResult(std::move(output));
-				}
-			} catch (Error& e) {
-				return e;
-			}
-			return ValueReadResult();
-		}
+	if (specialKeys.contains(key)) {
+		CODE_PROBE(true, "Special keys get");
+		return getDatabase()->specialKeySpace->get(this, key);
 	}
 
 	if (checkUsedDuringCommit()) {
@@ -1753,20 +1692,9 @@ Future<RangeReadResult> ReadYourWritesTransaction::getRange(KeySelector begin,
                                                             GetRangeLimits limits,
                                                             Snapshot snapshot,
                                                             Reverse reverse) {
-	if (getDatabase()->apiVersionAtLeast(630)) {
-		if (specialKeys.contains(begin.getKey()) && specialKeys.begin <= end.getKey() &&
-		    end.getKey() <= specialKeys.end) {
-			CODE_PROBE(true, "Special key space get range");
-			return getDatabase()->specialKeySpace->getRange(this, begin, end, limits, reverse);
-		}
-	} else {
-		if (begin.getKey() == "\xff\xff/worker_interfaces"_sr) {
-			if (tr.getDatabase().getPtr() && tr.getDatabase()->getConnectionRecord()) {
-				return getWorkerInterfaces(tr.getDatabase()->getConnectionRecord());
-			} else {
-				return RangeReadResult();
-			}
-		}
+	if (specialKeys.contains(begin.getKey()) && specialKeys.begin <= end.getKey() && end.getKey() <= specialKeys.end) {
+		CODE_PROBE(true, "Special key space get range");
+		return getDatabase()->specialKeySpace->getRange(this, begin, end, limits, reverse);
 	}
 
 	if (checkUsedDuringCommit()) {
@@ -1823,15 +1751,8 @@ Future<MappedRangeReadResult> ReadYourWritesTransaction::getMappedRange(KeySelec
                                                                         int matchIndex,
                                                                         Snapshot snapshot,
                                                                         Reverse reverse) {
-	if (getDatabase()->apiVersionAtLeast(630)) {
-		if (specialKeys.contains(begin.getKey()) && specialKeys.begin <= end.getKey() &&
-		    end.getKey() <= specialKeys.end) {
-			throw client_invalid_operation(); // Not support special keys.
-		}
-	} else {
-		if (begin.getKey() == "\xff\xff/worker_interfaces"_sr) {
-			throw client_invalid_operation(); // Not support special keys.
-		}
+	if (specialKeys.contains(begin.getKey()) && specialKeys.begin <= end.getKey() && end.getKey() <= specialKeys.end) {
+		throw client_invalid_operation(); // Not support special keys.
 	}
 
 	if (checkUsedDuringCommit()) {
@@ -1987,11 +1908,9 @@ void ReadYourWritesTransaction::addReadConflictRange(KeyRangeRef const& keys) {
 		throw used_during_commit();
 	}
 
-	if (tr.apiVersionAtLeast(300)) {
-		if ((keys.begin > getMaxReadKey() || keys.end > getMaxReadKey()) &&
-		    (keys.begin != metadataVersionKey || keys.end != metadataVersionKeyEnd)) {
-			throw key_outside_legal_range();
-		}
+	if ((keys.begin > getMaxReadKey() || keys.end > getMaxReadKey()) &&
+	    (keys.begin != metadataVersionKey || keys.end != metadataVersionKeyEnd)) {
+		throw key_outside_legal_range();
 	}
 
 	// There aren't any keys in the database with size larger than max key size, so if range contains large keys
@@ -2280,25 +2199,13 @@ void ReadYourWritesTransaction::atomicOp(const KeyRef& key, const ValueRef& oper
 	if (operand.size() > CLIENT_KNOBS->VALUE_SIZE_LIMIT)
 		throw value_too_large();
 
-	if (tr.apiVersionAtLeast(510)) {
-		if (operationType == MutationRef::Min)
-			operationType = MutationRef::MinV2;
-		else if (operationType == MutationRef::And)
-			operationType = MutationRef::AndV2;
-	}
+	if (operationType == MutationRef::Min)
+		operationType = MutationRef::MinV2;
+	else if (operationType == MutationRef::And)
+		operationType = MutationRef::AndV2;
 
-	KeyRef k;
-	if (!tr.apiVersionAtLeast(520) && operationType == MutationRef::SetVersionstampedKey) {
-		k = key.withSuffix("\x00\x00"_sr, arena);
-	} else {
-		k = KeyRef(arena, key);
-	}
-	ValueRef v;
-	if (!tr.apiVersionAtLeast(520) && operationType == MutationRef::SetVersionstampedValue) {
-		v = operand.withSuffix("\x00\x00\x00\x00"_sr, arena);
-	} else {
-		v = ValueRef(arena, operand);
-	}
+	KeyRef k = KeyRef(arena, key);
+	ValueRef v = ValueRef(arena, operand);
 
 	if (operationType == MutationRef::SetVersionstampedKey) {
 		CODE_PROBE(options.readYourWritesDisabled, "SetVersionstampedKey without ryw enabled");
@@ -2342,27 +2249,7 @@ void ReadYourWritesTransaction::set(const KeyRef& key, const ValueRef& value) {
 	}
 
 	if (specialKeys.contains(key)) {
-		if (getDatabase()->apiVersionAtLeast(700)) {
-			return getDatabase()->specialKeySpace->set(this, key, value);
-		} else {
-			// These three special keys are deprecated in 7.0 and an alternative C API is added
-			// TODO : Rewrite related code using C api
-			if (key == "\xff\xff/reboot_worker"_sr) {
-				BinaryReader::fromStringRef<ClientWorkerInterface>(value, IncludeVersion())
-				    .reboot.send(RebootRequest());
-				return;
-			}
-			if (key == "\xff\xff/suspend_worker"_sr) {
-				BinaryReader::fromStringRef<ClientWorkerInterface>(value, IncludeVersion())
-				    .reboot.send(RebootRequest(false, false, options.timeoutInSeconds));
-				return;
-			}
-			if (key == "\xff\xff/reboot_and_check_worker"_sr) {
-				BinaryReader::fromStringRef<ClientWorkerInterface>(value, IncludeVersion())
-				    .reboot.send(RebootRequest(false, true));
-				return;
-			}
-		}
+		return getDatabase()->specialKeySpace->set(this, key, value);
 	}
 
 	AddConflictRange addWriteConflict{ !options.getAndResetWriteConflictDisabled() };
@@ -2402,9 +2289,7 @@ void ReadYourWritesTransaction::clear(const KeyRangeRef& range) {
 	}
 
 	if (specialKeys.contains(range)) {
-		if (getDatabase()->apiVersionAtLeast(700)) {
-			return getDatabase()->specialKeySpace->clear(this, range);
-		}
+		return getDatabase()->specialKeySpace->clear(this, range);
 	}
 
 	KeyRef maxKey = getMaxWriteKey();
@@ -2451,9 +2336,7 @@ void ReadYourWritesTransaction::clear(const KeyRef& key) {
 	}
 
 	if (specialKeys.contains(key)) {
-		if (getDatabase()->apiVersionAtLeast(700)) {
-			return getDatabase()->specialKeySpace->clear(this, key);
-		}
+		return getDatabase()->specialKeySpace->clear(this, key);
 	}
 
 	if (key >= getMaxWriteKey())
@@ -2488,7 +2371,7 @@ Future<Void> ReadYourWritesTransaction::watch(const Key& key) {
 	if (options.readYourWritesDisabled)
 		return watches_disabled();
 
-	if (key >= allKeys.end || (key >= getMaxReadKey() && key != metadataVersionKey && tr.apiVersionAtLeast(300)))
+	if (key >= allKeys.end || (key >= getMaxReadKey() && key != metadataVersionKey))
 		return key_outside_legal_range();
 
 	if (key.size() > getMaxWriteKeySize(key, getTransactionState()->options.rawAccess)) {
@@ -2503,10 +2386,8 @@ void ReadYourWritesTransaction::addWriteConflictRange(KeyRangeRef const& keys) {
 		throw used_during_commit();
 	}
 
-	if (tr.apiVersionAtLeast(300)) {
-		if (keys.begin > getMaxWriteKey() || keys.end > getMaxWriteKey()) {
-			throw key_outside_legal_range();
-		}
+	if (keys.begin > getMaxWriteKey() || keys.end > getMaxWriteKey()) {
+		throw key_outside_legal_range();
 	}
 
 	// There aren't any keys in the database with size larger than the max key size, so if range contains large keys
@@ -2766,10 +2647,8 @@ void ReadYourWritesTransaction::resetRyow() {
 
 	deferredError = Error();
 
-	if (tr.apiVersionAtLeast(16)) {
-		options.reset(tr);
-		applyPersistentOptions();
-	}
+	options.reset(tr);
+	applyPersistentOptions();
 
 	if (!oldReset.isSet())
 		oldReset.sendError(transaction_cancelled());

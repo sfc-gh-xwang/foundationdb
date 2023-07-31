@@ -824,7 +824,9 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
 
 	state RolesInfo roles;
 
-	roles.addRole("master", db->get().master);
+	if (db->get().master.present()) {
+		roles.addRole("master", db->get().master.get());
+	}
 	roles.addRole("cluster_controller", db->get().clusterInterface.clientInterface);
 
 	if (db->get().distributor.present()) {
@@ -3109,7 +3111,10 @@ ACTOR Future<StatusReply> clusterGetStatus(
 		}
 
 		// Get the master Worker interface
-		Optional<WorkerDetails> _mWorker = getWorker(workers, db->get().master.address());
+		Optional<WorkerDetails> _mWorker;
+		if (db->get().master.present()) {
+			_mWorker = getWorker(workers, db->get().master.get().address());
+		}
 		if (_mWorker.present()) {
 			mWorker = _mWorker.get();
 		} else {

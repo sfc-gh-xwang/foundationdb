@@ -1886,7 +1886,7 @@ ACTOR Future<Void> monitorServerDBInfo(Reference<AsyncVar<Optional<ClusterContro
 				ServerDBInfo localInfo = _localInfo;
 				TraceEvent("TesterGotServerDBInfoChange")
 				    .detail("ChangeID", localInfo.id)
-				    .detail("MasterID", localInfo.master.id())
+				    .detail("MasterID", localInfo.master.present() ? localInfo.master.get().id() : UID())
 				    .detail("RatekeeperID", localInfo.ratekeeper.present() ? localInfo.ratekeeper.get().id() : UID())
 				    .detail("DataDistributorID",
 				            localInfo.distributor.present() ? localInfo.distributor.get().id() : UID());

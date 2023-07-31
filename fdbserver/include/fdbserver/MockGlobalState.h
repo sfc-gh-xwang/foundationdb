@@ -71,6 +71,8 @@ class MockStorageServer final : public IStorageMetricsService, public ReferenceC
 
 	CommonStorageCounters counters{ /*name=*/"", /*id=*/"", &metrics };
 
+	void debugCoalesceServerKeys() const;
+
 public:
 	struct ShardInfo {
 		MockShardStatus status;
@@ -120,7 +122,7 @@ public:
 	MockStorageServer() = default;
 
 	MockStorageServer(StorageServerInterface ssi, uint64_t availableDiskSpace, uint64_t usedDiskSpace = 0)
-	  : counters("MockStorageServer", ssi.id().toString()),
+	  : counters("MockStorageServer", ssi.id().toString(), &metrics),
 	    totalDiskSpace(usedDiskSpace + availableDiskSpace),
 	    usedDiskSpace(usedDiskSpace),
 	    ssi(ssi),

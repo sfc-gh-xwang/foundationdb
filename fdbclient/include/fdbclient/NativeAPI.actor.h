@@ -346,10 +346,14 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	Future<Void> startTransaction(uint32_t readVersionFlags = 0);
 	Future<Version> getReadVersion(uint32_t flags);
 
+	bool canUseGrvCache();
+
 	void addReadCost(uint64_t bytes);
 	void addWriteCost(uint64_t bytes);
 	void flushWriteCost();
 	int64_t getTotalCost() const;
+
+	Optional<ThrottlingId> getThrottlingId();
 
 	void setExpectedCost(uint64_t bytes);
 	Optional<uint64_t> getExpectedTransactionCost() const;
@@ -369,8 +373,6 @@ private:
 
 	// Expected transaction cost provided by the client
 	Optional<uint64_t> expectedTransactionCost;
-
-	Optional<ThrottlingId> getThrottlingId();
 };
 
 class Transaction : NonCopyable {

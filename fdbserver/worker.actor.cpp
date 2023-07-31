@@ -755,8 +755,9 @@ ACTOR Future<Void> registrationClient(
 // Returns true if `address` is used in the db (indicated by `dbInfo`) transaction system and in the db's primary DC.
 bool addressInDbAndPrimaryDc(const NetworkAddress& address, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
 	const auto& dbi = dbInfo->get();
+	ASSERT(dbi.master.present());
 
-	if (dbi.master.addresses().contains(address)) {
+	if (dbi.master.get().addresses().contains(address)) {
 		return true;
 	}
 
@@ -803,7 +804,7 @@ bool addressInDbAndPrimaryDc(const NetworkAddress& address, Reference<AsyncVar<S
 	}
 
 	auto localityIsInPrimaryDc = [&dbInfo](const LocalityData& locality) {
-		return locality.dcId() == dbInfo->get().master.locality.dcId();
+		return locality.dcId() == dbInfo->get().master.get().locality.dcId();
 	};
 
 	for (const auto& logSet : dbi.logSystemConfig.tLogs) {
@@ -837,11 +838,12 @@ TEST_CASE("/fdbserver/worker/addressInDbAndPrimaryDc") {
 	ServerDBInfo testDbInfo;
 	LocalityData testLocal;
 	testLocal.set("dcid"_sr, StringRef(std::to_string(1)));
-	testDbInfo.master.locality = testLocal;
+	testDbInfo.master = MasterInterface();
+	testDbInfo.master.get().locality = testLocal;
 
 	// Manually set up a master address.
 	NetworkAddress testAddress(IPAddress(0x13131313), 1);
-	testDbInfo.master.getCommitVersion =
+	testDbInfo.master.get().getCommitVersion =
 	    RequestStream<struct GetCommitVersionRequest>(Endpoint({ testAddress }, UID(1, 2)));
 
 	// First, create an empty TLogInterface, and check that it shouldn't be considered as in primary DC.
@@ -918,7 +920,8 @@ TEST_CASE("/fdbserver/worker/addressInDbAndPrimarySatelliteDc") {
 	ServerDBInfo testDbInfo;
 	LocalityData testLocal;
 	testLocal.set("dcid"_sr, StringRef(std::to_string(1)));
-	testDbInfo.master.locality = testLocal;
+	testDbInfo.master = MasterInterface();
+	testDbInfo.master.get().locality = testLocal;
 
 	// First, create an empty TLogInterface, and check that it shouldn't be considered as in satellite DC.
 	testDbInfo.logSystemConfig.tLogs.push_back(TLogSet());
@@ -999,7 +1002,8 @@ TEST_CASE("/fdbserver/worker/addressInDbAndRemoteDc") {
 	ServerDBInfo testDbInfo;
 	LocalityData testLocal;
 	testLocal.set("dcid"_sr, StringRef(std::to_string(1)));
-	testDbInfo.master.locality = testLocal;
+	testDbInfo.master = MasterInterface();
+	testDbInfo.master.get().locality = testLocal;
 
 	// First, create an empty TLogInterface, and check that it shouldn't be considered as in remote DC.
 	testDbInfo.logSystemConfig.tLogs.push_back(TLogSet());
@@ -1069,7 +1073,8 @@ TEST_CASE("/fdbserver/worker/addressIsRemoteLogRouter") {
 	ServerDBInfo testDbInfo;
 	LocalityData testLocal;
 	testLocal.set("dcid"_sr, StringRef(std::to_string(1)));
-	testDbInfo.master.locality = testLocal;
+	testDbInfo.master = MasterInterface();
+	testDbInfo.master->locality = testLocal;
 
 	// First, create an empty TLogInterface, and check that it shouldn't be considered as remote log router.
 	testDbInfo.logSystemConfig.tLogs.push_back(TLogSet());
@@ -2482,7 +2487,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 						TraceEvent("GotServerDBInfoChange")
 						    .detail("ChangeID", localInfo.id)
 						    .detail("InfoGeneration", localInfo.infoGeneration)
-						    .detail("MasterID", localInfo.master.id())
+						    .detail("MasterID", localInfo.master.present() ? localInfo.master.get().id() : UID())
 						    .detail("RatekeeperID",
 						            localInfo.ratekeeper.present() ? localInfo.ratekeeper.get().id() : UID())
 						    .detail("DataDistributorID",

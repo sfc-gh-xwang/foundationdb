@@ -168,7 +168,7 @@ struct IDDTxnProcessorApiWorkload : TestWorkload {
 
 	// according to boundaries, generate valid ranges for moveKeys operation
 	KeyRange getRandomKeys() const {
-		int choice = deterministicRandom()->randomInt(0, 3);
+		int choice = deterministicRandom()->randomInt(0, 4);
 		// merge or split operations
 		Key begin, end;
 		if (choice == 0) {
@@ -182,13 +182,22 @@ struct IDDTxnProcessorApiWorkload : TestWorkload {
 			int b = deterministicRandom()->randomInt(a + 1, boundaries.size());
 			begin = boundaries[a];
 			end = boundaries[b];
-		} else {
+		} else if (choice == 2) {
 			// split
 			double start = deterministicRandom()->random01();
 			begin = doubleToTestKey(start);
 			auto it = std::upper_bound(boundaries.begin(), boundaries.end(), begin);
 			ASSERT(it != boundaries.end()); // allKeys.end is larger than any random keys here
 			end = *it;
+		} else if (choice == 3) {
+			// merge + split
+			double startN = deterministicRandom()->random01() + 0.00001;
+			double endN = deterministicRandom()->random01() + startN;
+			begin = doubleToTestKey(startN);
+			end = doubleToTestKey(endN);
+			auto beginIt = std::upper_bound(boundaries.begin(), boundaries.end(), begin);
+			auto endIt = std::upper_bound(boundaries.begin(), boundaries.end(), end);
+			CODE_PROBE(beginIt != endIt, "mock merge and split in same operation");
 		}
 
 		return KeyRangeRef(begin, end);

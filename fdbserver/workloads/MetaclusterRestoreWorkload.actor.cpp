@@ -50,6 +50,9 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		std::set<TenantGroupName> tenantGroups;
 		bool restored = false;
 		bool restoreHasMessages = false;
+		bool deletedTenantsAfterBackup = false;
+
+		bool allowDeletesDuringBackup = deterministicRandom()->coinflip();
 
 		DataClusterData() {}
 		DataClusterData(Database db) : db(db) {}
@@ -65,15 +68,19 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		AccessTime renameTime = AccessTime::NONE;
 		AccessTime configureTime = AccessTime::NONE;
 
+		bool hasData;
+
 		RestoreTenantData() {}
 		RestoreTenantData(TenantName name,
 		                  ClusterName cluster,
 		                  Optional<TenantGroupName> tenantGroup,
-		                  AccessTime createTime)
+		                  AccessTime createTime,
+		                  bool hasData)
 		  : name(name),
 		    cluster(cluster),
 		    tenantGroup(tenantGroup),
-		    createTime(createTime) {}
+		    createTime(createTime),
+		    hasData(hasData) {}
 	};
 
 	struct TenantGroupData {
@@ -246,22 +253,34 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 	                                             int simultaneousRestoreCount,
 	                                             MetaclusterRestoreWorkload* self) {
 		state FileBackupAgent backupAgent;
-		state Standalone<VectorRef<KeyRangeRef>> backupRanges;
 		state metacluster::ForceReuseTenantIdPrefix forceReuseTenantIdPrefix(deterministicRandom()->coinflip());
-		addDefaultBackupRanges(backupRanges);
+		state metacluster::ForceDeleteMissingTenants forceDeleteMissingTenants(deterministicRandom()->coinflip());
+
+		Standalone<VectorRef<KeyRangeRef>> allBackupRanges;
+		addDefaultBackupRanges(allBackupRanges);
 
 		TraceEvent("MetaclusterRestoreWorkloadClearDatabase").detail("ClusterName", clusterName);
-		wait(runTransaction(dataDb.getReference(),
-		                    [backupRanges = backupRanges](Reference<ReadYourWritesTransaction> tr) {
-			                    tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			                    for (auto range : backupRanges) {
-				                    tr->clear(range);
-			                    }
-			                    return Future<Void>(Void());
-		                    }));
+		wait(runTransaction(dataDb.getReference(), [allBackupRanges](Reference<ReadYourWritesTransaction> tr) {
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			for (auto range : allBackupRanges) {
+				tr->clear(range);
+			}
+			return Future<Void>(Void());
+		}));
 
 		TraceEvent("MetaclusterRestoreWorkloadRestoreCluster").detail("ClusterName", clusterName);
-		wait(success(backupAgent.restore(dataDb, dataDb, clusterName, StringRef(backupUrl), {}, backupRanges)));
+		wait(success(backupAgent.restore(
+		    dataDb, dataDb, clusterName.withSuffix("_system"_sr), StringRef(backupUrl), {}, getSystemBackupRanges())));
+
+		wait(success(backupAgent.restore(dataDb,
+		                                 dataDb,
+		                                 clusterName,
+		                                 StringRef(backupUrl),
+		                                 {},
+		                                 WaitForComplete::True,
+		                                 ::invalidVersion,
+		                                 Verbose::True,
+		                                 normalKeys)));
 
 		state std::vector<std::string> messages;
 		if (addToMetacluster) {
@@ -280,6 +299,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 				                                 metacluster::RestoreDryRun::True,
 				                                 forceJoin,
 				                                 forceReuseTenantIdPrefix,
+				                                 forceDeleteMissingTenants,
 				                                 &messages));
 
 				state metacluster::util::MetaclusterData<IDatabase> postDryRunMetaclusterData(self->managementDb);
@@ -299,6 +319,9 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 				messages.clear();
 			}
 
+			auto const& dataClusterData = self->dataDbs[clusterName];
+			state bool deletedTenantsAfterBackup = dataClusterData.deletedTenantsAfterBackup;
+			state bool allowDeletesDuringBackup = dataClusterData.allowDeletesDuringBackup;
 			state int numRestores = deterministicRandom()->randomInt(1, 3);
 			state bool successfulRestore = false;
 			while (!successfulRestore) {
@@ -312,23 +335,34 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					                                        metacluster::RestoreDryRun::False,
 					                                        forceJoin,
 					                                        forceReuseTenantIdPrefix,
+					                                        forceDeleteMissingTenants,
 					                                        &messages)));
 					wait(delay(deterministicRandom()->random01() * 5));
 				}
 
 				wait(waitForAll(restoreFutures));
 
+				state bool tenantNotFound = false;
 				for (auto const& f : restoreFutures) {
 					if (!f.get().isError()) {
 						successfulRestore = true;
+						ASSERT(self->recoverManagementCluster || forceDeleteMissingTenants ||
+						       !deletedTenantsAfterBackup || allowDeletesDuringBackup);
 					} else {
-						ASSERT(f.get().getError().code() == error_code_conflicting_restore);
+						if (f.get().getError().code() == error_code_tenant_not_found) {
+							tenantNotFound = true;
+							ASSERT(deletedTenantsAfterBackup);
+						} else if (f.get().getError().code() != error_code_conflicting_restore) {
+							TraceEvent(SevError, "DataClusterRestoreFailed").error(f.get().getError());
+							ASSERT(false);
+						}
 					}
 				}
 
-				CODE_PROBE(!successfulRestore, "Simultaneous restores all failed");
-				ASSERT(successfulRestore || restoreFutures.size() > 1);
+				CODE_PROBE(!successfulRestore && !tenantNotFound, "Simultaneous restores all failed");
+				ASSERT(successfulRestore || restoreFutures.size() > 1 || deletedTenantsAfterBackup);
 				numRestores = 1;
+				forceDeleteMissingTenants = metacluster::ForceDeleteMissingTenants(deterministicRandom()->coinflip());
 			}
 
 			metacluster::DataClusterMetadata clusterMetadata =
@@ -351,10 +385,64 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 			    .detail("TenantName", itr->second.name);
 			deletedTenants.insert(tenantId);
 			dataDbs[itr->second.cluster].tenants.erase(tenantId);
+			dataDbs[itr->second.cluster].deletedTenantsAfterBackup = true;
 			if (itr->second.tenantGroup.present()) {
 				tenantGroups[itr->second.tenantGroup.get()].tenants.erase(tenantId);
 			}
 			createdTenants.erase(itr);
+		}
+	}
+
+	ACTOR static Future<Void> writeTenantData(Database db, Reference<Tenant> tenant) {
+		state ReadYourWritesTransaction tr(db, tenant);
+		loop {
+			try {
+				tr.set("restoreTenantKey"_sr, "value"_sr);
+				wait(tr.commit());
+				return Void();
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	ACTOR template <class TenantIdentifier>
+	static Future<Void> metaclusterDeleteTenant(MetaclusterRestoreWorkload* self, TenantIdentifier tenant) {
+		state metacluster::MetaclusterTenantMapEntry entry = wait(metacluster::getTenant(self->managementDb, tenant));
+		state Database db = self->dataDbs[entry.assignedCluster].db;
+
+		state ReadYourWritesTransaction tr(db, makeReference<Tenant>(entry.id));
+		loop {
+			try {
+				tr.clear(normalKeys);
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		wait(metacluster::deleteTenant(self->managementDb, tenant));
+		return Void();
+	}
+
+	ACTOR static Future<Void> checkTenantData(Database db,
+	                                          Reference<Tenant> tenant,
+	                                          bool hasData,
+	                                          RestoreTenantData::AccessTime createTime) {
+		state ReadYourWritesTransaction tr(db, tenant);
+		loop {
+			try {
+				RangeReadResult result = wait(tr.getRange(normalKeys, 1));
+				if (hasData) {
+					ASSERT(createTime == RestoreTenantData::AccessTime::DURING_BACKUP || !result.empty());
+				} else {
+					ASSERT(result.empty());
+				}
+				return Void();
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
 		}
 	}
 
@@ -371,6 +459,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		TraceEvent("MetaclusterRestoreWorkloadDeleteTenantCollisions")
 		    .detail("FromCluster", clusterName)
 		    .detail("TenantCollisions", tenantCollisions.size());
+
 		std::vector<Future<Void>> deleteFutures;
 		for (auto const& t : tenantCollisions) {
 			// If the data cluster tenant is expected, then remove the management tenant
@@ -378,13 +467,18 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 			if (self->createdTenants.count(t.second.first)) {
 				CODE_PROBE(true, "Remove management tenant in restore collision");
 				removeTrackedTenant(t.second.second);
-				deleteFutures.push_back(metacluster::deleteTenant(self->managementDb, t.second.second));
+				deleteFutures.push_back(metaclusterDeleteTenant(self, t.second.second));
 			}
 			// We don't expect the data cluster tenant, so delete it
 			else {
 				CODE_PROBE(true, "Remove data cluster tenant in restore collision");
 				removeTrackedTenant(t.second.first);
-				deleteFutures.push_back(TenantAPI::deleteTenant(dataDb.getReference(), t.first, t.second.first));
+				deleteFutures.push_back(
+				    runTransaction(dataDb.getReference(), [t](Reference<ReadYourWritesTransaction> tr) {
+					    tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+					    tr->clear(prefixRange(TenantAPI::idToPrefix(t.second.first)));
+					    return TenantAPI::deleteTenantTransaction(tr, t.second.first);
+				    }));
 			}
 		}
 
@@ -438,7 +532,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 
 				for (auto const& t : tenantsInGroup) {
 					self->removeTrackedTenant(t);
-					deleteFutures.push_back(metacluster::deleteTenant(self->managementDb, t));
+					deleteFutures.push_back(metaclusterDeleteTenant(self, t));
 				}
 			}
 			// The tenant group from the management cluster is what we expect
@@ -459,6 +553,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					    std::vector<Future<Void>> groupDeletions;
 					    for (auto const& t : tenantsInGroup) {
 						    self->removeTrackedTenant(t);
+						    tr->clear(prefixRange(TenantAPI::idToPrefix(t)));
 						    groupDeletions.push_back(TenantAPI::deleteTenantTransaction(tr, t));
 					    }
 					    return waitForAll(groupDeletions);
@@ -606,6 +701,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 						    metacluster::RestoreDryRun::True,
 						    metacluster::ForceJoin(deterministicRandom()->coinflip()),
 						    metacluster::ForceReuseTenantIdPrefix(newTenantIdPrefix == self->initialTenantIdPrefix),
+						    metacluster::ForceDeleteMissingTenants::False,
 						    &messages));
 
 						state metacluster::util::MetaclusterData<IDatabase> postDryRunMetaclusterData(
@@ -642,6 +738,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 							    metacluster::RestoreDryRun::False,
 							    metacluster::ForceJoin(deterministicRandom()->coinflip()),
 							    metacluster::ForceReuseTenantIdPrefix(newTenantIdPrefix == self->initialTenantIdPrefix),
+							    metacluster::ForceDeleteMissingTenants::False,
 							    &messagesList[restoreFutures.size()])));
 							wait(delay(deterministicRandom()->random01() * 5));
 						}
@@ -798,8 +895,10 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 				    .detail("Tenant", tenantName)
 				    .detail("TenantId", createdEntry.id)
 				    .detail("AccessTime", createTime);
-				self->createdTenants[createdEntry.id] =
-				    RestoreTenantData(tenantName, createdEntry.assignedCluster, createdEntry.tenantGroup, createTime);
+				bool hasTenantData = deterministicRandom()->random01() <
+				                     (BUGGIFY && createTime == RestoreTenantData::AccessTime::DURING_BACKUP ? 0 : 0.5);
+				self->createdTenants[createdEntry.id] = RestoreTenantData(
+				    tenantName, createdEntry.assignedCluster, createdEntry.tenantGroup, createTime, hasTenantData);
 				self->tenantNameIndex[tenantName] = createdEntry.id;
 				auto& dataDb = self->dataDbs[createdEntry.assignedCluster];
 				dataDb.tenants.insert(createdEntry.id);
@@ -809,6 +908,11 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					tenantGroupData.tenants.insert(createdEntry.id);
 					dataDb.tenantGroups.insert(createdEntry.tenantGroup.get());
 				}
+
+				if (hasTenantData) {
+					wait(writeTenantData(dataDb.db, makeReference<Tenant>(createdEntry.id)));
+				}
+
 				return Void();
 			} catch (Error& e) {
 				if (e.code() != error_code_metacluster_no_capacity) {
@@ -839,23 +943,40 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		    .detail("Tenant", tenantName)
 		    .detail("TenantId", tenantId)
 		    .detail("AccessTime", accessTime);
-		wait(metacluster::deleteTenant(self->managementDb, tenantName));
-		auto const& tenantData = self->createdTenants[tenantId];
 
-		auto& dataDb = self->dataDbs[tenantData.cluster];
-		dataDb.tenants.erase(tenantId);
-		if (tenantData.tenantGroup.present()) {
-			auto groupItr = self->tenantGroups.find(tenantData.tenantGroup.get());
+		auto const& tenantData = self->createdTenants[tenantId];
+		state RestoreTenantData::AccessTime createTime = tenantData.createTime;
+		state ClusterName clusterName = tenantData.cluster;
+		state DataClusterData* dataDb = &self->dataDbs[tenantData.cluster];
+		state Optional<TenantGroupName> tenantGroup = tenantData.tenantGroup;
+
+		if ((accessTime == RestoreTenantData::AccessTime::DURING_BACKUP ||
+		     (accessTime == RestoreTenantData::AccessTime::AFTER_BACKUP &&
+		      createTime == RestoreTenantData::AccessTime::DURING_BACKUP)) &&
+		    !dataDb->allowDeletesDuringBackup) {
+			return Void();
+		}
+
+		wait(metaclusterDeleteTenant(self, tenantName));
+
+		dataDb->tenants.erase(tenantId);
+		if (tenantGroup.present()) {
+			auto groupItr = self->tenantGroups.find(tenantGroup.get());
 			groupItr->second.tenants.erase(tenantId);
 			if (groupItr->second.tenants.empty()) {
 				self->tenantGroups.erase(groupItr);
-				dataDb.tenantGroups.erase(tenantData.tenantGroup.get());
+				dataDb->tenantGroups.erase(tenantGroup.get());
 			}
 		}
 
 		self->createdTenants.erase(tenantId);
 		self->tenantNameIndex.erase(tenantName);
 		self->deletedTenants.insert(tenantId);
+
+		if (accessTime >= RestoreTenantData::AccessTime::DURING_BACKUP &&
+		    createTime <= RestoreTenantData::AccessTime::DURING_BACKUP) {
+			dataDb->deletedTenantsAfterBackup = true;
+		}
 
 		return Void();
 	}
@@ -1188,6 +1309,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 			ASSERT_EQ(self->managementTenantsBeforeRestore.size(), tenantMap.size());
 		}
 
+		state std::vector<Future<Void>> dataCheckFutures;
 		for (auto const& [tenantId, tenantData] : self->createdTenants) {
 			auto tenantItr = tenantMap.find(tenantId);
 			if (tenantItr == tenantMap.end()) {
@@ -1197,17 +1319,20 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 				ASSERT(self->dataDbs[tenantData.cluster].restored && self->recoverManagementCluster);
 				CODE_PROBE(true, "Tenant lost when recovering management and data cluster");
 			} else {
-				if (tenantData.createTime != RestoreTenantData::AccessTime::BEFORE_BACKUP &&
-				    self->dataDbs[tenantData.cluster].restored) {
-					ASSERT(tenantItr->second.tenantState == metacluster::TenantState::ERROR ||
-					       (tenantItr->second.tenantState == metacluster::TenantState::READY &&
-					        tenantData.createTime == RestoreTenantData::AccessTime::DURING_BACKUP));
-					if (tenantItr->second.tenantState == metacluster::TenantState::ERROR) {
-						ASSERT(self->dataDbs[tenantData.cluster].restoreHasMessages);
-						CODE_PROBE(true, "Tenant lost when recovering data cluster");
+				if (tenantItr->second.tenantState == metacluster::TenantState::READY) {
+					if (self->dataDbs[tenantData.cluster].restored) {
+						ASSERT_LE(tenantData.createTime, RestoreTenantData::AccessTime::DURING_BACKUP);
 					}
+
+					dataCheckFutures.push_back(checkTenantData(self->dataDbs[tenantData.cluster].db,
+					                                           makeReference<Tenant>(tenantId),
+					                                           tenantData.hasData,
+					                                           tenantData.createTime));
 				} else {
-					ASSERT_EQ(tenantItr->second.tenantState, metacluster::TenantState::READY);
+					ASSERT_EQ(tenantItr->second.tenantState, metacluster::TenantState::ERROR);
+					ASSERT_GE(tenantData.createTime, RestoreTenantData::AccessTime::DURING_BACKUP);
+					ASSERT(self->dataDbs[tenantData.cluster].restoreHasMessages);
+					CODE_PROBE(true, "Tenant lost when recovering data cluster");
 				}
 			}
 		}
@@ -1251,6 +1376,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 			wait(waitForAll(deleteFutures));
 		}
 
+		wait(waitForAll(dataCheckFutures));
 		return Void();
 	}
 

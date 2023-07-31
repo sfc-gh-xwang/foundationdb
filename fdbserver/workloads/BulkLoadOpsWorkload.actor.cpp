@@ -115,13 +115,17 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	Future<Void> start(Database const& cx) override {
+		unitClient = Future<Void>(Void());
 		if (clientId == 0) {
-			for (int i = 0; i < concurrentLoads; i++) {
-				loadClients.push_back(bulkLoadClient(cx->clone(), this));
+			// sometimes don't do both unit tests and normal load tests
+			if (deterministicRandom()->random01() < 0.9) {
+				for (int i = 0; i < concurrentLoads; i++) {
+					loadClients.push_back(bulkLoadClient(cx->clone(), this, i));
+				}
 			}
-			unitClient = bulkLoadUnitTests(cx->clone(), this);
-		} else {
-			unitClient = Future<Void>(Void());
+			if (deterministicRandom()->random01() < 0.8 || loadClients.empty()) {
+				unitClient = bulkLoadUnitTests(cx->clone(), this);
+			}
 		}
 		return delay(testDuration);
 	}
@@ -151,7 +155,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->unitClient);
 		TraceEvent("BulkLoadOpsUnitsComplete");
 
-		std::vector<BulkLoadID> loadsNotCleanedUp = wait(cx->listBulkLoads(false));
+		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp = wait(cx->listBulkLoads(false, self->tenant));
 		fmt::print("{0} running loads\n", loadsNotCleanedUp.size());
 		for (auto& it : loadsNotCleanedUp) {
 			fmt::print("    {0}\n", it.printable());
@@ -232,7 +236,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// Validate bulk load state at end.
 
 		BulkLoadStatus status = wait(cx->getBulkLoadStatus(id));
-		BulkLoadState current = status.state;
+		BulkLoadStatus::State current = status.state;
 
 		if (BLW_DEBUG) {
 			fmt::print(
@@ -240,11 +244,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		if (abortCompleted) {
-			ASSERT(current == BulkLoadState::ABORTED);
+			ASSERT(current == BulkLoadStatus::State::ABORTED || current == BulkLoadStatus::State::ABORTED_COMPLETE);
 		} else if (!injectedAbort) {
-			ASSERT(current == BulkLoadState::DONE);
+			ASSERT(current == BulkLoadStatus::State::DONE);
 		} else {
-			ASSERT(current == BulkLoadState::DONE || current == BulkLoadState::ABORTED);
+			ASSERT(current == BulkLoadStatus::State::DONE || current == BulkLoadStatus::State::ABORTED ||
+			       current == BulkLoadStatus::State::ABORTED_COMPLETE);
 		}
 
 		return Void();
@@ -274,6 +279,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		// FIXME: if DONE, check data matches loaded data for range!
 
+		if (BLW_DEBUG) {
+			fmt::print("BLW {0} {1}: cleaning up\n", range.begin.printable(), id.printable());
+		}
 		// FIXME: once auto-cleanup implemented, sometimes don't clean up, especially if aborted, and ensure auto clean
 		// up gets it
 		wait(cx->cleanupBulkLoad(id, self->tenant));
@@ -285,7 +293,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Void> bulkLoadClient(Database cx, BulkLoadOpsWorkload* self) {
+	ACTOR Future<Void> bulkLoadClient(Database cx, BulkLoadOpsWorkload* self, int clientIdx) {
 		// FIXME: REENABLE!
 		/*if (deterministicRandom()->coinflip()) {
 		    cx->internal = IsInternal::False;
@@ -294,10 +302,13 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		cx->internal = IsInternal::True;
 
 		state bool completedAny = false;
+		if (BLW_DEBUG) {
+			fmt::print("BLW: client {0} workload starting\n", clientIdx);
+		}
 		loop {
 			if (completedAny && self->stopTest) {
 				if (BLW_DEBUG) {
-					fmt::print("BLW {0}: workload done\n", range.begin.printable());
+					fmt::print("BLW: client {0} workload done\n", clientIdx);
 				}
 				return Void();
 			}
@@ -306,8 +317,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			state KeyRange range(KeyRangeRef(StringRef(nextRangeKey), strinc(StringRef(nextRangeKey))));
 			bool injectAbort = deterministicRandom()->random01() < 0.2;
 			try {
-				fmt::print("BLW {0}: starting one bulk load\n", range.begin.printable());
+				fmt::print("BLW {0}: starting one bulk load (client {1})\n", range.begin.printable(), clientIdx);
 				wait(self->doOneBulkLoad(cx, self, range, injectAbort));
+				fmt::print("BLW {0}: completed one bulk load (client {1})\n", range.begin.printable(), clientIdx);
 			} catch (Error& e) {
 				if (BLW_DEBUG) {
 					fmt::print("BLW {0}: unexpected error {1}\n", range.begin.printable(), e.name());
@@ -327,7 +339,11 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		INVALID_LOAD_ID_UNIT,
 		WRITE_DURING_LOAD_UNIT,
 		READ_DURING_LOAD_UNIT,
-		OP_COUNT = 7 /* keep this last */
+		SANITY_CHECK_VERSIONSTAMP_UNIT,
+		NON_EMPTY_RANGE_UNIT,
+		ALREADY_BLOB_RANGE_UNIT,
+		BLOBBIFY_DURING_LOAD_UNIT,
+		OP_COUNT = 11 /* keep this last */
 	};
 
 	ACTOR Future<Void> abortAndCleanupAfterUnit(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
@@ -378,7 +394,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->abortBulkLoad(id, self->tenant));
 
 		try {
-			wait(cx->updateBulkLoadState(id, BulkLoadState::DONE));
+			wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
 			ASSERT(false);
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_aborted);
@@ -423,9 +439,10 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->checkCorrectInvalidIDError(cx->abortBulkLoad(id, self->tenant)));
 		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadComplete(id, self->tenant)));
 		// don't test cleanup because it's idempotent if it was already cleaned up
-		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadState::STAGING)));
-		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadState::STAGING)));
+		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING)));
+		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadStatus::State::STAGING)));
 		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadStatus(id))));
+		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadVersion(id))));
 
 		return Void();
 	}
@@ -481,6 +498,113 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR Future<Version> doGRV(Database cx) {
+		state Transaction tr(cx);
+		loop {
+			try {
+				Version readVersion = wait(tr.getReadVersion());
+				return readVersion;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	ACTOR Future<Void> sanityCheckVersionstampUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that client cannot clean up a bulk load before it is done or aborted
+
+		// since we can't access the transaction object used to start the bulk load and validate that it is exactly the
+		// same version, we just do a GRV before and after and make sure it matches
+		state Version start = wait(self->doGRV(cx));
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state Version end = wait(self->doGRV(cx));
+
+		Version createVersion = wait(cx->getBulkLoadVersion(id));
+
+		ASSERT(createVersion >= start);
+		ASSERT(createVersion <= end);
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
+	ACTOR Future<Void> nonEmptyRangeUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that a bulk load cannot start to a non-empty range
+		state Transaction tr(cx, self->tenant);
+		loop {
+			try {
+				tr.set(range.begin, "foo"_sr);
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		try {
+			wait(success(cx->startBulkLoad(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_range_not_empty);
+		}
+
+		tr.reset();
+		loop {
+			try {
+				tr.clear(range.begin);
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		return Void();
+	}
+
+	ACTOR Future<Void> alreadyBlobRangeUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that a bulk load cannot start if a blobbified range already overlaps the start range
+		bool success1 = wait(cx->blobbifyRange(range, self->tenant));
+		ASSERT(success1);
+
+		try {
+			wait(success(cx->startBulkLoad(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_range_not_empty);
+		}
+
+		// cleanup
+		Version v = wait(self->doGRV(cx));
+		Key purgeKey = wait(cx->purgeBlobGranules(range, v, self->tenant, true));
+		wait(cx->waitPurgeGranulesComplete(purgeKey));
+		bool success2 = wait(cx->unblobbifyRange(range, self->tenant));
+		ASSERT(success2);
+
+		return Void();
+	}
+
+	ACTOR Future<Void> blobbifyDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that clients cannot blobbify a range intersecting with an active bulk load
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		// FIXME: this needs to respect write lock/tenant lock for this to work
+		try {
+			wait(success(cx->blobbifyRange(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			// FIXME: new error code
+			ASSERT(e.code() == error_code_bulk_load_range_conflict);
+		}
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
 	ACTOR Future<Void> bulkLoadUnitTests(Database cx, BulkLoadOpsWorkload* self) {
 		// FIXME: REENABLE!
 		/*if (deterministicRandom()->coinflip()) {
@@ -502,6 +626,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			// FIXME: no lock implemented yet so these succeed - unexclude when implemented!
 			excludedTypes.insert(WRITE_DURING_LOAD_UNIT);
 			excludedTypes.insert(READ_DURING_LOAD_UNIT);
+			excludedTypes.insert(BLOBBIFY_DURING_LOAD_UNIT);
 
 			// prevent infinite loop
 			int loopTries = 1000;
@@ -533,6 +658,14 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->writeDuringLoadUnit(cx, self, range));
 			} else if (op == READ_DURING_LOAD_UNIT) {
 				wait(self->readDuringLoadUnit(cx, self, range));
+			} else if (op == SANITY_CHECK_VERSIONSTAMP_UNIT) {
+				wait(self->sanityCheckVersionstampUnit(cx, self, range));
+			} else if (op == NON_EMPTY_RANGE_UNIT) {
+				wait(self->nonEmptyRangeUnit(cx, self, range));
+			} else if (op == ALREADY_BLOB_RANGE_UNIT) {
+				wait(self->alreadyBlobRangeUnit(cx, self, range));
+			} else if (op == BLOBBIFY_DURING_LOAD_UNIT) {
+				wait(self->blobbifyDuringLoadUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}
