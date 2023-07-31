@@ -134,4 +134,6 @@ int getEncryptHeaderAuthTokenSize(int algo);
 bool isReservedEncryptDomain(EncryptCipherDomainId domainId);
 bool isEncryptHeaderDomain(EncryptCipherDomainId domainId);
 
+bool isCipherModeSupported(EncryptCipherMode mode);
+
 #endif
