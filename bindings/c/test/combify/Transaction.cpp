@@ -112,7 +112,7 @@ AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& 
 });
 
 AddTest testReadSystemKeyDisallowed("ReadSystemKeyDisallowed",
-                                    AND(withoutMultiVersion, withoutGrvCache, asTrustedClient),
+                                    AND(withoutGrvCache, asTrustedClient),
                                     [](const TestEnv& env) {
 	                                    auto db = env.newDatabase();
 	                                    auto tr = env.newTransaction(db);
@@ -132,7 +132,7 @@ AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& en
 });
 
 AddTest testWriteSystemKeyDisallowed("WriteSystemKeyDisallowed",
-                                     AND(withoutMultiVersion, withoutGrvCache, asTrustedClient),
+                                     AND(withoutGrvCache, asTrustedClient),
                                      [](const TestEnv& env) {
 	                                     auto db = env.newDatabase();
 	                                     auto tr = env.newTransaction(db);
