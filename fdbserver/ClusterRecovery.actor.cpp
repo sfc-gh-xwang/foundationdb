@@ -1008,6 +1008,7 @@ ACTOR Future<std::vector<Standalone<CommitTransactionRef>>> recruitTransactionSu
 		    .detail("StatusCode", RecoveryStatus::recruiting_transaction_servers)
 		    .detail("Status", RecoveryStatus::names[RecoveryStatus::recruiting_transaction_servers])
 		    .detail("Conf", self->configuration.toString())
+		    .detail("ColocateStatelessProcesses", SERVER_KNOBS->COLOCATE_STATELESS_PROCESSES)
 		    .detail("RequiredCommitProxies", 1)
 		    .detail("RequiredGrvProxies", 1)
 		    .detail("RequiredResolvers", 1)
