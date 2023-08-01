@@ -767,11 +767,11 @@ def test_malformed_tokens_trace(cluster, default_tenant, tenant_tr_gen, token_cl
             tr.commit().wait()
             assert (
                 False
-            ), "expected permission denied for 'unsplittable_bad_token' case but write transaction went through"
+            ), "expected permission denied for 'splittable_bad_token' case but write transaction went through"
         except fdb.FDBError as e:
             assert (
                 e.code == 6000
-            ), f"expected permission_denied for 'unsplittable_bad_token' case, got {e} instead"
+            ), f"expected permission_denied for 'splittable_bad_token' case, got {e} instead"
 
 
 def test_authz_not_enabled_trace(build_dir):
