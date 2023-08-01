@@ -20,6 +20,7 @@
 
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/MetaclusterRegistration.h"
+#include "fdbclient/SystemData.h"
 #include "fdbrpc/sim_validation.h"
 #include "fdbserver/ApplyMetadataMutation.h"
 #include "fdbserver/BackupProgress.actor.h"
@@ -319,7 +320,7 @@ ACTOR static Future<Optional<Version>> getMinBackupVersion(Reference<ClusterReco
 		try {
 			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			ValueReadResult value = wait(tr.get(backupStartedKey));
+			ValueReadResult value = wait(tr.get(deprecatedBackupStartedKey));
 			Optional<Version> minVersion;
 			if (value.present()) {
 				auto uidVersions = decodeBackupStartedValue(value.get());

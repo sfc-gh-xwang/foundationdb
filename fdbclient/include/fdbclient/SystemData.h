@@ -402,8 +402,12 @@ UID decodeBackupProgressKey(const KeyRef& key);
 WorkerBackupStatus decodeBackupProgressValue(const ValueRef& value);
 
 // The key to signal backup workers a new backup job is submitted.
-//    "\xff\x02/backupStarted" := "[[vector<UID,Version1>]]"
+//    "\xff/backupStarted" := "[[vector<UID,Version1>]]"
 extern const KeyRef backupStartedKey;
+// TODO: Remove after a few releases.
+// This key works exactly the same as the non-deprecated backupStarted key,
+// except that it is not stored in transaction state store.
+extern const KeyRef deprecatedBackupStartedKey;
 Value encodeBackupStartedValue(const std::vector<std::pair<UID, Version>>& ids);
 std::vector<std::pair<UID, Version>> decodeBackupStartedValue(const ValueRef& value);
 
