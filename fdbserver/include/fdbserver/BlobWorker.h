@@ -29,8 +29,6 @@
 
 #include <vector>
 
-#include "flow/actorcompiler.h" // has to be last include
-
 // We have a normal target snapshot/delta ratio, but in write-heavy cases where are behind and need to catch up,
 // we want to change this target to get more efficient. To maintain a consistent write amp if the snapshot size is
 // growing without the ability to split, we scale the bytes before recompact to reach the target write amp. We also
@@ -258,5 +256,13 @@ struct BlobWorkerData : NonCopyable, ReferenceCounted<BlobWorkerData> {
 	void addGRVHistory(Version readVersion);
 	bool maybeInjectTargetedRestart();
 };
+
+Optional<CompressionFilter> getBlobFileCompressFilter();
+
+Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<BlobWorkerData> bwData,
+                                                            KeyRange keyRange,
+                                                            Arena* arena);
+
+Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(Reference<BlobWorkerData> bwData, KeyRange keyRange);
 
 #endif
