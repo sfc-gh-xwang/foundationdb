@@ -39,6 +39,7 @@
 #include "fdbserver/Knobs.h"
 #include "flow/ApiVersion.h"
 #include "flow/Error.h"
+#include "flow/FastRef.h"
 #include "flow/IRandom.h"
 #include "flow/ThreadHelper.actor.h"
 #include "flow/flow.h"
@@ -1942,9 +1943,11 @@ struct TenantManagementWorkload : TestWorkload {
 		state bool useManagementCluster = self->useMetacluster && deterministicRandom()->random01() < 0.05;
 		state Database db = useManagementCluster ? self->managementDbInternal : self->dataDb;
 
-		state Reference<ReadYourWritesTransaction> tr = (tenant.present() && !useManagementCluster)
-		                                                    ? makeReference<ReadYourWritesTransaction>(tenant.get())
-		                                                    : makeReference<ReadYourWritesTransaction>(db);
+		state Reference<ReadYourWritesTransaction> tr =
+		    !tenant.present() ? makeReference<ReadYourWritesTransaction>(db)
+		    : !useManagementCluster
+		        ? makeReference<ReadYourWritesTransaction>(tenant.get())
+		        : makeReference<ReadYourWritesTransaction>(makeReference<Tenant>(db, tenant.get()->id()));
 		state Optional<TenantName> tName = tenant.flatMapRef(&Tenant::name);
 		state bool tenantExists = false;
 		state TenantTestData tData = TenantTestData();
