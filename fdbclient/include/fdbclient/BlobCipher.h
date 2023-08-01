@@ -633,6 +633,7 @@ private:
 	int64_t refreshAtTS;
 	// CipherKey is valid until
 	int64_t expireAtTS;
+	EncryptCipherNonce nonce;
 
 	void initKey(const EncryptCipherDomainId& domainId,
 	             const EncryptCipherBaseKeyId& baseCiphId,
@@ -738,6 +739,7 @@ public:
 private:
 	EncryptCipherDomainId domainId;
 	BlobCipherKeyIdCacheMap keyIdCache;
+	BlobCipherNonceMap nonceMap;
 	Optional<EncryptCipherBaseKeyId> latestBaseCipherKeyId;
 	Optional<EncryptCipherRandomSalt> latestRandomSalt;
 	size_t* sizeStat; // pointer to the outer BlobCipherKeyCache size count.
@@ -751,6 +753,8 @@ public:
 	// API Note: Constructor is expected to be instantiated only in simulation mode.
 
 	explicit BlobCipherKeyCache(bool ignored) { ASSERT(g_network->isSimulated()); }
+
+	int getAndUpdateNonce(Reference<BlobCipherKey> key);
 
 	// Enable clients to insert base encryption cipher details to the BlobCipherKeyCache.
 	// The cipherKeys are indexed using 'baseCipherId', given cipherKeys are immutable,
