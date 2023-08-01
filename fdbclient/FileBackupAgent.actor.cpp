@@ -3681,14 +3681,13 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 		return returnStr;
 	}
 
-	ACTOR static Future<Void> _validTenantAccess(KeyRef key, Reference<TenantEntryCache<Void>> tenantCache) {
+	ACTOR static Future<bool> _validTenantAccess(KeyRef key, Reference<TenantEntryCache<Void>> tenantCache) {
 		if (isSystemKey(key)) {
-			return Void();
+			return true;
 		}
 		state int64_t tenantId = TenantAPI::extractTenantIdFromKeyRef(key);
 		Optional<TenantEntryCachePayload<Void>> payload = wait(tenantCache->getById(tenantId));
-		ASSERT(payload.present());
-		return Void();
+		return payload.present();
 	}
 
 	ACTOR static Future<Void> _execute(Database cx,
@@ -3752,7 +3751,7 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 			throw;
 		}
 		state Optional<Reference<TenantEntryCache<Void>>> tenantCache;
-		state std::vector<Future<Void>> validTenantCheckFutures;
+		state std::vector<Future<bool>> validTenantCheckFutures;
 		state Arena arena;
 		state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
 		if (config.tenantMode == TenantMode::REQUIRED && g_network && g_network->isSimulated()) {
@@ -3858,7 +3857,10 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 					wait(tr->commit());
 
 					if (!validTenantCheckFutures.empty()) {
-						waitForAll(validTenantCheckFutures);
+						wait(waitForAll(validTenantCheckFutures));
+						for (auto f : validTenantCheckFutures) {
+							ASSERT(f.get());
+						}
 						validTenantCheckFutures.clear();
 					}
 

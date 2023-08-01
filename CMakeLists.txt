@@ -111,7 +111,7 @@ file(WRITE ${CMAKE_BINARY_DIR}/version.txt ${FDB_VERSION})
 
 set(FDB_CURRENT_VERSION ${PROJECT_VERSION})
 set(FDB_FUTURE_VERSION "9.0.0")
-set(FDB_PREV_RELEASE_VERSION "71.3.0")
+set(FDB_PREV_RELEASE_VERSION "71.3.1")
 set(FDB_PREV2_RELEASE_VERSION "71.2.9")
 set(FDB_PREV3_RELEASE_VERSION "7.1.4")
 
@@ -175,6 +175,7 @@ set(SEED "0x${SEED_}" CACHE STRING "Random seed for testing")
 
 include(CompileBoost)
 include(GetMsgpack)
+add_subdirectory(apigen)
 add_subdirectory(contrib)
 add_subdirectory(flow)
 add_subdirectory(fdbrpc)

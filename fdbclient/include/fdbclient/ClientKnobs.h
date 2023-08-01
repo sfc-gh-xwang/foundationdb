@@ -295,6 +295,26 @@ public:
 	// tag quota system keyspace.
 	bool USE_SIMPLE_THROUGHPUT_QUOTA_CACHE;
 
+	// Enables client-side tracking of average transaction costs. The clients will track and
+	// report the expected cost per ThrottlingID along with each GRV requests.
+	// The QuotaThrottler will utilize this information to throttle transactions.
+	// Note: Must be used with in conjunction with TRACK_THROUGHPUT_ON_CLIENTS.
+	bool TRACK_AVERAGE_COST_ON_CLIENT;
+	// Default expected cost of a transaction, used as a fallback value when the average cost is not available
+	double DEFAULT_EXPECTED_TRANSACTION_COST;
+	// Report DEFAULT_EXPECTED_TRANSACTION_COST for the first AVERAGE_COST_START_DELAY seconds,
+	// until sufficient data is collected for accurate tracking of average transaction costs.
+	double AVERAGE_COST_START_DELAY;
+	// Folding time parameter used by the ThroughputTracker's HoltLinearSmoother
+	// for calculating the average cost.
+	double AVERAGE_COST_FOLDING_TIME;
+
+	// Enable busy throttling ID tracking. Only those IDs in the busy set will be subject to throttling by the GRV
+	// proxy. If an ID is not considered busy, it can utilize the GRV cache. The thresholds for determining whether an
+	// ID is busy or not are configurable by SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD and
+	// SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD.
+	bool TRACK_BUSY_THROTTLING_IDS;
+
 	// busyness reporting
 	double BUSYNESS_SPIKE_START_THRESHOLD;
 	double BUSYNESS_SPIKE_SATURATED_THRESHOLD;
@@ -340,6 +360,13 @@ public:
 	// REST KMS configurations
 	bool REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 	int SIM_KMS_VAULT_MAX_KEYS;
+
+	// Bulk Loading
+	// knob guard to disallow starting bulk loads until implementation is completed
+	bool ALLOW_BULK_LOADS;
+	int BULK_LOAD_FILE_POINTER_TOO_MANY;
+
+	bool ENABLE_STORAGE_ENGINE_PARAM_INTERFACE;
 
 	ClientKnobs(Randomize randomize);
 	void initialize(Randomize randomize);

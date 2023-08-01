@@ -813,6 +813,33 @@ struct DDMockTxnProcessorImpl {
 			params.dataMovementComplete.send(Void());
 		return Void();
 	}
+
+	ACTOR static Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(
+	    std::shared_ptr<MockGlobalState> mgs,
+	    KeyRange keys) {
+		loop {
+			int64_t shardLimit = 100; // Shard limit here does not really matter since this function is currently only
+			                          // used to find the read-hot sub ranges within a read-hot shard.
+			state std::vector<KeyRangeLocationInfo> locations =
+			    wait(mgs->getKeyRangeLocations(TenantInfo(),
+			                                   keys,
+			                                   shardLimit,
+			                                   Reverse::False,
+			                                   SpanContext(),
+			                                   Optional<UID>(),
+			                                   UseProvisionalProxies::False,
+			                                   /* version = */ 0));
+
+			state bool invalidateLocationCache = false;
+			Standalone<VectorRef<ReadHotRangeWithMetrics>> results =
+			    wait(::getReadHotRangesWithLocations(keys, &locations, &invalidateLocationCache));
+
+			if (!invalidateLocationCache) {
+				return results;
+			}
+			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
+		}
+	}
 };
 
 Future<ServerWorkerInfos> DDMockTxnProcessor::getServerListAndProcessClasses() {
@@ -958,6 +985,11 @@ Future<Void> DDMockTxnProcessor::moveKeys(const MoveKeysParams& params) {
 	return DDMockTxnProcessorImpl::moveKeys(this, params);
 }
 
+Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> DDMockTxnProcessor::getReadHotRanges(
+    KeyRange const& keys) const {
+	return DDMockTxnProcessorImpl::getReadHotRanges(mgs, keys);
+}
+
 // FIXME: finish implementation
 Future<HealthMetrics> DDMockTxnProcessor::getHealthMetrics(bool detailed) const {
 	return Future<HealthMetrics>();
@@ -1006,22 +1038,29 @@ ACTOR Future<Void> rawStartMovement(std::shared_ptr<MockGlobalState> mgs,
 
 	std::vector<ShardsAffectedByTeamFailure::Team> destTeams;
 	destTeams.emplace_back(params.destinationTeam, true);
-	// invariant: the splitting and merge operation won't happen at the same moveKeys action. For example, if [a,c) [c,
-	// e) exists, the params.keys won't be [b, d).
+
 	auto intersectRanges = mgs->shardMapping->intersectingRanges(keys);
 	// 1. splitting or just move a range. The new boundary need to be defined in startMovement
 	if (intersectRanges.begin().range().contains(keys)) {
 		mgs->shardMapping->defineShard(keys);
+	} else {
+		Key oldStart = intersectRanges.begin().begin();
+		Key oldEnd = intersectRanges.end().begin();
+		// split first range if not aligned
+		if (oldStart < keys.begin) {
+			mgs->shardMapping->defineShard(KeyRangeRef(oldStart, keys.begin));
+		}
+		// split last range if not aligned
+		if (oldEnd > keys.end) {
+			mgs->shardMapping->defineShard(KeyRangeRef(keys.end, oldEnd));
+		}
 	}
 	// 2. merge ops will coalesce the boundary in finishMovement;
 	intersectRanges = mgs->shardMapping->intersectingRanges(keys);
-	fmt::print("Keys: {}; intersect: {} {}\n",
-	           keys.toString(),
-	           intersectRanges.begin().begin(),
-	           intersectRanges.end().begin());
-	// NOTE: What if there is a split follow up by a merge?
-	// ASSERT(keys.begin == intersectRanges.begin().begin());
-	// ASSERT(keys.end == intersectRanges.end().begin());
+	// fmt::print("Keys: {}; intersect: {} {}\n", keys.toString(), intersectRanges.begin().begin(),
+	// intersectRanges.end().begin());
+	ASSERT(keys.begin == intersectRanges.begin().begin());
+	ASSERT(keys.end == intersectRanges.end().begin());
 
 	int totalRangeSize = 0;
 	for (auto it = intersectRanges.begin(); it != intersectRanges.end(); ++it) {
@@ -1138,10 +1177,13 @@ Future<Void> DDMockTxnProcessor::waitForAllDataRemoved(
     const UID& serverID,
     const Version& addedVersion,
     Reference<ShardsAffectedByTeamFailure> shardsAffectedByTeamFailure) const {
+	// cpMgs is a shared_ptr so that the checkUtil function below doesn't try to access invalid memory if this is
+	// destroyed before checkUtil
+	std::shared_ptr<MockGlobalState> cpMgs = mgs;
 	return checkUntil(
 	    SERVER_KNOBS->ALL_DATA_REMOVED_DELAY,
-	    [&, this]() -> bool {
-		    return mgs->allShardsRemovedFromServer(serverID) &&
+	    [=]() -> bool {
+		    return cpMgs->allShardsRemovedFromServer(serverID) &&
 		           shardsAffectedByTeamFailure->getNumberOfShards(serverID) == 0;
 	    },
 	    TaskPriority::DataDistribution);

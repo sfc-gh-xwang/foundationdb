@@ -1,5 +1,6 @@
 [configuration]
 tenantModes = ['disabled']
+generateFearless = false
 # TODO: Support multiple GRV proxies
 grvProxyCount = 1
 
@@ -7,17 +8,21 @@ grvProxyCount = 1
 testTitle='ExpectStableThroughput'
 
   [[test.workload]]
-  testName='ThroughputQuota'
-  nameRepresentsTenantGroup=false
-  name='testTag'
+  testName='TagThroughputQuota'
+  prefix='testTag'
+  count=2
   totalQuotaInPages=1000
 
   [[test.workload]]
   testName='ExpectStableThroughput'
-  throttlingTag='testTag'
+  tagPrefix='testTag'
+  numTags=2
   expectedThroughputPagesRate=1000
-  # TODO: Reduce this error tolerance
-  errorTolerance=0.3
+  attemptedThroughputPagesRate=2000
+  # The error tolerance has to be this high because
+  # frequent injected failures can cause repeated spikes in
+  # throttling behavior. We should only very rarely need
+  # the full error tolerance to be 0.5, but it is set this
+  # high to avoid spurious failures.
+  errorTolerance=0.5
   numActors=100
-  attemptedTransactionRatePerActor=4
-  opsPerTransaction=5

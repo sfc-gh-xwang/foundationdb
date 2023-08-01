@@ -104,4 +104,8 @@ Future<Void> removeTenantGroupQuota(Database const& db, TenantGroupName const& t
 	return _removeTenantGroupQuota(db, tenantGroup);
 }
 
+TransactionTag getTransactionTag(StringRef const& prefix, int index) {
+	return TransactionTag(fmt::format("{}", index)).withPrefix(prefix);
+}
+
 } // namespace ThroughputQuotaUtil

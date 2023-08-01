@@ -249,7 +249,6 @@ struct RegisterWorkerReply {
 struct RegisterMasterRequest {
 	constexpr static FileIdentifier file_identifier = 10773445;
 	UID id;
-	LocalityData mi;
 	LogSystemConfig logSystemConfig;
 	std::vector<CommitProxyInterface> commitProxies;
 	std::vector<GrvProxyInterface> grvProxies;
@@ -272,7 +271,6 @@ struct RegisterMasterRequest {
 		}
 		serializer(ar,
 		           id,
-		           mi,
 		           logSystemConfig,
 		           commitProxies,
 		           grvProxies,

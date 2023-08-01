@@ -1673,42 +1673,26 @@ void excludeServers(Transaction& tr, std::vector<AddressExclusion>& servers, boo
 }
 
 ACTOR Future<Void> excludeServers(Database cx, std::vector<AddressExclusion> servers, bool failed) {
-	if (cx->apiVersionAtLeast(700)) {
-		state ReadYourWritesTransaction ryw(cx);
-		loop {
-			try {
-				ryw.setOption(FDBTransactionOptions::RAW_ACCESS);
-				ryw.setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
-				ryw.set(
-				    SpecialKeySpace::getManagementApiCommandOptionSpecialKey(failed ? "failed" : "excluded", "force"),
-				    ValueRef());
-				for (auto& s : servers) {
-					Key addr = failed
-					               ? SpecialKeySpace::getManagementApiCommandPrefix("failed").withSuffix(s.toString())
-					               : SpecialKeySpace::getManagementApiCommandPrefix("exclude").withSuffix(s.toString());
-					ryw.set(addr, ValueRef());
-				}
-				TraceEvent("ExcludeServersSpecialKeySpaceCommit")
-				    .detail("Servers", describe(servers))
-				    .detail("ExcludeFailed", failed);
-				wait(ryw.commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("ExcludeServersError").errorUnsuppressed(e);
-				wait(ryw.onError(e));
+	state ReadYourWritesTransaction ryw(cx);
+	loop {
+		try {
+			ryw.setOption(FDBTransactionOptions::RAW_ACCESS);
+			ryw.setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
+			ryw.set(SpecialKeySpace::getManagementApiCommandOptionSpecialKey(failed ? "failed" : "excluded", "force"),
+			        ValueRef());
+			for (auto& s : servers) {
+				Key addr = failed ? SpecialKeySpace::getManagementApiCommandPrefix("failed").withSuffix(s.toString())
+				                  : SpecialKeySpace::getManagementApiCommandPrefix("exclude").withSuffix(s.toString());
+				ryw.set(addr, ValueRef());
 			}
-		}
-	} else {
-		state Transaction tr(cx);
-		loop {
-			try {
-				excludeServers(tr, servers, failed);
-				wait(tr.commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("ExcludeServersError").errorUnsuppressed(e);
-				wait(tr.onError(e));
-			}
+			TraceEvent("ExcludeServersSpecialKeySpaceCommit")
+			    .detail("Servers", describe(servers))
+			    .detail("ExcludeFailed", failed);
+			wait(ryw.commit());
+			return Void();
+		} catch (Error& e) {
+			TraceEvent("ExcludeServersError").errorUnsuppressed(e);
+			wait(ryw.onError(e));
 		}
 	}
 }
@@ -1736,144 +1720,70 @@ void excludeLocalities(Transaction& tr, std::unordered_set<std::string> localiti
 // Exclude the servers matching the given set of localities from use as state servers.
 // excludes localities by setting the keys.
 ACTOR Future<Void> excludeLocalities(Database cx, std::unordered_set<std::string> localities, bool failed) {
-	if (cx->apiVersionAtLeast(700)) {
-		state ReadYourWritesTransaction ryw(cx);
-		loop {
-			try {
-				ryw.setOption(FDBTransactionOptions::RAW_ACCESS);
-				ryw.setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
-				ryw.set(SpecialKeySpace::getManagementApiCommandOptionSpecialKey(
-				            failed ? "failed_locality" : "excluded_locality", "force"),
-				        ValueRef());
-				for (const auto& l : localities) {
-					Key addr = failed
-					               ? SpecialKeySpace::getManagementApiCommandPrefix("failedlocality").withSuffix(l)
-					               : SpecialKeySpace::getManagementApiCommandPrefix("excludedlocality").withSuffix(l);
-					ryw.set(addr, ValueRef());
-				}
-				TraceEvent("ExcludeLocalitiesSpecialKeySpaceCommit")
-				    .detail("Localities", describe(localities))
-				    .detail("ExcludeFailed", failed);
+	state ReadYourWritesTransaction ryw(cx);
+	loop {
+		try {
+			ryw.setOption(FDBTransactionOptions::RAW_ACCESS);
+			ryw.setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
+			ryw.set(SpecialKeySpace::getManagementApiCommandOptionSpecialKey(
+			            failed ? "failed_locality" : "excluded_locality", "force"),
+			        ValueRef());
+			for (const auto& l : localities) {
+				Key addr = failed ? SpecialKeySpace::getManagementApiCommandPrefix("failedlocality").withSuffix(l)
+				                  : SpecialKeySpace::getManagementApiCommandPrefix("excludedlocality").withSuffix(l);
+				ryw.set(addr, ValueRef());
+			}
+			TraceEvent("ExcludeLocalitiesSpecialKeySpaceCommit")
+			    .detail("Localities", describe(localities))
+			    .detail("ExcludeFailed", failed);
 
-				wait(ryw.commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("ExcludeLocalitiesError").errorUnsuppressed(e);
-				wait(ryw.onError(e));
-			}
-		}
-	} else {
-		state Transaction tr(cx);
-		loop {
-			try {
-				excludeLocalities(tr, localities, failed);
-				wait(tr.commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("ExcludeLocalitiesError").errorUnsuppressed(e);
-				wait(tr.onError(e));
-			}
+			wait(ryw.commit());
+			return Void();
+		} catch (Error& e) {
+			TraceEvent("ExcludeLocalitiesError").errorUnsuppressed(e);
+			wait(ryw.onError(e));
 		}
 	}
 }
 
 ACTOR Future<Void> includeServers(Database cx, std::vector<AddressExclusion> servers, bool failed) {
 	state std::string versionKey = deterministicRandom()->randomUniqueID().toString();
-	if (cx->apiVersionAtLeast(700)) {
-		state ReadYourWritesTransaction ryw(cx);
-		loop {
-			try {
-				ryw.setOption(FDBTransactionOptions::RAW_ACCESS);
-				ryw.setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
-				for (auto& s : servers) {
-					if (!s.isValid()) {
-						if (failed) {
-							ryw.clear(SpecialKeySpace::getManagementApiCommandRange("failed"));
-						} else {
-							ryw.clear(SpecialKeySpace::getManagementApiCommandRange("exclude"));
-						}
+	state ReadYourWritesTransaction ryw(cx);
+	loop {
+		try {
+			ryw.setOption(FDBTransactionOptions::RAW_ACCESS);
+			ryw.setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
+			for (auto& s : servers) {
+				if (!s.isValid()) {
+					if (failed) {
+						ryw.clear(SpecialKeySpace::getManagementApiCommandRange("failed"));
 					} else {
-						Key addr =
-						    failed ? SpecialKeySpace::getManagementApiCommandPrefix("failed").withSuffix(s.toString())
-						           : SpecialKeySpace::getManagementApiCommandPrefix("exclude").withSuffix(s.toString());
-						ryw.clear(addr);
-						// Eliminate both any ip-level exclusion (1.2.3.4) and any
-						// port-level exclusions (1.2.3.4:5)
-						// The range ['IP', 'IP;'] was originally deleted. ';' is
-						// char(':' + 1). This does not work, as other for all
-						// x between 0 and 9, 'IPx' will also be in this range.
-						//
-						// This is why we now make two clears: first only of the ip
-						// address, the second will delete all ports.
-						if (s.isWholeMachine())
-							ryw.clear(KeyRangeRef(addr.withSuffix(":"_sr), addr.withSuffix(";"_sr)));
+						ryw.clear(SpecialKeySpace::getManagementApiCommandRange("exclude"));
 					}
-				}
-				TraceEvent("IncludeServersCommit").detail("Servers", describe(servers)).detail("Failed", failed);
-
-				wait(ryw.commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("IncludeServersError").errorUnsuppressed(e);
-				wait(ryw.onError(e));
-			}
-		}
-	} else {
-		state Transaction tr(cx);
-		loop {
-			try {
-				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-				tr.setOption(FDBTransactionOptions::USE_PROVISIONAL_PROXIES);
-
-				// includeServers might be used in an emergency transaction, so make sure it is retry-self-conflicting
-				// and CAUSAL_WRITE_RISKY
-				tr.setOption(FDBTransactionOptions::CAUSAL_WRITE_RISKY);
-				if (failed) {
-					tr.addReadConflictRange(singleKeyRange(failedServersVersionKey));
-					tr.set(failedServersVersionKey, versionKey);
 				} else {
-					tr.addReadConflictRange(singleKeyRange(excludedServersVersionKey));
-					tr.set(excludedServersVersionKey, versionKey);
+					Key addr = failed
+					               ? SpecialKeySpace::getManagementApiCommandPrefix("failed").withSuffix(s.toString())
+					               : SpecialKeySpace::getManagementApiCommandPrefix("exclude").withSuffix(s.toString());
+					ryw.clear(addr);
+					// Eliminate both any ip-level exclusion (1.2.3.4) and any
+					// port-level exclusions (1.2.3.4:5)
+					// The range ['IP', 'IP;'] was originally deleted. ';' is
+					// char(':' + 1). This does not work, as other for all
+					// x between 0 and 9, 'IPx' will also be in this range.
+					//
+					// This is why we now make two clears: first only of the ip
+					// address, the second will delete all ports.
+					if (s.isWholeMachine())
+						ryw.clear(KeyRangeRef(addr.withSuffix(":"_sr), addr.withSuffix(";"_sr)));
 				}
-
-				for (auto& s : servers) {
-					if (!s.isValid()) {
-						if (failed) {
-							tr.clear(failedServersKeys);
-						} else {
-							tr.clear(excludedServersKeys);
-						}
-					} else if (s.isWholeMachine()) {
-						// Eliminate both any ip-level exclusion (1.2.3.4) and any
-						// port-level exclusions (1.2.3.4:5)
-						// The range ['IP', 'IP;'] was originally deleted. ';' is
-						// char(':' + 1). This does not work, as other for all
-						// x between 0 and 9, 'IPx' will also be in this range.
-						//
-						// This is why we now make two clears: first only of the ip
-						// address, the second will delete all ports.
-						auto addr = failed ? encodeFailedServersKey(s) : encodeExcludedServersKey(s);
-						tr.clear(singleKeyRange(addr));
-						tr.clear(KeyRangeRef(addr + ':', addr + char(':' + 1)));
-					} else {
-						if (failed) {
-							tr.clear(encodeFailedServersKey(s));
-						} else {
-							tr.clear(encodeExcludedServersKey(s));
-						}
-					}
-				}
-
-				TraceEvent("IncludeServersCommit").detail("Servers", describe(servers)).detail("Failed", failed);
-
-				wait(tr.commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("IncludeServersError").errorUnsuppressed(e);
-				wait(tr.onError(e));
 			}
+			TraceEvent("IncludeServersCommit").detail("Servers", describe(servers)).detail("Failed", failed);
+
+			wait(ryw.commit());
+			return Void();
+		} catch (Error& e) {
+			TraceEvent("IncludeServersError").errorUnsuppressed(e);
+			wait(ryw.onError(e));
 		}
 	}
 }
@@ -1882,85 +1792,35 @@ ACTOR Future<Void> includeServers(Database cx, std::vector<AddressExclusion> ser
 // include localities by clearing the keys.
 ACTOR Future<Void> includeLocalities(Database cx, std::vector<std::string> localities, bool failed, bool includeAll) {
 	state std::string versionKey = deterministicRandom()->randomUniqueID().toString();
-	if (cx->apiVersionAtLeast(700)) {
-		state ReadYourWritesTransaction ryw(cx);
-		loop {
-			try {
-				ryw.setOption(FDBTransactionOptions::RAW_ACCESS);
-				ryw.setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
-				if (includeAll) {
-					if (failed) {
-						ryw.clear(SpecialKeySpace::getManagementApiCommandRange("failedlocality"));
-					} else {
-						ryw.clear(SpecialKeySpace::getManagementApiCommandRange("excludedlocality"));
-					}
-				} else {
-					for (const auto& l : localities) {
-						Key locality =
-						    failed ? SpecialKeySpace::getManagementApiCommandPrefix("failedlocality").withSuffix(l)
-						           : SpecialKeySpace::getManagementApiCommandPrefix("excludedlocality").withSuffix(l);
-						ryw.clear(locality);
-					}
-				}
-				TraceEvent("IncludeLocalitiesCommit")
-				    .detail("Localities", describe(localities))
-				    .detail("Failed", failed)
-				    .detail("IncludeAll", includeAll);
-
-				wait(ryw.commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("IncludeLocalitiesError").errorUnsuppressed(e);
-				wait(ryw.onError(e));
-			}
-		}
-	} else {
-		state Transaction tr(cx);
-		loop {
-			try {
-				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-				tr.setOption(FDBTransactionOptions::USE_PROVISIONAL_PROXIES);
-
-				// includeLocalities might be used in an emergency transaction, so make sure it is
-				// retry-self-conflicting and CAUSAL_WRITE_RISKY
-				tr.setOption(FDBTransactionOptions::CAUSAL_WRITE_RISKY);
+	state ReadYourWritesTransaction ryw(cx);
+	loop {
+		try {
+			ryw.setOption(FDBTransactionOptions::RAW_ACCESS);
+			ryw.setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
+			if (includeAll) {
 				if (failed) {
-					tr.addReadConflictRange(singleKeyRange(failedLocalityVersionKey));
-					tr.set(failedLocalityVersionKey, versionKey);
+					ryw.clear(SpecialKeySpace::getManagementApiCommandRange("failedlocality"));
 				} else {
-					tr.addReadConflictRange(singleKeyRange(excludedLocalityVersionKey));
-					tr.set(excludedLocalityVersionKey, versionKey);
+					ryw.clear(SpecialKeySpace::getManagementApiCommandRange("excludedlocality"));
 				}
-
-				if (includeAll) {
-					if (failed) {
-						tr.clear(failedLocalityKeys);
-					} else {
-						tr.clear(excludedLocalityKeys);
-					}
-				} else {
-					for (const auto& l : localities) {
-						if (failed) {
-							tr.clear(encodeFailedLocalityKey(l));
-						} else {
-							tr.clear(encodeExcludedLocalityKey(l));
-						}
-					}
+			} else {
+				for (const auto& l : localities) {
+					Key locality =
+					    failed ? SpecialKeySpace::getManagementApiCommandPrefix("failedlocality").withSuffix(l)
+					           : SpecialKeySpace::getManagementApiCommandPrefix("excludedlocality").withSuffix(l);
+					ryw.clear(locality);
 				}
-
-				TraceEvent("IncludeLocalitiesCommit")
-				    .detail("Localities", describe(localities))
-				    .detail("Failed", failed)
-				    .detail("IncludeAll", includeAll);
-
-				wait(tr.commit());
-				return Void();
-			} catch (Error& e) {
-				TraceEvent("IncludeLocalitiesError").errorUnsuppressed(e);
-				wait(tr.onError(e));
 			}
+			TraceEvent("IncludeLocalitiesCommit")
+			    .detail("Localities", describe(localities))
+			    .detail("Failed", failed)
+			    .detail("IncludeAll", includeAll);
+
+			wait(ryw.commit());
+			return Void();
+		} catch (Error& e) {
+			TraceEvent("IncludeLocalitiesError").errorUnsuppressed(e);
+			wait(ryw.onError(e));
 		}
 	}
 }

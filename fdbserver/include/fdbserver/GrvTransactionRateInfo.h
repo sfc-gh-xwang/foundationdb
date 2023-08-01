@@ -39,12 +39,13 @@ class GrvTransactionRateInfo {
 	double rate{ 0.0 };
 	double limit{ 0.0 };
 	double budget{ 0.0 };
+	double maxToStart{ 0.0 };
 	bool disabled{ true };
 	Smoother smoothRate;
 	Smoother smoothReleased;
 
 public:
-	GrvTransactionRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate);
+	GrvTransactionRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate, double maxToStart);
 
 	// Determines the number of transactions that this proxy is allowed to release
 	// in this release window.

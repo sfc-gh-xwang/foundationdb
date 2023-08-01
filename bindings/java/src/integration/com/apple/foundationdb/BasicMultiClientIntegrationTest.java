@@ -41,7 +41,7 @@ public class BasicMultiClientIntegrationTest {
 	@Test
 	@Tag("MultiClient")
 	void testMultiClientWritesAndReadsData() throws Exception {
-		FDB fdb = FDB.selectAPIVersion(630);
+		FDB fdb = FDB.selectAPIVersion(ApiVersion.LATEST);
 		fdb.options().setKnob("min_trace_severity=5");
 
 		Collection<Database> dbs = clientHelper.openDatabases(fdb); // the clientHelper will close the databases for us

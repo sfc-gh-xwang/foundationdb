@@ -106,50 +106,6 @@ struct WorkerFitnessInfo {
 	    used(used) {}
 };
 
-struct RecruitmentInfo {
-	DatabaseConfiguration configuration;
-	bool recruitSeedServers;
-	int maxOldLogRouters;
-
-	RecruitmentInfo() {}
-	explicit RecruitmentInfo(DatabaseConfiguration const& configuration, bool recruitSeedServers, int maxOldLogRouters)
-	  : configuration(configuration),
-	    recruitSeedServers(recruitSeedServers),
-	    maxOldLogRouters(maxOldLogRouters) {}
-};
-
-// Stores details about all the workers required for a functioning transaction
-// subsystem.
-struct WorkerRecruitment {
-	std::vector<WorkerDetails> grvProxies;
-	std::vector<WorkerDetails> commitProxies;
-	std::vector<WorkerDetails> resolvers;
-	std::vector<WorkerDetails> tLogs;
-	std::vector<WorkerDetails> satelliteTLogs;
-	std::vector<WorkerDetails> storageServers;
-	// During recovery, log routers for older generations will be recruited.
-	std::vector<WorkerDetails> oldLogRouters;
-	std::vector<WorkerDetails> backupWorkers;
-	// dcId is where the master is recruited. It prefers to be in
-	// configuration.primaryDcId, but it can be recruited from
-	// configuration.secondaryDc: The dcId will be the secondaryDcId and this
-	// generation's primaryDC in memory is different from
-	// configuration.primaryDcId.
-	Optional<Key> dcId;
-
-	// Satellite fallback mode is automatically enabled when one of two
-	// satellite datacenters become unavailable. In satellite fallback mode,
-	// mutations will only be sent to the single remaining satellite
-	// datacenter.
-	bool satelliteFallback;
-
-	WorkerRecruitment() : satelliteFallback(false) {}
-
-	// TODO(ljoswiak): Implement when refactoring `betterMasterExists`
-	bool operator==(WorkerRecruitment const& rhs) const { return true; }
-	bool operator<(WorkerRecruitment const& rhs) const { return true; }
-};
-
 struct RemoteRecruitmentInfo {
 	DatabaseConfiguration configuration;
 	Optional<Key> dcId;
@@ -172,4 +128,53 @@ struct RemoteWorkerRecruitment {
 	std::vector<WorkerDetails> remoteTLogs;
 	std::vector<WorkerDetails> logRouters;
 	Optional<UID> dbgId;
+};
+
+struct RecruitmentInfo {
+	DatabaseConfiguration configuration;
+	bool recruitSeedServers;
+	int maxOldLogRouters;
+
+	RecruitmentInfo() {}
+	explicit RecruitmentInfo(DatabaseConfiguration const& configuration, bool recruitSeedServers, int maxOldLogRouters)
+	  : configuration(configuration),
+	    recruitSeedServers(recruitSeedServers),
+	    maxOldLogRouters(maxOldLogRouters) {}
+};
+
+// Stores details about all the workers required for a functioning transaction
+// subsystem.
+struct WorkerRecruitment {
+	Optional<WorkerDetails> sequencer;
+	std::vector<WorkerDetails> grvProxies;
+	std::vector<WorkerDetails> commitProxies;
+	std::vector<WorkerDetails> resolvers;
+	std::vector<WorkerDetails> tLogs;
+	std::vector<WorkerDetails> satelliteTLogs;
+	std::vector<WorkerDetails> storageServers;
+	// During recovery, log routers for older generations will be recruited.
+	std::vector<WorkerDetails> oldLogRouters;
+	std::vector<WorkerDetails> backupWorkers;
+	// dcId is where the master is recruited. It prefers to be in
+	// configuration.primaryDcId, but it can be recruited from
+	// configuration.secondaryDc: The dcId will be the secondaryDcId and this
+	// generation's primaryDC in memory is different from
+	// configuration.primaryDcId.
+	Optional<Key> dcId;
+	Optional<Future<RemoteWorkerRecruitment>> remoteWorkerRecruitment;
+
+	// Satellite fallback mode is automatically enabled when one of two
+	// satellite datacenters become unavailable. In satellite fallback mode,
+	// mutations will only be sent to the single remaining satellite
+	// datacenter.
+	bool satelliteFallback;
+
+	WorkerRecruitment() : satelliteFallback(false) {}
+
+	// Returns true if `this` represents a worse recruitment when compared to
+	// `rhs`, for some definition of worse.
+	bool operator<(WorkerRecruitment const& rhs) const;
+	bool operator>(WorkerRecruitment const& rhs) const { return rhs < *this; }
+	bool operator<=(WorkerRecruitment const& rhs) const { return !(*this > rhs); }
+	bool operator>=(WorkerRecruitment const& rhs) const { return !(*this < rhs); }
 };

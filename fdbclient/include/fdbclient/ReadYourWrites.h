@@ -127,7 +127,8 @@ public:
 	Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(const KeyRange& range,
 	                                                                    Version begin,
 	                                                                    Optional<Version> readVersion,
-	                                                                    Version* readVersionOut) override;
+	                                                                    Version* readVersionOut,
+	                                                                    int64_t mutationByteLimit) override;
 
 	Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules(const KeyRange& range,
 	                                                                           Optional<Version> summaryVersion,
@@ -153,6 +154,7 @@ public:
 
 	double getTagThrottledDuration() const override { return tr.getTagThrottledDuration(); }
 	int64_t getTotalCost() const override { return tr.getTotalCost(); }
+	void setExpectedCost(uint64_t value) override { tr.setExpectedCost(value); }
 	int64_t getApproximateSize() const override { return approximateSize; }
 	[[nodiscard]] Future<Standalone<StringRef>> getVersionstamp() override;
 

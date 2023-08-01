@@ -11,13 +11,18 @@ class TooManyGrvBatchersWorkload : public TestWorkload {
 	static TransactionTag getTag(int index) { return TransactionTag(format("tag/%06d", index)); }
 
 	ACTOR static Future<Void> getReadVersion(Database cx, int index) {
+		state Transaction tr(cx);
+		state UID debugId = deterministicRandom()->randomUniqueID();
+		TraceEvent("StartingReadVersionFetcherTransaction", debugId);
+		tr.debugTransaction(debugId);
 		loop {
 			try {
-				state Transaction tr(cx);
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, getTag(index));
 				wait(success(tr.getReadVersion()));
+				TraceEvent("ReadVersionFetcherGotReadVersion", debugId);
 				return Void();
 			} catch (Error& e) {
+				TraceEvent("ReadVersionFetcherTransactionError", debugId).error(e);
 				wait(tr.onError(e));
 			}
 		}
@@ -57,7 +62,21 @@ class TooManyGrvBatchersWorkload : public TestWorkload {
 		wait(delay(CLIENT_KNOBS->GRV_BATCHER_EXPIRATION_TIMEOUT + CLIENT_KNOBS->GRV_BATCHER_CLEANING_INTERVAL * 2));
 
 		// Now getting a read version with a new tag should succeed
-		wait(getReadVersion(cx, numActors));
+		loop {
+			try {
+				wait(getReadVersion(cx, numActors));
+				break;
+			} catch (Error& e) {
+				// If the database is in an unhealthy state, it's possible that old GRV requests
+				// are still outstanding, so GRV batchers have not yet expired. In this case,
+				// continue retrying.
+				if (e.code() == error_code_too_many_grv_batchers) {
+					wait(delayJittered(1.0));
+				} else {
+					throw e;
+				}
+			}
+		}
 
 		return Void();
 	}

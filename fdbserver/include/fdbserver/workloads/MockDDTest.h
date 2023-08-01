@@ -41,6 +41,9 @@ struct MockDDTestWorkload : public TestWorkload {
 	KeyRange getRandomRange(double offset) const;
 	Future<Void> setup(Database const& cx) override;
 
+	// workload metrics
+	Int64MetricHandle totalReadsMetric;
+
 protected:
 	uint64_t mockDbSize = 0;
 	int keySize = 16;
@@ -60,6 +63,9 @@ protected:
 	int minSpaceKeyCount = 1000, maxSpaceKeyCount = 1000;
 	int linearStride = 10 * (1 << 20), linearStartSize = 10 * (1 << 20);
 
+	// operation rates
+	double getPerSecond, setPerSecond;
+
 	explicit MockDDTestWorkload(WorkloadContext const& wcx);
 
 	virtual void populateRandomStrategy();
@@ -67,6 +73,9 @@ protected:
 	virtual void populateFixedStrategy();
 	// populate data to MGS
 	virtual void populateMgs();
+
+	// operation clients
+	Future<Void> randomGetClient(double delaySeconds, int keySpaceMin, int keySpaceMax);
 };
 
 #endif // FOUNDATIONDB_MOCKDDTEST_H

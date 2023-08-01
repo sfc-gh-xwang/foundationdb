@@ -19,7 +19,6 @@
  */
 
 #include "TesterUtil.h"
-#include "fmt/core.h"
 #include "fmt/chrono.h"
 #include <cstdio>
 #include <algorithm>

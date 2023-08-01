@@ -75,6 +75,10 @@ public:
 	ThreadFuture<DatabaseSharedState*> createSharedState() override;
 	void setSharedState(DatabaseSharedState* p) override;
 
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
+
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
@@ -113,6 +117,10 @@ public:
 
 	// Return a JSON string containing tenant client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
+
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
 
 	void addref() override { ThreadSafeReferenceCounted<ThreadSafeTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<ThreadSafeTenant>::delref(); }
@@ -203,6 +211,7 @@ public:
 	ThreadFuture<SpanContext> getSpanContext() override;
 	ThreadFuture<double> getTagThrottledDuration() override;
 	ThreadFuture<int64_t> getTotalCost() override;
+	void setExpectedCost(uint64_t value) override;
 	ThreadFuture<int64_t> getApproximateSize() override;
 
 	ThreadFuture<uint64_t> getProtocolVersion();
@@ -255,6 +264,8 @@ public:
 
 	void addNetworkThreadCompletionHook(void (*hook)(void*), void* hookParameter) override;
 	FDBAllocatorIfc* getAllocatorInterface() override;
+
+	ApiVersion getApiVersion() { return apiVersion; }
 
 private:
 	friend IClientApi* getLocalClientAPI();

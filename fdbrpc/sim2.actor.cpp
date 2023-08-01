@@ -358,7 +358,10 @@ struct Sim2Conn final : IConnection, ReferenceCounted<Sim2Conn> {
 		    .detail("StableConnection", stableConnection);
 	}
 
-	~Sim2Conn() { ASSERT_ABORT(!opened || closedByCaller); }
+	~Sim2Conn() {
+		// FIXME: HTTPServer implement idle-connection monitoring
+		ASSERT_ABORT(!opened || closedByCaller || g_simulator->httpServerIps.count(peerEndpoint.ip));
+	}
 
 	void addref() override { ReferenceCounted<Sim2Conn>::addref(); }
 	void delref() override { ReferenceCounted<Sim2Conn>::delref(); }
@@ -576,8 +579,10 @@ private:
 	}
 
 	ACTOR static Future<Void> trackLeakedConnection(Sim2Conn* self) {
-		// FIXME: we could also just implement connection idle closing for sim http server instead
-		if (g_simulator->httpServerIps.count(self->process->address.ip)) {
+		// FIXME: we could also just implement connection idle closing for sim http server instead && tracking client
+		// connection (pooled) if any
+		if (g_simulator->httpServerIps.count(self->process->address.ip) ||
+		    g_simulator->httpServerIps.count(self->peerEndpoint.ip)) {
 			return Void();
 		}
 		wait(g_simulator->onProcess(self->process));
@@ -2437,7 +2442,10 @@ public:
 	                                  Reference<HTTP::SimServerContext> serverContext,
 	                                  Reference<HTTP::SimRegisteredHandlerContext> handlerContext) {
 		try {
-			NetworkAddress addr = serverContext->newAddress();
+			NetworkAddress addr = NetworkAddress(g_simulator->getCurrentProcess()->address.ip,
+			                                     handlerContext->port,
+			                                     true /* isPublic*/,
+			                                     false /*isTLS*/);
 			process->listenerMap[addr] = Reference<IListener>(new Sim2Listener(process, addr));
 			addressMap[addr] = process;
 			handlerContext->addAddress(addr);
@@ -2497,19 +2505,19 @@ public:
 	                                                     std::string hostname,
 	                                                     std::string service,
 	                                                     Reference<HTTP::IRequestHandler> requestHandler) {
-		// handle race where test client tries to register server before all processes are up, but time out eventually
-		// FIXME: make this so a server that starts after this or a server that restarts will automatically re-add
-		// itself, register the handler, and register with dns
 		std::string id = hostname + ":" + service;
 		ASSERT(!self->httpHandlers.count(id));
 
+		// check not too many servers
+		ASSERT(self->httpHandlers.size() < 1000);
 		state Reference<HTTP::SimRegisteredHandlerContext> handlerContext =
-		    makeReference<HTTP::SimRegisteredHandlerContext>(hostname, service, requestHandler);
+		    makeReference<HTTP::SimRegisteredHandlerContext>(hostname, service, self->nextHTTPPort++, requestHandler);
 		self->httpHandlers.insert({ id, handlerContext });
 
 		// start process on all running HTTP servers
 		state ProcessInfo* callingProcess = self->getCurrentProcess();
 		state int i = 0;
+
 		// copy the processes before waits just to ensure no races with addSimHTTPProcess
 		state std::vector<std::pair<ProcessInfo*, Reference<HTTP::SimServerContext>>> procsCopy =
 		    self->httpServerProcesses;
