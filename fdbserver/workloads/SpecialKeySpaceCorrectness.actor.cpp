@@ -137,10 +137,6 @@ struct SpecialKeySpaceCorrectnessWorkload : TestWorkload {
 		Future<Void> f;
 		{
 			ReadYourWritesTransaction ryw{ cx->clone() };
-			if (!ryw.getDatabase()->apiVersionAtLeast(630)) {
-				// This test is not valid for API versions smaller than 630
-				return;
-			}
 			f = success(ryw.get("\xff\xff/status/json"_sr));
 			CODE_PROBE(!f.isReady(), "status json not ready");
 		}

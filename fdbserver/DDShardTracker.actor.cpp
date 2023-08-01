@@ -223,9 +223,10 @@ ACTOR Future<Void> trackShardMetrics(DataDistributionTracker::SafeAccessor self,
 			std::tie(bounds, readHotShard) = calculateShardSizeBounds(keys, shardMetrics, bandwidthStatus);
 
 			if (readHotShard) {
-				// TraceEvent("RHDTriggerReadHotLoggingForShard")
-				//     .detail("ShardBegin", keys.begin.printable().c_str())
-				//     .detail("ShardEnd", keys.end.printable().c_str());
+				DisabledTraceEvent("RHDTriggerReadHotLoggingForShard")
+				    .detail("ShardBegin", keys.begin.printable())
+				    .detail("ShardEnd", keys.end.printable())
+				    .detail("ShardMetrics", shardMetrics->get().get().metrics.toString());
 				self()->readHotShard.send(keys);
 			}
 

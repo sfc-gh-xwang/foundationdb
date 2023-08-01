@@ -32,9 +32,6 @@ def open(*args, **kwargs):
     raise RuntimeError("You must call api_version() before using any fdb methods")
 
 
-init = open
-
-
 def transactional(*args, **kwargs):
     raise RuntimeError("You must call api_version() before using fdb.transactional")
 
@@ -65,8 +62,8 @@ def api_version(ver):
             )
         return
 
-    if ver < 13:
-        raise RuntimeError("FDB API versions before 13 are not supported")
+    if ver < 710:
+        raise RuntimeError("FDB API versions before 710 are not supported")
 
     if ver > header_version:
         raise RuntimeError("Latest known FDB API version is %d" % header_version)
@@ -112,42 +109,8 @@ def api_version(ver):
 
     _add_symbols(fdb.impl, list)
 
-    if ver >= 630:
-        import fdb.tenant_management
-
-    if ver < 610:
-        globals()["init"] = getattr(fdb.impl, "init")
-        globals()["open"] = getattr(fdb.impl, "open_v609")
-        globals()["create_cluster"] = getattr(fdb.impl, "create_cluster")
-        globals()["Cluster"] = getattr(fdb.impl, "Cluster")
-
-    if ver > 22:
-        import fdb.locality
-
-    if ver == 13:
-        globals()["open"] = getattr(fdb.impl, "open_v13")
-        globals()["init"] = getattr(fdb.impl, "init_v13")
-
-        # Future.get got renamed to Future.wait in v14 to make room for
-        # Database.get, we have to undo that here
-        for name in dir(fdb.impl):
-            o = getattr(fdb.impl, name)
-            try:
-                if issubclass(o, fdb.impl.Future):
-                    if hasattr(o, "wait"):
-                        o.get = o.wait
-            except TypeError:
-                pass
-
-        # FDBRange used to be called FDBRangeIter and was an iterator,
-        # but it's now a container. In v13 we have to make it act like
-        # an iterator again.
-        def next(self):
-            if not hasattr(self, "__iterating"):
-                self.__iterating = iter(self)
-            return next(self.__iterating)
-
-        setattr(fdb.impl.FDBRange, "next", next)
+    import fdb.tenant_management
+    import fdb.locality
 
     globals()["_version"] = ver
 

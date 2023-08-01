@@ -26,7 +26,7 @@
 #define DLLEXPORT
 #endif
 
-#if FDB_API_VERSION >= 23 && !defined(WARN_UNUSED_RESULT)
+#if !defined(WARN_UNUSED_RESULT)
 #ifdef __GNUG__
 #define WARN_UNUSED_RESULT __attribute__((warn_unused_result))
 #else
@@ -45,7 +45,6 @@ extern "C" {
 /* Pointers to these opaque types represent objects in the FDB API */
 typedef struct FDB_future FDBFuture;
 typedef struct FDBResult_ FDBResult;
-typedef struct FDB_cluster FDBCluster;
 typedef struct FDB_database FDBDatabase;
 typedef struct FDB_tenant FDBTenant;
 typedef struct FDB_transaction FDBTransaction;
@@ -65,25 +64,12 @@ typedef struct FDBKey_ {
 	int key_length;
 } FDBKey;
 
-#if FDB_API_VERSION >= 630
-
 typedef struct FDBKeyValue_ {
 	const uint8_t* key;
 	int key_length;
 	const uint8_t* value;
 	int value_length;
 } FDBKeyValue;
-
-#else
-
-typedef struct FDBKeyValue_ {
-	const void* key;
-	int key_length;
-	const void* value;
-	int value_length;
-} FDBKeyValue;
-
-#endif
 
 typedef struct FDBKeyRange_ {
 	const uint8_t* begin_key;
@@ -161,7 +147,7 @@ typedef struct FDBBGFileDescriptionV1_ {
 
 /* ---------------------------------------------------------------------------------
  *	New blob granule API structures
- *  (Changed to referecence extensible data structures by pointers)
+ *  (Changed to reference extensible data structures by pointers)
  */
 
 /* contains metadata necessary to derive encryption keys (for passing back to FDB) */
@@ -228,6 +214,8 @@ typedef struct readgranulecontext {
 	/* Number of granules to load in parallel */
 	int granuleParallelism;
 } FDBReadBlobGranuleContext;
+
+typedef FDBByteString FDBBulkLoadID;
 
 #ifdef __cplusplus
 }

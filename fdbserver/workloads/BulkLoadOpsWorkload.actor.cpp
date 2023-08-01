@@ -85,6 +85,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> _setup(Database cx, BulkLoadOpsWorkload* self) {
+		if (self->clientId != 0) {
+			return Void();
+		}
 		// create initial target ranges
 		TraceEvent("BulkLoadOpsSetup").detail("ConcurrentLoads", self->concurrentLoads).log();
 
@@ -101,7 +104,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			self->tenant = makeReference<Tenant>(cx, self->tenantName.get());
 		}
 
-		TraceEvent("BulkLoadOpsSetupComplete");
+		TraceEvent("BulkLoadOpsSetupComplete").detail("UseTenant", self->tenant.present());
 		return Void();
 	}
 
@@ -115,13 +118,18 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	Future<Void> start(Database const& cx) override {
+		unitClient = Future<Void>(Void());
 		if (clientId == 0) {
-			for (int i = 0; i < concurrentLoads; i++) {
-				loadClients.push_back(bulkLoadClient(cx->clone(), this));
+			// sometimes don't do both unit tests and normal load tests
+			if (deterministicRandom()->random01() < 0.9) {
+				for (int i = 0; i < concurrentLoads; i++) {
+					loadClients.push_back(bulkLoadClient(cx->clone(), this, i));
+				}
 			}
-			unitClient = bulkLoadUnitTests(cx->clone(), this);
-		} else {
-			unitClient = Future<Void>(Void());
+
+			if (deterministicRandom()->random01() < 0.8 || loadClients.empty()) {
+				unitClient = bulkLoadUnitTests(cx->clone(), this);
+			}
 		}
 		return delay(testDuration);
 	}
@@ -151,7 +159,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->unitClient);
 		TraceEvent("BulkLoadOpsUnitsComplete");
 
-		std::vector<BulkLoadID> loadsNotCleanedUp = wait(cx->listBulkLoads(false));
+		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp = wait(cx->listBulkLoads(false, self->tenant));
 		fmt::print("{0} running loads\n", loadsNotCleanedUp.size());
 		for (auto& it : loadsNotCleanedUp) {
 			fmt::print("    {0}\n", it.printable());
@@ -164,6 +172,34 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	void getMetrics(std::vector<PerfMetric>& m) override {}
+
+	ACTOR Future<Void> stageSingleFile(Database cx, BulkLoadID id, KeyRange range, Optional<Reference<Tenant>> tenant) {
+		// sometimes request extra pointers
+		int count = deterministicRandom()->randomInt(1, 3);
+		Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
+		    wait(cx->getBulkLoadFilesToWrite(id, count, tenant));
+
+		state Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+		filesWritten.arena().dependsOn(filesToWrite.arena());
+
+		// FIXME: actually write file to blob storage and stuff
+		BulkLoadWrittenFileRef writtenFile;
+		writtenFile.fileId = filesToWrite[0].fileId;
+		writtenFile.keyRange = range;
+		writtenFile.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile);
+
+		wait(cx->markBulkLoadFilesWritten(id, filesWritten, tenant));
+
+		if (deterministicRandom()->random01() < 0.1) {
+			// re-registering the same file should be idempotent
+			wait(cx->markBulkLoadFilesWritten(id, filesWritten, tenant));
+		}
+
+		return Void();
+	}
 
 	ACTOR Future<Void> doInjectAbort(Database cx,
 	                                 BulkLoadOpsWorkload* self,
@@ -187,12 +223,15 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Void> doWaitLoad(Future<Void> loadF, const bool* injectedAbort, bool* loadComplete) {
+	ACTOR Future<Void> doWaitLoad(BulkLoadID id, Future<Void> loadF, const bool* injectedAbort, bool* loadComplete) {
 		try {
 			wait(loadF);
 			*loadComplete = true;
 		} catch (Error& e) {
 			if (e.code() == error_code_bulk_load_aborted) {
+				if (!*injectedAbort) {
+					TraceEvent("BulkLoadAbortedBySystem").detail("BulkLoadID", id);
+				}
 				ASSERT(*injectedAbort);
 			} else {
 				throw e;
@@ -218,7 +257,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		Future<Void> abortFuture = injectAbort
 		                               ? self->doInjectAbort(cx, self, id, loadFuture, &injectedAbort, &abortCompleted)
 		                               : Future<Void>(Void());
-		wait(self->doWaitLoad(loadFuture, &injectedAbort, &loadCompleted) && abortFuture);
+		wait(self->doWaitLoad(id, loadFuture, &injectedAbort, &loadCompleted) && abortFuture);
 
 		// both load and abort cannot have successfully completed
 		ASSERT(loadCompleted != abortCompleted);
@@ -232,7 +271,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// Validate bulk load state at end.
 
 		BulkLoadStatus status = wait(cx->getBulkLoadStatus(id));
-		BulkLoadState current = status.state;
+		BulkLoadStatus::State current = status.state;
 
 		if (BLW_DEBUG) {
 			fmt::print(
@@ -240,11 +279,64 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		if (abortCompleted) {
-			ASSERT(current == BulkLoadState::ABORTED);
+			ASSERT(current == BulkLoadStatus::State::ABORTED || current == BulkLoadStatus::State::ABORTED_COMPLETE);
 		} else if (!injectedAbort) {
-			ASSERT(current == BulkLoadState::DONE);
+			ASSERT(current == BulkLoadStatus::State::DONE);
 		} else {
-			ASSERT(current == BulkLoadState::DONE || current == BulkLoadState::ABORTED);
+			ASSERT(current == BulkLoadStatus::State::DONE || current == BulkLoadStatus::State::ABORTED ||
+			       current == BulkLoadStatus::State::ABORTED_COMPLETE);
+		}
+
+		return Void();
+	}
+
+	ACTOR Future<Void> stageFilesForBulkLoad(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id, KeyRange range) {
+		state int targetFiles = deterministicRandom()->randomInt(1, 11);
+
+		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite;
+		state int targetFilesToStage = targetFiles;
+
+		while (targetFilesToStage > 0) {
+			int batchSize = deterministicRandom()->randomSkewedUInt32(1, targetFiles + 1);
+			batchSize = std::min(targetFilesToStage, batchSize);
+			targetFilesToStage -= batchSize;
+
+			Standalone<VectorRef<BulkLoadFileToWriteRef>> thisBatch =
+			    wait(cx->getBulkLoadFilesToWrite(id, batchSize, self->tenant));
+			filesToWrite.arena().dependsOn(thisBatch.arena());
+			filesToWrite.append(filesToWrite.arena(), thisBatch.begin(), thisBatch.size());
+		}
+
+		ASSERT(filesToWrite.size() == targetFiles);
+
+		state int targetFilesToWrite = targetFiles;
+		state int prefix = 0;
+		while (targetFilesToWrite > 0) {
+			int batchSize = deterministicRandom()->randomSkewedUInt32(1, targetFiles + 1);
+			batchSize = std::min(targetFilesToWrite, batchSize);
+			targetFilesToWrite -= batchSize;
+
+			Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+			for (int i = 0; i < batchSize; i++, prefix++) {
+				// sometimes skip file to make non-contiguous
+				if (filesWritten.empty() || deterministicRandom()->random01() < 0.8) {
+					std::string filePrefixStr = std::to_string(prefix);
+					Standalone<StringRef> filePrefix =
+					    range.begin.withSuffix("/"_sr).withSuffix(filePrefixStr).withSuffix("/"_sr);
+					KeyRange fileRange(KeyRangeRef(filePrefix, strinc(filePrefix)));
+
+					filesWritten.arena().dependsOn(fileRange.arena());
+					BulkLoadWrittenFileRef writtenFile;
+					writtenFile.fileId = filesToWrite[prefix].fileId;
+					writtenFile.keyRange = fileRange;
+					writtenFile.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+					writtenFile.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+					filesWritten.push_back(filesWritten.arena(), writtenFile);
+				}
+			}
+
+			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
 		}
 
 		return Void();
@@ -261,8 +353,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			fmt::print("BLW {0} {1}: started\n", range.begin.printable(), id.printable());
 		}
 
-		// FIXME: actually load data into at least 1 file and register for bulk load!!
-		wait(delay(deterministicRandom()->random01() * 2));
+		wait(self->stageFilesForBulkLoad(cx, self, id, range));
+
+		// FIXME: also do aborting during staging/all files registered. already handled by unit tests some
 
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 
@@ -274,6 +367,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		// FIXME: if DONE, check data matches loaded data for range!
 
+		if (BLW_DEBUG) {
+			fmt::print("BLW {0} {1}: cleaning up\n", range.begin.printable(), id.printable());
+		}
 		// FIXME: once auto-cleanup implemented, sometimes don't clean up, especially if aborted, and ensure auto clean
 		// up gets it
 		wait(cx->cleanupBulkLoad(id, self->tenant));
@@ -285,7 +381,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Void> bulkLoadClient(Database cx, BulkLoadOpsWorkload* self) {
+	ACTOR Future<Void> bulkLoadClient(Database cx, BulkLoadOpsWorkload* self, int clientIdx) {
 		// FIXME: REENABLE!
 		/*if (deterministicRandom()->coinflip()) {
 		    cx->internal = IsInternal::False;
@@ -294,10 +390,13 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		cx->internal = IsInternal::True;
 
 		state bool completedAny = false;
+		if (BLW_DEBUG) {
+			fmt::print("BLW: client {0} workload starting\n", clientIdx);
+		}
 		loop {
 			if (completedAny && self->stopTest) {
 				if (BLW_DEBUG) {
-					fmt::print("BLW {0}: workload done\n", range.begin.printable());
+					fmt::print("BLW: client {0} workload done\n", clientIdx);
 				}
 				return Void();
 			}
@@ -306,8 +405,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			state KeyRange range(KeyRangeRef(StringRef(nextRangeKey), strinc(StringRef(nextRangeKey))));
 			bool injectAbort = deterministicRandom()->random01() < 0.2;
 			try {
-				fmt::print("BLW {0}: starting one bulk load\n", range.begin.printable());
+				fmt::print("BLW {0}: starting one bulk load (client {1})\n", range.begin.printable(), clientIdx);
 				wait(self->doOneBulkLoad(cx, self, range, injectAbort));
+				fmt::print("BLW {0}: completed one bulk load (client {1})\n", range.begin.printable(), clientIdx);
 			} catch (Error& e) {
 				if (BLW_DEBUG) {
 					fmt::print("BLW {0}: unexpected error {1}\n", range.begin.printable(), e.name());
@@ -327,8 +427,32 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		INVALID_LOAD_ID_UNIT,
 		WRITE_DURING_LOAD_UNIT,
 		READ_DURING_LOAD_UNIT,
-		OP_COUNT = 7 /* keep this last */
+		SANITY_CHECK_VERSIONSTAMP_UNIT,
+		NON_EMPTY_RANGE_UNIT,
+		ALREADY_BLOB_RANGE_UNIT,
+		BLOBBIFY_DURING_LOAD_UNIT,
+		REGISTER_NO_FILES_UNIT,
+		DUPLICATE_FILES_SAME_REGISTER_UNIT,
+		DUPLICATE_FILES_MULTIPLE_REGISTER_UNIT,
+		OVERLAPPING_FILES_SAME_REGISTER_UNIT,
+		OVERLAPPING_FILES_MULTIPLE_REGISTER_UNIT,
+		REGISTER_FILES_ALREADY_LOADING_UNIT,
+		REGISTER_NONEXISTENT_FILE_UNIT,
+		OP_COUNT = 18 /* keep this last */
 	};
+
+	ACTOR Future<Void> expectAbortedBySystem(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
+		try {
+			// retry of all files registered might also throw bulk_load_aborted
+			wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
+			wait(cx->waitBulkLoadComplete(id, self->tenant));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_aborted);
+		}
+		wait(cx->cleanupBulkLoad(id, self->tenant));
+		return Void();
+	}
 
 	ACTOR Future<Void> abortAndCleanupAfterUnit(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
 		wait(cx->abortBulkLoad(id, self->tenant));
@@ -356,6 +480,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	ACTOR Future<Void> doneThenAbortUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that client cannot abort an already completed bulk load
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		wait(self->stageSingleFile(cx, id, range, self->tenant));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 		wait(cx->waitBulkLoadComplete(id, self->tenant));
 
@@ -378,7 +503,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->abortBulkLoad(id, self->tenant));
 
 		try {
-			wait(cx->updateBulkLoadState(id, BulkLoadState::DONE));
+			wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
 			ASSERT(false);
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_aborted);
@@ -423,9 +548,20 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->checkCorrectInvalidIDError(cx->abortBulkLoad(id, self->tenant)));
 		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadComplete(id, self->tenant)));
 		// don't test cleanup because it's idempotent if it was already cleaned up
-		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadState::STAGING)));
-		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadState::STAGING)));
+		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING)));
+		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadStatus::State::STAGING)));
 		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadStatus(id))));
+		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadVersion(id))));
+		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadFilesToWrite(id, 1, self->tenant))));
+
+		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+		BulkLoadWrittenFileRef writtenFile;
+		writtenFile.fileId = "file_id"_sr;
+		writtenFile.keyRange = range;
+		writtenFile.physicalSize = 1;
+		writtenFile.logicalSize = 1;
+		filesWritten.push_back(filesWritten.arena(), writtenFile);
+		wait(self->checkCorrectInvalidIDError(success(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant))));
 
 		return Void();
 	}
@@ -481,6 +617,272 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR Future<Version> doGRV(Database cx) {
+		state Transaction tr(cx);
+		loop {
+			try {
+				Version readVersion = wait(tr.getReadVersion());
+				return readVersion;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	ACTOR Future<Void> sanityCheckVersionstampUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that client cannot clean up a bulk load before it is done or aborted
+
+		// since we can't access the transaction object used to start the bulk load and validate that it is exactly the
+		// same version, we just do a GRV before and after and make sure it matches
+		state Version start = wait(self->doGRV(cx));
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state Version end = wait(self->doGRV(cx));
+
+		Version createVersion = wait(cx->getBulkLoadVersion(id));
+
+		ASSERT(createVersion >= start);
+		ASSERT(createVersion <= end);
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
+	ACTOR Future<Void> nonEmptyRangeUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that a bulk load cannot start to a non-empty range
+		state Transaction tr(cx, self->tenant);
+		loop {
+			try {
+				tr.set(range.begin, "foo"_sr);
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		try {
+			wait(success(cx->startBulkLoad(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_range_not_empty);
+		}
+
+		tr.reset();
+		loop {
+			try {
+				tr.clear(range.begin);
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		return Void();
+	}
+
+	ACTOR Future<Void> alreadyBlobRangeUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that a bulk load cannot start if a blobbified range already overlaps the start range
+		bool success1 = wait(cx->blobbifyRange(range, self->tenant));
+		ASSERT(success1);
+
+		try {
+			wait(success(cx->startBulkLoad(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_range_not_empty);
+		}
+
+		// cleanup
+		Version v = wait(self->doGRV(cx));
+		Key purgeKey = wait(cx->purgeBlobGranules(range, v, self->tenant, true));
+		wait(cx->waitPurgeGranulesComplete(purgeKey));
+		bool success2 = wait(cx->unblobbifyRange(range, self->tenant));
+		ASSERT(success2);
+
+		return Void();
+	}
+
+	ACTOR Future<Void> blobbifyDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that clients cannot blobbify a range intersecting with an active bulk load
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		// FIXME: this needs to respect write lock/tenant lock for this to work
+		try {
+			wait(success(cx->blobbifyRange(range, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			// FIXME: new error code
+			ASSERT(e.code() == error_code_bulk_load_range_conflict);
+		}
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
+	ACTOR Future<Void> registerNoFilesUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		// maybe request file pointers or not
+		if (deterministicRandom()->coinflip()) {
+			wait(success(cx->getBulkLoadFilesToWrite(id, 1, self->tenant)));
+		}
+
+		wait(self->expectAbortedBySystem(cx, self, id));
+		return Void();
+	}
+
+	ACTOR Future<Void> duplicateFilesSameRegisterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
+		    wait(cx->getBulkLoadFilesToWrite(id, 2, self->tenant));
+
+		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+		filesWritten.arena().dependsOn(filesToWrite.arena());
+
+		BulkLoadWrittenFileRef writtenFile1;
+		writtenFile1.fileId = filesToWrite[0].fileId;
+		writtenFile1.keyRange = singleKeyRange(range.begin.withSuffix("a"_sr));
+		writtenFile1.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile1.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile1);
+
+		BulkLoadWrittenFileRef writtenFile2;
+		writtenFile2.fileId = filesToWrite[0].fileId; // same id as other file!
+		writtenFile2.keyRange = singleKeyRange(range.begin.withSuffix("b"_sr));
+		writtenFile2.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile2.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile2);
+
+		try {
+			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+		}
+
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		return Void();
+	}
+
+	ACTOR Future<Void> duplicateFilesMultipleRegisterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		wait(self->stageSingleFile(cx, id, range, self->tenant));
+		wait(self->stageSingleFile(cx, id, range, self->tenant));
+
+		wait(self->expectAbortedBySystem(cx, self, id));
+		return Void();
+	}
+
+	ACTOR Future<Void> overlappingFilesSameRegisterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
+		    wait(cx->getBulkLoadFilesToWrite(id, 2, self->tenant));
+
+		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+		filesWritten.arena().dependsOn(filesToWrite.arena());
+
+		BulkLoadWrittenFileRef writtenFile1;
+		writtenFile1.fileId = filesToWrite[0].fileId;
+		writtenFile1.keyRange = range;
+		writtenFile1.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile1.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile1);
+
+		BulkLoadWrittenFileRef writtenFile2;
+		writtenFile2.fileId = filesToWrite[1].fileId;
+		writtenFile2.keyRange = range; // same range as other file
+		writtenFile2.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile2.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile2);
+
+		try {
+			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+		}
+
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		return Void();
+	}
+
+	ACTOR Future<Void> overlappingFilesMultipleRegisterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		wait(self->stageSingleFile(cx, id, range, self->tenant));
+		wait(self->stageSingleFile(cx, id, range, self->tenant));
+
+		wait(self->expectAbortedBySystem(cx, self, id));
+		return Void();
+	}
+
+	ACTOR Future<Void> registerFilesAlreadyLoadingUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		wait(self->stageSingleFile(cx, id, singleKeyRange(range.begin), self->tenant));
+		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
+
+		try {
+			wait(success(cx->getBulkLoadFilesToWrite(id, 1, self->tenant)));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_not_registering_files);
+		}
+
+		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+		BulkLoadWrittenFileRef writtenFile;
+		writtenFile.fileId = "invalid_file_id"_sr;
+		writtenFile.keyRange = range;
+		writtenFile.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile);
+
+		try {
+			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
+			ASSERT(false);
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_not_registering_files);
+		}
+
+		wait(cx->waitBulkLoadComplete(id, self->tenant));
+		wait(cx->cleanupBulkLoad(id, self->tenant));
+
+		return Void();
+	}
+
+	ACTOR Future<Void> registerNonexistentFileUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+		BulkLoadWrittenFileRef writtenFile;
+		writtenFile.fileId = "invalid_file_id"_sr;
+		writtenFile.keyRange = range;
+		writtenFile.physicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile);
+
+		try {
+			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_file_id_not_found);
+		}
+
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		return Void();
+	}
+
 	ACTOR Future<Void> bulkLoadUnitTests(Database cx, BulkLoadOpsWorkload* self) {
 		// FIXME: REENABLE!
 		/*if (deterministicRandom()->coinflip()) {
@@ -502,6 +904,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			// FIXME: no lock implemented yet so these succeed - unexclude when implemented!
 			excludedTypes.insert(WRITE_DURING_LOAD_UNIT);
 			excludedTypes.insert(READ_DURING_LOAD_UNIT);
+			excludedTypes.insert(BLOBBIFY_DURING_LOAD_UNIT);
 
 			// prevent infinite loop
 			int loopTries = 1000;
@@ -533,6 +936,28 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->writeDuringLoadUnit(cx, self, range));
 			} else if (op == READ_DURING_LOAD_UNIT) {
 				wait(self->readDuringLoadUnit(cx, self, range));
+			} else if (op == SANITY_CHECK_VERSIONSTAMP_UNIT) {
+				wait(self->sanityCheckVersionstampUnit(cx, self, range));
+			} else if (op == NON_EMPTY_RANGE_UNIT) {
+				wait(self->nonEmptyRangeUnit(cx, self, range));
+			} else if (op == ALREADY_BLOB_RANGE_UNIT) {
+				wait(self->alreadyBlobRangeUnit(cx, self, range));
+			} else if (op == BLOBBIFY_DURING_LOAD_UNIT) {
+				wait(self->blobbifyDuringLoadUnit(cx, self, range));
+			} else if (op == REGISTER_NO_FILES_UNIT) {
+				wait(self->registerNoFilesUnit(cx, self, range));
+			} else if (op == DUPLICATE_FILES_SAME_REGISTER_UNIT) {
+				wait(self->duplicateFilesSameRegisterUnit(cx, self, range));
+			} else if (op == DUPLICATE_FILES_MULTIPLE_REGISTER_UNIT) {
+				wait(self->duplicateFilesMultipleRegisterUnit(cx, self, range));
+			} else if (op == OVERLAPPING_FILES_SAME_REGISTER_UNIT) {
+				wait(self->overlappingFilesSameRegisterUnit(cx, self, range));
+			} else if (op == OVERLAPPING_FILES_MULTIPLE_REGISTER_UNIT) {
+				wait(self->overlappingFilesSameRegisterUnit(cx, self, range));
+			} else if (op == REGISTER_FILES_ALREADY_LOADING_UNIT) {
+				wait(self->registerFilesAlreadyLoadingUnit(cx, self, range));
+			} else if (op == REGISTER_NONEXISTENT_FILE_UNIT) {
+				wait(self->registerNonexistentFileUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}

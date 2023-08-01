@@ -1062,6 +1062,21 @@ ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyD
 	return Void();
 }
 
+ACTOR Future<Void> resetEKPProxyData(Reference<EncryptKeyProxyData> ekpProxyData) {
+	if (ekpProxyData.isValid()) {
+		ekpProxyData->encryptionKeyRefresher.cancel();
+		ekpProxyData->blobMetadataRefresher.cancel();
+		ekpProxyData->healthChecker.cancel();
+
+		wait(delay(0.0));
+		while (!ekpProxyData->addActor.isEmpty()) {
+			ekpProxyData->addActor.getFuture().pop();
+		}
+	}
+
+	return Void();
+}
+
 ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
                                          Reference<AsyncVar<ServerDBInfo>> db,
                                          EncryptionAtRestMode encryptMode) {
@@ -1071,7 +1086,6 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 	state KmsConnectorInterface kmsConnectorInf;
 
 	try {
-
 		kmsConnectorInf.initEndpoints();
 		TraceEvent("EKPStart", self->myId).detail("KmsConnectorInf", kmsConnectorInf.id());
 		self->addActor.send(waitFailureServer(ekpInterface.waitFailure.getFuture()));
@@ -1134,10 +1148,13 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 			}
 		}
 	} catch (Error& e) {
-		TraceEvent("EKPTerminated", self->myId).errorUnsuppressed(e);
-		throw;
+		state Error _e = e;
+		wait(resetEKPProxyData(self));
+		TraceEvent("EKPTerminated", self->myId).errorUnsuppressed(_e);
+		throw _e;
 	}
 
+	wait(resetEKPProxyData(self));
 	TraceEvent("EKPStopped", self->myId);
 	return Void();
 }

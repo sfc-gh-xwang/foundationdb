@@ -11470,6 +11470,7 @@ ACTOR Future<Void> waitMetrics(StorageServerMetrics* self, WaitMetricsRequest re
 	    .detail("Metrics", metrics.toString())
 	    .detail("ReqMin", req.min.toString())
 	    .detail("ReqMax", req.max.toString());
+
 	if (!req.min.allLessOrEqual(metrics) || !metrics.allLessOrEqual(req.max)) {
 		CODE_PROBE(true, "ShardWaitMetrics return case 1 (quickly)");
 		req.reply.send(metrics);
@@ -11536,7 +11537,7 @@ ACTOR Future<Void> waitMetrics(StorageServerMetrics* self, WaitMetricsRequest re
 
 		wait(delay(0)); // prevent iterator invalidation of functions sending changes
 	}
-	// fmt::print("PopWaitMetricsMap {}\n", req.keys.toString());
+
 	auto rs = self->waitMetricsMap.modify(req.keys);
 	for (auto i = rs.begin(); i != rs.end(); ++i) {
 		auto& x = i->value();

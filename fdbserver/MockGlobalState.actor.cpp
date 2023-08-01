@@ -45,7 +45,7 @@ public:
 			                                           UseProvisionalProxies::False,
 			                                           version)
 			                     .get();
-			TraceEvent(SevDebug, "MGSWaitStorageMetrics")
+			DisabledTraceEvent(SevDebug, "MGSWaitStorageMetrics")
 			    .detail("Phase", "GetLocation")
 			    .detail("KeyRange", keys.toString())
 			    .detail("LocationsCount", locations.size())
@@ -60,7 +60,7 @@ public:
 			Optional<StorageMetrics> res = wait(::waitStorageMetricsWithLocation(
 			    tenantInfo, version, keys, &locations, min, max, permittedError, &invalidateCache));
 
-			TraceEvent(SevDebug, "MGSWaitStorageMetrics")
+			DisabledTraceEvent(SevDebug, "MGSWaitStorageMetrics")
 			    .detail("Phase", "GetStorageMetrics")
 			    .detail("KeyRange", keys.toString())
 			    .detail("Present", res.present());
@@ -127,6 +127,10 @@ public:
 			}
 		}
 
+		// NOTE: mimic network delay (it's necessary because the same network delivery will result endless trigger of
+		// wait metrics). In the mock DD test, this function and notifyBytes are on the same process. But in production,
+		// this is not the case.
+		wait(delayJittered(0.5));
 		if (!self->isReadable(req.keys)) {
 			self->sendErrorWithPenalty(req.reply, wrong_shard_server(), self->getPenalty());
 		} else {
@@ -270,7 +274,15 @@ void MockStorageServer::setShardStatus(const KeyRangeRef& range, MockShardStatus
 		}
 	}
 }
-
+void MockStorageServer::debugCoalesceServerKeys() const {
+	auto allRanges = serverKeys.ranges();
+	while (!allRanges.empty()) {
+		fmt::print("debugCoalesceServerKeys: begin: {}, status: {}\n",
+		           allRanges.begin().begin().toStringView(),
+		           (int)allRanges.begin().cvalue().status);
+		allRanges.pop_front();
+	}
+}
 void MockStorageServer::coalesceCompletedRange(const KeyRangeRef& range) {
 	auto ranges = serverKeys.intersectingRanges(range);
 	// ranges at least has allKeys
@@ -291,6 +303,9 @@ void MockStorageServer::coalesceCompletedRange(const KeyRangeRef& range) {
 	while (right != allRanges.end() && right->cvalue().status == MockShardStatus::COMPLETED) {
 		++right;
 	}
+	if (right->cvalue().status == MockShardStatus::COMPLETED) {
+		++right;
+	}
 
 	int newSize = 0;
 	for (auto it = left; it != right; ++it) {
@@ -299,8 +314,9 @@ void MockStorageServer::coalesceCompletedRange(const KeyRangeRef& range) {
 		it->value().shardSize = 0;
 	}
 	auto beginKey = left.begin(), endKey = right.begin();
-	serverKeys.coalesce(KeyRangeRef(beginKey, endKey));
-	serverKeys[beginKey].shardSize = newSize;
+	// fmt::print("coalesceCompletedRange: beginKey: {} endKey: {}\n", beginKey.toStringView(), endKey.toStringView());
+	// debugCoalesceServerKeys();
+	serverKeys.insert(KeyRangeRef(beginKey, endKey), ShardInfo{ MockShardStatus::COMPLETED, (uint64_t)newSize });
 }
 
 // split the out range [a, d) based on the inner range's boundary [b, c). The result would be [a,b), [b,c), [c,d). The
@@ -346,7 +362,6 @@ void MockStorageServer::removeShard(const KeyRangeRef& range) {
 	auto rangeSize = sumRangeSize(range);
 	usedDiskSpace -= rangeSize;
 	serverKeys.insert(range, MockStorageServer::ShardInfo{ MockShardStatus::UNSET, 0 });
-	serverKeys.coalesce(range);
 	byteSampleApplyClear(range);
 	metrics.notifyNotReadable(range);
 }
@@ -401,7 +416,6 @@ Future<Void> MockStorageServer::run() {
 	                                   [self = this](TraceEvent& te) {
 		                                   te.detail("CpuUsage", self->calculateCpuUsage());
 		                                   te.detail("DiskUsedBytes", self->usedDiskSpace);
-		                                   te.detail("BytesStored", self->metrics.byteSample.getEstimate(allKeys));
 	                                   }));
 	return actors.getResult();
 }
@@ -614,6 +628,7 @@ void MockGlobalState::initializeClusterLayout(const BasicSimulationConfig& conf)
 			for (int k = 0; k < conf.processes_per_machine; ++k) {
 				Standalone<StringRef> pid(StringRef(fmt::format("process_{}_{}_{}", i, j, k)));
 				LocalityData localityData(pid, mcId, mcId, dcId);
+				localityData.set(LocalityData::keyDataHallId, dcId);
 				processes.emplace_back(new mock::Process(localityData, pid, machine));
 				machine->children.emplace_back(processes.back());
 

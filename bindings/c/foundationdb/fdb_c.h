@@ -31,8 +31,8 @@
 
 #if !defined(FDB_API_VERSION)
 #error You must #define FDB_API_VERSION prior to including fdb_c.h (the latest version is defined as FDB_LATEST_API_VERSION)
-#elif FDB_API_VERSION < 13
-#error API version no longer supported (upgrade to 13)
+#elif FDB_API_VERSION < 710
+#error API version no longer supported (upgrade to 710)
 #elif FDB_API_VERSION > FDB_LATEST_API_VERSION
 #error Requested API version requires a newer version of this header
 #endif
@@ -93,9 +93,7 @@ DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_network_set_option(FDBNetworkOption
                                                                 uint8_t const* value,
                                                                 int value_length);
 
-#if FDB_API_VERSION >= 14
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_setup_network(void);
-#endif
 
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_run_network(void);
 
@@ -174,9 +172,7 @@ DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_set_callback(FDBFuture* f,
                                                                  FDBCallback callback,
                                                                  void* callback_parameter);
 
-#if FDB_API_VERSION >= 23
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_error(FDBFuture* f);
-#endif
 
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_bool(FDBFuture* f, fdb_bool_t* out);
 
@@ -197,12 +193,10 @@ DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_value(FDBFuture* f,
                                                               uint8_t const** out_value,
                                                               int* out_value_length);
 
-#if FDB_API_VERSION >= 14
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_keyvalue_array(FDBFuture* f,
                                                                        FDBKeyValue const** out_kv,
                                                                        int* out_count,
                                                                        fdb_bool_t* out_more);
-#endif
 
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_mappedkeyvalue_array(FDBFuture* f,
                                                                              FDBMappedKeyValue const** out_kv,
@@ -237,6 +231,10 @@ DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_readbg_get_descriptions_v1(F
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_readbg_get_descriptions_v2(FDBFuture* f,
                                                                                FDBBGFileDescriptionV2*** out_descs,
                                                                                int* out_count);
+
+DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_bulk_load_id_result(FDBFuture* f,
+                                                                            uint8_t const** out_id,
+                                                                            int* out_id_length);
 
 #define fdb_future_readbg_get_descriptions BLOB_GRANULE_IDENTIFIER(fdb_future_readbg_get_descriptions_v)
 
@@ -370,6 +368,28 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_flush_blob_range(FDBDatabas
                                                                       fdb_bool_t compact,
                                                                       int64_t version);
 
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_start_bulk_load(FDBDatabase* db,
+                                                                     uint8_t const* begin_key_name,
+                                                                     int begin_key_name_length,
+                                                                     uint8_t const* end_key_name,
+                                                                     int end_key_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_bulk_load_all_files_registered(FDBDatabase* db,
+                                                                                    uint8_t const* bulk_load_id_name,
+                                                                                    int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_abort_bulk_load(FDBDatabase* db,
+                                                                     uint8_t const* bulk_load_id_name,
+                                                                     int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_cleanup_bulk_load(FDBDatabase* db,
+                                                                       uint8_t const* bulk_load_id_name,
+                                                                       int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_wait_bulk_load_complete(FDBDatabase* db,
+                                                                             uint8_t const* bulk_load_id_name,
+                                                                             int bulk_load_id_name_length);
+
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_status(FDBDatabase* db);
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant);
@@ -438,44 +458,59 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_flush_blob_range(FDBTenant* t
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_id(FDBTenant* tenant);
 
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_start_bulk_load(FDBTenant* tenant,
+                                                                   uint8_t const* begin_key_name,
+                                                                   int begin_key_name_length,
+                                                                   uint8_t const* end_key_name,
+                                                                   int end_key_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_all_files_registered(FDBTenant* tenant,
+                                                                                  uint8_t const* bulk_load_id_name,
+                                                                                  int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_abort_bulk_load(FDBTenant* tenant,
+                                                                   uint8_t const* bulk_load_id_name,
+                                                                   int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_cleanup_bulk_load(FDBTenant* tenant,
+                                                                     uint8_t const* bulk_load_id_name,
+                                                                     int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_wait_bulk_load_complete(FDBTenant* tenant,
+                                                                           uint8_t const* bulk_load_id_name,
+                                                                           int bulk_load_id_name_length);
+
 DLLEXPORT void fdb_tenant_destroy(FDBTenant* tenant);
 
 DLLEXPORT void fdb_transaction_destroy(FDBTransaction* tr);
 
 DLLEXPORT void fdb_transaction_cancel(FDBTransaction* tr);
 
-#if FDB_API_VERSION >= 14
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_transaction_set_option(FDBTransaction* tr,
                                                                     FDBTransactionOption option,
                                                                     uint8_t const* value,
                                                                     int value_length);
-#endif
 
 DLLEXPORT void fdb_transaction_set_read_version(FDBTransaction* tr, int64_t version);
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_read_version(FDBTransaction* tr);
 
-#if FDB_API_VERSION >= 14
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get(FDBTransaction* tr,
                                                             uint8_t const* key_name,
                                                             int key_name_length,
                                                             fdb_bool_t snapshot);
-#endif
 
-#if FDB_API_VERSION >= 14
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_key(FDBTransaction* tr,
                                                                 uint8_t const* key_name,
                                                                 int key_name_length,
                                                                 fdb_bool_t or_equal,
                                                                 int offset,
                                                                 fdb_bool_t snapshot);
-#endif
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_addresses_for_key(FDBTransaction* tr,
                                                                               uint8_t const* key_name,
                                                                               int key_name_length);
 
-#if FDB_API_VERSION >= 14
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_range(FDBTransaction* tr,
                                                                   uint8_t const* begin_key_name,
                                                                   int begin_key_name_length,
@@ -491,7 +526,6 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_range(FDBTransaction
                                                                   int iteration,
                                                                   fdb_bool_t snapshot,
                                                                   fdb_bool_t reverse);
-#endif
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_mapped_range(FDBTransaction* tr,
                                                                          uint8_t const* begin_key_name,
@@ -647,97 +681,6 @@ DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_select_api_version_impl(int runtime
 
 DLLEXPORT int fdb_get_max_api_version(void);
 DLLEXPORT const char* fdb_get_client_version(void);
-
-/* LEGACY API VERSIONS */
-
-#if FDB_API_VERSION < 620
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_version(FDBFuture* f, int64_t* out_version);
-#else
-#define fdb_future_get_version(f, ov) FDB_REMOVED_FUNCTION
-#endif
-
-#if FDB_API_VERSION < 610 || defined FDB_INCLUDE_LEGACY_TYPES
-typedef struct FDB_cluster FDBCluster;
-
-typedef enum {
-	/* This option is only a placeholder for C compatibility and should not be used */
-	FDB_CLUSTER_OPTION_DUMMY_DO_NOT_USE = -1
-} FDBClusterOption;
-#endif
-
-#if FDB_API_VERSION < 610
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_cluster(FDBFuture* f, FDBCluster** out_cluster);
-
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_database(FDBFuture* f, FDBDatabase** out_database);
-
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_create_cluster(const char* cluster_file_path);
-
-DLLEXPORT void fdb_cluster_destroy(FDBCluster* c);
-
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_cluster_set_option(FDBCluster* c,
-                                                                FDBClusterOption option,
-                                                                uint8_t const* value,
-                                                                int value_length);
-
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_cluster_create_database(FDBCluster* c,
-                                                                    uint8_t const* db_name,
-                                                                    int db_name_length);
-#else
-#define fdb_future_get_cluster(f, oc) FDB_REMOVED_FUNCTION
-#define fdb_future_get_database(f, od) FDB_REMOVED_FUNCTION
-#define fdb_create_cluster(cfp) FDB_REMOVED_FUNCTION
-#define fdb_cluster_destroy(c) FDB_REMOVED_FUNCTION
-#define fdb_cluster_set_option(c, o, v, vl) FDB_REMOVED_FUNCTION
-#define fdb_cluster_create_database(c, dn, dnl) FDB_REMOVED_FUNCTION
-#endif
-
-#if FDB_API_VERSION < 23
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_error(FDBFuture* f, const char** out_description /* = NULL */);
-
-DLLEXPORT fdb_bool_t fdb_future_is_error(FDBFuture* f);
-#else
-#define fdb_future_is_error(x) FDB_REMOVED_FUNCTION
-#endif
-
-#if FDB_API_VERSION < 14
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_future_get_keyvalue_array(FDBFuture* f,
-                                                                       FDBKeyValue const** out_kv,
-                                                                       int* out_count);
-
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get(FDBTransaction* tr,
-                                                            uint8_t const* key_name,
-                                                            int key_name_length);
-
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_key(FDBTransaction* tr,
-                                                                uint8_t const* key_name,
-                                                                int key_name_length,
-                                                                fdb_bool_t or_equal,
-                                                                int offset);
-
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_setup_network(const char* local_address);
-
-DLLEXPORT void fdb_transaction_set_option(FDBTransaction* tr, FDBTransactionOption option);
-
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_range(FDBTransaction* tr,
-                                                                  uint8_t const* begin_key_name,
-                                                                  int begin_key_name_length,
-                                                                  uint8_t const* end_key_name,
-                                                                  int end_key_name_length,
-                                                                  int limit);
-
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_transaction_get_range_selector(FDBTransaction* tr,
-                                                                           uint8_t const* begin_key_name,
-                                                                           int begin_key_name_length,
-                                                                           fdb_bool_t begin_or_equal,
-                                                                           int begin_offset,
-                                                                           uint8_t const* end_key_name,
-                                                                           int end_key_name_length,
-                                                                           fdb_bool_t end_or_equal,
-                                                                           int end_offset,
-                                                                           int limit);
-#else
-#define fdb_transaction_get_range_selector(tr, bkn, bknl, boe, bo, ekn, eknl, eoe, eo, lim) FDB_REMOVED_FUNCTION
-#endif
 
 #ifdef __cplusplus
 }

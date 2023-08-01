@@ -274,7 +274,7 @@ auto ShardsAffectedByTeamFailure::intersectingRanges(KeyRangeRef keyRange) const
 	return shard_teams.intersectingRanges(keyRange);
 }
 
-std::vector<UID> ShardsAffectedByTeamFailure::getSourceServerIdsFor(KeyRef key) {
+std::vector<UID> ShardsAffectedByTeamFailure::getSourceServerIdsFor(const KeyRef& key) {
 	auto teamPair = getTeamsFor(key);
 	std::set<UID> res;
 	auto& srcTeams = teamPair.second.empty() ? teamPair.first : teamPair.second;

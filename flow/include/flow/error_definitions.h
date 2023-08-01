@@ -376,8 +376,16 @@ ERROR( bulk_load_abort_failed, 2601, "Bulk load abort failed" );
 ERROR( bulk_load_range_conflict, 2602, "Bulk load for key range already in progress" );
 ERROR( bulk_load_cleanup_failed, 2603, "Bulk load could not clean up because it is still in progress");
 ERROR( bulk_load_not_found, 2604, "Bulk load ID not found" );
+ERROR( bulk_load_range_not_empty, 2605, "Bulk load for key range already in progress" );
+ERROR( bulk_load_tenant_mismatch, 2606, "Bulk load id is for a different tenant" );
+
+// Bulk load file operations errors
+ERROR( bulk_load_file_id_not_found , 2620, "No file id for the given bulk load id exists");
+ERROR( bulk_load_not_registering_files, 2621, "Bulk load for this id exists but is already done registering files");
+ERROR( bulk_load_invalid_file_metadata, 2622, "Invalid bulk load file metadaata");
+
 // other internal-only state transition failures - end user should not see this error
-ERROR( bulk_load_invalid_state_transition, 2605, "Bulk load invalid state transition" );
+ERROR( bulk_load_invalid_state_transition, 2650, "Bulk load invalid state transition" );
 
 // 27XX - Encryption operations errors
 ERROR( encrypt_ops_error, 2700, "Encryption operation error" )

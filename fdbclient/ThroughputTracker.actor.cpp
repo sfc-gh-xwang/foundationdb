@@ -20,15 +20,22 @@ public:
 			try {
 				ReportThroughputRequest req(std::move(self->throughput));
 				self->throughput.clear();
-				wait(basicLoadBalance(cx->getGrvProxies(UseProvisionalProxies::False),
-				                      &GrvProxyInterface::reportThroughput,
-				                      std::move(req),
-				                      TaskPriority::DefaultPromiseEndpoint,
-				                      AtMostOnce::True) ||
-				     timer);
-				if (timer.isReady()) {
-					CODE_PROBE(true, "ReportThroughputRequest timed out");
-					TraceEvent(SevWarn, "ReportThroughputRequestTimedOut");
+				choose {
+					when(ReportThroughputReply reply =
+					         wait(basicLoadBalance(cx->getGrvProxies(UseProvisionalProxies::False),
+					                               &GrvProxyInterface::reportThroughput,
+					                               std::move(req),
+					                               TaskPriority::DefaultPromiseEndpoint,
+					                               AtMostOnce::True))) {
+						if (isBusyThrottlingIdsTrackingEnabled()) {
+							self->busyThrottlingIds = std::move(reply.busyThrottlingIds);
+						}
+					}
+
+					when(wait(timer)) {
+						CODE_PROBE(true, "ReportThroughputRequest timed out");
+						TraceEvent(SevWarn, "ReportThroughputRequestTimedOut");
+					}
 				}
 			} catch (Error& e) {
 				if (e.code() == error_code_request_maybe_delivered) {
@@ -70,8 +77,8 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 	if (throughputIt == smoothThroughput.end() || transactionRateIt == smoothTransactionRate.end()) {
 		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
 	} else {
-		auto throughput = throughputIt->second.smoother.smoothTotal();
-		auto transactionRate = transactionRateIt->second.smoother.smoothTotal();
+		auto const throughput = throughputIt->second.smoother.smoothRate();
+		auto const transactionRate = transactionRateIt->second.smoother.smoothRate();
 
 		if (throughput <= 0 || transactionRate <= 0) {
 			return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
@@ -83,4 +90,14 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 bool isClientAverageCostTrackingEnabled() {
 	// TRACK_AVERAGE_COST_ON_CLIENT depends on TRACK_THROUGHPUT_ON_CLIENTS
 	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT;
+}
+
+bool isBusyThrottlingIdsTrackingEnabled() {
+	// TRACK_BUSY_THROTTLING_IDS depends on TRACK_THROUGHPUT_ON_CLIENTS
+	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS &&
+	       CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT;
+}
+
+bool ThroughputTracker::isThrottlingIdBusy(ThrottlingId const& throttlingId) const {
+	return busyThrottlingIds.contains(throttlingId);
 }

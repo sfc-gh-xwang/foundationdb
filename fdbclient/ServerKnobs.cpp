@@ -358,9 +358,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC,   isSimulated ? 2 : 21 * 60 * 60 * 24 ); if(randomize && BUGGIFY) DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC = isSimulated ? 0: 120;
 	init( DD_TENANT_AWARENESS_ENABLED,                         false );
 	init( STORAGE_QUOTA_ENABLED,                                true ); if(isSimulated) STORAGE_QUOTA_ENABLED = deterministicRandom()->coinflip();
-	init( TENANT_CACHE_LIST_REFRESH_INTERVAL,                      5 ); if( randomize && BUGGIFY ) TENANT_CACHE_LIST_REFRESH_INTERVAL = deterministicRandom()->randomInt(1, 10);
-	init( TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL,            60 ); if(isSimulated) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = 10; if( randomize && BUGGIFY ) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 15);
-	init( TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL,            10 ); if( randomize && BUGGIFY ) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 15);
+	init( TENANT_CACHE_LIST_REFRESH_INTERVAL,                     30 ); if(isSimulated) TENANT_CACHE_LIST_REFRESH_INTERVAL = 5; if( randomize && BUGGIFY ) TENANT_CACHE_LIST_REFRESH_INTERVAL = deterministicRandom()->randomInt(1, 10);
+	init( TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL,           180 ); if(isSimulated) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = 10; if( randomize && BUGGIFY ) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 15);
+	init( TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL,            30 ); if(isSimulated) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = 10; if( randomize && BUGGIFY ) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 15);
 	init( TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL,             300 );
 	init( CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL,            5 ); if( randomize && BUGGIFY ) CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL = deterministicRandom()->randomInt(1, 10);
 	init( DD_BUILD_EXTRA_TEAMS_OVERRIDE,                          10 ); if( randomize && BUGGIFY ) DD_BUILD_EXTRA_TEAMS_OVERRIDE = 2;
@@ -560,10 +560,11 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,             10.0 );
 	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,                1000.0 );
 	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET,        40960000 );
-	init( START_TRANSACTION_MAX_QUEUE_SIZE,                      1e6 );
+	init( START_TRANSACTION_MAX_QUEUE_SIZE,                      1e6 ); if ( randomize && BUGGIFY ) START_TRANSACTION_MAX_QUEUE_SIZE = 1000;
 	init( KEY_LOCATION_MAX_QUEUE_SIZE,                           1e6 );
 	init( TENANT_ID_REQUEST_MAX_QUEUE_SIZE,                      1e6 );
 	init( BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE,                  1e5 ); if ( randomize && BUGGIFY ) BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE = 100;
+	init( BULK_LOADERS_MAX_QUEUE_SIZE,                           1e4 ); if ( randomize && BUGGIFY ) BULK_LOADERS_MAX_QUEUE_SIZE = 100;
 	init( COMMIT_PROXY_LIVENESS_TIMEOUT,                        20.0 );
 
 	init( COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE,         0.0005 ); if( randomize && BUGGIFY ) COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE = 0.005;
@@ -662,6 +663,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_PRUNE_CLIENTS_INTERVAL,                            60.0 );
 	init( CC_CHANGE_DELAY,                                       0.1 );
 	init( CC_CLASS_DELAY,                                       0.01 );
+	init( COLOCATE_STATELESS_PROCESSES,                        false ); if( randomize && BUGGIFY ) COLOCATE_STATELESS_PROCESSES = deterministicRandom()->random01() < 0.25;
 	init( WAIT_FOR_GOOD_RECRUITMENT_DELAY,                       1.0 );
 	init( WAIT_FOR_GOOD_REMOTE_RECRUITMENT_DELAY,                5.0 );
 	init( ATTEMPT_RECRUITMENT_DELAY,                           0.035 );
@@ -823,7 +825,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BW_RK_SIM_QUIESCE_DELAY,                             300.0 );
 
 	init( TAG_THROTTLE_PUSH_INTERVAL,                            1.0 ); if(randomize && BUGGIFY) TAG_THROTTLE_PUSH_INTERVAL = 0.0;
-	init( SS_THROTTLE_TAGS_TRACKED,                                1 ); if(randomize && BUGGIFY) SS_THROTTLE_TAGS_TRACKED = deterministicRandom()->randomInt(1, 10);
+	init( SS_THROTTLE_TAGS_TRACKED,                                5 ); if(randomize && BUGGIFY) SS_THROTTLE_TAGS_TRACKED = deterministicRandom()->randomInt(5, 15);
 	init( GLOBAL_TAG_THROTTLING,                                true );
 	init( GLOBAL_TAG_THROTTLING_MIN_RATE,                        1.0 );
 	init( GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED,                100 );
@@ -846,6 +848,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,            1.0 );
 	init( CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME,           10.0 );
 
+	init( THROTTLING_ID_BUSY_THRESHOLD,                           0.8 );
+	init( THROTTLING_ID_FORGET_THRESHOLD,                         0.5 );
+
 	//Storage Metrics
 	init( STORAGE_METRICS_AVERAGE_INTERVAL,                    120.0 );
 	init( STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS,        1000.0 / STORAGE_METRICS_AVERAGE_INTERVAL );  // milliHz!
@@ -853,7 +858,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( IOPS_UNITS_PER_SAMPLE,                                10000 * 1000 / STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS / 100 );
 	init( BYTES_WRITTEN_UNITS_PER_SAMPLE,                           SHARD_MIN_BYTES_PER_KSEC / STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS / 25 );
 	init( BYTES_READ_UNITS_PER_SAMPLE,                          100000 ); // 100K bytes
-	init( OPS_READ_UNITS_PER_SAMPLE, 100 * STORAGE_METRICS_AVERAGE_INTERVAL ); // during a sampling interval, in average every 100 op being sampled once
+	init( OPS_READ_UNITS_PER_SAMPLE, 100 * STORAGE_METRICS_AVERAGE_INTERVAL ); // during a sampling interval, on a Storage Server, there are about (readOps Per Second To the SS / 100 ) is in the sampler.
 	init( READ_HOT_SUB_RANGE_CHUNK_SIZE,                        10000000); // 10MB
 	init( EMPTY_READ_PENALTY,                                   20 ); // 20 bytes
 	init( DD_SHARD_COMPARE_LIMIT,                               1000 );
@@ -1207,6 +1212,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_MAX_CIPHER_REQUEST_VERSION,                      1);
 	init( REST_SIM_KMS_VAULT_DIR,                                  "");
 	init( REST_KMS_STABILITY_CHECK_INTERVAL,                      5.0);
+	init( KMS_LOGGING_INTERVAL,                                   5.0);
+
 
 	init( CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO,                0.5 ); if( randomize && BUGGIFY ) CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO = deterministicRandom()->random01();
 
@@ -1217,6 +1224,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
  	init( IDEMPOTENCY_IDS_CLEANER_POLLING_INTERVAL,                10);
 	// Don't clean idempotency ids younger than this
  	init( IDEMPOTENCY_IDS_MIN_AGE_SECONDS,              3600 * 24 * 7);
+
+	// Bulk Load
+	init( BULK_LOAD_FILE_POINTER_BATCH_SIZE,                     100 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_POINTER_BATCH_SIZE = deterministicRandom()->randomInt(10, 100);
 
 	// clang-format on
 

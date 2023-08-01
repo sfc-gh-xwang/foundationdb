@@ -1004,18 +1004,22 @@ private:
 		if (uid_applyMutationsData == nullptr) {
 			return;
 		}
-		if (m.param1.size() >= applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID) &&
-		    m.param2.size() >= applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID)) {
-			Key uid = m.param1.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
-			Key uid2 = m.param2.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
 
-			if (uid == uid2) {
+		int prefixSize = applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID);
+		if (m.param1.size() >= prefixSize && m.param2.size() >= prefixSize) {
+			Key uid = m.param1.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
+			Key endRange = strinc(m.param1.substr(0, prefixSize));
+			if (m.param2 <= endRange) {
 				auto& p = (*uid_applyMutationsData)[uid];
 				if (p.keyVersion == Reference<KeyRangeMap<Version>>())
 					p.keyVersion = makeReference<KeyRangeMap<Version>>();
-				p.keyVersion->rawErase(
-				    KeyRangeRef(m.param1.substr(applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID)),
-				                m.param2.substr(applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID))));
+
+				KeyRef begin = m.param1.substr(prefixSize);
+				KeyRef end = (m.param2 == endRange) ? p.keyVersion->mapEnd : m.param2.substr(prefixSize);
+
+				if (begin < end) {
+					p.keyVersion->rawErase(KeyRangeRef(begin, end));
+				}
 			}
 		}
 	}
