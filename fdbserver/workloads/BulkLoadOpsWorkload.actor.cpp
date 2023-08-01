@@ -18,7 +18,7 @@
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
-#define BLW_DEBUG true
+#define BLW_DEBUG false
 
 // A workload specifically designed to stress bulk loading functionality
 struct BulkLoadOpsWorkload : TestWorkload {
@@ -160,10 +160,14 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		TraceEvent("BulkLoadOpsUnitsComplete");
 
 		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp = wait(cx->listBulkLoads(false, self->tenant));
-		// retransmits/duplications of starting a bulk load for the same id can cause it to restart after completion,
-		// technically
-		// FIXME: find another way to test this or to stop this from happening
-		// ASSERT(loadsNotCleanedUp.empty());
+		if (BLW_DEBUG) {
+			fmt::print("Found {0} loads at end of test:\n", loadsNotCleanedUp.size());
+			for (auto& it : loadsNotCleanedUp) {
+				fmt::print("    {0}\n", it.printable());
+			}
+		}
+
+		ASSERT(loadsNotCleanedUp.empty());
 
 		TraceEvent("BulkLoadOpsQuietCheckComplete");
 
@@ -459,6 +463,30 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR Future<Version> doGRV(Database cx) {
+		state Transaction tr(cx);
+		loop {
+			try {
+				Version readVersion = wait(tr.getReadVersion());
+				return readVersion;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	ACTOR Future<Void> delayCleanupWindow(Database cx, BulkLoadOpsWorkload* self) {
+		state Version waitVersion = wait(self->doGRV(cx));
+		waitVersion += CLIENT_KNOBS->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
+		loop {
+			wait(delay(1.0));
+			Version newV = wait(self->doGRV(cx));
+			if (newV >= waitVersion) {
+				return Void();
+			}
+		}
+	}
+
 	ACTOR Future<Void> overlappingLoadsUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that client cannot start a bulk load that overlaps with an active one
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
@@ -469,6 +497,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_range_conflict);
 		}
+
+		// wait to clean up until after any retransmits or retries of the second failed bulk load cannot proceed
+		wait(self->delayCleanupWindow(cx, self));
 
 		// cleanup
 		wait(self->abortAndCleanupAfterUnit(cx, self, id));
@@ -616,18 +647,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Version> doGRV(Database cx) {
-		state Transaction tr(cx);
-		loop {
-			try {
-				Version readVersion = wait(tr.getReadVersion());
-				return readVersion;
-			} catch (Error& e) {
-				wait(tr.onError(e));
-			}
-		}
-	}
-
 	ACTOR Future<Void> sanityCheckVersionstampUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that client cannot clean up a bulk load before it is done or aborted
 
@@ -668,17 +687,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			ASSERT(e.code() == error_code_bulk_load_range_not_empty);
 		}
 
-		tr.reset();
-		loop {
-			try {
-				tr.clear(range.begin);
-				wait(tr.commit());
-				break;
-			} catch (Error& e) {
-				wait(tr.onError(e));
-			}
-		}
-
 		return Void();
 	}
 
@@ -693,13 +701,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_range_not_empty);
 		}
-
-		// cleanup
-		Version v = wait(self->doGRV(cx));
-		Key purgeKey = wait(cx->purgeBlobGranules(range, v, self->tenant, true));
-		wait(cx->waitPurgeGranulesComplete(purgeKey));
-		bool success2 = wait(cx->unblobbifyRange(range, self->tenant));
-		ASSERT(success2);
 
 		return Void();
 	}

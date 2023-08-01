@@ -453,7 +453,10 @@ public:
 	Future<Void> waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// internal state management helper functions - not exposed to public clients at all
-	Future<Void> startBulkLoadInternal(BulkLoadID id, KeyRange range, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> startBulkLoadInternal(BulkLoadID id,
+	                                   KeyRange range,
+	                                   Version maxReadVersion,
+	                                   Optional<Reference<Tenant>> tenant = {});
 	Future<Void> cleanupBulkLoadInternal(BulkLoadID id, Optional<int64_t> tenantIdToVerify = {});
 	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id,
 	                                      BulkLoadStatus::State desiredState,

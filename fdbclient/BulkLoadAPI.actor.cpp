@@ -127,25 +127,55 @@ BulkLoadID newBulkLoadID() {
 	return wr.toValue();
 }
 
+ACTOR Future<Version> doGRV(Database cx) {
+	state Transaction tr(cx);
+	loop {
+		try {
+			Version readVersion = wait(tr.getReadVersion());
+			return readVersion;
+		} catch (Error& e) {
+			wait(tr.onError(e));
+		}
+	}
+}
+
 ACTOR Future<BulkLoadID> startBulkLoadExternalActor(Reference<DatabaseContext> db,
                                                     KeyRange range,
                                                     Optional<Reference<Tenant>> tenant) {
 	// choose bulk load id on client side to guarantee idempotency for retransmits/duplication, and to not start extra
 	// random bulk loads
 	state BulkLoadID id = newBulkLoadID();
-	BulkLoadStartRequest req;
-	req.arena.dependsOn(range.arena());
-	req.arena.dependsOn(id.arena());
-	req.id = id;
-	req.keyRange = range;
-	if (BULKLOAD_DEBUG) {
-		fmt::print("StartBulkLoadExternal {0}: begin\n", id.printable());
+	loop {
+		try {
+			Version readVersion = wait(doGRV(Database(db)));
+			BulkLoadStartRequest req;
+			req.arena.dependsOn(range.arena());
+			req.arena.dependsOn(id.arena());
+			req.id = id;
+			req.keyRange = range;
+			req.startReadVersion = readVersion;
+			if (BULKLOAD_DEBUG) {
+				fmt::print("StartBulkLoadExternal {0}: begin [{1} - {2})\n",
+				           id.printable(),
+				           req.keyRange.begin.printable(),
+				           req.keyRange.end.printable());
+			}
+			wait(success(doBulkLoadRequest(db, tenant, req, &BulkLoaderInterface::startRequest)));
+			if (BULKLOAD_DEBUG) {
+				fmt::print("StartBulkLoadExternal {0}: complete\n", id.printable());
+			}
+			return id;
+		} catch (Error& e) {
+			if (e.code() != error_code_bulk_load_create_too_old) {
+				throw e;
+			}
+			if (BULKLOAD_DEBUG) {
+				fmt::print("StartBulkLoadExternal {0}: retrying too old\n", id.printable());
+			}
+			CODE_PROBE(true, "start bulk load create too old", probe::decoration::rare);
+			wait(delayJittered(1.0));
+		}
 	}
-	wait(success(doBulkLoadRequest(db, tenant, req, &BulkLoaderInterface::startRequest)));
-	if (BULKLOAD_DEBUG) {
-		fmt::print("StartBulkLoadExternal {0}: complete\n", id.printable());
-	}
-	return id;
 }
 
 Future<BulkLoadID> DatabaseContext::startBulkLoad(KeyRange range, Optional<Reference<Tenant>> tenant) {
@@ -160,6 +190,9 @@ Future<Void> DatabaseContext::bulkLoadAllFilesRegistered(BulkLoadID id, Optional
 	req.arena.dependsOn(id.arena());
 	req.id = id;
 	req.desired = BulkLoadStatus::State::STAGING;
+	if (BULKLOAD_DEBUG) {
+		fmt::print("AllFilesRegisteredExternal {0}: begin\n", id.printable());
+	}
 	return doBulkLoadRequest(
 	    Reference<DatabaseContext>::addRef(this), tenant, req, &BulkLoaderInterface::stateChangeRequest);
 }
@@ -169,6 +202,9 @@ Future<Void> DatabaseContext::abortBulkLoad(BulkLoadID id, Optional<Reference<Te
 	req.arena.dependsOn(id.arena());
 	req.id = id;
 	req.desired = BulkLoadStatus::State::ABORTED;
+	if (BULKLOAD_DEBUG) {
+		fmt::print("AbortExternal {0}: begin\n", id.printable());
+	}
 	return doBulkLoadRequest(
 	    Reference<DatabaseContext>::addRef(this), tenant, req, &BulkLoaderInterface::stateChangeRequest);
 }
@@ -178,6 +214,9 @@ Future<Void> DatabaseContext::cleanupBulkLoad(BulkLoadID id, Optional<Reference<
 	req.arena.dependsOn(id.arena());
 	req.id = id;
 	req.desired = BulkLoadStatus::State::CLEANUP;
+	if (BULKLOAD_DEBUG) {
+		fmt::print("CleanupExternal {0}: begin\n", id.printable());
+	}
 	return doBulkLoadRequest(
 	    Reference<DatabaseContext>::addRef(this), tenant, req, &BulkLoaderInterface::stateChangeRequest);
 }
@@ -193,6 +232,7 @@ Future<Void> DatabaseContext::waitBulkLoadComplete(BulkLoadID id, Optional<Refer
 ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
                                               BulkLoadID id,
                                               KeyRange range,
+                                              Version maxReadVersion,
                                               Optional<Reference<Tenant>> tenant) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
@@ -231,6 +271,12 @@ ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
 					throw bulk_load_range_conflict();
 				}
 				return Void();
+			}
+
+			// reject with error if read version > limit version (which is client's read version + X)
+			if (tr->getReadVersion().get() >= maxReadVersion) {
+				CODE_PROBE(true, "bulk load create rejected due to read version too old");
+				throw bulk_load_create_too_old();
 			}
 
 			// make sure no other bulk load is already using range
@@ -289,8 +335,11 @@ ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
 	}
 }
 
-Future<Void> DatabaseContext::startBulkLoadInternal(BulkLoadID id, KeyRange range, Optional<Reference<Tenant>> tenant) {
-	return startBulkLoadInternalActor(Reference<DatabaseContext>::addRef(this), id, range, tenant);
+Future<Void> DatabaseContext::startBulkLoadInternal(BulkLoadID id,
+                                                    KeyRange range,
+                                                    Version maxReadVersion,
+                                                    Optional<Reference<Tenant>> tenant) {
+	return startBulkLoadInternalActor(Reference<DatabaseContext>::addRef(this), id, range, maxReadVersion, tenant);
 }
 
 ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
@@ -359,8 +408,31 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 				if (BULKLOAD_DEBUG) {
 					fmt::print("UpdateBulkLoadState {0}: erasing on cleanup\n", id.printable());
 				}
+
+				// handle cleanup races and retransmits with starting a bulk load
+				Optional<Versionstamp> v = wait(BulkLoadMetadata::versionMap().get(tr, id));
+				ASSERT(v.present());
+				Version minReadVersion = v.get().version + CLIENT_KNOBS->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
+				// ensure we wait until any previous start bulk loads for the same id are guaranteed to have completed
+				// or failed
+				if (tr->getReadVersion().get() < minReadVersion) {
+					CODE_PROBE(true,
+					           "bulk load cleanup waiting to avoid conflicts with concurrent starts",
+					           probe::decoration::rare);
+					if (BULKLOAD_DEBUG) {
+						fmt::print("UpdateBulkLoadState {0}: cleanup sleeping to avoid start conflicts\n",
+						           id.printable());
+					}
+					int64_t versionDiff = minReadVersion - tr->getReadVersion().get();
+					double timeToSleep = 1.0 + (1.0 * versionDiff) / CLIENT_KNOBS->VERSIONS_PER_SECOND;
+					wait(delay(timeToSleep));
+					// just for flow control
+					throw bulk_load_create_too_old();
+				}
+
 				BulkLoadMetadata::statusMap().erase(tr, id);
 				BulkLoadMetadata::infoMap().erase(tr, id);
+				BulkLoadMetadata::versionMap().erase(tr, id);
 			} else {
 				BulkLoadStatus newStatus = currentStatus.get();
 				newStatus.state = desiredState;
@@ -392,7 +464,6 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					// FIXME: any way to make this coalescing?
 					wait(BulkLoadMetadata::rangeMap().updateRange(
 					    tr, physicalRange.begin, physicalRange.end, ""_sr, true));
-					BulkLoadMetadata::versionMap().erase(tr, id);
 				} else if (desiredState == BulkLoadStatus::State::STAGING_BLOB_DONE) {
 					// clean up pointers once granules actually staged
 					std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
@@ -412,7 +483,15 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 			}
 			return Void();
 		} catch (Error& e) {
-			wait(tr->onError(e));
+			if (BULKLOAD_DEBUG) {
+				fmt::print("UpdateBulkLoadState {0}: error {1}\n", id.printable(), e.name());
+			}
+			// flow control for not committing and getting a new read version after sleeping for cleanup conflicts
+			if (e.code() == error_code_bulk_load_create_too_old) {
+				tr->reset();
+			} else {
+				wait(tr->onError(e));
+			}
 		}
 	}
 }

@@ -31,6 +31,7 @@ bool canReplyWith(const Error& e) {
 	case error_code_bulk_load_range_conflict:
 	case error_code_bulk_load_cleanup_failed:
 	case error_code_bulk_load_range_not_empty:
+	case error_code_bulk_load_create_too_old:
 		return true;
 	default:
 		return false;
@@ -517,7 +518,9 @@ ACTOR Future<Void> handleStartRequest(Reference<BulkLoaderData> self,
 		if (req.tenantInfo.hasTenant()) {
 			tenant = makeReference<Tenant>(req.tenantInfo.tenantId);
 		}
-		wait(self->db->startBulkLoadInternal(req.id, req.keyRange, tenant));
+
+		Version maxReadVersion = req.startReadVersion + CLIENT_KNOBS->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
+		wait(self->db->startBulkLoadInternal(req.id, req.keyRange, maxReadVersion, tenant));
 		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
 			wait(Never());
 		}
