@@ -1353,28 +1353,23 @@ public:
 	}
 
 	TypedFuture<future_var::BulkLoadIDResult> startBulkLoad(KeyRef begin, KeyRef end) override {
-		// FIXME: support!
-		throw std::runtime_error("startBulkLoad() not supported for database");
+		return native::fdb_database_start_bulk_load(getDB(), begin.data(), intSize(begin), end.data(), intSize(end));
 	}
 
 	TypedFuture<future_var::None> bulkLoadAllFilesRegistered(BulkLoadID id) override {
-		// FIXME: support!
-		throw std::runtime_error("bulkLoadAllFilesRegistered() not supported for database");
+		return native::fdb_database_bulk_load_all_files_registered(getDB(), id.data(), intSize(id));
 	}
 
 	TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) override {
-		// FIXME: support!
-		throw std::runtime_error("abortBulkLoad() not supported for database");
+		return native::fdb_database_abort_bulk_load(getDB(), id.data(), intSize(id));
 	}
 
 	TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) override {
-		// FIXME: support!
-		throw std::runtime_error("cleanupBulkLoad() not supported for database");
+		return native::fdb_database_cleanup_bulk_load(getDB(), id.data(), intSize(id));
 	}
 
 	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
-		// FIXME: support!
-		throw std::runtime_error("waitBulkLoadComplete() not supported for database");
+		return native::fdb_database_wait_bulk_load_complete(getDB(), id.data(), intSize(id));
 	}
 };
 
