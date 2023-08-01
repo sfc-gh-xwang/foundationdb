@@ -391,7 +391,7 @@ const Value workerListValue(ProcessData const&);
 Key decodeWorkerListKey(KeyRef const&);
 ProcessData decodeWorkerListValue(ValueRef const&);
 
-//	"\xff\x02/backupProgress/[[workerID]]" := "[[WorkerBackupStatus]]"
+//	"\xff/backupProgress/[[workerID]]" := "[[WorkerBackupStatus]]"
 //	Provides the progress for the given backup worker.
 //	See "FDBTypes.h" struct WorkerBackupStatus for more details on the return type value.
 extern const KeyRangeRef backupProgressKeys;

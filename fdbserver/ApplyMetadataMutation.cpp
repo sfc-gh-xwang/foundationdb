@@ -675,6 +675,15 @@ private:
 		}
 	}
 
+	void checkSetBackupProgressKeys(MutationRef m) {
+		if (!m.param1.startsWith(backupProgressPrefix)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+	}
+
 	void checkSetOtherKeys(MutationRef m) {
 		if (initialCommit)
 			return;
@@ -863,6 +872,15 @@ private:
 		    !excludedLocalityKeys.contains(range) && !failedLocalityKeys.contains(range)) {
 			TraceEvent("MutationRequiresRestart", dbgid).detail("M", m);
 			confChange = true;
+		}
+	}
+
+	void checkClearBackupProgressKeys(KeyRangeRef range) {
+		if (!backupProgressKeys.intersects(range)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->clear(range & backupProgressKeys);
 		}
 	}
 
@@ -1411,6 +1429,7 @@ public:
 				checkSetTenantMapPrefix(m);
 				checkSetMetaclusterRegistration(m);
 				checkSetBackupStartedKey(m);
+				checkSetBackupProgressKeys(m);
 				checkSetOtherKeys(m);
 			} else if (m.type == MutationRef::ClearRange && isSystemKey(m.param2)) {
 				KeyRangeRef range(m.param1, m.param2);
@@ -1429,6 +1448,7 @@ public:
 				checkClearVersionEpochKeys(m, range);
 				checkClearTenantMapPrefix(range);
 				checkClearMetaclusterRegistration(range);
+				checkClearBackupProgressKeys(range);
 				checkClearMiscRangeKeys(range);
 			}
 		}
