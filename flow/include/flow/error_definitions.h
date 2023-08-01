@@ -382,7 +382,7 @@ ERROR( bulk_load_tenant_mismatch, 2606, "Bulk load id is for a different tenant"
 // Bulk load file operations errors
 ERROR( bulk_load_file_id_not_found , 2620, "No file id for the given bulk load id exists");
 ERROR( bulk_load_not_registering_files, 2621, "Bulk load for this id exists but is already done registering files");
-ERROR( bulk_load_invalid_file_metadata, 2622, "Invalid bulk load file metadaata");
+ERROR( bulk_load_invalid_file_metadata, 2622, "Invalid bulk load file metadata");
 ERROR( bulk_load_file_missing, 2623, "File does not exist in blob storage for the file id");
 
 // other internal-only state transition failures - end user should not see this error

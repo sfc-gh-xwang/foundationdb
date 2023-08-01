@@ -126,7 +126,6 @@ BulkLoadFileID uidToFileID(UID id) {
 	return wr.toValue();
 }
 
-// self, bstore, cipherKeysCtx, cipherKeysMeta, version, batchSize
 std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> self,
                                                      Reference<BlobConnectionProvider> bstore,
                                                      Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx,
@@ -153,7 +152,7 @@ std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> s
 		arena.dependsOn(fileId.arena());
 		fp.response.fileId = fileId;
 
-		fp.response.filename = filename;
+		fp.response.fileName = filename;
 		fp.response.targetSize = SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES;
 		fp.response.cipherKeysCtx = cipherKeysCtx;
 		fp.response.type = BulkLoadFileType::SNAPSHOT;

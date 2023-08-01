@@ -216,7 +216,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		Value serialized = wait(serializeChunkedSnapshot(
-		    toWrite.filename, &snapshot, 16 * 1024, toWrite.compression, toWrite.cipherKeysCtx, true));
+		    toWrite.fileName, &snapshot, 16 * 1024, toWrite.compression, toWrite.cipherKeysCtx, true));
 		return serialized;
 	}
 
@@ -233,7 +233,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		Value serialized = wait(self->createOneFile(toWrite, filePrefix, rowCount, valueSize, &logicalSize));
 		state int64_t physicalSize = serialized.size();
 
-		std::string fname = toWrite.filename.toString();
+		std::string fname = toWrite.fileName.toString();
 		// filename and volume is already predetermined, so just access it instead of doing createForWrite
 		Reference<BackupContainerFileSystem> blobConn = self->bstore->getForAccess(fname);
 		state std::string fileContents = serialized.toString();
@@ -273,7 +273,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			wait(cx->markBulkLoadFilesWritten(id, filesWritten, tenant));
 		}
 
-		return filesToWrite[0].filename.toString();
+		return filesToWrite[0].fileName.toString();
 	}
 
 	ACTOR Future<Void> doInjectAbort(Database cx,
@@ -1033,7 +1033,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 		wait(cx->waitBulkLoadComplete(id, self->tenant));
 
-		wait(self->expectFileDeleted(self, filesToWrite[0].filename.toString()));
+		wait(self->expectFileDeleted(self, filesToWrite[0].fileName.toString()));
 		// FIXME: once load actually keeps granules this needs to be inverted, we should check that the file is kept
 		wait(self->expectFileDeleted(self, stagedFile));
 
@@ -1057,7 +1057,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->expectAbortedBySystem(cx, self, id));
 
 		wait(self->expectFileDeleted(self, stagedFile));
-		wait(self->expectFileDeleted(self, filesToWrite[0].filename.toString()));
+		wait(self->expectFileDeleted(self, filesToWrite[0].fileName.toString()));
 
 		return Void();
 	}

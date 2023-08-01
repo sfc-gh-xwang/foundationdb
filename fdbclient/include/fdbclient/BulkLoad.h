@@ -115,7 +115,7 @@ struct BulkLoadFileToWriteRef {
 	BulkLoadFileIDRef fileId;
 
 	// location to write file to
-	StringRef filename;
+	StringRef fileName;
 
 	// target size in bytes of file to be written
 	int64_t targetSize;
@@ -131,7 +131,7 @@ struct BulkLoadFileToWriteRef {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, fileId, filename, targetSize, cipherKeysCtx, type, format, compression);
+		serializer(ar, fileId, fileName, targetSize, cipherKeysCtx, type, format, compression);
 	}
 };
 

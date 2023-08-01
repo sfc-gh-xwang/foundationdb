@@ -35,7 +35,7 @@ bool newLoadersDifferentAndValid(Reference<BulkLoaderInfo> oldLoaders, Reference
 		ASSERT(oldLoaderIDs.insert(oldLoaders->getId(i)).second);
 	}
 	for (int i = 0; i < newLoaders->size(); i++) {
-		if (!oldLoaderIDs.count(newLoaders->getId(i))) {
+		if (!oldLoaderIDs.contains(newLoaders->getId(i))) {
 			return true;
 		}
 	}
@@ -483,6 +483,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					    tr, physicalRange.begin, physicalRange.end, ""_sr, true));
 				} else if (desiredState == BulkLoadStatus::State::STAGING_BLOB_DONE) {
 					// clean up pointers once granules actually staged
+					// FIXME: convert these 3 lines into common function?
 					std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
 					    BulkLoadMetadata::allFilePointersForLoadRange(id);
 					BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
