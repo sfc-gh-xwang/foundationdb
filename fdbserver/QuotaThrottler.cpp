@@ -332,7 +332,7 @@ class QuotaThrottlerImpl {
 	}
 
 	// Update the busy ThrottlingId set and returns whether the throttlingId is busy
-	bool isThrottlingIdsBusy(ThrottlingId const& throttlingId, double metric, double effectiveLimit) {
+	bool isThrottlingIdBusy(ThrottlingId const& throttlingId, double metric, double effectiveLimit) {
 		if (metric > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * effectiveLimit)) {
 			busyThrottlingIds.emplace(throttlingId);
 		} else if (metric < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * effectiveLimit)) {
@@ -399,7 +399,7 @@ public:
 				auto rate = stats.getTransactionRate();
 				if (isBusyThrottlingIdsTrackingEnabled()) {
 					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
-					if (isThrottlingIdsBusy(throttlingId, rate, targetPerProxyRate)) {
+					if (isThrottlingIdBusy(throttlingId, rate, targetPerProxyRate)) {
 						result[throttlingId] = targetPerProxyRate;
 					}
 				} else {
@@ -453,7 +453,7 @@ public:
 
 				if (isBusyThrottlingIdsTrackingEnabled()) {
 					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
-					if (isThrottlingIdsBusy(throttlingId, throughput, targetPerProxyThroughput)) {
+					if (isThrottlingIdBusy(throttlingId, throughput, targetPerProxyThroughput)) {
 						result[throttlingId] = targetPerProxyThroughput;
 					}
 				} else {
