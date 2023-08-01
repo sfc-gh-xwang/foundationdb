@@ -118,25 +118,6 @@ inline auto setupAndStartNetworkGuarded() {
 	});
 }
 
-// Given a string s, returns the "lowest" string greater than any string that
-// starts with s. Taken from
-// https://github.com/apple/foundationdb/blob/e7d72f458c6a985fdfa677ae021f357d6f49945b/flow/flow.cpp#L223.
-inline std::string strincStr(const std::string& s) {
-	int index = -1;
-	for (index = s.size() - 1; index >= 0; --index) {
-		if ((uint8_t)s[index] != 255) {
-			break;
-		}
-	}
-
-	assert(index >= 0);
-
-	std::string r = s.substr(0, index + 1);
-	char* p = r.data();
-	p[r.size() - 1]++;
-	return r;
-}
-
 inline void populateDBData(fdb::Database db, const std::map<std::string, std::string>& data) {
 	auto tr = db.createTransaction();
 

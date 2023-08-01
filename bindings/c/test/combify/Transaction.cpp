@@ -8,7 +8,7 @@ using namespace combify;
 using namespace fdb::literals;
 
 // Helper function to add `prefix` to all keys in the given map. Returns a new map
-auto createData(const std::string& prefix, std::map<std::string, std::string>&& map) {
+auto applyKeyPrefix(const std::string& prefix, std::map<std::string, std::string>&& map) {
 	std::map<std::string, std::string> out;
 	for (const auto& [key, val] : map) {
 		out[prefix + key] = val;
@@ -16,50 +16,21 @@ auto createData(const std::string& prefix, std::map<std::string, std::string>&& 
 	return out;
 }
 
-// getValue is a helper function to set options to a transaction and get the value of a given key
-auto getValue(fdb::Transaction tr,
-              fdb::KeyRef key,
-              bool snapshot = false,
-              string_view what = "",
-              const std::vector<FDBTransactionOption>& options = {}) {
-
-	return runToCompletion(
-	    tr,
-	    [key, snapshot, options](auto tr) {
-		    for (const auto& opt : options) {
-			    tr.setOption(opt);
-		    }
-		    return tr.get(key, snapshot);
-	    },
-	    what);
-}
-
-// setValue is a helper function to set options to a transaction and set a key value
-auto setValue(fdb::Transaction tr,
-              fdb::KeyRef key,
-              fdb::ValueRef val,
-              string_view what = "",
-              const std::vector<FDBTransactionOption>& options = {}) {
-	return runToCompletion(
-	    tr,
-	    [key, val, options](auto tr) {
-		    for (const auto& opt : options) {
-			    tr.setOption(opt);
-		    }
-		    tr.set(key, val);
-		    return tr.commit();
-	    },
-	    what);
-}
-
 AddTest testWriteAndRead("BasicWriteAndReadBack", asTrustedClient, [](const TestEnv& env) {
 	auto db = env.newDatabase();
 
 	auto tr = env.newTransaction(db);
-	setValue(tr, "abc"_br, "def"_br, "WriteSomeValue");
+	runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.set("abc"_br, "def"_br);
+		    return tr.commit();
+	    },
+	    "WriteSomeValue");
 
 	tr = env.newTransaction(db);
-	auto f = getValue(tr, "abc"_br, false, "ReadBackValue");
+	auto f = runToCompletion(
+	    tr, [](auto tr) { return tr.get("abc"_br, false); }, "ReadBackValue");
 	ASSERT(f.get() == "def"_br, "unmatched read back value: expected=def actual={}", fdb::toCharsRef(f.get()));
 });
 
@@ -77,7 +48,7 @@ AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-key");
 	auto db = env.newDatabase();
 
-	populateDBData(db, createData(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
+	populateDBData(db, applyKeyPrefix(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
 
 	auto tr = env.newTransaction(db);
 
@@ -98,9 +69,10 @@ AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-value");
 	auto db = env.newDatabase();
 
-	populateDBData(db, createData(prefix, { { "foo", "bar" } }));
+	populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 	auto tr = env.newTransaction(db);
-	auto f = getValue(tr, fdb::toBytesRef(prefix + "foo"), false, "GetValue");
+	auto f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "GetValue");
 
 	ASSERT(f.get() == "bar"_br, "unmatched read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
 });
@@ -108,7 +80,7 @@ AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-get-string-array");
 	auto db = env.newDatabase();
-	populateDBData(db, createData(prefix, { { "foo", "bar" } }));
+	populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 	auto tr = env.newTransaction(db);
 	auto f = runToCompletion(
 	    tr, [&prefix](auto tr) { return tr.getAddressForKey(fdb::toBytesRef(prefix + "foo")); }, "GetStringArray");
@@ -126,11 +98,12 @@ AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& en
 	for (auto const enableReadSystemKeys : { false, true }) {
 		auto tr = env.newTransaction(db);
 		try {
-			std::vector<FDBTransactionOption> options;
 			if (enableReadSystemKeys) {
-				options.push_back(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+				tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
 			}
-			auto f = getValue(tr, "\xff/coordinators"_br, false, "ReadSystemKey", options);
+			auto f = runToCompletion(
+			    tr, [](auto tr) { return tr.get("\xff/coordinators"_br, false); }, "ReadSystemKey");
+
 			ASSERT(enableReadSystemKeys);
 			// Only when enableReadSystemKeys is set we hit this line
 			ASSERT(f.get().has_value(), "Unexpected null value from read");
@@ -149,15 +122,22 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 		auto tr = env.newTransaction(db);
 		try {
 			// Write a system key
-			std::vector<FDBTransactionOption> options;
 			if (enableWriteSystemKeys) {
-				options.push_back(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
+				tr.setOption(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
 			}
-			setValue(tr, syskey, "bar"_br, "WriteSystemKey", options);
+			runToCompletion(
+			    tr,
+			    [syskey](auto tr) {
+				    tr.set(syskey, "bar"_br);
+				    return tr.commit();
+			    },
+			    "WriteSystemKey");
 
 			// Read and verify the system key value
 			tr = env.newTransaction(db);
-			auto f = getValue(tr, syskey, false, "ReadBackSystemKey", { FDB_TR_OPTION_READ_SYSTEM_KEYS });
+			tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+			auto f = runToCompletion(
+			    tr, [syskey](auto tr) { return tr.get(syskey, false); }, "ReadBackSystemKey");
 
 			ASSERT(enableWriteSystemKeys);
 			ASSERT(f.get() == "bar"_br, "unexpected read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
@@ -184,7 +164,9 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 		// 3) If FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE is set, read with both
 		auto snapshot = option != FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE;
 
-		auto f1 = getValue(tr, "foo"_br, snapshot, "ReadValue");
+		auto f1 = runToCompletion(
+		    tr, [snapshot](auto tr) { return tr.get("foo"_br, snapshot); }, "ReadValue");
+
 		switch (option) {
 		case FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE:
 			ASSERT(!f1.get().has_value(), "Expect null value");
@@ -195,7 +177,9 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 		case FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE: {
 			ASSERT(!f1.get().has_value(), "Expect null value");
 			// Non-snapshot reads should still read writes in the transaction
-			auto f2 = getValue(tr, "foo"_br, false, "ReadValueNonSnapshot");
+			auto f2 = runToCompletion(
+			    tr, [](auto tr) { return tr.get("foo"_br, false); }, "ReadValueNonSnapshot");
+
 			ASSERT(f2.get() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f2.get()));
 			break;
 		}
@@ -208,7 +192,7 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 
 AddTest testGetKeyValueArray("GetKeyValueArray", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-get-key-value-array");
-	auto data = createData(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
+	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
 
 	auto db = env.newDatabase();
 	populateDBData(db, data);
