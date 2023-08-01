@@ -1575,6 +1575,8 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
+    transactionBulkLoaderRequests("BulkLoaderRequests", cc),
+    transactionBulkLoaderRequestsCompleted("BulkLoaderRequestsCompleted", cc),
     transactionStatusRequests("StatusRequests", cc),
     transactionTenantLookupRequests("TenantLookupRequests", cc),
     transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
@@ -1644,7 +1646,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	metadataVersionCache.resize(CLIENT_KNOBS->METADATA_VERSION_CACHE_SIZE);
 	maxOutstandingWatches = CLIENT_KNOBS->DEFAULT_MAX_OUTSTANDING_WATCHES;
 
-	snapshotRywEnabled = apiVersion.hasSnapshotRYW() ? 1 : 0;
+	snapshotRywEnabled = 1;
 
 	logger = databaseLogger(this) && tssLogger(this);
 	locationCacheSize = g_network->isSimulated() ? CLIENT_KNOBS->LOCATION_CACHE_EVICTION_SIZE_SIM
@@ -1664,226 +1666,220 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	smoothMidShardSize.reset(CLIENT_KNOBS->INIT_MID_SHARD_BYTES);
 	globalConfig = std::make_unique<GlobalConfig>(this);
 
-	if (apiVersion.version() >= 700) {
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::ERRORMSG,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<SingleSpecialKeyImpl>(
-		                            SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ERRORMSG).begin,
-		                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
-			                            if (ryw->getSpecialKeySpaceErrorMsg().present()) {
-				                            return ValueReadResult(
-				                                Optional<Value>(ryw->getSpecialKeySpaceErrorMsg().get()));
-			                            } else {
-				                            return ValueReadResult();
-			                            }
-		                            },
-		                            true));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ManagementCommandsOptionsImpl>(
-		        KeyRangeRef("options/"_sr, "options0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ExcludeServersRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("exclude")));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<FailedServersRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("failed")));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
-		                        SpecialKeySpace::IMPLTYPE::READWRITE,
-		                        std::make_unique<ExcludedLocalitiesRangeImpl>(
-		                            SpecialKeySpace::getManagementApiCommandRange("excludedlocality")));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
-		                        SpecialKeySpace::IMPLTYPE::READWRITE,
-		                        std::make_unique<FailedLocalitiesRangeImpl>(
-		                            SpecialKeySpace::getManagementApiCommandRange("failedlocality")));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<ExclusionInProgressRangeImpl>(
-		        KeyRangeRef("in_progress_exclusion/"_sr, "in_progress_exclusion0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::CONFIGURATION,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ProcessClassRangeImpl>(
-		        KeyRangeRef("process/class_type/"_sr, "process/class_type0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::CONFIGURATION,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<ProcessClassSourceRangeImpl>(
-		        KeyRangeRef("process/class_source/"_sr, "process/class_source0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<LockDatabaseImpl>(
-		        singleKeyRange("db_locked"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ConsistencyCheckImpl>(
-		        singleKeyRange("consistency_check_suspended"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::GLOBALCONFIG,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<GlobalConfigImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::GLOBALCONFIG)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::TRACING,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<TracingOptionsImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::TRACING)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::CONFIGURATION,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<CoordinatorsImpl>(
-		        KeyRangeRef("coordinators/"_sr, "coordinators0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<CoordinatorsAutoImpl>(
-		        singleKeyRange("auto_coordinators"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<AdvanceVersionImpl>(
-		        singleKeyRange("min_required_commit_version"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<VersionEpochImpl>(
-		        singleKeyRange("version_epoch"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<ClientProfilingImpl>(
-		        KeyRangeRef("profiling/"_sr, "profiling0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)),
-		    /* deprecated */ ApiVersion::withClientProfilingDeprecated().version());
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<MaintenanceImpl>(
-		        KeyRangeRef("maintenance/"_sr, "maintenance0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<DataDistributionImpl>(
-		        KeyRangeRef("data_distribution/"_sr, "data_distribution0"_sr)
-		            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::ACTORLINEAGE,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<ActorLineageImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ACTORLINEAGE)));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF,
-		                        SpecialKeySpace::IMPLTYPE::READWRITE,
-		                        std::make_unique<ActorProfilerConf>(
-		                            SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF)));
-	}
-	if (apiVersion.version() >= 630) {
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<ConflictingKeysImpl>(conflictingKeysRange));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<ReadConflictRangeImpl>(readConflictRangeKeysRange));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<WriteConflictRangeImpl>(writeConflictRangeKeysRange));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::METRICS,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<DDStatsRangeImpl>(ddStatsRange));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::METRICS,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<HealthMetricsRangeImpl>(
-		                            KeyRangeRef("\xff\xff/metrics/health/"_sr, "\xff\xff/metrics/health0"_sr)));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::WORKERINTERFACE,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<WorkerInterfacesSpecialKeyImpl>(
-		                            KeyRangeRef("\xff\xff/worker_interfaces/"_sr, "\xff\xff/worker_interfaces0"_sr)));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::STATUSJSON,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<SingleSpecialKeyImpl>(
-		                            "\xff\xff/status/json"_sr,
-		                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ERRORMSG,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ERRORMSG).begin,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            if (ryw->getSpecialKeySpaceErrorMsg().present()) {
+			                            return ValueReadResult(
+			                                Optional<Value>(ryw->getSpecialKeySpaceErrorMsg().get()));
+		                            } else {
+			                            return ValueReadResult();
+		                            }
+	                            },
+	                            true));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ManagementCommandsOptionsImpl>(
+	        KeyRangeRef("options/"_sr, "options0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ExcludeServersRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("exclude")));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<FailedServersRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("failed")));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
+	                        SpecialKeySpace::IMPLTYPE::READWRITE,
+	                        std::make_unique<ExcludedLocalitiesRangeImpl>(
+	                            SpecialKeySpace::getManagementApiCommandRange("excludedlocality")));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<FailedLocalitiesRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("failedlocality")));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READONLY,
+	    std::make_unique<ExclusionInProgressRangeImpl>(
+	        KeyRangeRef("in_progress_exclusion/"_sr, "in_progress_exclusion0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::CONFIGURATION,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ProcessClassRangeImpl>(
+	        KeyRangeRef("process/class_type/"_sr, "process/class_type0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::CONFIGURATION,
+	    SpecialKeySpace::IMPLTYPE::READONLY,
+	    std::make_unique<ProcessClassSourceRangeImpl>(
+	        KeyRangeRef("process/class_source/"_sr, "process/class_source0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<LockDatabaseImpl>(
+	        singleKeyRange("db_locked"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ConsistencyCheckImpl>(
+	        singleKeyRange("consistency_check_suspended"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::GLOBALCONFIG,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<GlobalConfigImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::GLOBALCONFIG)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::TRACING,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<TracingOptionsImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::TRACING)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::CONFIGURATION,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<CoordinatorsImpl>(
+	        KeyRangeRef("coordinators/"_sr, "coordinators0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::CONFIGURATION).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READONLY,
+	    std::make_unique<CoordinatorsAutoImpl>(
+	        singleKeyRange("auto_coordinators"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<AdvanceVersionImpl>(
+	        singleKeyRange("min_required_commit_version"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<VersionEpochImpl>(
+	        singleKeyRange("version_epoch"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<ClientProfilingImpl>(
+	        KeyRangeRef("profiling/"_sr, "profiling0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)),
+	    /* deprecated */ ApiVersion::withClientProfilingDeprecated().version());
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<MaintenanceImpl>(
+	        KeyRangeRef("maintenance/"_sr, "maintenance0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::MANAGEMENT,
+	    SpecialKeySpace::IMPLTYPE::READWRITE,
+	    std::make_unique<DataDistributionImpl>(
+	        KeyRangeRef("data_distribution/"_sr, "data_distribution0"_sr)
+	            .withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::MANAGEMENT).begin)));
+	registerSpecialKeysImpl(
+	    SpecialKeySpace::MODULE::ACTORLINEAGE,
+	    SpecialKeySpace::IMPLTYPE::READONLY,
+	    std::make_unique<ActorLineageImpl>(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ACTORLINEAGE)));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF,
+	                        SpecialKeySpace::IMPLTYPE::READWRITE,
+	                        std::make_unique<ActorProfilerConf>(
+	                            SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF)));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<ConflictingKeysImpl>(conflictingKeysRange));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<ReadConflictRangeImpl>(readConflictRangeKeysRange));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::TRANSACTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<WriteConflictRangeImpl>(writeConflictRangeKeysRange));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::METRICS,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<DDStatsRangeImpl>(ddStatsRange));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::METRICS,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<HealthMetricsRangeImpl>(
+	                            KeyRangeRef("\xff\xff/metrics/health/"_sr, "\xff\xff/metrics/health0"_sr)));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::WORKERINTERFACE,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<WorkerInterfacesSpecialKeyImpl>(
+	                            KeyRangeRef("\xff\xff/worker_interfaces/"_sr, "\xff\xff/worker_interfaces0"_sr)));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::STATUSJSON,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            "\xff\xff/status/json"_sr,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            if (ryw->getDatabase().getPtr() && ryw->getDatabase()->getConnectionRecord()) {
+			                            ++ryw->getDatabase()->transactionStatusRequests;
+			                            return getJSON(ryw->getDatabase());
+		                            } else {
+			                            return ValueReadResult();
+		                            }
+	                            },
+	                            true));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::CLUSTERFILEPATH,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            "\xff\xff/cluster_file_path"_sr,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            try {
 			                            if (ryw->getDatabase().getPtr() && ryw->getDatabase()->getConnectionRecord()) {
-				                            ++ryw->getDatabase()->transactionStatusRequests;
-				                            return getJSON(ryw->getDatabase());
-			                            } else {
-				                            return ValueReadResult();
+				                            Optional<Value> output =
+				                                StringRef(ryw->getDatabase()->getConnectionRecord()->getLocation());
+				                            return ValueReadResult(output);
 			                            }
-		                            },
-		                            true));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::CLUSTERFILEPATH,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<SingleSpecialKeyImpl>(
-		                            "\xff\xff/cluster_file_path"_sr,
-		                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
-			                            try {
-				                            if (ryw->getDatabase().getPtr() &&
-				                                ryw->getDatabase()->getConnectionRecord()) {
-					                            Optional<Value> output =
-					                                StringRef(ryw->getDatabase()->getConnectionRecord()->getLocation());
-					                            return ValueReadResult(output);
-				                            }
-			                            } catch (Error& e) {
-				                            return e;
-			                            }
-			                            return ValueReadResult();
-		                            },
-		                            true));
+		                            } catch (Error& e) {
+			                            return e;
+		                            }
+		                            return ValueReadResult();
+	                            },
+	                            true));
 
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::CONNECTIONSTRING,
-		    SpecialKeySpace::IMPLTYPE::READONLY,
-		    std::make_unique<SingleSpecialKeyImpl>(
-		        "\xff\xff/connection_string"_sr,
-		        [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
-			        try {
-				        if (ryw->getDatabase().getPtr() && ryw->getDatabase()->getConnectionRecord()) {
-					        Reference<IClusterConnectionRecord> f = ryw->getDatabase()->getConnectionRecord();
-					        Optional<Value> output = StringRef(f->getConnectionString().toString());
-					        return ValueReadResult(output);
-				        }
-			        } catch (Error& e) {
-				        return e;
-			        }
-			        return ValueReadResult();
-		        },
-		        true));
-		registerSpecialKeysImpl(SpecialKeySpace::MODULE::CLUSTERID,
-		                        SpecialKeySpace::IMPLTYPE::READONLY,
-		                        std::make_unique<SingleSpecialKeyImpl>(
-		                            "\xff\xff/cluster_id"_sr,
-		                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
-			                            try {
-				                            if (ryw->getDatabase().getPtr()) {
-					                            return map(getClusterId(ryw->getDatabase()), [](UID id) {
-						                            return ValueReadResult(Optional<Value>(StringRef(id.toString())));
-					                            });
-				                            }
-			                            } catch (Error& e) {
-				                            return e;
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::CONNECTIONSTRING,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            "\xff\xff/connection_string"_sr,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            try {
+			                            if (ryw->getDatabase().getPtr() && ryw->getDatabase()->getConnectionRecord()) {
+				                            Reference<IClusterConnectionRecord> f =
+				                                ryw->getDatabase()->getConnectionRecord();
+				                            Optional<Value> output = StringRef(f->getConnectionString().toString());
+				                            return ValueReadResult(output);
 			                            }
-			                            return ValueReadResult();
-		                            },
-		                            true));
+		                            } catch (Error& e) {
+			                            return e;
+		                            }
+		                            return ValueReadResult();
+	                            },
+	                            true));
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::CLUSTERID,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<SingleSpecialKeyImpl>(
+	                            "\xff\xff/cluster_id"_sr,
+	                            [](ReadYourWritesTransaction* ryw) -> Future<ValueReadResult> {
+		                            try {
+			                            if (ryw->getDatabase().getPtr()) {
+				                            return map(getClusterId(ryw->getDatabase()), [](UID id) {
+					                            return ValueReadResult(Optional<Value>(StringRef(id.toString())));
+				                            });
+			                            }
+		                            } catch (Error& e) {
+			                            return e;
+		                            }
+		                            return ValueReadResult();
+	                            },
+	                            true));
 
-		registerSpecialKeysImpl(
-		    SpecialKeySpace::MODULE::MANAGEMENT,
-		    SpecialKeySpace::IMPLTYPE::READWRITE,
-		    std::make_unique<TenantRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("tenant")));
-	}
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
+	                        SpecialKeySpace::IMPLTYPE::READWRITE,
+	                        std::make_unique<TenantRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("tenant")));
 
 	if (BUGGIFY) {
 		debugUseTag = true;
@@ -1933,6 +1929,8 @@ DatabaseContext::DatabaseContext(const Error& err)
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
+    transactionBulkLoaderRequests("BulkLoaderRequests", cc),
+    transactionBulkLoaderRequestsCompleted("BulkLoaderRequestsCompleted", cc),
     transactionStatusRequests("StatusRequests", cc),
     transactionTenantLookupRequests("TenantLookupRequests", cc),
     transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
@@ -2891,6 +2889,46 @@ Future<Reference<CommitProxyInfo>> DatabaseContext::getCommitProxiesFuture(
 	return ::getCommitProxiesFuture(this, useProvisionalProxies);
 }
 
+ACTOR Future<Reference<BulkLoaderInfo>> getBulkLoadersActor(DatabaseContext* cx,
+                                                            UseProvisionalProxies useProvisionalProxies) {
+	// FIXME: cache results somehow
+	loop {
+		++cx->transactionBulkLoaderRequests;
+		try {
+			choose {
+				when(wait(cx->onProxiesChanged())) {}
+				when(GetBulkLoaderInterfacesReply rep =
+				         wait(basicLoadBalance(cx->getCommitProxies(useProvisionalProxies),
+				                               &CommitProxyInterface::getBulkLoaderInterfaces,
+				                               GetBulkLoaderInterfacesRequest(SpanContext()),
+				                               TaskPriority::DefaultPromiseEndpoint))) {
+					++cx->transactionBulkLoaderRequestsCompleted;
+
+					std::vector<Reference<ReferencedInterface<BulkLoaderInterface>>> interfs;
+					for (auto interf : rep.blInterfs) {
+						interfs.push_back(makeReference<ReferencedInterface<BulkLoaderInterface>>(interf));
+					}
+					return makeReference<BulkLoaderInfo>(interfs);
+				}
+			}
+		} catch (Error& e) {
+			if (e.code() == error_code_commit_proxy_memory_limit_exceeded) {
+				// Commit Proxy returns an error
+				wait(delayJittered(CLIENT_KNOBS->GRV_ERROR_RETRY_DELAY));
+			} else {
+				++cx->transactionBulkLoaderRequestsCompleted;
+				throw e;
+			}
+		}
+	}
+}
+
+// Returns a future which will not be set until the CommitProxyInfo of this DatabaseContext is not nullptr
+// TODO: allow provisional proxies? don't think there's any need for it
+Future<Reference<BulkLoaderInfo>> DatabaseContext::getBulkLoaders() {
+	return ::getBulkLoadersActor(this, UseProvisionalProxies::False);
+}
+
 void GetRangeLimits::decrement(VectorRef<KeyValueRef> const& data) {
 	if (rows != GetRangeLimits::ROW_LIMIT_UNLIMITED) {
 		ASSERT(data.size() <= rows);
@@ -3564,10 +3602,6 @@ Reference<TransactionState> TransactionState::cloneAndReset(Reference<Transactio
 	SpanContext newSpanContext = generateNewSpan ? generateSpanID(cx->transactionTracingSample) : spanContext;
 	Reference<TransactionState> newState =
 	    makeReference<TransactionState>(cx, tenant_, cx->taskID, newSpanContext, newTrLogInfo);
-
-	if (!cx->apiVersionAtLeast(16)) {
-		newState->options = options;
-	}
 
 	newState->readVersionFuture = Future<Version>();
 	newState->metadataVersion = Promise<Optional<Key>>();
@@ -6109,12 +6143,10 @@ void Transaction::atomicOp(const KeyRef& key,
 	if (operand.size() > CLIENT_KNOBS->VALUE_SIZE_LIMIT)
 		throw value_too_large();
 
-	if (apiVersionAtLeast(510)) {
-		if (operationType == MutationRef::Min)
-			operationType = MutationRef::MinV2;
-		else if (operationType == MutationRef::And)
-			operationType = MutationRef::AndV2;
-	}
+	if (operationType == MutationRef::Min)
+		operationType = MutationRef::MinV2;
+	else if (operationType == MutationRef::And)
+		operationType = MutationRef::AndV2;
 
 	auto& req = tr;
 	auto& t = req.transaction;
@@ -6261,9 +6293,7 @@ TransactionOptions::TransactionOptions() {
 void TransactionOptions::reset(Database const& cx) {
 	clear();
 	lockAware = cx->lockAware;
-	if (cx->apiVersionAtLeast(630)) {
-		includePort = true;
-	}
+	includePort = true;
 }
 
 void Transaction::resetImpl(bool generateNewSpan) {
@@ -6940,12 +6970,6 @@ Future<Void> Transaction::commitMutations() {
 			    .detail("DebugIdentifier", trState->trLogInfo ? trState->trLogInfo->identifier : "");
 		}
 
-		if (!apiVersionAtLeast(300)) {
-			transactionSize =
-			    tr.transaction.mutations.expectedSize(); // Old API versions didn't account for conflict ranges when
-			                                             // determining whether to throw transaction_too_large
-		}
-
 		if (transactionSize > trState->options.sizeLimit) {
 			return transaction_too_large();
 		}
@@ -7031,10 +7055,6 @@ ACTOR Future<Void> commitAndWatch(Transaction* self) {
 			self->setupWatches();
 		}
 
-		if (!self->apiVersionAtLeast(700)) {
-			self->reset();
-		}
-
 		return Void();
 	} catch (Error& e) {
 		if (e.code() != error_code_actor_cancelled) {
@@ -7043,10 +7063,6 @@ ACTOR Future<Void> commitAndWatch(Transaction* self) {
 			}
 
 			self->trState->versionstampPromise.sendError(transaction_invalid_version());
-
-			if (!self->apiVersionAtLeast(700)) {
-				self->reset();
-			}
 		}
 
 		throw;
@@ -7363,10 +7379,7 @@ bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority prior
 }
 
 ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
-	if (!CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !trState->options.skipGrvCache &&
-	    (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE ||
-	     trState->options.useGrvCache) &&
-	    rkThrottlingCooledDown(trState->cx.getPtr(), trState->options.priority)) {
+	if (trState->canUseGrvCache()) {
 		// Upon our first request to use cached RVs, start the background updater
 		if (!trState->cx->grvUpdateHandler.isValid()) {
 			trState->cx->grvUpdateHandler = backgroundGrvUpdater(trState->cx.getPtr());
@@ -7376,6 +7389,10 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 		double requestTime = now();
 		if (requestTime - lastTime <= CLIENT_KNOBS->MAX_VERSION_CACHE_LAG && rv != Version(0)) {
 			ASSERT(!debug_checkVersionTime(rv, requestTime, "CheckStaleness"));
+			// client side average cost tracking should be enabled, account for this transaction.
+			if (trState->getThrottlingId().present()) {
+				trState->cx->addTransaction(trState->getThrottlingId().get(), 1);
+			}
 			return rv;
 		} // else go through regular GRV path
 	}
@@ -7411,7 +7428,8 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 	                                                               tenantGroup,
 	                                                               span.context,
 	                                                               trState->options.throttlingTag,
-	                                                               versionDebugID);
+	                                                               versionDebugID,
+	                                                               trState->getExpectedTransactionCost());
 	trState->startTime = now();
 	GetReadVersionReply rep = wait(f);
 	double replyTime = now();
@@ -7475,6 +7493,15 @@ Future<Version> TransactionState::getReadVersion(uint32_t flags) {
 	return getReadVersion_internal(this, flags);
 }
 
+bool TransactionState::canUseGrvCache() {
+	return !CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !options.skipGrvCache &&
+	       (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE || options.useGrvCache) &&
+	       rkThrottlingCooledDown(cx.getPtr(), options.priority) &&
+	       // skip cache if throttlingId is busy, busy throttlingId depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
+	       !(isBusyThrottlingIdsTrackingEnabled() && getThrottlingId().present() &&
+	         cx->isThrottlingIdBusy(getThrottlingId().get()));
+}
+
 Optional<ThrottlingId> TransactionState::getThrottlingId() {
 	if (tenant().present() && tenant().get()->tenantGroup().present()) {
 		return ThrottlingIdRef::fromTenantGroup(tenant().get()->tenantGroup().get());
@@ -7525,6 +7552,14 @@ ACTOR Future<Version> Transaction_getReadVersion(Reference<TransactionState> trS
 
 Future<Version> Transaction::getReadVersion() {
 	return Transaction_getReadVersion(trState);
+}
+
+void TransactionState::setExpectedCost(uint64_t bytes) {
+	expectedTransactionCost = bytes;
+}
+
+Optional<uint64_t> TransactionState::getExpectedTransactionCost() const {
+	return expectedTransactionCost;
 }
 
 Optional<Version> Transaction::getCachedReadVersion() const {
@@ -7851,12 +7886,68 @@ ACTOR Future<StorageMetrics> extractMetrics(Future<std::pair<Optional<StorageMet
 	return x.first.get();
 }
 
+ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRangesWithLocations(
+    KeyRange keys,
+    std::vector<KeyRangeLocationInfo>* locations,
+    bool* invalidateLocationCache) {
+
+	state Standalone<VectorRef<ReadHotRangeWithMetrics>> results;
+	try {
+		// TODO: how to handle this?
+		// This function is called whenever a shard becomes read-hot. But somehow the shard was split across more
+		// than one storage server after becoming read-hot and before this function is called, i.e. a race
+		// condition. Should we abort and wait for the newly split shards to be hot again?
+		state int nLocs = locations->size();
+		// if (nLocs > 1) {
+		//	TraceEvent("RHDDebug")
+		//	    .detail("NumSSIs", nLocs)
+		//	    .detail("KeysBegin", keys.begin.printable().c_str())
+		//	    .detail("KeysEnd", keys.end.printable().c_str());
+		// }
+		state std::vector<Future<ReadHotSubRangeReply>> fReplies(nLocs);
+		KeyRef partBegin, partEnd;
+		for (int i = 0; i < nLocs; i++) {
+			partBegin = (i == 0) ? keys.begin : locations->at(i).range.begin;
+			partEnd = (i == nLocs - 1) ? keys.end : locations->at(i).range.end;
+			ReadHotSubRangeRequest req(KeyRangeRef(partBegin, partEnd));
+			fReplies[i] = loadBalance(locations->at(i).locations->locations(),
+			                          &StorageServerInterface::getReadHotRanges,
+			                          req,
+			                          TaskPriority::DataDistribution);
+		}
+
+		wait(waitForAll(fReplies));
+
+		if (nLocs == 1) {
+			CODE_PROBE(true, "Single-shard read hot range request");
+			return fReplies[0].get().readHotRanges;
+		} else {
+			CODE_PROBE(true, "Multi-shard read hot range request");
+
+			for (int i = 0; i < nLocs; i++) {
+				results.append(
+				    results.arena(), fReplies[i].get().readHotRanges.begin(), fReplies[i].get().readHotRanges.size());
+				results.arena().dependsOn(fReplies[i].get().readHotRanges.arena());
+			}
+			return results;
+		}
+	} catch (Error& e) {
+		if (e.code() != error_code_wrong_shard_server && e.code() != error_code_all_alternatives_failed) {
+			TraceEvent(SevError, "GetReadHotSubRangesError").error(e);
+			throw;
+		}
+		*invalidateLocationCache = true;
+	}
+	return results;
+}
+
 ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(Database cx, KeyRange keys) {
 	state Span span("NAPI:GetReadHotRanges"_loc);
+
 	loop {
 		int64_t shardLimit = 100; // Shard limit here does not really matter since this function is currently only used
 		                          // to find the read-hot sub ranges within a read-hot shard.
-		std::vector<KeyRangeLocationInfo> locations =
+		state std::vector<KeyRangeLocationInfo> locations =
 		    wait(getKeyRangeLocations(cx,
 		                              TenantInfo(),
 		                              keys,
@@ -7867,77 +7958,54 @@ ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRanges(Da
 		                              Optional<UID>(),
 		                              UseProvisionalProxies::False,
 		                              latestVersion));
-		try {
-			// TODO: how to handle this?
-			// This function is called whenever a shard becomes read-hot. But somehow the shard was split across more
-			// than one storage server after becoming read-hot and before this function is called, i.e. a race
-			// condition. Should we abort and wait for the newly split shards to be hot again?
-			state int nLocs = locations.size();
-			// if (nLocs > 1) {
-			//	TraceEvent("RHDDebug")
-			//	    .detail("NumSSIs", nLocs)
-			//	    .detail("KeysBegin", keys.begin.printable().c_str())
-			//	    .detail("KeysEnd", keys.end.printable().c_str());
-			// }
-			state std::vector<Future<ReadHotSubRangeReply>> fReplies(nLocs);
-			KeyRef partBegin, partEnd;
-			for (int i = 0; i < nLocs; i++) {
-				partBegin = (i == 0) ? keys.begin : locations[i].range.begin;
-				partEnd = (i == nLocs - 1) ? keys.end : locations[i].range.end;
-				ReadHotSubRangeRequest req(KeyRangeRef(partBegin, partEnd));
-				fReplies[i] = loadBalance(locations[i].locations->locations(),
-				                          &StorageServerInterface::getReadHotRanges,
-				                          req,
-				                          TaskPriority::DataDistribution);
-			}
 
-			wait(waitForAll(fReplies));
+		state bool invalidateLocationCache = false;
+		Standalone<VectorRef<ReadHotRangeWithMetrics>> results =
+		    wait(getReadHotRangesWithLocations(keys, &locations, &invalidateLocationCache));
 
-			if (nLocs == 1) {
-				CODE_PROBE(true, "Single-shard read hot range request");
-				return fReplies[0].get().readHotRanges;
-			} else {
-				CODE_PROBE(true, "Multi-shard read hot range request");
-				Standalone<VectorRef<ReadHotRangeWithMetrics>> results;
-				for (int i = 0; i < nLocs; i++) {
-					results.append(results.arena(),
-					               fReplies[i].get().readHotRanges.begin(),
-					               fReplies[i].get().readHotRanges.size());
-					results.arena().dependsOn(fReplies[i].get().readHotRanges.arena());
-				}
-
-				return results;
-			}
-		} catch (Error& e) {
-			if (e.code() != error_code_wrong_shard_server && e.code() != error_code_all_alternatives_failed) {
-				TraceEvent(SevError, "GetReadHotSubRangesError").error(e);
-				throw;
-			}
-			cx->invalidateCache({}, keys);
-			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
+		if (!invalidateLocationCache) {
+			return results;
 		}
+
+		cx->invalidateCache({}, keys);
+		wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
 	}
 }
 
 ACTOR Future<Optional<StorageMetrics>> waitStorageMetricsWithLocation(TenantInfo tenantInfo,
                                                                       Version version,
                                                                       KeyRange keys,
-                                                                      std::vector<KeyRangeLocationInfo> locations,
+                                                                      std::vector<KeyRangeLocationInfo>* locations,
                                                                       StorageMetrics min,
                                                                       StorageMetrics max,
-                                                                      StorageMetrics permittedError) {
-	Future<StorageMetrics> fx;
-	if (locations.size() > 1) {
-		fx = waitStorageMetricsMultipleLocations(tenantInfo, version, locations, min, max, permittedError);
-	} else {
-		WaitMetricsRequest req(tenantInfo, version, keys, min, max);
-		fx = loadBalance(locations[0].locations->locations(),
-		                 &StorageServerInterface::waitMetrics,
-		                 req,
-		                 TaskPriority::DataDistribution);
+                                                                      StorageMetrics permittedError,
+                                                                      bool* invalidateCache) {
+	try {
+		Future<StorageMetrics> fx;
+		if (locations->size() > 1) {
+			fx = waitStorageMetricsMultipleLocations(tenantInfo, version, *locations, min, max, permittedError);
+		} else {
+			WaitMetricsRequest req(tenantInfo, version, keys, min, max);
+			fx = loadBalance(locations->at(0).locations->locations(),
+			                 &StorageServerInterface::waitMetrics,
+			                 req,
+			                 TaskPriority::DataDistribution);
+		}
+		StorageMetrics x = wait(fx);
+		return x;
+	} catch (Error& e) {
+		TraceEvent(SevDebug, "WaitStorageMetricsHandleError").error(e);
+		if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
+			*invalidateCache = true;
+		} else if (e.code() == error_code_future_version) {
+			wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
+		} else {
+			bool ok = e.code() == error_code_tenant_not_found;
+			TraceEvent(ok ? SevInfo : SevError, "WaitStorageMetricsError").error(e);
+			throw;
+		}
 	}
-	StorageMetrics x = wait(fx);
-	return x;
+	return Optional<StorageMetrics>();
 }
 
 ACTOR Future<std::pair<Optional<StorageMetrics>, int>> waitStorageMetrics(
@@ -7990,24 +8058,15 @@ ACTOR Future<std::pair<Optional<StorageMetrics>, int>> waitStorageMetrics(
 			continue;
 		}
 
-		try {
-			Optional<StorageMetrics> res =
-			    wait(waitStorageMetricsWithLocation(tenantInfo, version, keys, locations, min, max, permittedError));
-			if (res.present()) {
-				return std::make_pair(res, -1);
-			}
-		} catch (Error& e) {
-			TraceEvent(SevDebug, "WaitStorageMetricsHandleError").error(e);
-			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
-				cx->invalidateCache(tenantInfo.prefix, keys);
-				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
-			} else if (e.code() == error_code_future_version) {
-				wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
-			} else {
-				bool ok = e.code() == error_code_tenant_not_found;
-				TraceEvent(ok ? SevInfo : SevError, "WaitStorageMetricsError").error(e);
-				throw;
-			}
+		state bool invalidateCache = false;
+		Optional<StorageMetrics> res = wait(waitStorageMetricsWithLocation(
+		    tenantInfo, version, keys, &locations, min, max, permittedError, &invalidateCache));
+		if (res.present()) {
+			return std::make_pair(res, -1);
+		}
+		if (invalidateCache) {
+			cx->invalidateCache(tenantInfo.prefix, keys);
+			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
 		}
 	}
 }
@@ -8300,7 +8359,9 @@ ACTOR Future<Void> streamRemainingGranuleMutations(BlobWorkerInterface bwInterf,
 	return Void();
 }
 
-ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileRequest req, BlobWorkerInterface bwInterf) {
+ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileRequest req,
+                                                           BlobWorkerInterface bwInterf,
+                                                           bool streamRemainingMutations) {
 	std::vector<Reference<ReferencedInterface<BlobWorkerInterface>>> v;
 	v.push_back(makeReference<ReferencedInterface<BlobWorkerInterface>>(bwInterf));
 	state Reference<MultiInterface<ReferencedInterface<BlobWorkerInterface>>> location =
@@ -8320,7 +8381,7 @@ ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileReques
 
 		ASSERT(!rep.chunks.empty());
 
-		if (req.summarize) {
+		if (req.summarize || !streamRemainingMutations) {
 			return rep;
 		}
 
@@ -8360,9 +8421,11 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
     Optional<Version> read,
     Version* readVersionOut,
     int chunkLimit,
-    bool summarize) { // read not present is "use transaction version"
+    bool summarize,
+    int64_t mutationByteLimit) { // read not present is "use transaction version"
 
 	ASSERT(chunkLimit > 0);
+	ASSERT(mutationByteLimit >= 0);
 	state KeyRange keyRange = range;
 	state int i;
 	state Version rv;
@@ -8382,12 +8445,14 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 	// Cache misses could still read from the DB, or we could add it to the Transaction State Store and
 	// have proxies serve it from memory.
 	if (BG_REQUEST_DEBUG) {
-		fmt::print("Doing blob granule request [{0} - {1}) @ {2}{3}\n",
-		           range.begin.printable(),
-		           range.end.printable(),
-		           rv,
-		           self->getTenant().present() ? " for tenant " + printable(self->getTenant().get()->description())
-		                                       : "");
+		fmt::print(
+		    "Doing blob granule request [{0} - {1}) @ {2}{3}{4}\n",
+		    range.begin.printable(),
+		    range.end.printable(),
+		    rv,
+		    self->getTenant().present() ? " for tenant " + printable(self->getTenant().get()->description()) : "",
+		    mutationByteLimit < std::numeric_limits<int64_t>::max() ? fmt::format("( byteLimit={0})", mutationByteLimit)
+		                                                            : "");
 	}
 
 	if (self->getTenant().present()) {
@@ -8480,7 +8545,11 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		req.canCollapseBegin = true; // TODO make this a parameter once we support it
 		req.summarize = summarize;
 
-		if (BUGGIFY_WITH_PROB(0.1)) {
+		state bool streamRemainingMutations = true;
+		if (mutationByteLimit < req.granuleMutationBytesLimit) {
+			req.granuleMutationBytesLimit = mutationByteLimit;
+			streamRemainingMutations = false;
+		} else if (BUGGIFY_WITH_PROB(0.1)) {
 			req.granuleMutationBytesLimit = 0;
 		} else if (BUGGIFY_WITH_PROB(0.1)) {
 			req.granuleMutationBytesLimit = deterministicRandom()->randomSkewedUInt32(1, 1000000);
@@ -8489,7 +8558,8 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		// use load balance with one option for now for retry and error handling
 		try {
 			choose {
-				when(BlobGranuleFileReply rep = wait(getFullGranuleFileReply(req, bwInterf))) {
+				when(BlobGranuleFileReply rep =
+				         wait(getFullGranuleFileReply(req, bwInterf, streamRemainingMutations))) {
 					if (BG_REQUEST_DEBUG) {
 						fmt::print("Blob granule request for [{0} - {1}) @ {2} - {3} got reply from {4}:\n",
 						           granule.begin.printable(),
@@ -8595,9 +8665,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 Future<Standalone<VectorRef<BlobGranuleChunkRef>>> Transaction::readBlobGranules(const KeyRange& range,
                                                                                  Version begin,
                                                                                  Optional<Version> readVersion,
-                                                                                 Version* readVersionOut) {
+                                                                                 Version* readVersionOut,
+                                                                                 int64_t mutationByteLimit) {
 	return readBlobGranulesActor(
-	    this, range, begin, readVersion, readVersionOut, std::numeric_limits<int>::max(), false);
+	    this, range, begin, readVersion, readVersionOut, std::numeric_limits<int>::max(), false, mutationByteLimit);
 }
 
 ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranulesActor(Transaction* self,
@@ -8608,7 +8679,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules
 
 	state Version readVersionOut;
 	Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-	    wait(readBlobGranulesActor(self, range, 0, summaryVersion, &readVersionOut, rangeLimit, true));
+	    wait(readBlobGranulesActor(self, range, 0, summaryVersion, &readVersionOut, rangeLimit, true, 0));
 	ASSERT(chunks.size() <= rangeLimit);
 	ASSERT(!summaryVersion.present() || readVersionOut == summaryVersion.get());
 	Standalone<VectorRef<BlobGranuleSummaryRef>> summaries;
@@ -11372,38 +11443,23 @@ void DatabaseContext::addCost(ThrottlingId const& throttlingId, uint64_t bytes) 
 	throughputTracker.addCost(throttlingId, bytes);
 }
 
+void DatabaseContext::addTransaction(const ThrottlingId& throttlingId, uint64_t numTransactions) {
+	throughputTracker.addTransaction(throttlingId, numTransactions);
+}
+
+double DatabaseContext::getAverageTransactionCost(const ThrottlingId& throttlingId) const {
+	return throughputTracker.getAverageTransactionCost(throttlingId);
+}
+
+bool DatabaseContext::isThrottlingIdBusy(const ThrottlingId& throttlingId) const {
+	return throughputTracker.isThrottlingIdBusy(throttlingId);
+}
+
 Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 	return makeReference<ReadYourWritesTransaction>(Database(Reference<DatabaseContext>::addRef(this)));
 }
 
 // BlobGranule API.
-ACTOR Future<Standalone<VectorRef<KeyRangeRef>>> getBlobRanges(Transaction* tr, KeyRange range, int batchLimit) {
-	state Standalone<VectorRef<KeyRangeRef>> blobRanges;
-	state Key beginKey = range.begin;
-
-	tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-
-	loop {
-
-		state RangeResult results =
-		    wait(krmGetRangesUnaligned(tr, blobRangeKeys.begin, KeyRangeRef(beginKey, range.end), 2 * batchLimit + 2));
-
-		blobRanges.arena().dependsOn(results.arena());
-		for (int i = 0; i < results.size() - 1; i++) {
-			if (isBlobRangeActive(results[i].value)) {
-				blobRanges.push_back(blobRanges.arena(), KeyRangeRef(results[i].key, results[i + 1].key));
-			}
-			if (blobRanges.size() == batchLimit) {
-				return blobRanges;
-			}
-		}
-
-		if (!results.more) {
-			return blobRanges;
-		}
-		beginKey = results.back().key;
-	}
-}
 
 ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
                                          KeyRange range,
@@ -11732,6 +11788,8 @@ int64_t getMaxWriteKeySize(KeyRef const& key, bool hasRawAccess) {
 int64_t getMaxClearKeySize(KeyRef const& key) {
 	return getMaxKeySize(key);
 }
+
+// TODO: file writing APIs
 
 namespace NativeAPI {
 

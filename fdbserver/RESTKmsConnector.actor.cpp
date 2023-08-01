@@ -18,7 +18,6 @@
  * limitations under the License.
  */
 
-#include "fdbclient/RESTUtils.h"
 #include "fdbserver/RESTKmsConnector.h"
 
 #include "fdbclient/BlobCipher.h"
@@ -73,7 +72,6 @@ bool canReplyWith(Error e) {
 	case error_code_value_too_large:
 	case error_code_timed_out:
 	case error_code_connection_failed:
-	case error_code_rest_malformed_response:
 		return true;
 	default:
 		return false;
@@ -227,17 +225,37 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	KmsUrlStore<KmsUrlPenaltyParams> kmsUrlStore;
 	double lastKmsUrlsRefreshTs;
 	double lastKmsUrlDiscoverTS;
+	bool kmsStable;
 	RESTClient restClient;
 	ValidationTokenMap validationTokenMap;
 	PromiseStream<Future<Void>> addActor;
-	bool kmsStable;
 	Future<Void> kmsStabilityChecker;
+	Future<Void> logger;
+
+	CounterCollection kmsConnectorMetrics;
+
+	Counter numMalformedResponses;
 
 	RESTKmsConnectorCtx()
 	  : uid(deterministicRandom()->randomUniqueID()),
 	    lastKmsUrlsRefreshTs(0),
-	    lastKmsUrlDiscoverTS(0.0) {}
-	explicit RESTKmsConnectorCtx(const UID& id) : uid(id), lastKmsUrlsRefreshTs(0), lastKmsUrlDiscoverTS(0.0) {}
+	    lastKmsUrlDiscoverTS(0.0),
+	    kmsStable(true),
+	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
+	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
+		logger = kmsConnectorMetrics.traceCounters(
+		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics");
+	}
+	explicit RESTKmsConnectorCtx(const UID& id)
+	  : uid(id),
+	    lastKmsUrlsRefreshTs(0),
+	    lastKmsUrlDiscoverTS(0.0),
+	    kmsStable(true),
+	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
+	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
+		logger = kmsConnectorMetrics.traceCounters(
+		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics");
+	}
 };
 
 std::string getFullRequestUrl(Reference<RESTKmsConnectorCtx> ctx, const std::string& url, const std::string& suffix) {
@@ -326,7 +344,7 @@ ACTOR Future<Void> parseDiscoverKmsUrlFile(Reference<RESTKmsConnectorCtx> ctx, s
 	    filename, IAsyncFile::OPEN_NO_AIO | IAsyncFile::OPEN_READONLY | IAsyncFile::OPEN_UNCACHED, 0644));
 	state int64_t fSize = wait(dFile->size());
 	state Standalone<StringRef> buff = makeString(fSize);
-	int bytesRead = wait(dFile->read(mutateString(buff), fSize, 0));
+	int bytesRead = wait(uncancellable(holdWhile(buff, dFile->read(mutateString(buff), fSize, 0))));
 	if (bytesRead != fSize) {
 		TraceEvent(SevWarnAlways, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
 		    .detail("Filename", filename)
@@ -414,6 +432,7 @@ void checkResponseForError(Reference<RESTKmsConnectorCtx> ctx,
 	if (!doc.HasMember(REQUEST_VERSION_TAG) || !doc[REQUEST_VERSION_TAG].IsInt()) {
 		TraceEvent(SevWarnAlways, "RESTKMSResponseMissingVersion", ctx->uid).log();
 		CODE_PROBE(true, "KMS response missing version");
+		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
 	}
 
@@ -425,6 +444,7 @@ void checkResponseForError(Reference<RESTKmsConnectorCtx> ctx,
 		    .detail("Version", version)
 		    .detail("MaxSupportedVersion", maxSupportedVersion);
 		CODE_PROBE(true, "KMS response invalid version");
+		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
 	}
 
@@ -499,6 +519,7 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 		TraceEvent(SevWarn, "RESTParseEncryptCipherResponseFailed", ctx->uid)
 		    .detail("Reason", "MissingCipherKeyDetails");
 		CODE_PROBE(true, "REST CipherKeyDetails not array");
+		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
 	}
 
@@ -508,6 +529,7 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 			    .detail("CipherDetailType", cipherDetail.GetType())
 			    .detail("Reason", "EncryptKeyDetailsNotObject");
 			CODE_PROBE(true, "REST CipherKeyDetail not object");
+			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
 		}
 
@@ -521,6 +543,7 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 			    .detail("BaseCipherPresent", isBaseCipherPresent)
 			    .detail("EncryptDomainIdPresent", isEncryptDomainIdPresent);
 			CODE_PROBE(true, "REST CipherKeyDetail malformed");
+			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
 		}
 
@@ -627,6 +650,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 	if (!doc.HasMember(BLOB_METADATA_DETAILS_TAG) || !doc[BLOB_METADATA_DETAILS_TAG].IsArray()) {
 		TraceEvent(SevWarn, "ParseBlobMetadataResponseFailureMissingDetails", ctx->uid).log();
 		CODE_PROBE(true, "REST BlobMetadata details missing or not-array");
+		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
 	}
 
@@ -635,6 +659,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 			TraceEvent(SevWarn, "ParseBlobMetadataResponseFailureDetailsNotObject", ctx->uid)
 			    .detail("CipherDetailType", detail.GetType());
 			CODE_PROBE(true, "REST BlobMetadata detail not-object");
+			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
 		}
 
@@ -646,6 +671,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 			    .detail("DomainIdPresent", isDomainIdPresent)
 			    .detail("LocationsPresent", isLocationsPresent);
 			CODE_PROBE(true, "REST BlobMetadata detail malformed", probe::decoration::rare);
+			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
 		}
 
@@ -657,6 +683,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 			if (!location.IsObject()) {
 				TraceEvent("ParseBlobMetadataResponseFailureLocationNotObject", ctx->uid)
 				    .detail("LocationType", location.GetType());
+				++ctx->numMalformedResponses;
 				throw rest_malformed_response();
 			}
 			const bool isLocationIdPresent = location.HasMember(BLOB_METADATA_LOCATION_ID_TAG);
@@ -666,6 +693,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 				    .detail("LocationIdPresent", isLocationIdPresent)
 				    .detail("PathPresent", isPathPresent);
 				CODE_PROBE(true, "REST BlobMetadata location malformed", probe::decoration::rare);
+				++ctx->numMalformedResponses;
 				throw rest_malformed_response();
 			}
 
@@ -789,8 +817,11 @@ Future<T> kmsRequestImpl(
 					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS);
 				}
 
-				Reference<HTTP::IncomingResponse> resp = wait(ctx->restClient.doPost(
-				    kmsEncryptionFullUrl, requestBodyRef.toString(), RESTKmsConnectorUtils::getHTTPHeaders()));
+				HTTP::Headers headers;
+				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
+				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
+				Reference<HTTP::IncomingResponse> resp =
+				    wait(ctx->restClient.doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
 				urlCtx->nRequests++;
 
 				try {
@@ -1084,7 +1115,7 @@ ACTOR Future<Void> procureValidationTokensFromFiles(Reference<RESTKmsConnectorCt
 		}
 
 		state Standalone<StringRef> buff = makeString(fSize);
-		int bytesRead = wait(tFile->read(mutateString(buff), fSize, 0));
+		int bytesRead = wait(uncancellable(holdWhile(buff, tFile->read(mutateString(buff), fSize, 0))));
 		if (bytesRead != fSize) {
 			TraceEvent(SevError, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
 			    .detail("Filename", tokenFile)
@@ -1149,9 +1180,8 @@ Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSState
 	reply.kmsStable = self->kmsStable;
 
 	try {
-		reply.restKMSUrls.reserve(reply.arena, self->kmsUrlStore.kmsUrls.size());
 		for (const auto& url : self->kmsUrlStore.kmsUrls) {
-			reply.restKMSUrls.emplace_back(reply.arena, url.toString());
+			reply.restKMSUrls.push_back(url.url);
 		}
 		req.reply.send(reply);
 	} catch (Error& e) {
@@ -1162,36 +1192,57 @@ Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSState
 	return Void();
 }
 
+ACTOR Future<Void> resetRESTKmsConnectorCtx(Reference<RESTKmsConnectorCtx> ctx) {
+	if (ctx.isValid()) {
+		ctx->kmsStabilityChecker.cancel();
+
+		wait(delay(0.0));
+
+		while (!ctx->addActor.isEmpty()) {
+			ctx->addActor.getFuture().pop();
+		}
+	}
+	return Void();
+}
+
 ACTOR Future<Void> restConnectorCoreImpl(KmsConnectorInterface interf) {
 	state Reference<RESTKmsConnectorCtx> self = makeReference<RESTKmsConnectorCtx>(interf.id());
 	state Future<Void> collection = actorCollection(self->addActor.getFuture());
 
-	TraceEvent("RESTKmsConnectorInit", self->uid).log();
+	try {
+		TraceEvent("RESTKmsConnectorInit", self->uid).log();
 
-	self->kmsStabilityChecker =
-	    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL);
-	wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
-	wait(procureValidationTokens(self));
+		self->kmsStabilityChecker =
+		    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL);
+		wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
+		wait(procureValidationTokens(self));
 
-	loop {
-		choose {
-			when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
-				self->addActor.send(fetchEncryptionKeysByKeyIds(self, req));
-			}
-			when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
-				self->addActor.send(fetchEncryptionKeysByDomainIds(self, req));
-			}
-			when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
-				self->addActor.send(fetchBlobMetadata(self, req));
-			}
-			when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
-				self->addActor.send(getKMSState(self, req));
-			}
-			when(wait(collection)) {
-				// this should throw an error, not complete
-				ASSERT(false);
+		loop {
+			choose {
+				when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
+					self->addActor.send(fetchEncryptionKeysByKeyIds(self, req));
+				}
+				when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
+					self->addActor.send(fetchEncryptionKeysByDomainIds(self, req));
+				}
+				when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
+					self->addActor.send(fetchBlobMetadata(self, req));
+				}
+				when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
+					self->addActor.send(getKMSState(self, req));
+				}
+				when(wait(collection)) {
+					ASSERT(false);
+					throw internal_error();
+				}
 			}
 		}
+	} catch (Error& e) {
+		state Error _e = e;
+		TraceEvent("RESTKmsConnectorError", self->uid).errorUnsuppressed(_e);
+		// reset RESTKmsConnectorCtx to ensure destruction of cached connectionPool
+		wait(resetRESTKmsConnectorCtx(self));
+		throw _e;
 	}
 }
 

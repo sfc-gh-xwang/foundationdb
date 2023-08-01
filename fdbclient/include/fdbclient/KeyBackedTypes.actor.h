@@ -353,10 +353,31 @@ Future<Version> WatchableTrigger::onChangeActor(WatchableTrigger self,
 	}
 }
 
+// Caller is responsible for retrying since FDB transactions may not preserve these options across retries
+template <typename Transaction, bool RawAccess>
+static void enforceRawAccessIfNeeded(Transaction tr) {
+	if constexpr (RawAccess) {
+		tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+	}
+}
+
+// Caller is responsible for retrying since FDB transactions may not preserve these options across retries
+template <typename TransactionContext, bool SystemAccess, bool RawAccess>
+static void setTransactionAccessOptions(decltype(std::declval<TransactionContext>()->createTransaction()) tr) {
+	if constexpr (SystemAccess) {
+		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+	} else if constexpr (RawAccess) {
+		tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+	}
+	tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+}
+
 // Convenient read/write access to a single value of type T stored at key
 // Even though 'this' is not actually mutated, methods that change the db key are not const.
-template <typename T, typename Codec = TupleCodec<T>>
+template <typename T, typename Codec = TupleCodec<T>, bool SystemAccess = true, bool RawAccess = true>
 class KeyBackedProperty {
+	static_assert(!SystemAccess || RawAccess);
+
 public:
 	KeyBackedProperty(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {}, Codec codec = {})
 	  : key(key),
@@ -368,11 +389,11 @@ public:
 
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				setTransactionAccessOptions<Transaction, SystemAccess, RawAccess>(tr);
 				return self.get(tr, snapshot);
 			});
 		} else {
+			enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 			typename transaction_future_type<Transaction, ValueReadResult>::type getFuture = tr->get(key, snapshot);
 
 			return holdWhile(
@@ -390,11 +411,11 @@ public:
 	Future<T> getD(Transaction tr, Snapshot snapshot = Snapshot::False, T defaultValue = T()) const {
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				setTransactionAccessOptions<Transaction, SystemAccess, RawAccess>(tr);
 				return self.getD(tr, snapshot, defaultValue);
 			});
 		} else {
+			enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 			return map(get(tr, snapshot),
 			           [=](Optional<T> val) -> T { return val.present() ? val.get() : defaultValue; });
 		}
@@ -405,11 +426,11 @@ public:
 	Future<T> getOrThrow(Transaction tr, Snapshot snapshot = Snapshot::False, Error err = key_not_found()) const {
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				setTransactionAccessOptions<Transaction, SystemAccess, RawAccess>(tr);
 				return self.getOrThrow(tr, snapshot, err);
 			});
 		} else {
+			enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 			return map(get(tr, snapshot), [=](Optional<T> val) -> T {
 				if (!val.present()) {
 					throw err;
@@ -420,40 +441,46 @@ public:
 		}
 	}
 
-	template <class Transaction>
-	void set(Transaction tr, T const& val) {
-		if constexpr (is_transaction_creator<Transaction>) {
-			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-				return self.set(tr, val);
-			});
-		} else {
-			tr->set(key, packValue(val));
-			if (trigger.present()) {
-				trigger->update(tr);
-			}
-		}
+	template <class TransactionContext>
+	std::enable_if_t<is_transaction_creator<TransactionContext>, Future<Void>> set(TransactionContext tcx,
+	                                                                               T const& val) {
+		return runTransaction(tcx, [this, val](decltype(tcx->createTransaction()) tr) {
+			setTransactionAccessOptions<TransactionContext, SystemAccess, RawAccess>(tr);
+			set(tr, val);
+			return Future<Void>(Void());
+		});
 	}
 
 	template <class Transaction>
-	void clear(Transaction tr) {
-		if constexpr (is_transaction_creator<Transaction>) {
-			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-				return self.clear(tr);
-			});
-		} else {
-			tr->clear(key);
-			if (trigger.present()) {
-				trigger->update(tr);
-			}
+	std::enable_if_t<!is_transaction_creator<Transaction>, void> set(Transaction tr, T const& val) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+		tr->set(key, packValue(val));
+		if (trigger.present()) {
+			trigger->update(tr);
+		}
+	}
+
+	template <class TransactionContext>
+	std::enable_if_t<is_transaction_creator<TransactionContext>, Future<Void>> clear(TransactionContext tcx) {
+		return runTransaction(tcx, [this](decltype(tcx->createTransaction()) tr) {
+			setTransactionAccessOptions<TransactionContext, SystemAccess, RawAccess>(tr);
+			clear(tr);
+			return Future<Void>(Void());
+		});
+	}
+
+	template <class Transaction>
+	std::enable_if_t<!is_transaction_creator<Transaction>, void> clear(Transaction tr) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+		tr->clear(key);
+		if (trigger.present()) {
+			trigger->update(tr);
 		}
 	}
 
 	template <class Transaction>
 	Future<Void> watch(Transaction tr) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		return tr->watch(key);
 	}
 
@@ -467,10 +494,10 @@ public:
 
 // KeyBackedObjectProperty is a convenience wrapper of KeyBackedProperty which uses ObjectCodec<T, VersionOptions> as
 // the codec
-template <typename T, typename VersionOptions>
-class KeyBackedObjectProperty : public KeyBackedProperty<T, ObjectCodec<T, VersionOptions>> {
+template <typename T, typename VersionOptions, bool SystemAccess = true, bool RawAccess = true>
+class KeyBackedObjectProperty : public KeyBackedProperty<T, ObjectCodec<T, VersionOptions>, SystemAccess, RawAccess> {
 	typedef ObjectCodec<T, VersionOptions> TCodec;
-	typedef KeyBackedProperty<T, TCodec> Base;
+	typedef KeyBackedProperty<T, TCodec, SystemAccess, RawAccess> Base;
 
 public:
 	KeyBackedObjectProperty(KeyRef key, VersionOptions vo, Optional<WatchableTrigger> trigger = {})
@@ -479,15 +506,16 @@ public:
 
 // KeyBackedBinaryValue is a convenience wrapper of KeyBackedProperty but using BinaryCodec<T> as the codec and adds
 // atomic ops and version stamp operations.
-template <typename T>
+template <typename T, bool SystemAccess = true, bool RawAccess = true>
 class KeyBackedBinaryValue : public KeyBackedProperty<T, BinaryCodec<T>> {
-	typedef KeyBackedProperty<T, BinaryCodec<T>> Base;
+	typedef KeyBackedProperty<T, BinaryCodec<T>, SystemAccess, RawAccess> Base;
 
 public:
 	KeyBackedBinaryValue(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {}) : Base(key, trigger) {}
 
 	template <class Transaction>
 	void atomicOp(Transaction tr, T const& val, MutationRef::Type type) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->atomicOp(this->key, BinaryWriter::toValue<T>(val, Unversioned()), type);
 		if (this->trigger.present()) {
 			this->trigger->update(tr);
@@ -496,6 +524,7 @@ public:
 
 	template <class Transaction>
 	void setVersionstamp(Transaction tr, T const& val, int offset) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->atomicOp(
 		    this->key,
 		    BinaryWriter::toValue<T>(val, Unversioned()).withSuffix(StringRef(reinterpret_cast<uint8_t*>(&offset), 4)),
@@ -547,8 +576,12 @@ struct TypedKeySelector {
 template <typename _KeyType,
           typename _ValueType,
           typename KeyCodec = TupleCodec<_KeyType>,
-          typename ValueCodec = TupleCodec<_ValueType>>
+          typename ValueCodec = TupleCodec<_ValueType>,
+          bool SystemAccess = true,
+          bool RawAccess = true>
 class KeyBackedMap {
+	static_assert(!SystemAccess || RawAccess);
+
 public:
 	KeyBackedMap(KeyRef prefix = invalidKey, Optional<WatchableTrigger> trigger = {}, ValueCodec valueCodec = {})
 	  : subspace(prefixRange(prefix)),
@@ -560,7 +593,7 @@ public:
 	typedef std::pair<KeyType, ValueType> PairType;
 	typedef KeyBackedRangeResult<PairType> RangeResultType;
 	typedef TypedKVPair<KeyType, ValueType> KVType;
-	typedef KeyBackedProperty<ValueType, ValueCodec> SingleRecordProperty;
+	typedef KeyBackedProperty<ValueType, ValueCodec, SystemAccess, RawAccess> SingleRecordProperty;
 	typedef TypedKeySelector<KeyType, KeyCodec> KeySelector;
 
 	// If end is not present one key past the end of the map is used.
@@ -574,13 +607,14 @@ public:
 
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				setTransactionAccessOptions<Transaction, SystemAccess, RawAccess>(tr);
 				return self.getRange(tr, begin, end, limit, snapshot, reverse);
 			});
 		} else {
 			Key beginKey = begin.present() ? packKey(begin.get()) : subspace.begin;
 			Key endKey = end.present() ? packKey(end.get()) : subspace.end;
+
+			enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 
 			typename transaction_future_type<Transaction, RangeReadResult>::type getRangeFuture =
 			    tr->getRange(KeyRangeRef(beginKey, endKey), GetRangeLimits(limit), snapshot, reverse);
@@ -616,6 +650,9 @@ public:
 
 		state ::KeySelector ksBegin = begin.pack(self.subspace.begin);
 		state ::KeySelector ksEnd = end.pack(self.subspace.begin);
+
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		state typename transaction_future_type<Transaction, RangeReadResult>::type getRangeFuture =
 		    tr->getRange(ksBegin, ksEnd, limits, snapshot, reverse);
 
@@ -669,6 +706,8 @@ public:
 				// The last key is the exclusive begin of the new getRange
 				ksBegin = ::firstGreaterThan(kvs.back().key);
 			}
+
+			enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 			getRangeFuture = tr->getRange(ksBegin, ksEnd, limits, snapshot, reverse);
 		}
 
@@ -719,6 +758,7 @@ public:
 			end = self.subspace.end;
 		}
 
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		state typename transaction_future_type<Transaction, RangeReadResult>::type getRangeFuture =
 		    tr->getRange(KeyRangeRef(begin, end), 1, snapshot, Reverse{ lessThan });
 
@@ -754,6 +794,7 @@ public:
 
 	template <class Transaction>
 	Future<Optional<ValueType>> get(Transaction tr, KeyType const& key, Snapshot snapshot = Snapshot::False) const {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		typename transaction_future_type<Transaction, ValueReadResult>::type getFuture =
 		    tr->get(packKey(key), snapshot);
 
@@ -776,12 +817,20 @@ public:
 		           [=](Optional<ValueType> val) -> ValueType { return val.orDefault(defaultValue); });
 	}
 
+	template <class Transaction>
+	Future<Void> watch(Transaction tr, KeyType const& key) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+		return safeThreadFutureToFuture(tr->watch(packKey(key)));
+	}
+
 	// Returns a Property that can be get/set that represents key's entry in this this.
 	SingleRecordProperty getProperty(KeyType const& key) const { return { packKey(key), trigger, valueCodec }; }
 
 	// Returns the expectedSize of the set key
 	template <class Transaction>
 	int set(Transaction tr, KeyType const& key, ValueType const& val) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		Key k = packKey(key);
 		Value v = packValue(val);
 		kbt_debug("MAP SET {} -> {}\n", k.printable(), v.printable());
@@ -794,6 +843,8 @@ public:
 
 	template <class Transaction>
 	void atomicOp(Transaction tr, KeyType const& key, ValueType const& val, MutationRef::Type type) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		Key k = packKey(key);
 		Value v = packValue(val);
 		tr->atomicOp(k, v, type);
@@ -804,6 +855,8 @@ public:
 
 	template <class Transaction>
 	void setVersionstamp(Transaction tr, KeyType const& key, ValueType const& val, int offset = 0) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		Key k = packKey(key);
 		Value v = packValue(val).withSuffix(StringRef(reinterpret_cast<uint8_t*>(&offset), 4));
 		tr->atomicOp(k, v, MutationRef::SetVersionstampedValue);
@@ -814,6 +867,8 @@ public:
 
 	template <class Transaction>
 	void erase(Transaction tr, KeyType const& key) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		kbt_debug("MAP ERASE {}\n", packKey(key).printable());
 		tr->clear(packKey(key));
 		if (trigger.present()) {
@@ -823,6 +878,8 @@ public:
 
 	template <class Transaction>
 	void erase(Transaction tr, KeyType const& begin, KeyType const& end) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		tr->clear(KeyRangeRef(packKey(begin), packKey(end)));
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -831,6 +888,8 @@ public:
 
 	template <class Transaction>
 	void clear(Transaction tr) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		tr->clear(subspace);
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -839,23 +898,28 @@ public:
 
 	template <class Transaction>
 	void addReadConflictKey(Transaction tr, KeyType const& key) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		Key k = packKey(key);
 		tr->addReadConflictRange(singleKeyRange(k));
 	}
 
 	template <class Transaction>
 	void addReadConflictRange(Transaction tr, KeyType const& begin, KeyType const& end) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->addReadConflictRange(packKey(begin), packKey(end));
 	}
 
 	template <class Transaction>
 	void addWriteConflictKey(Transaction tr, KeyType const& key) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		Key k = packKey(key);
 		tr->addWriteConflictRange(singleKeyRange(k));
 	}
 
 	template <class Transaction>
 	void addWriteConflictRange(Transaction tr, KeyType const& begin, KeyType const& end) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->addWriteConflictRange(packKey(begin), packKey(end));
 	}
 
@@ -874,19 +938,30 @@ public:
 
 // KeyBackedObjectMap is a convenience wrapper of KeyBackedMap which uses ObjectCodec<_ValueType, VersionOptions> as
 // the value codec
-template <typename _KeyType, typename _ValueType, typename VersionOptions, typename KeyCodec = TupleCodec<_KeyType>>
-class KeyBackedObjectMap
-  : public KeyBackedMap<_KeyType, _ValueType, KeyCodec, ObjectCodec<_ValueType, VersionOptions>> {
+template <typename _KeyType,
+          typename _ValueType,
+          typename VersionOptions,
+          typename KeyCodec = TupleCodec<_KeyType>,
+          bool SystemAccess = true,
+          bool RawAccess = true>
+class KeyBackedObjectMap : public KeyBackedMap<_KeyType,
+                                               _ValueType,
+                                               KeyCodec,
+                                               ObjectCodec<_ValueType, VersionOptions>,
+                                               SystemAccess,
+                                               RawAccess> {
 	typedef ObjectCodec<_ValueType, VersionOptions> ValueCodec;
-	typedef KeyBackedMap<_KeyType, _ValueType, KeyCodec, ValueCodec> Base;
+	typedef KeyBackedMap<_KeyType, _ValueType, KeyCodec, ValueCodec, SystemAccess, RawAccess> Base;
 
 public:
 	KeyBackedObjectMap(KeyRef key, VersionOptions vo, Optional<WatchableTrigger> trigger = {})
 	  : Base(key, trigger, ValueCodec(vo)) {}
 };
 
-template <typename _ValueType, typename Codec = TupleCodec<_ValueType>>
+template <typename _ValueType, typename Codec = TupleCodec<_ValueType>, bool SystemAccess = true, bool RawAccess = true>
 class KeyBackedSet {
+	static_assert(!SystemAccess || RawAccess);
+
 public:
 	KeyBackedSet(KeyRef key = invalidKey, Optional<WatchableTrigger> trigger = {})
 	  : subspace(prefixRange(key)),
@@ -903,6 +978,8 @@ public:
 	                                 int limit,
 	                                 Snapshot snapshot = Snapshot::False,
 	                                 Reverse reverse = Reverse::False) const {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
+
 		Key beginKey = begin.present() ? packKey(begin.get()) : subspace.begin;
 		Key endKey = end.present() ? packKey(end.get()) : subspace.end;
 
@@ -930,6 +1007,7 @@ public:
 	                                             GetRangeLimits limits,
 	                                             Snapshot snapshot,
 	                                             Reverse reverse) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		kbt_debug("MAP GETRANGE KeySelectors {} - {}\n",
 		          begin.pack(self.subspace.begin).toString(),
 		          end.pack(self.subspace.begin).toString());
@@ -987,6 +1065,7 @@ public:
 				// The last key is the exclusive begin of the new getRange
 				ksBegin = ::firstGreaterThan(kvs.back().key);
 			}
+			enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 			getRangeFuture = tr->getRange(ksBegin, ksEnd, limits, snapshot, reverse);
 		}
 
@@ -1036,7 +1115,7 @@ public:
 			}
 			end = self.subspace.end;
 		}
-
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		state typename transaction_future_type<Transaction, RangeReadResult>::type getRangeFuture =
 		    tr->getRange(KeyRangeRef(begin, end), 1, snapshot, Reverse{ lessThan });
 
@@ -1078,6 +1157,7 @@ public:
 
 	template <class Transaction>
 	Future<bool> exists(Transaction tr, ValueType const& val, Snapshot snapshot = Snapshot::False) const {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		typename transaction_future_type<Transaction, ValueReadResult>::type getFuture =
 		    tr->get(packKey(val), snapshot);
 
@@ -1089,6 +1169,7 @@ public:
 	// Returns the expectedSize of the set key
 	template <class Transaction>
 	int insert(Transaction tr, ValueType const& val) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		Key k = packKey(val);
 		tr->set(k, StringRef());
 		if (trigger.present()) {
@@ -1099,6 +1180,7 @@ public:
 
 	template <class Transaction>
 	void erase(Transaction tr, ValueType const& val) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->clear(packKey(val));
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -1107,6 +1189,7 @@ public:
 
 	template <class Transaction>
 	void erase(Transaction tr, ValueType const& begin, ValueType const& end) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->clear(KeyRangeRef(packKey(begin), packKey(end)));
 		if (trigger.present()) {
 			trigger->update(tr);
@@ -1115,6 +1198,7 @@ public:
 
 	template <class Transaction>
 	void clear(Transaction tr) {
+		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		tr->clear(subspace);
 		if (trigger.present()) {
 			trigger->update(tr);

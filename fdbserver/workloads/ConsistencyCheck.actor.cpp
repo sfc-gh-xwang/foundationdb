@@ -333,9 +333,11 @@ struct ConsistencyCheckWorkload : TestWorkload {
 							self->testFailure("Blob workers incorrect");
 					}
 
-					// Check that each machine is operating as its desired class
+					// Check that each machine is operating as its desired
+					// class. Ignore the check if stateless process colocation
+					// is enabled, as it follows different recruitment rules.
 					bool usingDesiredClasses = wait(self->checkUsingDesiredClasses(cx, self));
-					if (!usingDesiredClasses)
+					if (!usingDesiredClasses && !SERVER_KNOBS->COLOCATE_STATELESS_PROCESSES)
 						self->testFailure("Cluster has machine(s) not using requested classes");
 
 					bool workerListCorrect = wait(self->checkWorkerList(cx, self));
@@ -1410,15 +1412,16 @@ struct ConsistencyCheckWorkload : TestWorkload {
 			    .detail("CCAddress", db.clusterInterface.clientInterface.address().toString());
 			return false;
 		}
-		if (!allWorkerProcessMap.count(db.master.address())) {
+		if (!db.master.present() || !allWorkerProcessMap.count(db.master.get().address())) {
 			TraceEvent("ConsistencyCheck_MasterNotInWorkerList")
-			    .detail("MasterAddress", db.master.address().toString());
+			    .detail("MasterAddress", db.master.present() ? db.master.get().address().toString() : "0.0.0.0:0000");
 			return false;
 		}
 
+		ASSERT(db.master.present());
 		Optional<Key> ccDcId =
 		    allWorkerProcessMap[db.clusterInterface.clientInterface.address()].interf.locality.dcId();
-		Optional<Key> masterDcId = allWorkerProcessMap[db.master.address()].interf.locality.dcId();
+		Optional<Key> masterDcId = allWorkerProcessMap[db.master.get().address()].interf.locality.dcId();
 
 		if (ccDcId != masterDcId) {
 			TraceEvent("ConsistencyCheck_CCAndMasterNotInSameDC")
@@ -1481,15 +1484,15 @@ struct ConsistencyCheckWorkload : TestWorkload {
 			}
 		}
 
-		if ((!nonExcludedWorkerProcessMap.count(db.master.address()) &&
+		if ((!nonExcludedWorkerProcessMap.count(db.master.get().address()) &&
 		     bestMasterFitness != ProcessClass::ExcludeFit) ||
-		    nonExcludedWorkerProcessMap[db.master.address()].processClass.machineClassFitness(ProcessClass::Master) !=
-		        bestMasterFitness) {
+		    nonExcludedWorkerProcessMap[db.master.get().address()].processClass.machineClassFitness(
+		        ProcessClass::Master) != bestMasterFitness) {
 			TraceEvent("ConsistencyCheck_MasterNotBest")
 			    .detail("BestMasterFitness", bestMasterFitness)
 			    .detail("ExistingMasterFit",
-			            nonExcludedWorkerProcessMap.count(db.master.address())
-			                ? nonExcludedWorkerProcessMap[db.master.address()].processClass.machineClassFitness(
+			            nonExcludedWorkerProcessMap.count(db.master.get().address())
+			                ? nonExcludedWorkerProcessMap[db.master.get().address()].processClass.machineClassFitness(
 			                      ProcessClass::Master)
 			                : -1);
 			return false;
@@ -1574,7 +1577,8 @@ struct ConsistencyCheckWorkload : TestWorkload {
 
 		// Check DataDistributor
 		ProcessClass::Fitness fitnessLowerBound =
-		    allWorkerProcessMap[db.master.address()].processClass.machineClassFitness(ProcessClass::DataDistributor);
+		    allWorkerProcessMap[db.master.get().address()].processClass.machineClassFitness(
+		        ProcessClass::DataDistributor);
 		if (db.distributor.present() &&
 		    (!nonExcludedWorkerProcessMap.count(db.distributor.get().address()) ||
 		     nonExcludedWorkerProcessMap[db.distributor.get().address()].processClass.machineClassFitness(

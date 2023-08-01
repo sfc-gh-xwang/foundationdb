@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "fdbclient/BlobWorkerInterface.h"
+#include "fdbclient/BulkLoaderInterface.h"
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/EncryptKeyProxyInterface.h"
 #include "fdbclient/FDBTypes.h"
@@ -65,6 +66,7 @@ struct CommitProxyInterface {
 	PublicRequestStream<struct ExpireIdempotencyIdRequest> expireIdempotencyId;
 	PublicRequestStream<struct TenantLookupRequest> tenantLookup;
 	PublicRequestStream<struct GetBlobGranuleLocationsRequest> getBlobGranuleLocations;
+	PublicRequestStream<struct GetBulkLoaderInterfacesRequest> getBulkLoaderInterfaces;
 
 	UID id() const { return commit.getEndpoint().token; }
 	std::string toString() const { return id().shortString(); }
@@ -97,6 +99,8 @@ struct CommitProxyInterface {
 			    PublicRequestStream<struct TenantLookupRequest>(commit.getEndpoint().getAdjustedEndpoint(11));
 			getBlobGranuleLocations = PublicRequestStream<struct GetBlobGranuleLocationsRequest>(
 			    commit.getEndpoint().getAdjustedEndpoint(12));
+			getBulkLoaderInterfaces = PublicRequestStream<struct GetBulkLoaderInterfacesRequest>(
+			    commit.getEndpoint().getAdjustedEndpoint(13));
 		}
 	}
 
@@ -116,6 +120,7 @@ struct CommitProxyInterface {
 		streams.push_back(expireIdempotencyId.getReceiver());
 		streams.push_back(tenantLookup.getReceiver());
 		streams.push_back(getBlobGranuleLocations.getReceiver());
+		streams.push_back(getBulkLoaderInterfaces.getReceiver());
 		FlowTransport::transport().addEndpoints(streams);
 	}
 };
@@ -328,6 +333,7 @@ struct GetReadVersionRequest : TimedRequest {
 	TransactionPriority priority;
 
 	Optional<ThrottlingId> throttlingId;
+	Optional<double> expectedTotalCost;
 
 	// Not serialized, because this field does not need to be sent to master.
 	// It is used for reporting to clients the amount of time spent delayed by
@@ -340,18 +346,21 @@ struct GetReadVersionRequest : TimedRequest {
 	Version maxVersion; // max version in the client's version vector cache
 
 	GetReadVersionRequest() : transactionCount(1), flags(0), maxVersion(invalidVersion) {}
+
 	GetReadVersionRequest(SpanContext spanContext,
 	                      uint32_t transactionCount,
 	                      TransactionPriority priority,
 	                      Version maxVersion,
 	                      uint32_t flags = 0,
 	                      Optional<ThrottlingId> const& throttlingId = Optional<ThrottlingId>(),
-	                      Optional<UID> debugID = Optional<UID>())
+	                      Optional<UID> debugID = Optional<UID>(),
+	                      Optional<double> expectedTotalCost = Optional<double>())
 	  : spanContext(spanContext),
 	    transactionCount(transactionCount),
 	    flags(flags),
 	    priority(priority),
 	    throttlingId(throttlingId),
+	    expectedTotalCost(expectedTotalCost),
 	    debugID(debugID),
 	    maxVersion(maxVersion) {
 		flags = flags & ~FLAG_PRIORITY_MASK;
@@ -376,7 +385,8 @@ struct GetReadVersionRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, transactionCount, flags, debugID, reply, spanContext, maxVersion, throttlingId);
+		serializer(
+		    ar, transactionCount, flags, debugID, reply, spanContext, maxVersion, throttlingId, expectedTotalCost);
 
 		if (ar.isDeserializing) {
 			if ((flags & PRIORITY_SYSTEM_IMMEDIATE) == PRIORITY_SYSTEM_IMMEDIATE) {
@@ -555,6 +565,35 @@ struct GetBlobGranuleLocationsRequest {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, begin, end, limit, reverse, reply, spanContext, tenant, minTenantVersion, justGranules, arena);
+	}
+};
+
+struct GetBulkLoaderInterfacesReply {
+	constexpr static FileIdentifier file_identifier = 4007011;
+	Arena arena;
+	std::vector<BulkLoaderInterface> blInterfs;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, blInterfs, arena);
+	}
+};
+
+struct GetBulkLoaderInterfacesRequest {
+	constexpr static FileIdentifier file_identifier = 3181697;
+	Arena arena;
+	SpanContext spanContext;
+	ReplyPromise<GetBulkLoaderInterfacesReply> reply;
+
+	GetBulkLoaderInterfacesRequest() {}
+	GetBulkLoaderInterfacesRequest(SpanContext spanContext) : spanContext(spanContext) {}
+
+	// no non-public information is disclosed so no need for authz on this call
+	bool verify() const noexcept { return true; }
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reply, spanContext, arena);
 	}
 };
 

@@ -40,8 +40,17 @@ def version_from_str(ver_str):
 
 
 def api_version_from_str(ver_str):
+    # FIXME: simplify after everything is 8.0+
     ver_tuple = version_from_str(ver_str)
-    return ver_tuple[0] * 100 + ver_tuple[1] * 10
+    if ver_tuple[0] >= 8 and ver_tuple[0] < 71:
+        # handle 8.x -> 800000, as now the second version is the patch version
+        ret = ver_tuple[0] * 100000
+    elif ver_tuple[0] >= 71:
+        # handle 71.3 -> 710300
+        ret = ver_tuple[0] * 10000 + ver_tuple[1] * 100
+    else:
+        ret = ver_tuple[0] * 100 + ver_tuple[1] * 10
+    return ret
 
 
 def version_before(ver_str1, ver_str2):
@@ -229,7 +238,9 @@ class UpgradeTest:
         logger.info("Starting cluster version {}".format(self.cluster_version))
         self.cluster.start_cluster()
         self.cluster.create_database(
-            enable_tenants=(self.api_version >= TENANT_API_VERSION)
+            tenant_mode="optional_experimental"
+            if (self.api_version >= TENANT_API_VERSION)
+            else None
         )
         return self
 

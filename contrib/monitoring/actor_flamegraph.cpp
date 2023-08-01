@@ -25,7 +25,9 @@ struct Error {
 struct Actor {
 	template <class Str>
 	explicit Actor(std::unordered_map<std::string, unsigned long>& results, unsigned long id, Str&& name)
-	  : results(results), id(id), name(std::forward<Str>(name)) {}
+	  : results(results),
+	    id(id),
+	    name(std::forward<Str>(name)) {}
 	Actor(const Actor&) = delete;
 	~Actor() { collect(); }
 	std::unordered_map<std::string, unsigned long>& results;

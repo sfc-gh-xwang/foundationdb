@@ -20,9 +20,10 @@
 
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/ThrottlingId.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
-#include "fdbserver/IRKThroughputTracker.h"
+#include "fdbserver/IRKClusterThroughputTracker.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/QuotaThrottler.h"
 
@@ -103,7 +104,7 @@ class QuotaThrottlerImpl {
 
 		double getTransactionRate() const { return transactionCounter.smoothRate(); }
 
-		double updateAndGetTargetLimit(double targetTps) {
+		double updateAndGetTargetRateLimit(double targetTps) {
 			targetRate.setTotal(targetTps);
 			return targetRate.smoothTotal();
 		}
@@ -117,22 +118,41 @@ class QuotaThrottlerImpl {
 		void updateLastLogged() { lastLogged = now(); }
 	};
 
+	class ThroughputStatistics {
+		Smoother targetThroughput;
+		double throughputLastAdded;
+		double lastLogged;
+
+	public:
+		explicit ThroughputStatistics()
+		  : targetThroughput(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
+		    throughputLastAdded(now()),
+		    lastLogged(0) {}
+
+		double updateAndGetTargetThroughputLimit(double targetBps) {
+			throughputLastAdded = now();
+			targetThroughput.setTotal(targetBps);
+			return targetThroughput.smoothTotal();
+		}
+
+		bool recentTransactionsAdded() const {
+			return now() - throughputLastAdded < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER;
+		}
+
+		bool canLog() const { return now() - lastLogged > SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRACE_INTERVAL; }
+
+		void updateLastLogged() { lastLogged = now(); }
+	};
+
 	UID id;
 	int maxFallingBehind{ 0 };
 	double limitingThreshold{ 0.0 };
 	uint32_t lastBusyThrottlingIdCount{ 0 };
 
 	ThrottlingIdMap<PerThrottlingIdStatistics> throttlingStatistics;
-	ServerThroughputTracker serverThroughputTracker;
-	Optional<ClientThroughputTracker> clientThroughputTracker;
+	ThrottlingIdMap<ThroughputStatistics> throughputStatistics;
 
-	IRKThroughputTracker const& throughputTracker() const& {
-		if (clientThroughputTracker.present()) {
-			return clientThroughputTracker.get();
-		} else {
-			return serverThroughputTracker;
-		}
-	}
+	boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 
 	Optional<double> getTransactionRate(ThrottlingId const& throttlingId) const {
 		auto it = throttlingStatistics.find(throttlingId);
@@ -145,8 +165,10 @@ class QuotaThrottlerImpl {
 	// For transactions with the provided throttling ID, returns the average cost of all transactions
 	// accross the cluster. The minimum cost is one page. If the transaction rate is too low,
 	// return an empty Optional, because no accurate estimation can be made.
-	Optional<double> getAverageTransactionCost(ThrottlingId throttlingId, TraceEvent& te) const {
-		auto const cost = throughputTracker().getThroughput(throttlingId);
+	Optional<double> getAverageTransactionCost(ThrottlingId const& throttlingId,
+	                                           IRKClusterThroughputTracker const& throughputTracker,
+	                                           TraceEvent& te) const {
+		auto const cost = throughputTracker.getThroughput(throttlingId);
 		auto const transactionRate = getTransactionRate(throttlingId);
 		if (!transactionRate.present()) {
 			return CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
@@ -160,68 +182,94 @@ class QuotaThrottlerImpl {
 		}
 	}
 
-	// Returns the limiting transaction rate for the provided throttlingId.
+	// Returns the limiting throttling ratio for the provided throttlingId.
 	// The throttling ratios from the worst maxFallingBehind zones are
 	// ignored, because we do not want non-workload related issues (e.g. slow disks)
 	// to affect tag throttling. If more than maxFallingBehind zones are at
 	// or near saturation, this indicates that throttling should take place.
-	Optional<double> getLimitingTps(ThrottlingId const& throttlingId, IRKMetricsTracker const& metricsTracker) const {
-		auto const transactionRate = getTransactionRate(throttlingId);
-		if (!transactionRate.present()) {
-			return {};
-		}
-
-		std::unordered_map<Optional<Standalone<StringRef>>, double> zoneThrottlingRatios;
+	Optional<double> getLimitingThrottlingRatio(ThrottlingId const& throttlingId,
+	                                            IRKMetricsTracker const& metricsTracker,
+	                                            RKServerThroughputTracker const& serverThroughputTracker) const {
+		boost::unordered_flat_map<Optional<Standalone<StringRef>>, double> zoneThrottlingRatios;
 		auto const& storageQueueInfo = metricsTracker.getStorageQueueInfo();
 		for (auto const& [id, ssInfo] : storageQueueInfo) {
+			auto const throttlingRatio =
+			    ssInfo.getTagThrottlingRatio(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER);
+			if (!throttlingRatio.present()) {
+				continue;
+			}
+
 			// Ignore storage servers where throttlingId is not significantly contributing
 			auto const throughput = serverThroughputTracker.getThroughput(id, throttlingId);
 			if (!throughput.present() || throughput.get() < limitingThreshold) {
 				continue;
 			}
 
-			auto const throttlingRatio =
-			    ssInfo.getTagThrottlingRatio(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER);
-			if (throttlingRatio.present()) {
-				auto const [it, inserted] =
-				    zoneThrottlingRatios.try_emplace(ssInfo.locality.zoneId(), throttlingRatio.get());
-				if (!inserted) {
-					auto& zoneThrottlingRatio = it->second;
-					zoneThrottlingRatio = std::min<double>(zoneThrottlingRatio, throttlingRatio.get());
-				}
+			auto const [it, inserted] =
+			    zoneThrottlingRatios.try_emplace(ssInfo.locality.zoneId(), throttlingRatio.get());
+			if (!inserted) {
+				auto& zoneThrottlingRatio = it->second;
+				zoneThrottlingRatio = std::min<double>(zoneThrottlingRatio, throttlingRatio.get());
 			}
 		}
 		if (zoneThrottlingRatios.size() <= maxFallingBehind) {
 			return {};
 		} else {
-			// max heap:
-			std::priority_queue<double, std::vector<double>> pq;
+			std::priority_queue<double, std::vector<double>> maxHeap;
 			ASSERT_GE(maxFallingBehind, 0);
 			for (auto const& [_, throttlingRatio] : zoneThrottlingRatios) {
-				if (pq.size() < maxFallingBehind + 1) {
-					pq.push(throttlingRatio);
-				} else if (pq.top() > throttlingRatio) {
-					pq.pop();
-					pq.push(throttlingRatio);
+				if (maxHeap.size() < maxFallingBehind + 1) {
+					maxHeap.push(throttlingRatio);
+				} else if (maxHeap.top() > throttlingRatio) {
+					maxHeap.pop();
+					maxHeap.push(throttlingRatio);
 				}
 			}
-			return transactionRate.get() * pq.top();
+			return maxHeap.top();
 		}
+	}
+
+	Optional<double> getLimitingTps(ThrottlingId const& throttlingId,
+	                                IRKMetricsTracker const& metricsTracker,
+	                                RKServerThroughputTracker const& serverThroughputTracker) const {
+		auto const transactionRate = getTransactionRate(throttlingId);
+		if (!transactionRate.present()) {
+			return {};
+		}
+		auto const throttlingRatio = getLimitingThrottlingRatio(throttlingId, metricsTracker, serverThroughputTracker);
+		if (!throttlingRatio.present()) {
+			return {};
+		}
+		return transactionRate.get() * throttlingRatio.get();
+	}
+
+	Optional<double> getLimitingBps(ThrottlingId const& throttlingId,
+	                                IRKMetricsTracker const& metricsTracker,
+	                                IRKClusterThroughputTracker const& clusterThroughputTracker,
+	                                RKServerThroughputTracker const& serverThroughputTracker) {
+		auto const throttlingRatio = getLimitingThrottlingRatio(throttlingId, metricsTracker, serverThroughputTracker);
+		if (!throttlingRatio.present()) {
+			return {};
+		}
+		auto const currentThroughput = clusterThroughputTracker.getThroughput(throttlingId);
+		return currentThroughput * throttlingRatio.get();
 	}
 
 	struct TargetTpsResult {
 		Optional<double> targetTps;
-		bool isBusy{ false };
+		bool isThrottled{ false };
 	};
 
-	TargetTpsResult getTargetTps(ThrottlingId throttlingId,
+	TargetTpsResult getTargetTps(ThrottlingId const& throttlingId,
 	                             IRKThroughputQuotaCache const& quotaCache,
 	                             IRKMetricsTracker const& metricsTracker,
+	                             IRKClusterThroughputTracker const& clusterThroughputTracker,
+	                             RKServerThroughputTracker const& serverThroughputTracker,
 	                             TraceEvent& te) {
 		TargetTpsResult result;
-		auto const limitingTps = getLimitingTps(throttlingId, metricsTracker);
-		auto const averageTransactionCost = getAverageTransactionCost(throttlingId, te);
+		auto const limitingTps = getLimitingTps(throttlingId, metricsTracker, serverThroughputTracker);
+		auto const averageTransactionCost = getAverageTransactionCost(throttlingId, clusterThroughputTracker, te);
 		auto const totalQuota = quotaCache.getTotalQuota(throttlingId);
 		auto const reservedQuota = quotaCache.getReservedQuota(throttlingId);
 		if (!averageTransactionCost.present() || !totalQuota.present() || !reservedQuota.present()) {
@@ -231,7 +279,7 @@ class QuotaThrottlerImpl {
 		auto const reservedTps = reservedQuota.get() / averageTransactionCost.get();
 
 		result.targetTps = getMax(reservedTps, getMin(desiredTps, limitingTps));
-		result.isBusy = limitingTps.present() && limitingTps.get() < desiredTps;
+		result.isThrottled = limitingTps.present() && limitingTps.get() < desiredTps;
 
 		te.detail("ThrottlingId", throttlingId)
 		    .detail("TargetTps", result.targetTps)
@@ -246,17 +294,61 @@ class QuotaThrottlerImpl {
 		return result;
 	}
 
+	struct TargetBpsResult {
+		Optional<double> targetBps;
+		bool isThrottled{ false };
+	};
+
+	TargetBpsResult getTargetBps(ThrottlingId const& throttlingId,
+	                             IRKThroughputQuotaCache const& quotaCache,
+	                             IRKMetricsTracker const& metricsTracker,
+	                             IRKClusterThroughputTracker const& clusterThroughputTracker,
+	                             RKServerThroughputTracker const& serverThroughputTracker,
+	                             TraceEvent& te) {
+		TargetBpsResult result;
+		auto const limitingBps =
+		    getLimitingBps(throttlingId, metricsTracker, clusterThroughputTracker, serverThroughputTracker);
+		auto const totalQuota = quotaCache.getTotalQuota(throttlingId);
+		auto const reservedQuota = quotaCache.getReservedQuota(throttlingId);
+		if (!totalQuota.present() || !reservedQuota.present()) {
+			return result;
+		}
+		auto const desiredBps = totalQuota.get();
+		auto const reservedBps = reservedQuota.get();
+
+		result.targetBps = getMax(reservedBps, getMin(desiredBps, limitingBps));
+		result.isThrottled = limitingBps.present() && limitingBps.get() < desiredBps;
+
+		te.detail("ThrottlingId", throttlingId)
+		    .detail("TargetBps", result.targetBps)
+		    .detail("LimitingBps", limitingBps)
+		    .detail("ReservedBps", reservedBps)
+		    .detail("DesiredBps", desiredBps)
+		    .detail("NumStorageServers", serverThroughputTracker.storageServersTracked())
+		    .detail("TotalQuota", totalQuota)
+		    .detail("ReservedQuota", reservedQuota);
+
+		return result;
+	}
+
+	// Update the busy ThrottlingId set and returns whether the throttlingId is busy
+	bool isThrottlingIdsBusy(ThrottlingId const& throttlingId, double metric, double effectiveLimit) {
+		if (metric > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * effectiveLimit)) {
+			busyThrottlingIds.emplace(throttlingId);
+		} else if (metric < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * effectiveLimit)) {
+			busyThrottlingIds.erase(throttlingId);
+		}
+
+		return busyThrottlingIds.contains(throttlingId);
+	}
+
 public:
 	QuotaThrottlerImpl(UID id, int maxFallingBehind, double limitingThreshold)
 	  : id(id),
 	    maxFallingBehind(maxFallingBehind),
-	    limitingThreshold(limitingThreshold) {
-		if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
-			clientThroughputTracker = ClientThroughputTracker();
-		}
-	}
+	    limitingThreshold(limitingThreshold) {}
 
-	void addRequests(ThrottlingId throttlingId, int count) {
+	void addRequests(ThrottlingId const& throttlingId, int count) {
 		auto it = throttlingStatistics.find(throttlingId);
 		if (it == throttlingStatistics.end()) {
 			if (throttlingStatistics.size() == SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED) {
@@ -276,52 +368,127 @@ public:
 		}
 	}
 
-	ThrottlingIdMap<double> getProxyRates(int numProxies,
-	                                      IRKThroughputQuotaCache const& quotaCache,
-	                                      IRKMetricsTracker const& metricsTracker) {
+	ThrottlingIdMap<double> getTargetRates(int numProxies,
+	                                       IRKThroughputQuotaCache const& quotaCache,
+	                                       IRKMetricsTracker const& metricsTracker,
+	                                       IRKClusterThroughputTracker const& clusterThroughputTracker,
+	                                       RKServerThroughputTracker const& serverThroughputTracker) {
 		ThrottlingIdMap<double> result;
 		lastBusyThrottlingIdCount = 0;
 
 		for (auto& [throttlingId, stats] : throttlingStatistics) {
 			// Currently there is no differentiation between batch priority and default priority transactions
-			TraceEvent te("QuotaThrottler_GotRate", id);
+			TraceEvent te("QuotaThrottler_GotTargetTransactionRate", id);
 			bool const traceEnabled = stats.canLog();
 			if (!traceEnabled) {
 				te.disable();
 			}
-			auto const [targetTps, isBusy] = getTargetTps(throttlingId, quotaCache, metricsTracker, te);
+			auto const [targetTps, isBusy] = getTargetTps(
+			    throttlingId, quotaCache, metricsTracker, clusterThroughputTracker, serverThroughputTracker, te);
 			if (isBusy) {
 				++lastBusyThrottlingIdCount;
 			}
 			if (targetTps.present()) {
-				auto const smoothedTargetTps = stats.updateAndGetTargetLimit(targetTps.get());
+				auto const smoothedTargetTps = stats.updateAndGetTargetRateLimit(targetTps.get());
 				te.detail("SmoothedTargetTps", smoothedTargetTps).detail("NumProxies", numProxies);
-				result[throttlingId] = std::max(1.0, smoothedTargetTps / numProxies);
+				auto const targetPerProxyRate = std::max(1.0, smoothedTargetTps / numProxies);
 				if (traceEnabled) {
 					stats.updateLastLogged();
 				}
+
+				auto rate = stats.getTransactionRate();
+				if (isBusyThrottlingIdsTrackingEnabled()) {
+					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
+					if (isThrottlingIdsBusy(throttlingId, rate, targetPerProxyRate)) {
+						result[throttlingId] = targetPerProxyRate;
+					}
+				} else {
+					result[throttlingId] = targetPerProxyRate;
+				}
+
 			} else {
 				te.disable();
+				busyThrottlingIds.erase(throttlingId);
 			}
 		}
 
 		return result;
 	}
 
-	void updateThroughput(ThrottlingIdMap<uint64_t> const& newThroughput) {
-		if (clientThroughputTracker.present()) {
-			clientThroughputTracker.get().update(newThroughput);
+	ThrottlingIdMap<double> getTargetThroughput(int numProxies,
+	                                            IRKThroughputQuotaCache const& quotaCache,
+	                                            IRKMetricsTracker const& metricsTracker,
+	                                            IRKClusterThroughputTracker const& clusterThroughputTracker,
+	                                            RKServerThroughputTracker const& serverThroughputTracker) {
+		ThrottlingIdMap<double> result;
+
+		for (const auto& [throttlingId, throughput] :
+		     clusterThroughputTracker.getActiveThrottlingIds(SERVER_KNOBS->THROUGHPUT_QUOTA_TRACK_THRESHOLD)) {
+
+			auto& stats = throughputStatistics[throttlingId];
+
+			TraceEvent te("QuotaThrottler_GotTargetThroughput", id);
+
+			bool const traceEnabled = stats.canLog();
+			if (!traceEnabled) {
+				te.disable();
+			}
+
+			auto const [targetBps, isThrottled] = getTargetBps(
+			    throttlingId, quotaCache, metricsTracker, clusterThroughputTracker, serverThroughputTracker, te);
+			if (isThrottled) {
+				++lastBusyThrottlingIdCount;
+			}
+			if (targetBps.present()) {
+				auto const smoothedTargetBps = stats.updateAndGetTargetThroughputLimit(targetBps.get());
+
+				te.detail("SmoothedTargetBps", smoothedTargetBps).detail("NumProxies", numProxies);
+				auto const targetPerProxyThroughput =
+				    std::max(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE, (int64_t)smoothedTargetBps / numProxies);
+				if (traceEnabled) {
+					stats.updateLastLogged();
+				}
+
+				te.detail("Throughput", throughput);
+
+				if (isBusyThrottlingIdsTrackingEnabled()) {
+					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
+					if (isThrottlingIdsBusy(throttlingId, throughput, targetPerProxyThroughput)) {
+						result[throttlingId] = targetPerProxyThroughput;
+					}
+				} else {
+					result[throttlingId] = targetPerProxyThroughput;
+				}
+
+			} else {
+				te.disable();
+				busyThrottlingIds.erase(throttlingId);
+			}
 		}
+		return result;
 	}
 
 	int64_t throttleCount() const { return lastBusyThrottlingIdCount; }
 	int64_t manualThrottleCount() const { return 0; }
 
-	void updateThrottling(Map<UID, StorageQueueInfo> const& sqInfos) { serverThroughputTracker.update(sqInfos); }
-
 	void removeExpiredThrottlingIds() {
-		boost::unordered::erase_if(throttlingStatistics,
-		                           [](auto const& kv) { return !kv.second.recentTransactionsAdded(); });
+		boost::unordered::erase_if(throttlingStatistics, [&](auto const& kv) {
+			if (!kv.second.recentTransactionsAdded()) {
+				busyThrottlingIds.erase(kv.first);
+				return true;
+			} else {
+				return false;
+			}
+		});
+
+		boost::unordered::erase_if(throughputStatistics, [&](auto const& kv) {
+			if (!kv.second.recentTransactionsAdded()) {
+				busyThrottlingIds.erase(kv.first);
+				return true;
+			} else {
+				return false;
+			}
+		});
 	}
 
 	Future<Void> removeExpiredThrottlingIdsActor() {
@@ -336,27 +503,34 @@ QuotaThrottler::QuotaThrottler(UID id, int maxFallingBehind, double limitingThre
 
 QuotaThrottler::~QuotaThrottler() = default;
 
-Future<Void> QuotaThrottler::monitorThrottlingChanges() {
+Future<Void> QuotaThrottler::expireUnusedThrottlingIds() {
 	return impl->removeExpiredThrottlingIdsActor();
 }
 
-void QuotaThrottler::addRequests(ThrottlingId throttlingId, int count) {
+void QuotaThrottler::addRequests(ThrottlingId const& throttlingId, int count) {
 	return impl->addRequests(throttlingId, count);
 }
-ThrottlingIdMap<double> QuotaThrottler::getProxyRates(int numProxies,
-                                                      IRKThroughputQuotaCache const& quotaCache,
-                                                      IRKMetricsTracker const& metricsTracker) {
-	return impl->getProxyRates(numProxies, quotaCache, metricsTracker);
-}
-int64_t QuotaThrottler::throttleCount() const {
-	return impl->throttleCount();
-}
-void QuotaThrottler::updateThrottling(Map<UID, StorageQueueInfo> const& sqInfos) {
-	return impl->updateThrottling(sqInfos);
+
+ThrottlingIdMap<double> QuotaThrottler::getTargetRates(int numProxies,
+                                                       IRKThroughputQuotaCache const& quotaCache,
+                                                       IRKMetricsTracker const& metricsTracker,
+                                                       IRKClusterThroughputTracker const& clusterThroughputTracker,
+                                                       RKServerThroughputTracker const& serverThroughputTracker) {
+	return impl->getTargetRates(
+	    numProxies, quotaCache, metricsTracker, clusterThroughputTracker, serverThroughputTracker);
 }
 
-void QuotaThrottler::updateThroughput(ThrottlingIdMap<uint64_t> const& newThroughput) {
-	return impl->updateThroughput(newThroughput);
+ThrottlingIdMap<double> QuotaThrottler::getTargetThroughput(int numProxies,
+                                                            IRKThroughputQuotaCache const& quotaCache,
+                                                            IRKMetricsTracker const& metricsTracker,
+                                                            IRKClusterThroughputTracker const& clusterThroughputTracker,
+                                                            RKServerThroughputTracker const& serverThroughputTracker) {
+	return impl->getTargetThroughput(
+	    numProxies, quotaCache, metricsTracker, clusterThroughputTracker, serverThroughputTracker);
+}
+
+int64_t QuotaThrottler::throttleCount() const {
+	return impl->throttleCount();
 }
 
 uint32_t QuotaThrottler::throttlingIdsTracked() const {

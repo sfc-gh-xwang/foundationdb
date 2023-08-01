@@ -1023,10 +1023,10 @@ struct CLIOptions {
 			if (*endptr != '\0') {
 				fprintf(stderr, "ERROR: invalid client version %s\n", args.OptionArg());
 				return 1;
-			} else if (apiVersion < 700 || apiVersion > ApiVersion::LATEST_VERSION) {
-				// multi-version fdbcli only available after 7.0
+			} else if (apiVersion < 710 || apiVersion > ApiVersion::LATEST_VERSION) {
+				// Api versions older than 710 are deprecated
 				fprintf(stderr,
-				        "ERROR: api version %s is not supported. (Min: 700, Max: %d)\n",
+				        "ERROR: api version %s is not supported. (Min: 710, Max: %d)\n",
 				        args.OptionArg(),
 				        ApiVersion::LATEST_VERSION);
 				return 1;

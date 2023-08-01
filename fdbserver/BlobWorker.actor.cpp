@@ -32,12 +32,15 @@
 #include "fdbclient/BlobMetadataUtils.h"
 #include "fdbclient/BlobWorkerCommon.h"
 #include "fdbclient/BlobWorkerInterface.h"
+#include "fdbclient/BulkLoaderInterface.h"
+#include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/Notified.h"
 
 #include "fdbserver/BlobWorker.h"
+#include "fdbserver/BulkLoader.h"
 #include "fdbserver/BlobGranuleServerCommon.actor.h"
 #include "fdbclient/GetEncryptCipherKeys.h"
 #include "fdbserver/Knobs.h"
@@ -282,17 +285,6 @@ bool BlobWorkerData::maybeInjectTargetedRestart() {
 
 namespace {
 
-Optional<CompressionFilter> getBlobFileCompressFilter() {
-	Optional<CompressionFilter> compFilter;
-	if (SERVER_KNOBS->ENABLE_BLOB_GRANULE_COMPRESSION) {
-		compFilter = CompressionUtils::fromFilterString(SERVER_KNOBS->BLOB_GRANULE_COMPRESSION_FILTER);
-		if (BUGGIFY_WITH_PROB(0.1)) {
-			compFilter = CompressionUtils::getRandomFilter();
-		}
-	}
-	return compFilter;
-}
-
 // returns true if we can acquire it
 void acquireGranuleLock(int64_t epoch, int64_t seqno, int64_t prevOwnerEpoch, int64_t prevOwnerSeqno) {
 	// returns true if our lock (E, S) >= (Eprev, Sprev)
@@ -339,9 +331,9 @@ void checkGranuleLock(int64_t epoch, int64_t seqno, int64_t ownerEpoch, int64_t 
 // In most of the cases, the EK lookup should be satisfied by process local in-memory cache and/or EKP in-memory cache,
 // unless cluster and/or a process crash/restart.
 
-ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<BlobWorkerData> bwData,
-                                                                  KeyRange keyRange,
-                                                                  Arena* arena) {
+ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference<BlobWorkerData> bwData,
+                                                                       KeyRange keyRange,
+                                                                       Arena* arena) {
 	state BlobGranuleCipherKeysCtx cipherKeysCtx;
 	state EncryptCipherDomainId domainId = FDB_DEFAULT_ENCRYPT_DOMAIN_ID;
 	state Reference<GranuleTenantData> tenantData;
@@ -397,6 +389,12 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<Blob
 	}
 
 	return cipherKeysCtx;
+}
+
+Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<BlobWorkerData> bwData,
+                                                            KeyRange keyRange,
+                                                            Arena* arena) {
+	return getLatestGranuleCipherKeysActor(bwData, keyRange, arena);
 }
 
 ACTOR Future<BlobGranuleCipherKey> lookupCipherKey(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
@@ -707,6 +705,17 @@ ACTOR Future<Void> writeFile(Reference<BackupContainerFileSystem> writeBStore, s
 	wait(objectFile->finish());
 
 	return Void();
+}
+
+Optional<CompressionFilter> getBlobFileCompressFilter() {
+	Optional<CompressionFilter> compFilter;
+	if (SERVER_KNOBS->ENABLE_BLOB_GRANULE_COMPRESSION) {
+		compFilter = CompressionUtils::fromFilterString(SERVER_KNOBS->BLOB_GRANULE_COMPRESSION_FILTER);
+		if (BUGGIFY_WITH_PROB(0.1)) {
+			compFilter = CompressionUtils::getRandomFilter();
+		}
+	}
+	return compFilter;
 }
 
 // writeDelta file writes speculatively in the common case to optimize throughput. It creates the s3 object even though
@@ -4658,8 +4667,8 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 	}
 }
 
-ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(Reference<BlobWorkerData> bwData,
-                                                                    KeyRange keyRange) {
+ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenantActor(Reference<BlobWorkerData> bwData,
+                                                                         KeyRange keyRange) {
 	state int retryCount = 0;
 	loop {
 		state Reference<GranuleTenantData> data;
@@ -4679,6 +4688,10 @@ ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(Reference<Bl
 			wait(delay(0.1));
 		}
 	}
+}
+
+Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(Reference<BlobWorkerData> bwData, KeyRange keyRange) {
+	return loadBStoreForTenantActor(bwData, keyRange);
 }
 
 ACTOR Future<Void> start(Reference<BlobWorkerData> bwData, GranuleRangeMetadata* meta, AssignBlobRangeRequest req) {
@@ -5041,6 +5054,7 @@ void handleBlobVersionRequest(Reference<BlobWorkerData> bwData, MinBlobVersionRe
 
 ACTOR Future<Void> registerBlobWorker(Reference<BlobWorkerData> bwData,
                                       BlobWorkerInterface interf,
+                                      BulkLoaderInterface blInterf,
                                       Optional<UID> previous) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bwData->db);
 	state Key blobWorkerListKey = blobWorkerListKeyFor(interf.id());
@@ -5065,6 +5079,8 @@ ACTOR Future<Void> registerBlobWorker(Reference<BlobWorkerData> bwData,
 			ASSERT(currentLockValue.present());
 			int64_t currentEpoch = decodeBlobManagerEpochValue(currentLockValue.get());
 			bwData->managerEpochOk(currentEpoch);
+
+			BulkLoadMetadata::loaderListMap().set(tr, blInterf.id(), blInterf);
 
 			wait(tr->commit());
 
@@ -5542,7 +5558,9 @@ ACTOR Future<Void> simForceFullMemory(Reference<BlobWorkerData> bwData) {
 	}
 }
 
-ACTOR Future<Void> blobWorkerCore(BlobWorkerInterface bwInterf, Reference<BlobWorkerData> self) {
+ACTOR Future<Void> blobWorkerCore(BlobWorkerInterface bwInterf,
+                                  BulkLoaderInterface blInterf,
+                                  Reference<BlobWorkerData> self) {
 	state Future<Void> collection = actorCollection(self->addActor.getFuture());
 
 	self->addActor.send(waitFailureServer(bwInterf.waitFailure.getFuture()));
@@ -5555,6 +5573,12 @@ ACTOR Future<Void> blobWorkerCore(BlobWorkerInterface bwInterf, Reference<BlobWo
 	}
 	if (g_network->isSimulated() && SERVER_KNOBS->BLOB_WORKER_DO_REJECT_WHEN_FULL && BUGGIFY_WITH_PROB(0.25)) {
 		self->addActor.send(simForceFullMemory(self));
+	}
+
+	// FIXME: eventually make its own role potentially?
+	if (CLIENT_KNOBS->ALLOW_BULK_LOADS) {
+		Reference<BulkLoaderData> blData = makeReference<BulkLoaderData>(self->id, self->db);
+		self->addActor.send(bulkLoader(blInterf, blData, self));
 	}
 
 	try {
@@ -5776,6 +5800,15 @@ ACTOR Future<Void> checkUpdateEncryptionAtRestMode(Reference<BlobWorkerData> sel
 	return Void();
 }
 
+BulkLoaderInterface createBulkLoaderInterface(const BlobWorkerInterface& bwInterf) {
+	BulkLoaderInterface recruited(bwInterf.locality, bwInterf.id());
+	recruited.initEndpoints();
+	DUMPTOKEN(recruited.waitFailure);
+	DUMPTOKEN(recruited.filesToWriteRequest);
+	DUMPTOKEN(recruited.filesWrittenRequest);
+	return recruited;
+}
+
 ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
                               ReplyPromise<InitializeBlobWorkerReply> recruitReply,
                               Reference<AsyncVar<ServerDBInfo> const> dbInfo,
@@ -5787,6 +5820,8 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 	self->locality = bwInterf.locality;
 
 	TraceEvent("BlobWorkerInitStart", self->id).detail("Recovering", false).log();
+
+	state BulkLoaderInterface blInterf = createBulkLoaderInterface(bwInterf);
 
 	try {
 		// Since the blob worker gets initalized through the blob manager it is more reliable to fetch the encryption
@@ -5817,7 +5852,7 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 		}
 
 		// register the blob worker to the system keyspace
-		wait(registerBlobWorker(self, bwInterf, Optional<UID>()));
+		wait(registerBlobWorker(self, bwInterf, blInterf, Optional<UID>()));
 
 		// By now, we know that initialization was successful, so
 		// respond to the initialization request with the interface itself
@@ -5830,7 +5865,7 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 		TraceEvent("BWEncryptionAtRestMode", self->id).detail("Mode", self->encryptMode.toString());
 
 		TraceEvent("BlobWorkerInit", self->id).log();
-		wait(blobWorkerCore(bwInterf, self));
+		wait(blobWorkerCore(bwInterf, blInterf, self));
 		return Void();
 	} catch (Error& e) {
 		if (!recruitReply.isSet()) {
@@ -5882,6 +5917,8 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 	self->locality = bwInterf.locality;
 	TraceEvent("BlobWorkerInitStart", self->id).detail("Recovering", true).log();
 
+	state BulkLoaderInterface blInterf = createBulkLoaderInterface(bwInterf);
+
 	try {
 		wait(self->storage->init());
 		wait(self->storage->commit());
@@ -5912,7 +5949,7 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 				}
 			}
 			// register the blob worker to the system keyspace
-			wait(registerBlobWorker(self, bwInterf, previous));
+			wait(registerBlobWorker(self, bwInterf, blInterf, previous));
 		} catch (Error& e) {
 			if (BW_DEBUG) {
 				fmt::print("BW got init error {0}\n", e.name());
@@ -5930,7 +5967,7 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 		TraceEvent("BWEncryptionAtRestModeRecover", self->id).detail("Mode", self->encryptMode.toString());
 
 		TraceEvent("BlobWorkerInit", self->id).log();
-		wait(blobWorkerCore(bwInterf, self));
+		wait(blobWorkerCore(bwInterf, blInterf, self));
 		return Void();
 	} catch (Error& e) {
 		if (recovered.canBeSet())

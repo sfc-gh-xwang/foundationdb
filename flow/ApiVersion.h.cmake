@@ -61,11 +61,6 @@ public:
 	constexpr bool operator>(const ApiVersion other) const { return version() > other.version(); }
 
 public: // introduced features
-    API_VERSION_FEATURE(@FDB_AV_SNAPSHOT_RYW@, SnapshotRYW);
-    API_VERSION_FEATURE(@FDB_AV_INLINE_UPDATE_DATABASE@, InlineUpdateDatabase);
-    API_VERSION_FEATURE(@FDB_AV_PERSISTENT_OPTIONS@, PersistentOptions);
-    API_VERSION_FEATURE(@FDB_AV_TRACE_FILE_IDENTIFIER@, TraceFileIdentifier);
-    API_VERSION_FEATURE(@FDB_AV_CLUSTER_SHARED_STATE_MAP@, ClusterSharedStateMap);
     API_VERSION_FEATURE(@FDB_AV_BLOB_RANGE_API@, BlobRangeApi);
     API_VERSION_FEATURE(@FDB_AV_CREATE_DB_FROM_CONN_STRING@, CreateDBFromConnString);
     API_VERSION_FEATURE(@FDB_AV_FUTURE_GET_BOOL@, FutureGetBool);
@@ -85,6 +80,8 @@ public: // introduced features
     API_VERSION_FEATURE(@FDB_AV_INITIALIZE_TRACE_ON_SETUP@, InitializeTraceOnSetup);
     API_VERSION_FEATURE(@FDB_AV_TENANT_GET_ID@, TenantGetId);
     API_VERSION_FEATURE(@FDB_AV_EVOLVABLE_API@, EvolvableApi);
+    API_VERSION_FEATURE(@FDB_AV_SET_EXPECTED_COST@, SetExpectedCost);
+    API_VERSION_FEATURE(@FDB_AV_COLUMNAR_CACHE_SKEW_HANDLING@, ColumnarCacheSkewHandling);
 };
 
 #endif // FLOW_CODE_API_VERSION_H

@@ -9,6 +9,7 @@ injectSSDelay = true
 # FIXME: re-enable rocks at some point
 storageEngineExcludeTypes = [4, 5]
 disableAesGcm = true
+simHTTPServerEnabled=false
 
 [[knobs]]
 blob_worker_disk_enabled = false

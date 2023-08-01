@@ -12,6 +12,7 @@ import fcntl
 import sys
 import xml.etree.ElementTree as ET
 import tempfile
+import typing
 from authz_util import private_key_gen, public_keyset_from_keys
 from test_util import random_alphanum_string, get_logger
 
@@ -433,13 +434,24 @@ tracer = log_file
     def fdbcli_exec_and_get(self, cmd, timeout=None):
         return self.__fdbcli_exec(cmd, subprocess.PIPE, None, timeout)
 
-    def create_database(self, storage="ssd", enable_tenants=True):
+    def create_database(
+        self,
+        storage="ssd",
+        tenant_mode: typing.Union[str, None] = "optional_experimental",
+    ):
+        # None is for database version that does not support tenants
+        assert tenant_mode in [
+            None,
+            "disabled",
+            "optional_experimental",
+            "required_experimental",
+        ]
         if self.enable_encryption_at_rest:
             # only redwood supports EAR
             storage = "ssd-redwood-1"
         db_config = "configure new {} {}".format(self.redundancy, storage)
-        if enable_tenants:
-            db_config += " tenant_mode=optional_experimental"
+        if tenant_mode != None:
+            db_config += " tenant_mode={}".format(tenant_mode)
         if self.enable_encryption_at_rest:
             # FIXME: could support domain_aware if tenants are required
             db_config += " encryption_at_rest_mode=cluster_aware"

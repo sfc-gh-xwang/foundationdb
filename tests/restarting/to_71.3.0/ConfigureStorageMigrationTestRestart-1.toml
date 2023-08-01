@@ -5,6 +5,7 @@ disableHostname=true
 storageEngineExcludeTypes=[4]
 tenantModes=['disabled']
 disableAesGcm = true
+simHTTPServerEnabled=false
 
 [[test]]
 testTitle = 'CloggedConfigureDatabaseTest'
