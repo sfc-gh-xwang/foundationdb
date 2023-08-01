@@ -534,7 +534,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		UNUSED_POINTER_CLEANUP_UNIT,
 		ABORTED_POINTER_CLEANUP_UNIT,
 		FILE_SIZE_MISMATCH_UNIT,
-		OP_COUNT = 21 /* keep this last */
+		OP_COUNT = 22 /* keep this last */
 	};
 
 	ACTOR Future<Void> expectAbortedBySystem(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
@@ -1011,6 +1011,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		try {
 			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
+			ASSERT(false);
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_file_missing);
 		}
@@ -1084,6 +1085,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		try {
 			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
+			ASSERT(false);
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
 		}
