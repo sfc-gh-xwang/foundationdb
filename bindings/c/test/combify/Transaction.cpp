@@ -184,14 +184,13 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 	}
 });
 
-AddTest testGetKeyValueArray("GetKeyValueArray", asTrustedClient, [](const TestEnv& env) {
+AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-key-value-array");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, data);
 
-	auto db = env.newDatabase();
-	populateDBData(db, data);
-
-	auto tr = env.newTransaction(db);
+	tr = env.newNormalOrTenantTransaction();
 	auto f = runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
