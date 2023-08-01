@@ -355,10 +355,20 @@ ACTOR Future<Void> validateBlobPointer(Reference<BulkLoaderData> self,
 		std::string fname = filename.toString();
 		state Reference<BackupContainerFileSystem> blobConn = bstore->getForAccess(fname);
 		state Reference<IAsyncFile> reader = wait(blobConn->readFile(fname));
+		state Future<int64_t> sizeF = reader->size();
 		// read 1 byte from file to make sure it exists
 		state uint8_t data;
 		int readSize = wait(reader->read(&data, 1, 0));
 		ASSERT(readSize == 1);
+		int64_t size = wait(sizeF);
+		if (size != file.physicalSize) {
+			TraceEvent("BulkLoadInvalidFileSize")
+			    .detail("LoadID", id)
+			    .detail("FileID", file.fileId)
+			    .detail("UserProvidedSize", file.physicalSize)
+			    .detail("ActualSize", size);
+			throw bulk_load_invalid_file_metadata();
+		}
 	} catch (Error& e) {
 		if (e.code() == error_code_file_not_found) {
 			TraceEvent("BulkLoadInvalidFilenameMissing").detail("LoadID", id).detail("FileID", file.fileId);

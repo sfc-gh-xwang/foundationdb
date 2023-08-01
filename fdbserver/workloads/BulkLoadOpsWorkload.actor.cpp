@@ -204,13 +204,15 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	ACTOR Future<Value> createOneFile(BulkLoadFileToWriteRef toWrite,
 	                                  Standalone<StringRef> filePrefix,
 	                                  int rowCount,
-	                                  int valueSize) {
+	                                  int valueSize,
+	                                  int64_t* logicalSize) {
 		state Standalone<GranuleSnapshot> snapshot;
 		snapshot.reserve(snapshot.arena(), rowCount);
 		for (int i = 0; i < rowCount; i++) {
 			Key k = filePrefix.withSuffix(format("%08x", i));
 			Value val = genVal(i, valueSize);
 			snapshot.push_back_deep(snapshot.arena(), KeyValueRef(k, val));
+			*logicalSize += k.size() + val.size();
 		}
 
 		Value serialized = wait(serializeChunkedSnapshot(
@@ -218,22 +220,26 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return serialized;
 	}
 
-	ACTOR Future<Void> writeOneFileToBlob(BulkLoadOpsWorkload* self,
-	                                      BulkLoadFileToWriteRef toWrite,
-	                                      Standalone<StringRef> filePrefix,
-	                                      int rowCount,
-	                                      int valueSize) {
+	// pair of logical, physical size
+	ACTOR Future<std::pair<int64_t, int64_t>> writeOneFileToBlob(BulkLoadOpsWorkload* self,
+	                                                             BulkLoadFileToWriteRef toWrite,
+	                                                             Standalone<StringRef> filePrefix,
+	                                                             int rowCount,
+	                                                             int valueSize) {
 		ASSERT(toWrite.type == BulkLoadFileType::SNAPSHOT);
 		ASSERT(toWrite.format == BulkLoadFileFormat::ROW_V1);
 
-		Value serialized = wait(self->createOneFile(toWrite, filePrefix, rowCount, valueSize));
+		state int64_t logicalSize = 0;
+		Value serialized = wait(self->createOneFile(toWrite, filePrefix, rowCount, valueSize, &logicalSize));
+		state int64_t physicalSize = serialized.size();
 
 		std::string fname = toWrite.filename.toString();
 		// filename and volume is already predetermined, so just access it instead of doing createForWrite
 		Reference<BackupContainerFileSystem> blobConn = self->bstore->getForAccess(fname);
 		state std::string fileContents = serialized.toString();
 		wait(blobConn->writeEntireFile(fname, fileContents));
-		return Void();
+		std::pair<int64_t, int64_t> result = { logicalSize, physicalSize };
+		return result;
 	}
 
 	ACTOR Future<std::string> stageSingleFile(Database cx,
@@ -250,13 +256,13 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		filesWritten.arena().dependsOn(filesToWrite.arena());
 
 		// write tiny file
-		wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin, 1, 32));
+		std::pair<int64_t, int64_t> sizes = wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin, 1, 32));
 
 		BulkLoadWrittenFileRef writtenFile;
 		writtenFile.fileId = filesToWrite[0].fileId;
 		writtenFile.keyRange = range;
-		writtenFile.physicalSize = deterministicRandom()->randomInt(1, 10000000);
-		writtenFile.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+		writtenFile.logicalSize = sizes.first;
+		writtenFile.physicalSize = sizes.second;
 
 		filesWritten.push_back(filesWritten.arena(), writtenFile);
 
@@ -382,7 +388,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		ASSERT(filesToWrite.size() == targetFiles);
 
-		state std::vector<Future<Void>> blobWrites;
 		state int targetFilesToWrite = targetFiles;
 		state int prefix = 0;
 		while (targetFilesToWrite > 0) {
@@ -391,6 +396,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			targetFilesToWrite -= batchSize;
 
 			state Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+			state std::vector<Future<std::pair<int64_t, int64_t>>> blobWrites;
 			for (int i = 0; i < batchSize; i++, prefix++) {
 				// sometimes skip file to make non-contiguous
 				if (filesWritten.empty() || deterministicRandom()->random01() < 0.8) {
@@ -403,8 +409,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 					BulkLoadWrittenFileRef writtenFile;
 					writtenFile.fileId = filesToWrite[prefix].fileId;
 					writtenFile.keyRange = fileRange;
-					writtenFile.physicalSize = deterministicRandom()->randomInt(1, 10000000);
-					writtenFile.logicalSize = deterministicRandom()->randomInt(1, 10000000);
+					writtenFile.physicalSize = -1;
+					writtenFile.logicalSize = -1;
 
 					filesWritten.push_back(filesWritten.arena(), writtenFile);
 					// FIXME: actually use target value size sometimes
@@ -413,6 +419,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			}
 
 			wait(waitForAll(blobWrites));
+			for (int i = 0; i < blobWrites.size(); i++) {
+				std::tie(filesWritten[i].logicalSize, filesWritten[i].physicalSize) = blobWrites[i].get();
+			}
 
 			self->maybeReopenTenant(cx);
 
@@ -524,6 +533,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		REGISTER_NONEXISTENT_FILE_UNIT,
 		UNUSED_POINTER_CLEANUP_UNIT,
 		ABORTED_POINTER_CLEANUP_UNIT,
+		FILE_SIZE_MISMATCH_UNIT,
 		OP_COUNT = 21 /* keep this last */
 	};
 
@@ -1018,7 +1028,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
 
 		// write file but DON'T register it
-		wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin.withSuffix("b"_sr), 1, 32));
+		wait(success(self->writeOneFileToBlob(self, filesToWrite[0], range.begin.withSuffix("b"_sr), 1, 32)));
 
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 		wait(cx->waitBulkLoadComplete(id, self->tenant));
@@ -1041,7 +1051,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
 
 		// write file but DON'T register it
-		wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin.withSuffix("b"_sr), 1, 32));
+		wait(success(self->writeOneFileToBlob(self, filesToWrite[0], range.begin.withSuffix("b"_sr), 1, 32)));
 
 		wait(cx->abortBulkLoad(id, self->tenant));
 		wait(self->expectAbortedBySystem(cx, self, id));
@@ -1049,6 +1059,36 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->expectFileDeleted(self, stagedFile));
 		wait(self->expectFileDeleted(self, filesToWrite[0].filename.toString()));
 
+		return Void();
+	}
+
+	ACTOR Future<Void> fileSizeMismatchUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
+		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
+
+		state Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
+		filesWritten.arena().dependsOn(filesToWrite.arena());
+
+		// write tiny file to blob
+		std::pair<int64_t, int64_t> sizes = wait(self->writeOneFileToBlob(self, filesToWrite[0], range.begin, 1, 32));
+
+		BulkLoadWrittenFileRef writtenFile;
+		writtenFile.fileId = filesToWrite[0].fileId;
+		writtenFile.keyRange = range;
+		writtenFile.logicalSize = sizes.first;
+		writtenFile.physicalSize = sizes.second + 1; // intentionally incorrect!!
+
+		filesWritten.push_back(filesWritten.arena(), writtenFile);
+
+		try {
+			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+		}
+
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
 		return Void();
 	}
 
@@ -1135,6 +1175,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->unusedPointerCleanupUnit(cx, self, range));
 			} else if (op == ABORTED_POINTER_CLEANUP_UNIT) {
 				wait(self->abortedPointerCleanupUnit(cx, self, range));
+			} else if (op == FILE_SIZE_MISMATCH_UNIT) {
+				wait(self->fileSizeMismatchUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}
