@@ -16,10 +16,8 @@ auto applyKeyPrefix(const std::string& prefix, std::map<std::string, std::string
 	return out;
 }
 
-AddTest testWriteAndRead("BasicWriteAndReadBack", asTrustedClient, [](const TestEnv& env) {
-	auto db = env.newDatabase();
-
-	auto tr = env.newTransaction(db);
+AddTest testWriteAndRead("BasicWriteAndReadBack", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
 	    tr,
 	    [](auto tr) {
@@ -28,30 +26,27 @@ AddTest testWriteAndRead("BasicWriteAndReadBack", asTrustedClient, [](const Test
 	    },
 	    "WriteSomeValue");
 
-	tr = env.newTransaction(db);
+	tr = env.newNormalOrTenantTransaction();
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.get("abc"_br, false); }, "ReadBackValue");
 	ASSERT(f.get() == "def"_br, "unmatched read back value: expected=def actual={}", fdb::toCharsRef(f.get()));
 });
 
-AddTest testGetReadVersion("BasicGetReadVersion", asTrustedClient, [](const TestEnv& env) {
-	auto db = env.newDatabase();
-	auto tr = env.newTransaction(db);
-
+AddTest testGetReadVersion("BasicGetReadVersion", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
 
 	ASSERT(f.get() > 0, "unmatched read version value: expected > 0");
 });
 
-AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
+AddTest testGetKey("BasicGetKey", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-key");
-	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction();
 
-	populateDBData(db, applyKeyPrefix(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
+	populateDBData(tr, applyKeyPrefix(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
 
-	auto tr = env.newTransaction(db);
-
+	tr = env.newNormalOrTenantTransaction();
 	auto f = runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -65,12 +60,12 @@ AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 	       fdb::toCharsRef(f.get()));
 });
 
-AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
+AddTest testGetValue("BasicGetValue", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-value");
-	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 
-	populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
-	auto tr = env.newTransaction(db);
+	tr = env.newNormalOrTenantTransaction();
 	auto f = runToCompletion(
 	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "GetValue");
 
@@ -94,7 +89,6 @@ AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& 
 
 AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& env) {
 	auto db = env.newDatabase();
-
 	for (auto const enableReadSystemKeys : { false, true }) {
 		auto tr = env.newTransaction(db);
 		try {

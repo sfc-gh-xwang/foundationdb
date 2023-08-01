@@ -156,6 +156,12 @@ public:
 	// Will throw if authorization is not enabled in test options or tenantName is not among the elements of
 	// tenantNames().
 	string tokenForTenant(fdb::BytesRef tenantName) const;
+
+	// Returns a DB transaction for trustedClient and a tenant transaction for untrusted client.
+	// For simplicity, when tenant transaction is used, the first tenant is always used, allowing
+	// the caller to use this function to read its own writes. For advanced use case when testing
+	// multi-tenant case, consider using tenantByIndex and newTenantTransaction methods.
+	fdb::Transaction newNormalOrTenantTransaction() const;
 };
 
 template <class PredicateFunc>

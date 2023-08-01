@@ -507,6 +507,11 @@ bool TestEnv::runTest(const TestCase& t) {
 	return !exc.has_value();
 }
 
+fdb::Transaction TestEnv::newNormalOrTenantTransaction() const {
+	auto db = newDatabase();
+	return *trustedClient ? newTransaction(db) : newTenantTransaction(db, tenants[0].first);
+}
+
 std::vector<const TestCase*> collectTestCases(const TestOptions& options) {
 	std::vector<const TestCase*> ret;
 	for (const auto& testCase : testCases) {
