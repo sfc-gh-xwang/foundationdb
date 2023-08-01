@@ -137,6 +137,21 @@ inline std::string strincStr(const std::string& s) {
 	return r;
 }
 
+inline void populateDBData(fdb::Database db, const std::map<std::string, std::string>& data) {
+	auto tr = db.createTransaction();
+
+	runToCompletion(
+	    tr,
+	    [&data](auto tr) {
+		    // Insert data
+		    for (const auto& [key, val] : data) {
+			    tr.set(fdb::toBytesRef(key), fdb::toBytesRef(val));
+		    }
+		    return tr.commit();
+	    },
+	    "PopulateDBData");
+}
+
 } // namespace combify
 
 #endif /*COMBIFY_TEST_HELPERS_HPP*/

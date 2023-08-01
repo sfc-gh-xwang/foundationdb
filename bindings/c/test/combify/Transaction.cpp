@@ -75,9 +75,10 @@ AddTest testGetReadVersion("BasicGetReadVersion", asTrustedClient, [](const Test
 
 AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-key");
-	env.clearAndPopulateDBData(prefix, createData(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
-
 	auto db = env.newDatabase();
+
+	populateDBData(db, createData(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
+
 	auto tr = env.newTransaction(db);
 
 	auto f = runToCompletion(
@@ -95,9 +96,9 @@ AddTest testGetKey("BasicGetKey", asTrustedClient, [](const TestEnv& env) {
 
 AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-value");
-	env.clearAndPopulateDBData(prefix, createData(prefix, { { "foo", "bar" } }));
-
 	auto db = env.newDatabase();
+
+	populateDBData(db, createData(prefix, { { "foo", "bar" } }));
 	auto tr = env.newTransaction(db);
 	auto f = getValue(tr, fdb::toBytesRef(prefix + "foo"), false, "GetValue");
 
@@ -106,8 +107,8 @@ AddTest testGetValue("BasicGetValue", asTrustedClient, [](const TestEnv& env) {
 
 AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-get-string-array");
-	env.clearAndPopulateDBData(prefix, createData(prefix, { { "foo", "bar" } }));
 	auto db = env.newDatabase();
+	populateDBData(db, createData(prefix, { { "foo", "bar" } }));
 	auto tr = env.newTransaction(db);
 	auto f = runToCompletion(
 	    tr, [&prefix](auto tr) { return tr.getAddressForKey(fdb::toBytesRef(prefix + "foo")); }, "GetStringArray");
@@ -168,10 +169,8 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 });
 
 AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& env) {
-	const std::string prefix("combify-read-your-writes");
-	env.clearAndPopulateDBData(prefix, {});
-
 	auto db = env.newDatabase();
+
 	for (auto const option : { FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
 	                           FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE,
 	                           FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE }) {
@@ -210,9 +209,10 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 AddTest testGetKeyValueArray("GetKeyValueArray", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-get-key-value-array");
 	auto data = createData(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
-	env.clearAndPopulateDBData(prefix, data);
 
 	auto db = env.newDatabase();
+	populateDBData(db, data);
+
 	auto tr = env.newTransaction(db);
 	auto f = runToCompletion(
 	    tr,

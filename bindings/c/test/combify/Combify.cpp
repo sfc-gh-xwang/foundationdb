@@ -507,25 +507,6 @@ bool TestEnv::runTest(const TestCase& t) {
 	return !exc.has_value();
 }
 
-void TestEnv::clearAndPopulateDBData(const std::string& prefix, const std::map<std::string, std::string>& data) const {
-	auto db = newDatabase();
-	auto tr = newTransaction(db);
-
-	runToCompletion(
-	    tr,
-	    [&prefix, &data](auto tr) {
-		    // Clear the range
-		    auto endKey = strincStr(prefix);
-		    tr.clearRange(fdb::toBytesRef(prefix), fdb::toBytesRef(endKey));
-		    // Insert data
-		    for (const auto& [key, val] : data) {
-			    tr.set(fdb::toBytesRef(key), fdb::toBytesRef(val));
-		    }
-		    return tr.commit();
-	    },
-	    "ClearRangeAndPopulateDBData");
-}
-
 std::vector<const TestCase*> collectTestCases(const TestOptions& options) {
 	std::vector<const TestCase*> ret;
 	for (const auto& testCase : testCases) {

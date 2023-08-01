@@ -156,10 +156,6 @@ public:
 	// Will throw if authorization is not enabled in test options or tenantName is not among the elements of
 	// tenantNames().
 	string tokenForTenant(fdb::BytesRef tenantName) const;
-
-	// Clear all data in the database for the given prefix, and populate data for the given
-	// key value pairs.
-	void clearAndPopulateDBData(const std::string& prefix, const std::map<std::string, std::string>& data) const;
 };
 
 template <class PredicateFunc>
