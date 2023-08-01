@@ -21,6 +21,7 @@
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseConfiguration.h"
+#include "fdbclient/EncryptBlobCipher.h"
 #include "fdbclient/TenantEntryCache.actor.h"
 #include "fdbclient/TenantManagement.actor.h"
 #include "fdbclient/BlobRestoreCommon.h"

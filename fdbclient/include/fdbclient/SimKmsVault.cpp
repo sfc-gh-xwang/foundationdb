@@ -20,6 +20,7 @@
 
 #include "fdbclient/SimKmsVault.h"
 #include "fdbclient/BlobCipher.h"
+#include "fdbclient/EncryptBlobCipher.h"
 #include "fdbclient/BlobMetadataUtils.h"
 #include "fdbclient/ClientKnobs.h"
 

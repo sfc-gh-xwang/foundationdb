@@ -21,6 +21,7 @@
 #include "benchmark/benchmark.h"
 
 #include "fdbclient/BlobCipher.h"
+#include "fdbclient/EncryptBlobCipher.h"
 #include "fdbserver/BenchmarkGlobalData.h"
 #include "flow/EncryptUtils.h"
 #include "flow/StreamCipher.h"
