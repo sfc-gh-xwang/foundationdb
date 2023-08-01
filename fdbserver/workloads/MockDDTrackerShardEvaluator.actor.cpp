@@ -184,8 +184,7 @@ public:
 		for (const auto& [reason, count] : rsReasonCounts) {
 			m.push_back(PerfMetric(RelocateReason(reason).toString(), count, Averaged::False));
 		}
-		m.emplace_back(
-		    totalReadsMetric->metricName.toString(), totalReadsMetric.getValue() / testDuration, Averaged::True);
+		m.emplace_back("TotalReadOps", (double)totalReadsMetric->getValue() / testDuration, Averaged::True);
 	}
 };
 

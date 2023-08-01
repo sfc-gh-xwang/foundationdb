@@ -199,6 +199,29 @@ private:
 		    /* failOnError = */ false);
 	}
 
+	OpType chooseRandomAllowedOp(std::shared_ptr<BulkLoadMetadata> metadata) {
+		// enum OpType { OP_START, OP_REGISTER_COMPLETE, OP_WAIT_COMPLETE, OP_ABORT, OP_CLEANUP, OP_LAST = OP_CLEANUP };
+		std::vector<OpType> allowed;
+		if (metadata->activeLoads < loadCap) {
+			allowed.push_back(OP_START);
+		}
+		if (!metadata->loadsStaging.empty()) {
+			allowed.push_back(OP_REGISTER_COMPLETE);
+		}
+		if (!metadata->loadsWaiting.empty()) {
+			allowed.push_back(OP_WAIT_COMPLETE);
+		}
+		if (!metadata->loadsWaiting.empty() || !metadata->loadsStaging.empty()) {
+			allowed.push_back(OP_ABORT);
+		}
+		if (!metadata->loadsDone.empty() || !metadata->loadsAborted.empty()) {
+			allowed.push_back(OP_CLEANUP);
+		}
+		ASSERT(!allowed.empty());
+		int randomIdx = Random::get().randomInt(0, allowed.size() - 1);
+		return allowed[randomIdx];
+	}
+
 	void randomOperation(TTaskFct cont) override {
 		std::optional<int> tenantId = randomTenant();
 		std::shared_ptr<BulkLoadMetadata> metadata(new BulkLoadMetadata());
@@ -208,46 +231,25 @@ private:
 		} else {
 			metadataByTenant[tenantId] = metadata;
 		}
-		int tries = 0;
-		while (true) {
-			OpType opType = (OpType)Random::get().randomInt(0, OP_LAST);
-			tries++;
-			ASSERT(tries < 100);
+		OpType opType = chooseRandomAllowedOp(metadata);
 
-			switch (opType) {
-			case OP_START:
-				if (metadata->activeLoads < loadCap) {
-					randomOpStart(cont, metadata, tenantId);
-					metadata->activeLoads++;
-					return;
-				}
-				break;
-			case OP_REGISTER_COMPLETE:
-				if (!metadata->loadsStaging.empty()) {
-					randomOpRegisterComplete(cont, metadata, tenantId);
-					return;
-				}
-				break;
-			case OP_WAIT_COMPLETE:
-				if (!metadata->loadsWaiting.empty()) {
-					randomOpWaitComplete(cont, metadata, tenantId);
-					return;
-				}
-				break;
-			case OP_ABORT:
-				if (!metadata->loadsWaiting.empty() || !metadata->loadsStaging.empty()) {
-					randomOpAbort(cont, metadata, tenantId);
-					return;
-				}
-				break;
-			case OP_CLEANUP:
-				if (!metadata->loadsDone.empty() || !metadata->loadsAborted.empty()) {
-					randomOpCleanup(cont, metadata, tenantId);
-					metadata->activeLoads--;
-					return;
-				}
-				break;
-			}
+		switch (opType) {
+		case OP_START:
+			randomOpStart(cont, metadata, tenantId);
+			metadata->activeLoads++;
+			break;
+		case OP_REGISTER_COMPLETE:
+			randomOpRegisterComplete(cont, metadata, tenantId);
+			break;
+		case OP_WAIT_COMPLETE:
+			randomOpWaitComplete(cont, metadata, tenantId);
+			break;
+		case OP_ABORT:
+			randomOpAbort(cont, metadata, tenantId);
+			break;
+		case OP_CLEANUP:
+			metadata->activeLoads--;
+			break;
 		}
 	}
 };

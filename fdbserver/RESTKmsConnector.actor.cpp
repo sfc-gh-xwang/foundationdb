@@ -1192,36 +1192,57 @@ Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSState
 	return Void();
 }
 
+ACTOR Future<Void> resetRESTKmsConnectorCtx(Reference<RESTKmsConnectorCtx> ctx) {
+	if (ctx.isValid()) {
+		ctx->kmsStabilityChecker.cancel();
+
+		wait(delay(0.0));
+
+		while (!ctx->addActor.isEmpty()) {
+			ctx->addActor.getFuture().pop();
+		}
+	}
+	return Void();
+}
+
 ACTOR Future<Void> restConnectorCoreImpl(KmsConnectorInterface interf) {
 	state Reference<RESTKmsConnectorCtx> self = makeReference<RESTKmsConnectorCtx>(interf.id());
 	state Future<Void> collection = actorCollection(self->addActor.getFuture());
 
-	TraceEvent("RESTKmsConnectorInit", self->uid).log();
+	try {
+		TraceEvent("RESTKmsConnectorInit", self->uid).log();
 
-	self->kmsStabilityChecker =
-	    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL);
-	wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
-	wait(procureValidationTokens(self));
+		self->kmsStabilityChecker =
+		    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL);
+		wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
+		wait(procureValidationTokens(self));
 
-	loop {
-		choose {
-			when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
-				self->addActor.send(fetchEncryptionKeysByKeyIds(self, req));
-			}
-			when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
-				self->addActor.send(fetchEncryptionKeysByDomainIds(self, req));
-			}
-			when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
-				self->addActor.send(fetchBlobMetadata(self, req));
-			}
-			when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
-				self->addActor.send(getKMSState(self, req));
-			}
-			when(wait(collection)) {
-				// this should throw an error, not complete
-				ASSERT(false);
+		loop {
+			choose {
+				when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
+					self->addActor.send(fetchEncryptionKeysByKeyIds(self, req));
+				}
+				when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
+					self->addActor.send(fetchEncryptionKeysByDomainIds(self, req));
+				}
+				when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
+					self->addActor.send(fetchBlobMetadata(self, req));
+				}
+				when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
+					self->addActor.send(getKMSState(self, req));
+				}
+				when(wait(collection)) {
+					ASSERT(false);
+					throw internal_error();
+				}
 			}
 		}
+	} catch (Error& e) {
+		state Error _e = e;
+		TraceEvent("RESTKmsConnectorError", self->uid).errorUnsuppressed(_e);
+		// reset RESTKmsConnectorCtx to ensure destruction of cached connectionPool
+		wait(resetRESTKmsConnectorCtx(self));
+		throw _e;
 	}
 }
 
