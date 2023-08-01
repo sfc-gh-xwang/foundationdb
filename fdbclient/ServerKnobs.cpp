@@ -580,7 +580,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	bool shortRecoveryDuration = randomize && BUGGIFY;
 	init( ENFORCED_MIN_RECOVERY_DURATION,                       0.085 ); if( shortRecoveryDuration ) ENFORCED_MIN_RECOVERY_DURATION = 0.01;
 	init( REQUIRED_MIN_RECOVERY_DURATION,                       0.080 ); if( shortRecoveryDuration ) REQUIRED_MIN_RECOVERY_DURATION = 0.01;
-	init( ALWAYS_CAUSAL_READ_RISKY,                             false );
+	init( ALWAYS_CAUSAL_READ_RISKY,                              true );
 	init( MAX_COMMIT_UPDATES,                                    2000 ); if( randomize && BUGGIFY ) MAX_COMMIT_UPDATES = 1;
 	init( MAX_PROXY_COMPUTE,                                      2.0 );
 	init( MAX_COMPUTE_PER_OPERATION,                              0.1 );
