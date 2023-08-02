@@ -19,6 +19,7 @@
  */
 #ifndef FDBCLIENT_ENCRYPT_BLOB_CIPHER_H
 #define FDBCLIENT_ENCRYPT_BLOB_CIPHER_H
+#include "flow/EncryptUtils.h"
 #pragma once
 
 #include "fdbrpc/Stats.h"
@@ -78,6 +79,12 @@ public:
 
 	virtual void addref() = 0;
 	virtual void delref() = 0;
+
+	StringRef getIVRef() { return ivRef; }
+	static void generateIV(EncryptCipherMode encryptMode,
+	                       Reference<BlobCipherKey> textCipherKey,
+	                       uint8_t* iv,
+	                       int ivLen);
 
 protected:
 	virtual void init() = 0;

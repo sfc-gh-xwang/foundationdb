@@ -23,6 +23,7 @@
 
 #include "fdbrpc/Stats.h"
 
+#include "fdbclient/FDBTypes.h"
 #include "fdbclient/Knobs.h"
 #include "flow/Arena.h"
 #include "flow/EncryptUtils.h"
@@ -57,6 +58,8 @@
 #if defined(HAVE_WOLFSSL)
 #include <wolfssl/options.h>
 #endif
+
+using EncryptCipherNonce = uint128_t;
 
 #define AES_256_KEY_LENGTH 32
 #define AES_256_CTR_IV_LENGTH 16
@@ -543,7 +546,6 @@ struct BlobCipherEncryptHeaderRef {
 	// API supports following validation:
 	// 1. Ensure input BlobCipherDetails (textDetails and/or headerDetails) matches with the input
 	// 2. Ensure persited KCV matches with the input values
-	// 3. Ensure input IV buffer matches with the persisted ones.
 	//
 	// Currently API is used by BlobGranule encryption where encryption key lookup based on persisted
 	// BlobGranuleCipherKeyCtx
@@ -592,6 +594,14 @@ public:
 		       randomSalt == toCompare->getSalt() && baseCipherLen == toCompare->getBaseCipherLen() &&
 		       memcmp(cipher.get(), toCompare->rawCipher(), AES_256_KEY_LENGTH) == 0 &&
 		       memcmp(baseCipher.get(), toCompare->rawBaseCipher(), baseCipherLen) == 0;
+	}
+	EncryptCipherNonce getAndUpdateNonce(EncryptCipherNonce max_value);
+	EncryptCipherNonce getNonce() { return nonce; }
+	// The nonce should not be set outside of testing
+	void setNonce(EncryptCipherNonce other) {
+		if (g_network->isSimulated()) {
+			this->nonce = other;
+		}
 	}
 
 	bool isCipherDetailMatches(const BlobCipherDetails& details) {

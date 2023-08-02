@@ -395,16 +395,19 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestManifestCipherKeys(Reference<Asy
 
 	auto domainKeyItr = domainKeyMap.find(FDB_DEFAULT_ENCRYPT_DOMAIN_ID);
 	ASSERT(domainKeyItr != domainKeyMap.end());
-	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(domainKeyItr->second, *arena);
+	state Reference<BlobCipherKey> textCipherKey = domainKeyItr->second;
+	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(textCipherKey, *arena);
 
 	TextAndHeaderCipherKeys cipherKeys = wait(
 	    GetEncryptCipherKeys<ServerDBInfo>::getLatestSystemEncryptCipherKeys(dbInfo, BlobCipherMetrics::BLOB_GRANULE));
 	ASSERT(cipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(cipherKeys.cipherHeaderKey, *arena);
 
-	int ivLength = getIVLengthFromEncryptMode(encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE));
+	EncryptCipherMode encryptMode = encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE);
+	int ivLength = getIVLengthFromEncryptMode(encryptMode);
 	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), ivLength);
+	EncryptBlobCipher::generateIV(
+	    encryptMode, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
 
 	return cipherKeysCtx;
 }

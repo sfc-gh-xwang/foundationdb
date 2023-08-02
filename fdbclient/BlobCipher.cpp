@@ -473,7 +473,15 @@ BlobCipherKey::BlobCipherKey(const EncryptCipherDomainId& domainId,
 	if (g_network->isSimulated()) {
 		salt = deterministicRandom()->randomUInt64();
 	} else {
+		// TODO (Nim): Use RAND_BYTES (crypto-secure)
 		salt = nondeterministicRandom()->randomUInt64();
+	}
+
+	if (g_network->isSimulated()) {
+		nonce = deterministicRandom()->randomUInt64();
+	} else {
+		// TODO (Nim): Use RAND_BYTES (crypto-secure)
+		nonce = nondeterministicRandom()->randomUInt64();
 	}
 
 	// Support two type of CipherKeys: 'revocable' & 'non-revocable' ciphers.
@@ -492,7 +500,27 @@ BlobCipherKey::BlobCipherKey(const EncryptCipherDomainId& domainId,
                              const EncryptCipherRandomSalt& salt,
                              const int64_t refreshAt,
                              const int64_t expireAt) {
+	if (g_network->isSimulated()) {
+		nonce = deterministicRandom()->randomUInt64();
+	} else {
+		// TODO (Nim): Use RAND_BYTES (crypto-secure)
+		nonce = nondeterministicRandom()->randomUInt64();
+	}
 	initKey(domainId, baseCiphId, baseCiph, baseCiphLen, baseCiphKCV, salt, refreshAt, expireAt);
+}
+
+EncryptCipherNonce BlobCipherKey::getAndUpdateNonce(EncryptCipherNonce max_value) {
+	if (nonce >= max_value) {
+		TraceEvent(SevWarnAlways, "NonceOverflow");
+		if (nonce > max_value) {
+			nonce = 0;
+			return nonce++;
+		}
+		EncryptCipherNonce prevNonce = nonce;
+		nonce = 0;
+		return prevNonce;
+	}
+	return nonce++;
 }
 
 void BlobCipherKey::initKey(const EncryptCipherDomainId& domainId,
@@ -1116,6 +1144,30 @@ EncryptCipherMode getEncryptMode() {
 		return EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR;
 	} else if (std::is_same_v<Params, AesGcmParams>) {
 		return EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM;
+	} else {
+		throw unsupported_operation();
+	}
+}
+
+template <class Params>
+EncryptCipherNonce getMaxNonceSize() {
+	if (std::is_same_v<Params, AesCtrWithHmacParams> || std::is_same_v<Params, AesCtrWithCmacParams> ||
+	    std::is_same_v<Params, AesCtrNoAuth>) {
+		return std::numeric_limits<uint128_t>::max();
+	} else if (std::is_same_v<Params, AesGcmParams>) {
+		return std::numeric_limits<uint96_t>::max();
+	} else {
+		throw unsupported_operation();
+	}
+}
+
+template <class Params>
+EncryptAuthTokenMode getAuthTokenMode() {
+	if (std::is_same_v<Params, AesCtrWithHmacParams> || std::is_same_v<Params, AesCtrWithCmacParams> ||
+	    std::is_same_v<Params, AesGcmParams>) {
+		return EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE;
+	} else if (std::is_same_v<Params, AesCtrNoAuth>) {
+		return EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
 	} else {
 		throw unsupported_operation();
 	}
@@ -2046,10 +2098,61 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthMode(const int minDoma
 	TraceEvent("TestConfigurableEncryptionInvalidEncryptKeySingleAuthTokenEnd").detail("Mode", authAlgoStr);
 }
 
+void testNonceGeneration(const int minDomainId) {
+	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
+	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
+	EncryptCipherNonce nonce = cipherKey->getNonce();
+	EncryptCipherNonce maxNonceValue = nonce + 2;
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce + 1);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce + 2);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 0);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 1);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 2);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 3);
+	maxNonceValue = 2;
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 0);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 1);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 2);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 0);
+}
+
+template <class Params>
+void testNonceIVGeneration(const int minDomainId) {
+	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
+	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
+	Reference<BlobCipherKey> headerCipherKey = cipherKeyCache->getLatestCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
+	const EncryptAuthTokenAlgo authAlgo = getAuthTokenAlgo<Params>();
+	const EncryptCipherMode encryptMode = getEncryptMode<Params>();
+	const EncryptAuthTokenMode authTokenMode = getAuthTokenMode<Params>();
+	const EncryptCipherNonce maxNonceSize = getMaxNonceSize<Params>();
+
+	for (int i = 0; i < 10; i++) {
+		EncryptCipherNonce nonce = cipherKey->getNonce();
+		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
+		    cipherKey, headerCipherKey, authTokenMode, authAlgo, encryptMode, BlobCipherMetrics::TEST);
+		StringRef ivRef = encryptor->getIVRef();
+		ASSERT_EQ(ivRef.size(), Params::ivSize);
+		EncryptCipherNonce encryptorNonce;
+		memcpy(&encryptorNonce, ivRef.begin(), ivRef.size());
+		ASSERT(encryptorNonce == nonce);
+		ASSERT(nonce + 1 == cipherKey->getNonce());
+	}
+
+	cipherKey->setNonce(maxNonceSize + 1);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
+	    cipherKey, headerCipherKey, authTokenMode, authAlgo, encryptMode, BlobCipherMetrics::TEST);
+	StringRef ivRef = encryptor->getIVRef();
+	ASSERT_EQ(ivRef.size(), Params::ivSize);
+	EncryptCipherNonce encryptorNonce;
+	memcpy(&encryptorNonce, ivRef.begin(), ivRef.size());
+	ASSERT(encryptorNonce == 0);
+}
+
 TEST_CASE("/blobCipher") {
 	DomainKeyMap domainKeyMap;
 	const EncryptCipherDomainId minDomainId = 1;
-	const EncryptCipherDomainId maxDomainId = deterministicRandom()->randomInt(minDomainId, minDomainId + 10) + 5;
+	const EncryptCipherDomainId maxDomainId = deterministicRandom()->randomInt(minDomainId + 1, minDomainId + 10) + 5;
 	const EncryptCipherBaseKeyId minBaseCipherKeyId = 100;
 	const EncryptCipherBaseKeyId maxBaseCipherKeyId =
 	    deterministicRandom()->randomInt(minBaseCipherKeyId, minBaseCipherKeyId + 50) + 15;
@@ -2088,6 +2191,12 @@ TEST_CASE("/blobCipher") {
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthMode<AesCtrWithHmacParams>(minDomainId);
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthMode<AesCtrWithCmacParams>(minDomainId);
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthMode<AesGcmParams>(minDomainId);
+
+	testNonceGeneration(minDomainId);
+
+	testNonceIVGeneration<AesCtrWithHmacParams>(minDomainId + 1);
+	testNonceIVGeneration<AesCtrWithCmacParams>(minDomainId + 1);
+	testNonceIVGeneration<AesGcmParams>(minDomainId + 1);
 
 	testKeyCacheCleanup(minDomainId, maxDomainId);
 

@@ -19,6 +19,8 @@
  */
 
 #include "fdbclient/EncryptBlobCipher.h"
+#include "flow/EncryptUtils.h"
+#include "flow/network.h"
 
 // EncryptBlobCipher class methods
 EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
@@ -57,17 +59,28 @@ EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
     authTokenMode(mode),
     authTokenAlgo(algo),
     encryptMode(encryptCipherMode) {
-	int ivLen = 0;
-	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
-		ivLen = AES_256_CTR_IV_LENGTH;
-	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
-		ivLen = AES_256_GCM_IV_LENGTH;
+	int ivLength = getIVLengthFromEncryptMode(encryptMode);
+	this->ivRef = Standalone<StringRef>(makeString(ivLength, this->ivRef.arena()));
+	generateIV(encryptMode, textCipherKey, mutateString(this->ivRef.contents()), ivLength);
+}
+
+void EncryptBlobCipher::generateIV(EncryptCipherMode encryptMode,
+                                   Reference<BlobCipherKey> textCipherKey,
+                                   uint8_t* iv,
+                                   int ivLen) {
+	EncryptCipherNonce maxValue = 0;
+	if (encryptMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
+		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
+		maxValue = std::numeric_limits<uint128_t>::max();
+	} else if (encryptMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
+		ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
+		maxValue = std::numeric_limits<uint96_t>::max();
 	} else {
 		throw not_implemented();
 	}
-	uint8_t iv[ivLen];
-	deterministicRandom()->randomBytes(iv, ivLen);
-	this->ivRef = Standalone<StringRef>(StringRef(iv, ivLen));
+	EncryptCipherNonce nonce = textCipherKey->getAndUpdateNonce(maxValue);
+	ASSERT(nonce <= maxValue);
+	memcpy(iv, &nonce, ivLen);
 }
 
 EncryptBlobCipher::~EncryptBlobCipher() {

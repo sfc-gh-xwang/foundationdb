@@ -365,7 +365,8 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 
 	auto domainKeyItr = domainKeyMap.find(domainId);
 	ASSERT(domainKeyItr != domainKeyMap.end());
-	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(domainKeyItr->second, *arena);
+	state Reference<BlobCipherKey> textCipherKey = domainKeyItr->second;
+	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(textCipherKey, *arena);
 
 	TextAndHeaderCipherKeys systemCipherKeys =
 	    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestSystemEncryptCipherKeys(bwData->dbInfo,
@@ -373,9 +374,11 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 	ASSERT(systemCipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(systemCipherKeys.cipherHeaderKey, *arena);
 
-	int ivLength = getIVLengthFromEncryptMode(encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE));
+	EncryptCipherMode encryptMode = encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE);
+	int ivLength = getIVLengthFromEncryptMode(encryptMode);
 	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), ivLength);
+	EncryptBlobCipher::generateIV(
+	    encryptMode, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
 		TraceEvent(SevDebug, "GetLatestGranuleCipherKey")

@@ -41,7 +41,6 @@ constexpr const int AUTH_TOKEN_MAX_SIZE = AUTH_TOKEN_HMAC_SHA_SIZE;
 using EncryptCipherDomainId = int64_t;
 using EncryptCipherBaseKeyId = uint64_t;
 using EncryptCipherRandomSalt = uint64_t;
-using EncryptCipherNonce = uint64_t;
 using EncryptCipherKeyCheckValue = uint32_t;
 
 using EncryptCipherDomainIdVec = std::vector<EncryptCipherDomainId>;
