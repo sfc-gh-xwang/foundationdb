@@ -533,6 +533,22 @@ ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
 			try {
 				SystemDBWriteLockedNow(db)->setOptions(tr);
 
+				// check tenant mismatch first to not leak any info
+				if (tenantIdToVerify.present()) {
+					Optional<BulkLoadInfo> currentInfo = wait(BulkLoadMetadata::infoMap().get(tr, id));
+					if (currentInfo.present()) {
+						if (currentInfo.get().tenantId != tenantIdToVerify.get()) {
+							TraceEvent("WaitBulkLoadStateAtLeastTenantMismatch")
+							    .detail("BulkLoadID", id)
+							    .detail("InfoTenant", currentInfo.get().tenantId)
+							    .detail("UserTenant", tenantIdToVerify.get());
+							throw bulk_load_tenant_mismatch();
+						}
+						tenantIdToVerify = {};
+					}
+					// otherwise we'll fail in next if block anyway
+				}
+
 				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, id));
 
 				if (!status.present()) {
@@ -543,23 +559,12 @@ ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
 					throw bulk_load_not_found();
 				}
 				state BulkLoadStatus::State st = status.get().state;
+
 				if (st == BulkLoadStatus::State::ABORTED_COMPLETE || st == BulkLoadStatus::State::ABORTED) {
 					if (desiredState != BulkLoadStatus::State::ABORTED &&
 					    desiredState != BulkLoadStatus::State::ABORTED_COMPLETE) {
 						throw bulk_load_aborted();
 					}
-				}
-
-				if (tenantIdToVerify.present()) {
-					Optional<BulkLoadInfo> currentInfo = wait(BulkLoadMetadata::infoMap().get(tr, id));
-					if (currentInfo.get().tenantId != tenantIdToVerify.get()) {
-						TraceEvent("WaitBulkLoadStateAtLeastTenantMismatch")
-						    .detail("BulkLoadID", id)
-						    .detail("InfoTenant", currentInfo.get().tenantId)
-						    .detail("UserTenant", tenantIdToVerify.get());
-						throw bulk_load_tenant_mismatch();
-					}
-					tenantIdToVerify = {};
 				}
 
 				if (st >= desiredState) {
