@@ -28,10 +28,23 @@ tmpDstClusterFileName = "tmp_dst_fdb.cluster"
 
 @fdb.transactional
 def readSrcRange(tr, begin, end, throttlingTag):
-    tr.options.set_lock_aware()
-    tr.options.set_auto_throttle_tag(throttlingTag)
-    readRange = tr.get_range(begin, end, 0, False, StreamingMode.want_all)
-    return list(readRange)
+    result = []
+    beginKey = begin
+    while True:
+        try:
+            tr.options.set_lock_aware()
+            tr.options.set_auto_throttle_tag(throttlingTag)
+            readRange = tr.get_range(beginKey, end, 0, False, StreamingMode.want_all)
+            for kv in readRange:
+                beginKey = kv.key
+                result.append(kv)
+            break
+        except fdb.FDBError as e:
+            # transaction_too_old can just be retried
+            if e.code != 1007:
+                raise
+            tr.reset()
+    return result
 
 
 # Returns the index of the last kv pair NOT set in this transaction
@@ -93,12 +106,15 @@ def copyData(
                 )
             )
             break
-        except Exception as e:
+        except fdb.FDBError as e:
             print(
                 "Exception while reading from {} for range {} - {}. Error: {}".format(
                     srcTenantName, begin, end, str(e)
                 )
             )
+            # transaction_too_old can just be retried
+            if e.code != 1007:
+                raise
 
     totalKeys = len(readRange)
 
@@ -110,12 +126,15 @@ def copyData(
                 # print("Wrote destination range: {} - {}".format(readRange[0], readRange[cutoffIndex - 1]))
                 readRange = readRange[cutoffIndex:]
                 break
-            except Exception as e:
+            except fdb.FDBError as e:
                 print(
                     "Exception while writing to {} for range {} - {}. Error: {}".format(
                         dstTenantName, begin, end, str(e)
                     )
                 )
+                # transaction_too_old can just be retried
+                if e.code != 1007:
+                    raise
     print(
         "Wrote full destination range: {} - {} for tenant {}. Total Keys: {}. Time Elapsed: {}".format(
             begin,
