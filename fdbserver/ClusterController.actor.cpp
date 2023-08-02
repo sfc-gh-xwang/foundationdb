@@ -515,9 +515,6 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	bool csHealthy = isHealthySingleton<ConsistencyScanSingleton>(
 	    self, newCSWorker, csSingleton, bestFitnessForCS, self->recruitingConsistencyScanID);
 
-	bool tbHealthy = isHealthySingleton<TenantBalancerSingleton>(
-	    self, newTBWorker, tbSingleton, bestFitnessForTB, self->recruitingTenantBalancerID);
-
 	bool bmHealthy = true;
 	bool mgHealthy = true;
 	if (self->db.blobGranulesEnabled.get()) {
@@ -534,6 +531,13 @@ void checkBetterSingletons(ClusterControllerData* self) {
 		ekpHealthy = isHealthySingleton<EncryptKeyProxySingleton>(
 		    self, newEKPWorker, ekpSingleton, bestFitnessForEKP, self->recruitingEncryptKeyProxyID);
 	}
+
+	bool tbHealthy = true;
+	if (SERVER_KNOBS->CC_ENABLE_TENANT_BALANCER) {
+		tbHealthy = isHealthySingleton<TenantBalancerSingleton>(
+		    self, newTBWorker, tbSingleton, bestFitnessForTB, self->recruitingTenantBalancerID);
+	}
+
 	// if any of the singletons are unhealthy (rerecruited or not stable), then do not
 	// consider any further re-recruitments
 	if (!(rkHealthy && ddHealthy && bmHealthy && ekpHealthy && csHealthy && mgHealthy && tbHealthy)) {
