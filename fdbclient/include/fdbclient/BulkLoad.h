@@ -53,6 +53,30 @@ public:
 	void serialize(Ar& ar) {
 		serializer(ar, state);
 	}
+
+	std::string toStateString() const {
+		switch (state) {
+		case State::STARTED:
+			return "Started";
+		case State::STAGING:
+			return "Staging";
+		case State::STAGING_BLOB_DONE:
+			return "Staging blob done";
+		case State::STAGING_DDPREPARED:
+			return "Staging Prepared";
+		case State::DONE:
+			return "Done";
+		case State::ABORTED:
+			return "Aborted";
+		case State::ABORTED_COMPLETE:
+			return "Aborted Complete";
+		case State::CLEANUP:
+			return "Cleanup";
+		default:
+			ASSERT(true);
+			return "Unknown";
+		}
+	}
 };
 
 struct BulkLoadInfo {

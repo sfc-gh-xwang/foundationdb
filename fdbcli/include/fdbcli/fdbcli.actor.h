@@ -247,8 +247,11 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 ACTOR Future<bool> blobKeyCommandActor(Database localDb,
                                        Optional<TenantMapEntry> tenantEntry,
                                        std::vector<StringRef> tokens);
-// blobrestore command
-ACTOR Future<bool> blobRestoreCommandActor(Database localDb, std::vector<StringRef> tokens);
+// bulkload command
+ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
+                                        Optional<TenantMapEntry> tenantEntry,
+                                        std::vector<StringRef> tokens);
+
 // hotrange command
 ACTOR Future<bool> hotRangeCommandActor(Database localDb,
                                         Reference<IDatabase> db,
