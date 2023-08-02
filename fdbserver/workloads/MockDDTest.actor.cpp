@@ -28,7 +28,7 @@ struct MockDDTestWorkloadImpl {
 	                                          int keySpaceMax) {
 		loop {
 			double kDouble = keySpaceMin + deterministicRandom()->random01() * (keySpaceMax - keySpaceMin);
-			auto key = doubleToTestKey(kDouble);
+			Key key = doubleToTestKey(kDouble);
 			self->sharedMgs->get(key);
 			self->totalReadsMetric++;
 			wait(delayJittered(delaySeconds));

@@ -249,13 +249,14 @@ struct Watch : public ReferenceCounted<Watch>, NonCopyable {
 class Tenant : public ReferenceCounted<Tenant>, public FastAllocated<Tenant>, NonCopyable {
 public:
 	Tenant(Database cx, TenantName name);
-	explicit Tenant(int64_t id);
-	Tenant(Future<TenantLookupInfo> tenantLookupFuture, Optional<TenantName> name);
+	explicit Tenant(Database cx, int64_t id);
+	Tenant(Database cx, Future<TenantLookupInfo> tenantLookupFuture, Optional<TenantName> name);
 
 	static Tenant* allocateOnForeignThread() { return (Tenant*)Tenant::operator new(sizeof(Tenant)); }
 
 	Future<Void> ready() const { return success(lookupFuture); }
 	int64_t id() const;
+	Database database() const;
 	Optional<TenantGroupName> tenantGroup() const;
 	Future<TenantLookupInfo> getLookupFuture() const;
 	KeyRef prefix() const;
@@ -266,6 +267,7 @@ public:
 private:
 	mutable int64_t bigEndianId = -1;
 	Future<TenantLookupInfo> lookupFuture;
+	Future<Database> dbFuture;
 };
 
 template <>
@@ -375,9 +377,12 @@ private:
 
 class Transaction : NonCopyable {
 public:
-	explicit Transaction(Database const& cx, Optional<Reference<Tenant>> const& tenant = Optional<Reference<Tenant>>());
+	explicit Transaction(Database const& cx);
+	explicit Transaction(Reference<Tenant> const& tenant);
+	explicit Transaction(Transaction&& tr);
 	~Transaction();
 
+	static Transaction fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx);
 	void setVersion(Version v);
 	Future<Version> getReadVersion();
 	Future<Version> getRawReadVersion();

@@ -17,6 +17,107 @@
 
 #define BULKLOAD_DEBUG false
 
+// get bulk loader interfaces, and if unavailable, re-fetch them
+
+bool newLoadersDifferentAndValid(Reference<BulkLoaderInfo> oldLoaders, Reference<BulkLoaderInfo> newLoaders) {
+	if (!newLoaders.isValid() || newLoaders->size() == 0) {
+		return false;
+	}
+	if (!oldLoaders.isValid() || oldLoaders->size() == 0) {
+		return true;
+	}
+	if (oldLoaders->size() != newLoaders->size()) {
+		return true;
+	}
+	std::unordered_set<UID> oldLoaderIDs;
+	for (int i = 0; i < oldLoaders->size(); i++) {
+		// assert ids are unique while building the set
+		ASSERT(oldLoaderIDs.insert(oldLoaders->getId(i)).second);
+	}
+	for (int i = 0; i < newLoaders->size(); i++) {
+		if (!oldLoaderIDs.count(newLoaders->getId(i))) {
+			return true;
+		}
+	}
+	return false;
+}
+
+ACTOR template <class Request, bool P>
+Future<REPLY_TYPE(Request)> doBulkLoadRequest(Reference<DatabaseContext> db,
+                                              Optional<Reference<Tenant>> tenant,
+                                              Request req,
+                                              RequestStream<Request, P> BulkLoaderInterface::*channel) {
+	// fill out tenant info before requests
+	if (BULKLOAD_DEBUG) {
+		fmt::print("DoBulkLoadReq: Start\n");
+	}
+	if (tenant.present()) {
+		wait(tenant.get()->ready());
+		// FIXME: need to be able to get auth token from a tenant to construct TenantInfo! this won't work with authz
+		req.tenantInfo = TenantInfo(tenant.get()->id(), {});
+	}
+	// FIXME: cache the interfaces in db context
+
+	// Make a request with the set of bulk loaders we find, until all of the loaders we found become failed, because
+	// loadBalance assumes the set of interfaces is up to date. If all failed or we can't find any loaders, wait until
+	// we get a new valid set of loaders to restart the request to the new loaders
+	state Future<REPLY_TYPE(Request)> requestFuture = Never();
+	state Future<Void> retryFuture = Never();
+	state Reference<BulkLoaderInfo> bulkLoaders;
+	loop {
+		try {
+			Reference<BulkLoaderInfo> newLoaders = wait(db->getBulkLoaders());
+
+			if (newLoadersDifferentAndValid(bulkLoaders, newLoaders)) {
+				if (BULKLOAD_DEBUG) {
+					fmt::print("DoBulkLoadReq: Found New Loaders ({0})\n", newLoaders->size());
+				}
+				bulkLoaders = newLoaders;
+
+				resetReply(req);
+				requestFuture = loadBalance(bulkLoaders,
+				                            channel,
+				                            req,
+				                            TaskPriority::DefaultPromiseEndpoint,
+				                            AtMostOnce::False,
+				                            db->enableLocalityLoadBalance ? &db->queueModel : nullptr);
+
+				std::vector<Future<Void>> waitForFailed;
+				for (int i = 0; i < bulkLoaders->size(); i++) {
+					waitForFailed.push_back(IFailureMonitor::failureMonitor().onStateEqual(
+					    bulkLoaders->get(i, channel).getEndpoint(), FailureStatus(true)));
+				};
+				retryFuture = waitForAll(waitForFailed);
+			} else {
+				// don't set request future in case they all failed, but it was just temporary because of a network
+				// issue instead of actually all dead, so the current set of loaders is still the correct one
+				bool alreadyHadLoaders = bulkLoaders.isValid() && bulkLoaders->size() > 0;
+				CODE_PROBE(alreadyHadLoaders, "no change in bulk loader interfaces");
+				CODE_PROBE(!alreadyHadLoaders, "no valid bulk loader interfaces");
+				retryFuture = delay(0);
+			}
+			choose {
+				when(REPLY_TYPE(Request) rep = wait(requestFuture)) {
+					if (BULKLOAD_DEBUG) {
+						fmt::print("DoBulkLoadReq: Complete\n");
+					}
+					// FIXME: could buggify randomly retrying the same request because all of these operations need to
+					// be idempotent necessarily
+					return rep;
+				}
+				when(wait(retryFuture)) {
+					CODE_PROBE(bulkLoaders.isValid() && bulkLoaders->size() > 0, "all bulk loaders failed");
+				}
+			}
+			wait(delayJittered(1.0));
+		} catch (Error& e) {
+			// FIXME: any errors to retry?
+			TraceEvent("BulkLoadRequestError").errorUnsuppressed(e);
+			throw e;
+		}
+	}
+}
+
 BulkLoadID newBulkLoadID() {
 	// for now just generate UID and convert to string - we assume no 128-bit UID collisions
 	UID randomUID = deterministicRandom()->randomUniqueID();
@@ -187,6 +288,12 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					    tr, physicalRange.begin, physicalRange.end, ""_sr, true));
 					BulkLoadMetadata::infoMap().erase(tr, id);
 					BulkLoadMetadata::versionMap().erase(tr, id);
+				} else if (desiredState == BulkLoadStatus::State::STAGING_BLOB_DONE) {
+					// clean up pointers once granules actually staged
+					std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
+					    BulkLoadMetadata::allFilePointersForLoadRange(id);
+					BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
+					BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
 				}
 			}
 
@@ -371,7 +478,24 @@ ACTOR Future<Void> cleanupAbortedBulkLoadActor(Reference<DatabaseContext> db, Bu
 		return Void();
 	}
 
+	state Database cx(db);
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
 	// TODO: implement actual cleanup! Must be idempotent to handle retries/multiple concurrent cleanup callers
+	// remaining: actually delete blob files, purge hybrid data, clear range, unblobbify/clean up purged range
+	loop {
+		try {
+			// clean up file pointers if deleted in staging phase
+			SystemDBWriteLockedNow(db)->setOptions(tr);
+			auto idRange = BulkLoadMetadata::allFilePointersForLoadRange(id);
+			BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
+			BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
+
+			wait(tr->commit());
+			break;
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
 
 	// change bulk load state to ABORTED_COMPLETE
 	wait(updateBulkLoadStateActor(db, id, BulkLoadStatus::State::ABORTED_COMPLETE));
@@ -404,3 +528,102 @@ ACTOR Future<Version> getBulkLoadVersionActor(Reference<DatabaseContext> db, Bul
 Future<Version> DatabaseContext::getBulkLoadVersion(BulkLoadID id) {
 	return getBulkLoadVersionActor(Reference<DatabaseContext>::addRef(this), id);
 }
+
+ACTOR Future<Standalone<VectorRef<BulkLoadFileToWriteRef>>> getBulkLoadFilesToWriteActor(
+    Reference<DatabaseContext> db,
+    BulkLoadID id,
+    int count,
+    Optional<Reference<Tenant>> tenant) {
+	BulkLoadFilesToWriteRequest req;
+	req.arena.dependsOn(id.arena());
+	req.id = id;
+	req.count = count;
+	BulkLoadFilesToWriteReply reply =
+	    wait(doBulkLoadRequest(db, tenant, req, &BulkLoaderInterface::filesToWriteRequest));
+	return Standalone<VectorRef<BulkLoadFileToWriteRef>>(reply.filePointers, reply.arena);
+}
+
+Future<Standalone<VectorRef<BulkLoadFileToWriteRef>>>
+DatabaseContext::getBulkLoadFilesToWrite(BulkLoadID id, int count, Optional<Reference<Tenant>> tenant) {
+	if (count <= 0) {
+		throw unsupported_operation();
+	}
+	if (count >= CLIENT_KNOBS->BULK_LOAD_FILE_POINTER_TOO_MANY) {
+		TraceEvent(SevWarn, "GetBulkLoadFilesToWriteLimitExceeded")
+		    .detail("Count", count)
+		    .detail("Limit", CLIENT_KNOBS->BULK_LOAD_FILE_POINTER_TOO_MANY);
+		throw unsupported_operation();
+	}
+	if (BULKLOAD_DEBUG) {
+		fmt::print("GetBulkLoadFilesToWrite {0}: {1}\n", id.printable(), count);
+	}
+	return getBulkLoadFilesToWriteActor(Reference<DatabaseContext>::addRef(this), id, count, tenant);
+}
+
+Future<Void> DatabaseContext::markBulkLoadFilesWritten(BulkLoadID id,
+                                                       Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
+                                                       Optional<Reference<Tenant>> tenant) {
+	if (files.empty()) {
+		return Void();
+	}
+	if (files.size() >= CLIENT_KNOBS->BULK_LOAD_FILE_POINTER_TOO_MANY) {
+		TraceEvent(SevWarn, "MarkBulkLoadFilesWrittenLimitExceeded")
+		    .detail("Count", files.size())
+		    .detail("Limit", CLIENT_KNOBS->BULK_LOAD_FILE_POINTER_TOO_MANY);
+		throw unsupported_operation();
+	}
+	BulkLoadFilesWrittenRequest req;
+	req.arena.dependsOn(files.arena());
+	req.arena.dependsOn(id.arena());
+	req.id = id;
+	req.filesWritten = files;
+	if (BULKLOAD_DEBUG) {
+		fmt::print("MarkBulkLoadFilesWritten {0}: {1}\n", id.printable(), files.size());
+	}
+	return doBulkLoadRequest(
+	    Reference<DatabaseContext>::addRef(this), tenant, req, &BulkLoaderInterface::filesWrittenRequest);
+}
+
+// TSS stubs required by load balance, but these requests are not to storage servers
+template <>
+bool TSS_doCompare(const BulkLoadFilesToWriteReply& src, const BulkLoadFilesToWriteReply& tss) {
+	ASSERT(false);
+	return true;
+}
+
+template <>
+const char* TSS_mismatchTraceName(const BulkLoadFilesToWriteRequest& req) {
+	ASSERT(false);
+	return "";
+}
+
+template <>
+void TSS_traceMismatch(TraceEvent& event,
+                       const BulkLoadFilesToWriteRequest& req,
+                       const BulkLoadFilesToWriteReply& src,
+                       const BulkLoadFilesToWriteReply& tss) {
+	ASSERT(false);
+}
+
+template <>
+void TSSMetrics::recordLatency(const BulkLoadFilesToWriteRequest& req, double ssLatency, double tssLatency) {}
+
+template <>
+bool TSS_doCompare(const Void& src, const Void& tss) {
+	ASSERT(false);
+	return true;
+}
+
+template <>
+const char* TSS_mismatchTraceName(const BulkLoadFilesWrittenRequest& req) {
+	ASSERT(false);
+	return "";
+}
+
+template <>
+void TSS_traceMismatch(TraceEvent& event, const BulkLoadFilesWrittenRequest& req, const Void& src, const Void& tss) {
+	ASSERT(false);
+}
+
+template <>
+void TSSMetrics::recordLatency(const BulkLoadFilesWrittenRequest& req, double ssLatency, double tssLatency) {}

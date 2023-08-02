@@ -57,7 +57,7 @@ struct MetricNameRef {
 	StringRef type, name, id;
 
 	std::string toString() const {
-		return format("(%s,%s,%s,%s)", type.toString().c_str(), name.toString().c_str(), id.toString().c_str());
+		return format("(%s,%s,%s)", type.toString().c_str(), name.toString().c_str(), id.toString().c_str());
 	}
 
 	int expectedSize() const { return type.expectedSize() + name.expectedSize(); }

@@ -195,7 +195,7 @@ struct BlobGranuleMergeBoundariesWorkload : TestWorkload {
 			wait(delay(1.0));
 		}
 
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(self->tenant, cx);
 		loop {
 			try {
 				Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(tupleRange, 1000000));

@@ -34,6 +34,7 @@
 #pragma once
 
 #include "fdbclient/BulkLoad.h"
+#include "fdbclient/BulkLoaderInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/KeyRangeMap.h"
@@ -82,6 +83,7 @@ struct LocationInfo : MultiInterface<ReferencedInterface<StorageServerInterface>
 
 using CommitProxyInfo = ModelInterface<CommitProxyInterface>;
 using GrvProxyInfo = ModelInterface<GrvProxyInterface>;
+using BulkLoaderInfo = MultiInterface<ReferencedInterface<BulkLoaderInterface>>;
 
 struct WatchParameters : public ReferenceCounted<WatchParameters> {
 	const TenantInfo tenant;
@@ -299,6 +301,7 @@ public:
 	bool isCurrentGrvProxy(UID proxyId) const;
 	Future<Void> onProxiesChanged() const;
 	Future<HealthMetrics> getHealthMetrics(bool detailed);
+	Future<Reference<BulkLoaderInfo>> getBulkLoaders();
 	// Get storage stats of a storage server from the cached healthy metrics if now() - lastUpdate < maxStaleness.
 	// Otherwise, ask GRVProxy for the up-to-date health metrics.
 	Future<Optional<HealthMetrics::StorageStats>> getStorageStats(const UID& id, double maxStaleness);
@@ -461,7 +464,12 @@ public:
 	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// bulk data writing apis
-	// TODO: the actual file pointer + serialization APIs
+	Future<Standalone<VectorRef<BulkLoadFileToWriteRef>>>
+	getBulkLoadFilesToWrite(BulkLoadID id, int count, Optional<Reference<Tenant>> tenant = {});
+
+	Future<Void> markBulkLoadFilesWritten(BulkLoadID id,
+	                                      Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
+	                                      Optional<Reference<Tenant>> tenant = {});
 
 	// private:
 	explicit DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
@@ -595,6 +603,8 @@ public:
 	Counter transactionKeyServerLocationRequestsCompleted;
 	Counter transactionBlobGranuleLocationRequests;
 	Counter transactionBlobGranuleLocationRequestsCompleted;
+	Counter transactionBulkLoaderRequests;
+	Counter transactionBulkLoaderRequestsCompleted;
 	Counter transactionStatusRequests;
 	Counter transactionTenantLookupRequests;
 	Counter transactionTenantLookupRequestsCompleted;

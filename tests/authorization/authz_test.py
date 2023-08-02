@@ -675,6 +675,105 @@ def test_bad_token(cluster, default_tenant, tenant_tr_gen, token_claim_1h):
             ), f"expected permission_denied for 'unknown key' case, got {e} instead"
 
 
+def test_malformed_tokens_trace(cluster, default_tenant, tenant_tr_gen, token_claim_1h):
+    # if token is not splittable by '.', server should not trace unless LOG_MALFORMED_TOKEN_STRINGS flow knob is enabled (false by default)
+    def check_token_parse_error_trace_unsplittable(
+        trace_entries, token_str_shouldnt_trace
+    ):
+        found = False
+        for _, ev_type, entry in trace_entries:
+            if (
+                ev_type == "InvalidToken"
+                and entry.attrib["Reason"] == "ParseError"
+                and entry.attrib["ErrorDetail"]
+                == "Token does not follow header.payload.signature structure"
+            ):
+                found = True
+            for key, value in entry.items():
+                if (
+                    key.find(token_str_shouldnt_trace) != -1
+                    or value.find(token_str_shouldnt_trace) != -1
+                ):
+                    pytest.fail(
+                        f'token string {token_str_shouldnt_trace} found in TraceEvent type {ev_type} at attribute "{key}"="{value}"'
+                    )
+        if not found:
+            pytest.fail(
+                "trace not found: InvalidToken trace with Reason=ParseError and ErrorDetail matching expected string"
+            )
+
+    unsplittable_bad_token = "token-which-cannot-be-split-by-period"
+    with ScopedTraceChecker(
+        cluster,
+        functools.partial(
+            check_token_parse_error_trace_unsplittable,
+            token_str_shouldnt_trace=unsplittable_bad_token,
+        ),
+    ):
+        tr = tenant_tr_gen(default_tenant)
+        tr.options.set_authorization_token(unsplittable_bad_token)
+        tr[b"abc"] = b"def"
+        try:
+            tr.commit().wait()
+            assert (
+                False
+            ), "expected permission denied for 'unsplittable_bad_token' case but write transaction went through"
+        except fdb.FDBError as e:
+            assert (
+                e.code == 6000
+            ), f"expected permission_denied for 'unsplittable_bad_token' case, got {e} instead"
+
+    # if token is splittable by '.' but had parse errors, the token should be traced up to but not including the second period
+    splittable_bad_token = "abcd.efghi.jklmn.opq"
+    token_fragment = "abcd.efghi"
+
+    def check_token_parse_error_trace_splittable(
+        trace_entries, whole_token_shouldnt_trace, token_fragment_should_trace
+    ):
+        found = False
+        for _, ev_type, entry in trace_entries:
+            if (
+                ev_type == "InvalidToken"
+                and entry.attrib["Reason"] == "ParseError"
+                and entry.attrib["SignInput"] == token_fragment_should_trace
+            ):
+                found = True
+            # check that the whole token is not logged
+            for key, value in entry.items():
+                if (
+                    key.find(whole_token_shouldnt_trace) != -1
+                    or value.find(whole_token_shouldnt_trace) != -1
+                ):
+                    pytest.fail(
+                        f'whole bad token {whole_token_shouldnt_trace} traced in event type {ev_type} at attribute "{key}"="{value}"'
+                    )
+        if not found:
+            pytest.fail(
+                f'trace not found: InvalidToken trace with Reason=ParseError and SignInput matching expected fragment "{token_fragment_should_trace}"'
+            )
+
+    with ScopedTraceChecker(
+        cluster,
+        functools.partial(
+            check_token_parse_error_trace_splittable,
+            whole_token_shouldnt_trace=splittable_bad_token,
+            token_fragment_should_trace=token_fragment,
+        ),
+    ):
+        tr = tenant_tr_gen(default_tenant)
+        tr.options.set_authorization_token(splittable_bad_token)
+        tr[b"abc"] = b"def"
+        try:
+            tr.commit().wait()
+            assert (
+                False
+            ), "expected permission denied for 'splittable_bad_token' case but write transaction went through"
+        except fdb.FDBError as e:
+            assert (
+                e.code == 6000
+            ), f"expected permission_denied for 'splittable_bad_token' case, got {e} instead"
+
+
 def test_authz_not_enabled_trace(build_dir):
     # spin up a cluster without authz and see it logs as expected
     def check_authz_disablement_traces(trace_entries):

@@ -10,12 +10,16 @@
 #define FDBCLIENT_BULKLOAD_H
 
 #include "flow/Arena.h"
+#include "flow/CompressionUtils.h"
 #include "fdbclient/FDBTypes.h"
+#include "fdbclient/BlobGranuleCommon.h"
 
 // This file (to distinguish from BulkLoadMetadata.h) only contains struct definitions and primitives for bulk loading.
 
 using BulkLoadID = Standalone<StringRef>;
 using BulkLoadIDRef = StringRef;
+using BulkLoadFileID = Standalone<StringRef>;
+using BulkLoadFileIDRef = StringRef;
 
 // Generally ordered such that valid state transitions only increase the number
 // leaving space for future states with int gaps
@@ -66,6 +70,52 @@ struct BulkLoadInfo {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, tenantId, keyRange);
+	}
+};
+
+enum class BulkLoadFileType : uint8_t { SNAPSHOT = 0, DELTA = 1 };
+// file format (only row_v1 currently supported)
+enum class BulkLoadFileFormat : uint8_t { ROW_V1 = 0, COLUMNAR_V1 = 1 };
+
+struct BulkLoadFileToWriteRef {
+	constexpr static FileIdentifier file_identifier = 5109804;
+	// file id - pass back to fdb along with file metadata when file is successfully written to mark as registered
+	BulkLoadFileIDRef fileId;
+
+	// location to write file to
+	StringRef filename;
+
+	// target size in bytes of file to be written
+	int64_t targetSize;
+
+	// The following are just config pass-throughs to the fdb client library on how the file should be written
+	// Encryption keys to write file with (if enabled)
+	Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
+
+	BulkLoadFileType type;
+	BulkLoadFileFormat format;
+	// only matters for ROW_V1 format
+	CompressionFilter compression;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, fileId, filename, targetSize, cipherKeysCtx, type, format, compression);
+	}
+};
+
+struct BulkLoadWrittenFileRef {
+	constexpr static FileIdentifier file_identifier = 3671325;
+	// id to register as written
+	BulkLoadFileIDRef fileId;
+
+	// post-write metadata about file
+	KeyRangeRef keyRange;
+	int64_t logicalSize;
+	int64_t physicalSize;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, fileId, keyRange, logicalSize, physicalSize);
 	}
 };
 

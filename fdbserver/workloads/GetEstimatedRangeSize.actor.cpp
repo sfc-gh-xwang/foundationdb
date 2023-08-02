@@ -20,6 +20,7 @@
 
 #include <cstring>
 
+#include "fdbclient/KeyRangeMap.h"
 #include "fdbrpc/TenantName.h"
 #include "fdbrpc/simulator.h"
 #include "fdbclient/FDBTypes.h"
@@ -105,7 +106,7 @@ struct GetEstimatedRangeSizeWorkload : TestWorkload {
 	}
 
 	ACTOR static Future<int64_t> getSize(GetEstimatedRangeSizeWorkload* self, Database cx) {
-		state ReadYourWritesTransaction tr(cx, self->tenant);
+		state ReadYourWritesTransaction tr = ReadYourWritesTransaction::fromTenantOrDefault(self->tenant, cx);
 		state double totalDelay = 0.0;
 		TraceEvent(SevDebug, "GetSizeStart").detail("Tenant", self->tenant);
 

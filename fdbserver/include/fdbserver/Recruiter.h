@@ -101,7 +101,8 @@ public:
 	    DatabaseConfiguration const& conf,
 	    std::map<Optional<Standalone<StringRef>>, int>& id_used,
 	    std::map<Optional<Standalone<StringRef>>, int> const& preferredSharing = {},
-	    bool checkStable = false);
+	    bool checkStable = false,
+	    std::map<Standalone<StringRef>, int> const& machineCount = {});
 
 	std::vector<WorkerDetails> getWorkersForRoleInDatacenter(
 	    ClusterControllerData const* clusterControllerData,
@@ -113,6 +114,17 @@ public:
 	    std::map<Optional<Standalone<StringRef>>, int> const& preferredSharing = {},
 	    Optional<WorkerFitnessInfo> const& minWorker = Optional<WorkerFitnessInfo>(),
 	    bool checkStable = false);
+
+	// Pass the sequencer to prefer recruitment of workers to colocate with it.
+	std::vector<WorkerDetails> getColocatedWorkersForRoleInDatacenter(
+	    ClusterControllerData const* clusterControllerData,
+	    Optional<Standalone<StringRef>> const& dcId,
+	    ProcessClass::ClusterRole role,
+	    int amount,
+	    DatabaseConfiguration const& conf,
+	    std::map<Optional<Standalone<StringRef>>, int>& id_used,
+	    bool checkStable = false,
+	    Optional<WorkerDetails> const& sequencer = Optional<WorkerDetails>());
 
 	// Selects the best method for TLog recruitment based on the specified policy
 	std::vector<WorkerDetails> getWorkersForTLogs(ClusterControllerData const* clusterControllerData,

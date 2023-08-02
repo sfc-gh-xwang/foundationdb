@@ -7,13 +7,33 @@
 #define COMBIFY_TEST_HELPERS_HPP
 
 #include <concepts>
+#include <iterator>
+#include <map>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <type_traits>
 
+#include <execinfo.h>
+
 #include <fmt/format.h>
 #include <fdb_api.hpp>
+
+#ifdef ASSERT
+#error "ASSERT macro clashes with existing definition"
+#else
+#define ASSERT(condition, ...)                                                                                         \
+	do {                                                                                                               \
+		if (!(condition)) {                                                                                            \
+			fmt::memory_buffer buf;                                                                                    \
+			fmt::format_to(                                                                                            \
+			    std::back_inserter(buf), "Assertion '" #condition "' failed at " __FILE__ ":{} ", __LINE__);           \
+			fmt::format_to(std::back_inserter(buf), "" __VA_ARGS__);                                                   \
+			throw std::runtime_error(std::string(buf.data(), buf.size()));                                             \
+		}                                                                                                              \
+	} while (0)
+#endif /*ASSERT*/
 
 namespace combify {
 
@@ -46,23 +66,33 @@ concept TransactionLambda = requires(Func&& fn) {
 // Function shall take a transaction object as parameter and return some future.
 template <TransactionLambda Fn>
 auto runToCompletion(fdb::Transaction tr, Fn&& fn, string_view what = "") {
+	std::map<fdb::Error, int> stats;
+	// make sure error stats print before leaving scope
+	auto errorPrintGuard = ScopeExit([&stats, &what]() {
+		if (!stats.empty()) {
+			fmt::print("runToCompletion({}) errors:", what);
+			for (const auto& [err, times] : stats) {
+				fmt::print(" ('{}', {})", err.what(), times);
+			}
+			fmt::print("\n");
+		}
+	});
+	auto throwError = [&what](std::string_view format, const char* whichError) {
+		auto buf = fmt::memory_buffer{};
+		fmt::format_to(std::back_inserter(buf), "runToCompletion({}): ", what);
+		fmt::format_to(std::back_inserter(buf), fmt::runtime(format), whichError);
+		throw std::runtime_error(std::string(buf.data(), buf.size()));
+	};
 	while (true) {
 		auto f = fn(tr);
 		if (auto err = f.blockUntilReady()) {
-			throw std::runtime_error(fmt::format("blockUntilReady() RETURNED '{}' ERROR{}'",
-			                                     err.what(),
-			                                     what.empty() ? string() : fmt::format(" DURING {}", what)));
+			throwError("blockUntilReady() returned '{}'", err.what());
 		}
 		if (auto err = f.error()) {
-			fmt::print("[DEBUG] {} TRANSACTION RETURNED {}ERROR {}\n",
-			           what.empty() ? "ANONYMOUS" : what,
-			           err.retryable() ? "RETRYABLE " : "",
-			           err.what());
+			stats[err] += 1;
 			auto errf = tr.onError(err);
 			if (auto berr = errf.blockUntilReady()) {
-				throw std::runtime_error(fmt::format("blockUntilReady() ON ON_ERROR() FUTURE RETURNED '{}' ERROR{}'",
-				                                     berr.what(),
-				                                     what.empty() ? string() : fmt::format(" DURING {}", what)));
+				throwError("blockUntilReady() on onError() future returned '{}'", berr.what());
 			}
 			if (auto oerr = errf.error()) {
 				// Cannot go on. Throw.
@@ -79,7 +109,7 @@ inline auto setupAndStartNetworkGuarded() {
 	fdb::network::setup();
 	auto thread = std::thread([]() {
 		if (auto err = fdb::network::run()) {
-			throw std::runtime_error(fmt::format("SETUP NETWORK THREAD RAN INTO ERROR: {}", err.what()));
+			throw std::runtime_error(fmt::format("fdb::network::run(): {}", err.what()));
 		}
 	});
 	return ScopeExit([thread = std::move(thread)]() mutable {

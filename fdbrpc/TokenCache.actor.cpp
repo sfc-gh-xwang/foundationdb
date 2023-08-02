@@ -211,7 +211,11 @@ bool TokenCacheImpl::validateAndAdd(double currentTime, StringRef token, Network
 		te.detail("Reason", "ParseError");
 		te.detail("ErrorDetail", err.get());
 		if (signInput.empty()) { // unrecognizable token structure
-			te.detail("Token", token.toString());
+			if (FLOW_KNOBS->LOG_MALFORMED_TOKEN_STRINGS) {
+				te.detail("Token", token.toString());
+			} else {
+				te.detail("Token", "[not_a_valid_jwt_structure]");
+			}
 		} else { // trace with signature part taken out
 			te.detail("SignInput", signInput.toString());
 		}
