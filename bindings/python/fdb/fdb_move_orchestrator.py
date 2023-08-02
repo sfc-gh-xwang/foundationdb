@@ -26,8 +26,8 @@ tmpSrcClusterFileName = "tmp_src_fdb.cluster"
 tmpDstClusterFileName = "tmp_dst_fdb.cluster"
 
 
-@fdb.transactional
-def readSrcRange(tr, begin, end, throttlingTag):
+def readSrcRange(tenant, begin, end, throttlingTag):
+    tr = tenant.create_transaction()
     result = []
     beginKey = begin
     while True:
@@ -36,14 +36,16 @@ def readSrcRange(tr, begin, end, throttlingTag):
             tr.options.set_auto_throttle_tag(throttlingTag)
             readRange = tr.get_range(beginKey, end, 0, False, StreamingMode.want_all)
             for kv in readRange:
-                beginKey = kv.key
+                lastKey = kv.key
                 result.append(kv)
             break
         except fdb.FDBError as e:
+            beginKey = lastKey + b"\x00"
             # transaction_too_old can just be retried
             if e.code != 1007:
-                raise
-            tr.reset()
+                tr.reset()
+            else:
+                tr.on_error(e).wait()
     return result
 
 
