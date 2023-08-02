@@ -15,7 +15,7 @@ import multiprocessing
 from datetime import datetime
 import ast
 
-fdb.api_version(713000)
+fdb.api_version(710300)
 
 # Reserved keyrange on management cluster to store info for data movement
 moveDataPrefix = b"emergency_movement"
@@ -185,7 +185,7 @@ def get_next_queue_head(tr, tenantGroup, runId, currentTenant, key):
         (moveDataPrefix + b"/split_points/"),
     )
     packKeyEnd = fdb.tuple.pack(
-        (tenantGroup, runId, "\xff"),
+        (tenantGroup, runId, b"\xff"),
         (moveDataPrefix + b"/split_points/"),
     )
     readRange = tr.get_range(packKeyBegin, packKeyEnd, 2).to_list()
@@ -194,7 +194,7 @@ def get_next_queue_head(tr, tenantGroup, runId, currentTenant, key):
         # By convention, tenant name is 3rd element in the tuple
         # and the key is the 4th element
         nextTuple = fdb.tuple.unpack(
-            nextSplitPoint, len(moveDataPrefix + "/split_points/")
+            nextSplitPoint, len(moveDataPrefix + b"/split_points/")
         )
         nextTenant = nextTuple[2]
         key = nextTuple[3]
@@ -247,7 +247,7 @@ def get_queue_head_from_split_points(tr, tenantGroup, runId):
         (tenantGroup, runId), (moveDataPrefix + b"/split_points/")
     )
     packEnd = fdb.tuple.pack(
-        (tenantGroup, runId, "\xff"),
+        (tenantGroup, runId, b"\xff"),
         (moveDataPrefix + b"/split_points/"),
     )
     readRange = tr.get_range(packBegin, packEnd, 1).to_list()
