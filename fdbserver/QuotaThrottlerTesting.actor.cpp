@@ -452,20 +452,33 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuotaBusyId") {
 }
 
 // 10 storage servers can handle 5 pages/second each.
-// Total quota is set to 100 pages/second.
+// Total quota is either unset or set to > 50 pages/second.
 // Client attempts 10 6-page transactions per second
 // Target is adjusted to 50/6 transactions per second, to match the total capacity all storage servers.
 // Throttling ID should be reported as busy.
-TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottling") {
+ACTOR static Future<Void> testActiveThrottling(Optional<long> totalQuotaInPages = Optional<long>()) {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
-	env.setQuota(testTag, /*totalQuotaInPages=*/100);
+	if (totalQuotaInPages.present()) {
+		ASSERT_GE(totalQuotaInPages.get(), 10 * 5);
+		env.setQuota(testTag, totalQuotaInPages.get());
+	}
 	state Future<Void> client = env.runClient(testTag, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor = monitorActor(&env, [testTag](auto& env) {
 		return env.targetRateIsNear(testTag, 50 / 6.0, /*shouldBeBusy=*/true) && env.throttleCount() == 1;
 	});
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
+	return Void();
+}
+
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottling") {
+	wait(testActiveThrottling(/*totalQuotaInPages=*/100));
+	return Void();
+}
+
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottlingNoQuota") {
+	wait(testActiveThrottling());
 	return Void();
 }
 
