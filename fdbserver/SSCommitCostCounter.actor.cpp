@@ -26,7 +26,7 @@ UIDTransactionTagMap<TransactionCommitCostEstimation> SSCommitCostCounter::getTo
 			if (cost.getCostSum() < minCostTracked) {
 				continue;
 			}
-			if (topKTags.size() < maxTagTracked) {
+			if (topKTags.size() < maxTagsTracked) {
 				topKTags.emplace(tag, cost);
 			} else if (topKTags.top().costEst.getCostSum() < cost.getCostSum()) {
 				topKTags.pop();
@@ -47,7 +47,7 @@ UIDTransactionTagMap<TransactionCommitCostEstimation> SSCommitCostCounter::getTo
 
 TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBeyondMaxTracked") {
 
-	SSCommitCostCounter counter(/*maxTagTracked=*/2, /*minCostTracked=*/10);
+	SSCommitCostCounter counter(/*maxTagsTracked=*/2, /*minCostTracked=*/10);
 	ASSERT_EQ(counter.getTopBusyTagCost().size(), 0);
 
 	const UID uid;
@@ -65,6 +65,7 @@ TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBeyondMaxTracked") {
 	ASSERT(!result.at(uid).contains("throttlingTagB"_sr));
 	ASSERT(result.at(uid).contains("throttlingTagC"_sr));
 
+	// SSCommitCostCounter::getTopBusyTagCost clears the tag costs, a second call should return empty result.
 	auto const result2 = counter.getTopBusyTagCost();
 	ASSERT(result2.empty());
 
@@ -72,7 +73,7 @@ TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBeyondMaxTracked") {
 }
 
 TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBelowMinCost") {
-	SSCommitCostCounter counter(/*maxTagTracked=*/2, /*minCostTracked=*/10);
+	SSCommitCostCounter counter(/*maxTagsTracked=*/2, /*minCostTracked=*/10);
 	ASSERT_EQ(counter.getTopBusyTagCost().size(), 0);
 
 	const UID uid;

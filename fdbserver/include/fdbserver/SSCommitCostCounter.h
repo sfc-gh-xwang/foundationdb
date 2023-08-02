@@ -10,7 +10,7 @@
 #include "fdbserver/RatekeeperInterface.h"
 
 class SSCommitCostCounter {
-	int maxTagTracked;
+	int maxTagsTracked;
 	uint64_t minCostTracked;
 
 	UIDTransactionTagMap<TransactionCommitCostEstimation> commitCost;
@@ -28,8 +28,8 @@ class SSCommitCostCounter {
 	};
 
 public:
-	SSCommitCostCounter(int maxTagTracked, uint64_t minCostTracked)
-	  : maxTagTracked(maxTagTracked),
+	SSCommitCostCounter(int maxTagsTracked, uint64_t minCostTracked)
+	  : maxTagsTracked(maxTagsTracked),
 	    minCostTracked(minCostTracked) {}
 	void addSSTagCost(const UID& id, const TransactionTag& throttlingTag, uint64_t cost);
 

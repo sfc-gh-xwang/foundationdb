@@ -375,8 +375,8 @@ struct ProxyCommitData {
 	    lastStartCommit(0),
 	    lastCommitLatency(SERVER_KNOBS->REQUIRED_MIN_RECOVERY_DURATION),
 	    lastCommitTime(0),
-	    ssTrTagCommitCost(SERVER_KNOBS->SS_THROTTLE_TAGS_TRACKED,
-	                      SERVER_KNOBS->MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
+	    ssTrTagCommitCost(SERVER_KNOBS->CP_THROTTLE_TAGS_TRACKED,
+	                      SERVER_KNOBS->CP_MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
 	    lastMasterReset(now()),
 	    lastResolverReset(now()),
 	    encryptMode(encryptMode) {
