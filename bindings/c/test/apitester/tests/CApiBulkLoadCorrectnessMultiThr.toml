@@ -22,7 +22,8 @@ minValueLength = 1
 maxValueLength = 1000
 maxKeysPerTransaction = 50
 initialSize = 0
-numRandomOperations = 100
+# numRandomOperations = 100
+numRandomOperations = 0
 
 [[knobs]]
 allow_bulk_loads=true
