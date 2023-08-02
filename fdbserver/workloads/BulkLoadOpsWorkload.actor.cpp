@@ -651,7 +651,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> nonEmptyRangeUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that a bulk load cannot start to a non-empty range
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(self->tenant, cx);
 		loop {
 			try {
 				tr.set(range.begin, "foo"_sr);

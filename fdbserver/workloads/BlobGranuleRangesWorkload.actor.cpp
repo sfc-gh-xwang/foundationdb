@@ -277,7 +277,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 			ASSERT(blobRanges.empty());
 		}
 
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(self->tenant, cx);
 		loop {
 			try {
 				Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(range, 1000000));
@@ -472,7 +472,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		ASSERT(blobRanges.size() == 1);
 		ASSERT(blobRanges[0] == expectedRange);
 
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(self->tenant, cx);
 		loop {
 			try {
 				Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(queryRange, 1000000));
@@ -585,7 +585,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 			ASSERT(blobRanges.size() == 1);
 			ASSERT(blobRanges[0] == activeRange);
 
-			state Transaction tr(cx, self->tenant);
+			state Transaction tr = Transaction::fromTenantOrDefault(self->tenant, cx);
 			loop {
 				try {
 					Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(range, 1000000));

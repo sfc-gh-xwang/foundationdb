@@ -342,7 +342,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		state uint32_t val;
 
 		// read the old tenant's data and parse the keys from it
-		state Transaction tr(cx, threadData->tenant);
+		state Transaction tr(threadData->tenant);
 		state KeyRange keyRange = normalKeys;
 		state bool gotEOS = false;
 		state int64_t totalRows = 0;
@@ -455,7 +455,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		// ignore tenants that aren't blobbified, might be default tenants created for other workloads
 		state std::vector<std::pair<int64_t, TenantMapEntry>> blobbifiedTenants;
 		for (i = 0; i < allTenants.size(); i++) {
-			Reference<Tenant> tenant = makeReference<Tenant>(allTenants[i].first);
+			Reference<Tenant> tenant = makeReference<Tenant>(cx, allTenants[i].first);
 			Standalone<VectorRef<KeyRangeRef>> blobbifiedRanges = wait(cx->listBlobbifiedRanges(normalKeys, 1, tenant));
 			if (!blobbifiedRanges.empty()) {
 				blobbifiedTenants.push_back(allTenants[i]);
@@ -598,7 +598,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 	                                     bool doSetup) {
 		// read entire keyspace at the start until granules for the entire thing are available
 		loop {
-			state Transaction tr(cx, threadData->tenant);
+			state Transaction tr(threadData->tenant);
 			try {
 				Version rv = wait(self->doGrv(&tr));
 				state Version readVersion = rv;
@@ -1052,7 +1052,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		TraceEvent("BlobGranuleCorrectnessWriterReady").log();
 
 		loop {
-			state Transaction tr(cx, threadData->tenant);
+			state Transaction tr(threadData->tenant);
 
 			// pick rows to write and clear, generate values for writes
 			state std::vector<std::tuple<uint32_t, uint32_t, uint32_t, uint16_t>> keyAndIdToWrite;
@@ -1211,7 +1211,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		// check that reading ranges with tenant name gives valid result of ranges just for tenant, with no tenant
 		// prefix
 		loop {
-			state Transaction tr(cx, threadData->tenant);
+			state Transaction tr(threadData->tenant);
 			try {
 				Standalone<VectorRef<KeyRangeRef>> ranges = wait(tr.getBlobGranuleRanges(normalKeys, 1000000));
 				ASSERT(ranges.size() >= 1 && ranges.size() < 1000000);
