@@ -352,6 +352,7 @@ public:
 	Future<Void> multiVersionCleanup;
 	Future<Void> pingLogger;
 	Future<Void> publicKeyFileWatch;
+	Future<Void> publicKeyIdsMonitor;
 
 	std::unordered_map<Standalone<StringRef>, PublicKey> publicKeys;
 };
@@ -2096,4 +2097,24 @@ ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, Transport
 
 void FlowTransport::watchPublicKeyFile(const std::string& publicKeyFilePath) {
 	self->publicKeyFileWatch = watchPublicKeyJwksFile(publicKeyFilePath, self);
+}
+
+ACTOR static Future<Void> tracePublicKeyIdsAtIntervals(TransportData* self) {
+	loop {
+		std::ostringstream oss;
+		int count = 0;
+		for (const auto& [name, _] : self->publicKeys) {
+			if (count > 0) {
+				oss << ",";
+			}
+			oss << name.toString();
+			++count;
+		}
+		TraceEvent("AuthzActivePublicKeyIds").detail("KeyIds", std::move(oss).str()).log();
+		wait(delay(FLOW_KNOBS->ACTIVE_PUBLIC_KEY_IDS_LOG_INTERVAL_SECONDS));
+	}
+}
+
+void FlowTransport::monitorActivePublicKeyIds() {
+	self->publicKeyIdsMonitor = tracePublicKeyIdsAtIntervals(self);
 }

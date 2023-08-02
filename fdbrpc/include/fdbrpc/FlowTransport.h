@@ -308,6 +308,8 @@ public:
 	// Periodically read JWKS (RFC 7517) public key file to refresh public key set.
 	void watchPublicKeyFile(const std::string& publicKeyFilePath);
 
+	// Trace "kid" fields of public keys joined by ", "
+	void monitorActivePublicKeyIds();
 private:
 	class TransportData* self;
 };

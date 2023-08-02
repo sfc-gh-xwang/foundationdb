@@ -774,6 +774,34 @@ def test_malformed_tokens_trace(cluster, default_tenant, tenant_tr_gen, token_cl
             ), f"expected permission_denied for 'splittable_bad_token' case, got {e} instead"
 
 
+def test_active_public_key_ids_trace_as_expected(
+    cluster, active_public_key_ids_log_interval
+):
+    def check_public_key_ids_log(
+        trace_entries, expected_key_ids_string, min_expected_trace_count
+    ):
+        count = 0
+        for _, ev_type, entry in trace_entries:
+            if ev_type == "AuthzActivePublicKeyIds":
+                actual_key_ids_string = entry.attrib["KeyIds"]
+                assert actual_key_ids_string == expected_key_ids_string
+                count += 1
+        assert count >= min_expected_trace_count
+
+    assert active_public_key_ids_log_interval > 0
+    max_trace_count = 5
+    sleep_duration_seconds = active_public_key_ids_log_interval * max_trace_count
+    with ScopedTraceChecker(
+        cluster,
+        functools.partial(
+            check_public_key_ids_log,
+            expected_key_ids_string=cluster.private_key.kid,
+            min_expected_trace_count=max_trace_count - 2,
+        ),  # conservative estimate to account for any time fluctuations in server-side trace event creation
+    ):
+        time.sleep(sleep_duration_seconds)
+
+
 def test_authz_not_enabled_trace(build_dir):
     # spin up a cluster without authz and see it logs as expected
     def check_authz_disablement_traces(trace_entries):
