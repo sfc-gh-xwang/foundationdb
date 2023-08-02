@@ -11431,6 +11431,15 @@ Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 
 // BlobGranule API.
 
+ACTOR Future<Void> checkTenantLock(Transaction* tr, int64_t tenantId) {
+	Optional<TenantMapEntry> tenant = wait(TenantAPI::tryGetTenantTransaction(tr, tenantId));
+	ASSERT(tenant.present());
+	if (tenant.get().tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
+		throw tenant_locked();
+	}
+	return Void();
+}
+
 ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
                                          KeyRange range,
                                          Version purgeVersion,
@@ -11470,6 +11479,10 @@ ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
 			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+
+			if (tenant.present()) {
+				wait(checkTenantLock(&tr, tenant.get()->id()));
+			}
 
 			// must be aligned to blob range(s)
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedBegin =
@@ -11581,6 +11594,10 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+
+			if (tenant.present()) {
+				wait(checkTenantLock(&tr->getTransaction(), tenant.get()->id()));
+			}
 
 			Standalone<VectorRef<KeyRangeRef>> startBlobRanges = wait(getBlobRanges(&tr->getTransaction(), range, 1));
 
