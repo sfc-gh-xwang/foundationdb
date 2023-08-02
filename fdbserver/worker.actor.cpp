@@ -4087,6 +4087,7 @@ ACTOR Future<Void> fdbd(Reference<IClusterConnectionRecord> connRecord,
 		if (e.code() == error_code_invalid_cluster_id) {
 			// If this process tried to join an invalid cluster, become a
 			// zombie and wait for manual action by the operator.
+			printf("FDBD left cluster (%s).\n", e.name());
 			TraceEvent(g_network->isSimulated() ? SevWarnAlways : SevError, "ZombieProcess").error(e);
 			wait(Never());
 		}
