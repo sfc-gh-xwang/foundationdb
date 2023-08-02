@@ -1037,7 +1037,7 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 			}
 		}
 		getCipherKeys = GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-		    pProxyCommitData->db, encryptDomainIds, BlobCipherMetrics::TLOG);
+		    pProxyCommitData->db, encryptDomainIds, BlobCipherMetrics::TLOG, pProxyCommitData->encryptionMonitor);
 	}
 
 	self->releaseFuture = releaseResolvingAfter(pProxyCommitData, self->releaseDelay, self->localBatchNumber);
@@ -1704,9 +1704,11 @@ ACTOR Future<Void> applyMetadataToCommittedTransactions(CommitBatchContext* self
 			}
 		}
 		if (!extraDomainIds.empty()) {
-			std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> extraCipherKeys =
-			    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-			        pProxyCommitData->db, extraDomainIds, BlobCipherMetrics::TLOG_POST_RESOLUTION));
+			std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> extraCipherKeys = wait(
+			    GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(pProxyCommitData->db,
+			                                                                   extraDomainIds,
+			                                                                   BlobCipherMetrics::TLOG_POST_RESOLUTION,
+			                                                                   pProxyCommitData->encryptionMonitor));
 			self->cipherKeys.insert(extraCipherKeys.begin(), extraCipherKeys.end());
 		}
 	}
@@ -1731,8 +1733,8 @@ ACTOR Future<WriteMutationRefVar> writeMutationEncryptedMutation(CommitBatchCont
 	ASSERT(encryptedMutation.isEncrypted());
 	Reference<AsyncVar<ServerDBInfo> const> dbInfo = self->pProxyCommitData->db;
 	headerRef = encryptedMutation.configurableEncryptionHeader();
-	TextAndHeaderCipherKeys cipherKeys =
-	    wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(dbInfo, headerRef, BlobCipherMetrics::TLOG));
+	TextAndHeaderCipherKeys cipherKeys = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
+	    dbInfo, headerRef, BlobCipherMetrics::TLOG, self->pProxyCommitData->encryptionMonitor));
 	decryptedMutation = encryptedMutation.decrypt(cipherKeys, *arena, BlobCipherMetrics::TLOG);
 
 	ASSERT(decryptedMutation.type == mutation->type);
@@ -3526,9 +3528,11 @@ ACTOR Future<Void> processCompleteTransactionStateRequest(TransactionStateResolv
 
 	state std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> systemCipherKeys;
 	if (pContext->pCommitData->encryptMode.isEncryptionEnabled()) {
-		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cks =
-		    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-		        pContext->pCommitData->db, ENCRYPT_CIPHER_SYSTEM_DOMAINS, BlobCipherMetrics::TLOG));
+		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cks = wait(
+		    GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(pContext->pCommitData->db,
+		                                                                   ENCRYPT_CIPHER_SYSTEM_DOMAINS,
+		                                                                   BlobCipherMetrics::TLOG,
+		                                                                   pContext->pCommitData->encryptionMonitor));
 		systemCipherKeys = cks;
 	}
 
@@ -3878,10 +3882,13 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 				if (trs.size() || lastCommitComplete.isReady()) {
 					lastCommitComplete = transformError(
 					    timeoutError(
-					        commitBatch(&commitData,
-					                    const_cast<std::vector<CommitTransactionRequest>*>(&batchedRequests.first),
-					                    batchBytes),
-					        SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT),
+					        timeoutErrorIfCleared(
+					            commitBatch(&commitData,
+					                        const_cast<std::vector<CommitTransactionRequest>*>(&batchedRequests.first),
+					                        batchBytes),
+					            SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT,
+					            commitData.encryptionMonitor->degraded()),
+					        SERVER_KNOBS->COMMIT_PROXY_MAX_LIVENESS_TIMEOUT),
 					    timed_out(),
 					    failed_to_progress());
 					addActor.send(lastCommitComplete);

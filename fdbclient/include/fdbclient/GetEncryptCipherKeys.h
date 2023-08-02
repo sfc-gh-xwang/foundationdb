@@ -20,6 +20,8 @@
 
 #ifndef FDBCLIENT_GETCIPHERKEYS_H
 #define FDBCLIENT_GETCIPHERKEYS_H
+#include "flow/FastRef.h"
+#include "flow/TaskPriority.h"
 #pragma once
 
 #include "flow/EncryptUtils.h"
@@ -43,6 +45,31 @@ struct TextAndHeaderCipherKeys {
 	Reference<BlobCipherKey> cipherHeaderKey;
 };
 
+class GetEncryptCipherKeysMonitor : public ReferenceCounted<GetEncryptCipherKeysMonitor> {
+public:
+	GetEncryptCipherKeysMonitor() = default;
+
+	Reference<AsyncVar<bool>> degraded() const { return degradedVar; }
+
+	void incLongRunningRequests() {
+		if (longRunningRequests == 0) {
+			degradedVar->set(true);
+		}
+		longRunningRequests++;
+	}
+
+	void decLongRunningRequests() {
+		longRunningRequests--;
+		if (longRunningRequests == 0) {
+			degradedVar->set(false);
+		}
+	}
+
+private:
+	Reference<AsyncVar<bool>> degradedVar = makeReference<AsyncVar<bool>>(false);
+	int longRunningRequests = 0;
+};
+
 template <class T>
 class GetEncryptCipherKeys {
 public:
@@ -52,14 +79,17 @@ public:
 	static Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> getLatestEncryptCipherKeys(
 	    Reference<AsyncVar<T> const> db,
 	    std::unordered_set<EncryptCipherDomainId> domainIds,
-	    BlobCipherMetrics::UsageType usageType);
+	    BlobCipherMetrics::UsageType usageType,
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
 
 	// Get latest cipher key for given a encryption domain. It tries to get the cipher key from the local cache.
 	// In case of cache miss, it fetches the cipher key from EncryptKeyProxy and put the result in the local cache
 	// before return.
-	static Future<Reference<BlobCipherKey>> getLatestEncryptCipherKey(Reference<AsyncVar<T> const> db,
-	                                                                  EncryptCipherDomainId domainId,
-	                                                                  BlobCipherMetrics::UsageType usageType);
+	static Future<Reference<BlobCipherKey>> getLatestEncryptCipherKey(
+	    Reference<AsyncVar<T> const> db,
+	    EncryptCipherDomainId domainId,
+	    BlobCipherMetrics::UsageType usageType,
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
 
 	// Get cipher keys specified by the list of cipher details. It tries to get the cipher keys from local cache.
 	// In case of cache miss, it fetches the cipher keys from EncryptKeyProxy and put the result in the local cache
@@ -67,22 +97,32 @@ public:
 	static Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> getEncryptCipherKeys(
 	    Reference<AsyncVar<T> const> db,
 	    std::unordered_set<BlobCipherDetails> cipherDetails,
-	    BlobCipherMetrics::UsageType usageType);
+	    BlobCipherMetrics::UsageType usageType,
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
 
-	static Future<TextAndHeaderCipherKeys> getLatestEncryptCipherKeysForDomain(Reference<AsyncVar<T> const> db,
-	                                                                           EncryptCipherDomainId domainId,
-	                                                                           BlobCipherMetrics::UsageType usageType);
+	static Future<TextAndHeaderCipherKeys> getLatestEncryptCipherKeysForDomain(
+	    Reference<AsyncVar<T> const> db,
+	    EncryptCipherDomainId domainId,
+	    BlobCipherMetrics::UsageType usageType,
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
 
-	static Future<TextAndHeaderCipherKeys> getLatestSystemEncryptCipherKeys(const Reference<AsyncVar<T> const>& db,
-	                                                                        BlobCipherMetrics::UsageType usageType);
+	static Future<TextAndHeaderCipherKeys> getLatestSystemEncryptCipherKeys(
+	    const Reference<AsyncVar<T> const>& db,
+	    BlobCipherMetrics::UsageType usageType,
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
 
-	static Future<TextAndHeaderCipherKeys> getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
-	                                                            BlobCipherEncryptHeader header,
-	                                                            BlobCipherMetrics::UsageType usageType);
+	/*
+	    static Future<TextAndHeaderCipherKeys> getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
+	                                                                BlobCipherEncryptHeader header,
+	                                                                BlobCipherMetrics::UsageType usageType,
+	                                                                Reference<GetEncryptCipherKeysMonitor> monitor =
+	   {});
+	*/
 
 	static Future<TextAndHeaderCipherKeys> getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
 	                                                            BlobCipherEncryptHeaderRef header,
-	                                                            BlobCipherMetrics::UsageType usageType);
+	                                                            BlobCipherMetrics::UsageType usageType,
+	                                                            Reference<GetEncryptCipherKeysMonitor> monitor = {});
 };
 
 #endif

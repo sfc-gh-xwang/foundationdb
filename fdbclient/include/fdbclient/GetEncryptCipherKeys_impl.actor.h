@@ -20,6 +20,8 @@
 
 #pragma once
 #include "flow/EncryptUtils.h"
+#include "flow/Error.h"
+#include "flow/TaskPriority.h"
 #include "flow/genericactors.actor.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_GETCIPHERKEYS_IMPL_ACTOR_G_H)
 #define FDBCLIENT_GETCIPHERKEYS_IMPL_ACTOR_G_H
@@ -38,6 +40,23 @@
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 #define DEBUG_GET_CIPHER false
+
+ACTOR template <class T>
+Future<T> _monitorGetEncryptCipherKeys(Future<T> actor, Reference<GetEncryptCipherKeysMonitor> monitor) {
+	ASSERT(monitor.isValid());
+	Future<Void> timer = delay(CLIENT_KNOBS->ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD, TaskPriority::DefaultDelay);
+	choose {
+		when(T t = wait(actor)) {
+			return t;
+		}
+		when(wait(timer)) {
+			monitor->incLongRunningRequests();
+			T t = wait(actor);
+			monitor->decLongRunningRequests();
+			return t;
+		}
+	}
+}
 
 template <class T>
 Optional<EncryptKeyProxyInterface> _getEncryptKeyProxyInterface(const Reference<AsyncVar<T> const>& db) {
@@ -106,7 +125,7 @@ Future<EKPGetLatestBaseCipherKeysReply> _getUncachedLatestEncryptCipherKeys(Refe
 }
 
 ACTOR template <class T>
-Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> _getLatestEncryptCipherKeys(
+Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> _getLatestEncryptCipherKeysImpl(
     Reference<AsyncVar<T> const> db,
     std::unordered_set<EncryptCipherDomainId> domainIds,
     BlobCipherMetrics::UsageType usageType) {
@@ -170,13 +189,28 @@ Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> _get
 	return cipherKeys;
 }
 
+template <class T>
+Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> _getLatestEncryptCipherKeys(
+    Reference<AsyncVar<T> const> db,
+    std::unordered_set<EncryptCipherDomainId> domainIds,
+    BlobCipherMetrics::UsageType usageType,
+    Reference<GetEncryptCipherKeysMonitor> monitor) {
+	Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> actor =
+	    _getLatestEncryptCipherKeysImpl(db, domainIds, usageType);
+	if (monitor.isValid()) {
+		actor = _monitorGetEncryptCipherKeys(actor, monitor);
+	}
+	return actor;
+}
+
 ACTOR template <class T>
 Future<Reference<BlobCipherKey>> _getLatestEncryptCipherKey(Reference<AsyncVar<T> const> db,
                                                             EncryptCipherDomainId domainId,
-                                                            BlobCipherMetrics::UsageType usageType) {
+                                                            BlobCipherMetrics::UsageType usageType,
+                                                            Reference<GetEncryptCipherKeysMonitor> monitor) {
 	std::unordered_set<EncryptCipherDomainId> domainIds{ domainId };
 	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKey =
-	    wait(_getLatestEncryptCipherKeys(db, domainIds, usageType));
+	    wait(_getLatestEncryptCipherKeys(db, domainIds, usageType, monitor));
 
 	return cipherKey.at(domainId);
 }
@@ -234,7 +268,7 @@ Future<EKPGetBaseCipherKeysByIdsReply> _getUncachedEncryptCipherKeys(Reference<A
 // In case of cache miss, it fetches the cipher keys from EncryptKeyProxy and put the result in the local cache
 // before return.
 ACTOR template <class T>
-Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> _getEncryptCipherKeys(
+Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> _getEncryptCipherKeysImpl(
     Reference<AsyncVar<T> const> db,
     std::unordered_set<BlobCipherDetails> cipherDetails,
     BlobCipherMetrics::UsageType usageType) {
@@ -309,14 +343,29 @@ Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> _getEncr
 	return cipherKeys;
 }
 
+template <class T>
+Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> _getEncryptCipherKeys(
+    Reference<AsyncVar<T> const> db,
+    std::unordered_set<BlobCipherDetails> cipherDetails,
+    BlobCipherMetrics::UsageType usageType,
+    Reference<GetEncryptCipherKeysMonitor> monitor) {
+	Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> actor =
+	    _getEncryptCipherKeysImpl(db, cipherDetails, usageType);
+	if (monitor.isValid()) {
+		actor = _monitorGetEncryptCipherKeys(actor, monitor);
+	}
+	return actor;
+}
+
 ACTOR template <class T>
 Future<TextAndHeaderCipherKeys> _getLatestEncryptCipherKeysForDomain(Reference<AsyncVar<T> const> db,
                                                                      EncryptCipherDomainId domainId,
-                                                                     BlobCipherMetrics::UsageType usageType) {
+                                                                     BlobCipherMetrics::UsageType usageType,
+                                                                     Reference<GetEncryptCipherKeysMonitor> monitor) {
 	// TODO: Do not fetch header cipher key if authentication is diabled.
 	std::unordered_set<EncryptCipherDomainId> domainIds = { domainId, ENCRYPT_HEADER_DOMAIN_ID };
 	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys =
-	    wait(_getLatestEncryptCipherKeys(db, domainIds, usageType));
+	    wait(_getLatestEncryptCipherKeys(db, domainIds, usageType, monitor));
 	ASSERT(cipherKeys.count(domainId) > 0);
 	ASSERT(cipherKeys.count(ENCRYPT_HEADER_DOMAIN_ID) > 0);
 	TextAndHeaderCipherKeys result{ cipherKeys.at(domainId), cipherKeys.at(ENCRYPT_HEADER_DOMAIN_ID) };
@@ -327,48 +376,53 @@ Future<TextAndHeaderCipherKeys> _getLatestEncryptCipherKeysForDomain(Reference<A
 
 template <class T>
 Future<TextAndHeaderCipherKeys> _getLatestSystemEncryptCipherKeys(const Reference<AsyncVar<T> const>& db,
-                                                                  BlobCipherMetrics::UsageType usageType) {
-	return _getLatestEncryptCipherKeysForDomain(db, SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID, usageType);
+                                                                  BlobCipherMetrics::UsageType usageType,
+                                                                  Reference<GetEncryptCipherKeysMonitor> monitor) {
+	return _getLatestEncryptCipherKeysForDomain(db, SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID, usageType, monitor);
 }
 
+/*
 ACTOR template <class T>
 Future<TextAndHeaderCipherKeys> _getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
                                                       BlobCipherEncryptHeader header,
-                                                      BlobCipherMetrics::UsageType usageType) {
-	state bool authenticatedEncryption = header.flags.authTokenMode != ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
+                                                      BlobCipherMetrics::UsageType usageType,
+                                                      Reference<GetEncryptCipherKeysMonitor> monitor) {
+    state bool authenticatedEncryption = header.flags.authTokenMode != ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
 
-	ASSERT(header.cipherTextDetails.isValid());
-	ASSERT(!authenticatedEncryption || header.cipherHeaderDetails.isValid());
+    ASSERT(header.cipherTextDetails.isValid());
+    ASSERT(!authenticatedEncryption || header.cipherHeaderDetails.isValid());
 
-	std::unordered_set<BlobCipherDetails> cipherDetails{ header.cipherTextDetails };
-	if (authenticatedEncryption) {
-		cipherDetails.insert(header.cipherHeaderDetails);
-	}
+    std::unordered_set<BlobCipherDetails> cipherDetails{ header.cipherTextDetails };
+    if (authenticatedEncryption) {
+        cipherDetails.insert(header.cipherHeaderDetails);
+    }
 
-	std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> cipherKeys =
-	    wait(_getEncryptCipherKeys(db, cipherDetails, usageType));
+    std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> cipherKeys =
+        wait(_getEncryptCipherKeys(db, cipherDetails, usageType, monitor));
 
-	TextAndHeaderCipherKeys result;
-	auto setCipherKey = [&](const BlobCipherDetails& details, TextAndHeaderCipherKeys& result) {
-		ASSERT(details.isValid());
-		auto iter = cipherKeys.find(details);
-		ASSERT(iter != cipherKeys.end() && iter->second.isValid());
-		isEncryptHeaderDomain(details.encryptDomainId) ? result.cipherHeaderKey = iter->second
-		                                               : result.cipherTextKey = iter->second;
-	};
-	setCipherKey(header.cipherTextDetails, result);
-	if (authenticatedEncryption) {
-		setCipherKey(header.cipherHeaderDetails, result);
-	}
-	ASSERT(result.cipherTextKey.isValid() && (!authenticatedEncryption || result.cipherHeaderKey.isValid()));
+    TextAndHeaderCipherKeys result;
+    auto setCipherKey = [&](const BlobCipherDetails& details, TextAndHeaderCipherKeys& result) {
+        ASSERT(details.isValid());
+        auto iter = cipherKeys.find(details);
+        ASSERT(iter != cipherKeys.end() && iter->second.isValid());
+        isEncryptHeaderDomain(details.encryptDomainId) ? result.cipherHeaderKey = iter->second
+                                                       : result.cipherTextKey = iter->second;
+    };
+    setCipherKey(header.cipherTextDetails, result);
+    if (authenticatedEncryption) {
+        setCipherKey(header.cipherHeaderDetails, result);
+    }
+    ASSERT(result.cipherTextKey.isValid() && (!authenticatedEncryption || result.cipherHeaderKey.isValid()));
 
-	return result;
+    return result;
 }
+*/
 
 ACTOR template <class T>
 Future<TextAndHeaderCipherKeys> _getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
                                                       BlobCipherEncryptHeaderRef header,
-                                                      BlobCipherMetrics::UsageType usageType) {
+                                                      BlobCipherMetrics::UsageType usageType,
+                                                      Reference<GetEncryptCipherKeysMonitor> monitor) {
 	state bool authenticatedEncryption = header.getAuthTokenMode() != ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
 	state EncryptHeaderCipherDetails details = header.getCipherDetails();
 
@@ -382,7 +436,7 @@ Future<TextAndHeaderCipherKeys> _getEncryptCipherKeys(Reference<AsyncVar<T> cons
 	}
 
 	std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> cipherKeys =
-	    wait(_getEncryptCipherKeys(db, cipherDetails, usageType));
+	    wait(_getEncryptCipherKeys(db, cipherDetails, usageType, monitor));
 	TextAndHeaderCipherKeys result;
 
 	auto setCipherKey = [&](const BlobCipherDetails& details, TextAndHeaderCipherKeys& result) {
@@ -405,53 +459,64 @@ template <class T>
 Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>>
 GetEncryptCipherKeys<T>::getLatestEncryptCipherKeys(Reference<AsyncVar<T> const> db,
                                                     std::unordered_set<EncryptCipherDomainId> domainIds,
-                                                    BlobCipherMetrics::UsageType usageType) {
-	return _getLatestEncryptCipherKeys(db, domainIds, usageType);
+                                                    BlobCipherMetrics::UsageType usageType,
+                                                    Reference<GetEncryptCipherKeysMonitor> monitor) {
+	return _getLatestEncryptCipherKeys(db, domainIds, usageType, monitor);
 }
 
 template <class T>
 Future<Reference<BlobCipherKey>> GetEncryptCipherKeys<T>::getLatestEncryptCipherKey(
     Reference<AsyncVar<T> const> db,
     EncryptCipherDomainId domainId,
-    BlobCipherMetrics::UsageType usageType) {
-	return _getLatestEncryptCipherKey(db, domainId, usageType);
+    BlobCipherMetrics::UsageType usageType,
+    Reference<GetEncryptCipherKeysMonitor> monitor) {
+	return _getLatestEncryptCipherKey(db, domainId, usageType, monitor);
 }
 
 template <class T>
 Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> GetEncryptCipherKeys<T>::getEncryptCipherKeys(
     Reference<AsyncVar<T> const> db,
     std::unordered_set<BlobCipherDetails> cipherDetails,
-    BlobCipherMetrics::UsageType usageType) {
-	return _getEncryptCipherKeys(db, cipherDetails, usageType);
+    BlobCipherMetrics::UsageType usageType,
+    Reference<GetEncryptCipherKeysMonitor> monitor) {
+	return _getEncryptCipherKeys(db, cipherDetails, usageType, monitor);
 }
 
 template <class T>
 Future<TextAndHeaderCipherKeys> GetEncryptCipherKeys<T>::getLatestEncryptCipherKeysForDomain(
     Reference<AsyncVar<T> const> db,
     EncryptCipherDomainId domainId,
-    BlobCipherMetrics::UsageType usageType) {
-	return _getLatestEncryptCipherKeysForDomain(db, domainId, usageType);
+    BlobCipherMetrics::UsageType usageType,
+    Reference<GetEncryptCipherKeysMonitor> monitor) {
+	return _getLatestEncryptCipherKeysForDomain(db, domainId, usageType, monitor);
 }
 
 template <class T>
 Future<TextAndHeaderCipherKeys> GetEncryptCipherKeys<T>::getLatestSystemEncryptCipherKeys(
     const Reference<AsyncVar<T> const>& db,
-    BlobCipherMetrics::UsageType usageType) {
-	return _getLatestSystemEncryptCipherKeys(db, usageType);
+    BlobCipherMetrics::UsageType usageType,
+    Reference<GetEncryptCipherKeysMonitor> monitor) {
+	return _getLatestSystemEncryptCipherKeys(db, usageType, monitor);
 }
 
+/*
 template <class T>
-Future<TextAndHeaderCipherKeys> GetEncryptCipherKeys<T>::getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
-                                                                              BlobCipherEncryptHeader header,
-                                                                              BlobCipherMetrics::UsageType usageType) {
-	return _getEncryptCipherKeys(db, header, usageType);
+Future<TextAndHeaderCipherKeys> GetEncryptCipherKeys<T>::getEncryptCipherKeys(
+    Reference<AsyncVar<T> const> db,
+    BlobCipherEncryptHeader header,
+    BlobCipherMetrics::UsageType usageType,
+    Reference<GetEncryptCipherKeysMonitor> monitor) {
+    return _getEncryptCipherKeys(db, header, usageType, monitor);
 }
+*/
 
 template <class T>
-Future<TextAndHeaderCipherKeys> GetEncryptCipherKeys<T>::getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
-                                                                              BlobCipherEncryptHeaderRef header,
-                                                                              BlobCipherMetrics::UsageType usageType) {
-	return _getEncryptCipherKeys(db, header, usageType);
+Future<TextAndHeaderCipherKeys> GetEncryptCipherKeys<T>::getEncryptCipherKeys(
+    Reference<AsyncVar<T> const> db,
+    BlobCipherEncryptHeaderRef header,
+    BlobCipherMetrics::UsageType usageType,
+    Reference<GetEncryptCipherKeysMonitor> monitor) {
+	return _getEncryptCipherKeys(db, header, usageType, monitor);
 }
 
 #include "flow/unactorcompiler.h"

@@ -22,6 +22,7 @@
 
 // When actually compiled (NO_INTELLISENSE), include the generated version of this file.  In intellisense use the source
 // version.
+#include "flow/Error.h"
 #include "flow/FastRef.h"
 #include "flow/network.h"
 #include <utility>
@@ -927,6 +928,41 @@ Future<Void> setWhenDoneOrError(Future<Void> condition, Reference<AsyncVar<T>> v
 		throw;
 	}
 	return Void();
+}
+
+ACTOR template <class T>
+Future<T> afterCleared(std::function<Future<T>()> f, Reference<AsyncVar<bool>> condition) {
+	state Future<T> run = condition->get() ? Never() : f();
+	state bool previousState = condition->get();
+	loop choose {
+		when(T t = wait(run)) {
+			return t;
+		}
+		when(wait(condition->onChange())) {
+			bool currentState = condition->get();
+			if (currentState != previousState) {
+				run = currentState ? Never() : f();
+				previousState = currentState;
+			}
+		}
+	}
+}
+
+// Similar to timeoutError, but only throw timed_out if condition is cleared (i.e. equal to false) consecutively for the
+// given time.
+ACTOR template <class T>
+Future<T> timeoutErrorIfCleared(Future<T> what,
+                                double time,
+                                Reference<AsyncVar<bool>> condition,
+                                TaskPriority taskID = TaskPriority::DefaultDelay) {
+	choose {
+		when(T t = wait(what)) {
+			return t;
+		}
+		when(wait(afterCleared<Void>(std::bind(delay, time, taskID), condition))) {
+			throw timed_out();
+		}
+	}
 }
 
 Future<bool> allTrue(const std::vector<Future<bool>>& all);

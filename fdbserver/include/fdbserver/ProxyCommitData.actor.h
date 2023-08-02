@@ -19,6 +19,7 @@
  */
 
 #pragma once
+#include "fdbclient/GetEncryptCipherKeys.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBSERVER_PROXYCOMMITDATA_ACTOR_G_H)
 #define FDBSERVER_PROXYCOMMITDATA_ACTOR_G_H
 #include "fdbserver/ProxyCommitData.actor.g.h"
@@ -282,6 +283,7 @@ struct ProxyCommitData {
 	int localTLogCount = -1;
 
 	EncryptionAtRestMode encryptMode;
+	Reference<GetEncryptCipherKeysMonitor> encryptionMonitor;
 
 	PromiseStream<ExpectedIdempotencyIdCountForKey> expectedIdempotencyIdCountForKey;
 	Standalone<VectorRef<MutationRef>> idempotencyClears;
@@ -379,7 +381,8 @@ struct ProxyCommitData {
 	                      SERVER_KNOBS->CP_MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
 	    lastMasterReset(now()),
 	    lastResolverReset(now()),
-	    encryptMode(encryptMode) {
+	    encryptMode(encryptMode),
+	    encryptionMonitor(makeReference<GetEncryptCipherKeysMonitor>()) {
 		commitComputePerOperation.resize(SERVER_KNOBS->PROXY_COMPUTE_BUCKETS, 0.0);
 	}
 };
