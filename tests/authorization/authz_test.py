@@ -391,6 +391,19 @@ def test_public_key_set_rollover(
     interim_set = public_keyset_from_keys([new_key, cluster.private_key])
     max_repeat = 10
 
+    def check_keyset_update_trace(trace_entries, expected_key_ids):
+        found = False
+        for _, ev_type, entry in trace_entries:
+            if ev_type == "AuthzActivePublicKeyIds":
+                print("active public key IDs trace:", entry.items())
+                if (
+                    sorted(entry.attrib["KeyIds"].split(","))
+                    == sorted(expected_key_ids)
+                    and entry.attrib["FromKeySetUpdate"] == "1"
+                ):
+                    found = True
+        assert found, "active public key IDs trace not found"
+
     print(f"interim keyset: {interim_set}")
     old_key_json = None
     with open(cluster.public_key_json_file, "r") as keyfile:
@@ -399,24 +412,40 @@ def test_public_key_set_rollover(
     delay = public_key_refresh_interval
 
     with KeyFileReverter(cluster.public_key_json_file, old_key_json, delay):
-        with open(cluster.public_key_json_file, "w") as keyfile:
-            keyfile.write(interim_set)
-        wait_until_tenant_tr_succeeds(
-            second_tenant, new_key, tenant_tr_gen, max_repeat, delay, token_claim_1h
-        )
+        with ScopedTraceChecker(
+            cluster,
+            functools.partial(
+                check_keyset_update_trace,
+                expected_key_ids=[new_key.kid, cluster.private_key.kid],
+            ),
+        ):
+            with open(cluster.public_key_json_file, "w") as keyfile:
+                keyfile.write(interim_set)
+            wait_until_tenant_tr_succeeds(
+                second_tenant, new_key, tenant_tr_gen, max_repeat, delay, token_claim_1h
+            )
+
         print("interim key set activated")
         final_set = public_keyset_from_keys([new_key])
         print(f"final keyset: {final_set}")
-        with open(cluster.public_key_json_file, "w") as keyfile:
-            keyfile.write(final_set)
-        wait_until_tenant_tr_fails(
-            default_tenant,
-            cluster.private_key,
-            tenant_tr_gen,
-            max_repeat,
-            delay,
-            token_claim_1h,
-        )
+
+        with ScopedTraceChecker(
+            cluster,
+            functools.partial(
+                check_keyset_update_trace,
+                expected_key_ids=[new_key.kid],
+            ),
+        ):
+            with open(cluster.public_key_json_file, "w") as keyfile:
+                keyfile.write(final_set)
+            wait_until_tenant_tr_fails(
+                default_tenant,
+                cluster.private_key,
+                tenant_tr_gen,
+                max_repeat,
+                delay,
+                token_claim_1h,
+            )
 
 
 def test_public_key_set_broken_file_tolerance(

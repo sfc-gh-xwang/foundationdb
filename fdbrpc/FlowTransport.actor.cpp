@@ -2055,6 +2055,24 @@ void FlowTransport::loadPublicKeyFile(const std::string& filePath) {
 	}
 }
 
+FDB_BOOLEAN_PARAM(FromKeySetUpdate);
+
+static void traceActivePublicKeyIds(TransportData* self, FromKeySetUpdate fromUpdate = FromKeySetUpdate::False) {
+	std::ostringstream oss;
+	int count = 0;
+	for (const auto& [name, _] : self->publicKeys) {
+		if (count > 0) {
+			oss << ",";
+		}
+		oss << name.toString();
+		++count;
+	}
+	TraceEvent("AuthzActivePublicKeyIds"_audit)
+		.detail("KeyIds", std::move(oss).str())
+		.detail("FromKeySetUpdate", fromUpdate)
+		.log();
+}
+
 ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, TransportData* self) {
 	state AsyncTrigger fileChanged;
 	state Future<Void> fileWatch;
@@ -2083,6 +2101,7 @@ ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, Transport
 			}
 			wait(success(file->read(&json[0], filesize, 0)));
 			self->applyPublicKeySet(StringRef(json));
+			traceActivePublicKeyIds(self, FromKeySetUpdate::True);
 			errorCount = 0;
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
@@ -2101,16 +2120,7 @@ void FlowTransport::watchPublicKeyFile(const std::string& publicKeyFilePath) {
 
 ACTOR static Future<Void> tracePublicKeyIdsAtIntervals(TransportData* self) {
 	loop {
-		std::ostringstream oss;
-		int count = 0;
-		for (const auto& [name, _] : self->publicKeys) {
-			if (count > 0) {
-				oss << ",";
-			}
-			oss << name.toString();
-			++count;
-		}
-		TraceEvent("AuthzActivePublicKeyIds").detail("KeyIds", std::move(oss).str()).log();
+		traceActivePublicKeyIds(self);
 		wait(delay(FLOW_KNOBS->ACTIVE_PUBLIC_KEY_IDS_LOG_INTERVAL_SECONDS));
 	}
 }
