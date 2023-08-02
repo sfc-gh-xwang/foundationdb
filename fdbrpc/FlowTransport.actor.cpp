@@ -2068,9 +2068,9 @@ static void traceActivePublicKeyIds(TransportData* self, FromKeySetUpdate fromUp
 		++count;
 	}
 	TraceEvent("AuthzActivePublicKeyIds"_audit)
-		.detail("KeyIds", std::move(oss).str())
-		.detail("FromKeySetUpdate", fromUpdate)
-		.log();
+	    .detail("KeyIds", std::move(oss).str())
+	    .detail("FromKeySetUpdate", fromUpdate)
+	    .log();
 }
 
 ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, TransportData* self) {

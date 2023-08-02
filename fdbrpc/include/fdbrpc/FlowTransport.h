@@ -310,6 +310,7 @@ public:
 
 	// Trace "kid" fields of public keys joined by ", "
 	void monitorActivePublicKeyIds();
+
 private:
 	class TransportData* self;
 };
