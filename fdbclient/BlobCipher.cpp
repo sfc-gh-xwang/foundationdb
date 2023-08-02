@@ -2125,7 +2125,7 @@ void testNonceIVGeneration(const int minDomainId) {
 		StringRef ivRef = encryptor->getIVRef();
 		ASSERT_EQ(ivRef.size(), Params::ivSize);
 		EncryptCipherNonce encryptorNonce;
-		memcpy(&encryptorNonce, ivRef.begin(), ivRef.size());
+		memcpy(reinterpret_cast<unsigned char*>(&encryptorNonce), ivRef.begin(), ivRef.size());
 		ASSERT(encryptorNonce == nonce);
 		ASSERT(nonce + 1 == cipherKey->getNonce());
 	}
@@ -2136,7 +2136,7 @@ void testNonceIVGeneration(const int minDomainId) {
 	StringRef ivRef = encryptor->getIVRef();
 	ASSERT_EQ(ivRef.size(), Params::ivSize);
 	EncryptCipherNonce encryptorNonce;
-	memcpy(&encryptorNonce, ivRef.begin(), ivRef.size());
+	memcpy(reinterpret_cast<unsigned char*>(&encryptorNonce), ivRef.begin(), ivRef.size());
 	ASSERT(encryptorNonce == 0);
 }
 
