@@ -868,4 +868,6 @@ private:
 
 int getIVLengthFromEncryptMode(EncryptCipherMode mode);
 
+void generateCryptoSecureRandomBytes(unsigned char* buffer, int size);
+
 #endif // FDBCLIENT_BLOB_CIPHER_H

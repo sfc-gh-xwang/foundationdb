@@ -467,22 +467,9 @@ BlobCipherKey::BlobCipherKey(const EncryptCipherDomainId& domainId,
                              const EncryptCipherKeyCheckValue baseCiphKCV,
                              const int64_t refreshAt,
                              const int64_t expireAt) {
-	// Salt generated is used while applying HMAC Key derivation, hence, not using crypto-secure hash algorithm is
-	// ok. Further, 'deterministic' salt generation is used to preserve simulation determinism properties.
+	// Generate crypto secure salt
 	EncryptCipherRandomSalt salt;
-	if (g_network->isSimulated()) {
-		salt = deterministicRandom()->randomUInt64();
-	} else {
-		// TODO (Nim): Use RAND_BYTES (crypto-secure)
-		salt = nondeterministicRandom()->randomUInt64();
-	}
-
-	if (g_network->isSimulated()) {
-		nonce = deterministicRandom()->randomUInt64();
-	} else {
-		// TODO (Nim): Use RAND_BYTES (crypto-secure)
-		nonce = nondeterministicRandom()->randomUInt64();
-	}
+	generateCryptoSecureRandomBytes(reinterpret_cast<unsigned char*>(&salt), sizeof(salt));
 
 	// Support two type of CipherKeys: 'revocable' & 'non-revocable' ciphers.
 	// In all cases, either cipherKey never expires i.e. refreshAt == infinite, or, refreshAt needs <= expireAt
@@ -500,12 +487,6 @@ BlobCipherKey::BlobCipherKey(const EncryptCipherDomainId& domainId,
                              const EncryptCipherRandomSalt& salt,
                              const int64_t refreshAt,
                              const int64_t expireAt) {
-	if (g_network->isSimulated()) {
-		nonce = deterministicRandom()->randomUInt64();
-	} else {
-		// TODO (Nim): Use RAND_BYTES (crypto-secure)
-		nonce = nondeterministicRandom()->randomUInt64();
-	}
 	initKey(domainId, baseCiphId, baseCiph, baseCiphLen, baseCiphKCV, salt, refreshAt, expireAt);
 }
 
@@ -557,6 +538,8 @@ void BlobCipherKey::initKey(const EncryptCipherDomainId& domainId,
 	baseCipherLen = baseCiphLen;
 	baseCipherKCV = baseCiphKCV;
 	baseCipherId = baseCiphId;
+	// generate a crypto secure nonce
+	generateCryptoSecureRandomBytes(reinterpret_cast<unsigned char*>(&nonce), sizeof(nonce));
 	// Set the encryption domain for the base encryption key
 	encryptDomainId = domainId;
 	randomSalt = salt;
@@ -1048,6 +1031,14 @@ int getIVLengthFromEncryptMode(EncryptCipherMode mode) {
 	}
 	TraceEvent(SevWarn, "GetIVLengthModeUnsupported").detail("Mode", mode);
 	throw not_implemented();
+}
+
+void generateCryptoSecureRandomBytes(unsigned char* buffer, int size) {
+	// In simulation we call bindDeterministicRandomToOpenssl which allows us to use RAND_bytes deterministically
+	if (RAND_bytes(buffer, size) != 1) {
+		TraceEvent(SevWarn, "RandBytesGenerationError");
+		throw encrypt_ops_error();
+	}
 }
 
 // Only used to link unit tests
