@@ -389,6 +389,14 @@ struct TLogData : NonCopyable {
 		bool replied; // whether current transition has been answered. ensure Promise is only delivered once
 		uint32_t oldPeekRefcount; // during non-transition, all requests will use this refcount
 		uint32_t newPeekRefcount; // during transition, all new requests will use new window and this refcount
+
+		void resetExceptPromise() {
+			waitWindow = -1;
+			transitioning = false;
+			replied = true;
+			oldPeekRefcount = 0;
+			newPeekRefcount = 0;
+		}
 	};
 	std::unordered_map<Tag, emptyVersionWaitMeta> emptyVersionWaitMetaMap;
 
@@ -2140,13 +2148,8 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 				emptyVersionWaitWindow = 0;
 				break;
 			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
-				if (!self->emptyVersionWaitMetaMap.contains(reqTag)) {
-					self->emptyVersionWaitMetaMap[reqTag].waitWindow = -1;
-					self->emptyVersionWaitMetaMap[reqTag].transitioning = false;
-					self->emptyVersionWaitMetaMap[reqTag].replied = true;
-					self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount = 0;
-					self->emptyVersionWaitMetaMap[reqTag].newPeekRefcount = 0;
-				}
+				if (!self->emptyVersionWaitMetaMap.contains(reqTag))
+					self->emptyVersionWaitMetaMap[reqTag].resetExceptPromise();
 				// snapshot transition state and wait window now and retain it for current request over it's lifetime
 				emptyVersionWaitTransition = self->emptyVersionWaitMetaMap[reqTag].transitioning;
 				emptyVersionWaitWindow = self->emptyVersionWaitMetaMap[reqTag].waitWindow;
@@ -2279,13 +2282,8 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
 		return Void();
 
-	if (!self->emptyVersionWaitMetaMap.contains(req.tag)) {
-		self->emptyVersionWaitMetaMap[req.tag].waitWindow = -1;
-		self->emptyVersionWaitMetaMap[req.tag].transitioning = false;
-		self->emptyVersionWaitMetaMap[req.tag].replied = true;
-		self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount = 0;
-		self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount = 0;
-	}
+	if (!self->emptyVersionWaitMetaMap.contains(req.tag))
+		self->emptyVersionWaitMetaMap[req.tag].resetExceptPromise();
 
 	// During transition no furthur emptyVersionWait for the tlog-ss pair should be sent to tlog
 	// FIXME: the msg can be delivered more than once?
