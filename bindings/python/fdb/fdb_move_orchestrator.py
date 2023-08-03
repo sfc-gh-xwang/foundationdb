@@ -26,7 +26,9 @@ tmpSrcClusterFileName = "tmp_src_fdb.cluster"
 tmpDstClusterFileName = "tmp_dst_fdb.cluster"
 
 
-def readSrcRange(tenant, begin, end, throttlingTag):
+def readSrcRange(
+    tenant: fdb.Tenant, begin: bytes, end: bytes, throttlingTag: bytes
+) -> list:
     tr = tenant.create_transaction()
     result = []
     beginKey = begin
@@ -51,7 +53,7 @@ def readSrcRange(tenant, begin, end, throttlingTag):
 
 # Returns the index of the last kv pair NOT set in this transaction
 @fdb.transactional
-def writeDstRange(tr, keyRange, throttlingTag):
+def writeDstRange(tr: fdb.Transaction, keyRange: list, throttlingTag: bytes) -> int:
     tr.options.set_lock_aware()
     tr.options.set_auto_throttle_tag(throttlingTag)
     sizeLimit = pow(10, 5)
@@ -67,24 +69,14 @@ def writeDstRange(tr, keyRange, throttlingTag):
 
 
 def copyData(
-    srcClusterFile,
-    destClusterFile,
-    srcTenantName,
-    dstTenantName,
-    begin,
-    end,
-    throttlingTag,
-):
-    if not isinstance(begin, bytes):
-        begin = begin.encode("utf-8")
-    if not isinstance(end, bytes):
-        end = end.encode("utf-8")
-
-    if not isinstance(srcTenantName, bytes):
-        srcTenantName = srcTenantName.encode("utf-8")
-    if not isinstance(dstTenantName, bytes):
-        dstTenantName = dstTenantName.encode("utf-8")
-
+    srcClusterFile: str,
+    destClusterFile: str,
+    srcTenantName: bytes,
+    dstTenantName: bytes,
+    begin: bytes,
+    end: bytes,
+    throttlingTag: bytes,
+) -> None:
     srcDb = fdb.open(srcClusterFile)
     srcDb.options.set_transaction_timeout(timeoutLen)
 
@@ -169,7 +161,7 @@ def run_fdbcli_command_mgmt(*args):
 
 
 @fdb.transactional
-def get_move_record(tr, tenantGroup):
+def get_move_record(tr: fdb.Transaction, tenantGroup: bytes) -> tuple:
     tr.options.set_raw_access()
     packKey = fdb.tuple.pack((tenantGroup,), (moveDataPrefix + b"/move/"))
     result = tr.get(packKey)
@@ -178,7 +170,13 @@ def get_move_record(tr, tenantGroup):
 
 
 @fdb.transactional
-def get_next_queue_head(tr, tenantGroup, runId, currentTenant, key):
+def get_next_queue_head(
+    tr: fdb.Transaction,
+    tenantGroup: bytes,
+    runId: bytes,
+    currentTenant: bytes,
+    key: bytes,
+) -> tuple:
     tr.options.set_raw_access()
     packKeyBegin = fdb.tuple.pack(
         (tenantGroup, runId, currentTenant, key),
@@ -203,7 +201,7 @@ def get_next_queue_head(tr, tenantGroup, runId, currentTenant, key):
 
 
 @fdb.transactional
-def get_queue_head(tr, tenantGroup, runId):
+def get_queue_head(tr: fdb.Transaction, tenantGroup: bytes, runId: bytes) -> tuple:
     tr.options.set_raw_access()
     packKey = fdb.tuple.pack((tenantGroup, runId), (moveDataPrefix + b"/queue/"))
     result = tr.get(packKey)
@@ -213,7 +211,9 @@ def get_queue_head(tr, tenantGroup, runId):
 
 
 @fdb.transactional
-def set_queue_head(tr, tenantGroup, runId, tenantName, key):
+def set_queue_head(
+    tr: fdb.Transaction, tenantGroup: bytes, runId: bytes, tenantName: bytes, key: bytes
+) -> None:
     tr.options.set_raw_access()
     packKey = fdb.tuple.pack((tenantGroup, runId), (moveDataPrefix + b"/queue/"))
     packValue = fdb.tuple.pack((tenantName, key))
@@ -221,14 +221,16 @@ def set_queue_head(tr, tenantGroup, runId, tenantName, key):
 
 
 @fdb.transactional
-def clear_queue_head(tr, tenantGroup, runId):
+def clear_queue_head(tr, tenantGroup: bytes, runId: bytes) -> None:
     tr.options.set_raw_access()
     packKey = fdb.tuple.pack((tenantGroup, runId), (moveDataPrefix + b"/queue/"))
     tr.clear(packKey)
 
 
 @fdb.transactional
-def get_stored_split_point(tr, tenantGroup, runId, tenantName, key):
+def get_stored_split_point(
+    tr: fdb.Transaction, tenantGroup: bytes, runId: bytes, tenantName: bytes, key: bytes
+) -> bytes:
     tr.options.set_raw_access()
     packKey = fdb.tuple.pack(
         (tenantGroup, runId, tenantName, key),
@@ -241,7 +243,9 @@ def get_stored_split_point(tr, tenantGroup, runId, tenantName, key):
 
 
 @fdb.transactional
-def get_queue_head_from_split_points(tr, tenantGroup, runId):
+def get_queue_head_from_split_points(
+    tr: fdb.Transaction, tenantGroup: bytes, runId: bytes
+) -> tuple:
     tr.options.set_raw_access()
     packBegin = fdb.tuple.pack(
         (tenantGroup, runId), (moveDataPrefix + b"/split_points/")
@@ -262,7 +266,9 @@ def get_queue_head_from_split_points(tr, tenantGroup, runId):
 
 # return currentTenant, begin, end: 3 arguments passed to copyData
 @fdb.transactional
-def get_and_update_queue_head(tr, tenantGroup, runId):
+def get_and_update_queue_head(
+    tr: fdb.Transaction, tenantGroup: bytes, runId: bytes
+) -> tuple:
     queue_tuple = get_queue_head(tr, tenantGroup, runId)
     if queue_tuple == None:
         (
@@ -289,7 +295,9 @@ def get_and_update_queue_head(tr, tenantGroup, runId):
 
 
 @fdb.transactional
-def clear_stored_split_point(tr, tenantGroup, runId, tenantName, key):
+def clear_stored_split_point(
+    tr: fdb.Transaction, tenantGroup: bytes, runId: bytes, tenantName: bytes, key: bytes
+) -> None:
     tr.options.set_raw_access()
     packKey = fdb.tuple.pack(
         (tenantGroup, runId, tenantName, key),
@@ -298,7 +306,9 @@ def clear_stored_split_point(tr, tenantGroup, runId, tenantName, key):
     tr.clear(packKey)
 
 
-def process_queue(mgmtDbName, tenantGroup, srcClusterName, dstClusterName):
+def process_queue(
+    mgmtDbName: bytes, tenantGroup: bytes, srcClusterName: bytes, dstClusterName: bytes
+) -> int:
     print("Process Queue Started")
     mgmtDb = fdb.open(mgmtDbName)
     mgmtDb.options.set_transaction_timeout(timeoutLen)
