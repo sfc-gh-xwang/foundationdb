@@ -201,7 +201,8 @@ struct ReadMetricsWorkload : KVWorkload {
 
 			if (!SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
 				ASSERT_EQ(readMetrics.getRangeBusyness(), 0);
-			} else if (useRepeatedOperation && now() - start > SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL) {
+			} else if (useRepeatedOperation && now() - start > SERVER_KNOBS->STORAGE_METRICS_AVERAGE_INTERVAL +
+			                                                       SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL) {
 				++self->totalOps;
 				double expectedBusyness = op.expectedAccuracy * selectionProbability;
 				if (readMetrics.getRangeBusyness() > expectedBusyness) {

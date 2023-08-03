@@ -276,6 +276,10 @@ class ShardInfo : public ReferenceCounted<ShardInfo>, NonCopyable {
 	    desiredShardId(0LL),
 	    version(0) {}
 
+	int64_t shardSampledReads = -1;
+	int64_t totalSampledReads = -1;
+	double lastReadSampleCacheTime = 0;
+
 public:
 	// A shard has 3 mutual exclusive states: adding, readWrite and notAssigned.
 	std::unique_ptr<AddingShard> adding;
@@ -285,6 +289,8 @@ public:
 	uint64_t shardId;
 	uint64_t desiredShardId;
 	Version version;
+
+	double getSampledReadRate(StorageServer* data);
 
 	static ShardInfo* newNotAssigned(KeyRange keys) { return new ShardInfo(keys, nullptr, nullptr); }
 	static ShardInfo* newReadWrite(KeyRange keys, StorageServer* data) { return new ShardInfo(keys, nullptr, data); }
@@ -909,8 +915,8 @@ public:
 	Optional<TenantGroupName> getTenantGroup(Version, TenantInfo, bool lockAware) const;
 
 	std::vector<StorageServerShard> getStorageServerShards(KeyRangeRef range);
-	void insertShardsIntoRangeMap(CoalescedKeyRangeMap<bool>& ranges, KeyRangeRef range);
-	ReadMetrics getReadMetrics(CoalescedKeyRangeMap<bool> const& ranges);
+	void insertReadShards(std::unordered_set<Reference<ShardInfo>>& shardSet, KeyRangeRef range);
+	ReadMetrics getReadMetrics(std::unordered_set<Reference<ShardInfo>> const& shards);
 	ReadMetrics getReadMetrics(KeyRef const& key);
 
 	class CurrentRunningFetchKeys {
@@ -1882,6 +1888,31 @@ public:
 	bool isUsingStorageEngineParams() const { return storageEngineParams.isValid(); }
 };
 
+double ShardInfo::getSampledReadRate(StorageServer* data) {
+	if (now() - lastReadSampleCacheTime >= SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL) {
+		lastReadSampleCacheTime = now();
+
+		KeyRangeRef sampleRange = keys;
+		KeyRangeRef totalRange = allKeys;
+		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
+			if (keys.begin.startsWith(systemKeys.begin)) {
+				return 0;
+			} else if (keys.end.startsWith(systemKeys.begin)) {
+				sampleRange = KeyRangeRef(sampleRange.begin, systemKeys.begin);
+			}
+
+			totalRange = normalKeys;
+		}
+
+		shardSampledReads = data->metrics.opsReadSample.getEstimate(sampleRange);
+		totalSampledReads = data->metrics.opsReadSample.getEstimate(totalRange);
+	}
+
+	double readRate = shardSampledReads / std::max<double>(1.0, totalSampledReads);
+	ASSERT_LE(readRate, 1.0);
+	return readRate;
+}
+
 const StringRef StorageServer::CurrentRunningFetchKeys::emptyString = ""_sr;
 const KeyRangeRef StorageServer::CurrentRunningFetchKeys::emptyKeyRange =
     KeyRangeRef(StorageServer::CurrentRunningFetchKeys::emptyString,
@@ -2270,40 +2301,22 @@ std::vector<StorageServerShard> StorageServer::getStorageServerShards(KeyRangeRe
 	return res;
 }
 
-void StorageServer::insertShardsIntoRangeMap(CoalescedKeyRangeMap<bool>& ranges, KeyRangeRef range) {
+void StorageServer::insertReadShards(std::unordered_set<Reference<ShardInfo>>& shardSet, KeyRangeRef range) {
 	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
 		for (auto shard : shards.intersectingRanges(range)) {
-			ranges.insert(shard->value()->keys, true);
+			shardSet.insert(shard->value());
 		}
 	}
 }
 
-ReadMetrics StorageServer::getReadMetrics(CoalescedKeyRangeMap<bool> const& ranges) {
+ReadMetrics StorageServer::getReadMetrics(std::unordered_set<Reference<ShardInfo>> const& shards) {
 	double rangeBusyness = 0;
 	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
-		int64_t rangeEstimate = 0;
-		for (auto const& range : ranges.ranges()) {
-			if (range.cvalue()) {
-				if (SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
-					rangeEstimate += metrics.opsReadSample.getEstimate(range.range());
-				} else {
-					KeyRangeRef modifiedRange = range.range();
-					if (modifiedRange.begin.startsWith(systemKeys.begin)) {
-						continue;
-					} else if (modifiedRange.end.startsWith(systemKeys.begin)) {
-						modifiedRange = KeyRangeRef(modifiedRange.begin, normalKeys.end);
-					}
-					rangeEstimate += metrics.opsReadSample.getEstimate(modifiedRange);
-				}
-			}
+		for (auto const& shard : shards) {
+			rangeBusyness += shard->getSampledReadRate(this);
 		}
 
-		double overallEstimate = std::max<double>(
-		    1.0,
-		    metrics.opsReadSample.getEstimate(SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS ? allKeys : normalKeys));
-
-		ASSERT_LE(rangeEstimate, overallEstimate);
-		rangeBusyness = rangeEstimate / overallEstimate;
+		// fmt::print("Get read metrics from range: {}\n", rangeBusyness);
 	}
 
 	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
@@ -2314,24 +2327,7 @@ ReadMetrics StorageServer::getReadMetrics(KeyRef const& key) {
 	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
 		Reference<ShardInfo> shard = shards[key];
 
-		double overallEstimate;
-		KeyRangeRef range = shard->keys;
-		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
-			if (key.startsWith(systemKeys.begin)) {
-				return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
-			}
-
-			overallEstimate = std::max<double>(1.0, metrics.opsReadSample.getEstimate(normalKeys));
-			if (range.end.startsWith(systemKeys.begin)) {
-				range = KeyRangeRef(range.begin, normalKeys.end);
-			}
-		} else {
-			overallEstimate = std::max<double>(1.0, metrics.opsReadSample.getEstimate(allKeys));
-		}
-
-		int64_t rangeEstimate = metrics.opsReadSample.getEstimate(range);
-		ASSERT_LE(rangeEstimate, overallEstimate);
-		rangeBusyness = rangeEstimate / overallEstimate;
+		rangeBusyness = shard->getSampledReadRate(this);
 	}
 	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
 }
@@ -4336,7 +4332,7 @@ ACTOR Future<Key> findKey(StorageServer* data,
                           int* pOffset,
                           SpanContext parentSpan,
                           Optional<ReadOptions> options,
-                          CoalescedKeyRangeMap<bool>* shards)
+                          std::unordered_set<Reference<ShardInfo>>* shards)
 // Attempts to find the key indicated by sel in the data at version, within range.
 // Precondition: selectorInRange(sel, range)
 // If it is found, offset is set to 0 and a key is returned which falls inside range.
@@ -4402,8 +4398,8 @@ ACTOR Future<Key> findKey(StorageServer* data,
 		returnKey = more ? rep.data.back().key : range.begin;
 	}
 
-	data->insertShardsIntoRangeMap(
-	    *shards, forward ? KeyRangeRef(sel.getKey(), returnKey) : KeyRangeRef(returnKey, sel.getKey()));
+	data->insertReadShards(*shards,
+	                       forward ? KeyRangeRef(sel.getKey(), returnKey) : KeyRangeRef(returnKey, sel.getKey()));
 
 	if (index < rep.data.size()) {
 		*pOffset = 0;
@@ -4617,7 +4613,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
-		state CoalescedKeyRangeMap<bool> readShards;
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
@@ -4727,7 +4723,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 			                     ? keyAfterWithPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
 			                     : end;
 
-			data->insertShardsIntoRangeMap(readShards, KeyRangeRef(readBegin, readEnd));
+			data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
 
 			r.penalty = data->getPenalty();
 			r.readMetrics = data->getReadMetrics(readShards);
@@ -5807,7 +5803,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
-		state CoalescedKeyRangeMap<bool> readShards;
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
@@ -5924,7 +5920,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 			        ? keyAfterWithPrefix(getKeyValuesReply.data.back().key, req.tenantInfo.prefix, req.arena)
 			        : end;
 
-			data->insertShardsIntoRangeMap(readShards, KeyRangeRef(readBegin, readEnd));
+			data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
 
 			r.penalty = data->getPenalty();
 			// Note: this does not include metrics for the mapped keys
@@ -6021,7 +6017,7 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
-		state CoalescedKeyRangeMap<bool> readShards;
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
@@ -6110,7 +6106,7 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 				                     ? keyAfterWithPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
 				                     : end;
 
-				data->insertShardsIntoRangeMap(readShards, KeyRangeRef(readBegin, readEnd));
+				data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
 				r.readMetrics = data->getReadMetrics(readShards);
 
 				if (req.options.present() && req.options.get().debugID.present())
@@ -6223,7 +6219,7 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
 		state int offset;
-		state CoalescedKeyRangeMap<bool> readShards;
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		Key absoluteKey =
 		    wait(findKey(data, req.sel, version, searchRange, &offset, req.spanContext, req.options, &readShards));
 
