@@ -80,7 +80,9 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 		auto const throughput = throughputIt->second.smoother.smoothRate();
 		auto const transactionRate = transactionRateIt->second.smoother.smoothRate();
 
-		if (throughput <= 0 || transactionRate <= 0) {
+		// In this case, throughput is extremely low, and an
+		// average cost estimation cannot be made
+		if (throughput <= 0.0 || transactionRate < 1.0) {
 			return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
 		}
 		return throughput / transactionRate;
