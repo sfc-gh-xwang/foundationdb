@@ -1123,6 +1123,7 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
 				self->actors.add(getEKPStatus(self, kmsConnectorInf, req));
 			}
+			when(wait(self->actors.getResult())) {}
 		}
 	} catch (Error& e) {
 		self->actors = ActorCollection(false);

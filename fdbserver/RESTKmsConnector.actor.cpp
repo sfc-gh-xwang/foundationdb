@@ -1215,6 +1215,7 @@ ACTOR Future<Void> restConnectorCoreImpl(KmsConnectorInterface interf) {
 				when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
 					self->actors.add(getKMSState(self, req));
 				}
+				when(wait(self->actors.getResult())) {}
 			}
 		}
 	} catch (Error& e) {
