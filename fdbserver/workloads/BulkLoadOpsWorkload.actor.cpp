@@ -836,10 +836,14 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
 		filesWritten.arena().dependsOn(filesToWrite.arena());
+		KeyRange range1 = singleKeyRange(range.begin.withSuffix("a"_sr));
+		KeyRange range2 = singleKeyRange(range.begin.withSuffix("b"_sr));
+		filesWritten.arena().dependsOn(range1.arena());
+		filesWritten.arena().dependsOn(range2.arena());
 
 		BulkLoadWrittenFileRef writtenFile1;
 		writtenFile1.fileId = filesToWrite[0].fileId;
-		writtenFile1.keyRange = singleKeyRange(range.begin.withSuffix("a"_sr));
+		writtenFile1.keyRange = range1;
 		writtenFile1.physicalSize = deterministicRandom()->randomInt(1, 10000000);
 		writtenFile1.logicalSize = deterministicRandom()->randomInt(1, 10000000);
 
@@ -847,7 +851,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		BulkLoadWrittenFileRef writtenFile2;
 		writtenFile2.fileId = filesToWrite[0].fileId; // same id as other file!
-		writtenFile2.keyRange = singleKeyRange(range.begin.withSuffix("b"_sr));
+		writtenFile2.keyRange = range2;
 		writtenFile2.physicalSize = deterministicRandom()->randomInt(1, 10000000);
 		writtenFile2.logicalSize = deterministicRandom()->randomInt(1, 10000000);
 
