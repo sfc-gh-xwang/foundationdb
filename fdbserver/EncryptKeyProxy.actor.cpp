@@ -35,6 +35,7 @@
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/WorkerInterface.actor.h"
 
+#include "flow/ActorCollection.h"
 #include "flow/Arena.h"
 #include "flow/CodeProbe.h"
 #include "flow/EncryptUtils.h"
@@ -234,11 +235,7 @@ using BlobMetadataDomainIdCache = std::unordered_map<BlobMetadataDomainId, BlobM
 struct EncryptKeyProxyData : NonCopyable, ReferenceCounted<EncryptKeyProxyData> {
 public:
 	UID myId;
-	PromiseStream<Future<Void>> addActor;
-	Future<Void> encryptionKeyRefresher;
-	Future<Void> blobMetadataRefresher;
-	Future<Void> healthChecker;
-	Future<Void> logger;
+	ActorCollection actors;
 
 	EncryptBaseDomainIdCache baseCipherDomainIdCache;
 	EncryptBaseCipherDomainIdKeyIdCache baseCipherDomainIdKeyIdCache;
@@ -297,8 +294,8 @@ public:
 	                              id,
 	                              SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
 	                              SERVER_KNOBS->LATENCY_SKETCH_ACCURACY) {
-		logger = ekpCacheMetrics.traceCounters(
-		    "EncryptKeyProxyMetrics", id, SERVER_KNOBS->ENCRYPTION_LOGGING_INTERVAL, "EncryptKeyProxyMetrics");
+		actors.add(ekpCacheMetrics.traceCounters(
+		    "EncryptKeyProxyMetrics", id, SERVER_KNOBS->ENCRYPTION_LOGGING_INTERVAL, "EncryptKeyProxyMetrics"));
 	}
 
 	void setKMSHealthiness(bool canConnect) {
@@ -1058,22 +1055,7 @@ ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyD
 	    .detail("ConnectorType", ekpProxyData->kmsConnector->getConnectorStr())
 	    .detail("InfId", kmsConnectorInf.id());
 
-	ekpProxyData->addActor.send(ekpProxyData->kmsConnector->connectorCore(kmsConnectorInf));
-	return Void();
-}
-
-ACTOR Future<Void> resetEKPProxyData(Reference<EncryptKeyProxyData> ekpProxyData) {
-	if (ekpProxyData.isValid()) {
-		ekpProxyData->encryptionKeyRefresher.cancel();
-		ekpProxyData->blobMetadataRefresher.cancel();
-		ekpProxyData->healthChecker.cancel();
-
-		wait(delay(0.0));
-		while (!ekpProxyData->addActor.isEmpty()) {
-			ekpProxyData->addActor.getFuture().pop();
-		}
-	}
-
+	ekpProxyData->actors.add(ekpProxyData->kmsConnector->connectorCore(kmsConnectorInf));
 	return Void();
 }
 
@@ -1082,14 +1064,13 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
                                          EncryptionAtRestMode encryptMode) {
 
 	state Reference<EncryptKeyProxyData> self = makeReference<EncryptKeyProxyData>(ekpInterface.id());
-	state Future<Void> collection = actorCollection(self->addActor.getFuture());
 	state KmsConnectorInterface kmsConnectorInf;
 
 	try {
 		kmsConnectorInf.initEndpoints();
 		TraceEvent("EKPStart", self->myId).detail("KmsConnectorInf", kmsConnectorInf.id());
-		self->addActor.send(waitFailureServer(ekpInterface.waitFailure.getFuture()));
-		self->addActor.send(traceRole(Role::ENCRYPT_KEY_PROXY, ekpInterface.id()));
+		self->actors.add(waitFailureServer(ekpInterface.waitFailure.getFuture()));
+		self->actors.add(traceRole(Role::ENCRYPT_KEY_PROXY, ekpInterface.id()));
 
 		wait(activateKmsConnector(self, kmsConnectorInf));
 
@@ -1100,37 +1081,37 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 		// FLOW_KNOB->ENCRRYPTION_KEY_REFRESH_INTERVAL_SEC, allowing the interactions with external Encryption Key
 		// Manager mostly not co-inciding with FDB process encryption key refresh attempts.
 
-		self->encryptionKeyRefresher = recurringAsync([&]() { return refreshEncryptionKeys(self, kmsConnectorInf); },
-		                                              FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* interval */
-		                                              true, /* absoluteIntervalDelay */
-		                                              FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* initialDelay */
-		                                              TaskPriority::Worker);
+		self->actors.add(recurringAsync([&]() { return refreshEncryptionKeys(self, kmsConnectorInf); },
+		                                FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* interval */
+		                                true, /* absoluteIntervalDelay */
+		                                FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* initialDelay */
+		                                TaskPriority::Worker));
 
-		self->blobMetadataRefresher = recurring([&]() { refreshBlobMetadata(self, kmsConnectorInf); },
-		                                        CLIENT_KNOBS->BLOB_METADATA_REFRESH_INTERVAL,
-		                                        TaskPriority::Worker);
+		self->actors.add(recurring([&]() { refreshBlobMetadata(self, kmsConnectorInf); },
+		                           CLIENT_KNOBS->BLOB_METADATA_REFRESH_INTERVAL,
+		                           TaskPriority::Worker));
 
-		self->healthChecker = recurringAsync([&]() { return updateHealthStatus(self, kmsConnectorInf); },
-		                                     FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
-		                                     true,
-		                                     FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
-		                                     TaskPriority::Worker,
-		                                     true);
+		self->actors.add(recurringAsync([&]() { return updateHealthStatus(self, kmsConnectorInf); },
+		                                FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
+		                                true,
+		                                FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
+		                                TaskPriority::Worker,
+		                                true));
 
 		CODE_PROBE(!encryptMode.isEncryptionEnabled() && SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION,
 		           "Encryption disabled and EKP Recruited");
 		loop choose {
 			when(EKPGetBaseCipherKeysByIdsRequest req = waitNext(ekpInterface.getBaseCipherKeysByIds.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled());
-				self->addActor.send(getCipherKeysByBaseCipherKeyIds(self, kmsConnectorInf, req));
+				self->actors.add(getCipherKeysByBaseCipherKeyIds(self, kmsConnectorInf, req));
 			}
 			when(EKPGetLatestBaseCipherKeysRequest req = waitNext(ekpInterface.getLatestBaseCipherKeys.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled());
-				self->addActor.send(getLatestCipherKeys(self, kmsConnectorInf, req));
+				self->actors.add(getLatestCipherKeys(self, kmsConnectorInf, req));
 			}
 			when(EKPGetLatestBlobMetadataRequest req = waitNext(ekpInterface.getLatestBlobMetadata.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
-				self->addActor.send(getLatestBlobMetadata(self, kmsConnectorInf, req));
+				self->actors.add(getLatestBlobMetadata(self, kmsConnectorInf, req));
 			}
 			when(HaltEncryptKeyProxyRequest req = waitNext(ekpInterface.haltEncryptKeyProxy.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
@@ -1140,21 +1121,16 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 			}
 			when(EncryptKeyProxyHealthStatusRequest req = waitNext(ekpInterface.getHealthStatus.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
-				self->addActor.send(getEKPStatus(self, kmsConnectorInf, req));
-			}
-			when(wait(collection)) {
-				ASSERT(false);
-				throw internal_error();
+				self->actors.add(getEKPStatus(self, kmsConnectorInf, req));
 			}
 		}
 	} catch (Error& e) {
-		state Error _e = e;
-		wait(resetEKPProxyData(self));
-		TraceEvent("EKPTerminated", self->myId).errorUnsuppressed(_e);
-		throw _e;
+		self->actors = ActorCollection(false);
+		TraceEvent("EKPTerminated", self->myId).errorUnsuppressed(e);
+		throw e;
 	}
 
-	wait(resetEKPProxyData(self));
+	self->actors = ActorCollection(false);
 	TraceEvent("EKPStopped", self->myId);
 	return Void();
 }
