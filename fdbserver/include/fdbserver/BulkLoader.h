@@ -28,7 +28,7 @@ struct BulkLoaderStats {
 	Counter startRequests;
 	Counter stateChangeRequests;
 	Counter waitCompleteRequests;
-	
+
 	Counter errors;
 
 	int activeRequests;
@@ -38,7 +38,7 @@ struct BulkLoaderStats {
 	    filesToWriteRequests("FilesToWriteRequests", cc),
 	    filesWrittenRequests("FilesWrittenRequests", cc),
 	    filesToWriteCreated("FilesToWriteCreated", cc),
-		filesWrittenValidated("FilesWrittenValidated", cc),
+	    filesWrittenValidated("FilesWrittenValidated", cc),
 	    fileValidationErrors("FileValidationErrors", cc),
 	    filesWrittenRegistered("FilesWrittenRegistered", cc),
 	    startRequests("StartRequests", cc),
