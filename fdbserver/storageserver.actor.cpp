@@ -2317,6 +2317,7 @@ ReadMetrics StorageServer::getReadMetrics(std::unordered_set<Reference<ShardInfo
 		}
 
 		// fmt::print("Get read metrics from range: {}\n", rangeBusyness);
+		rangeBusyness = std::min(1.0, rangeBusyness);
 	}
 
 	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
