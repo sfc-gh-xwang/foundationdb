@@ -165,6 +165,8 @@ def get_move_record(tr: fdb.Transaction, tenantGroup: bytes) -> tuple:
     tr.options.set_raw_access()
     packKey = fdb.tuple.pack((tenantGroup,), (moveDataPrefix + b"/move/"))
     result = tr.get(packKey)
+    if result == None:
+        return None
     moveTuple = fdb.tuple.unpack(result)
     return moveTuple
 
@@ -313,6 +315,10 @@ def process_queue(
     mgmtDb = fdb.open(mgmtDbName)
     mgmtDb.options.set_transaction_timeout(timeoutLen)
     moveRecord = get_move_record(mgmtDb, tenantGroup)
+    if moveRecord is None:
+        print("No move record found for the tenant group {}".format(tenantGroup))
+        return -1
+
     # Validate move record with parameters
     runId = moveRecord[0]
     mrSrc = moveRecord[1]
