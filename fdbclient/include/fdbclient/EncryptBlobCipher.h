@@ -30,7 +30,7 @@
 // do two things:
 // 1) generate encrypted ciphertext for given plaintext input.
 // 2) generate BlobCipherEncryptHeader (including the 'header authTokens') and persit for decryption on reads.
-class EncryptBlobCipher : NonCopyable {
+class EncryptBlobCipher : public ReferenceCounted<EncryptBlobCipher>, NonCopyable {
 public:
 	static Reference<EncryptBlobCipher> getEncryptor(Reference<BlobCipherKey> tCipherKey,
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
@@ -76,9 +76,6 @@ public:
 	                            BlobCipherEncryptHeaderRef* headerRef,
 	                            double* encryptTime = nullptr) = 0;
 
-	virtual void addref() = 0;
-	virtual void delref() = 0;
-
 protected:
 	virtual void init() = 0;
 
@@ -104,7 +101,7 @@ protected:
 	Standalone<StringRef> ivRef;
 };
 
-class EncryptBlobCipherAes256Ctr final : public EncryptBlobCipher, public ReferenceCounted<EncryptBlobCipherAes256Ctr> {
+class EncryptBlobCipherAes256Ctr final : public EncryptBlobCipher {
 public:
 	EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> tCipherKey,
 	                           Optional<Reference<BlobCipherKey>> hCipherKey,
@@ -136,9 +133,6 @@ public:
 	                    const int plaintextLen,
 	                    BlobCipherEncryptHeaderRef* headerRef,
 	                    double* encryptTime = nullptr) override;
-
-	void addref() override;
-	void delref() override;
 
 private:
 	template <class Params>
@@ -155,7 +149,7 @@ private:
 	void init() override;
 };
 
-class EncryptBlobCipherAes256Gcm final : public EncryptBlobCipher, public ReferenceCounted<EncryptBlobCipherAes256Gcm> {
+class EncryptBlobCipherAes256Gcm final : public EncryptBlobCipher {
 public:
 	EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> tCipherKey,
 	                           Optional<Reference<BlobCipherKey>> hCipherKey,
@@ -187,9 +181,6 @@ public:
 	                    const int plaintextLen,
 	                    BlobCipherEncryptHeaderRef* headerRef,
 	                    double* encryptTime = nullptr) override;
-
-	void addref() override;
-	void delref() override;
 
 private:
 	void setCipherAlgoHeaderWithAuthV1(const uint8_t*,
@@ -208,7 +199,7 @@ private:
 // This interface enable data block decryption. An invocation to decrypt() would generate
 // 'plaintext' for a given 'ciphertext' input, the caller needs to supply BlobCipherEncryptHeader.
 
-class DecryptBlobCipher : NonCopyable {
+class DecryptBlobCipher : public ReferenceCounted<DecryptBlobCipher>, NonCopyable {
 public:
 	static Reference<DecryptBlobCipher> getDecryptor(Reference<BlobCipherKey> tCipherKey,
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
@@ -234,9 +225,6 @@ public:
 	                            double* decryptTime = nullptr) = 0;
 
 	virtual bool supportsInplaceDecryption() = 0;
-
-	virtual void addref() = 0;
-	virtual void delref() = 0;
 
 protected:
 	EVP_CIPHER_CTX* ctx;
@@ -265,7 +253,7 @@ protected:
 	void vaidateEncryptHeaderCipherKCVs(const BlobCipherEncryptHeaderRef&, const BlobCipherEncryptHeaderFlagsV1&);
 };
 
-class DecryptBlobCipherAes256Gcm final : public DecryptBlobCipher, public ReferenceCounted<DecryptBlobCipherAes256Gcm> {
+class DecryptBlobCipherAes256Gcm final : public DecryptBlobCipher {
 public:
 	DecryptBlobCipherAes256Gcm(Reference<BlobCipherKey> tCipherKey,
 	                           Optional<Reference<BlobCipherKey>> hCipherKey,
@@ -285,9 +273,6 @@ public:
 
 	bool supportsInplaceDecryption() override;
 
-	void addref() override;
-	void delref() override;
-
 private:
 	void validateAuthTokensV1(const uint8_t*,
 	                          const int,
@@ -295,7 +280,7 @@ private:
 	                          const BlobCipherEncryptHeaderRef&) override;
 };
 
-class DecryptBlobCipherAes256Ctr final : public DecryptBlobCipher, public ReferenceCounted<DecryptBlobCipherAes256Ctr> {
+class DecryptBlobCipherAes256Ctr final : public DecryptBlobCipher {
 public:
 	DecryptBlobCipherAes256Ctr(Reference<BlobCipherKey> tCipherKey,
 	                           Optional<Reference<BlobCipherKey>> hCipherKey,
@@ -314,9 +299,6 @@ public:
 	                    double* decryptTime = nullptr) override;
 
 	bool supportsInplaceDecryption() override;
-
-	void addref() override;
-	void delref() override;
 
 private:
 	void validateAuthTokensV1(const uint8_t*,

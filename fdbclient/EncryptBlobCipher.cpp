@@ -320,13 +320,6 @@ void EncryptBlobCipherAes256Gcm::setCipherAlgoHeaderWithAuthV1(const uint8_t* ci
 	setCipherAlgoHeaderWithAuthV1<AesGcmParams>(ciphertext, ciphertextLen, flags, headerRef);
 }
 
-void EncryptBlobCipherAes256Gcm::addref() {
-	ReferenceCounted<EncryptBlobCipherAes256Gcm>::addref();
-}
-void EncryptBlobCipherAes256Gcm::delref() {
-	ReferenceCounted<EncryptBlobCipherAes256Gcm>::delref();
-}
-
 // EncryptBlobCipherAes256Ctr class methods
 EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> tCipherKey,
                                                        Optional<Reference<BlobCipherKey>> hCipherKeyOpt,
@@ -529,13 +522,6 @@ bool EncryptBlobCipherAes256Ctr::supportsInplaceEncryption() {
 	return true;
 }
 
-void EncryptBlobCipherAes256Ctr::addref() {
-	ReferenceCounted<EncryptBlobCipherAes256Ctr>::addref();
-}
-void EncryptBlobCipherAes256Ctr::delref() {
-	ReferenceCounted<EncryptBlobCipherAes256Ctr>::delref();
-}
-
 // DecryptBlobCipher class methods
 
 DecryptBlobCipher::DecryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
@@ -713,13 +699,6 @@ void DecryptBlobCipherAes256Gcm::validateAuthTokensV1(const uint8_t*,
                                                       const BlobCipherEncryptHeaderFlagsV1&,
                                                       const BlobCipherEncryptHeaderRef&) {
 	// GCM Auth token validation is done post-decryption
-}
-
-void DecryptBlobCipherAes256Gcm::addref() {
-	ReferenceCounted<DecryptBlobCipherAes256Gcm>::addref();
-}
-void DecryptBlobCipherAes256Gcm::delref() {
-	ReferenceCounted<DecryptBlobCipherAes256Gcm>::delref();
 }
 
 // DecryptBlobCipherAes256Ctr class methods
@@ -917,13 +896,6 @@ void DecryptBlobCipherAes256Ctr::validateAuthTokensV1(const uint8_t* ciphertext,
 	ASSERT_EQ(flags.authTokenMode, EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
 	validateHeaderSingleAuthTokenV1(ciphertext, ciphertextLen, flags, headerRef);
 	authTokensValidationDone = true;
-}
-
-void DecryptBlobCipherAes256Ctr::addref() {
-	ReferenceCounted<DecryptBlobCipherAes256Ctr>::addref();
-}
-void DecryptBlobCipherAes256Ctr::delref() {
-	ReferenceCounted<DecryptBlobCipherAes256Ctr>::delref();
 }
 
 // HmacSha256DigestGen class methods
