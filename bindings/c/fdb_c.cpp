@@ -310,10 +310,14 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_get_key(FDBFuture* f, uint8_t const*
 	// This function was historically used to process any byte string, while in 8.0 one of the usages (getKey requests)
 	// was changed to wrap a KeyResult type. For that reason, we do not know the exact type of the wrapped value. We do
 	// know that it is either a proper Key or a subclass of a Key, so we cast it to a Key.
-	CATCH_AND_RETURN(ThreadSingleAssignmentVarBase* tsav = TSAVB(f);
-	                 KeyRef key = tsav->getAndCast<Key>(AddValueReference::True);
-	                 *out_key = key.begin();
-	                 *out_key_length = key.size(););
+	CATCH_AND_RETURN({
+		if (typeid(f) == typeid(ThreadSingleAssignmentVar<Key>)) {
+			return fdb_future_get_bytes(f, out_key, out_key_length);
+		}
+		KeyReadResult key = TSAV(KeyReadResult, f)->get();
+		*out_key = key.begin();
+		*out_key_length = key.size();
+	});
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_future_get_value(FDBFuture* f,
@@ -331,11 +335,17 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_get_keyvalue_array(FDBFuture* f,
                                                                FDBKeyValue const** out_kv,
                                                                int* out_count,
                                                                fdb_bool_t* out_more) {
-	CATCH_AND_RETURN(ThreadSingleAssignmentVarBase* tsav = TSAVB(f);
-	                 RangeResultRef rrr = tsav->getAndCast<RangeResult>(AddValueReference::True);
-	                 *out_kv = (FDBKeyValue*)rrr.begin();
-	                 *out_count = rrr.size();
-	                 *out_more = rrr.more;);
+	CATCH_AND_RETURN({
+		RangeResult rr;
+		if (typeid(f) == typeid(ThreadSingleAssignmentVar<RangeResult>)) {
+			rr = TSAV(RangeResult, f)->get();
+		} else {
+			rr = TSAV(RangeReadResult, f)->get();
+		}
+		*out_kv = (FDBKeyValue*)rr.begin();
+		*out_count = rr.size();
+		*out_more = rr.more;
+	});
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_future_get_mappedkeyvalue_array(FDBFuture* f,
@@ -384,11 +394,13 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_get_granule_summary_array(FDBFuture*
 extern "C" DLLEXPORT fdb_error_t fdb_future_get_read_busyness(FDBFuture* f,
                                                               float* server_busyness,
                                                               float* range_busyness) {
-	CATCH_AND_RETURN(ThreadSingleAssignmentVarBase* tsav = TSAVB(f);
-	                 ReadResultBase rr = tsav->getAndCast<ReadResultBase>(AddValueReference::False);
-	                 ReadMetrics const& readMetrics = rr.getReadMetrics();
-	                 *server_busyness = readMetrics.getServerBusyness();
-	                 *range_busyness = readMetrics.getRangeBusyness(););
+	CATCH_AND_RETURN({
+		ThreadSingleAssignmentVarBase* tsav = TSAVB(f);
+		ReadResultBase rr = tsav->getAndCast<ReadResultBase>(AddValueReference::False);
+		ReadMetrics const& readMetrics = rr.getReadMetrics();
+		*server_busyness = readMetrics.getServerBusyness();
+		*range_busyness = readMetrics.getRangeBusyness();
+	});
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_future_readbg_get_descriptions_v2(FDBFuture* f,

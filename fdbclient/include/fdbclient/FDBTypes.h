@@ -794,7 +794,7 @@ private:
 	BusynessT rangeBusyness = 0;
 };
 
-class ReadResultBase {
+class ReadResultBase : public Castable {
 public:
 	constexpr static FileIdentifier file_identifier = 6066542;
 

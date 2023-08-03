@@ -524,7 +524,7 @@ protected:
 
 	// Get a pointer to the value held by the subclass. This can be used to access the underlying value with a
 	// polymorphic type.
-	virtual const void* getValuePtrUnsafe() = 0;
+	virtual const Castable* getValuePtrUnsafe() = 0;
 };
 
 template <class T>
@@ -548,7 +548,14 @@ public:
 		return value;
 	}
 
-	const void* getValuePtrUnsafe() override { return static_cast<void*>(&value); }
+	const Castable* getValuePtrUnsafe() override {
+		if constexpr (std::is_base_of_v<Castable, T>) {
+			return static_cast<Castable*>(&value);
+		} else {
+			ASSERT(false);
+			throw internal_error();
+		}
+	}
 
 	void addref() override { ThreadSafeReferenceCounted<ThreadSingleAssignmentVar<T>>::addref(); }
 
