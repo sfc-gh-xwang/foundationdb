@@ -2406,13 +2406,13 @@ WorkerFitnessInfo Recruiter::getWorkerForRoleInDatacenter(
 					numProcessesOnMachine = mit->second;
 				}
 			}
-			auto comparator = SingleWorkerComparator(
-					fitness,
-			        id_used[optionalWorkerId],
-			        isLongLivedStateless(clusterControllerData, optionalWorkerId, role),
-			        sharing != preferredSharing.end() ? sharing->second : static_cast<int>(1e6),
-			        numProcessesOnMachine);
-			auto [iter, inserted] = fitness_workers.insert({std::move(comparator), std::vector<WorkerDetails>{}});
+			auto comparator =
+			    SingleWorkerComparator(fitness,
+			                           id_used[optionalWorkerId],
+			                           isLongLivedStateless(clusterControllerData, optionalWorkerId, role),
+			                           sharing != preferredSharing.end() ? sharing->second : static_cast<int>(1e6),
+			                           numProcessesOnMachine);
+			auto [iter, inserted] = fitness_workers.insert({ std::move(comparator), std::vector<WorkerDetails>{} });
 			(iter->second).push_back(workerInfo.details);
 		}
 	}
