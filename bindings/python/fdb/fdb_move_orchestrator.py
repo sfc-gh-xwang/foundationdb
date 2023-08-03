@@ -329,7 +329,7 @@ def process_queue(
         return -1
     mrDst = moveRecord[2]
     if mrDst != dstClusterName:
-        print("Mismatch between move record and provided source cluster name:")
+        print("Mismatch between move record and provided destination cluster name:")
         print("  Provided: {}".format(dstClusterName))
         print("  Move Record: {}".format(mrDst))
         return -1
