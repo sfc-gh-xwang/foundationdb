@@ -386,6 +386,7 @@ ERROR( bulk_load_invalid_file_metadata, 2622, "Invalid bulk load file metadaata"
 
 // other internal-only state transition failures - end user should not see this error
 ERROR( bulk_load_invalid_state_transition, 2650, "Bulk load invalid state transition" );
+ERROR( bulk_load_create_too_old, 2651, "Bulk load create request took too long and cannot be completed" );
 
 // 27XX - Encryption operations errors
 ERROR( encrypt_ops_error, 2700, "Encryption operation error" )

@@ -23,10 +23,13 @@ struct BulkLoaderStats {
 	Counter filesWrittenRequests;
 	Counter filesToWriteCreated;
 	Counter filesWritten;
+	Counter startRequests;
+	Counter stateChangeRequests;
+	Counter waitCompleteRequests;
+
 	Counter errors;
 
-	bool waitingBetweenRounds = false;
-	int targetRate = 0;
+	int activeRequests;
 
 	explicit BulkLoaderStats(UID id, double interval)
 	  : cc("BulkLoaderStats", id.toString()),
@@ -34,7 +37,12 @@ struct BulkLoaderStats {
 	    filesWrittenRequests("FilesWrittenRequests", cc),
 	    filesToWriteCreated("FilesToWriteCreated", cc),
 	    filesWritten("FilesWritten", cc),
-	    errors("Errors", cc) {
+	    startRequests("StartRequests", cc),
+	    stateChangeRequests("StateChangeRequests", cc),
+	    waitCompleteRequests("WaitCompleteRequests", cc),
+	    errors("Errors", cc),
+	    activeRequests(0) {
+		specialCounter(cc, "ActiveRequests", [this]() { return this->activeRequests; });
 		logger = cc.traceCounters("BulkLoaderMetrics", id, interval, "BulkLoaderMetrics");
 	}
 };

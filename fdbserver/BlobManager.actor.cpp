@@ -5997,7 +5997,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
 		} else {
 			++bmData->stats.bulkLoadStagingErrors;
-			wait(bmData->db->abortBulkLoad(id, {}));
+			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::ABORTED));
 			// don't return, we have to do cleanup
 			throw bulk_load_aborted();
 		}
