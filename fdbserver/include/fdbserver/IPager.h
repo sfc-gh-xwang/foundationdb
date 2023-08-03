@@ -484,7 +484,7 @@ public:
 			if (cipher->supportsInplaceDecryption()) {
 				cipher->decryptInplace(payload, len, headerRef, decryptTime);
 			} else {
-				StringRef plaintext = cipher->decrypt(payload, len, headerRef, arena);
+				StringRef plaintext = cipher->decrypt(payload, len, headerRef, arena, decryptTime);
 				ASSERT_EQ(len, plaintext.size());
 				memcpy(payload, plaintext.begin(), len);
 			}
