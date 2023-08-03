@@ -92,7 +92,7 @@ ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
 			return false;
 		}
 		id = tokens[2];
-		wait(localDb->cleanupAbortedBulkLoad(id));
+		wait(localDb->cleanupBulkLoad(id, tenant));
 		fmt::print("Bulk Load {} is cleaned up successfully.\n", id.printable());
 	} else if (tokencmp(tokens[1], "list")) {
 		Standalone<VectorRef<BulkLoadIDRef>> list = wait(localDb->listBulkLoads(false, tenant));

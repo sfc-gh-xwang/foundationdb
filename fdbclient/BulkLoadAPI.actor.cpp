@@ -35,11 +35,20 @@ bool newLoadersDifferentAndValid(Reference<BulkLoaderInfo> oldLoaders, Reference
 		ASSERT(oldLoaderIDs.insert(oldLoaders->getId(i)).second);
 	}
 	for (int i = 0; i < newLoaders->size(); i++) {
-		if (!oldLoaderIDs.count(newLoaders->getId(i))) {
+		if (!oldLoaderIDs.contains(newLoaders->getId(i))) {
 			return true;
 		}
 	}
 	return false;
+}
+
+bool requestCanRetry(const Error& e) {
+	switch (e.code()) {
+	case error_code_bulk_load_cannot_validate_file:
+		return true;
+	default:
+		return false;
+	};
 }
 
 ACTOR template <class Request, bool P>
@@ -111,9 +120,17 @@ Future<REPLY_TYPE(Request)> doBulkLoadRequest(Reference<DatabaseContext> db,
 			}
 			wait(delayJittered(1.0));
 		} catch (Error& e) {
-			// FIXME: any errors to retry?
-			TraceEvent("BulkLoadRequestError").errorUnsuppressed(e);
-			throw e;
+			if (requestCanRetry(e)) {
+				CODE_PROBE(true, "Bulk load request retrying on retryable error");
+				// FIXME: add exponential backoff specifically in error case
+				wait(delayJittered(1.0));
+				// clear loaders to make sure we get new ones and restart request
+				bulkLoaders.clear();
+			} else {
+				// FIXME: any errors to retry?
+				TraceEvent("BulkLoadRequestError").errorUnsuppressed(e);
+				throw e;
+			}
 		}
 	}
 }
@@ -466,6 +483,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					    tr, physicalRange.begin, physicalRange.end, ""_sr, true));
 				} else if (desiredState == BulkLoadStatus::State::STAGING_BLOB_DONE) {
 					// clean up pointers once granules actually staged
+					// FIXME: convert these 3 lines into common function?
 					std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
 					    BulkLoadMetadata::allFilePointersForLoadRange(id);
 					BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
@@ -664,47 +682,6 @@ Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listBulkLoads(bool
 
 Future<BulkLoadStatus> DatabaseContext::getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
 	return getBulkLoadStatusActor(Reference<DatabaseContext>::addRef(this), id);
-}
-
-ACTOR Future<Void> cleanupAbortedBulkLoadActor(Reference<DatabaseContext> db, BulkLoadID id) {
-	BulkLoadStatus startStatus = wait(getBulkLoadStatusActor(db, id));
-
-	// ensure load was in aborted state before starting cleanup
-	if (!checkValidBulkLoadStateTransition(startStatus.state, BulkLoadStatus::State::ABORTED_COMPLETE)) {
-		if (BULKLOAD_DEBUG) {
-			fmt::print("CleanupAbortedBulkLoadActor {0}: already cleaned up\n", id.printable());
-		}
-		CODE_PROBE(true, "cleanup aborted bulk load already done");
-		return Void();
-	}
-
-	state Database cx(db);
-	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
-	// TODO: implement actual cleanup! Must be idempotent to handle retries/multiple concurrent cleanup callers
-	// remaining: actually delete blob files, purge hybrid data, clear range, unblobbify/clean up purged range
-	loop {
-		try {
-			// clean up file pointers if deleted in staging phase
-			SystemDBWriteLockedNow(db)->setOptions(tr);
-			auto idRange = BulkLoadMetadata::allFilePointersForLoadRange(id);
-			BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
-			BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
-
-			wait(tr->commit());
-			break;
-		} catch (Error& e) {
-			wait(tr->onError(e));
-		}
-	}
-
-	// change bulk load state to ABORTED_COMPLETE
-	wait(updateBulkLoadStateActor(db, id, BulkLoadStatus::State::ABORTED_COMPLETE, {}));
-
-	return Void();
-}
-
-Future<Void> DatabaseContext::cleanupAbortedBulkLoad(BulkLoadID id) {
-	return cleanupAbortedBulkLoadActor(Reference<DatabaseContext>::addRef(this), id);
 }
 
 ACTOR Future<Version> getBulkLoadVersionActor(Reference<DatabaseContext> db, BulkLoadID id) {

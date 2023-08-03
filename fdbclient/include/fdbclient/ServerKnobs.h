@@ -1235,6 +1235,7 @@ public:
 
 	// Bulk Load
 	int BULK_LOAD_FILE_POINTER_BATCH_SIZE;
+	int BULK_LOAD_PARALLEL_FILE_VALIDATIONS;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

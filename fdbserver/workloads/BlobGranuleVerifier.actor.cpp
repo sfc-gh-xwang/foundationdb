@@ -817,7 +817,7 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 				std::string fname = (fileIdx >= oldFiles.snapshotFiles.size())
 				                        ? oldFiles.deltaFiles[fileIdx - oldFiles.snapshotFiles.size()].filename
 				                        : oldFiles.snapshotFiles[fileIdx].filename;
-				state Reference<BackupContainerFileSystem> bstore = self->bstore->getForRead(fname);
+				state Reference<BackupContainerFileSystem> bstore = self->bstore->getForAccess(fname);
 				try {
 					wait(success(bstore->readFile(fname)));
 					ASSERT(false);
