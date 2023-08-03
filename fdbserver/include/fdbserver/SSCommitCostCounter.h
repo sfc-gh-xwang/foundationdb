@@ -33,5 +33,5 @@ public:
 	    minCostTracked(minCostTracked) {}
 	void addSSTagCost(const UID& id, const TransactionTag& throttlingTag, uint64_t cost);
 
-	UIDTransactionTagMap<TransactionCommitCostEstimation> getTopBusyTagCost();
+	UIDTransactionTagMap<TransactionCommitCostEstimation> getTopBusyTagCost(double elapsed);
 };

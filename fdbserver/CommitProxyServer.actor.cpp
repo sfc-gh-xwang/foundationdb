@@ -3322,6 +3322,7 @@ ACTOR Future<Void> reportTxnTagCommitCost(UID myID,
                                           SSCommitCostCounter* ssTrTagCommitCost) {
 	state Future<Void> nextRequestTimer = Never();
 	state Future<Void> nextReply = Never();
+	state double lastReq = 0;
 	if (db->get().ratekeeper.present())
 		nextRequestTimer = Void();
 	loop choose {
@@ -3336,9 +3337,11 @@ ACTOR Future<Void> reportTxnTagCommitCost(UID myID,
 		}
 		when(wait(nextRequestTimer)) {
 			nextRequestTimer = Never();
+			double elapsed = now() - lastReq;
+			lastReq = now();
 			if (db->get().ratekeeper.present()) {
 				nextReply = brokenPromiseToNever(db->get().ratekeeper.get().reportCommitCostEstimation.getReply(
-				    ReportCommitCostEstimationRequest(ssTrTagCommitCost->getTopBusyTagCost())));
+				    ReportCommitCostEstimationRequest(ssTrTagCommitCost->getTopBusyTagCost(elapsed))));
 			} else {
 				nextReply = Never();
 			}

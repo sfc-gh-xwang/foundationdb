@@ -16,14 +16,14 @@ void SSCommitCostCounter::addSSTagCost(const UID& id, const TransactionTag& thro
 	costItem.costSum += cost;
 }
 
-UIDTransactionTagMap<TransactionCommitCostEstimation> SSCommitCostCounter::getTopBusyTagCost() {
+UIDTransactionTagMap<TransactionCommitCostEstimation> SSCommitCostCounter::getTopBusyTagCost(double elapsed) {
 	UIDTransactionTagMap<TransactionCommitCostEstimation> result;
 
 	for (const auto& [ssID, tagCostMap] : commitCost) {
 		std::priority_queue<TagCostInfo, std::vector<TagCostInfo>, std::greater<TagCostInfo>> topKTags;
 
 		for (const auto& [tag, cost] : tagCostMap) {
-			if (cost.getCostSum() < minCostTracked) {
+			if ((cost.getCostSum() / elapsed) < minCostTracked) {
 				continue;
 			}
 			if (topKTags.size() < maxTagsTracked) {
@@ -48,7 +48,7 @@ UIDTransactionTagMap<TransactionCommitCostEstimation> SSCommitCostCounter::getTo
 TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBeyondMaxTracked") {
 
 	SSCommitCostCounter counter(/*maxTagsTracked=*/2, /*minCostTracked=*/10);
-	ASSERT_EQ(counter.getTopBusyTagCost().size(), 0);
+	ASSERT_EQ(counter.getTopBusyTagCost(1).size(), 0);
 
 	const UID uid;
 	counter.addSSTagCost(uid, "throttlingTagA"_sr, 10);
@@ -56,7 +56,7 @@ TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBeyondMaxTracked") {
 	counter.addSSTagCost(uid, "throttlingTagB"_sr, 15);
 	counter.addSSTagCost(uid, "throttlingTagC"_sr, 20);
 
-	auto const result = counter.getTopBusyTagCost();
+	auto const result = counter.getTopBusyTagCost(1);
 
 	ASSERT(result.contains(uid));
 	ASSERT_EQ(result.at(uid).size(), 2);
@@ -66,7 +66,7 @@ TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBeyondMaxTracked") {
 	ASSERT(result.at(uid).contains("throttlingTagC"_sr));
 
 	// SSCommitCostCounter::getTopBusyTagCost clears the tag costs, a second call should return empty result.
-	auto const result2 = counter.getTopBusyTagCost();
+	auto const result2 = counter.getTopBusyTagCost(1);
 	ASSERT(result2.empty());
 
 	return Void();
@@ -74,12 +74,12 @@ TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBeyondMaxTracked") {
 
 TEST_CASE("/fdbserver/SSCommitCostCounter/IgnoreBelowMinCost") {
 	SSCommitCostCounter counter(/*maxTagsTracked=*/2, /*minCostTracked=*/10);
-	ASSERT_EQ(counter.getTopBusyTagCost().size(), 0);
+	ASSERT_EQ(counter.getTopBusyTagCost(1).size(), 0);
 
 	const UID uid;
 	counter.addSSTagCost(uid, "throttlingTagA"_sr, 5);
 
-	auto const result = counter.getTopBusyTagCost();
+	auto const result = counter.getTopBusyTagCost(1);
 	ASSERT(result.empty());
 
 	return Void();
