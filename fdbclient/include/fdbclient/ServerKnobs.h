@@ -780,7 +780,9 @@ public:
 	// client throughput tracker running on ratekeeper:
 	double CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL;
 	// If true, a throttlingId will potentially have a limiting rate
-	// computed even if no quota is set
+	// computed even if no quota is set. This rate is computed based
+	// on storage server saturation for storage servers being affected
+	// by the throttlingId in question.
 	bool THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
