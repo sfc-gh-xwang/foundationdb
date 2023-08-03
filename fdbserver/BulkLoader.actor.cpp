@@ -516,7 +516,7 @@ ACTOR Future<Void> handleStartRequest(Reference<BulkLoaderData> self,
 	try {
 		Optional<Reference<Tenant>> tenant;
 		if (req.tenantInfo.hasTenant()) {
-			tenant = makeReference<Tenant>(req.tenantInfo.tenantId);
+			tenant = makeReference<Tenant>(self->db, req.tenantInfo.tenantId);
 		}
 
 		Version maxReadVersion = req.startReadVersion + CLIENT_KNOBS->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
