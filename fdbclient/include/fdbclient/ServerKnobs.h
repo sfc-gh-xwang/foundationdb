@@ -537,7 +537,8 @@ public:
 	// per storage server by the commit proxy.
 	int64_t CP_THROTTLE_TAGS_TRACKED;
 	// Minimum write throughput (in pages/second, multiplied by fungibility ratio)
-	// that a tag must register on a commit proxy in order for commit proxy to send cost estimation to the RKMetricsTracker
+	// that a tag must register on a commit proxy in order for commit proxy to send cost estimation to the
+	// RKMetricsTracker
 	int64_t CP_MIN_TAG_WRITE_PAGES_RATE;
 	bool PROXY_REJECT_BATCH_QUEUED_TOO_LONG;
 	bool PROXY_USE_RESOLVER_PRIVATE_MUTATIONS;
