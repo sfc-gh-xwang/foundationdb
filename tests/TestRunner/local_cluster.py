@@ -83,12 +83,18 @@ class TLSConfig:
         server_chain_len: int = 3,
         client_chain_len: int = 2,
         verify_peers: str = "Check.Valid=1",
-        client_tls_required: bool = False,
+        server_disable_tls: bool = False,
+        client_disable_tls: bool = False,
+        server_require_tls: bool = False,
+        client_require_tls: bool = False,
     ):
         self.server_chain_len = server_chain_len
         self.client_chain_len = client_chain_len
         self.verify_peers = verify_peers
-        self.client_tls_required = client_tls_required
+        self.server_disable_tls = server_disable_tls
+        self.client_disable_tls = client_disable_tls
+        self.server_require_tls = server_require_tls
+        self.client_require_tls = client_require_tls
 
 
 class LocalCluster:
@@ -160,7 +166,6 @@ tracer = log_file
         custom_config: dict = {},
         authorization_kty: str = "",
         authorization_keypair_id: str = "",
-        disable_server_side_tls: bool = False,
     ):
         self.port_provider = PortProvider()
         self.basedir = Path(basedir)
@@ -209,7 +214,6 @@ tracer = log_file
         self.use_legacy_conf_syntax = False
         self.coordinators = set()
         self.active_servers = set(self.server_ports.keys())
-        self.disable_server_side_tls = disable_server_side_tls
         self.tls_config = tls_config
         self.public_key_jwks_str = None
         self.public_key_json_file = None
@@ -344,6 +348,21 @@ tracer = log_file
         )
         return conn_str
 
+    def get_client_tls_ca_path(self):
+        if not self.tls_config:
+            return None
+        return self.client_ca_file
+
+    def get_client_tls_cert_path(self):
+        if not self.tls_config:
+            return None
+        return self.client_cert_file
+
+    def get_client_tls_key_path(self):
+        if not self.tls_config:
+            return None
+        return self.client_key_file
+
     def start_cluster(self):
         assert not self.running, "Can't start a server that is already running"
         args = [
@@ -405,6 +424,8 @@ tracer = log_file
 
     def __fdbcli_exec(self, cmd, stdout, stderr, timeout):
         args = [self.fdbcli_binary, "-C", self.cluster_file, "--exec", cmd]
+        # Note that we never set tls-required for the client during database configure step
+        # becuase database setup is part of the test fixture, not under test here.
         if self.tls_config:
             args += [
                 "--tls-certificate-file",
@@ -414,8 +435,6 @@ tracer = log_file
                 "--tls-ca-file",
                 self.server_ca_file,
             ]
-            if self.tls_config.client_tls_required:
-                args += ["--tls-required", "true"]
         if self.use_future_protocol_version:
             args += ["--use-future-protocol-version"]
         res = subprocess.run(
@@ -498,7 +517,7 @@ tracer = log_file
 
     # Materialize server's TLS configuration section
     def tls_conf_string(self):
-        if self.tls_config is None or self.disable_server_side_tls:
+        if self.tls_config is None or self.tls_config.server_disable_tls:
             return ""
         else:
             conf_map = {
@@ -506,11 +525,12 @@ tracer = log_file
                 "tls-key-file": self.server_key_file,
                 "tls-ca-file": self.client_ca_file,
                 "tls-verify-peers": self.tls_config.verify_peers,
+                "tls-required": str(self.tls_config.server_require_tls),
             }
             return "\n".join("{} = {}".format(k, v) for k, v in conf_map.items())
 
     def tls_optional_string(self):
-        if self.tls_config is None or self.disable_server_side_tls:
+        if self.tls_config is None or self.tls_config.server_disable_tls:
             return ""
         else:
             return ":tls"

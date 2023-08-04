@@ -42,7 +42,6 @@ class TestCluster(LocalCluster):
         version: str,
         tls_config: TLSConfig = None,
         mkcert_binary: str = None,
-        disable_server_side_tls: bool = False,
     ):
         self.client_config_tester_bin = Path(args.client_config_tester_bin).resolve()
         assert self.client_config_tester_bin.exists(), "{} does not exist".format(
@@ -72,7 +71,6 @@ class TestCluster(LocalCluster):
             1,
             tls_config=tls_config,
             mkcert_binary=self.mkcert_binary,
-            disable_server_side_tls=disable_server_side_tls,
         )
         self.set_env_var("LD_LIBRARY_PATH", downloader.lib_dir(version))
 
@@ -116,10 +114,7 @@ class ClientConfigTest:
         self.status_json = None
 
         # Configuration parameters to be set directly as needed
-        self.tls_client_cert_file = None
-        self.tls_client_key_file = None
-        self.tls_client_ca_file = None
-        self.tls_client_tls_required = None
+        self.tls_config = None
         self.disable_local_client = False
         self.disable_client_bypass = False
         self.ignore_external_client_failures = False
@@ -335,17 +330,29 @@ class ClientConfigTest:
         if self.disable_client_bypass:
             cmd_args += ["--network-option-disable_client_bypass", ""]
 
-        if self.tls_client_cert_file:
-            cmd_args += ["--network-option-tls_cert_path", self.tls_client_cert_file]
+        if self.tls_config and not self.tls_config.client_disable_tls:
+            cmd_args += [
+                "--network-option-tls_cert_path",
+                self.cluster.get_client_tls_cert_path(),
+            ]
 
-        if self.tls_client_key_file:
-            cmd_args += ["--network-option-tls_key_path", self.tls_client_key_file]
+        if self.tls_config and not self.tls_config.client_disable_tls:
+            cmd_args += [
+                "--network-option-tls_key_path",
+                self.cluster.get_client_tls_key_path(),
+            ]
 
-        if self.tls_client_ca_file:
-            cmd_args += ["--network-option-tls_ca_path", self.tls_client_ca_file]
+        if self.tls_config and not self.tls_config.client_disable_tls:
+            cmd_args += [
+                "--network-option-tls_ca_path",
+                self.cluster.get_client_tls_ca_path(),
+            ]
 
-        if self.tls_client_tls_required:
-            cmd_args += ["--network-option-tls_required", "true"]
+        if self.tls_config and self.tls_config.client_require_tls:
+            cmd_args += [
+                "--network-option-tls_required",
+                str(self.tls_config.client_require_tls),
+            ]
 
         if self.external_lib_path is not None:
             cmd_args += ["--external-client-library", self.external_lib_path]
@@ -427,8 +434,10 @@ class ClientConfigTests(unittest.TestCase):
     def test_tls_required(self):
         # Local client only; Plaintext connections are disabled in a plaintext cluster; Timeout Expected
         test = ClientConfigTest(self)
+        test.tls_config = TLSConfig(
+            server_disable_tls=True, client_disable_tls=True, client_require_tls=True
+        )
         test.print_status = True
-        test.tls_client_tls_required = True
         test.transaction_timeout = 100
         test.expected_error = 1031  # Timeout
         test.exec()
@@ -680,15 +689,13 @@ class ClientConfigSeparateCluster(unittest.TestCase):
 
     def test_tls_cluster_tls_client(self):
         # Test connecting successfully to a TLS-enabled cluster
-        self.cluster = TestCluster(CURRENT_VERSION, tls_config=TLSConfig())
+        tls_config = TLSConfig()
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
+            test.tls_config = tls_config
             test.print_status = True
-            test.tls_client_cert_file = self.cluster.client_cert_file
-            test.tls_client_key_file = self.cluster.client_key_file
-            test.tls_client_ca_file = self.cluster.client_ca_file
-            test.tls_client_tls_required = True
             test.exec()
             test.check_healthy_status(True)
         finally:
@@ -696,65 +703,57 @@ class ClientConfigSeparateCluster(unittest.TestCase):
 
     def test_plaintext_cluster_tls_client(self):
         # Test connecting succesfully to a plaintext cluster with a TLS client
-        self.cluster = TestCluster(
-            CURRENT_VERSION, tls_config=TLSConfig(), disable_server_side_tls=True
-        )
+        tls_config = TLSConfig(server_disable_tls=True)
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
+            test.tls_config = tls_config
             test.print_status = True
-            test.tls_client_cert_file = self.cluster.client_cert_file
-            test.tls_client_key_file = self.cluster.client_key_file
-            test.tls_client_ca_file = self.cluster.client_ca_file
             test.exec()
             test.check_healthy_status(True)
         finally:
             self.cluster.tear_down()
 
-    def test_tls_cluster_plaintext_client_plaintext_disabled(self):
+    def test_tls_cluster_plaintext_client_require_tls(self):
         # Test failing connection with timeout to a plaintext cluster with a TLS-configured client with plaintext connections disabled
-        self.cluster = TestCluster(CURRENT_VERSION, tls_config=TLSConfig())
+        tls_config = TLSConfig(
+            client_disable_tls=True, server_require_tls=True, client_require_tls=True
+        )
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
-            test.tls_client_tls_required = True
+            test.tls_config = tls_config
             test.transaction_timeout = 100
             test.expected_error = 1031  # timeout
             test.exec()
         finally:
             self.cluster.tear_down()
 
-    def test_tls_cluster_tls_client_plaintext_disabled(self):
+    def test_tls_cluster_tls_client_require_tls(self):
         # Test connecting successfully to a TLS-enabled cluster with plain-text connections
         # disabled in a TLS-configured client
-        tls_required = True
-        tls_config = TLSConfig(client_tls_required=tls_required)
+        tls_config = TLSConfig(client_require_tls=True)
         self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
+            test.tls_config = tls_config
             test.print_status = True
-            test.tls_client_cert_file = self.cluster.client_cert_file
-            test.tls_client_key_file = self.cluster.client_key_file
-            test.tls_client_ca_file = self.cluster.client_ca_file
-            test.tls_client_tls_required = tls_required
             test.exec()
             test.check_healthy_status(True)
         finally:
             self.cluster.tear_down()
 
-    def test_plaintext_cluster_tls_client_plaintext_connection_disabled(self):
+    def test_plaintext_cluster_tls_client_require_tls(self):
         # Test failing connection with timeout to a plaintext cluster with a TLS-configured client with plaintext connections disabled
-        self.cluster = TestCluster(
-            CURRENT_VERSION, tls_config=TLSConfig(), disable_server_side_tls=True
-        )
+        tls_config = TLSConfig(server_disable_tls=True, client_require_tls=True)
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
-            test.tls_client_cert_file = self.cluster.client_cert_file
-            test.tls_client_key_file = self.cluster.client_key_file
-            test.tls_client_ca_file = self.cluster.client_ca_file
-            test.tls_client_tls_required = True
+            test.tls_config = tls_config
             test.transaction_timeout = 100
             test.expected_error = 1031  # Timeout
             test.exec()
