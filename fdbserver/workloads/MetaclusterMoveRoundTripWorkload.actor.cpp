@@ -145,11 +145,6 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 		// Update tenantGroups
 		auto groupData = self->tenantGroups[tenantGroup];
 		auto groupTenants = groupData.tenants;
-		TraceEvent("BreakpointTestUpdateStart")
-		    .detail("OldCluster", oldCluster)
-		    .detail("NewCluster", newCluster)
-		    .detail("TenantGroup", tenantGroup)
-		    .detail("Size", groupTenants.size());
 		groupData.cluster = newCluster;
 		self->tenantGroups[tenantGroup] = groupData;
 
@@ -277,7 +272,7 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 					auto testData = self->createdTenants[tId];
 					if (testData.cluster != expectedCluster || !testData.tenantGroup.present() ||
 					    testData.tenantGroup.get() != tenantGroup) {
-						TraceEvent(SevError, "MetaclusterMoveVerifyTenantLocationsFailed")
+						TraceEvent(SevError, "MetaclusterMoveRoundTripVerifyTenantLocationsFailed")
 						    .detail("ExpectedTenantGroup", tenantGroup)
 						    .detail("ActualTenantGroup", testData.tenantGroup)
 						    .detail("ExpectedCluster", expectedCluster)
@@ -327,7 +322,7 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 
 				wait(mrFuture && mqFuture && splitPointsFuture);
 
-				TraceEvent("MetaclusterMoveVerifyMetadataErased")
+				TraceEvent("MetaclusterMoveRoundTripVerifyMetadataErased")
 				    .detail("MrPresent", mr.present())
 				    .detail("MqEmpty", mq.results.empty())
 				    .detail("SplitpointsEmpty", splitPoints.results.empty());
@@ -465,11 +460,6 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 			}
 		}
 
-		TraceEvent("BreakpointSrcRange")
-		    .detail("TenantName", moveBlock.tenant)
-		    .detail("KeyRange", keyRange)
-		    .detail("SrcRangeSize", srcRange.size());
-
 		state Database dstDbObj = self->dataDbs[dstDb].db;
 		state Reference<Tenant> dstTenant = makeReference<Tenant>(dstDbObj, moveBlock.tenant);
 		state Reference<ReadYourWritesTransaction> dstTr =
@@ -480,9 +470,7 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 				for (const auto& [k, v] : srcRange) {
 					dstTr->set(k, v);
 				}
-				TraceEvent("BreakpointCopyCommit1").detail("TenantName", moveBlock.tenant);
 				wait(dstTr->commit());
-				TraceEvent("BreakpointCopyCommit2").detail("TenantName", moveBlock.tenant);
 				break;
 			} catch (Error& e) {
 				wait(dstTr->onError(e));
@@ -524,9 +512,6 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 		state KeyBackedRangeResult<std::pair<Tuple, Key>> splitPoints =
 		    wait(metacluster::metadata::management::emergency_movement::splitPointsMap().getRange(
 		        tr, beginTuple, endTuple, 2));
-		TraceEvent("BreakpointSplitPoints")
-		    .detail("BeginTuple", Tuple::tupleToString(beginTuple))
-		    .detail("EndTuple", Tuple::tupleToString(endTuple));
 
 		ASSERT(!splitPoints.results.empty());
 		state KeyRef headEnd = splitPoints.results[0].second;
@@ -559,17 +544,8 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 			if (!block.present()) {
 				return Void();
 			}
-			TraceEvent("BreakpointMoveBlock")
-			    .detail("Tenant", block.get().tenant)
-			    .detail("Begin", block.get().begin)
-			    .detail("End", block.get().end);
 
 			wait(copyTenantData(self, tenantGroup, block.get(), srcDb, dstDb));
-			TraceEvent("BreakpointCopy")
-			    .detail("Begin", block.get().begin)
-			    .detail("End", block.get().end)
-			    .detail("TenantGroup", tenantGroup)
-			    .detail("TenantName", block.get().tenant);
 
 			wait(runTransactionVoid(
 			    self->managementDb,
@@ -610,7 +586,6 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 		// start
 		loop {
 			try {
-				TraceEvent("BreakpointNoTimeout1");
 				wait(metacluster::startTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages));
 				break;
@@ -634,15 +609,12 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 			}
 		}
 		// copy
-		TraceEvent("BreakpointNoTimeout2");
 		// If start completes successfully, the move identifier should be written
 		wait(store(self->moveRecord, self->getMoveRecord(tenantGroup)));
 		wait(processQueue(self, tenantGroup, srcCluster, dstCluster));
-		TraceEvent("BreakpointNoTimeout3");
 		// switch
 		loop {
 			try {
-				TraceEvent("BreakpointNoTimeout4");
 				wait(metacluster::switchTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages));
 				updateTestData(self, tenantGroup, dstCluster, srcCluster);
@@ -663,7 +635,6 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 		// finish
 		loop {
 			try {
-				TraceEvent("BreakpointNoTimeout5");
 				wait(metacluster::finishTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages));
 				break;
@@ -687,8 +658,6 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 				throw err2;
 			}
 		}
-
-		TraceEvent("BreakpointNoTimeout6");
 
 		return Void();
 	}
@@ -718,12 +687,9 @@ struct MetaclusterMoveRoundTripWorkload : TestWorkload {
 		}
 
 		// Forward: move src -> dst
-		TraceEvent("BreakpointRoundTrip1");
 		wait(noTimeoutMovement(cx, self, srcCluster, dstCluster, tenantGroup));
-		TraceEvent("BreakpointRoundTrip2");
 		// Backward: move dst-> src
 		wait(noTimeoutMovement(cx, self, dstCluster, srcCluster, tenantGroup));
-		TraceEvent("BreakpointRoundTrip3");
 
 		bool success = wait(finishVerification(self, tenantGroup, srcCluster));
 		if (!success) {

@@ -52,8 +52,6 @@ template <class DB>
 struct MetaclusterOperationContext {
 	Reference<DB> managementDb;
 	Reference<IDatabase> dataClusterDb;
-	// TODO: remove debugId in general
-	UID debugId = nondeterministicRandom()->randomUniqueID();
 
 	Optional<ClusterName> clusterName;
 
@@ -173,10 +171,8 @@ struct MetaclusterOperationContext {
 				    wait(func(tr));
 
 				wait(buggifiedCommit(tr, BUGGIFY_WITH_PROB(0.1)));
-				TraceEvent("BreakpointManagementCommit", self->debugId).detail("ClusterName", self->clusterName);
 				return result;
 			} catch (Error& e) {
-				TraceEvent("BreakpointManagementError", self->debugId).error(e);
 				wait(safeThreadFutureToFuture(tr->onError(e)));
 			}
 		}
@@ -254,10 +250,8 @@ struct MetaclusterOperationContext {
 				    wait(func(tr));
 
 				wait(safeThreadFutureToFuture(tr->commit()));
-				TraceEvent("BreakpointDataClusterCommit").detail("ClusterName", self->clusterName);
 				return result;
 			} catch (Error& e) {
-				TraceEvent("BreakpointDataClusterError").error(e);
 				wait(safeThreadFutureToFuture(tr->onError(e)));
 			}
 		}

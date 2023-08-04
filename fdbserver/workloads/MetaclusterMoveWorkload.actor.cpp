@@ -147,11 +147,6 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		// Update tenantGroups
 		auto groupData = self->tenantGroups[tenantGroup];
 		auto groupTenants = groupData.tenants;
-		TraceEvent("BreakpointTestUpdateStart")
-		    .detail("OldCluster", oldCluster)
-		    .detail("NewCluster", newCluster)
-		    .detail("TenantGroup", tenantGroup)
-		    .detail("Size", groupTenants.size());
 		groupData.cluster = newCluster;
 		self->tenantGroups[tenantGroup] = groupData;
 
@@ -731,11 +726,6 @@ struct MetaclusterMoveWorkload : TestWorkload {
 			}
 		}
 
-		TraceEvent("BreakpointSrcRange")
-		    .detail("TenantName", moveBlock.tenant)
-		    .detail("KeyRange", keyRange)
-		    .detail("SrcRangeSize", srcRange.size());
-
 		state Database dstDbObj = self->dataDbs[dstDb].db;
 		state Reference<Tenant> dstTenant = makeReference<Tenant>(dstDbObj, moveBlock.tenant);
 		state Reference<ReadYourWritesTransaction> dstTr =
@@ -751,9 +741,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					           deterministicRandom()->randomUniqueID().toString());
 					CODE_PROBE(true, "Intentionally copied inconsistent data to test safety guards");
 				}
-				TraceEvent("BreakpointCopyCommit1").detail("TenantName", moveBlock.tenant);
 				wait(dstTr->commit());
-				TraceEvent("BreakpointCopyCommit2").detail("TenantName", moveBlock.tenant);
 				break;
 			} catch (Error& e) {
 				wait(dstTr->onError(e));
@@ -795,9 +783,6 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		state KeyBackedRangeResult<std::pair<Tuple, Key>> splitPoints =
 		    wait(metacluster::metadata::management::emergency_movement::splitPointsMap().getRange(
 		        tr, beginTuple, endTuple, 2));
-		TraceEvent("BreakpointSplitPoints")
-		    .detail("BeginTuple", Tuple::tupleToString(beginTuple))
-		    .detail("EndTuple", Tuple::tupleToString(endTuple));
 
 		ASSERT(!splitPoints.results.empty());
 		state KeyRef headEnd = splitPoints.results[0].second;
@@ -830,17 +815,8 @@ struct MetaclusterMoveWorkload : TestWorkload {
 			if (!block.present()) {
 				return Void();
 			}
-			TraceEvent("BreakpointMoveBlock")
-			    .detail("Tenant", block.get().tenant)
-			    .detail("Begin", block.get().begin)
-			    .detail("End", block.get().end);
 
 			wait(copyTenantData(self, tenantGroup, block.get(), srcDb, dstDb));
-			TraceEvent("BreakpointCopy")
-			    .detail("Begin", block.get().begin)
-			    .detail("End", block.get().end)
-			    .detail("TenantGroup", tenantGroup)
-			    .detail("TenantName", block.get().tenant);
 
 			wait(runTransactionVoid(
 			    self->managementDb,
@@ -935,13 +911,6 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		state MoveCommand cmdChoice;
 		loop {
 			try {
-				TraceEvent("BreakpointTestStart")
-				    .detail("Src", srcCluster)
-				    .detail("Dst", dstCluster)
-				    .detail("TenantGroup", tenantGroup)
-				    .detail("TenantsInGroup", self->tenantGroups[tenantGroup].tenants.size())
-				    .detail("GroupsOnSrc", self->dataDbs[srcCluster].tenantGroups.size())
-				    .detail("GroupsOnDst", self->dataDbs[dstCluster].tenantGroups.size());
 				cmdChoice = deterministicRandom()->randomChoice(initFailCmds);
 				wait(runCommandFail(self, tenantGroup, srcCluster, dstCluster, cmdChoice));
 

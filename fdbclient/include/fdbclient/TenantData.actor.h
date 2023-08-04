@@ -95,10 +95,6 @@ private:
 		ASSERT(!tenantList.more);
 		self->tenantMap = std::map<int64_t, typename TenantTypes::TenantMapEntryT>(tenantList.results.begin(),
 		                                                                           tenantList.results.end());
-		for (const auto& [tId, mapEntry] : self->tenantMap) {
-			TraceEvent("BreakpointTenantMap").detail("TenantId", tId).detail("TenantName", mapEntry.tenantName);
-		}
-
 		ASSERT(!tenantNameIndexList.more);
 		self->tenantNameIndex =
 		    std::map<TenantName, int64_t>(tenantNameIndexList.results.begin(), tenantNameIndexList.results.end());
