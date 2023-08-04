@@ -35,7 +35,7 @@ ACTOR Future<Standalone<StringRef>> readFile(Reference<BlobConnectionProvider> b
 	try {
 		state Arena arena;
 		std::string fname = f.filename.toString();
-		state Reference<BackupContainerFileSystem> bstore = bstoreProvider->getForRead(fname);
+		state Reference<BackupContainerFileSystem> bstore = bstoreProvider->getForAccess(fname);
 		state Reference<IAsyncFile> reader = wait(bstore->readFile(fname));
 
 		state uint8_t* data = new (arena) uint8_t[f.length];

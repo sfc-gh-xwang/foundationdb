@@ -62,26 +62,6 @@
 //                    that the global tag throttler aims to achieve (across all clients).
 
 class QuotaThrottlerImpl {
-	static Optional<double> getMin(Optional<double> a, Optional<double> b) {
-		if (a.present() && b.present()) {
-			return std::min(a.get(), b.get());
-		} else if (a.present()) {
-			return a;
-		} else {
-			return b;
-		}
-	}
-
-	static Optional<double> getMax(Optional<double> a, Optional<double> b) {
-		if (a.present() && b.present()) {
-			return std::max(a.get(), b.get());
-		} else if (a.present()) {
-			return a;
-		} else {
-			return b;
-		}
-	}
-
 	// Track various statistics per throttling ID, aggregated across all storage servers
 	class PerThrottlingIdStatistics {
 		HoltLinearSmoother transactionCounter;
@@ -272,14 +252,29 @@ class QuotaThrottlerImpl {
 		auto const averageTransactionCost = getAverageTransactionCost(throttlingId, clusterThroughputTracker, te);
 		auto const totalQuota = quotaCache.getTotalQuota(throttlingId);
 		auto const reservedQuota = quotaCache.getReservedQuota(throttlingId);
-		if (!averageTransactionCost.present() || !totalQuota.present() || !reservedQuota.present()) {
+		if (!averageTransactionCost.present()) {
 			return result;
 		}
-		auto const desiredTps = totalQuota.get() / averageTransactionCost.get();
-		auto const reservedTps = reservedQuota.get() / averageTransactionCost.get();
 
-		result.targetTps = getMax(reservedTps, getMin(desiredTps, limitingTps));
-		result.isThrottled = limitingTps.present() && limitingTps.get() < desiredTps;
+		ASSERT_EQ(totalQuota.present(), reservedQuota.present());
+		Optional<double> desiredTps, reservedTps;
+		if (totalQuota.present()) {
+			auto const desiredTps = totalQuota.get() / averageTransactionCost.get();
+			auto const reservedTps = reservedQuota.get() / averageTransactionCost.get();
+			if (limitingTps.present()) {
+				result.targetTps = std::max(reservedTps, std::min(desiredTps, limitingTps.get()));
+				result.isThrottled = limitingTps.get() < desiredTps;
+			} else {
+				result.targetTps = desiredTps;
+			}
+		} else {
+			if (SERVER_KNOBS->THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS) {
+				result.targetTps = limitingTps;
+				result.isThrottled = limitingTps.present();
+			} else {
+				return result;
+			}
+		}
 
 		te.detail("ThrottlingId", throttlingId)
 		    .detail("TargetTps", result.targetTps)
@@ -310,20 +305,28 @@ class QuotaThrottlerImpl {
 		    getLimitingBps(throttlingId, metricsTracker, clusterThroughputTracker, serverThroughputTracker);
 		auto const totalQuota = quotaCache.getTotalQuota(throttlingId);
 		auto const reservedQuota = quotaCache.getReservedQuota(throttlingId);
-		if (!totalQuota.present() || !reservedQuota.present()) {
-			return result;
-		}
-		auto const desiredBps = totalQuota.get();
-		auto const reservedBps = reservedQuota.get();
 
-		result.targetBps = getMax(reservedBps, getMin(desiredBps, limitingBps));
-		result.isThrottled = limitingBps.present() && limitingBps.get() < desiredBps;
+		ASSERT_EQ(totalQuota.present(), reservedQuota.present());
+		if (totalQuota.present()) {
+			if (limitingBps.present()) {
+				result.targetBps =
+				    std::max<double>(reservedQuota.get(), std::min<double>(totalQuota.get(), limitingBps.get()));
+				result.isThrottled = limitingBps.get() < totalQuota.get();
+			} else {
+				result.targetBps = totalQuota.castTo<double>();
+			}
+		} else {
+			if (SERVER_KNOBS->THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS) {
+				result.targetBps = limitingBps;
+				result.isThrottled = limitingBps.present();
+			} else {
+				return result;
+			}
+		}
 
 		te.detail("ThrottlingId", throttlingId)
 		    .detail("TargetBps", result.targetBps)
 		    .detail("LimitingBps", limitingBps)
-		    .detail("ReservedBps", reservedBps)
-		    .detail("DesiredBps", desiredBps)
 		    .detail("NumStorageServers", serverThroughputTracker.storageServersTracked())
 		    .detail("TotalQuota", totalQuota)
 		    .detail("ReservedQuota", reservedQuota);
@@ -332,7 +335,7 @@ class QuotaThrottlerImpl {
 	}
 
 	// Update the busy ThrottlingId set and returns whether the throttlingId is busy
-	bool isThrottlingIdsBusy(ThrottlingId const& throttlingId, double metric, double effectiveLimit) {
+	bool isThrottlingIdBusy(ThrottlingId const& throttlingId, double metric, double effectiveLimit) {
 		if (metric > (SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD * effectiveLimit)) {
 			busyThrottlingIds.emplace(throttlingId);
 		} else if (metric < (SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD * effectiveLimit)) {
@@ -399,7 +402,7 @@ public:
 				auto rate = stats.getTransactionRate();
 				if (isBusyThrottlingIdsTrackingEnabled()) {
 					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
-					if (isThrottlingIdsBusy(throttlingId, rate, targetPerProxyRate)) {
+					if (isThrottlingIdBusy(throttlingId, rate, targetPerProxyRate)) {
 						result[throttlingId] = targetPerProxyRate;
 					}
 				} else {
@@ -453,7 +456,7 @@ public:
 
 				if (isBusyThrottlingIdsTrackingEnabled()) {
 					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
-					if (isThrottlingIdsBusy(throttlingId, throughput, targetPerProxyThroughput)) {
+					if (isThrottlingIdBusy(throttlingId, throughput, targetPerProxyThroughput)) {
 						result[throttlingId] = targetPerProxyThroughput;
 					}
 				} else {

@@ -67,7 +67,7 @@ class GrvProxyTagThrottler {
 		void setRate(double rate);
 		bool isMaxThrottled(double maxThrottleDuration) const;
 		void rejectRequests(LatencyBandsMap&);
-		void endReleaseWindow(int64_t numStarted, double elapsed);
+		void endReleaseWindow(uint64_t numStarted, double elapsed);
 	};
 
 	// Track the budgets for each tag
@@ -79,7 +79,7 @@ class GrvProxyTagThrottler {
 
 	// Get the cost of a GRV Request. If track-average-cost-on-client is enabled,
 	// the cost returned is in bytes per second, otherwise it's in transactions per second.
-	uint32_t getCost(GetReadVersionRequest const&) const;
+	uint64_t getCost(GetReadVersionRequest const&) const;
 
 public:
 	explicit GrvProxyTagThrottler(double maxThrottleDuration);

@@ -36,6 +36,7 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/TesterInterface.actor.h"
 #include "fdbserver/workloads/workloads.actor.h"
+#include "fdbserver/workloads/BGCorrectnessUtils.h"
 #include "flow/Arena.h"
 #include "flow/IRandom.h"
 #include "flow/flow.h"
@@ -702,39 +703,6 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		printf("\n");
 	}
 
-	Value genVal(uint32_t val, uint16_t valLen) {
-		std::string v(valLen, 'x');
-		auto valFormatted = format("%08x", val);
-		ASSERT(valFormatted.size() <= v.size());
-
-		for (int i = 0; i < valFormatted.size(); i++) {
-			v[i] = valFormatted[i];
-		}
-		// copy into an arena
-		// TODO do this in original arena? a bit more efficient that way
-		Arena a;
-		return Standalone<StringRef>(StringRef(a, v), a);
-	}
-
-	bool validateValue(const Value& v, uint32_t val, uint16_t valLen) {
-		if (v.size() != valLen) {
-			return false;
-		}
-		// check for correct value portion
-		auto valFormatted = format("%08x", val);
-		ASSERT(valFormatted.size() <= v.size());
-		if (v.substr(0, valFormatted.size()) != valFormatted) {
-			return false;
-		}
-		// check for corruption
-		for (int i = valFormatted.size(); i < v.size(); i++) {
-			if (v[i] != 'x') {
-				return false;
-			}
-		}
-		return true;
-	}
-
 	bool validateResult(Reference<ThreadData> threadData,
 	                    std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob,
 	                    int startKeyInclusive,
@@ -1122,7 +1090,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 							           std::get<2>(it),
 							           std::get<3>(it));
 						}
-						Value v = self->genVal(std::get<2>(it), std::get<3>(it));
+						Value v = genVal(std::get<2>(it), std::get<3>(it));
 						tr.set(threadData->getKey(std::get<0>(it), std::get<1>(it)), v);
 					}
 					for (auto& it : keyAndIdToClear) {

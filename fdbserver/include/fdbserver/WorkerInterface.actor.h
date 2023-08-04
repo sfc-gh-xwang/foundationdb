@@ -147,7 +147,7 @@ struct WorkerDetails {
 	bool degraded;
 	bool recoveredDiskFiles;
 
-	WorkerDetails() : degraded(false), recoveredDiskFiles(false) {}
+	WorkerDetails() : interf(), processClass(), degraded(false), recoveredDiskFiles(false) {}
 	WorkerDetails(const WorkerInterface& interf, ProcessClass processClass, bool degraded, bool recoveredDiskFiles)
 	  : interf(interf),
 	    processClass(processClass),
