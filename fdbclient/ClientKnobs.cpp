@@ -336,6 +336,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	// Bulk Loading
 	init( ALLOW_BULK_LOADS,                         false );
 	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );
+	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); if ( randomize && BUGGIFY ) BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE = deterministicRandom()->randomInt(1, 10000000);
 
 	init( ENABLE_STORAGE_ENGINE_PARAM_INTERFACE,    false );
 

@@ -49,7 +49,7 @@ struct LeakTLogInterfaceWorkload : TestWorkload {
 	virtual void getMetrics(std::vector<PerfMetric>& m) override {}
 
 	ACTOR static Future<Void> persistSerializedTLogInterface(LeakTLogInterfaceWorkload* self, Database cx) {
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr(self->tenant);
 		loop {
 			ObjectWriter writer(IncludeVersion());
 			writer.serialize(self->dbInfo->get().logSystemConfig);

@@ -1225,7 +1225,7 @@ struct MetaclusterManagementWorkload : TestWorkload {
 	}
 
 	ACTOR static Future<Void> deleteTenantData(Database db, TenantName tenant) {
-		state ReadYourWritesTransaction tr(db, makeReference<Tenant>(db, tenant));
+		state ReadYourWritesTransaction tr(makeReference<Tenant>(db, tenant));
 		loop {
 			try {
 				tr.setOption(FDBTransactionOptions::LOCK_AWARE);

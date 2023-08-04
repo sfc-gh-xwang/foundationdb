@@ -1982,6 +1982,7 @@ int main(int argc, char* argv[]) {
 					TraceEvent("AuthzPublicKeySetLoadError").error(e);
 				}
 				FlowTransport::transport().watchPublicKeyFile(opts.authzPublicKeyFile);
+				FlowTransport::transport().monitorActivePublicKeyIds();
 			} else {
 				TraceEvent(SevInfo, "AuthzPublicKeyFileNotSet");
 			}

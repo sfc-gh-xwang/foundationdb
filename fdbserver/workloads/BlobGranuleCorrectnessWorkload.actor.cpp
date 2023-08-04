@@ -36,6 +36,7 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/TesterInterface.actor.h"
 #include "fdbserver/workloads/workloads.actor.h"
+#include "fdbserver/workloads/BGCorrectnessUtils.h"
 #include "flow/Arena.h"
 #include "flow/IRandom.h"
 #include "flow/flow.h"
@@ -342,7 +343,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		state uint32_t val;
 
 		// read the old tenant's data and parse the keys from it
-		state Transaction tr(cx, threadData->tenant);
+		state Transaction tr(threadData->tenant);
 		state KeyRange keyRange = normalKeys;
 		state bool gotEOS = false;
 		state int64_t totalRows = 0;
@@ -455,7 +456,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		// ignore tenants that aren't blobbified, might be default tenants created for other workloads
 		state std::vector<std::pair<int64_t, TenantMapEntry>> blobbifiedTenants;
 		for (i = 0; i < allTenants.size(); i++) {
-			Reference<Tenant> tenant = makeReference<Tenant>(allTenants[i].first);
+			Reference<Tenant> tenant = makeReference<Tenant>(cx, allTenants[i].first);
 			Standalone<VectorRef<KeyRangeRef>> blobbifiedRanges = wait(cx->listBlobbifiedRanges(normalKeys, 1, tenant));
 			if (!blobbifiedRanges.empty()) {
 				blobbifiedTenants.push_back(allTenants[i]);
@@ -598,7 +599,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 	                                     bool doSetup) {
 		// read entire keyspace at the start until granules for the entire thing are available
 		loop {
-			state Transaction tr(cx, threadData->tenant);
+			state Transaction tr(threadData->tenant);
 			try {
 				Version rv = wait(self->doGrv(&tr));
 				state Version readVersion = rv;
@@ -700,39 +701,6 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			fmt::print("  IncludedVersion: {}\n", chunk.includedVersion);
 		}
 		printf("\n");
-	}
-
-	Value genVal(uint32_t val, uint16_t valLen) {
-		std::string v(valLen, 'x');
-		auto valFormatted = format("%08x", val);
-		ASSERT(valFormatted.size() <= v.size());
-
-		for (int i = 0; i < valFormatted.size(); i++) {
-			v[i] = valFormatted[i];
-		}
-		// copy into an arena
-		// TODO do this in original arena? a bit more efficient that way
-		Arena a;
-		return Standalone<StringRef>(StringRef(a, v), a);
-	}
-
-	bool validateValue(const Value& v, uint32_t val, uint16_t valLen) {
-		if (v.size() != valLen) {
-			return false;
-		}
-		// check for correct value portion
-		auto valFormatted = format("%08x", val);
-		ASSERT(valFormatted.size() <= v.size());
-		if (v.substr(0, valFormatted.size()) != valFormatted) {
-			return false;
-		}
-		// check for corruption
-		for (int i = valFormatted.size(); i < v.size(); i++) {
-			if (v[i] != 'x') {
-				return false;
-			}
-		}
-		return true;
 	}
 
 	bool validateResult(Reference<ThreadData> threadData,
@@ -1052,7 +1020,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		TraceEvent("BlobGranuleCorrectnessWriterReady").log();
 
 		loop {
-			state Transaction tr(cx, threadData->tenant);
+			state Transaction tr(threadData->tenant);
 
 			// pick rows to write and clear, generate values for writes
 			state std::vector<std::tuple<uint32_t, uint32_t, uint32_t, uint16_t>> keyAndIdToWrite;
@@ -1122,7 +1090,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 							           std::get<2>(it),
 							           std::get<3>(it));
 						}
-						Value v = self->genVal(std::get<2>(it), std::get<3>(it));
+						Value v = genVal(std::get<2>(it), std::get<3>(it));
 						tr.set(threadData->getKey(std::get<0>(it), std::get<1>(it)), v);
 					}
 					for (auto& it : keyAndIdToClear) {
@@ -1211,7 +1179,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		// check that reading ranges with tenant name gives valid result of ranges just for tenant, with no tenant
 		// prefix
 		loop {
-			state Transaction tr(cx, threadData->tenant);
+			state Transaction tr(threadData->tenant);
 			try {
 				Standalone<VectorRef<KeyRangeRef>> ranges = wait(tr.getBlobGranuleRanges(normalKeys, 1000000));
 				ASSERT(ranges.size() >= 1 && ranges.size() < 1000000);

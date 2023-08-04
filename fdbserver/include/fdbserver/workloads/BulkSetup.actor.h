@@ -64,7 +64,7 @@ Future<bool> checkRangeSimpleValueSize(Database cx,
                                        uint64_t end,
                                        Optional<Reference<Tenant>> tenant) {
 	loop {
-		state Transaction tr(cx, tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
 		setAuthToken(*workload, tr);
 		try {
 			state Standalone<KeyValueRef> firstKV = (*workload)(begin);
@@ -93,7 +93,7 @@ Future<uint64_t> setupRange(Database cx,
 		if (tenants.size() > 0) {
 			tenant = deterministicRandom()->randomChoice(tenants);
 		}
-		state Transaction tr(cx, tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
 		setAuthToken(*workload, tr);
 		try {
 			// if( deterministicRandom()->random01() < 0.001 )
@@ -164,7 +164,7 @@ Future<uint64_t> setupRangeWorker(Database cx,
 			bytesStored += numBytes;
 
 			if (keysLoaded - lastStoredKeysLoaded >= keySaveIncrement || jobs->size() == 0) {
-				state Transaction tr(cx, tenant);
+				state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
 				setAuthToken(*workload, tr);
 				try {
 					std::string countKey = format("keycount|%d|%d", workload->clientId, actorId);

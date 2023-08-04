@@ -1371,6 +1371,7 @@ public:
 								    self->checkAndCreateMachine(self->server_info[server->getId()]);
 								ASSERT(destMachine.isValid());
 							}
+							self->resetLocalitySet();
 
 							// Ensure the server's server team belong to a machine team, and
 							// Get the newBadTeams due to the locality change
@@ -1389,7 +1390,6 @@ public:
 							}
 
 							server->updateInDesiredDC(self->includedDCs);
-							self->resetLocalitySet();
 
 							bool addedNewBadTeam = false;
 							for (auto it : newBadTeams) {
