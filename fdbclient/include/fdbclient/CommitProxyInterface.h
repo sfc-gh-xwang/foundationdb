@@ -407,13 +407,17 @@ struct TenantLookupInfo {
 
 	int64_t id = TenantInfo::INVALID_TENANT;
 	Optional<TenantGroupName> group;
+	Optional<ClusterName> assignedCluster;
 
 	TenantLookupInfo() = default;
-	TenantLookupInfo(int64_t id, Optional<TenantGroupName> const& group = {}) : id(id), group(group) {}
+	TenantLookupInfo(int64_t id, Optional<TenantGroupName> const& group = {}, Optional<ClusterName> const& cluster = {})
+	  : id(id),
+	    group(group),
+	    assignedCluster(cluster) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, id, group);
+		serializer(ar, id, group, assignedCluster);
 	}
 };
 
