@@ -160,6 +160,8 @@ bool checkValidBulkLoadStateTransition(BulkLoadStatus::State current, BulkLoadSt
 	return true;
 }
 
+// ----- Unit Tests + Helper Functions for testing checkValidBulkLoadStateTransition -----
+
 enum StateTransitionResult { ALLOWED, DISALLOWED, ALREADY_DONE };
 
 void testBulkLoadStateTransition(BulkLoadStatus::State current,
@@ -372,7 +374,6 @@ TEST_CASE("/fdbclient/bulkload/stateTransitions") {
 // ensure sizes are valid, all ids are unique, all key ranges are within bulk load key range, and key ranges are all
 // disjoint
 // FIXME: for large number of files, maybe break up with yields?
-// FIXME: add traces to show what went wrong
 void validateBulkLoadWrittenPointers(const BulkLoadID& id,
                                      const BulkLoadInfo& info,
                                      const VectorRef<BulkLoadWrittenFileRef>& files) {
@@ -421,6 +422,7 @@ void validateBulkLoadWrittenPointers(const BulkLoadID& id,
 	}
 }
 
+// ----- Unit Tests + Helper Functions for testing validateBulkLoadWrittenPointers -----
 // helper to convert std::vector to VectorRef
 void validateBulkLoadWrittenPointers(const BulkLoadID& id,
                                      const BulkLoadInfo& info,

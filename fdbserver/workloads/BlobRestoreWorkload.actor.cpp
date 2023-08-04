@@ -86,7 +86,7 @@ struct BlobRestoreWorkload : TestWorkload {
 			// check if we have manifest
 			Reference<BlobConnectionProvider> manifestStore =
 			    BlobConnectionProvider::newBlobConnectionProvider(self->blobManifestUrl_.toString());
-			Reference<BackupContainerFileSystem> container = manifestStore->getForRead("");
+			Reference<BackupContainerFileSystem> container = manifestStore->getForAccess("");
 			BackupContainerFileSystem::FilesAndSizesT filesAndSizes = wait(container->listFiles(""));
 			bool validManifest = false;
 			for (auto& file : filesAndSizes) {
