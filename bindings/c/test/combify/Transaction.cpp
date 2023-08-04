@@ -72,13 +72,13 @@ AddTest testGetValue("BasicGetValue", ALL, [](const TestEnv& env) {
 	ASSERT(f.get() == "bar"_br, "unmatched read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
 });
 
-AddTest testGetStringArray("GetStringArray", asTrustedClient, [](const TestEnv& env) {
+AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-get-string-array");
 	auto db = env.newDatabase();
 	populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 	auto tr = env.newTransaction(db);
 	auto f = runToCompletion(
-	    tr, [&prefix](auto tr) { return tr.getAddressForKey(fdb::toBytesRef(prefix + "foo")); }, "GetStringArray");
+	    tr, [&prefix](auto tr) { return tr.getAddressForKey(fdb::toBytesRef(prefix + "foo")); }, "GetKeyAddress");
 
 	auto const& [strings, count] = f.get();
 	ASSERT(count > 0);
@@ -92,11 +92,16 @@ AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& en
 	for (auto const enableReadSystemKeys : { false, true }) {
 		auto tr = env.newTransaction(db);
 		try {
-			if (enableReadSystemKeys) {
-				tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
-			}
 			auto f = runToCompletion(
-			    tr, [](auto tr) { return tr.get("\xff/coordinators"_br, false); }, "ReadSystemKey");
+			    tr,
+			    [enableReadSystemKeys](auto tr) {
+				    if (enableReadSystemKeys) {
+					    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+				    }
+
+				    return tr.get("\xff/coordinators"_br, false);
+			    },
+			    "ReadSystemKey");
 
 			ASSERT(enableReadSystemKeys);
 			// Only when enableReadSystemKeys is set we hit this line
@@ -116,12 +121,13 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 		auto tr = env.newTransaction(db);
 		try {
 			// Write a system key
-			if (enableWriteSystemKeys) {
-				tr.setOption(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
-			}
 			runToCompletion(
 			    tr,
-			    [syskey](auto tr) {
+			    [enableWriteSystemKeys, syskey](auto tr) {
+				    if (enableWriteSystemKeys) {
+					    tr.setOption(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
+				    }
+
 				    tr.set(syskey, "bar"_br);
 				    return tr.commit();
 			    },
@@ -129,9 +135,13 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 
 			// Read and verify the system key value
 			tr = env.newTransaction(db);
-			tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
 			auto f = runToCompletion(
-			    tr, [syskey](auto tr) { return tr.get(syskey, false); }, "ReadBackSystemKey");
+			    tr,
+			    [syskey](auto tr) {
+				    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+				    return tr.get(syskey, false);
+			    },
+			    "ReadBackSystemKey");
 
 			ASSERT(enableWriteSystemKeys);
 			ASSERT(f.get() == "bar"_br, "unexpected read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
