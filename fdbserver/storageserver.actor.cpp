@@ -1009,6 +1009,10 @@ public:
 	EmptyVersionStats emptyVersionWaitMutationStats;
 	EmptyVersionStats emptyVersionWaitNonMutationStats;
 
+	double emptyVerionWaitLastWaitWindow;
+	bool emptyVersionWaitEmergencyTransition;
+	PromiseStream<Void> emptyVersionWaitEmergencyNotify;
+
 	std::map<Version, Standalone<VerUpdateRef>> const& getMutationLog() const { return mutationLog; }
 	std::map<Version, Standalone<VerUpdateRef>>& getMutableMutationLog() { return mutationLog; }
 	VersionedData const& data() const { return versionedData; }
@@ -1563,6 +1567,8 @@ public:
 	    diskUsage(0.0),
 	    emptyVersionWaitMutationStats(),
 	    emptyVersionWaitNonMutationStats(),
+	    emptyVerionWaitLastWaitWindow(0),
+	    emptyVersionWaitEmergencyTransition(false),
 	    storage(this, storage),
 	    shardChangeCounter(0),
 	    lastTLogVersion(0),
@@ -2195,8 +2201,18 @@ Future<Version> waitForVersion(StorageServer* data,
 		// TraceEvent(SevDebug, "WFVThrow", data->thisServerID).detail("Version", version).detail("OldestVersion", data->oldestVersion.get());
 		return transaction_too_old();
 	} else if (version <= data->version.get()) {
+		// dynamic empty version wait window
 		sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitMutationStats, version, versionArrivalTime);
 		sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, version, versionArrivalTime);
+		// edge-triggered dynamic empty version wait window emergency
+		double emergencyThreshold =
+		    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION * data->emptyVerionWaitLastWaitWindow;
+		if (!data->emptyVersionWaitEmergencyTransition &&
+		    (std::max(0., data->emptyVersionWaitMutationStats.minSafeWaitWindow) < emergencyThreshold ||
+		     std::max(0., data->emptyVersionWaitNonMutationStats.minSafeWaitWindow) < emergencyThreshold)) {
+			data->emptyVersionWaitEmergencyTransition = true;
+			data->emptyVersionWaitEmergencyNotify.send(Void());
+		}
 		return version;
 	}
 
@@ -12113,11 +12129,21 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 		return Void();
 
 	state double lastSyncTime = g_network->timer();
-	state double lastWaitWindow = 0;
 
 	loop {
 		choose {
-			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_INTERVAL))) {
+			when(waitNext(self->emptyVersionWaitEmergencyNotify.getFuture())) {
+				state double emergencyWaitWindow = 0;
+				traceWaitWindowDecision(self, emergencyWaitWindow, self->emptyVerionWaitLastWaitWindow);
+				if (emergencyWaitWindow != self->emptyVerionWaitLastWaitWindow) {
+					wait(self->logSystem->pushEmptyVersionWaitWindow(emergencyWaitWindow, self->tag));
+				}
+				resetWaitWindowStatistics(self);
+				self->emptyVerionWaitLastWaitWindow = emergencyWaitWindow;
+				lastSyncTime = g_network->timer();
+				self->emptyVersionWaitEmergencyTransition = false;
+			}
+			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL))) {
 				if (!self->logSystem) {
 					continue;
 				}
@@ -12142,25 +12168,26 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					                                      (mutationSize + nonMutationSize)
 					                       ? 0 + self->emptyVersionWaitMutationStats.minWaitWindow *
 					                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR
-					                       : (lastWaitWindow + self->emptyVersionWaitNonMutationStats.minWaitWindow) *
+					                       : (self->emptyVerionWaitLastWaitWindow +
+					                          self->emptyVersionWaitNonMutationStats.minWaitWindow) *
 					                             SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
 				} else {
-					targetWaitWindow =
-					    mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE *
-					                       (mutationSize + nonMutationSize)
-					        ? 0 + self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
-					                  SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
-					        : lastWaitWindow + self->emptyVersionWaitNonMutationStats.safeWaitWindow.percentile(
-					                               SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
+					targetWaitWindow = mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE *
+					                                      (mutationSize + nonMutationSize)
+					                       ? 0 + self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
+					                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
+					                       : self->emptyVerionWaitLastWaitWindow +
+					                             self->emptyVersionWaitNonMutationStats.safeWaitWindow.percentile(
+					                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
 				}
 
 				// Log-only mode reporting
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
 				    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY) {
 					if (g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
-						traceWaitWindowDecision(self, targetWaitWindow, lastWaitWindow);
+						traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWaitWindow);
 						resetWaitWindowStatistics(self);
-						lastWaitWindow = targetWaitWindow;
+						self->emptyVerionWaitLastWaitWindow = targetWaitWindow;
 						lastSyncTime = g_network->timer();
 					}
 					continue;
@@ -12174,25 +12201,15 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				// Cap delay window growth to be below maximum allowed version wait.
 				targetWaitWindow = std::min(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_CAP, targetWaitWindow);
 
-				// Emergency rewrite safety. Under following situations a sync is sent regardless of sync interval
-				// knob
-				// 1. Falling wait window decision edge: Last window much bigger than new window.
-				bool emergencyRewrite = false;
-				if (lastWaitWindow - targetWaitWindow > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD)
-					emergencyRewrite = true;
-
 				// Boradcast wait window decision to all tlog and wait for reply
-				if (emergencyRewrite ||
-				    g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
-					traceWaitWindowDecision(self, targetWaitWindow, lastWaitWindow);
-					// Skip sending wait window if new decision is the same as the last one sent.
-					if (targetWaitWindow != lastWaitWindow) {
-						wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag));
-					}
-					resetWaitWindowStatistics(self);
-					lastWaitWindow = targetWaitWindow;
-					lastSyncTime = g_network->timer();
+				// Skip sending wait window if new decision is the same as the last one sent.
+				traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWaitWindow);
+				if (targetWaitWindow != self->emptyVerionWaitLastWaitWindow) {
+					wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag));
 				}
+				resetWaitWindowStatistics(self);
+				self->emptyVerionWaitLastWaitWindow = targetWaitWindow;
+				lastSyncTime = g_network->timer();
 			}
 		}
 	}

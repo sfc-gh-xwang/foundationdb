@@ -138,10 +138,8 @@ public:
 	double DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
 	double DYNAMIC_EMPTY_VERSION_WAIT_CAP; // Hard cap for largest safe delay window to limit damage to P999
 	                                       // read/version wait latency
-	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_INTERVAL; // Interval of ss checking local statistics to make a
-	                                                      // new decision of wait window.
-	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_THRESHOLD; // If previous synced window is this amount greater than the
-	                                                       // new window, bypass sync interval and sync immediately.
+	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION; // Percentage deviation from last window to trigger an
+	                                                       // emergency resend
 	double DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL; // Interval of pushing calculated delay window from ss to tlogs.
 	                                                 // IMPORTANT: This have huge impact on tlog CPU utilization
 	                                                 // especially on larger clusters. All ss will broadcast sync
