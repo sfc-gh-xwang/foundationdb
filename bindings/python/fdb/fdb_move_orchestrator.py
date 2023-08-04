@@ -450,20 +450,10 @@ if __name__ == "__main__":
         exit(0)
 
     # Arguments to the queue
-    cluster = args.cluster
-    tenantGroup = ast.literal_eval("'%s'" % args.tenant_group)
-    srcName = args.src_name
-    dstName = args.dst_name
-
-    # Ensure all arguments are byte strings
-    if not isinstance(cluster, bytes):
-        cluster = cluster.encode("utf-8")
-    if not isinstance(tenantGroup, bytes):
-        tenantGroup = tenantGroup.encode("utf-8")
-    if not isinstance(srcName, bytes):
-        srcName = srcName.encode("utf-8")
-    if not isinstance(dstName, bytes):
-        dstName = dstName.encode("utf-8")
+    cluster = ast.literal_eval("b'%s'" % args.cluster)
+    tenantGroup = ast.literal_eval("b'%s'" % args.tenant_group)
+    srcName = ast.literal_eval("b'%s'" % args.src_name)
+    dstName = ast.literal_eval("b'%s'" % args.dst_name)
 
     poolArgs = (cluster, tenantGroup, srcName, dstName)
     multiArgs = [poolArgs for i in range(args.num_procs)]
