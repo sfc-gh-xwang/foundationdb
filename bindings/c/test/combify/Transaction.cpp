@@ -190,6 +190,34 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 	}
 });
 
+AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable", asTrustedClient, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newTransaction(db);
+
+	auto f2 = runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE);
+		    tr.set("foo"_br, "bar"_br);
+		    auto f1 = tr.get("foo"_br, /*snapshot*/ true);
+
+		    if (auto err = f1.blockUntilReady()) {
+			    return f1;
+		    }
+
+		    if (auto err = f1.error()) {
+			    return f1;
+		    }
+
+		    ASSERT(!f1.get().has_value(), "Expect null value");
+		    auto f2 = tr.get("foo"_br, /*snapshot*/ false);
+		    return f2;
+	    },
+	    "ReadSnapshotYourWrites");
+
+	ASSERT(f2.get() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f2.get()));
+});
+
 AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-key-value-array");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
