@@ -1201,8 +1201,8 @@ void usage() {
 	       "Specify the prefix of transaction tag - mako${txntagging_prefix} (Default: '')");
 	printf("%-24s %s\n",
 	       "    --txn_grv_cache",
-	       "Use GRV Cache. Must be used in conjunction with --disable_client_bypass ");
-	printf("%-24s %s\n", "    --txn_expected_cost=VALUE", "Set the expected cost of a transasction. (Default: -1)");
+	       "Use GRV Cache. Must be used in conjunction with --disable_client_bypass. (Default: 0)");
+	printf("%-24s %s\n", "    --txn_expected_cost=VALUE", "Set the expected cost of a transaction. (Default: -1)");
 	printf("%-24s %s\n", "    --knobs=KNOBS", "Set client knobs");
 	printf("%-24s %s\n", "    --flatbuffers", "Use flatbuffers");
 	printf("%-24s %s\n", "    --streaming", "Streaming mode: all (default), iterator, small, medium, large, serial");
