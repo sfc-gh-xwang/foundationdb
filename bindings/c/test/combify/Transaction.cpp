@@ -201,6 +201,7 @@ AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable", asTru
 		    tr.set("foo"_br, "bar"_br);
 		    auto f1 = tr.get("foo"_br, /*snapshot*/ true);
 
+		    // This allows the runToCompletion to properly retry on transient errors that happen to f1
 		    if (auto err = f1.blockUntilReady()) {
 			    return f1;
 		    }
