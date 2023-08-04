@@ -401,9 +401,15 @@ if __name__ == "__main__":
     #   Also add cert files and other args needed for AuthZ
     # mgmt fdbcli command template
     command_template_mgmt = [
-        "fdbcli",
+        "/usr/bin/fdbcli",
         "-C",
         args.cluster,
+        "--tls_certificate_file",
+        "/etc/foundationdb/fdb.pem",
+        "--tls_ca_file",
+        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+        "--tls_key_file",
+        "/etc/foundationdb/fdb.pem",
         "--exec",
     ]
 
@@ -455,9 +461,9 @@ if __name__ == "__main__":
     srcName = ast.literal_eval("b'%s'" % args.src_name)
     dstName = ast.literal_eval("b'%s'" % args.dst_name)
 
+    start = datetime.now()
     poolArgs = (cluster, tenantGroup, srcName, dstName)
     multiArgs = [poolArgs for i in range(args.num_procs)]
-    start = datetime.now()
     with multiprocessing.Pool(processes=args.num_procs) as pool:
         pool.starmap(process_queue, multiArgs)
     print("Time Elapsed for Copy: ", (datetime.now() - start).total_seconds())
