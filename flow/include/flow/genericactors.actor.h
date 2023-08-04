@@ -1441,6 +1441,45 @@ Future<T> waitOrError(Future<T> f, Future<Void> errorSignal) {
 	}
 }
 
+// A simple counter designed to track an ongoing count of something, such as how many actors are in a critical section,
+// how many bytes are currently being processed, etc... Can be explicitly released idempotently, or will automatically
+// release when destructed to handle actor ending or errors.
+// Can be used for any type T so long as it has += and -= operators.
+
+// Usage Example: tracking number of actors in code section
+// ActiveCounter<int> counter;
+//
+//   state ActiveCounter::Releaser tracker = counter.take(1);
+//   wait(perform my operation);
+//   tracker.release();
+
+template <class T>
+struct ActiveCounter {
+	struct Releaser {
+		ActiveCounter<T>* parent;
+		T delta;
+
+		Releaser(ActiveCounter<T>* parent, T delta) : parent(parent), delta(delta) { parent->counter += delta; }
+
+		void release() {
+			if (parent) {
+				parent->counter -= delta;
+				parent = nullptr;
+			}
+		}
+
+		~Releaser() { release(); }
+	};
+
+	T counter;
+
+	ActiveCounter(T initialValue) : counter(initialValue) {}
+
+	T getCount() { return counter; }
+
+	Releaser take(T delta) { return Releaser(this, delta); }
+};
+
 // A low-overhead FIFO mutex made with no internal queue structure (no list, deque, vector, etc)
 // The lock is implemented as a Promise<Void>, which is returned to callers in a convenient wrapper
 // called Lock.
