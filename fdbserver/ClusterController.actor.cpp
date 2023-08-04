@@ -130,12 +130,12 @@ ACTOR Future<Void> clusterWatchDatabase(ClusterControllerData* cluster,
 			dbInfo.blobManager = db->serverInfo->get().blobManager;
 			dbInfo.blobMigrator = db->serverInfo->get().blobMigrator;
 			dbInfo.consistencyScan = db->serverInfo->get().consistencyScan;
+			dbInfo.tenantBalancer = db->serverInfo->get().tenantBalancer;
 			dbInfo.latencyBandConfig = db->serverInfo->get().latencyBandConfig;
 			dbInfo.myLocality = db->serverInfo->get().myLocality;
 			dbInfo.client = ClientDBInfo();
 			dbInfo.client.encryptKeyProxy = db->serverInfo->get().client.encryptKeyProxy;
 			dbInfo.client.id = deterministicRandom()->randomUniqueID();
-			dbInfo.tenantBalancer = db->serverInfo->get().tenantBalancer;
 			dbInfo.client.tenantMode = TenantAPI::tenantModeForClusterType(db->clusterType, db->config.tenantMode);
 			dbInfo.client.clusterId = db->serverInfo->get().client.clusterId;
 			dbInfo.client.clusterType = db->clusterType;
