@@ -653,7 +653,7 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 	state int idx = 1;
 	state Reference<GranuleTenantData> tenantData;
 	state int retryCount = 0;
-	wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange)));
+	wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange, false)));
 	while (SERVER_KNOBS->BG_METADATA_SOURCE == "tenant" && !tenantData.isValid()) {
 		// this is a bit of a hack, but if we know this range is supposed to have a tenant, and it doesn't, just wait
 		retryCount++;
@@ -663,7 +663,7 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 		    .detail("Granule", granuleRange)
 		    .detail("Retries", retryCount);
 		wait(delay(1.0));
-		wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange)));
+		wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange, false)));
 	}
 	for (; idx < splits.size() - 1; idx++) {
 		alignKeyBoundary(bmData, tenantData, splits[idx], offset, splitPoints);
