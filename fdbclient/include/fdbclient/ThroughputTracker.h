@@ -10,10 +10,8 @@
 #include <boost/unordered/unordered_flat_set.hpp>
 
 // The ThroughputTracker class is responsible for periodically reporting each
-// throttlingId's throughput to GRV proxies.
-//
-// TODO: Add the future responsibility of tracking average transaction cost
-// for each throttlingId.
+// throttlingId's throughput to GRV proxies. This class also tracks the average
+// transaction cost for each throttlingId.
 class ThroughputTracker {
 	friend class ThroughputTrackerImpl;
 	ThrottlingIdMap<uint64_t> throughput;

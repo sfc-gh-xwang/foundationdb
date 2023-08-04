@@ -66,6 +66,7 @@ struct ProxyStats {
 	Counter tenantLookupRequestOut;
 	Counter tenantLookupRequestErrors;
 	Counter blobGranuleLocationIn, blobGranuleLocationOut, blobGranuleLocationErrors;
+	Counter bulkLoadersIn, bulkLoadersOut, bulkLoadersErrors;
 	Counter txnExpensiveClearCostEstCount;
 	Version lastCommitVersionAssigned;
 
@@ -147,6 +148,9 @@ struct ProxyStats {
 	    blobGranuleLocationIn("BlobGranuleLocationIn", cc),
 	    blobGranuleLocationOut("BlobGranuleLocationOut", cc),
 	    blobGranuleLocationErrors("BlobGranuleLocationErrors", cc),
+	    bulkLoadersIn("BulkLoadersIn", cc),
+	    bulkLoadersOut("BulkLoadersOut", cc),
+	    bulkLoadersErrors("BulkLoadersErrors", cc),
 	    txnExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
 	    lastCommitVersionAssigned(0),
 	    commitLatencySample("CommitLatencyMetrics",

@@ -431,9 +431,9 @@ ThreadSafeTransaction::ThreadSafeTransaction(DatabaseContext* cx,
 		if (tenantPtr) {
 			Reference<Tenant> tenant = Reference<Tenant>::addRef(tenantPtr);
 			if (type == ISingleThreadTransaction::Type::RYW) {
-				new (tr) ReadYourWritesTransaction(db, tenant);
+				new (tr) ReadYourWritesTransaction(tenant);
 			} else {
-				tr->construct(db, tenant);
+				tr->construct(tenant);
 			}
 		} else {
 			if (type == ISingleThreadTransaction::Type::RYW) {

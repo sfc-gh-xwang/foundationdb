@@ -280,7 +280,7 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 				// differentiates between an active connection timing out vs a connection timing out, though not
 				// between an active connection failing vs connection attempt failing.
 				// TODO:  Add more error types?
-				if (code == error_code_timed_out && !connectionEstablished) {
+				if ((code == error_code_timed_out || code == error_code_lookup_failed) && !connectionEstablished) {
 					throw connection_failed();
 				}
 

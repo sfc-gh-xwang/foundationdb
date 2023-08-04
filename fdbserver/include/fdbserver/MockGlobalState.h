@@ -272,8 +272,8 @@ public:
 	DatabaseConfiguration configuration;
 
 	// user defined parameters for mock workload purpose
-	double emptyProb; // probability of doing an empty read
-	int minByteSize, maxByteSize; // the size band of a point data operation
+	double emptyProb = 0; // probability of doing an empty read
+	int minByteSize = 32, maxByteSize = 32; // the size band of a point data operation
 	bool restrictSize = true;
 
 	MockGlobalState() : shardMapping(new ShardsAffectedByTeamFailure) {}

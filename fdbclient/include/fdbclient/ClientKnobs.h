@@ -363,6 +363,8 @@ public:
 	// Bulk Loading
 	// knob guard to disallow starting bulk loads until implementation is completed
 	bool ALLOW_BULK_LOADS;
+	int BULK_LOAD_FILE_POINTER_TOO_MANY;
+	int64_t BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
 
 	bool ENABLE_STORAGE_ENGINE_PARAM_INTERFACE;
 

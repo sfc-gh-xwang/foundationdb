@@ -368,6 +368,28 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_flush_blob_range(FDBDatabas
                                                                       fdb_bool_t compact,
                                                                       int64_t version);
 
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_start_bulk_load(FDBDatabase* db,
+                                                                     uint8_t const* begin_key_name,
+                                                                     int begin_key_name_length,
+                                                                     uint8_t const* end_key_name,
+                                                                     int end_key_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_bulk_load_all_files_registered(FDBDatabase* db,
+                                                                                    uint8_t const* bulk_load_id_name,
+                                                                                    int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_abort_bulk_load(FDBDatabase* db,
+                                                                     uint8_t const* bulk_load_id_name,
+                                                                     int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_cleanup_bulk_load(FDBDatabase* db,
+                                                                       uint8_t const* bulk_load_id_name,
+                                                                       int bulk_load_id_name_length);
+
+DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_wait_bulk_load_complete(FDBDatabase* db,
+                                                                             uint8_t const* bulk_load_id_name,
+                                                                             int bulk_load_id_name_length);
+
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_status(FDBDatabase* db);
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant);
@@ -436,7 +458,6 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_flush_blob_range(FDBTenant* t
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_id(FDBTenant* tenant);
 
-/* FIXME: create database versions of bulk load APIs too! */
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_start_bulk_load(FDBTenant* tenant,
                                                                    uint8_t const* begin_key_name,
                                                                    int begin_key_name_length,

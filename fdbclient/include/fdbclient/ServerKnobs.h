@@ -498,6 +498,7 @@ public:
 	int KEY_LOCATION_MAX_QUEUE_SIZE;
 	int TENANT_ID_REQUEST_MAX_QUEUE_SIZE;
 	int BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE;
+	int BULK_LOADERS_MAX_QUEUE_SIZE;
 	double COMMIT_PROXY_LIVENESS_TIMEOUT;
 
 	double COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE;
@@ -587,6 +588,7 @@ public:
 	double CC_PRUNE_CLIENTS_INTERVAL;
 	double CC_CHANGE_DELAY;
 	double CC_CLASS_DELAY;
+	bool COLOCATE_STATELESS_PROCESSES;
 	double WAIT_FOR_GOOD_RECRUITMENT_DELAY;
 	double WAIT_FOR_GOOD_REMOTE_RECRUITMENT_DELAY;
 	double ATTEMPT_RECRUITMENT_DELAY;
@@ -778,6 +780,11 @@ public:
 	// Interval at which to expire inactive throttlingIds from the
 	// client throughput tracker running on ratekeeper:
 	double CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL;
+	// If true, a throttlingId will potentially have a limiting rate
+	// computed even if no quota is set. This rate is computed based
+	// on storage server saturation for storage servers being affected
+	// by the throttlingId in question.
+	bool THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;
@@ -1225,6 +1232,10 @@ public:
 	double IDEMPOTENCY_ID_IN_MEMORY_LIFETIME;
 	double IDEMPOTENCY_IDS_CLEANER_POLLING_INTERVAL;
 	double IDEMPOTENCY_IDS_MIN_AGE_SECONDS;
+
+	// Bulk Load
+	int BULK_LOAD_FILE_POINTER_BATCH_SIZE;
+	int BULK_LOAD_PARALLEL_FILE_VALIDATIONS;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

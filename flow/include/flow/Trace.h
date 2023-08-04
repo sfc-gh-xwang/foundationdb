@@ -226,6 +226,7 @@ class AuditedEvent {
 		"AuditTokenUsed",
 		"AuthzPublicKeySetApply",
 		"AuthzPublicKeySetRefreshError",
+		"AuthzActivePublicKeyIds",
 		"IncomingConnection",
 		"InvalidToken",
 		"N2_ConnectHandshakeError",

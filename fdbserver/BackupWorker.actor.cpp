@@ -513,7 +513,7 @@ struct BackupData {
 	Future<Version> getMinKnownCommittedVersion() { return _getMinKnownCommittedVersion(this); }
 };
 
-// Monitors "backupStartedKey". If "present" is true, wait until the key is set;
+// Monitors "deprecatedBackupStarted". If "present" is true, wait until the key is set;
 // otherwise, wait until the key is cleared. If "watch" is false, do not perform
 // the wait for key set/clear events. Returns if key present.
 ACTOR Future<bool> monitorBackupStartedKeyChanges(BackupData* self, bool present, bool watch) {
@@ -524,7 +524,7 @@ ACTOR Future<bool> monitorBackupStartedKeyChanges(BackupData* self, bool present
 			try {
 				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-				ValueReadResult value = wait(tr.get(backupStartedKey));
+				ValueReadResult value = wait(tr.get(deprecatedBackupStartedKey));
 				std::vector<std::pair<UID, Version>> uidVersions;
 				bool shouldExit = self->endVersion.present();
 				if (value.present()) {
@@ -552,7 +552,7 @@ ACTOR Future<bool> monitorBackupStartedKeyChanges(BackupData* self, bool present
 					}
 				}
 
-				state Future<Void> watchFuture = tr.watch(backupStartedKey);
+				state Future<Void> watchFuture = tr.watch(deprecatedBackupStartedKey);
 				wait(tr.commit());
 				wait(watchFuture);
 				break;
