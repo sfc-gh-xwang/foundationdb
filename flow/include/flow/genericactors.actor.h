@@ -1459,6 +1459,7 @@ struct ActiveCounter {
 		ActiveCounter<T>* parent;
 		T delta;
 
+		Releaser() : parent(nullptr) {}
 		Releaser(ActiveCounter<T>* parent, T delta) : parent(parent), delta(delta) { parent->counter += delta; }
 
 		void release() {
@@ -1475,7 +1476,7 @@ struct ActiveCounter {
 
 	ActiveCounter(T initialValue) : counter(initialValue) {}
 
-	T getCount() { return counter; }
+	T getValue() { return counter; }
 
 	Releaser take(T delta) { return Releaser(this, delta); }
 };
@@ -2359,7 +2360,7 @@ public:
 		}
 	}
 
-	static int getCount() { return instanceMap.size(); }
+	static int getValue() { return instanceMap.size(); }
 	static void resetInstances() { instanceMap.clear(); }
 
 private:
