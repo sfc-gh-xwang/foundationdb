@@ -112,7 +112,7 @@ private:
 			TraceEvent("RestorableGranule", self->interf_.id()).detail("Size", self->blobGranules_.size());
 			if (granules.empty()) {
 				TraceEvent("EmptyBlobGranules", self->interf_.id()).log();
-				CODE_PROBE(true, "Blob restore with no blob granules");
+				CODE_PROBE(true, "Blob restore with no blob granules", probe::decoration::rare);
 				wait(canRestore(self));
 				wait(preloadApplyMutationsKeyVersionMap(self));
 				wait(BlobRestoreController::setPhase(controller, APPLYING_MLOGS, self->interf_.id()));

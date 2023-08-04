@@ -137,10 +137,6 @@ struct SpecialKeySpaceCorrectnessWorkload : TestWorkload {
 		Future<Void> f;
 		{
 			ReadYourWritesTransaction ryw{ cx->clone() };
-			if (!ryw.getDatabase()->apiVersionAtLeast(630)) {
-				// This test is not valid for API versions smaller than 630
-				return;
-			}
 			f = success(ryw.get("\xff\xff/status/json"_sr));
 			CODE_PROBE(!f.isReady(), "status json not ready");
 		}
@@ -327,7 +323,7 @@ struct SpecialKeySpaceCorrectnessWorkload : TestWorkload {
 		}
 		state Reference<ReadYourWritesTransaction> tx = makeReference<ReadYourWritesTransaction>(cx);
 		state Reference<ReadYourWritesTransaction> tenantTx =
-		    makeReference<ReadYourWritesTransaction>(cx, makeReference<Tenant>(tenantId));
+		    makeReference<ReadYourWritesTransaction>(makeReference<Tenant>(cx, tenantId));
 		// Use new transactions that may use default tenant rather than re-use tx
 		// This is because tx will reject raw access for later tests if default tenant is set
 		state Reference<ReadYourWritesTransaction> defaultTx1 = makeReference<ReadYourWritesTransaction>(cx);

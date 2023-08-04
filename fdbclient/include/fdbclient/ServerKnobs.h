@@ -498,6 +498,7 @@ public:
 	int KEY_LOCATION_MAX_QUEUE_SIZE;
 	int TENANT_ID_REQUEST_MAX_QUEUE_SIZE;
 	int BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE;
+	int BULK_LOADERS_MAX_QUEUE_SIZE;
 	double COMMIT_PROXY_LIVENESS_TIMEOUT;
 
 	double COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE;
@@ -587,6 +588,7 @@ public:
 	double CC_PRUNE_CLIENTS_INTERVAL;
 	double CC_CHANGE_DELAY;
 	double CC_CLASS_DELAY;
+	bool COLOCATE_STATELESS_PROCESSES;
 	double WAIT_FOR_GOOD_RECRUITMENT_DELAY;
 	double WAIT_FOR_GOOD_REMOTE_RECRUITMENT_DELAY;
 	double ATTEMPT_RECRUITMENT_DELAY;
@@ -778,6 +780,11 @@ public:
 	// Interval at which to expire inactive throttlingIds from the
 	// client throughput tracker running on ratekeeper:
 	double CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL;
+	// If true, a throttlingId will potentially have a limiting rate
+	// computed even if no quota is set. This rate is computed based
+	// on storage server saturation for storage servers being affected
+	// by the throttlingId in question.
+	bool THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;
@@ -785,6 +792,15 @@ public:
 	double GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME;
 	double CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME;
 	double CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME;
+
+	// Enabled by CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS
+	// A throttling ID will be classified as a busy throttling ID if its throughput exceeds
+	// (THROTTLING_ID_BUSY_THRESHOLD * effective quota).
+	double THROTTLING_ID_BUSY_THRESHOLD;
+	// These two parameters work in tandem to configure the hysteresis for busy IDs. When the throughput of a busy ID
+	// drops below this threshold, it will transition to a non-busy state. This prevents the ID from continuously
+	// oscillating between busy and not busy.
+	double THROTTLING_ID_FORGET_THRESHOLD;
 
 	double MAX_TRANSACTIONS_PER_BYTE;
 
@@ -1208,6 +1224,7 @@ public:
 	int REST_KMS_MAX_CIPHER_REQUEST_VERSION;
 	std::string REST_SIM_KMS_VAULT_DIR;
 	double REST_KMS_STABILITY_CHECK_INTERVAL;
+	double KMS_LOGGING_INTERVAL;
 
 	double CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO;
 
@@ -1215,6 +1232,10 @@ public:
 	double IDEMPOTENCY_ID_IN_MEMORY_LIFETIME;
 	double IDEMPOTENCY_IDS_CLEANER_POLLING_INTERVAL;
 	double IDEMPOTENCY_IDS_MIN_AGE_SECONDS;
+
+	// Bulk Load
+	int BULK_LOAD_FILE_POINTER_BATCH_SIZE;
+	int BULK_LOAD_PARALLEL_FILE_VALIDATIONS;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

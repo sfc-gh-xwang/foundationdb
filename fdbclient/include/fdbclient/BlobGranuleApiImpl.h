@@ -1,11 +1,11 @@
 /*
- * BlobGranuleFilesApi.h
+ * BlobGranuleApiImpl.h
  *
  * Copyright (c) 2023 Snowflake Computing
  */
 
-#ifndef __FDBCLIENT_BLOB_GRANULE_FILES_API_H__
-#define __FDBCLIENT_BLOB_GRANULE_FILES_API_H__
+#ifndef __FDBCLIENT_BLOB_GRANULE_API_IMPL_H__
+#define __FDBCLIENT_BLOB_GRANULE_API_IMPL_H__
 #pragma once
 
 #include "flow/ApiVersion.h"

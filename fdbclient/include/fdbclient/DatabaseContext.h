@@ -34,6 +34,7 @@
 #pragma once
 
 #include "fdbclient/BulkLoad.h"
+#include "fdbclient/BulkLoaderInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/KeyRangeMap.h"
@@ -82,6 +83,7 @@ struct LocationInfo : MultiInterface<ReferencedInterface<StorageServerInterface>
 
 using CommitProxyInfo = ModelInterface<CommitProxyInterface>;
 using GrvProxyInfo = ModelInterface<GrvProxyInterface>;
+using BulkLoaderInfo = MultiInterface<ReferencedInterface<BulkLoaderInterface>>;
 
 struct WatchParameters : public ReferenceCounted<WatchParameters> {
 	const TenantInfo tenant;
@@ -299,6 +301,7 @@ public:
 	bool isCurrentGrvProxy(UID proxyId) const;
 	Future<Void> onProxiesChanged() const;
 	Future<HealthMetrics> getHealthMetrics(bool detailed);
+	Future<Reference<BulkLoaderInfo>> getBulkLoaders();
 	// Get storage stats of a storage server from the cached healthy metrics if now() - lastUpdate < maxStaleness.
 	// Otherwise, ask GRVProxy for the up-to-date health metrics.
 	Future<Optional<HealthMetrics::StorageStats>> getStorageStats(const UID& id, double maxStaleness);
@@ -442,23 +445,39 @@ public:
 
 	// bulk load functions
 
-	// state management
+	// external state management apis - exposed to clients, go through interface/authz
 	Future<BulkLoadID> startBulkLoad(KeyRange range, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> bulkLoadAllFilesRegistered(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> abortBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> cleanupBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
-	// internal state management - not exposed to public clients
-	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadState desiredState);
-	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadState desiredState);
+	// internal state management helper functions - not exposed to public clients at all
+	Future<Void> startBulkLoadInternal(BulkLoadID id,
+	                                   KeyRange range,
+	                                   Version maxReadVersion,
+	                                   Optional<Reference<Tenant>> tenant = {});
+	Future<Void> cleanupBulkLoadInternal(BulkLoadID id, Optional<int64_t> tenantIdToVerify = {});
+	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id,
+	                                      BulkLoadStatus::State desiredState,
+	                                      Optional<int64_t> tenantIdToVerify = {});
+	Future<Void> updateBulkLoadState(BulkLoadID id,
+	                                 BulkLoadStatus::State desiredState,
+	                                 Optional<int64_t> tenantIdToVerify = {});
+	Future<Version> getBulkLoadVersion(BulkLoadID id);
 
 	// operational management
-	Future<std::vector<BulkLoadID>> listBulkLoads(bool onlyActive);
-	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id);
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoads(bool onlyActive,
+	                                                           Optional<Reference<Tenant>> tenant = {});
+	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// bulk data writing apis
-	// TODO: the actual file pointer + serialization APIs
+	Future<Standalone<VectorRef<BulkLoadFileToWriteRef>>>
+	getBulkLoadFilesToWrite(BulkLoadID id, int count, Optional<Reference<Tenant>> tenant = {});
+
+	Future<Void> markBulkLoadFilesWritten(BulkLoadID id,
+	                                      Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
+	                                      Optional<Reference<Tenant>> tenant = {});
 
 	// private:
 	explicit DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
@@ -592,6 +611,8 @@ public:
 	Counter transactionKeyServerLocationRequestsCompleted;
 	Counter transactionBlobGranuleLocationRequests;
 	Counter transactionBlobGranuleLocationRequestsCompleted;
+	Counter transactionBulkLoaderRequests;
+	Counter transactionBulkLoaderRequestsCompleted;
 	Counter transactionStatusRequests;
 	Counter transactionTenantLookupRequests;
 	Counter transactionTenantLookupRequestsCompleted;
@@ -761,6 +782,8 @@ public:
 	void addCost(ThrottlingId const&, uint64_t bytes);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
+
+	bool isThrottlingIdBusy(ThrottlingId const&) const;
 
 	// used in template functions to create a transaction
 	using TransactionT = ReadYourWritesTransaction;

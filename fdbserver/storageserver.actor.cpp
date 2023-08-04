@@ -3972,9 +3972,9 @@ ACTOR Future<GetValueReqAndResultRef> quickGetValue(StorageServer* data,
 	++data->counters.quickGetValueMiss;
 	if (SERVER_KNOBS->QUICK_GET_VALUE_FALLBACK) {
 		Optional<Reference<Tenant>> tenant = pOriginalReq->tenantInfo.hasTenant()
-		                                         ? makeReference<Tenant>(pOriginalReq->tenantInfo.tenantId)
+		                                         ? makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)
 		                                         : Optional<Reference<Tenant>>();
-		state Transaction tr(data->cx, tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, data->cx);
 		tr.setVersion(version);
 		// TODO: is DefaultPromiseEndpoint the best priority for this?
 		tr.trState->taskID = TaskPriority::DefaultPromiseEndpoint;
@@ -4724,9 +4724,9 @@ ACTOR Future<GetRangeReqAndResultRef> quickGetKeyValues(
 	++data->counters.quickGetKeyValuesMiss;
 	if (SERVER_KNOBS->QUICK_GET_KEY_VALUES_FALLBACK) {
 		Optional<Reference<Tenant>> tenant = pOriginalReq->tenantInfo.hasTenant()
-		                                         ? makeReference<Tenant>(pOriginalReq->tenantInfo.tenantId)
+		                                         ? makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)
 		                                         : Optional<Reference<Tenant>>();
-		state Transaction tr(data->cx, tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, data->cx);
 		tr.setVersion(version);
 		if (pOriginalReq->options.present() && pOriginalReq->options.get().debugID.present()) {
 			tr.debugTransaction(pOriginalReq->options.get().debugID.get());
@@ -11386,6 +11386,7 @@ ACTOR Future<Void> waitMetrics(StorageServerMetrics* self, WaitMetricsRequest re
 	    .detail("Metrics", metrics.toString())
 	    .detail("ReqMin", req.min.toString())
 	    .detail("ReqMax", req.max.toString());
+
 	if (!req.min.allLessOrEqual(metrics) || !metrics.allLessOrEqual(req.max)) {
 		CODE_PROBE(true, "ShardWaitMetrics return case 1 (quickly)");
 		req.reply.send(metrics);
@@ -11452,7 +11453,7 @@ ACTOR Future<Void> waitMetrics(StorageServerMetrics* self, WaitMetricsRequest re
 
 		wait(delay(0)); // prevent iterator invalidation of functions sending changes
 	}
-	// fmt::print("PopWaitMetricsMap {}\n", req.keys.toString());
+
 	auto rs = self->waitMetricsMap.modify(req.keys);
 	for (auto i = rs.begin(); i != rs.end(); ++i) {
 		auto& x = i->value();

@@ -56,13 +56,9 @@ def test_fdb_transactional_generator(db):
         def function_that_yields(tr):
             yield 0
 
-        assert (
-            fdb.get_api_version() < 630
-        ), "Pre-6.3, a decorator may wrap a function that yields"
+        assert False, "A decorator should throw if wrapped function yields"
     except ValueError:
-        assert (
-            fdb.get_api_version() >= 630
-        ), "Post-6.3, a decorator should throw if wrapped function yields"
+        pass
 
 
 def test_fdb_transactional_returns_generator(db):
@@ -76,11 +72,9 @@ def test_fdb_transactional_returns_generator(db):
             return function_that_yields(tr)
 
         function_that_returns()
-        assert fdb.get_api_version() < 630, "Pre-6.3, returning a generator is allowed"
+        assert False, "Returning a generator should throw"
     except ValueError:
-        assert (
-            fdb.get_api_version() >= 630
-        ), "Post-6.3, returning a generator should throw"
+        pass
 
 
 def test_db_options(db):
@@ -257,10 +251,8 @@ def run_unit_tests(db):
         test_get_approximate_size(db)
         log("test_get_client_status")
         test_get_client_status(db)
-
-        if fdb.get_api_version() >= 710:
-            log("test_tenants")
-            test_tenants(db)
+        log("test_tenants")
+        test_tenants(db)
 
     except fdb.FDBError as e:
         print("Unit tests failed: %s" % e.description)

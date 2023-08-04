@@ -2,6 +2,7 @@
  * RKServerThroughputTracker.cpp
  */
 
+#include "fdbclient/ThrottlingId.h"
 #include "fdbserver/IRKClusterThroughputTracker.h"
 #include "fdbserver/Knobs.h"
 
@@ -188,11 +189,13 @@ double RKServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId
 	}
 }
 
-boost::unordered_flat_set<ThrottlingId> RKServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	boost::unordered_flat_set<ThrottlingId> result;
+ThrottlingIdMap<double> RKServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	ThrottlingIdMap<double> result;
 	for (auto const& [throttlingId, throttlingIdThroughput] : throughputByThrottlingId) {
-		if (throttlingIdThroughput.getThroughput() > threshold) {
-			result.insert(throttlingId);
+		auto const throughput = throttlingIdThroughput.getThroughput();
+
+		if (throughput > threshold) {
+			result.emplace(throttlingId, throughput);
 		}
 	}
 	return result;
@@ -217,11 +220,11 @@ double MockThroughputTracker::getThroughput(ThrottlingId const& throttlingId) co
 	}
 }
 
-boost::unordered_flat_set<ThrottlingId> MockThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	boost::unordered_flat_set<ThrottlingId> result;
+ThrottlingIdMap<double> MockThroughputTracker::getActiveThrottlingIds(double threshold) const {
+	ThrottlingIdMap<double> result;
 	for (auto const& [throttlingId, throughputValue] : throughput) {
 		if (throughputValue > threshold) {
-			result.insert(throttlingId);
+			result.emplace(throttlingId, throughputValue);
 		}
 	}
 	return result;

@@ -387,10 +387,17 @@ ACTOR static Future<Void> decodeBackupLogValue(Arena* arena,
 				KeyRangeRef range(logValue.param1, logValue.param2);
 				auto ranges = key_version->intersectingRanges(range);
 				for (auto r : ranges) {
-					if (version > r.value() && r.value() != invalidVersion) {
-						KeyRef minKey = std::min(r.range().end, range.end);
+					bool includeRange = version > r.value() && r.value() != invalidVersion;
+					KeyRangeRef intersectingSubRange = r.range();
+					if (!includeRange && range.contains(metadataVersionKey) &&
+					    intersectingSubRange.contains(metadataVersionKey)) {
+						intersectingSubRange = KeyRangeRef(metadataVersionKey, metadataVersionKeyEnd);
+						includeRange = true;
+					}
+					if (includeRange) {
+						KeyRef minKey = std::min(intersectingSubRange.end, range.end);
 						if (minKey == (removePrefix == StringRef() ? allKeys.end : strinc(removePrefix))) {
-							logValue.param1 = std::max(r.range().begin, range.begin);
+							logValue.param1 = std::max(intersectingSubRange.begin, range.begin);
 							if (removePrefix.size()) {
 								logValue.param1 = logValue.param1.removePrefix(removePrefix);
 							}
@@ -400,7 +407,7 @@ ACTOR static Future<Void> decodeBackupLogValue(Arena* arena,
 							logValue.param2 = addPrefix == StringRef() ? allKeys.end : strinc(addPrefix, tempArena);
 							_addResult(tenantMapChanging, result, mutationSize, arena, logValue, tenantMapRange);
 						} else {
-							logValue.param1 = std::max(r.range().begin, range.begin);
+							logValue.param1 = std::max(intersectingSubRange.begin, range.begin);
 							logValue.param2 = minKey;
 							if (removePrefix.size()) {
 								logValue.param1 = logValue.param1.removePrefix(removePrefix);
@@ -422,7 +429,7 @@ ACTOR static Future<Void> decodeBackupLogValue(Arena* arena,
 			} else {
 				Version ver = key_version->rangeContaining(logValue.param1).value();
 				//TraceEvent("ApplyMutation").detail("LogValue", logValue).detail("Version", version).detail("Ver", ver).detail("Apply", version > ver && ver != invalidVersion);
-				if (version > ver && ver != invalidVersion) {
+				if ((version > ver && ver != invalidVersion) || logValue.param1 == metadataVersionKey) {
 					if (removePrefix.size()) {
 						logValue.param1 = logValue.param1.removePrefix(removePrefix);
 					}
@@ -910,8 +917,6 @@ ACTOR Future<Void> applyMutations(Database cx,
 	state PromiseStream<Future<Void>> addActor;
 	state Future<Void> error = actorCollection(addActor.getFuture());
 	state int maxBytes = CLIENT_KNOBS->APPLY_MIN_LOCK_BYTES;
-
-	keyVersion->insert(metadataVersionKey, 0);
 
 	try {
 		loop {

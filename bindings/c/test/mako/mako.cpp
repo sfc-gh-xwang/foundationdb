@@ -2668,6 +2668,10 @@ int main(int argc, char* argv[]) {
 	/* forking (num_process + 1) children */
 	/* last process is the stats handler */
 	for (auto p = 0; p < args.num_processes + 1; p++) {
+		// prevent child process from getting duplicate data from the parent buffer
+		// and eventually printing for the second time
+		fflush(stdout);
+		fflush(stderr);
 		auto pid = fork();
 		if (pid != 0) {
 			/* master */

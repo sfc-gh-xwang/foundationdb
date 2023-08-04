@@ -2,10 +2,13 @@
  * QuotaThrottlerTesting.actor.cpp
  */
 
+#include "fdbclient/Knobs.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/QuotaThrottler.h"
 #include "flow/UnitTest.h"
 #include "flow/actorcompiler.h" // must be last include
+#include "flow/genericactors.actor.h"
 
 namespace {
 
@@ -206,18 +209,33 @@ public:
 		return _runClient(this, throttlingId, tps, pagesPerTransaction, opType, storageServerIndices);
 	}
 
-	bool targetRateIsNear(ThrottlingId const& throttlingId, Optional<double> expected) {
+	bool targetRateIsNear(ThrottlingId const& throttlingId, Optional<double> expected, bool shouldBeBusy = false) {
 		Optional<double> rate;
 		auto const targetRates = getTargetRates();
 		auto it = targetRates.find(throttlingId);
 		if (it != targetRates.end()) {
 			rate = it->second;
 		}
+
+		bool isBusy = isThrottlingIdBusy(throttlingId);
+
 		TraceEvent("QuotaThrottling_RateMonitor")
 		    .detail("ThrottlingId", throttlingId)
 		    .detail("CurrentTPSRate", rate)
-		    .detail("ExpectedTPSRate", expected);
-		return isNear(rate, expected);
+		    .detail("ExpectedTPSRate", expected)
+		    .detail("ShouldBeBusy", shouldBeBusy)
+		    .detail("IsBusy", isBusy);
+
+		if (isBusyThrottlingIdsTrackingEnabled()) {
+			if (shouldBeBusy) {
+				return isBusy && isNear(rate, expected);
+			} else {
+				// If the tag is not busy, then the target rate should not be present.
+				return !isBusy && !rate.present();
+			}
+		} else {
+			return isNear(rate, expected);
+		}
 	}
 
 	bool totalTargetRateIsNear(double expected) {
@@ -250,6 +268,11 @@ public:
 	int throttleCount() const { return quotaThrottler.throttleCount(); }
 
 	void setCapacity(int index, double pagesPerSecond) { storageServers.setCapacity(index, pagesPerSecond); }
+
+	bool isThrottlingIdBusy(ThrottlingId const& throttlingId) {
+		auto rates = getTargetRates();
+		return rates.contains(throttlingId);
+	}
 }; // class TestEnv
 
 ACTOR template <class Check>
@@ -275,13 +298,14 @@ Future<Void> monitorActor(TestEnv* env, Check check) {
 // Total quota set to 100 pages/second.
 // Client attempts 5 6-byte read transactions per second.
 // Limit should adjust to allow 100/6 transactions per second.
+// Client is only using about 30% of its quota, not busy.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/Simple") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
-	state Future<Void> monitor =
-	    monitorActor(&env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 100.0 / 6.0); });
+	state Future<Void> monitor = monitorActor(
+	    &env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 100.0 / 6.0, /*shouldBeBusy=*/false); });
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
 	return Void();
@@ -291,13 +315,15 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/Simple") {
 // Total quota set to 100 pages/second.
 // Client attempts 5 6-byte write transactions per second.
 // Limit should adjust to allow 100/(6*<fungibility_ratio>) transactions per second.
+// Client using more than 100% of its quota, should be tracked as busy and should be throttled.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/WriteThrottling") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::WRITE);
 	state Future<Void> monitor = monitorActor(&env, [testTag](auto& env) {
-		return env.targetRateIsNear(testTag, 100.0 / (6.0 * CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO));
+		return env.targetRateIsNear(
+		    testTag, 100.0 / (6.0 * CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO), /*shouldBeBusy=*/true);
 	});
 
 	state Future<Void> updater = env.update();
@@ -309,6 +335,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/WriteThrottling") {
 // Total quota set to 100 pages/second for each tag.
 // 2 clients each attempt 5 6-byte read transactions per second.
 // Both limits should adjust to allow 100/6 transactions per second.
+// Each client using about 30% of its quota, they are not busy and no target rate should be reported.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagThrottling") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag1 = ThrottlingIdRef::fromTag("sampleTag1"_sr);
@@ -321,8 +348,10 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagThrottling") {
 	futures.push_back(env.runClient(testTag2, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ));
 	futures.push_back(env.update());
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
-		return env.targetRateIsNear(testTag1, 100.0 / 6.0) && env.targetRateIsNear(testTag2, 100.0 / 6.0);
+		return env.targetRateIsNear(testTag1, 100.0 / 6.0, /*shouldBeBusy=*/false) &&
+		       env.targetRateIsNear(testTag2, 100.0 / 6.0, /*shouldBeBusy=*/false);
 	});
+
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
 	return Void();
 }
@@ -331,13 +360,14 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagThrottling") {
 // Total quota set to 100 pages/second.
 // Client attempts 20 10-page read transactions per second.
 // Limit should adjust to allow 100/10 transactions per second.
+// Client should be tracked as busy.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/AttemptWorkloadAboveQuota") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/20.0, /*pagesPerTransaction=*/10.0, OpType::READ);
 	state Future<Void> monitor =
-	    monitorActor(&env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 10.0); });
+	    monitorActor(&env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 10.0, /*shouldBeBusy=*/true); });
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
 	return Void();
@@ -348,20 +378,25 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/AttemptWorkloadAboveQuota") {
 // Client attempts 5 6-page transactions per second.
 // Test that the tag throttler can reach equilibrium, then adjust to a new equilibrium once the quota is changed
 // Target rate should adjust to allow 100/6 transactions per second.
-// Total quota is modified to 50 pages/second.
-// Target rate should adjust to allow 50/6 transactions per second.
+// Roughly 30% quota usage, should not be reported as busy.
+// Total quota is modified to 30 pages/second.
+// Target rate should adjust to allow 30/6 transactions per second.
+// Throttling ID should now be tracked as busy.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/UpdateQuota") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
-	state Future<Void> monitor = monitorActor(
-	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0); });
+	state Future<Void> monitor = monitorActor(&env, [](auto& env) {
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0, /*shouldBeBusy=*/false);
+	});
+
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
-	env.setQuota(testTag, /*totalQuotaInPages=*/50);
-	monitor = monitorActor(
-	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 50.0 / 6.0); });
+	env.setQuota(testTag, /*totalQuotaInPages=*/30);
+	monitor = monitorActor(&env, [](auto& env) {
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 30.0 / 6.0, /*shouldBeBusy=*/true);
+	});
 	wait(timeoutError(monitor || client || updater, 600.0));
 	return Void();
 }
@@ -370,6 +405,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/UpdateQuota") {
 // Total quota is initially set to 100 pages/second.
 // Client attempts 5 6-page read transactions per second.
 // Target limit adjusts to allow 100/6 transactions per second.
+// Throttling ID not considered busy, and target rate will not be reported.
 // Then Quota is removed.
 // Target limit is removed as a result.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuota") {
@@ -377,30 +413,72 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuota") {
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
-	state Future<Void> monitor = monitorActor(
-	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0); });
+	state Future<Void> monitor = monitorActor(&env, [](auto& env) {
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0, false);
+	});
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
 	env.removeQuota(testTag);
-	monitor = monitorActor(
-	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), {}); });
+	monitor = monitorActor(&env, [](auto& env) {
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), {}, /*shouldBeBusy=*/false);
+	});
+	wait(timeoutError(monitor || client || updater, 600.0));
+	return Void();
+}
+
+// 10 storage servers can handle 100 pages/second each.
+// Total quota is initially set to 30 pages/second.
+// Client attempts 5 6-page read transactions per second.
+// Target limit adjusts to allow 30/6 transactions per second.
+// Throttling ID should be reported as busy
+// Then Quota is removed.
+// Target limit is removed as a result. Throttling id should also be removed from the busy set.
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuotaBusyId") {
+	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
+	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
+	env.setQuota(testTag, /*totalQuotaInPages=*/30);
+	state Future<Void> client = env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
+	state Future<Void> monitor = monitorActor(&env, [](auto& env) {
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 30.0 / 6.0, /*shouldBeBusy=*/true);
+	});
+	state Future<Void> updater = env.update();
+	wait(timeoutError(monitor || client || updater, 600.0));
+	env.removeQuota(testTag);
+	monitor = monitorActor(&env, [](auto& env) {
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), {}, /*shouldBeBusy=*/false);
+	});
 	wait(timeoutError(monitor || client || updater, 600.0));
 	return Void();
 }
 
 // 10 storage servers can handle 5 pages/second each.
-// Total quota is set to 100 pages/second.
+// Total quota is either unset or set to > 50 pages/second.
 // Client attempts 10 6-page transactions per second
 // Target is adjusted to 50/6 transactions per second, to match the total capacity all storage servers.
-TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottling") {
+// Throttling ID should be reported as busy.
+ACTOR static Future<Void> testActiveThrottling(Optional<long> totalQuotaInPages = Optional<long>()) {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
-	env.setQuota(testTag, /*totalQuotaInPages=*/100);
+	if (totalQuotaInPages.present()) {
+		ASSERT_GE(totalQuotaInPages.get(), 10 * 5);
+		env.setQuota(testTag, totalQuotaInPages.get());
+	}
 	state Future<Void> client = env.runClient(testTag, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ);
-	state Future<Void> monitor = monitorActor(
-	    &env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 50 / 6.0) && env.throttleCount() == 1; });
+	state Future<Void> monitor = monitorActor(&env, [testTag](auto& env) {
+		return env.targetRateIsNear(testTag, 50 / 6.0, /*shouldBeBusy=*/true) && env.throttleCount() == 1;
+	});
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
+	return Void();
+}
+
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottling") {
+	wait(testActiveThrottling(/*totalQuotaInPages=*/100));
+	return Void();
+}
+
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottlingNoQuota") {
+	wait(testActiveThrottling());
 	return Void();
 }
 
@@ -420,7 +498,10 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling1") {
 	futures.push_back(env.runClient(testTag1, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ));
 	futures.push_back(env.runClient(testTag2, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
-		return env.totalTargetRateIsNear(50 / 6.0) && env.throttleCount() == 2;
+		return env.totalTargetRateIsNear(50 / 6.0) && env.throttleCount() == 2 &&
+		       // Both tags should be busy
+		       (!isBusyThrottlingIdsTrackingEnabled() ||
+		        (env.isThrottlingIdBusy(testTag1) && env.isThrottlingIdBusy(testTag2)));
 	});
 	futures.push_back(env.update());
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
@@ -443,7 +524,10 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling2") {
 	futures.push_back(env.runClient(testTag1, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 0, 1 }));
 	futures.push_back(env.runClient(testTag2, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
-		return env.totalTargetRateIsNear(100 / 6.0) && env.throttleCount() == 2;
+		return env.totalTargetRateIsNear(100 / 6.0) && env.throttleCount() == 2 &&
+		       // Both tags should be busy
+		       (!isBusyThrottlingIdsTrackingEnabled() ||
+		        (env.isThrottlingIdBusy(testTag1) && env.isThrottlingIdBusy(testTag2)));
 	});
 	futures.push_back(env.update());
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
@@ -466,8 +550,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling3") {
 	futures.push_back(env.runClient(testTag1, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 0 }));
 	futures.push_back(env.runClient(testTag2, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ, { 1, 2 }));
 	state Future<Void> monitor = monitorActor(&env, [testTag1, testTag2](auto& env) {
-		return env.targetRateIsNear(testTag1, 50 / 6.0) && env.targetRateIsNear(testTag2, 100 / 6.0) &&
-		       env.throttleCount() == 1;
+		return env.targetRateIsNear(testTag1, 50 / 6.0, /*shouldBeBusy=*/true) &&
+		       env.targetRateIsNear(testTag2, 100 / 6.0, /*shouldBeBusy=*/false) && env.throttleCount() == 1;
 	});
 	futures.push_back(env.update());
 	wait(timeoutError(waitForAny(futures) || monitor, 600.0));
@@ -485,18 +569,20 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ReservedQuota") {
 	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100, /*reservedQuotaInPages=*/70);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ);
-	state Future<Void> monitor =
-	    monitorActor(&env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 70 / 6.0); });
+	state Future<Void> monitor = monitorActor(
+	    &env, [testTag](auto& env) { return env.targetRateIsNear(testTag, 70 / 6.0, /*shouldBeBusy=*/true); });
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
 	return Void();
 }
 
 // Test that tags are expired iff a sufficient amount of time has passed since the
-// last transaction with that tag
+// last transaction with that tag, tag should also be removed from the busy set.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ExpireTags") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/5);
-	auto testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
+	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
+
+	env.setQuota(testTag, /*totalQuotaInPages=*/30);
 
 	state Future<Void> client =
 	    timeout(env.runClient(testTag, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ), 60.0, Void());
@@ -505,12 +591,28 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ExpireTags") {
 	client.cancel();
 	updater.cancel();
 	ASSERT_EQ(env.throttlingIdsTracked(), 1);
+	if (isBusyThrottlingIdsTrackingEnabled()) {
+		ASSERT(env.isThrottlingIdBusy(testTag));
+	}
+
 	env.removeExpiredThrottlingIds();
 	ASSERT_EQ(env.throttlingIdsTracked(), 1);
+	if (isBusyThrottlingIdsTrackingEnabled()) {
+		ASSERT(env.isThrottlingIdBusy(testTag));
+	}
+
 	wait(delay(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER + 1.0));
 	ASSERT_EQ(env.throttlingIdsTracked(), 1);
+	if (isBusyThrottlingIdsTrackingEnabled()) {
+		// Client has been stopped, no throughput for a while. ID should no longer be busy.
+		ASSERT(!env.isThrottlingIdBusy(testTag));
+	}
+
 	env.removeExpiredThrottlingIds();
 	ASSERT_EQ(env.throttlingIdsTracked(), 0);
+	if (isBusyThrottlingIdsTrackingEnabled()) {
+		ASSERT(!env.isThrottlingIdBusy(testTag));
+	}
 	return Void();
 }
 
@@ -545,13 +647,77 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/IgnoreWorstZone") {
 	env.setCapacity(/*index=*/0, /*pagesPerSecond=*/1);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
 	state Future<Void> client = env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
-	state Future<Void> monitor = monitorActor(
-	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0); });
+	state Future<Void> monitor = monitorActor(&env, [](auto& env) {
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0, /*shouldBeBusy=*/false);
+	});
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
 	env.setCapacity(/*index=*/1, /*pagesPerSecond=*/1);
-	monitor = monitorActor(
-	    &env, [](auto& env) { return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 10.0 / 6.0); });
+	monitor = monitorActor(&env, [](auto& env) {
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 10.0 / 6.0, /*shouldBeBusy=*/true);
+	});
 	wait(timeoutError(monitor || client || updater, 600.0));
+	return Void();
+}
+
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
+	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100);
+	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
+
+	// Only run this unit test if busy throttling id tracking is enabled.
+	if (!isBusyThrottlingIdsTrackingEnabled()) {
+		return Void();
+	}
+
+	env.setQuota(testTag, /*totalQuotaInPages=*/300); // 50 TPS effective quota
+	state Future<Void> updater = env.update();
+
+	// 10% < Forget threshold, tag should not be tracked as busy.
+	wait(timeoutError(env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(
+		                                       ThrottlingIdRef::fromTag("sampleTag1"_sr), {}, /*shouldBeBusy=*/false);
+	                                   }),
+	                  600.0));
+
+	// Forget threshold < 60% < Busy threshold, , tag should not be tracked as busy.
+	wait(timeoutError(env.runClient(testTag, /*tps=*/30.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(
+		                                       ThrottlingIdRef::fromTag("sampleTag1"_sr), {}, /*shouldBeBusy=*/false);
+	                                   }),
+	                  600.0));
+
+	// Busy threshold < 100%, tag should be tracked as busy
+	wait(timeoutError(env.runClient(testTag, /*tps=*/50.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr),
+		                                                               300 / 6,
+		                                                               /*shouldBeBusy=*/true);
+	                                   }),
+	                  600.0));
+
+	// Forget threshold < 70% < Busy threshold, tag below busy threshold, but above forget threshold
+	wait(timeoutError(env.runClient(testTag, /*tps=*/35.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr),
+		                                                               300 / 6,
+		                                                               /*shouldBeBusy=*/true);
+	                                   }),
+	                  600.0));
+
+	// 40% < Forget threshold, less than forget threshold, should be no longer be tracked as busy
+	wait(timeoutError(env.runClient(testTag, /*tps=*/20.0, /*pagesPerTransaction=*/6.0, OpType::READ) ||
+	                      monitorActor(&env,
+	                                   [](auto& env) {
+		                                   return env.targetRateIsNear(
+		                                       ThrottlingIdRef::fromTag("sampleTag1"_sr), {}, /*shouldBeBusy=*/false);
+	                                   }),
+	                  600.0));
+
 	return Void();
 }

@@ -327,6 +327,9 @@ public:
 		return *this;
 	}
 
+	// Default implementation for using a standalone as a value type in KeyBackedRangeMap - just returns the new value
+	Standalone<T> apply(Standalone<T> const& update) const { return update; }
+
 // Always-copy mode was meant to make alloc instrumentation more useful by making allocations occur at the final resting
 // place of objects leaked It doesn't actually work because some uses of Standalone things assume the object's memory
 // will not change on copy or assignment

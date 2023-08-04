@@ -106,7 +106,7 @@ ACTOR Future<int64_t> createObject(ConnectionProviderTestSettings* settings, Pro
 }
 
 ACTOR Future<int64_t> readAndVerifyObject(ProviderTestData* provider, std::string objFullPath, Value expectedData) {
-	Reference<BackupContainerFileSystem> bstore = provider->provider->getForRead(objFullPath);
+	Reference<BackupContainerFileSystem> bstore = provider->provider->getForAccess(objFullPath);
 	state Reference<IAsyncFile> reader = wait(bstore->readFile(objFullPath));
 
 	state Value actualData = makeString(expectedData.size());
@@ -118,7 +118,7 @@ ACTOR Future<int64_t> readAndVerifyObject(ProviderTestData* provider, std::strin
 }
 
 Future<Void> deleteObject(ProviderTestData* provider, std::string objFullPath) {
-	Reference<BackupContainerFileSystem> bstore = provider->provider->getForRead(objFullPath);
+	Reference<BackupContainerFileSystem> bstore = provider->provider->getForAccess(objFullPath);
 	return bstore->deleteFile(objFullPath);
 }
 
