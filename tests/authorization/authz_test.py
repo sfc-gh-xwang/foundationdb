@@ -391,6 +391,19 @@ def test_public_key_set_rollover(
     interim_set = public_keyset_from_keys([new_key, cluster.private_key])
     max_repeat = 10
 
+    def check_keyset_update_trace(trace_entries, expected_key_ids):
+        found = False
+        for _, ev_type, entry in trace_entries:
+            if ev_type == "AuthzActivePublicKeyIds":
+                print("active public key IDs trace:", entry.items())
+                if (
+                    sorted(entry.attrib["KeyIds"].split(","))
+                    == sorted(expected_key_ids)
+                    and entry.attrib["FromKeySetUpdate"] == "1"
+                ):
+                    found = True
+        assert found, "active public key IDs trace not found"
+
     print(f"interim keyset: {interim_set}")
     old_key_json = None
     with open(cluster.public_key_json_file, "r") as keyfile:
@@ -399,24 +412,40 @@ def test_public_key_set_rollover(
     delay = public_key_refresh_interval
 
     with KeyFileReverter(cluster.public_key_json_file, old_key_json, delay):
-        with open(cluster.public_key_json_file, "w") as keyfile:
-            keyfile.write(interim_set)
-        wait_until_tenant_tr_succeeds(
-            second_tenant, new_key, tenant_tr_gen, max_repeat, delay, token_claim_1h
-        )
+        with ScopedTraceChecker(
+            cluster,
+            functools.partial(
+                check_keyset_update_trace,
+                expected_key_ids=[new_key.kid, cluster.private_key.kid],
+            ),
+        ):
+            with open(cluster.public_key_json_file, "w") as keyfile:
+                keyfile.write(interim_set)
+            wait_until_tenant_tr_succeeds(
+                second_tenant, new_key, tenant_tr_gen, max_repeat, delay, token_claim_1h
+            )
+
         print("interim key set activated")
         final_set = public_keyset_from_keys([new_key])
         print(f"final keyset: {final_set}")
-        with open(cluster.public_key_json_file, "w") as keyfile:
-            keyfile.write(final_set)
-        wait_until_tenant_tr_fails(
-            default_tenant,
-            cluster.private_key,
-            tenant_tr_gen,
-            max_repeat,
-            delay,
-            token_claim_1h,
-        )
+
+        with ScopedTraceChecker(
+            cluster,
+            functools.partial(
+                check_keyset_update_trace,
+                expected_key_ids=[new_key.kid],
+            ),
+        ):
+            with open(cluster.public_key_json_file, "w") as keyfile:
+                keyfile.write(final_set)
+            wait_until_tenant_tr_fails(
+                default_tenant,
+                cluster.private_key,
+                tenant_tr_gen,
+                max_repeat,
+                delay,
+                token_claim_1h,
+            )
 
 
 def test_public_key_set_broken_file_tolerance(
@@ -772,6 +801,34 @@ def test_malformed_tokens_trace(cluster, default_tenant, tenant_tr_gen, token_cl
             assert (
                 e.code == 6000
             ), f"expected permission_denied for 'splittable_bad_token' case, got {e} instead"
+
+
+def test_active_public_key_ids_trace_as_expected(
+    cluster, active_public_key_ids_log_interval
+):
+    def check_public_key_ids_log(
+        trace_entries, expected_key_ids_string, min_expected_trace_count
+    ):
+        count = 0
+        for _, ev_type, entry in trace_entries:
+            if ev_type == "AuthzActivePublicKeyIds":
+                actual_key_ids_string = entry.attrib["KeyIds"]
+                assert actual_key_ids_string == expected_key_ids_string
+                count += 1
+        assert count >= min_expected_trace_count
+
+    assert active_public_key_ids_log_interval > 0
+    max_trace_count = 5
+    sleep_duration_seconds = active_public_key_ids_log_interval * max_trace_count
+    with ScopedTraceChecker(
+        cluster,
+        functools.partial(
+            check_public_key_ids_log,
+            expected_key_ids_string=cluster.private_key.kid,
+            min_expected_trace_count=max_trace_count - 2,
+        ),  # conservative estimate to account for any time fluctuations in server-side trace event creation
+    ):
+        time.sleep(sleep_duration_seconds)
 
 
 def test_authz_not_enabled_trace(build_dir):

@@ -931,6 +931,14 @@ ACTOR Future<Void> registerWorker(RegisterWorkerRequest req,
 	const WorkerInterface& w = req.wi;
 	if (req.clusterId.present() && self->clusterId->get().present() && req.clusterId != self->clusterId->get() &&
 	    req.processClass != ProcessClass::TesterClass) {
+		// The cluster ID of the registering worker does not match that of the
+		// cluster itself. This probably means the cluster file was manually
+		// changed for this stateful process. Note that processes with a
+		// modified cluster file can delete their own data when connecting to a
+		// new cluster. If this is intended, delete the `clusterId` file in the
+		// data directory for each of the rejected processes, then bounce them.
+
+		// Reject the worker's registration and log a message.
 		TraceEvent(g_network->isSimulated() ? SevWarnAlways : SevError, "WorkerBelongsToExistingCluster", self->id)
 		    .detail("WorkerClusterId", req.clusterId)
 		    .detail("ClusterControllerClusterId", self->clusterId->get())

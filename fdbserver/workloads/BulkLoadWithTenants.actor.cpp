@@ -72,7 +72,7 @@ struct BulkSetupWorkload : TestWorkload {
 		state KeySelector begin = firstGreaterOrEqual(normalKeys.begin);
 		state KeySelector end = firstGreaterOrEqual(normalKeys.end);
 		state std::vector<KeyValueRef> kvPairs;
-		state ReadYourWritesTransaction tr = ReadYourWritesTransaction(cx, tenant);
+		state ReadYourWritesTransaction tr = ReadYourWritesTransaction(tenant);
 		loop {
 			try {
 				RangeReadResult kvRange = wait(tr.getRange(begin, end, 1000));
@@ -106,7 +106,7 @@ struct BulkSetupWorkload : TestWorkload {
 			for (auto& f : tenantFutures) {
 				ASSERT(f.get().present());
 				TenantLookupInfo const tenantLookupInfo(f.get().get().id, f.get().get().tenantGroup);
-				workload->tenants.push_back(makeReference<Tenant>(tenantLookupInfo, f.get().get().tenantName));
+				workload->tenants.push_back(makeReference<Tenant>(cx, tenantLookupInfo, f.get().get().tenantName));
 				TraceEvent("BulkSetupCreatedTenant").detail("Tenant", workload->tenants.back());
 			}
 		}
@@ -205,7 +205,7 @@ struct BulkSetupWorkload : TestWorkload {
 					    .detail("Tenant", tenant)
 					    .detail("TotalNumTenants", workload->tenants.size());
 					// clear the tenant
-					state ReadYourWritesTransaction tr = ReadYourWritesTransaction(cx, tenant);
+					state ReadYourWritesTransaction tr = ReadYourWritesTransaction(tenant);
 					loop {
 						try {
 							tr.clear(normalKeys);

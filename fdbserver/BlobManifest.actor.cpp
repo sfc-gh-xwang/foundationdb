@@ -750,7 +750,7 @@ public:
 
 	// Return max epoch from all manifest files
 	ACTOR static Future<int64_t> lastBlobEpoc(Reference<BlobManifestLoader> self) {
-		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForRead("");
+		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForAccess("");
 		std::vector<BlobManifestFile> files = wait(BlobManifestFile::listAll(container));
 		ASSERT(!files.empty());
 		return files.front().epoch;
@@ -759,7 +759,7 @@ public:
 private:
 	// Load latest manifest to system space
 	ACTOR static Future<Void> load(Reference<BlobManifestLoader> self) {
-		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForRead("");
+		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForAccess("");
 		std::vector<BlobManifestFile> files = wait(BlobManifestFile::listAll(container));
 
 		// Load tailer

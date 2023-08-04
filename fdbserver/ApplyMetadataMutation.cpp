@@ -19,6 +19,8 @@
  */
 
 #include "fdbclient/BackupAgent.actor.h"
+#include "fdbclient/CommitTransaction.h"
+#include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h" // for key backed map codecs for tss mapping
 #include "fdbclient/MetaclusterRegistration.h"
 #include "fdbclient/MutationList.h"
@@ -30,6 +32,7 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/LogProtocolMessage.h"
 #include "fdbserver/LogSystem.h"
+#include "flow/CodeProbe.h"
 #include "flow/Error.h"
 #include "flow/Trace.h"
 
@@ -672,6 +675,15 @@ private:
 		}
 	}
 
+	void checkSetBackupProgressKeys(MutationRef m) {
+		if (!m.param1.startsWith(backupProgressPrefix)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+	}
+
 	void checkSetOtherKeys(MutationRef m) {
 		if (initialCommit)
 			return;
@@ -820,6 +832,16 @@ private:
 		}
 	}
 
+	void checkSetBackupStartedKey(MutationRef m) {
+		if (m.param1 != backupStartedKey) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+		TraceEvent("BackupStartedKey", dbgid).detail("BackupStarted", m.param2);
+	}
+
 	void checkClearKeyServerKeys(KeyRangeRef range) {
 		if (!keyServersKeys.intersects(range)) {
 			return;
@@ -850,6 +872,15 @@ private:
 		    !excludedLocalityKeys.contains(range) && !failedLocalityKeys.contains(range)) {
 			TraceEvent("MutationRequiresRestart", dbgid).detail("M", m);
 			confChange = true;
+		}
+	}
+
+	void checkClearBackupProgressKeys(KeyRangeRef range) {
+		if (!backupProgressKeys.intersects(range)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->clear(range & backupProgressKeys);
 		}
 	}
 
@@ -1290,6 +1321,9 @@ private:
 		if (range.contains(writeRecoveryKey)) {
 			txnStateStore->clear(singleKeyRange(writeRecoveryKey));
 		}
+		if (range.contains(backupStartedKey)) {
+			txnStateStore->clear(singleKeyRange(backupStartedKey));
+		}
 		if (range.intersects(testOnlyTxnStateStorePrefixRange)) {
 			txnStateStore->clear(range & testOnlyTxnStateStorePrefixRange);
 		}
@@ -1394,6 +1428,8 @@ public:
 				checkSetVersionEpochKey(m);
 				checkSetTenantMapPrefix(m);
 				checkSetMetaclusterRegistration(m);
+				checkSetBackupStartedKey(m);
+				checkSetBackupProgressKeys(m);
 				checkSetOtherKeys(m);
 			} else if (m.type == MutationRef::ClearRange && isSystemKey(m.param2)) {
 				KeyRangeRef range(m.param1, m.param2);
@@ -1412,6 +1448,7 @@ public:
 				checkClearVersionEpochKeys(m, range);
 				checkClearTenantMapPrefix(range);
 				checkClearMetaclusterRegistration(range);
+				checkClearBackupProgressKeys(range);
 				checkClearMiscRangeKeys(range);
 			}
 		}

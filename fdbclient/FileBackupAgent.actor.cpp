@@ -1613,7 +1613,7 @@ ACTOR static Future<Key> addBackupTask(StringRef name,
 // Clears the backup ID from "backupStartedKey" to pause backup workers.
 ACTOR static Future<Void> clearBackupStartID(Reference<ReadYourWritesTransaction> tr, UID backupUid) {
 	// If backup worker is not enabled, exit early.
-	ValueReadResult started = wait(tr->get(backupStartedKey));
+	ValueReadResult started = wait(tr->get(deprecatedBackupStartedKey));
 	std::vector<std::pair<UID, Version>> ids;
 	if (started.present()) {
 		ids = decodeBackupStartedValue(started.get());
@@ -1627,8 +1627,10 @@ ACTOR static Future<Void> clearBackupStartID(Reference<ReadYourWritesTransaction
 	if (ids.empty()) {
 		TraceEvent("ClearBackup").detail("BackupID", backupUid);
 		tr->clear(backupStartedKey);
+		tr->clear(deprecatedBackupStartedKey);
 	} else {
 		tr->set(backupStartedKey, encodeBackupStartedValue(ids));
+		tr->set(deprecatedBackupStartedKey, encodeBackupStartedValue(ids));
 	}
 	return Void();
 }
@@ -3426,7 +3428,7 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				state Future<Void> keepRunning = taskBucket->keepRunning(tr, task);
 
-				state Future<ValueReadResult> started = tr->get(backupStartedKey);
+				state Future<ValueReadResult> started = tr->get(deprecatedBackupStartedKey);
 				state Future<ValueReadResult> taskStarted = tr->get(config.allWorkerStarted().key);
 				partitionedLog = config.partitionedLogEnabled().get(tr);
 				wait(success(started) && success(taskStarted) && success(partitionedLog));
@@ -3449,6 +3451,7 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 				}
 
 				tr->set(backupStartedKey, encodeBackupStartedValue(ids));
+				tr->set(deprecatedBackupStartedKey, encodeBackupStartedValue(ids));
 				if (backupWorkerEnabled) {
 					config.backupWorkerEnabled().set(tr, true);
 				}

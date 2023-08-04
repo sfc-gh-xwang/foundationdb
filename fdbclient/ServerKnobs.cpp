@@ -581,7 +581,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	bool shortRecoveryDuration = randomize && BUGGIFY;
 	init( ENFORCED_MIN_RECOVERY_DURATION,                       0.085 ); if( shortRecoveryDuration ) ENFORCED_MIN_RECOVERY_DURATION = 0.01;
 	init( REQUIRED_MIN_RECOVERY_DURATION,                       0.080 ); if( shortRecoveryDuration ) REQUIRED_MIN_RECOVERY_DURATION = 0.01;
-	init( ALWAYS_CAUSAL_READ_RISKY,                             false );
+	init( ALWAYS_CAUSAL_READ_RISKY,                              true );
 	init( MAX_COMMIT_UPDATES,                                    2000 ); if( randomize && BUGGIFY ) MAX_COMMIT_UPDATES = 1;
 	init( MAX_PROXY_COMPUTE,                                      2.0 );
 	init( MAX_COMPUTE_PER_OPERATION,                              0.1 );
@@ -827,6 +827,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD,          60.0 );
 	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,         409600.0 );
 	init( CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL,   5.0 );
+	init( THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS,                true );
 
 	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,        10.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   2.0 );
@@ -1214,7 +1215,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 
 	// Bulk Load
 	init( BULK_LOAD_FILE_POINTER_BATCH_SIZE,                     100 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_POINTER_BATCH_SIZE = deterministicRandom()->randomInt(10, 100);
-
+	init( BULK_LOAD_PARALLEL_FILE_VALIDATIONS,                     1 ); if ( randomize && BUGGIFY ) BULK_LOAD_PARALLEL_FILE_VALIDATIONS = deterministicRandom()->randomInt(1, 10);
 	// clang-format on
 
 	if (clientKnobs) {
@@ -1223,5 +1224,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 		    std::min(MAX_READ_TRANSACTION_LIFE_VERSIONS, MAX_WRITE_TRANSACTION_LIFE_VERSIONS) /
 		    (5.0 * VERSIONS_PER_SECOND);
 		clientKnobs->INIT_MID_SHARD_BYTES = MIN_SHARD_BYTES;
+		clientKnobs->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE =
+		    std::max(clientKnobs->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, MAX_READ_TRANSACTION_LIFE_VERSIONS);
+		clientKnobs->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE =
+		    std::max(clientKnobs->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, MAX_WRITE_TRANSACTION_LIFE_VERSIONS);
 	}
 }
