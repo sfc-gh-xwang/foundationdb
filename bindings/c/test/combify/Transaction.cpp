@@ -1,3 +1,4 @@
+#include <optional>
 #include "Combify.hpp"
 #include "TestHelpers.hpp"
 
@@ -73,6 +74,7 @@ AddTest testGetValue("BasicGetValue", ALL, [](const TestEnv& env) {
 });
 
 AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& env) {
+	// Access of key address is protected from the tenant use case. This test case only tests the trusted client case.
 	const std::string prefix("combify-get-string-array");
 	auto db = env.newDatabase();
 	populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
@@ -155,12 +157,11 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& env) {
 	auto db = env.newDatabase();
 
-	for (auto const option : { FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
-	                           FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE,
-	                           FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE }) {
+	for (auto const option : std::vector<std::optional<FDBTransactionOption>>{ std::nullopt,
+	                                                                           FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE,
+	                                                                           FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE,
+	                                                                           FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE }) {
 		auto tr = env.newTransaction(db);
-		tr.setOption(option);
-		tr.set("foo"_br, "bar"_br);
 
 		// Read before committing. Herer we test 3 different cases:
 		// 1) If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false
@@ -169,9 +170,22 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 		auto snapshot = option != FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE;
 
 		auto f1 = runToCompletion(
-		    tr, [snapshot](auto tr) { return tr.get("foo"_br, snapshot); }, "ReadValue");
+		    tr,
+		    [option, snapshot](auto tr) {
+			    if (option.has_value()) {
+				    tr.setOption(option.value());
+			    }
+			    tr.set("foo"_br, "bar"_br);
+			    return tr.get("foo"_br, snapshot);
+		    },
+		    "ReadValue");
 
-		switch (option) {
+		if (!option.has_value()) {
+			ASSERT(f1.get() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f1.get()));
+			continue;
+		}
+
+		switch (option.value()) {
 		case FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE:
 			ASSERT(!f1.get().has_value(), "Expect null value");
 			break;
@@ -188,7 +202,7 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 			break;
 		}
 		default:
-			ASSERT(false, "Unexpected option value: {}", option);
+			ASSERT(false, "Unexpected option value: {}", option.value());
 			break;
 		}
 	}
