@@ -3648,7 +3648,7 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(
 				// As long as either LoadBytes or CPU or WriteRate doesn't pass the normal pivot check, we won't do any
 				// prevention.
 			} else if (deterministicRandom()->random01() <
-					(probabilityLoadBytes + probabilityCPU + probabilityWrite) / 3) {
+			           (probabilityLoadBytes + probabilityCPU + probabilityWrite) / 3) {
 				return sourceTeam;
 			}
 		}
