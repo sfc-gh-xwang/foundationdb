@@ -117,6 +117,13 @@ void LoadedTLSConfig::print(FILE* fp) {
 void ConfigureSSLContext(const LoadedTLSConfig& loaded, boost::asio::ssl::context& context) {
 	try {
 		context.set_options(boost::asio::ssl::context::default_workarounds);
+		// Disable insecure versions of SSL/TLS
+		context.set_options(boost::asio::ssl::context::no_sslv2);
+		context.set_options(boost::asio::ssl::context::no_sslv3);
+		context.set_options(boost::asio::ssl::context::no_tlsv1);
+		context.set_options(boost::asio::ssl::context::no_tlsv1_1);
+		context.set_options(boost::asio::ssl::context::no_tlsv1_2);
+
 		auto verifyFailIfNoPeerCert = boost::asio::ssl::verify_fail_if_no_peer_cert;
 		// Servers get to accept connections without peer certs as "untrusted" clients
 		if (loaded.getEndpointType() == TLSEndpointType::SERVER)
