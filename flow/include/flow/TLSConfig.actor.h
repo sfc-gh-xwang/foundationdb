@@ -272,7 +272,7 @@ public:
 	    { TLSConfig::OPT_TLS_VERIFY_PEERS, TLS_VERIFY_PEERS_FLAG, SO_REQ_SEP },                                        \
 	    { TLSConfig::OPT_TLS_PASSWORD, TLS_PASSWORD_FLAG, SO_REQ_SEP },                                                \
 	    { TLSConfig::OPT_TLS_CA_FILE, TLS_CA_FILE_FLAG, SO_REQ_SEP }, {                                                \
-		TLSConfig::OPT_TLS_REQUIRED, TLS_REQUIRED_FLAG, SO_REQ_SEP             \
+		TLSConfig::OPT_TLS_REQUIRED, TLS_REQUIRED_FLAG, SO_REQ_SEP                                                     \
 	}
 
 #define TLS_HELP                                                                                                       \
@@ -289,7 +289,7 @@ public:
 	"  " TLS_VERIFY_PEERS_FLAG " CONSTRAINTS\n"                                                                        \
 	"                 The constraints by which to validate TLS peers. The contents\n"                                  \
 	"                 and format of CONSTRAINTS are plugin-specific.\n"                                                \
-	"  " TLS_REQUIRED_FLAG " BOOLEAN\n"                                                            \
+	"  " TLS_REQUIRED_FLAG " BOOLEAN\n"                                                                                \
 	"                 Disable non-TLS connections. All plaintext connection attempts will timeout.\n"
 
 #include "flow/unactorcompiler.h"

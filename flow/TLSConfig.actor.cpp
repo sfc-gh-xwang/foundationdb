@@ -225,10 +225,7 @@ bool TLSConfig::getTlsRequired() const {
 		try {
 			return boost::lexical_cast<bool>(envTlsRequired);
 		} catch (boost::bad_lexical_cast& e) {
-			fprintf(stderr,
-			        "Warning: Ignoring invalid FDB_TLS_REQUIRED [%s]: %s\n",
-			        envTlsRequired.c_str(),
-			        e.what());
+			fprintf(stderr, "Warning: Ignoring invalid FDB_TLS_REQUIRED [%s]: %s\n", envTlsRequired.c_str(), e.what());
 		}
 	}
 
