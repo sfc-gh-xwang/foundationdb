@@ -220,33 +220,54 @@ AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
 	auto tr = env.newNormalOrTenantTransaction();
 	populateDBData(tr, data);
 
-	tr = env.newNormalOrTenantTransaction();
-	auto f = runToCompletion(
-	    tr,
-	    [&prefix](auto tr) {
-		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(prefix + "a")),
-		                       fdb::key_select::lastLessOrEqual(fdb::toBytesRef(prefix + "c"), 1),
-		                       /* limit */ 0,
-		                       /* target_bytes */ 0,
-		                       /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
-		                       /* iteration */ 0,
-		                       /* snapshot */ false,
-		                       /* reverse */ false);
-	    },
-	    "GetKeyValueArray");
+	for (auto const& testConfigs : { std::make_tuple(false, FDB_STREAMING_MODE_WANT_ALL, 0),
+	                                 std::make_tuple(true, FDB_STREAMING_MODE_WANT_ALL, 0),
+	                                 std::make_tuple(false, FDB_STREAMING_MODE_WANT_ALL, 2),
+	                                 std::make_tuple(false, FDB_STREAMING_MODE_EXACT, 3) }) {
+		tr = env.newNormalOrTenantTransaction();
+		auto f = runToCompletion(
+		    tr,
+		    [&prefix, &testConfigs](auto tr) {
+			    auto const [reverse, mode, limit] = testConfigs;
+			    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(prefix + "a")),
+			                       fdb::key_select::lastLessOrEqual(fdb::toBytesRef(prefix + "d"), 1),
+			                       /* limit */ limit,
+			                       /* target_bytes */ 0,
+			                       /* FDBStreamingMode */ mode,
+			                       /* iteration */ 0,
+			                       /* snapshot */ false,
+			                       /* reverse */ reverse);
+		    },
+		    "GetKeyValueArray");
 
-	auto [kvs, count, more] = f.get();
-	ASSERT(count > 0, "count is expected to be larger than zero");
-	ASSERT(count <= 3, "count is expected to be less or equan to 3");
-	if (count < 3) {
-		ASSERT(more, "more is expected to be true if count < 3");
-	}
-	for (int i = 0; i < count; i++) {
-		auto kv = *kvs++;
-		auto key = std::string(kv.key().begin(), kv.key().end());
-		auto value = std::string(kv.value().begin(), kv.value().end());
-		ASSERT(data[i].first == key, "unmatched key, expected={}, actual={}", data[i].first, key);
-		ASSERT(data[i].second == value, "unmatched value, expected={}, actual={}", data[i].second, value);
+		auto const [reverse, mode, limit] = testConfigs;
+		auto [kvs, count, more] = f.get();
+		ASSERT(count > 0, "count is expected to be larger than zero");
+
+		auto expectedUpperBound = std::max(limit, (int)data.size());
+		if (mode == FDB_STREAMING_MODE_EXACT) {
+			ASSERT(count == limit, "unmatched count: expected={}, actual={}", limit, count);
+		} else {
+			ASSERT(count <= expectedUpperBound, "unmatched count: expected<={}, actual={}", expectedUpperBound, count);
+			if (count < expectedUpperBound) {
+				ASSERT(more, "more is expected to be true if count < {}", expectedUpperBound);
+			}
+		}
+
+		auto dataIdx = reverse ? data.size() - 1 : 0;
+		for (int i = 0; i < count; i++) {
+			auto kv = *kvs++;
+			auto key = std::string(kv.key().begin(), kv.key().end());
+			auto value = std::string(kv.value().begin(), kv.value().end());
+			auto& d = data[dataIdx];
+			ASSERT(d.first == key, "unmatched key, expected={}, actual={}", d.first, key);
+			ASSERT(d.second == value, "unmatched value, expected={}, actual={}", d.second, value);
+			if (reverse) {
+				dataIdx--;
+			} else {
+				dataIdx++;
+			}
+		}
 	}
 });
 
