@@ -400,4 +400,81 @@ AddTest testGetApproxSize("GetApproxSize", ALL, [](const TestEnv& env) {
 	ASSERT(f.get() >= 3, "Unmatched transaction approx size: expected>=3, actual={}", f.get());
 });
 
+AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
+	// Test bitwise and on values of same length:
+	//   db key = foo
+	//   db value = 'a' == 97
+	//   param = 'b' == 98
+	//
+	//   'a' == 97 == 0b01100001
+	// & 'b' == 98 == 0b01100010
+	//   -----------------------
+	//                0b01100000 == 96 == '`'
+	//
+	// Test bitwise and on extended database value:
+	//   db key = bar
+	//   db value = 'c' == 99
+	//   param = "ad"
+	//
+	//   'c' == 99 == 0b0110001100000000 (zero extended on right to match length of param)
+	// & "ad"   ==    0b0110000101100100
+	//   -------------------------------
+	//                0b0110000100000000 == 'a' followed by null (0)
+	//
+	// Test bitwise and on truncated database value:
+	//   db key = baz
+	//   db value = "abc"
+	//   param = 'e' == 101
+	//
+	//   "abc"  ->  0b01100001 (truncated to "a" to match length of param)
+	// & 'e' == 101 0b01100101
+	//   ---------------------
+	//              0b01100001 == 97 == 'a'
+	//
+	const std::string prefix("combify-atomic-op-bit-and");
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "c" }, { "baz", "abc" } }));
+	auto fooKey = prefix + "foo";
+	auto barKey = prefix + "bar";
+	auto bazKey = prefix + "baz";
+
+	tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&fooKey, &barKey, &bazKey](auto tr) {
+		    char param[] = { 'a', 'd' };
+
+		    tr.atomicOp(fdb::toBytesRef(fooKey), "b"_br, FDB_MUTATION_TYPE_BIT_AND);
+		    tr.atomicOp(fdb::toBytesRef(barKey),
+		                fdb::BytesRef(reinterpret_cast<const uint8_t*>(param), 2),
+		                FDB_MUTATION_TYPE_BIT_AND);
+		    tr.atomicOp(fdb::toBytesRef(bazKey), "e"_br, FDB_MUTATION_TYPE_BIT_AND);
+
+		    return tr.commit();
+	    },
+	    "FDBMutationBitAnd");
+
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr, [&fooKey](auto tr) { return tr.get(fdb::toBytesRef(fooKey), false); }, "GetFoo");
+	ASSERT(f.get().has_value(), "Unexpected null value from reading foo");
+	ASSERT(f.get()->size() == 1, "unmatched value size for foo: expected=1, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 96, "unmatched value: expected=96, actual={}", f.get()->data()[0]);
+
+	tr = env.newNormalOrTenantTransaction();
+	f = runToCompletion(
+	    tr, [&barKey](auto tr) { return tr.get(fdb::toBytesRef(barKey), false); }, "GetBar");
+	ASSERT(f.get().has_value(), "Unexpected null value from reading bar");
+	ASSERT(f.get()->size() == 2, "unmatched value size for bar: expected=2, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 97, "unmatched value: expected=97, actual={}", f.get()->data()[0]);
+	ASSERT(f.get()->data()[1] == 0, "unmatched value: expected=0, actual={}", f.get()->data()[1]);
+
+	tr = env.newNormalOrTenantTransaction();
+	f = runToCompletion(
+	    tr, [&bazKey](auto tr) { return tr.get(fdb::toBytesRef(bazKey), false); }, "GetBaz");
+	ASSERT(f.get().has_value(), "Unexpected null value from reading baz");
+	ASSERT(f.get()->size() == 1, "unmatched value size for bar: expected=1, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 97, "unmatched value: expected=97, actual={}", f.get()->data()[0]);
+});
+
 } // anonymous namespace
