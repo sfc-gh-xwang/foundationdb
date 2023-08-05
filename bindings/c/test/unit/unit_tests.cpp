@@ -1491,29 +1491,6 @@ TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_KEY in
 	}
 }
 
-TEST_CASE("fdb_transaction_get_tag_throttled_duration") {
-	auto tr = db.createTransaction();
-	while (1) {
-		auto f1 = tr.get("foo"_br, /*snapshot*/ false);
-		auto err = waitFuture(f1);
-		if (err) {
-			auto fOnError = tr.onError(err);
-			fdbCheck(waitFuture(fOnError));
-			continue;
-		}
-		auto f2 = tr.getTagThrottledDuration();
-		err = waitFuture(f2);
-		if (err) {
-			auto fOnError = tr.onError(err);
-			fdbCheck(waitFuture(fOnError));
-			continue;
-		}
-		double tagThrottledDuration = f2.get();
-		CHECK(tagThrottledDuration >= 0.0);
-		break;
-	}
-}
-
 TEST_CASE("fdb_transaction_get_total_cost") {
 	auto tr = db.createTransaction();
 	while (1) {

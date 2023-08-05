@@ -201,11 +201,7 @@ AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable", ALL, 
 		    auto f1 = tr.get("foo"_br, /*snapshot*/ true);
 
 		    // This allows the runToCompletion to properly retry on transient errors that happen to f1
-		    if (auto err = f1.blockUntilReady()) {
-			    return f1;
-		    }
-
-		    if (auto err = f1.error()) {
+		    if (f1.blockUntilReady() || f1.error()) {
 			    return f1;
 		    }
 
@@ -297,9 +293,19 @@ AddTest testGetCommittedVersion("GetCommittedVersion", ALL, [](const TestEnv& en
 	    },
 	    "CommitValue");
 
-	ASSERT(tr.getCommittedVersion() >= 0,
-	       "Unmatched committed version: expected >= 0, actual={}",
-	       tr.getCommittedVersion());
+	ASSERT(
+	    tr.getCommittedVersion() >= 0, "Unmatched committed version: expected>=0, actual={}", tr.getCommittedVersion());
+});
+
+AddTest testGetTagThrottledDuration("GetTagThrottledDuration", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr, [](auto tr) { return tr.get("foo"_br, /*snapshot*/ false); }, "GetKey");
+
+	auto f = runToCompletion(
+	    tr, [](auto tr) { return tr.getTagThrottledDuration(); }, "GetTagThrottledDuration");
+
+	ASSERT(f.get() >= 0.0, "Unmatched tag throttled duration: expected>=0.0, actual={}", f.get());
 });
 
 } // anonymous namespace
