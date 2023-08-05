@@ -1613,19 +1613,6 @@ TEST_CASE("fdb_transaction_watch") {
 	}
 }
 
-TEST_CASE("fdb_transaction_cancel") {
-	// Cannot use transaction after cancelling it...
-	auto tr = db.createTransaction();
-	tr.cancel();
-	auto f1 = tr.get("foo"_br, /* snapshot */ false);
-	CHECK(waitFuture(f1).code() == 1025); // transaction_cancelled
-
-	// ... until the transaction has been reset.
-	tr.reset();
-	auto f2 = tr.get("foo"_br, /* snapshot */ false);
-	CHECK(waitFuture(f2).code() != 1025); // transaction_cancelled
-}
-
 TEST_CASE("fdb_transaction_add_conflict_range") {
 	bool success = false;
 

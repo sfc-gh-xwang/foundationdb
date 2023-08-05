@@ -272,6 +272,33 @@ AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
 	ASSERT(!f.get().has_value(), "Expect null value");
 });
 
+AddTest testCancel("Cancel", asTrustedClient, [](const TestEnv& env) {
+	// Cannot use transaction after cancelling
+	auto tr = env.newNormalOrTenantTransaction();
+
+	try {
+		auto f = runToCompletion(
+		    tr,
+		    [](auto tr) {
+			    tr.cancel();
+			    return tr.get("foo"_br, /* snapshot */ false);
+		    },
+		    "ReadKeyFail");
+		ASSERT(false, "Read-key operation should fail after transaction is canceled");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 1025, "unmatched error code: expected=1025, actual={}", e.code()); // transaction_cancelled
+	}
+
+	// After the transaction is reset, the transaction can get through
+	runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.reset();
+		    return tr.get("foo"_br, /* snapshot */ false);
+	    },
+	    "ReadKeyWithoutException");
+});
+
 AddTest testGetCommittedVersionReadOnly("GetCommittedVersionReadOnly", ALL, [](const TestEnv& env) {
 	auto tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
