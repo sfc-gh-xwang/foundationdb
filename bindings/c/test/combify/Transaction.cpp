@@ -9,10 +9,10 @@ using namespace combify;
 using namespace fdb::literals;
 
 // Helper function to add `prefix` to all keys in the given map. Returns a new map
-auto applyKeyPrefix(const std::string& prefix, std::map<std::string, std::string>&& map) {
-	std::map<std::string, std::string> out;
-	for (const auto& [key, val] : map) {
-		out[prefix + key] = val;
+auto applyKeyPrefix(const std::string& prefix, std::vector<std::pair<std::string, std::string>>&& data) {
+	std::vector<std::pair<std::string, std::string>> out;
+	for (const auto& d : data) {
+		out.emplace_back(prefix + d.first, d.second);
 	}
 	return out;
 }
@@ -245,7 +245,8 @@ AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
 		auto kv = *kvs++;
 		auto key = std::string(kv.key().begin(), kv.key().end());
 		auto value = std::string(kv.value().begin(), kv.value().end());
-		ASSERT(data[key] == value);
+		ASSERT(data[i].first == key, "unmatched key, expected={}, actual={}", data[i].first, key);
+		ASSERT(data[i].second == value, "unmatched value, expected={}, actual={}", data[i].second, value);
 	}
 });
 

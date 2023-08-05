@@ -118,20 +118,20 @@ inline auto setupAndStartNetworkGuarded() {
 	});
 }
 
-inline void populateDBData(fdb::Transaction tr, const std::map<std::string, std::string>& data) {
+inline void populateDBData(fdb::Transaction tr, const std::vector<std::pair<std::string, std::string>>& data) {
 	runToCompletion(
 	    tr,
 	    [&data](auto tr) {
 		    // Insert data
-		    for (const auto& [key, val] : data) {
-			    tr.set(fdb::toBytesRef(key), fdb::toBytesRef(val));
+		    for (const auto& d : data) {
+			    tr.set(fdb::toBytesRef(d.first), fdb::toBytesRef(d.second));
 		    }
 		    return tr.commit();
 	    },
 	    "PopulateDBData");
 }
 
-inline void populateDBData(fdb::Database db, const std::map<std::string, std::string>& data) {
+inline void populateDBData(fdb::Database db, const std::vector<std::pair<std::string, std::string>>& data) {
 	return populateDBData(db.createTransaction(), data);
 }
 
