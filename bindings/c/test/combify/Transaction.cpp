@@ -220,6 +220,11 @@ AddTest testGetKeyValueArray("GetRange", ALL, [](const TestEnv& env) {
 	auto tr = env.newNormalOrTenantTransaction();
 	populateDBData(tr, data);
 
+	// The following use cases are tested for getRange
+	// 1) FDB_STREAMING_MODE_WANT_ALL + no limit.
+	// 2) FDB_STREAMING_MODE_WANT_ALL + no limit + reverse order
+	// 3) FDB_STREAMING_MODE_WANT_ALL + limit = 2
+	// 4) FDB_STREAMING_MODE_EXACT + limit = 3
 	for (auto const& testConfigs : { std::make_tuple(false, FDB_STREAMING_MODE_WANT_ALL, 0),
 	                                 std::make_tuple(true, FDB_STREAMING_MODE_WANT_ALL, 0),
 	                                 std::make_tuple(false, FDB_STREAMING_MODE_WANT_ALL, 2),
@@ -244,7 +249,11 @@ AddTest testGetKeyValueArray("GetRange", ALL, [](const TestEnv& env) {
 		auto [kvs, count, more] = f.get();
 		ASSERT(count > 0, "count is expected to be larger than zero");
 
-		auto expectedUpperBound = std::max(limit, (int)data.size());
+		auto expectedUpperBound = data.size();
+		if (limit > 0) {
+			expectedUpperBound = std::min(limit, expectedUpperBound);
+		}
+
 		if (mode == FDB_STREAMING_MODE_EXACT) {
 			ASSERT(count == limit, "unmatched count: expected={}, actual={}", limit, count);
 		} else {
