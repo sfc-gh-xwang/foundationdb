@@ -74,7 +74,7 @@ AddTest testGetValue("BasicGetValue", ALL, [](const TestEnv& env) {
 });
 
 AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& env) {
-	// Access of key address is protected from the tenant use case. This test case only tests the trusted client case.
+	// Access of key address is protected from the tenant use case. Thus only trusted client case is tested.
 	const std::string prefix("combify-get-string-array");
 	auto db = env.newDatabase();
 	populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
@@ -90,6 +90,7 @@ AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& e
 });
 
 AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& env) {
+	// Access of system key is protected from the tenant use case. Thus only trusted client case is tested.
 	auto db = env.newDatabase();
 	for (auto const enableReadSystemKeys : { false, true }) {
 		auto tr = env.newTransaction(db);
@@ -116,6 +117,7 @@ AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& en
 });
 
 AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& env) {
+	// Access of system key is protected from the tenant use case. Thus only trusted client case is tested.
 	auto db = env.newDatabase();
 	auto syskey = "\xff\x02"_br;
 
@@ -154,12 +156,10 @@ AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& 
 	}
 });
 
-AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& env) {
-	auto db = env.newDatabase();
-
+AddTest testReadYourWrites("ReadYourWrites", ALL, [](const TestEnv& env) {
 	for (auto const option : std::vector<std::optional<FDBTransactionOption>>{
 	         std::nullopt, FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE }) {
-		auto tr = env.newTransaction(db);
+		auto tr = env.newNormalOrTenantTransaction();
 
 		// Read before committing. Herer we test 3 different cases:
 		// 1) By default, read the snapshot = false after a write before commit should read the initial write
@@ -190,9 +190,8 @@ AddTest testReadYourWrites("ReadYourWrites", asTrustedClient, [](const TestEnv& 
 	}
 });
 
-AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable", asTrustedClient, [](const TestEnv& env) {
-	auto db = env.newDatabase();
-	auto tr = env.newTransaction(db);
+AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
 
 	auto f2 = runToCompletion(
 	    tr,
