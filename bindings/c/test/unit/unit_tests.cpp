@@ -1491,63 +1491,6 @@ TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_KEY in
 	}
 }
 
-TEST_CASE("fdb_transaction_get_total_cost") {
-	auto tr = db.createTransaction();
-	while (1) {
-		auto f1 = tr.get("foo"_br, /*snapshot*/ false);
-		auto err = waitFuture(f1);
-		if (err) {
-			auto fOnError = tr.onError(err);
-			fdbCheck(waitFuture(fOnError));
-			continue;
-		}
-		auto f2 = tr.getTotalCost();
-		err = waitFuture(f2);
-		if (err) {
-			auto fOnError = tr.onError(err);
-			fdbCheck(waitFuture(fOnError));
-			continue;
-		}
-		int64_t cost = f2.get();
-		CHECK(cost > 0);
-		break;
-	}
-}
-
-TEST_CASE("fdb_transaction_set_expected_cost") {
-	auto tr = db.createTransaction();
-	tr.setExpectedCost(4096);
-
-	while (1) {
-		auto f1 = tr.getReadVersion();
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-		break;
-	}
-}
-
-TEST_CASE("fdb_transaction_get_approximate_size") {
-	auto tr = db.createTransaction();
-	while (1) {
-		tr.set(fdb::toBytesRef(key("foo")), "bar"_br);
-		auto f1 = tr.getApproximateSize();
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-
-		int64_t size = f1.get();
-		CHECK(size >= 3);
-		break;
-	}
-}
-
 TEST_CASE("fdb_database_get_server_protocol") {
 	// We don't really have any expectations other than "don't crash" here
 	auto protocolFuture = db.getServerProtocol(0);

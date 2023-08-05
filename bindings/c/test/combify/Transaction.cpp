@@ -308,4 +308,38 @@ AddTest testGetTagThrottledDuration("GetTagThrottledDuration", ALL, [](const Tes
 	ASSERT(f.get() >= 0.0, "Unmatched tag throttled duration: expected>=0.0, actual={}", f.get());
 });
 
+AddTest testGetTotalCost("GetTotalCost", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr, [](auto tr) { return tr.get("foo"_br, /*snapshot*/ false); }, "GetKey");
+
+	auto f = runToCompletion(
+	    tr, [](auto tr) { return tr.getTotalCost(); }, "GetTotalCost");
+
+	ASSERT(f.get() > 0.0, "Unmatched tag throttled duration: expected>=0.0, actual={}", f.get());
+});
+
+AddTest testSetExpectedCost("SetExpectedCost", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+	tr.setExpectedCost(4096);
+
+	runToCompletion(
+	    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
+});
+
+AddTest testGetApproxSize("GetApproxSize", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-get-approx-size-");
+	auto tr = env.newNormalOrTenantTransaction();
+
+	auto f = runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    tr.set(fdb::toBytesRef(prefix + "foo"), "bar"_br);
+		    return tr.getApproximateSize();
+	    },
+	    "GetApproxSize");
+
+	ASSERT(f.get() >= 3, "Unmatched transaction approx size: expected>=3, actual={}", f.get());
+});
+
 } // anonymous namespace
