@@ -1491,45 +1491,6 @@ TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_KEY in
 	}
 }
 
-TEST_CASE("fdb_transaction_get_committed_version read_only") {
-	// Read-only transaction should have a committed version of -1.
-	auto tr = db.createTransaction();
-	while (1) {
-		auto f1 = tr.get("foo"_br, /*snapshot*/ false);
-
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-
-		int64_t out_version;
-		fdbCheck(tr.getCommittedVersionNothrow(out_version));
-		CHECK(out_version == -1);
-		break;
-	}
-}
-
-TEST_CASE("fdb_transaction_get_committed_version") {
-	auto tr = db.createTransaction();
-	while (1) {
-		tr.set(fdb::toBytesRef(key("foo")), "bar"_br);
-		auto f1 = tr.commit();
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-
-		int64_t out_version;
-		fdbCheck(tr.getCommittedVersionNothrow(out_version));
-		CHECK(out_version >= 0);
-		break;
-	}
-}
-
 TEST_CASE("fdb_transaction_get_tag_throttled_duration") {
 	auto tr = db.createTransaction();
 	while (1) {

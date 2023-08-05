@@ -42,7 +42,7 @@ AddTest testGetReadVersion("BasicGetReadVersion", ALL, [](const TestEnv& env) {
 });
 
 AddTest testGetKey("BasicGetKey", ALL, [](const TestEnv& env) {
-	const std::string prefix("combify-basic-get-key");
+	const std::string prefix("combify-basic-get-key-");
 	auto tr = env.newNormalOrTenantTransaction();
 
 	populateDBData(tr, applyKeyPrefix(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
@@ -62,7 +62,7 @@ AddTest testGetKey("BasicGetKey", ALL, [](const TestEnv& env) {
 });
 
 AddTest testGetValue("BasicGetValue", ALL, [](const TestEnv& env) {
-	const std::string prefix("combify-basic-get-value");
+	const std::string prefix("combify-basic-get-value-");
 	auto tr = env.newNormalOrTenantTransaction();
 	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 
@@ -75,7 +75,7 @@ AddTest testGetValue("BasicGetValue", ALL, [](const TestEnv& env) {
 
 AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& env) {
 	// Access of key address is protected from the tenant use case. Thus only trusted client case is tested.
-	const std::string prefix("combify-get-string-array");
+	const std::string prefix("combify-get-string-array-");
 	auto db = env.newDatabase();
 	populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 	auto tr = env.newTransaction(db);
@@ -219,7 +219,7 @@ AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable", ALL, 
 });
 
 AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
-	const std::string prefix("combify-get-key-value-array");
+	const std::string prefix("combify-get-key-value-array-");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
 	auto tr = env.newNormalOrTenantTransaction();
 	populateDBData(tr, data);
@@ -254,7 +254,7 @@ AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
 });
 
 AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
-	const std::string prefix("combify-clear-key");
+	const std::string prefix("combify-clear-key-");
 	auto tr = env.newNormalOrTenantTransaction();
 
 	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
@@ -274,6 +274,32 @@ AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
 	    [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), /* snapshot */ false); },
 	    "CheckEmptyKey");
 	ASSERT(!f.get().has_value(), "Expect null value");
+});
+
+AddTest testGetCommittedVersionReadOnly("GetCommittedVersionReadOnly", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr, [](auto tr) { return tr.get("foo"_br, /*snapshot*/ false); }, "ReadOnlyTransaction");
+
+	ASSERT(tr.getCommittedVersion() == -1,
+	       "Unmatched committed version: expected=-1, actual={}",
+	       tr.getCommittedVersion());
+});
+
+AddTest testGetCommittedVersion("GetCommittedVersion", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-get-committed-version-");
+	auto tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    tr.set(fdb::toBytesRef(prefix + "foo"), "bar"_br);
+		    return tr.commit();
+	    },
+	    "CommitValue");
+
+	ASSERT(tr.getCommittedVersion() >= 0,
+	       "Unmatched committed version: expected >= 0, actual={}",
+	       tr.getCommittedVersion());
 });
 
 } // anonymous namespace
