@@ -249,7 +249,7 @@ AddTest testGetKeyValueArray("GetRange", ALL, [](const TestEnv& env) {
 		auto [kvs, count, more] = f.get();
 		ASSERT(count > 0, "count is expected to be larger than zero");
 
-		auto expectedUpperBound = data.size();
+		auto expectedUpperBound = (int)data.size();
 		if (limit > 0) {
 			expectedUpperBound = std::min(limit, expectedUpperBound);
 		}
