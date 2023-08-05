@@ -214,7 +214,7 @@ AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable", ALL, 
 	ASSERT(f2.get() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f2.get()));
 });
 
-AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
+AddTest testGetKeyValueArray("GetRange", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-key-value-array-");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
 	auto tr = env.newNormalOrTenantTransaction();
@@ -238,7 +238,7 @@ AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
 			                       /* snapshot */ false,
 			                       /* reverse */ reverse);
 		    },
-		    "GetKeyValueArray");
+		    "GetRange");
 
 		auto const [reverse, mode, limit] = testConfigs;
 		auto [kvs, count, more] = f.get();
