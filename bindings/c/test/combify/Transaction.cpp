@@ -253,4 +253,27 @@ AddTest testGetKeyValueArray("GetKeyValueArray", ALL, [](const TestEnv& env) {
 	}
 });
 
+AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-clear-key");
+	auto tr = env.newNormalOrTenantTransaction();
+
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    tr.clear(fdb::toBytesRef(prefix + "foo"));
+		    return tr.commit();
+	    },
+	    "ClearKey");
+
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), /* snapshot */ false); },
+	    "CheckEmptyKey");
+	ASSERT(!f.get().has_value(), "Expect null value");
+});
+
 } // anonymous namespace

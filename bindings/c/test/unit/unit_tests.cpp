@@ -958,27 +958,6 @@ TEST_CASE("fdb_transaction_get_range FDB_STREAMING_MODE_EXACT") {
 	}
 }
 
-TEST_CASE("fdb_transaction_clear") {
-	insert_data(db, create_data({ { "foo", "bar" } }));
-
-	auto tr = db.createTransaction();
-	while (1) {
-		tr.clear(fdb::toBytesRef(key("foo")));
-		auto f1 = tr.commit();
-
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-		break;
-	}
-
-	auto value = getValue(fdb::toBytesRef(key("foo")), /* snapshot */ false, {});
-	REQUIRE(!value.has_value());
-}
-
 TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_ADD") {
 	insert_data(db, create_data({ { "foo", "\x00" } }));
 
