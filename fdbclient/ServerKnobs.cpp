@@ -124,10 +124,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Dynamic Empty Version Wait: Sampling
 	init( DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH,         10000 ); 
 	init( DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT,            true ); 
-	init( DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL,              0 ); 
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE,         0 );
 	// Dynamic Empty Version Wait: Decision
-	init( DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE,        0.1 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD,         0.1 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR, 0.95 );
 	init( DYNAMIC_EMPTY_VERSION_WAIT_CAP,                      0.020 );
 	// Dynamic Empty Version Wait: Syncing

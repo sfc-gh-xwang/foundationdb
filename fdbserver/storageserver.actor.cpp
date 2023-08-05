@@ -30,7 +30,6 @@
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/DatabaseConfiguration.h"
 #include "fdbclient/RandomKeyValueUtils.h"
-#include "fdbclient/ServerKnobs.h"
 #include "fdbrpc/ContinuousSample.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/ApiVersion.h"
@@ -994,10 +993,6 @@ public:
 		uint64_t positiveSampleNum = 0;
 		uint64_t negativeSampleNum = 0;
 
-		// DDSketch<double> emptyVersionWaitWindowLatency = DDSketch<double>(0.00001); // deprecated for now
-		// DDSketch<double> emptyVersionWaitWindowSketchPositive = DDSketch<double>(0.00001); // deprecated for now
-		// DDSketch<double> emptyVersionWaitWindowSketchNegative = DDSketch<double>(0.00001); // deprecated for now
-
 		void resetExceptQueue() {
 			safeWaitWindow.clear();
 			minWaitWindow = INT_MAX;
@@ -1009,7 +1004,7 @@ public:
 	EmptyVersionStats emptyVersionWaitMutationStats;
 	EmptyVersionStats emptyVersionWaitNonMutationStats;
 
-	double emptyVerionWaitLastWaitWindow;
+	double emptyVerionWaitLastWindow;
 	bool emptyVersionWaitEmergencyTransition;
 	PromiseStream<Void> emptyVersionWaitEmergencyNotify;
 
@@ -1567,7 +1562,7 @@ public:
 	    diskUsage(0.0),
 	    emptyVersionWaitMutationStats(),
 	    emptyVersionWaitNonMutationStats(),
-	    emptyVerionWaitLastWaitWindow(0),
+	    emptyVerionWaitLastWindow(0),
 	    emptyVersionWaitEmergencyTransition(false),
 	    storage(this, storage),
 	    shardChangeCounter(0),
@@ -2094,7 +2089,7 @@ void updateProcessStats(StorageServer* self) {
 #pragma region Queries
 #endif
 
-// Lightweight blocking function that samples request and log positive safe wait window.
+// Sample client request who does not have to wait for version
 inline void sampleNoWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& stats,
                                                Version version,
                                                double versionArrivalTime) {
@@ -2130,7 +2125,7 @@ inline void sampleNoWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats&
 	}
 }
 
-// Lightweight blocking function that samples request and log negative wait window adjustments.
+// Sample client request who has to wait for version
 inline void sampleWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& stats, double versionArrivalTime) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
@@ -2206,10 +2201,11 @@ Future<Version> waitForVersion(StorageServer* data,
 		sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, version, versionArrivalTime);
 		// edge-triggered dynamic empty version wait window emergency
 		double emergencyThreshold =
-		    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION * data->emptyVerionWaitLastWaitWindow;
+		    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION * data->emptyVerionWaitLastWindow;
 		if (!data->emptyVersionWaitEmergencyTransition &&
 		    (std::max(0., data->emptyVersionWaitMutationStats.minSafeWaitWindow) < emergencyThreshold ||
-		     std::max(0., data->emptyVersionWaitNonMutationStats.minSafeWaitWindow) < emergencyThreshold)) {
+		     std::max(0., data->emptyVerionWaitLastWindow + data->emptyVersionWaitNonMutationStats.minSafeWaitWindow) <
+		         emergencyThreshold)) {
 			data->emptyVersionWaitEmergencyTransition = true;
 			data->emptyVersionWaitEmergencyNotify.send(Void());
 		}
@@ -2236,9 +2232,6 @@ Future<Version> waitForVersion(StorageServer* data,
 	if (commitVersion == invalidVersion) {
 		return waitForVersion(data, readVersion, spanContext, versionArrivalTime);
 	}
-
-	// This feature should already be disabled everywhere
-	// ASSERT(false);
 
 	if (readVersion == latestVersion) {
 		readVersion = std::max(Version(1), data->version.get());
@@ -4571,8 +4564,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 		    .detail("DebugID",
 		            req.options.present() && req.options.get().debugID.present() ? req.options.get().debugID.get()
 		                                                                         : UID());
-		state double versionWaitTime = g_network->timer() - queueWaitEnd;
-		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
+		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
 
 		tenantGroup =
 		    data->getTenantGroup(version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
@@ -5748,8 +5740,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 		// VERSION_VECTOR change
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
 		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context, queueWaitEnd));
-		state double versionWaitTime = g_network->timer() - queueWaitEnd;
-		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
+		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
 
 		data->checkTenantEntry(
 		    req.version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
@@ -6161,8 +6152,7 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 	try {
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
 		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext, queueWaitEnd));
-		state double versionWaitTime = g_network->timer() - queueWaitEnd;
-		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
+		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
 
 		tenantGroup =
 		    data->getTenantGroup(version, req.tenantInfo, req.options.map(&ReadOptions::lockAware).orDefault(false));
@@ -12133,13 +12123,17 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	loop {
 		choose {
 			when(waitNext(self->emptyVersionWaitEmergencyNotify.getFuture())) {
+				if (!self->logSystem) {
+					continue;
+				}
+
 				state double emergencyWaitWindow = 0;
-				traceWaitWindowDecision(self, emergencyWaitWindow, self->emptyVerionWaitLastWaitWindow);
-				if (emergencyWaitWindow != self->emptyVerionWaitLastWaitWindow) {
+				traceWaitWindowDecision(self, emergencyWaitWindow, self->emptyVerionWaitLastWindow);
+				if (emergencyWaitWindow != self->emptyVerionWaitLastWindow) {
 					wait(self->logSystem->pushEmptyVersionWaitWindow(emergencyWaitWindow, self->tag));
 				}
 				resetWaitWindowStatistics(self);
-				self->emptyVerionWaitLastWaitWindow = emergencyWaitWindow;
+				self->emptyVerionWaitLastWindow = emergencyWaitWindow;
 				lastSyncTime = g_network->timer();
 				self->emptyVersionWaitEmergencyTransition = false;
 			}
@@ -12164,19 +12158,19 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 				// Decide wait window
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE == 0) {
-					targetWaitWindow = mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE *
-					                                      (mutationSize + nonMutationSize)
-					                       ? 0 + self->emptyVersionWaitMutationStats.minWaitWindow *
-					                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR
-					                       : (self->emptyVerionWaitLastWaitWindow +
-					                          self->emptyVersionWaitNonMutationStats.minWaitWindow) *
-					                             SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
+					targetWaitWindow =
+					    mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD *
+					                       (mutationSize + nonMutationSize)
+					        ? 0 + self->emptyVersionWaitMutationStats.minWaitWindow *
+					                  SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR
+					        : (self->emptyVerionWaitLastWindow + self->emptyVersionWaitNonMutationStats.minWaitWindow) *
+					              SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
 				} else {
-					targetWaitWindow = mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE *
+					targetWaitWindow = mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD *
 					                                      (mutationSize + nonMutationSize)
 					                       ? 0 + self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
 					                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
-					                       : self->emptyVerionWaitLastWaitWindow +
+					                       : self->emptyVerionWaitLastWindow +
 					                             self->emptyVersionWaitNonMutationStats.safeWaitWindow.percentile(
 					                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
 				}
@@ -12185,30 +12179,30 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
 				    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY) {
 					if (g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
-						traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWaitWindow);
+						traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWindow);
 						resetWaitWindowStatistics(self);
-						self->emptyVerionWaitLastWaitWindow = targetWaitWindow;
+						self->emptyVerionWaitLastWindow = targetWaitWindow;
 						lastSyncTime = g_network->timer();
 					}
 					continue;
 				}
 
-				// Under read bursts, it is possible the sketch gives negative results because of requests waiting
+				// It is possible the distribution gives negative results because of requests waiting
 				// for versions even if we have already set waitWindow to zero. We keep sending the minimum wait
 				// window possible to tlog (zero)
 				targetWaitWindow = std::max(targetWaitWindow, .0);
 
 				// Cap delay window growth to be below maximum allowed version wait.
-				targetWaitWindow = std::min(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_CAP, targetWaitWindow);
+				targetWaitWindow = std::min(targetWaitWindow, SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_CAP);
 
 				// Boradcast wait window decision to all tlog and wait for reply
 				// Skip sending wait window if new decision is the same as the last one sent.
-				traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWaitWindow);
-				if (targetWaitWindow != self->emptyVerionWaitLastWaitWindow) {
+				traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWindow);
+				if (targetWaitWindow != self->emptyVerionWaitLastWindow) {
 					wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag));
 				}
 				resetWaitWindowStatistics(self);
-				self->emptyVerionWaitLastWaitWindow = targetWaitWindow;
+				self->emptyVerionWaitLastWindow = targetWaitWindow;
 				lastSyncTime = g_network->timer();
 			}
 		}

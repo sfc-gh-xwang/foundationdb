@@ -116,9 +116,9 @@ public:
 	bool PEEK_BATCHING_EMPTY_MSG; // Enable tlog empty version peeks batching.
 	double PEEK_BATCHING_EMPTY_MSG_INTERVAL; // Maximum wait time for a batch on tlog side.
 	enum DYNAMIC_EMPTY_VERSION_WAIT_MODE { DISABLED, EMPTY_VERSION_WAIT_LOG_ONLY, EMPTY_VERSION_WAIT };
-	int DYNAMIC_EMPTY_VERSION_WAIT; // 1. Disabled: disabled
-	                                // 2. EMPTY_VERSION_WAIT_LOG_ONLY: No batching + logging
-	                                // 3. EMPTY_VERSION_WAIT: dynamic wait window adjustment + logging
+	int DYNAMIC_EMPTY_VERSION_WAIT; // 0. Disabled: disabled
+	                                // 1. EMPTY_VERSION_WAIT_LOG_ONLY: No batching + logging
+	                                // 2. EMPTY_VERSION_WAIT: dynamic wait window adjustment + logging
 	int DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH; // Max size limit of empty version wait window logging queue. Tlog
 	                                                 // samples will be discarded once limit is reached. It is advised
 	                                                 // to keep this window big enough to capture tlog sync time window
@@ -126,20 +126,20 @@ public:
 	                                                 // SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL for collected statistics
 	                                                 // to make sense.
 	bool DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT; // Whether to log non-queue-popping samples in empty version wait
-	                                                // window logging. Enabling this will result in less skewed logging
-	                                                // but increased storage server CPU cost.
-	double DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL; // Interval of sampling incoming requests at each storage
-	                                                   // server for empty version wait window logging. Sampling too
-	                                                   // frequently may incur extra storage server CPU cost and
-	                                                   // latency penalty for reads.
+	                                                // window logging. Dsiabling this will result in more skewed logging
+	                                                // but reduce storage server CPU cost. By default enabled.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
 	                                                        // delay window.
-	double DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_PERCENTILE;
-	double DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
-	double DYNAMIC_EMPTY_VERSION_WAIT_CAP; // Hard cap for largest safe delay window to limit damage to P999
-	                                       // read/version wait latency
+	double DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD; // If number of samples in mutation distribution is greater
+	                                                      // than this amount * total number of mutations, we rely on
+	                                                      // mutation distribution to make a decision/
+	double
+	    DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR; // Smoothing factor to multiply a decision by. Makes
+	                                                          // decision more pessimistic but help reduce latency loss
+	                                                          // when true window fluctuates around decision window.
+	double DYNAMIC_EMPTY_VERSION_WAIT_CAP; // Hard cap for largest safe delay window decisions.
 	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION; // Percentage deviation from last window to trigger an
-	                                                       // emergency resend
+	                                                       // emergency resend.
 	double DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL; // Interval of pushing calculated delay window from ss to tlogs.
 	                                                 // IMPORTANT: This have huge impact on tlog CPU utilization
 	                                                 // especially on larger clusters. All ss will broadcast sync

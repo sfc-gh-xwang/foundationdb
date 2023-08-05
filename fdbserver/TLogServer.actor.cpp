@@ -18,7 +18,6 @@
  * limitations under the License.
  */
 
-#include "fdbclient/ServerKnobs.h"
 #include "flow/Hash3.h"
 #include "flow/UnitTest.h"
 #include "fdbclient/NativeAPI.actor.h"
@@ -382,7 +381,7 @@ struct TLogData : NonCopyable {
 	Reference<Histogram> timeUntilDurableDist;
 
 	// Track dynamic empty version wait window for each storage server
-	struct emptyVersionWaitMeta {
+	struct emptyVersionWaitMetadata {
 		double waitWindow; // "atomically" change (as appears to peek actor) with transisioning state
 		bool transitioning; // whether tlog-ss pair is currently in transitioning state
 		Promise<Void> applied; // signal tlogEmptyVersionWait actor to conclude current transition
@@ -398,12 +397,12 @@ struct TLogData : NonCopyable {
 			newPeekRefcount = 0;
 		}
 	};
-	std::unordered_map<Tag, emptyVersionWaitMeta> emptyVersionWaitMetaMap;
+	std::unordered_map<Tag, emptyVersionWaitMetadata> emptyVersionWaitMetaMap;
 
 	// Tlog side empty peek number monitoring
 	uint32_t tlogPeekMsgCount;
 	uint32_t tlogEmptyPeekMsgCount;
-	uint32_t versionSyncMsgCount;
+	uint32_t tlogVersionSyncMsgCount;
 
 	TLogData(UID dbgid,
 	         UID workerID,
@@ -438,7 +437,7 @@ struct TLogData : NonCopyable {
 	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)),
 	    tlogPeekMsgCount(0),
 	    tlogEmptyPeekMsgCount(0),
-	    versionSyncMsgCount(0) {
+	    tlogVersionSyncMsgCount(0) {
 		cx = openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	}
 };
@@ -2131,14 +2130,15 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			//TraceEvent("TLogPeekResults", self->dbgid).detail("ForAddress", replyPromise.getEndpoint().getPrimaryAddress()).detail("MessageBytes", messages.getLength()).detail("NextEpoch", next_pos.epoch).detail("NextSeq", next_pos.sequence).detail("NowSeq", self->sequence.getNextSequence());
 		}
 
-		// reply immediately if have message, or peek batching is disabled
+		// Reply the peek request when
+		//   - Have data return to the caller, or
+		//   - Batching empty peek is disabled
 		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG) {
 			break;
 		}
 
 		if (emptyVersionFirstEntry) {
 			emptyVersionFirstEntry = false;
-			DebugLogTraceEvent("RequestTagDebug1").detail("Tag", reqTag);
 
 			switch (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT) {
 			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED:
@@ -2181,7 +2181,6 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		}
 	}
 
-	DebugLogTraceEvent("RequestTagDebug2").detail("Tag", reqTag);
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT &&
 	    emptyVersionWaitRefcounted) {
 		if (emptyVersionWaitTransition)
@@ -2214,10 +2213,9 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	reply.messages = messagesValue;
 	reply.end = endVersion;
 	reply.onlySpilled = onlySpilled;
+	// NOTE: we need to timestamp all peek requests when they come in if we want accurate elapsed wait time and utilize
+	// semi-waited requests as wait window datapoints
 	reply.timeWaited = requestWaited ? 1 : 0;
-
-	// TODO: we need to stamp every single version if we want accurate elapsed wait time
-	// reply.timeWaited = g_network->timer() - ? ;
 
 	DebugLogTraceEvent("TLogPeekMessages4", self->dbgid)
 	    .detail("LogId", logData->logId)
@@ -2286,8 +2284,6 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 		self->emptyVersionWaitMetaMap[req.tag].resetExceptPromise();
 
 	// During transition no furthur emptyVersionWait for the tlog-ss pair should be sent to tlog
-	// FIXME: the msg can be delivered more than once?
-	// ASSERT(!self->emptyVersionWaitMetaMap[req.tag].transitioning);
 	if (self->emptyVersionWaitMetaMap[req.tag].transitioning) {
 		// discard additional requests when more-than-once delivery of the same wait window update is received
 		DebugLogTraceEvent("DiscardedSyncMessage").detail("Tag", req.tag).detail("WaitWindow", req.waitWindow);
@@ -2914,7 +2910,7 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 			}
 		}
 		when(TlogEmptyVersionWaitRequest req = waitNext(tli.emptyVersionWaitRequest.getFuture())) {
-			++self->versionSyncMsgCount;
+			++self->tlogVersionSyncMsgCount;
 			logData->addActor.send(tLogEmptyVersionWait(self, req));
 		}
 		when(TLogPeekStreamRequest req = waitNext(tli.peekStreamMessages.getFuture())) {
@@ -3207,10 +3203,10 @@ ACTOR Future<Void> tLogCore(TLogData* self,
 
 		                              te.detail("TlogPeekMsgCount", self->tlogPeekMsgCount);
 		                              te.detail("TlogEmptyPeekMsgCount", self->tlogEmptyPeekMsgCount);
-		                              te.detail("VersionSyncMsgCount", self->versionSyncMsgCount);
+		                              te.detail("VersionSyncMsgCount", self->tlogVersionSyncMsgCount);
 		                              self->tlogPeekMsgCount = 0;
 		                              self->tlogEmptyPeekMsgCount = 0;
-		                              self->versionSyncMsgCount = 0;
+		                              self->tlogVersionSyncMsgCount = 0;
 	                              }));
 
 	logData->addActor.send(serveTLogInterface(self, tli, logData, warningCollectorInput));
