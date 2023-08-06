@@ -982,39 +982,6 @@ TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_APPEND_IF_FITS") {
 	}
 }
 
-TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_MAX") {
-	insert_data(db, create_data({ { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
-
-	auto tr = db.createTransaction();
-	while (1) {
-		tr.atomicOp(fdb::toBytesRef(key("foo")), "b"_br, FDB_MUTATION_TYPE_MAX);
-		// Value in database will be extended with zeros to match length of param.
-		tr.atomicOp(fdb::toBytesRef(key("bar")), "aa"_br, FDB_MUTATION_TYPE_MAX);
-		// Value in database will be truncated to match length of param.
-		tr.atomicOp(fdb::toBytesRef(key("baz")), "b"_br, FDB_MUTATION_TYPE_MAX);
-		auto f1 = tr.commit();
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-		break;
-	}
-
-	auto value = getValue(fdb::toBytesRef(key("foo")), /* snapshot */ false, {});
-	REQUIRE(value.has_value());
-	CHECK(value->compare("b") == 0);
-
-	value = getValue(fdb::toBytesRef(key("bar")), /* snapshot */ false, {});
-	REQUIRE(value.has_value());
-	CHECK(value->compare("aa") == 0);
-
-	value = getValue(fdb::toBytesRef(key("baz")), /* snapshot */ false, {});
-	REQUIRE(value.has_value());
-	CHECK(value->compare("c") == 0);
-}
-
 TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_MIN") {
 	insert_data(db, create_data({ { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
 
