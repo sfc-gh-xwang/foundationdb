@@ -2741,6 +2741,12 @@ TEST_CASE("/blobgranule/files/granuleReadUnitTest") {
 	return Void();
 }
 
+// FIXME: move elsewhere
+TEST_CASE("-/blobgranule/files/testNegative") {
+	ASSERT(false);
+	return Void();
+}
+
 namespace {
 MutationsAndVersionRef singleMutation(Version v,
                                       MutationRef::Type type,
