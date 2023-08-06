@@ -454,25 +454,22 @@ AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	    },
 	    "FDBMutationBitAnd");
 
-	tr = env.newNormalOrTenantTransaction();
-	auto f = runToCompletion(
-	    tr, [&fooKey](auto tr) { return tr.get(fdb::toBytesRef(fooKey), false); }, "GetFoo");
-	ASSERT(f.get().has_value(), "Unexpected null value from reading foo");
-	ASSERT(f.get() == "`"_br, "unmatched value: expected=`, actual={}", fdb::toCharsRef(f.get()));
+	// Check results
+	for (auto const& keyVal :
+	     { std::make_tuple("foo", "`"_br), std::make_tuple("bar", "a\0"_br), std::make_tuple("baz", "a"_br) }) {
+		std::string key;
+		fdb::BytesRef val;
+		std::tie(key, val) = keyVal;
 
-	tr = env.newNormalOrTenantTransaction();
-	f = runToCompletion(
-	    tr, [&barKey](auto tr) { return tr.get(fdb::toBytesRef(barKey), false); }, "GetBar");
-	ASSERT(f.get().has_value(), "Unexpected null value from reading bar");
-	ASSERT(f.get()->size() == 2, "unmatched value size for bar: expected=2, actual={}", f.get()->size());
-	ASSERT(f.get()->data()[0] == 97, "unmatched value: expected=97, actual={}", f.get()->data()[0]);
-	ASSERT(f.get()->data()[1] == 0, "unmatched value: expected=0, actual={}", f.get()->data()[1]);
-
-	tr = env.newNormalOrTenantTransaction();
-	f = runToCompletion(
-	    tr, [&bazKey](auto tr) { return tr.get(fdb::toBytesRef(bazKey), false); }, "GetBaz");
-	ASSERT(f.get().has_value(), "Unexpected null value from reading baz");
-	ASSERT(f.get() == "a"_br, "unmatched value: expected=a, actual={}", fdb::toCharsRef(f.get()));
+		tr = env.newNormalOrTenantTransaction();
+		auto f = runToCompletion(
+		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
+		ASSERT(f.get() == val,
+		       "unmatched val for {}: expected={}, actual={}",
+		       key,
+		       fdb::toCharsRef(val),
+		       fdb::toCharsRef(f.get()));
+	}
 });
 
 AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
@@ -529,23 +526,22 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 	    },
 	    "FDBMutationBitAnd");
 
-	tr = env.newNormalOrTenantTransaction();
-	auto f = runToCompletion(
-	    tr, [&fooKey](auto tr) { return tr.get(fdb::toBytesRef(fooKey), false); }, "GetFoo");
-	ASSERT(f.get().has_value(), "Unexpected null value from reading foo");
-	ASSERT(f.get() == "c"_br, "unmatched value: expected=c, actual={}", fdb::toCharsRef(f.get()));
+	// Check results
+	for (auto const& keyVal :
+	     { std::make_tuple("foo", "c"_br), std::make_tuple("bar", "cd"_br), std::make_tuple("baz", "e"_br) }) {
+		std::string key;
+		fdb::BytesRef val;
+		std::tie(key, val) = keyVal;
 
-	tr = env.newNormalOrTenantTransaction();
-	f = runToCompletion(
-	    tr, [&barKey](auto tr) { return tr.get(fdb::toBytesRef(barKey), false); }, "GetBar");
-	ASSERT(f.get().has_value(), "Unexpected null value from reading bar");
-	ASSERT(f.get() == "cd"_br, "unmatched value: expected=cd, actual={}", fdb::toCharsRef(f.get()));
-
-	tr = env.newNormalOrTenantTransaction();
-	f = runToCompletion(
-	    tr, [&bazKey](auto tr) { return tr.get(fdb::toBytesRef(bazKey), false); }, "GetBaz");
-	ASSERT(f.get().has_value(), "Unexpected null value from reading baz");
-	ASSERT(f.get() == "e"_br, "unmatched value: expected=e, actual={}", fdb::toCharsRef(f.get()));
+		tr = env.newNormalOrTenantTransaction();
+		auto f = runToCompletion(
+		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
+		ASSERT(f.get() == val,
+		       "unmatched val for {}: expected={}, actual={}",
+		       key,
+		       fdb::toCharsRef(val),
+		       fdb::toCharsRef(f.get()));
+	}
 });
 
 AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const TestEnv& env) {
@@ -595,6 +591,7 @@ AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const Tes
 	    },
 	    "MutationTypeMax");
 
+	// Check results
 	for (auto const& keyVal :
 	     { std::make_tuple("foo", "b"_br), std::make_tuple("bar", "aa"_br), std::make_tuple("baz", "c"_br) }) {
 		std::string key;
@@ -604,7 +601,11 @@ AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const Tes
 		tr = env.newNormalOrTenantTransaction();
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
-		ASSERT(f.get() == val, "unmatched val: expected={}, actual={}", fdb::toCharsRef(val), fdb::toCharsRef(f.get()));
+		ASSERT(f.get() == val,
+		       "unmatched val for {}: expected={}, actual={}",
+		       key,
+		       fdb::toCharsRef(val),
+		       fdb::toCharsRef(f.get()));
 	}
 });
 
