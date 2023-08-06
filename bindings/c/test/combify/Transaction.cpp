@@ -609,4 +609,112 @@ AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const Tes
 	}
 });
 
+AddTest testAtomicOpMutationTypeMin("AtomicOpMutationTypeMin", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-atomic-op-mutation-type-min-");
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "b"_br, FDB_MUTATION_TYPE_MIN);
+		    // Value in database will be extended with zeros to match length of param.
+		    tr.atomicOp(fdb::toBytesRef(prefix + "bar"), "aa"_br, FDB_MUTATION_TYPE_MIN);
+		    // Value in database will be truncated to match length of param.
+		    tr.atomicOp(fdb::toBytesRef(prefix + "baz"), "b"_br, FDB_MUTATION_TYPE_MIN);
+		    return tr.commit();
+	    },
+	    "MutationTypeMin");
+
+	// Check results
+	for (auto const& keyVal :
+	     { std::make_tuple("foo", "a"_br), std::make_tuple("bar", "b\0"_br), std::make_tuple("baz", "b"_br) }) {
+		std::string key;
+		fdb::BytesRef val;
+		std::tie(key, val) = keyVal;
+
+		tr = env.newNormalOrTenantTransaction();
+		auto f = runToCompletion(
+		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
+		ASSERT(f.get() == val,
+		       "unmatched val for {}: expected={}, actual={}",
+		       key,
+		       fdb::toCharsRef(val),
+		       fdb::toCharsRef(f.get()));
+	}
+});
+
+AddTest testAtomicOpMutationTypeByteMax("AtomicOpMutationTypeByteMax", ALL, [](const TestEnv& env) {
+	// The difference with FDB_MUTATION_TYPE_MAX is that strings will not be
+	// extended/truncated so lengths match.
+	const std::string prefix("combify-atomic-op-mutation-type-byte-max-");
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "b"_br, FDB_MUTATION_TYPE_BYTE_MAX);
+		    tr.atomicOp(fdb::toBytesRef(prefix + "bar"), "cc"_br, FDB_MUTATION_TYPE_BYTE_MAX);
+		    tr.atomicOp(fdb::toBytesRef(prefix + "baz"), "b"_br, FDB_MUTATION_TYPE_BYTE_MAX);
+		    return tr.commit();
+	    },
+	    "MutationTypeByteMax");
+
+	// Check results
+	for (auto const& keyVal :
+	     { std::make_tuple("foo", "b"_br), std::make_tuple("bar", "cc"_br), std::make_tuple("baz", "cba"_br) }) {
+		std::string key;
+		fdb::BytesRef val;
+		std::tie(key, val) = keyVal;
+
+		tr = env.newNormalOrTenantTransaction();
+		auto f = runToCompletion(
+		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
+		ASSERT(f.get() == val,
+		       "unmatched val for {}: expected={}, actual={}",
+		       key,
+		       fdb::toCharsRef(val),
+		       fdb::toCharsRef(f.get()));
+	}
+});
+
+AddTest testAtomicOpMutationTypeByteMin("AtomicOpMutationTypeByteMin", ALL, [](const TestEnv& env) {
+	// The difference with FDB_MUTATION_TYPE_MIN is that strings will not be
+	// extended/truncated so lengths match.
+	const std::string prefix("combify-atomic-op-mutation-type-byte-min-");
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "b"_br, FDB_MUTATION_TYPE_BYTE_MIN);
+		    tr.atomicOp(fdb::toBytesRef(prefix + "bar"), "aa"_br, FDB_MUTATION_TYPE_BYTE_MIN);
+		    tr.atomicOp(fdb::toBytesRef(prefix + "baz"), "b"_br, FDB_MUTATION_TYPE_BYTE_MIN);
+		    return tr.commit();
+	    },
+	    "MutationTypeByteMin");
+
+	// Check results
+	for (auto const& keyVal :
+	     { std::make_tuple("foo", "a"_br), std::make_tuple("bar", "aa"_br), std::make_tuple("baz", "abc"_br) }) {
+		std::string key;
+		fdb::BytesRef val;
+		std::tie(key, val) = keyVal;
+
+		tr = env.newNormalOrTenantTransaction();
+		auto f = runToCompletion(
+		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
+		ASSERT(f.get() == val,
+		       "unmatched val for {}: expected={}, actual={}",
+		       key,
+		       fdb::toCharsRef(val),
+		       fdb::toCharsRef(f.get()));
+	}
+});
+
 } // anonymous namespace
