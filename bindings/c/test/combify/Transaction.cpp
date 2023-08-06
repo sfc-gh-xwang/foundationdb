@@ -577,4 +577,35 @@ AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const Tes
 	       fdb::toCharsRef(f.get()));
 });
 
+AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-atomic-op-mutation-type-max-");
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "b"_br, FDB_MUTATION_TYPE_MAX);
+		    // Value in database will be extended with zeros to match length of param.
+		    tr.atomicOp(fdb::toBytesRef(prefix + "bar"), "aa"_br, FDB_MUTATION_TYPE_MAX);
+		    // Value in database will be truncated to match length of param.
+		    tr.atomicOp(fdb::toBytesRef(prefix + "baz"), "b"_br, FDB_MUTATION_TYPE_MAX);
+		    return tr.commit();
+	    },
+	    "MutationTypeMax");
+
+	for (auto const& keyVal :
+	     { std::make_tuple("foo", "b"_br), std::make_tuple("bar", "aa"_br), std::make_tuple("baz", "c"_br) }) {
+		std::string key;
+		fdb::BytesRef val;
+		std::tie(key, val) = keyVal;
+
+		tr = env.newNormalOrTenantTransaction();
+		auto f = runToCompletion(
+		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
+		ASSERT(f.get() == val, "unmatched val: expected={}, actual={}", fdb::toCharsRef(val), fdb::toCharsRef(f.get()));
+	}
+});
+
 } // anonymous namespace
