@@ -548,4 +548,33 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 	ASSERT(f.get() == "e"_br, "unmatched value: expected=e, actual={}", fdb::toCharsRef(f.get()));
 });
 
+AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const TestEnv& env) {
+	// Atomically remove a key-value pair from the database based on a value
+	// comparison.
+	const std::string prefix("combify-atomic-op-compare-and-clear-");
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "bar" }, { "fdb", "foundation" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "bar"_br, FDB_MUTATION_TYPE_COMPARE_AND_CLEAR);
+		    return tr.commit();
+	    },
+	    "CompareAndClear");
+
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "GetFoo");
+	ASSERT(!f.get().has_value(), "Expect null value");
+
+	tr = env.newNormalOrTenantTransaction();
+	f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "fdb"), false); }, "GetFdb");
+	ASSERT(f.get() == "foundation"_br,
+	       "unmatched value for fdb key: expected=foundation, actual={}",
+	       fdb::toCharsRef(f.get()));
+});
+
 } // anonymous namespace

@@ -943,32 +943,6 @@ TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_BIT_XOR") {
 	CHECK(value->data()[0] == 0x5);
 }
 
-TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_COMPARE_AND_CLEAR") {
-	// Atomically remove a key-value pair from the database based on a value
-	// comparison.
-	insert_data(db, create_data({ { "foo", "bar" }, { "fdb", "foundation" } }));
-
-	auto tr = db.createTransaction();
-	while (1) {
-		tr.atomicOp(fdb::toBytesRef(key("foo")), "bar"_br, FDB_MUTATION_TYPE_COMPARE_AND_CLEAR);
-		auto f1 = tr.commit();
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-		break;
-	}
-
-	auto value = getValue(fdb::toBytesRef(key("foo")), /* snapshot */ false, {});
-	CHECK(!value.has_value());
-
-	value = getValue(fdb::toBytesRef(key("fdb")), /* snapshot */ false, {});
-	REQUIRE(value.has_value());
-	CHECK(value->compare("foundation") == 0);
-}
-
 TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_APPEND_IF_FITS") {
 	// Atomically append a value to an existing key-value pair, or insert the
 	// key-value pair if an existing key-value pair doesn't exist.
