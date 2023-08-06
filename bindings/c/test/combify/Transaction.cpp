@@ -458,8 +458,7 @@ AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	auto f = runToCompletion(
 	    tr, [&fooKey](auto tr) { return tr.get(fdb::toBytesRef(fooKey), false); }, "GetFoo");
 	ASSERT(f.get().has_value(), "Unexpected null value from reading foo");
-	ASSERT(f.get()->size() == 1, "unmatched value size for foo: expected=1, actual={}", f.get()->size());
-	ASSERT(f.get()->data()[0] == 96, "unmatched value: expected=96, actual={}", f.get()->data()[0]);
+	ASSERT(f.get() == "`"_br, "unmatched value: expected=`, actual={}", fdb::toCharsRef(f.get()));
 
 	tr = env.newNormalOrTenantTransaction();
 	f = runToCompletion(
@@ -473,8 +472,80 @@ AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	f = runToCompletion(
 	    tr, [&bazKey](auto tr) { return tr.get(fdb::toBytesRef(bazKey), false); }, "GetBaz");
 	ASSERT(f.get().has_value(), "Unexpected null value from reading baz");
-	ASSERT(f.get()->size() == 1, "unmatched value size for bar: expected=1, actual={}", f.get()->size());
-	ASSERT(f.get()->data()[0] == 97, "unmatched value: expected=97, actual={}", f.get()->data()[0]);
+	ASSERT(f.get() == "a"_br, "unmatched value: expected=a, actual={}", fdb::toCharsRef(f.get()));
+});
+
+AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
+	// Test bitwise or on values of same length:
+	//   db key = foo
+	//   db value = 'a' == 97
+	//   param = 'b' == 98
+	//
+	//   'a' == 97 == 0b01100001
+	// | 'b' == 98 == 0b01100010
+	//   -----------------------
+	//                0b01100011 == 99 == 'c'
+	//
+	// Test bitwise or on extended database value:
+	//   db key = bar
+	//   db value = 'b' == 98
+	//   param = "ad"
+	//
+	//   'b' == 98 -> 0b0110001000000000 (zero extended on right to match length of param)
+	// | "ad"   ==    0b0110000101100100
+	//   -------------------------------
+	//                0b0110001101100100 == "cd"
+	//
+	// Test bitwise or on truncated database value:
+	//   db key = baz
+	//   db value = "abc"
+	//   param = 'd' == 100
+	//
+	//   "abc"  ->  0b01100001 (truncated to "a" to match length of param)
+	// | 'd' == 100 0b01100100
+	//   ---------------------
+	//              0b01100101 == 101 == 'e'
+	//
+	const std::string prefix("combify-atomic-op-bit-or");
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
+	auto fooKey = prefix + "foo";
+	auto barKey = prefix + "bar";
+	auto bazKey = prefix + "baz";
+
+	tr = env.newNormalOrTenantTransaction();
+	runToCompletion(
+	    tr,
+	    [&fooKey, &barKey, &bazKey](auto tr) {
+		    char param[] = { 'a', 'd' };
+
+		    tr.atomicOp(fdb::toBytesRef(fooKey), "b"_br, FDB_MUTATION_TYPE_BIT_OR);
+		    tr.atomicOp(fdb::toBytesRef(barKey),
+		                fdb::BytesRef(reinterpret_cast<const uint8_t*>(param), 2),
+		                FDB_MUTATION_TYPE_BIT_OR);
+		    tr.atomicOp(fdb::toBytesRef(bazKey), "d"_br, FDB_MUTATION_TYPE_BIT_OR);
+
+		    return tr.commit();
+	    },
+	    "FDBMutationBitAnd");
+
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr, [&fooKey](auto tr) { return tr.get(fdb::toBytesRef(fooKey), false); }, "GetFoo");
+	ASSERT(f.get().has_value(), "Unexpected null value from reading foo");
+	ASSERT(f.get() == "c"_br, "unmatched value: expected=c, actual={}", fdb::toCharsRef(f.get()));
+
+	tr = env.newNormalOrTenantTransaction();
+	f = runToCompletion(
+	    tr, [&barKey](auto tr) { return tr.get(fdb::toBytesRef(barKey), false); }, "GetBar");
+	ASSERT(f.get().has_value(), "Unexpected null value from reading bar");
+	ASSERT(f.get() == "cd"_br, "unmatched value: expected=cd, actual={}", fdb::toCharsRef(f.get()));
+
+	tr = env.newNormalOrTenantTransaction();
+	f = runToCompletion(
+	    tr, [&bazKey](auto tr) { return tr.get(fdb::toBytesRef(bazKey), false); }, "GetBaz");
+	ASSERT(f.get().has_value(), "Unexpected null value from reading baz");
+	ASSERT(f.get() == "e"_br, "unmatched value: expected=e, actual={}", fdb::toCharsRef(f.get()));
 });
 
 } // anonymous namespace
