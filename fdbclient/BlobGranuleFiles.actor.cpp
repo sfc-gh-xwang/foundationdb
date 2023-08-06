@@ -613,6 +613,9 @@ struct IndexedBlobGranuleFile {
 		}
 		ASSERT(file.fileType == SNAPSHOT_FILE_TYPE || file.fileType == DELTA_FILE_TYPE);
 
+		// FIXME: could add some sanity checks here that index block is sorted and that file pointers are all within the
+		// file
+
 		return Standalone<IndexedBlobGranuleFile>(file, arena);
 	}
 
@@ -644,6 +647,7 @@ struct IndexedBlobGranuleFile {
 
 		size_t blockSize = nextPointer->offset - childPointer->offset;
 		// Account for IndexBlockRef size for chunk offset computation
+		ASSERT(childPointer->offset + startOffset + blockSize < fileBytes.size());
 		StringRef childData(fileBytes.begin() + childPointer->offset + startOffset, blockSize);
 
 		if (BG_ENCRYPT_COMPRESS_DEBUG) {
@@ -2744,6 +2748,71 @@ TEST_CASE("/blobgranule/files/granuleReadUnitTest") {
 // FIXME: move elsewhere
 TEST_CASE("-/blobgranule/files/testNegative") {
 	ASSERT(false);
+	return Void();
+}
+
+// FIXME: also move somewhere else!
+namespace {
+struct TestStruct1 {
+	constexpr static FileIdentifier file_identifier = 10001;
+	int val;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, val);
+	}
+};
+
+struct TestStruct2 {
+	constexpr static FileIdentifier file_identifier = 10002;
+	int val;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, val);
+	}
+};
+} // namespace
+
+TEST_CASE("-/blobgranule/files/flatbufferMismatch") {
+	// try to parse flatbuffer type as wrong type
+	TestStruct1 struct1;
+	Value serialized = ObjectWriter::toValue(struct1, Unversioned());
+	ObjectReader::fromStringRef<TestStruct2>(serialized, Unversioned());
+	return Void();
+}
+
+TEST_CASE("-/blobgranule/files/fileTypeMismatch") {
+	state uint8_t writeFileType, readFileType;
+	if (deterministicRandom()->coinflip()) {
+		writeFileType = SNAPSHOT_FILE_TYPE;
+		readFileType = DELTA_FILE_TYPE;
+	} else {
+		writeFileType = DELTA_FILE_TYPE;
+		readFileType = SNAPSHOT_FILE_TYPE;
+	}
+
+	state KeyValueGen kvGen;
+	state Standalone<StringRef> fileNameRef = StringRef(std::string("testMismatch"));
+
+	state Value serialized;
+	if (writeFileType == SNAPSHOT_FILE_TYPE) {
+		Standalone<GranuleSnapshot> rows = genSnapshot(kvGen, 1);
+		wait(store(serialized,
+		           serializeChunkedSnapshot(fileNameRef, &rows, 1, kvGen.compressFilter, kvGen.cipherKeys, true)));
+	} else {
+		Standalone<GranuleDeltas> deltas = genDeltas(kvGen, 1);
+		wait(store(serialized,
+		           serializeChunkedDeltaFile(
+		               fileNameRef, &deltas, kvGen.allRange, 1, kvGen.compressFilter, kvGen.cipherKeys)));
+	}
+
+	if (readFileType == SNAPSHOT_FILE_TYPE) {
+		bgReadSnapshotFile(serialized, {}, kvGen.cipherKeys, kvGen.allRange);
+	} else {
+		bgReadDeltaFile(serialized, {}, kvGen.cipherKeys);
+	}
+
 	return Void();
 }
 
