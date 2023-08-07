@@ -304,6 +304,8 @@ struct BlobManagerStats {
 	Counter filesPurged;
 	Counter bulkLoadsStaged;
 	Counter bulkLoadStagingErrors;
+	Counter bulkLoadAbortsCleanedUp;
+	Counter bulkLoadUnusedFilesCleanedUp;
 	Future<Void> logger;
 	int64_t activeMerges;
 	int64_t blockedAssignments;
@@ -313,6 +315,8 @@ struct BlobManagerStats {
 	int64_t lastManifestSeqNo;
 	int64_t lastManifestDumpTs;
 	int64_t manifestSizeInBytes;
+
+	ActiveCounter<int> activeGranuleSplitChecks;
 
 	// Current stats maintained for a given blob worker process
 	explicit BlobManagerStats(UID id,
@@ -337,13 +341,16 @@ struct BlobManagerStats {
 	    filesPurged("FilesPurged", cc),
 	    bulkLoadsStaged("BulkLoadsStaged", cc),
 	    bulkLoadStagingErrors("BulkLoadStagingErrors", cc),
+	    bulkLoadAbortsCleanedUp("BulkLoadAbortsCleanedUp", cc),
+	    bulkLoadUnusedFilesCleanedUp("BulkLoadUnusedPointersCleanedUp", cc),
 	    activeMerges(0),
 	    blockedAssignments(0),
 	    lastFlushVersion(0),
 	    lastMLogTruncationVersion(0),
 	    lastManifestSeqNo(0),
 	    lastManifestDumpTs(0),
-	    manifestSizeInBytes(0) {
+	    manifestSizeInBytes(0),
+	    activeGranuleSplitChecks(0) {
 		specialCounter(cc, "WorkerCount", [workers]() { return workers->size(); });
 		specialCounter(cc, "Epoch", [epoch]() { return epoch; });
 		specialCounter(cc, "ActiveMerges", [this]() { return this->activeMerges; });
@@ -355,6 +362,8 @@ struct BlobManagerStats {
 		specialCounter(cc, "LastManifestSeqNo", [this]() { return this->lastManifestSeqNo; });
 		specialCounter(cc, "LastManifestDumpTs", [this]() { return this->lastManifestDumpTs; });
 		specialCounter(cc, "ManifestSizeInBytes", [this]() { return this->manifestSizeInBytes; });
+		specialCounter(
+		    cc, "ActiveGranuleSplitChecks", [this]() -> int { return this->activeGranuleSplitChecks.getValue(); });
 		logger = cc.traceCounters("BlobManagerMetrics", id, interval, "BlobManagerMetrics");
 	}
 };
@@ -643,11 +652,18 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 
 	state int idx = 1;
 	state Reference<GranuleTenantData> tenantData;
-	wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange)));
+	state int retryCount = 0;
+	wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange, false)));
 	while (SERVER_KNOBS->BG_METADATA_SOURCE == "tenant" && !tenantData.isValid()) {
 		// this is a bit of a hack, but if we know this range is supposed to have a tenant, and it doesn't, just wait
+		retryCount++;
+		TraceEvent(retryCount <= 10 ? SevDebug : SevWarn, "BlobManagerUnknownTenantAlignKeys", bmData->id)
+		    .suppressFor(5.0)
+		    .detail("Epoch", bmData->epoch)
+		    .detail("Granule", granuleRange)
+		    .detail("Retries", retryCount);
 		wait(delay(1.0));
-		wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange)));
+		wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange, false)));
 	}
 	for (; idx < splits.size() - 1; idx++) {
 		alignKeyBoundary(bmData, tenantData, splits[idx], offset, splitPoints);
@@ -998,6 +1014,13 @@ ACTOR Future<Void> doRangeAssignment(Reference<BlobManagerData> bmData,
 			}
 		}
 	} catch (Error& e) {
+		TraceEvent("BlobManagerErrorDoRangeAssignment", bmData->id)
+		    .errorUnsuppressed(e)
+		    .suppressFor(10.0)
+		    .detail("Epoch", bmData->epoch)
+		    .detail("Range", assignment.keyRange)
+		    .detail("IsAssign", assignment.isAssign)
+		    .detail("IsBlocked", assignment.previousFailure.present());
 		if (assignment.previousFailure.present()) {
 			// previous assign failed, consider it unblocked if it's not a retriable error
 			--bmData->stats.blockedAssignments;
@@ -1947,6 +1970,8 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 	}
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bmData->db);
 
+	state ActiveCounter<int>::Releaser holdingSplitCheckCounter = bmData->stats.activeGranuleSplitChecks.take(1);
+
 	// first get ranges to split
 	state BlobGranuleSplitPoints splitPoints = wait(splitRange(bmData, granuleRange, writeHot, false));
 
@@ -2854,6 +2879,10 @@ ACTOR Future<Void> granuleMergeChecker(Reference<BlobManagerData> bmData) {
 
 ACTOR Future<Void> deregisterBlobWorker(Reference<BlobManagerData> bmData, BlobWorkerInterface interf) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bmData->db);
+	TraceEvent("BMDeregisteringWorker", bmData->id)
+	    .detail("Epoch", bmData->epoch)
+	    .detail("WorkerId", interf.id())
+	    .detail("WorkerAddr", interf.address());
 	loop {
 		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 		tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
@@ -2868,6 +2897,11 @@ ACTOR Future<Void> deregisterBlobWorker(Reference<BlobManagerData> bmData, BlobW
 			BulkLoadMetadata::loaderListMap().erase(tr, interf.id());
 
 			wait(tr->commit());
+
+			TraceEvent("BMDeregisteredWorker", bmData->id)
+			    .detail("Epoch", bmData->epoch)
+			    .detail("WorkerId", interf.id())
+			    .detail("WorkerAddr", interf.address());
 
 			if (BM_DEBUG) {
 				fmt::print("Deregistered blob worker {0}\n", interf.id().toString());
@@ -2913,7 +2947,10 @@ ACTOR Future<Void> killBlobWorker(Reference<BlobManagerData> bmData, BlobWorkerI
 	// Remove it from workersById also since otherwise that worker addr will remain excluded
 	// when we try to recruit new blob workers.
 
-	TraceEvent("KillBlobWorker", bmData->id).detail("Epoch", bmData->epoch).detail("WorkerId", bwId);
+	TraceEvent("KillBlobWorker", bmData->id)
+	    .detail("Epoch", bmData->epoch)
+	    .detail("WorkerId", bwId)
+	    .detail("Registered", registered);
 
 	if (registered) {
 		bmData->deadWorkers.insert(bwId);
@@ -2982,6 +3019,11 @@ ACTOR Future<Void> killBlobWorker(Reference<BlobManagerData> bmData, BlobWorkerI
 	if (registered) {
 		bmData->deadWorkers.erase(bwInterf.id());
 	}
+
+	TraceEvent("KillBlobWorkerComplete", bmData->id)
+	    .detail("Epoch", bmData->epoch)
+	    .detail("WorkerId", bwId)
+	    .detail("Registered", registered);
 
 	return Void();
 }
@@ -3359,9 +3401,13 @@ ACTOR Future<Void> checkBlobWorkerList(Reference<BlobManagerData> bmData, Promis
 			}
 			// add all blob workers to this new blob manager's records and start monitoring it
 			bool foundAnyNew = false;
+			int failedOrExcludedCount = 0;
 			for (auto& worker : blobWorkers) {
 				if (!bmData->deadWorkers.count(worker.id())) {
 					bool isFailedOrExcluded = bmData->exclusionTracker.isFailedOrExcluded(worker.stableAddress());
+					if (isFailedOrExcluded) {
+						failedOrExcludedCount++;
+					}
 					if (!bmData->workerAddresses.count(worker.stableAddress()) &&
 					    worker.locality.dcId() == bmData->dcId && !isFailedOrExcluded) {
 						bmData->workerAddresses.insert(worker.stableAddress());
@@ -3369,6 +3415,10 @@ ACTOR Future<Void> checkBlobWorkerList(Reference<BlobManagerData> bmData, Promis
 						bmData->workerStats[worker.id()] = BlobWorkerInfo();
 						bmData->addActor.send(monitorBlobWorker(bmData, worker));
 						foundAnyNew = true;
+						TraceEvent("BMFoundNewWorker", bmData->id)
+						    .detail("Epoch", bmData->epoch)
+						    .detail("WorkerId", worker.id())
+						    .detail("WorkerAddr", worker.address());
 					} else if (!bmData->workersById.count(worker.id())) {
 						TraceEvent("KillingExtraneousBlobWorker", bmData->id)
 						    .detail("WorkerId", worker.id())
@@ -3386,6 +3436,13 @@ ACTOR Future<Void> checkBlobWorkerList(Reference<BlobManagerData> bmData, Promis
 				Promise<Void> hold = bmData->foundBlobWorkers;
 				bmData->foundBlobWorkers = Promise<Void>();
 				hold.send(Void());
+			} else if (bmData->workersById.empty()) {
+				CODE_PROBE(true, "blob manager found no workers");
+				TraceEvent(SevWarn, "BlobManagerFoundNoWorkers", bmData->id)
+				    .detail("Epoch", bmData->epoch)
+				    .detail("InDBCount", blobWorkers.size())
+				    .detail("DeadCount", bmData->deadWorkers.size())
+				    .detail("FailedOrExcludedCount", failedOrExcludedCount);
 			}
 			wait(delay(SERVER_KNOBS->BLOB_WORKERLIST_FETCH_INTERVAL));
 		}
@@ -4183,7 +4240,11 @@ ACTOR Future<Void> initializeBlobWorker(Reference<BlobManagerData> self,
 			CODE_PROBE(true, "BM got error recruiting BW");
 			TraceEvent(SevWarn, "BMRecruitmentError", self->id)
 			    .error(newBlobWorker.getError())
-			    .detail("Epoch", self->epoch);
+			    .detail("Epoch", self->epoch)
+			    .detail("WorkerID", candidateWorker.worker.id())
+			    .detail("WorkerLocality", candidateWorker.worker.locality.toString())
+			    .detail("Interf", interfaceId)
+			    .detail("Addr", candidateWorker.worker.address());
 			if (!newBlobWorker.isError(error_code_recruitment_failed) &&
 			    !newBlobWorker.isError(error_code_request_maybe_delivered)) {
 				throw newBlobWorker.getError();
@@ -4248,16 +4309,21 @@ ACTOR Future<Void> blobWorkerRecruiter(
 		try {
 			state RecruitBlobWorkerRequest recruitReq;
 
+			// SevDebug normally but SevInfo if we have no active workers
+			Severity excludeSeverity = self->workersById.empty() ? SevInfo : SevDebug;
+
 			// workers that are used by existing blob workers should be excluded
 			for (auto const& [bwId, bwInterf] : self->workersById) {
 				auto addr = bwInterf.stableAddress();
 				AddressExclusion addrExcl(addr.ip, addr.port);
 				recruitReq.excludeAddresses.emplace_back(addrExcl);
+				TraceEvent(excludeSeverity, "BMRecruitExcl1").detail("Excluding", addr);
 			}
 
 			// workers that are used by blob workers that are currently being recruited should be excluded
 			for (auto addr : self->recruitingLocalities) {
 				recruitReq.excludeAddresses.emplace_back(AddressExclusion(addr.ip, addr.port));
+				TraceEvent(excludeSeverity, "BMRecruitExcl2").detail("Excluding", addr);
 			}
 
 			// don't recruit on excluded or failed addresses
@@ -4277,6 +4343,10 @@ ACTOR Future<Void> blobWorkerRecruiter(
 			TraceEvent("BMRecruiting", self->id)
 			    .detail("Epoch", self->epoch)
 			    .detail("ExcludedCount", recruitReq.excludeAddresses.size())
+			    .detail("ExistingCount", self->workersById.size())
+			    .detail("InProgressCount", self->recruitingLocalities.size())
+			    .detail("ExternalCount", self->exclusionTracker.excluded.size() + self->exclusionTracker.failed.size())
+			    .detail("DeadCount", self->deadWorkers.size())
 			    .detail("State", "Sending request to CC");
 
 			if (!fCandidateWorker.isValid() || fCandidateWorker.isReady() ||
@@ -4476,7 +4546,7 @@ ACTOR Future<bool> canDeleteFullGranule(Reference<BlobManagerData> self, UID gra
 }
 
 static Future<Void> deleteFile(Reference<BlobConnectionProvider> bstoreProvider, std::string filePath) {
-	Reference<BackupContainerFileSystem> bstore = bstoreProvider->getForRead(filePath);
+	Reference<BackupContainerFileSystem> bstore = bstoreProvider->getForAccess(filePath);
 	return bstore->deleteFile(filePath);
 }
 
@@ -4487,6 +4557,7 @@ ACTOR Future<Reference<BlobConnectionProvider>> getBStoreForGranule(Reference<Bl
 	}
 	loop {
 		state Reference<GranuleTenantData> data;
+		state int retryCount = 0;
 		wait(store(data, self->tenantData.getDataForGranule(granuleRange)));
 		if (data.isValid()) {
 			wait(data->bstoreLoaded.getFuture());
@@ -4494,6 +4565,12 @@ ACTOR Future<Reference<BlobConnectionProvider>> getBStoreForGranule(Reference<Bl
 			return data->bstore;
 		} else {
 			// race on startup between loading tenant ranges and bgcc/purging. just wait
+			retryCount++;
+			TraceEvent(retryCount <= 10 ? SevDebug : SevWarn, "BlobManagerUnknownTenantForGranule", self->id)
+			    .suppressFor(5.0)
+			    .detail("Epoch", self->epoch)
+			    .detail("KeyRange", granuleRange)
+			    .detail("Retries", retryCount);
 			wait(delay(0.1));
 		}
 	}
@@ -5859,6 +5936,9 @@ ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
 ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoadID id) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bmData->db);
 	state Optional<BulkLoadInfo> info;
+	state bool deletedFiles = false;
+	state std::vector<Future<Void>> fileDeleteFutures;
+	state Reference<BlobConnectionProvider> bstore;
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
@@ -5874,10 +5954,19 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 				}
 			}
 
+			if (!bstore.isValid()) {
+				KeyRange physicalRange = info->getPhysicalKeyRange();
+				wait(store(bstore, getBStoreForGranule(bmData, physicalRange)));
+				ASSERT(bstore.isValid());
+			}
+
 			wait(checkManagerLock(tr, bmData));
 
 			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, id));
-			ASSERT(status.present());
+			// since we cached info, on a re-read it could be non-present if bulk load finished by us or someone else
+			if (!status.present()) {
+				return true;
+			}
 			if (status.get().state != BulkLoadStatus::State::STAGING) {
 				ASSERT(status.get().state > BulkLoadStatus::State::STAGING);
 				return true;
@@ -5926,22 +6015,129 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 				throw e;
 			}
 
-			// FIXME: additional file validation that files actually exist, format is valid, data is in file ranges,
-			// etc...
+			if (!deletedFiles) {
+				CODE_PROBE(!createdPointers.results.empty(), "unused bulk load file pointers");
+				// do deletes for each unused bulk file pointer in case a file was written there but it was not staged
+				for (auto& it : createdPointers.results) {
+					ASSERT(id == it.first.first);
+					fileDeleteFutures.push_back(deleteFile(bstore, it.second.filename.toString()));
+				}
+			}
 
-			CODE_PROBE(!createdPointers.results.empty(), "unused bulk load file pointers");
-			// FIXME: do deletes for each unused bulk file pointer in case a file was written there but it was not
-			// staged
+			// FIXME: actually stage granules instead of just deleting their files!!
+			if (!deletedFiles) {
+				for (auto& it : writtenPointers.results) {
+					fileDeleteFutures.push_back(deleteFile(bstore, it.second.createdPointer.filename.toString()));
+				}
+			}
 
-			// FIXME: actually stage granules!
+			if (!deletedFiles) {
+				wait(waitForAll(fileDeleteFutures));
+				deletedFiles = true;
+			}
 
 			wait(tr->commit());
-			return true;
+			break;
 
 		} catch (Error& e) {
 			wait(tr->onError(e));
 		}
 	}
+
+	wait(waitForAll(fileDeleteFutures));
+
+	bmData->stats.bulkLoadUnusedFilesCleanedUp += fileDeleteFutures.size();
+
+	return true;
+}
+
+ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID id) {
+	state Database cx(bmData->db);
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
+	state Optional<BulkLoadInfo> info;
+	state bool deletedFiles = false;
+	state std::set<BulkLoadFileID> fileIdsDeleted;
+	state std::vector<Future<Void>> fileDeleteFutures;
+	state Reference<BlobConnectionProvider> bstore;
+	// TODO: implement actual cleanup! Must be idempotent to handle retries/multiple concurrent cleanup callers
+	// remaining: purge hybrid data, clear range, unblobbify/clean up purged range
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, id));
+			if (!status.present() || status->state != BulkLoadStatus::State::ABORTED) {
+				if (BM_BULKLOAD_DEBUG) {
+					fmt::print("CleanupAbortedBulkLoad {0}: already cleaned up\n", id.printable());
+				}
+				CODE_PROBE(true, "cleanup aborted bulk load already done");
+				return Void();
+			}
+
+			if (!info.present()) {
+				wait(store(info, BulkLoadMetadata::infoMap().get(tr, id)));
+				ASSERT(info.present());
+			}
+
+			if (!bstore.isValid()) {
+				KeyRange physicalRange = info->getPhysicalKeyRange();
+				wait(store(bstore, getBStoreForGranule(bmData, physicalRange)));
+				ASSERT(bstore.isValid());
+			}
+
+			// clean up file pointers if deleted in staging phase
+
+			if (!deletedFiles) {
+				state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
+				    BulkLoadMetadata::allFilePointersForLoadRange(id);
+				state BulkLoadMetadata::CreatedFilePointersMap::RangeResultType createdPointers =
+				    wait(BulkLoadMetadata::createdFilePointersMap().getRange(
+				        tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY));
+				ASSERT(!createdPointers.more);
+
+				state BulkLoadMetadata::WrittenFilePointersMap::RangeResultType writtenPointers =
+				    wait(BulkLoadMetadata::writtenFilePointersMap().getRange(
+				        tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY));
+				ASSERT(!writtenPointers.more);
+
+				for (auto& it : createdPointers.results) {
+					ASSERT(id == it.first.first);
+					fileDeleteFutures.push_back(deleteFile(bstore, it.second.filename.toString()));
+				}
+
+				// FIXME: actually stage granules instead of just deleting their files!!
+				for (auto& it : writtenPointers.results) {
+					ASSERT(id == it.first.first);
+					fileDeleteFutures.push_back(deleteFile(bstore, it.second.createdPointer.filename.toString()));
+				}
+
+				wait(waitForAll(fileDeleteFutures));
+
+				deletedFiles = true;
+			}
+
+			BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
+			BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
+
+			wait(tr->commit());
+			break;
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+
+	// change bulk load state to ABORTED_COMPLETE
+	wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::ABORTED_COMPLETE));
+
+	if (BM_BULKLOAD_DEBUG) {
+		fmt::print("CleanupAbortedBulkLoad {0}: done\n", id.printable());
+	}
+
+	++bmData->stats.bulkLoadAbortsCleanedUp;
+
+	return Void();
 }
 
 // FIXME: handle state transitions from STAGING to STAGING_BLOB_DONE
@@ -5954,7 +6150,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 			fmt::print("DBGBM {0}: TrackBL {1}: already aborted, cleaning up\n", bmData->epoch, id.printable());
 		}
 		try {
-			wait(bmData->db->cleanupAbortedBulkLoad(id));
+			wait(cleanupAbortedBulkLoad(bmData, id));
 		} catch (Error& e) {
 			if (e.code() == error_code_bulk_load_not_found) {
 				// somebody else must already have finished cleanup
@@ -5997,7 +6193,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
 		} else {
 			++bmData->stats.bulkLoadStagingErrors;
-			wait(bmData->db->abortBulkLoad(id, {}));
+			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::ABORTED));
 			// don't return, we have to do cleanup
 			throw bulk_load_aborted();
 		}
@@ -6020,7 +6216,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 				if (BM_BULKLOAD_DEBUG) {
 					fmt::print("DBGBM {0}: TrackBL {1}: cleaning up aborted load\n", bmData->epoch, id.printable());
 				}
-				wait(bmData->db->cleanupAbortedBulkLoad(id));
+				wait(cleanupAbortedBulkLoad(bmData, id));
 				if (BM_BULKLOAD_DEBUG) {
 					fmt::print("DBGBM {0}: TrackBL {1}: cleaned up aborted load\n", bmData->epoch, id.printable());
 				}
@@ -6050,6 +6246,9 @@ static std::map<std::pair<UID, int64_t>, UID> managerEpochsSeen;
 ACTOR Future<Void> checkBlobManagerEpoch(Reference<AsyncVar<ServerDBInfo> const> dbInfo, int64_t epoch, UID dbgid) {
 	loop {
 		if (dbInfo->get().blobManager.present() && dbInfo->get().blobManager.get().epoch > epoch) {
+			TraceEvent("BMRemovedFromDBInfo", dbgid)
+			    .detail("Epoch", epoch)
+			    .detail("NewEpoch", dbInfo->get().blobManager.get().epoch);
 			throw worker_removed();
 		}
 		wait(dbInfo->onChange());

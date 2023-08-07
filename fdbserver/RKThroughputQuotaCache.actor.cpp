@@ -95,8 +95,8 @@ class RKThroughputQuotaCacheImpl {
 		TraceEvent("RKThroughputQuotaCacheReadSnapshotStart", self->id).detail("QuotasToRead", newSnapshot.size());
 		while (it != newSnapshot.end()) {
 			CODE_PROBE(it != newSnapshot.begin(), "RKThroughputQuotaCache reading snapshot in multiple batches");
-			batchSize =
-			    std::min(std::distance(it, self->quotas.end()), SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_BATCH_SIZE);
+			batchSize = std::min(static_cast<int64_t>(std::distance(it, self->quotas.end())),
+			                     SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_BATCH_SIZE);
 			wait(readBatch(self, it, batchSize));
 			std::advance(it, batchSize);
 		}

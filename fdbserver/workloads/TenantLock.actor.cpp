@@ -46,7 +46,7 @@ struct TenantLock : TestWorkload {
 	                                           Optional<UID> expectedVal,
 	                                           bool readOnly = false,
 	                                           LockAwareTx lA = LockAwareTx::NO) {
-		state ReadYourWritesTransaction tr(db, makeReference<Tenant>(db, name));
+		state ReadYourWritesTransaction tr(makeReference<Tenant>(db, name));
 		state UID result = deterministicRandom()->randomUniqueID();
 		state Value resultValue = BinaryWriter::toValue(result, IncludeVersion());
 		loop {

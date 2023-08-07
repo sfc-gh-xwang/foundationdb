@@ -3020,15 +3020,21 @@ AddressExclusion AddressExclusion::parse(StringRef const& key) {
 	}
 }
 
-Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)) {}
-Tenant::Tenant(int64_t id) : lookupFuture(id) {}
-Tenant::Tenant(Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
+Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)), dbFuture(cx) {}
+Tenant::Tenant(Database cx, int64_t id) : lookupFuture(id), dbFuture(cx) {}
+Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
   : name(name),
-    lookupFuture(tenantLookupInfo) {}
+    lookupFuture(tenantLookupInfo),
+    dbFuture(cx) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
 	return lookupFuture.get().id;
+}
+
+Database Tenant::database() const {
+	ASSERT(dbFuture.isReady());
+	return dbFuture.get();
 }
 
 Optional<TenantGroupName> Tenant::tenantGroup() const {
@@ -3523,7 +3529,7 @@ ACTOR Future<Void> warmRange_impl(Reference<TransactionState> trState, KeyRange 
 
 		if (totalRequests % 20 == 0) {
 			// To avoid blocking the proxies from starting other transactions, occasionally get a read version.
-			state Transaction tr(trState->cx, trState->tenant());
+			state Transaction tr = Transaction::fromTenantOrDefault(trState->tenant(), trState->cx);
 			loop {
 				try {
 					tr.setOption(FDBTransactionOptions::LOCK_AWARE);
@@ -3664,7 +3670,7 @@ Optional<Reference<Tenant>> const& TransactionState::tenant() {
 bool TransactionState::hasTenant(ResolveDefaultTenant resolveDefaultTenant) {
 	if (!tenantSet && resolveDefaultTenant) {
 		if (!options.rawAccess && cx->defaultTenant.present()) {
-			tenant_ = makeReference<Tenant>(cx->lookupTenant(cx->defaultTenant.get()), cx->defaultTenant);
+			tenant_ = makeReference<Tenant>(cx, cx->lookupTenant(cx->defaultTenant.get()), cx->defaultTenant);
 		}
 		tenantSet = true;
 	}
@@ -3852,6 +3858,7 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 
 	state Optional<UID> getKeyID;
 	state Optional<ReadOptions> readOptions = trState->readOptions;
+	state ReadMetrics readMetrics;
 
 	state Span span("NAPI:getKey"_loc, trState->spanContext);
 	if (trState->readOptions.present() && trState->readOptions.get().debugID.present()) {
@@ -3870,11 +3877,11 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 	loop {
 		if (k.getKey() == allKeys.end) {
 			if (k.offset > 0) {
-				return allKeys.end;
+				return KeyReadResult(allKeys.end, readMetrics);
 			}
 			k.orEqual = false;
 		} else if (k.getKey() == allKeys.begin && k.offset <= 0) {
-			return Key();
+			return KeyReadResult(Key(), readMetrics);
 		}
 
 		Key locationKey(k.getKey(), k.arena());
@@ -3930,9 +3937,10 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 				                      getKeyID.get().first(),
 				                      "NativeAPI.getKey.After"); //.detail("NextKey",reply.sel.key).detail("Offset",
 				                                                 // reply.sel.offset).detail("OrEqual", k.orEqual);
+			readMetrics.combine(reply.readMetrics);
 			k = reply.sel;
 			if (!k.offset && k.orEqual) {
-				return KeyReadResult(std::move(k.getKey()), reply.readMetrics);
+				return KeyReadResult(std::move(k.getKey()), readMetrics);
 			}
 		} catch (Error& e) {
 			if (getKeyID.present())
@@ -4158,10 +4166,10 @@ ACTOR Future<Void> watchStorageServerResp(int64_t tenantId, Key key, Database cx
 }
 
 ACTOR Future<Void> sameVersionDiffValue(Database cx, Reference<WatchParameters> parameters) {
-	state ReadYourWritesTransaction tr(cx,
-	                                   parameters->tenant.hasTenant()
-	                                       ? makeReference<Tenant>(parameters->tenant.tenantId)
-	                                       : Optional<Reference<Tenant>>());
+	Optional<Reference<Tenant>> tenant = parameters->tenant.hasTenant()
+	                                         ? makeReference<Tenant>(cx, parameters->tenant.tenantId)
+	                                         : Optional<Reference<Tenant>>();
+	state ReadYourWritesTransaction tr = ReadYourWritesTransaction::fromTenantOrDefault(tenant, cx);
 
 	loop {
 		try {
@@ -4972,7 +4980,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					CODE_PROBE(true, "!GetKeyValuesFamilyReply.more and modifiedSelectors in getRange");
 
 					if (!rep.data.size()) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -4982,8 +4990,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -5011,7 +5021,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					                             Reverse{ reverse ? (end - 1).isBackward() : begin.isBackward() });
 
 					if (e.code() == error_code_wrong_shard_server) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -5021,8 +5031,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -5622,9 +5634,9 @@ void debugAddTag(Reference<TransactionState> trState) {
 Transaction::Transaction()
   : trState(makeReference<TransactionState>(TaskPriority::DefaultEndpoint, generateSpanID(false))) {}
 
-Transaction::Transaction(Database const& cx, Optional<Reference<Tenant>> const& tenant)
+Transaction::Transaction(Database const& cx)
   : trState(makeReference<TransactionState>(cx,
-                                            tenant,
+                                            Optional<Reference<Tenant>>(),
                                             cx->taskID,
                                             generateSpanID(cx->transactionTracingSample),
                                             createTrLogInfoProbabilistically(cx))),
@@ -5636,9 +5648,35 @@ Transaction::Transaction(Database const& cx, Optional<Reference<Tenant>> const& 
 	}
 }
 
+Transaction::Transaction(Reference<Tenant> const& tenant)
+  : trState(makeReference<TransactionState>(tenant->database(),
+                                            tenant,
+                                            tenant->database()->taskID,
+                                            generateSpanID(tenant->database()->transactionTracingSample),
+                                            createTrLogInfoProbabilistically(tenant->database()))),
+    span(trState->spanContext, "Transaction"_loc),
+    backoff(CLIENT_KNOBS->DEFAULT_BACKOFF),
+    tr(trState->spanContext) {
+	if (tenant->database()->debugUseTag) {
+		debugAddTag(trState);
+	}
+}
+
+Transaction::Transaction(Transaction&& tr) {
+	*this = std::move(tr);
+}
+
 Transaction::~Transaction() {
 	flushTrLogsIfEnabled();
 	cancelWatches();
+}
+
+Transaction Transaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx) {
+	if (tenant.present()) {
+		return Transaction(tenant.get());
+	} else {
+		return Transaction(cx);
+	}
 }
 
 void Transaction::operator=(Transaction&& r) noexcept {
@@ -6439,7 +6477,7 @@ FDB_BOOLEAN_PARAM(TenantPrefixPrepended);
 ACTOR static Future<Void> commitDummyTransaction(Reference<TransactionState> trState,
                                                  KeyRange range,
                                                  TenantPrefixPrepended tenantPrefixPrepended) {
-	state Transaction tr(trState->cx, trState->tenant());
+	state Transaction tr = Transaction::fromTenantOrDefault(trState->tenant(), trState->cx);
 	state int retries = 0;
 	state Span span("NAPI:dummyTransaction"_loc, trState->spanContext);
 	tr.span.setParent(span.context);
@@ -8732,7 +8770,7 @@ ACTOR Future<Version> checkBlobSubrange(Database db,
                                         KeyRange keyRange,
                                         Optional<Version> version,
                                         UseRawAccess useRawAccess) {
-	state Transaction tr(db, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 	state Optional<Version> summaryVersion;
 	if (version.present()) {
 		summaryVersion = version.get();
@@ -8763,7 +8801,7 @@ ACTOR Future<Version> verifyBlobRangeActor(Reference<DatabaseContext> cx,
                                            Optional<Reference<Tenant>> tenant,
                                            UseRawAccess useRawAccess) {
 	state Database db(cx);
-	state Transaction tr(db, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 	state Standalone<VectorRef<KeyRangeRef>> allRanges;
 	state KeyRange curRegion = KeyRangeRef(range.begin, range.begin);
 	state Version readVersionOut = invalidVersion;
@@ -9790,17 +9828,30 @@ Reference<ChangeFeedStorageData> DatabaseContext::getStorageData(StorageServerIn
 }
 
 Version DatabaseContext::getMinimumChangeFeedVersion() {
-	Version minVersion = std::numeric_limits<Version>::max();
+	Version minUpdaterVersion = std::numeric_limits<Version>::max();
+	Version minNALFeedVersion = std::numeric_limits<Version>::max();
+	Version minUpdaterDesiredVersion = std::numeric_limits<Version>::max();
 	for (auto& it : changeFeedUpdaters) {
-		if (now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
-			minVersion = std::min(minVersion, it.second->version.get());
+		if (it.second->version.get() < minUpdaterVersion &&
+		    now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
+			minUpdaterVersion = it.second->version.get();
+			minUpdaterDesiredVersion = it.second->desired.get();
 		}
 	}
 	for (auto& it : notAtLatestChangeFeeds) {
 		if (now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
-			minVersion = std::min(minVersion, it.second->getVersion());
+			minNALFeedVersion = std::min(minNALFeedVersion, it.second->getVersion());
 		}
 	}
+	Version minVersion = std::min(minUpdaterVersion, minNALFeedVersion);
+	TraceEvent("DBMinimumChangeFeedVersion")
+	    .suppressFor(10.0)
+	    .detail("FeedUpdaters", changeFeedUpdaters.size())
+	    .detail("NotAtLatestFeeds", notAtLatestChangeFeeds.size())
+	    .detail("MinVersion", minVersion)
+	    .detail("MinUpdaterVersion", minUpdaterVersion)
+	    .detail("MinUpdaterDesiredVersion", minUpdaterDesiredVersion)
+	    .detail("MinNALFeedVersion", minNALFeedVersion);
 	return minVersion;
 }
 

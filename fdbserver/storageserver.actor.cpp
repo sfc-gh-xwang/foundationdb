@@ -277,6 +277,10 @@ class ShardInfo : public ReferenceCounted<ShardInfo>, NonCopyable {
 	    desiredShardId(0LL),
 	    version(0) {}
 
+	int64_t shardSampledReads = -1;
+	int64_t totalSampledReads = -1;
+	double lastReadSampleCacheTime = 0;
+
 public:
 	// A shard has 3 mutual exclusive states: adding, readWrite and notAssigned.
 	std::unique_ptr<AddingShard> adding;
@@ -286,6 +290,8 @@ public:
 	uint64_t shardId;
 	uint64_t desiredShardId;
 	Version version;
+
+	double getSampledReadRate(StorageServer* data);
 
 	static ShardInfo* newNotAssigned(KeyRange keys) { return new ShardInfo(keys, nullptr, nullptr); }
 	static ShardInfo* newReadWrite(KeyRange keys, StorageServer* data) { return new ShardInfo(keys, nullptr, data); }
@@ -910,6 +916,9 @@ public:
 	Optional<TenantGroupName> getTenantGroup(Version, TenantInfo, bool lockAware) const;
 
 	std::vector<StorageServerShard> getStorageServerShards(KeyRangeRef range);
+	void insertReadShards(std::unordered_set<Reference<ShardInfo>>& shardSet, KeyRangeRef range);
+	ReadMetrics getReadMetrics(std::unordered_set<Reference<ShardInfo>> const& shards);
+	ReadMetrics getReadMetrics(KeyRef const& key);
 
 	class CurrentRunningFetchKeys {
 		std::unordered_map<UID, double> startTimeMap;
@@ -1504,6 +1513,23 @@ public:
 			specialCounter(cc, "ActiveChangeFeeds", [self]() { return self->uidChangeFeed.size(); });
 			specialCounter(cc, "ActiveChangeFeedQueries", [self]() { return self->activeFeedQueries; });
 			specialCounter(cc, "ChangeFeedMemoryBytes", [self]() { return self->changeFeedMemoryBytes; });
+			specialCounter(cc, "BlockedFeedClients", [self]() { return self->changeFeedClientVersions.size(); });
+			specialCounter(cc, "BlockedFeedStreams", [self]() {
+				int64_t total = 0;
+				for (auto& it : self->changeFeedClientVersions) {
+					total += it.second.size();
+				}
+				return total;
+			});
+			specialCounter(cc, "BlockedFeedVersion", [self]() {
+				Version minVersion = std::numeric_limits<Version>::max();
+				for (auto& client : self->changeFeedClientVersions) {
+					for (auto& stream : client.second) {
+						minVersion = std::min(minVersion, stream.second);
+					}
+				}
+				return minVersion;
+			});
 		}
 	} counters;
 
@@ -1888,6 +1914,31 @@ public:
 
 	bool isUsingStorageEngineParams() const { return storageEngineParams.isValid(); }
 };
+
+double ShardInfo::getSampledReadRate(StorageServer* data) {
+	if (now() - lastReadSampleCacheTime >= SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL) {
+		lastReadSampleCacheTime = now();
+
+		KeyRangeRef sampleRange = keys;
+		KeyRangeRef totalRange = allKeys;
+		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
+			if (keys.begin.startsWith(systemKeys.begin)) {
+				return 0;
+			} else if (keys.end.startsWith(systemKeys.begin)) {
+				sampleRange = KeyRangeRef(sampleRange.begin, systemKeys.begin);
+			}
+
+			totalRange = normalKeys;
+		}
+
+		shardSampledReads = data->metrics.opsReadSample.getEstimate(sampleRange);
+		totalSampledReads = data->metrics.opsReadSample.getEstimate(totalRange);
+	}
+
+	double readRate = shardSampledReads / std::max<double>(1.0, totalSampledReads);
+	ASSERT_LE(readRate, 1.0);
+	return readRate;
+}
 
 const StringRef StorageServer::CurrentRunningFetchKeys::emptyString = ""_sr;
 const KeyRangeRef StorageServer::CurrentRunningFetchKeys::emptyKeyRange =
@@ -2352,10 +2403,35 @@ std::vector<StorageServerShard> StorageServer::getStorageServerShards(KeyRangeRe
 	return res;
 }
 
-ReadMetrics getReadMetrics() {
-	// For now, return 0.0 for range busyness. Eventually, this will be determined by looking at how much is
-	// attributable to the ranges associated with the read, which will be added as parameters to this function.
-	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
+void StorageServer::insertReadShards(std::unordered_set<Reference<ShardInfo>>& shardSet, KeyRangeRef range) {
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		for (auto shard : shards.intersectingRanges(range)) {
+			shardSet.insert(shard->value());
+		}
+	}
+}
+
+ReadMetrics StorageServer::getReadMetrics(std::unordered_set<Reference<ShardInfo>> const& shards) {
+	double rangeBusyness = 0;
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		for (auto const& shard : shards) {
+			rangeBusyness += shard->getSampledReadRate(this);
+		}
+
+		rangeBusyness = std::min(1.0, rangeBusyness);
+	}
+
+	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
+}
+
+ReadMetrics StorageServer::getReadMetrics(KeyRef const& key) {
+	double rangeBusyness = 0;
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		Reference<ShardInfo> shard = shards[key];
+		rangeBusyness = shard->getSampledReadRate(this);
+	}
+
+	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
 }
 
 ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
@@ -2476,7 +2552,7 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 		// if (cached)
 		//	TraceEvent(SevDebug, "SSGetValueCached").detail("Key", req.key);
 
-		GetValueReply reply(v, cached, getReadMetrics());
+		GetValueReply reply(v, cached, data->getReadMetrics(req.key));
 		reply.penalty = data->getPenalty();
 		req.reply.send(reply);
 	} catch (Error& e) {
@@ -3938,6 +4014,14 @@ KeyRef addPrefix(KeyRef const& key, Optional<KeyRef> prefix, Arena& arena) {
 	}
 }
 
+KeyRef keyAfterWithPrefix(KeyRef const& key, Optional<KeyRef> prefix, Arena& arena) {
+	if (prefix.present()) {
+		return concatenateStrings(arena, prefix.get(), key, "\x00"_sr);
+	} else {
+		return keyAfter(key, arena);
+	}
+}
+
 KeyValueRef removePrefix(KeyValueRef const& src, Optional<KeyRef> prefix) {
 	if (prefix.present()) {
 		return KeyValueRef(src.key.removePrefix(prefix.get()), src.value);
@@ -4048,9 +4132,9 @@ ACTOR Future<GetValueReqAndResultRef> quickGetValue(StorageServer* data,
 	++data->counters.quickGetValueMiss;
 	if (SERVER_KNOBS->QUICK_GET_VALUE_FALLBACK) {
 		Optional<Reference<Tenant>> tenant = pOriginalReq->tenantInfo.hasTenant()
-		                                         ? makeReference<Tenant>(pOriginalReq->tenantInfo.tenantId)
+		                                         ? makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)
 		                                         : Optional<Reference<Tenant>>();
-		state Transaction tr(data->cx, tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, data->cx);
 		tr.setVersion(version);
 		// TODO: is DefaultPromiseEndpoint the best priority for this?
 		tr.trState->taskID = TaskPriority::DefaultPromiseEndpoint;
@@ -4323,7 +4407,8 @@ ACTOR Future<Key> findKey(StorageServer* data,
                           KeyRange range,
                           int* pOffset,
                           SpanContext parentSpan,
-                          Optional<ReadOptions> options)
+                          Optional<ReadOptions> options,
+                          std::unordered_set<Reference<ShardInfo>>* shards)
 // Attempts to find the key indicated by sel in the data at version, within range.
 // Precondition: selectorInRange(sel, range)
 // If it is found, offset is set to 0 and a key is returned which falls inside range.
@@ -4382,6 +4467,16 @@ ACTOR Future<Key> findKey(StorageServer* data,
 	if (skipEqualKey && rep.data.size() && rep.data[0].key == sel.getKey())
 		++index;
 
+	Key returnKey;
+	if (forward) {
+		returnKey = more ? keyAfter(rep.data.back().key) : range.end;
+	} else {
+		returnKey = more ? rep.data.back().key : range.begin;
+	}
+
+	data->insertReadShards(*shards,
+	                       forward ? KeyRangeRef(sel.getKey(), returnKey) : KeyRangeRef(returnKey, sel.getKey()));
+
 	if (index < rep.data.size()) {
 		*pOffset = 0;
 
@@ -4407,15 +4502,12 @@ ACTOR Future<Key> findKey(StorageServer* data,
 			CODE_PROBE(true, "Key selector read range had more results");
 
 			ASSERT(rep.data.size());
-			Key returnKey = forward ? keyAfter(rep.data.back().key) : rep.data.back().key;
-
 			// This is possible if key/value pairs are very large and only one result is returned on a last less than
 			// query SOMEDAY: graceful handling of exceptionally sized values
 			ASSERT(returnKey != sel.getKey());
-			return returnKey;
-		} else {
-			return forward ? range.end : range.begin;
 		}
+
+		return returnKey;
 	}
 }
 
@@ -4594,16 +4686,17 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
 		    req.begin.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.begin.getKey())
-		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options);
+		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options, &readShards);
 		state Future<Key> fEnd =
 		    req.end.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.end.getKey())
-		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options);
+		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options, &readShards);
 		state Key begin = wait(fBegin);
 		state Key end = wait(fEnd);
 
@@ -4636,7 +4729,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 			none.version = version;
 			none.more = false;
 			none.penalty = data->getPenalty();
-			none.readMetrics = getReadMetrics();
+			none.readMetrics = data->getReadMetrics(readShards);
 
 			data->checkChangeCounter(changeCounter,
 			                         KeyRangeRef(std::min<KeyRef>(req.begin.getKey(), req.end.getKey()),
@@ -4696,8 +4789,17 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 				    addPrefix(r.data[r.data.size() - 1].key, req.tenantInfo.prefix, req.arena), bytesReadPerKSecond);
 			}
 
+			KeyRef readBegin = (req.limit < 0 && r.data.size() > 0 && r.more)
+			                       ? addPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
+			                       : begin;
+			KeyRef readEnd = (req.limit >= 0 && r.data.size() > 0 && r.more)
+			                     ? keyAfterWithPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
+			                     : end;
+
+			data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
+
 			r.penalty = data->getPenalty();
-			r.readMetrics = getReadMetrics();
+			r.readMetrics = data->getReadMetrics(readShards);
 			if (g_network->isSimulated()) {
 				maybeInjectConsistencyScanCorruption(data->thisServerID, req, r);
 			}
@@ -4797,9 +4899,9 @@ ACTOR Future<GetRangeReqAndResultRef> quickGetKeyValues(
 	++data->counters.quickGetKeyValuesMiss;
 	if (SERVER_KNOBS->QUICK_GET_KEY_VALUES_FALLBACK) {
 		Optional<Reference<Tenant>> tenant = pOriginalReq->tenantInfo.hasTenant()
-		                                         ? makeReference<Tenant>(pOriginalReq->tenantInfo.tenantId)
+		                                         ? makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)
 		                                         : Optional<Reference<Tenant>>();
-		state Transaction tr(data->cx, tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, data->cx);
 		tr.setVersion(version);
 		if (pOriginalReq->options.present() && pOriginalReq->options.get().debugID.present()) {
 			tr.debugTransaction(pOriginalReq->options.get().debugID.get());
@@ -5771,16 +5873,17 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
 		    req.begin.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.begin.getKey())
-		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options);
+		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options, &readShards);
 		state Future<Key> fEnd =
 		    req.end.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.end.getKey())
-		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options);
+		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options, &readShards);
 		state Key begin = wait(fBegin);
 		state Key end = wait(fEnd);
 
@@ -5827,7 +5930,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 			none.version = version;
 			none.more = false;
 			none.penalty = data->getPenalty();
-			none.readMetrics = getReadMetrics();
+			none.readMetrics = data->getReadMetrics(readShards);
 
 			data->checkChangeCounter(changeCounter,
 			                         KeyRangeRef(std::min<KeyRef>(req.begin.getKey(), req.end.getKey()),
@@ -5839,14 +5942,14 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 			// because readRange is cheap when reading additional bytes
 			state int bytesForIndex =
 			    std::min(req.limitBytes, (int)(req.limitBytes * SERVER_KNOBS->FRACTION_INDEX_BYTELIMIT_PREFETCH));
-			GetKeyValuesReply getKeyValuesReply = wait(readRange(data,
-			                                                     version,
-			                                                     KeyRangeRef(begin, end),
-			                                                     req.limit,
-			                                                     &bytesForIndex,
-			                                                     span.context,
-			                                                     req.options,
-			                                                     req.tenantInfo.prefix));
+			state GetKeyValuesReply getKeyValuesReply = wait(readRange(data,
+			                                                           version,
+			                                                           KeyRangeRef(begin, end),
+			                                                           req.limit,
+			                                                           &bytesForIndex,
+			                                                           span.context,
+			                                                           req.options,
+			                                                           req.tenantInfo.prefix));
 
 			// Unlock read lock before the subqueries because each
 			// subquery will route back to getValueQ or getKeyValuesQ with a new request having the same
@@ -5879,8 +5982,19 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 				//                ASSERT(r.data.size() <= std::abs(req.limit));
 			}
 
+			KeyRef readBegin = (req.limit < 0 && getKeyValuesReply.data.size() > 0 && getKeyValuesReply.more)
+			                       ? addPrefix(getKeyValuesReply.data.back().key, req.tenantInfo.prefix, req.arena)
+			                       : begin;
+			KeyRef readEnd =
+			    (req.limit >= 0 && getKeyValuesReply.data.size() > 0 && getKeyValuesReply.more)
+			        ? keyAfterWithPrefix(getKeyValuesReply.data.back().key, req.tenantInfo.prefix, req.arena)
+			        : end;
+
+			data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
+
 			r.penalty = data->getPenalty();
-			r.readMetrics = getReadMetrics();
+			// Note: this does not include metrics for the mapped keys
+			r.readMetrics = data->getReadMetrics(readShards);
 			req.reply.send(r);
 
 			resultSize = req.limitBytes - remainingLimitBytes;
@@ -5972,16 +6086,17 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
 		    req.begin.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.begin.getKey())
-		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options);
+		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options, &readShards);
 		state Future<Key> fEnd =
 		    req.end.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.end.getKey())
-		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options);
+		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options, &readShards);
 		state Key begin = wait(fBegin);
 		state Key end = wait(fEnd);
 		if (req.options.present() && req.options.get().debugID.present())
@@ -6014,7 +6129,7 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 			GetKeyValuesStreamReply none;
 			none.version = version;
 			none.more = false;
-			none.readMetrics = getReadMetrics();
+			none.readMetrics = data->getReadMetrics(readShards);
 
 			data->checkChangeCounter(changeCounter,
 			                         KeyRangeRef(std::min<KeyRef>(req.begin.getKey(), req.end.getKey()),
@@ -6053,7 +6168,15 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 				                                      req.tenantInfo.prefix));
 				readLock.release();
 				GetKeyValuesStreamReply r(_r);
-				r.readMetrics = getReadMetrics();
+
+				KeyRef readBegin =
+				    (req.limit < 0 && r.more) ? addPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena) : begin;
+				KeyRef readEnd = (req.limit >= 0 && r.more)
+				                     ? keyAfterWithPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
+				                     : end;
+
+				data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
+				r.readMetrics = data->getReadMetrics(readShards);
 
 				if (req.options.present() && req.options.get().debugID.present())
 					g_traceBatch.addEvent("TransactionDebug",
@@ -6083,13 +6206,10 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 					totalByteSize += r.data[i].expectedSize();
 				}
 
-				KeyRef lastKey;
-				if (!r.data.empty()) {
-					lastKey = addPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena);
-				}
 				if (totalByteSize > 0 && SERVER_KNOBS->READ_SAMPLING_ENABLED) {
 					int64_t bytesReadPerKSecond = std::max(totalByteSize, SERVER_KNOBS->EMPTY_READ_PENALTY) / 2;
 					KeyRef firstKey = addPrefix(r.data[0].key, req.tenantInfo.prefix, req.arena);
+					KeyRef lastKey = (req.limit >= 0) ? readEnd.substr(0, readEnd.size() - 1) : readBegin;
 					data->metrics.notifyBytesReadPerKSecond(firstKey, bytesReadPerKSecond);
 					data->metrics.notifyBytesReadPerKSecond(lastKey, bytesReadPerKSecond);
 				}
@@ -6107,9 +6227,9 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 				ASSERT(r.data.size());
 
 				if (req.limit >= 0) {
-					begin = keyAfter(lastKey);
+					begin = readEnd;
 				} else {
-					end = lastKey;
+					end = readBegin;
 				}
 
 				// lock.release();
@@ -6161,11 +6281,13 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 		}
 		state uint64_t changeCounter = data->shardChangeCounter;
 
-		KeyRange shard = getShardKeyRange(data, req.sel);
+		state KeyRange shard = getShardKeyRange(data, req.sel);
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
 		state int offset;
-		Key absoluteKey = wait(findKey(data, req.sel, version, searchRange, &offset, req.spanContext, req.options));
+		state std::unordered_set<Reference<ShardInfo>> readShards;
+		Key absoluteKey =
+		    wait(findKey(data, req.sel, version, searchRange, &offset, req.spanContext, req.options, &readShards));
 
 		data->checkChangeCounter(changeCounter,
 		                         KeyRangeRef(std::min<KeyRef>(req.sel.getKey(), absoluteKey),
@@ -6197,7 +6319,7 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 		//	TraceEvent(SevDebug, "SSGetKeyCached").detail("Key", k).detail("Begin",
 		// shard.begin).detail("End", shard.end);
 
-		GetKeyReply reply(updated, cached, getReadMetrics());
+		GetKeyReply reply(updated, cached, data->getReadMetrics(readShards));
 		reply.penalty = data->getPenalty();
 
 		req.reply.send(reply);

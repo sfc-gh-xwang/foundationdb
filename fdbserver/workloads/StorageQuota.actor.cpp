@@ -125,7 +125,7 @@ struct StorageQuotaWorkload : TestWorkload {
 	}
 
 	ACTOR static Future<int64_t> getSize(Database cx, Reference<Tenant> tenant) {
-		state ReadYourWritesTransaction tr(cx, tenant);
+		state ReadYourWritesTransaction tr(tenant);
 		state double totalDelay = 0.0;
 		state int64_t previousSize = -1;
 
@@ -183,7 +183,7 @@ struct StorageQuotaWorkload : TestWorkload {
 		// the storage usage and quota related monitors to fetch and propagate the latest information
 		// about the tenants that are over storage quota.
 		for (i = 0; i < 10; i++) {
-			state Transaction tr(cx, tenant);
+			state Transaction tr(tenant);
 			if (bypassQuota) {
 				tr.setOption(FDBTransactionOptions::BYPASS_STORAGE_QUOTA);
 			}

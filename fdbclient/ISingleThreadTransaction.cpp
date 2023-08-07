@@ -68,6 +68,6 @@ Reference<ISingleThreadTransaction> ISingleThreadTransaction::create(Type type,
 	} else {
 		result = makeReference<PaxosConfigTransaction>();
 	}
-	result->construct(cx, tenant);
+	result->construct(tenant);
 	return result;
 }

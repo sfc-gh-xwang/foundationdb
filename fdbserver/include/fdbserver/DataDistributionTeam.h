@@ -100,19 +100,10 @@ double getProbabilityWithPivot(T lowerPivot, T upperPivot, T sample) {
 	double result;
 	if (lowerPivot == upperPivot) {
 		// Deal with special case at first
-		if (sample < upperPivot) {
+		if (sample <= lowerPivot) {
 			result = 1;
-		} else if (sample > upperPivot) {
-			result = 0;
 		} else {
-			// sample == lowerPivot == upperPivot
-			// In simulation, we would be optimistic to set the probability to be 1, and allow prevention.
-			// In production, on the other side, be pessimistic and not to prevent movements.
-			if (g_network->isSimulated()) {
-				result = 1;
-			} else {
-				result = 0;
-			}
+			result = 0;
 		}
 	} else {
 		LinearFunc<T> linearFunc(typename LinearFunc<T>::Point{ .x = lowerPivot, .y = 1.0 },
@@ -136,6 +127,7 @@ struct IDataDistributionTeam {
 	virtual bool hasLowerLoadBytes(int64_t thresholdBytes, double inflightPenalty) const = 0;
 	virtual int64_t getReadInFlightToTeam() const = 0;
 	virtual double getReadLoad(bool includeInFlight = true, double inflightPenalty = 1.0) const = 0;
+	virtual double getWriteLoad() const = 0;
 	virtual double getAverageCPU() const = 0;
 	virtual bool hasLowerCpu(double cpuThreshold) const = 0;
 	virtual int64_t getMinAvailableSpace(bool includeInFlight = true) const = 0;

@@ -391,7 +391,7 @@ const Value workerListValue(ProcessData const&);
 Key decodeWorkerListKey(KeyRef const&);
 ProcessData decodeWorkerListValue(ValueRef const&);
 
-//	"\xff\x02/backupProgress/[[workerID]]" := "[[WorkerBackupStatus]]"
+//	"\xff/backupProgress/[[workerID]]" := "[[WorkerBackupStatus]]"
 //	Provides the progress for the given backup worker.
 //	See "FDBTypes.h" struct WorkerBackupStatus for more details on the return type value.
 extern const KeyRangeRef backupProgressKeys;
@@ -402,8 +402,12 @@ UID decodeBackupProgressKey(const KeyRef& key);
 WorkerBackupStatus decodeBackupProgressValue(const ValueRef& value);
 
 // The key to signal backup workers a new backup job is submitted.
-//    "\xff\x02/backupStarted" := "[[vector<UID,Version1>]]"
+//    "\xff/backupStarted" := "[[vector<UID,Version1>]]"
 extern const KeyRef backupStartedKey;
+// TODO: Remove after a few releases.
+// This key works exactly the same as the non-deprecated backupStarted key,
+// except that it is not stored in transaction state store.
+extern const KeyRef deprecatedBackupStartedKey;
 Value encodeBackupStartedValue(const std::vector<std::pair<UID, Version>>& ids);
 std::vector<std::pair<UID, Version>> decodeBackupStartedValue(const ValueRef& value);
 
