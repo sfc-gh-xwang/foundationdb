@@ -1753,6 +1753,12 @@ int Arguments::validate() {
 			return -1;
 		}
 	}
+
+	if (txn_grv_cache && !disable_client_bypass) {
+		logr.error("--txn_grv_cache must be used with --disable_client_bypass");
+		return -1;
+	}
+
 	return 0;
 }
 
