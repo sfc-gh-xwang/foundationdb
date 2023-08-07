@@ -400,6 +400,7 @@ AddTest testGetApproxSize("GetApproxSize", ALL, [](const TestEnv& env) {
 	ASSERT(f.get() >= 3, "Unmatched transaction approx size: expected>=3, actual={}", f.get());
 });
 
+/* Transaction Atomic Operations */
 AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	// Test bitwise and on values of same length:
 	//   db key = foo
@@ -716,5 +717,103 @@ AddTest testAtomicOpMutationTypeByteMin("AtomicOpMutationTypeByteMin", ALL, [](c
 		       fdb::toCharsRef(f.get()));
 	}
 });
+
+AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
+    "AtomicOptionMutationTypeSetVersionstampedKey",
+    ALL,
+    [](const TestEnv& env) {
+	    const std::string prefix("combify-atomic-op-mutation-type-set-versionstamped-key-");
+	    int offset = prefix.size() + 3;
+	    const char* p = reinterpret_cast<const char*>(&offset);
+	    char keybuf[] = { 'f',  'o',  'o',  '\0', '\0', '\0', '\0', '\0', '\0',
+		                  '\0', '\0', '\0', '\0', p[0], p[1], p[2], p[3] };
+	    std::string key = prefix + std::string(keybuf, 17);
+	    std::string versionstamp("");
+
+	    auto tr = env.newNormalOrTenantTransaction();
+	    runToCompletion(
+	        tr,
+	        [&key, &versionstamp](auto tr) {
+		        tr.atomicOp(fdb::toBytesRef(key), "bar"_br, FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_KEY);
+		        auto f1 = tr.getVersionstamp();
+		        fdb::Future f2 = tr.commit();
+
+		        if (f2.blockUntilReady() || f2.error()) {
+			        return f2;
+		        }
+
+		        if (f1.blockUntilReady() || f1.error()) {
+			        return static_cast<fdb::Future>(f1);
+		        }
+
+		        versionstamp = std::string(f1.get().begin(), f1.get().end());
+		        // The cast here is a workaround to avoid runToCompletion to throw an error
+		        // because the return type of tr.getVersionstamp() is different from the
+		        // return type of tr.commit()
+		        return static_cast<fdb::Future>(f1);
+	        },
+	        "AtomicOptionMutationTypeSetVersionstampedKey");
+
+	    ASSERT(versionstamp.size() > 0, "Expect versionstamp's size > 0");
+
+	    tr = env.newNormalOrTenantTransaction();
+	    auto f = runToCompletion(
+	        tr,
+	        [&prefix, &versionstamp](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo" + versionstamp), false); },
+	        "CheckVersionstamp");
+
+	    ASSERT(f.get().has_value(), "Unexpected null value");
+	    ASSERT(f.get() == "bar"_br, "unmatched value: expected=bar, actual={}", fdb::toCharsRef(f.get()));
+    });
+
+AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
+    "AtomicOptionMutationTypeSetVersionstampedValue",
+    ALL,
+    [](const TestEnv& env) {
+	    const std::string prefix("combify-atomic-op-mutation-type-set-versionstamped-value-");
+	    char valbuf[] = { 'b', 'a', 'r', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', 3, 0, 0, 0 };
+	    std::string versionstamp("");
+	    std::string key = prefix + "foo";
+
+	    auto tr = env.newNormalOrTenantTransaction();
+	    runToCompletion(
+	        tr,
+	        [&key, &versionstamp, &valbuf](auto tr) {
+		        tr.atomicOp(fdb::toBytesRef(key),
+		                    fdb::BytesRef(reinterpret_cast<const uint8_t*>(valbuf), 17),
+		                    FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_VALUE);
+		        auto f1 = tr.getVersionstamp();
+		        fdb::Future f2 = tr.commit();
+
+		        if (f2.blockUntilReady() || f2.error()) {
+			        return f2;
+		        }
+
+		        if (f1.blockUntilReady() || f1.error()) {
+			        return static_cast<fdb::Future>(f1);
+		        }
+
+		        versionstamp = std::string(f1.get().begin(), f1.get().end());
+		        // The cast here is a workaround to avoid runToCompletion to throw an error
+		        // because the return type of tr.getVersionstamp() is different from the
+		        // return type of tr.commit()
+		        return static_cast<fdb::Future>(f1);
+	        },
+	        "AtomicOptionMutationTypeSetVersionstampedKey");
+
+	    ASSERT(versionstamp.size() > 0, "Expect versionstamp's size > 0");
+
+	    tr = env.newNormalOrTenantTransaction();
+	    auto f = runToCompletion(
+	        tr, [&key](auto tr) { return tr.get(fdb::toBytesRef(key), false); }, "CheckValue");
+
+	    auto expectedVal = fdb::toBytesRef("bar" + versionstamp);
+
+	    ASSERT(f.get().has_value(), "Unexpected null value");
+	    ASSERT(f.get() == expectedVal,
+	           "unmatched value: expected={}, actual={}",
+	           fdb::toCharsRef(expectedVal),
+	           fdb::toCharsRef(f.get()));
+    });
 
 } // anonymous namespace
