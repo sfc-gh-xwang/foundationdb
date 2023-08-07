@@ -311,12 +311,14 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_get_key(FDBFuture* f, uint8_t const*
 	// was changed to wrap a KeyResult type. For that reason, we do not know the exact type of the wrapped value. We do
 	// know that it is either a proper Key or a subclass of a Key, so we cast it to a Key.
 	CATCH_AND_RETURN({
-		if (typeid(f) == typeid(ThreadSingleAssignmentVar<Key>)) {
+		if (TSAVB(f)->containsValueType<KeyReadResult>()) {
+			KeyReadResult key = TSAV(KeyReadResult, f)->get();
+			*out_key = key.begin();
+			*out_key_length = key.size();
+		} else {
+			ASSERT(TSAVB(f)->containsValueType<Key>());
 			return fdb_future_get_bytes(f, out_key, out_key_length);
 		}
-		KeyReadResult key = TSAV(KeyReadResult, f)->get();
-		*out_key = key.begin();
-		*out_key_length = key.size();
 	});
 }
 
@@ -337,10 +339,11 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_get_keyvalue_array(FDBFuture* f,
                                                                fdb_bool_t* out_more) {
 	CATCH_AND_RETURN({
 		RangeResult rr;
-		if (typeid(f) == typeid(ThreadSingleAssignmentVar<RangeResult>)) {
-			rr = TSAV(RangeResult, f)->get();
-		} else {
+		if (TSAVB(f)->containsValueType<RangeReadResult>()) {
 			rr = TSAV(RangeReadResult, f)->get();
+		} else {
+			ASSERT(TSAVB(f)->containsValueType<RangeResult>());
+			rr = TSAV(RangeResult, f)->get();
 		}
 		*out_kv = (FDBKeyValue*)rr.begin();
 		*out_count = rr.size();

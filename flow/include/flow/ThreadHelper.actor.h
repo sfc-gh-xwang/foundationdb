@@ -481,6 +481,9 @@ public:
 			cleanupUnsafe();
 	}
 
+	template <class T>
+	bool containsValueType() const;
+
 private:
 	Future<Void> cancelFuture;
 	int32_t valueReferenceCount;
@@ -522,6 +525,9 @@ protected:
 		cancel();
 	}
 
+	// Return the typeid of a pointer to the derived class
+	const virtual std::type_info& getTypeId() const = 0;
+
 	// Get a pointer to the value held by the subclass. This can be used to access the underlying value with a
 	// polymorphic type.
 	virtual const Castable* getValuePtrUnsafe() = 0;
@@ -546,15 +552,6 @@ public:
 
 		addValueReferenceUnsafe();
 		return value;
-	}
-
-	const Castable* getValuePtrUnsafe() override {
-		if constexpr (std::is_base_of_v<Castable, T>) {
-			return static_cast<Castable*>(&value);
-		} else {
-			ASSERT(false);
-			throw internal_error();
-		}
 	}
 
 	void addref() override { ThreadSafeReferenceCounted<ThreadSingleAssignmentVar<T>>::addref(); }
@@ -595,7 +592,25 @@ public:
 		value = T();
 		ThreadSingleAssignmentVarBase::cleanupUnsafe();
 	}
+
+protected:
+	// Return the typeid of the this pointer (i.e. getTypeId() == typeid(const ThreadSingleAssignmentVar<T>*))
+	const std::type_info& getTypeId() const override { return typeid(this); }
+
+	const Castable* getValuePtrUnsafe() override {
+		if constexpr (std::is_base_of_v<Castable, T>) {
+			return static_cast<Castable*>(&value);
+		} else {
+			ASSERT(false);
+			throw internal_error();
+		}
+	}
 };
+
+template <class T>
+bool ThreadSingleAssignmentVarBase::containsValueType() const {
+	return getTypeId() == typeid(const ThreadSingleAssignmentVar<T>*);
+}
 
 template <class T>
 class ThreadFuture {
