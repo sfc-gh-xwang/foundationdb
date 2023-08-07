@@ -120,7 +120,12 @@ void ConfigureSSLContext(const LoadedTLSConfig& loaded, boost::asio::ssl::contex
 		                  boost::asio::ssl::context::no_sslv3 | boost::asio::ssl::context::no_tlsv1 |
 		                  boost::asio::ssl::context::no_tlsv1_1;
 		if (!FLOW_KNOBS->TLS_V1_2_ALLOWED) {
+			TraceEvent("TLSV12Disabled");
 			context.set_options(boost::asio::ssl::context::no_tlsv1_2);
+		}
+		if (!FLOW_KNOBS->TLS_V1_3_ALLOWED) {
+			TraceEvent("TLSV13Disabled");
+			context.set_options(boost::asio::ssl::context::no_tlsv1_3);
 		}
 		context.set_options(tlsOptions);
 
