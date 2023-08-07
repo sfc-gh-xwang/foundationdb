@@ -213,7 +213,7 @@ func (o NetworkOptions) SetTLSPassword(param string) error {
 	return o.setOpt(54, []byte(param))
 }
 
-// Prevent client from connecting or listening to a non-TLS endpoint by throwing tls required error.
+// Prevent client/server from connecting/listening to a non-TLS endpoint by throwing tls_required error.
 func (o NetworkOptions) SetTLSRequired() error {
 	return o.setOpt(55, nil)
 }
