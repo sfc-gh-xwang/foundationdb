@@ -106,9 +106,7 @@ def copyData(
                     srcTenantName, begin, end, str(e)
                 )
             )
-            # transaction_too_old can just be retried
-            if e.code != 1007:
-                raise
+            raise
 
     totalKeys = len(readRange)
 
@@ -126,9 +124,7 @@ def copyData(
                         dstTenantName, begin, end, str(e)
                     )
                 )
-                # transaction_too_old can just be retried
-                if e.code != 1007:
-                    raise
+                raise
     print(
         "Wrote full destination range: {} - {} for tenant {}. Total Keys: {}. Time Elapsed: {}".format(
             begin,
@@ -309,7 +305,7 @@ def clear_stored_split_point(
 
 
 def process_queue(
-    mgmtDbName: bytes, tenantGroup: bytes, srcClusterName: bytes, dstClusterName: bytes
+    mgmtDbName: str, tenantGroup: bytes, srcClusterName: bytes, dstClusterName: bytes
 ) -> int:
     print("Process Queue Started")
     mgmtDb = fdb.open(mgmtDbName)
@@ -456,7 +452,7 @@ if __name__ == "__main__":
         exit(0)
 
     # Arguments to the queue
-    cluster = ast.literal_eval("b'%s'" % args.cluster)
+    cluster = args.cluster
     tenantGroup = ast.literal_eval("b'%s'" % args.tenant_group)
     srcName = ast.literal_eval("b'%s'" % args.src_name)
     dstName = ast.literal_eval("b'%s'" % args.dst_name)
