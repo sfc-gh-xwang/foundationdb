@@ -48,6 +48,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( MAX_VERSION_RATE_MODIFIER,                             0.1 );
 	init( MAX_VERSION_RATE_OFFSET,               VERSIONS_PER_SECOND ); // If the calculated version is more than this amount away from the expected version, it will be clamped to this value. This prevents huge version jumps.
 	init( ENABLE_VERSION_VECTOR_HA_OPTIMIZATION,               false );
+	init( MAX_RECOVERY_VERSION_EPOCH_CORRECTION_SECONDS,       86400 );
 
 	// TLogs
 	init( TLOG_TIMEOUT,                                          0.4 ); //cannot buggify because of availability

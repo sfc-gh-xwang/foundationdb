@@ -45,6 +45,10 @@ public:
 	double MAX_VERSION_RATE_MODIFIER;
 	int64_t MAX_VERSION_RATE_OFFSET;
 	bool ENABLE_VERSION_VECTOR_HA_OPTIMIZATION;
+	// Maximum correction recovery can make to the version if the actual
+	// version of the cluster is behind the expected version (version
+	// correction must be enabled). Denoted as a value in seconds.
+	int64_t MAX_RECOVERY_VERSION_EPOCH_CORRECTION_SECONDS;
 
 	// TLogs
 	bool PEEK_USING_STREAMING;
