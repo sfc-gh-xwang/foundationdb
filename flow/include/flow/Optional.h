@@ -208,6 +208,7 @@ public:
 	}
 
 	bool present() const { return impl.has_value(); }
+	bool has_value() const { return impl.has_value(); }
 	T& get() & {
 		UNSTOPPABLE_ASSERT(impl.has_value());
 		return impl.value();
