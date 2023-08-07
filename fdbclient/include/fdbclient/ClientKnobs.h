@@ -309,6 +309,12 @@ public:
 	// for calculating the average cost.
 	double AVERAGE_COST_FOLDING_TIME;
 
+	// Enable busy throttling ID tracking. Only those IDs in the busy set will be subject to throttling by the GRV
+	// proxy. If an ID is not considered busy, it can utilize the GRV cache. The thresholds for determining whether an
+	// ID is busy or not are configurable by SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD and
+	// SERVER_KNOBS->THROTTLING_ID_FORGET_THRESHOLD.
+	bool TRACK_BUSY_THROTTLING_IDS;
+
 	// busyness reporting
 	double BUSYNESS_SPIKE_START_THRESHOLD;
 	double BUSYNESS_SPIKE_SATURATED_THRESHOLD;
@@ -357,6 +363,8 @@ public:
 	// Bulk Loading
 	// knob guard to disallow starting bulk loads until implementation is completed
 	bool ALLOW_BULK_LOADS;
+	int BULK_LOAD_FILE_POINTER_TOO_MANY;
+	int64_t BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
 
 	bool ENABLE_STORAGE_ENGINE_PARAM_INTERFACE;
 

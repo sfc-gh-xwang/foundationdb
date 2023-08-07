@@ -184,6 +184,8 @@ Future<Standalone<VectorRef<REPLY_TYPE(Request)>>> doBlobGranuleRequests(
 	}
 }
 
+ACTOR Future<Standalone<VectorRef<KeyRangeRef>>> getBlobRanges(Transaction* tr, KeyRange range, int batchLimit);
+
 #include "flow/unactorcompiler.h"
 
 #endif

@@ -48,13 +48,9 @@ actions as a result of a failure should probably wait a while to see if a machin
 unfailed first.  If possible use onFailedFor() which in the future may react to 'permanent'
 failures immediately.
 
-In older FDB, information reported through this interface was actually actively supplied by
-failureMonitorClient, which exchanges FailureMonitoringRequest/Reply pairs with the
-failureDetectionServer actor on the ClusterController.
-
-Now it is done locally by each process with help of of FlowTransport. Whenever a network
-connection is establish/failed, the address is marked as available or failed accordingly. We
-do however take an optimistic approach of assuming every newly discovered address
+Failure monitoring is done locally by each process with the help of FlowTransport. Whenever a
+network connection is establish/failed, the address is marked as available or failed accordingly.
+We do however take an optimistic approach of assuming every newly discovered address
 (when deserializing an endpoint) is healthy by default.
 
 In the future it may be augmented with locally available information about failures (e.g.

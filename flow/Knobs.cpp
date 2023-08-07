@@ -141,8 +141,10 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	//Authorization
 	init( ALLOW_TOKENLESS_TENANT_ACCESS,                     false );
 	init( AUDIT_LOGGING_ENABLED,                              true );
+	init( LOG_MALFORMED_TOKEN_STRINGS,                       false );
 	init( PUBLIC_KEY_FILE_MAX_SIZE,                    1024 * 1024 );
 	init( PUBLIC_KEY_FILE_REFRESH_INTERVAL_SECONDS,            300 );
+	init( ACTIVE_PUBLIC_KEY_IDS_LOG_INTERVAL_SECONDS,           60 );
 	init( AUDIT_TIME_WINDOW,                                   5.0 );
 	init( TOKEN_CACHE_SIZE,                                   2000 );
 	init( WIPE_SENSITIVE_DATA_FROM_PACKET_BUFFER,             true );

@@ -19,6 +19,8 @@
  */
 
 #include "fdbclient/BackupAgent.actor.h"
+#include "fdbclient/CommitTransaction.h"
+#include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h" // for key backed map codecs for tss mapping
 #include "fdbclient/MetaclusterRegistration.h"
 #include "fdbclient/MutationList.h"
@@ -30,6 +32,7 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/LogProtocolMessage.h"
 #include "fdbserver/LogSystem.h"
+#include "flow/CodeProbe.h"
 #include "flow/Error.h"
 #include "flow/Trace.h"
 
@@ -672,6 +675,15 @@ private:
 		}
 	}
 
+	void checkSetBackupProgressKeys(MutationRef m) {
+		if (!m.param1.startsWith(backupProgressPrefix)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+	}
+
 	void checkSetOtherKeys(MutationRef m) {
 		if (initialCommit)
 			return;
@@ -820,6 +832,16 @@ private:
 		}
 	}
 
+	void checkSetBackupStartedKey(MutationRef m) {
+		if (m.param1 != backupStartedKey) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+		TraceEvent("BackupStartedKey", dbgid).detail("BackupStarted", m.param2);
+	}
+
 	void checkClearKeyServerKeys(KeyRangeRef range) {
 		if (!keyServersKeys.intersects(range)) {
 			return;
@@ -850,6 +872,15 @@ private:
 		    !excludedLocalityKeys.contains(range) && !failedLocalityKeys.contains(range)) {
 			TraceEvent("MutationRequiresRestart", dbgid).detail("M", m);
 			confChange = true;
+		}
+	}
+
+	void checkClearBackupProgressKeys(KeyRangeRef range) {
+		if (!backupProgressKeys.intersects(range)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->clear(range & backupProgressKeys);
 		}
 	}
 
@@ -1004,18 +1035,22 @@ private:
 		if (uid_applyMutationsData == nullptr) {
 			return;
 		}
-		if (m.param1.size() >= applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID) &&
-		    m.param2.size() >= applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID)) {
-			Key uid = m.param1.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
-			Key uid2 = m.param2.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
 
-			if (uid == uid2) {
+		int prefixSize = applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID);
+		if (m.param1.size() >= prefixSize && m.param2.size() >= prefixSize) {
+			Key uid = m.param1.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
+			Key endRange = strinc(m.param1.substr(0, prefixSize));
+			if (m.param2 <= endRange) {
 				auto& p = (*uid_applyMutationsData)[uid];
 				if (p.keyVersion == Reference<KeyRangeMap<Version>>())
 					p.keyVersion = makeReference<KeyRangeMap<Version>>();
-				p.keyVersion->rawErase(
-				    KeyRangeRef(m.param1.substr(applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID)),
-				                m.param2.substr(applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID))));
+
+				KeyRef begin = m.param1.substr(prefixSize);
+				KeyRef end = (m.param2 == endRange) ? p.keyVersion->mapEnd : m.param2.substr(prefixSize);
+
+				if (begin < end) {
+					p.keyVersion->rawErase(KeyRangeRef(begin, end));
+				}
 			}
 		}
 	}
@@ -1286,6 +1321,9 @@ private:
 		if (range.contains(writeRecoveryKey)) {
 			txnStateStore->clear(singleKeyRange(writeRecoveryKey));
 		}
+		if (range.contains(backupStartedKey)) {
+			txnStateStore->clear(singleKeyRange(backupStartedKey));
+		}
 		if (range.intersects(testOnlyTxnStateStorePrefixRange)) {
 			txnStateStore->clear(range & testOnlyTxnStateStorePrefixRange);
 		}
@@ -1390,6 +1428,8 @@ public:
 				checkSetVersionEpochKey(m);
 				checkSetTenantMapPrefix(m);
 				checkSetMetaclusterRegistration(m);
+				checkSetBackupStartedKey(m);
+				checkSetBackupProgressKeys(m);
 				checkSetOtherKeys(m);
 			} else if (m.type == MutationRef::ClearRange && isSystemKey(m.param2)) {
 				KeyRangeRef range(m.param1, m.param2);
@@ -1408,6 +1448,7 @@ public:
 				checkClearVersionEpochKeys(m, range);
 				checkClearTenantMapPrefix(range);
 				checkClearMetaclusterRegistration(range);
+				checkClearBackupProgressKeys(range);
 				checkClearMiscRangeKeys(range);
 			}
 		}

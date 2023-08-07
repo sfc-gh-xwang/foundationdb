@@ -86,7 +86,7 @@ struct BlobRestoreWorkload : TestWorkload {
 			// check if we have manifest
 			Reference<BlobConnectionProvider> manifestStore =
 			    BlobConnectionProvider::newBlobConnectionProvider(self->blobManifestUrl_.toString());
-			Reference<BackupContainerFileSystem> container = manifestStore->getForRead("");
+			Reference<BackupContainerFileSystem> container = manifestStore->getForAccess("");
 			BackupContainerFileSystem::FilesAndSizesT filesAndSizes = wait(container->listFiles(""));
 			bool validManifest = false;
 			for (auto& file : filesAndSizes) {
@@ -186,7 +186,7 @@ struct BlobRestoreWorkload : TestWorkload {
 			state Standalone<VectorRef<KeyValueRef>> src_ = wait(readFromBlob(cx, targetVersion, self));
 		} catch (Error& e) {
 			fmt::print("Couldn't read blob data at version {}\n", targetVersion);
-			CODE_PROBE(true, "Skip blob restore test because of missing blob data");
+			CODE_PROBE(true, "Skip blob restore test because of missing blob data", probe::decoration::rare);
 			return invalidVersion;
 		}
 		return targetVersion;

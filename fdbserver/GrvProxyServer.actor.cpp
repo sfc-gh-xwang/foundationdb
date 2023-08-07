@@ -40,6 +40,7 @@
 #include "flow/flow.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 #include "flow/genericactors.actor.h"
+#include <boost/unordered/unordered_flat_set.hpp>
 
 struct GrvProxyStats {
 	CounterCollection cc;
@@ -409,14 +410,22 @@ ACTOR Future<Void> globalConfigRequestServer(GrvProxyData* grvProxyData, GrvProx
 	}
 }
 
-ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRequest> stream,
-                                                 ThrottlingIdMap<uint64_t>* throttlingIdToThroughput) {
+ACTOR Future<Void> handleClientThroughputReports(
+    FutureStream<ReportThroughputRequest> stream,
+    ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
+    boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds) {
 	loop {
 		ReportThroughputRequest req = waitNext(stream);
 		for (auto const& [throttlingId, clientThroughput] : req.throughput) {
 			(*throttlingIdToThroughput)[throttlingId] += clientThroughput;
 		}
-		req.reply.send(Void());
+
+		ReportThroughputReply reply;
+		if (isBusyThrottlingIdsTrackingEnabled()) {
+			reply.busyThrottlingIds = *busyThrottlingIds;
+		}
+
+		req.reply.send(reply);
 	}
 }
 
@@ -432,7 +441,8 @@ ACTOR Future<Void> getRate(UID myID,
                            ThrottlingIdMap<uint64_t>* throttlingIdTransactionCounter,
                            ThrottlingIdMap<uint64_t>* throttlingIdThroughput,
                            GrvProxyStats* stats,
-                           GrvProxyData* proxyData) {
+                           GrvProxyData* proxyData,
+                           boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds) {
 	state Future<Void> nextRequestTimer = Never();
 	state Future<Void> leaseTimeout = Never();
 	state Future<GetRateInfoReply> reply = Never();
@@ -492,10 +502,22 @@ ACTOR Future<Void> getRate(UID myID,
 				// target throughput in bytes per second.
 				if (rep.targetThroughput.present()) {
 					proxyData->tagThrottler.updateRates(rep.targetThroughput.get());
+
+					// The quota throttler only reports rates for busy throttlingIds
+					busyThrottlingIds->clear();
+					for (const auto& [k, _] : rep.targetThroughput.get()) {
+						busyThrottlingIds->emplace(k);
+					}
 				}
 			} else if (rep.targetTransactionRate.present()) {
 				// Update the tag throttler with the target rates in transactions per second
 				proxyData->tagThrottler.updateRates(rep.targetTransactionRate.get());
+
+				// The quota throttler only reports rates for busy throttlingIds
+				busyThrottlingIds->clear();
+				for (const auto& [k, _] : rep.targetTransactionRate.get()) {
+					busyThrottlingIds->emplace(k);
+				}
 			}
 		}
 		when(wait(leaseTimeout)) {
@@ -528,6 +550,7 @@ void proxyGRVThresholdExceeded(const GetReadVersionRequest* req, GrvProxyStats* 
 // Drop a GetReadVersion request from a queue, by responding an error to the request.
 void dropRequestFromQueue(Deque<GetReadVersionRequest>* queue, GrvProxyStats* stats) {
 	proxyGRVThresholdExceeded(&queue->front(), stats);
+	++stats->txnRequestOut;
 	queue->pop_front();
 }
 
@@ -889,6 +912,8 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state ThrottlingIdMap<uint64_t> throttlingIdTransactionCounter;
 	state ThrottlingIdMap<uint64_t> throttlingIdThroughput;
 
+	state boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
+
 	state PromiseStream<double> normalGRVLatency;
 
 	state int64_t midShardSize = SERVER_KNOBS->MIN_SHARD_BYTES;
@@ -897,7 +922,8 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	addActor.send(monitorDDMetricsChanges(&midShardSize, db));
 
 	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
-		addActor.send(handleClientThroughputReports(proxy.reportThroughput.getFuture(), &throttlingIdThroughput));
+		addActor.send(handleClientThroughputReports(
+		    proxy.reportThroughput.getFuture(), &throttlingIdThroughput, &busyThrottlingIds));
 	}
 	addActor.send(getRate(proxy.id(),
 	                      db,
@@ -910,7 +936,8 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	                      &throttlingIdTransactionCounter,
 	                      &throttlingIdThroughput,
 	                      &grvProxyData->stats,
-	                      grvProxyData));
+	                      grvProxyData,
+	                      &busyThrottlingIds));
 	addActor.send(queueGetReadVersionRequests(db,
 	                                          &systemQueue,
 	                                          &defaultQueue,

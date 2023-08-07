@@ -69,7 +69,7 @@ void GrvProxyTagThrottler::TagQueue::rejectRequests(LatencyBandsMap& latencyBand
 	}
 }
 
-void GrvProxyTagThrottler::TagQueue::endReleaseWindow(int64_t numStarted, double elapsed) {
+void GrvProxyTagThrottler::TagQueue::endReleaseWindow(uint64_t numStarted, double elapsed) {
 	if (rateInfo.present()) {
 		CODE_PROBE(requests.empty(), "Tag queue ending release window with empty request queue");
 		CODE_PROBE(!requests.empty(), "Tag queue ending release window with requests still queued");
@@ -108,12 +108,12 @@ void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {
 	queues[req.throttlingId.get()].requests.emplace_back(req);
 }
 
-uint32_t GrvProxyTagThrottler::getCost(GetReadVersionRequest const& req) const {
+uint64_t GrvProxyTagThrottler::getCost(GetReadVersionRequest const& req) const {
 
 	if (isClientAverageCostTrackingEnabled()) {
 		// track-average-cost-on-client is enabled use the expectedTransactionCost.
 		if (req.expectedTotalCost.present()) {
-			return req.expectedTotalCost.get();
+			return static_cast<uint64_t>(req.expectedTotalCost.get());
 		} else {
 			// expectedTransactionCost not provided, use req.transactionCount * DEFAULT_EXPECTED_TRANSACTION_COST
 			return req.transactionCount * CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
@@ -133,12 +133,12 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 	struct TagQueueHandle {
 		// Store pointers here to avoid frequent std::unordered_map lookups
 		TagQueue* queue;
-		// Cannot be stored directly because we need to
-		uint32_t* numReleased;
+		// Cannot be stored directly because amountReleased outlives TagQueueHandle
+		uint64_t* numReleased;
 		// Sequence number of the first queued request
-		int64_t nextSeqNo;
+		uint64_t nextSeqNo;
 		bool operator>(TagQueueHandle const& rhs) const { return nextSeqNo > rhs.nextSeqNo; }
-		explicit TagQueueHandle(TagQueue& queue, uint32_t& numReleased) : queue(&queue), numReleased(&numReleased) {
+		explicit TagQueueHandle(TagQueue& queue, uint64_t& numReleased) : queue(&queue), numReleased(&numReleased) {
 			ASSERT(!this->queue->requests.empty());
 			nextSeqNo = this->queue->requests.front().sequenceNumber;
 		}
@@ -149,7 +149,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 	std::priority_queue<TagQueueHandle, std::vector<TagQueueHandle>, std::greater<TagQueueHandle>> pqOfQueues;
 
 	// Track transactions released for each throttlingId
-	std::vector<std::pair<ThrottlingId, uint32_t>> transactionsReleased;
+	std::vector<std::pair<ThrottlingId, uint64_t>> transactionsReleased;
 	transactionsReleased.reserve(queues.size());
 	auto const transactionsReleasedInitialCapacity = transactionsReleased.capacity();
 
@@ -176,7 +176,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		pqOfQueues.pop();
 		// Used to determine when it is time to start processing another throttlingId
 		auto const nextQueueSeqNo =
-		    pqOfQueues.empty() ? std::numeric_limits<int64_t>::max() : pqOfQueues.top().nextSeqNo;
+		    pqOfQueues.empty() ? std::numeric_limits<uint64_t>::max() : pqOfQueues.top().nextSeqNo;
 
 		while (!tagQueueHandle.queue->requests.empty()) {
 			auto& delayedReq = tagQueueHandle.queue->requests.front();
@@ -228,7 +228,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 
 	// End release windows for all tag queues
 	{
-		ThrottlingIdMap<uint32_t> transactionsReleasedMap;
+		ThrottlingIdMap<uint64_t> transactionsReleasedMap;
 		for (const auto& [throttlingId, count] : transactionsReleased) {
 			transactionsReleasedMap[throttlingId] = count;
 		}
@@ -341,7 +341,7 @@ static TransactionTag getRandomTag() {
 	return result;
 }
 
-static bool isNear(double desired, int64_t actual) {
+static bool isNear(double desired, uint64_t actual) {
 	return std::abs(desired - actual) * 10 < desired;
 }
 

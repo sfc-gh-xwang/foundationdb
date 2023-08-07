@@ -133,7 +133,7 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 
 	Optional<Reference<Tenant>> tenant;
 	if (tenantEntry.present()) {
-		tenant = Reference<Tenant>(new Tenant(tenantEntry.get().id));
+		tenant = Reference<Tenant>(new Tenant(localDb, tenantEntry.get().id));
 	}
 
 	Key begin = tokens[2];

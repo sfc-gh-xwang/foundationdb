@@ -1,0 +1,28 @@
+[[test]]
+title = 'Bulk Load API Tenant Encryption Correctness Multi Threaded'
+multiThreaded = true
+buggify = true
+minFdbThreads = 2
+maxFdbThreads = 8
+minClients = 1
+maxClients = 8
+minTenants = 1
+maxTenants = 5
+
+[[server]]
+blob_granules_enabled = true
+enable_encryption_at_rest = true
+
+[[test.workload]]
+name = 'BulkLoadCorrectness'
+minKeyLength = 1
+maxKeyLength = 64
+minValueLength = 1
+maxValueLength = 1000
+maxKeysPerTransaction = 50
+initialSize = 0
+# numRandomOperations = 100
+numRandomOperations = 0
+
+[[knobs]]
+allow_bulk_loads=true

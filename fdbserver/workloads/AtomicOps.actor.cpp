@@ -32,7 +32,6 @@ struct AtomicOpsWorkload : TestWorkload {
 	static constexpr auto NAME = "AtomicOps";
 	int opNum, actorCount, nodeCount;
 	uint32_t opType;
-	bool apiVersion500 = false;
 
 	double testDuration, transactionsPerSecond;
 	std::vector<Future<Void>> clients;
@@ -44,10 +43,6 @@ struct AtomicOpsWorkload : TestWorkload {
 		actorCount = getOption(options, "actorsPerClient"_sr, transactionsPerSecond / 5);
 		opType = getOption(options, "opType"_sr, -1);
 		nodeCount = getOption(options, "nodeCount"_sr, 1000);
-		// Atomic OPs Min and And have modified behavior from api version 510. Hence allowing testing for older version
-		// (500) with a 10% probability Actual change of api Version happens in setup
-		apiVersion500 = ((sharedRandomNumber % 10) == 0);
-		TraceEvent("AtomicOpsApiVersion500").detail("ApiVersion500", apiVersion500);
 
 		lbsum = 0;
 		ubsum = 0;
@@ -108,9 +103,6 @@ struct AtomicOpsWorkload : TestWorkload {
 	}
 
 	Future<Void> setup(Database const& cx) override {
-		if (apiVersion500)
-			cx->apiVersion = ApiVersion(500);
-
 		if (clientId != 0)
 			return Void();
 		return _setup(cx, this);

@@ -1033,9 +1033,10 @@ ProcessData decodeWorkerListValue(ValueRef const& value) {
 	return s;
 }
 
-const KeyRangeRef backupProgressKeys("\xff\x02/backupProgress/"_sr, "\xff\x02/backupProgress0"_sr);
+const KeyRangeRef backupProgressKeys("\xff/backupProgress/"_sr, "\xff/backupProgress0"_sr);
 const KeyRef backupProgressPrefix = backupProgressKeys.begin;
-const KeyRef backupStartedKey = "\xff\x02/backupStarted"_sr;
+const KeyRef deprecatedBackupStartedKey = "\xff\x02/backupStarted"_sr;
+const KeyRef backupStartedKey = "\xff/backupStarted"_sr;
 extern const KeyRef backupPausedKey = "\xff\x02/backupPaused"_sr;
 
 const Key backupProgressKeyFor(UID workerID) {

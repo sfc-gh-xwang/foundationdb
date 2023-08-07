@@ -1371,6 +1371,7 @@ public:
 								    self->checkAndCreateMachine(self->server_info[server->getId()]);
 								ASSERT(destMachine.isValid());
 							}
+							self->resetLocalitySet();
 
 							// Ensure the server's server team belong to a machine team, and
 							// Get the newBadTeams due to the locality change
@@ -1389,7 +1390,6 @@ public:
 							}
 
 							server->updateInDesiredDC(self->includedDCs);
-							self->resetLocalitySet();
 
 							bool addedNewBadTeam = false;
 							for (auto it : newBadTeams) {
@@ -2714,7 +2714,11 @@ public:
 							// FIXME: better way to do this than timer?
 						} else {
 							pendingTSSCheck = false;
-							checkTss = Never();
+							if (!self->zeroHealthyTeams->get()) {
+								checkTss = Never();
+							} else {
+								checkTss = delay(SERVER_KNOBS->TSS_DD_CHECK_INTERVAL);
+							}
 						}
 					}
 					when(wait(self->restartRecruiting.onTrigger())) {}

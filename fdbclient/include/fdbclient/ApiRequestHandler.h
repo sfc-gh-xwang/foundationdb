@@ -13,7 +13,10 @@
 #include "fdbclient/ISingleThreadTransaction.h"
 #include "fdbclient/FDBTypes.h"
 
-Future<ApiResult> handleApiRequest(ISingleThreadTransaction* tr, ApiRequest req);
+Future<ApiResult> handleTransactionApiRequest(ISingleThreadTransaction* tr, ApiRequest req);
+Future<ApiResult> handleDatabaseOrTenantApiRequest(DatabaseContext* db,
+                                                   ApiRequest req,
+                                                   Optional<Reference<Tenant>> tenant = {});
 
 ReadRangeApiResult createReadRangeApiResult(RangeResult rangeResult);
 

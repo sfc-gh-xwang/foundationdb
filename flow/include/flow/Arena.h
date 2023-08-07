@@ -327,6 +327,9 @@ public:
 		return *this;
 	}
 
+	// Default implementation for using a standalone as a value type in KeyBackedRangeMap - just returns the new value
+	Standalone<T> apply(Standalone<T> const& update) const { return update; }
+
 // Always-copy mode was meant to make alloc instrumentation more useful by making allocations occur at the final resting
 // place of objects leaked It doesn't actually work because some uses of Standalone things assume the object's memory
 // will not change on copy or assignment
@@ -732,6 +735,40 @@ inline static StringRef makeAlignedString(int alignment, int length, Arena& aren
 // is only legitimate if you know where the StringRef's memory came from and that it is not shared!
 inline static uint8_t* mutateString(StringRef& s) {
 	return const_cast<uint8_t*>(s.begin());
+}
+
+template <class... StringRefType>
+static Standalone<StringRef> concatenateStrings(StringRefType... strs) {
+	int totalSize = 0;
+	for (auto const& s : { strs... }) {
+		totalSize += s.size();
+	}
+
+	Standalone<StringRef> str = makeString(totalSize);
+	uint8_t* buf = mutateString(str);
+
+	for (auto const& s : { strs... }) {
+		buf = s.copyTo(buf);
+	}
+
+	return str;
+}
+
+template <class... StringRefType>
+static StringRef concatenateStrings(Arena& arena, StringRefType... strs) {
+	int totalSize = 0;
+	for (auto const& s : { strs... }) {
+		totalSize += s.size();
+	}
+
+	StringRef str = makeString(totalSize, arena);
+	uint8_t* buf = mutateString(str);
+
+	for (auto const& s : { strs... }) {
+		buf = s.copyTo(buf);
+	}
+
+	return str;
 }
 
 template <class Archive>
