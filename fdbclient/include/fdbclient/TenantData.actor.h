@@ -95,6 +95,7 @@ private:
 		ASSERT(!tenantList.more);
 		self->tenantMap = std::map<int64_t, typename TenantTypes::TenantMapEntryT>(tenantList.results.begin(),
 		                                                                           tenantList.results.end());
+
 		ASSERT(!tenantNameIndexList.more);
 		self->tenantNameIndex =
 		    std::map<TenantName, int64_t>(tenantNameIndexList.results.begin(), tenantNameIndexList.results.end());
