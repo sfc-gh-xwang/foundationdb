@@ -1,4 +1,5 @@
 #include <optional>
+#include <semaphore>
 #include "Combify.hpp"
 #include "TestHelpers.hpp"
 
@@ -815,5 +816,123 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
 	           fdb::toCharsRef(expectedVal),
 	           fdb::toCharsRef(f.get()));
     });
+
+/* Transaction Watch */
+AddTest testTransactionWatchRYWDisabled("TransactionWatchRYWDisabled", asTrustedClient, [](const TestEnv& env) {
+	// Watches created on a transaction with the option READ_YOUR_WRITES_DISABLE
+	// should return a watches_disabled error.
+	auto tr = env.newNormalOrTenantTransaction();
+	try {
+		auto f = runToCompletion(
+		    tr,
+		    [](auto tr) {
+			    tr.setOption(FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE);
+			    return tr.watch("foo"_br);
+		    },
+		    "WatchDisabled");
+		ASSERT(false, "Expect watch to fail");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 1034); // watches_disabled
+	}
+});
+
+AddTest testTransactionWatchReset("TransactionWatchReset", asTrustedClient, [](const TestEnv& env) {
+	// Resetting (or destroying) an uncommitted transaction should cause watches
+	// created by the transaction to fail with a transaction_cancelled error.
+	auto tr = env.newNormalOrTenantTransaction();
+	try {
+		auto f = runToCompletion(
+		    tr,
+		    [](auto tr) {
+			    auto f = tr.watch("foo"_br);
+			    tr.reset();
+			    return f;
+		    },
+		    "TransactionCancelledAfterWatch");
+		ASSERT(false, "Expect watch to fail");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 1025); // transaction_cancelled
+	}
+});
+
+AddTest testTransactionMaxWatches("TransactionMaxWatches", asTrustedClient, [](const TestEnv& env) {
+	const std::string prefix("combify-transaction-max-watches-");
+	int64_t max_watches = 3;
+	auto db = env.newDatabase();
+	db.setOption(FDB_DB_OPTION_MAX_WATCHES, max_watches);
+
+	auto tr = db.createTransaction();
+	runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    std::vector<fdb::Future> futures;
+		    for (auto c = 'a'; c <= 'd'; c++) {
+			    futures.push_back(tr.watch(fdb::toBytesRef(prefix + c)));
+		    }
+
+		    auto f = tr.commit();
+		    if (f.blockUntilReady() || f.error()) {
+			    return f;
+		    }
+
+		    std::binary_semaphore sem(0);
+		    // Callbacks will be triggered with operation_cancelled errors once the
+		    // too_many_watches error fires, as the other futures will go out of scope
+		    // and be cleaned up. The future which too_many_watches occurs on is
+		    // nondeterministic, so each future is checked.
+		    for (auto& ft : futures) {
+			    ft.then([&sem](fdb::Future f) {
+				    ASSERT(!f.blockUntilReady(), "Unexpected future unready");
+				    auto err = f.error();
+				    if (err.code() != /*operation_cancelled*/ 1101 && !err.retryable()) {
+					    ASSERT(err.code() == 1032); // too_many_watches
+				    }
+				    sem.release();
+			    });
+		    }
+
+		    // We only expect 1 of the callbacks above to be fired because the max watches
+		    // is set to 3 and there are four watches, leading to one of the future to fail
+		    // and causing the callback to be called. The other three watches will wait
+		    // because no changes have been made to any of the keys used in this test.
+		    sem.acquire();
+		    return f;
+	    },
+	    "TransactionMaxWatches");
+
+	// Reset available number of watches.
+	max_watches = 10000;
+	db.setOption(FDB_DB_OPTION_MAX_WATCHES, max_watches);
+});
+
+AddTest testTransactionWatch("TransactionWatch", asTrustedClient, [](const TestEnv& env) {
+	const std::string prefix("combify-transaction-watch-");
+	auto tr = env.newNormalOrTenantTransaction();
+	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "foo" } }));
+
+	auto db = env.newDatabase();
+	tr = env.newNormalOrTenantTransaction();
+
+	runToCompletion(
+	    tr,
+	    [&prefix, &db](auto tr) {
+		    std::binary_semaphore sem(0);
+
+		    auto f1 = tr.watch(fdb::toBytesRef(prefix + "foo"));
+		    fdb::Future f2 = tr.commit();
+
+		    if (f2.blockUntilReady() || f2.error()) {
+			    return f2;
+		    }
+
+		    f1.then([&sem](fdb::Future f) { sem.release(); });
+		    // Update value for key "foo" to trigger the watch.
+		    populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
+		    sem.acquire();
+
+		    return static_cast<fdb::Future>(f1);
+	    },
+	    "TransactionWatch");
+});
 
 } // anonymous namespace
