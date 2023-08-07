@@ -3858,6 +3858,7 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 
 	state Optional<UID> getKeyID;
 	state Optional<ReadOptions> readOptions = trState->readOptions;
+	state ReadMetrics readMetrics;
 
 	state Span span("NAPI:getKey"_loc, trState->spanContext);
 	if (trState->readOptions.present() && trState->readOptions.get().debugID.present()) {
@@ -3876,11 +3877,11 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 	loop {
 		if (k.getKey() == allKeys.end) {
 			if (k.offset > 0) {
-				return allKeys.end;
+				return KeyReadResult(allKeys.end, readMetrics);
 			}
 			k.orEqual = false;
 		} else if (k.getKey() == allKeys.begin && k.offset <= 0) {
-			return Key();
+			return KeyReadResult(Key(), readMetrics);
 		}
 
 		Key locationKey(k.getKey(), k.arena());
@@ -3936,9 +3937,10 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 				                      getKeyID.get().first(),
 				                      "NativeAPI.getKey.After"); //.detail("NextKey",reply.sel.key).detail("Offset",
 				                                                 // reply.sel.offset).detail("OrEqual", k.orEqual);
+			readMetrics.combine(reply.readMetrics);
 			k = reply.sel;
 			if (!k.offset && k.orEqual) {
-				return KeyReadResult(std::move(k.getKey()), reply.readMetrics);
+				return KeyReadResult(std::move(k.getKey()), readMetrics);
 			}
 		} catch (Error& e) {
 			if (getKeyID.present())
@@ -4978,7 +4980,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					CODE_PROBE(true, "!GetKeyValuesFamilyReply.more and modifiedSelectors in getRange");
 
 					if (!rep.data.size()) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -4988,8 +4990,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -5017,7 +5021,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					                             Reverse{ reverse ? (end - 1).isBackward() : begin.isBackward() });
 
 					if (e.code() == error_code_wrong_shard_server) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -5027,8 +5031,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -9822,17 +9828,30 @@ Reference<ChangeFeedStorageData> DatabaseContext::getStorageData(StorageServerIn
 }
 
 Version DatabaseContext::getMinimumChangeFeedVersion() {
-	Version minVersion = std::numeric_limits<Version>::max();
+	Version minUpdaterVersion = std::numeric_limits<Version>::max();
+	Version minNALFeedVersion = std::numeric_limits<Version>::max();
+	Version minUpdaterDesiredVersion = std::numeric_limits<Version>::max();
 	for (auto& it : changeFeedUpdaters) {
-		if (now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
-			minVersion = std::min(minVersion, it.second->version.get());
+		if (it.second->version.get() < minUpdaterVersion &&
+		    now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
+			minUpdaterVersion = it.second->version.get();
+			minUpdaterDesiredVersion = it.second->desired.get();
 		}
 	}
 	for (auto& it : notAtLatestChangeFeeds) {
 		if (now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
-			minVersion = std::min(minVersion, it.second->getVersion());
+			minNALFeedVersion = std::min(minNALFeedVersion, it.second->getVersion());
 		}
 	}
+	Version minVersion = std::min(minUpdaterVersion, minNALFeedVersion);
+	TraceEvent("DBMinimumChangeFeedVersion")
+	    .suppressFor(10.0)
+	    .detail("FeedUpdaters", changeFeedUpdaters.size())
+	    .detail("NotAtLatestFeeds", notAtLatestChangeFeeds.size())
+	    .detail("MinVersion", minVersion)
+	    .detail("MinUpdaterVersion", minUpdaterVersion)
+	    .detail("MinUpdaterDesiredVersion", minUpdaterDesiredVersion)
+	    .detail("MinNALFeedVersion", minNALFeedVersion);
 	return minVersion;
 }
 
