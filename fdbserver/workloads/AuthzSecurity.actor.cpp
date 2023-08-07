@@ -144,7 +144,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	    purgeBlobNegative("PurgeBlobNegative"),
 	    bulkLoadStart("Start", false),
 	    bulkLoadStateChange("StateChange"),
-	    bulkLoadCleanup("Cleanup"),
+	    bulkLoadCleanup("Cleanup", false),
 	    bulkLoadWaitComplete("WaitComplete"),
 	    bulkLoadFilesToWrite("FilesToWrite"),
 	    bulkLoadFilesWritten("FilesWritten") {
@@ -278,7 +278,6 @@ struct AuthzSecurityWorkload : TestWorkload {
 		CODE_PROBE(bulkLoadStateChange.tenantMismatch.getValue(), "AuthzSecurity bulkLoadStateChangeMismatch > 0");
 		CODE_PROBE(bulkLoadCleanup.positive.getValue(), "AuthzSecurity bulkLoadCleanupPositive > 0");
 		CODE_PROBE(bulkLoadCleanup.negative.getValue(), "AuthzSecurity bulkLoadCleanupNegative > 0");
-		CODE_PROBE(bulkLoadCleanup.tenantMismatch.getValue(), "AuthzSecurity bulkLoadCleanupMismatch > 0");
 		CODE_PROBE(bulkLoadWaitComplete.positive.getValue(), "AuthzSecurity bulkLoadWaitCompletePositive > 0");
 		CODE_PROBE(bulkLoadWaitComplete.negative.getValue(), "AuthzSecurity bulkLoadWaitCompleteNegative > 0");
 		CODE_PROBE(bulkLoadWaitComplete.tenantMismatch.getValue(), "AuthzSecurity bulkLoadWaitCompleteMismatch > 0");
@@ -1060,14 +1059,14 @@ struct AuthzSecurityWorkload : TestWorkload {
 				++counter->negative;
 			}
 		} else if (testCase == BulkLoadTestCase::TENANT_MISMATCH) {
-			// Should always fail. Expected to return bulk_load_tenant_mismatch, but expected to occasionally fail with
+			// Should always fail. Expected to return bulk_load_not_found, but expected to occasionally fail with
 			// different errors
 			if (!outcome.present()) {
 				TraceEvent(SevError, "AuthzSecurityError")
 				    .detail("Case", "CrossTenantBulkLoad" + counter->baseName + "Allowed")
 				    .detail("Subcase", "Mismatch")
 				    .log();
-			} else if (outcome.get().code() == error_code_bulk_load_tenant_mismatch) {
+			} else if (outcome.get().code() == error_code_bulk_load_not_found) {
 				++counter->tenantMismatch;
 			} else if (outcome.get().code() == error_code_permission_denied) {
 				TraceEvent(SevError, "AuthzSecurityError")
