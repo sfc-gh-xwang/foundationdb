@@ -442,18 +442,6 @@ class ClientConfigTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.cluster.tear_down()
 
-    def test_tls_required(self):
-        # Local client only; Plaintext connections are disabled in a plaintext cluster; Timeout Expected
-        test = ClientConfigTest(self)
-        test.tls_config = TLSConfig(
-            server_disable_tls=True, client_disable_tls=True, client_require_tls=True
-        )
-        test.print_status = True
-        test.transaction_timeout = 100
-        test.expected_error = 1031  # Timeout
-        test.exec()
-        test.check_healthy_status(False)
-
     def test_local_client_only(self):
         # Local client only
         test = ClientConfigTest(self)
@@ -698,8 +686,52 @@ class ClientConfigSeparateCluster(unittest.TestCase):
         finally:
             self.cluster.tear_down()
 
+    def test_plaintext_cluster_tls_client(self):
+        # Test connecting succesfully to a plaintext cluster with a TLS client
+        tls_config = TLSConfig(server_disable_tls=True)
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
+        self.cluster.setup()
+        try:
+            test = ClientConfigTest(self)
+            test.print_status = True
+            test.exec()
+            test.check_healthy_status(True)
+        finally:
+            self.cluster.tear_down()
+
+    def test_plaintext_cluster_tls_client_require_tls(self):
+        # Test failing connection with timeout to a plaintext cluster with a TLS-configured client with plaintext connections disabled
+        tls_config = TLSConfig(server_disable_tls=True, client_require_tls=True)
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
+        self.cluster.setup()
+        try:
+            test = ClientConfigTest(self)
+            test.transaction_timeout = 100
+            test.expected_error = 1031  # Timeout
+            test.exec()
+        finally:
+            self.cluster.tear_down()
+
+    def test_plaintext_cluster_plaintext_client_tls_required(self):
+        # Test failing connection to a plaintext cluster with a tls client with tls required
+        tls_config = TLSConfig(
+            server_disable_tls=True,
+            client_disable_tls=True,
+            server_tls_required=True,
+            client_tls_required=True,
+        )
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
+        self.cluster.setup()
+        try:
+            test = ClientConfigTest(self)
+            test.transaction_timeout = 100
+            test.expected_error = 1031  # timeout
+            test.exec()
+        finally:
+            self.cluster.tear_down()
+
     def test_tls_cluster_tls_client(self):
-        # Test connecting successfully to a TLS-enabled cluster
+        # Test connecting successfully to a TLS-enabled cluster with TLS-enabled client
         tls_config = TLSConfig()
         self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
         self.cluster.setup()
@@ -711,9 +743,10 @@ class ClientConfigSeparateCluster(unittest.TestCase):
         finally:
             self.cluster.tear_down()
 
-    def test_plaintext_cluster_tls_client(self):
-        # Test connecting succesfully to a plaintext cluster with a TLS client
-        tls_config = TLSConfig(server_disable_tls=True)
+    def test_tls_cluster_tls_client_require_tls(self):
+        # Test connecting successfully to a TLS-enabled cluster with plain-text connections
+        # disabled in a TLS-configured client
+        tls_config = TLSConfig(server_require_tls=True, client_require_tls=True)
         self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
         self.cluster.setup()
         try:
@@ -735,33 +768,6 @@ class ClientConfigSeparateCluster(unittest.TestCase):
             test = ClientConfigTest(self)
             test.transaction_timeout = 100
             test.expected_error = 1031  # timeout
-            test.exec()
-        finally:
-            self.cluster.tear_down()
-
-    def test_tls_cluster_tls_client_require_tls(self):
-        # Test connecting successfully to a TLS-enabled cluster with plain-text connections
-        # disabled in a TLS-configured client
-        tls_config = TLSConfig(client_require_tls=True)
-        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
-        self.cluster.setup()
-        try:
-            test = ClientConfigTest(self)
-            test.print_status = True
-            test.exec()
-            test.check_healthy_status(True)
-        finally:
-            self.cluster.tear_down()
-
-    def test_plaintext_cluster_tls_client_require_tls(self):
-        # Test failing connection with timeout to a plaintext cluster with a TLS-configured client with plaintext connections disabled
-        tls_config = TLSConfig(server_disable_tls=True, client_require_tls=True)
-        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
-        self.cluster.setup()
-        try:
-            test = ClientConfigTest(self)
-            test.transaction_timeout = 100
-            test.expected_error = 1031  # Timeout
             test.exec()
         finally:
             self.cluster.tear_down()
