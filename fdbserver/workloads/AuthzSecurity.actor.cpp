@@ -1087,11 +1087,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                           WipedString token,
 	                                                           BulkLoaderInterface interf)>;
 
-	ACTOR static Future<Void> testRandomBulkLoadOp(AuthzSecurityWorkload* self,
-	                                               Database cx,
-	                                               KeyRange keyRange,
-	                                               BulkLoadFunc func,
-	                                               BulkLoadCounter* counter) {
+	ACTOR static Future<Void> runAndCheckRandomBulkLoadOp(AuthzSecurityWorkload* self,
+	                                                      Database cx,
+	                                                      KeyRange keyRange,
+	                                                      BulkLoadFunc func,
+	                                                      BulkLoadCounter* counter) {
 		Reference<BulkLoaderInfo> loaders = wait(cx->getBulkLoaders());
 		if (!loaders.isValid() || loaders->size() == 0) {
 			return Void();
@@ -1134,12 +1134,12 @@ struct AuthzSecurityWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Optional<Error>> tryBulkLoadStart(AuthzSecurityWorkload* self,
-	                                               Database cx,
-	                                               Reference<Tenant> tenant,
-	                                               KeyRange keyRange,
-	                                               WipedString token,
-	                                               BulkLoaderInterface interf) {
+	ACTOR static Future<Optional<Error>> tryBulkLoadStart(AuthzSecurityWorkload* self,
+	                                                      Database cx,
+	                                                      Reference<Tenant> tenant,
+	                                                      KeyRange keyRange,
+	                                                      WipedString token,
+	                                                      BulkLoaderInterface interf) {
 		state Version readVersion;
 		state Transaction tr(cx);
 		loop {
@@ -1165,27 +1165,18 @@ struct AuthzSecurityWorkload : TestWorkload {
 	}
 
 	ACTOR static Future<Void> testRandomBulkLoadStart(AuthzSecurityWorkload* self, Database cx) {
-		// have to do another lambda because it's a member function
-		BulkLoadFunc startFunc = [=](AuthzSecurityWorkload* self,
-		                             Database cx,
-		                             Reference<Tenant> tenant,
-		                             KeyRange keyRange,
-		                             WipedString token,
-		                             BulkLoaderInterface interf) {
-			return self->tryBulkLoadStart(self, cx, tenant, keyRange, token, interf);
-		};
 		KeyRange keyRange = singleKeyRange(self->randomString());
-		wait(testRandomBulkLoadOp(self, cx, keyRange, startFunc, &self->bulkLoadStart));
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, tryBulkLoadStart, &self->bulkLoadStart));
 		return Void();
 	}
 
-	ACTOR Future<Optional<Error>> tryBulkLoadStateChange(AuthzSecurityWorkload* self,
-	                                                     Database cx,
-	                                                     Reference<Tenant> tenant,
-	                                                     KeyRange keyRange,
-	                                                     WipedString token,
-	                                                     BulkLoaderInterface interf,
-	                                                     BulkLoadStatus::State desired) {
+	ACTOR static Future<Optional<Error>> tryBulkLoadStateChange(AuthzSecurityWorkload* self,
+	                                                            Database cx,
+	                                                            Reference<Tenant> tenant,
+	                                                            KeyRange keyRange,
+	                                                            WipedString token,
+	                                                            BulkLoaderInterface interf,
+	                                                            BulkLoadStatus::State desired) {
 		BulkLoadStateChangeRequest req;
 		req.arena.dependsOn(keyRange.arena());
 		req.id = keyRange.begin; // fake bulk load id but it works fine
@@ -1204,10 +1195,10 @@ struct AuthzSecurityWorkload : TestWorkload {
 		return Optional<Error>();
 	}
 
-	ACTOR Future<bool> createBulkLoadForTest(AuthzSecurityWorkload* self,
-	                                         Database cx,
-	                                         KeyRange keyRange,
-	                                         bool abortAfter = false) {
+	ACTOR static Future<bool> createBulkLoadForTest(AuthzSecurityWorkload* self,
+	                                                Database cx,
+	                                                KeyRange keyRange,
+	                                                bool abortAfter = false) {
 		Reference<BulkLoaderInfo> loaders = wait(cx->getBulkLoaders());
 		if (!loaders.isValid() || loaders->size() == 0) {
 			return false;
@@ -1249,7 +1240,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 			return self->tryBulkLoadStateChange(
 			    self, cx, tenant, keyRange, token, interf, BulkLoadStatus::State::STAGING);
 		};
-		wait(testRandomBulkLoadOp(self, cx, keyRange, stateChangeFunc, &self->bulkLoadStateChange));
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, stateChangeFunc, &self->bulkLoadStateChange));
 		return Void();
 	}
 
@@ -1271,16 +1262,16 @@ struct AuthzSecurityWorkload : TestWorkload {
 			return self->tryBulkLoadStateChange(
 			    self, cx, tenant, keyRange, token, interf, BulkLoadStatus::State::CLEANUP);
 		};
-		wait(testRandomBulkLoadOp(self, cx, keyRange, cleanupFunc, &self->bulkLoadCleanup));
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, cleanupFunc, &self->bulkLoadCleanup));
 		return Void();
 	}
 
-	ACTOR Future<Optional<Error>> tryBulkLoadFilesToWrite(AuthzSecurityWorkload* self,
-	                                                      Database cx,
-	                                                      Reference<Tenant> tenant,
-	                                                      KeyRange keyRange,
-	                                                      WipedString token,
-	                                                      BulkLoaderInterface interf) {
+	ACTOR static Future<Optional<Error>> tryBulkLoadFilesToWrite(AuthzSecurityWorkload* self,
+	                                                             Database cx,
+	                                                             Reference<Tenant> tenant,
+	                                                             KeyRange keyRange,
+	                                                             WipedString token,
+	                                                             BulkLoaderInterface interf) {
 		BulkLoadFilesToWriteRequest req;
 		req.arena.dependsOn(keyRange.arena());
 		req.id = keyRange.begin; // fake bulk load id but it works fine
@@ -1301,25 +1292,16 @@ struct AuthzSecurityWorkload : TestWorkload {
 			return Void();
 		}
 		CODE_PROBE(true, "Authz security attempting bulk load files to write");
-		// have to do another lambda because it's a member function
-		BulkLoadFunc filesToWriteFunc = [=](AuthzSecurityWorkload* self,
-		                                    Database cx,
-		                                    Reference<Tenant> tenant,
-		                                    KeyRange keyRange,
-		                                    WipedString token,
-		                                    BulkLoaderInterface interf) {
-			return self->tryBulkLoadFilesToWrite(self, cx, tenant, keyRange, token, interf);
-		};
-		wait(testRandomBulkLoadOp(self, cx, keyRange, filesToWriteFunc, &self->bulkLoadFilesToWrite));
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, tryBulkLoadFilesToWrite, &self->bulkLoadFilesToWrite));
 		return Void();
 	}
 
-	ACTOR Future<Optional<Error>> tryBulkLoadFilesWritten(AuthzSecurityWorkload* self,
-	                                                      Database cx,
-	                                                      Reference<Tenant> tenant,
-	                                                      KeyRange keyRange,
-	                                                      WipedString token,
-	                                                      BulkLoaderInterface interf) {
+	ACTOR static Future<Optional<Error>> tryBulkLoadFilesWritten(AuthzSecurityWorkload* self,
+	                                                             Database cx,
+	                                                             Reference<Tenant> tenant,
+	                                                             KeyRange keyRange,
+	                                                             WipedString token,
+	                                                             BulkLoaderInterface interf) {
 		BulkLoadFilesWrittenRequest req;
 		req.arena.dependsOn(keyRange.arena());
 		req.id = keyRange.begin; // fake bulk load id but it works fine
@@ -1352,25 +1334,16 @@ struct AuthzSecurityWorkload : TestWorkload {
 			return Void();
 		}
 		CODE_PROBE(true, "Authz security attempting bulk load files written");
-		// have to do another lambda because it's a member function
-		BulkLoadFunc filesWrittenFunc = [=](AuthzSecurityWorkload* self,
-		                                    Database cx,
-		                                    Reference<Tenant> tenant,
-		                                    KeyRange keyRange,
-		                                    WipedString token,
-		                                    BulkLoaderInterface interf) {
-			return self->tryBulkLoadFilesWritten(self, cx, tenant, keyRange, token, interf);
-		};
-		wait(testRandomBulkLoadOp(self, cx, keyRange, filesWrittenFunc, &self->bulkLoadFilesWritten));
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, tryBulkLoadFilesWritten, &self->bulkLoadFilesWritten));
 		return Void();
 	}
 
-	ACTOR Future<Optional<Error>> tryBulkLoadWaitComplete(AuthzSecurityWorkload* self,
-	                                                      Database cx,
-	                                                      Reference<Tenant> tenant,
-	                                                      KeyRange keyRange,
-	                                                      WipedString token,
-	                                                      BulkLoaderInterface interf) {
+	ACTOR static Future<Optional<Error>> tryBulkLoadWaitComplete(AuthzSecurityWorkload* self,
+	                                                             Database cx,
+	                                                             Reference<Tenant> tenant,
+	                                                             KeyRange keyRange,
+	                                                             WipedString token,
+	                                                             BulkLoaderInterface interf) {
 		BulkLoadWaitCompleteRequest req;
 		req.arena.dependsOn(keyRange.arena());
 		req.id = keyRange.begin; // fake bulk load id but it works fine
@@ -1394,17 +1367,8 @@ struct AuthzSecurityWorkload : TestWorkload {
 		if (!createdLoad) {
 			return Void();
 		}
-		CODE_PROBE(true, "Authz security attempting bulk load files written");
-		// have to do another lambda because it's a member function
-		BulkLoadFunc waitCompleteFunc = [=](AuthzSecurityWorkload* self,
-		                                    Database cx,
-		                                    Reference<Tenant> tenant,
-		                                    KeyRange keyRange,
-		                                    WipedString token,
-		                                    BulkLoaderInterface interf) {
-			return self->tryBulkLoadWaitComplete(self, cx, tenant, keyRange, token, interf);
-		};
-		wait(testRandomBulkLoadOp(self, cx, keyRange, waitCompleteFunc, &self->bulkLoadWaitComplete));
+		CODE_PROBE(true, "Authz security attempting bulk load wait complete");
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, tryBulkLoadWaitComplete, &self->bulkLoadWaitComplete));
 		return Void();
 	}
 
