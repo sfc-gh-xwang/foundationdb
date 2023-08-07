@@ -114,7 +114,6 @@ class ClientConfigTest:
         self.status_json = None
 
         # Configuration parameters to be set directly as needed
-        self.tls_config = None
         self.disable_local_client = False
         self.disable_client_bypass = False
         self.ignore_external_client_failures = False
@@ -330,28 +329,40 @@ class ClientConfigTest:
         if self.disable_client_bypass:
             cmd_args += ["--network-option-disable_client_bypass", ""]
 
-        if self.tls_config and not self.tls_config.client_disable_tls:
+        if (
+            self.cluster.get_tls_config()
+            and not self.cluster.get_tls_config().client_disable_tls
+        ):
             cmd_args += [
                 "--network-option-tls_cert_path",
                 self.cluster.get_client_tls_cert_path(),
             ]
 
-        if self.tls_config and not self.tls_config.client_disable_tls:
+        if (
+            self.cluster.get_tls_config()
+            and not self.cluster.get_tls_config().client_disable_tls
+        ):
             cmd_args += [
                 "--network-option-tls_key_path",
                 self.cluster.get_client_tls_key_path(),
             ]
 
-        if self.tls_config and not self.tls_config.client_disable_tls:
+        if (
+            self.cluster.get_tls_config()
+            and not self.cluster.get_tls_config().client_disable_tls
+        ):
             cmd_args += [
                 "--network-option-tls_ca_path",
                 self.cluster.get_client_tls_ca_path(),
             ]
 
-        if self.tls_config and self.tls_config.client_require_tls:
+        if (
+            self.cluster.get_tls_config()
+            and self.cluster.get_tls_config().client_require_tls
+        ):
             cmd_args += [
                 "--network-option-tls_required",
-                str(self.tls_config.client_require_tls),
+                str(self.cluster.get_tls_config().client_require_tls),
             ]
 
         if self.external_lib_path is not None:
@@ -694,7 +705,6 @@ class ClientConfigSeparateCluster(unittest.TestCase):
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
-            test.tls_config = tls_config
             test.print_status = True
             test.exec()
             test.check_healthy_status(True)
@@ -708,7 +718,6 @@ class ClientConfigSeparateCluster(unittest.TestCase):
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
-            test.tls_config = tls_config
             test.print_status = True
             test.exec()
             test.check_healthy_status(True)
@@ -724,7 +733,6 @@ class ClientConfigSeparateCluster(unittest.TestCase):
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
-            test.tls_config = tls_config
             test.transaction_timeout = 100
             test.expected_error = 1031  # timeout
             test.exec()
@@ -739,7 +747,6 @@ class ClientConfigSeparateCluster(unittest.TestCase):
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
-            test.tls_config = tls_config
             test.print_status = True
             test.exec()
             test.check_healthy_status(True)
@@ -753,7 +760,6 @@ class ClientConfigSeparateCluster(unittest.TestCase):
         self.cluster.setup()
         try:
             test = ClientConfigTest(self)
-            test.tls_config = tls_config
             test.transaction_timeout = 100
             test.expected_error = 1031  # Timeout
             test.exec()

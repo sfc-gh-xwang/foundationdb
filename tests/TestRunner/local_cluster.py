@@ -348,6 +348,9 @@ tracer = log_file
         )
         return conn_str
 
+    def get_tls_config(self):
+        return self.tls_config
+
     def get_client_tls_ca_path(self):
         if not self.tls_config:
             return None
