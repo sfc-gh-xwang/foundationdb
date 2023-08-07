@@ -644,6 +644,8 @@ public:
 			if (resolvedEnd == ryw->getMaxReadKey())
 				readThroughEnd = true;
 
+			result.getReadMetrics().combine(resolvedEnd.getReadMetrics());
+
 			if (begin.getKey() >= resolvedEnd && !begin.isBackward()) {
 				return result;
 			} else if (resolvedEnd == allKeys.begin) {
@@ -955,6 +957,8 @@ public:
 				readToBegin = true;
 			if (resolvedBegin == ryw->getMaxReadKey())
 				readThroughEnd = true;
+
+			result.getReadMetrics().combine(resolvedBegin.getReadMetrics());
 
 			if (resolvedBegin >= end.getKey() && end.offset <= 1) {
 				return result;
