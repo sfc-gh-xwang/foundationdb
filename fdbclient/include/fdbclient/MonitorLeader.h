@@ -40,7 +40,9 @@ struct ClientStatusInfo {
 	ClientStatusInfo(Key const& traceLogGroup,
 	                 Standalone<VectorRef<ClientVersionRef>> versions,
 	                 Standalone<VectorRef<StringRef>> issues)
-	  : traceLogGroup(traceLogGroup), versions(versions), issues(issues) {}
+	  : traceLogGroup(traceLogGroup),
+	    versions(versions),
+	    issues(issues) {}
 };
 
 struct ClientData {
@@ -58,7 +60,8 @@ struct MonitorLeaderInfo {
 
 	MonitorLeaderInfo() : hasConnected(false) {}
 	explicit MonitorLeaderInfo(Reference<IClusterConnectionRecord> intermediateConnRecord)
-	  : hasConnected(false), intermediateConnRecord(intermediateConnRecord) {}
+	  : hasConnected(false),
+	    intermediateConnRecord(intermediateConnRecord) {}
 };
 
 Optional<std::pair<LeaderInfo, bool>> getLeader(const std::vector<Optional<LeaderInfo>>& nominees);

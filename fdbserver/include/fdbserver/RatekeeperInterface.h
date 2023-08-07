@@ -78,11 +78,18 @@ struct GetRateInfoReply {
 	double batchTransactionRate;
 	double leaseDuration;
 	HealthMetrics healthMetrics;
-	Optional<ThrottlingIdMap<double>> proxyThrottledTags;
+	Optional<ThrottlingIdMap<double>> targetTransactionRate;
+	Optional<ThrottlingIdMap<double>> targetThroughput;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, transactionRate, batchTransactionRate, leaseDuration, healthMetrics, proxyThrottledTags);
+		serializer(ar,
+		           transactionRate,
+		           batchTransactionRate,
+		           leaseDuration,
+		           healthMetrics,
+		           targetTransactionRate,
+		           targetThroughput);
 	}
 };
 
@@ -106,10 +113,13 @@ struct GetRateInfoRequest {
 	                   ThrottlingIdMap<uint64_t>&& throttlingIdToTransactionCount,
 	                   ThrottlingIdMap<uint64_t>&& throttlingIdToThroughput,
 	                   bool detailed)
-	  : requesterID(requesterID), totalReleasedTransactions(totalReleasedTransactions),
-	    batchReleasedTransactions(batchReleasedTransactions), version(version),
+	  : requesterID(requesterID),
+	    totalReleasedTransactions(totalReleasedTransactions),
+	    batchReleasedTransactions(batchReleasedTransactions),
+	    version(version),
 	    throttlingIdToTransactionCount(std::move(throttlingIdToTransactionCount)),
-	    throttlingIdToThroughput(std::move(throttlingIdToThroughput)), detailed(detailed) {}
+	    throttlingIdToThroughput(std::move(throttlingIdToThroughput)),
+	    detailed(detailed) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

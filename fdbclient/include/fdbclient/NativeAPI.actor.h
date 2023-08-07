@@ -189,7 +189,9 @@ struct TransactionLogInfo : public ReferenceCounted<TransactionLogInfo>, NonCopy
 	TransactionLogInfo() : logLocation(DONT_LOG), maxFieldLength(0) {}
 	TransactionLogInfo(LoggingLocation location) : logLocation(location), maxFieldLength(0) {}
 	TransactionLogInfo(std::string id, LoggingLocation location)
-	  : logLocation(location), maxFieldLength(0), identifier(id) {}
+	  : logLocation(location),
+	    maxFieldLength(0),
+	    identifier(id) {}
 
 	void setIdentifier(std::string id) { identifier = id; }
 	void logTo(LoggingLocation loc) { logLocation = logLocation | loc; }
@@ -235,7 +237,11 @@ struct Watch : public ReferenceCounted<Watch>, NonCopyable {
 	Watch() : valuePresent(false), setPresent(false), watchFuture(Never()) {}
 	Watch(Key key) : key(key), valuePresent(false), setPresent(false), watchFuture(Never()) {}
 	Watch(Key key, Optional<Value> val)
-	  : key(key), value(val), valuePresent(true), setPresent(false), watchFuture(Never()) {}
+	  : key(key),
+	    value(val),
+	    valuePresent(true),
+	    setPresent(false),
+	    watchFuture(Never()) {}
 
 	void setWatch(Future<Void> watchFuture);
 };
@@ -243,13 +249,14 @@ struct Watch : public ReferenceCounted<Watch>, NonCopyable {
 class Tenant : public ReferenceCounted<Tenant>, public FastAllocated<Tenant>, NonCopyable {
 public:
 	Tenant(Database cx, TenantName name);
-	explicit Tenant(int64_t id);
-	Tenant(Future<TenantLookupInfo> tenantLookupFuture, Optional<TenantName> name);
+	explicit Tenant(Database cx, int64_t id);
+	Tenant(Database cx, Future<TenantLookupInfo> tenantLookupFuture, Optional<TenantName> name);
 
 	static Tenant* allocateOnForeignThread() { return (Tenant*)Tenant::operator new(sizeof(Tenant)); }
 
 	Future<Void> ready() const { return success(lookupFuture); }
 	int64_t id() const;
+	Database database() const;
 	Optional<TenantGroupName> tenantGroup() const;
 	Future<TenantLookupInfo> getLookupFuture() const;
 	KeyRef prefix() const;
@@ -260,6 +267,7 @@ public:
 private:
 	mutable int64_t bigEndianId = -1;
 	Future<TenantLookupInfo> lookupFuture;
+	Future<Database> dbFuture;
 };
 
 template <>
@@ -309,7 +317,9 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 
 	// Only available so that Transaction can have a default constructor, for use in state variables
 	TransactionState(TaskPriority taskID, SpanContext spanContext)
-	  : taskID(taskID), spanContext(spanContext), tenantSet(false) {}
+	  : taskID(taskID),
+	    spanContext(spanContext),
+	    tenantSet(false) {}
 
 	// VERSION_VECTOR changed default values of readVersionObtainedFromGrvProxy
 	TransactionState(Database cx,
@@ -317,6 +327,8 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	                 TaskPriority taskID,
 	                 SpanContext spanContext,
 	                 Reference<TransactionLogInfo> trLogInfo);
+
+	~TransactionState();
 
 	Reference<TransactionState> cloneAndReset(Reference<TransactionLogInfo> newTrLogInfo, bool generateNewSpan) const;
 
@@ -334,10 +346,17 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	Future<Void> startTransaction(uint32_t readVersionFlags = 0);
 	Future<Version> getReadVersion(uint32_t flags);
 
+	bool canUseGrvCache();
+
 	void addReadCost(uint64_t bytes);
 	void addWriteCost(uint64_t bytes);
 	void flushWriteCost();
 	int64_t getTotalCost() const;
+
+	Optional<ThrottlingId> getThrottlingId();
+
+	void setExpectedCost(uint64_t bytes);
+	Optional<uint64_t> getExpectedTransactionCost() const;
 
 private:
 	Optional<Reference<Tenant>> tenant_;
@@ -352,21 +371,20 @@ private:
 	int64_t writeCost = 0;
 	bool flushedWriteCost = false;
 
-	Optional<ThrottlingId> getThrottlingId();
+	// Expected transaction cost provided by the client
+	Optional<uint64_t> expectedTransactionCost;
 };
 
 class Transaction : NonCopyable {
 public:
-	explicit Transaction(Database const& cx, Optional<Reference<Tenant>> const& tenant = Optional<Reference<Tenant>>());
+	explicit Transaction(Database const& cx);
+	explicit Transaction(Reference<Tenant> const& tenant);
+	explicit Transaction(Transaction&& tr);
 	~Transaction();
 
+	static Transaction fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx);
 	void setVersion(Version v);
-	Future<Version> getReadVersion() {
-		if (!trState->readVersionFuture.isValid()) {
-			trState->readVersionFuture = trState->getReadVersion(0);
-		}
-		return trState->readVersionFuture;
-	}
+	Future<Version> getReadVersion();
 	Future<Version> getRawReadVersion();
 	Optional<Version> getCachedReadVersion() const;
 
@@ -477,10 +495,12 @@ public:
 	Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(KeyRange const& keys, int64_t chunkSize);
 
 	Future<Standalone<VectorRef<KeyRangeRef>>> getBlobGranuleRanges(const KeyRange& range, int rangeLimit);
-	Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(const KeyRange& range,
-	                                                                    Version begin,
-	                                                                    Optional<Version> readVersion,
-	                                                                    Version* readVersionOut = nullptr);
+	Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(
+	    const KeyRange& range,
+	    Version begin,
+	    Optional<Version> readVersion,
+	    Version* readVersionOut = nullptr,
+	    int64_t mutationByteLimit = std::numeric_limits<int64_t>::max());
 
 	Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules(const KeyRange& range,
 	                                                                           Optional<Version> summaryVersion,
@@ -506,6 +526,8 @@ public:
 	Version getCommittedVersion() const { return trState->committedVersion; }
 
 	int64_t getTotalCost() const { return trState->getTotalCost(); }
+
+	void setExpectedCost(uint64_t bytes) { trState->setExpectedCost(bytes); }
 
 	double getTagThrottledDuration() const;
 
@@ -679,10 +701,11 @@ struct KeyRangeLocationInfo;
 ACTOR Future<Optional<StorageMetrics>> waitStorageMetricsWithLocation(TenantInfo tenantInfo,
                                                                       Version version,
                                                                       KeyRange keys,
-                                                                      std::vector<KeyRangeLocationInfo> locations,
+                                                                      std::vector<KeyRangeLocationInfo>* locations,
                                                                       StorageMetrics min,
                                                                       StorageMetrics max,
-                                                                      StorageMetrics permittedError);
+                                                                      StorageMetrics permittedError,
+                                                                      bool* invalidateCache);
 
 // Return the suggested split points from storage server.The locations tell which interface should
 // serve the request. `limit` is the current estimated storage metrics of `keys`.The returned points, if present,
@@ -695,6 +718,11 @@ ACTOR Future<Optional<Standalone<VectorRef<KeyRef>>>> splitStorageMetricsWithLoc
     Optional<int> minSplitBytes);
 
 ACTOR Future<RangeReadResult> getWorkerInterfaces(Reference<IClusterConnectionRecord> connRecord);
+
+ACTOR Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> getReadHotRangesWithLocations(
+    KeyRange keys,
+    std::vector<KeyRangeLocationInfo>* locations,
+    bool* invalidateLocationCache);
 
 namespace NativeAPI {
 ACTOR Future<std::vector<std::pair<StorageServerInterface, ProcessClass>>> getServerListAndProcessClasses(

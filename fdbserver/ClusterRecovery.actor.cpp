@@ -20,6 +20,7 @@
 
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/MetaclusterRegistration.h"
+#include "fdbclient/SystemData.h"
 #include "fdbrpc/sim_validation.h"
 #include "fdbserver/ApplyMetadataMutation.h"
 #include "fdbserver/BackupProgress.actor.h"
@@ -36,6 +37,7 @@ static std::set<int> const& normalClusterRecoveryErrors() {
 	static std::set<int> s;
 	if (s.empty()) {
 		s.insert(error_code_operation_failed);
+		s.insert(error_code_master_failed);
 		s.insert(error_code_tlog_stopped);
 		s.insert(error_code_tlog_failed);
 		s.insert(error_code_commit_proxy_failed);
@@ -73,58 +75,19 @@ ACTOR Future<Void> recoveryTerminateOnConflict(UID dbgid,
 	}
 }
 
-// TODO: Move to Recruitment class
-ACTOR Future<Void> recruitNewMaster(ClusterControllerData* cluster,
-                                    ClusterControllerData::DBInfo* db,
-                                    MasterInterface* newMaster) {
-	state Future<ErrorOr<MasterInterface>> fNewMaster;
-	state WorkerFitnessInfo masterWorker;
-
-	loop {
-		// We must recruit the master in the same data center as the cluster controller.
-		// This should always be possible, because we can recruit the master on the same process as the cluster
-		// controller.
-		std::map<Optional<Standalone<StringRef>>, int> id_used;
-		id_used[cluster->clusterControllerProcessId]++;
-		masterWorker = cluster->recruiter.getWorkerForRoleInDatacenter(cluster,
-		                                                               cluster->clusterControllerDcId,
-		                                                               ProcessClass::Master,
-		                                                               ProcessClass::NeverAssign,
-		                                                               db->config,
-		                                                               id_used);
-		if ((masterWorker.worker.processClass.machineClassFitness(ProcessClass::Master) >
-		         SERVER_KNOBS->EXPECTED_MASTER_FITNESS ||
-		     masterWorker.worker.interf.locality.processId() == cluster->clusterControllerProcessId) &&
-		    !cluster->goodRecruitmentTime.isReady()) {
-			TraceEvent("RecruitNewMaster", cluster->id)
-			    .detail("Fitness", masterWorker.worker.processClass.machineClassFitness(ProcessClass::Master));
-			wait(delay(SERVER_KNOBS->ATTEMPT_RECRUITMENT_DELAY));
-			continue;
-		}
-		RecruitMasterRequest rmq;
-		rmq.lifetime = db->serverInfo->get().masterLifetime;
-		rmq.forceRecovery = db->forceRecovery;
-
-		cluster->masterProcessId = masterWorker.worker.interf.locality.processId();
-		cluster->db.unfinishedRecoveries++;
-		fNewMaster = masterWorker.worker.interf.master.tryGetReply(rmq);
-		wait(ready(fNewMaster) || db->forceMasterFailure.onTrigger());
-		if (fNewMaster.isReady() && fNewMaster.get().present()) {
-			TraceEvent("RecruitNewMaster", cluster->id).detail("Recruited", fNewMaster.get().get().id());
-
-			// for status tool
-			TraceEvent("RecruitedMasterWorker", cluster->id)
-			    .detail("Address", fNewMaster.get().get().address())
-			    .trackLatest(cluster->recruitedMasterWorkerEventHolder->trackingKey);
-
-			*newMaster = fNewMaster.get().get();
-
-			return Void();
-		} else {
-			CODE_PROBE(true, "clusterWatchDatabase() !newMaster.present()");
-			wait(delay(SERVER_KNOBS->MASTER_SPIN_DELAY));
-		}
-	}
+Future<Void> waitSequencerFailure(Reference<ClusterRecoveryData> self, MasterInterface const& sequencer) {
+	// Master failure detection is pretty sensitive, but if we are in the middle of a very long recovery we
+	// really don't want to have to start over
+	return tagError<Void>(
+	    waitFailureClient(sequencer.waitFailure,
+	                      self->controllerData->db.masterRegistrationCount
+	                          ? SERVER_KNOBS->MASTER_FAILURE_REACTION_TIME
+	                          : (now() - self->recoveryStart) * SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY,
+	                      self->controllerData->db.masterRegistrationCount
+	                          ? -SERVER_KNOBS->MASTER_FAILURE_REACTION_TIME /
+	                                SERVER_KNOBS->SECONDS_BEFORE_NO_FAILURE_DELAY
+	                          : SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY),
+	    master_failed());
 }
 
 Future<Void> waitCommitProxyFailure(std::vector<CommitProxyInterface> const& commitProxies) {
@@ -265,7 +228,8 @@ ACTOR Future<Void> changeCoordinators(Reference<ClusterRecoveryData> self) {
 		TraceEvent("ChangeCoordinators", self->dbgid).log();
 		++self->changeCoordinatorsRequests;
 		state ChangeCoordinatorsRequest changeCoordinatorsRequest = req;
-		if (self->masterInterface.id() != changeCoordinatorsRequest.masterId) {
+		ASSERT(self->masterInterface.present());
+		if (self->masterInterface.get().id() != changeCoordinatorsRequest.masterId) {
 			// Make sure the request is coming from a proxy from the same
 			// generation. If not, throw coordinators_changed - this is OK
 			// because the client will still receive commit_unknown_result, and
@@ -356,7 +320,7 @@ ACTOR static Future<Optional<Version>> getMinBackupVersion(Reference<ClusterReco
 		try {
 			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			ValueReadResult value = wait(tr.get(backupStartedKey));
+			ValueReadResult value = wait(tr.get(deprecatedBackupStartedKey));
 			Optional<Version> minVersion;
 			if (value.present()) {
 				auto uidVersions = decodeBackupStartedValue(value.get());
@@ -414,7 +378,7 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 		    .detail("BackupEpoch", epoch)
 		    .detail("StartVersion", req.startVersion);
 		initializationReplies.push_back(
-		    transformErrors(throwErrorOr(worker.backup.getReplyUnlessFailedFor(
+		    transformErrors(throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 		                        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 		                    backup_worker_failed()));
 	}
@@ -453,7 +417,7 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 			    .detail("StartVersion", req.startVersion)
 			    .detail("EndVersion", req.endVersion.get());
 			initializationReplies.push_back(transformErrors(
-			    throwErrorOr(worker.backup.getReplyUnlessFailedFor(
+			    throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 			        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
 			    backup_worker_failed()));
 		}
@@ -515,8 +479,7 @@ Future<Void> sendMasterRegistration(ClusterRecoveryData* self,
                                     DBRecoveryCount recoveryCount,
                                     std::vector<UID> priorCommittedLogServers) {
 	RegisterMasterRequest masterReq;
-	masterReq.id = self->masterInterface.id();
-	masterReq.mi = self->masterInterface.locality;
+	masterReq.id = self->masterInterface.present() ? self->masterInterface.get().id() : UID();
 	masterReq.logSystemConfig = logSystemConfig;
 	masterReq.commitProxies = commitProxies;
 	masterReq.grvProxies = grvProxies;
@@ -686,8 +649,10 @@ ACTOR Future<Void> readTransactionSystemState(Reference<ClusterRecoveryData> sel
                                               Version txsPoppedVersion) {
 	state Reference<AsyncVar<PeekTxsInfo>> myLocality = Reference<AsyncVar<PeekTxsInfo>>(
 	    new AsyncVar<PeekTxsInfo>(PeekTxsInfo(tagLocalityInvalid, tagLocalityInvalid, invalidVersion)));
-	state Future<Void> localityUpdater =
-	    updateLocalityForDcId(self->masterInterface.locality.dcId(), oldLogSystem, myLocality);
+	state Future<Void> localityUpdater = updateLocalityForDcId(
+	    self->masterInterface.present() ? self->masterInterface.get().locality.dcId() : Optional<Key>(),
+	    oldLogSystem,
+	    myLocality);
 	// Peek the txnStateTag in oldLogSystem and recover self->txnStateStore
 
 	// For now, we also obtain the recovery metadata that the log system obtained during the end_epoch process for
@@ -1044,6 +1009,7 @@ ACTOR Future<std::vector<Standalone<CommitTransactionRef>>> recruitTransactionSu
 		    .detail("StatusCode", RecoveryStatus::recruiting_transaction_servers)
 		    .detail("Status", RecoveryStatus::names[RecoveryStatus::recruiting_transaction_servers])
 		    .detail("Conf", self->configuration.toString())
+		    .detail("ColocateStatelessProcesses", SERVER_KNOBS->COLOCATE_STATELESS_PROCESSES)
 		    .detail("RequiredCommitProxies", 1)
 		    .detail("RequiredGrvProxies", 1)
 		    .detail("RequiredResolvers", 1)
@@ -1108,6 +1074,7 @@ ACTOR Future<std::vector<Standalone<CommitTransactionRef>>> recruitTransactionSu
 	TraceEvent(getRecoveryEventName(ClusterRecoveryEventType::CLUSTER_RECOVERY_STATE_EVENT_NAME).c_str(), self->dbgid)
 	    .detail("StatusCode", RecoveryStatus::initializing_transaction_servers)
 	    .detail("Status", RecoveryStatus::names[RecoveryStatus::initializing_transaction_servers])
+	    .detail("Sequencer", recruitment.sequencer.present())
 	    .detail("CommitProxies", recruitment.commitProxies.size())
 	    .detail("GrvProxies", recruitment.grvProxies.size())
 	    .detail("TLogs", recruitment.tLogs.size())
@@ -1123,14 +1090,19 @@ ACTOR Future<std::vector<Standalone<CommitTransactionRef>>> recruitTransactionSu
 	state std::vector<Standalone<CommitTransactionRef>> confChanges =
 	    wait(self->controllerData->recruiter.recruitWorkers(self, recruitment, seedServers, oldLogSystem));
 
+	// Monitor sequencer for failures.
+	ASSERT(self->masterInterface.present());
+	self->addActor.send(waitSequencerFailure(self, self->masterInterface.get()));
+	self->addActor.send(waitFailureServer(self->masterInterface.get().waitFailure.getFuture()));
+
 	// Update recovery related information to the newly elected sequencer (master) process.
-	wait(brokenPromiseToNever(
-	    self->masterInterface.updateRecoveryData.getReply(UpdateRecoveryDataRequest(self->recoveryTransactionVersion,
-	                                                                                self->lastEpochEnd,
-	                                                                                self->commitProxies,
-	                                                                                self->resolvers,
-	                                                                                self->versionEpoch,
-	                                                                                self->primaryLocality))));
+	wait(brokenPromiseToNever(self->masterInterface.get().updateRecoveryData.getReply(
+	    UpdateRecoveryDataRequest(self->recoveryTransactionVersion,
+	                              self->lastEpochEnd,
+	                              self->commitProxies,
+	                              self->resolvers,
+	                              self->versionEpoch,
+	                              self->primaryLocality))));
 
 	return confChanges;
 }
@@ -1224,8 +1196,6 @@ ACTOR Future<Void> recoverFrom(Reference<ClusterRecoveryData> self,
 ACTOR Future<Void> clusterRecoveryCore(Reference<ClusterRecoveryData> self) {
 	state TraceInterval recoveryInterval("ClusterRecovery");
 	state double recoverStartTime = now();
-
-	self->addActor.send(waitFailureServer(self->masterInterface.waitFailure.getFuture()));
 
 	TraceEvent(recoveryInterval.begin(), self->dbgid).log();
 
@@ -1371,7 +1341,7 @@ ACTOR Future<Void> clusterRecoveryCore(Reference<ClusterRecoveryData> self) {
 	    .detail("StatusCode", RecoveryStatus::recovery_transaction)
 	    .detail("Status", RecoveryStatus::names[RecoveryStatus::recovery_transaction])
 	    .detail("PrimaryLocality", self->primaryLocality)
-	    .detail("DcId", self->masterInterface.locality.dcId())
+	    .detail("DcId", self->masterInterface.get().locality.dcId())
 	    .trackLatest(self->clusterRecoveryStateEventHolder->trackingKey);
 
 	// Recovery transaction

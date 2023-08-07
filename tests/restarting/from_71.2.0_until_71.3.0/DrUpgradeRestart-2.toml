@@ -1,5 +1,6 @@
 [configuration]
 extraDatabaseMode = "Local"
+simHTTPServerEnabled=false
 
 [[test]]
 testTitle = "DrUpgrade"

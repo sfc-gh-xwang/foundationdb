@@ -2,11 +2,15 @@
  * RKRateServer.h
  */
 
+#include "fdbclient/ThroughputTracker.h"
+#include "fdbserver/IRKThroughputQuotaCache.h"
 #include "fdbserver/IRKRateServer.h"
 #include "fdbserver/IRKRateUpdater.h"
 #include "fdbserver/IRKRecoveryTracker.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/QuotaThrottler.h"
+
+#include "flow/actorcompiler.h" // must be last include
 
 class RKRateServerImpl {
 public:
@@ -14,7 +18,11 @@ public:
 	                              IRKRateUpdater const* normalRateUpdater,
 	                              IRKRateUpdater const* batchRateUpdater,
 	                              QuotaThrottler* quotaThrottler,
-	                              IRKRecoveryTracker* recoveryTracker) {
+	                              IRKThroughputQuotaCache const* quotaCache,
+	                              IRKMetricsTracker const* metricsTracker,
+	                              IRKRecoveryTracker* recoveryTracker,
+	                              RKClientThroughputTracker* clientThroughputTracker,
+	                              RKServerThroughputTracker const* serverThroughputTracker) {
 		loop {
 			GetRateInfoRequest req = waitNext(self->getRateInfo);
 			GetRateInfoReply reply;
@@ -27,7 +35,7 @@ public:
 				for (auto const& [throttlingId, count] : req.throttlingIdToTransactionCount) {
 					quotaThrottler->addRequests(throttlingId, count);
 				}
-				quotaThrottler->updateThroughput(req.throttlingIdToThroughput);
+				clientThroughputTracker->update(req.throttlingIdToThroughput);
 			}
 			if (p.batchTransactions > 0) {
 				self->smoothBatchReleasedTransactions.addDelta(req.batchReleasedTransactions - p.batchTransactions);
@@ -48,10 +56,33 @@ public:
 			if (now() > p.lastTagPushTime + SERVER_KNOBS->TAG_THROTTLE_PUSH_INTERVAL) {
 				p.lastTagPushTime = now();
 
-				auto proxyThrottledTags = quotaThrottler->getProxyRates(self->grvProxyInfo.size());
-				if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
-					CODE_PROBE(proxyThrottledTags.size() > 0, "Returning tag throttles to a proxy");
-					reply.proxyThrottledTags = std::move(proxyThrottledTags);
+				IRKClusterThroughputTracker const* clusterThroughputTracker = nullptr;
+				if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+					clusterThroughputTracker = clientThroughputTracker;
+				} else {
+					clusterThroughputTracker = serverThroughputTracker;
+				}
+
+				if (isClientAverageCostTrackingEnabled()) {
+					auto targetThroughput = quotaThrottler->getTargetThroughput(self->grvProxyInfo.size(),
+					                                                            *quotaCache,
+					                                                            *metricsTracker,
+					                                                            *clusterThroughputTracker,
+					                                                            *serverThroughputTracker);
+					if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
+						CODE_PROBE(targetThroughput.size() > 0, "Returning per-throttlingId TPS limits");
+						reply.targetThroughput = std::move(targetThroughput);
+					}
+				} else {
+					auto targetTransactionRate = quotaThrottler->getTargetRates(self->grvProxyInfo.size(),
+					                                                            *quotaCache,
+					                                                            *metricsTracker,
+					                                                            *clusterThroughputTracker,
+					                                                            *serverThroughputTracker);
+					if (!SERVER_KNOBS->GLOBAL_TAG_THROTTLING_REPORT_ONLY) {
+						CODE_PROBE(targetTransactionRate.size() > 0, "Returning per-throttlingId throughput limits");
+						reply.targetTransactionRate = std::move(targetTransactionRate);
+					}
 				}
 			}
 
@@ -65,7 +96,8 @@ public:
 }; // class RKRateServerImpl
 
 RKRateServer::RKRateServer(FutureStream<GetRateInfoRequest> getRateInfo)
-  : getRateInfo(getRateInfo), smoothReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT),
+  : getRateInfo(getRateInfo),
+    smoothReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT),
     smoothBatchReleasedTransactions(SERVER_KNOBS->SMOOTHING_AMOUNT) {}
 
 RKRateServer::~RKRateServer() = default;
@@ -78,18 +110,13 @@ double RKRateServer::getSmoothBatchReleasedTransactionRate() const {
 	return smoothBatchReleasedTransactions.smoothRate();
 }
 
-std::unordered_map<UID, RKGrvProxyInfo> const& RKRateServer::getGrvProxyInfo() const& {
+boost::unordered_flat_map<UID, RKGrvProxyInfo> const& RKRateServer::getGrvProxyInfo() const& {
 	return grvProxyInfo;
 }
 
 void RKRateServer::cleanupExpiredGrvProxies() {
 	double tooOld = now() - 1.0;
-	for (auto p = grvProxyInfo.begin(); p != grvProxyInfo.end();) {
-		if (p->second.lastUpdateTime < tooOld)
-			p = grvProxyInfo.erase(p);
-		else
-			++p;
-	}
+	boost::unordered::erase_if(grvProxyInfo, [tooOld](auto const& kv) { return kv.second.lastUpdateTime < tooOld; });
 }
 
 void RKRateServer::updateLastLimited(double batchTpsLimit) {
@@ -99,8 +126,20 @@ void RKRateServer::updateLastLimited(double batchTpsLimit) {
 Future<Void> RKRateServer::run(IRKRateUpdater const& normalRateUpdater,
                                IRKRateUpdater const& batchRateUpdater,
                                QuotaThrottler& quotaThrottler,
-                               IRKRecoveryTracker& recoveryTracker) {
-	return RKRateServerImpl::run(this, &normalRateUpdater, &batchRateUpdater, &quotaThrottler, &recoveryTracker);
+                               IRKThroughputQuotaCache const& quotaCache,
+                               IRKMetricsTracker const& metricsTracker,
+                               IRKRecoveryTracker& recoveryTracker,
+                               RKClientThroughputTracker& clientThroughputTracker,
+                               RKServerThroughputTracker const& serverThroughputTracker) {
+	return RKRateServerImpl::run(this,
+	                             &normalRateUpdater,
+	                             &batchRateUpdater,
+	                             &quotaThrottler,
+	                             &quotaCache,
+	                             &metricsTracker,
+	                             &recoveryTracker,
+	                             &clientThroughputTracker,
+	                             &serverThroughputTracker);
 }
 
 void MockRKRateServer::updateProxy(UID proxyId, Version v, int newTotalTransactions) {

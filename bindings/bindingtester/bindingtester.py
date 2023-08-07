@@ -49,30 +49,6 @@ import fdb.tuple
 
 
 API_VERSIONS = [
-    13,
-    14,
-    16,
-    21,
-    22,
-    23,
-    100,
-    200,
-    300,
-    400,
-    410,
-    420,
-    430,
-    440,
-    450,
-    460,
-    500,
-    510,
-    520,
-    600,
-    610,
-    620,
-    630,
-    700,
     710,
     710200,
     710300,
@@ -315,10 +291,8 @@ class TestRunner(object):
                 [not tester.directory_snapshot_ops_enabled for tester in self.testers]
             )
         )
-        self.args.no_tenants = (
-            self.args.no_tenants
-            or any([not tester.tenants_enabled for tester in self.testers])
-            or self.args.api_version < 710
+        self.args.no_tenants = self.args.no_tenants or any(
+            [not tester.tenants_enabled for tester in self.testers]
         )
 
     def print_test(self):

@@ -38,21 +38,28 @@ public:
 	ActorCollection actors;
 
 	std::map<RelocateReason, int> rsReasonCounts;
+	StorageMetrics totalMetrics, thresholdMetrics;
 
 	Reference<DataDistributionTracker> shardTracker;
 
 	// --- test configs ---
 
+	double shardMetricsDelay = 0;
 	// check threshold
 	int checkMinShardCount = 1;
 	int checkMinSizeSplit = 0;
 	int checkMinWriteSplit = 0;
 
 	MockDDTrackerShardEvaluatorWorkload(WorkloadContext const& wcx)
-	  : MockDDTestWorkload(wcx), ddcx(deterministicRandom()->randomUniqueID()) {
+	  : MockDDTestWorkload(wcx),
+	    ddcx(deterministicRandom()->randomUniqueID()) {
 		checkMinShardCount = getOption(options, "checkMinShardCount"_sr, checkMinShardCount);
 		checkMinSizeSplit = getOption(options, "checkMinSizeSplit"_sr, checkMinSizeSplit);
 		checkMinWriteSplit = getOption(options, "checkMinWriteSplit"_sr, checkMinWriteSplit);
+		shardMetricsDelay = getOption(options, "shardMetricsDelay"_sr, shardMetricsDelay);
+
+		thresholdMetrics = ShardSizeBounds::shardSizeBoundsBeforeTrack().min;
+		thresholdMetrics.opsReadPerKSecond = getOption(options, "MinSampledReadOps"_sr, getPerSecond);
 	}
 
 	Future<Void> setup(Database const& cx) override {
@@ -65,6 +72,26 @@ public:
 		return Void();
 	}
 
+	ACTOR static Future<Void> traceStorageMetrics(MockDDTrackerShardEvaluatorWorkload* self,
+	                                              double delaySec,
+	                                              KeyRange keys,
+	                                              bool addToTotal = false) {
+		wait(delay(delaySec));
+		GetMetricsRequest req(keys);
+		self->getShardMetrics.send(req);
+		StorageMetrics metrics = wait(req.reply.getFuture());
+		DisabledTraceEvent("MockDDTracker_ShardMetrics")
+		    .detail("DelayAfter", delaySec)
+		    .detail("Keys", keys)
+		    .detail("StorageMetrics", metrics.toString());
+
+		if (addToTotal) {
+			self->totalMetrics += metrics;
+		}
+
+		return Void();
+	}
+
 	ACTOR static Future<Void> relocateShardReporter(MockDDTrackerShardEvaluatorWorkload* self,
 	                                                FutureStream<RelocateShard> input) {
 		loop {
@@ -72,13 +99,17 @@ public:
 				choose {
 					when(RelocateShard rs = waitNext(input)) {
 						++self->rsReasonCounts[rs.reason];
+						self->actors.add(traceStorageMetrics(self, 0, rs.keys));
+						if (self->shardMetricsDelay > 0) {
+							self->actors.add(traceStorageMetrics(self, self->shardMetricsDelay, rs.keys, true));
+						}
 					}
 				}
 			} catch (Error& e) {
 				if (e.code() != error_code_wrong_shard_server)
 					throw e;
-				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY));
 			}
+			wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY));
 		}
 	}
 
@@ -115,6 +146,10 @@ public:
 		                                        getAverageShardBytes.getFuture()));
 		actors.add(relocateShardReporter(this, output.getFuture()));
 
+		if (getPerSecond > 0) {
+			actors.add(randomGetClient(1.0 / getPerSecond, 0, keySpaceCount));
+		}
+
 		return timeout(reportErrors(actors.getResult(), "MockDDTrackerShardEvaluatorWorkload"), testDuration, Void());
 	}
 
@@ -130,14 +165,26 @@ public:
 		ASSERT_GE(rsReasonCounts[RelocateReason::SIZE_SPLIT], checkMinSizeSplit);
 		ASSERT_GE(rsReasonCounts[RelocateReason::WRITE_SPLIT], checkMinWriteSplit);
 
+		fmt::print("Check Total Storage Metrics: {}\n", totalMetrics.toString());
+		if (!thresholdMetrics.allLessOrEqual(totalMetrics)) {
+			TraceEvent(SevError, "MockDDTracker_Failed")
+			    .detail("Reason", "Wrong Storage Metrics")
+			    .detail("Threshold", thresholdMetrics.toString())
+			    .detail("Actual", totalMetrics.toString());
+		}
+
 		actors.clear(true);
 		return true;
 	}
 
 	void getMetrics(std::vector<PerfMetric>& m) override {
+		if (!enabled)
+			return;
+
 		for (const auto& [reason, count] : rsReasonCounts) {
 			m.push_back(PerfMetric(RelocateReason(reason).toString(), count, Averaged::False));
 		}
+		m.emplace_back("TotalReadOps", (double)totalReadsMetric->getValue() / testDuration, Averaged::True);
 	}
 };
 

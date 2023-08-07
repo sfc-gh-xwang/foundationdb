@@ -74,8 +74,13 @@ struct RegionInfo {
 	std::vector<SatelliteInfo> satellites;
 
 	RegionInfo()
-	  : priority(0), satelliteDesiredTLogCount(-1), satelliteTLogReplicationFactor(0), satelliteTLogWriteAntiQuorum(0),
-	    satelliteTLogUsableDcs(1), satelliteTLogReplicationFactorFallback(0), satelliteTLogWriteAntiQuorumFallback(0),
+	  : priority(0),
+	    satelliteDesiredTLogCount(-1),
+	    satelliteTLogReplicationFactor(0),
+	    satelliteTLogWriteAntiQuorum(0),
+	    satelliteTLogUsableDcs(1),
+	    satelliteTLogReplicationFactorFallback(0),
+	    satelliteTLogWriteAntiQuorumFallback(0),
 	    satelliteTLogUsableDcsFallback(0) {}
 
 	struct sort_by_priority {
@@ -98,6 +103,55 @@ struct RegionInfo {
 		           satelliteTLogUsableDcsFallback,
 		           satellites);
 	}
+};
+
+struct StorageEngineParamSet : public ReferenceCounted<StorageEngineParamSet> {
+
+	constexpr static FileIdentifier file_identifier = 2389372;
+
+	// each represents the needed effort to update the parameter
+	enum CHANGETYPE { RUNTIME, NEEDREBOOT, NEEDREPLACEMENT };
+
+	StorageEngineParamSet() {}
+	StorageEngineParamSet(const std::map<std::string, std::string>& params) : params(params) {}
+	StorageEngineParamSet(const StorageEngineParamSet& s) : params(s.params) {}
+
+	StorageEngineParamSet& operator=(const StorageEngineParamSet& rhs) {
+		params = rhs.params;
+		return *this;
+	}
+
+	void set(const std::string& name, const std::string& value) { params[name] = value; }
+
+	void clear(const std::string& name) { params.erase(name); }
+
+	std::string getOrDefault(const std::string& name, const std::string& defaultValue) const {
+		return params.contains(name) ? params.at(name) : defaultValue;
+	}
+
+	const std::map<std::string, std::string>& getParams() const { return params; }
+
+	std::map<std::string, std::string>& getMutableParams() { return params; }
+
+	bool operator==(const StorageEngineParamSet& b) const { return params == b.params; }
+
+	bool operator!=(const StorageEngineParamSet& b) const { return !(*this == b); }
+
+	StatusObject toJSON() const {
+		StatusObject result;
+		for (const auto& [name, value] : params) {
+			result[name] = value;
+		}
+		return result;
+	}
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, params);
+	}
+
+private:
+	std::map<std::string, std::string> params;
 };
 
 struct DatabaseConfiguration {
@@ -230,10 +284,12 @@ struct DatabaseConfiguration {
 	Reference<IReplicationPolicy> storagePolicy;
 	int32_t storageTeamSize;
 	KeyValueStoreType storageServerStoreType;
+	StorageEngineParamSet storageEngineParams;
 
 	// Testing StorageServers
 	int32_t desiredTSSCount;
 	KeyValueStoreType testingStorageServerStoreType;
+	StorageEngineParamSet tssStorageEngineParams;
 
 	// Remote TLogs
 	int32_t desiredLogRouterCount;
@@ -351,6 +407,42 @@ private:
 
 public: // Testing
 	void test_setDefaultReplicationPolicy();
+};
+
+// used to initialize supported parameters and default values for different storage engines
+struct StorageEngineParamsFactory {
+
+	static constexpr auto REMOTE_KV_STORE_PARAM_KEY = "remote_kv_store";
+
+	static std::map<KeyValueStoreType::StoreType,
+	                std::map<std::string, std::pair<StorageEngineParamSet::CHANGETYPE, std::string>>>&
+	factories() {
+		static std::map<KeyValueStoreType::StoreType,
+		                std::map<std::string, std::pair<StorageEngineParamSet::CHANGETYPE, std::string>>>
+		    theFactories;
+		return theFactories;
+	}
+
+	StorageEngineParamsFactory(
+	    KeyValueStoreType::StoreType storeType,
+	    std::map<std::string, std::pair<StorageEngineParamSet::CHANGETYPE, std::string>> const& vals) {
+		factories()[storeType] = vals;
+	}
+
+	static std::map<std::string, std::pair<StorageEngineParamSet::CHANGETYPE, std::string>>& getSupportedParams(
+	    KeyValueStoreType::StoreType storeType) {
+		return factories()[storeType];
+	}
+
+	static StorageEngineParamSet::CHANGETYPE getChangeType(KeyValueStoreType::StoreType storeType,
+	                                                       const std::string& name) {
+		return factories()[storeType][name].first;
+	}
+
+	// only storage engines added into the factory are supported
+	static bool isSupported(KeyValueStoreType::StoreType storeType) {
+		return CLIENT_KNOBS->ENABLE_STORAGE_ENGINE_PARAM_INTERFACE && !factories()[storeType].empty();
+	}
 };
 
 #endif

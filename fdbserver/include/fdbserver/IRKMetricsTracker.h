@@ -6,7 +6,6 @@
 
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/StorageServerInterface.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbrpc/Locality.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbserver/RatekeeperInterface.h"
@@ -56,6 +55,10 @@ public:
 
 	// Determine the ratio (limit / current throughput) for throttling based on write queue size
 	Optional<double> getTagThrottlingRatio(int64_t storageTargetBytes, int64_t storageSpringBytes) const;
+
+	// Testing:
+public:
+	static StorageQueueInfo createTestInfo(UID id, int64_t storageQueueBytes);
 };
 
 // Stores statistics for an individual tlog that are relevant for ratekeeper throttling
@@ -121,7 +124,7 @@ class RKMetricsTracker : public IRKMetricsTracker {
 	double lastSSListFetchedTimestamp;
 	PromiseStream<std::pair<UID, Optional<StorageServerInterface>>> serverChanges;
 	// Maps storage server ID to storage server interface
-	std::unordered_map<UID, StorageServerInterface> storageServerInterfaces;
+	boost::unordered_flat_map<UID, StorageServerInterface> storageServerInterfaces;
 	Map<UID, StorageQueueInfo> storageQueueInfo;
 	Map<UID, TLogQueueInfo> tlogQueueInfo;
 	Smoother smoothTotalDurableBytes;

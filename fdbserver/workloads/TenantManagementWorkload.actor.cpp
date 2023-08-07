@@ -39,6 +39,7 @@
 #include "fdbserver/Knobs.h"
 #include "flow/ApiVersion.h"
 #include "flow/Error.h"
+#include "flow/FastRef.h"
 #include "flow/IRandom.h"
 #include "flow/ThreadHelper.actor.h"
 #include "flow/flow.h"
@@ -61,10 +62,17 @@ struct TenantManagementWorkload : TestWorkload {
 		bool empty;
 
 		TenantTestData() : empty(true) {}
-		TenantTestData(int64_t id, Optional<TenantGroupName> tenantGroup, bool empty)
-		  : tenant(makeReference<Tenant>(id)), tenantGroup(tenantGroup), empty(empty) {}
-		TenantTestData(int64_t id, Optional<TenantName> tName, Optional<TenantGroupName> tenantGroup, bool empty)
-		  : tenant(makeReference<Tenant>(TenantLookupInfo(id, tenantGroup), tName)), tenantGroup(tenantGroup),
+		TenantTestData(Database cx, int64_t id, Optional<TenantGroupName> tenantGroup, bool empty)
+		  : tenant(makeReference<Tenant>(cx, id)),
+		    tenantGroup(tenantGroup),
+		    empty(empty) {}
+		TenantTestData(Database cx,
+		               int64_t id,
+		               Optional<TenantName> tName,
+		               Optional<TenantGroupName> tenantGroup,
+		               bool empty)
+		  : tenant(makeReference<Tenant>(cx, TenantLookupInfo(id, tenantGroup), tName)),
+		    tenantGroup(tenantGroup),
 		    empty(empty) {}
 	};
 
@@ -451,7 +459,7 @@ struct TenantManagementWorkload : TestWorkload {
 
 		// Update our local tenant state to include the newly created one
 		self->maxId = entry.get().id;
-		TenantTestData tData = TenantTestData(entry.get().id, itrName, tGroup, true);
+		TenantTestData tData = TenantTestData(self->dataDb, entry.get().id, itrName, tGroup, true);
 		self->createdTenants[itrName] = tData;
 		self->allTestTenants.push_back(tData.tenant);
 		return Void();
@@ -633,7 +641,7 @@ struct TenantManagementWorkload : TestWorkload {
 					// Randomly decide to insert a key into the tenant
 					state bool insertData = deterministicRandom()->random01() < 0.5;
 					if (insertData) {
-						state Transaction insertTr(self->dataDb, self->createdTenants[tenantItr->first].tenant);
+						state Transaction insertTr(self->createdTenants[tenantItr->first].tenant);
 						loop {
 							try {
 								// The value stored in the key will be the name of the tenant
@@ -727,7 +735,7 @@ struct TenantManagementWorkload : TestWorkload {
 	// set a random watch on a tenant
 	ACTOR static Future<Void> watchTenant(TenantManagementWorkload* self, Reference<Tenant> tenant) {
 		loop {
-			state Reference<ReadYourWritesTransaction> tr(new ReadYourWritesTransaction(self->dataDb, tenant));
+			state Reference<ReadYourWritesTransaction> tr(new ReadYourWritesTransaction(tenant));
 			try {
 				state Future<Void> watch = tr->watch(doubleToTestKey(deterministicRandom()->random01()));
 				wait(tr->commit());
@@ -754,7 +762,7 @@ struct TenantManagementWorkload : TestWorkload {
 	}
 
 	ACTOR static Future<bool> clearTenantData(TenantManagementWorkload* self, TenantName tenantName) {
-		state Transaction clearTr(self->dataDb, self->createdTenants[tenantName].tenant);
+		state Transaction clearTr(self->createdTenants[tenantName].tenant);
 		loop {
 			try {
 				clearTr.clear(self->keyName);
@@ -1085,7 +1093,7 @@ struct TenantManagementWorkload : TestWorkload {
 	ACTOR static Future<Void> checkTenantContents(TenantManagementWorkload* self,
 	                                              TenantName tenantName,
 	                                              TenantTestData tenantData) {
-		state Transaction tr(self->dataDb, self->createdTenants[tenantName].tenant);
+		state Transaction tr(self->createdTenants[tenantName].tenant);
 		loop {
 			try {
 				tr.setOption(FDBTransactionOptions::READ_LOCK_AWARE);
@@ -1399,7 +1407,7 @@ struct TenantManagementWorkload : TestWorkload {
 		tData.tenant->name = newTenantName;
 		self->createdTenants[newTenantName] = tData;
 		self->createdTenants.erase(oldTenantName);
-		state Transaction insertTr(self->dataDb, tData.tenant);
+		state Transaction insertTr(tData.tenant);
 		if (!tData.empty) {
 			loop {
 				try {
@@ -1929,13 +1937,17 @@ struct TenantManagementWorkload : TestWorkload {
 		if (!self->allTestTenants.empty() && deterministicRandom()->random01() < 0.90) {
 			tenant = deterministicRandom()->randomChoice(self->allTestTenants);
 		} else if (deterministicRandom()->coinflip()) {
-			tenant = makeReference<Tenant>(std::numeric_limits<int64_t>::max());
+			tenant = makeReference<Tenant>(self->dataDb, std::numeric_limits<int64_t>::max());
 		}
 
 		state bool useManagementCluster = self->useMetacluster && deterministicRandom()->random01() < 0.05;
 		state Database db = useManagementCluster ? self->managementDbInternal : self->dataDb;
 
-		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db, tenant);
+		state Reference<ReadYourWritesTransaction> tr =
+		    !tenant.present() ? makeReference<ReadYourWritesTransaction>(db)
+		    : !useManagementCluster
+		        ? makeReference<ReadYourWritesTransaction>(tenant.get())
+		        : makeReference<ReadYourWritesTransaction>(makeReference<Tenant>(db, tenant.get()->id()));
 		state Optional<TenantName> tName = tenant.flatMapRef(&Tenant::name);
 		state bool tenantExists = false;
 		state TenantTestData tData = TenantTestData();

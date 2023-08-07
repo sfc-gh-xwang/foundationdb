@@ -32,7 +32,9 @@ struct Hostname {
 	bool isTLS;
 
 	Hostname(const std::string& host, const std::string& service, bool isTLS)
-	  : host(host), service(service), isTLS(isTLS) {}
+	  : host(host),
+	    service(service),
+	    isTLS(isTLS) {}
 	Hostname() : host(""), service(""), isTLS(false) {}
 
 	bool operator==(const Hostname& r) const { return host == r.host && service == r.service && isTLS == r.isTLS; }

@@ -21,8 +21,13 @@
 #include "fdbclient/ServerKnobs.h"
 #include "fdbserver/DDTeamCollection.h"
 #include "fdbserver/TCInfo.h"
-#include "flow/actorcompiler.h" // This must be the last #include.
+
+#ifdef ADDRESS_SANITIZER
+#include <sanitizer/lsan_interface.h>
+#endif
 #include <unordered_set>
+
+#include "flow/actorcompiler.h" // This must be the last #include.
 
 class TCServerInfoImpl {
 public:
@@ -133,9 +138,17 @@ TCServerInfo::TCServerInfo(StorageServerInterface ssi,
                            bool inDesiredDC,
                            Reference<LocalitySet> storageServerSet,
                            Version addedVersion)
-  : id(ssi.id()), inDesiredDC(inDesiredDC), collection(collection), addedVersion(addedVersion), lastKnownInterface(ssi),
-    lastKnownClass(processClass), storeType(KeyValueStoreType::END), dataInFlightToServer(0),
-    onInterfaceChanged(interfaceChanged.getFuture()), onRemoved(removed.getFuture()), onTSSPairRemoved(Never()) {
+  : id(ssi.id()),
+    inDesiredDC(inDesiredDC),
+    collection(collection),
+    addedVersion(addedVersion),
+    lastKnownInterface(ssi),
+    lastKnownClass(processClass),
+    storeType(KeyValueStoreType::END),
+    dataInFlightToServer(0),
+    onInterfaceChanged(interfaceChanged.getFuture()),
+    onRemoved(removed.getFuture()),
+    onTSSPairRemoved(Never()) {
 
 	if (!ssi.isTss()) {
 		localityEntry = ((LocalityMap<UID>*)storageServerSet.getPtr())->add(ssi.locality, &id);
@@ -261,7 +274,13 @@ bool TCMachineTeamInfo::removeServerTeam(Reference<TCTeamInfo> team) {
 }
 
 Reference<TCMachineInfo> TCMachineInfo::clone() const {
+#ifdef ADDRESS_SANITIZER
+	__lsan_disable();
+#endif
 	auto result = Reference<TCMachineInfo>(new TCMachineInfo);
+#ifdef ADDRESS_SANITIZER
+	__lsan_enable();
+#endif
 	result->serversOnMachine = serversOnMachine;
 	result->machineID = machineID;
 	result->machineTeams = machineTeams;
@@ -291,7 +310,8 @@ std::string TCMachineInfo::getServersIDStr() const {
 }
 
 TCMachineTeamInfo::TCMachineTeamInfo(std::vector<Reference<TCMachineInfo>> const& machines)
-  : _id(deterministicRandom()->randomUniqueID()), machines(machines) {
+  : _id(deterministicRandom()->randomUniqueID()),
+    machines(machines) {
 	machineIDs.reserve(machines.size());
 	for (int i = 0; i < machines.size(); i++) {
 		machineIDs.push_back(machines[i]->machineID);
@@ -313,8 +333,12 @@ std::string TCMachineTeamInfo::getMachineIDsStr() const {
 }
 
 TCTeamInfo::TCTeamInfo(std::vector<Reference<TCServerInfo>> const& servers, Optional<Reference<TCTenantInfo>> tenant)
-  : servers(servers), tenant(tenant), healthy(true), wrongConfiguration(false),
-    priority(SERVER_KNOBS->PRIORITY_TEAM_HEALTHY), id(deterministicRandom()->randomUniqueID()) {
+  : servers(servers),
+    tenant(tenant),
+    healthy(true),
+    wrongConfiguration(false),
+    priority(SERVER_KNOBS->PRIORITY_TEAM_HEALTHY),
+    id(deterministicRandom()->randomUniqueID()) {
 	if (servers.empty()) {
 		TraceEvent(SevInfo, "ConstructTCTeamFromEmptyServers").log();
 	}

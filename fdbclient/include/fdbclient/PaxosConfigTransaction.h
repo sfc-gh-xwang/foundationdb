@@ -66,6 +66,7 @@ public:
 	Version getCommittedVersion() const override;
 	double getTagThrottledDuration() const override;
 	int64_t getTotalCost() const override;
+	void setExpectedCost(uint64_t value) override;
 	int64_t getApproximateSize() const override;
 	void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) override;
 	Future<Void> onError(Error const& e) override;

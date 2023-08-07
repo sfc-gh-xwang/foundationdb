@@ -58,7 +58,9 @@ struct CreateTenantImpl {
 	                 MetaclusterTenantMapEntry tenantEntry,
 	                 AssignClusterAutomatically assignClusterAutomatically,
 	                 IgnoreCapacityLimit ignoreCapacityLimit)
-	  : ctx(managementDb), tenantEntry(tenantEntry), assignClusterAutomatically(assignClusterAutomatically),
+	  : ctx(managementDb),
+	    tenantEntry(tenantEntry),
+	    assignClusterAutomatically(assignClusterAutomatically),
 	    ignoreCapacityLimit(ignoreCapacityLimit) {}
 
 	ACTOR static Future<ClusterName> checkClusterAvailability(Reference<IDatabase> dataClusterDb,

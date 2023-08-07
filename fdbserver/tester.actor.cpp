@@ -63,8 +63,13 @@
 WorkloadContext::WorkloadContext() {}
 
 WorkloadContext::WorkloadContext(const WorkloadContext& r)
-  : options(r.options), clientId(r.clientId), clientCount(r.clientCount), sharedRandomNumber(r.sharedRandomNumber),
-    dbInfo(r.dbInfo), ccr(r.ccr), defaultTenant(r.defaultTenant) {}
+  : options(r.options),
+    clientId(r.clientId),
+    clientCount(r.clientCount),
+    sharedRandomNumber(r.sharedRandomNumber),
+    dbInfo(r.dbInfo),
+    ccr(r.ccr),
+    defaultTenant(r.defaultTenant) {}
 
 WorkloadContext::~WorkloadContext() {}
 
@@ -339,25 +344,44 @@ Future<Void> CompoundWorkload::start(Database const& cx) {
 	std::vector<Future<Void>> all;
 	all.reserve(workloads.size() + failureInjection.size());
 	auto wCount = std::make_shared<unsigned>(0);
+	auto remainingWorkloads = std::make_shared<std::map<std::string, int>>();
 	auto startWorkload = [&](TestWorkload& workload) -> Future<Void> {
 		auto workloadName = workload.description();
 		++(*wCount);
 		TraceEvent("WorkloadRunStatus").detail("Name", workloadName).detail("Count", *wCount).detail("Phase", "Start");
 		return fmap(
-		    [workloadName, wCount](Void value) {
+		    [workloadName, wCount, remainingWorkloads](Void value) {
 			    --(*wCount);
+			    auto it = remainingWorkloads->find(workloadName);
+			    ASSERT(it != remainingWorkloads->end());
+			    ASSERT_GT(it->second, 0);
+			    --it->second;
+			    std::string remainingWorkloadsStr("[");
+			    for (const auto& [w, cnt] : *remainingWorkloads) {
+				    if (cnt > 0) {
+					    remainingWorkloadsStr.append(w + "x" + std::to_string(cnt) + " ");
+				    }
+			    }
+			    if (remainingWorkloadsStr.back() == ' ') {
+				    remainingWorkloadsStr.back() = ']';
+			    } else {
+				    remainingWorkloadsStr.push_back(']');
+			    }
 			    TraceEvent("WorkloadRunStatus")
 			        .detail("Name", workloadName)
 			        .detail("Remaining", *wCount)
+			        .detail("RemainingWorkloads", remainingWorkloadsStr)
 			        .detail("Phase", "End");
 			    return Void();
 		    },
 		    workload.start(cx));
 	};
 	for (auto& workload : workloads) {
+		++(*remainingWorkloads)[workload->description()];
 		all.push_back(startWorkload(*workload));
 	}
 	for (auto& workload : failureInjection) {
+		++(*remainingWorkloads)[workload->description()];
 		all.push_back(startWorkload(*workload));
 	}
 	return waitForAll(all);
@@ -367,6 +391,7 @@ Future<bool> CompoundWorkload::check(Database const& cx) {
 	std::vector<Future<bool>> all;
 	all.reserve(workloads.size() + failureInjection.size());
 	auto wCount = std::make_shared<unsigned>(0);
+	auto remainingWorkloads = std::make_shared<std::map<std::string, int>>();
 	auto starter = [&](TestWorkload& workload) -> Future<bool> {
 		++(*wCount);
 		std::string workloadName = workload.description();
@@ -375,11 +400,27 @@ Future<bool> CompoundWorkload::check(Database const& cx) {
 		    .detail("Count", *wCount)
 		    .detail("Phase", "Start");
 		return fmap(
-		    [workloadName, wCount](bool ret) {
+		    [workloadName, wCount, remainingWorkloads](bool ret) {
 			    --(*wCount);
+			    auto it = remainingWorkloads->find(workloadName);
+			    ASSERT(it != remainingWorkloads->end());
+			    ASSERT_GT(it->second, 0);
+			    --it->second;
+			    std::string remainingWorkloadsStr("[");
+			    for (const auto& [w, cnt] : *remainingWorkloads) {
+				    if (cnt > 0) {
+					    remainingWorkloadsStr.append(w + "x" + std::to_string(cnt) + " ");
+				    }
+			    }
+			    if (remainingWorkloadsStr.back() == ' ') {
+				    remainingWorkloadsStr.back() = ']';
+			    } else {
+				    remainingWorkloadsStr.push_back(']');
+			    }
 			    TraceEvent("WorkloadCheckStatus")
 			        .detail("Name", workloadName)
 			        .detail("Remaining", *wCount)
+			        .detail("RemainingWorkloads", remainingWorkloadsStr)
 			        .detail("Phase", "End")
 			        .detail("Success", ret);
 			    return ret;
@@ -387,9 +428,11 @@ Future<bool> CompoundWorkload::check(Database const& cx) {
 		    workload.check(cx));
 	};
 	for (auto& workload : workloads) {
+		++(*remainingWorkloads)[workload->description()];
 		all.push_back(starter(*workload));
 	}
 	for (auto& workload : failureInjection) {
+		++(*remainingWorkloads)[workload->description()];
 		all.push_back(starter(*workload));
 	}
 	return allTrue(all);
@@ -875,8 +918,8 @@ ACTOR Future<Void> testerServerCore(TesterInterface interf,
 	}
 }
 
-ACTOR Future<Void> clearTenantData(Database db, Reference<Tenant> tenant) {
-	state Transaction tr(db, tenant);
+ACTOR Future<Void> clearTenantData(Reference<Tenant> tenant) {
+	state Transaction tr(tenant);
 	loop {
 		try {
 			tr.debugTransaction(debugRandom()->randomUniqueID());
@@ -930,7 +973,7 @@ ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
 		std::vector<Future<Void>> deleteDataFutures;
 		for (auto const& [id, entry] : tenants.results) {
 			if (entry.tenantName != defaultTenant) {
-				deleteDataFutures.push_back(clearTenantData(cx, makeReference<Tenant>(id)));
+				deleteDataFutures.push_back(clearTenantData(makeReference<Tenant>(cx, id)));
 			}
 		}
 
@@ -1486,7 +1529,10 @@ std::map<std::string, std::function<void(const std::string&)>> testSpecGlobalKey
 	{ "disableRemoteKVS",
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedRemoteKVS", ""); } },
 	{ "allowDefaultTenant",
-	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedDefaultTenant", ""); } }
+	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedDefaultTenant", ""); } },
+	{ "simHTTPServerEnabled",
+	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedSimHTTPServerEnabled", ""); } }
+
 };
 
 std::map<std::string, std::function<void(const std::string& value, TestSpec* spec)>> testSpecTestKeys = {
@@ -1838,9 +1884,9 @@ ACTOR Future<Void> monitorServerDBInfo(Reference<AsyncVar<Optional<ClusterContro
 			                  ? brokenPromiseToNever(ccInterface->get().get().getServerDBInfo.getReply(req))
 			                  : Never())) {
 				ServerDBInfo localInfo = _localInfo;
-				TraceEvent("GotServerDBInfoChange")
+				TraceEvent("TesterGotServerDBInfoChange")
 				    .detail("ChangeID", localInfo.id)
-				    .detail("MasterID", localInfo.master.id())
+				    .detail("MasterID", localInfo.master.present() ? localInfo.master.get().id() : UID())
 				    .detail("RatekeeperID", localInfo.ratekeeper.present() ? localInfo.ratekeeper.get().id() : UID())
 				    .detail("DataDistributorID",
 				            localInfo.distributor.present() ? localInfo.distributor.get().id() : UID());
@@ -1981,7 +2027,7 @@ ACTOR Future<Void> disableConnectionFailuresAfter(double seconds, std::string co
 }
 
 ACTOR Future<Void> writeTenantKey(Database db, Reference<Tenant> tenant) {
-	state ReadYourWritesTransaction tr(db, tenant);
+	state ReadYourWritesTransaction tr = ReadYourWritesTransaction::fromTenantOrDefault(tenant, db);
 	loop {
 		try {
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);

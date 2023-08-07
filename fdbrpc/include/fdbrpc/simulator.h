@@ -350,6 +350,9 @@ public:
 	bool willRestart = false;
 	bool restarted = false;
 	ValidationData validationData;
+	bool initRESTSimKmsVaultConfigFilesDone = false;
+
+	ProcessInfo* testSystem = nullptr;
 
 	bool hasDiffProtocolProcess; // true if simulator is testing a process with a different version
 	bool setDiffProtocol; // true if a process with a different protocol version has been started
@@ -408,6 +411,7 @@ public:
 	std::unordered_map<std::string, Reference<HTTP::SimRegisteredHandlerContext>> httpHandlers;
 	std::vector<std::pair<ProcessInfo*, Reference<HTTP::SimServerContext>>> httpServerProcesses;
 	std::set<IPAddress> httpServerIps;
+	int nextHTTPPort = 5000;
 	bool httpProtected = false;
 
 	flowGlobalType global(int id) const final;

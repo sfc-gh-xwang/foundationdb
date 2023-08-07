@@ -21,13 +21,30 @@
 #include "fdbserver/workloads/MockDDTest.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
+struct MockDDTestWorkloadImpl {
+	ACTOR static Future<Void> randomGetClient(MockDDTestWorkload* self,
+	                                          double delaySeconds,
+	                                          int keySpaceMin,
+	                                          int keySpaceMax) {
+		loop {
+			double kDouble = keySpaceMin + deterministicRandom()->random01() * (keySpaceMax - keySpaceMin);
+			Key key = doubleToTestKey(kDouble);
+			self->sharedMgs->get(key);
+			self->totalReadsMetric++;
+			wait(delayJittered(delaySeconds));
+		}
+	}
+};
+
 KeyRange MockDDTestWorkload::getRandomRange(double offset) const {
 	double len = deterministicRandom()->random01() * this->maxKeyspace;
 	double pos = offset + deterministicRandom()->random01() * (1.0 - len);
 	return KeyRangeRef(doubleToTestKey(pos), doubleToTestKey(pos + len));
 }
 
-MockDDTestWorkload::MockDDTestWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
+MockDDTestWorkload::MockDDTestWorkload(WorkloadContext const& wcx)
+  : TestWorkload(wcx),
+    totalReadsMetric("MockDDTest.totalReads"_sr) {
 	enabled = !clientId && g_network->isSimulated(); // only do this on the "first" client
 	simpleConfig = getOption(options, "simpleConfig"_sr, simpleConfig);
 	testDuration = getOption(options, "testDuration"_sr, testDuration);
@@ -44,6 +61,8 @@ MockDDTestWorkload::MockDDTestWorkload(WorkloadContext const& wcx) : TestWorkloa
 	maxSpaceKeyCount = getOption(options, "maxSpaceKeyCount"_sr, maxSpaceKeyCount);
 	linearStride = getOption(options, "linearStride"_sr, linearStride);
 	linearStartSize = getOption(options, "linearStartSize"_sr, linearStartSize);
+	getPerSecond = getOption(options, "getPerSecond"_sr, 0);
+	setPerSecond = getOption(options, "setPerSecond"_sr, 0);
 }
 
 void MockDDTestWorkload::populateRandomStrategy() {
@@ -122,4 +141,8 @@ Future<Void> MockDDTestWorkload::setup(Database const& cx) {
 	sharedMgs->initializeClusterLayout(dbConfig);
 	sharedMgs->initializeAsEmptyDatabaseMGS(dbConfig.db);
 	return Void();
+}
+
+Future<Void> MockDDTestWorkload::randomGetClient(double delaySeconds, int keySpaceMin, int keySpaceMax) {
+	return MockDDTestWorkloadImpl::randomGetClient(this, delaySeconds, 0, keySpaceCount);
 }

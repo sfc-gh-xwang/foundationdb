@@ -75,7 +75,7 @@ ACTOR Future<std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>>>
     Optional<Reference<Tenant>> tenant) {
 	state RangeResult out;
 	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks;
-	state Transaction tr(cx, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
 
 	loop {
 		try {
@@ -225,7 +225,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> getSummaries(Database
                                                                         KeyRange range,
                                                                         Version summaryVersion,
                                                                         Optional<Reference<Tenant>> tenant) {
-	state Transaction tr(cx, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
 	loop {
 		try {
 			Standalone<VectorRef<BlobGranuleSummaryRef>> summaries =
@@ -254,7 +254,7 @@ ACTOR Future<Void> validateGranuleSummaries(Database cx,
 	state Arena lastSummaryArena;
 	state KeyRangeMap<Optional<BlobGranuleSummaryRef>> lastSummary;
 	state Version lastSummaryVersion = invalidVersion;
-	state Transaction tr(cx, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
 	state int successCount = 0;
 	try {
 		loop {
@@ -610,6 +610,34 @@ ACTOR Future<Void> checkFeedCleanup(Database cx, bool debug) {
 			wait(delay(2.0));
 			// reset transaction to get higher read version
 			tr.reset();
+		} catch (Error& e) {
+			wait(tr.onError(e));
+		}
+	}
+}
+
+// This ideally should have no effect on anything else, but before these fixes caused head-of-line blocking in change
+// feeds that could freeze the whole system
+ACTOR Future<Void> requestWayInTheFuture(Database cx, KeyRange range, Optional<Reference<Tenant>> tenant) {
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
+	state Version version = 0;
+	loop {
+		try {
+			wait(store(version, tr.getReadVersion()));
+			break;
+		} catch (Error& e) {
+			wait(tr.onError(e));
+		}
+	}
+
+	version += 100000000 * SERVER_KNOBS->VERSIONS_PER_SECOND;
+
+	loop {
+		try {
+			wait(success(tr.readBlobGranules(range, 0, version)));
+			// this intentionally should never succeed
+			ASSERT(false);
+			return Void();
 		} catch (Error& e) {
 			wait(tr.onError(e));
 		}

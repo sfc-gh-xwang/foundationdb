@@ -28,7 +28,9 @@ ClusterConnectionKey::ClusterConnectionKey(Database db,
                                            Key connectionStringKey,
                                            ClusterConnectionString const& contents,
                                            ConnectionStringNeedsPersisted needsToBePersisted)
-  : IClusterConnectionRecord(needsToBePersisted), db(db), connectionStringKey(connectionStringKey) {
+  : IClusterConnectionRecord(needsToBePersisted),
+    db(db),
+    connectionStringKey(connectionStringKey) {
 	if (!needsToBePersisted) {
 		lastPersistedConnectionString = ValueRef(contents.toString());
 	}

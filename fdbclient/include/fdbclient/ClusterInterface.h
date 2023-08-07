@@ -32,7 +32,6 @@
 struct ClusterInterface {
 	constexpr static FileIdentifier file_identifier = 15888863;
 	RequestStream<struct OpenDatabaseRequest> openDatabase;
-	RequestStream<struct FailureMonitoringRequest> failureMonitoring;
 	RequestStream<struct StatusRequest> databaseStatus;
 	RequestStream<ReplyPromise<Void>> ping;
 	RequestStream<struct GetClientWorkersRequest> getClientWorkers;
@@ -48,16 +47,15 @@ struct ClusterInterface {
 	NetworkAddress address() const { return openDatabase.getEndpoint().getPrimaryAddress(); }
 
 	bool hasMessage() const {
-		return openDatabase.getFuture().isReady() || failureMonitoring.getFuture().isReady() ||
-		       databaseStatus.getFuture().isReady() || ping.getFuture().isReady() ||
-		       getClientWorkers.getFuture().isReady() || forceRecovery.getFuture().isReady() ||
-		       moveShard.getFuture().isReady() || repairSystemData.getFuture().isReady() ||
-		       splitShard.getFuture().isReady() || triggerAudit.getFuture().isReady();
+		return openDatabase.getFuture().isReady() || databaseStatus.getFuture().isReady() ||
+		       ping.getFuture().isReady() || getClientWorkers.getFuture().isReady() ||
+		       forceRecovery.getFuture().isReady() || moveShard.getFuture().isReady() ||
+		       repairSystemData.getFuture().isReady() || splitShard.getFuture().isReady() ||
+		       triggerAudit.getFuture().isReady();
 	}
 
 	void initEndpoints() {
 		openDatabase.getEndpoint(TaskPriority::ClusterController);
-		failureMonitoring.getEndpoint(TaskPriority::FailureMonitor);
 		databaseStatus.getEndpoint(TaskPriority::ClusterController);
 		ping.getEndpoint(TaskPriority::ClusterController);
 		getClientWorkers.getEndpoint(TaskPriority::ClusterController);
@@ -72,7 +70,6 @@ struct ClusterInterface {
 	void serialize(Ar& ar) {
 		serializer(ar,
 		           openDatabase,
-		           failureMonitoring,
 		           databaseStatus,
 		           ping,
 		           getClientWorkers,
@@ -156,66 +153,6 @@ struct OpenDatabaseRequest {
 extern template class RequestStream<OpenDatabaseRequest, false>;
 extern template struct NetNotifiedQueue<OpenDatabaseRequest, false>;
 
-struct SystemFailureStatus {
-	constexpr static FileIdentifier file_identifier = 3194108;
-	NetworkAddressList addresses;
-	FailureStatus status;
-
-	SystemFailureStatus() {}
-	SystemFailureStatus(NetworkAddressList const& a, FailureStatus const& s) : addresses(a), status(s) {}
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar, addresses, status);
-	}
-};
-
-struct FailureMonitoringReply {
-	constexpr static FileIdentifier file_identifier = 6820325;
-	VectorRef<SystemFailureStatus> changes;
-	Version failureInformationVersion;
-	bool allOthersFailed; // If true, changes are relative to all servers being failed, otherwise to the version given
-	                      // in the request
-	int clientRequestIntervalMS, // after this many milliseconds, send another request
-	    considerServerFailedTimeoutMS; // after this many additional milliseconds, consider the ClusterController itself
-	                                   // to be failed
-	Arena arena;
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar,
-		           changes,
-		           failureInformationVersion,
-		           allOthersFailed,
-		           clientRequestIntervalMS,
-		           considerServerFailedTimeoutMS,
-		           arena);
-	}
-};
-
-struct FailureMonitoringRequest {
-	// Sent by all participants to the cluster controller reply.clientRequestIntervalMS
-	//   ms after receiving the previous reply.
-	// Provides the controller the self-diagnosed status of the sender, and also
-	//   requests the status of other systems.  Failure to timely send one of these implies
-	//   a failed status.
-	// If !senderStatus.present(), the sender wants to receive the latest failure information
-	//   but doesn't want to be monitored.
-	// The failureInformationVersion returned in reply should be passed back to the
-	//   next request to facilitate delta compression of the failure information.
-
-	constexpr static FileIdentifier file_identifier = 5867851;
-	Optional<FailureStatus> senderStatus;
-	Version failureInformationVersion;
-	NetworkAddressList addresses;
-	ReplyPromise<struct FailureMonitoringReply> reply;
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar, senderStatus, failureInformationVersion, addresses, reply);
-	}
-};
-
 struct StatusReply {
 	constexpr static FileIdentifier file_identifier = 9980504;
 	StatusObject statusObj;
@@ -223,7 +160,8 @@ struct StatusReply {
 
 	StatusReply() {}
 	explicit StatusReply(StatusObject obj)
-	  : statusObj(obj), statusStr(json_spirit::write_string(json_spirit::mValue(obj))) {}
+	  : statusObj(obj),
+	    statusStr(json_spirit::write_string(json_spirit::mValue(obj))) {}
 	explicit StatusReply(std::string&& text) : statusStr(text) {}
 
 	template <class Ar>
@@ -288,7 +226,8 @@ struct MoveShardRequest {
 
 	MoveShardRequest() {}
 	MoveShardRequest(KeyRange shard, std::vector<NetworkAddress> addresses)
-	  : shard{ std::move(shard) }, addresses{ std::move(addresses) } {}
+	  : shard{ std::move(shard) },
+	    addresses{ std::move(addresses) } {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

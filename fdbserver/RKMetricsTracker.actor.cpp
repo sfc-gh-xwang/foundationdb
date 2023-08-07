@@ -100,7 +100,7 @@ public:
 	}
 
 	ACTOR static Future<Void> trackEachStorageServer(RKMetricsTracker* self) {
-		state std::unordered_map<UID, Future<Void>> storageServerTrackers;
+		state boost::unordered_flat_map<UID, Future<Void>> storageServerTrackers;
 		state Promise<Void> err;
 
 		loop choose {
@@ -218,8 +218,12 @@ RKMetricsTracker::RKMetricsTracker(UID ratekeeperId,
                                    Database db,
                                    FutureStream<ReportCommitCostEstimationRequest> reportCommitCostEstimation,
                                    Reference<AsyncVar<ServerDBInfo> const> dbInfo)
-  : ratekeeperId(ratekeeperId), dbInfo(dbInfo), db(db), reportCommitCostEstimation(reportCommitCostEstimation),
-    lastSSListFetchedTimestamp(now()), smoothTotalDurableBytes(SERVER_KNOBS->SLOW_SMOOTHING_AMOUNT) {}
+  : ratekeeperId(ratekeeperId),
+    dbInfo(dbInfo),
+    db(db),
+    reportCommitCostEstimation(reportCommitCostEstimation),
+    lastSSListFetchedTimestamp(now()),
+    smoothTotalDurableBytes(SERVER_KNOBS->SLOW_SMOOTHING_AMOUNT) {}
 
 RKMetricsTracker::~RKMetricsTracker() = default;
 
@@ -261,11 +265,19 @@ Future<Void> RKMetricsTracker::run() {
 }
 
 StorageQueueInfo::StorageQueueInfo(const UID& ratekeeperID_, const UID& id_, const LocalityData& locality_)
-  : ratekeeperID(ratekeeperID_), smoothFreeSpace(SERVER_KNOBS->SMOOTHING_AMOUNT),
-    smoothTotalSpace(SERVER_KNOBS->SMOOTHING_AMOUNT), smoothDurableBytes(SERVER_KNOBS->SMOOTHING_AMOUNT),
-    smoothInputBytes(SERVER_KNOBS->SMOOTHING_AMOUNT), verySmoothDurableBytes(SERVER_KNOBS->SLOW_SMOOTHING_AMOUNT),
-    smoothDurableVersion(SERVER_KNOBS->SMOOTHING_AMOUNT), smoothLatestVersion(SERVER_KNOBS->SMOOTHING_AMOUNT),
-    valid(false), id(id_), locality(locality_), acceptingRequests(false), limitReason(limitReason_t::unlimited) {
+  : ratekeeperID(ratekeeperID_),
+    smoothFreeSpace(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    smoothTotalSpace(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    smoothDurableBytes(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    smoothInputBytes(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    verySmoothDurableBytes(SERVER_KNOBS->SLOW_SMOOTHING_AMOUNT),
+    smoothDurableVersion(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    smoothLatestVersion(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    valid(false),
+    id(id_),
+    locality(locality_),
+    acceptingRequests(false),
+    limitReason(limitReason_t::unlimited) {
 	// FIXME: this is a tacky workaround for a potential uninitialized use in trackStorageServerQueueInfo
 	lastReply.instanceID = -1;
 }
@@ -310,18 +322,30 @@ UpdateCommitCostRequest StorageQueueInfo::refreshCommitCost(double elapsed) {
 	TransactionTag busiestTag;
 	TransactionCommitCostEstimation maxCost;
 	double maxRate = 0;
+	std::priority_queue<BusyThrottlingIdInfo, std::vector<BusyThrottlingIdInfo>, std::greater<BusyThrottlingIdInfo>>
+	    topKWriters;
 	for (const auto& [tag, cost] : tagCostEst) {
-		double rate = cost.getCostSum() / elapsed;
+		double const rate = cost.getCostSum() / elapsed;
+		if (rate < SERVER_KNOBS->MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE) {
+			continue;
+		}
+		if (topKWriters.size() < SERVER_KNOBS->SS_THROTTLE_TAGS_TRACKED) {
+			topKWriters.emplace(ThrottlingId::fromTag(tag), rate);
+		} else if (topKWriters.top().rate < rate) {
+			topKWriters.pop();
+			topKWriters.emplace(ThrottlingId::fromTag(tag), rate);
+		}
+
 		if (rate > maxRate) {
 			busiestTag = tag;
 			maxRate = rate;
 			maxCost = cost;
 		}
 	}
-	if (maxRate > SERVER_KNOBS->MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE) {
-		// TraceEvent("RefreshSSCommitCost").detail("TotalWriteCost", totalWriteCost).detail("TotalWriteOps",totalWriteOps);
-		ASSERT_GT(totalWriteCosts, 0);
-		busiestWriters.emplace_back(ThrottlingId::fromTag(busiestTag), maxRate);
+
+	while (!topKWriters.empty()) {
+		busiestWriters.push_back(std::move(topKWriters.top()));
+		topKWriters.pop();
 	}
 
 	UpdateCommitCostRequest updateCommitCostRequest{ ratekeeperID,
@@ -354,10 +378,22 @@ Optional<double> StorageQueueInfo::getTagThrottlingRatio(int64_t storageTargetBy
 	}
 }
 
+StorageQueueInfo StorageQueueInfo::createTestInfo(UID id, int64_t storageQueueBytes) {
+	StorageQueueInfo result(id, LocalityData({}, /*zoneId=*/Value(id.toString()), {}, {}));
+	result.valid = true;
+	// Simulate a storage queue of the provided size:
+	result.lastReply.bytesInput = storageQueueBytes;
+	return result;
+}
+
 TLogQueueInfo::TLogQueueInfo(UID id)
-  : smoothDurableBytes(SERVER_KNOBS->SMOOTHING_AMOUNT), smoothInputBytes(SERVER_KNOBS->SMOOTHING_AMOUNT),
-    verySmoothDurableBytes(SERVER_KNOBS->SLOW_SMOOTHING_AMOUNT), smoothFreeSpace(SERVER_KNOBS->SMOOTHING_AMOUNT),
-    smoothTotalSpace(SERVER_KNOBS->SMOOTHING_AMOUNT), valid(false), id(id) {
+  : smoothDurableBytes(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    smoothInputBytes(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    verySmoothDurableBytes(SERVER_KNOBS->SLOW_SMOOTHING_AMOUNT),
+    smoothFreeSpace(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    smoothTotalSpace(SERVER_KNOBS->SMOOTHING_AMOUNT),
+    valid(false),
+    id(id) {
 	// FIXME: this is a tacky workaround for a potential uninitialized use in trackTLogQueueInfo (copied
 	// from storageQueueInfo)
 	lastReply.instanceID = -1;

@@ -83,8 +83,12 @@ public:
 	ReusableCoordinatedState(ServerCoordinators const& coordinators,
 	                         PromiseStream<Future<Void>> const& addActor,
 	                         UID const& dbgid)
-	  : finalWriteStarted(false), previousWrite(Void()), cstate(coordinators), coordinators(coordinators),
-	    addActor(addActor), dbgid(dbgid) {}
+	  : finalWriteStarted(false),
+	    previousWrite(Void()),
+	    cstate(coordinators),
+	    coordinators(coordinators),
+	    addActor(addActor),
+	    dbgid(dbgid) {}
 
 	Future<Void> read() { return _read(this); }
 
@@ -216,7 +220,7 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 	Version initialClusterVersion = -1;
 	Standalone<StringRef> dbId;
 
-	MasterInterface masterInterface;
+	Optional<MasterInterface> masterInterface;
 	LifetimeToken masterLifetime;
 	const ClusterControllerFullInterface
 	    clusterController; // If the cluster controller changes, this master will die, so this is immutable.
@@ -227,6 +231,7 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 	Reference<AsyncVar<ServerDBInfo> const> dbInfo;
 	int64_t registrationCount; // Number of different MasterRegistrationRequests sent to clusterController
 
+	double recoveryStart;
 	RecoveryState recoveryState;
 
 	PromiseStream<Future<Void>> addActor;
@@ -236,7 +241,7 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 	int8_t safeLocality;
 	int8_t primaryLocality;
 
-	std::vector<WorkerInterface> backupWorkers; // Recruited backup workers from cluster controller.
+	std::vector<WorkerDetails> backupWorkers; // Recruited backup workers from cluster controller.
 
 	CounterCollection cc;
 	Counter changeCoordinatorsRequests;
@@ -257,23 +262,42 @@ struct ClusterRecoveryData : NonCopyable, ReferenceCounted<ClusterRecoveryData> 
 
 	ClusterRecoveryData(ClusterControllerData* controllerData,
 	                    Reference<AsyncVar<ServerDBInfo> const> const& dbInfo,
-	                    MasterInterface const& masterInterface,
 	                    LifetimeToken const& masterLifetimeToken,
 	                    ServerCoordinators const& coordinators,
 	                    ClusterControllerFullInterface const& clusterController,
 	                    Standalone<StringRef> const& dbId,
 	                    PromiseStream<Future<Void>> const& addActor,
-	                    bool forceRecovery)
+	                    bool forceRecovery,
+	                    double recoveryStart,
+	                    UID const& dbgid)
 
-	  : controllerData(controllerData), dbgid(masterInterface.id()), lastEpochEnd(invalidVersion),
-	    recoveryTransactionVersion(invalidVersion), lastCommitTime(0), liveCommittedVersion(invalidVersion),
-	    databaseLocked(false), minKnownCommittedVersion(invalidVersion), hasConfiguration(false),
-	    coordinators(coordinators), lastVersionTime(0), memoryLimit(2e9), dbId(dbId), masterInterface(masterInterface),
-	    masterLifetime(masterLifetimeToken), clusterController(clusterController),
-	    cstate(coordinators, addActor, dbgid), dbInfo(dbInfo), registrationCount(0), addActor(addActor),
-	    recruitmentStalled(makeReference<AsyncVar<bool>>(false)), forceRecovery(forceRecovery), neverCreated(false),
-	    safeLocality(tagLocalityInvalid), primaryLocality(tagLocalityInvalid),
-	    cc("ClusterRecoveryData", dbgid.toString()), changeCoordinatorsRequests("ChangeCoordinatorsRequests", cc),
+	  : controllerData(controllerData),
+	    dbgid(dbgid),
+	    lastEpochEnd(invalidVersion),
+	    recoveryTransactionVersion(invalidVersion),
+	    lastCommitTime(0),
+	    liveCommittedVersion(invalidVersion),
+	    databaseLocked(false),
+	    minKnownCommittedVersion(invalidVersion),
+	    hasConfiguration(false),
+	    coordinators(coordinators),
+	    lastVersionTime(0),
+	    memoryLimit(2e9),
+	    dbId(dbId),
+	    masterLifetime(masterLifetimeToken),
+	    clusterController(clusterController),
+	    cstate(coordinators, addActor, dbgid),
+	    dbInfo(dbInfo),
+	    registrationCount(0),
+	    recoveryStart(recoveryStart),
+	    addActor(addActor),
+	    recruitmentStalled(makeReference<AsyncVar<bool>>(false)),
+	    forceRecovery(forceRecovery),
+	    neverCreated(false),
+	    safeLocality(tagLocalityInvalid),
+	    primaryLocality(tagLocalityInvalid),
+	    cc("ClusterRecoveryData", dbgid.toString()),
+	    changeCoordinatorsRequests("ChangeCoordinatorsRequests", cc),
 	    getCommitVersionRequests("GetCommitVersionRequests", cc),
 	    backupWorkerDoneRequests("BackupWorkerDoneRequests", cc),
 	    getLiveCommittedVersionRequests("GetLiveCommittedVersionRequests", cc),

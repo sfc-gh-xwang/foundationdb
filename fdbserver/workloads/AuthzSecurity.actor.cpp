@@ -91,20 +91,30 @@ struct AuthzSecurityWorkload : TestWorkload {
 	bool checkBlobGranules, checkBlobManagement;
 
 	AuthzSecurityWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), crossTenantGetPositive("CrossTenantGetPositive"),
-	    crossTenantGetNegative("CrossTenantGetNegative"), crossTenantCommitPositive("CrossTenantCommitPositive"),
+	  : TestWorkload(wcx),
+	    crossTenantGetPositive("CrossTenantGetPositive"),
+	    crossTenantGetNegative("CrossTenantGetNegative"),
+	    crossTenantCommitPositive("CrossTenantCommitPositive"),
 	    crossTenantCommitNegative("CrossTenantCommitNegative"),
-	    publicNonTenantRequestPositive("PublicNonTenantRequestPositive"), tLogReadNegative("TLogReadNegative"),
-	    keyLocationLeakNegative("KeyLocationLeakNegative"), bgLocationLeakNegative("BGLocationLeakNegative"),
-	    crossTenantBGLocPositive("CrossTenantBGLocPositive"), crossTenantBGLocNegative("CrossTenantBGLocNegative"),
-	    crossTenantBGReqPositive("CrossTenantBGReqPositive"), crossTenantBGReqNegative("CrossTenantBGReqNegative"),
+	    publicNonTenantRequestPositive("PublicNonTenantRequestPositive"),
+	    tLogReadNegative("TLogReadNegative"),
+	    keyLocationLeakNegative("KeyLocationLeakNegative"),
+	    bgLocationLeakNegative("BGLocationLeakNegative"),
+	    crossTenantBGLocPositive("CrossTenantBGLocPositive"),
+	    crossTenantBGLocNegative("CrossTenantBGLocNegative"),
+	    crossTenantBGReqPositive("CrossTenantBGReqPositive"),
+	    crossTenantBGReqNegative("CrossTenantBGReqNegative"),
 	    crossTenantBGStreamPositive("CrossTenantBGStreamPositive"),
 	    crossTenantBGStreamNegative("CrossTenantBGStreamNegative"),
-	    crossTenantBGReadPositive("CrossTenantBGReadPositive"), crossTenantBGReadNegative("CrossTenantBGReadNegative"),
+	    crossTenantBGReadPositive("CrossTenantBGReadPositive"),
+	    crossTenantBGReadNegative("CrossTenantBGReadNegative"),
 	    crossTenantGetGranulesPositive("CrossTenantGetGranulesPositive"),
-	    crossTenantGetGranulesNegative("CrossTenantGetGranulesNegative"), blobbifyNegative("BlobbifyNegative"),
-	    unblobbifyNegative("UnblobbifyNegative"), listBlobNegative("ListBlobNegative"),
-	    verifyBlobNegative("VerifyBlobNegative"), flushBlobNegative("FlushBlobNegative"),
+	    crossTenantGetGranulesNegative("CrossTenantGetGranulesNegative"),
+	    blobbifyNegative("BlobbifyNegative"),
+	    unblobbifyNegative("UnblobbifyNegative"),
+	    listBlobNegative("ListBlobNegative"),
+	    verifyBlobNegative("VerifyBlobNegative"),
+	    flushBlobNegative("FlushBlobNegative"),
 	    purgeBlobNegative("PurgeBlobNegative") {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		transactionsPerSecond = getOption(options, "transactionsPerSecond"_sr, 500.0) / clientCount;
@@ -264,7 +274,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                               WipedString token,
 	                                                               StringRef key,
 	                                                               StringRef value) {
-		state Transaction tr(cx, tenant);
+		state Transaction tr(tenant);
 		loop {
 			try {
 				self->setAuthToken(tr, token);
@@ -282,7 +292,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                                      Reference<Tenant> tenant,
 	                                                                      WipedString token,
 	                                                                      StringRef key) {
-		state Transaction tr(cx, tenant);
+		state Transaction tr(tenant);
 		loop {
 			try {
 				// trigger GetKeyServerLocationsRequest and subsequent cache update
@@ -460,7 +470,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 
 	ACTOR static Future<Void> testPublicNonTenantRequestsAllowedWithoutTokens(AuthzSecurityWorkload* self,
 	                                                                          Database cx) {
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr(self->tenant);
 		loop {
 			try {
 				Version version = wait(tr.getReadVersion());
@@ -478,7 +488,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 		state Value value = self->randomString();
 		state Version committedVersion =
 		    wait(setAndCommitKeyValueAndGetVersion(self, cx, self->tenant, self->signedToken, key, value));
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr(self->tenant);
 		state Optional<Value> tLogConfigString;
 		loop {
 			try {
@@ -602,11 +612,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                                               TenantInfo tenant,
 	                                                                               Version v) {
 		try {
-			GetBlobGranuleLocationsReply reply = wait(
-			    basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
-			                     &CommitProxyInterface::getBlobGranuleLocations,
-			                     GetBlobGranuleLocationsRequest(
-			                         SpanContext(), tenant, ""_sr, Optional<KeyRef>(), 100, false, false, v, Arena())));
+			GetBlobGranuleLocationsReply reply =
+			    wait(basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
+			                          &CommitProxyInterface::getBlobGranuleLocations,
+			                          GetBlobGranuleLocationsRequest(
+			                              SpanContext(), tenant, ""_sr, "\xff"_sr, 100, false, false, v, Arena())));
 			return reply;
 		} catch (Error& e) {
 			if (e.code() == error_code_operation_cancelled) {
@@ -655,6 +665,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                           WipedString reqToken,
 	                                                           Version committedVersion,
 	                                                           bool doStreamReqInstead = false) {
+
 		try {
 			ErrorOr<GetBlobGranuleLocationsReply> rep =
 			    wait(getGranuleLocations(self, cx, TenantInfo(tenant->id(), locToken), committedVersion));
@@ -684,6 +695,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 			auto& bwInterf = rep.get().bwInterfs[bwInterfIdx];
 
 			if (!doStreamReqInstead) {
+				CODE_PROBE(true, "Authz blob granule doing request");
 				BlobGranuleFileRequest fileReq;
 				fileReq.arena.dependsOn(rep.get().arena);
 				fileReq.keyRange = rep.get().results[locIdx].first;
@@ -695,9 +707,12 @@ struct AuthzSecurityWorkload : TestWorkload {
 				}
 				ASSERT(!fileRep.get().chunks.empty());
 			} else {
+				CODE_PROBE(true, "Authz blob granule doing stream request");
 				BlobGranuleMutationStreamRequest streamReq;
 				streamReq.arena.dependsOn(rep.get().arena);
 				streamReq.keyRange = rep.get().results[locIdx].first;
+				// has to exactly match granule range - strip 8 byte tenant prefix since it'll get re-applied
+				streamReq.keyRange = streamReq.keyRange.removePrefix(streamReq.keyRange.begin.substr(0, 8));
 				streamReq.tenantInfo = TenantInfo(tenant->id(), reqToken);
 				streamReq.beginVersion = committedVersion;
 				streamReq.readVersion = committedVersion;
@@ -715,7 +730,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 			return Optional<Error>();
 		} catch (Error& e) {
 			if (e.code() == error_code_end_of_stream) {
-				CODE_PROBE(true, "Authz blob granule stream request successful", probe::decoration::rare);
+				CODE_PROBE(true, "Authz blob granule stream request successful");
 				return Optional<Error>();
 			}
 			CODE_PROBE(e.code() == error_code_permission_denied,
@@ -730,7 +745,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                        Key key,
 	                                                        WipedString token,
 	                                                        Version committedVersion) {
-		state Transaction tr(cx, tenant);
+		state Transaction tr(tenant);
 		self->setAuthToken(tr, token);
 		KeyRange range(KeyRangeRef(key, keyAfter(key)));
 		try {
@@ -850,7 +865,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                    Reference<Tenant> tenant,
 	                                                    Key key,
 	                                                    WipedString token) {
-		state Transaction tr(cx, tenant);
+		state Transaction tr(tenant);
 		self->setAuthToken(tr, token);
 		KeyRange range(KeyRangeRef(key, keyAfter(key)));
 		try {
@@ -956,7 +971,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	ACTOR static Future<Void> checkGetOrSetValueWithoutAuthTokenNegative(AuthzSecurityWorkload* self,
 	                                                                     Database cx,
 	                                                                     TestGetMethod isGet) {
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr(self->tenant);
 		state Key key = self->randomString();
 		state Value value = self->randomString();
 		loop {

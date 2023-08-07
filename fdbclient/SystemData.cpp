@@ -986,6 +986,12 @@ std::string encodeFailedLocalityKey(std::string const& locality) {
 	return failedLocalityPrefix.toString() + locality;
 }
 
+const KeyRef storageEngineParamsPrefix = "\xff/conf/storage_engine_params/"_sr;
+const KeyRangeRef storageEngineParamsKeys("\xff/conf/storage_engine_params/"_sr, "\xff/conf/storage_engine_params0"_sr);
+const KeyRef tssStorageEngineParamsPrefix = "\xff/conf/tss_storage_engine_params/"_sr;
+const KeyRangeRef tssStorageEngineParamsKeys("\xff/conf/tss_storage_engine_params/"_sr,
+                                             "\xff/conf/tss_storage_engine_params0"_sr);
+
 // const KeyRangeRef globalConfigKeys( "\xff/globalConfig/"_sr, "\xff/globalConfig0"_sr );
 // const KeyRef globalConfigPrefix = globalConfigKeys.begin;
 
@@ -1027,9 +1033,10 @@ ProcessData decodeWorkerListValue(ValueRef const& value) {
 	return s;
 }
 
-const KeyRangeRef backupProgressKeys("\xff\x02/backupProgress/"_sr, "\xff\x02/backupProgress0"_sr);
+const KeyRangeRef backupProgressKeys("\xff/backupProgress/"_sr, "\xff/backupProgress0"_sr);
 const KeyRef backupProgressPrefix = backupProgressKeys.begin;
-const KeyRef backupStartedKey = "\xff\x02/backupStarted"_sr;
+const KeyRef deprecatedBackupStartedKey = "\xff\x02/backupStarted"_sr;
+const KeyRef backupStartedKey = "\xff/backupStarted"_sr;
 extern const KeyRef backupPausedKey = "\xff\x02/backupPaused"_sr;
 
 const Key backupProgressKeyFor(UID workerID) {

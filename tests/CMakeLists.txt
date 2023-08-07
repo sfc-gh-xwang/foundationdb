@@ -196,6 +196,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES fast/RandomSelector.toml)
   add_fdb_test(TEST_FILES fast/RandomUnitTests.toml)
   add_fdb_test(TEST_FILES fast/ReadHotDetectionCorrectness.toml IGNORE) # TODO re-enable once read hot detection is enabled.
+  add_fdb_test(TEST_FILES fast/ReadMetrics.toml)
   add_fdb_test(TEST_FILES fast/ReportConflictingKeys.toml)
   add_fdb_test(TEST_FILES fast/RESTUnit.toml IGNORE)
   add_fdb_test(TEST_FILES fast/SelectorCorrectness.toml)
@@ -235,6 +236,7 @@ if(WITH_PYTHON)
     # Mock DD Tests
     add_fdb_test(TEST_FILES fast/IDDTxnProcessorMoveKeys.toml IGNORE)
     add_fdb_test(TEST_FILES fast/MockDDReadWrite.toml IGNORE)
+    add_fdb_test(TEST_FILES fast/MockDDShardTrack.toml IGNORE)
   else()
     add_fdb_test(TEST_FILES fast/ValidateStorage.toml IGNORE)
     add_fdb_test(TEST_FILES noSim/KeyValueStoreRocksDBTest.toml IGNORE)
@@ -245,11 +247,14 @@ if(WITH_PYTHON)
     # Mock DD Tests
     add_fdb_test(TEST_FILES fast/IDDTxnProcessorMoveKeys.toml)
     add_fdb_test(TEST_FILES fast/MockDDReadWrite.toml)
+    add_fdb_test(TEST_FILES fast/MockDDShardTrack.toml)
   endif()
 
   add_fdb_test(TEST_FILES rare/BlobGranuleRanges.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleRangesChangeLog.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleMergeBoundaries.toml)
+  add_fdb_test(TEST_FILES rare/BulkLoadOperations.toml)
+  add_fdb_test(TEST_FILES rare/BulkLoadOperationsTenants.toml)
   add_fdb_test(TEST_FILES rare/CheckRelocation.toml)
   add_fdb_test(TEST_FILES rare/ClogTlog.toml)
   add_fdb_test(TEST_FILES rare/ClogUnclog.toml)
@@ -275,7 +280,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES rare/SwizzledLargeApiCorrectness.toml)
   add_fdb_test(TEST_FILES rare/RedwoodCorrectnessBTree.toml)
   add_fdb_test(TEST_FILES rare/RedwoodDeltaTree.toml)
-  add_fdb_test(TEST_FILES rare/TagThroughputQuota.toml)
+  add_fdb_test(TEST_FILES rare/SimpleThroughputQuotaCache.toml)
   add_fdb_test(TEST_FILES rare/TenantGroupThroughputQuota.toml)
   add_fdb_test(TEST_FILES rare/Throttling.toml)
   add_fdb_test(TEST_FILES rare/ThroughputQuotaCache.toml)
@@ -284,6 +289,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES rare/AllSimUnitTests.toml IGNORE)
   add_fdb_test(TEST_FILES rare/StatusBuilderPerf.toml)
   add_fdb_test(TEST_FILES rare/TLogVersionMessagesOverheadFactor.toml)
+  add_fdb_test(TEST_FILES rare/UpdateStream.toml)
   add_fdb_test(
     TEST_FILES restarting/from_5.0.0_until_6.3.0/CycleTestRestart-1.txt
     restarting/from_5.0.0_until_6.3.0/CycleTestRestart-2.txt)
@@ -370,8 +376,8 @@ if(WITH_PYTHON)
     restarting/from_71.3.0/CycleTestRestart-2.txt)
   #TODO: Reenable this test once knob issue is fixed (FDBCORE-5417):
   add_fdb_test(
-    TEST_FILES restarting/from_71.3.0/BlobGranuleRestartCorrectness-1.toml
-    restarting/from_71.3.0/BlobGranuleRestartCorrectness-2.toml IGNORE)
+    TEST_FILES restarting/from_71.3.1/BlobGranuleRestartCorrectness-1.toml
+    restarting/from_71.3.1/BlobGranuleRestartCorrectness-2.toml)
   add_fdb_test(
     TEST_FILES restarting/from_71.3.0/SnapCycleRestart-1.toml
     restarting/from_71.3.0/SnapCycleRestart-2.toml)
@@ -394,8 +400,14 @@ if(WITH_PYTHON)
     TEST_FILES restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-1.toml
     restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-2.toml)
   add_fdb_test(
+    TEST_FILES restarting/to_71.3.1/ConfigureStorageMigrationTestRestart-1.toml
+	restarting/to_71.3.1/ConfigureStorageMigrationTestRestart-2.toml)
+  add_fdb_test(
     TEST_FILES restarting/to_71.3.0/CycleTestRestart-1.toml
     restarting/to_71.3.0/CycleTestRestart-2.toml)
+  add_fdb_test(
+    TEST_FILES restarting/to_71.3.1/CycleTestRestart-1.toml
+	restarting/to_71.3.1/CycleTestRestart-2.toml)
   add_fdb_test(
     TEST_FILES restarting/to_71.3.0/BlobGranuleRestartCycle-1.toml
     restarting/to_71.3.0/BlobGranuleRestartCycle-2.toml)

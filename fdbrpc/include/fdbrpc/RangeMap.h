@@ -98,14 +98,14 @@ private:
 		IteratorImpl() {} // singular
 		explicit IteratorImpl<isConst>(const value_type it) : it(it) {}
 
-		Key const& begin() { return it->key; }
-		Key const& end() {
+		Key const& begin() const { return it->key; }
+		Key const& end() const {
 			auto j = it;
 			++j;
 			return j->key;
 		}
 
-		Range range() { return Range(begin(), end()); }
+		Range range() const { return Range(begin(), end()); }
 
 		std::conditional_t<isConst, const Val&, Val&> value() {
 			// ASSERT( it->key != allKeys.end );
@@ -142,6 +142,7 @@ public:
 	Val const& operator[](const Key& k) const { return rangeContaining(k).value(); }
 	Val& operator[](const Key& k) { return rangeContaining(k).value(); }
 
+	// from the begin to the last valid item, not include the end iterator;
 	Ranges ranges() { return Ranges(iterator(map.begin()), iterator(map.lastItem())); }
 	ConstRanges ranges() const { return ConstRanges(const_iterator(map.begin()), const_iterator(map.lastItem())); }
 	// intersectingRanges returns [begin, end] where begin <= r.begin and end >= r.end

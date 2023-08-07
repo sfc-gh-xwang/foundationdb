@@ -217,16 +217,37 @@ struct RestoreFileFR {
 	}
 
 	RestoreFileFR()
-	  : version(invalidVersion), isRange(false), blockSize(0), fileSize(0), endVersion(invalidVersion),
-	    beginVersion(invalidVersion), cursor(0), fileIndex(0) {}
+	  : version(invalidVersion),
+	    isRange(false),
+	    blockSize(0),
+	    fileSize(0),
+	    endVersion(invalidVersion),
+	    beginVersion(invalidVersion),
+	    cursor(0),
+	    fileIndex(0) {}
 
 	explicit RestoreFileFR(const RangeFile& f)
-	  : version(f.version), fileName(f.fileName), isRange(true), blockSize(f.blockSize), fileSize(f.fileSize),
-	    endVersion(f.version), beginVersion(f.version), cursor(0), fileIndex(0) {}
+	  : version(f.version),
+	    fileName(f.fileName),
+	    isRange(true),
+	    blockSize(f.blockSize),
+	    fileSize(f.fileSize),
+	    endVersion(f.version),
+	    beginVersion(f.version),
+	    cursor(0),
+	    fileIndex(0) {}
 
 	explicit RestoreFileFR(const LogFile& f)
-	  : version(f.beginVersion), fileName(f.fileName), isRange(false), blockSize(f.blockSize), fileSize(f.fileSize),
-	    endVersion(f.endVersion), beginVersion(f.beginVersion), cursor(0), fileIndex(0), partitionId(f.tagId) {}
+	  : version(f.beginVersion),
+	    fileName(f.fileName),
+	    isRange(false),
+	    blockSize(f.blockSize),
+	    fileSize(f.fileSize),
+	    endVersion(f.endVersion),
+	    beginVersion(f.beginVersion),
+	    cursor(0),
+	    fileIndex(0),
+	    partitionId(f.tagId) {}
 
 	std::string toString() const {
 		std::stringstream ss;

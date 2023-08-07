@@ -255,6 +255,7 @@ ERROR( no_external_client_provided, 2123, "No external client library provided."
 ERROR( all_external_clients_failed, 2124, "All external clients have failed." )
 ERROR( incompatible_client, 2125, "None of the available clients match the protocol version of the cluster." )
 ERROR( too_many_grv_batchers, 2126, "The client is running too many concurrent GRV batchers" )
+ERROR( restart_update_stream, 2127, "Restart update stream" )
 
 ERROR( tenant_name_required, 2130, "Tenant name must be specified to access data in the cluster" )
 ERROR( tenant_not_found, 2131, "Tenant does not exist" )
@@ -352,6 +353,7 @@ ERROR( blob_restore_corrupted_manifest, 2387, "Corrupted manifest" )
 ERROR( blob_restore_missing_manifest, 2388, "Missing manifest" )
 ERROR( blob_migrator_replaced, 2389, "Blob migrator is replaced")
 
+// 2400 - json errors
 ERROR( key_not_found, 2400, "Expected key is missing")
 ERROR( json_malformed, 2401, "JSON string was malformed")
 ERROR( json_eof_expected, 2402, "JSON string did not terminate where expected")
@@ -367,6 +369,26 @@ ERROR( snap_not_fully_recovered_unsupported, 2506, "Unsupported when the cluster
 ERROR( snap_log_anti_quorum_unsupported, 2507, "Unsupported when log anti quorum is configured" )
 ERROR( snap_with_recovery_unsupported, 2508, "Cluster recovery during snapshot operation not supported" )
 ERROR( snap_invalid_uid_string, 2509, "The given uid string is not a 32-length hex string" )
+
+// 26XX - Bulk Load operations errors
+ERROR( bulk_load_aborted, 2600, "Bulk load operation was aborted" );
+ERROR( bulk_load_abort_failed, 2601, "Bulk load abort failed" );
+ERROR( bulk_load_range_conflict, 2602, "Bulk load for key range already in progress" );
+ERROR( bulk_load_cleanup_failed, 2603, "Bulk load could not clean up because it is still in progress");
+ERROR( bulk_load_not_found, 2604, "Bulk load ID not found" );
+ERROR( bulk_load_range_not_empty, 2605, "Bulk load for key range already in progress" );
+ERROR( bulk_load_tenant_mismatch, 2606, "Bulk load id is for a different tenant" );
+
+// Bulk load file operations errors
+ERROR( bulk_load_file_id_not_found , 2620, "No file id for the given bulk load id exists");
+ERROR( bulk_load_not_registering_files, 2621, "Bulk load for this id exists but is already done registering files");
+ERROR( bulk_load_invalid_file_metadata, 2622, "Invalid bulk load file metadata");
+ERROR( bulk_load_file_missing, 2623, "File does not exist in blob storage for the file id");
+
+// other internal-only state transition failures - end user should not see this error
+ERROR( bulk_load_invalid_state_transition, 2650, "Bulk load invalid state transition" );
+ERROR( bulk_load_create_too_old, 2651, "Bulk load create request took too long and cannot be completed" );
+ERROR( bulk_load_cannot_validate_file, 2652, "Bulk load transient error validating file" );
 
 // 27XX - Encryption operations errors
 ERROR( encrypt_ops_error, 2700, "Encryption operation error" )

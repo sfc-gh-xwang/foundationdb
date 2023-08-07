@@ -118,7 +118,6 @@ set(UNIT_TEST_SRCS
   test/unit/unit_tests.cpp
 )
 
-set(UNIT_TEST_VERSION_510_SRCS test/unit/unit_tests_version_510.cpp)
 set(TRACE_PARTIAL_FILE_SUFFIX_TEST_SRCS test/unit/trace_partial_file_suffix_test.cpp)
 set(DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS
   test/unit/disconnected_timeout_tests.cpp)
@@ -139,6 +138,7 @@ set(API_TESTER_SRCS
   test/apitester/TesterBlobGranuleErrorsWorkload.cpp
   test/apitester/TesterBlobGranuleUtil.cpp
   test/apitester/TesterBlobGranuleUtil.h
+  test/apitester/TesterBulkLoadCorrectnessWorkload.cpp
   test/apitester/TesterCancelTransactionWorkload.cpp
   test/apitester/TesterCorrectnessWorkload.cpp
   test/apitester/TesterExampleWorkload.cpp
@@ -159,6 +159,23 @@ set(API_TESTER_SRCS
 add_library(fdb_c_unit_tests_impl OBJECT ${UNIT_TEST_SRCS})
 add_library(fdb_c_api_tester_impl OBJECT ${API_TESTER_SRCS})
 
+set(COMBIFY_CORE_SRCS
+  test/combify/Combify.hpp
+  test/combify/Combify.cpp
+  test/combify/IterableOptions.hpp
+  test/combify/JsonOption.hpp
+  test/combify/NumericUtils.hpp
+  test/combify/ScopeExit.hpp
+  test/combify/StaticOptions.hpp
+  test/combify/StringUtils.hpp
+  test/combify/TestHelpers.hpp
+  test/combify/Throw.hpp
+)
+
+set(COMBIFY_TEST_SRCS
+  test/combify/Authorization.cpp
+)
+
 if(OPEN_FOR_IDE)
   add_library(fdb_c_performance_test OBJECT test/performance_test.c test/test.h)
   add_library(fdb_c_ryw_benchmark OBJECT test/ryw_benchmark.c test/test.h)
@@ -166,10 +183,10 @@ if(OPEN_FOR_IDE)
   add_library(fdb_c_client_memory_test OBJECT test/client_memory_test.cpp)
   add_library(mako OBJECT ${MAKO_SRCS})
   add_library(fdb_c_setup_tests OBJECT test/unit/setup_tests.cpp)
-  add_library(fdb_c_unit_tests_version_510 OBJECT ${UNIT_TEST_VERSION_510_SRCS})
   add_library(trace_partial_file_suffix_test OBJECT ${TRACE_PARTIAL_FILE_SUFFIX_TEST_SRCS})
   add_library(disconnected_timeout_unit_tests OBJECT ${DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS})
   add_library(fdb_c_client_config_tester OBJECT test/client_config_tester.cpp)
+  add_library(fdb_c_combify_test OBJECT ${COMBIFY_CORE_SRCS} ${COMBIFY_TEST_SRCS})
 else()
   add_executable(fdb_c_performance_test test/performance_test.c test/test.h)
   add_executable(fdb_c_ryw_benchmark test/ryw_benchmark.c test/test.h)
@@ -179,11 +196,12 @@ else()
   add_executable(fdb_c_setup_tests test/unit/setup_tests.cpp)
   add_executable(fdb_c_unit_tests)
   target_link_libraries(fdb_c_unit_tests PRIVATE fdb_c fdb_c_unit_tests_impl)
-  add_executable(fdb_c_unit_tests_version_510 ${UNIT_TEST_VERSION_510_SRCS})
   add_executable(trace_partial_file_suffix_test ${TRACE_PARTIAL_FILE_SUFFIX_TEST_SRCS})
   add_executable(disconnected_timeout_unit_tests ${DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS})
   add_executable(fdb_c_api_tester)
   target_link_libraries(fdb_c_api_tester PRIVATE fdb_c fdb_c_api_tester_impl)
+  add_executable(fdb_c_combify_test ${COMBIFY_CORE_SRCS} ${COMBIFY_TEST_SRCS})
+  target_link_libraries(fdb_c_combify_test PRIVATE fdb_c tokensign fmt::fmt Threads::Threads fdb_cpp boost_target rapidjson)
   strip_debug_symbols(fdb_c_performance_test)
   strip_debug_symbols(fdb_c_ryw_benchmark)
   strip_debug_symbols(fdb_c_txn_size_test)
@@ -204,13 +222,11 @@ endif()
 target_link_libraries(fdb_c_api_tester_impl PRIVATE SimpleOpt)
 
 target_include_directories(fdb_c_unit_tests_impl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/foundationdb/)
-target_include_directories(fdb_c_unit_tests_version_510 PUBLIC ${CMAKE_BINARY_DIR}/flow/include)
 target_link_libraries(fdb_c_setup_tests PRIVATE fdb_c Threads::Threads doctest)
 target_link_libraries(fdb_c_unit_tests_impl PRIVATE fdb_c Threads::Threads fdbclient rapidjson doctest)
-target_link_libraries(fdb_c_unit_tests_version_510 PRIVATE fdb_c Threads::Threads doctest)
 target_link_libraries(trace_partial_file_suffix_test PRIVATE fdb_c Threads::Threads flow doctest)
 target_link_libraries(disconnected_timeout_unit_tests PRIVATE fdb_c fdb_cpp Threads::Threads doctest)
-target_link_libraries(fdb_c_client_config_tester PRIVATE SimpleOpt fdb_cpp fdb_c fdbclient Threads::Threads fmt::fmt)
+target_link_libraries(fdb_c_client_config_tester PRIVATE SimpleOpt fdb_cpp fdb_c fdbclient Threads::Threads fmt::fmt rapidjson)
 target_include_directories(fdb_c_client_config_tester PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/foundationdb/)
 
 # do not set RPATH for mako
@@ -252,11 +268,6 @@ else()
     @CLUSTER_FILE@
     fdb)
   add_fdbclient_test(
-    NAME fdb_c_unit_tests_version_510
-    COMMAND $<TARGET_FILE:fdb_c_unit_tests_version_510>
-    @CLUSTER_FILE@
-    fdb)
-  add_fdbclient_test(
     NAME trace_partial_file_suffix_test
     COMMAND $<TARGET_FILE:trace_partial_file_suffix_test>
     @CLUSTER_FILE@
@@ -267,6 +278,11 @@ else()
     @CLUSTER_FILE@
     fdb
     ${CMAKE_CURRENT_BINARY_DIR}/libfdb_c_external.so
+  )
+  add_python_venv_test(
+    NAME fdb_c_combify_test
+    COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py ${CMAKE_BINARY_DIR}
+    TEST_TIMEOUT 300
   )
   add_unavailable_fdbclient_test(
     NAME disconnected_timeout_unit_tests
@@ -312,7 +328,7 @@ else()
     --process-number 3
     )
 
-  if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND NOT USE_SANITIZER)
+  if(NOT USE_SANITIZER)
     add_python_venv_test(NAME fdb_c_client_config_tests
       COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/test/fdb_c_client_config_tests.py
       --build-dir ${CMAKE_BINARY_DIR}
@@ -361,6 +377,16 @@ else()
       --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
+    
+    # FIXME: re-enable after 71.3.2 is published and prev_release_version is changed to it
+    # add_python_venv_test(NAME fdb_c_upgrade_from_prev_blob_granule
+    #  COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
+    #  --build-dir ${CMAKE_BINARY_DIR}
+    #  --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/ApiBlobGranulesCorrectness.toml
+    #  --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}" "${FDB_PREV_RELEASE_VERSION}"
+    #  --blob-granules-enabled
+    #  --process-number 3
+    #  )
 
     add_python_venv_test(NAME fdb_c_wiggle_only
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py

@@ -105,6 +105,7 @@ public:
 	virtual ThreadFuture<SpanContext> getSpanContext() = 0;
 	virtual ThreadFuture<double> getTagThrottledDuration() = 0;
 	virtual ThreadFuture<int64_t> getTotalCost() = 0;
+	virtual void setExpectedCost(uint64_t value) = 0;
 	virtual ThreadFuture<int64_t> getApproximateSize() = 0;
 
 	virtual void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) = 0;
@@ -156,6 +157,13 @@ public:
 
 	virtual ThreadFuture<Version> verifyBlobRange(const KeyRangeRef& keyRange, Optional<Version> version) = 0;
 	virtual ThreadFuture<bool> flushBlobRange(const KeyRangeRef& keyRange, bool compact, Optional<Version> version) = 0;
+
+	// Return a JSON string containing tenant client-side status information
+	virtual ThreadFuture<Standalone<StringRef>> getClientStatus() = 0;
+
+	virtual ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) = 0;
+
+	virtual FDBAllocatorIfc* getAllocatorInterface() = 0;
 
 	virtual void addref() = 0;
 	virtual void delref() = 0;
@@ -212,6 +220,10 @@ public:
 
 	// Return a JSON string containing database client-side status information
 	virtual ThreadFuture<Standalone<StringRef>> getClientStatus() = 0;
+
+	virtual ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) = 0;
+
+	virtual FDBAllocatorIfc* getAllocatorInterface() = 0;
 
 	// used in template functions as the Transaction type that can be created through createTransaction()
 	using TransactionT = ITransaction;

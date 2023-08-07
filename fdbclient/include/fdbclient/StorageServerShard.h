@@ -42,7 +42,11 @@ struct StorageServerShard {
 	                   const uint64_t id,
 	                   const uint64_t desiredId,
 	                   ShardState shardState)
-	  : range(range), version(version), id(id), desiredId(desiredId), shardState(shardState) {}
+	  : range(range),
+	    version(version),
+	    id(id),
+	    desiredId(desiredId),
+	    shardState(shardState) {}
 
 	static StorageServerShard notAssigned(KeyRange range, Version version = 0) {
 		return StorageServerShard(range, version, 0, 0, NotAssigned);

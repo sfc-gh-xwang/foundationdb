@@ -37,7 +37,11 @@ struct BulkLoadWorkload : TestWorkload {
 	DDSketch<double> latencies;
 
 	BulkLoadWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), clientCount(wcx.clientCount), transactions("Transactions"), retries("Retries"), latencies() {
+	  : TestWorkload(wcx),
+	    clientCount(wcx.clientCount),
+	    transactions("Transactions"),
+	    retries("Retries"),
+	    latencies() {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		actorCount = getOption(options, "actorCount"_sr, 20);
 		writesPerTransaction = getOption(options, "writesPerTransaction"_sr, 10);

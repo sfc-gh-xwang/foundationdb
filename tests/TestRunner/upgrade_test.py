@@ -40,8 +40,17 @@ def version_from_str(ver_str):
 
 
 def api_version_from_str(ver_str):
+    # FIXME: simplify after everything is 8.0+
     ver_tuple = version_from_str(ver_str)
-    return ver_tuple[0] * 100 + ver_tuple[1] * 10
+    if ver_tuple[0] >= 8 and ver_tuple[0] < 71:
+        # handle 8.x -> 800000, as now the second version is the patch version
+        ret = ver_tuple[0] * 100000
+    elif ver_tuple[0] >= 71:
+        # handle 71.3 -> 710300
+        ret = ver_tuple[0] * 10000 + ver_tuple[1] * 100
+    else:
+        ret = ver_tuple[0] * 100 + ver_tuple[1] * 10
+    return ret
 
 
 def version_before(ver_str1, ver_str2):
@@ -98,6 +107,7 @@ class UpgradeTest:
         )
         os.mkfifo(self.input_pipe_path)
         os.mkfifo(self.output_pipe_path)
+        self.progress_success = False
         self.progress_event = Event()
         self.api_version = None
         self.tester_retcode = None
@@ -228,7 +238,9 @@ class UpgradeTest:
         logger.info("Starting cluster version {}".format(self.cluster_version))
         self.cluster.start_cluster()
         self.cluster.create_database(
-            enable_tenants=(self.api_version >= TENANT_API_VERSION)
+            tenant_mode="optional_experimental"
+            if (self.api_version >= TENANT_API_VERSION)
+            else None
         )
         return self
 
@@ -315,10 +327,14 @@ class UpgradeTest:
 
     # Perform a progress check: Trigger it and wait until it is completed
     def progress_check(self):
-        self.progress_event.clear()
-        os.write(self.ctrl_pipe, b"CHECK\n")
-        self.progress_event.wait(None if RUN_WITH_GDB else PROGRESS_CHECK_TIMEOUT_SEC)
-        if self.progress_event.is_set():
+        self.progress_success = False
+        if not self.output_pipe.closed:
+            self.progress_event.clear()
+            os.write(self.ctrl_pipe, b"CHECK\n")
+            self.progress_event.wait(
+                None if RUN_WITH_GDB else PROGRESS_CHECK_TIMEOUT_SEC
+            )
+        if self.progress_success:
             logger.info("Progress check: OK")
         else:
             status = self.cluster.get_status()
@@ -340,8 +356,10 @@ class UpgradeTest:
                 msg = line.strip()
                 logger.info("Received {}".format(msg))
                 if msg == "CHECK_OK":
+                    self.progress_success = True
                     self.progress_event.set()
             self.output_pipe.close()
+            self.progress_event.set()
         except Exception as e:
             logger.error("Error while reading output pipe: {}".format(e))
             logger.error(traceback.format_exc())

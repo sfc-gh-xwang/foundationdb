@@ -233,8 +233,15 @@ public:
 	                         int64_t epoch,
 	                         int64_t seqNo,
 	                         Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx)
-	  : blobConn_(blobConn), epoch_(epoch), seqNo_(seqNo), segmentNo_(1), totalRows_(0), logicalSize_(0),
-	    totalBytes_(0), closed_(false), cipherKeysCtx_(cipherKeysCtx) {}
+	  : blobConn_(blobConn),
+	    epoch_(epoch),
+	    seqNo_(seqNo),
+	    segmentNo_(1),
+	    totalRows_(0),
+	    logicalSize_(0),
+	    totalBytes_(0),
+	    closed_(false),
+	    cipherKeysCtx_(cipherKeysCtx) {}
 
 	// Append a new row to the splitter
 	void append(KeyValueRef row) {
@@ -410,7 +417,11 @@ public:
 	                   int64_t epoch,
 	                   int64_t seqNo,
 	                   bool encryptionEnabled)
-	  : db_(db), blobConn_(blobConn), epoch_(epoch), seqNo_(seqNo), dbInfo_(dbInfo),
+	  : db_(db),
+	    blobConn_(blobConn),
+	    epoch_(epoch),
+	    seqNo_(seqNo),
+	    dbInfo_(dbInfo),
 	    encryptionEnabled_(encryptionEnabled) {}
 	virtual ~BlobManifestDumper() {}
 
@@ -652,7 +663,9 @@ public:
 	BlobManifestLoader(Database& db,
 	                   Reference<AsyncVar<ServerDBInfo> const> dbInfo,
 	                   Reference<BlobConnectionProvider> blobConn)
-	  : db_(db), blobConn_(blobConn), dbInfo_(dbInfo) {}
+	  : db_(db),
+	    blobConn_(blobConn),
+	    dbInfo_(dbInfo) {}
 	virtual ~BlobManifestLoader() {}
 
 	// Execute the loader
@@ -737,7 +750,7 @@ public:
 
 	// Return max epoch from all manifest files
 	ACTOR static Future<int64_t> lastBlobEpoc(Reference<BlobManifestLoader> self) {
-		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForRead("");
+		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForAccess("");
 		std::vector<BlobManifestFile> files = wait(BlobManifestFile::listAll(container));
 		ASSERT(!files.empty());
 		return files.front().epoch;
@@ -746,7 +759,7 @@ public:
 private:
 	// Load latest manifest to system space
 	ACTOR static Future<Void> load(Reference<BlobManifestLoader> self) {
-		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForRead("");
+		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForAccess("");
 		std::vector<BlobManifestFile> files = wait(BlobManifestFile::listAll(container));
 
 		// Load tailer

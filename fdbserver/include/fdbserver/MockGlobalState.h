@@ -71,6 +71,8 @@ class MockStorageServer final : public IStorageMetricsService, public ReferenceC
 
 	CommonStorageCounters counters{ /*name=*/"", /*id=*/"", &metrics };
 
+	void debugCoalesceServerKeys() const;
+
 public:
 	struct ShardInfo {
 		MockShardStatus status;
@@ -120,8 +122,11 @@ public:
 	MockStorageServer() = default;
 
 	MockStorageServer(StorageServerInterface ssi, uint64_t availableDiskSpace, uint64_t usedDiskSpace = 0)
-	  : counters("MockStorageServer", ssi.id().toString()), totalDiskSpace(usedDiskSpace + availableDiskSpace),
-	    usedDiskSpace(usedDiskSpace), ssi(ssi), id(ssi.id()) {}
+	  : counters("MockStorageServer", ssi.id().toString(), &metrics),
+	    totalDiskSpace(usedDiskSpace + availableDiskSpace),
+	    usedDiskSpace(usedDiskSpace),
+	    ssi(ssi),
+	    id(ssi.id()) {}
 
 	MockStorageServer(const UID& id, uint64_t availableDiskSpace, uint64_t usedDiskSpace = 0)
 	  : MockStorageServer(StorageServerInterface(id), availableDiskSpace, usedDiskSpace) {}
@@ -234,14 +239,17 @@ struct TopologyObject {
 	std::shared_ptr<TopologyObject> parent;
 	std::vector<std::shared_ptr<TopologyObject>> children;
 	TopologyObject(Type type, Standalone<StringRef> id, std::shared_ptr<TopologyObject> parent = nullptr)
-	  : type(type), topoId(id), parent(parent) {}
+	  : type(type),
+	    topoId(id),
+	    parent(parent) {}
 };
 
 struct Process : public TopologyObject {
 	LocalityData locality;
 	std::vector<StorageServerInterface> ssInterfaces;
 	Process(LocalityData locality, Standalone<StringRef> id, std::shared_ptr<TopologyObject> parent = nullptr)
-	  : TopologyObject(PROCESS, id, parent), locality(locality) {}
+	  : TopologyObject(PROCESS, id, parent),
+	    locality(locality) {}
 };
 } // namespace mock
 
@@ -264,8 +272,8 @@ public:
 	DatabaseConfiguration configuration;
 
 	// user defined parameters for mock workload purpose
-	double emptyProb; // probability of doing an empty read
-	int minByteSize, maxByteSize; // the size band of a point data operation
+	double emptyProb = 0; // probability of doing an empty read
+	int minByteSize = 32, maxByteSize = 32; // the size band of a point data operation
 	bool restrictSize = true;
 
 	MockGlobalState() : shardMapping(new ShardsAffectedByTeamFailure) {}

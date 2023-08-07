@@ -2,112 +2,217 @@
  * RKThroughputQuotaCache.actor.cpp
  */
 
-#include "fdbclient/DatabaseContext.h"
-#include "fdbclient/ReadYourWrites.h"
+#include "fdbclient/UpdateStream.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
+#include "fdbserver/Knobs.h"
 #include "flow/actorcompiler.h" // must be last include
 
 class RKThroughputQuotaCacheImpl {
-public:
-	ACTOR static Future<Void> run(RKThroughputQuotaCache* self) {
-		loop {
-			state Reference<ReadYourWritesTransaction> tr = self->db->createTransaction();
-			loop {
-				try {
-					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-					tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-					tr->setOption(FDBTransactionOptions::READ_LOCK_AWARE);
 
-					state RangeReadResult tagQuotas = wait(tr->getRange(tagQuotaKeys, CLIENT_KNOBS->TOO_MANY));
-					state KeyBackedRangeResult<std::pair<TenantGroupName, ThrottleApi::ThroughputQuotaValue>>
-					    tenantGroupQuotas = wait(TenantMetadata::throughputQuota().getRange(
-					        tr, {}, {}, CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER));
-					TraceEvent("RKThroughputQuotaCache_ReadCurrentQuotas", self->id)
-					    .detail("TagQuotasSize", tagQuotas.size())
-					    .detail("TenantGroupQuotasSize", tenantGroupQuotas.results.size());
-					self->quotas.clear();
-					for (auto const kv : tagQuotas) {
-						auto const tag = kv.key.removePrefix(tagQuotaPrefix);
-						self->quotas[ThrottlingId::fromTag(tag)] =
-						    ThrottleApi::ThroughputQuotaValue::unpack(Tuple::unpack(kv.value));
-					}
-					for (auto const& [groupName, quota] : tenantGroupQuotas.results) {
-						self->quotas[ThrottlingId::fromTenantGroup(groupName)] = quota;
-					}
-					wait(delay(5.0));
+	ACTOR static Future<Void> expireOldThrottlingIds(RKThroughputQuotaCache* self) {
+		loop {
+			wait(delayJittered(self->expirationCheckInterval));
+			auto const mustBeActiveSince = now() - self->expirationThreshold;
+			boost::unordered::erase_if(self->quotas, [mustBeActiveSince](auto const& kv) {
+				return kv.second.lastActiveTime < mustBeActiveSince;
+			});
+		}
+	}
+
+	// Reads and deserializes the quota for the provided throttlingId with the provided transaction
+	ACTOR static Future<Optional<ThrottleApi::ThroughputQuotaValue>> getQuota(Reference<ReadYourWritesTransaction> tr,
+	                                                                          ThrottlingId throttlingId) {
+		if (throttlingId.isTag()) {
+			ValueReadResult value = wait(tr->get(throttlingId.getTag().withPrefix(tagQuotaPrefix)));
+			if (value.contents().present()) {
+				return ThrottleApi::ThroughputQuotaValue::unpack(Tuple::unpack(value.contents().get()));
+			} else {
+				return Optional<ThrottleApi::ThroughputQuotaValue>();
+			}
+		} else {
+			Optional<ThrottleApi::ThroughputQuotaValue> result =
+			    wait(TenantMetadata::throughputQuota().get(tr, throttlingId.getTenantGroup()));
+			return result;
+		}
+	}
+
+	// Update the lastActiveTime for the provided throttlingId, and if it is not currently being tracked,
+	// read and store its quota.
+	ACTOR static Future<Void> markActive(RKThroughputQuotaCache* self, ThrottlingId throttlingId) {
+		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData>::iterator it;
+		state Reference<ReadYourWritesTransaction> tr;
+		auto const [_it, inserted] = self->quotas.try_emplace(throttlingId);
+		it = _it;
+		it->second.lastActiveTime = now();
+		if (inserted) {
+			tr = makeReference<ReadYourWritesTransaction>(self->db);
+			loop {
+				tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				try {
+					wait(store(it->second.quota, getQuota(tr, throttlingId)));
 					break;
 				} catch (Error& e) {
-					TraceEvent("RKThroughputQuotaCacheError", self->id).error(e);
 					wait(tr->onError(e));
+				}
+			}
+		}
+		return Void();
+	}
+
+	// Use a single transaction to parallelly read a batch of quotas
+	ACTOR static Future<Void> readBatch(RKThroughputQuotaCache* self,
+	                                    ThrottlingIdMap<RKThroughputQuotaCache::QuotaData>::iterator begin,
+	                                    int batchSize) {
+		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);
+		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData>::iterator it;
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				std::vector<Future<Void>> futures;
+				futures.reserve(batchSize);
+				it = begin;
+				for (int i = 0; i < batchSize; ++i) {
+					auto& [throttlingId, quotaData] = *it;
+					futures.push_back(store(quotaData.quota, getQuota(tr, throttlingId)));
+					++it;
+				}
+				wait(waitForAll(futures));
+				return Void();
+			} catch (Error& e) {
+				TraceEvent("RKThroughputQuotaCacheReadBatchError", self->id).error(e);
+				wait(tr->onError(e));
+			}
+		}
+	}
+
+	ACTOR static Future<Void> readSnapshot(RKThroughputQuotaCache* self) {
+		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData> newSnapshot = self->quotas;
+		state ThrottlingIdMap<RKThroughputQuotaCache::QuotaData>::iterator it = newSnapshot.begin();
+		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);
+		state int batchSize;
+		TraceEvent("RKThroughputQuotaCacheReadSnapshotStart", self->id).detail("QuotasToRead", newSnapshot.size());
+		while (it != newSnapshot.end()) {
+			CODE_PROBE(it != newSnapshot.begin(), "RKThroughputQuotaCache reading snapshot in multiple batches");
+			batchSize = std::min(static_cast<int64_t>(std::distance(it, self->quotas.end())),
+			                     SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_BATCH_SIZE);
+			wait(readBatch(self, it, batchSize));
+			std::advance(it, batchSize);
+		}
+		self->quotas = std::move(newSnapshot);
+		TraceEvent("RKThroughputQuotaCacheReadSnapshotComplete", self->id).detail("QuotasSize", self->quotas.size());
+		return Void();
+	}
+
+public:
+	ACTOR static Future<Void> run(RKThroughputQuotaCache* self) {
+		state Reference<UpdateStream> updateStream;
+		state FutureStream<UpdateStream::Update> updates;
+		state Future<Void> cleanerActor = expireOldThrottlingIds(self);
+		TraceEvent("RKThroughputQuotaCacheRun", self->id);
+		loop {
+			updateStream = makeReference<UpdateStream>(throughputQuotaUpdatePrefix,
+			                                           SERVER_KNOBS->THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,
+			                                           /*accessSystemKeys=*/true,
+			                                           /*immediatePriority=*/true);
+			wait(success(updateStream->start(self->db)));
+			wait(readSnapshot(self));
+			updates = updateStream->getUpdates(self->db);
+
+			try {
+				loop choose {
+					when(UpdateStream::Update update = waitNext(updates)) {
+						self->applyUpdate(update.key, update.value);
+					}
+					when(ThrottlingId throttlingId = waitNext(self->activeThrottlingIdStream.getFuture())) {
+						wait(markActive(self, throttlingId));
+					}
+				}
+			} catch (Error& e) {
+				TraceEvent("RKThroughputQuotaCacheRunError", self->id).error(e);
+				if (e.code() == error_code_restart_update_stream) {
+					// If two ratekeepers attempt to run at the same time, wait here
+					// to avoid rapidly competing for the lease
+					wait(delayJittered(1.0));
+					continue;
+				} else {
+					throw e;
 				}
 			}
 		}
 	}
 }; // class RKThroughputQuotaCacheImpl
 
-RKThroughputQuotaCache::RKThroughputQuotaCache(UID id, Database db) : id(id), db(db) {}
+RKThroughputQuotaCache::RKThroughputQuotaCache(UID id,
+                                               Database db,
+                                               double throughputThreshold,
+                                               double expirationCheckInterval,
+                                               double expirationThreshold)
+  : id(id),
+    db(db),
+    throughputThreshold(throughputThreshold),
+    expirationCheckInterval(expirationCheckInterval),
+    expirationThreshold(expirationThreshold) {}
 
 RKThroughputQuotaCache::~RKThroughputQuotaCache() = default;
 
-Optional<int64_t> RKThroughputQuotaCache::getTotalQuota(ThrottlingId const& tag) const {
-	auto it = quotas.find(tag);
-	if (it == quotas.end()) {
+Optional<int64_t> RKThroughputQuotaCache::getTotalQuota(ThrottlingId const& throttlingId) const {
+	auto it = quotas.find(throttlingId);
+	if (it == quotas.end() || !it->second.quota.present()) {
 		return {};
 	} else {
-		return it->second.totalQuota;
+		return it->second.quota.get().totalQuota;
 	}
 }
 
-Optional<int64_t> RKThroughputQuotaCache::getReservedQuota(ThrottlingId const& tag) const {
-	auto it = quotas.find(tag);
-	if (it == quotas.end()) {
+Optional<int64_t> RKThroughputQuotaCache::getReservedQuota(ThrottlingId const& throttlingId) const {
+	auto it = quotas.find(throttlingId);
+	if (it == quotas.end() || !it->second.quota.present()) {
 		return {};
 	} else {
-		return it->second.reservedQuota;
+		return it->second.quota.get().reservedQuota;
 	}
 }
 
 int RKThroughputQuotaCache::size() const {
-	return quotas.size();
+	int result = 0;
+	for (auto const& [_, quotaData] : quotas) {
+		if (quotaData.quota.present()) {
+			++result;
+		}
+	}
+	return result;
 }
 
 Future<Void> RKThroughputQuotaCache::run() {
 	return RKThroughputQuotaCacheImpl::run(this);
 }
 
-MockRKThroughputQuotaCache::~MockRKThroughputQuotaCache() = default;
-
-Optional<int64_t> MockRKThroughputQuotaCache::getTotalQuota(ThrottlingId const& tag) const {
-	auto it = quotas.find(tag);
-	if (it == quotas.end()) {
-		return {};
+void RKThroughputQuotaCache::applyUpdate(Key const& key, Optional<Value> const& value) {
+	ThrottlingId throttlingId;
+	if (key.startsWith(tagQuotaPrefix)) {
+		throttlingId = ThrottlingIdRef::fromTag(key.removePrefix(tagQuotaPrefix));
 	} else {
-		return it->second.totalQuota;
+		throttlingId = ThrottlingIdRef::fromTenantGroup(TenantMetadata::throughputQuota().unpackKey(key));
+	}
+	auto it = quotas.find(throttlingId);
+	if (it != quotas.end()) {
+		if (value.present()) {
+			it->second.quota = ThrottleApi::ThroughputQuotaValue::unpack(Tuple::unpack(value.get()));
+		} else {
+			it->second.quota = {};
+		}
 	}
 }
 
-Optional<int64_t> MockRKThroughputQuotaCache::getReservedQuota(ThrottlingId const& tag) const {
-	auto it = quotas.find(tag);
-	if (it == quotas.end()) {
-		return {};
-	} else {
-		return it->second.reservedQuota;
+void RKThroughputQuotaCache::updateThroughput(IRKClusterThroughputTracker const& throughputTracker) {
+	auto const activeThrottlingIds = throughputTracker.getActiveThrottlingIds(throughputThreshold);
+	for (auto const& [throttlingId, _] : activeThrottlingIds) {
+		activeThrottlingIdStream.send(throttlingId);
 	}
 }
 
-int MockRKThroughputQuotaCache::size() const {
+int RKThroughputQuotaCache::activeThrottlingIds() const {
 	return quotas.size();
-}
-
-void MockRKThroughputQuotaCache::setQuota(ThrottlingId const& tag, int64_t totalQuota, int64_t reservedQuota) {
-	quotas[tag].totalQuota = totalQuota;
-	quotas[tag].reservedQuota = reservedQuota;
-}
-
-void MockRKThroughputQuotaCache::removeQuota(ThrottlingId const& tag) {
-	quotas.erase(tag);
-}
-
-Future<Void> MockRKThroughputQuotaCache::run() {
-	return Never();
 }

@@ -141,8 +141,10 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	//Authorization
 	init( ALLOW_TOKENLESS_TENANT_ACCESS,                     false );
 	init( AUDIT_LOGGING_ENABLED,                              true );
+	init( LOG_MALFORMED_TOKEN_STRINGS,                       false );
 	init( PUBLIC_KEY_FILE_MAX_SIZE,                    1024 * 1024 );
 	init( PUBLIC_KEY_FILE_REFRESH_INTERVAL_SECONDS,            300 );
+	init( ACTIVE_PUBLIC_KEY_IDS_LOG_INTERVAL_SECONDS,           60 );
 	init( AUDIT_TIME_WINDOW,                                   5.0 );
 	init( TOKEN_CACHE_SIZE,                                   2000 );
 	init( WIPE_SENSITIVE_DATA_FROM_PACKET_BUFFER,             true );
@@ -324,10 +326,10 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	// REST Client
 	init( RESTCLIENT_MAX_CONNECTIONPOOL_SIZE,                   10 );
 	init( RESTCLIENT_CONNECT_TRIES,                             10 );
-	init( RESTCLIENT_CONNECT_TIMEOUT,                           10 );
+	init( RESTCLIENT_CONNECT_TIMEOUT,                            1 );
 	init( RESTCLIENT_MAX_CONNECTION_LIFE,                      120 );
 	init( RESTCLIENT_REQUEST_TRIES,                             10 );
-	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                      120 );
+	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                        6 );
 	init( REST_LOG_LEVEL,                                        3 );
 }
 // clang-format on

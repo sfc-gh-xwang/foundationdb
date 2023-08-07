@@ -226,6 +226,7 @@ class AuditedEvent {
 		"AuditTokenUsed",
 		"AuthzPublicKeySetApply",
 		"AuthzPublicKeySetRefreshError",
+		"AuthzActivePublicKeyIds",
 		"IncomingConnection",
 		"InvalidToken",
 		"N2_ConnectHandshakeError",
@@ -238,7 +239,8 @@ class AuditedEvent {
 	int len;
 	bool valid;
 	explicit constexpr AuditedEvent(const char* type, int len) noexcept
-	  : eventType(type), len(len),
+	  : eventType(type),
+	    len(len),
 	    valid(std::find(std::begin(auditTopics), std::end(auditTopics), std::string_view(type, len)) !=
 	          std::end(auditTopics)) // whitelist looked up during compile time
 	{}

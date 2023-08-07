@@ -44,7 +44,8 @@ ConfigFollowerInterface::ConfigFollowerInterface(NetworkAddress const& remote)
     lock(Endpoint::wellKnown({ remote }, WLTOKEN_CONFIGFOLLOWER_LOCK)) {}
 
 ConfigFollowerInterface::ConfigFollowerInterface(Hostname const& remote)
-  : _id(deterministicRandom()->randomUniqueID()), hostname(remote) {}
+  : _id(deterministicRandom()->randomUniqueID()),
+    hostname(remote) {}
 
 bool ConfigFollowerInterface::operator==(ConfigFollowerInterface const& rhs) const {
 	return _id == rhs._id;

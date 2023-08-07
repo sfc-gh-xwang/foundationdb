@@ -96,7 +96,9 @@ struct MutationRef {
 	MutationRef(Type t, StringRef a, StringRef b) : type(t), param1(a), param2(b) {}
 	MutationRef(Arena& to, Type t, StringRef a, StringRef b) : type(t), param1(to, a), param2(to, b) {}
 	MutationRef(Arena& to, const MutationRef& from)
-	  : type(from.type), param1(to, from.param1), param2(to, from.param2) {}
+	  : type(from.type),
+	    param1(to, from.param1),
+	    param2(to, from.param2) {}
 	int totalSize() const { return OVERHEAD_BYTES + param1.size() + param2.size(); }
 	int expectedSize() const { return param1.size() + param2.size(); }
 	int weightedTotalSize() const {
@@ -346,9 +348,12 @@ static inline bool isNonAssociativeOp(MutationRef::Type mutationType) {
 struct CommitTransactionRef {
 	CommitTransactionRef() = default;
 	CommitTransactionRef(Arena& a, const CommitTransactionRef& from)
-	  : read_conflict_ranges(a, from.read_conflict_ranges), write_conflict_ranges(a, from.write_conflict_ranges),
-	    mutations(a, from.mutations), read_snapshot(from.read_snapshot),
-	    report_conflicting_keys(from.report_conflicting_keys), lock_aware(from.lock_aware),
+	  : read_conflict_ranges(a, from.read_conflict_ranges),
+	    write_conflict_ranges(a, from.write_conflict_ranges),
+	    mutations(a, from.mutations),
+	    read_snapshot(from.read_snapshot),
+	    report_conflicting_keys(from.report_conflicting_keys),
+	    lock_aware(from.lock_aware),
 	    spanContext(from.spanContext) {}
 
 	VectorRef<KeyRangeRef> read_conflict_ranges;
@@ -427,13 +432,20 @@ struct MutationsAndVersionRef {
 
 	MutationsAndVersionRef() {}
 	explicit MutationsAndVersionRef(Version version, Version knownCommittedVersion)
-	  : version(version), knownCommittedVersion(knownCommittedVersion) {}
+	  : version(version),
+	    knownCommittedVersion(knownCommittedVersion) {}
 	MutationsAndVersionRef(VectorRef<MutationRef> mutations, Version version, Version knownCommittedVersion)
-	  : mutations(mutations), version(version), knownCommittedVersion(knownCommittedVersion) {}
+	  : mutations(mutations),
+	    version(version),
+	    knownCommittedVersion(knownCommittedVersion) {}
 	MutationsAndVersionRef(Arena& to, VectorRef<MutationRef> mutations, Version version, Version knownCommittedVersion)
-	  : mutations(to, mutations), version(version), knownCommittedVersion(knownCommittedVersion) {}
+	  : mutations(to, mutations),
+	    version(version),
+	    knownCommittedVersion(knownCommittedVersion) {}
 	MutationsAndVersionRef(Arena& to, const MutationsAndVersionRef& from)
-	  : mutations(to, from.mutations), version(from.version), knownCommittedVersion(from.knownCommittedVersion) {}
+	  : mutations(to, from.mutations),
+	    version(from.version),
+	    knownCommittedVersion(from.knownCommittedVersion) {}
 	int expectedSize() const { return mutations.expectedSize(); }
 
 	struct OrderByVersion {
@@ -462,13 +474,17 @@ struct EncryptedMutationsAndVersionRef {
 
 	EncryptedMutationsAndVersionRef() {}
 	explicit EncryptedMutationsAndVersionRef(Version version, Version knownCommittedVersion)
-	  : version(version), knownCommittedVersion(knownCommittedVersion) {}
+	  : version(version),
+	    knownCommittedVersion(knownCommittedVersion) {}
 	EncryptedMutationsAndVersionRef(VectorRef<MutationRef> mutations,
 	                                VectorRef<MutationRef> encrypted,
 	                                const std::vector<TextAndHeaderCipherKeys>& cipherKeys,
 	                                Version version,
 	                                Version knownCommittedVersion)
-	  : mutations(mutations), encrypted(encrypted), cipherKeys(cipherKeys), version(version),
+	  : mutations(mutations),
+	    encrypted(encrypted),
+	    cipherKeys(cipherKeys),
+	    version(version),
 	    knownCommittedVersion(knownCommittedVersion) {}
 	EncryptedMutationsAndVersionRef(Arena& to,
 	                                VectorRef<MutationRef> mutations,
@@ -476,14 +492,18 @@ struct EncryptedMutationsAndVersionRef {
 	                                const std::vector<TextAndHeaderCipherKeys>& cipherKeys,
 	                                Version version,
 	                                Version knownCommittedVersion)
-	  : mutations(to, mutations), cipherKeys(cipherKeys), version(version),
+	  : mutations(to, mutations),
+	    cipherKeys(cipherKeys),
+	    version(version),
 	    knownCommittedVersion(knownCommittedVersion) {
 		if (encrypt.present()) {
 			encrypted = VectorRef<MutationRef>(to, encrypt.get());
 		}
 	}
 	EncryptedMutationsAndVersionRef(Arena& to, const EncryptedMutationsAndVersionRef& from)
-	  : mutations(to, from.mutations), cipherKeys(from.cipherKeys), version(from.version),
+	  : mutations(to, from.mutations),
+	    cipherKeys(from.cipherKeys),
+	    version(from.version),
 	    knownCommittedVersion(from.knownCommittedVersion) {
 		if (from.encrypted.present()) {
 			encrypted = VectorRef<MutationRef>(to, from.encrypted.get());

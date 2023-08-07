@@ -410,9 +410,13 @@ struct RestoreRecruitRoleReply : TimedRequest {
 
 	RestoreRecruitRoleReply() = default;
 	explicit RestoreRecruitRoleReply(UID id, RestoreRole role, RestoreLoaderInterface const& loader)
-	  : id(id), role(role), loader(loader) {}
+	  : id(id),
+	    role(role),
+	    loader(loader) {}
 	explicit RestoreRecruitRoleReply(UID id, RestoreRole role, RestoreApplierInterface const& applier)
-	  : id(id), role(role), applier(applier) {}
+	  : id(id),
+	    role(role),
+	    applier(applier) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -444,7 +448,9 @@ struct RestoreRecruitRoleRequest : TimedRequest {
 
 	RestoreRecruitRoleRequest() : role(RestoreRole::Invalid) {}
 	explicit RestoreRecruitRoleRequest(RestoreControllerInterface ci, RestoreRole role, int nodeIndex)
-	  : ci(ci), role(role), nodeIndex(nodeIndex) {}
+	  : ci(ci),
+	    role(role),
+	    nodeIndex(nodeIndex) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -473,7 +479,8 @@ struct RestoreSysInfoRequest : TimedRequest {
 	RestoreSysInfoRequest() = default;
 	explicit RestoreSysInfoRequest(RestoreSysInfo sysInfo,
 	                               Standalone<VectorRef<std::pair<KeyRangeRef, Version>>> rangeVersions)
-	  : sysInfo(sysInfo), rangeVersions(rangeVersions) {}
+	  : sysInfo(sysInfo),
+	    rangeVersions(rangeVersions) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -498,7 +505,9 @@ struct RestoreSamplesRequest : TimedRequest {
 
 	RestoreSamplesRequest() = default;
 	explicit RestoreSamplesRequest(UID id, int batchIndex, SampledMutationsVec samples)
-	  : id(id), batchIndex(batchIndex), samples(samples) {}
+	  : id(id),
+	    batchIndex(batchIndex),
+	    samples(samples) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -570,7 +579,9 @@ struct RestoreSendMutationsToAppliersRequest : TimedRequest {
 
 	RestoreSendMutationsToAppliersRequest() = default;
 	explicit RestoreSendMutationsToAppliersRequest(int batchIndex, std::map<Key, UID> rangeToApplier, bool useRangeFile)
-	  : batchIndex(batchIndex), rangeToApplier(rangeToApplier), useRangeFile(useRangeFile) {}
+	  : batchIndex(batchIndex),
+	    rangeToApplier(rangeToApplier),
+	    useRangeFile(useRangeFile) {}
 
 	bool operator<(RestoreSendMutationsToAppliersRequest const& rhs) const { return batchIndex > rhs.batchIndex; }
 
@@ -605,7 +616,10 @@ struct RestoreSendVersionedMutationsRequest : TimedRequest {
 	                                              Version msgIndex,
 	                                              bool isRangeFile,
 	                                              VersionedMutationsVec versionedMutations)
-	  : batchIndex(batchIndex), asset(asset), msgIndex(msgIndex), isRangeFile(isRangeFile),
+	  : batchIndex(batchIndex),
+	    asset(asset),
+	    msgIndex(msgIndex),
+	    isRangeFile(isRangeFile),
 	    versionedMutations(versionedMutations) {}
 
 	std::string toString() const {

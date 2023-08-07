@@ -102,7 +102,9 @@ private:
 };
 
 EndpointMap::EndpointMap(int wellKnownEndpointCount)
-  : wellKnownEndpointCount(wellKnownEndpointCount), data(wellKnownEndpointCount), firstFree(-1) {}
+  : wellKnownEndpointCount(wellKnownEndpointCount),
+    data(wellKnownEndpointCount),
+    firstFree(-1) {}
 
 void EndpointMap::realloc() {
 	int oldSize = data.size();
@@ -350,6 +352,7 @@ public:
 	Future<Void> multiVersionCleanup;
 	Future<Void> pingLogger;
 	Future<Void> publicKeyFileWatch;
+	Future<Void> publicKeyIdsMonitor;
 
 	std::unordered_map<Standalone<StringRef>, PublicKey> publicKeys;
 };
@@ -413,8 +416,12 @@ ACTOR Future<Void> pingLatencyLogger(TransportData* self) {
 }
 
 TransportData::TransportData(uint64_t transportId, int maxWellKnownEndpoints, IPAllowList const* allowList)
-  : endpoints(maxWellKnownEndpoints), endpointNotFoundReceiver(endpoints), pingReceiver(endpoints),
-    numIncompatibleConnections(0), lastIncompatibleMessage(0), transportId(transportId),
+  : endpoints(maxWellKnownEndpoints),
+    endpointNotFoundReceiver(endpoints),
+    pingReceiver(endpoints),
+    numIncompatibleConnections(0),
+    lastIncompatibleMessage(0),
+    transportId(transportId),
     allowList(allowList == nullptr ? IPAllowList() : *allowList) {
 	degraded = makeReference<AsyncVar<bool>>(false);
 	pingLogger = pingLatencyLogger(this);
@@ -890,13 +897,27 @@ ACTOR Future<Void> connectionKeeper(Reference<Peer> self,
 }
 
 Peer::Peer(TransportData* transport, NetworkAddress const& destination)
-  : transport(transport), destination(destination), compatible(true), connected(false), outgoingConnectionIdle(true),
-    lastConnectTime(0.0), reconnectionDelay(FLOW_KNOBS->INITIAL_RECONNECTION_TIME), peerReferences(-1),
-    bytesReceived(0), bytesSent(0), lastDataPacketSentTime(now()), outstandingReplies(0),
-    pingLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1), lastLoggedTime(0.0),
-    lastLoggedBytesReceived(0), lastLoggedBytesSent(0), timeoutCount(0),
+  : transport(transport),
+    destination(destination),
+    compatible(true),
+    connected(false),
+    outgoingConnectionIdle(true),
+    lastConnectTime(0.0),
+    reconnectionDelay(FLOW_KNOBS->INITIAL_RECONNECTION_TIME),
+    peerReferences(-1),
+    bytesReceived(0),
+    bytesSent(0),
+    lastDataPacketSentTime(now()),
+    outstandingReplies(0),
+    pingLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1),
+    lastLoggedTime(0.0),
+    lastLoggedBytesReceived(0),
+    lastLoggedBytesSent(0),
+    timeoutCount(0),
     protocolVersion(Reference<AsyncVar<Optional<ProtocolVersion>>>(new AsyncVar<Optional<ProtocolVersion>>())),
-    connectOutgoingCount(0), connectIncomingCount(0), connectFailedCount(0),
+    connectOutgoingCount(0),
+    connectIncomingCount(0),
+    connectFailedCount(0),
     connectLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1) {
 	IFailureMonitor::failureMonitor().setStatus(destination, FailureStatus(false));
 }
@@ -2034,6 +2055,24 @@ void FlowTransport::loadPublicKeyFile(const std::string& filePath) {
 	}
 }
 
+FDB_BOOLEAN_PARAM(FromKeySetUpdate);
+
+static void traceActivePublicKeyIds(TransportData* self, FromKeySetUpdate fromUpdate = FromKeySetUpdate::False) {
+	std::ostringstream oss;
+	int count = 0;
+	for (const auto& [name, _] : self->publicKeys) {
+		if (count > 0) {
+			oss << ",";
+		}
+		oss << name.toString();
+		++count;
+	}
+	TraceEvent("AuthzActivePublicKeyIds"_audit)
+	    .detail("KeyIds", std::move(oss).str())
+	    .detail("FromKeySetUpdate", fromUpdate)
+	    .log();
+}
+
 ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, TransportData* self) {
 	state AsyncTrigger fileChanged;
 	state Future<Void> fileWatch;
@@ -2062,6 +2101,7 @@ ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, Transport
 			}
 			wait(success(file->read(&json[0], filesize, 0)));
 			self->applyPublicKeySet(StringRef(json));
+			traceActivePublicKeyIds(self, FromKeySetUpdate::True);
 			errorCount = 0;
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
@@ -2076,4 +2116,15 @@ ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, Transport
 
 void FlowTransport::watchPublicKeyFile(const std::string& publicKeyFilePath) {
 	self->publicKeyFileWatch = watchPublicKeyJwksFile(publicKeyFilePath, self);
+}
+
+ACTOR static Future<Void> tracePublicKeyIdsAtIntervals(TransportData* self) {
+	loop {
+		traceActivePublicKeyIds(self);
+		wait(delay(FLOW_KNOBS->ACTIVE_PUBLIC_KEY_IDS_LOG_INTERVAL_SECONDS));
+	}
+}
+
+void FlowTransport::monitorActivePublicKeyIds() {
+	self->publicKeyIdsMonitor = tracePublicKeyIdsAtIntervals(self);
 }

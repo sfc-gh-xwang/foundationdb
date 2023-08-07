@@ -1,0 +1,66 @@
+/*
+ * TagThroughputQuota.actor.cpp
+ *
+ * This source file is part of the FoundationDB open source project
+ *
+ * Copyright 2013-2022 Apple Inc. and the FoundationDB project authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "fdbclient/ThrottleApi.h"
+#include "fdbserver/workloads/ThroughputQuotaUtil.h"
+#include "fdbserver/workloads/workloads.actor.h"
+
+#include "flow/actorcompiler.h" // This must be the last #include.
+
+// This workload sets the throughput quota of a tag during the setup phase
+class TagThroughputQuotaWorkload : public TestWorkload {
+	Standalone<StringRef> prefix;
+	int count{ 0 };
+	int64_t reservedQuotaInPages{ 0 };
+	int64_t totalQuotaInPages{ 0 };
+
+	int64_t getReservedQuota() const { return reservedQuotaInPages * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
+	int64_t getTotalQuota() const { return totalQuotaInPages * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
+
+public:
+	static constexpr auto NAME = "TagThroughputQuota";
+	explicit TagThroughputQuotaWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
+		prefix = getOption(options, "prefix"_sr, "sampleTag"_sr);
+		count = getOption(options, "count"_sr, 1);
+		reservedQuotaInPages = getOption(options, "reservedQuotaInPages"_sr, 0);
+		totalQuotaInPages = getOption(options, "totalQuotaInPages"_sr, 0);
+	}
+
+	Future<Void> setup(Database const& db) override {
+		if (clientId != 0) {
+			return Void();
+		}
+		std::vector<Future<Void>> futures;
+		for (int index = 0; index < count; ++index) {
+			auto const throttlingTag = ThroughputQuotaUtil::getTransactionTag(prefix, index);
+			TraceEvent("TagThroughputQuotaWorkload_SettingQuota")
+			    .detail("Tag", printable(throttlingTag))
+			    .detail("ReservedQuota", getReservedQuota())
+			    .detail("TotalQuota", getTotalQuota());
+			futures.push_back(ThroughputQuotaUtil::setTagQuota(db, throttlingTag, getReservedQuota(), getTotalQuota()));
+		}
+		return waitForAll(futures);
+	}
+	Future<Void> start(Database const& cx) override { return Void(); }
+	Future<bool> check(Database const& cx) override { return true; }
+	void getMetrics(std::vector<PerfMetric>& m) override {}
+};
+
+WorkloadFactory<TagThroughputQuotaWorkload> TagThroughputQuotaWorkloadFactory;

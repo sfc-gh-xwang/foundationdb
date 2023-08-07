@@ -919,11 +919,13 @@ ACTOR template <class T>
 Future<Void> setWhenDoneOrError(Future<Void> condition, Reference<AsyncVar<T>> var, T val) {
 	try {
 		wait(condition);
+		var->set(val);
 	} catch (Error& e) {
-		if (e.code() == error_code_actor_cancelled)
-			throw;
+		if (e.code() != error_code_actor_cancelled) {
+			var->set(val);
+		}
+		throw;
 	}
-	var->set(val);
 	return Void();
 }
 
@@ -1439,6 +1441,53 @@ Future<T> waitOrError(Future<T> f, Future<Void> errorSignal) {
 	}
 }
 
+// A simple counter designed to track an ongoing count of something, such as how many actors are in a critical section,
+// how many bytes are currently being processed, etc... Can be explicitly released idempotently, or will automatically
+// release when destructed to handle actor ending or errors.
+// Can be used for any type T so long as it has += and -= operators.
+
+// Usage Example: tracking number of actors in code section
+// ActiveCounter<int> counter;
+//
+//   state ActiveCounter::Releaser tracker = counter.take(1);
+//   wait(perform my operation);
+//   tracker.release();
+
+template <class T>
+struct ActiveCounter {
+	struct Releaser : NonCopyable {
+		ActiveCounter<T>* parent;
+		T delta;
+
+		Releaser() : parent(nullptr) {}
+		Releaser(ActiveCounter<T>* parent, T delta) : parent(parent), delta(delta) { parent->counter += delta; }
+		Releaser(Releaser&& r) noexcept : parent(r.parent), delta(r.delta) { r.parent = nullptr; }
+		void operator=(Releaser&& r) {
+			release();
+			parent = r.parent;
+			delta = r.delta;
+			r.parent = nullptr;
+		}
+
+		void release() {
+			if (parent) {
+				parent->counter -= delta;
+				parent = nullptr;
+			}
+		}
+
+		~Releaser() { release(); }
+	};
+
+	T counter;
+
+	ActiveCounter(T initialValue) : counter(initialValue) {}
+
+	T getValue() { return counter; }
+
+	Releaser take(T delta) { return Releaser(this, delta); }
+};
+
 // A low-overhead FIFO mutex made with no internal queue structure (no list, deque, vector, etc)
 // The lock is implemented as a Promise<Void>, which is returned to callers in a convenient wrapper
 // called Lock.
@@ -1724,7 +1773,9 @@ struct BoundedFlowLock : NonCopyable, public ReferenceCounted<BoundedFlowLock> {
 
 	BoundedFlowLock() : minOutstanding(0), nextPermitNumber(0), unrestrictedPermits(1), boundedPermits(0) {}
 	explicit BoundedFlowLock(int64_t unrestrictedPermits, int64_t boundedPermits)
-	  : minOutstanding(0), nextPermitNumber(0), unrestrictedPermits(unrestrictedPermits),
+	  : minOutstanding(0),
+	    nextPermitNumber(0),
+	    unrestrictedPermits(unrestrictedPermits),
 	    boundedPermits(boundedPermits) {}
 
 	Future<int64_t> take() { return takeActor(this); }
@@ -2216,7 +2267,8 @@ class AsyncListener final : public IAsyncListener<Output> {
 
 public:
 	AsyncListener(Reference<AsyncVar<Input> const> const& input, F const& f)
-	  : output(f(input->get())), monitorActor(monitor(input, &output, f)) {}
+	  : output(f(input->get())),
+	    monitorActor(monitor(input, &output, f)) {}
 	Output const& get() const override { return output.get(); }
 	Future<Void> onChange() const override { return output.onChange(); }
 };
@@ -2315,7 +2367,7 @@ public:
 		}
 	}
 
-	static int getCount() { return instanceMap.size(); }
+	static int getValue() { return instanceMap.size(); }
 	static void resetInstances() { instanceMap.clear(); }
 
 private:

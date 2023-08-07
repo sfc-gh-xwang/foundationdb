@@ -40,7 +40,11 @@ struct WriteBandwidthWorkload : KVWorkload {
 	DDSketch<double> commitLatencies, GRVLatencies;
 
 	WriteBandwidthWorkload(WorkloadContext const& wcx)
-	  : KVWorkload(wcx), loadTime(0.0), transactions("Transactions"), retries("Retries"), commitLatencies(),
+	  : KVWorkload(wcx),
+	    loadTime(0.0),
+	    transactions("Transactions"),
+	    retries("Retries"),
+	    commitLatencies(),
 	    GRVLatencies() {
 		testDuration = getOption(options, "testDuration"_sr, 10.0);
 		keysPerTransaction = getOption(options, "keysPerTransaction"_sr, 100);

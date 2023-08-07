@@ -86,6 +86,8 @@ ACTOR Future<Void> connectionHandler(Reference<HTTP::SimServerContext> server,
 		state FlowMutex responseMutex;
 		state Future<Void> readPrevRequest = Future<Void>(Void());
 		wait(conn->acceptHandshake());
+
+		// FIXME: Implement idle-connection monitoring to proactively close idle-connection.
 		loop {
 			wait(readPrevRequest);
 			wait(delay(0));
@@ -136,13 +138,6 @@ ACTOR Future<Void> listenActor(Reference<HTTP::SimServerContext> server,
 	return Void();
 }
 
-NetworkAddress HTTP::SimServerContext::newAddress() {
-	// allocate new addr, assert we have enough addr space
-	ASSERT(listenAddresses.size() < 1000);
-	return NetworkAddress(
-	    g_simulator->getCurrentProcess()->address.ip, nextPort++, true /* isPublic*/, false /*isTLS*/);
-}
-
 void HTTP::SimServerContext::registerNewServer(NetworkAddress addr, Reference<HTTP::IRequestHandler> requestHandler) {
 	listenAddresses.push_back(addr);
 	listeners.push_back(INetworkConnections::net()->listen(addr));
@@ -172,6 +167,22 @@ void HTTP::SimRegisteredHandlerContext::removeIp(IPAddress ip) {
 		}
 	}
 	updateDNS();
+}
+
+struct AlwaysFailRequestHandler final : HTTP::IRequestHandler, ReferenceCounted<AlwaysFailRequestHandler> {
+	Future<Void> handleRequest(Reference<HTTP::IncomingRequest> req,
+	                           Reference<HTTP::OutgoingResponse> response) override {
+		ASSERT(false);
+		return Void();
+	}
+	Reference<HTTP::IRequestHandler> clone() override { return makeReference<AlwaysFailRequestHandler>(); }
+
+	void addref() override { ReferenceCounted<AlwaysFailRequestHandler>::addref(); }
+	void delref() override { ReferenceCounted<AlwaysFailRequestHandler>::delref(); }
+};
+
+Future<Void> HTTP::registerAlwaysFailHTTPHandler() {
+	return g_simulator->registerSimHTTPServer("alwaysfail_donotuse", "80", makeReference<AlwaysFailRequestHandler>());
 }
 
 // unit test stuff

@@ -1,22 +1,16 @@
+# This test can't run as part of RandomUnitTests.toml, so run it less frequently
+testPriority = '10'
+
 [configuration]
-testClass = 'MockDD'
+# set testClass only when global mock DD is needed
+# testClass = 'MockDD'
+simHTTPServerEnabled = false
 
 [[knobs]]
 enable_dd_physical_shard = false
 shard_encode_location_metadata = false
 dd_tenant_awareness_enabled = false
 storage_quota_enabled = false
-
-[[test]]
-testTitle = 'MockDDTracker'
-useDB = false
-
-    [[test.workload]]
-    testName = 'MockDDTrackerShardEvaluator'
-    keySpaceCount = 1000
-    testDuration = 50.0
-    checkMinShardCount = 2
-
 
 [[test]]
 testTitle = 'MockDDReadWriteTest'
@@ -26,4 +20,3 @@ useDB = false
     testName = 'MockDDReadWrite'
     keySpaceCount = 1000
     testDuration = 500.0
-    simpleConfig = true

@@ -151,7 +151,7 @@ bool validateTraceFormat(std::string_view format) {
 	return format == "xml" || format == "json";
 }
 
-const int MIN_TESTABLE_API_VERSION = 400;
+const int MIN_TESTABLE_API_VERSION = 710;
 
 void processIntOption(const std::string& optionName, const std::string& value, int minValue, int maxValue, int& res) {
 	char* endptr;

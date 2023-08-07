@@ -70,10 +70,21 @@ ISimulator* g_simulator = nullptr;
 thread_local ISimulator::ProcessInfo* ISimulator::currentProcess = nullptr;
 
 ISimulator::ISimulator()
-  : desiredCoordinators(1), physicalDatacenters(1), processesPerMachine(0), listenersPerProcess(1), usableRegions(1),
-    allowLogSetKills(true), tssMode(TSSMode::Disabled), configDBType(ConfigDBType::DISABLED),
-    blobGranulesEnabled(false), isStopped(false), lastConnectionFailure(0), connectionFailuresDisableDuration(0),
-    speedUpSimulation(false), backupAgents(BackupAgentType::WaitForType), drAgents(BackupAgentType::WaitForType),
+  : desiredCoordinators(1),
+    physicalDatacenters(1),
+    processesPerMachine(0),
+    listenersPerProcess(1),
+    usableRegions(1),
+    allowLogSetKills(true),
+    tssMode(TSSMode::Disabled),
+    configDBType(ConfigDBType::DISABLED),
+    blobGranulesEnabled(false),
+    isStopped(false),
+    lastConnectionFailure(0),
+    connectionFailuresDisableDuration(0),
+    speedUpSimulation(false),
+    backupAgents(BackupAgentType::WaitForType),
+    drAgents(BackupAgentType::WaitForType),
     allSwapsDisabled(false) {}
 ISimulator::~ISimulator() = default;
 
@@ -308,8 +319,13 @@ SimClogging g_clogging;
 
 struct Sim2Conn final : IConnection, ReferenceCounted<Sim2Conn> {
 	Sim2Conn(ISimulator::ProcessInfo* process)
-	  : opened(false), closedByCaller(false), stableConnection(false), trustedPeer(true), process(process),
-	    dbgid(deterministicRandom()->randomUniqueID()), stopReceive(Never()) {
+	  : opened(false),
+	    closedByCaller(false),
+	    stableConnection(false),
+	    trustedPeer(true),
+	    process(process),
+	    dbgid(deterministicRandom()->randomUniqueID()),
+	    stopReceive(Never()) {
 		pipes = sender(this) && receiver(this);
 	}
 
@@ -342,7 +358,10 @@ struct Sim2Conn final : IConnection, ReferenceCounted<Sim2Conn> {
 		    .detail("StableConnection", stableConnection);
 	}
 
-	~Sim2Conn() { ASSERT_ABORT(!opened || closedByCaller); }
+	~Sim2Conn() {
+		// FIXME: HTTPServer implement idle-connection monitoring
+		ASSERT_ABORT(!opened || closedByCaller || g_simulator->httpServerIps.count(peerEndpoint.ip));
+	}
 
 	void addref() override { ReferenceCounted<Sim2Conn>::addref(); }
 	void delref() override { ReferenceCounted<Sim2Conn>::delref(); }
@@ -560,8 +579,10 @@ private:
 	}
 
 	ACTOR static Future<Void> trackLeakedConnection(Sim2Conn* self) {
-		// FIXME: we could also just implement connection idle closing for sim http server instead
-		if (g_simulator->httpServerIps.count(self->process->address.ip)) {
+		// FIXME: we could also just implement connection idle closing for sim http server instead && tracking client
+		// connection (pooled) if any
+		if (g_simulator->httpServerIps.count(self->process->address.ip) ||
+		    g_simulator->httpServerIps.count(self->peerEndpoint.ip)) {
 			return Void();
 		}
 		wait(g_simulator->onProcess(self->process));
@@ -707,8 +728,13 @@ private:
 	           const std::string& filename,
 	           const std::string& actualFilename,
 	           int flags)
-	  : h(h), diskParameters(diskParameters), filename(filename), actualFilename(actualFilename), flags(flags),
-	    dbgId(deterministicRandom()->randomUniqueID()), delayOnWrite(delayOnWrite) {}
+	  : h(h),
+	    diskParameters(diskParameters),
+	    filename(filename),
+	    actualFilename(actualFilename),
+	    flags(flags),
+	    dbgId(deterministicRandom()->randomUniqueID()),
+	    delayOnWrite(delayOnWrite) {}
 
 	static int flagConversion(int flags) {
 		int outFlags = O_BINARY | O_CLOEXEC;
@@ -952,7 +978,8 @@ void doReboot(ISimulator::ProcessInfo* const& p, ISimulator::KillType const& kt)
 
 struct Sim2Listener final : IListener, ReferenceCounted<Sim2Listener> {
 	explicit Sim2Listener(ISimulator::ProcessInfo* process, const NetworkAddress& listenAddr)
-	  : process(process), address(listenAddr) {}
+	  : process(process),
+	    address(listenAddr) {}
 
 	void incomingConnection(double seconds, Reference<IConnection> conn) { // Called by another process!
 		incoming(Reference<Sim2Listener>::addRef(this), seconds, conn);
@@ -2415,7 +2442,10 @@ public:
 	                                  Reference<HTTP::SimServerContext> serverContext,
 	                                  Reference<HTTP::SimRegisteredHandlerContext> handlerContext) {
 		try {
-			NetworkAddress addr = serverContext->newAddress();
+			NetworkAddress addr = NetworkAddress(g_simulator->getCurrentProcess()->address.ip,
+			                                     handlerContext->port,
+			                                     true /* isPublic*/,
+			                                     false /*isTLS*/);
 			process->listenerMap[addr] = Reference<IListener>(new Sim2Listener(process, addr));
 			addressMap[addr] = process;
 			handlerContext->addAddress(addr);
@@ -2475,19 +2505,19 @@ public:
 	                                                     std::string hostname,
 	                                                     std::string service,
 	                                                     Reference<HTTP::IRequestHandler> requestHandler) {
-		// handle race where test client tries to register server before all processes are up, but time out eventually
-		// FIXME: make this so a server that starts after this or a server that restarts will automatically re-add
-		// itself, register the handler, and register with dns
 		std::string id = hostname + ":" + service;
 		ASSERT(!self->httpHandlers.count(id));
 
+		// check not too many servers
+		ASSERT(self->httpHandlers.size() < 1000);
 		state Reference<HTTP::SimRegisteredHandlerContext> handlerContext =
-		    makeReference<HTTP::SimRegisteredHandlerContext>(hostname, service, requestHandler);
+		    makeReference<HTTP::SimRegisteredHandlerContext>(hostname, service, self->nextHTTPPort++, requestHandler);
 		self->httpHandlers.insert({ id, handlerContext });
 
 		// start process on all running HTTP servers
 		state ProcessInfo* callingProcess = self->getCurrentProcess();
 		state int i = 0;
+
 		// copy the processes before waits just to ensure no races with addSimHTTPProcess
 		state std::vector<std::pair<ProcessInfo*, Reference<HTTP::SimServerContext>>> procsCopy =
 		    self->httpServerProcesses;
@@ -2510,7 +2540,11 @@ public:
 	}
 
 	Sim2(bool printSimTime)
-	  : time(0.0), timerTime(0.0), currentTaskID(TaskPriority::Zero), yielded(false), yield_limit(0),
+	  : time(0.0),
+	    timerTime(0.0),
+	    currentTaskID(TaskPriority::Zero),
+	    yielded(false),
+	    yield_limit(0),
 	    printSimTime(printSimTime) {
 		// Not letting currentProcess be nullptr eliminates some annoying special cases
 		currentProcess =
@@ -2669,8 +2703,11 @@ class UDPSimSocket : public IUDPSocket, ReferenceCounted<UDPSimSocket> {
 
 public:
 	UDPSimSocket(NetworkAddress const& localAddress, Optional<NetworkAddress> const& peerAddress)
-	  : id(deterministicRandom()->randomUniqueID()), process(g_simulator->getCurrentProcess()),
-	    peerAddress(peerAddress), actors(false), _localAddress(localAddress) {
+	  : id(deterministicRandom()->randomUniqueID()),
+	    process(g_simulator->getCurrentProcess()),
+	    peerAddress(peerAddress),
+	    actors(false),
+	    _localAddress(localAddress) {
 		g_sim2.addressMap.emplace(_localAddress, process);
 		ASSERT(process->boundUDPSockets.find(localAddress) == process->boundUDPSockets.end());
 		process->boundUDPSockets.emplace(localAddress, this);

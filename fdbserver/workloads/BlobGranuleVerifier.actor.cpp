@@ -88,6 +88,7 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 
 	Future<Void> summaryClient;
 	Future<Void> forceFlushingClient;
+	Future<Void> reqWayInFuture;
 	Promise<Void> triggerSummaryComplete;
 
 	BlobGranuleVerifierWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
@@ -511,6 +512,9 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 		} else {
 			forceFlushingClient = Future<Void>(Void());
 		}
+		if (clientId == 0 && deterministicRandom()->random01() < 0.1) {
+			reqWayInFuture = requestWayInTheFuture(cx, normalKeys, {});
+		}
 		return delay(testDuration);
 	}
 
@@ -813,7 +817,7 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 				std::string fname = (fileIdx >= oldFiles.snapshotFiles.size())
 				                        ? oldFiles.deltaFiles[fileIdx - oldFiles.snapshotFiles.size()].filename
 				                        : oldFiles.snapshotFiles[fileIdx].filename;
-				state Reference<BackupContainerFileSystem> bstore = self->bstore->getForRead(fname);
+				state Reference<BackupContainerFileSystem> bstore = self->bstore->getForAccess(fname);
 				try {
 					wait(success(bstore->readFile(fname)));
 					ASSERT(false);

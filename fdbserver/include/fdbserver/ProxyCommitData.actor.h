@@ -33,6 +33,7 @@
 #include "fdbserver/LogSystemDiskQueueAdapter.h"
 #include "fdbserver/MasterInterface.h"
 #include "fdbserver/ResolverInterface.h"
+#include "fdbserver/SSCommitCostCounter.h"
 #include "flow/IRandom.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -66,6 +67,7 @@ struct ProxyStats {
 	Counter tenantLookupRequestOut;
 	Counter tenantLookupRequestErrors;
 	Counter blobGranuleLocationIn, blobGranuleLocationOut, blobGranuleLocationErrors;
+	Counter bulkLoadersIn, bulkLoadersOut, bulkLoadersErrors;
 	Counter txnExpensiveClearCostEstCount;
 	Version lastCommitVersionAssigned;
 
@@ -123,20 +125,35 @@ struct ProxyStats {
 	                    NotifiedVersion* pCommittedVersion,
 	                    int64_t* commitBatchesMemBytesCountPtr,
 	                    std::map<int64_t, TenantName>* pTenantMap)
-	  : cc("ProxyStats", id.toString()), txnCommitIn("TxnCommitIn", cc),
-	    txnCommitVersionAssigned("TxnCommitVersionAssigned", cc), txnCommitResolving("TxnCommitResolving", cc),
-	    txnCommitResolved("TxnCommitResolved", cc), txnCommitOut("TxnCommitOut", cc),
-	    txnCommitOutSuccess("TxnCommitOutSuccess", cc), txnCommitErrors("TxnCommitErrors", cc),
-	    txnConflicts("TxnConflicts", cc), txnRejectedForQueuedTooLong("TxnRejectedForQueuedTooLong", cc),
-	    commitBatchIn("CommitBatchIn", cc), commitBatchOut("CommitBatchOut", cc), mutationBytes("MutationBytes", cc),
-	    mutations("Mutations", cc), conflictRanges("ConflictRanges", cc),
-	    keyServerLocationIn("KeyServerLocationIn", cc), keyServerLocationOut("KeyServerLocationOut", cc),
-	    keyServerLocationErrors("KeyServerLocationErrors", cc), tenantLookupRequestIn("TenantLookupRequestIn", cc),
+	  : cc("ProxyStats", id.toString()),
+	    txnCommitIn("TxnCommitIn", cc),
+	    txnCommitVersionAssigned("TxnCommitVersionAssigned", cc),
+	    txnCommitResolving("TxnCommitResolving", cc),
+	    txnCommitResolved("TxnCommitResolved", cc),
+	    txnCommitOut("TxnCommitOut", cc),
+	    txnCommitOutSuccess("TxnCommitOutSuccess", cc),
+	    txnCommitErrors("TxnCommitErrors", cc),
+	    txnConflicts("TxnConflicts", cc),
+	    txnRejectedForQueuedTooLong("TxnRejectedForQueuedTooLong", cc),
+	    commitBatchIn("CommitBatchIn", cc),
+	    commitBatchOut("CommitBatchOut", cc),
+	    mutationBytes("MutationBytes", cc),
+	    mutations("Mutations", cc),
+	    conflictRanges("ConflictRanges", cc),
+	    keyServerLocationIn("KeyServerLocationIn", cc),
+	    keyServerLocationOut("KeyServerLocationOut", cc),
+	    keyServerLocationErrors("KeyServerLocationErrors", cc),
+	    tenantLookupRequestIn("TenantLookupRequestIn", cc),
 	    tenantLookupRequestOut("TenantLookupRequestOut", cc),
-	    tenantLookupRequestErrors("TenantLookupRequestErrors", cc), blobGranuleLocationIn("BlobGranuleLocationIn", cc),
+	    tenantLookupRequestErrors("TenantLookupRequestErrors", cc),
+	    blobGranuleLocationIn("BlobGranuleLocationIn", cc),
 	    blobGranuleLocationOut("BlobGranuleLocationOut", cc),
 	    blobGranuleLocationErrors("BlobGranuleLocationErrors", cc),
-	    txnExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc), lastCommitVersionAssigned(0),
+	    bulkLoadersIn("BulkLoadersIn", cc),
+	    bulkLoadersOut("BulkLoadersOut", cc),
+	    bulkLoadersErrors("BulkLoadersErrors", cc),
+	    txnExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
+	    lastCommitVersionAssigned(0),
 	    commitLatencySample("CommitLatencyMetrics",
 	                        id,
 	                        SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
@@ -158,7 +175,8 @@ struct ProxyStats {
 	                   id,
 	                   SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
 	                   SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
-	    maxComputeNS(0), minComputeNS(1e12),
+	    maxComputeNS(0),
+	    minComputeNS(1e12),
 	    commitBatchQueuingDist(
 	        Histogram::getHistogram("CommitProxy"_sr, "CommitBatchQueuing"_sr, Histogram::Unit::milliseconds)),
 	    getCommitVersionDist(
@@ -190,7 +208,9 @@ struct ExpectedIdempotencyIdCountForKey {
 
 	ExpectedIdempotencyIdCountForKey() {}
 	ExpectedIdempotencyIdCountForKey(Version commitVersion, int16_t idempotencyIdCount, uint8_t batchIndexHighByte)
-	  : commitVersion(commitVersion), idempotencyIdCount(idempotencyIdCount), batchIndexHighByte(batchIndexHighByte) {}
+	  : commitVersion(commitVersion),
+	    idempotencyIdCount(idempotencyIdCount),
+	    batchIndexHighByte(batchIndexHighByte) {}
 };
 
 struct ProxyCommitData {
@@ -256,7 +276,7 @@ struct ProxyCommitData {
 	NotifiedDouble lastCommitTime;
 
 	std::vector<double> commitComputePerOperation;
-	UIDTransactionTagMap<TransactionCommitCostEstimation> ssTrTagCommitCost;
+	SSCommitCostCounter ssTrTagCommitCost;
 	double lastMasterReset;
 	double lastResolverReset;
 	int localTLogCount = -1;
@@ -314,12 +334,8 @@ struct ProxyCommitData {
 	}
 
 	void updateSSTagCost(const UID& id, const TransactionTag& throttlingTag, MutationRef m, uint64_t cost) {
-		auto [it, _] = ssTrTagCommitCost.try_emplace(id, TransactionTagMap<TransactionCommitCostEstimation>());
-
-		auto& costItem = it->second[throttlingTag];
 		if (m.isAtomicOp() || m.type == MutationRef::Type::SetValue || m.type == MutationRef::Type::ClearRange) {
-			costItem.opsSum++;
-			costItem.costSum += cost;
+			ssTrTagCommitCost.addSSTagCost(id, throttlingTag, cost);
 		}
 	}
 
@@ -332,16 +348,38 @@ struct ProxyCommitData {
 	                bool firstProxy,
 	                EncryptionAtRestMode encryptMode,
 	                bool provisional)
-	  : dbgid(dbgid), commitBatchesMemBytesCount(0),
-	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap), master(master),
-	    logAdapter(nullptr), committedVersion(recoveryTransactionVersion), minKnownCommittedVersion(0), version(0),
-	    lastVersionTime(0), commitVersionRequestNumber(1), mostRecentProcessedRequestNumber(0), firstProxy(firstProxy),
-	    lastCoalesceTime(0), locked(false), commitBatchInterval(SERVER_KNOBS->COMMIT_TRANSACTION_BATCH_INTERVAL_MIN),
-	    provisional(provisional), localCommitBatchesStarted(0), getConsistentReadVersion(getConsistentReadVersion),
-	    commit(commit), cx(openDBOnServer(db, TaskPriority::DefaultEndpoint, LockAware::True)), db(db),
-	    singleKeyMutationEvent("SingleKeyMutation"_sr), lastTxsPop(0), popRemoteTxs(false), lastStartCommit(0),
-	    lastCommitLatency(SERVER_KNOBS->REQUIRED_MIN_RECOVERY_DURATION), lastCommitTime(0), lastMasterReset(now()),
-	    lastResolverReset(now()), encryptMode(encryptMode) {
+	  : dbgid(dbgid),
+	    commitBatchesMemBytesCount(0),
+	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap),
+	    master(master),
+	    logAdapter(nullptr),
+	    committedVersion(recoveryTransactionVersion),
+	    minKnownCommittedVersion(0),
+	    version(0),
+	    lastVersionTime(0),
+	    commitVersionRequestNumber(1),
+	    mostRecentProcessedRequestNumber(0),
+	    firstProxy(firstProxy),
+	    lastCoalesceTime(0),
+	    locked(false),
+	    commitBatchInterval(SERVER_KNOBS->COMMIT_TRANSACTION_BATCH_INTERVAL_MIN),
+	    provisional(provisional),
+	    localCommitBatchesStarted(0),
+	    getConsistentReadVersion(getConsistentReadVersion),
+	    commit(commit),
+	    cx(openDBOnServer(db, TaskPriority::DefaultEndpoint, LockAware::True)),
+	    db(db),
+	    singleKeyMutationEvent("SingleKeyMutation"_sr),
+	    lastTxsPop(0),
+	    popRemoteTxs(false),
+	    lastStartCommit(0),
+	    lastCommitLatency(SERVER_KNOBS->REQUIRED_MIN_RECOVERY_DURATION),
+	    lastCommitTime(0),
+	    ssTrTagCommitCost(SERVER_KNOBS->CP_THROTTLE_TAGS_TRACKED,
+	                      SERVER_KNOBS->CP_MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
+	    lastMasterReset(now()),
+	    lastResolverReset(now()),
+	    encryptMode(encryptMode) {
 		commitComputePerOperation.resize(SERVER_KNOBS->PROXY_COMPUTE_BUCKETS, 0.0);
 	}
 };

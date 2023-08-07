@@ -54,7 +54,8 @@ struct MetaclusterManagementWorkload : TestWorkload {
 
 		TenantTestData() {}
 		TenantTestData(ClusterName cluster, Optional<TenantGroupName> tenantGroup)
-		  : cluster(cluster), tenantGroup(tenantGroup) {}
+		  : cluster(cluster),
+		    tenantGroup(tenantGroup) {}
 	};
 
 	struct TenantGroupData : ReferenceCounted<TenantGroupData> {
@@ -104,7 +105,8 @@ struct MetaclusterManagementWorkload : TestWorkload {
 	bool useExistingMetacluster;
 
 	MetaclusterManagementWorkload(WorkloadContext const& wcx)
-	  : TestWorkload(wcx), metaclusterCreated(deterministicRandom()->coinflip()) {
+	  : TestWorkload(wcx),
+	    metaclusterCreated(deterministicRandom()->coinflip()) {
 		maxTenants =
 		    deterministicRandom()->randomInt(1, std::min<int>(1e8 - 1, getOption(options, "maxTenants"_sr, 100)) + 1);
 		maxTenantGroups = deterministicRandom()->randomInt(
@@ -656,6 +658,9 @@ struct MetaclusterManagementWorkload : TestWorkload {
 				state std::vector<Future<Void>> deleteFutures;
 				for (auto const& f : getFutures) {
 					if (f.get().present()) {
+						if (self->useExistingMetacluster) {
+							tr->clear(prefixRange(TenantAPI::idToPrefix(f.get().get())));
+						}
 						deleteFutures.push_back(TenantAPI::deleteTenantTransaction(tr, f.get().get()));
 					}
 				}
@@ -668,8 +673,8 @@ struct MetaclusterManagementWorkload : TestWorkload {
 			}
 		}
 
-		CODE_PROBE(foundTenantCollision, "Resolved tenant collision for restore", probe::decoration::rare);
-		CODE_PROBE(foundGroupCollision, "Resolved group collision for restore", probe::decoration::rare);
+		CODE_PROBE(foundTenantCollision, "Resolved tenant collision for restore");
+		CODE_PROBE(foundGroupCollision, "Resolved group collision for restore");
 		return foundTenantCollision || foundGroupCollision;
 	}
 
@@ -698,15 +703,16 @@ struct MetaclusterManagementWorkload : TestWorkload {
 					}
 				}
 
-				Future<Void> restoreFuture =
-				    metacluster::restoreCluster(self->managementDb,
-				                                clusterName,
-				                                dataDb->db->getConnectionRecord()->getConnectionString(),
-				                                metacluster::ApplyManagementClusterUpdates(!dataDb->detached),
-				                                metacluster::RestoreDryRun(dryRun),
-				                                metacluster::ForceJoin(forceJoin),
-				                                metacluster::ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
-				                                &messages);
+				Future<Void> restoreFuture = metacluster::restoreCluster(
+				    self->managementDb,
+				    clusterName,
+				    dataDb->db->getConnectionRecord()->getConnectionString(),
+				    metacluster::ApplyManagementClusterUpdates(!dataDb->detached),
+				    metacluster::RestoreDryRun(dryRun),
+				    metacluster::ForceJoin(forceJoin),
+				    metacluster::ForceReuseTenantIdPrefix(forceReuseTenantIdPrefix),
+				    metacluster::ForceDeleteMissingTenants(deterministicRandom()->coinflip()),
+				    &messages);
 				Optional<Void> result = wait(timeout(restoreFuture, deterministicRandom()->randomInt(1, 30)));
 				if (!result.present()) {
 					retried = true;
@@ -1218,12 +1224,31 @@ struct MetaclusterManagementWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR static Future<Void> deleteTenantData(Database db, TenantName tenant) {
+		state ReadYourWritesTransaction tr(makeReference<Tenant>(db, tenant));
+		loop {
+			try {
+				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+				tr.clear(normalKeys);
+				wait(tr.commit());
+				return Void();
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
 	ACTOR static Future<Void> deleteTenant(MetaclusterManagementWorkload* self) {
 		state TenantName tenant = self->chooseTenantName();
 
 		auto itr = self->createdTenants.find(tenant);
 		state bool exists = itr != self->createdTenants.end();
 		state bool retried = false;
+
+		if (exists && self->useExistingMetacluster) {
+			auto dataDb = self->dataDbs[itr->second->cluster];
+			wait(deleteTenantData(dataDb->db, tenant));
+		}
 
 		try {
 			loop {
@@ -1774,8 +1799,18 @@ struct MetaclusterManagementWorkload : TestWorkload {
 			state std::vector<std::pair<TenantName, int64_t>> tenants =
 			    wait(metacluster::listTenants(self->managementDb, ""_sr, "\xff\xff"_sr, 10e6));
 
+			if (self->useExistingMetacluster) {
+				std::vector<Future<Void>> deleteTenantDataFutures;
+				for (auto const& [tenantName, tid] : tenants) {
+					auto const& dataDb = self->dataDbs[self->createdTenants[tenantName]->cluster];
+					deleteTenantDataFutures.push_back(deleteTenantData(dataDb->db, tenantName));
+				}
+
+				wait(waitForAll(deleteTenantDataFutures));
+			}
+
 			state std::vector<Future<Void>> deleteTenantFutures;
-			for (auto [tenantName, tid] : tenants) {
+			for (auto const& [tenantName, tid] : tenants) {
 				deleteTenantFutures.push_back(metacluster::deleteTenant(self->managementDb, tenantName));
 			}
 

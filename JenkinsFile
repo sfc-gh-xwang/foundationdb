@@ -13,13 +13,24 @@ pipeline {
                     scmInfo = checkout scm
                     println("${scmInfo}")
                     precommit_job_status = "SUCCESS"
+                    buildcop_members = ['tclinkenbeard',
+                                         'akejriwal',
+                                         'mdvorsky',
+                                         'jshim',
+                                         'jslocum',
+                                         'ajbeamon',
+                                         'dadkins',
+                                         'yajin']
                     user_id = ""
                     labels = []
+                    run_ci = true
                     if (env.BRANCH_NAME.startsWith("PR-")) {
                         //Aborting previous runs if any in progress to avoid running multiple runs for same PR
                         abortPreviousBuilds()
                         labels = getLabels()
                     }
+                    build_trigger_cause = "${currentBuild.getBuildCauses()[0].shortDescription}"
+                    println("Build Trigger Cause : ${build_trigger_cause}")
                 }
             }
         }
@@ -50,11 +61,9 @@ pipeline {
         stage('Check Git Comment') {
             steps {
                 script {
-                    // Checking github comment is only needed if branch is PR-*
-                    if (env.BRANCH_NAME.startsWith("PR-")) {
+                    // Checking github comment is only needed if branch is PR-* and not needed when PR is just opened.
+                    if (env.BRANCH_NAME.startsWith("PR-") && !"${build_trigger_cause}".matches("Pull request(.*)opened")) {
                         def trigger_comment = "@fdb-ci precommit start"
-                        def build_trigger_cause = "${currentBuild.getBuildCauses()[0].shortDescription}"
-                        println("Build Trigger Cause : ${build_trigger_cause}")
 
                         if ("${build_trigger_cause}" == "GitHub pull request comment" &&
                                 "${currentBuild.getBuildCauses()[0].commentBody}".contains("${trigger_comment}")) {
@@ -63,18 +72,33 @@ pipeline {
                             //extracting the LDAP portion from commentAuthor sfc-gh-xxx
                             user_id = "${currentBuild.getBuildCauses()[0].commentAuthor}".split("-")[2]
                             createCheck("github_comment", "Criteria Satisfied", "", "completed", "success");
+
+                            //Check CI is initiated by @fdb-build-cop member when labels are used
+                            println("labels " + labels.size())
+                            if (labels.size() > 0 && labels[0] != "")  {
+                                if (buildcop_members.contains(user_id)) {
+                                    msg = user_id + " approved labels " + labels.join(", ") + " and started CI"
+                                    createCheck("labels_check", msg, msg, "completed", "success");
+                                } else {
+                                    msg = "CI can only be triggered by one of the members of @fdb-build-cop if labels used"
+                                    shortDescription = "Please check with one of the @fdb-build-cop members: " + buildcop_members.join(", ")
+                                    createCheck("labels_check", msg, shortDescription, "completed", "failure");
+                                    error("Aborting the build.")
+                                }
+                            }
                         } else {
                             def triggerMessage = "To start Full CI, Please comment: @fdb-ci precommit start"
                             createCheck("github_comment", triggerMessage, triggerMessage, "completed", "failure");
                             println("FDB_Precommit build job execution is skipped. Please comment: ${trigger_comment}")
                             currentBuild.result = 'FAILURE'
-                            error("Aborting the build.")
+                            run_ci = false
                         }
                     }
                 }
             }
         }
         stage('FDB Build Image') {
+            when { expression { run_ci } }
             steps {
                 script {
                     def dryrun = "true"
@@ -93,10 +117,12 @@ pipeline {
                         git_branch = env.BRANCH_NAME
                         dryrun = "false"
                     }
-                    // if any changes detected in path "/contrib/build_image/" run FDB_ECR/Build_Image job
+
                     def changedFiles = getChangedFiles()
                     println(changedFiles)
-                    if (changedFiles.contains("contrib/build_image/")) {
+
+                    // if any changes detected in path "/contrib/build_image/" or in case of new branch creation run FDB_ECR/Build_Image job
+                    if (changedFiles.contains("contrib/build_image/") || checkNewBranchCreation()) {
                         println("**** Starting FDB Build Image Job  **** ")
                         createCheck("FDB Build Image", "FDB Build Image", "In Progress", "in_progress", "");
                         def j = build job: "FDB_ECR/Build_Image",
@@ -127,6 +153,7 @@ pipeline {
             }
         }
         stage('Build and Test') {
+            when { expression { run_ci } }
             parallel {
                 stage('Build and Test - PRERELEASE') {
                     steps {
@@ -289,8 +316,16 @@ void createCheck(context, title, summary, jobStatus, jobConclusion) {
 }
 
 def getChangedFiles() {
-    def git_dff = sh(script:"git diff HEAD~1 HEAD --name-only", returnStdout: true)
+    def git_dff = sh(script:"git diff `git log --first-parent --merges -1 --format=%H` HEAD --name-only", returnStdout: true)
     return git_dff
+}
+
+def checkNewBranchCreation() {
+    //In case of new branch GIT_PREVIOUS_COMMIT is null
+    if (("${scmInfo.GIT_PREVIOUS_COMMIT}" == "null") && "${build_trigger_cause}".startsWith("Push event to branch release")) {
+        return true
+    }
+    return false
 }
 
 def getLabels() {
@@ -303,7 +338,7 @@ def getLabels() {
             curl -S -u "$GITHUB_USER:$GITHUB_TOKEN" "https://api.github.com/repos/snowflakedb/frostdb/pulls/${pr_id}" -o pr.json
         """
     }
-    def labels = sh(script:"jq -r '.labels[].name' pr.json; rm pr.json", returnStdout: true)
+    labels = sh(script:"jq -r '.labels[].name' pr.json; rm pr.json", returnStdout: true)
     labels = labels.split("\n")
     return labels
 }

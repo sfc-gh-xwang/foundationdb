@@ -26,6 +26,7 @@
 #include "fdbclient/BackupAgent.actor.h"
 #include "fdbclient/BlobCipher.h"
 #include "fdbclient/BuildIdempotencyIdMutations.h"
+#include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/FDBTypes.h"
@@ -57,6 +58,7 @@
 #include "fdbserver/ServerDBInfo.actor.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/WorkerInterface.actor.h"
+#include "fdbserver/SSCommitCostCounter.h"
 #include "flow/ActorCollection.h"
 #include "flow/CodeProbe.h"
 #include "flow/EncryptUtils.h"
@@ -122,7 +124,8 @@ struct ResolutionRequestBuilder {
 	                         Version prevVersion,
 	                         Version lastReceivedVersion,
 	                         Span& parentSpan)
-	  : self(self), requests(self->resolvers.size()) {
+	  : self(self),
+	    requests(self->resolvers.size()) {
 		for (auto& req : requests) {
 			req.spanContext = parentSpan.context;
 			req.prevVersion = prevVersion;
@@ -760,10 +763,13 @@ std::set<Tag> CommitBatchContext::getWrittenTagsPreResolution() {
 CommitBatchContext::CommitBatchContext(ProxyCommitData* const pProxyCommitData_,
                                        const std::vector<CommitTransactionRequest>* trs_,
                                        const int currentBatchMemBytesCount)
-  : pProxyCommitData(pProxyCommitData_), trs(std::move(*const_cast<std::vector<CommitTransactionRequest>*>(trs_))),
-    currentBatchMemBytesCount(currentBatchMemBytesCount), startTime(g_network->now()),
+  : pProxyCommitData(pProxyCommitData_),
+    trs(std::move(*const_cast<std::vector<CommitTransactionRequest>*>(trs_))),
+    currentBatchMemBytesCount(currentBatchMemBytesCount),
+    startTime(g_network->now()),
     localBatchNumber(++pProxyCommitData->localCommitBatchesStarted),
-    toCommit(pProxyCommitData->logSystem, pProxyCommitData->localTLogCount), span("MP:commitBatch"_loc),
+    toCommit(pProxyCommitData->logSystem, pProxyCommitData->localTLogCount),
+    span("MP:commitBatch"_loc),
     committed(trs.size()) {
 
 	evaluateBatchSize();
@@ -2836,6 +2842,7 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 
 	ASSERT(!keyRange.empty());
 
+	// FIXME: add retry loop? likely less expensive to handle retryable errors here than to propagate back to client?
 	state Transaction tr(commitData->cx);
 	try {
 		// TODO: could skip GRV, and keeps consistent with tenant mapping? Appears to be other issues though
@@ -2954,6 +2961,75 @@ ACTOR static Future<Void> bgReadRequestServer(CommitProxyInterface proxy,
 		} else {
 			++commitData->stats.blobGranuleLocationIn;
 			addActor.send(doBlobGranuleLocationRequest(req, commitData));
+		}
+	}
+}
+
+// Right now this just proxies a call to read the system keyspace to allow untrusted clients to bypass the system
+// keyspace.
+ACTOR static Future<Void> doBulkLoadersRequest(GetBulkLoaderInterfacesRequest req, ProxyCommitData* commitData) {
+	// FIXME: data is already in transaction state store, just add it there and use that instead or cache result for
+	// small time period We can't respond to these requests until we have valid txnStateStore
+	wait(commitData->validState.getFuture());
+
+	wait(delay(0, TaskPriority::DefaultEndpoint));
+
+	state GetBulkLoaderInterfacesReply rep;
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(commitData->cx);
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+			BulkLoadMetadata::LoaderListMap::RangeResultType result =
+			    wait(BulkLoadMetadata::loaderListMap().getRange(tr, {}, {}, CLIENT_KNOBS->TOO_MANY));
+			ASSERT(!result.more);
+			for (auto& it : result.results) {
+				rep.blInterfs.push_back(it.second);
+			}
+			break;
+		} catch (Error& e) {
+			// TODO: should we give up eventually if db is down and have client retry to not hog spots in the queue?
+			if (e.code() == error_code_operation_cancelled) {
+				++commitData->stats.bulkLoadersErrors;
+				throw;
+			}
+			// TODO: only specific error types?
+			try {
+				wait(tr->onError(e));
+			} catch (Error& e2) {
+				// if error is not retryable by a transaction, throw it back to client
+				if (e2.code() == error_code_operation_cancelled) {
+					throw e2;
+				}
+				++commitData->stats.bulkLoadersErrors;
+				req.reply.sendError(e2);
+				return Void();
+			}
+		}
+	}
+
+	req.reply.send(rep);
+	++commitData->stats.bulkLoadersOut;
+	return Void();
+}
+
+ACTOR static Future<Void> bulkLoadersRequestServer(CommitProxyInterface proxy,
+                                                   PromiseStream<Future<Void>> addActor,
+                                                   ProxyCommitData* commitData) {
+	loop {
+		GetBulkLoaderInterfacesRequest req = waitNext(proxy.getBulkLoaderInterfaces.getFuture());
+		// WARNING: this code is run at a high priority, so it needs to do as little work as possible
+		if ((commitData->stats.bulkLoadersIn.getValue() - commitData->stats.bulkLoadersOut.getValue() >
+		     SERVER_KNOBS->BULK_LOADERS_MAX_QUEUE_SIZE) ||
+		    (g_network->isSimulated() && !g_simulator->speedUpSimulation && BUGGIFY_WITH_PROB(0.0001))) {
+			++commitData->stats.bulkLoadersErrors;
+			req.reply.sendError(commit_proxy_memory_limit_exceeded());
+			TraceEvent(SevWarnAlways, "ProxyBulkLoadersRequestThresholdExceeded", commitData->dbgid).suppressFor(60);
+		} else {
+			++commitData->stats.bulkLoadersIn;
+			addActor.send(doBulkLoadersRequest(req, commitData));
 		}
 	}
 }
@@ -3243,27 +3319,29 @@ ACTOR Future<Void> proxyCheckSafeExclusion(Reference<AsyncVar<ServerDBInfo> cons
 
 ACTOR Future<Void> reportTxnTagCommitCost(UID myID,
                                           Reference<AsyncVar<ServerDBInfo> const> db,
-                                          UIDTransactionTagMap<TransactionCommitCostEstimation>* ssTrTagCommitCost) {
+                                          SSCommitCostCounter* ssTrTagCommitCost) {
 	state Future<Void> nextRequestTimer = Never();
 	state Future<Void> nextReply = Never();
+	state double lastReq = 0;
 	if (db->get().ratekeeper.present())
 		nextRequestTimer = Void();
 	loop choose {
 		when(wait(db->onChange())) {
 			if (db->get().ratekeeper.present()) {
-				TraceEvent("ProxyRatekeeperChanged", myID).detail("RKID", db->get().ratekeeper.get().id());
+				TraceEvent("CommitProxyRatekeeperChanged", myID).detail("RKID", db->get().ratekeeper.get().id());
 				nextRequestTimer = Void();
 			} else {
-				TraceEvent("ProxyRatekeeperDied", myID).log();
+				TraceEvent("CommitProxyRatekeeperDied", myID).log();
 				nextRequestTimer = Never();
 			}
 		}
 		when(wait(nextRequestTimer)) {
 			nextRequestTimer = Never();
+			double elapsed = now() - lastReq;
+			lastReq = now();
 			if (db->get().ratekeeper.present()) {
 				nextReply = brokenPromiseToNever(db->get().ratekeeper.get().reportCommitCostEstimation.getReply(
-				    ReportCommitCostEstimationRequest(std::move(*ssTrTagCommitCost))));
-				ssTrTagCommitCost->clear();
+				    ReportCommitCostEstimationRequest(ssTrTagCommitCost->getTopBusyTagCost(elapsed))));
 			} else {
 				nextReply = Never();
 			}
@@ -3430,7 +3508,9 @@ struct TransactionStateResolveContext {
 	TransactionStateResolveContext() = default;
 
 	TransactionStateResolveContext(ProxyCommitData* pCommitData_, PromiseStream<Future<Void>>* pActors_)
-	  : pCommitData(pCommitData_), pTxnStateStore(pCommitData_->txnStateStore), pActors(pActors_) {
+	  : pCommitData(pCommitData_),
+	    pTxnStateStore(pCommitData_->txnStateStore),
+	    pActors(pActors_) {
 		ASSERT(pTxnStateStore.isValid());
 	}
 };
@@ -3732,6 +3812,7 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 	addActor.send(tenantLookupServer(proxy, addActor, &commitData));
 	addActor.send(readRequestServer(proxy, addActor, &commitData));
 	addActor.send(bgReadRequestServer(proxy, addActor, &commitData));
+	addActor.send(bulkLoadersRequestServer(proxy, addActor, &commitData));
 	addActor.send(rejoinServer(proxy, &commitData));
 	addActor.send(ddMetricsRequestServer(proxy, db));
 	addActor.send(reportTxnTagCommitCost(proxy.id(), db, &commitData.ssTrTagCommitCost));

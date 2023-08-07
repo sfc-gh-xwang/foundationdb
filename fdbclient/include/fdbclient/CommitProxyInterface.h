@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "fdbclient/BlobWorkerInterface.h"
+#include "fdbclient/BulkLoaderInterface.h"
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/EncryptKeyProxyInterface.h"
 #include "fdbclient/FDBTypes.h"
@@ -34,7 +35,6 @@
 #include "fdbclient/GrvProxyInterface.h"
 #include "fdbclient/IdempotencyId.actor.h"
 #include "fdbclient/StorageServerInterface.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/VersionVector.h"
 
 #include "fdbrpc/Stats.h"
@@ -66,6 +66,7 @@ struct CommitProxyInterface {
 	PublicRequestStream<struct ExpireIdempotencyIdRequest> expireIdempotencyId;
 	PublicRequestStream<struct TenantLookupRequest> tenantLookup;
 	PublicRequestStream<struct GetBlobGranuleLocationsRequest> getBlobGranuleLocations;
+	PublicRequestStream<struct GetBulkLoaderInterfacesRequest> getBulkLoaderInterfaces;
 
 	UID id() const { return commit.getEndpoint().token; }
 	std::string toString() const { return id().shortString(); }
@@ -98,6 +99,8 @@ struct CommitProxyInterface {
 			    PublicRequestStream<struct TenantLookupRequest>(commit.getEndpoint().getAdjustedEndpoint(11));
 			getBlobGranuleLocations = PublicRequestStream<struct GetBlobGranuleLocationsRequest>(
 			    commit.getEndpoint().getAdjustedEndpoint(12));
+			getBulkLoaderInterfaces = PublicRequestStream<struct GetBulkLoaderInterfacesRequest>(
+			    commit.getEndpoint().getAdjustedEndpoint(13));
 		}
 	}
 
@@ -117,6 +120,7 @@ struct CommitProxyInterface {
 		streams.push_back(expireIdempotencyId.getReceiver());
 		streams.push_back(tenantLookup.getReceiver());
 		streams.push_back(getBlobGranuleLocations.getReceiver());
+		streams.push_back(getBulkLoaderInterfaces.getReceiver());
 		FlowTransport::transport().addEndpoints(streams);
 	}
 };
@@ -176,7 +180,9 @@ struct ExpireIdempotencyIdRequest {
 
 	ExpireIdempotencyIdRequest() {}
 	ExpireIdempotencyIdRequest(Version commitVersion, uint8_t batchIndexHighByte, TenantInfo tenant)
-	  : commitVersion(commitVersion), batchIndexHighByte(batchIndexHighByte), tenant(tenant) {}
+	  : commitVersion(commitVersion),
+	    batchIndexHighByte(batchIndexHighByte),
+	    tenant(tenant) {}
 
 	bool verify() const { return tenant.isAuthorized(); }
 
@@ -203,8 +209,21 @@ struct CommitID {
 	         uint16_t txnBatchId,
 	         const Optional<Value>& metadataVersion,
 	         const Optional<Standalone<VectorRef<int>>>& conflictingKRIndices = Optional<Standalone<VectorRef<int>>>())
-	  : version(version), txnBatchId(txnBatchId), metadataVersion(metadataVersion),
+	  : version(version),
+	    txnBatchId(txnBatchId),
+	    metadataVersion(metadataVersion),
 	    conflictingKRIndices(conflictingKRIndices) {}
+};
+
+struct ClientTrCommitCostEstimation {
+	int opsCount = 0;
+	uint64_t writeCosts = 0;
+	std::deque<std::pair<int, uint64_t>> clearIdxCosts;
+	uint32_t expensiveCostEstCount = 0;
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, opsCount, writeCosts, clearIdxCosts, expensiveCostEstCount);
+	}
 };
 
 struct CommitTransactionRequest : TimedRequest {
@@ -314,6 +333,7 @@ struct GetReadVersionRequest : TimedRequest {
 	TransactionPriority priority;
 
 	Optional<ThrottlingId> throttlingId;
+	Optional<double> expectedTotalCost;
 
 	// Not serialized, because this field does not need to be sent to master.
 	// It is used for reporting to clients the amount of time spent delayed by
@@ -326,15 +346,23 @@ struct GetReadVersionRequest : TimedRequest {
 	Version maxVersion; // max version in the client's version vector cache
 
 	GetReadVersionRequest() : transactionCount(1), flags(0), maxVersion(invalidVersion) {}
+
 	GetReadVersionRequest(SpanContext spanContext,
 	                      uint32_t transactionCount,
 	                      TransactionPriority priority,
 	                      Version maxVersion,
 	                      uint32_t flags = 0,
 	                      Optional<ThrottlingId> const& throttlingId = Optional<ThrottlingId>(),
-	                      Optional<UID> debugID = Optional<UID>())
-	  : spanContext(spanContext), transactionCount(transactionCount), flags(flags), priority(priority),
-	    throttlingId(throttlingId), debugID(debugID), maxVersion(maxVersion) {
+	                      Optional<UID> debugID = Optional<UID>(),
+	                      Optional<double> expectedTotalCost = Optional<double>())
+	  : spanContext(spanContext),
+	    transactionCount(transactionCount),
+	    flags(flags),
+	    priority(priority),
+	    throttlingId(throttlingId),
+	    expectedTotalCost(expectedTotalCost),
+	    debugID(debugID),
+	    maxVersion(maxVersion) {
 		flags = flags & ~FLAG_PRIORITY_MASK;
 		switch (priority) {
 		case TransactionPriority::BATCH:
@@ -357,7 +385,8 @@ struct GetReadVersionRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, transactionCount, flags, debugID, reply, spanContext, maxVersion, throttlingId);
+		serializer(
+		    ar, transactionCount, flags, debugID, reply, spanContext, maxVersion, throttlingId, expectedTotalCost);
 
 		if (ar.isDeserializing) {
 			if ((flags & PRIORITY_SYSTEM_IMMEDIATE) == PRIORITY_SYSTEM_IMMEDIATE) {
@@ -401,7 +430,8 @@ struct TenantLookupRequest {
 
 	TenantLookupRequest() : minTenantVersion(latestVersion) {}
 	TenantLookupRequest(TenantNameRef const& tenantName, Version minTenantVersion)
-	  : tenantName(tenantName), minTenantVersion(minTenantVersion) {}
+	  : tenantName(tenantName),
+	    minTenantVersion(minTenantVersion) {}
 
 	bool verify() const { return true; }
 
@@ -462,7 +492,13 @@ struct GetKeyServerLocationsRequest {
 	                             bool reverse,
 	                             Version minTenantVersion,
 	                             Arena const& arena)
-	  : arena(arena), spanContext(spanContext), tenant(tenant), begin(begin), end(end), limit(limit), reverse(reverse),
+	  : arena(arena),
+	    spanContext(spanContext),
+	    tenant(tenant),
+	    begin(begin),
+	    end(end),
+	    limit(limit),
+	    reverse(reverse),
 	    minTenantVersion(minTenantVersion) {}
 
 	bool verify() const { return tenant.isAuthorized(); }
@@ -514,14 +550,50 @@ struct GetBlobGranuleLocationsRequest {
 	                               bool justGranules,
 	                               Version minTenantVersion,
 	                               Arena const& arena)
-	  : arena(arena), spanContext(spanContext), tenant(tenant), begin(begin), end(end), limit(limit), reverse(reverse),
-	    justGranules(justGranules), minTenantVersion(minTenantVersion) {}
+	  : arena(arena),
+	    spanContext(spanContext),
+	    tenant(tenant),
+	    begin(begin),
+	    end(end),
+	    limit(limit),
+	    reverse(reverse),
+	    justGranules(justGranules),
+	    minTenantVersion(minTenantVersion) {}
 
 	bool verify() const { return tenant.isAuthorized(); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, begin, end, limit, reverse, reply, spanContext, tenant, minTenantVersion, justGranules, arena);
+	}
+};
+
+struct GetBulkLoaderInterfacesReply {
+	constexpr static FileIdentifier file_identifier = 4007011;
+	Arena arena;
+	std::vector<BulkLoaderInterface> blInterfs;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, blInterfs, arena);
+	}
+};
+
+struct GetBulkLoaderInterfacesRequest {
+	constexpr static FileIdentifier file_identifier = 3181697;
+	Arena arena;
+	SpanContext spanContext;
+	ReplyPromise<GetBulkLoaderInterfacesReply> reply;
+
+	GetBulkLoaderInterfacesRequest() {}
+	GetBulkLoaderInterfacesRequest(SpanContext spanContext) : spanContext(spanContext) {}
+
+	// no non-public information is disclosed so no need for authz on this call
+	bool verify() const noexcept { return true; }
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reply, spanContext, arena);
 	}
 };
 
@@ -535,7 +607,10 @@ struct GetRawCommittedVersionReply {
 	VersionVector ssVersionVectorDelta;
 
 	GetRawCommittedVersionReply()
-	  : debugID(Optional<UID>()), version(invalidVersion), locked(false), metadataVersion(Optional<Value>()),
+	  : debugID(Optional<UID>()),
+	    version(invalidVersion),
+	    locked(false),
+	    metadataVersion(Optional<Value>()),
 	    minKnownCommittedVersion(invalidVersion) {}
 
 	template <class Ar>
@@ -554,7 +629,9 @@ struct GetRawCommittedVersionRequest {
 	explicit GetRawCommittedVersionRequest(SpanContext spanContext,
 	                                       Optional<UID> const& debugID = Optional<UID>(),
 	                                       Version maxVersion = invalidVersion)
-	  : spanContext(spanContext), debugID(debugID), maxVersion(maxVersion) {}
+	  : spanContext(spanContext),
+	    debugID(debugID),
+	    maxVersion(maxVersion) {}
 	explicit GetRawCommittedVersionRequest() : spanContext(), debugID(), maxVersion(invalidVersion) {}
 
 	template <class Ar>
@@ -685,7 +762,9 @@ struct ProxySnapRequest {
 
 	explicit ProxySnapRequest(Optional<UID> const& debugID = Optional<UID>()) : debugID(debugID) {}
 	explicit ProxySnapRequest(StringRef snap, UID snapUID, Optional<UID> debugID = Optional<UID>())
-	  : snapPayload(snap), snapUID(snapUID), debugID(debugID) {}
+	  : snapPayload(snap),
+	    snapUID(snapUID),
+	    debugID(debugID) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {

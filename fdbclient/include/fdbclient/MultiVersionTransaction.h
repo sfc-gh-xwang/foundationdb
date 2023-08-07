@@ -196,6 +196,8 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 
 	FDBFuture* (*databaseGetClientStatus)(FDBDatabase* db);
 
+	FDBFuture* (*databaseExecAsync)(FDBDatabase* tr, FDBRequest* request);
+
 	// Tenant
 	fdb_error_t (*tenantCreateTransaction)(FDBTenant* tenant, FDBTransaction** outTransaction);
 
@@ -252,6 +254,11 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 	                                   int64_t version);
 
 	FDBFuture* (*tenantGetId)(FDBTenant* tenant);
+
+	FDBFuture* (*tenantGetClientStatus)(FDBTenant* tenant);
+
+	FDBFuture* (*tenantExecAsync)(FDBTenant* tr, FDBRequest* request);
+
 	void (*tenantDestroy)(FDBTenant* tenant);
 
 	// Transaction
@@ -357,6 +364,7 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 	fdb_error_t (*transactionGetCommittedVersion)(FDBTransaction* tr, int64_t* outVersion);
 	FDBFuture* (*transactionGetTagThrottledDuration)(FDBTransaction* tr);
 	FDBFuture* (*transactionGetTotalCost)(FDBTransaction* tr);
+	void (*transactionSetExpectedCost)(FDBTransaction* tr, uint64_t value);
 	FDBFuture* (*transactionGetApproximateSize)(FDBTransaction* tr);
 	FDBFuture* (*transactionWatch)(FDBTransaction* tr, uint8_t const* keyName, int keyNameLength);
 	FDBFuture* (*transactionOnError)(FDBTransaction* tr, fdb_error_t error);
@@ -476,6 +484,7 @@ public:
 	ThreadFuture<SpanContext> getSpanContext() override { return SpanContext(); };
 	ThreadFuture<double> getTagThrottledDuration() override;
 	ThreadFuture<int64_t> getTotalCost() override;
+	void setExpectedCost(uint64_t value) override;
 	ThreadFuture<int64_t> getApproximateSize() override;
 
 	void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) override;
@@ -526,6 +535,13 @@ public:
 
 	ThreadFuture<Version> verifyBlobRange(const KeyRangeRef& keyRange, Optional<Version> version) override;
 	ThreadFuture<bool> flushBlobRange(const KeyRangeRef& keyRange, bool compact, Optional<Version> version) override;
+
+	// Return a JSON string containing tenant client-side status information
+	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
+
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
 
 	void addref() override { ThreadSafeReferenceCounted<DLTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<DLTenant>::delref(); }
@@ -584,6 +600,10 @@ public:
 
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
+
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
 
 private:
 	const Reference<FdbCApi> api;
@@ -705,6 +725,7 @@ public:
 	ThreadFuture<SpanContext> getSpanContext() override;
 	ThreadFuture<double> getTagThrottledDuration() override;
 	ThreadFuture<int64_t> getTotalCost() override;
+	void setExpectedCost(uint64_t value) override;
 	ThreadFuture<int64_t> getApproximateSize() override;
 
 	void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) override;
@@ -788,7 +809,9 @@ struct ClientDesc {
 	bool const useFutureVersion;
 
 	ClientDesc(std::string libPath, bool external, bool useFutureVersion)
-	  : libPath(libPath), external(external), useFutureVersion(useFutureVersion) {}
+	  : libPath(libPath),
+	    external(external),
+	    useFutureVersion(useFutureVersion) {}
 };
 
 struct ClientInfo : ClientDesc, ThreadSafeReferenceCounted<ClientInfo> {
@@ -801,13 +824,25 @@ struct ClientInfo : ClientDesc, ThreadSafeReferenceCounted<ClientInfo> {
 	std::vector<std::pair<void (*)(void*), void*>> threadCompletionHooks;
 
 	ClientInfo()
-	  : ClientDesc(std::string(), false, false), protocolVersion(0), api(nullptr), failed(true), initialized(false),
+	  : ClientDesc(std::string(), false, false),
+	    protocolVersion(0),
+	    api(nullptr),
+	    failed(true),
+	    initialized(false),
 	    threadIndex(0) {}
 	ClientInfo(IClientApi* api)
-	  : ClientDesc("internal", false, false), protocolVersion(0), api(api), failed(false), initialized(false),
+	  : ClientDesc("internal", false, false),
+	    protocolVersion(0),
+	    api(api),
+	    failed(false),
+	    initialized(false),
 	    threadIndex(0) {}
 	ClientInfo(IClientApi* api, std::string libPath, bool useFutureVersion, int threadIndex)
-	  : ClientDesc(libPath, true, useFutureVersion), protocolVersion(0), api(api), failed(false), initialized(false),
+	  : ClientDesc(libPath, true, useFutureVersion),
+	    protocolVersion(0),
+	    api(api),
+	    failed(false),
+	    initialized(false),
 	    threadIndex(threadIndex) {}
 
 	void loadVersion();
@@ -845,6 +880,13 @@ public:
 	void addref() override { ThreadSafeReferenceCounted<MultiVersionTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<MultiVersionTenant>::delref(); }
 
+	// Return a JSON string containing tenant client-side status information
+	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
+
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
+
 	// A struct that manages the current connection state of the MultiVersionDatabase. This wraps the underlying
 	// IDatabase object that is currently interacting with the cluster.
 	struct TenantState : ThreadSafeReferenceCounted<TenantState> {
@@ -856,6 +898,9 @@ public:
 
 		// Cleans up local state to break reference cycles
 		void close();
+
+		// Return a JSON string containing tenant client-side status information
+		Standalone<StringRef> getClientStatus(ErrorOr<Standalone<StringRef>> tenantContextStatus);
 
 		Reference<ThreadSafeAsyncVar<Reference<ITenant>>> tenantVar;
 		const TenantName tenantName;
@@ -978,9 +1023,9 @@ public:
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
-	// private:
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
 
-	struct LegacyVersionMonitor;
+	FDBAllocatorIfc* getAllocatorInterface() override;
 
 	// Database initialization state
 	enum class InitializationState { INITIALIZING, INITIALIZATION_FAILED, CREATED, INCOMPATIBLE, CLOSED };
@@ -1003,10 +1048,6 @@ public:
 		// Watch the cluster protocol version for changes and update the database state when it does.
 		// Must be called from the main thread
 		ThreadFuture<Void> monitorProtocolVersion();
-
-		// Starts version monitors for old client versions that don't support connect packet monitoring (<= 5.0).
-		// Must be called from the main thread
-		void startLegacyVersionMonitors();
 
 		// Set a new database connnection
 		void setDatabase(Reference<IDatabase> db);
@@ -1038,20 +1079,10 @@ public:
 		Error initializationError;
 
 		ThreadFuture<Void> changed;
-		ThreadFuture<Void> dbReady;
 		ThreadFuture<Void> protocolVersionMonitor;
 
 		Future<Void> sharedStateUpdater;
 		bool isConfigDB;
-
-		// Versions older than 6.1 do not benefit from having their database connections closed. Additionally,
-		// there are various issues that result in negative behavior in some cases if the connections are closed.
-		// Therefore, we leave them open.
-		std::map<ProtocolVersion, Reference<IDatabase>> legacyDatabaseConnections;
-
-		// Versions 5.0 and older do not support connection packet monitoring and require alternate techniques to
-		// determine the cluster version.
-		std::list<Reference<LegacyVersionMonitor>> legacyVersionMonitors;
 
 		Optional<ProtocolVersion> dbProtocolVersion;
 
@@ -1062,30 +1093,6 @@ public:
 		std::vector<std::pair<FDBDatabaseOptions::Option, Optional<Standalone<StringRef>>>> options;
 		UniqueOrderedOptionList<FDBTransactionOptions> transactionDefaultOptions;
 		Mutex optionLock;
-	};
-
-	// A struct that enables monitoring whether the cluster is running an old version (<= 5.0) that doesn't support
-	// connect packet monitoring.
-	struct LegacyVersionMonitor : ThreadSafeReferenceCounted<LegacyVersionMonitor> {
-		LegacyVersionMonitor(Reference<ClientInfo> const& client) : client(client), monitorRunning(false) {}
-
-		// Terminates the version monitor to break reference cycles
-		void close();
-
-		// Starts the connection monitor by creating a database object at an old version.
-		// Must be called from the main thread
-		void startConnectionMonitor(Reference<DatabaseState> dbState);
-
-		// Runs a GRV probe on the cluster to determine if the client version is compatible with the cluster.
-		// Must be called from main thread
-		void runGrvProbe(Reference<DatabaseState> dbState);
-
-		Reference<ClientInfo> client;
-		Reference<IDatabase> db;
-		Reference<ITransaction> tr;
-
-		ThreadFuture<Void> versionMonitor;
-		bool monitorRunning;
 	};
 
 	const Reference<DatabaseState> dbState;
