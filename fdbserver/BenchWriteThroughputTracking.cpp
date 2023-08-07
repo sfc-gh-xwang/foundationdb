@@ -28,7 +28,7 @@ static void bench_refreshCommitCost(benchmark::State& benchState) {
 		}
 		benchState.ResumeTiming();
 
-		benchmark::DoNotOptimize(ssInfo.refreshCommitCost(1));
+		ssInfo.refreshCommitCost(1);
 	}
 	benchState.SetItemsProcessed(static_cast<long>(benchState.iterations()) * numTags);
 }
