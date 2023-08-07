@@ -590,6 +590,11 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( PROXY_COMPUTE_GROWTH_RATE,                             0.01 );
 	init( TXN_STATE_SEND_AMOUNT,                                    4 );
 	init( REPORT_TRANSACTION_COST_ESTIMATION_DELAY,               0.1 );
+	// In simulation, we cannot efficiently simulate a very large workload, so using the
+	// default CP_MIN_TAG_WRITE_PAGES_RATE value of 100 causes undercounting of write throughput
+	// that is substantial. To work around this, set CP_MIN_TAG_WRITE_PAGES_RATE to 1 in simulation.
+	init( CP_MIN_TAG_WRITE_PAGES_RATE,                             50 ); if( isSimulated ) CP_MIN_TAG_WRITE_PAGES_RATE = 1;
+	init( CP_THROTTLE_TAGS_TRACKED,                                10 ); if(randomize && BUGGIFY) CP_THROTTLE_TAGS_TRACKED = deterministicRandom()->randomInt(5, 15);
 	init( PROXY_REJECT_BATCH_QUEUED_TOO_LONG,                    true );
 
 	bool buggfyUseResolverPrivateMutations = randomize && BUGGIFY && !ENABLE_VERSION_VECTOR_TLOG_UNICAST;
