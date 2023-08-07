@@ -646,8 +646,11 @@ struct IndexedBlobGranuleFile {
 		ASSERT(nextPointer != indexBlockRef.block.children.end());
 
 		size_t blockSize = nextPointer->offset - childPointer->offset;
+
+		ASSERT(childPointer->offset >= 0);
+		ASSERT(blockSize >= 0);
+		ASSERT(childPointer->offset + startOffset + blockSize <= fileBytes.size());
 		// Account for IndexBlockRef size for chunk offset computation
-		ASSERT(childPointer->offset + startOffset + blockSize < fileBytes.size());
 		StringRef childData(fileBytes.begin() + childPointer->offset + startOffset, blockSize);
 
 		if (BG_ENCRYPT_COMPRESS_DEBUG) {
