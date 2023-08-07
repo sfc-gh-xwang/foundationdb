@@ -2316,7 +2316,6 @@ ReadMetrics StorageServer::getReadMetrics(std::unordered_set<Reference<ShardInfo
 			rangeBusyness += shard->getSampledReadRate(this);
 		}
 
-		// fmt::print("Get read metrics from range: {}\n", rangeBusyness);
 		rangeBusyness = std::min(1.0, rangeBusyness);
 	}
 
@@ -2327,9 +2326,9 @@ ReadMetrics StorageServer::getReadMetrics(KeyRef const& key) {
 	double rangeBusyness = 0;
 	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
 		Reference<ShardInfo> shard = shards[key];
-
 		rangeBusyness = shard->getSampledReadRate(this);
 	}
+
 	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
 }
 
