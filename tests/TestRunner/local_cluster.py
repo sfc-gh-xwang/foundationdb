@@ -77,7 +77,10 @@ class PortProvider:
 
 
 class TLSConfig:
-    # Passing a negative chain length generates expired leaf certificate
+    # Passing a negative chain length generates expired leaf certificate.
+    # {server,client}_disable_tls and {server,client}_require_tls are provided
+    # separately for testing purposes, normally they these options are applied
+    # to both clients and servers.
     def __init__(
         self,
         server_chain_len: int = 3,
