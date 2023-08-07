@@ -11706,23 +11706,49 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			if (active) {
 				// Idempotent request.
 				if (!startBlobRanges.empty()) {
-					return startBlobRanges.front().begin == range.begin && startBlobRanges.front().end == range.end;
+					auto res = startBlobRanges.front().begin == range.begin && startBlobRanges.front().end == range.end;
+					if (!res && BG_REQUEST_DEBUG) {
+						// Repeating the blobify command precisely is a no-op, but we block partial overlaps.
+						fmt::print("Blob range actor failed: encountered range {}-{}, trying to work on {}-{}; "
+						           "disallowed overlap\n",
+						           startBlobRanges.front().begin,
+						           startBlobRanges.front().end,
+						           range.begin,
+						           range.end);
+					}
+					return res;
 				}
 			} else {
 				// An unblobbify request must be aligned to boundaries.
-				// It is okay to unblobbify multiple regions all at once.
+				// It is okay to unblobbify multiple regions all at once. Gaps in the existing blob ranges
+				// are allowed, so if we've blobbed [10,20) and [40,50), we can unblob both with a single
+				// unlob([10,50)) command.
 				if (startBlobRanges.empty()) {
 					// already unblobbified
 					return true;
 				} else if (startBlobRanges.front().begin < range.begin) {
 					// If there is a blob at the beginning of the range that overlaps the start
+					if (BG_REQUEST_DEBUG) {
+						fmt::print("unblobify {}-{} found range {}-{}, but cannot break existing ranges\n",
+						           range.begin,
+						           range.end,
+						           startBlobRanges.front().begin,
+						           startBlobRanges.front().end);
+					}
 					return false;
 				}
-				// if blob range does start at the specified, key, we need to make sure the end of also a boundary of a
-				// blob range
+				// if blob range does start at the specified, key, we need to make sure the end is also a
+				// boundary of a blob range
 				Standalone<VectorRef<KeyRangeRef>> endBlobRanges =
 				    wait(getBlobRanges(&tr->getTransaction(), singleKeyRange(range.end), 1));
 				if (!endBlobRanges.empty() && endBlobRanges.front().begin < range.end) {
+					if (BG_REQUEST_DEBUG) {
+						fmt::print("unblobify {}-{} found range {}-{}, but cannot break existing ranges\n",
+						           range.begin,
+						           range.end,
+						           endBlobRanges.front().begin,
+						           endBlobRanges.front().end);
+					}
 					return false;
 				}
 			}
