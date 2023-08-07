@@ -1232,8 +1232,8 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			clients.push_back(timeout(writeWorker(this, start, cx, it), testDuration, Void()));
 			clients.push_back(timeout(readWorker(this, start, cx, it), testDuration, Void()));
 		}
-		// FIXME: only do sometimes
-		if (g_network->isSimulated() && !g_simulator->willRestart && clientId == 0) {
+		if (g_network->isSimulated() && !g_simulator->willRestart && clientId == 0 &&
+		    deterministicRandom()->coinflip()) {
 			extraTenantsClient = makeExtraTenants(cx, this);
 		}
 		return delay(testDuration);
