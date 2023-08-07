@@ -877,6 +877,7 @@ public:
 	// Rolling window duration over which the average bytes moved by DD is calculated for the 'MovingData' trace event.
 	double DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL;
 	int64_t MOVING_WINDOW_SAMPLE_SIZE;
+	bool READ_METRICS_INCLUDE_SYSTEM_KEYS;
 
 	// Storage Server
 	double STORAGE_LOGGING_DELAY;
@@ -900,6 +901,9 @@ public:
 	int STORAGE_COMMIT_BYTES;
 	int STORAGE_FETCH_BYTES;
 	double STORAGE_COMMIT_INTERVAL;
+	bool ENABLE_READ_RANGE_BUSYNESS_REPORTING;
+	double SHARD_READ_SAMPLE_UPDATE_INTERVAL;
+
 	int BYTE_SAMPLING_FACTOR;
 	int BYTE_SAMPLING_OVERHEAD;
 	double MIN_BYTE_SAMPLING_PROBABILITY; // Adjustable only for test of PhysicalShardMove. Should always be 0 for other
@@ -1234,6 +1238,7 @@ public:
 	double KMS_LOGGING_INTERVAL;
 
 	double CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO;
+	bool ENABLE_CONSISTENCY_SCAN;
 
 	// Idempotency ids
 	double IDEMPOTENCY_ID_IN_MEMORY_LIFETIME;
