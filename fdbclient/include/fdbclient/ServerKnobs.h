@@ -211,13 +211,15 @@ public:
 	// Given an array that's ascend sorted by CPU percent, the pivot position is CPU_PIVOT_RATIO *
 	// team count. DD won't move shard to teams that has CPU > pivot CPU.
 	double CPU_PIVOT_RATIO;
-	// DD won't move out a shard from its source team, by re-evaluating the utilization of source team from TWO metrics:
-	// Disk Usage, CPU. For each metrics, DD would compare the source team's metrics to the lower and upper pivot of all
-	// teams to decide whether to leave the shard in source team.
+	// DD won't move out a shard from its source team, by re-evaluating the utilization of source team from THREE
+	// metrics: Disk Usage, CPU, Write Rate. For each metrics, DD would compare the source team's metrics to the lower
+	// and upper pivot of all teams to decide whether to leave the shard in source team.
 	double DD_LOWER_LOAD_BYTES_PIVOT_RATIO;
 	double DD_UPPER_LOAD_BYTES_PIVOT_RATIO;
 	double DD_LOWER_CPU_PIVOT_RATIO;
 	double DD_UPPER_CPU_PIVOT_RATIO;
+	double DD_LOWER_WRITE_PIVOT_RATIO;
+	double DD_UPPER_WRITE_PIVOT_RATIO;
 	// DD won't move shard to teams that has CPU > MAX_DEST_CPU_PERCENT
 	double MAX_DEST_CPU_PERCENT;
 	// The constant interval DD update pivot values for team selection. It should be >=

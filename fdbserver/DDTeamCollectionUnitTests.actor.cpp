@@ -940,24 +940,28 @@ public:
 
 		collection->teamPivots.lastPivotsUpdate = -100;
 
-		int64_t capacity = SERVER_KNOBS->MIN_AVAILABLE_SPACE * 20, loadBytes = 90 * 1024 * 1024;
+		int64_t capacity = SERVER_KNOBS->MIN_AVAILABLE_SPACE * 20, loadBytes = 90 * 1024 * 1024,
+		        writeLoad = 100 * 1024 * 1024;
 		GetStorageMetricsReply high_s_high_r;
 		high_s_high_r.capacity.bytes = capacity;
 		high_s_high_r.available.bytes = SERVER_KNOBS->MIN_AVAILABLE_SPACE * 5;
 		high_s_high_r.load.bytes = loadBytes;
 		high_s_high_r.load.opsReadPerKSecond = 7000 * 1000;
+		high_s_high_r.load.bytesWrittenPerKSecond = writeLoad;
 
 		GetStorageMetricsReply high_s_low_r;
 		high_s_low_r.capacity.bytes = capacity;
 		high_s_low_r.available.bytes = SERVER_KNOBS->MIN_AVAILABLE_SPACE * 5;
 		high_s_low_r.load.bytes = loadBytes;
 		high_s_low_r.load.opsReadPerKSecond = 100 * 1000;
+		high_s_low_r.load.bytesWrittenPerKSecond = writeLoad * 2;
 
 		GetStorageMetricsReply low_s_low_r;
 		low_s_low_r.capacity.bytes = capacity;
 		low_s_low_r.available.bytes = SERVER_KNOBS->MIN_AVAILABLE_SPACE * 5;
 		low_s_low_r.load.bytes = loadBytes * 2;
 		low_s_low_r.load.opsReadPerKSecond = 100 * 1000;
+		low_s_low_r.load.bytesWrittenPerKSecond = writeLoad;
 
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_reevaluation_enabled",
 		                                                          KnobValueRef::create(bool{ true }));
@@ -966,9 +970,13 @@ public:
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_upper_load_bytes_pivot_ratio",
 		                                                          KnobValueRef::create(double{ 0.6 }));
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_lower_cpu_pivot_ratio",
-		                                                          KnobValueRef::create(double{ 0.7 }));
+		                                                          KnobValueRef::create(double{ 0.5 }));
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_upper_cpu_pivot_ratio",
-		                                                          KnobValueRef::create(double{ 0.9 }));
+		                                                          KnobValueRef::create(double{ 0.6 }));
+		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_lower_write_pivot_ratio",
+		                                                          KnobValueRef::create(double{ 0.5 }));
+		IKnobCollection::getMutableGlobalKnobCollection().setKnob("dd_upper_write_pivot_ratio",
+		                                                          KnobValueRef::create(double{ 0.6 }));
 
 		HealthMetrics::StorageStats low_cpu, mid_cpu, high_cpu;
 		low_cpu.cpuUsage = SERVER_KNOBS->MAX_DEST_CPU_PERCENT - 60;
@@ -1038,6 +1046,19 @@ public:
 		ASSERT(anyTeam.present());
 		ASSERT_NE(anyTeam.get()->getServerIDs(), std::vector<UID>{ UID(3, 0) });
 
+		// CASE 4: Don't return source team because its writeLoad is greater than pivot values
+		TeamSelect writeSelect(TeamSelect::ANY);
+		writeSelect.setForRelocateShard(ForRelocateShard::True);
+		state GetTeamRequest writeReq(writeSelect,
+		                              PreferLowerDiskUtil::True,
+		                              TeamMustHaveShards::False,
+		                              PreferLowerReadUtil::False,
+		                              ForReadBalance::True);
+		writeReq.src = std::vector{ UID(2, 0) };
+		wait(collection->getTeam(writeReq));
+		const auto [writeTeam, found4] = writeReq.reply.getFuture().get();
+		ASSERT(writeTeam.present());
+		ASSERT_NE(writeTeam.get()->getServerIDs(), std::vector<UID>{ UID(2, 0) });
 		return Void();
 	}
 
