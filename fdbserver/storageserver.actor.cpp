@@ -12118,8 +12118,6 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return Void();
 
-	state double lastSyncTime = g_network->timer();
-
 	loop {
 		choose {
 			when(waitNext(self->emptyVersionWaitEmergencyNotify.getFuture())) {
@@ -12134,7 +12132,6 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				}
 				resetWaitWindowStatistics(self);
 				self->emptyVerionWaitLastWindow = emergencyWaitWindow;
-				lastSyncTime = g_network->timer();
 				self->emptyVersionWaitEmergencyTransition = false;
 			}
 			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL))) {
@@ -12178,12 +12175,9 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				// Log-only mode reporting
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
 				    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY) {
-					if (g_network->timer() - lastSyncTime > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) {
-						traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWindow);
-						resetWaitWindowStatistics(self);
-						self->emptyVerionWaitLastWindow = targetWaitWindow;
-						lastSyncTime = g_network->timer();
-					}
+					traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWindow);
+					resetWaitWindowStatistics(self);
+					self->emptyVerionWaitLastWindow = targetWaitWindow;
 					continue;
 				}
 
@@ -12203,7 +12197,6 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				}
 				resetWaitWindowStatistics(self);
 				self->emptyVerionWaitLastWindow = targetWaitWindow;
-				lastSyncTime = g_network->timer();
 			}
 		}
 	}
