@@ -717,8 +717,8 @@ class ClientConfigSeparateCluster(unittest.TestCase):
         tls_config = TLSConfig(
             server_disable_tls=True,
             client_disable_tls=True,
-            server_tls_required=True,
-            client_tls_required=True,
+            server_require_tls=True,
+            client_require_tls=True,
         )
         self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
         self.cluster.setup()
