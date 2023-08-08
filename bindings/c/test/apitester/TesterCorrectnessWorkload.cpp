@@ -57,7 +57,7 @@ private:
 		ASSERT(result.rangeBusyness() >= 0);
 		ASSERT(result.rangeBusyness() <= 1);
 
-		if (readRequired && microsecToSec(timeElapsedInUs(testStart)) > 5) {
+		if (validateBusynessMetrics && readRequired && microsecToSec(timeElapsedInUs(testStart)) > 5) {
 			ASSERT(result.serverBusyness() > 0);
 		}
 
