@@ -1896,6 +1896,8 @@ double ShardInfo::getSampledReadRate(StorageServer* data) {
 		KeyRangeRef totalRange = allKeys;
 		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
 			if (keys.begin.startsWith(systemKeys.begin)) {
+				shardSampledReads = 0;
+				totalSampledReads = 0;
 				return 0;
 			} else if (keys.end.startsWith(systemKeys.begin)) {
 				sampleRange = KeyRangeRef(sampleRange.begin, systemKeys.begin);
