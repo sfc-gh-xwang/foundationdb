@@ -1398,7 +1398,7 @@ ACTOR Future<Void> monitorTenants(Reference<BlobManagerData> bmData) {
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				wait(loadTenantMap(tr, bmData));
 
-				state Future<Void> watchChange = tr->watch(TenantMetadata::lastTenantId().key);
+				state Future<Void> watchChange = TenantMetadata::lastTenantModification().watch(tr);
 				wait(tr->commit());
 				wait(watchChange);
 				tr->reset();
