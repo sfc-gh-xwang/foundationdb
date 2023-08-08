@@ -800,7 +800,7 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
 		        // return type of tr.commit()
 		        return static_cast<fdb::Future>(f1);
 	        },
-	        "AtomicOptionMutationTypeSetVersionstampedKey");
+	        "AtomicOptionMutationTypeSetVersionstampedValue");
 
 	    ASSERT(versionstamp.size() > 0, "Expect versionstamp's size > 0");
 
@@ -808,10 +808,10 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
 	    auto f = runToCompletion(
 	        tr, [&key](auto tr) { return tr.get(fdb::toBytesRef(key), false); }, "CheckValue");
 
-	    auto expectedVal = fdb::toBytesRef("bar" + versionstamp);
+	    auto expectedVal = "bar" + versionstamp;
 
 	    ASSERT(f.get().has_value(), "Unexpected null value");
-	    ASSERT(f.get() == expectedVal,
+	    ASSERT(std::string(f.get()->begin(), f.get()->end()) == expectedVal,
 	           "unmatched value: expected={}, actual={}",
 	           fdb::toCharsRef(expectedVal),
 	           fdb::toCharsRef(f.get()));
