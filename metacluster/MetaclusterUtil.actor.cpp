@@ -58,10 +58,13 @@ ACTOR Future<Reference<IDatabase>> openDatabase(ClusterConnectionString connecti
 	}
 }
 
-ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(Database db,
-                                                              Optional<int64_t> tenantIdPrefix,
-                                                              Optional<DataClusterEntry> dataClusterConfig,
-                                                              SkipMetaclusterCreation skipMetaclusterCreation) {
+ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
+    Database db,
+    Optional<int64_t> tenantIdPrefix,
+    Optional<DataClusterEntry> dataClusterConfig,
+    SkipMetaclusterCreation skipMetaclusterCreation,
+    WaitForMetaclusterCreation waitForMetaclusterCreation,
+    WaitForDataClusterRegistration waitForDataClusterRegistration) {
 	ASSERT(g_network->isSimulated());
 	state SimulatedMetacluster simMetacluster;
 
@@ -77,6 +80,10 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(Database db,
 			                                                  TenantAPI::TENANT_ID_PREFIX_MAX_VALUE + 1);
 		}
 		wait(success(createMetacluster(db.getReference(), "management_cluster"_sr, tenantIdPrefix.get(), false)));
+	} else if (waitForMetaclusterCreation) {
+		while (db->clientInfo->get().clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
+			wait(db->clientInfo->onChange());
+		}
 	}
 
 	metacluster::DataClusterEntry entry;
@@ -101,6 +108,11 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(Database db,
 				    tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 				    return success(tr->get("\xff"_sr));
 			    }));
+		} else if (waitForDataClusterRegistration) {
+			while (simMetacluster.dataDbs[clusterName]->clientInfo->get().clusterType !=
+			       ClusterType::METACLUSTER_DATA) {
+				wait(simMetacluster.dataDbs[clusterName]->clientInfo->onChange());
+			}
 		}
 	}
 
