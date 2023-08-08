@@ -242,14 +242,18 @@ CharsRef toCharsRef(const StringLike<Char>& s) noexcept {
 }
 
 // get charstring view from optional bytestring: e.g. std::optional<std::basic_string{_view}<uint8_t>>
-template <template <class...> class StringLike, class Char>
-CharsRef toCharsRef(const std::optional<StringLike<Char>>& s) noexcept {
-	static_assert(sizeof(Char) == 1);
+template <class T>
+CharsRef toCharsRef(const std::optional<T>& s) noexcept {
 	if (s) {
-		return CharsRef(reinterpret_cast<char const*>(s.value().data()), s.value().size());
+		return toCharsRef(s.value());
 	} else {
 		return CharsRef("[not set]");
 	}
+}
+
+template <class T>
+CharsRef toCharsRef(const ReadResult<T>& r) noexcept {
+	return toCharsRef(r.contents());
 }
 
 template <template <class...> class StringLike, class Char>

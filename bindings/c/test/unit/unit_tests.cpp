@@ -413,7 +413,7 @@ TEST_CASE("fdb_future_get_key") {
 		}
 
 		auto dbKey = f1.get();
-		CHECK(fdb::toCharsRef(dbKey.contents()) == prefix + "bar");
+		CHECK(fdb::toCharsRef(dbKey) == prefix + "bar");
 		break;
 	}
 }
@@ -432,7 +432,7 @@ TEST_CASE("fdb_future_get_value") {
 		}
 
 		auto dbValue = f1.get();
-		CHECK(fdb::toCharsRef(dbValue.contents()) == "bar");
+		CHECK(fdb::toCharsRef(dbValue) == "bar");
 		break;
 	}
 }
@@ -573,7 +573,7 @@ TEST_CASE("fdb_transaction read_your_writes") {
 
 		auto val = f1.get();
 		CHECK(val.has_value());
-		CHECK(fdb::toCharsRef(val.contents()).compare("bar") == 0);
+		CHECK(fdb::toCharsRef(val).compare("bar") == 0);
 		break;
 	}
 }
@@ -621,7 +621,7 @@ TEST_CASE("fdb_transaction_set_option snapshot_read_your_writes_enable") {
 
 		auto val = f1.get();
 		CHECK(val.has_value());
-		CHECK(fdb::toCharsRef(val.contents()).compare("bar") == 0);
+		CHECK(fdb::toCharsRef(val).compare("bar") == 0);
 		break;
 	}
 }
@@ -657,7 +657,7 @@ TEST_CASE("fdb_transaction_set_option snapshot_read_your_writes_disable") {
 
 		val = f2.get();
 		CHECK(val.has_value());
-		CHECK(fdb::toCharsRef(val.contents()).compare("bar") == 0);
+		CHECK(fdb::toCharsRef(val).compare("bar") == 0);
 		break;
 	}
 }

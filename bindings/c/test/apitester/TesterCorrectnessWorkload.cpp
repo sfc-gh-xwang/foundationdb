@@ -260,7 +260,6 @@ private:
 			const bool more = out.second;
 			if (more) {
 				// Fetch the remaining results.
-				auto selector = fdb::key_select::firstGreaterThan(results->back().key);
 				getRangeLoop(ctx, fdb::key_select::firstGreaterThan(results->back().key), endKey, results);
 			} else {
 				ctx->done();
