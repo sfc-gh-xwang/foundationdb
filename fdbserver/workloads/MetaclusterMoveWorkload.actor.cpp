@@ -883,11 +883,11 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR static Future<Void> _start(Database cx, MetaclusterMoveWorkload* self) {
+	ACTOR static Future<Void> runMove(Database cx, MetaclusterMoveWorkload* self) {
 		// Expect an error if the same cluster is picked
 		state ClusterName srcCluster = self->chooseClusterName();
 		state ClusterName dstCluster = self->chooseClusterName();
-		auto& existingGroups = self->dataDbs[srcCluster].tenantGroups;
+		auto existingGroups = self->dataDbs[srcCluster].tenantGroups;
 
 		state int tries = 0;
 		state int tryLimit = 10;
@@ -964,6 +964,15 @@ struct MetaclusterMoveWorkload : TestWorkload {
 			throw operation_failed();
 		}
 
+		return Void();
+	}
+
+	ACTOR static Future<Void> _start(Database cx, MetaclusterMoveWorkload* self) {
+		state int numMoves = 5;
+		state int i = 0;
+		for (; i < numMoves; ++i) {
+			wait(runMove(cx, self));
+		}
 		return Void();
 	}
 
