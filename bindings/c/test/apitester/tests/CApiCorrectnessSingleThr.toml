@@ -6,6 +6,7 @@ multiThreaded = false
 
 [[server]]
 knob_shard_read_sample_update_interval = 1.0
+knob_ops_read_units_per_sample = 1
 
 [[test.workload]]
 name = 'ApiCorrectness'
