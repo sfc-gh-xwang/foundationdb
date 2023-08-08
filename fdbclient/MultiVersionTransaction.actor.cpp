@@ -1300,6 +1300,10 @@ void DLApi::init() {
 	loadClientFunction(
 	    &api->resultGetKeyValueArray, lib, fdbCPath, "fdb_result_get_keyvalue_array", headerVersion >= 0);
 	loadClientFunction(&api->resultDestroy, lib, fdbCPath, "fdb_result_destroy", headerVersion >= 0);
+
+	if (api->futureGetBytes == nullptr) {
+		api->futureGetBytes = api->futureGetKey;
+	}
 }
 
 void DLApi::selectApiVersion(int apiVersion) {
