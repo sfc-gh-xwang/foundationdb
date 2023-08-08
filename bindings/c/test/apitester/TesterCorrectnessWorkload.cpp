@@ -57,7 +57,8 @@ private:
 		ASSERT(result.rangeBusyness() >= 0);
 		ASSERT(result.rangeBusyness() <= 1);
 
-		if (validateBusynessMetrics && readRequired && microsecToSec(timeElapsedInUs(testStart)) > 5) {
+		if (validateBusynessMetrics && apiVersion >= 800000 && readRequired &&
+		    microsecToSec(timeElapsedInUs(testStart)) > 5) {
 			ASSERT(result.serverBusyness() > 0);
 		}
 
@@ -339,7 +340,7 @@ private:
 	}
 
 	void operationsCompleted() override {
-		if (validateBusynessMetrics) {
+		if (validateBusynessMetrics && apiVersion >= 800000) {
 			ASSERT(rangeBusynessValueReads > 0);
 			ASSERT(rangeBusynessKeyReads > 0);
 			ASSERT(rangeBusynessRangeReads > 0);

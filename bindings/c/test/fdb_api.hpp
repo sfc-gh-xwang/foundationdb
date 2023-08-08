@@ -43,6 +43,10 @@
 
 namespace fdb {
 
+namespace internal {
+inline std::atomic<int> g_apiVersion(-1);
+} // namespace internal
+
 // hide C API to discourage mixing C/C++ API
 namespace native {
 #include <foundationdb/fdb_c.h>
@@ -556,10 +560,12 @@ struct ReadResult {
 
 		float serverBusyness = 0;
 		float rangeBusyness = 0;
-		auto errCode = native::fdb_future_get_read_busyness(f, &serverBusyness, &rangeBusyness);
+		if (fdb::internal::g_apiVersion >= 800000) {
+			err = Error(native::fdb_future_get_read_busyness(f, &serverBusyness, &rangeBusyness));
+		}
 
 		out = fdb::ReadResult<typename T::Type>(result, serverBusyness, rangeBusyness);
-		return Error(errCode);
+		return err;
 	}
 };
 
@@ -1421,7 +1427,11 @@ public:
 	if (version < FDB_API_VERSION_TENANT_API_RELEASED) {
 		Tenant::tenantManagementMapPrefix = "\xff\xff/management/tenant_map/";
 	}
-	return Error(native::fdb_select_api_version(version));
+	Error::CodeType errCode = native::fdb_select_api_version(version);
+	if (errCode == Error::success().code()) {
+		internal::g_apiVersion = version;
+	}
+	return Error(errCode);
 }
 
 inline void selectApiVersion(int version) {
@@ -1434,8 +1444,12 @@ inline void selectApiVersion(int version) {
 	if (version < FDB_API_VERSION_TENANT_API_RELEASED) {
 		Tenant::tenantManagementMapPrefix = "\xff\xff/management/tenant_map/";
 	}
-	return Error(
-	    native::fdb_select_api_version_impl(version, std::min(native::fdb_get_max_api_version(), FDB_API_VERSION)));
+	Error::CodeType errCode =
+	    native::fdb_select_api_version_impl(version, std::min(native::fdb_get_max_api_version(), FDB_API_VERSION));
+	if (errCode == Error::success().code()) {
+		internal::g_apiVersion = version;
+	}
+	return Error(errCode);
 }
 
 inline void selectApiVersionCapped(int version) {
