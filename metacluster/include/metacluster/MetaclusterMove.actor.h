@@ -539,7 +539,16 @@ struct StartTenantMovementImpl {
 		return Void();
 	}
 
-	ACTOR static Future<Void> lockSourceTenants(StartTenantMovementImpl* self) {
+	ACTOR static Future<Void> lockSourceTenants(StartTenantMovementImpl* self, Reference<ITransaction> tr) {
+		state Versionstamp lastAbortVersion =
+		    wait(metadata::data::emergency_movement::lastTenantMoveAbort().getD(tr, Snapshot::False, Versionstamp()));
+		if (self->mgmtStartVersion <= lastAbortVersion) {
+			// If lock happened before the abort, fail with an error
+			TraceEvent("TenantMoveStartAbortLockSerialization")
+			    .detail("StartVersion", self->mgmtStartVersion)
+			    .detail("AbortVersion", lastAbortVersion);
+			throw tenant_move_failed();
+		}
 		std::vector<Future<Void>> lockFutures;
 		for (auto& tenantPair : self->tenantsInGroup) {
 			lockFutures.push_back(changeTenantLockState(self->srcCtx.managementDb,
@@ -682,7 +691,7 @@ struct StartTenantMovementImpl {
 		    wait(metadata::data::emergency_movement::lastTenantMoveAbort().getD(tr, Snapshot::False, Versionstamp()));
 		if (self->mgmtStartVersion <= lastAbortVersion) {
 			// If create happened before the abort, fail with an error
-			TraceEvent("TenantMoveStartAbortSerialization")
+			TraceEvent("TenantMoveStartAbortCreateSerialization")
 			    .detail("StartVersion", self->mgmtStartVersion)
 			    .detail("AbortVersion", lastAbortVersion);
 			throw tenant_move_failed();
@@ -737,7 +746,8 @@ struct StartTenantMovementImpl {
 			}
 		}
 		if (self->moveRecord.mState < metadata::management::MovementState::START_CREATE) {
-			wait(lockSourceTenants(self));
+			wait(self->srcCtx.runDataClusterTransaction(
+			    [self = self](Reference<ITransaction> tr) { return lockSourceTenants(self, tr); }));
 		}
 
 		wait(self->srcCtx.runDataClusterTransaction(
@@ -1722,6 +1732,8 @@ struct AbortTenantMovementImpl {
 					    return initAbort(self, tr, movementRecord);
 				    }));
 				wait(self->dstCtx.runDataClusterTransaction(
+				    [self = self](Reference<ITransaction> tr) { return writeDataAbortVersion(self, tr); }));
+				wait(self->srcCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return writeDataAbortVersion(self, tr); }));
 				if (exitSignal) {
 					return Void();

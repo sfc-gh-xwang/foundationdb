@@ -342,6 +342,22 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		return locationSuccess && eraseSuccess;
 	}
 
+	ACTOR static Future<bool> checkGroupExists(MetaclusterMoveWorkload* self,
+	                                           ClusterName cluster,
+	                                           TenantGroupName tenantGroup) {
+		state Reference<ITransaction> tr = self->managementDb->createTransaction();
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				state bool exists = wait(metacluster::metadata::management::clusterTenantGroupIndex().exists(
+				    tr, Tuple::makeTuple(cluster, tenantGroup)));
+				return exists;
+			} catch (Error& e) {
+				wait(safeThreadFutureToFuture(tr->onError(e)));
+			}
+		}
+	}
+
 	// returns true if move is aborted
 	ACTOR static Future<bool> abortMove(MetaclusterMoveWorkload* self,
 	                                    TenantGroupName tenantGroup,
@@ -362,7 +378,11 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					    .detail("TenantGroup", tenantGroup)
 					    .detail("SourceCluster", srcCluster)
 					    .detail("DestinationCluster", dstCluster);
-					if (self->tenantGroups[tenantGroup].cluster == dstCluster) {
+					// Aborting after finish returns success but is actually a no-op
+					// Check that the group was actually aborted to src AND we switched to dst
+					// in the test data before updating test data
+					bool exists = wait(checkGroupExists(self, srcCluster, tenantGroup));
+					if (self->tenantGroups[tenantGroup].cluster == dstCluster && exists) {
 						updateTestData(self, tenantGroup, srcCluster, dstCluster);
 					}
 					break;
