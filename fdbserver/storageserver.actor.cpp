@@ -278,7 +278,7 @@ class ShardInfo : public ReferenceCounted<ShardInfo>, NonCopyable {
 
 	int64_t shardSampledReads = -1;
 	int64_t totalSampledReads = -1;
-	double lastReadSampleCacheTime = 0;
+	double lastReadSampleCacheTime = -SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL;
 
 public:
 	// A shard has 3 mutual exclusive states: adding, readWrite and notAssigned.
@@ -1896,6 +1896,8 @@ double ShardInfo::getSampledReadRate(StorageServer* data) {
 		KeyRangeRef totalRange = allKeys;
 		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
 			if (keys.begin.startsWith(systemKeys.begin)) {
+				shardSampledReads = 0;
+				totalSampledReads = 0;
 				return 0;
 			} else if (keys.end.startsWith(systemKeys.begin)) {
 				sampleRange = KeyRangeRef(sampleRange.begin, systemKeys.begin);
@@ -1910,6 +1912,7 @@ double ShardInfo::getSampledReadRate(StorageServer* data) {
 
 	double readRate = shardSampledReads / std::max<double>(1.0, totalSampledReads);
 	ASSERT_LE(readRate, 1.0);
+	ASSERT_GE(readRate, 0.0);
 	return readRate;
 }
 
