@@ -77,7 +77,8 @@ Standalone<BlobMetadataDetailsRef> createRandomTestBlobMetadata(const std::strin
 		partitionCount = deterministicRandom()->randomInt(2, 12);
 	}
 	// guarantee unique location for each domain for now
-	BlobMetadataLocationId locIdBase = domainId * 100;
+	// FIXME: actual metacluster prefix
+	BlobMetadataLocationId locIdBase = (domainId & 0xffffffff) * 100;
 	TraceEvent ev(SevDebug, "SimBlobMetadata");
 	ev.detail("DomainId", domainId).detail("TypeNum", type).detail("PartitionCount", partitionCount);
 	if (type == 0) {
