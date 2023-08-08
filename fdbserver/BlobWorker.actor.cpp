@@ -349,7 +349,9 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 				// loading tenants, and instead a persistent issue.
 				retryCount++;
 				TraceEvent(retryCount <= 10 ? SevDebug : SevWarn, "BlobWorkerUnknownTenantForCipherKeys", bwData->id)
-				    .detail("KeyRange", keyRange);
+				    .suppressFor(10.0)
+				    .detail("KeyRange", keyRange)
+				    .detail("Retries", retryCount);
 				wait(delay(0.1));
 			}
 		}
@@ -2142,6 +2144,7 @@ ACTOR Future<Key> getTenantPrefix(Reference<BlobWorkerData> bwData, KeyRange key
 			CODE_PROBE(true, "Get prefix for unknown tenant");
 			retryCount++;
 			TraceEvent(retryCount <= 10 ? SevDebug : SevWarn, "BlobWorkerUnknownTenantPrefix", bwData->id)
+			    .suppressFor(10.0)
 			    .detail("KeyRange", keyRange)
 			    .detail("Retries", retryCount);
 			wait(delay(0.1));
@@ -4672,6 +4675,7 @@ ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenantActor(Referen
 			// loading tenants, and instead a persistent issue.
 			retryCount++;
 			TraceEvent(retryCount <= 10 ? SevDebug : SevWarn, "BlobWorkerUnknownTenantForGranule", bwData->id)
+			    .suppressFor(10.0)
 			    .detail("KeyRange", keyRange)
 			    .detail("Retries", retryCount);
 			wait(delay(0.1));
