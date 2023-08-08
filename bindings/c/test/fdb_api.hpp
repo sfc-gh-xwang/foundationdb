@@ -60,6 +60,26 @@ using ValueRef = BytesRef;
 using BulkLoadID = ByteString;
 using BulkLoadIDRef = BytesRef;
 
+template <class T>
+struct ReadResult : public T {
+private:
+	float _serverBusyness = 0;
+	float _rangeBusyness = 0;
+
+public:
+	ReadResult() {}
+	ReadResult(T result, float serverBusyness, float rangeBusyness)
+	  : T(result),
+	    _serverBusyness(serverBusyness),
+	    _rangeBusyness(rangeBusyness) {}
+
+	T& contents() { return *(T*)this; }
+	T const& contents() const { return *(T const*)this; }
+
+	float serverBusyness() const { return _serverBusyness; }
+	float rangeBusyness() const { return _rangeBusyness; }
+};
+
 struct KeyRangeRef : native::FDBKeyRange {
 	KeyRef beginKey() const noexcept { return KeyRef(native::FDBKeyRange::begin_key, begin_key_length); }
 	KeyRef endKey() const noexcept { return KeyRef(native::FDBKeyRange::end_key, end_key_length); }
@@ -519,6 +539,26 @@ struct GranuleSummaryRef : native::FDBGranuleSummary {
 	}
 };
 
+template <class T>
+struct ReadResult {
+	using Type = fdb::ReadResult<typename T::Type>;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept {
+		typename T::Type result;
+		Error err = T::extract(f, result);
+
+		if (err.code() != 0) {
+			return err;
+		}
+
+		float serverBusyness = 0;
+		float rangeBusyness = 0;
+		auto errCode = native::fdb_future_get_read_busyness(f, &serverBusyness, &rangeBusyness);
+
+		out = fdb::ReadResult<typename T::Type>(result, serverBusyness, rangeBusyness);
+		return Error(errCode);
+	}
+};
+
 struct GranuleSummaryRefArray {
 	using Type = std::tuple<GranuleSummaryRef const*, int>;
 	static Error extract(native::FDBFuture* f, Type& out) noexcept {
@@ -857,24 +897,24 @@ public:
 
 	TypedFuture<future_var::KeyRef> getVersionstamp() { return native::fdb_transaction_get_versionstamp(tr.get()); }
 
-	TypedFuture<future_var::KeyRef> getKey(KeySelector sel, bool snapshot) {
+	TypedFuture<future_var::ReadResult<future_var::KeyRef>> getKey(KeySelector sel, bool snapshot) {
 		return native::fdb_transaction_get_key(tr.get(), sel.key, sel.keyLength, sel.orEqual, sel.offset, snapshot);
 	}
 
-	TypedFuture<future_var::ValueRef> get(KeyRef key, bool snapshot) {
+	TypedFuture<future_var::ReadResult<future_var::ValueRef>> get(KeyRef key, bool snapshot) {
 		return native::fdb_transaction_get(tr.get(), key.data(), intSize(key), snapshot);
 	}
 
 	// Usage: tx.getRange(key_select::firstGreaterOrEqual(firstKey), key_select::lastLessThan(lastKey), ...)
 	// gets key-value pairs in key range [begin, end)
-	TypedFuture<future_var::KeyValueRefArray> getRange(KeySelector first,
-	                                                   KeySelector last,
-	                                                   int limit,
-	                                                   int target_bytes,
-	                                                   FDBStreamingMode mode,
-	                                                   int iteration,
-	                                                   bool snapshot,
-	                                                   bool reverse) {
+	TypedFuture<future_var::ReadResult<future_var::KeyValueRefArray>> getRange(KeySelector first,
+	                                                                           KeySelector last,
+	                                                                           int limit,
+	                                                                           int target_bytes,
+	                                                                           FDBStreamingMode mode,
+	                                                                           int iteration,
+	                                                                           bool snapshot,
+	                                                                           bool reverse) {
 		return native::fdb_transaction_get_range(tr.get(),
 		                                         first.key,
 		                                         first.keyLength,
@@ -892,16 +932,16 @@ public:
 		                                         reverse);
 	}
 
-	TypedFuture<future_var::MappedKeyValueRefArray> getMappedRange(KeySelector first,
-	                                                               KeySelector last,
-	                                                               KeyRef mapperName,
-	                                                               int limit,
-	                                                               int targetBytes,
-	                                                               FDBStreamingMode mode,
-	                                                               int iteration,
-	                                                               int matchIndex,
-	                                                               bool snapshot,
-	                                                               bool reverse) {
+	TypedFuture<future_var::ReadResult<future_var::MappedKeyValueRefArray>> getMappedRange(KeySelector first,
+	                                                                                       KeySelector last,
+	                                                                                       KeyRef mapperName,
+	                                                                                       int limit,
+	                                                                                       int targetBytes,
+	                                                                                       FDBStreamingMode mode,
+	                                                                                       int iteration,
+	                                                                                       int matchIndex,
+	                                                                                       bool snapshot,
+	                                                                                       bool reverse) {
 		return native::fdb_transaction_get_mapped_range(tr.get(),
 		                                                first.key,
 		                                                first.keyLength,

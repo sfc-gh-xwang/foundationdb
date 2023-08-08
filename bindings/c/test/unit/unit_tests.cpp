@@ -196,7 +196,7 @@ GetMappedRangeResult getMappedRange(fdb::Transaction& tr,
 		return GetMappedRangeResult{ {}, false, err };
 	}
 
-	auto [outMkv, outCount, outMore] = f1.get();
+	auto [outMkv, outCount, outMore] = f1.get().contents();
 
 	GetMappedRangeResult result;
 	result.more = (outMore != 0);
@@ -328,7 +328,7 @@ TEST_CASE("fdb_future_cancel after future completion") {
 		// Should have no effect
 		f1.cancel();
 
-		std::optional<fdb::ValueRef> val;
+		fdb::ReadResult<std::optional<fdb::ValueRef>> val;
 		fdbCheck(f1.getNothrow(val));
 		break;
 	}
@@ -366,7 +366,7 @@ TEST_CASE("fdb_future_release_memory") {
 		// "After [fdb_future_release_memory] has been called the same number of
 		// times as fdb_future_get_*(), further calls to fdb_future_get_*() will
 		// return a future_released error".
-		std::optional<fdb::ValueRef> value;
+		fdb::ReadResult<std::optional<fdb::ValueRef>> value;
 		fdbCheck(f1.getNothrow(value));
 		fdbCheck(f1.getNothrow(value));
 
@@ -413,7 +413,7 @@ TEST_CASE("fdb_future_get_key") {
 		}
 
 		auto dbKey = f1.get();
-		CHECK(fdb::toCharsRef(dbKey) == prefix + "bar");
+		CHECK(fdb::toCharsRef(dbKey.contents()) == prefix + "bar");
 		break;
 	}
 }
@@ -432,7 +432,7 @@ TEST_CASE("fdb_future_get_value") {
 		}
 
 		auto dbValue = f1.get();
-		CHECK(fdb::toCharsRef(dbValue) == "bar");
+		CHECK(fdb::toCharsRef(dbValue.contents()) == "bar");
 		break;
 	}
 }
@@ -573,7 +573,7 @@ TEST_CASE("fdb_transaction read_your_writes") {
 
 		auto val = f1.get();
 		CHECK(val.has_value());
-		CHECK(fdb::toCharsRef(val).compare("bar") == 0);
+		CHECK(fdb::toCharsRef(val.contents()).compare("bar") == 0);
 		break;
 	}
 }
@@ -621,7 +621,7 @@ TEST_CASE("fdb_transaction_set_option snapshot_read_your_writes_enable") {
 
 		auto val = f1.get();
 		CHECK(val.has_value());
-		CHECK(fdb::toCharsRef(val).compare("bar") == 0);
+		CHECK(fdb::toCharsRef(val.contents()).compare("bar") == 0);
 		break;
 	}
 }
@@ -657,7 +657,7 @@ TEST_CASE("fdb_transaction_set_option snapshot_read_your_writes_disable") {
 
 		val = f2.get();
 		CHECK(val.has_value());
-		CHECK(fdb::toCharsRef(val).compare("bar") == 0);
+		CHECK(fdb::toCharsRef(val.contents()).compare("bar") == 0);
 		break;
 	}
 }

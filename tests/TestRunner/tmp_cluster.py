@@ -30,6 +30,7 @@ class TempCluster(LocalCluster):
         custom_config: dict = {},
         tenant_mode: typing.Union[str, None] = "optional_experimental",
         enable_encryption_at_rest: bool = False,
+        knobs: list = [],
     ):
         self.build_dir = Path(build_dir).resolve()
         assert self.build_dir.exists(), "{} does not exist".format(build_dir)
@@ -54,6 +55,7 @@ class TempCluster(LocalCluster):
             authorization_kty=authorization_kty,
             authorization_keypair_id=authorization_keypair_id,
             custom_config=custom_config,
+            knobs=knobs,
         )
 
     def __enter__(self):
@@ -99,6 +101,7 @@ if __name__ == "__main__":
         action="store_true",
     )
 
+    knobs = []
     args = parser.parse_args()
 
     if args.disable_tenants:
@@ -112,6 +115,11 @@ if __name__ == "__main__":
             server_chain_len=args.server_cert_chain_len,
             client_chain_len=args.client_cert_chain_len,
         )
+
+    if args.accelerate_read_metrics_generation:
+        knobs.append("knob_shard_read_sample_update_interval=1")
+        knobs.append("knob_ops_read_units_per_sample=1")
+
     errcode = 1
     with TempCluster(
         args.build_dir,
@@ -122,6 +130,7 @@ if __name__ == "__main__":
         authorization_kty=args.authorization_kty,
         authorization_keypair_id=args.authorization_keypair_id,
         remove_at_exit=not args.no_remove_at_exit,
+        knobs=knobs,
     ) as cluster:
         logger.info("log-dir: {}".format(cluster.log))
         logger.info("etc-dir: {}".format(cluster.etc))
