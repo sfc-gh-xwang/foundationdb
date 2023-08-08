@@ -3486,20 +3486,31 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<
                                                                       Reverse reverse,
                                                                       UseTenant useTenant,
                                                                       JustGranules justGranules,
+                                                                      Optional<Version> granuleReadVersion,
                                                                       bool* more) {
-	return getBlobGranuleLocations(
-	    trState->cx,
-	    useTenant ? trState->getTenantInfo(AllowInvalidTenantID::True) : TenantInfo(),
-	    keys,
-	    limit,
-	    reverse,
-	    justGranules,
-	    trState->spanContext,
-	    trState->readOptions.present() ? trState->readOptions.get().debugID : Optional<UID>(),
-	    trState->useProvisionalProxies,
-	    trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady() ? trState->readVersion()
-	                                                                                 : latestVersion,
-	    more);
+	// essentially take the max of any provided read version, either explicitly or from txn
+	// if none provided, use latestVersion
+	// this only works for with max because latestVersion is hardcoded to -2
+	Version version = latestVersion;
+	if (granuleReadVersion.present()) {
+		version = std::max(version, granuleReadVersion.get());
+	}
+	if (trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady()) {
+		version = std::max(version, trState->readVersion());
+	}
+
+	return getBlobGranuleLocations(trState->cx,
+	                               useTenant ? trState->getTenantInfo(AllowInvalidTenantID::True) : TenantInfo(),
+	                               keys,
+	                               limit,
+	                               reverse,
+	                               justGranules,
+	                               trState->spanContext,
+	                               trState->readOptions.present() ? trState->readOptions.get().debugID
+	                                                              : Optional<UID>(),
+	                               trState->useProvisionalProxies,
+	                               version,
+	                               more);
 }
 
 ACTOR Future<Void> warmRange_impl(Reference<TransactionState> trState, KeyRange keys) {
@@ -3579,6 +3590,21 @@ ACTOR Future<TenantLookupInfo> lookupTenantImpl(DatabaseContext* cx, TenantName 
 
 Future<TenantLookupInfo> DatabaseContext::lookupTenant(TenantName tenant) {
 	return lookupTenantImpl(this, tenant);
+}
+
+ACTOR Future<TenantMode> getOrWaitForTenantModeImpl(DatabaseContext* cx) {
+	loop {
+		Optional<TenantMode> tenantMode = cx->getTenantMode();
+		if (tenantMode.present()) {
+			return tenantMode.get();
+		}
+		// otherwise we don't know the tenant mode yet, wait for non-provisional proxies
+		wait(cx->clientInfo->onChange());
+	}
+}
+
+Future<TenantMode> DatabaseContext::getOrWaitForTenantMode() {
+	return getOrWaitForTenantModeImpl(this);
 }
 
 TransactionState::TransactionState(Database cx,
@@ -8265,7 +8291,7 @@ ACTOR Future<Standalone<VectorRef<KeyRangeRef>>> getBlobGranuleRangesActor(Trans
 			remaining = std::min(remaining, deterministicRandom()->randomInt(1, 10));
 		}
 		std::vector<std::pair<KeyRange, UID>> blobGranuleMapping = wait(getBlobGranuleLocations(
-		    self->trState, currentRange, remaining, Reverse::False, UseTenant::True, JustGranules::True, &more));
+		    self->trState, currentRange, remaining, Reverse::False, UseTenant::True, JustGranules::True, {}, &more));
 		for (auto& it : blobGranuleMapping) {
 			if (!results.empty() && results.back().end > it.first.end) {
 				ASSERT(results.back().end > it.first.begin);
@@ -8536,6 +8562,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 	                                 Reverse::False,
 	                                 UseTenant::True,
 	                                 JustGranules::False,
+	                                 rv,
 	                                 &moreMapping));
 
 	if (blobGranuleMapping.empty()) {
@@ -11556,17 +11583,6 @@ Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 
 // BlobGranule API.
 
-ACTOR Future<TenantMode> getOrWaitForTenantMode(Database cx) {
-	loop {
-		Optional<TenantMode> tenantMode = cx->getTenantMode();
-		if (tenantMode.present()) {
-			return tenantMode.get();
-		}
-		// otherwise we don't know the tenant mode yet, wait for non-provisional proxies
-		wait(cx->clientInfo->onChange());
-	}
-}
-
 ACTOR Future<Void> checkTenantLock(Transaction* tr, Optional<Reference<Tenant>> tenant, KeyRange keyRange) {
 	if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
 		return Void();
@@ -11577,7 +11593,7 @@ ACTOR Future<Void> checkTenantLock(Transaction* tr, Optional<Reference<Tenant>> 
 		tenantId = tenant.get()->id();
 	} else {
 		// otherwise assume raw access mode and infer it
-		TenantMode tenantMode = wait(getOrWaitForTenantMode(tr->trState->cx));
+		TenantMode tenantMode = wait(tr->trState->cx->getOrWaitForTenantMode());
 		if (tenantMode == TenantMode::DISABLED || !TenantAPI::withinSingleTenant(keyRange)) {
 			return Void();
 		} else {

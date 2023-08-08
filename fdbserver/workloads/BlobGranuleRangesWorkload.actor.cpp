@@ -194,7 +194,8 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		// set up blob granules
 		wait(success(ManagementAPI::changeConfig(cx.getReference(), "blob_granules_enabled=1", true)));
 
-		if (cx->clientInfo->get().tenantMode != TenantMode::REQUIRED && deterministicRandom()->coinflip()) {
+		TenantMode tenantMode = wait(cx->getOrWaitForTenantMode());
+		if (tenantMode != TenantMode::REQUIRED && deterministicRandom()->coinflip()) {
 			self->tenantName.reset();
 			self->lockTenantName.reset();
 		}
@@ -887,15 +888,16 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 	                              KeyRange range,
 	                              std::function<Future<Void>(KeyRange, Optional<Reference<Tenant>>)> testFunction) {
 		wait(self->lockTenant.get()->ready());
+		TenantMode tenantMode = wait(cx->getOrWaitForTenantMode());
 
 		state Optional<Reference<Tenant>> tenant;
 		// randomly choose to use tenant or to use raw equivalent
-		if (deterministicRandom()->coinflip()) {
+		if (deterministicRandom()->coinflip() || tenantMode == TenantMode::REQUIRED) {
 			tenant = self->lockTenant;
-
 		} else {
 			range = range.withPrefix(self->lockTenant.get()->prefix());
 		}
+
 		// ensure the function works before locking and after unlocking, but not during
 		state KeyRange beforeRange = singleKeyRange(range.begin.withSuffix("/before/"_sr));
 		state KeyRange duringRange = singleKeyRange(range.begin.withSuffix("/during/"_sr));
@@ -948,6 +950,19 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR static Future<Void> checkHybridReadable(Database cx, Optional<Reference<Tenant>> tenant, KeyRange range) {
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
+
+		loop {
+			try {
+				wait(success(tr.readBlobGranules(range, 0, {})));
+				return Void();
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
 	// FIXME: extend test support to reads and read lock as well
 	// Should metadata operations like getting the set of blobbified ranges for a tenant also respect the tenant read
 	// lock?
@@ -979,13 +994,30 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		};
 		testFunctions.push_back(purgeFunc);
 
+		LockTestFunc readFunc = [this](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
+			return checkHybridReadable(cx, tenant, keyRange);
+		};
+		testFunctions.push_back(readFunc);
+
 		loop {
 			if (self->stopUnitClient) {
 				return Void();
 			}
 			std::string nextRangeKey = "L_" + self->newKey();
 			state KeyRange range(KeyRangeRef(StringRef(nextRangeKey), strinc(StringRef(nextRangeKey))));
-			int idx = deterministicRandom()->randomInt(0, testFunctions.size());
+			state int idx = deterministicRandom()->randomInt(0, testFunctions.size());
+			if (BGRW_DEBUG) {
+				fmt::print("Selected range [{0} - {1}) for lock unit {2}.\n",
+				           range.begin.printable(),
+				           range.end.printable(),
+				           idx);
+			}
+
+			if (idx == 3) {
+				// blobbify range before checking hybrid readable
+				bool blobbifySuccess = wait(cx->blobbifyRangeBlocking(range, self->lockTenant));
+				ASSERT(blobbifySuccess);
+			}
 			wait(self->doLockTest(cx, self, range, testFunctions[idx]));
 			wait(delayJittered(1.0));
 		}

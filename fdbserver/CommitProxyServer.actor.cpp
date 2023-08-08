@@ -2861,6 +2861,33 @@ ACTOR static Future<Void> readRequestServer(CommitProxyInterface proxy,
 	}
 }
 
+// FIXME: how to support lock-aware?
+ACTOR static Future<Void> checkTenantLock(ProxyCommitData* commitData,
+                                          int64_t tenantId,
+                                          Version minVersion,
+                                          KeyRange keyRange) {
+	if (tenantId == TenantInfo::INVALID_TENANT) {
+		// otherwise assume raw access mode and infer it
+		TenantMode tenantMode = wait(commitData->cx->getOrWaitForTenantMode());
+		if (tenantMode == TenantMode::DISABLED || !TenantAPI::withinSingleTenant(keyRange)) {
+			return Void();
+		} else {
+			// in optional tenant mode this could return something that is a bogus tenant id, but that's fine because a
+			// non-existent tenant can't be locked
+			tenantId = TenantAPI::extractTenantIdFromKeyRef(keyRange.begin);
+		}
+	}
+	if (minVersion > commitData->version.get()) {
+		CODE_PROBE(true, "tenant lock check waiting for CP version");
+		wait(commitData->version.whenAtLeast(minVersion));
+	}
+	if (commitData->lockedTenants.count(tenantId)) {
+		CODE_PROBE(true, "tenant lock active in hybrid locations request");
+		throw tenant_locked();
+	}
+	return Void();
+}
+
 // Right now this just proxies a call to read the system keyspace for tenant+authorization purposes, but this will
 // eventually be extended to have this mapping in the transaction state store
 ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRequest req,
@@ -2876,6 +2903,7 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 		req.reply.sendError(unsupported_operation());
 		return Void();
 	}
+
 	// We can't respond to these requests until we have valid txnStateStore
 	wait(commitData->validState.getFuture());
 	state int i = 0;
@@ -2895,24 +2923,27 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 		return Void();
 	}
 
-	state GetBlobGranuleLocationsReply rep;
-	state KeyRange keyRange;
-	if (req.end.present()) {
-		keyRange = KeyRangeRef(req.begin, req.end.get());
-	} else {
-		keyRange = KeyRangeRef(req.begin, keyAfter(req.begin, req.arena));
-	}
-	if (req.tenant.hasTenant()) {
-		keyRange = keyRange.withPrefix(req.tenant.prefix.get(), req.arena);
-	}
-
-	req.limit = std::min(req.limit, CLIENT_KNOBS->BG_TOO_MANY_GRANULES);
-
-	ASSERT(!keyRange.empty());
-
 	// FIXME: add retry loop? likely less expensive to handle retryable errors here than to propagate back to client?
 	state Transaction tr(commitData->cx);
 	try {
+		state GetBlobGranuleLocationsReply rep;
+		state KeyRange keyRange;
+		if (req.end.present()) {
+			keyRange = KeyRangeRef(req.begin, req.end.get());
+		} else {
+			keyRange = KeyRangeRef(req.begin, keyAfter(req.begin, req.arena));
+		}
+
+		// check on the logical range + tenant id
+		wait(checkTenantLock(commitData, req.tenant.tenantId, minVersion, keyRange));
+
+		if (req.tenant.hasTenant()) {
+			keyRange = keyRange.withPrefix(req.tenant.prefix.get(), req.arena);
+		}
+
+		req.limit = std::min(req.limit, CLIENT_KNOBS->BG_TOO_MANY_GRANULES);
+
+		ASSERT(!keyRange.empty());
 		// TODO: could skip GRV, and keeps consistent with tenant mapping? Appears to be other issues though
 		// tr.setVersion(minVersion);
 		// FIXME: could use streaming range read for large mappings?
