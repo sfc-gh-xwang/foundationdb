@@ -73,16 +73,6 @@ Future<Optional<MetaclusterTenantMapEntry>> tryGetTenant(Reference<DB> db, Tenan
 	}
 }
 
-ACTOR template <class Transaction, class Tenant>
-Future<MetaclusterTenantMapEntry> getTenantTransaction(Transaction tr, Tenant tenant) {
-	Optional<MetaclusterTenantMapEntry> entry = wait(tryGetTenantTransaction(tr, tenant));
-	if (!entry.present()) {
-		throw tenant_not_found();
-	}
-
-	return entry.get();
-}
-
 ACTOR template <class DB, class Tenant>
 Future<MetaclusterTenantMapEntry> getTenant(Reference<DB> db, Tenant tenant) {
 	Optional<MetaclusterTenantMapEntry> entry = wait(tryGetTenant(db, tenant));

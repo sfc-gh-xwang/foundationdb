@@ -77,16 +77,6 @@ Future<Optional<DataClusterMetadata>> tryGetCluster(Reference<DB> db, ClusterNam
 	}
 }
 
-ACTOR template <class Transaction>
-Future<DataClusterMetadata> getClusterTransaction(Transaction tr, ClusterNameRef name) {
-	Optional<DataClusterMetadata> metadata = wait(tryGetClusterTransaction(tr, name));
-	if (!metadata.present()) {
-		throw cluster_not_found();
-	}
-
-	return metadata.get();
-}
-
 ACTOR template <class DB>
 Future<DataClusterMetadata> getCluster(Reference<DB> db, ClusterName name) {
 	Optional<DataClusterMetadata> metadata = wait(tryGetCluster(db, name));
