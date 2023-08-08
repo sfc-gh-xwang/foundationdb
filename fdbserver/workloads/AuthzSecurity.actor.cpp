@@ -1055,8 +1055,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 				    .detail("Case", "CrossTenantBulkLoad" + counter->baseName + "Allowed")
 				    .detail("Subcase", "Negative")
 				    .log();
-			}
-			if (outcome.get().code() == error_code_permission_denied) {
+			} else if (outcome.get().code() == error_code_permission_denied) {
 				++counter->negative;
 			}
 		} else if (testCase == BulkLoadTestCase::TENANT_MISMATCH) {
