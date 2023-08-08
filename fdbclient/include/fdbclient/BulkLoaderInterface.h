@@ -90,9 +90,7 @@ struct BulkLoadFilesToWriteRequest : TimedRequest {
 
 	BulkLoadFilesToWriteRequest() {}
 
-	// FIXME: add authorization once we can get tenant info from tenant instead of transaction!!
-	// bool verify() const noexcept { return tenantInfo.isAuthorized(); }
-	bool verify() const noexcept { return true; }
+	bool verify() const noexcept { return tenantInfo.isAuthorized(); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -113,9 +111,7 @@ struct BulkLoadFilesWrittenRequest : TimedRequest {
 
 	BulkLoadFilesWrittenRequest() {}
 
-	// FIXME: add authorization once we can get tenant info from tenant!!
-	// bool verify() const noexcept { return tenantInfo.isAuthorized(); }
-	bool verify() const noexcept { return true; }
+	bool verify() const noexcept { return tenantInfo.isAuthorized(); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -157,9 +153,7 @@ struct BulkLoadStartRequest : TimedRequest {
 
 	BulkLoadStartRequest() {}
 
-	// FIXME: add authorization once we can get tenant info from tenant!!
-	// bool verify() const noexcept { return tenantInfo.isAuthorized(); }
-	bool verify() const noexcept { return true; }
+	bool verify() const noexcept { return tenantInfo.isAuthorized(); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -180,9 +174,7 @@ struct BulkLoadStateChangeRequest : TimedRequest {
 
 	BulkLoadStateChangeRequest() {}
 
-	// FIXME: add authorization once we can get tenant info from tenant!!
-	// bool verify() const noexcept { return tenantInfo.isAuthorized(); }
-	bool verify() const noexcept { return true; }
+	bool verify() const noexcept { return tenantInfo.isAuthorized(); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -202,9 +194,7 @@ struct BulkLoadWaitCompleteRequest : TimedRequest {
 
 	BulkLoadWaitCompleteRequest() {}
 
-	// FIXME: add authorization once we can get tenant info from tenant!!
-	// bool verify() const noexcept { return tenantInfo.isAuthorized(); }
-	bool verify() const noexcept { return true; }
+	bool verify() const noexcept { return tenantInfo.isAuthorized(); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
