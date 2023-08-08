@@ -25,6 +25,8 @@ void addWorker(ClusterControllerData& data, ProcessClass::ClassType classType, L
 	data.id_worker[id].details.recoveredDiskFiles = true;
 }
 
+// Adds `count` workers with the specified process class to the given
+// ClusterControllerData's list of workers.
 void addWorkers(ClusterControllerData& data,
                 ProcessClass::ClassType classType,
                 Optional<Standalone<StringRef>> zoneId,
@@ -34,6 +36,19 @@ void addWorkers(ClusterControllerData& data,
 	for (int i = 0; i < count; ++i) {
 		Standalone<StringRef> id = StringRef(std::to_string(workers++));
 		addWorker(data, classType, LocalityData(id, zoneId, machineId, dcId));
+	}
+}
+
+// Asserts that all `workers` are of process class `expectedClass` and running
+// on machine `expectedMachineId` (if present).
+void assertWorkers(std::vector<WorkerDetails> workers,
+                   ProcessClass::ClassType expectedClass,
+                   Optional<StringRef> expectedMachineId = Optional<StringRef>()) {
+	for (const auto& worker : workers) {
+		ASSERT_EQ(worker.processClass.classType(), expectedClass);
+		if (expectedMachineId.present()) {
+			ASSERT_EQ(worker.interf.locality.machineId().get(), expectedMachineId);
+		}
 	}
 }
 
@@ -234,6 +249,9 @@ TEST_CASE("/fdbserver/Recruiter/Stateless/All") {
 // Even when asking for zero stateless processes, we should always get at least
 // one.
 TEST_CASE("/fdbserver/Recruiter/Stateless/Zero") {
+	IKnobCollection::getMutableGlobalKnobCollection().setKnob("colocate_stateless_processes",
+	                                                          KnobValueRef::create(false));
+
 	DatabaseConfiguration conf;
 	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "0"_sr));
 	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "0"_sr));
@@ -353,6 +371,187 @@ TEST_CASE("/fdbserver/Recruiter/TLogs/NoReplicationPolicy") {
 	auto recruiter = Recruiter(UID());
 	RecruitmentInfo info(conf, false, 0);
 	ASSERT_EQ(recruiter.findWorkers(&data, info, false).tLogs.size(), 1);
+
+	return Void();
+}
+
+// Test recruitment colocation. Adds a few machines with a large number of
+// stateless processes. The recruiter should pick the machine with the most
+// processes as the location for all roles (in this case, all the roles should
+// all fit on one machine).
+TEST_CASE("/fdbserver/Recruiter/Colocate/General") {
+	IKnobCollection::getMutableGlobalKnobCollection().setKnob("colocate_stateless_processes",
+	                                                          KnobValueRef::create(true));
+
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "2"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "6"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/resolvers"_sr, "1"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+	// Add three machines in the same zone and region, but each running a
+	// different number of stateless processes.
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, "1"_sr, "1"_sr, 12);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, "2"_sr, "1"_sr, 11);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, "3"_sr, "1"_sr, 10);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+
+	auto workers = recruiter.findWorkers(&data, info, false);
+	ASSERT(workers.sequencer.present());
+	assertWorkers({ workers.sequencer.get() }, ProcessClass::ClassType::StatelessClass, "1"_sr);
+
+	ASSERT_EQ(workers.grvProxies.size(), 2);
+	assertWorkers(workers.grvProxies, ProcessClass::ClassType::StatelessClass, "1"_sr);
+
+	ASSERT_EQ(workers.commitProxies.size(), 6);
+	assertWorkers(workers.commitProxies, ProcessClass::ClassType::StatelessClass, "1"_sr);
+
+	ASSERT_EQ(workers.resolvers.size(), 1);
+	assertWorkers(workers.resolvers, ProcessClass::ClassType::StatelessClass, "1"_sr);
+
+	// Don't forget the sequencer when counting roles!
+	ASSERT_EQ(uniqueProcesses(workers), 10);
+
+	return Void();
+}
+
+// Test recruitment colocation against a more production-like cluster, with
+// many machines running only a few processes, and one machine with many
+// stateless processes. The stateless roles should all get recruited on the
+// single machine with a bunch of stateless processes.
+TEST_CASE("/fdbserver/Recruiter/Colocate/XXSmall") {
+	IKnobCollection::getMutableGlobalKnobCollection().setKnob("colocate_stateless_processes",
+	                                                          KnobValueRef::create(true));
+
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "2"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "6"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/logs"_sr, "3"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+
+	// Add six processes on one machine in zone 1.
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, "1"_sr, "1"_sr, 1);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, "1"_sr, "1"_sr, 2);
+	addWorkers(data, ProcessClass::ClassType::StorageClass, "1"_sr, "1"_sr, "1"_sr, 3);
+
+	// Add six processes on one machine in zone 2.
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "2"_sr, "2"_sr, "1"_sr, 1);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "2"_sr, "2"_sr, "1"_sr, 2);
+	addWorkers(data, ProcessClass::ClassType::StorageClass, "2"_sr, "2"_sr, "1"_sr, 3);
+
+	// Add six processes on one machine in zone 3.
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "3"_sr, "3"_sr, "1"_sr, 1);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "3"_sr, "3"_sr, "1"_sr, 2);
+	addWorkers(data, ProcessClass::ClassType::StorageClass, "3"_sr, "3"_sr, "1"_sr, 3);
+
+	// Add a machine running a bunch of stateless processes in zone 1. The
+	// stateless roles should all get recruited on this machine.
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, "4"_sr, "1"_sr, 16);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+
+	auto workers = recruiter.findWorkers(&data, info, false);
+
+	// Make sure all the stateless roles got recruited on the machine running
+	// the large number of stateless processes.
+	ASSERT(workers.sequencer.present());
+	assertWorkers({ workers.sequencer.get() }, ProcessClass::ClassType::StatelessClass, "4"_sr);
+
+	ASSERT_EQ(workers.grvProxies.size(), 2);
+	assertWorkers(workers.grvProxies, ProcessClass::ClassType::StatelessClass, "4"_sr);
+
+	ASSERT_EQ(workers.commitProxies.size(), 6);
+	assertWorkers(workers.commitProxies, ProcessClass::ClassType::StatelessClass, "4"_sr);
+
+	ASSERT_EQ(workers.resolvers.size(), 1);
+	assertWorkers(workers.resolvers, ProcessClass::ClassType::StatelessClass, "4"_sr);
+
+	ASSERT_EQ(workers.tLogs.size(), 3);
+	assertWorkers(workers.tLogs, ProcessClass::ClassType::TransactionClass);
+
+	// Don't forget the sequencer when counting roles!
+	ASSERT_EQ(uniqueProcesses(workers), 13);
+
+	return Void();
+}
+
+// Test stateless process colocation recruitment when one machine doesn't have
+// enough processes to run all the stateless roles.
+TEST_CASE("/fdbserver/Recruiter/Colocate/Spread") {
+	IKnobCollection::getMutableGlobalKnobCollection().setKnob("colocate_stateless_processes",
+	                                                          KnobValueRef::create(true));
+
+	// Configure 11 stateless processes, plus one for the sequencer.
+	DatabaseConfiguration conf;
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/grv_proxies"_sr, "3"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/commit_proxies"_sr, "6"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/resolvers"_sr, "2"_sr));
+	conf.applyMutation(MutationRef(MutationRef::SetValue, "\xff/conf/logs"_sr, "3"_sr));
+	conf.test_setDefaultReplicationPolicy();
+
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData({}, {}, {}, "1"_sr),
+	                           ServerCoordinators(),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+
+	// Add six processes on one machine in zone 1.
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "1"_sr, "1"_sr, "1"_sr, 1);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, "1"_sr, "1"_sr, 2);
+	addWorkers(data, ProcessClass::ClassType::StorageClass, "1"_sr, "1"_sr, "1"_sr, 3);
+
+	// Add six processes on one machine in zone 2.
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "2"_sr, "2"_sr, "1"_sr, 1);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "2"_sr, "2"_sr, "1"_sr, 2);
+	addWorkers(data, ProcessClass::ClassType::StorageClass, "2"_sr, "2"_sr, "1"_sr, 3);
+
+	// Add six processes on one machine in zone 3.
+	addWorkers(data, ProcessClass::ClassType::TransactionClass, "3"_sr, "3"_sr, "1"_sr, 1);
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "3"_sr, "3"_sr, "1"_sr, 2);
+	addWorkers(data, ProcessClass::ClassType::StorageClass, "3"_sr, "3"_sr, "1"_sr, 3);
+
+	// Add a machine running a bunch of stateless processes in zone 1. The
+	// stateless roles should all get recruited on this machine.
+	addWorkers(data, ProcessClass::ClassType::StatelessClass, "1"_sr, "4"_sr, "1"_sr, 10);
+
+	auto recruiter = Recruiter(UID());
+	RecruitmentInfo info(conf, false, 0);
+
+	auto workers = recruiter.findWorkers(&data, info, false);
+
+	// Make sure the first batch of stateless roles got recruited on the
+	// machine running the large number of stateless processes.
+	ASSERT(workers.sequencer.present());
+	assertWorkers({ workers.sequencer.get() }, ProcessClass::ClassType::StatelessClass, "4"_sr);
+
+	ASSERT_EQ(workers.grvProxies.size(), 3);
+	assertWorkers(workers.grvProxies, ProcessClass::ClassType::StatelessClass, "4"_sr);
+
+	ASSERT_EQ(workers.commitProxies.size(), 6);
+	assertWorkers(workers.commitProxies, ProcessClass::ClassType::StatelessClass, "4"_sr);
+
+	// Resolvers get recruited last. Therefore, if there aren't enough
+	// processes remaining on the single large stateless machine, the resolvers
+	// should prefer recruitment on another machine in the same zone.
+	ASSERT_EQ(workers.resolvers.size(), 2);
+	assertWorkers(workers.resolvers, ProcessClass::ClassType::StatelessClass, "1"_sr);
+
+	ASSERT_EQ(workers.tLogs.size(), 3);
+	assertWorkers(workers.tLogs, ProcessClass::ClassType::TransactionClass);
+
+	// Don't forget the sequencer when counting roles!
+	ASSERT_EQ(uniqueProcesses(workers), 15);
 
 	return Void();
 }

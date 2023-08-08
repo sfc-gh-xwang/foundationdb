@@ -198,6 +198,8 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 
 	FDBFuture* (*databaseGetLatestEncryptCipherKeysStatus)(FDBDatabase* db, int64_t const* domainId);
 
+	FDBFuture* (*databaseExecAsync)(FDBDatabase* tr, FDBRequest* request);
+
 	// Tenant
 	fdb_error_t (*tenantCreateTransaction)(FDBTenant* tenant, FDBTransaction** outTransaction);
 
@@ -256,6 +258,8 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 	FDBFuture* (*tenantGetId)(FDBTenant* tenant);
 
 	FDBFuture* (*tenantGetClientStatus)(FDBTenant* tenant);
+
+	FDBFuture* (*tenantExecAsync)(FDBTenant* tr, FDBRequest* request);
 
 	void (*tenantDestroy)(FDBTenant* tenant);
 
@@ -537,6 +541,10 @@ public:
 	// Return a JSON string containing tenant client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
+
 	void addref() override { ThreadSafeReferenceCounted<DLTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<DLTenant>::delref(); }
 
@@ -597,6 +605,10 @@ public:
 
 	ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
 	    Optional<EncryptCipherDomainId> domainId) override;
+
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
 
 private:
 	const Reference<FdbCApi> api;
@@ -876,6 +888,10 @@ public:
 	// Return a JSON string containing tenant client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
+
 	// A struct that manages the current connection state of the MultiVersionDatabase. This wraps the underlying
 	// IDatabase object that is currently interacting with the cluster.
 	struct TenantState : ThreadSafeReferenceCounted<TenantState> {
@@ -1014,6 +1030,10 @@ public:
 
 	ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
 	    Optional<EncryptCipherDomainId> domainId) override;
+
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
 
 	// Database initialization state
 	enum class InitializationState { INITIALIZING, INITIALIZATION_FAILED, CREATED, INCOMPATIBLE, CLOSED };

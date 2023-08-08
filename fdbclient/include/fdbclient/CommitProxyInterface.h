@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "fdbclient/BlobWorkerInterface.h"
+#include "fdbclient/BulkLoaderInterface.h"
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/EncryptKeyProxyInterface.h"
 #include "fdbclient/FDBTypes.h"
@@ -65,6 +66,7 @@ struct CommitProxyInterface {
 	PublicRequestStream<struct ExpireIdempotencyIdRequest> expireIdempotencyId;
 	PublicRequestStream<struct TenantLookupRequest> tenantLookup;
 	PublicRequestStream<struct GetBlobGranuleLocationsRequest> getBlobGranuleLocations;
+	PublicRequestStream<struct GetBulkLoaderInterfacesRequest> getBulkLoaderInterfaces;
 
 	UID id() const { return commit.getEndpoint().token; }
 	std::string toString() const { return id().shortString(); }
@@ -97,6 +99,8 @@ struct CommitProxyInterface {
 			    PublicRequestStream<struct TenantLookupRequest>(commit.getEndpoint().getAdjustedEndpoint(11));
 			getBlobGranuleLocations = PublicRequestStream<struct GetBlobGranuleLocationsRequest>(
 			    commit.getEndpoint().getAdjustedEndpoint(12));
+			getBulkLoaderInterfaces = PublicRequestStream<struct GetBulkLoaderInterfacesRequest>(
+			    commit.getEndpoint().getAdjustedEndpoint(13));
 		}
 	}
 
@@ -116,6 +120,7 @@ struct CommitProxyInterface {
 		streams.push_back(expireIdempotencyId.getReceiver());
 		streams.push_back(tenantLookup.getReceiver());
 		streams.push_back(getBlobGranuleLocations.getReceiver());
+		streams.push_back(getBulkLoaderInterfaces.getReceiver());
 		FlowTransport::transport().addEndpoints(streams);
 	}
 };
@@ -560,6 +565,35 @@ struct GetBlobGranuleLocationsRequest {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, begin, end, limit, reverse, reply, spanContext, tenant, minTenantVersion, justGranules, arena);
+	}
+};
+
+struct GetBulkLoaderInterfacesReply {
+	constexpr static FileIdentifier file_identifier = 4007011;
+	Arena arena;
+	std::vector<BulkLoaderInterface> blInterfs;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, blInterfs, arena);
+	}
+};
+
+struct GetBulkLoaderInterfacesRequest {
+	constexpr static FileIdentifier file_identifier = 3181697;
+	Arena arena;
+	SpanContext spanContext;
+	ReplyPromise<GetBulkLoaderInterfacesReply> reply;
+
+	GetBulkLoaderInterfacesRequest() {}
+	GetBulkLoaderInterfacesRequest(SpanContext spanContext) : spanContext(spanContext) {}
+
+	// no non-public information is disclosed so no need for authz on this call
+	bool verify() const noexcept { return true; }
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reply, spanContext, arena);
 	}
 };
 

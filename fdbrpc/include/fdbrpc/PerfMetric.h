@@ -72,6 +72,7 @@ struct PerfIntCounter {
 	PerfMetric getMetric() const { return PerfMetric(name, static_cast<double>(value), Averaged::False, "%.0lf"); }
 	int64_t getValue() const { return value; }
 	void clear() { value = 0; }
+	std::string getName() { return name; }
 
 private:
 	std::string name;

@@ -27,8 +27,8 @@
 #include <unordered_set>
 
 enum class CompressionFilter {
-	NONE,
-	ZSTD,
+	NONE = 0,
+	ZSTD = 1,
 	LAST // Always the last member
 };
 

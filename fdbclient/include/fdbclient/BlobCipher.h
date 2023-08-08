@@ -103,9 +103,15 @@ public:
 	Counter latestCipherKeyCacheHit;
 	Counter latestCipherKeyCacheMiss;
 	Counter latestCipherKeyCacheNeedsRefresh;
+	Counter blobMetadataCacheHit;
+	Counter blobMetadataCacheMiss;
+	Counter blobMetadataNeedsRefresh;
 	LatencySample getBlobMetadataLatency;
 	LatencySample getCipherKeysLatency;
 	LatencySample getLatestCipherKeysLatency;
+	ActiveCounter<int> outstandingCipherKeyRequests;
+	ActiveCounter<int> outstandingLatestCipherKeysRequests;
+	ActiveCounter<int> outstandingBlobMetadataRequests;
 };
 
 std::string toString(BlobCipherMetrics::UsageType type);

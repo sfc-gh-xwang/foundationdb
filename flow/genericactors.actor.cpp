@@ -266,3 +266,39 @@ TEST_CASE("/flow/genericactors/generic/storeTuple") {
 	return Void();
 }
 #endif
+
+TEST_CASE("/flow/genericactors/ActiveCounter") {
+	state ActiveCounter<int> counter(0);
+	ASSERT_EQ(0, counter.getValue());
+	state ActiveCounter<int>::Releaser declareReleaserEarly;
+
+	{
+		ActiveCounter<int>::Releaser active = counter.take(1);
+		ASSERT_EQ(1, counter.getValue());
+		active.release();
+		ASSERT_EQ(0, counter.getValue());
+	}
+	ASSERT_EQ(0, counter.getValue());
+
+	// same thing but no active release, just destructor
+	{
+		ActiveCounter<int>::Releaser active = counter.take(2);
+		ASSERT_EQ(2, counter.getValue());
+	}
+	ASSERT_EQ(0, counter.getValue());
+
+	// wait case of above
+	ActiveCounter<int>::Releaser active = counter.take(4);
+	ASSERT_EQ(4, counter.getValue());
+	wait(delay(0));
+	ASSERT_EQ(0, counter.getValue());
+
+	declareReleaserEarly = counter.take(8);
+	ASSERT_EQ(8, counter.getValue());
+	wait(delay(0));
+	ASSERT_EQ(8, counter.getValue());
+	declareReleaserEarly.release();
+	ASSERT_EQ(0, counter.getValue());
+
+	return Void();
+}

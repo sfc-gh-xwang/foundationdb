@@ -1576,6 +1576,8 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
+    transactionBulkLoaderRequests("BulkLoaderRequests", cc),
+    transactionBulkLoaderRequestsCompleted("BulkLoaderRequestsCompleted", cc),
     transactionStatusRequests("StatusRequests", cc),
     transactionTenantLookupRequests("TenantLookupRequests", cc),
     transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
@@ -1928,6 +1930,8 @@ DatabaseContext::DatabaseContext(const Error& err)
     transactionKeyServerLocationRequestsCompleted("KeyServerLocationRequestsCompleted", cc),
     transactionBlobGranuleLocationRequests("BlobGranuleLocationRequests", cc),
     transactionBlobGranuleLocationRequestsCompleted("BlobGranuleLocationRequestsCompleted", cc),
+    transactionBulkLoaderRequests("BulkLoaderRequests", cc),
+    transactionBulkLoaderRequestsCompleted("BulkLoaderRequestsCompleted", cc),
     transactionStatusRequests("StatusRequests", cc),
     transactionTenantLookupRequests("TenantLookupRequests", cc),
     transactionTenantLookupRequestsCompleted("TenantLookupRequestsCompleted", cc),
@@ -2886,6 +2890,46 @@ Future<Reference<CommitProxyInfo>> DatabaseContext::getCommitProxiesFuture(
 	return ::getCommitProxiesFuture(this, useProvisionalProxies);
 }
 
+ACTOR Future<Reference<BulkLoaderInfo>> getBulkLoadersActor(DatabaseContext* cx,
+                                                            UseProvisionalProxies useProvisionalProxies) {
+	// FIXME: cache results somehow
+	loop {
+		++cx->transactionBulkLoaderRequests;
+		try {
+			choose {
+				when(wait(cx->onProxiesChanged())) {}
+				when(GetBulkLoaderInterfacesReply rep =
+				         wait(basicLoadBalance(cx->getCommitProxies(useProvisionalProxies),
+				                               &CommitProxyInterface::getBulkLoaderInterfaces,
+				                               GetBulkLoaderInterfacesRequest(SpanContext()),
+				                               TaskPriority::DefaultPromiseEndpoint))) {
+					++cx->transactionBulkLoaderRequestsCompleted;
+
+					std::vector<Reference<ReferencedInterface<BulkLoaderInterface>>> interfs;
+					for (auto interf : rep.blInterfs) {
+						interfs.push_back(makeReference<ReferencedInterface<BulkLoaderInterface>>(interf));
+					}
+					return makeReference<BulkLoaderInfo>(interfs);
+				}
+			}
+		} catch (Error& e) {
+			if (e.code() == error_code_commit_proxy_memory_limit_exceeded) {
+				// Commit Proxy returns an error
+				wait(delayJittered(CLIENT_KNOBS->GRV_ERROR_RETRY_DELAY));
+			} else {
+				++cx->transactionBulkLoaderRequestsCompleted;
+				throw e;
+			}
+		}
+	}
+}
+
+// Returns a future which will not be set until the CommitProxyInfo of this DatabaseContext is not nullptr
+// TODO: allow provisional proxies? don't think there's any need for it
+Future<Reference<BulkLoaderInfo>> DatabaseContext::getBulkLoaders() {
+	return ::getBulkLoadersActor(this, UseProvisionalProxies::False);
+}
+
 void GetRangeLimits::decrement(VectorRef<KeyValueRef> const& data) {
 	if (rows != GetRangeLimits::ROW_LIMIT_UNLIMITED) {
 		ASSERT(data.size() <= rows);
@@ -2977,15 +3021,21 @@ AddressExclusion AddressExclusion::parse(StringRef const& key) {
 	}
 }
 
-Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)) {}
-Tenant::Tenant(int64_t id) : lookupFuture(id) {}
-Tenant::Tenant(Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
+Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)), dbFuture(cx) {}
+Tenant::Tenant(Database cx, int64_t id) : lookupFuture(id), dbFuture(cx) {}
+Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
   : name(name),
-    lookupFuture(tenantLookupInfo) {}
+    lookupFuture(tenantLookupInfo),
+    dbFuture(cx) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
 	return lookupFuture.get().id;
+}
+
+Database Tenant::database() const {
+	ASSERT(dbFuture.isReady());
+	return dbFuture.get();
 }
 
 Optional<TenantGroupName> Tenant::tenantGroup() const {
@@ -3480,7 +3530,7 @@ ACTOR Future<Void> warmRange_impl(Reference<TransactionState> trState, KeyRange 
 
 		if (totalRequests % 20 == 0) {
 			// To avoid blocking the proxies from starting other transactions, occasionally get a read version.
-			state Transaction tr(trState->cx, trState->tenant());
+			state Transaction tr = Transaction::fromTenantOrDefault(trState->tenant(), trState->cx);
 			loop {
 				try {
 					tr.setOption(FDBTransactionOptions::LOCK_AWARE);
@@ -3621,7 +3671,7 @@ Optional<Reference<Tenant>> const& TransactionState::tenant() {
 bool TransactionState::hasTenant(ResolveDefaultTenant resolveDefaultTenant) {
 	if (!tenantSet && resolveDefaultTenant) {
 		if (!options.rawAccess && cx->defaultTenant.present()) {
-			tenant_ = makeReference<Tenant>(cx->lookupTenant(cx->defaultTenant.get()), cx->defaultTenant);
+			tenant_ = makeReference<Tenant>(cx, cx->lookupTenant(cx->defaultTenant.get()), cx->defaultTenant);
 		}
 		tenantSet = true;
 	}
@@ -3809,6 +3859,7 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 
 	state Optional<UID> getKeyID;
 	state Optional<ReadOptions> readOptions = trState->readOptions;
+	state ReadMetrics readMetrics;
 
 	state Span span("NAPI:getKey"_loc, trState->spanContext);
 	if (trState->readOptions.present() && trState->readOptions.get().debugID.present()) {
@@ -3827,11 +3878,11 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 	loop {
 		if (k.getKey() == allKeys.end) {
 			if (k.offset > 0) {
-				return allKeys.end;
+				return KeyReadResult(allKeys.end, readMetrics);
 			}
 			k.orEqual = false;
 		} else if (k.getKey() == allKeys.begin && k.offset <= 0) {
-			return Key();
+			return KeyReadResult(Key(), readMetrics);
 		}
 
 		Key locationKey(k.getKey(), k.arena());
@@ -3887,9 +3938,10 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 				                      getKeyID.get().first(),
 				                      "NativeAPI.getKey.After"); //.detail("NextKey",reply.sel.key).detail("Offset",
 				                                                 // reply.sel.offset).detail("OrEqual", k.orEqual);
+			readMetrics.combine(reply.readMetrics);
 			k = reply.sel;
 			if (!k.offset && k.orEqual) {
-				return KeyReadResult(std::move(k.getKey()), reply.readMetrics);
+				return KeyReadResult(std::move(k.getKey()), readMetrics);
 			}
 		} catch (Error& e) {
 			if (getKeyID.present())
@@ -4115,10 +4167,10 @@ ACTOR Future<Void> watchStorageServerResp(int64_t tenantId, Key key, Database cx
 }
 
 ACTOR Future<Void> sameVersionDiffValue(Database cx, Reference<WatchParameters> parameters) {
-	state ReadYourWritesTransaction tr(cx,
-	                                   parameters->tenant.hasTenant()
-	                                       ? makeReference<Tenant>(parameters->tenant.tenantId)
-	                                       : Optional<Reference<Tenant>>());
+	Optional<Reference<Tenant>> tenant = parameters->tenant.hasTenant()
+	                                         ? makeReference<Tenant>(cx, parameters->tenant.tenantId)
+	                                         : Optional<Reference<Tenant>>();
+	state ReadYourWritesTransaction tr = ReadYourWritesTransaction::fromTenantOrDefault(tenant, cx);
 
 	loop {
 		try {
@@ -4929,7 +4981,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					CODE_PROBE(true, "!GetKeyValuesFamilyReply.more and modifiedSelectors in getRange");
 
 					if (!rep.data.size()) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -4939,8 +4991,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -4968,7 +5022,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					                             Reverse{ reverse ? (end - 1).isBackward() : begin.isBackward() });
 
 					if (e.code() == error_code_wrong_shard_server) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -4978,8 +5032,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -5579,9 +5635,9 @@ void debugAddTag(Reference<TransactionState> trState) {
 Transaction::Transaction()
   : trState(makeReference<TransactionState>(TaskPriority::DefaultEndpoint, generateSpanID(false))) {}
 
-Transaction::Transaction(Database const& cx, Optional<Reference<Tenant>> const& tenant)
+Transaction::Transaction(Database const& cx)
   : trState(makeReference<TransactionState>(cx,
-                                            tenant,
+                                            Optional<Reference<Tenant>>(),
                                             cx->taskID,
                                             generateSpanID(cx->transactionTracingSample),
                                             createTrLogInfoProbabilistically(cx))),
@@ -5593,9 +5649,35 @@ Transaction::Transaction(Database const& cx, Optional<Reference<Tenant>> const& 
 	}
 }
 
+Transaction::Transaction(Reference<Tenant> const& tenant)
+  : trState(makeReference<TransactionState>(tenant->database(),
+                                            tenant,
+                                            tenant->database()->taskID,
+                                            generateSpanID(tenant->database()->transactionTracingSample),
+                                            createTrLogInfoProbabilistically(tenant->database()))),
+    span(trState->spanContext, "Transaction"_loc),
+    backoff(CLIENT_KNOBS->DEFAULT_BACKOFF),
+    tr(trState->spanContext) {
+	if (tenant->database()->debugUseTag) {
+		debugAddTag(trState);
+	}
+}
+
+Transaction::Transaction(Transaction&& tr) {
+	*this = std::move(tr);
+}
+
 Transaction::~Transaction() {
 	flushTrLogsIfEnabled();
 	cancelWatches();
+}
+
+Transaction Transaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx) {
+	if (tenant.present()) {
+		return Transaction(tenant.get());
+	} else {
+		return Transaction(cx);
+	}
 }
 
 void Transaction::operator=(Transaction&& r) noexcept {
@@ -6396,7 +6478,7 @@ FDB_BOOLEAN_PARAM(TenantPrefixPrepended);
 ACTOR static Future<Void> commitDummyTransaction(Reference<TransactionState> trState,
                                                  KeyRange range,
                                                  TenantPrefixPrepended tenantPrefixPrepended) {
-	state Transaction tr(trState->cx, trState->tenant());
+	state Transaction tr = Transaction::fromTenantOrDefault(trState->tenant(), trState->cx);
 	state int retries = 0;
 	state Span span("NAPI:dummyTransaction"_loc, trState->spanContext);
 	tr.span.setParent(span.context);
@@ -7336,10 +7418,7 @@ bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority prior
 }
 
 ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
-	if (!CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !trState->options.skipGrvCache &&
-	    (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE ||
-	     trState->options.useGrvCache) &&
-	    rkThrottlingCooledDown(trState->cx.getPtr(), trState->options.priority)) {
+	if (trState->canUseGrvCache()) {
 		// Upon our first request to use cached RVs, start the background updater
 		if (!trState->cx->grvUpdateHandler.isValid()) {
 			trState->cx->grvUpdateHandler = backgroundGrvUpdater(trState->cx.getPtr());
@@ -7349,6 +7428,10 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 		double requestTime = now();
 		if (requestTime - lastTime <= CLIENT_KNOBS->MAX_VERSION_CACHE_LAG && rv != Version(0)) {
 			ASSERT(!debug_checkVersionTime(rv, requestTime, "CheckStaleness"));
+			// client side average cost tracking should be enabled, account for this transaction.
+			if (trState->getThrottlingId().present()) {
+				trState->cx->addTransaction(trState->getThrottlingId().get(), 1);
+			}
 			return rv;
 		} // else go through regular GRV path
 	}
@@ -7447,6 +7530,15 @@ Future<Version> TransactionState::getReadVersion(uint32_t flags) {
 	ASSERT(!readVersionFuture.isValid());
 
 	return getReadVersion_internal(this, flags);
+}
+
+bool TransactionState::canUseGrvCache() {
+	return !CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !options.skipGrvCache &&
+	       (deterministicRandom()->random01() <= CLIENT_KNOBS->DEBUG_USE_GRV_CACHE_CHANCE || options.useGrvCache) &&
+	       rkThrottlingCooledDown(cx.getPtr(), options.priority) &&
+	       // skip cache if throttlingId is busy, busy throttlingId depends on the TRACK_THROUGHPUT_ON_CLIENTS knob
+	       !(isBusyThrottlingIdsTrackingEnabled() && getThrottlingId().present() &&
+	         cx->isThrottlingIdBusy(getThrottlingId().get()));
 }
 
 Optional<ThrottlingId> TransactionState::getThrottlingId() {
@@ -8679,7 +8771,7 @@ ACTOR Future<Version> checkBlobSubrange(Database db,
                                         KeyRange keyRange,
                                         Optional<Version> version,
                                         UseRawAccess useRawAccess) {
-	state Transaction tr(db, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 	state Optional<Version> summaryVersion;
 	if (version.present()) {
 		summaryVersion = version.get();
@@ -8710,7 +8802,7 @@ ACTOR Future<Version> verifyBlobRangeActor(Reference<DatabaseContext> cx,
                                            Optional<Reference<Tenant>> tenant,
                                            UseRawAccess useRawAccess) {
 	state Database db(cx);
-	state Transaction tr(db, tenant);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 	state Standalone<VectorRef<KeyRangeRef>> allRanges;
 	state KeyRange curRegion = KeyRangeRef(range.begin, range.begin);
 	state Version readVersionOut = invalidVersion;
@@ -9737,17 +9829,30 @@ Reference<ChangeFeedStorageData> DatabaseContext::getStorageData(StorageServerIn
 }
 
 Version DatabaseContext::getMinimumChangeFeedVersion() {
-	Version minVersion = std::numeric_limits<Version>::max();
+	Version minUpdaterVersion = std::numeric_limits<Version>::max();
+	Version minNALFeedVersion = std::numeric_limits<Version>::max();
+	Version minUpdaterDesiredVersion = std::numeric_limits<Version>::max();
 	for (auto& it : changeFeedUpdaters) {
-		if (now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
-			minVersion = std::min(minVersion, it.second->version.get());
+		if (it.second->version.get() < minUpdaterVersion &&
+		    now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
+			minUpdaterVersion = it.second->version.get();
+			minUpdaterDesiredVersion = it.second->desired.get();
 		}
 	}
 	for (auto& it : notAtLatestChangeFeeds) {
 		if (now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
-			minVersion = std::min(minVersion, it.second->getVersion());
+			minNALFeedVersion = std::min(minNALFeedVersion, it.second->getVersion());
 		}
 	}
+	Version minVersion = std::min(minUpdaterVersion, minNALFeedVersion);
+	TraceEvent("DBMinimumChangeFeedVersion")
+	    .suppressFor(10.0)
+	    .detail("FeedUpdaters", changeFeedUpdaters.size())
+	    .detail("NotAtLatestFeeds", notAtLatestChangeFeeds.size())
+	    .detail("MinVersion", minVersion)
+	    .detail("MinUpdaterVersion", minUpdaterVersion)
+	    .detail("MinUpdaterDesiredVersion", minUpdaterDesiredVersion)
+	    .detail("MinNALFeedVersion", minNALFeedVersion);
 	return minVersion;
 }
 
@@ -11398,11 +11503,49 @@ double DatabaseContext::getAverageTransactionCost(const ThrottlingId& throttling
 	return throughputTracker.getAverageTransactionCost(throttlingId);
 }
 
+bool DatabaseContext::isThrottlingIdBusy(const ThrottlingId& throttlingId) const {
+	return throughputTracker.isThrottlingIdBusy(throttlingId);
+}
+
 Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 	return makeReference<ReadYourWritesTransaction>(Database(Reference<DatabaseContext>::addRef(this)));
 }
 
 // BlobGranule API.
+
+ACTOR Future<TenantMode> getOrWaitForTenantMode(Database cx) {
+	loop {
+		Optional<TenantMode> tenantMode = cx->getTenantMode();
+		if (tenantMode.present()) {
+			return tenantMode.get();
+		}
+		// otherwise we don't know the tenant mode yet, wait for non-provisional proxies
+		wait(cx->clientInfo->onChange());
+	}
+}
+
+ACTOR Future<Void> checkTenantLock(Transaction* tr, Optional<Reference<Tenant>> tenant, KeyRange keyRange) {
+	state int64_t tenantId;
+	if (tenant.present()) {
+		// if tenant present, explicitly get id
+		tenantId = tenant.get()->id();
+	} else {
+		// otherwise assume raw access mode and infer it
+		TenantMode tenantMode = wait(getOrWaitForTenantMode(tr->trState->cx));
+		if (tenantMode == TenantMode::DISABLED || !TenantAPI::withinSingleTenant(keyRange)) {
+			return Void();
+		} else {
+			// in optional tenant mode this could return something that is a bogus tenant id, but that's fine because a
+			// non-existent tenant can't be locked
+			tenantId = TenantAPI::extractTenantIdFromKeyRef(keyRange.begin);
+		}
+	}
+	Optional<TenantMapEntry> tenantEntry = wait(TenantAPI::tryGetTenantTransaction(tr, tenantId));
+	if (tenantEntry.present() && tenantEntry.get().tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
+		throw tenant_locked();
+	}
+	return Void();
+}
 
 ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
                                          KeyRange range,
@@ -11444,12 +11587,13 @@ ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 
+			state Future<Void> tenantLockCheck = checkTenantLock(&tr, tenant, range);
 			// must be aligned to blob range(s)
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedBegin =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.begin, keyAfter(purgeRange.begin)), 1);
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedEnd =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.end, keyAfter(purgeRange.end)), 1);
-			wait(success(blobbifiedBegin) && success(blobbifiedEnd));
+			wait(success(blobbifiedBegin) && success(blobbifiedEnd) && tenantLockCheck);
 			// If there are no blob ranges on the boundary that's okay as we allow purging of multiple full ranges.
 			if ((!blobbifiedBegin.get().empty() && blobbifiedBegin.get().front().begin < purgeRange.begin) ||
 			    (!blobbifiedEnd.get().empty() && blobbifiedEnd.get().front().begin < purgeRange.end)) {
@@ -11530,12 +11674,13 @@ Future<Void> DatabaseContext::waitPurgeGranulesComplete(Key purgeKey) {
 }
 
 ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
-                                     KeyRange range,
+                                     KeyRange originalRange,
                                      bool active,
                                      Optional<Reference<Tenant>> tenant) {
 	state Database db(cx);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 
+	state KeyRange range = originalRange;
 	if (tenant.present()) {
 		wait(tenant.get()->ready());
 		range = range.withPrefix(tenant.get()->prefix());
@@ -11554,6 +11699,8 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+
+			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange));
 
 			Standalone<VectorRef<KeyRangeRef>> startBlobRanges = wait(getBlobRanges(&tr->getTransaction(), range, 1));
 

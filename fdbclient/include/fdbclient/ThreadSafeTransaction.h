@@ -75,6 +75,10 @@ public:
 	ThreadFuture<DatabaseSharedState*> createSharedState() override;
 	void setSharedState(DatabaseSharedState* p) override;
 
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
+
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
 
@@ -116,6 +120,10 @@ public:
 
 	// Return a JSON string containing tenant client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
+
+	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
+
+	FDBAllocatorIfc* getAllocatorInterface() override;
 
 	void addref() override { ThreadSafeReferenceCounted<ThreadSafeTenant>::addref(); }
 	void delref() override { ThreadSafeReferenceCounted<ThreadSafeTenant>::delref(); }

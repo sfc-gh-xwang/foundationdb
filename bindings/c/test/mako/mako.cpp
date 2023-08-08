@@ -420,7 +420,9 @@ int runWorkload(Database db,
                 std::atomic<int> const& signal,
                 WorkflowStatistics& workflow_stats,
                 int const dotrace,
-                int const dotagging) {
+                int const dotagging,
+                bool const use_grv_cache,
+                int const expected_cost) {
 	auto traceid = std::string{};
 	auto tagstr = std::string{};
 
@@ -504,8 +506,19 @@ int runWorkload(Database db,
 				               urand(0, args.txntagging - 1));
 				auto err = tx.setOptionNothrow(FDB_TR_OPTION_AUTO_THROTTLE_TAG, toBytesRef(tagstr));
 				if (err) {
-					logr.error("TR_OPTION_DEBUG_TRANSACTION_IDENTIFIER: {}", err.what());
+					logr.error("FDB_TR_OPTION_AUTO_THROTTLE_TAG: {}", err.what());
 				}
+			}
+
+			if (use_grv_cache) {
+				auto err = tx.setOptionNothrow(FDB_TR_OPTION_USE_GRV_CACHE);
+				if (err) {
+					logr.error("FDB_TR_OPTION_USE_GRV_CACHE: {}", err.what());
+				}
+			}
+
+			if (expected_cost >= 0) {
+				tx.setExpectedCost(expected_cost);
 			}
 
 			rc = runOneTransaction(tx, token, args, workflow_stats, key1, key2, val);
@@ -647,6 +660,8 @@ void workerThread(const ThreadArgs& thread_args) {
 	const auto dotrace = (process_idx == 0 && thread_idx == 0 && args.txntrace) ? args.txntrace : 0;
 	auto database = thread_args.database;
 	const auto dotagging = args.txntagging;
+	const bool use_grv_cache = args.txn_grv_cache;
+	const int expected_cost = args.txn_expected_cost;
 	const auto& signal = thread_args.shm.headerConst().signal;
 	const auto& throttle_factor = thread_args.shm.headerConst().throttle_factor;
 	auto& readycount = thread_args.shm.header().readycount;
@@ -689,8 +704,17 @@ void workerThread(const ThreadArgs& thread_args) {
 			logr.error("populate failed");
 		}
 	} else if (args.mode == MODE_RUN) {
-		auto rc = runWorkload(
-		    database, args, thread_tps, throttle_factor, thread_iters, signal, workflow_stats, dotrace, dotagging);
+		auto rc = runWorkload(database,
+		                      args,
+		                      thread_tps,
+		                      throttle_factor,
+		                      thread_iters,
+		                      signal,
+		                      workflow_stats,
+		                      dotrace,
+		                      dotagging,
+		                      use_grv_cache,
+		                      expected_cost);
 		if (rc < 0) {
 			logr.error("runWorkload failed");
 		}
@@ -870,6 +894,8 @@ Arguments::Arguments() {
 	txntagging = 0;
 	memset(cluster_files, 0, sizeof(cluster_files));
 	memset(txntagging_prefix, 0, TAGPREFIXLENGTH_MAX);
+	txn_grv_cache = 0;
+	txn_expected_cost = -1;
 	enable_token_based_authorization = false;
 	for (auto i = 0; i < MAX_OP; i++) {
 		txnspec.ops[i][OP_COUNT] = 0;
@@ -1173,6 +1199,10 @@ void usage() {
 	printf("%-24s %s\n",
 	       "    --txntagging_prefix",
 	       "Specify the prefix of transaction tag - mako${txntagging_prefix} (Default: '')");
+	printf("%-24s %s\n",
+	       "    --txn_grv_cache",
+	       "Use GRV Cache. Must be used in conjunction with --disable_client_bypass. (Default: 0)");
+	printf("%-24s %s\n", "    --txn_expected_cost=VALUE", "Set the expected cost of a transaction. (Default: -1)");
 	printf("%-24s %s\n", "    --knobs=KNOBS", "Set client knobs");
 	printf("%-24s %s\n", "    --flatbuffers", "Use flatbuffers");
 	printf("%-24s %s\n", "    --streaming", "Streaming mode: all (default), iterator, small, medium, large, serial");
@@ -1251,6 +1281,8 @@ int parseArguments(int argc, char* argv[], Arguments& args) {
 			{ "txntrace", required_argument, NULL, ARG_TXNTRACE },
 			{ "txntagging", required_argument, NULL, ARG_TXNTAGGING },
 			{ "txntagging_prefix", required_argument, NULL, ARG_TXNTAGGINGPREFIX },
+			{ "txn_grv_cache", no_argument, NULL, ARG_TXN_GRV_CACHE },
+			{ "txn_expected_cost", required_argument, NULL, ARG_TXN_EXPECTED_COST },
 			{ "client_threads_per_version", required_argument, NULL, ARG_CLIENT_THREADS_PER_VERSION },
 			{ "bg_file_path", required_argument, NULL, ARG_BG_FILE_PATH },
 			{ "distributed_tracer_client", required_argument, NULL, ARG_DISTRIBUTED_TRACER_CLIENT },
@@ -1481,6 +1513,12 @@ int parseArguments(int argc, char* argv[], Arguments& args) {
 				_exit(0);
 			}
 			memcpy(args.txntagging_prefix, optarg, strlen(optarg));
+			break;
+		case ARG_TXN_GRV_CACHE:
+			args.txn_grv_cache = 1;
+			break;
+		case ARG_TXN_EXPECTED_COST:
+			args.txn_expected_cost = atoi(optarg);
 			break;
 		case ARG_CLIENT_THREADS_PER_VERSION:
 			args.client_threads_per_version = atoi(optarg);
@@ -1715,6 +1753,12 @@ int Arguments::validate() {
 			return -1;
 		}
 	}
+
+	if (txn_grv_cache && !disable_client_bypass) {
+		logr.error("--txn_grv_cache must be used with --disable_client_bypass");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -2383,6 +2427,8 @@ int statsProcessMain(Arguments const& args,
 		fmt::fprintf(fp, "\"txntrace\": %d,", args.txntrace);
 		fmt::fprintf(fp, "\"txntagging\": %d,", args.txntagging);
 		fmt::fprintf(fp, "\"txntagging_prefix\": \"%s\",", args.txntagging_prefix);
+		fmt::fprintf(fp, "\"txn_grv_cache\": %d,", args.txn_grv_cache);
+		fmt::fprintf(fp, "\"txn_expected_cost\": %d,", args.txn_expected_cost);
 		fmt::fprintf(fp, "\"streaming_mode\": %d,", args.streaming_mode);
 		fmt::fprintf(fp, "\"disable_ryw\": %d,", args.disable_ryw);
 		fmt::fprintf(fp, "\"transaction_timeout_db\": %d,", args.transaction_timeout_db);
@@ -2668,6 +2714,10 @@ int main(int argc, char* argv[]) {
 	/* forking (num_process + 1) children */
 	/* last process is the stats handler */
 	for (auto p = 0; p < args.num_processes + 1; p++) {
+		// prevent child process from getting duplicate data from the parent buffer
+		// and eventually printing for the second time
+		fflush(stdout);
+		fflush(stderr);
 		auto pid = fork();
 		if (pid != 0) {
 			/* master */

@@ -644,6 +644,8 @@ public:
 			if (resolvedEnd == ryw->getMaxReadKey())
 				readThroughEnd = true;
 
+			result.getReadMetrics().combine(resolvedEnd.getReadMetrics());
+
 			if (begin.getKey() >= resolvedEnd && !begin.isBackward()) {
 				return result;
 			} else if (resolvedEnd == allKeys.begin) {
@@ -955,6 +957,8 @@ public:
 				readToBegin = true;
 			if (resolvedBegin == ryw->getMaxReadKey())
 				readThroughEnd = true;
+
+			result.getReadMetrics().combine(resolvedBegin.getReadMetrics());
 
 			if (resolvedBegin >= end.getKey() && end.offset <= 1) {
 				return result;
@@ -1565,29 +1569,45 @@ public:
 	}
 };
 
-ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx, Optional<Reference<Tenant>> const& tenant)
-  : ISingleThreadTransaction(cx->deferredError),
-    tr(cx, tenant),
+ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx)
+  : ReadYourWritesTransaction(Transaction(cx), cx->deferredError, cx.getTransactionDefaults()) {}
+
+ReadYourWritesTransaction::ReadYourWritesTransaction(Reference<Tenant> const& tenant)
+  : ReadYourWritesTransaction(Transaction(tenant),
+                              tenant->database()->deferredError,
+                              tenant->database().getTransactionDefaults()) {}
+
+ReadYourWritesTransaction::ReadYourWritesTransaction(Transaction&& transaction,
+                                                     Error const& deferredError,
+                                                     UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList)
+  : ISingleThreadTransaction(deferredError),
+    tr(std::move(transaction)),
+
     cache(&arena),
     writes(&arena),
-    retries(0),
-    approximateSize(0),
     creationTime(now()),
-    commitStarted(false),
     versionStampFuture(tr.getVersionstamp()),
     specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
     options(tr) {
-	std::copy(
-	    cx.getTransactionDefaults().begin(), cx.getTransactionDefaults().end(), std::back_inserter(persistentOptions));
+	std::copy(trOptionList.begin(), trOptionList.end(), std::back_inserter(persistentOptions));
 	applyPersistentOptions();
+}
+
+ReadYourWritesTransaction ReadYourWritesTransaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant,
+                                                                         Database const& cx) {
+	if (tenant.present()) {
+		return ReadYourWritesTransaction(tenant.get());
+	} else {
+		return ReadYourWritesTransaction(cx);
+	}
 }
 
 void ReadYourWritesTransaction::construct(Database const& cx) {
 	*this = ReadYourWritesTransaction(cx);
 }
 
-void ReadYourWritesTransaction::construct(Database const& cx, Reference<Tenant> const& tenant) {
-	*this = ReadYourWritesTransaction(cx, tenant);
+void ReadYourWritesTransaction::construct(Reference<Tenant> const& tenant) {
+	*this = ReadYourWritesTransaction(tenant);
 }
 
 ACTOR Future<Void> timebomb(double endTime, Promise<Void> resetPromise) {

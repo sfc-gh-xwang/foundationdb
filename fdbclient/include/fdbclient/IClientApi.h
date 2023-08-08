@@ -162,6 +162,10 @@ public:
 	// Return a JSON string containing tenant client-side status information
 	virtual ThreadFuture<Standalone<StringRef>> getClientStatus() = 0;
 
+	virtual ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) = 0;
+
+	virtual FDBAllocatorIfc* getAllocatorInterface() = 0;
+
 	virtual void addref() = 0;
 	virtual void delref() = 0;
 };
@@ -222,6 +226,10 @@ public:
 	// information.
 	virtual ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
 	    Optional<EncryptCipherDomainId> domainId) = 0;
+
+	virtual ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) = 0;
+
+	virtual FDBAllocatorIfc* getAllocatorInterface() = 0;
 
 	// used in template functions as the Transaction type that can be created through createTransaction()
 	using TransactionT = ITransaction;

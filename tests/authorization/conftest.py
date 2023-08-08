@@ -70,6 +70,13 @@ def pytest_addoption(parser):
         help="How frequently server refreshes authorization public key file",
     )
     parser.addoption(
+        "--active-public-key-ids-log-interval",
+        action="store",
+        default=1,
+        dest="active_public_key_ids_log_interval",
+        help="How frequently server logs IDs ('kid' field of JSON Web Key) of active public keys",
+    )
+    parser.addoption(
         "--force-multi-version-client",
         action="store_true",
         default=False,
@@ -106,6 +113,11 @@ def public_key_refresh_interval(request):
 
 
 @pytest.fixture(scope="session")
+def active_public_key_ids_log_interval(request):
+    return request.config.option.active_public_key_ids_log_interval
+
+
+@pytest.fixture(scope="session")
 def force_multi_version_client(request):
     return request.config.option.force_multi_version_client
 
@@ -133,6 +145,7 @@ def cluster(
     admin_ipc,
     build_dir,
     public_key_refresh_interval,
+    active_public_key_ids_log_interval,
     trusted_client,
     force_multi_version_client,
     use_grv_cache,
@@ -146,6 +159,7 @@ def cluster(
         remove_at_exit=True,
         custom_config={
             "knob-public-key-file-refresh-interval-seconds": public_key_refresh_interval,
+            "knob-active-public-key-ids-log-interval-seconds": active_public_key_ids_log_interval,
         },
     ) as cluster:
         keyfile = str(cluster.client_key_file)

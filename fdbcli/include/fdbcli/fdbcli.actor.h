@@ -247,8 +247,11 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 ACTOR Future<bool> blobKeyCommandActor(Database localDb,
                                        Optional<TenantMapEntry> tenantEntry,
                                        std::vector<StringRef> tokens);
-// blobrestore command
-ACTOR Future<bool> blobRestoreCommandActor(Database localDb, std::vector<StringRef> tokens);
+// bulkload command
+ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
+                                        Optional<TenantMapEntry> tenantEntry,
+                                        std::vector<StringRef> tokens);
+
 // hotrange command
 ACTOR Future<bool> hotRangeCommandActor(Database localDb,
                                         Reference<IDatabase> db,
@@ -296,8 +299,6 @@ ACTOR Future<bool> triggerddteaminfologCommandActor(Reference<IDatabase> db);
 ACTOR Future<bool> tssqCommandActor(Reference<IDatabase> db, std::vector<StringRef> tokens);
 // versionepoch command
 ACTOR Future<bool> versionEpochCommandActor(Reference<IDatabase> db, Database cx, std::vector<StringRef> tokens);
-// targetversion command
-ACTOR Future<bool> targetVersionCommandActor(Reference<IDatabase> db, std::vector<StringRef> tokens);
 // idempotencyids command
 ACTOR Future<bool> idempotencyIdsCommandActor(Database cx, std::vector<StringRef> tokens);
 

@@ -62,6 +62,8 @@ void AdminServer::start() {
 	assert(server_pid == -1);
 	assert(logr.isFor(ProcKind::MAIN));
 	logr.info("forking admin server process");
+	fflush(stdout);
+	fflush(stderr);
 	auto pid = fork();
 	if (pid == 0) {
 		// Update thread-local logger to modify log line header

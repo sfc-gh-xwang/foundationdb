@@ -295,6 +295,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( AVERAGE_COST_START_DELAY,                10.0 );
 	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
 	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); if ( randomize && BUGGIFY ) USE_SIMPLE_THROUGHPUT_QUOTA_CACHE = false;
+	init( TRACK_BUSY_THROTTLING_IDS,              false ); if ( randomize && BUGGIFY ) TRACK_BUSY_THROTTLING_IDS = true;
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
@@ -334,6 +335,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 	// Bulk Loading
 	init( ALLOW_BULK_LOADS,                         false );
+	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );
+	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); if ( randomize && BUGGIFY ) BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE = deterministicRandom()->randomInt(1, 10000000);
 
 	init( ENABLE_STORAGE_ENGINE_PARAM_INTERFACE,    false );
 
