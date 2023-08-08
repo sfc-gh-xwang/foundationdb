@@ -21,7 +21,7 @@
 #include "TesterUtil.h"
 #include "test/fdb_api.hpp"
 #include <memory>
-#include <unordered_set>
+#include <set>
 #include <fmt/format.h>
 
 namespace FdbApiTester {
@@ -69,7 +69,7 @@ private:
 	void randomCommitReadOp(TTaskFct cont, std::optional<int> tenantId) {
 		int numKeys = Random::get().randomInt(1, maxKeysPerTransaction);
 		auto kvPairs = std::make_shared<std::vector<fdb::KeyValue>>();
-		std::unordered_set<fdb::Key> deduplicatedKeys;
+		std::set<fdb::Key> deduplicatedKeys;
 		for (int i = 0; i < numKeys; i++) {
 			fdb::Key k = randomKey(readExistingKeysRatio, tenantId);
 			kvPairs->push_back(fdb::KeyValue{ k, randomValue() });
@@ -131,7 +131,7 @@ private:
 		int numKeys = Random::get().randomInt(1, maxKeysPerTransaction);
 		auto keys = std::make_shared<std::vector<fdb::Key>>();
 		auto results = std::make_shared<std::vector<std::optional<fdb::Value>>>();
-		std::unordered_set<fdb::Key> deduplicatedKeys;
+		std::set<fdb::Key> deduplicatedKeys;
 		for (int i = 0; i < numKeys; i++) {
 			fdb::Key k = randomKey(readExistingKeysRatio, tenantId);
 			keys->push_back(k);
