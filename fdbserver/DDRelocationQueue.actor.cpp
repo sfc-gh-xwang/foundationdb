@@ -291,6 +291,10 @@ public:
 		});
 	}
 
+	double getWriteLoad() const override {
+		return sum<double>([](IDataDistributionTeam const& team) { return team.getWriteLoad(); });
+	}
+
 	double getAverageCPU() const override {
 		return sum<double>([](IDataDistributionTeam const& team) { return team.getAverageCPU(); }) / teams.size();
 	}

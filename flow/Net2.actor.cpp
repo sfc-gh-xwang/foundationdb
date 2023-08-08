@@ -1365,6 +1365,8 @@ void Net2::initTLS(ETLSInitState targetState) {
 			boost::asio::ssl::context newContext(boost::asio::ssl::context::tls);
 			const LoadedTLSConfig& loaded = tlsConfig.loadSync();
 			TraceEvent("Net2TLSConfig")
+			    .detail("TLSV12Enabled", FLOW_KNOBS->TLS_V1_2_ALLOWED)
+			    .detail("TLSV13Enabled", FLOW_KNOBS->TLS_V1_3_ALLOWED)
 			    .detail("CAPath", tlsConfig.getCAPathSync())
 			    .detail("CertificatePath", tlsConfig.getCertificatePathSync())
 			    .detail("KeyPath", tlsConfig.getKeyPathSync())

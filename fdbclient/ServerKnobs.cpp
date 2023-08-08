@@ -192,7 +192,14 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 		DD_UPPER_CPU_PIVOT_RATIO = DD_LOWER_CPU_PIVOT_RATIO + (0.999 - DD_LOWER_CPU_PIVOT_RATIO) * deterministicRandom()->random01();
 	}
 	ASSERT_LE(DD_LOWER_CPU_PIVOT_RATIO, DD_UPPER_CPU_PIVOT_RATIO);
-	init( DD_REEVALUATION_ENABLED,                             false); if( isSimulated ) DD_REEVALUATION_ENABLED = deterministicRandom()->coinflip();
+	init( DD_LOWER_WRITE_PIVOT_RATIO,                             0.7 );
+	init( DD_UPPER_WRITE_PIVOT_RATIO,                             0.9 );
+	ASSERT_LE(DD_LOWER_WRITE_PIVOT_RATIO, DD_UPPER_WRITE_PIVOT_RATIO);
+	if (randomize && BUGGIFY) {
+		DD_LOWER_WRITE_PIVOT_RATIO = deterministicRandom()->random01() * 0.4 + 0.5;
+		DD_UPPER_WRITE_PIVOT_RATIO = DD_LOWER_WRITE_PIVOT_RATIO + (0.999 - DD_LOWER_WRITE_PIVOT_RATIO) * deterministicRandom()->random01();
+	}
+	init( DD_REEVALUATION_ENABLED,                               false); if( isSimulated ) DD_REEVALUATION_ENABLED = deterministicRandom()->coinflip();
 
 	// In simulation, the CPU percent of every storage server is hard-coded as 100.0%. It is difficult to test pivot CPU in normal simulation. TODO: add mock DD Test case for it.
 	// TODO: choose a meaning value for real cluster
@@ -590,6 +597,11 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( PROXY_COMPUTE_GROWTH_RATE,                             0.01 );
 	init( TXN_STATE_SEND_AMOUNT,                                    4 );
 	init( REPORT_TRANSACTION_COST_ESTIMATION_DELAY,               0.1 );
+	// In simulation, we cannot efficiently simulate a very large workload, so using the
+	// default CP_MIN_TAG_WRITE_PAGES_RATE value of 100 causes undercounting of write throughput
+	// that is substantial. To work around this, set CP_MIN_TAG_WRITE_PAGES_RATE to 1 in simulation.
+	init( CP_MIN_TAG_WRITE_PAGES_RATE,                             50 ); if( isSimulated ) CP_MIN_TAG_WRITE_PAGES_RATE = 1;
+	init( CP_THROTTLE_TAGS_TRACKED,                                10 ); if(randomize && BUGGIFY) CP_THROTTLE_TAGS_TRACKED = deterministicRandom()->randomInt(5, 15);
 	init( PROXY_REJECT_BATCH_QUEUED_TOO_LONG,                    true );
 
 	bool buggfyUseResolverPrivateMutations = randomize && BUGGIFY && !ENABLE_VERSION_VECTOR_TLOG_UNICAST;
@@ -845,14 +857,15 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( SPLIT_JITTER_AMOUNT,                                  0.05 ); if( randomize && BUGGIFY ) SPLIT_JITTER_AMOUNT = 0.2;
 	init( IOPS_UNITS_PER_SAMPLE,                                10000 * 1000 / STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS / 100 );
 	init( BYTES_WRITTEN_UNITS_PER_SAMPLE,                           SHARD_MIN_BYTES_PER_KSEC / STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS / 25 );
-	init( BYTES_READ_UNITS_PER_SAMPLE,                          100000 ); // 100K bytes
-	init( OPS_READ_UNITS_PER_SAMPLE, 100 * STORAGE_METRICS_AVERAGE_INTERVAL ); // during a sampling interval, on a Storage Server, there are about (readOps Per Second To the SS / 100 ) is in the sampler.
-	init( READ_HOT_SUB_RANGE_CHUNK_SIZE,                        10000000); // 10MB
-	init( EMPTY_READ_PENALTY,                                   20 ); // 20 bytes
+	init( BYTES_READ_UNITS_PER_SAMPLE,                        100000 ); // 100K bytes
+	init( OPS_READ_UNITS_PER_SAMPLE, 100 * STORAGE_METRICS_AVERAGE_INTERVAL ); // One sample per measurement interval for each 100 ops/s read rate 
+	init( READ_HOT_SUB_RANGE_CHUNK_SIZE,                    10000000 ); // 10MB
+	init( EMPTY_READ_PENALTY,                                     20 ); // 20 bytes
 	init( DD_SHARD_COMPARE_LIMIT,                               1000 );
 	init( READ_SAMPLING_ENABLED,                                true ); if ( randomize && BUGGIFY ) READ_SAMPLING_ENABLED = false;// enable/disable read sampling
-	init( DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL,                   120);
-	init( MOVING_WINDOW_SAMPLE_SIZE,                         10000000); // 10MB
+	init( DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL,                  120 );
+	init( MOVING_WINDOW_SAMPLE_SIZE,                        10000000 ); // 10MB
+	init( READ_METRICS_INCLUDE_SYSTEM_KEYS,                     true );
 
 	//Storage Server
 	init( STORAGE_LOGGING_DELAY,                                 5.0 );
@@ -876,7 +889,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( STORAGE_DURABILITY_LAG_REJECT_THRESHOLD,              0.25 );
 	init( STORAGE_DURABILITY_LAG_MIN_RATE,                       0.1 );
 	init( STORAGE_COMMIT_INTERVAL,                               0.5 ); if( randomize && BUGGIFY ) STORAGE_COMMIT_INTERVAL = 2.0;
-
+	init( ENABLE_READ_RANGE_BUSYNESS_REPORTING,                 true ); if( randomize && BUGGIFY ) ENABLE_READ_RANGE_BUSYNESS_REPORTING = false;
+	init( SHARD_READ_SAMPLE_UPDATE_INTERVAL,                    30.0 ); if( randomize && BUGGIFY ) SHARD_READ_SAMPLE_UPDATE_INTERVAL = 0;
 
 	// Constants which affect the fraction of data which is sampled
 	// by storage severs to estimate key-range sizes and splits.
@@ -1204,6 +1218,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 
 
 	init( CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO,                0.5 ); if( randomize && BUGGIFY ) CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO = deterministicRandom()->random01();
+	init( ENABLE_CONSISTENCY_SCAN,                              true );
 
 	// Drop in-memory state associated with an idempotency id after this many seconds. Once dropped, this id cannot be
 	// expired proactively, but will eventually get cleaned up by the idempotency id cleaner.
@@ -1216,6 +1231,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Bulk Load
 	init( BULK_LOAD_FILE_POINTER_BATCH_SIZE,                     100 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_POINTER_BATCH_SIZE = deterministicRandom()->randomInt(10, 100);
 	init( BULK_LOAD_PARALLEL_FILE_VALIDATIONS,                     1 ); if ( randomize && BUGGIFY ) BULK_LOAD_PARALLEL_FILE_VALIDATIONS = deterministicRandom()->randomInt(1, 10);
+
 	// clang-format on
 
 	if (clientKnobs) {

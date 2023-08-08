@@ -75,6 +75,12 @@ struct KeyData {
 
 static std::vector<int> targetValSizes = { 40, 100, 500 };
 
+struct ExtraTenantData {
+	TenantName name;
+	Reference<Tenant> tenant;
+	KeyRange range;
+};
+
 struct ThreadData : ReferenceCounted<ThreadData>, NonCopyable {
 	// directory info
 	int32_t directoryID;
@@ -231,6 +237,9 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 	std::vector<Reference<ThreadData>> directories;
 	std::vector<Future<Void>> clients;
 	DatabaseConfiguration config;
+
+	std::vector<ExtraTenantData> extraTenants;
+	Future<Void> extraTenantsClient;
 
 	BlobGranuleCorrectnessWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
 		doSetup = !clientId; // only do this on the "first" client
@@ -1152,6 +1161,59 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		}
 	}
 
+	ACTOR Future<ExtraTenantData> createAndBlobbifyExtraTenant(Database cx,
+	                                                           BlobGranuleCorrectnessWorkload* self,
+	                                                           TenantName name) {
+		TenantMapEntry entry = wait(self->setUpTenant(cx, name));
+		state ExtraTenantData data;
+		data.name = name;
+		data.tenant = makeReference<Tenant>(cx, name);
+		bool success = wait(cx->blobbifyRange(normalKeys, data.tenant));
+		ASSERT(success);
+		return data;
+	}
+
+	ACTOR Future<Void> makeExtraTenants(Database cx, BlobGranuleCorrectnessWorkload* self) {
+		state int desiredExtraTenants = deterministicRandom()->randomSkewedUInt32(10, 100);
+		int desiredBatches = deterministicRandom()->randomSkewedUInt32(1, desiredExtraTenants / 2);
+		state int tenantsPerBatch = desiredExtraTenants / desiredBatches;
+		state double expectedDelayBetweenBatches = self->testDuration / (desiredBatches + 1);
+
+		if (BGW_DEBUG) {
+			fmt::print("Expecting to create {0} extra tenants\n", desiredExtraTenants);
+		}
+
+		wait(delayJittered(deterministicRandom()->random01() * expectedDelayBetweenBatches));
+
+		loop {
+			// average out to expected delay between batches, and only sleep extra time that creating batch didn't take
+			state Future<Void> sleepAfter =
+			    delayJittered(deterministicRandom()->random01() * 2 * expectedDelayBetweenBatches);
+
+			state int toCreate = std::min<int>(desiredExtraTenants - self->extraTenants.size(),
+			                                   deterministicRandom()->randomInt(1, 2 * tenantsPerBatch + 1));
+			if (toCreate <= 0) {
+				return Void();
+			}
+
+			state std::vector<Future<ExtraTenantData>> newTenants;
+			newTenants.reserve(toCreate);
+			state int i;
+			for (i = 0; i < toCreate; i++) {
+				int idx = self->extraTenants.size() + i;
+				Standalone<StringRef> name = StringRef("bgExtraTenant_" + std::to_string(idx));
+				newTenants.push_back(self->createAndBlobbifyExtraTenant(cx, self, name));
+			}
+
+			for (i = 0; i < toCreate; i++) {
+				ExtraTenantData newTenant = wait(newTenants[i]);
+				self->extraTenants.push_back(newTenant);
+			}
+
+			wait(sleepAfter);
+		}
+	}
+
 	Future<Void> start(Database const& cx) override {
 		clients.reserve(3 * directories.size());
 		for (auto& it : directories) {
@@ -1169,6 +1231,10 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			}
 			clients.push_back(timeout(writeWorker(this, start, cx, it), testDuration, Void()));
 			clients.push_back(timeout(readWorker(this, start, cx, it), testDuration, Void()));
+		}
+		if (g_network->isSimulated() && !g_simulator->willRestart && clientId == 0 &&
+		    deterministicRandom()->coinflip()) {
+			extraTenantsClient = makeExtraTenants(cx, this);
 		}
 		return delay(testDuration);
 	}
@@ -1274,6 +1340,52 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		return result;
 	}
 
+	ACTOR Future<Void> checkExtraTenants(Database cx, BlobGranuleCorrectnessWorkload* self) {
+		if (self->extraTenants.empty()) {
+			fmt::print("Check Extra Tenants empty\n");
+			return Void();
+		}
+		CODE_PROBE(true, "extra tenants to check in BGCorrectness");
+		state std::unordered_set<int> completed;
+		loop {
+			// do verifies for all ranges, and when successful, add to completed
+			state std::vector<std::pair<int, Future<Version>>> attempts;
+			state int i;
+			for (i = 0; i < self->extraTenants.size(); i++) {
+				if (!completed.contains(i)) {
+					attempts.push_back(
+					    { i, cx->verifyBlobRange(normalKeys, latestVersion, self->extraTenants[i].tenant) });
+				}
+			}
+
+			if (attempts.empty()) {
+				if (BGW_DEBUG) {
+					fmt::print("Check Extra Tenants complete\n");
+				}
+				return Void();
+			}
+
+			fmt::print("Checking {0} extra tenants\n", attempts.size());
+			state int unsuccessful = 0;
+			for (i = 0; i < attempts.size(); i++) {
+				Version v = wait(attempts[i].second);
+				if (v != invalidVersion) {
+					// successful
+					completed.insert(attempts[i].first);
+				} else {
+					unsuccessful++;
+				}
+			}
+			fmt::print("Checking {0} extra tenants succeeded on {1}, failed for {2}\n",
+			           attempts.size(),
+			           attempts.size() - unsuccessful,
+			           unsuccessful);
+			if (unsuccessful > 0) {
+				wait(delayJittered(5.0));
+			}
+		}
+	}
+
 	ACTOR Future<bool> _check(Database cx, BlobGranuleCorrectnessWorkload* self) {
 		// check error counts, and do an availability check at the end
 		state std::vector<Future<bool>> results;
@@ -1286,6 +1398,9 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			bool dirSuccess = wait(f);
 			allSuccessful &= dirSuccess;
 		}
+
+		self->extraTenantsClient.cancel();
+		wait(self->checkExtraTenants(cx, self));
 
 		// do feed cleanup check only after data is guaranteed to be available for each granule
 		state Future<Void> checkFeedCleanupFuture;

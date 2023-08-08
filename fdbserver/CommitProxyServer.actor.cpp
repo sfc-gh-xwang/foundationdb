@@ -58,6 +58,7 @@
 #include "fdbserver/ServerDBInfo.actor.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/WorkerInterface.actor.h"
+#include "fdbserver/SSCommitCostCounter.h"
 #include "flow/ActorCollection.h"
 #include "flow/CodeProbe.h"
 #include "flow/EncryptUtils.h"
@@ -2818,6 +2819,8 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 
 	wait(delay(0, TaskPriority::DefaultEndpoint));
 
+	// FIXME: wait for hybrid read version as part of this - need to specify in request  - then check CP state to see if
+	// tenant locked as of version and reject if so
 	bool validTenant = wait(checkTenant(commitData, req.tenant.tenantId, minVersion, "GetBlobGranuleLocation"));
 
 	if (!validTenant) {
@@ -3318,9 +3321,10 @@ ACTOR Future<Void> proxyCheckSafeExclusion(Reference<AsyncVar<ServerDBInfo> cons
 
 ACTOR Future<Void> reportTxnTagCommitCost(UID myID,
                                           Reference<AsyncVar<ServerDBInfo> const> db,
-                                          UIDTransactionTagMap<TransactionCommitCostEstimation>* ssTrTagCommitCost) {
+                                          SSCommitCostCounter* ssTrTagCommitCost) {
 	state Future<Void> nextRequestTimer = Never();
 	state Future<Void> nextReply = Never();
+	state double lastReq = 0;
 	if (db->get().ratekeeper.present())
 		nextRequestTimer = Void();
 	loop choose {
@@ -3335,10 +3339,11 @@ ACTOR Future<Void> reportTxnTagCommitCost(UID myID,
 		}
 		when(wait(nextRequestTimer)) {
 			nextRequestTimer = Never();
+			double elapsed = now() - lastReq;
+			lastReq = now();
 			if (db->get().ratekeeper.present()) {
 				nextReply = brokenPromiseToNever(db->get().ratekeeper.get().reportCommitCostEstimation.getReply(
-				    ReportCommitCostEstimationRequest(std::move(*ssTrTagCommitCost))));
-				ssTrTagCommitCost->clear();
+				    ReportCommitCostEstimationRequest(ssTrTagCommitCost->getTopBusyTagCost(elapsed))));
 			} else {
 				nextReply = Never();
 			}

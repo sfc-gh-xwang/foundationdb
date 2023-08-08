@@ -30,6 +30,8 @@ Commands within ``fdbcli``
 
 The following commands can be issued from within ``fdbcli`` at the internal ``fdb>`` prompt:
 
+.. _fdbcli-advanceversion:
+
 advanceversion
 --------------
 
