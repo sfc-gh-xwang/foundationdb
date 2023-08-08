@@ -95,6 +95,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	int maxTenants;
 	int maxTenantGroups;
 	int tenantGroupCapacity;
+	int timeoutLimit;
 	metacluster::metadata::management::MovementRecord moveRecord;
 	bool badCopy;
 
@@ -116,6 +117,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		reservedQuota = getOption(options, "reservedQuota"_sr, 0);
 		totalQuota = getOption(options, "totalQuota"_sr, 1e8);
 		storageQuota = getOption(options, "storageQuota"_sr, 1e8);
+		timeoutLimit = getOption(options, "timeoutLimit"_sr, 2);
 		badCopy = getOption(options, "badCopy"_sr, deterministicRandom()->random01() < 0.05);
 	}
 
@@ -364,6 +366,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	                                    ClusterName srcCluster,
 	                                    ClusterName dstCluster) {
 		state std::vector<std::string> messages;
+		state int timeouts = 0;
 		loop {
 			try {
 				TraceEvent("MetaclusterMoveAbortBegin")
@@ -372,7 +375,12 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				Future<Void> abortFuture = metacluster::abortTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages);
-				Optional<Void> result = wait(timeout(abortFuture, deterministicRandom()->randomInt(1, 30)));
+				state Optional<Void> result;
+				if (timeouts >= self->timeoutLimit) {
+					wait(store(result, abortFuture));
+				} else {
+					wait(store(result, timeout(abortFuture, deterministicRandom()->randomInt(1, 30))));
+				}
 				if (result.present()) {
 					TraceEvent(SevDebug, "MetaclusterMoveAbortComplete")
 					    .detail("TenantGroup", tenantGroup)
@@ -387,6 +395,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					}
 					break;
 				}
+				timeouts++;
 				TraceEvent("MetaclusterMoveAbortTimedOut")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
@@ -419,6 +428,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	                                    ClusterName srcCluster,
 	                                    ClusterName dstCluster) {
 		state std::vector<std::string> messages;
+		state int timeouts = 0;
 		loop {
 			try {
 				TraceEvent("MetaclusterMoveStartBegin")
@@ -427,7 +437,12 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				Future<Void> startFuture = metacluster::startTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages);
-				Optional<Void> result = wait(timeout(startFuture, deterministicRandom()->randomInt(1, 30)));
+				state Optional<Void> result;
+				if (timeouts >= self->timeoutLimit) {
+					wait(store(result, startFuture));
+				} else {
+					wait(store(result, timeout(startFuture, deterministicRandom()->randomInt(1, 30))));
+				}
 				if (result.present()) {
 					TraceEvent(SevDebug, "MetaclusterMoveStartComplete")
 					    .detail("TenantGroup", tenantGroup)
@@ -435,6 +450,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					    .detail("DestinationCluster", dstCluster);
 					break;
 				}
+				timeouts++;
 				TraceEvent("MetaclusterMoveStartTimedOut")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
@@ -498,6 +514,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				}
 			}
 		}
+		state int timeouts = 0;
 		loop {
 			try {
 				TraceEvent("MetaclusterMoveSwitchBegin")
@@ -506,7 +523,12 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				Future<Void> switchFuture = metacluster::switchTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages);
-				Optional<Void> result = wait(timeout(switchFuture, deterministicRandom()->randomInt(1, 30)));
+				state Optional<Void> result;
+				if (timeouts >= self->timeoutLimit) {
+					wait(store(result, switchFuture));
+				} else {
+					wait(store(result, timeout(switchFuture, deterministicRandom()->randomInt(1, 30))));
+				}
 				if (result.present()) {
 					TraceEvent(SevDebug, "MetaclusterMoveSwitchComplete")
 					    .detail("TenantGroup", tenantGroup)
@@ -517,6 +539,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					}
 					break;
 				}
+				timeouts++;
 				TraceEvent("MetaclusterMoveSwitchTimedOut")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
@@ -558,6 +581,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	                                     ClusterName srcCluster,
 	                                     ClusterName dstCluster) {
 		state std::vector<std::string> messages;
+		state int timeouts = 0;
 		// finish tenant move will fail to abort if movement record has been updated
 		// expect this case and keep trying to finish
 		loop {
@@ -568,7 +592,12 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				Future<Void> finishFuture = metacluster::finishTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages);
-				Optional<Void> result = wait(timeout(finishFuture, deterministicRandom()->randomInt(1, 30)));
+				state Optional<Void> result;
+				if (timeouts >= self->timeoutLimit) {
+					wait(store(result, finishFuture));
+				} else {
+					wait(store(result, timeout(finishFuture, deterministicRandom()->randomInt(1, 30))));
+				}
 				if (result.present()) {
 					TraceEvent(SevDebug, "MetaclusterMoveFinishComplete")
 					    .detail("TenantGroup", tenantGroup)
@@ -576,6 +605,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					    .detail("DestinationCluster", dstCluster);
 					break;
 				}
+				timeouts++;
 				TraceEvent("MetaclusterMoveFinishTimedOut")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
