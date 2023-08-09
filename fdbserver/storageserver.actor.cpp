@@ -12240,13 +12240,16 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
 		return Void();
 
+	state bool criticalSection = false;
+
 	loop {
 		choose {
 			when(waitNext(self->emptyVersionWaitEmergencyNotify.getFuture())) {
-				if (!self->logSystem) {
+				if (!self->logSystem || criticalSection) {
 					continue;
 				}
 
+				criticalSection = true;
 				state double emergencyWaitWindow = 0;
 				traceWaitWindowDecision(self, emergencyWaitWindow, self->emptyVerionWaitLastWindow);
 				if (emergencyWaitWindow != self->emptyVerionWaitLastWindow) {
@@ -12255,27 +12258,30 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				resetWaitWindowStatistics(self);
 				self->emptyVerionWaitLastWindow = emergencyWaitWindow;
 				self->emptyVersionWaitEmergencyTransition = false;
+				criticalSection = false;
 			}
 			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL))) {
-				if (!self->logSystem) {
+				if (!self->logSystem || criticalSection) {
 					continue;
 				}
 
+				criticalSection = true;
 				state uint64_t mutationSize = self->emptyVersionWaitMutationStats.positiveSampleNum +
 				                              self->emptyVersionWaitMutationStats.negativeSampleNum;
 				state uint64_t nonMutationSize = self->emptyVersionWaitNonMutationStats.positiveSampleNum +
 				                                 self->emptyVersionWaitNonMutationStats.negativeSampleNum;
 				state uint64_t sampleCount = mutationSize + nonMutationSize;
-				state double targetWaitWindow = 0;
 
 				if (sampleCount < SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT) {
 					TraceEvent("EmptyVersionWaitWindowSkip", self->thisServerID)
-					    .suppressFor(20)
+					    .suppressFor(30)
 					    .detail("SketchSize", sampleCount);
+					criticalSection = false;
 					continue;
 				}
 
 				// Decide wait window
+				state double targetWaitWindow = 0;
 				if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE == 0) {
 					targetWaitWindow =
 					    mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD *
@@ -12300,6 +12306,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWindow);
 					resetWaitWindowStatistics(self);
 					self->emptyVerionWaitLastWindow = targetWaitWindow;
+					criticalSection = false;
 					continue;
 				}
 
@@ -12319,6 +12326,7 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 				}
 				resetWaitWindowStatistics(self);
 				self->emptyVerionWaitLastWindow = targetWaitWindow;
+				criticalSection = false;
 			}
 		}
 	}
