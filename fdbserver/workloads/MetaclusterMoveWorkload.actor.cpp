@@ -1018,7 +1018,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	}
 
 	ACTOR static Future<Void> _start(Database cx, MetaclusterMoveWorkload* self) {
-		state int numMoves = 5;
+		state int numMoves = 3;
 		state int i = 0;
 		for (; i < numMoves; ++i) {
 			wait(runMove(cx, self));

@@ -736,7 +736,7 @@ struct StartTenantMovementImpl {
 				self->mgmtStartVersion = vs;
 			} catch (Error& e) {
 				// This can happen because of commit_unknown_result. Use the read version instead
-				if (e.code() == error_code_transaction_invalid_version) {
+				if (e.code() == error_code_transaction_invalid_version || e.code() == error_code_broken_promise) {
 					wait(self->srcCtx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 						return storeReadVersion<DB>(&self->mgmtStartVersion, tr);
 					}));
@@ -1543,7 +1543,7 @@ struct AbortTenantMovementImpl {
 			self->abortVersion = vs;
 		} catch (Error& e) {
 			// This can happen because of commit_unknown_result. Use the read version instead
-			if (e.code() == error_code_transaction_invalid_version) {
+			if (e.code() == error_code_transaction_invalid_version || e.code() == error_code_broken_promise) {
 				wait(self->srcCtx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 					return storeReadVersion<DB>(&self->abortVersion, tr);
 				}));
@@ -1731,9 +1731,9 @@ struct AbortTenantMovementImpl {
 				                  Optional<metadata::management::MovementRecord> movementRecord) {
 					    return initAbort(self, tr, movementRecord);
 				    }));
-				wait(self->dstCtx.runDataClusterTransaction(
-				    [self = self](Reference<ITransaction> tr) { return writeDataAbortVersion(self, tr); }));
 				wait(self->srcCtx.runDataClusterTransaction(
+				    [self = self](Reference<ITransaction> tr) { return writeDataAbortVersion(self, tr); }));
+				wait(self->dstCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return writeDataAbortVersion(self, tr); }));
 				if (exitSignal) {
 					return Void();
