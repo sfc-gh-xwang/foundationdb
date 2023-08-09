@@ -6355,12 +6355,14 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 
 		self->addActor.send(watchBackupEnabled(self));
 
-		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
-		                                                         const BulkLoadStatus::State& state) {
-			return trackBulkLoad(self, id, state);
-		};
-		state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);
-		self->addActor.send(bulkLoadTracker.start());
+		if (CLIENT_KNOBS->ALLOW_BULK_LOADS) {
+			BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
+			                                                         const BulkLoadStatus::State& state) {
+				return trackBulkLoad(self, id, state);
+			};
+			state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);
+			self->addActor.send(bulkLoadTracker.start());
+		}
 
 		loop choose {
 			when(wait(self->iAmReplaced.getFuture())) {
