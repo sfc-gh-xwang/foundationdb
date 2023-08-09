@@ -80,7 +80,6 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	};
 
 	int nodeCount;
-	double transactionsPerSecond;
 	Key keyPrefix;
 
 	Reference<IDatabase> managementDb;
@@ -105,8 +104,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	int64_t storageQuota;
 
 	MetaclusterMoveWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
-		transactionsPerSecond = getOption(options, "transactionsPerSecond"_sr, 5000.0);
-		nodeCount = getOption(options, "nodeCount"_sr, transactionsPerSecond);
+		nodeCount = getOption(options, "nodeCount"_sr, 5000.0);
 		keyPrefix = unprintable(getOption(options, "keyPrefix"_sr, ""_sr).toString());
 		maxTenants =
 		    deterministicRandom()->randomInt(1, std::min<int>(1e8 - 1, getOption(options, "maxTenants"_sr, 100)) + 1);
@@ -651,6 +649,9 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				}
 				if (err.code() == error_code_tenant_move_failed) {
 					// Retryable error
+					TraceEvent("MetaclusterMoveAdvanceVersion")
+					    .detail("ClusterName", dstCluster)
+					    .detail("TargetVersion", self->moveRecord.version);
 					wait(advanceVersion(self->dataDbs[dstCluster].db, self->moveRecord.version));
 					continue;
 				}

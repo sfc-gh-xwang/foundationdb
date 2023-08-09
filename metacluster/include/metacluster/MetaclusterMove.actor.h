@@ -1522,16 +1522,18 @@ struct AbortTenantMovementImpl {
 	}
 
 	ACTOR static Future<Void> writeDataAbortVersion(AbortTenantMovementImpl* self, Reference<ITransaction> tr) {
-		ASSERT(self->vsFuture.present());
-		try {
-			state Standalone<StringRef> result = wait(safeThreadFutureToFuture(self->vsFuture.get()));
-			Versionstamp vs(result);
-			self->abortVersion = vs;
-		} catch (Error& e) {
-			TraceEvent("TenantMoveWriteAbortVersionError").error(e).backtrace();
-			throw e;
+		if (self->abortVersion == Versionstamp()) {
+			ASSERT(self->vsFuture.present());
+			try {
+				state Standalone<StringRef> result = wait(safeThreadFutureToFuture(self->vsFuture.get()));
+				Versionstamp vs(result);
+				self->abortVersion = vs;
+			} catch (Error& e) {
+				TraceEvent("TenantMoveWriteAbortVersionError").error(e).backtrace();
+				throw e;
+			}
 		}
-		metadata::data::emergency_movement::lastTenantMoveAbort().setVersionstamp(tr, self->abortVersion, 0);
+		metadata::data::emergency_movement::lastTenantMoveAbort().set(tr, self->abortVersion);
 		return Void();
 	}
 
