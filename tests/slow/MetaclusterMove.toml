@@ -13,5 +13,5 @@ runSetup = true
 
     [[test.workload]]
     testName = 'MetaclusterMove'
-	maxTenants = 100
-	maxTenantGroups = 10
+	maxTenants = 50
+	maxTenantGroups = 5

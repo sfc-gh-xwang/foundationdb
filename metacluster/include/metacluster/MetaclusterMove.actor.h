@@ -19,6 +19,7 @@
  */
 
 #pragma once
+#include "fdbclient/Knobs.h"
 #if defined(NO_INTELLISENSE) && !defined(METACLUSTER_METACLUSTERMOVE_ACTOR_G_H)
 #define METACLUSTER_METACLUSTERMOVE_ACTOR_G_H
 #include "metacluster/MetaclusterMove.actor.g.h"
@@ -244,7 +245,26 @@ static Future<Void> switchMetadata(Reference<typename DB::TransactionT> tr,
 	TraceEvent("TenantMoveSwitchBegin");
 
 	state std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantMetadataList;
-	wait(store(tenantMetadataList, listTenantMetadataTransaction(tr, tenantsInGroup)));
+	state std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantMetadataListCheck;
+	wait(store(tenantMetadataList, listTenantMetadataTransaction(tr, tenantsInGroup)) &&
+	     store(tenantMetadataListCheck,
+	           listTenantMetadataTransaction(tr,
+	                                         TenantNameRef(""_sr),
+	                                         TenantNameRef("\xff"_sr),
+	                                         CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER,
+	                                         tenantGroup)));
+	// Verify that the tenants read are equivalent to what the internal view of them are
+	if (tenantMetadataList != tenantMetadataListCheck) {
+		TraceEvent(SevError, "TenantMoveSwitchTenantsInGroupMismatch")
+		    .detail("ExpectedNumTenants", tenantMetadataList.size())
+		    .detail("ActualNumTenants", tenantMetadataListCheck.size());
+		messages->push_back(fmt::format("Tenant move switch: tenantGroup with incorrect number of tenants\n"
+		                                "		expected number of tenants:		{}\n"
+		                                "		actual number of tenants:		{}\n",
+		                                tenantMetadataList.size(),
+		                                tenantMetadataListCheck.size()));
+		throw invalid_tenant_move();
+	}
 
 	for (auto& tenantPair : tenantMetadataList) {
 		state TenantName tName = tenantPair.first;
@@ -343,30 +363,34 @@ static Future<Void> checkValidDelete(Reference<typename DB::TransactionT> tr,
 	state std::vector<TenantMapEntry> deleteEntries = aborting ? dstEntries : srcEntries;
 	state std::vector<TenantMapEntry> otherEntries = aborting ? srcEntries : dstEntries;
 	state size_t iterLen = tenantsInGroup.size();
-	if (iterLen != srcEntries.size()) {
+	// If there are extra tenants on the side we're trying to delete (src forward, dst backwards),
+	// throw an error, let the operator do some work before retrying
+	if (iterLen != deleteEntries.size()) {
 		TraceEvent(SevError, "TenantMoveCheckValidDeleteEntriesSizeDiff")
-		    .detail("SrcEntriesSize", srcEntries.size())
+		    .detail("DeleteEntriesSize", deleteEntries.size())
 		    .detail("TenantsInGroup", iterLen);
 		fmt::print(
-		    "Tenant move check delete: The number of source tenant entries does not match the expected number of "
+		    "Tenant move check delete: The number of delete tenant entries does not match the expected number of "
 		    "tenants in the group {}:\n"
-		    "	# Source tenant entries:				{}"
+		    "	# Delete tenant entries:				{}"
 		    "	# Tenants expected in tenant group:		{}",
 		    tenantGroup,
-		    srcEntries.size(),
+		    deleteEntries.size(),
 		    iterLen);
 		throw invalid_tenant_move();
 	}
-	if (iterLen != dstEntries.size()) {
+	// Allow extra entries on the non-deleted side
+	if (iterLen != otherEntries.size()) {
+		// TODO: Find and remove the extra entries for the purposes of this check
 		TraceEvent(SevError, "TenantMoveCheckValidDeleteOtherEntriesSizeDiff")
-		    .detail("DstEntriesSize", dstEntries.size())
+		    .detail("OtherEntriesSize", otherEntries.size())
 		    .detail("TenantsInGroup", iterLen);
-		fmt::print("Tenant move check delete: The number of destination tenant entries does not match the expected "
+		fmt::print("Tenant move check delete: The number of other new tenant entries does not match the expected "
 		           "number of tenants in the group {}:\n"
-		           "	# Destination tenant entries:			{}"
+		           "	# Other new tenant entries:				{}"
 		           "	# Tenants expected in tenant group:		{}",
 		           tenantGroup,
-		           dstEntries.size(),
+		           otherEntries.size(),
 		           iterLen);
 		throw invalid_tenant_move();
 	}
@@ -522,6 +546,12 @@ struct StartTenantMovementImpl {
 			// clusterTenantCount to accommodate for capacity calculations
 			int numTenants = self->tenantsInGroup.size();
 			metadata::management::clusterTenantCount().atomicOp(tr, dstName, numTenants, MutationRef::AddValue);
+			int64_t clusterTenantCount =
+			    wait(metadata::management::clusterTenantCount().getD(tr, dstName, Snapshot::False, 0));
+			if (clusterTenantCount > CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER) {
+				CODE_PROBE(true, "Cluster tenant capacity exceeded");
+				throw cluster_no_capacity();
+			}
 			self->vsFuture = tr->getVersionstamp();
 		} else {
 			self->moveRecord = movementRecord.get();
@@ -728,22 +758,11 @@ struct StartTenantMovementImpl {
 		                                                Optional<metadata::management::MovementRecord> movementRecord) {
 			                                  return initializeMove(self, tr, movementRecord);
 		                                  }));
-		// Check "move" tombstones instead of tenant tombstones
-		if (self->vsFuture.present()) {
-			try {
-				state Standalone<StringRef> result = wait(safeThreadFutureToFuture(self->vsFuture.get()));
-				Versionstamp vs(result);
-				self->mgmtStartVersion = vs;
-			} catch (Error& e) {
-				// This can happen because of commit_unknown_result. Use the read version instead
-				if (e.code() == error_code_transaction_invalid_version || e.code() == error_code_broken_promise) {
-					wait(self->srcCtx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
-						return storeReadVersion<DB>(&self->mgmtStartVersion, tr);
-					}));
-				} else {
-					throw;
-				}
-			}
+		// Default versionstamp is invalidVersion
+		if (self->mgmtStartVersion == Versionstamp()) {
+			state Standalone<StringRef> result = wait(safeThreadFutureToFuture(self->vsFuture.get()));
+			Versionstamp vs(result);
+			self->mgmtStartVersion = vs;
 		}
 		if (self->moveRecord.mState < metadata::management::MovementState::START_CREATE) {
 			wait(self->srcCtx.runDataClusterTransaction(
@@ -828,14 +847,14 @@ struct SwitchTenantMovementImpl {
 	}
 
 	ACTOR static Future<RangeReadResult> readTenantData(Reference<ITransaction> tr,
-	                                                    KeyRef begin,
-	                                                    KeyRef end,
+	                                                    KeySelectorRef begin,
+	                                                    KeySelectorRef end,
 	                                                    int64_t limit,
 	                                                    ThreadFuture<RangeReadResult>* resultFuture) {
 		loop {
 			try {
 				tr->setOption(FDBTransactionOptions::Option::LOCK_AWARE);
-				*resultFuture = tr->getRange(KeyRangeRef(begin, end), limit);
+				*resultFuture = tr->getRange(begin, end, limit);
 				RangeReadResult result = wait(safeThreadFutureToFuture(*resultFuture));
 				return result;
 			} catch (Error& e) {
@@ -851,8 +870,8 @@ struct SwitchTenantMovementImpl {
 		state Reference<ITransaction> srcTr = srcTenant->createTransaction();
 		state Reference<ITransaction> dstTr = dstTenant->createTransaction();
 
-		state KeyRef begin = ""_sr;
-		state KeyRef end = "\xff"_sr;
+		state KeySelectorRef begin = firstGreaterOrEqual(""_sr);
+		state KeySelectorRef end = firstGreaterOrEqual("\xff"_sr);
 		// what should limit be?
 		state int64_t limit = 10000;
 
@@ -873,13 +892,16 @@ struct SwitchTenantMovementImpl {
 				    .detail("End", end)
 				    .detail("SrcSize", srcRange.size())
 				    .detail("DstSize", dstRange.size());
-				self->messages.push_back(fmt::format(
-				    "Tenant move switch: data mismatch in range {} - {} for tenant {}\n", begin, end, tName));
+				self->messages.push_back(
+				    fmt::format("Tenant move switch: data mismatch in range {} - {} for tenant {}\n",
+				                begin.toString(),
+				                end.toString(),
+				                tName));
 				throw invalid_tenant_move();
 			}
 
 			if (srcRange.more) {
-				begin = srcRange.nextBeginKeySelector().getKey();
+				begin = srcRange.nextBeginKeySelector();
 			} else {
 				break;
 			}
@@ -902,7 +924,7 @@ struct SwitchTenantMovementImpl {
 
 	ACTOR static Future<Void> applyHybridRanges(SwitchTenantMovementImpl* self) {
 		// container of range-based for with continuation must be a state variable
-		state std::vector<std::pair<TenantName, int64_t>> tenantsInGroup = self->tenantsInGroup;
+		state std::vector<std::pair<TenantName, int64_t>> const& tenantsInGroup = self->tenantsInGroup;
 		for (auto& tenantPair : tenantsInGroup) {
 			state TenantName tName = tenantPair.first;
 			state Reference<ITenant> srcTenant = self->srcCtx.dataClusterDb->openTenant(tName);
@@ -933,19 +955,6 @@ struct SwitchTenantMovementImpl {
 			TraceEvent("TenantMoveSwitchBlobRangeApplied").detail("TenantName", tName);
 		}
 		return Void();
-	}
-
-	// Returns true if hybrid ranges have already been applied
-	ACTOR template <class Transaction>
-	static Future<bool> updateMoveRecordStateWrapper(Reference<Transaction> tr,
-	                                                 metadata::management::MovementRecord movementRecord,
-	                                                 metadata::management::MovementState mState,
-	                                                 TenantGroupName tenantGroup) {
-		if (movementRecord.mState == metadata::management::MovementState::SWITCH_METADATA) {
-			return true;
-		}
-		wait(updateMoveRecordState(tr, movementRecord, mState, tenantGroup));
-		return false;
 	}
 
 	ACTOR static Future<Void> run(SwitchTenantMovementImpl* self) {
@@ -981,8 +990,14 @@ struct SwitchTenantMovementImpl {
 		      metadata::management::MovementState::SWITCH_METADATA },
 		    [self = self](Reference<typename DB::TransactionT> tr,
 		                  Optional<metadata::management::MovementRecord> movementRecord) {
-			    return updateMoveRecordStateWrapper(
-			        tr, movementRecord.get(), metadata::management::MovementState::SWITCH_HYBRID, self->tenantGroup);
+			    if (movementRecord.get().mState == metadata::management::MovementState::SWITCH_METADATA) {
+				    return Future<bool>(true);
+			    }
+			    return tag(updateMoveRecordState(tr,
+			                                     movementRecord.get(),
+			                                     metadata::management::MovementState::SWITCH_HYBRID,
+			                                     self->tenantGroup),
+			               false);
 		    }));
 
 		if (!alreadyApplied) {
@@ -1178,33 +1193,6 @@ struct FinishTenantMovementImpl {
 		return Void();
 	}
 
-	ACTOR static Future<Void> checkValidDeleteWrapper(Reference<typename DB::TransactionT> tr,
-	                                                  TenantGroupName tenantGroup,
-	                                                  std::vector<std::pair<TenantName, int64_t>> tenantsInGroup,
-	                                                  ClusterName srcClusterName,
-	                                                  ClusterName dstClusterName,
-	                                                  std::vector<TenantMapEntry> srcEntries,
-	                                                  std::vector<TenantMapEntry> dstEntries,
-	                                                  Optional<metadata::management::MovementRecord> movementRecord,
-	                                                  std::vector<std::string>* messages,
-	                                                  Aborting aborting) {
-		ASSERT(movementRecord.present());
-		if (movementRecord.get().mState == metadata::management::MovementState::FINISH_UNLOCK) {
-			return Void();
-		}
-		wait(checkValidDelete<DB>(tr,
-		                          tenantGroup,
-		                          tenantsInGroup,
-		                          srcClusterName,
-		                          dstClusterName,
-		                          srcEntries,
-		                          dstEntries,
-		                          movementRecord,
-		                          messages,
-		                          Aborting::False));
-		return Void();
-	}
-
 	ACTOR static Future<Void> run(FinishTenantMovementImpl* self) {
 		wait(self->dstCtx.initializeContext());
 		wait(runMoveManagementTransaction(self->tenantGroup,
@@ -1232,10 +1220,11 @@ struct FinishTenantMovementImpl {
 					TraceEvent("MetaclusterMoveFinishVersionsTooFar")
 					    .detail("DstCluster", self->dstCtx.clusterName.get())
 					    .detail("VersionDiff", versionDiff);
-					self->messages.push_back(
-					    fmt::format("Tenant move finish: destination cluster {} has a version that is too far behind\n"
-					                "	Use `versionepoch commit` on the destination cluster to advance the version.\n",
-					                self->dstCtx.clusterName.get()));
+					self->messages.push_back(fmt::format(
+					    "Tenant move finish: destination cluster {} has a version that is {} versions behind\n"
+					    "	Use `versionepoch commit` on the destination cluster to advance the version.\n",
+					    versionDiff,
+					    self->dstCtx.clusterName.get()));
 					throw tenant_move_failed();
 				}
 				wait(delay(1.0));
@@ -1249,16 +1238,20 @@ struct FinishTenantMovementImpl {
 			                                  [self = self, srcEntries = srcEntries, dstEntries = dstEntries](
 			                                      Reference<typename DB::TransactionT> tr,
 			                                      Optional<metadata::management::MovementRecord> movementRecord) {
-				                                  return checkValidDeleteWrapper(tr,
-				                                                                 self->tenantGroup,
-				                                                                 self->tenantsInGroup,
-				                                                                 self->srcCtx.clusterName.get(),
-				                                                                 self->dstCtx.clusterName.get(),
-				                                                                 srcEntries,
-				                                                                 dstEntries,
-				                                                                 movementRecord,
-				                                                                 &self->messages,
-				                                                                 Aborting::False);
+				                                  if (movementRecord.get().mState ==
+				                                      metadata::management::MovementState::FINISH_UNLOCK) {
+					                                  return Future<Void>(Void());
+				                                  }
+				                                  return checkValidDelete<DB>(tr,
+				                                                              self->tenantGroup,
+				                                                              self->tenantsInGroup,
+				                                                              self->srcCtx.clusterName.get(),
+				                                                              self->dstCtx.clusterName.get(),
+				                                                              srcEntries,
+				                                                              dstEntries,
+				                                                              movementRecord,
+				                                                              &self->messages,
+				                                                              Aborting::False);
 			                                  }));
 		}
 		wait(runMoveManagementTransaction(
@@ -1355,15 +1348,9 @@ struct AbortTenantMovementImpl {
 			// See no move record while the start tr is still committing
 			// Attempt to re-clear the move record
 			// Conflict should arise if "start" transaction is still in flight
-			bool exitSignal = wait(self->srcCtx.runManagementTransaction(
-			    [self = self](Reference<typename DB::TransactionT> tr) { return clearMoveRecord(self, tr); }));
-			if (exitSignal) {
-				// No conflict, nothing to abort or abort already succeeded
-				return true;
-			}
-			// Conflict, want to refresh the move record
-			// Let outer wrapper take care of retry
-			throw tenant_move_record_missing();
+			self->vsFuture = tr->getVersionstamp();
+			metadata::management::emergency_movement::emergencyMovements().erase(tr, self->tenantGroup);
+			return true;
 		} else {
 			self->moveRecord = movementRecord.get();
 		}
@@ -1542,14 +1529,7 @@ struct AbortTenantMovementImpl {
 			Versionstamp vs(result);
 			self->abortVersion = vs;
 		} catch (Error& e) {
-			// This can happen because of commit_unknown_result. Use the read version instead
-			if (e.code() == error_code_transaction_invalid_version || e.code() == error_code_broken_promise) {
-				wait(self->srcCtx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
-					return storeReadVersion<DB>(&self->abortVersion, tr);
-				}));
-			} else {
-				throw;
-			}
+			TraceEvent("TenantMoveWriteAbortVersionError").error(e).backtrace();
 		}
 		metadata::data::emergency_movement::lastTenantMoveAbort().setVersionstamp(tr, self->abortVersion, 0);
 		return Void();
@@ -1702,19 +1682,6 @@ struct AbortTenantMovementImpl {
 		    }));
 		wait(abortSwitchHybrid(self));
 		return Void();
-	}
-
-	// Returns true if this can be considered a complete abort
-	ACTOR static Future<bool> clearMoveRecord(AbortTenantMovementImpl* self, Reference<typename DB::TransactionT> tr) {
-		Optional<metadata::management::MovementRecord> moveRecord =
-		    wait(metadata::management::emergency_movement::emergencyMovements().get(tr, self->tenantGroup));
-		self->vsFuture = tr->getVersionstamp();
-		if (!moveRecord.present()) {
-			metadata::management::emergency_movement::emergencyMovements().erase(tr, self->tenantGroup);
-		} else {
-			return false;
-		}
-		return true;
 	}
 
 	ACTOR static Future<Void> run(AbortTenantMovementImpl* self) {

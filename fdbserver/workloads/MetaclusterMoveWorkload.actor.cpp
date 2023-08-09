@@ -96,6 +96,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	int maxTenantGroups;
 	int tenantGroupCapacity;
 	int timeoutLimit;
+	int numMovements;
 	metacluster::metadata::management::MovementRecord moveRecord;
 	bool badCopy;
 
@@ -118,6 +119,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		totalQuota = getOption(options, "totalQuota"_sr, 1e8);
 		storageQuota = getOption(options, "storageQuota"_sr, 1e8);
 		timeoutLimit = getOption(options, "timeoutLimit"_sr, 2);
+		numMovements = getOption(options, "numMovements"_sr, 3);
 		badCopy = getOption(options, "badCopy"_sr, deterministicRandom()->random01() < 0.05);
 	}
 
@@ -1018,9 +1020,8 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	}
 
 	ACTOR static Future<Void> _start(Database cx, MetaclusterMoveWorkload* self) {
-		state int numMoves = 3;
 		state int i = 0;
-		for (; i < numMoves; ++i) {
+		for (; i < self->numMovements; ++i) {
 			wait(runMove(cx, self));
 		}
 		return Void();
