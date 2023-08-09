@@ -1,5 +1,5 @@
 /*
- * MetaclusterTenantEntry.h
+ * MetaclusterTenantEntry.actor.h
  *
  * This source file is part of the FoundationDB open source project
  *
@@ -18,16 +18,25 @@
  * limitations under the License.
  */
 
-#ifndef FDBCLIENT_METACLUSTERTENANTENTRY_H
-#define FDBCLIENT_METACLUSTERTENANTENTRY_H
 #pragma once
+#if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_METACLUSTERTENANTENTRY_ACTOR_G_H)
+#define FDBCLIENT_METACLUSTERTENANTENTRY_ACTOR_G_H
+#include "fdbclient/MetaclusterTenantEntry.actor.g.h"
+#elif !defined(FDBCLIENT_METACLUSTERTENANTENTRY_ACTOR_H)
+#define FDBCLIENT_METACLUSTERTENANTENTRY_ACTOR_H
 
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/json_spirit/json_spirit_value.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/MetaclusterRegistration.h"
+#include "fdbclient/Tenant.h"
 #include "flow/flat_buffers.h"
+
+#include "flow/flow.h"
+#include "flow/genericactors.actor.h"
+
+#include "flow/actorcompiler.h" // has to be last include
 
 namespace metacluster {
 
@@ -165,8 +174,66 @@ TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata();
 // A map from cluster name to the connection string for the cluster
 KeyBackedMap<ClusterName, ClusterConnectionString, TupleCodec<ClusterName>, ConnectionStringCodec>&
 dataClusterConnectionRecords();
+} // namespace metadata::management
+
+template <class Transaction>
+Future<Optional<MetaclusterTenantMapEntry>> tryGetTenantTransaction(Transaction tr, int64_t tenantId) {
+	CODE_PROBE(true, "Try get tenant by ID");
+	tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+	return metadata::management::tenantMetadata().tenantMap.get(tr, tenantId);
+}
+
+ACTOR template <class Transaction>
+Future<Optional<MetaclusterTenantMapEntry>> tryGetTenantTransaction(Transaction tr, TenantName name) {
+	CODE_PROBE(true, "Try get tenant by name");
+	tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+	Optional<int64_t> tenantId = wait(metadata::management::tenantMetadata().tenantNameIndex.get(tr, name));
+	if (tenantId.present()) {
+		Optional<MetaclusterTenantMapEntry> entry =
+		    wait(metadata::management::tenantMetadata().tenantMap.get(tr, tenantId.get()));
+		return entry;
+	} else {
+		return Optional<MetaclusterTenantMapEntry>();
+	}
+}
+
+ACTOR template <class DB, class Tenant>
+Future<Optional<MetaclusterTenantMapEntry>> tryGetTenant(Reference<DB> db, Tenant tenant) {
+	state Reference<typename DB::TransactionT> tr = db->createTransaction();
+
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::READ_LOCK_AWARE);
+			Optional<MetaclusterTenantMapEntry> entry = wait(tryGetTenantTransaction(tr, tenant));
+			return entry;
+		} catch (Error& e) {
+			wait(safeThreadFutureToFuture(tr->onError(e)));
+		}
+	}
+}
+
+ACTOR template <class Transaction, class Tenant>
+Future<MetaclusterTenantMapEntry> getTenantTransaction(Transaction tr, Tenant tenant) {
+	Optional<MetaclusterTenantMapEntry> entry = wait(tryGetTenantTransaction(tr, tenant));
+	if (!entry.present()) {
+		throw tenant_not_found();
+	}
+
+	return entry.get();
+}
+
+ACTOR template <class DB, class Tenant>
+Future<MetaclusterTenantMapEntry> getTenant(Reference<DB> db, Tenant tenant) {
+	Optional<MetaclusterTenantMapEntry> entry = wait(tryGetTenant(db, tenant));
+	if (!entry.present()) {
+		throw tenant_not_found();
+	}
+
+	return entry.get();
 }
 
 } // namespace metacluster
 
+#include "flow/unactorcompiler.h"
 #endif

@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-#include "fdbclient/MetaclusterTenantEntry.h"
+#include "fdbclient/MetaclusterTenantEntry.actor.h"
 
 #include "libb64/decode.h"
 #include "libb64/encode.h"
