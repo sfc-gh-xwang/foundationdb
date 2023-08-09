@@ -124,7 +124,6 @@ logdir = {logdir}
 {authz_public_key_config}
 {custom_config}
 {use_future_protocol_version}
-{knobs}
 knob_min_trace_severity=5
 tracer = log_file
 # logsize = 10MiB
@@ -162,7 +161,6 @@ tracer = log_file
         authorization_kty: str = "",
         authorization_keypair_id: str = "",
         disable_server_side_tls: bool = False,
-        knobs: list = [],
     ):
         self.port_provider = PortProvider()
         self.basedir = Path(basedir)
@@ -212,7 +210,6 @@ tracer = log_file
         self.coordinators = set()
         self.active_servers = set(self.server_ports.keys())
         self.disable_server_side_tls = disable_server_side_tls
-        self.knobs = knobs
         self.tls_config = tls_config
         self.public_key_jwks_str = None
         self.public_key_json_file = None
@@ -287,8 +284,6 @@ tracer = log_file
                     ]
                 )
 
-            knobs = "\n".join(self.knobs)
-
             f.write(
                 conf_template.format(
                     etcdir=self.etc,
@@ -298,7 +293,6 @@ tracer = log_file
                     ip_address=self.ip_address,
                     bg_config=bg_config,
                     encrypt_config=encrypt_config,
-                    knobs=knobs,
                     tls_config=self.tls_conf_string(),
                     authz_public_key_config=self.authz_public_key_conf_string(),
                     optional_tls=self.tls_optional_string(),

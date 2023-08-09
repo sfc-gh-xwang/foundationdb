@@ -50,6 +50,9 @@ private:
 		OP_LAST = OP_COMMIT_READ
 	};
 
+	// Read required is used to indicate whether we expect a read to be sent to the cluster
+	// Reads that could use the RYW cache (reading the same key twice in a transaction) or that have
+	// an empty range, etc. might not communicate the server and should pass false.
 	template <class T>
 	void checkReadResult(T result, bool readRequired, int64_t& rangeBusynessCounter) {
 		ASSERT(result.serverBusyness() >= 0);

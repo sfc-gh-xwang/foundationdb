@@ -158,11 +158,11 @@ class TestConfig:
             self.min_num_processes, self.max_num_processes
         )
 
-        self.server_knobs = [
-            "%s=%s" % (name, value)
+        self.server_knobs = {
+            name: value
             for name, value in server_config.items()
             if name.startswith("knob_")
-        ]
+        }
 
 
 def run_test(args, test_file):
@@ -182,7 +182,7 @@ def run_test(args, test_file):
         blob_granules_enabled=config.blob_granules_enabled,
         enable_encryption_at_rest=config.enable_encryption_at_rest,
         tls_config=tls_config,
-        knobs=config.server_knobs,
+        custom_config=config.server_knobs,
     ) as cluster:
         ret_code = run_tester(args, cluster, test_file)
         if not cluster.check_cluster_logs():
