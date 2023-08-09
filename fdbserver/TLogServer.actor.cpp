@@ -2290,17 +2290,12 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 		return Void();
 	}
 
-	// Upon receiving a new wait window:
-	// 1. Following requests will immediately start to use the new window
-	// 2. Ack back will only be sent after all requests with old window has been served
 	self->emptyVersionWaitMetaMap[req.tag].transitioning = true;
 	self->emptyVersionWaitMetaMap[req.tag].waitWindow = req.waitWindow;
 
 	// 1. If no peek request is using window currently, window is effectively applied immediately, notify ss right away.
-	// 2. If >0 peek request is using window currently, window is effectively applied after the next application of
-	// window. Notify ss on first window application.
-	// 3. If we do not do this, this actor will time out waiting on next application of the window, which may never
-	// come.
+	// 2. If >0 peek request is using window currently, window is effectively applied after all requests with the old
+	// window have been served.
 	if (self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount > 0) {
 		DebugLogTraceEvent("WaitStarted")
 		    .detail("Tag", req.tag)
