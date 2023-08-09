@@ -1163,8 +1163,8 @@ void tenantGenerator(const char* text,
                      std::vector<std::string>& lc,
                      std::vector<StringRef> const& tokens) {
 	if (tokens.size() == 1) {
-		const char* opts[] = { "create",    "delete", "deleteId", "list",   "get",
-			                   "configure", "rename", "lock",     "unlock", "emergency_move", nullptr };
+		const char* opts[] = { "create", "delete", "deleteId", "list",           "get",  "configure",
+			                   "rename", "lock",   "unlock",   "emergency_move", nullptr };
 		arrayGenerator(text, line, opts, lc);
 	} else if (tokens.size() >= 3 && tokencmp(tokens[1], "create")) {
 		const char* opts[] = { "tenant_group=", "assigned_cluster=", "ignore_capacity_limit", nullptr };
