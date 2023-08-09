@@ -26,7 +26,6 @@
 #define FDB_USE_LATEST_API_VERSION
 #endif
 
-#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <memory>
