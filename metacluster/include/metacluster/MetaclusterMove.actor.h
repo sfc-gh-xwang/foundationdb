@@ -19,7 +19,6 @@
  */
 
 #pragma once
-#include "fdbclient/Knobs.h"
 #if defined(NO_INTELLISENSE) && !defined(METACLUSTER_METACLUSTERMOVE_ACTOR_G_H)
 #define METACLUSTER_METACLUSTERMOVE_ACTOR_G_H
 #include "metacluster/MetaclusterMove.actor.g.h"
@@ -41,6 +40,7 @@
 #include "flow/ThreadHelper.actor.h"
 
 #include "fdbclient/DatabaseContext.h"
+#include "fdbclient/Knobs.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ReadYourWrites.h"
@@ -1151,7 +1151,6 @@ struct FinishTenantMovementImpl {
 	ACTOR static Future<Void> deleteSourceTenants(FinishTenantMovementImpl* self, Reference<ITransaction> tr) {
 		state std::vector<Future<Void>> deleteFutures;
 		for (auto& tenantPair : self->tenantsInGroup) {
-			// TenantName tName = tenantPair.first;
 			int64_t tId = tenantPair.second;
 			deleteFutures.push_back(TenantAPI::deleteTenantTransaction(tr, tId, ClusterType::METACLUSTER_DATA));
 		}
@@ -1530,6 +1529,7 @@ struct AbortTenantMovementImpl {
 			self->abortVersion = vs;
 		} catch (Error& e) {
 			TraceEvent("TenantMoveWriteAbortVersionError").error(e).backtrace();
+			throw e;
 		}
 		metadata::data::emergency_movement::lastTenantMoveAbort().setVersionstamp(tr, self->abortVersion, 0);
 		return Void();
