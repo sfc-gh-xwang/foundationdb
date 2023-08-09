@@ -55,7 +55,6 @@
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/GetTenant.actor.h"
-#include "fdbclient/GetCluster.actor.h"
 #include "fdbclient/GlobalConfig.actor.h"
 #include "fdbclient/IKnobCollection.h"
 #include "fdbclient/JsonBuilder.h"
@@ -3050,14 +3049,25 @@ ACTOR Future<Database> getDatabaseFuture(Database cx, Future<Optional<ClusterNam
 	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
 		return cx;
 	}
-	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	state Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	ASSERT(assignedCluster.present());
 	state Reference<DatabaseContext> mgmtCx = cx.getReference();
-	metacluster::DataClusterMetadata clusterMetadata = wait(metacluster::getCluster(mgmtCx, assignedCluster.get()));
-	Reference<IClusterConnectionRecord> connectionRecord =
-	    makeReference<ClusterConnectionMemoryRecord>(clusterMetadata.connectionString);
-	Database db = Database::createDatabase(connectionRecord, ApiVersion::LATEST_VERSION, IsInternal::False);
-	return db;
+	state Reference<DatabaseContext::TransactionT> tr = mgmtCx->createTransaction();
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+			Optional<ClusterConnectionString> connectionString =
+			    wait(metacluster::metadata::management::dataClusterConnectionRecords().get(tr, assignedCluster.get()));
+			ASSERT(connectionString.present());
+			Reference<IClusterConnectionRecord> connectionRecord =
+			    makeReference<ClusterConnectionMemoryRecord>(connectionString.get());
+			Database db = Database::createDatabase(connectionRecord, ApiVersion::LATEST_VERSION, IsInternal::False);
+			return db;
+		} catch (Error& e) {
+			wait(safeThreadFutureToFuture(tr->onError(e)));
+		}
+	}
 }
 
 ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<Database> dbFuture,
