@@ -29,8 +29,7 @@
 #include "flow/flow.h"
 #include "flow/genericactors.actor.h"
 
-#include "fdbclient/MetaclusterTypes.h"
-#include "fdbclient/MetaclusterMetadata.h"
+#include "fdbclient/MetaclusterTenantEntry.h"
 
 #include "flow/actorcompiler.h" // has to be last include
 

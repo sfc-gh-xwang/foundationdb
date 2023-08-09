@@ -1,5 +1,5 @@
 /*
- * MetaclusterTypes.h
+ * MetaclusterTenantEntry.h
  *
  * This source file is part of the FoundationDB open source project
  *
@@ -18,8 +18,8 @@
  * limitations under the License.
  */
 
-#ifndef FDBCLIENT_METACLUSTERTYPES_H
-#define FDBCLIENT_METACLUSTERTYPES_H
+#ifndef FDBCLIENT_METACLUSTERTENANTENTRY_H
+#define FDBCLIENT_METACLUSTERTENANTENTRY_H
 #pragma once
 
 #include "fdbclient/CoordinationInterface.h"
@@ -30,9 +30,6 @@
 #include "flow/flat_buffers.h"
 
 namespace metacluster {
-
-FDB_BOOLEAN_PARAM(IgnoreCapacityLimit);
-FDB_BOOLEAN_PARAM(IsRestoring);
 
 // Represents the various states that a tenant could be in. Only applies to metacluster, not standalone clusters.
 // In a metacluster, a tenant on the management cluster could be in the other states while changes are applied to the
@@ -57,120 +54,6 @@ enum class TenantState { REGISTERING, READY, REMOVING, UPDATING_CONFIGURATION, R
 
 std::string tenantStateToString(TenantState tenantState);
 TenantState stringToTenantState(std::string stateStr);
-
-struct ClusterUsage {
-	int numTenantGroups = 0;
-
-	ClusterUsage() = default;
-	ClusterUsage(int numTenantGroups) : numTenantGroups(numTenantGroups) {}
-
-	json_spirit::mObject toJson() const;
-
-	bool operator==(const ClusterUsage& other) const noexcept { return numTenantGroups == other.numTenantGroups; }
-	bool operator!=(const ClusterUsage& other) const noexcept { return !(*this == other); }
-	bool operator<(const ClusterUsage& other) const noexcept { return numTenantGroups < other.numTenantGroups; }
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar, numTenantGroups);
-	}
-};
-
-// Represents the various states that a data cluster could be in.
-//
-// REGISTERING - the data cluster is being registered with the metacluster
-// READY - the data cluster is active
-// REMOVING - the data cluster is being removed and cannot have its configuration changed or any tenants created
-// RESTORING - the data cluster is being restored and cannot have its configuration changed or any tenants
-//             created/updated/deleted.
-enum class DataClusterState { REGISTERING, READY, REMOVING, RESTORING };
-
-enum class AutoTenantAssignment { ENABLED, DISABLED };
-
-struct DataClusterEntry {
-	constexpr static FileIdentifier file_identifier = 929511;
-
-	static std::string clusterStateToString(DataClusterState clusterState);
-	static DataClusterState stringToClusterState(std::string stateStr);
-	static std::string autoTenantAssignmentToString(AutoTenantAssignment autoTenantAssignment);
-
-	UID id;
-	ClusterUsage capacity;
-	ClusterUsage allocated;
-
-	DataClusterState clusterState = DataClusterState::READY;
-
-	AutoTenantAssignment autoTenantAssignment = AutoTenantAssignment::ENABLED;
-
-	DataClusterEntry() = default;
-	DataClusterEntry(ClusterUsage capacity) : capacity(capacity) {}
-	DataClusterEntry(UID id, ClusterUsage capacity, ClusterUsage allocated)
-	  : id(id),
-	    capacity(capacity),
-	    allocated(allocated) {}
-
-	// Returns true if all configurable properties match
-	bool matchesConfiguration(DataClusterEntry const& other) const { return capacity == other.capacity; }
-
-	bool hasCapacity() const { return allocated < capacity; }
-
-	Value encode() const { return ObjectWriter::toValue(*this, IncludeVersion()); }
-	static DataClusterEntry decode(ValueRef const& value) {
-		return ObjectReader::fromStringRef<DataClusterEntry>(value, IncludeVersion());
-	}
-
-	json_spirit::mObject toJson() const;
-
-	bool operator==(DataClusterEntry const& other) const {
-		return id == other.id && capacity == other.capacity && allocated == other.allocated &&
-		       clusterState == other.clusterState;
-	}
-
-	bool operator!=(DataClusterEntry const& other) const { return !(*this == other); }
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar, id, capacity, allocated, clusterState, autoTenantAssignment);
-	}
-};
-
-struct DataClusterMetadata {
-	constexpr static FileIdentifier file_identifier = 5573993;
-
-	DataClusterEntry entry;
-	ClusterConnectionString connectionString;
-
-	DataClusterMetadata() = default;
-	DataClusterMetadata(DataClusterEntry const& entry, ClusterConnectionString const& connectionString)
-	  : entry(entry),
-	    connectionString(connectionString) {}
-
-	bool matchesConfiguration(DataClusterMetadata const& other) const {
-		return entry.matchesConfiguration(other.entry) && connectionString == other.connectionString;
-	}
-
-	Value encode() const { return ObjectWriter::toValue(*this, IncludeVersion()); }
-	static DataClusterMetadata decode(ValueRef const& value) {
-		return ObjectReader::fromStringRef<DataClusterMetadata>(value, IncludeVersion());
-	}
-
-	json_spirit::mValue toJson() const {
-		json_spirit::mObject obj = entry.toJson();
-		obj["connection_string"] = connectionString.toString();
-		return obj;
-	}
-
-	bool operator==(DataClusterMetadata const& other) const {
-		return entry == other.entry && connectionString == other.connectionString;
-	}
-
-	bool operator!=(DataClusterMetadata const& other) const { return !(*this == other); }
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar, connectionString, entry);
-	}
-};
 
 struct MetaclusterTenantMapEntry {
 	constexpr static FileIdentifier file_identifier = 12247338;
@@ -267,13 +150,23 @@ public:
 	using TenantGroupEntryT = MetaclusterTenantGroupEntry;
 };
 
-} // namespace metacluster
 
-template <>
-struct Traceable<metacluster::ClusterUsage> : std::true_type {
-	static std::string toString(const metacluster::ClusterUsage& value) {
-		return format("NumTenantGroups: %d", value.numTenantGroups);
-	}
+// Metadata used only on the management cluster
+namespace metadata::management {
+struct ConnectionStringCodec {
+    static inline Standalone<StringRef> pack(ClusterConnectionString const& val) { return StringRef(val.toString()); }
+    static inline ClusterConnectionString unpack(Standalone<StringRef> const& val) {
+        return ClusterConnectionString(val.toString());
+    }
 };
+
+TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata();
+
+// A map from cluster name to the connection string for the cluster
+KeyBackedMap<ClusterName, ClusterConnectionString, TupleCodec<ClusterName>, ConnectionStringCodec>&
+dataClusterConnectionRecords();
+}
+
+} // namespace metacluster
 
 #endif

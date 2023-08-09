@@ -105,13 +105,6 @@ KeyBackedObjectMap<ClusterName, DataClusterEntry, decltype(IncludeVersion())>& d
 	return instance;
 }
 
-KeyBackedMap<ClusterName, ClusterConnectionString, TupleCodec<ClusterName>, ConnectionStringCodec>&
-dataClusterConnectionRecords() {
-	static KeyBackedMap<ClusterName, ClusterConnectionString, TupleCodec<ClusterName>, ConnectionStringCodec> instance(
-	    "metacluster/dataCluster/connectionString/"_sr);
-	return instance;
-}
-
 KeyBackedSet<Tuple>& clusterCapacityIndex() {
 	static KeyBackedSet<Tuple> instance("metacluster/clusterCapacityIndex/"_sr);
 	return instance;
@@ -130,11 +123,6 @@ KeyBackedSet<Tuple>& clusterTenantIndex() {
 
 KeyBackedSet<Tuple>& clusterTenantGroupIndex() {
 	static KeyBackedSet<Tuple> instance("metacluster/dataCluster/tenantGroupMap/"_sr);
-	return instance;
-}
-
-TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata() {
-	static TenantMetadataSpecification<MetaclusterTenantTypes> instance(""_sr);
 	return instance;
 }
 

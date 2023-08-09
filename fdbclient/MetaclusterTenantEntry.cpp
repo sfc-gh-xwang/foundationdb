@@ -1,5 +1,5 @@
 /*
- * Metacluster.cpp
+ * MetaclusterTenantEntry.cpp
  *
  * This source file is part of the FoundationDB open source project
  *
@@ -18,8 +18,7 @@
  * limitations under the License.
  */
 
-#include "fdbclient/MetaclusterMetadata.h"
-#include "fdbclient/MetaclusterTypes.h"
+#include "fdbclient/MetaclusterTenantEntry.h"
 
 #include "libb64/decode.h"
 #include "libb64/encode.h"
@@ -62,62 +61,6 @@ TenantState stringToTenantState(std::string stateStr) {
 	}
 
 	throw invalid_option();
-}
-
-std::string DataClusterEntry::clusterStateToString(DataClusterState clusterState) {
-	switch (clusterState) {
-	case DataClusterState::REGISTERING:
-		return "registering";
-	case DataClusterState::READY:
-		return "ready";
-	case DataClusterState::REMOVING:
-		return "removing";
-	case DataClusterState::RESTORING:
-		return "restoring";
-	default:
-		UNREACHABLE();
-	}
-}
-
-DataClusterState DataClusterEntry::stringToClusterState(std::string stateStr) {
-	if (stateStr == "registering") {
-		return DataClusterState::REGISTERING;
-	} else if (stateStr == "ready") {
-		return DataClusterState::READY;
-	} else if (stateStr == "removing") {
-		return DataClusterState::REMOVING;
-	} else if (stateStr == "restoring") {
-		return DataClusterState::RESTORING;
-	}
-
-	UNREACHABLE();
-}
-
-std::string DataClusterEntry::autoTenantAssignmentToString(AutoTenantAssignment autoTenantAssignment) {
-	switch (autoTenantAssignment) {
-	case AutoTenantAssignment::DISABLED:
-		return "disabled";
-	case AutoTenantAssignment::ENABLED:
-		return "enabled";
-	default:
-		UNREACHABLE();
-	}
-}
-
-json_spirit::mObject DataClusterEntry::toJson() const {
-	json_spirit::mObject obj;
-	obj["id"] = id.toString();
-	obj["capacity"] = capacity.toJson();
-	obj["allocated"] = allocated.toJson();
-	obj["cluster_state"] = DataClusterEntry::clusterStateToString(clusterState);
-	obj["auto_tenant_assignment"] = autoTenantAssignmentToString(autoTenantAssignment);
-	return obj;
-}
-
-json_spirit::mObject ClusterUsage::toJson() const {
-	json_spirit::mObject obj;
-	obj["num_tenant_groups"] = numTenantGroups;
-	return obj;
 }
 
 MetaclusterTenantMapEntry::MetaclusterTenantMapEntry() {}
@@ -246,5 +189,20 @@ bool MetaclusterTenantGroupEntry::operator==(MetaclusterTenantGroupEntry const& 
 bool MetaclusterTenantGroupEntry::operator!=(MetaclusterTenantGroupEntry const& other) const {
 	return !(*this == other);
 }
+
+namespace metadata::management {
+TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata() {
+	static TenantMetadataSpecification<MetaclusterTenantTypes> instance(""_sr);
+	return instance;
+}
+
+KeyBackedMap<ClusterName, ClusterConnectionString, TupleCodec<ClusterName>, ConnectionStringCodec>&
+dataClusterConnectionRecords() {
+	static KeyBackedMap<ClusterName, ClusterConnectionString, TupleCodec<ClusterName>, ConnectionStringCodec> instance(
+	    "metacluster/dataCluster/connectionString/"_sr);
+	return instance;
+}
+
+}  // namespace metadata::management
 
 } // namespace metacluster
