@@ -1062,7 +1062,7 @@ public:
 		return Void();
 	}
 
-	ACTOR static Future<Void> GetProbabilityWithPivot() {
+	static void GetProbabilityWithPivot() {
 		double p;
 		p = data_distribution::getProbabilityWithPivot<int64_t>(0, 10, 5);
 		ASSERT(fabs(p - 0.5) < Epsilon);
@@ -1075,7 +1075,6 @@ public:
 		ASSERT(fabs(p - 0) < Epsilon);
 		p = data_distribution::getProbabilityWithPivot<double>(1.0, 2.0, 1.1);
 		ASSERT(fabs(p - 0.9) < Epsilon);
-		return Void();
 	}
 };
 
@@ -1170,6 +1169,6 @@ TEST_CASE("/DataDistribution/GetTeam/EvaluateSourceTeam") {
 }
 
 TEST_CASE("/DataDistribution/GetProbabilityWithPivot") {
-	wait(DDTeamCollectionUnitTest::GetProbabilityWithPivot());
+	DDTeamCollectionUnitTest::GetProbabilityWithPivot();
 	return Void();
 }

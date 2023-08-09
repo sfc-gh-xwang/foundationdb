@@ -299,7 +299,7 @@ public:
 	// report the expected cost per ThrottlingID along with each GRV requests.
 	// The QuotaThrottler will utilize this information to throttle transactions.
 	// Note: Must be used with in conjunction with TRACK_THROUGHPUT_ON_CLIENTS.
-	bool TRACK_AVERAGE_COST_ON_CLIENT;
+	bool TRACK_AVERAGE_COST_ON_CLIENTS;
 	// Default expected cost of a transaction, used as a fallback value when the average cost is not available
 	double DEFAULT_EXPECTED_TRANSACTION_COST;
 	// Report DEFAULT_EXPECTED_TRANSACTION_COST for the first AVERAGE_COST_START_DELAY seconds,

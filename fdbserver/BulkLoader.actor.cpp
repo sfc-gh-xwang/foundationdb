@@ -691,10 +691,10 @@ ACTOR Future<Void> handleWaitCompleteRequest(Reference<BulkLoaderData> self,
 	++self->stats.activeRequests;
 	try {
 		wait(self->db->waitBulkLoadStateAtLeast(req.id, BulkLoadStatus::State::DONE, req.tenantInfo.tenantId));
-		req.reply.send(Void());
 		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
 			wait(Never());
 		}
+		req.reply.send(Void());
 		--self->stats.activeRequests;
 		return Void();
 	} catch (Error& e) {
