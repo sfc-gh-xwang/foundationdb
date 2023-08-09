@@ -347,7 +347,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		// Validate bulk load state at end.
 
-		BulkLoadStatus status = wait(cx->getBulkLoadStatus(id));
+		BulkLoadStatus status = wait(cx->getBulkLoadStatus(id, self->tenant));
 		BulkLoadStatus::State current = status.state;
 
 		if (BLW_DEBUG) {
@@ -626,7 +626,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->abortBulkLoad(id, self->tenant));
 
 		try {
-			wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
+			wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::DONE, self->tenant));
 			ASSERT(false);
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_aborted);
@@ -671,10 +671,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->checkCorrectInvalidIDError(cx->abortBulkLoad(id, self->tenant)));
 		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadComplete(id, self->tenant)));
 		// don't test cleanup because it's idempotent if it was already cleaned up
-		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING)));
-		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadStatus::State::STAGING)));
-		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadStatus(id))));
-		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadVersion(id))));
+		wait(self->checkCorrectInvalidIDError(
+		    cx->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING, self->tenant)));
+		wait(self->checkCorrectInvalidIDError(
+		    cx->updateBulkLoadState(id, BulkLoadStatus::State::STAGING, self->tenant)));
+		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadStatus(id, self->tenant))));
+		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadVersion(id, self->tenant))));
 		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadFilesToWrite(id, 1, self->tenant))));
 
 		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
@@ -749,7 +751,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 		state Version end = wait(self->doGRV(cx));
 
-		Version createVersion = wait(cx->getBulkLoadVersion(id));
+		Version createVersion = wait(cx->getBulkLoadVersion(id, self->tenant));
 
 		ASSERT(createVersion >= start);
 		ASSERT(createVersion <= end);
