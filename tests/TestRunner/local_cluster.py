@@ -431,7 +431,7 @@ tracer = log_file
     def __fdbcli_exec(self, cmd, stdout, stderr, timeout):
         args = [self.fdbcli_binary, "-C", self.cluster_file, "--exec", cmd]
         # Note that we never set tls-required for the client during database configure step
-        # becuase database setup is part of the test fixture, not under test here.
+        # because database setup is part of the test fixture, not under test here.
         if self.tls_config:
             args += [
                 "--tls-certificate-file",
