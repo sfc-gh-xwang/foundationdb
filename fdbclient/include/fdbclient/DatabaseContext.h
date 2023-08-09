@@ -465,10 +465,14 @@ public:
 	                                 BulkLoadStatus::State desiredState,
 	                                 Optional<Reference<Tenant>> tenant = {});
 	Future<Version> getBulkLoadVersion(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternal(bool onlyActive, Optional<int64_t> tenantId);
+	Future<BulkLoadStatus> getBulkLoadStatusInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant);
 
 	// operational management
 	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoads(bool onlyActive,
 	                                                           Optional<Reference<Tenant>> tenant = {});
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoads(bool onlyActive,
+	                                                              Optional<Reference<Tenant>> tenant = {});
 	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// bulk data writing apis
