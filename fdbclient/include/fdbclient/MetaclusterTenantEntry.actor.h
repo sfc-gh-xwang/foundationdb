@@ -159,14 +159,13 @@ public:
 	using TenantGroupEntryT = MetaclusterTenantGroupEntry;
 };
 
-
 // Metadata used only on the management cluster
 namespace metadata::management {
 struct ConnectionStringCodec {
-    static inline Standalone<StringRef> pack(ClusterConnectionString const& val) { return StringRef(val.toString()); }
-    static inline ClusterConnectionString unpack(Standalone<StringRef> const& val) {
-        return ClusterConnectionString(val.toString());
-    }
+	static inline Standalone<StringRef> pack(ClusterConnectionString const& val) { return StringRef(val.toString()); }
+	static inline ClusterConnectionString unpack(Standalone<StringRef> const& val) {
+		return ClusterConnectionString(val.toString());
+	}
 };
 
 TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata();

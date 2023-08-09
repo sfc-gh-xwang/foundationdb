@@ -203,6 +203,6 @@ dataClusterConnectionRecords() {
 	return instance;
 }
 
-}  // namespace metadata::management
+} // namespace metadata::management
 
 } // namespace metacluster
