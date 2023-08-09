@@ -354,12 +354,21 @@ tracer = log_file
         return self.tls_config
 
     def get_client_tls_ca_path(self):
+        assert (
+            self.tls_config is not None
+        ), "TLSConfig must be set to generate TLS credentials"
         return self.client_ca_file
 
     def get_client_tls_cert_path(self):
+        assert (
+            self.tls_config is not None
+        ), "TLSConfig must be set to generate TLS credentials"
         return self.client_cert_file
 
     def get_client_tls_key_path(self):
+        assert (
+            self.tls_config is not None
+        ), "TLSConfig must be set to generate TLS credentials"
         return self.client_key_file
 
     def start_cluster(self):
