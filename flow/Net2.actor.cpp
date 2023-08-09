@@ -1845,7 +1845,7 @@ Future<Reference<IConnection>> Net2::connect(NetworkAddress toAddr, tcp::socket*
 	}
 
 	if (tlsConfig.getTlsRequired()) {
-		TraceEvent(SevError, "TLSRequired").detail("toAddr", toAddr);
+		TraceEvent(SevError, "TLSRequired").detail("ToAddr", toAddr);
 		throw tls_required_error();
 	}
 
@@ -2005,7 +2005,7 @@ Reference<IListener> Net2::listen(NetworkAddress localAddr) {
 		}
 
 		if (tlsConfig.getTlsRequired()) {
-			TraceEvent(SevError, "TLSRequired").detail("localAddr", localAddr);
+			TraceEvent(SevError, "TLSRequired").detail("LocalAddr", localAddr);
 			throw tls_required_error();
 		}
 		return Reference<IListener>(new Listener(reactor.ios, localAddr));
