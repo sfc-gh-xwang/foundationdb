@@ -69,7 +69,7 @@ public:
 	  : serverBusyness(serverBusyness),
 	    rangeBusyness(rangeBusyness) {}
 
-	inline static ReadMetrics getReadMetrics(fdb::Future const& f);
+	inline static ReadMetrics fromFuture(fdb::Future const& f);
 
 	float serverBusyness = 0;
 	float rangeBusyness = 0;
@@ -1421,7 +1421,7 @@ inline void selectApiVersionCapped(int version) {
 	}
 }
 
-ReadMetrics ReadMetrics::getReadMetrics(fdb::Future const& f) {
+ReadMetrics ReadMetrics::fromFuture(fdb::Future const& f) {
 	return f.get<future_var::ReadMetrics>();
 }
 

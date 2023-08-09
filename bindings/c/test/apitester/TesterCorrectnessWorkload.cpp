@@ -55,7 +55,7 @@ private:
 	// an empty range, etc. might not communicate the server and should pass false.
 	void checkReadResult(fdb::Future const& readFuture, bool readRequired, int64_t& rangeBusynessCounter) {
 		if (apiVersion >= 800000) {
-			fdb::ReadMetrics readMetrics = fdb::ReadMetrics::getReadMetrics(readFuture);
+			fdb::ReadMetrics readMetrics = fdb::ReadMetrics::fromFuture(readFuture);
 
 			ASSERT(readMetrics.serverBusyness >= 0);
 			ASSERT(readMetrics.serverBusyness <= 1);
