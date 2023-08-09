@@ -1269,6 +1269,35 @@ JNIEXPORT void JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1dispose(JNI
 	fdb_tenant_destroy((FDBTenant*)tPtr);
 }
 
+JNIEXPORT void JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1setOption(JNIEnv* jenv,
+                                                                               jobject,
+                                                                               jlong tPtr,
+                                                                               jint code,
+                                                                               jbyteArray value) {
+	if (!tPtr) {
+		throwParamNotNull(jenv);
+		return;
+	}
+	FDBTenant* tenant = (FDBTenant*)tPtr;
+	uint8_t* barr = nullptr;
+	int size = 0;
+
+	if (value != JNI_NULL) {
+		barr = (uint8_t*)jenv->GetByteArrayElements(value, JNI_NULL);
+		if (!barr) {
+			throwRuntimeEx(jenv, "Error getting handle to native resources");
+			return;
+		}
+		size = jenv->GetArrayLength(value);
+	}
+	fdb_error_t err = fdb_tenant_set_option(tenant, (FDBTenantOption)code, barr, size);
+	if (value != JNI_NULL)
+		jenv->ReleaseByteArrayElements(value, (jbyte*)barr, JNI_ABORT);
+	if (err) {
+		safeThrow(jenv, getThrowable(jenv, err));
+	}
+}
+
 JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1purgeBlobGranules(JNIEnv* jenv,
                                                                                         jobject,
                                                                                         jlong tPtr,

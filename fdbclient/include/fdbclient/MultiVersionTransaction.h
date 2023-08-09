@@ -201,6 +201,8 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 	// Tenant
 	fdb_error_t (*tenantCreateTransaction)(FDBTenant* tenant, FDBTransaction** outTransaction);
 
+	fdb_error_t (*tenantSetOption)(FDBTenant* tenant, FDBTenantOption option, uint8_t const* value, int valueLength);
+
 	FDBFuture* (*tenantPurgeBlobGranules)(FDBTenant* db,
 	                                      uint8_t const* begin_key_name,
 	                                      int begin_key_name_length,
@@ -523,6 +525,8 @@ public:
 
 	Reference<ITransaction> createTransaction() override;
 
+	void setOption(FDBTenantOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) override;
+
 	ThreadFuture<int64_t> getId() override;
 	ThreadFuture<Key> purgeBlobGranules(const KeyRangeRef& keyRange, Version purgeVersion, bool force) override;
 	ThreadFuture<Void> waitPurgeGranulesComplete(const KeyRef& purgeKey) override;
@@ -657,9 +661,7 @@ class MultiVersionTenant;
 // its wrapped transaction with one from another client.
 class MultiVersionTransaction : public ITransaction, ThreadSafeReferenceCounted<MultiVersionTransaction> {
 public:
-	MultiVersionTransaction(Reference<MultiVersionDatabase> db,
-	                        Optional<Reference<MultiVersionTenant>> tenant,
-	                        UniqueOrderedOptionList<FDBTransactionOptions> defaultOptions);
+	MultiVersionTransaction(Reference<MultiVersionDatabase> db, Optional<Reference<MultiVersionTenant>> tenant);
 
 	~MultiVersionTransaction() override;
 
@@ -794,13 +796,13 @@ private:
 
 	TransactionInfo getTransaction();
 	void updateTransaction(bool setPersistentOptions);
-	void setDefaultOptions(UniqueOrderedOptionList<FDBTransactionOptions> options);
+	void setDefaultOptions();
 
 	template <class T, class... Args>
 	ThreadFuture<T> executeOperation(ThreadFuture<T> (ITransaction::*func)(Args...), Args&&... args);
 
-	std::vector<std::pair<FDBTransactionOptions::Option, Optional<Standalone<StringRef>>>> persistentOptions;
-	std::vector<std::pair<FDBTransactionOptions::Option, Optional<WipedString>>> sensitivePersistentOptions;
+	UniqueOrderedOptionList<FDBTransactionOptions> persistentOptions;
+	UniqueOrderedOptionList<FDBTransactionOptions, true /*IsValueSensitive*/> sensitivePersistentOptions;
 };
 
 struct ClientDesc {
@@ -862,6 +864,8 @@ public:
 
 	Reference<ITransaction> createTransaction() override;
 
+	void setOption(FDBTenantOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) override;
+
 	template <class T, class... Args>
 	ThreadFuture<T> executeOperation(ThreadFuture<T> (ITenant::*func)(Args...), Args&&... args);
 
@@ -905,6 +909,13 @@ public:
 		Reference<ThreadSafeAsyncVar<Reference<ITenant>>> tenantVar;
 		const TenantName tenantName;
 
+		// Export transaction default option enum-value pairs to given container
+		void exportSensitiveTransactionDefaultOptions(
+		    UniqueOrderedOptionList<FDBTransactionOptions, true>& outOptionList);
+		// Reapply these options to underlying tenant object whenever database connection changes
+		std::vector<std::pair<FDBTenantOptions::Option, Optional<WipedString>>> sensitiveOptions;
+		// Propagate these options as defaults when creating a transaction from this tenant
+		UniqueOrderedOptionList<FDBTransactionOptions, true /*IsValueSensitive*/> sensitiveTransactionDefaultOptions;
 		Reference<MultiVersionDatabase> db;
 
 		Mutex tenantLock;
@@ -1057,6 +1068,9 @@ public:
 
 		// Return a JSON string containing database client-side status information
 		Standalone<StringRef> getClientStatus(ErrorOr<Standalone<StringRef>> dbContextStatus);
+
+		// Export transaction default option enum-value pairs to given container
+		void exportTransactionDefaultOptions(UniqueOrderedOptionList<FDBTransactionOptions>& outOptionList);
 
 		// Cleans up state for the legacy version monitors to break reference cycles
 		void close();

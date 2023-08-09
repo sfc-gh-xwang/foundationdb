@@ -229,6 +229,13 @@ description is not currently required but encouraged.
             paramType="Int" paramDescription="integer between 0 and 100 expressing the probability a client will verify it can't read stale data"
             description="Enables verification of causal read risky by checking whether clients are able to read stale data when they detect a recovery, and logging an error if so." />
   </Scope>
+
+  <Scope name="TenantOption">
+    <Option name="authorization_token" code="20"
+            description="Attach given authorization token to the tenant such that transactions created from the tenant object as well as subsequent tenant-aware operations are authorized"
+            paramType="String" paramDescription="A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload, which contains the list of base64-encoded JSON tenant key prefixes. A tenant key prefix has the same memory layout as the big-endian form of a 64-bit integer which uniquely identifies a tenant in FDB."
+            defaultFor="2000" sensitive="true"/>
+  </Scope>
   
   <Scope name="TransactionOption">
     <Option name="causal_write_risky" code="10"
@@ -349,7 +356,7 @@ description is not currently required but encouraged.
             hidden="true"/>
     <Option name="authorization_token" code="2000"
             description="Attach given authorization token to the transaction such that subsequent tenant-aware requests are authorized"
-            paramType="String" paramDescription="A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload."
+            paramType="String" paramDescription="A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload, which contains the list of base64-encoded JSON tenant key prefixes. A tenant key prefix has the same memory layout as the big-endian form of a 64-bit integer which uniquely identifies a tenant in FDB."
             persistent="true" sensitive="true"/>
   </Scope>
 

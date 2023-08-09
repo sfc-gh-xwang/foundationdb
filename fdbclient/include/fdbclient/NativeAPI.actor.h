@@ -260,9 +260,11 @@ public:
 	Optional<TenantGroupName> tenantGroup() const;
 	Future<TenantLookupInfo> getLookupFuture() const;
 	KeyRef prefix() const;
+	void setOption(FDBTenantOptions::Option option, Optional<StringRef> value = Optional<StringRef>());
 	std::string description() const;
 
 	Optional<TenantName> name;
+	Optional<WipedString> authToken;
 
 private:
 	mutable int64_t bigEndianId = -1;

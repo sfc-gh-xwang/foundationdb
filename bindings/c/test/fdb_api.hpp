@@ -1147,6 +1147,24 @@ public:
 		return tr.get(toBytesRef(fmt::format("{}{}", tenantManagementMapPrefix, toCharsRef(name))), false);
 	}
 
+	[[nodiscard]] Error setOptionNothrow(FDBTenantOption option, BytesRef str) noexcept {
+		return Error(native::fdb_tenant_set_option(tenant.get(), option, str.data(), intSize(str)));
+	}
+
+	[[nodiscard]] Error setOptionNothrow(FDBTenantOption option, CharsRef str) {
+		return setOptionNothrow(option, toBytesRef(str));
+	}
+
+	void setOption(FDBTenantOption option, BytesRef str) {
+		if (auto err = setOptionNothrow(option, str)) {
+			throwError(fmt::format("tenant_set_option({}) returned error: ",
+			                       static_cast<std::underlying_type_t<FDBTenantOption>>(option)),
+			           err);
+		}
+	}
+
+	void setOption(FDBTenantOption option, CharsRef str) { setOption(option, toBytesRef(str)); }
+
 	Transaction createTransaction() override {
 		auto tx_native = static_cast<native::FDBTransaction*>(nullptr);
 		auto err = Error(native::fdb_tenant_create_transaction(getTenant(), &tx_native));

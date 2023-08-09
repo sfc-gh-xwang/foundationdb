@@ -62,8 +62,7 @@ Future<REPLY_TYPE(Request)> doBulkLoadRequest(Reference<DatabaseContext> db,
 	}
 	if (tenant.present()) {
 		wait(tenant.get()->ready());
-		// FIXME: need to be able to get auth token from a tenant to construct TenantInfo! this won't work with authz
-		req.tenantInfo = TenantInfo(tenant.get()->id(), {});
+		req.tenantInfo = TenantInfo(tenant.get()->id(), tenant.get()->authToken);
 	}
 	// FIXME: cache the interfaces in db context
 
