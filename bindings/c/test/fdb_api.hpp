@@ -44,10 +44,6 @@
 
 namespace fdb {
 
-namespace internal {
-inline std::atomic<int> g_apiVersion(-1);
-} // namespace internal
-
 // hide C API to discourage mixing C/C++ API
 namespace native {
 #include <foundationdb/fdb_c.h>
@@ -65,24 +61,19 @@ using ValueRef = BytesRef;
 using BulkLoadID = ByteString;
 using BulkLoadIDRef = BytesRef;
 
-template <class T>
-struct ReadResult : public T {
-private:
-	float _serverBusyness = 0;
-	float _rangeBusyness = 0;
+class Future;
 
+struct ReadMetrics {
 public:
-	ReadResult() {}
-	ReadResult(T result, float serverBusyness, float rangeBusyness)
-	  : T(result),
-	    _serverBusyness(serverBusyness),
-	    _rangeBusyness(rangeBusyness) {}
+	ReadMetrics() {}
+	ReadMetrics(float serverBusyness, float rangeBusyness)
+	  : serverBusyness(serverBusyness),
+	    rangeBusyness(rangeBusyness) {}
 
-	T& contents() { return *(T*)this; }
-	T const& contents() const { return *(T const*)this; }
+	inline static ReadMetrics getReadMetrics(fdb::Future const& f);
 
-	float serverBusyness() const { return _serverBusyness; }
-	float rangeBusyness() const { return _rangeBusyness; }
+	float serverBusyness = 0;
+	float rangeBusyness = 0;
 };
 
 struct KeyRangeRef : native::FDBKeyRange {
@@ -254,11 +245,6 @@ CharsRef toCharsRef(const std::optional<T>& s) noexcept {
 	} else {
 		return CharsRef("[not set]");
 	}
-}
-
-template <class T>
-CharsRef toCharsRef(const ReadResult<T>& r) noexcept {
-	return toCharsRef(r.contents());
 }
 
 template <template <class...> class StringLike, class Char>
@@ -548,25 +534,10 @@ struct GranuleSummaryRef : native::FDBGranuleSummary {
 	}
 };
 
-template <class T>
-struct ReadResult {
-	using Type = fdb::ReadResult<typename T::Type>;
+struct ReadMetrics {
+	using Type = fdb::ReadMetrics;
 	static Error extract(native::FDBFuture* f, Type& out) noexcept {
-		typename T::Type result;
-		Error err = T::extract(f, result);
-
-		if (err.code() != 0) {
-			return err;
-		}
-
-		float serverBusyness = 0;
-		float rangeBusyness = 0;
-		if (fdb::internal::g_apiVersion >= 800000) {
-			err = Error(native::fdb_future_get_read_busyness(f, &serverBusyness, &rangeBusyness));
-		}
-
-		out = fdb::ReadResult<typename T::Type>(result, serverBusyness, rangeBusyness);
-		return err;
+		return Error(native::fdb_future_get_read_busyness(f, &out.serverBusyness, &out.rangeBusyness));
 	}
 };
 
@@ -908,24 +879,24 @@ public:
 
 	TypedFuture<future_var::KeyRef> getVersionstamp() { return native::fdb_transaction_get_versionstamp(tr.get()); }
 
-	TypedFuture<future_var::ReadResult<future_var::KeyRef>> getKey(KeySelector sel, bool snapshot) {
+	TypedFuture<future_var::KeyRef> getKey(KeySelector sel, bool snapshot) {
 		return native::fdb_transaction_get_key(tr.get(), sel.key, sel.keyLength, sel.orEqual, sel.offset, snapshot);
 	}
 
-	TypedFuture<future_var::ReadResult<future_var::ValueRef>> get(KeyRef key, bool snapshot) {
+	TypedFuture<future_var::ValueRef> get(KeyRef key, bool snapshot) {
 		return native::fdb_transaction_get(tr.get(), key.data(), intSize(key), snapshot);
 	}
 
 	// Usage: tx.getRange(key_select::firstGreaterOrEqual(firstKey), key_select::lastLessThan(lastKey), ...)
 	// gets key-value pairs in key range [begin, end)
-	TypedFuture<future_var::ReadResult<future_var::KeyValueRefArray>> getRange(KeySelector first,
-	                                                                           KeySelector last,
-	                                                                           int limit,
-	                                                                           int target_bytes,
-	                                                                           FDBStreamingMode mode,
-	                                                                           int iteration,
-	                                                                           bool snapshot,
-	                                                                           bool reverse) {
+	TypedFuture<future_var::KeyValueRefArray> getRange(KeySelector first,
+	                                                   KeySelector last,
+	                                                   int limit,
+	                                                   int target_bytes,
+	                                                   FDBStreamingMode mode,
+	                                                   int iteration,
+	                                                   bool snapshot,
+	                                                   bool reverse) {
 		return native::fdb_transaction_get_range(tr.get(),
 		                                         first.key,
 		                                         first.keyLength,
@@ -943,16 +914,16 @@ public:
 		                                         reverse);
 	}
 
-	TypedFuture<future_var::ReadResult<future_var::MappedKeyValueRefArray>> getMappedRange(KeySelector first,
-	                                                                                       KeySelector last,
-	                                                                                       KeyRef mapperName,
-	                                                                                       int limit,
-	                                                                                       int targetBytes,
-	                                                                                       FDBStreamingMode mode,
-	                                                                                       int iteration,
-	                                                                                       int matchIndex,
-	                                                                                       bool snapshot,
-	                                                                                       bool reverse) {
+	TypedFuture<future_var::MappedKeyValueRefArray> getMappedRange(KeySelector first,
+	                                                               KeySelector last,
+	                                                               KeyRef mapperName,
+	                                                               int limit,
+	                                                               int targetBytes,
+	                                                               FDBStreamingMode mode,
+	                                                               int iteration,
+	                                                               int matchIndex,
+	                                                               bool snapshot,
+	                                                               bool reverse) {
 		return native::fdb_transaction_get_mapped_range(tr.get(),
 		                                                first.key,
 		                                                first.keyLength,
@@ -1428,11 +1399,7 @@ public:
 	if (version < FDB_API_VERSION_TENANT_API_RELEASED) {
 		Tenant::tenantManagementMapPrefix = "\xff\xff/management/tenant_map/";
 	}
-	Error::CodeType errCode = native::fdb_select_api_version(version);
-	if (errCode == Error::success().code()) {
-		internal::g_apiVersion = version;
-	}
-	return Error(errCode);
+	return Error(native::fdb_select_api_version(version));
 }
 
 inline void selectApiVersion(int version) {
@@ -1445,18 +1412,18 @@ inline void selectApiVersion(int version) {
 	if (version < FDB_API_VERSION_TENANT_API_RELEASED) {
 		Tenant::tenantManagementMapPrefix = "\xff\xff/management/tenant_map/";
 	}
-	Error::CodeType errCode =
-	    native::fdb_select_api_version_impl(version, std::min(native::fdb_get_max_api_version(), FDB_API_VERSION));
-	if (errCode == Error::success().code()) {
-		internal::g_apiVersion = version;
-	}
-	return Error(errCode);
+	return Error(
+	    native::fdb_select_api_version_impl(version, std::min(native::fdb_get_max_api_version(), FDB_API_VERSION)));
 }
 
 inline void selectApiVersionCapped(int version) {
 	if (auto err = selectApiVersionCappedNothrow(version)) {
 		throwError(fmt::format("ERROR: fdb_select_api_version_capped({}): ", version), err);
 	}
+}
+
+ReadMetrics ReadMetrics::getReadMetrics(fdb::Future const& f) {
+	return f.get<future_var::ReadMetrics>();
 }
 
 } // namespace fdb

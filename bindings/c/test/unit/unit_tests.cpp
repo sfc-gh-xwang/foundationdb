@@ -196,7 +196,7 @@ GetMappedRangeResult getMappedRange(fdb::Transaction& tr,
 		return GetMappedRangeResult{ {}, false, err };
 	}
 
-	auto [outMkv, outCount, outMore] = f1.get().contents();
+	auto [outMkv, outCount, outMore] = f1.get();
 
 	GetMappedRangeResult result;
 	result.more = (outMore != 0);
@@ -328,7 +328,7 @@ TEST_CASE("fdb_future_cancel after future completion") {
 		// Should have no effect
 		f1.cancel();
 
-		fdb::ReadResult<std::optional<fdb::ValueRef>> val;
+		std::optional<fdb::ValueRef> val;
 		fdbCheck(f1.getNothrow(val));
 		break;
 	}
@@ -366,7 +366,7 @@ TEST_CASE("fdb_future_release_memory") {
 		// "After [fdb_future_release_memory] has been called the same number of
 		// times as fdb_future_get_*(), further calls to fdb_future_get_*() will
 		// return a future_released error".
-		fdb::ReadResult<std::optional<fdb::ValueRef>> value;
+		std::optional<fdb::ValueRef> value;
 		fdbCheck(f1.getNothrow(value));
 		fdbCheck(f1.getNothrow(value));
 

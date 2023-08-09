@@ -53,20 +53,22 @@ private:
 	// Read required is used to indicate whether we expect a read to be sent to the cluster
 	// Reads that could use the RYW cache (reading the same key twice in a transaction) or that have
 	// an empty range, etc. might not communicate the server and should pass false.
-	template <class T>
-	void checkReadResult(T result, bool readRequired, int64_t& rangeBusynessCounter) {
-		ASSERT(result.serverBusyness() >= 0);
-		ASSERT(result.serverBusyness() <= 1);
-		ASSERT(result.rangeBusyness() >= 0);
-		ASSERT(result.rangeBusyness() <= 1);
+	void checkReadResult(fdb::Future const& readFuture, bool readRequired, int64_t& rangeBusynessCounter) {
+		if (apiVersion >= 800000) {
+			fdb::ReadMetrics readMetrics = fdb::ReadMetrics::getReadMetrics(readFuture);
 
-		if (validateBusynessMetrics && apiVersion >= 800000 && readRequired &&
-		    microsecToSec(timeElapsedInUs(testStart)) > 5) {
-			ASSERT(result.serverBusyness() > 0);
-		}
+			ASSERT(readMetrics.serverBusyness >= 0);
+			ASSERT(readMetrics.serverBusyness <= 1);
+			ASSERT(readMetrics.rangeBusyness >= 0);
+			ASSERT(readMetrics.rangeBusyness <= 1);
 
-		if (result.rangeBusyness() > 0) {
-			++rangeBusynessCounter;
+			if (validateBusynessMetrics && readRequired && microsecToSec(timeElapsedInUs(testStart)) > 5) {
+				ASSERT(readMetrics.serverBusyness > 0);
+			}
+
+			if (readMetrics.rangeBusyness > 0) {
+				++rangeBusynessCounter;
+			}
 		}
 	}
 
@@ -103,9 +105,8 @@ private:
 				        ctx->continueAfterAll(*futures, [ctx, futures, results, allKeysUnique, this]() {
 					        results->clear();
 					        for (auto& f : *futures) {
-						        auto result = f.get<fdb::future_var::ReadResult<fdb::future_var::ValueRef>>();
-						        checkReadResult(result, allKeysUnique, rangeBusynessValueReads);
-						        results->push_back(copyValueRef(result));
+						        results->push_back(copyValueRef(f.get<fdb::future_var::ValueRef>()));
+						        checkReadResult(f, allKeysUnique, rangeBusynessValueReads);
 					        }
 					        ASSERT(results->size() == futures->size());
 					        ctx->done();
@@ -151,9 +152,8 @@ private:
 			    ctx->continueAfterAll(*futures, [ctx, futures, results, allKeysUnique, this]() {
 				    results->clear();
 				    for (auto& f : *futures) {
-					    auto result = f.get<fdb::future_var::ReadResult<fdb::future_var::ValueRef>>();
-					    checkReadResult(result, allKeysUnique, rangeBusynessValueReads);
-					    results->push_back(copyValueRef(result));
+					    results->push_back(copyValueRef(f.get<fdb::future_var::ValueRef>()));
+					    checkReadResult(f, allKeysUnique, rangeBusynessValueReads);
 				    }
 				    ASSERT(results->size() == futures->size());
 				    ctx->done();
@@ -204,9 +204,8 @@ private:
 			    ctx->continueAfterAll(*futures, [ctx, futures, results, numKeys, this]() {
 				    results->clear();
 				    for (auto& f : *futures) {
-					    auto result = f.get<fdb::future_var::ReadResult<fdb::future_var::KeyRef>>();
-					    checkReadResult(result, numKeys == 1, rangeBusynessKeyReads);
-					    results->push_back(fdb::Key(result));
+					    results->push_back(fdb::Key(f.get<fdb::future_var::KeyRef>()));
+					    checkReadResult(f, numKeys == 1, rangeBusynessKeyReads);
 				    }
 				    ASSERT(results->size() == futures->size());
 				    ctx->done();
@@ -257,9 +256,8 @@ private:
 		                            false /*snapshot*/,
 		                            false /*reverse*/);
 		ctx->continueAfter(f, [this, ctx, f, beginKey, endKey, results, willReadThrough]() {
-			auto result = f.get();
-			checkReadResult(result, willReadThrough, rangeBusynessRangeReads);
-			auto out = copyKeyValueArray(result);
+			auto out = copyKeyValueArray(f.get());
+			checkReadResult(f, willReadThrough, rangeBusynessRangeReads);
 			results->insert(results->end(), out.first.begin(), out.first.end());
 			const bool more = out.second;
 			if (more) {
