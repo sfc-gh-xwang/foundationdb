@@ -300,12 +300,12 @@ public:
 					    .detail("SourceTeamCpu", sourceTeam.get()->getAverageCPU())
 					    .detail("LowerPivotCpu", self->teamPivots.lowerPivotCPU)
 					    .detail("UpperPivotCpu", self->teamPivots.upperPivotCPU)
-					    .detail("SourceTeamBytes", sourceTeam.get()->getLoadBytes())
-					    .detail("LowerPivotBytes", self->teamPivots.lowerPivotBytes)
-					    .detail("UpperPivotBytes", self->teamPivots.upperPivotBytes)
-					    .detail("SourceTeamWrite", sourceTeam.get()->getWriteLoad())
-					    .detail("LowerPivotWrite", self->teamPivots.lowerPivotWrite)
-					    .detail("UpperPivotWrite", self->teamPivots.upperPivotWrite);
+					    .detail("SourceTeamDiskUsage", sourceTeam.get()->getLoadBytes())
+					    .detail("LowerPivotDiskUsage", self->teamPivots.lowerPivotBytes)
+					    .detail("UpperPivotDiskUsage", self->teamPivots.upperPivotBytes)
+					    .detail("SourceTeamWriteLoad", sourceTeam.get()->getWriteLoad())
+					    .detail("LowerPivotWriteLoad", self->teamPivots.lowerPivotWrite)
+					    .detail("UpperPivotWriteLoad", self->teamPivots.upperPivotWrite);
 					req.reply.send(std::make_pair(sourceTeam, foundSrc));
 					return Void();
 				}
@@ -3459,8 +3459,10 @@ void DDTeamCollection::updateTeamPivots(const double inflightPenalty) {
 		updateCpuPivot(teamAverageCPU);
 		updateMedianAvailableSpacePivot(teamAvailableSpace);
 		updateLoadBytesPivot(teamLoadBytes);
-		updateWriteLoadPivot(teamWriteLoad);
 		updateTeamEligibility(inflightPenalty);
+		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
+			updateWriteLoadPivot(teamWriteLoad);
+		}
 		teamPivots.lastPivotsUpdate = now();
 	}
 }
