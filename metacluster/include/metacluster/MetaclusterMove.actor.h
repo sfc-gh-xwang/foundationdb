@@ -363,8 +363,6 @@ static Future<Void> checkValidDelete(Reference<typename DB::TransactionT> tr,
 	state std::vector<TenantMapEntry> deleteEntries = aborting ? dstEntries : srcEntries;
 	state std::vector<TenantMapEntry> otherEntries = aborting ? srcEntries : dstEntries;
 	state size_t iterLen = tenantsInGroup.size();
-	// If there are extra tenants on the side we're trying to delete (src forward, dst backwards),
-	// throw an error, let the operator do some work before retrying
 	if (iterLen != deleteEntries.size()) {
 		TraceEvent(SevError, "TenantMoveCheckValidDeleteEntriesSizeDiff")
 		    .detail("DeleteEntriesSize", deleteEntries.size())
@@ -379,9 +377,7 @@ static Future<Void> checkValidDelete(Reference<typename DB::TransactionT> tr,
 		    iterLen);
 		throw invalid_tenant_move();
 	}
-	// Allow extra entries on the non-deleted side
 	if (iterLen != otherEntries.size()) {
-		// TODO: Find and remove the extra entries for the purposes of this check
 		TraceEvent(SevError, "TenantMoveCheckValidDeleteOtherEntriesSizeDiff")
 		    .detail("OtherEntriesSize", otherEntries.size())
 		    .detail("TenantsInGroup", iterLen);
