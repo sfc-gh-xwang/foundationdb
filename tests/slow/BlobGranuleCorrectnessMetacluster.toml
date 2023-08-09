@@ -1,7 +1,6 @@
 [configuration]
-blobGranulesEnabled = true 
+blobGranulesEnabled = true
 allowDefaultTenant = false
-tenantModes = ['optional', 'required']
 injectTargetedSSRestart = true
 injectSSDelay = true
 extraDatabaseMode = 'Single'
