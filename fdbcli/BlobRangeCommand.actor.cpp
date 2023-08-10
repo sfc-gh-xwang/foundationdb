@@ -98,6 +98,20 @@ ACTOR Future<Void> doBlobCheck(Database db,
 	return Void();
 }
 
+ACTOR Future<Void> doBlobDebug(Database db,
+                               Optional<Reference<Tenant>> tenant,
+                               Key startKey,
+                               Key endKey,
+                               Optional<Version> readVersion) {
+	state Transaction tr(db);
+
+	state Version version = wait(tr.getReadVersion());
+	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
+	    wait(tr.readBlobGranules(KeyRangeRef(startKey, endKey), version, readVersion));
+	printGranuleChunks(chunks);
+	return Void();
+}
+
 ACTOR Future<Void> doBlobFlush(Database db,
                                Optional<Reference<Tenant>> tenant,
                                Key startKey,
@@ -179,7 +193,7 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 	}
 
 	if (tokencmp(subcommand, "purge") || tokencmp(subcommand, "forcepurge") || tokencmp(subcommand, "check") ||
-	    tokencmp(subcommand, "flush") || tokencmp(subcommand, "compact")) {
+	    tokencmp(subcommand, "flush") || tokencmp(subcommand, "compact") || tokencmp(subcommand, "debug")) {
 		// Commands which can optionally take the version to work on
 		bool purge = tokencmp(subcommand, "purge") || tokencmp(subcommand, "forcepurge");
 		bool forcePurge = tokencmp(subcommand, "forcepurge");
@@ -214,6 +228,8 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 				wait(doBlobFlush(localDb, tenant, begin, end, version, false));
 			} else if (tokencmp(subcommand, "compact")) {
 				wait(doBlobFlush(localDb, tenant, begin, end, version, true));
+			} else if (tokencmp(subcommand, "debug")) {
+				wait(doBlobDebug(localDb, tenant, begin, end, version));
 			} else {
 				ASSERT(false);
 			}
@@ -226,5 +242,7 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 
 CommandFactory blobRangeFactory(
     "blobrange",
-    CommandHelp("blobrange <start|stop|check|purge|forcepurge|flush|compact> <startkey> <endkey> [version]", "", ""));
+    CommandHelp("blobrange <start|stop|check|debug|purge|forcepurge|flush|compact> <startkey> <endkey> [version]",
+                "",
+                ""));
 } // namespace fdb_cli
