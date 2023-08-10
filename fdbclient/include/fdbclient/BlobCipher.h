@@ -836,7 +836,8 @@ private:
 	size_t* sizeStat; // pointer to the outer BlobCipherKeyCache size count.
 };
 
-using BlobCipherDomainCacheMap = std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKeyIdCache>>;
+// The map needs to be a sorted map to serve iterateLatestCipherKeys.
+using BlobCipherDomainCacheMap = std::map<EncryptCipherDomainId, Reference<BlobCipherKeyIdCache>>;
 
 class BlobCipherKeyCache : NonCopyable, public ReferenceCounted<BlobCipherKeyCache> {
 public:
@@ -900,6 +901,13 @@ public:
 
 	// API returns point in time list of all 'cached' latest cipher key for all encryption domain.
 	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> getAllLatestCiphers();
+
+	// Iterate through latest cipher keys and apply f, beginning from beginDomainId, with number of domains no more than
+	// limit. Return true if the limit is hit and there are more domains in the cache.
+	bool iterateLatestCipherKeys(Optional<EncryptCipherDomainId> beginDomainId,
+	                             Optional<EncryptCipherDomainId> endDomainId,
+	                             size_t limit,
+	                             std::function<void(const EncryptCipherDomainId&, Reference<BlobCipherKey>)> f) const;
 
 	// API enables dropping all 'cached' cipherKeys for a given encryption domain Id.
 	// Useful to cleanup cache if an encryption domain gets removed/destroyed etc.

@@ -36,6 +36,7 @@ struct ClientWorkerInterface {
 	RequestStream<struct ProfilerRequest> profiler;
 	RequestStream<struct SetFailureInjection> setFailureInjection;
 	RequestStream<struct GetLatestEncryptCipherKeysStatusRequest> getLatestEncryptCipherKeysStatus;
+	RequestStream<struct ListLatestEncryptCipherKeysRequest> listLatestEncryptCipherKeys;
 
 	bool operator==(ClientWorkerInterface const& r) const { return id() == r.id(); }
 	bool operator!=(ClientWorkerInterface const& r) const { return id() != r.id(); }
@@ -46,7 +47,8 @@ struct ClientWorkerInterface {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, reboot, profiler, setFailureInjection, getLatestEncryptCipherKeysStatus);
+		serializer(
+		    ar, reboot, profiler, setFailureInjection, getLatestEncryptCipherKeysStatus, listLatestEncryptCipherKeys);
 	}
 };
 
@@ -151,6 +153,49 @@ struct GetLatestEncryptCipherKeysStatusRequest {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, domainId, reply);
+	}
+};
+
+struct EncryptCipherKeyEntry {
+	constexpr static FileIdentifier file_identifier = 2820955;
+	EncryptCipherBaseKeyId id = INVALID_ENCRYPT_CIPHER_KEY_ID;
+	double lastAccessTime = 0;
+
+	void merge(const EncryptCipherKeyEntry& o) {
+		ASSERT(id == o.id);
+		lastAccessTime = std::max(lastAccessTime, o.lastAccessTime);
+	}
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, id, lastAccessTime);
+	}
+};
+
+struct ListLatestEncryptCipherKeysReply {
+	constexpr static FileIdentifier file_identifier = 2141415;
+	VectorRef<std::pair<EncryptCipherDomainId, EncryptCipherKeyEntry>> list;
+	bool hasMore;
+	Arena arena;
+
+	ListLatestEncryptCipherKeysReply() = default;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, list, hasMore, arena);
+	}
+};
+
+struct ListLatestEncryptCipherKeysRequest {
+	const static FileIdentifier file_identifier = 1026950;
+	ReplyPromise<ListLatestEncryptCipherKeysReply> reply;
+	Optional<EncryptCipherDomainId> beginDomainId;
+	Optional<EncryptCipherDomainId> endDomainId;
+	size_t limit;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reply, beginDomainId, endDomainId, limit);
 	}
 };
 #endif

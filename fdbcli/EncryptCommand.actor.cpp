@@ -8,7 +8,7 @@
 
 #include "fdbclient/json_spirit/json_spirit_value.h"
 #include "fdbclient/json_spirit/json_spirit_writer_options.h"
-#include "flow/Arena.h"
+#include "fdbclient/SpecialKeySpace.actor.h"
 #include "flow/EncryptUtils.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -29,9 +29,29 @@ ACTOR Future<bool> encryptCommandActor(Database db, std::vector<StringRef> token
 			printUsage(tokens[0]);
 			return false;
 		}
-		Standalone<StringRef> result = wait(db->getLatestEncryptCipherKeysStatus(domainId));
+		state Reference<ReadYourWritesTransaction> txn = makeReference<ReadYourWritesTransaction>(db);
+		KeyRange range = SpecialKeySpace::getEncryptionApiCommandRange("latestcipherkeysbydomain");
+		state Key prefix = range.begin;
+		if (domainId.present()) {
+			range = singleKeyRange(Tuple::makeTuple(domainId.get()).pack().withPrefix(prefix));
+		}
+		RangeReadResult result = wait(txn->getRange(range, GetRangeLimits()));
+		JsonBuilderObject jsonResult;
+		for (auto& domain : result) {
+			EncryptCipherDomainId domainId = Tuple::unpack(domain.key.removePrefix(prefix)).getInt(0);
+			auto cipherKeys =
+			    ObjectReader::fromStringRef<std::vector<EncryptCipherKeyEntry>>(domain.value, Unversioned());
+			JsonBuilderArray domainArray;
+			for (auto& cipherKey : cipherKeys) {
+				JsonBuilderObject cipherKeyObject;
+				cipherKeyObject["cipher_key_id"] = std::to_string(cipherKey.id);
+				cipherKeyObject["last_access_time"] = std::to_string(cipherKey.lastAccessTime);
+				domainArray.push_back(cipherKeyObject);
+			}
+			jsonResult[std::to_string(domainId)] = domainArray;
+		}
 		json_spirit::mValue jsonValue;
-		json_spirit::read_string(result.toString(), jsonValue);
+		json_spirit::read_string(jsonResult.getJson(), jsonValue);
 		printf("%s\n", json_spirit::write_string(jsonValue, json_spirit::Output_options::pretty_print).c_str());
 	} else {
 		printUsage(tokens[0]);

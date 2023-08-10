@@ -2603,6 +2603,32 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				}
 				req.reply.send(reply);
 			}
+			when(ListLatestEncryptCipherKeysRequest _req =
+			         waitNext(interf.clientInterface.listLatestEncryptCipherKeys.getFuture())) {
+				state ListLatestEncryptCipherKeysRequest req = _req;
+				state Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
+				state ListLatestEncryptCipherKeysReply reply;
+				state bool hasMore = true;
+				while (reply.list.size() < req.limit && hasMore) {
+					Optional<EncryptCipherDomainId> nextDomainId =
+					    (reply.list.size() == 0 ? req.beginDomainId : reply.list.back().first + 1);
+					size_t limit =
+					    std::min<size_t>(req.limit - reply.list.size(), CLIENT_KNOBS->ENCRYPT_LIST_CIPHER_KEYS_LIMIT);
+					hasMore = cipherKeyCache->iterateLatestCipherKeys(
+					    nextDomainId,
+					    req.endDomainId,
+					    limit,
+					    [&](const EncryptCipherDomainId& domainId, Reference<BlobCipherKey> cipherKey) {
+						    reply.list.emplace_back(
+						        reply.arena,
+						        domainId,
+						        EncryptCipherKeyEntry({ cipherKey->getBaseCipherId(), cipherKey->getAccessAtTS() }));
+					    });
+					wait(yield());
+				}
+				reply.hasMore = hasMore;
+				req.reply.send(reply);
+			}
 			when(RecruitMasterRequest req = waitNext(interf.master.getFuture())) {
 				LocalLineage _;
 				getCurrentLineage()->modify(&RoleLineage::role) = ProcessClass::ClusterRole::Master;

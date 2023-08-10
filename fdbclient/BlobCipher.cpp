@@ -889,6 +889,27 @@ std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> BlobCipherKe
 	return result;
 }
 
+bool BlobCipherKeyCache::iterateLatestCipherKeys(
+    Optional<EncryptCipherDomainId> beginDomainId,
+    Optional<EncryptCipherDomainId> endDomainId,
+    size_t limit,
+    std::function<void(const EncryptCipherDomainId&, Reference<BlobCipherKey>)> f) const {
+	size_t count = 0;
+	auto cacheIter = beginDomainId.present() ? domainCacheMap.lower_bound(beginDomainId.get()) : domainCacheMap.begin();
+	auto hasMore = [&]() {
+		return cacheIter != domainCacheMap.end() && (!endDomainId.present() || cacheIter->first < endDomainId.get());
+	};
+	while (count < limit && hasMore()) {
+		Reference<BlobCipherKey> cipherKey = cacheIter->second->getLatestCipherKey();
+		if (cipherKey.isValid()) {
+			f(cacheIter->first, cipherKey);
+		}
+		count++;
+		cacheIter++;
+	}
+	return hasMore();
+}
+
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo) {
 	if (mode == EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE) {
 		return CLIENT_KNOBS->ENCRYPT_HEADER_AES_CTR_NO_AUTH_VERSION;
