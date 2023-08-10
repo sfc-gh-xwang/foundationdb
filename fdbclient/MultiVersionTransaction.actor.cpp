@@ -1728,6 +1728,7 @@ void MultiVersionTransaction::setOption(FDBTransactionOptions::Option option, Op
 	}
 
 	if (itr->second.persistent) {
+		MutexHolder holder(lock);
 		if (itr->second.sensitive)
 			sensitivePersistentOptions.emplace_back(option, value.castTo<WipedString>());
 		else
