@@ -149,8 +149,13 @@ struct TenantManagementConcurrencyWorkload : TestWorkload {
 				entry.get().capacity.numTenantGroups = 1e9;
 			}
 
-			metacluster::util::SimulatedMetacluster simMetacluster =
-			    wait(metacluster::util::createSimulatedMetacluster(cx, {}, entry, skipMetaclusterCreation));
+			metacluster::util::SimulatedMetacluster simMetacluster = wait(metacluster::util::createSimulatedMetacluster(
+			    cx,
+			    {},
+			    entry,
+			    skipMetaclusterCreation,
+			    metacluster::util::WaitForMetaclusterCreation(self->createMetacluster),
+			    metacluster::util::WaitForDataClusterRegistration(self->createMetacluster)));
 
 			self->managementDb = simMetacluster.managementDb;
 			ASSERT(!simMetacluster.dataDbs.empty());

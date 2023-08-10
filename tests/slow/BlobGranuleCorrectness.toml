@@ -15,6 +15,7 @@ testTitle = 'BlobGranuleCorrectness'
 
     [[test.workload]]
     testName = 'BlobGranuleCorrectnessWorkload'
+    useMetacluster = false
     testDuration = 240.0
 
     [[test.workload]]

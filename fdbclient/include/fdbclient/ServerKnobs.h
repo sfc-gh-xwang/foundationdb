@@ -898,7 +898,7 @@ public:
 	int DD_SHARD_COMPARE_LIMIT; // when read-aware DD is enabled, at most how many shards are compared together
 	bool READ_SAMPLING_ENABLED;
 	// Rolling window duration over which the average bytes moved by DD is calculated for the 'MovingData' trace event.
-	double DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL;
+	double DD_MOVING_DATA_TRACE_INTERVAL;
 	int64_t MOVING_WINDOW_SAMPLE_SIZE;
 	bool READ_METRICS_INCLUDE_SYSTEM_KEYS;
 

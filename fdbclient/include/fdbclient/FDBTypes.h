@@ -774,9 +774,7 @@ public:
 		rangeBusyness = std::max(rangeBusyness, other.rangeBusyness);
 	}
 
-	static BusynessT busynessFloatToInt(float value) {
-		return std::clamp<BusynessT>(value * scalingFactor, 0, scalingFactor);
-	}
+	static BusynessT busynessFloatToInt(float value) { return std::clamp<float>(value, 0, 1.0) * scalingFactor; }
 
 	static ReadMetrics fromFloats(float serverBusyness, float rangeBusyness) {
 		return ReadMetrics(busynessFloatToInt(serverBusyness), busynessFloatToInt(rangeBusyness));
