@@ -2331,7 +2331,7 @@ Future<Version> waitForVersion(StorageServer* data,
 		TraceEvent("WaitForVersion1000x");
 	}
 	return waitForVersionActor(
-	    data, std::max(commitVersion, data->oldestVersion.get()), spanContext, versionArrivalTime);
+	    data, std::max(commitVersion, data->oldestVersion.get()), spanContext, false, versionArrivalTime);
 }
 
 ACTOR Future<Version> waitForVersionNoTooOld(StorageServer* data, Version version) {
