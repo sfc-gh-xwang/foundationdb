@@ -119,6 +119,7 @@ public:
 	int DYNAMIC_EMPTY_VERSION_WAIT; // 0. Disabled: disabled
 	                                // 1. EMPTY_VERSION_WAIT_LOG_ONLY: No batching + logging
 	                                // 2. EMPTY_VERSION_WAIT: dynamic wait window adjustment + logging
+	double DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB; // Probability of sampling client requests, default 1 (sample all).
 	int DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH; // Max size limit of empty version wait window logging queue. Tlog
 	                                                 // samples will be discarded once limit is reached. It is advised
 	                                                 // to keep this window big enough to capture tlog sync time window
