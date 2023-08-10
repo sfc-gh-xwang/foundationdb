@@ -53,6 +53,66 @@ private:
 	std::unordered_map<Type, int> type_count;
 };
 
+// Implement y = ax + b where x in (leftPoint.first, rightPoint.first).
+// If x <= leftPoint.first, y = leftPoint.second;
+// If x >= rightPoint.first, y = rightPoint.second;
+template <class T>
+class LinearFunc {
+public:
+	struct Point {
+		T x;
+		double y;
+	};
+
+	// Initialize with two points: p1, p2
+	LinearFunc(Point p1, Point p2) {
+		ASSERT(p1.x != p2.x);
+		if (p1.x > p2.x) {
+			std::swap(p1, p2);
+		}
+		leftPoint = p1;
+		rightPoint = p2;
+		a = (p2.y - p1.y) / (p2.x - p1.x);
+		b = p2.y - a * p2.x;
+	}
+
+	double getY(T x) {
+		double result;
+		if (x <= leftPoint.x) {
+			result = leftPoint.y;
+		} else if (x >= rightPoint.x) {
+			result = rightPoint.y;
+		} else {
+			result = a * x + b;
+		}
+		return result;
+	}
+
+private:
+	Point leftPoint;
+	Point rightPoint;
+	double a;
+	double b;
+};
+
+template <typename T>
+double getProbabilityWithPivot(T lowerPivot, T upperPivot, T sample) {
+	double result;
+	if (lowerPivot == upperPivot) {
+		// Deal with special case at first
+		if (sample <= lowerPivot) {
+			result = 1;
+		} else {
+			result = 0;
+		}
+	} else {
+		LinearFunc<T> linearFunc(typename LinearFunc<T>::Point{ .x = lowerPivot, .y = 1.0 },
+		                         typename LinearFunc<T>::Point{ .x = upperPivot, .y = 0.0 });
+		result = linearFunc.getY(sample);
+	}
+	return result;
+}
+
 } // namespace data_distribution
 
 struct IDataDistributionTeam {
@@ -67,6 +127,7 @@ struct IDataDistributionTeam {
 	virtual bool hasLowerLoadBytes(int64_t thresholdBytes, double inflightPenalty) const = 0;
 	virtual int64_t getReadInFlightToTeam() const = 0;
 	virtual double getReadLoad(bool includeInFlight = true, double inflightPenalty = 1.0) const = 0;
+	virtual double getWriteLoad() const = 0;
 	virtual double getAverageCPU() const = 0;
 	virtual bool hasLowerCpu(double cpuThreshold) const = 0;
 	virtual int64_t getMinAvailableSpace(bool includeInFlight = true) const = 0;
@@ -168,14 +229,23 @@ struct GetTeamRequest {
 	               ForReadBalance forReadBalance = ForReadBalance::False,
 	               double inflightPenalty = 1.0,
 	               Optional<KeyRange> keys = Optional<KeyRange>())
-	  : teamSelect(teamSelectRequest), preferLowerDiskUtil(preferLowerDiskUtil), teamMustHaveShards(teamMustHaveShards),
-	    forReadBalance(forReadBalance), preferLowerReadUtil(preferLowerReadUtil), inflightPenalty(inflightPenalty),
-	    findTeamByServers(FindTeamByServers::False), keys(keys) {}
+	  : teamSelect(teamSelectRequest),
+	    preferLowerDiskUtil(preferLowerDiskUtil),
+	    teamMustHaveShards(teamMustHaveShards),
+	    forReadBalance(forReadBalance),
+	    preferLowerReadUtil(preferLowerReadUtil),
+	    inflightPenalty(inflightPenalty),
+	    findTeamByServers(FindTeamByServers::False),
+	    keys(keys) {}
 	GetTeamRequest(std::vector<UID> servers)
-	  : teamSelect(TeamSelect::WANT_COMPLETE_SRCS), preferLowerDiskUtil(PreferLowerDiskUtil::False),
-	    teamMustHaveShards(TeamMustHaveShards::False), forReadBalance(ForReadBalance::False),
-	    preferLowerReadUtil(PreferLowerReadUtil::False), inflightPenalty(1.0),
-	    findTeamByServers(FindTeamByServers::True), src(std::move(servers)) {}
+	  : teamSelect(TeamSelect::WANT_COMPLETE_SRCS),
+	    preferLowerDiskUtil(PreferLowerDiskUtil::False),
+	    teamMustHaveShards(TeamMustHaveShards::False),
+	    forReadBalance(ForReadBalance::False),
+	    preferLowerReadUtil(PreferLowerReadUtil::False),
+	    inflightPenalty(1.0),
+	    findTeamByServers(FindTeamByServers::True),
+	    src(std::move(servers)) {}
 
 	// return true if a.score < b.score
 	[[nodiscard]] bool lessCompare(TeamRef a, TeamRef b, int64_t aLoadBytes, int64_t bLoadBytes) const {

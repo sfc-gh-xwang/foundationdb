@@ -53,15 +53,16 @@ ACTOR Future<std::vector<WorkerDetails>> getWorkers(Reference<AsyncVar<ServerDBI
 // Gets the WorkerInterface representing the Master server.
 ACTOR Future<WorkerInterface> getMasterWorker(Database cx, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
 	TraceEvent("GetMasterWorker").detail("Stage", "GettingWorkers");
+	ASSERT(dbInfo->get().master.present());
 
 	loop {
 		state std::vector<WorkerDetails> workers = wait(getWorkers(dbInfo));
 
 		for (int i = 0; i < workers.size(); i++) {
-			if (workers[i].interf.address() == dbInfo->get().master.address()) {
+			if (workers[i].interf.address() == dbInfo->get().master.get().address()) {
 				TraceEvent("GetMasterWorker")
 				    .detail("Stage", "GotWorkers")
-				    .detail("MasterId", dbInfo->get().master.id())
+				    .detail("MasterId", dbInfo->get().master.get().id())
 				    .detail("WorkerId", workers[i].interf.id());
 				return workers[i].interf;
 			}
@@ -69,8 +70,8 @@ ACTOR Future<WorkerInterface> getMasterWorker(Database cx, Reference<AsyncVar<Se
 
 		TraceEvent(SevWarn, "GetMasterWorkerError")
 		    .detail("Error", "MasterWorkerNotFound")
-		    .detail("Master", dbInfo->get().master.id())
-		    .detail("MasterAddress", dbInfo->get().master.address())
+		    .detail("Master", dbInfo->get().master.get().id())
+		    .detail("MasterAddress", dbInfo->get().master.get().address())
 		    .detail("WorkerCount", workers.size());
 
 		wait(delay(1.0));
@@ -332,7 +333,7 @@ getStorageWorkers(Database cx, Reference<AsyncVar<ServerDBInfo> const> dbInfo, b
 	if (regionsValue.present()) {
 		usableRegions = atoi(regionsValue.get().toString().c_str());
 	}
-	auto masterDcId = dbInfo->get().master.locality.dcId();
+	auto masterDcId = dbInfo->get().master.present() ? dbInfo->get().master.get().locality.dcId() : Optional<Key>();
 
 	std::pair<std::vector<WorkerInterface>, int> result;
 	auto& [workerInterfaces, failures] = result;
@@ -814,7 +815,8 @@ struct QuietDatabaseChecker {
 	std::vector<std::string> lastFailReasons;
 
 	QuietDatabaseChecker(double maxDDRunTime)
-	  : maxDDRunTime(maxDDRunTime), timeoutEvent({ "Timeout"_sr, "TracedTooManyLines"_sr }, timeoutCallback) {}
+	  : maxDDRunTime(maxDDRunTime),
+	    timeoutEvent({ "Timeout"_sr, "TracedTooManyLines"_sr }, timeoutCallback) {}
 
 	void logFailure(StringRef name, StringRef msg, Error const& e) {
 		std::string reasons = fmt::format("{}", fmt::join(lastFailReasons, ", "));
@@ -833,7 +835,10 @@ struct QuietDatabaseChecker {
 		std::vector<std::string>& failReasons;
 
 		Impl(double start, const std::string& phase, const double maxDDRunTime, std::vector<std::string>& failReasons)
-		  : start(start), phase(phase), maxDDRunTime(maxDDRunTime), failReasons(failReasons) {}
+		  : start(start),
+		    phase(phase),
+		    maxDDRunTime(maxDDRunTime),
+		    failReasons(failReasons) {}
 
 		template <class T, class Comparison = std::less_equal<>>
 		Impl& add(BaseTraceEvent& evt,

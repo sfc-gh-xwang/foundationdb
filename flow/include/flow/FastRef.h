@@ -26,6 +26,10 @@
 #include <cstdint>
 #include "flow/Traceable.h"
 
+#ifdef ADDRESS_SANITIZER
+#include <sanitizer/lsan_interface.h>
+#endif
+
 // The thread safety this class provides is that it's safe to call addref and
 // delref on the same object concurrently in different threads. Subclass does
 // not get deleted until after all calls to delref complete.
@@ -188,9 +192,33 @@ struct Traceable<Reference<T>> : std::bool_constant<Traceable<T>::value> {
 	}
 };
 
+namespace std {
+template <class T>
+struct hash<Reference<T>> {
+	static constexpr std::hash<T*> hashFunc{};
+	std::size_t operator()(Reference<T> const& r) const { return hashFunc(r.getPtr()); }
+};
+} // namespace std
+
 template <class P, class... Args>
 Reference<P> makeReference(Args&&... args) {
 	return Reference<P>(new P(std::forward<Args>(args)...));
+}
+
+// In some places, we have known memory leaks that are benign and
+// difficult to remove. To enable ASAN leak checking globally, we
+// need to disable ASAN leak checking in certain places.
+// TODO: Fix memory leaks to make this function unnecessary.
+template <class P, class... Args>
+Reference<P> makeLeakyReference(Args&&... args) {
+#ifdef ADDRESS_SANITIZER
+	__lsan_disable();
+#endif
+	auto const result = makeReference<P>(std::forward<Args>(args)...);
+#ifdef ADDRESS_SANITIZER
+	__lsan_enable();
+#endif
+	return result;
 }
 
 template <class P>

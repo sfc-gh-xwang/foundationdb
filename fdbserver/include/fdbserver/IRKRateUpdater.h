@@ -15,7 +15,9 @@ struct RKVersionInfo {
 	double created;
 
 	RKVersionInfo(int64_t totalTransactions, int64_t batchTransactions, double created)
-	  : totalTransactions(totalTransactions), batchTransactions(batchTransactions), created(created) {}
+	  : totalTransactions(totalTransactions),
+	    batchTransactions(batchTransactions),
+	    created(created) {}
 
 	RKVersionInfo() : totalTransactions(0), batchTransactions(0), created(0.0) {}
 };

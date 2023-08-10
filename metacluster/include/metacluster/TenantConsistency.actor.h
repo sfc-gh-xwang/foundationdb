@@ -164,13 +164,17 @@ private:
 			ASSERT(f.isReady());
 			RangeReadResult rangeReadResult = f.get();
 			if (!rangeReadResult.empty()) {
+				KeyValueRef const& kv = rangeReadResult[0];
 				TraceEvent(SevError, "DataOutsideTenants")
 				    .detail("Count", rangeReadFutures.size())
 				    .detail("Index", i)
-				    .detail("Begin", ranges[i].begin.toHexString())
-				    .detail("End", ranges[i].end.toHexString())
-				    .detail("RangeReadResult", rangeReadResult.toString())
-				    .detail("ReadThrough", rangeReadResult.getReadThrough().toHexString());
+				    .detail("Begin", ranges[i].begin)
+				    .detail("End", ranges[i].end)
+				    .detail("Key", kv.key)
+				    .detail("Value", kv.value)
+				    .detail("TenantId",
+				            kv.key.size() >= 8 ? TenantAPI::prefixToId(kv.key.substr(0, 8), EnforceValidTenantId::False)
+				                               : TenantInfo::INVALID_TENANT);
 				ASSERT(false);
 			}
 		}

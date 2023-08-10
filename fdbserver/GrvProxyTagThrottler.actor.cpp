@@ -19,9 +19,11 @@
  */
 
 #include "fdbclient/Knobs.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/GrvProxyTagThrottler.h"
 #include "fdbserver/Knobs.h"
 #include "flow/UnitTest.h"
+#include <boost/unordered/unordered_flat_map.hpp>
 #include "flow/actorcompiler.h" // must be last include
 
 uint64_t GrvProxyTagThrottler::DelayedRequest::lastSequenceNumber = 0;
@@ -35,12 +37,21 @@ bool GrvProxyTagThrottler::DelayedRequest::isMaxThrottled(double maxThrottleDura
 	return now() - startTime > maxThrottleDuration;
 }
 
+GrvTransactionRateInfo GrvProxyTagThrottler::createGrvTransactionRateInfo(double rate) {
+	return GrvTransactionRateInfo(
+	    SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
+	    isClientAverageCostTrackingEnabled() ? SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET
+	                                         : SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
+	    rate,
+	    isClientAverageCostTrackingEnabled() ? SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START
+	                                         : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
+}
+
 void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
 	if (rateInfo.present()) {
 		rateInfo.get().setRate(rate);
 	} else {
-		rateInfo = GrvTransactionRateInfo(
-		    SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW, SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET, rate);
+		rateInfo = createGrvTransactionRateInfo(rate);
 	}
 }
 
@@ -58,7 +69,7 @@ void GrvProxyTagThrottler::TagQueue::rejectRequests(LatencyBandsMap& latencyBand
 	}
 }
 
-void GrvProxyTagThrottler::TagQueue::endReleaseWindow(int64_t numStarted, double elapsed) {
+void GrvProxyTagThrottler::TagQueue::endReleaseWindow(uint64_t numStarted, double elapsed) {
 	if (rateInfo.present()) {
 		CODE_PROBE(requests.empty(), "Tag queue ending release window with empty request queue");
 		CODE_PROBE(!requests.empty(), "Tag queue ending release window with requests still queued");
@@ -89,35 +100,45 @@ void GrvProxyTagThrottler::updateRates(ThrottlingIdMap<double> const& newRates) 
 			queue.rateInfo.reset();
 		}
 	}
-
-	// TODO: Use std::erase_if in C++20
-	for (auto it = queues.begin(); it != queues.end();) {
-		const auto& [throttlingId, queue] = *it;
-		if (queue.requests.empty() && !queue.rateInfo.present()) {
-			it = queues.erase(it);
-		} else {
-			++it;
-		}
-	}
+	boost::unordered::erase_if(
+	    queues, [](const auto& kv) { return kv.second.requests.empty() && !kv.second.rateInfo.present(); });
 }
 
 void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {
 	queues[req.throttlingId.get()].requests.emplace_back(req);
 }
 
-void GrvProxyTagThrottler::releaseTransactions(double elapsed,
-                                               Deque<GetReadVersionRequest>& outBatchPriority,
-                                               Deque<GetReadVersionRequest>& outDefaultPriority) {
+uint64_t GrvProxyTagThrottler::getCost(GetReadVersionRequest const& req) const {
+
+	if (isClientAverageCostTrackingEnabled()) {
+		// track-average-cost-on-client is enabled use the expectedTransactionCost.
+		if (req.expectedTotalCost.present()) {
+			return static_cast<uint64_t>(req.expectedTotalCost.get());
+		} else {
+			// expectedTransactionCost not provided, use req.transactionCount * DEFAULT_EXPECTED_TRANSACTION_COST
+			return req.transactionCount * CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+		}
+	} else {
+		return req.transactionCount;
+	}
+}
+
+GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTransactions(
+    double elapsed,
+    Deque<GetReadVersionRequest>& outBatchPriority,
+    Deque<GetReadVersionRequest>& outDefaultPriority) {
+	ReleaseTransactionsResult result;
+
 	// Pointer to a TagQueue with some extra metadata stored alongside
 	struct TagQueueHandle {
 		// Store pointers here to avoid frequent std::unordered_map lookups
 		TagQueue* queue;
-		// Cannot be stored directly because we need to
-		uint32_t* numReleased;
+		// Cannot be stored directly because amountReleased outlives TagQueueHandle
+		uint64_t* numReleased;
 		// Sequence number of the first queued request
-		int64_t nextSeqNo;
+		uint64_t nextSeqNo;
 		bool operator>(TagQueueHandle const& rhs) const { return nextSeqNo > rhs.nextSeqNo; }
-		explicit TagQueueHandle(TagQueue& queue, uint32_t& numReleased) : queue(&queue), numReleased(&numReleased) {
+		explicit TagQueueHandle(TagQueue& queue, uint64_t& numReleased) : queue(&queue), numReleased(&numReleased) {
 			ASSERT(!this->queue->requests.empty());
 			nextSeqNo = this->queue->requests.front().sequenceNumber;
 		}
@@ -128,7 +149,7 @@ void GrvProxyTagThrottler::releaseTransactions(double elapsed,
 	std::priority_queue<TagQueueHandle, std::vector<TagQueueHandle>, std::greater<TagQueueHandle>> pqOfQueues;
 
 	// Track transactions released for each throttlingId
-	std::vector<std::pair<ThrottlingId, uint32_t>> transactionsReleased;
+	std::vector<std::pair<ThrottlingId, uint64_t>> transactionsReleased;
 	transactionsReleased.reserve(queues.size());
 	auto const transactionsReleasedInitialCapacity = transactionsReleased.capacity();
 
@@ -155,31 +176,38 @@ void GrvProxyTagThrottler::releaseTransactions(double elapsed,
 		pqOfQueues.pop();
 		// Used to determine when it is time to start processing another throttlingId
 		auto const nextQueueSeqNo =
-		    pqOfQueues.empty() ? std::numeric_limits<int64_t>::max() : pqOfQueues.top().nextSeqNo;
+		    pqOfQueues.empty() ? std::numeric_limits<uint64_t>::max() : pqOfQueues.top().nextSeqNo;
 
 		while (!tagQueueHandle.queue->requests.empty()) {
 			auto& delayedReq = tagQueueHandle.queue->requests.front();
-			auto count = delayedReq.req.transactionCount;
+
+			auto cost = getCost(delayedReq.req);
+
 			ASSERT_EQ(tagQueueHandle.nextSeqNo, delayedReq.sequenceNumber);
 			if (tagQueueHandle.queue->rateInfo.present() &&
-			    !tagQueueHandle.queue->rateInfo.get().canStart(*(tagQueueHandle.numReleased), count)) {
+			    !tagQueueHandle.queue->rateInfo.get().canStart(*(tagQueueHandle.numReleased), cost)) {
 				// Cannot release any more transaction from this throttling ID (don't push the tag queue handle back
 				// into pqOfQueues)
 				CODE_PROBE(true, "GrvProxyTagThrottler throttling transaction");
 				if (tagQueueHandle.queue->isMaxThrottled(maxThrottleDuration)) {
 					// Requests in this queue have been throttled too long and errors
 					// should be sent to clients.
+					result.rejectedRequests += tagQueueHandle.queue->requests.size();
 					tagQueueHandle.queue->rejectRequests(latencyBandsMap);
 				}
 				break;
 			} else {
 				if (tagQueueHandle.nextSeqNo < nextQueueSeqNo) {
 					// Releasing transaction
-					*(tagQueueHandle.numReleased) += count;
+					*(tagQueueHandle.numReleased) += cost;
 					delayedReq.updateProxyTagThrottledDuration(latencyBandsMap);
 					if (delayedReq.req.priority == TransactionPriority::BATCH) {
+						result.batchPriorityTransactionsReleased += delayedReq.req.transactionCount;
+						++result.batchPriorityRequestsReleased;
 						outBatchPriority.push_back(delayedReq.req);
 					} else if (delayedReq.req.priority == TransactionPriority::DEFAULT) {
+						result.defaultPriorityTransactionsReleased += delayedReq.req.transactionCount;
+						++result.defaultPriorityRequestsReleased;
 						outDefaultPriority.push_back(delayedReq.req);
 					} else {
 						// Immediate priority transactions should bypass the GrvProxyTagThrottler
@@ -200,7 +228,7 @@ void GrvProxyTagThrottler::releaseTransactions(double elapsed,
 
 	// End release windows for all tag queues
 	{
-		ThrottlingIdMap<uint32_t> transactionsReleasedMap;
+		ThrottlingIdMap<uint64_t> transactionsReleasedMap;
 		for (const auto& [throttlingId, count] : transactionsReleased) {
 			transactionsReleasedMap[throttlingId] = count;
 		}
@@ -211,6 +239,8 @@ void GrvProxyTagThrottler::releaseTransactions(double elapsed,
 	// If the capacity is increased, that means the vector has been illegally resized, potentially
 	// corrupting memory
 	ASSERT_EQ(transactionsReleased.capacity(), transactionsReleasedInitialCapacity);
+
+	return result;
 }
 
 void GrvProxyTagThrottler::addLatencyBandThreshold(double value) {
@@ -235,6 +265,9 @@ ACTOR static Future<Void> mockClient(GrvProxyTagThrottler* throttler,
 		req.transactionCount = batchSize;
 		req.throttlingId = ThrottlingIdRef::fromTag(tag);
 		req.priority = priority;
+		if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS) {
+			req.expectedTotalCost = batchSize;
+		}
 		throttler->addRequest(req);
 		wait(success(req.reply.getFuture()) && timer);
 		(*counters)[tag] += batchSize;
@@ -308,7 +341,7 @@ static TransactionTag getRandomTag() {
 	return result;
 }
 
-static bool isNear(double desired, int64_t actual) {
+static bool isNear(double desired, uint64_t actual) {
 	return std::abs(desired - actual) * 10 < desired;
 }
 

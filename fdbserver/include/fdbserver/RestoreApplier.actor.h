@@ -268,12 +268,20 @@ struct ApplierBatchData : public ReferenceCounted<ApplierBatchData> {
 
 		Counters(ApplierBatchData* self, UID applierInterfID, int batchIndex)
 		  : cc("ApplierBatch", applierInterfID.toString() + ":" + std::to_string(batchIndex)),
-		    receivedBytes("ReceivedBytes", cc), receivedWeightedBytes("ReceivedWeightedMutations", cc),
-		    receivedMutations("ReceivedMutations", cc), receivedAtomicOps("ReceivedAtomicOps", cc),
-		    appliedBytes("AppliedBytes", cc), appliedWeightedBytes("AppliedWeightedBytes", cc),
-		    appliedMutations("AppliedMutations", cc), appliedAtomicOps("AppliedAtomicOps", cc),
-		    appliedTxns("AppliedTxns", cc), appliedTxnRetries("AppliedTxnRetries", cc), fetchKeys("FetchKeys", cc),
-		    fetchTxns("FetchTxns", cc), fetchTxnRetries("FetchTxnRetries", cc), clearOps("ClearOps", cc),
+		    receivedBytes("ReceivedBytes", cc),
+		    receivedWeightedBytes("ReceivedWeightedMutations", cc),
+		    receivedMutations("ReceivedMutations", cc),
+		    receivedAtomicOps("ReceivedAtomicOps", cc),
+		    appliedBytes("AppliedBytes", cc),
+		    appliedWeightedBytes("AppliedWeightedBytes", cc),
+		    appliedMutations("AppliedMutations", cc),
+		    appliedAtomicOps("AppliedAtomicOps", cc),
+		    appliedTxns("AppliedTxns", cc),
+		    appliedTxnRetries("AppliedTxnRetries", cc),
+		    fetchKeys("FetchKeys", cc),
+		    fetchTxns("FetchTxns", cc),
+		    fetchTxnRetries("FetchTxnRetries", cc),
+		    clearOps("ClearOps", cc),
 		    clearTxns("ClearTxns", cc) {}
 	} counters;
 
@@ -281,9 +289,14 @@ struct ApplierBatchData : public ReferenceCounted<ApplierBatchData> {
 	void delref() { return ReferenceCounted<ApplierBatchData>::delref(); }
 
 	explicit ApplierBatchData(UID nodeID, int batchIndex)
-	  : vbState(ApplierVersionBatchState::NOT_INIT), receiveMutationReqs(0), receivedBytes(0), appliedBytes(0),
+	  : vbState(ApplierVersionBatchState::NOT_INIT),
+	    receiveMutationReqs(0),
+	    receivedBytes(0),
+	    appliedBytes(0),
 	    targetWriteRateMB(SERVER_KNOBS->FASTRESTORE_WRITE_BW_MB / SERVER_KNOBS->FASTRESTORE_NUM_APPLIERS),
-	    totalBytesToWrite(-1), applyingDataBytes(0), counters(this, nodeID, batchIndex) {
+	    totalBytesToWrite(-1),
+	    applyingDataBytes(0),
+	    counters(this, nodeID, batchIndex) {
 		pollMetrics =
 		    counters.cc.traceCounters(format("FastRestoreApplierMetrics%d", batchIndex),
 		                              nodeID,

@@ -5,6 +5,7 @@ tenantModes = ['optional', 'required']
 
 [[knobs]]
 bg_metadata_source = "tenant"
+bg_key_tuple_truncate_offset = 1
 enable_rest_kms_communication = true
 
 [[test]]
@@ -12,4 +13,5 @@ testTitle = 'BlobGranuleCorrectness'
 
     [[test.workload]]
     testName = 'BlobGranuleCorrectnessWorkload'
+    useMetacluster = false
     testDuration = 120.0

@@ -99,10 +99,19 @@ struct MasterData : NonCopyable, ReferenceCounted<MasterData> {
 	           Standalone<StringRef> const& dbId,
 	           PromiseStream<Future<Void>> addActor,
 	           bool forceRecovery)
-	  : dbgid(myInterface.id()), lastEpochEnd(invalidVersion), recoveryTransactionVersion(invalidVersion),
-	    liveCommittedVersion(invalidVersion), databaseLocked(false), minKnownCommittedVersion(invalidVersion),
-	    coordinators(coordinators), version(invalidVersion), lastVersionTime(0), myInterface(myInterface),
-	    resolutionBalancer(&version), forceRecovery(forceRecovery), cc("Master", dbgid.toString()),
+	  : dbgid(myInterface.id()),
+	    lastEpochEnd(invalidVersion),
+	    recoveryTransactionVersion(invalidVersion),
+	    liveCommittedVersion(invalidVersion),
+	    databaseLocked(false),
+	    minKnownCommittedVersion(invalidVersion),
+	    coordinators(coordinators),
+	    version(invalidVersion),
+	    lastVersionTime(0),
+	    myInterface(myInterface),
+	    resolutionBalancer(&version),
+	    forceRecovery(forceRecovery),
+	    cc("Master", dbgid.toString()),
 	    getCommitVersionRequests("GetCommitVersionRequests", cc),
 	    getLiveCommittedVersionRequests("GetLiveCommittedVersionRequests", cc),
 	    reportLiveCommittedVersionRequests("ReportLiveCommittedVersionRequests", cc),
@@ -419,7 +428,8 @@ ACTOR Future<Void> masterServer(MasterInterface mi,
 	addActor.send(serveLiveCommittedVersion(self));
 	addActor.send(updateRecoveryData(self));
 
-	CODE_PROBE(!lifetime.isStillValid(db->get().masterLifetime, mi.id() == db->get().master.id()),
+	CODE_PROBE(!lifetime.isStillValid(db->get().masterLifetime,
+	                                  db->get().master.present() ? mi.id() == db->get().master.get().id() : false),
 	           "Master born doomed");
 	TraceEvent("MasterLifetime", self->dbgid).detail("LifetimeToken", lifetime.toString());
 
@@ -427,7 +437,9 @@ ACTOR Future<Void> masterServer(MasterInterface mi,
 		loop choose {
 			when(wait(onDBChange)) {
 				onDBChange = db->onChange();
-				if (!lifetime.isStillValid(db->get().masterLifetime, mi.id() == db->get().master.id())) {
+				if (!lifetime.isStillValid(db->get().masterLifetime,
+				                           db->get().master.present() ? mi.id() == db->get().master.get().id()
+				                                                      : false)) {
 					TraceEvent("MasterTerminated", mi.id())
 					    .detail("Reason", "LifetimeToken")
 					    .detail("MyToken", lifetime.toString())

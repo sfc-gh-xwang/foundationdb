@@ -170,6 +170,20 @@ fdb::KeyRange ApiWorkload::randomNonEmptyKeyRange() {
 	return keyRange;
 }
 
+fdb::KeyRange ApiWorkload::randomUniquePrefixKeyRange() {
+	fdb::KeyRange keyRange;
+	for (int i = 0; i < 100; i++) {
+		keyRange.beginKey = keyPrefix + Random::get().randomByteStringLowerCase(maxKeyLength, maxKeyLength);
+		if (!usedPrefixRanges.count(keyRange.beginKey)) {
+			keyRange.endKey = fdb::strinc(keyRange.beginKey);
+			ASSERT(keyRange.beginKey < keyRange.endKey);
+			return keyRange;
+		}
+	}
+	ASSERT(false);
+	return keyRange;
+}
+
 std::optional<int> ApiWorkload::randomTenant() {
 	if (tenants.size() > 0) {
 		return Random::get().randomInt(0, tenants.size() - 1);

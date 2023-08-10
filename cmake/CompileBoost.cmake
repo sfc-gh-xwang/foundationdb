@@ -91,7 +91,6 @@ function(compile_boost)
       B2
       DEPENDEES          download 
       DEPENDERS          configure
-      ALWAYS             TRUE
       COMMENT            "Downloading b2"
       WORKING_DIRECTORY  <SOURCE_DIR>
       COMMAND            curl -Ls https://github.com/bfgroup/b2/archive/refs/tags/4.8.2.tar.gz -o b2-4.8.2.tar.gz && 

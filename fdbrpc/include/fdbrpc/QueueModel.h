@@ -35,7 +35,9 @@ struct TSSEndpointData {
 	Reference<TSSMetrics> metrics;
 
 	TSSEndpointData(UID tssId, Endpoint endpoint, Reference<TSSMetrics> metrics)
-	  : tssId(tssId), endpoint(endpoint), metrics(metrics) {}
+	  : tssId(tssId),
+	    endpoint(endpoint),
+	    metrics(metrics) {}
 };
 
 // The data structure used for the client-side load balancing algorithm to
@@ -75,8 +77,12 @@ struct QueueData {
 	Optional<TSSEndpointData> tssData;
 
 	QueueData()
-	  : smoothOutstanding(FLOW_KNOBS->QUEUE_MODEL_SMOOTHING_AMOUNT), latency(0.001), penalty(1.0), failedUntil(0),
-	    futureVersionBackoff(FLOW_KNOBS->FUTURE_VERSION_INITIAL_BACKOFF), increaseBackoffTime(0) {}
+	  : smoothOutstanding(FLOW_KNOBS->QUEUE_MODEL_SMOOTHING_AMOUNT),
+	    latency(0.001),
+	    penalty(1.0),
+	    failedUntil(0),
+	    futureVersionBackoff(FLOW_KNOBS->FUTURE_VERSION_INITIAL_BACKOFF),
+	    increaseBackoffTime(0) {}
 };
 
 typedef double TimeEstimate;

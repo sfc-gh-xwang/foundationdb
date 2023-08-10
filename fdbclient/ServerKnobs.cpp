@@ -178,8 +178,29 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// In order to make sure GetTeam has enough eligible destination team:
 	ASSERT_GT(LOAD_BYTES_PIVOT_RATIO + CPU_PIVOT_RATIO, 1.0 );
 	// For dd re-evaluatioin
-	init( DD_STRICT_CPU_PIVOT_RATIO,                             0.9 ); if( randomize && BUGGIFY ) DD_STRICT_CPU_PIVOT_RATIO = deterministicRandom()->random01() * 0.45 + 0.5;
-	init( DD_REEVALUATION_ENABLED,                              false); if( isSimulated ) DD_REEVALUATION_ENABLED = deterministicRandom()->coinflip();
+	init( DD_LOWER_LOAD_BYTES_PIVOT_RATIO,                      0.4 );
+	init( DD_UPPER_LOAD_BYTES_PIVOT_RATIO,                      0.6 );
+	if( randomize && BUGGIFY ) {
+		DD_LOWER_LOAD_BYTES_PIVOT_RATIO = deterministicRandom()->random01() * 0.4 + 0.3;
+		DD_UPPER_LOAD_BYTES_PIVOT_RATIO = DD_LOWER_LOAD_BYTES_PIVOT_RATIO + (0.9 - DD_LOWER_LOAD_BYTES_PIVOT_RATIO) * deterministicRandom()->random01();
+	}
+	ASSERT_LE(DD_LOWER_LOAD_BYTES_PIVOT_RATIO, DD_UPPER_LOAD_BYTES_PIVOT_RATIO);
+	init( DD_LOWER_CPU_PIVOT_RATIO,                             0.7 );
+	init( DD_UPPER_CPU_PIVOT_RATIO,                             0.9 );
+	if (randomize && BUGGIFY) {
+		DD_LOWER_CPU_PIVOT_RATIO = deterministicRandom()->random01() * 0.4 + 0.5;
+		DD_UPPER_CPU_PIVOT_RATIO = DD_LOWER_CPU_PIVOT_RATIO + (0.999 - DD_LOWER_CPU_PIVOT_RATIO) * deterministicRandom()->random01();
+	}
+	ASSERT_LE(DD_LOWER_CPU_PIVOT_RATIO, DD_UPPER_CPU_PIVOT_RATIO);
+	init( DD_LOWER_WRITE_PIVOT_RATIO,                             0.7 );
+	init( DD_UPPER_WRITE_PIVOT_RATIO,                             0.9 );
+	ASSERT_LE(DD_LOWER_WRITE_PIVOT_RATIO, DD_UPPER_WRITE_PIVOT_RATIO);
+	if (randomize && BUGGIFY) {
+		DD_LOWER_WRITE_PIVOT_RATIO = deterministicRandom()->random01() * 0.4 + 0.5;
+		DD_UPPER_WRITE_PIVOT_RATIO = DD_LOWER_WRITE_PIVOT_RATIO + (0.999 - DD_LOWER_WRITE_PIVOT_RATIO) * deterministicRandom()->random01();
+	}
+	init( DD_REEVALUATION_ENABLED,                               false); if( isSimulated ) DD_REEVALUATION_ENABLED = deterministicRandom()->coinflip();
+
 	// In simulation, the CPU percent of every storage server is hard-coded as 100.0%. It is difficult to test pivot CPU in normal simulation. TODO: add mock DD Test case for it.
 	// TODO: choose a meaning value for real cluster
 	init( MAX_DEST_CPU_PERCENT,                                 100.0);
@@ -331,9 +352,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC,   isSimulated ? 2 : 21 * 60 * 60 * 24 ); if(randomize && BUGGIFY) DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC = isSimulated ? 0: 120;
 	init( DD_TENANT_AWARENESS_ENABLED,                         false );
 	init( STORAGE_QUOTA_ENABLED,                                true ); if(isSimulated) STORAGE_QUOTA_ENABLED = deterministicRandom()->coinflip();
-	init( TENANT_CACHE_LIST_REFRESH_INTERVAL,                      5 ); if( randomize && BUGGIFY ) TENANT_CACHE_LIST_REFRESH_INTERVAL = deterministicRandom()->randomInt(1, 10);
-	init( TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL,            60 ); if(isSimulated) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = 10; if( randomize && BUGGIFY ) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 15);
-	init( TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL,            10 ); if( randomize && BUGGIFY ) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 15);
+	init( TENANT_CACHE_LIST_REFRESH_INTERVAL,                     30 ); if(isSimulated) TENANT_CACHE_LIST_REFRESH_INTERVAL = 5; if( randomize && BUGGIFY ) TENANT_CACHE_LIST_REFRESH_INTERVAL = deterministicRandom()->randomInt(1, 10);
+	init( TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL,           180 ); if(isSimulated) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = 10; if( randomize && BUGGIFY ) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 15);
+	init( TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL,            30 ); if(isSimulated) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = 5; if( randomize && BUGGIFY ) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = deterministicRandom()->randomInt(1, 10);
 	init( TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL,             300 );
 	init( CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL,            5 ); if( randomize && BUGGIFY ) CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL = deterministicRandom()->randomInt(1, 10);
 	init( DD_BUILD_EXTRA_TEAMS_OVERRIDE,                          10 ); if( randomize && BUGGIFY ) DD_BUILD_EXTRA_TEAMS_OVERRIDE = 2;
@@ -526,15 +547,18 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( START_TRANSACTION_BATCH_INTERVAL_SMOOTHER_ALPHA,       0.1 );
 	init( START_TRANSACTION_BATCH_QUEUE_CHECK_INTERVAL,        0.001 );
 	init( START_TRANSACTION_MAX_TRANSACTIONS_TO_START,        100000 );
+	init( START_TRANSACTION_MAX_BYTES_TO_START,            409600000 );
 	init( START_TRANSACTION_MAX_REQUESTS_TO_START,             10000 );
 	init( START_TRANSACTION_RATE_WINDOW,                         2.0 );
 	init( TAG_THROTTLE_RATE_WINDOW,                              2.0 );
 	init( START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,             10.0 );
 	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,                1000.0 );
-	init( START_TRANSACTION_MAX_QUEUE_SIZE,                      1e6 );
+	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET,        40960000 );
+	init( START_TRANSACTION_MAX_QUEUE_SIZE,                      1e6 ); if ( randomize && BUGGIFY ) START_TRANSACTION_MAX_QUEUE_SIZE = 1000;
 	init( KEY_LOCATION_MAX_QUEUE_SIZE,                           1e6 );
 	init( TENANT_ID_REQUEST_MAX_QUEUE_SIZE,                      1e6 );
 	init( BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE,                  1e5 ); if ( randomize && BUGGIFY ) BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE = 100;
+	init( BULK_LOADERS_MAX_QUEUE_SIZE,                           1e4 ); if ( randomize && BUGGIFY ) BULK_LOADERS_MAX_QUEUE_SIZE = 100;
 	init( COMMIT_PROXY_LIVENESS_TIMEOUT,                        20.0 );
 
 	init( COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE,         0.0005 ); if( randomize && BUGGIFY ) COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE = 0.005;
@@ -564,7 +588,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	bool shortRecoveryDuration = randomize && BUGGIFY;
 	init( ENFORCED_MIN_RECOVERY_DURATION,                       0.085 ); if( shortRecoveryDuration ) ENFORCED_MIN_RECOVERY_DURATION = 0.01;
 	init( REQUIRED_MIN_RECOVERY_DURATION,                       0.080 ); if( shortRecoveryDuration ) REQUIRED_MIN_RECOVERY_DURATION = 0.01;
-	init( ALWAYS_CAUSAL_READ_RISKY,                             false );
+	init( ALWAYS_CAUSAL_READ_RISKY,                              true );
 	init( MAX_COMMIT_UPDATES,                                    2000 ); if( randomize && BUGGIFY ) MAX_COMMIT_UPDATES = 1;
 	init( MAX_PROXY_COMPUTE,                                      2.0 );
 	init( MAX_COMPUTE_PER_OPERATION,                              0.1 );
@@ -573,6 +597,11 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( PROXY_COMPUTE_GROWTH_RATE,                             0.01 );
 	init( TXN_STATE_SEND_AMOUNT,                                    4 );
 	init( REPORT_TRANSACTION_COST_ESTIMATION_DELAY,               0.1 );
+	// In simulation, we cannot efficiently simulate a very large workload, so using the
+	// default CP_MIN_TAG_WRITE_PAGES_RATE value of 100 causes undercounting of write throughput
+	// that is substantial. To work around this, set CP_MIN_TAG_WRITE_PAGES_RATE to 1 in simulation.
+	init( CP_MIN_TAG_WRITE_PAGES_RATE,                             50 ); if( isSimulated ) CP_MIN_TAG_WRITE_PAGES_RATE = 1;
+	init( CP_THROTTLE_TAGS_TRACKED,                                10 ); if(randomize && BUGGIFY) CP_THROTTLE_TAGS_TRACKED = deterministicRandom()->randomInt(5, 15);
 	init( PROXY_REJECT_BATCH_QUEUED_TOO_LONG,                    true );
 
 	bool buggfyUseResolverPrivateMutations = randomize && BUGGIFY && !ENABLE_VERSION_VECTOR_TLOG_UNICAST;
@@ -633,6 +662,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_PRUNE_CLIENTS_INTERVAL,                            60.0 );
 	init( CC_CHANGE_DELAY,                                       0.1 );
 	init( CC_CLASS_DELAY,                                       0.01 );
+	init( COLOCATE_STATELESS_PROCESSES,                        false ); if( randomize && BUGGIFY ) COLOCATE_STATELESS_PROCESSES = deterministicRandom()->random01() < 0.25;
 	init( WAIT_FOR_GOOD_RECRUITMENT_DELAY,                       1.0 );
 	init( WAIT_FOR_GOOD_REMOTE_RECRUITMENT_DELAY,                5.0 );
 	init( ATTEMPT_RECRUITMENT_DELAY,                           0.035 );
@@ -794,20 +824,32 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BW_RK_SIM_QUIESCE_DELAY,                             300.0 );
 
 	init( TAG_THROTTLE_PUSH_INTERVAL,                            1.0 ); if(randomize && BUGGIFY) TAG_THROTTLE_PUSH_INTERVAL = 0.0;
-	init( SS_THROTTLE_TAGS_TRACKED,                                1 ); if(randomize && BUGGIFY) SS_THROTTLE_TAGS_TRACKED = deterministicRandom()->randomInt(1, 10);
+	init( SS_THROTTLE_TAGS_TRACKED,                                5 ); if(randomize && BUGGIFY) SS_THROTTLE_TAGS_TRACKED = deterministicRandom()->randomInt(5, 15);
 	init( GLOBAL_TAG_THROTTLING,                                true );
 	init( GLOBAL_TAG_THROTTLING_MIN_RATE,                        1.0 );
 	init( GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED,                100 );
 	init( GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER,              240.0 );
 	init( GLOBAL_TAG_THROTTLING_PROXY_LOGGING_INTERVAL,         60.0 );
-	init( GLOBAL_TAG_THROTTLING_TRACE_INTERVAL,                  5.0 );
+	init( GLOBAL_TAG_THROTTLING_TRACE_INTERVAL,                 15.0 );
 	init( GLOBAL_TAG_THROTTLING_REPORT_ONLY,                   false );
-	init( GLOBAL_TAG_THROTTLING_FORGET_SS_THRESHOLD,          4096.0 );
+	init( GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD,  4096.0 );
+	init( THROUGHPUT_QUOTA_TRACK_THRESHOLD,                   409600 );
+	init( THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,                      10 ); if(randomize && BUGGIFY) THROUGHPUT_QUOTA_CACHE_BATCH_SIZE = deterministicRandom()->randomInt(1, 20);
+	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL,      5.0 );
+	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD,          60.0 );
+	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,         409600.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL,   5.0 );
+	init( THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS,                true );
 
 	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,        10.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   2.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME,   10.0 );
 	init( GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME,               10.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,            1.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME,           10.0 );
+
+	init( THROTTLING_ID_BUSY_THRESHOLD,                           0.8 );
+	init( THROTTLING_ID_FORGET_THRESHOLD,                         0.5 );
 
 	//Storage Metrics
 	init( STORAGE_METRICS_AVERAGE_INTERVAL,                    120.0 );
@@ -815,14 +857,15 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( SPLIT_JITTER_AMOUNT,                                  0.05 ); if( randomize && BUGGIFY ) SPLIT_JITTER_AMOUNT = 0.2;
 	init( IOPS_UNITS_PER_SAMPLE,                                10000 * 1000 / STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS / 100 );
 	init( BYTES_WRITTEN_UNITS_PER_SAMPLE,                           SHARD_MIN_BYTES_PER_KSEC / STORAGE_METRICS_AVERAGE_INTERVAL_PER_KSECONDS / 25 );
-	init( BYTES_READ_UNITS_PER_SAMPLE,                          100000 ); // 100K bytes
-	init( OPS_READ_UNITES_PER_SAMPLE, 100 * STORAGE_METRICS_AVERAGE_INTERVAL ); // during a sampling interval, in average every 100 op being sampled once
-	init( READ_HOT_SUB_RANGE_CHUNK_SIZE,                        10000000); // 10MB
-	init( EMPTY_READ_PENALTY,                                   20 ); // 20 bytes
+	init( BYTES_READ_UNITS_PER_SAMPLE,                        100000 ); // 100K bytes
+	init( OPS_READ_UNITS_PER_SAMPLE, 100 * STORAGE_METRICS_AVERAGE_INTERVAL ); // One sample per measurement interval for each 100 ops/s read rate 
+	init( READ_HOT_SUB_RANGE_CHUNK_SIZE,                    10000000 ); // 10MB
+	init( EMPTY_READ_PENALTY,                                     20 ); // 20 bytes
 	init( DD_SHARD_COMPARE_LIMIT,                               1000 );
 	init( READ_SAMPLING_ENABLED,                                true ); if ( randomize && BUGGIFY ) READ_SAMPLING_ENABLED = false;// enable/disable read sampling
-	init( DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL,                   120);
-	init( MOVING_WINDOW_SAMPLE_SIZE,                         10000000); // 10MB
+	init( DD_MOVING_DATA_TRACE_INTERVAL,                         120 );
+	init( MOVING_WINDOW_SAMPLE_SIZE,                        10000000 ); // 10MB
+	init( READ_METRICS_INCLUDE_SYSTEM_KEYS,                     true );
 
 	//Storage Server
 	init( STORAGE_LOGGING_DELAY,                                 5.0 );
@@ -846,7 +889,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( STORAGE_DURABILITY_LAG_REJECT_THRESHOLD,              0.25 );
 	init( STORAGE_DURABILITY_LAG_MIN_RATE,                       0.1 );
 	init( STORAGE_COMMIT_INTERVAL,                               0.5 ); if( randomize && BUGGIFY ) STORAGE_COMMIT_INTERVAL = 2.0;
-
+	init( ENABLE_READ_RANGE_BUSYNESS_REPORTING,                 true ); if( randomize && BUGGIFY ) ENABLE_READ_RANGE_BUSYNESS_REPORTING = false;
+	init( SHARD_READ_SAMPLE_UPDATE_INTERVAL,                    30.0 ); if( randomize && BUGGIFY ) SHARD_READ_SAMPLE_UPDATE_INTERVAL = 0;
 
 	// Constants which affect the fraction of data which is sampled
 	// by storage severs to estimate key-range sizes and splits.
@@ -874,7 +918,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BEHIND_CHECK_VERSIONS,             5 * VERSIONS_PER_SECOND );
 	init( WAIT_METRICS_WRONG_SHARD_CHANCE,   isSimulated ? 1.0 : 0.1 );
 	init( MIN_TAG_READ_PAGES_RATE,                               100 ); if( randomize && BUGGIFY ) MIN_TAG_READ_PAGES_RATE = 0;
-	init( MIN_TAG_WRITE_PAGES_RATE,                              100 ); if( randomize && BUGGIFY ) MIN_TAG_WRITE_PAGES_RATE = 0;
+	// In simulation, we cannot efficiently simulate a very large workload, so using the
+	// default MIN_TAG_WRITE_PAGES_RATE value of 100 causes undercounting of write throughput
+	// that is substantial. To work around this, set MIN_TAG_WRITE_PAGES_RATE to 1 in simulation.
+	init( MIN_TAG_WRITE_PAGES_RATE,                              100 ); if( isSimulated ) MIN_TAG_WRITE_PAGES_RATE = 1;
 	init( TAG_MEASUREMENT_INTERVAL,                              5.0 ); if( randomize && BUGGIFY ) TAG_MEASUREMENT_INTERVAL = 10.0;
 	init( PREFIX_COMPRESS_KVS_MEM_SNAPSHOTS,                    true ); if( randomize && BUGGIFY ) PREFIX_COMPRESS_KVS_MEM_SNAPSHOTS = false;
 	init( REPORT_DD_METRICS,                                    true );
@@ -1051,6 +1098,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH,                 100000 );
 
 	// encrypt key proxy
+	init( USE_REST_SIM_KMS_VAULT,                              false );
 	init( ENABLE_BLOB_GRANULE_COMPRESSION,                     false ); if ( randomize && BUGGIFY ) { ENABLE_BLOB_GRANULE_COMPRESSION = deterministicRandom()->coinflip(); }
 	init( BLOB_GRANULE_COMPRESSION_FILTER,                    "NONE" ); if ( randomize && BUGGIFY ) { BLOB_GRANULE_COMPRESSION_FILTER = CompressionUtils::toString(CompressionUtils::getRandomFilter()); }
 	init( ENCRYPTION_LOGGING_INTERVAL,                           5.0 );
@@ -1128,6 +1176,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_RESTORE_MANIFEST_RETENTION_MAX,                    10 );
 	init( BLOB_RESTORE_MLOGS_RETENTION_SECS,  isSimulated ?  180 : 3600 * 24 * 14 );
 	init( BLOB_RESTORE_LOAD_KEY_VERSION_MAP_STEP_SIZE,         10000 );
+	init( BLOB_RESTORE_SKIP_EMPTY_RANGES,                      true  );
 
 	init( BLOB_GRANULES_FLUSH_BATCH_SIZE,      isSimulated ?  2 : 64 );
 
@@ -1163,8 +1212,13 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_MAX_BLOB_METADATA_REQUEST_VERSION,               1);
 	init( REST_KMS_CURRENT_CIPHER_REQUEST_VERSION,                  1);
 	init( REST_KMS_MAX_CIPHER_REQUEST_VERSION,                      1);
+	init( REST_SIM_KMS_VAULT_DIR,                                  "");
+	init( REST_KMS_STABILITY_CHECK_INTERVAL,                      5.0);
+	init( KMS_LOGGING_INTERVAL,                                   5.0);
+
 
 	init( CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO,                0.5 ); if( randomize && BUGGIFY ) CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO = deterministicRandom()->random01();
+	init( ENABLE_CONSISTENCY_SCAN,                              true );
 
 	// Drop in-memory state associated with an idempotency id after this many seconds. Once dropped, this id cannot be
 	// expired proactively, but will eventually get cleaned up by the idempotency id cleaner.
@@ -1174,6 +1228,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Don't clean idempotency ids younger than this
  	init( IDEMPOTENCY_IDS_MIN_AGE_SECONDS,              3600 * 24 * 7);
 
+	// Bulk Load
+	init( BULK_LOAD_FILE_POINTER_BATCH_SIZE,                     100 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_POINTER_BATCH_SIZE = deterministicRandom()->randomInt(10, 100);
+	init( BULK_LOAD_PARALLEL_FILE_VALIDATIONS,                     1 ); if ( randomize && BUGGIFY ) BULK_LOAD_PARALLEL_FILE_VALIDATIONS = deterministicRandom()->randomInt(1, 10);
+
 	// clang-format on
 
 	if (clientKnobs) {
@@ -1182,5 +1240,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 		    std::min(MAX_READ_TRANSACTION_LIFE_VERSIONS, MAX_WRITE_TRANSACTION_LIFE_VERSIONS) /
 		    (5.0 * VERSIONS_PER_SECOND);
 		clientKnobs->INIT_MID_SHARD_BYTES = MIN_SHARD_BYTES;
+		clientKnobs->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE =
+		    std::max(clientKnobs->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, MAX_READ_TRANSACTION_LIFE_VERSIONS);
+		clientKnobs->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE =
+		    std::max(clientKnobs->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, MAX_WRITE_TRANSACTION_LIFE_VERSIONS);
 	}
 }

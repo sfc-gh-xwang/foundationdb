@@ -48,7 +48,7 @@ struct ServerDBInfo {
 	ClusterControllerFullInterface clusterInterface;
 	ClientDBInfo client; // After a successful recovery, eventually proxies that communicate with it
 	Optional<DataDistributorInterface> distributor; // The best guess of current data distributor.
-	MasterInterface master; // The best guess as to the most recent master, which might still be recovering
+	Optional<MasterInterface> master; // The best guess as to the most recent master, which might still be recovering
 	Optional<RatekeeperInterface> ratekeeper;
 	Optional<BlobManagerInterface> blobManager;
 	Optional<BlobMigratorInterface> blobMigrator;
@@ -70,7 +70,10 @@ struct ServerDBInfo {
 	int64_t infoGeneration;
 
 	ServerDBInfo()
-	  : recoveryCount(0), recoveryState(RecoveryState::UNINITIALIZED), logSystemConfig(0), infoGeneration(0) {}
+	  : recoveryCount(0),
+	    recoveryState(RecoveryState::UNINITIALIZED),
+	    logSystemConfig(0),
+	    infoGeneration(0) {}
 
 	bool operator==(ServerDBInfo const& r) const { return id == r.id; }
 	bool operator!=(ServerDBInfo const& r) const { return id != r.id; }

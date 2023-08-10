@@ -21,7 +21,6 @@
 #include "TesterWorkload.h"
 #include "TesterUtil.h"
 #include "fdb_c_options.g.h"
-#include "fmt/core.h"
 #include "test/apitester/TesterScheduler.h"
 #include <cstdlib>
 #include <memory>
@@ -81,8 +80,16 @@ bool WorkloadConfig::getBoolOption(const std::string& name, bool defaultVal) con
 }
 
 WorkloadBase::WorkloadBase(const WorkloadConfig& config)
-  : manager(nullptr), tasksScheduled(0), numErrors(0), lastTxCompleted(0), lastAction(Action::None),
-    clientId(config.clientId), numClients(config.numClients), failed(false), numTxCompleted(0), numTxStarted(0),
+  : manager(nullptr),
+    tasksScheduled(0),
+    numErrors(0),
+    lastTxCompleted(0),
+    lastAction(Action::None),
+    clientId(config.clientId),
+    numClients(config.numClients),
+    failed(false),
+    numTxCompleted(0),
+    numTxStarted(0),
     inProgress(false) {
 	maxErrors = config.getIntOption("maxErrors", 10);
 	minTxTimeoutMs = config.getIntOption("minTxTimeoutMs", 0);
@@ -187,7 +194,7 @@ void WorkloadBase::doExecute(TOpStartFct startFct,
 		    }
 		    startFct(ctx);
 	    },
-	    [this, cont, failOnError](fdb::Error err) {
+	    [this, transactional, cont, failOnError](fdb::Error err) {
 		    numTxCompleted++;
 		    {
 			    std::lock_guard<std::mutex> lock(pendingTxMutex);
@@ -197,7 +204,10 @@ void WorkloadBase::doExecute(TOpStartFct startFct,
 			    lastAction = Action::Continuation;
 			    cont();
 		    } else {
-			    std::string msg = fmt::format("Transaction failed with error: {} ({})", err.code(), err.what());
+			    std::string msg = fmt::format("{} failed with error: {} ({})",
+			                                  transactional ? "Transaction" : "Operation",
+			                                  err.code(),
+			                                  err.what());
 			    if (failOnError) {
 				    error("{}", msg);
 				    failed = true;

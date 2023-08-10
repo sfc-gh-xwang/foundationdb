@@ -21,8 +21,13 @@
 #include "fdbclient/ServerKnobs.h"
 #include "fdbserver/DDTeamCollection.h"
 #include "fdbserver/TCInfo.h"
-#include "flow/actorcompiler.h" // This must be the last #include.
+
+#ifdef ADDRESS_SANITIZER
+#include <sanitizer/lsan_interface.h>
+#endif
 #include <unordered_set>
+
+#include "flow/actorcompiler.h" // This must be the last #include.
 
 class TCServerInfoImpl {
 public:
@@ -133,9 +138,17 @@ TCServerInfo::TCServerInfo(StorageServerInterface ssi,
                            bool inDesiredDC,
                            Reference<LocalitySet> storageServerSet,
                            Version addedVersion)
-  : id(ssi.id()), inDesiredDC(inDesiredDC), collection(collection), addedVersion(addedVersion), lastKnownInterface(ssi),
-    lastKnownClass(processClass), storeType(KeyValueStoreType::END), dataInFlightToServer(0),
-    onInterfaceChanged(interfaceChanged.getFuture()), onRemoved(removed.getFuture()), onTSSPairRemoved(Never()) {
+  : id(ssi.id()),
+    inDesiredDC(inDesiredDC),
+    collection(collection),
+    addedVersion(addedVersion),
+    lastKnownInterface(ssi),
+    lastKnownClass(processClass),
+    storeType(KeyValueStoreType::END),
+    dataInFlightToServer(0),
+    onInterfaceChanged(interfaceChanged.getFuture()),
+    onRemoved(removed.getFuture()),
+    onTSSPairRemoved(Never()) {
 
 	if (!ssi.isTss()) {
 		localityEntry = ((LocalityMap<UID>*)storageServerSet.getPtr())->add(ssi.locality, &id);
@@ -224,6 +237,10 @@ int64_t TCServerInfo::loadBytes() const {
 	return getMetrics().load.bytes;
 }
 
+int64_t TCServerInfo::writeLoad() const {
+	return getMetrics().load.bytesWrittenPerKSecond;
+}
+
 void TCServerInfo::removeTeam(Reference<TCTeamInfo> team) {
 	for (int t = 0; t < teams.size(); t++) {
 		if (teams[t] == team) {
@@ -261,7 +278,13 @@ bool TCMachineTeamInfo::removeServerTeam(Reference<TCTeamInfo> team) {
 }
 
 Reference<TCMachineInfo> TCMachineInfo::clone() const {
+#ifdef ADDRESS_SANITIZER
+	__lsan_disable();
+#endif
 	auto result = Reference<TCMachineInfo>(new TCMachineInfo);
+#ifdef ADDRESS_SANITIZER
+	__lsan_enable();
+#endif
 	result->serversOnMachine = serversOnMachine;
 	result->machineID = machineID;
 	result->machineTeams = machineTeams;
@@ -291,7 +314,8 @@ std::string TCMachineInfo::getServersIDStr() const {
 }
 
 TCMachineTeamInfo::TCMachineTeamInfo(std::vector<Reference<TCMachineInfo>> const& machines)
-  : _id(deterministicRandom()->randomUniqueID()), machines(machines) {
+  : _id(deterministicRandom()->randomUniqueID()),
+    machines(machines) {
 	machineIDs.reserve(machines.size());
 	for (int i = 0; i < machines.size(); i++) {
 		machineIDs.push_back(machines[i]->machineID);
@@ -313,8 +337,12 @@ std::string TCMachineTeamInfo::getMachineIDsStr() const {
 }
 
 TCTeamInfo::TCTeamInfo(std::vector<Reference<TCServerInfo>> const& servers, Optional<Reference<TCTenantInfo>> tenant)
-  : servers(servers), tenant(tenant), healthy(true), wrongConfiguration(false),
-    priority(SERVER_KNOBS->PRIORITY_TEAM_HEALTHY), id(deterministicRandom()->randomUniqueID()) {
+  : servers(servers),
+    tenant(tenant),
+    healthy(true),
+    wrongConfiguration(false),
+    priority(SERVER_KNOBS->PRIORITY_TEAM_HEALTHY),
+    id(deterministicRandom()->randomUniqueID()) {
 	if (servers.empty()) {
 		TraceEvent(SevInfo, "ConstructTCTeamFromEmptyServers").log();
 	}
@@ -413,6 +441,21 @@ double TCTeamInfo::getReadLoad(bool includeInFlight, double inflightPenalty) con
 	}
 	return (size == 0 ? 0 : sum / size) +
 	       (includeInFlight ? inflightPenalty * getReadInFlightToTeam() / servers.size() : 0);
+}
+
+// average write bandwidth within a team
+double TCTeamInfo::getWriteLoad() const {
+	double sum = 0;
+	int size = 0;
+	for (const auto& server : servers) {
+		if (server->metricsPresent()) {
+			auto replyValue = server->writeLoad();
+			ASSERT(replyValue >= 0);
+			sum += replyValue;
+			size += 1;
+		}
+	}
+	return size == 0 ? 0 : sum / size;
 }
 
 double TCTeamInfo::getAverageCPU() const {

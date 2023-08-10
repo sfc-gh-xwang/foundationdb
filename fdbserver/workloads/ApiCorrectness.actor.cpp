@@ -114,7 +114,8 @@ public:
 	int validateEncryptionAtRest;
 
 	ApiCorrectnessWorkload(WorkloadContext const& wcx)
-	  : ApiWorkload(wcx), numRandomOperations("Num Random Operations") {
+	  : ApiWorkload(wcx),
+	    numRandomOperations("Num Random Operations") {
 		numGets = getOption(options, "numGets"_sr, 1000);
 		numGetRanges = getOption(options, "numGetRanges"_sr, 100);
 		numGetRangeSelectors = getOption(options, "numGetRangeSelectors"_sr, 100);

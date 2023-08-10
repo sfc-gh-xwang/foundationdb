@@ -81,9 +81,13 @@ struct ValueAndVersionRef {
 	explicit ValueAndVersionRef(Version version) : version(version), op(MutationRef::Type::ClearRange) {}
 	// create set
 	explicit ValueAndVersionRef(Version version, ValueRef value)
-	  : version(version), op(MutationRef::Type::SetValue), value(value) {}
+	  : version(version),
+	    op(MutationRef::Type::SetValue),
+	    value(value) {}
 	ValueAndVersionRef(Arena& arena, const ValueAndVersionRef& copyFrom)
-	  : version(copyFrom.version), op(copyFrom.op), value(arena, copyFrom.value) {}
+	  : version(copyFrom.version),
+	    op(copyFrom.op),
+	    value(arena, copyFrom.value) {}
 
 	bool isSet() const { return op == MutationRef::SetValue; }
 	bool isClear() const { return op == MutationRef::ClearRange; }
@@ -115,16 +119,26 @@ struct ParsedDeltaBoundaryRef {
 	// op constructor
 	ParsedDeltaBoundaryRef() {}
 	explicit ParsedDeltaBoundaryRef(KeyRef key, bool clearAfter, const ValueAndVersionRef& valueAndVersion)
-	  : key(key), op(valueAndVersion.op), value(valueAndVersion.value), clearAfter(clearAfter) {}
+	  : key(key),
+	    op(valueAndVersion.op),
+	    value(valueAndVersion.value),
+	    clearAfter(clearAfter) {}
 	// noop constructor
 	explicit ParsedDeltaBoundaryRef(KeyRef key, bool clearAfter)
-	  : key(key), op(MutationRef::Type::NoOp), clearAfter(clearAfter) {}
+	  : key(key),
+	    op(MutationRef::Type::NoOp),
+	    clearAfter(clearAfter) {}
 	// from snapshot set constructor
 	explicit ParsedDeltaBoundaryRef(const KeyValueRef& kv)
-	  : key(kv.key), op(MutationRef::Type::SetValue), value(kv.value), clearAfter(false) {}
+	  : key(kv.key),
+	    op(MutationRef::Type::SetValue),
+	    value(kv.value),
+	    clearAfter(false) {}
 
 	ParsedDeltaBoundaryRef(Arena& arena, const ParsedDeltaBoundaryRef& copyFrom)
-	  : key(arena, copyFrom.key), op(copyFrom.op), clearAfter(copyFrom.clearAfter) {
+	  : key(arena, copyFrom.key),
+	    op(copyFrom.op),
+	    clearAfter(copyFrom.clearAfter) {
 		if (copyFrom.isSet()) {
 			value = StringRef(arena, copyFrom.value);
 		}
@@ -146,7 +160,9 @@ struct DeltaBoundaryRef {
 
 	DeltaBoundaryRef() {}
 	DeltaBoundaryRef(Arena& ar, const DeltaBoundaryRef& copyFrom)
-	  : key(ar, copyFrom.key), values(ar, copyFrom.values), clearVersion(copyFrom.clearVersion) {}
+	  : key(ar, copyFrom.key),
+	    values(ar, copyFrom.values),
+	    clearVersion(copyFrom.clearVersion) {}
 
 	int totalSize() { return sizeof(DeltaBoundaryRef) + key.expectedSize() + values.expectedSize(); }
 	int expectedSize() const { return key.expectedSize() + values.expectedSize(); }

@@ -27,7 +27,6 @@
 #include "fdbserver/BlobMigratorInterface.h"
 #include "flow/Trace.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
-#include <climits>
 
 namespace {
 
@@ -67,7 +66,6 @@ int EligibilityCounter::getCount(int combinedType) const {
 	}
 	return minCount;
 }
-
 } // namespace data_distribution
 
 class DDTeamCollectionImpl {
@@ -288,10 +286,10 @@ public:
 				}
 			}
 
-			// When relocating shards, DD would evaluate the CPU & LoadBytes of sourceTeam. If
+			// When relocating shards, DD would evaluate the CPU, LoadBytes, WriteLoad of sourceTeam. If
 			// both of metrics are below pivot values, we would return the source team to dataDistributionRelocator
 			if (req.teamSelect.isForRelocateShard() && SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
-				auto sourceTeam = self->evaluateSourceTeam(req.src, req.inflightPenalty);
+				auto sourceTeam = self->evaluateSourceTeam(req);
 				if (sourceTeam.present()) {
 					CODE_PROBE(true, "dd re-evaluation triggered");
 					TraceEvent(SevDebug, "GetTeamReturnSourceTeam", self->distributorId)
@@ -300,9 +298,14 @@ public:
 					    .detail("CompleteSources", req.completeSources)
 					    .detail("SourceTeamInfo", sourceTeam.get()->getDesc())
 					    .detail("SourceTeamCpu", sourceTeam.get()->getAverageCPU())
-					    .detail("PivotCpu", self->teamPivots.strictPivotCPU)
-					    .detail("SourceTeamLoadBytes", sourceTeam.get()->getLoadBytes(true, req.inflightPenalty))
-					    .detail("PivotLoadBytes", self->teamPivots.pivotLoadBytes);
+					    .detail("LowerPivotCpu", self->teamPivots.lowerPivotCPU)
+					    .detail("UpperPivotCpu", self->teamPivots.upperPivotCPU)
+					    .detail("SourceTeamDiskUsage", sourceTeam.get()->getLoadBytes())
+					    .detail("LowerPivotDiskUsage", self->teamPivots.lowerPivotBytes)
+					    .detail("UpperPivotDiskUsage", self->teamPivots.upperPivotBytes)
+					    .detail("SourceTeamWriteLoad", sourceTeam.get()->getWriteLoad())
+					    .detail("LowerPivotWriteLoad", self->teamPivots.lowerPivotWrite)
+					    .detail("UpperPivotWriteLoad", self->teamPivots.upperPivotWrite);
 					req.reply.send(std::make_pair(sourceTeam, foundSrc));
 					return Void();
 				}
@@ -1369,6 +1372,7 @@ public:
 								    self->checkAndCreateMachine(self->server_info[server->getId()]);
 								ASSERT(destMachine.isValid());
 							}
+							self->resetLocalitySet();
 
 							// Ensure the server's server team belong to a machine team, and
 							// Get the newBadTeams due to the locality change
@@ -1387,7 +1391,6 @@ public:
 							}
 
 							server->updateInDesiredDC(self->includedDCs);
-							self->resetLocalitySet();
 
 							bool addedNewBadTeam = false;
 							for (auto it : newBadTeams) {
@@ -2712,7 +2715,11 @@ public:
 							// FIXME: better way to do this than timer?
 						} else {
 							pendingTSSCheck = false;
-							checkTss = Never();
+							if (!self->zeroHealthyTeams->get()) {
+								checkTss = Never();
+							} else {
+								checkTss = delay(SERVER_KNOBS->TSS_DD_CHECK_INTERVAL);
+							}
 						}
 					}
 					when(wait(self->restartRecruiting.onTrigger())) {}
@@ -2913,7 +2920,7 @@ public:
 					    .detail("Server", server->getId())
 					    .detail("IsTss", isTss)
 					    .detail("Reason", "Absent server list item");
-					return Void();
+					return Never();
 				}
 				Optional<StorageMetadataType> metadata = wait(metadataMap.get(tr, server->getId()));
 				// NOTE: in upgrade testing, there may not be any metadata
@@ -3298,8 +3305,20 @@ void DDTeamCollection::updateLoadBytesPivot(std::vector<int64_t>& teamLoadBytes)
 		size_t pivot = teamLoadBytes.size() * SERVER_KNOBS->LOAD_BYTES_PIVOT_RATIO;
 		std::nth_element(teamLoadBytes.begin(), teamLoadBytes.begin() + pivot, teamLoadBytes.end());
 		teamPivots.pivotLoadBytes = teamLoadBytes[pivot];
+
+		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
+			size_t lowerPivot = teamLoadBytes.size() * std::min(1.0, SERVER_KNOBS->DD_LOWER_LOAD_BYTES_PIVOT_RATIO);
+			std::nth_element(teamLoadBytes.begin(), teamLoadBytes.begin() + lowerPivot, teamLoadBytes.end());
+			size_t upperPivot = teamLoadBytes.size() * std::min(1.0, SERVER_KNOBS->DD_UPPER_LOAD_BYTES_PIVOT_RATIO);
+			std::nth_element(teamLoadBytes.begin(), teamLoadBytes.begin() + upperPivot, teamLoadBytes.end());
+
+			teamPivots.lowerPivotBytes = teamLoadBytes[lowerPivot];
+			teamPivots.upperPivotBytes = teamLoadBytes[upperPivot];
+		}
 	} else {
 		teamPivots.pivotLoadBytes = std::numeric_limits<int64_t>::max();
+		teamPivots.lowerPivotBytes = std::numeric_limits<int64_t>::min();
+		teamPivots.upperPivotBytes = std::numeric_limits<int64_t>::min();
 	}
 }
 
@@ -3332,13 +3351,18 @@ void DDTeamCollection::updateCpuPivot(std::vector<double>& teamAverageCPU) {
 		teamPivots.pivotCPU = teamAverageCPU[pivot];
 
 		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
-			size_t strictPivot = teamAverageCPU.size() * std::min(1.0, SERVER_KNOBS->DD_STRICT_CPU_PIVOT_RATIO);
-			std::nth_element(teamAverageCPU.begin(), teamAverageCPU.begin() + strictPivot, teamAverageCPU.end());
-			teamPivots.strictPivotCPU = teamAverageCPU[strictPivot];
+			size_t lowerPivot = teamAverageCPU.size() * std::min(1.0, SERVER_KNOBS->DD_LOWER_CPU_PIVOT_RATIO);
+			std::nth_element(teamAverageCPU.begin(), teamAverageCPU.begin() + lowerPivot, teamAverageCPU.end());
+			size_t upperPivot = teamAverageCPU.size() * std::min(1.0, SERVER_KNOBS->DD_UPPER_CPU_PIVOT_RATIO);
+			std::nth_element(teamAverageCPU.begin(), teamAverageCPU.begin() + upperPivot, teamAverageCPU.end());
+
+			teamPivots.lowerPivotCPU = teamAverageCPU[lowerPivot];
+			teamPivots.upperPivotCPU = teamAverageCPU[upperPivot];
 		}
 	} else {
 		teamPivots.pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
-		teamPivots.strictPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
+		teamPivots.lowerPivotCPU = 0;
+		teamPivots.upperPivotCPU = 0;
 	}
 
 	if (teamPivots.pivotCPU > SERVER_KNOBS->MAX_DEST_CPU_PERCENT) {
@@ -3346,6 +3370,21 @@ void DDTeamCollection::updateCpuPivot(std::vector<double>& teamAverageCPU) {
 		    .detail("PivotCPU", teamPivots.pivotCPU)
 		    .detail("MinTeamAvgCPU", teamPivots.minTeamAvgCPU)
 		    .detail("Primary", primary);
+	}
+}
+
+void DDTeamCollection::updateWriteLoadPivot(std::vector<double>& teamWriteLoad) {
+	if (!teamWriteLoad.empty()) {
+		size_t lowerPivot = teamWriteLoad.size() * std::min(1.0, SERVER_KNOBS->DD_LOWER_WRITE_PIVOT_RATIO);
+		std::nth_element(teamWriteLoad.begin(), teamWriteLoad.begin() + lowerPivot, teamWriteLoad.end());
+		size_t upperPivot = teamWriteLoad.size() * std::min(1.0, SERVER_KNOBS->DD_UPPER_WRITE_PIVOT_RATIO);
+		std::nth_element(teamWriteLoad.begin(), teamWriteLoad.begin() + upperPivot, teamWriteLoad.end());
+
+		teamPivots.lowerPivotWrite = teamWriteLoad[lowerPivot];
+		teamPivots.upperPivotWrite = teamWriteLoad[upperPivot];
+	} else {
+		teamPivots.lowerPivotWrite = std::numeric_limits<double>::min();
+		teamPivots.upperPivotWrite = std::numeric_limits<double>::min();
 	}
 }
 
@@ -3395,7 +3434,9 @@ void DDTeamCollection::updateTeamEligibility(const double inflightPenalty) {
 	    .detail("PivotAvailableSpaceRatio", teamPivots.pivotAvailableSpaceRatio)
 	    .detail("PivotCpuRatio", teamPivots.pivotCPU)
 	    .detail("PivotLoadBytes", teamPivots.pivotLoadBytes)
-	    .detail("StrictPivotCpuRatio", teamPivots.strictPivotCPU);
+	    .detail("LowerPivotCpuRatio", teamPivots.lowerPivotCPU)
+	    .detail("LowerPivotLoadBytes", teamPivots.lowerPivotBytes)
+	    .detail("UpperPivotLoadBytes", teamPivots.upperPivotBytes);
 }
 
 void DDTeamCollection::updateTeamPivots(const double inflightPenalty) {
@@ -3403,18 +3444,25 @@ void DDTeamCollection::updateTeamPivots(const double inflightPenalty) {
 		std::vector<double> teamAverageCPU;
 		std::vector<double> teamAvailableSpace;
 		std::vector<int64_t> teamLoadBytes;
+		std::vector<double> teamWriteLoad;
 		for (int i = 0; i < teams.size(); i++) {
 			if (teams[i]->isHealthy()) {
 				teamAverageCPU.emplace_back(teams[i]->getAverageCPU());
 				teamPivots.minTeamAvgCPU = std::min(teamPivots.minTeamAvgCPU, teamAverageCPU.back());
 				teamAvailableSpace.push_back(teams[i]->getMinAvailableSpaceRatio());
 				teamLoadBytes.push_back(teams[i]->getLoadBytes(true, inflightPenalty));
+				if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
+					teamWriteLoad.push_back(teams[i]->getWriteLoad());
+				}
 			}
 		}
 		updateCpuPivot(teamAverageCPU);
 		updateMedianAvailableSpacePivot(teamAvailableSpace);
 		updateLoadBytesPivot(teamLoadBytes);
 		updateTeamEligibility(inflightPenalty);
+		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
+			updateWriteLoadPivot(teamWriteLoad);
+		}
 		teamPivots.lastPivotsUpdate = now();
 	}
 }
@@ -3572,14 +3620,39 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::findTeamFromServers
 	return Optional<Reference<IDataDistributionTeam>>();
 }
 
-Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(const std::vector<UID>& servers,
-                                                                                const double inflightPenalty) {
-	auto sourceTeam = findTeamFromServers(servers, /* wantHealthy=*/true);
+Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(GetTeamRequest& req) {
+	Optional<Reference<IDataDistributionTeam>> sourceTeam = findTeamFromServers(req.src, /* wantHealthy=*/true);
 	if (sourceTeam.present()) {
-		if (sourceTeam.get()->hasLowerLoadBytes(teamPivots.pivotLoadBytes, inflightPenalty) &&
-		    sourceTeam.get()->hasHealthyAvailableSpace(teamPivots.pivotAvailableSpaceRatio) &&
-		    sourceTeam.get()->hasLowerCpu(teamPivots.strictPivotCPU)) {
-			return sourceTeam;
+		// Make sure there is enough available space in source team before preventing.
+		if (sourceTeam.get()->hasHealthyAvailableSpace(teamPivots.pivotAvailableSpaceRatio)) {
+			ASSERT_LE(teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes);
+			ASSERT_LE(teamPivots.lowerPivotCPU, teamPivots.upperPivotCPU);
+			ASSERT_LE(teamPivots.lowerPivotWrite, teamPivots.upperPivotWrite);
+
+			int64_t sourceLoadBytes = sourceTeam.get()->getLoadBytes(true, req.inflightPenalty);
+			double sourceCPU = sourceTeam.get()->getAverageCPU();
+			double sourceWrite = sourceTeam.get()->getWriteLoad();
+
+			double probabilityLoadBytes = data_distribution::getProbabilityWithPivot<int64_t>(
+			    teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes, sourceLoadBytes);
+
+			double probabilityCPU = data_distribution::getProbabilityWithPivot<double>(
+			    teamPivots.lowerPivotCPU, teamPivots.upperPivotCPU, sourceCPU);
+
+			double probabilityWrite = data_distribution::getProbabilityWithPivot<double>(
+			    teamPivots.lowerPivotWrite, teamPivots.upperPivotWrite, sourceWrite);
+
+			ASSERT(probabilityLoadBytes >= 0 && probabilityLoadBytes <= 1);
+			ASSERT(probabilityCPU >= 0 && probabilityCPU <= 1);
+			ASSERT(probabilityWrite >= 0 && probabilityWrite <= 1);
+
+			if (probabilityLoadBytes * probabilityCPU * probabilityWrite == 0) {
+				// As long as either LoadBytes or CPU or WriteRate doesn't pass the normal pivot check, we won't do any
+				// prevention.
+			} else if (deterministicRandom()->random01() <
+			           (probabilityLoadBytes + probabilityCPU + probabilityWrite) / 3) {
+				return sourceTeam;
+			}
 		}
 	}
 	return Optional<Reference<IDataDistributionTeam>>();
@@ -3879,38 +3952,56 @@ bool DDTeamCollection::satisfiesPolicy(const std::vector<Reference<TCServerInfo>
 }
 
 DDTeamCollection::DDTeamCollection(DDTeamCollectionInitParams const& params)
-  : doBuildTeams(true), lastBuildTeamsFailed(false), teamBuilder(Void()), lock(params.lock), output(params.output),
-    unhealthyServers(0), storageWiggler(makeReference<StorageWiggler>(this)), processingWiggle(params.processingWiggle),
-    getAverageShardBytes(params.getAverageShardBytes), shardsAffectedByTeamFailure(params.shardsAffectedByTeamFailure),
+  : doBuildTeams(true),
+    lastBuildTeamsFailed(false),
+    teamBuilder(Void()),
+    lock(params.lock),
+    output(params.output),
+    unhealthyServers(0),
+    storageWiggler(makeReference<StorageWiggler>(this)),
+    processingWiggle(params.processingWiggle),
+    getAverageShardBytes(params.getAverageShardBytes),
+    shardsAffectedByTeamFailure(params.shardsAffectedByTeamFailure),
     initialFailureReactionDelay(
         delayed(params.readyToStart, SERVER_KNOBS->INITIAL_FAILURE_REACTION_DELAY, TaskPriority::DataDistribution)),
-    initializationDoneActor(logOnCompletion(params.readyToStart && initialFailureReactionDelay)), recruitingStream(0),
-    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY), healthyTeamCount(0),
-    zeroHealthyTeams(params.zeroHealthyTeams), optimalTeamCount(0), zeroOptimalTeams(true), isTssRecruiting(false),
-    includedDCs(params.includedDCs), otherTrackedDCs(params.otherTrackedDCs),
-    processingUnhealthy(params.processingUnhealthy), readyToStart(params.readyToStart),
-    checkTeamDelay(delay(SERVER_KNOBS->CHECK_TEAM_DELAY, TaskPriority::DataDistribution)), badTeamRemover(Void()),
-    checkInvalidLocalities(Void()), wrongStoreTypeRemover(Void()), clearHealthyZoneFuture(true),
-    lowestUtilizationTeam(0), highestUtilizationTeam(0), getShardMetrics(params.getShardMetrics),
-    getUnhealthyRelocationCount(params.getUnhealthyRelocationCount), removeFailedServer(params.removeFailedServer),
+    initializationDoneActor(logOnCompletion(params.readyToStart && initialFailureReactionDelay)),
+    recruitingStream(0),
+    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
+    healthyTeamCount(0),
+    zeroHealthyTeams(params.zeroHealthyTeams),
+    optimalTeamCount(0),
+    zeroOptimalTeams(true),
+    isTssRecruiting(false),
+    includedDCs(params.includedDCs),
+    otherTrackedDCs(params.otherTrackedDCs),
+    processingUnhealthy(params.processingUnhealthy),
+    readyToStart(params.readyToStart),
+    checkTeamDelay(delay(SERVER_KNOBS->CHECK_TEAM_DELAY, TaskPriority::DataDistribution)),
+    badTeamRemover(Void()),
+    checkInvalidLocalities(Void()),
+    wrongStoreTypeRemover(Void()),
+    clearHealthyZoneFuture(true),
+    lowestUtilizationTeam(0),
+    highestUtilizationTeam(0),
+    getShardMetrics(params.getShardMetrics),
+    getUnhealthyRelocationCount(params.getUnhealthyRelocationCount),
+    removeFailedServer(params.removeFailedServer),
     ddTrackerStartingEventHolder(makeReference<EventCacheHolder>("DDTrackerStarting")),
     teamCollectionInfoEventHolder(makeReference<EventCacheHolder>("TeamCollectionInfo")),
     storageServerRecruitmentEventHolder(
         makeReference<EventCacheHolder>("StorageServerRecruitment_" + params.distributorId.toString())),
-    primary(params.primary), distributorId(params.distributorId), underReplication(false), db(params.db),
-    configuration(params.configuration), storageServerSet(new LocalityMap<UID>()) {
+    primary(params.primary),
+    distributorId(params.distributorId),
+    underReplication(false),
+    db(params.db),
+    configuration(params.configuration),
+    storageServerSet(new LocalityMap<UID>()) {
 
 	if (!primary || configuration.usableRegions == 1) {
 		TraceEvent("DDTrackerStarting", distributorId)
 		    .detail("State", "Inactive")
 		    .trackLatest(ddTrackerStartingEventHolder->trackingKey);
 	}
-	teamPivots = { .lastPivotsUpdate = 0,
-		           .pivotAvailableSpaceRatio = SERVER_KNOBS->MIN_AVAILABLE_SPACE_RATIO,
-		           .pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT,
-		           .pivotLoadBytes = std::numeric_limits<int64_t>::max(),
-		           .strictPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT,
-		           .minTeamAvgCPU = std::numeric_limits<double>::max() };
 }
 
 DDTeamCollection::~DDTeamCollection() {
@@ -4196,7 +4287,11 @@ struct ServerPriority {
 
 	ServerPriority() {}
 	ServerPriority(int healthyShards, int unhealthyShards, int64_t loadBytes, UID id, Reference<TCServerInfo> info)
-	  : healthyShards(healthyShards), unhealthyShards(unhealthyShards), loadBytes(loadBytes), id(id), info(info) {}
+	  : healthyShards(healthyShards),
+	    unhealthyShards(unhealthyShards),
+	    loadBytes(loadBytes),
+	    id(id),
+	    info(info) {}
 
 	bool operator<(ServerPriority const& r) const {
 		if (healthyShards != r.healthyShards) {
@@ -4320,7 +4415,7 @@ Reference<TCTeamInfo> DDTeamCollection::buildLargeTeam(int teamSize) {
 		candidateTeam.push_back(server_info[it]);
 	}
 	Optional<Reference<TCTenantInfo>> no_tenant = {};
-	auto teamInfo = makeReference<TCTeamInfo>(candidateTeam, no_tenant);
+	auto teamInfo = makeLeakyReference<TCTeamInfo>(candidateTeam, no_tenant);
 	teamInfo->tracker = teamTracker(teamInfo, IsBadTeam::False, IsRedundantTeam::False);
 	largeTeams.push_back(teamInfo);
 	return teamInfo;
@@ -4330,7 +4425,7 @@ void DDTeamCollection::addTeam(const std::vector<Reference<TCServerInfo>>& newTe
                                IsInitialTeam isInitialTeam,
                                IsRedundantTeam redundantTeam) {
 	Optional<Reference<TCTenantInfo>> no_tenant = {};
-	auto teamInfo = makeReference<TCTeamInfo>(newTeamServers, no_tenant);
+	auto teamInfo = makeLeakyReference<TCTeamInfo>(newTeamServers, no_tenant);
 
 	// Move satisfiesPolicy to the end for performance benefit
 	auto badTeam = IsBadTeam{ redundantTeam || !satisfiesPolicy(teamInfo->getServers()) ||
@@ -4389,7 +4484,7 @@ void DDTeamCollection::addTeam(const std::vector<Reference<TCServerInfo>>& newTe
 }
 
 Reference<TCMachineTeamInfo> DDTeamCollection::addMachineTeam(std::vector<Reference<TCMachineInfo>> machines) {
-	auto machineTeamInfo = makeReference<TCMachineTeamInfo>(machines);
+	auto machineTeamInfo = makeLeakyReference<TCMachineTeamInfo>(machines);
 	machineTeams.push_back(machineTeamInfo);
 
 	// Assign machine teams to machine
@@ -5228,7 +5323,7 @@ void DDTeamCollection::addServer(StorageServerInterface newServer,
 	    .detail("WaitFailureToken", newServer.waitFailure.getEndpoint().token)
 	    .detail("Address", newServer.waitFailure.getEndpoint().getPrimaryAddress());
 
-	auto& r = server_and_tss_info[newServer.id()] = makeReference<TCServerInfo>(
+	auto& r = server_and_tss_info[newServer.id()] = makeLeakyReference<TCServerInfo>(
 	    newServer,
 	    this,
 	    processClass,
@@ -5307,7 +5402,7 @@ Reference<TCMachineInfo> DDTeamCollection::checkAndCreateMachine(Reference<TCSer
 		CODE_PROBE(true, "First storage server in process on the machine");
 		// For each machine, store the first server's localityEntry into machineInfo for later use.
 		LocalityEntry localityEntry = machineLocalityMap.add(locality, &server->getId());
-		machineInfo = makeReference<TCMachineInfo>(server, localityEntry);
+		machineInfo = makeLeakyReference<TCMachineInfo>(server, localityEntry);
 		machine_info.insert(std::make_pair(machine_id, machineInfo));
 	} else {
 		machineInfo = machine_info.find(machine_id)->second;

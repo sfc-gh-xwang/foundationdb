@@ -5,8 +5,7 @@ tenantModes = ['optional', 'required']
 testTitle='TenantGroupThroughputQuotaTest'
 
   [[test.workload]]
-  testName='ThroughputQuota'
-  nameRepresentsTenantGroup=true
+  testName='TenantGroupThroughputQuota'
   name='TestTenantGroup'
   totalQuotaInPages=4
 

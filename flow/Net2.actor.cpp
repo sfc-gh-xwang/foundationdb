@@ -350,7 +350,10 @@ public:
 	BindPromise(AuditedEvent auditedEvent, UID errID) : errContext(auditedEvent), errID(errID) {}
 	BindPromise(BindPromise const& r) : p(r.p), errContext(r.errContext), errID(r.errID), peerAddr(r.peerAddr) {}
 	BindPromise(BindPromise&& r) noexcept
-	  : p(std::move(r.p)), errContext(r.errContext), errID(r.errID), peerAddr(r.peerAddr) {}
+	  : p(std::move(r.p)),
+	    errContext(r.errContext),
+	    errID(r.errID),
+	    peerAddr(r.peerAddr) {}
 
 	Future<Void> getFuture() const { return p.getFuture(); }
 
@@ -401,7 +404,8 @@ public:
 	void close() override { closeSocket(); }
 
 	explicit Connection(boost::asio::io_service& io_service)
-	  : id(nondeterministicRandom()->randomUniqueID()), socket(io_service) {}
+	  : id(nondeterministicRandom()->randomUniqueID()),
+	    socket(io_service) {}
 
 	// This is not part of the IConnection interface, because it is wrapped by INetwork::connect()
 	ACTOR static Future<Reference<IConnection>> connect(boost::asio::io_service* ios, NetworkAddress addr) {
@@ -711,7 +715,8 @@ public:
 
 private:
 	UDPSocket(boost::asio::io_service& io_service, Optional<NetworkAddress> toAddress, bool isV6)
-	  : id(nondeterministicRandom()->randomUniqueID()), socket(io_service, isV6 ? udp::v6() : udp::v4()) {}
+	  : id(nondeterministicRandom()->randomUniqueID()),
+	    socket(io_service, isV6 ? udp::v6() : udp::v4()) {}
 
 	void closeSocket() {
 		boost::system::error_code error;
@@ -751,7 +756,9 @@ class Listener final : public IListener, ReferenceCounted<Listener> {
 
 public:
 	Listener(boost::asio::io_context& io_service, NetworkAddress listenAddress)
-	  : io_service(io_service), listenAddress(listenAddress), acceptor(io_service, tcpEndpoint(listenAddress)) {
+	  : io_service(io_service),
+	    listenAddress(listenAddress),
+	    acceptor(io_service, tcpEndpoint(listenAddress)) {
 		// when port 0 is passed in, a random port will be opened
 		// set listenAddress as the address with the actual port opened instead of port 0
 		if (listenAddress.port == 0) {
@@ -856,12 +863,17 @@ public:
 
 	explicit SSLConnection(boost::asio::io_service& io_service,
 	                       Reference<ReferencedObject<boost::asio::ssl::context>> context)
-	  : id(nondeterministicRandom()->randomUniqueID()), socket(io_service), ssl_sock(socket, context->mutate()),
-	    sslContext(context), has_trusted_peer(false) {}
+	  : id(nondeterministicRandom()->randomUniqueID()),
+	    socket(io_service),
+	    ssl_sock(socket, context->mutate()),
+	    sslContext(context),
+	    has_trusted_peer(false) {}
 
 	explicit SSLConnection(Reference<ReferencedObject<boost::asio::ssl::context>> context, tcp::socket* existingSocket)
-	  : id(nondeterministicRandom()->randomUniqueID()), socket(std::move(*existingSocket)),
-	    ssl_sock(socket, context->mutate()), sslContext(context) {}
+	  : id(nondeterministicRandom()->randomUniqueID()),
+	    socket(std::move(*existingSocket)),
+	    ssl_sock(socket, context->mutate()),
+	    sslContext(context) {}
 
 	// This is not part of the IConnection interface, because it is wrapped by INetwork::connect()
 	ACTOR static Future<Reference<IConnection>> connect(boost::asio::io_service* ios,
@@ -1203,7 +1215,9 @@ public:
 	SSLListener(boost::asio::io_context& io_service,
 	            AsyncVar<Reference<ReferencedObject<boost::asio::ssl::context>>>* contextVar,
 	            NetworkAddress listenAddress)
-	  : io_service(io_service), listenAddress(listenAddress), acceptor(io_service, tcpEndpoint(listenAddress)),
+	  : io_service(io_service),
+	    listenAddress(listenAddress),
+	    acceptor(io_service, tcpEndpoint(listenAddress)),
 	    contextVar(contextVar) {
 		// when port 0 is passed in, a random port will be opened
 		// set listenAddress as the address with the actual port opened instead of port 0
@@ -1251,12 +1265,23 @@ private:
 // 5MB for loading files into memory
 
 Net2::Net2(const TLSConfig& tlsConfig, bool useThreadPool, bool useMetrics)
-  : globals(enumGlobal::COUNT), useThreadPool(useThreadPool), reactor(this),
+  : globals(enumGlobal::COUNT),
+    useThreadPool(useThreadPool),
+    reactor(this),
     sslContextVar({ ReferencedObject<boost::asio::ssl::context>::from(
         boost::asio::ssl::context(boost::asio::ssl::context::tls)) }),
-    sslHandshakerThreadsStarted(0), sslPoolHandshakesInProgress(0), tlsConfig(tlsConfig),
-    tlsInitializedState(ETLSInitState::NONE), network(this), tscBegin(0), tscEnd(0), taskBegin(0),
-    currentTaskID(TaskPriority::DefaultYield), stopped(false), started(false), numYields(0),
+    sslHandshakerThreadsStarted(0),
+    sslPoolHandshakesInProgress(0),
+    tlsConfig(tlsConfig),
+    tlsInitializedState(ETLSInitState::NONE),
+    network(this),
+    tscBegin(0),
+    tscEnd(0),
+    taskBegin(0),
+    currentTaskID(TaskPriority::DefaultYield),
+    stopped(false),
+    started(false),
+    numYields(0),
     lastPriorityStats(nullptr) {
 	// Until run() is called, yield() will always yield
 	TraceEvent("Net2Starting").log();
@@ -1340,6 +1365,8 @@ void Net2::initTLS(ETLSInitState targetState) {
 			boost::asio::ssl::context newContext(boost::asio::ssl::context::tls);
 			const LoadedTLSConfig& loaded = tlsConfig.loadSync();
 			TraceEvent("Net2TLSConfig")
+			    .detail("TLSV12Enabled", FLOW_KNOBS->TLS_V1_2_ALLOWED)
+			    .detail("TLSV13Enabled", FLOW_KNOBS->TLS_V1_3_ALLOWED)
 			    .detail("CAPath", tlsConfig.getCAPathSync())
 			    .detail("CertificatePath", tlsConfig.getCertificatePathSync())
 			    .detail("KeyPath", tlsConfig.getKeyPathSync())

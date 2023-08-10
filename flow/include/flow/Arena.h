@@ -327,6 +327,9 @@ public:
 		return *this;
 	}
 
+	// Default implementation for using a standalone as a value type in KeyBackedRangeMap - just returns the new value
+	Standalone<T> apply(Standalone<T> const& update) const { return update; }
+
 // Always-copy mode was meant to make alloc instrumentation more useful by making allocations occur at the final resting
 // place of objects leaked It doesn't actually work because some uses of Standalone things assume the object's memory
 // will not change on copy or assignment
@@ -379,6 +382,9 @@ private:
 };
 
 extern std::string format(const char* form, ...);
+
+// Used to designate types that can be cast in TSAV without knowing the derived type
+class Castable {};
 
 #pragma pack(push, 4)
 class StringRef {
@@ -734,6 +740,40 @@ inline static uint8_t* mutateString(StringRef& s) {
 	return const_cast<uint8_t*>(s.begin());
 }
 
+template <class... StringRefType>
+static Standalone<StringRef> concatenateStrings(StringRefType... strs) {
+	int totalSize = 0;
+	for (auto const& s : { strs... }) {
+		totalSize += s.size();
+	}
+
+	Standalone<StringRef> str = makeString(totalSize);
+	uint8_t* buf = mutateString(str);
+
+	for (auto const& s : { strs... }) {
+		buf = s.copyTo(buf);
+	}
+
+	return str;
+}
+
+template <class... StringRefType>
+static StringRef concatenateStrings(Arena& arena, StringRefType... strs) {
+	int totalSize = 0;
+	for (auto const& s : { strs... }) {
+		totalSize += s.size();
+	}
+
+	StringRef str = makeString(totalSize, arena);
+	uint8_t* buf = mutateString(str);
+
+	for (auto const& s : { strs... }) {
+		buf = s.copyTo(buf);
+	}
+
+	return str;
+}
+
 template <class Archive>
 inline void load(Archive& ar, StringRef& value) {
 	uint32_t length;
@@ -931,7 +971,10 @@ public:
 
 	template <VecSerStrategy S>
 	VectorRef(const VectorRef<T, S>& other)
-	  : VPS(other), data(other.data), m_size(other.m_size), m_capacity(other.m_capacity) {}
+	  : VPS(other),
+	    data(other.data),
+	    m_size(other.m_size),
+	    m_capacity(other.m_capacity) {}
 	template <VecSerStrategy S>
 	VectorRef& operator=(const VectorRef<T, S>& other) {
 		*static_cast<VPS*>(this) = other;
@@ -944,7 +987,9 @@ public:
 	// Arena constructor for non-Ref types, identified by !flow_ref
 	template <class T2 = T, VecSerStrategy S>
 	VectorRef(Arena& p, const VectorRef<T, S>& toCopy, typename std::enable_if<!flow_ref<T2>::value, int>::type = 0)
-	  : VPS(toCopy), data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]), m_size(toCopy.size()),
+	  : VPS(toCopy),
+	    data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]),
+	    m_size(toCopy.size()),
 	    m_capacity(toCopy.size()) {
 		if (m_size > 0) {
 			std::copy(toCopy.data, toCopy.data + m_size, data);
@@ -954,7 +999,10 @@ public:
 	// Arena constructor for Ref types, which must have an Arena constructor
 	template <class T2 = T, VecSerStrategy S>
 	VectorRef(Arena& p, const VectorRef<T, S>& toCopy, typename std::enable_if<flow_ref<T2>::value, int>::type = 0)
-	  : VPS(), data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]), m_size(toCopy.size()), m_capacity(toCopy.size()) {
+	  : VPS(),
+	    data((T*)new(p) uint8_t[sizeof(T) * toCopy.size()]),
+	    m_size(toCopy.size()),
+	    m_capacity(toCopy.size()) {
 		for (int i = 0; i < m_size; i++) {
 			auto ptr = new (&data[i]) T(p, toCopy[i]);
 			VPS::add(*ptr);
@@ -1284,7 +1332,9 @@ public: // Construction
 	static_assert(std::is_trivially_destructible_v<T>);
 	SmallVectorRef() {}
 	SmallVectorRef(const SmallVectorRef<T, InlineMembers>& other)
-	  : m_size(other.m_size), arr(other.arr), data(other.data) {}
+	  : m_size(other.m_size),
+	    arr(other.arr),
+	    data(other.data) {}
 	SmallVectorRef& operator=(const SmallVectorRef<T, InlineMembers>& other) {
 		m_size = other.m_size;
 		arr = other.arr;

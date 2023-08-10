@@ -153,7 +153,8 @@ ACTOR Future<std::vector<KeyBackedTag>> TagUidMap::getAll_impl(TagUidMap* tagsMa
 }
 
 KeyBackedTag::KeyBackedTag(std::string tagName, StringRef tagMapPrefix)
-  : KeyBackedProperty<UidAndAbortedFlagT>(TagUidMap(tagMapPrefix).getProperty(tagName)), tagName(tagName),
+  : KeyBackedProperty<UidAndAbortedFlagT>(TagUidMap(tagMapPrefix).getProperty(tagName)),
+    tagName(tagName),
     tagMapPrefix(tagMapPrefix) {}
 
 class RestoreConfig : public KeyBackedTaskConfig {
@@ -494,7 +495,8 @@ FileBackupAgent::FileBackupAgent()
   : subspace(Subspace(fileBackupPrefixRange.begin))
     // The other subspaces have logUID -> value
     ,
-    config(subspace.get(BackupAgentBase::keyConfig)), lastRestorable(subspace.get(FileBackupAgent::keyLastRestorable)),
+    config(subspace.get(BackupAgentBase::keyConfig)),
+    lastRestorable(subspace.get(FileBackupAgent::keyLastRestorable)),
     taskBucket(new TaskBucket(subspace.get(BackupAgentBase::keyTasks),
                               AccessSystemKeys::True,
                               PriorityBatch::False,
@@ -579,8 +581,14 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 	                         Optional<Reference<TenantEntryCache<Void>>> tenantCache,
 	                         Reference<IBackupFile> file = Reference<IBackupFile>(),
 	                         int blockSize = 0)
-	  : cx(cx), arena(arena), encryptMode(encryptMode), file(file), tenantCache(tenantCache), blockSize(blockSize),
-	    blockEnd(0), fileVersion(BACKUP_AGENT_ENCRYPTED_SNAPSHOT_FILE_VERSION) {
+	  : cx(cx),
+	    arena(arena),
+	    encryptMode(encryptMode),
+	    file(file),
+	    tenantCache(tenantCache),
+	    blockSize(blockSize),
+	    blockEnd(0),
+	    fileVersion(BACKUP_AGENT_ENCRYPTED_SNAPSHOT_FILE_VERSION) {
 		buffer = makeString(blockSize);
 		wPtr = mutateString(buffer);
 	}
@@ -969,7 +977,10 @@ private:
 //   just be padding anyway.
 struct RangeFileWriter : public IRangeFileWriter {
 	RangeFileWriter(Reference<IBackupFile> file = Reference<IBackupFile>(), int blockSize = 0)
-	  : file(file), blockSize(blockSize), blockEnd(0), fileVersion(BACKUP_AGENT_SNAPSHOT_FILE_VERSION) {}
+	  : file(file),
+	    blockSize(blockSize),
+	    blockEnd(0),
+	    fileVersion(BACKUP_AGENT_SNAPSHOT_FILE_VERSION) {}
 
 	// Handles the first block and internal blocks.  Ends current block if needed.
 	// The final flag is used in simulation to pad the file's final block to a whole block size
@@ -1264,7 +1275,9 @@ ACTOR Future<Standalone<VectorRef<KeyValueRef>>> decodeRangeFileBlock(Reference<
 // Header, [Key, Value]... Key len
 struct LogFileWriter {
 	LogFileWriter(Reference<IBackupFile> file = Reference<IBackupFile>(), int blockSize = 0)
-	  : file(file), blockSize(blockSize), blockEnd(0) {}
+	  : file(file),
+	    blockSize(blockSize),
+	    blockEnd(0) {}
 
 	// Start a new block if needed, then write the key and value
 	ACTOR static Future<Void> writeKV_impl(LogFileWriter* self, Key k, Value v) {
@@ -1592,7 +1605,7 @@ ACTOR static Future<Key> addBackupTask(StringRef name,
 // Clears the backup ID from "backupStartedKey" to pause backup workers.
 ACTOR static Future<Void> clearBackupStartID(Reference<ReadYourWritesTransaction> tr, UID backupUid) {
 	// If backup worker is not enabled, exit early.
-	ValueReadResult started = wait(tr->get(backupStartedKey));
+	ValueReadResult started = wait(tr->get(deprecatedBackupStartedKey));
 	std::vector<std::pair<UID, Version>> ids;
 	if (started.present()) {
 		ids = decodeBackupStartedValue(started.get());
@@ -1606,8 +1619,10 @@ ACTOR static Future<Void> clearBackupStartID(Reference<ReadYourWritesTransaction
 	if (ids.empty()) {
 		TraceEvent("ClearBackup").detail("BackupID", backupUid);
 		tr->clear(backupStartedKey);
+		tr->clear(deprecatedBackupStartedKey);
 	} else {
 		tr->set(backupStartedKey, encodeBackupStartedValue(ids));
+		tr->set(deprecatedBackupStartedKey, encodeBackupStartedValue(ids));
 	}
 	return Void();
 }
@@ -3405,7 +3420,7 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				state Future<Void> keepRunning = taskBucket->keepRunning(tr, task);
 
-				state Future<ValueReadResult> started = tr->get(backupStartedKey);
+				state Future<ValueReadResult> started = tr->get(deprecatedBackupStartedKey);
 				state Future<ValueReadResult> taskStarted = tr->get(config.allWorkerStarted().key);
 				partitionedLog = config.partitionedLogEnabled().get(tr);
 				wait(success(started) && success(taskStarted) && success(partitionedLog));
@@ -3428,6 +3443,7 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 				}
 
 				tr->set(backupStartedKey, encodeBackupStartedValue(ids));
+				tr->set(deprecatedBackupStartedKey, encodeBackupStartedValue(ids));
 				if (backupWorkerEnabled) {
 					config.backupWorkerEnabled().set(tr, true);
 				}
@@ -3660,14 +3676,13 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 		return returnStr;
 	}
 
-	ACTOR static Future<Void> _validTenantAccess(KeyRef key, Reference<TenantEntryCache<Void>> tenantCache) {
+	ACTOR static Future<bool> _validTenantAccess(KeyRef key, Reference<TenantEntryCache<Void>> tenantCache) {
 		if (isSystemKey(key)) {
-			return Void();
+			return true;
 		}
 		state int64_t tenantId = TenantAPI::extractTenantIdFromKeyRef(key);
 		Optional<TenantEntryCachePayload<Void>> payload = wait(tenantCache->getById(tenantId));
-		ASSERT(payload.present());
-		return Void();
+		return payload.present();
 	}
 
 	ACTOR static Future<Void> _execute(Database cx,
@@ -3731,7 +3746,7 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 			throw;
 		}
 		state Optional<Reference<TenantEntryCache<Void>>> tenantCache;
-		state std::vector<Future<Void>> validTenantCheckFutures;
+		state std::vector<Future<bool>> validTenantCheckFutures;
 		state Arena arena;
 		state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
 		if (config.tenantMode == TenantMode::REQUIRED && g_network && g_network->isSimulated()) {
@@ -3837,7 +3852,10 @@ struct RestoreRangeTaskFunc : RestoreFileTaskFuncBase {
 					wait(tr->commit());
 
 					if (!validTenantCheckFutures.empty()) {
-						waitForAll(validTenantCheckFutures);
+						wait(waitForAll(validTenantCheckFutures));
+						for (auto f : validTenantCheckFutures) {
+							ASSERT(f.get());
+						}
 						validTenantCheckFutures.clear();
 					}
 

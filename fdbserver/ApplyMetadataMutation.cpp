@@ -19,6 +19,8 @@
  */
 
 #include "fdbclient/BackupAgent.actor.h"
+#include "fdbclient/CommitTransaction.h"
+#include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h" // for key backed map codecs for tss mapping
 #include "fdbclient/MetaclusterRegistration.h"
 #include "fdbclient/MutationList.h"
@@ -30,6 +32,7 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/LogProtocolMessage.h"
 #include "fdbserver/LogSystem.h"
+#include "flow/CodeProbe.h"
 #include "flow/Error.h"
 #include "flow/Trace.h"
 
@@ -61,8 +64,13 @@ public:
 	                           Arena& arena_,
 	                           const VectorRef<MutationRef>& mutations_,
 	                           IKeyValueStore* txnStateStore_)
-	  : spanContext(spanContext_), dbgid(dbgid_), arena(arena_), mutations(mutations_), txnStateStore(txnStateStore_),
-	    confChange(dummyConfChange), encryptMode(EncryptionAtRestMode::DISABLED) {}
+	  : spanContext(spanContext_),
+	    dbgid(dbgid_),
+	    arena(arena_),
+	    mutations(mutations_),
+	    txnStateStore(txnStateStore_),
+	    confChange(dummyConfChange),
+	    encryptMode(EncryptionAtRestMode::DISABLED) {}
 
 	ApplyMetadataMutationsImpl(const SpanContext& spanContext_,
 	                           Arena& arena_,
@@ -77,17 +85,33 @@ public:
 	                           Version popVersion_,
 	                           bool initialCommit_,
 	                           bool provisionalCommitProxy_)
-	  : spanContext(spanContext_), dbgid(proxyCommitData_.dbgid), arena(arena_), mutations(mutations_),
-	    txnStateStore(proxyCommitData_.txnStateStore.getPtr()), toCommit(toCommit_), cipherKeys(cipherKeys_),
-	    confChange(confChange_), logSystem(logSystem_), version(version), popVersion(popVersion_),
-	    vecBackupKeys(&proxyCommitData_.vecBackupKeys), keyInfo(&proxyCommitData_.keyInfo),
+	  : spanContext(spanContext_),
+	    dbgid(proxyCommitData_.dbgid),
+	    arena(arena_),
+	    mutations(mutations_),
+	    txnStateStore(proxyCommitData_.txnStateStore.getPtr()),
+	    toCommit(toCommit_),
+	    cipherKeys(cipherKeys_),
+	    confChange(confChange_),
+	    logSystem(logSystem_),
+	    version(version),
+	    popVersion(popVersion_),
+	    vecBackupKeys(&proxyCommitData_.vecBackupKeys),
+	    keyInfo(&proxyCommitData_.keyInfo),
 	    cacheInfo(&proxyCommitData_.cacheInfo),
 	    uid_applyMutationsData(proxyCommitData_.firstProxy ? &proxyCommitData_.uid_applyMutationsData : nullptr),
-	    commit(proxyCommitData_.commit), cx(proxyCommitData_.cx), committedVersion(&proxyCommitData_.committedVersion),
-	    storageCache(&proxyCommitData_.storageCache), tag_popped(&proxyCommitData_.tag_popped),
-	    tssMapping(&proxyCommitData_.tssMapping), tenantMap(&proxyCommitData_.tenantMap),
-	    tenantNameIndex(&proxyCommitData_.tenantNameIndex), lockedTenants(&proxyCommitData_.lockedTenants),
-	    encryptMode(encryptMode), initialCommit(initialCommit_), provisionalCommitProxy(provisionalCommitProxy_) {
+	    commit(proxyCommitData_.commit),
+	    cx(proxyCommitData_.cx),
+	    committedVersion(&proxyCommitData_.committedVersion),
+	    storageCache(&proxyCommitData_.storageCache),
+	    tag_popped(&proxyCommitData_.tag_popped),
+	    tssMapping(&proxyCommitData_.tssMapping),
+	    tenantMap(&proxyCommitData_.tenantMap),
+	    tenantNameIndex(&proxyCommitData_.tenantNameIndex),
+	    lockedTenants(&proxyCommitData_.lockedTenants),
+	    encryptMode(encryptMode),
+	    initialCommit(initialCommit_),
+	    provisionalCommitProxy(provisionalCommitProxy_) {
 		if (encryptMode.isEncryptionEnabled()) {
 			ASSERT(cipherKeys != nullptr);
 			ASSERT(cipherKeys->count(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID) > 0);
@@ -102,11 +126,21 @@ public:
 	                           const VectorRef<MutationRef>& mutations_,
 	                           const std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>* cipherKeys_,
 	                           EncryptionAtRestMode encryptMode)
-	  : spanContext(spanContext_), dbgid(resolverData_.dbgid), arena(resolverData_.arena), mutations(mutations_),
-	    txnStateStore(resolverData_.txnStateStore.getPtr()), toCommit(resolverData_.toCommit), cipherKeys(cipherKeys_),
-	    confChange(resolverData_.confChanges), logSystem(resolverData_.logSystem), popVersion(resolverData_.popVersion),
-	    keyInfo(resolverData_.keyInfo), storageCache(resolverData_.storageCache), encryptMode(encryptMode),
-	    initialCommit(resolverData_.initialCommit), forResolver(true) {
+	  : spanContext(spanContext_),
+	    dbgid(resolverData_.dbgid),
+	    arena(resolverData_.arena),
+	    mutations(mutations_),
+	    txnStateStore(resolverData_.txnStateStore.getPtr()),
+	    toCommit(resolverData_.toCommit),
+	    cipherKeys(cipherKeys_),
+	    confChange(resolverData_.confChanges),
+	    logSystem(resolverData_.logSystem),
+	    popVersion(resolverData_.popVersion),
+	    keyInfo(resolverData_.keyInfo),
+	    storageCache(resolverData_.storageCache),
+	    encryptMode(encryptMode),
+	    initialCommit(resolverData_.initialCommit),
+	    forResolver(true) {
 		if (encryptMode.isEncryptionEnabled()) {
 			ASSERT(cipherKeys != nullptr);
 			ASSERT(cipherKeys->count(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID) > 0);
@@ -641,6 +675,15 @@ private:
 		}
 	}
 
+	void checkSetBackupProgressKeys(MutationRef m) {
+		if (!m.param1.startsWith(backupProgressPrefix)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+	}
+
 	void checkSetOtherKeys(MutationRef m) {
 		if (initialCommit)
 			return;
@@ -789,6 +832,16 @@ private:
 		}
 	}
 
+	void checkSetBackupStartedKey(MutationRef m) {
+		if (m.param1 != backupStartedKey) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+		TraceEvent("BackupStartedKey", dbgid).detail("BackupStarted", m.param2);
+	}
+
 	void checkClearKeyServerKeys(KeyRangeRef range) {
 		if (!keyServersKeys.intersects(range)) {
 			return;
@@ -819,6 +872,15 @@ private:
 		    !excludedLocalityKeys.contains(range) && !failedLocalityKeys.contains(range)) {
 			TraceEvent("MutationRequiresRestart", dbgid).detail("M", m);
 			confChange = true;
+		}
+	}
+
+	void checkClearBackupProgressKeys(KeyRangeRef range) {
+		if (!backupProgressKeys.intersects(range)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->clear(range & backupProgressKeys);
 		}
 	}
 
@@ -973,18 +1035,22 @@ private:
 		if (uid_applyMutationsData == nullptr) {
 			return;
 		}
-		if (m.param1.size() >= applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID) &&
-		    m.param2.size() >= applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID)) {
-			Key uid = m.param1.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
-			Key uid2 = m.param2.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
 
-			if (uid == uid2) {
+		int prefixSize = applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID);
+		if (m.param1.size() >= prefixSize && m.param2.size() >= prefixSize) {
+			Key uid = m.param1.substr(applyMutationsKeyVersionMapRange.begin.size(), sizeof(UID));
+			Key endRange = strinc(m.param1.substr(0, prefixSize));
+			if (m.param2 <= endRange) {
 				auto& p = (*uid_applyMutationsData)[uid];
 				if (p.keyVersion == Reference<KeyRangeMap<Version>>())
 					p.keyVersion = makeReference<KeyRangeMap<Version>>();
-				p.keyVersion->rawErase(
-				    KeyRangeRef(m.param1.substr(applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID)),
-				                m.param2.substr(applyMutationsKeyVersionMapRange.begin.size() + sizeof(UID))));
+
+				KeyRef begin = m.param1.substr(prefixSize);
+				KeyRef end = (m.param2 == endRange) ? p.keyVersion->mapEnd : m.param2.substr(prefixSize);
+
+				if (begin < end) {
+					p.keyVersion->rawErase(KeyRangeRef(begin, end));
+				}
 			}
 		}
 	}
@@ -1255,6 +1321,9 @@ private:
 		if (range.contains(writeRecoveryKey)) {
 			txnStateStore->clear(singleKeyRange(writeRecoveryKey));
 		}
+		if (range.contains(backupStartedKey)) {
+			txnStateStore->clear(singleKeyRange(backupStartedKey));
+		}
 		if (range.intersects(testOnlyTxnStateStorePrefixRange)) {
 			txnStateStore->clear(range & testOnlyTxnStateStorePrefixRange);
 		}
@@ -1359,6 +1428,8 @@ public:
 				checkSetVersionEpochKey(m);
 				checkSetTenantMapPrefix(m);
 				checkSetMetaclusterRegistration(m);
+				checkSetBackupStartedKey(m);
+				checkSetBackupProgressKeys(m);
 				checkSetOtherKeys(m);
 			} else if (m.type == MutationRef::ClearRange && isSystemKey(m.param2)) {
 				KeyRangeRef range(m.param1, m.param2);
@@ -1377,6 +1448,7 @@ public:
 				checkClearVersionEpochKeys(m, range);
 				checkClearTenantMapPrefix(range);
 				checkClearMetaclusterRegistration(range);
+				checkClearBackupProgressKeys(range);
 				checkClearMiscRangeKeys(range);
 			}
 		}

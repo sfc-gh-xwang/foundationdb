@@ -63,7 +63,12 @@ public:
 	          Unit unit = Unit::MAXHISTOGRAMUNIT,
 	          uint32_t lower = 0,
 	          uint32_t upper = UINT32_MAX)
-	  : group(group), op(op), unit(unit), registry(regis), lowerBound(lower), upperBound(upper) {
+	  : group(group),
+	    op(op),
+	    unit(unit),
+	    registry(regis),
+	    lowerBound(lower),
+	    upperBound(upper) {
 
 		ASSERT(unit <= Unit::MAXHISTOGRAMUNIT);
 		ASSERT(upperBound >= lowerBound);

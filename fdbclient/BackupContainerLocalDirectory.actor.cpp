@@ -33,7 +33,10 @@ namespace {
 class BackupFile : public IBackupFile, ReferenceCounted<BackupFile> {
 public:
 	BackupFile(const std::string& fileName, Reference<IAsyncFile> file, const std::string& finalFullPath)
-	  : IBackupFile(fileName), m_file(file), m_writeOffset(0), m_finalFullPath(finalFullPath),
+	  : IBackupFile(fileName),
+	    m_file(file),
+	    m_writeOffset(0),
+	    m_finalFullPath(finalFullPath),
 	    m_blockSize(CLIENT_KNOBS->BACKUP_LOCAL_FILE_WRITE_BLOCK) {
 		if (BUGGIFY) {
 			m_blockSize = deterministicRandom()->randomInt(100, 20000);

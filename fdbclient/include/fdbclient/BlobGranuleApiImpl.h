@@ -1,13 +1,14 @@
 /*
- * BlobGranuleFilesApi.h
+ * BlobGranuleApiImpl.h
  *
  * Copyright (c) 2023 Snowflake Computing
  */
 
-#ifndef __FDBCLIENT_BLOB_GRANULE_FILES_API_H__
-#define __FDBCLIENT_BLOB_GRANULE_FILES_API_H__
+#ifndef __FDBCLIENT_BLOB_GRANULE_API_IMPL_H__
+#define __FDBCLIENT_BLOB_GRANULE_API_IMPL_H__
 #pragma once
 
+#include "flow/ApiVersion.h"
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/ApiRequest.h"
 #include "fdbclient/ISingleThreadTransaction.h"
@@ -31,7 +32,8 @@ ReadBGMutationsApiResult parseBlobGranulesDeltaFileV2(StringRef fileName,
 ReadRangeApiResult loadAndMaterializeBlobGranules(const ReadBGDescriptionsApiResult& blobGranuleDescr,
                                                   const KeyRangeRef& keyRange,
                                                   Version beginVersion,
-                                                  const FDBReadBlobGranuleContext* granuleContext);
+                                                  const FDBReadBlobGranuleContext* granuleContext,
+                                                  ApiVersion apiVersion);
 
 Future<ApiResult> readBlobGranuleDescriptions(ISingleThreadTransaction* tr, ApiRequest req);
 

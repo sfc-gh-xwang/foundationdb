@@ -29,8 +29,6 @@
 
 #include <vector>
 
-#include "flow/actorcompiler.h" // has to be last include
-
 // We have a normal target snapshot/delta ratio, but in write-heavy cases where are behind and need to catch up,
 // we want to change this target to get more efficient. To maintain a consistent write amp if the snapshot size is
 // growing without the ability to split, we scale the bytes before recompact to reach the target write amp. We also
@@ -150,7 +148,9 @@ struct GranuleRangeMetadata {
 	void cancel();
 	GranuleRangeMetadata() : lastEpoch(0), lastSeqno(0) {}
 	GranuleRangeMetadata(int64_t epoch, int64_t seqno, Reference<GranuleMetadata> activeMetadata)
-	  : lastEpoch(epoch), lastSeqno(seqno), activeMetadata(activeMetadata) {}
+	  : lastEpoch(epoch),
+	    lastSeqno(seqno),
+	    activeMetadata(activeMetadata) {}
 };
 
 // represents a previous version of a granule, and optionally the files that compose it.
@@ -169,7 +169,10 @@ struct GranuleHistoryEntry : NonCopyable, ReferenceCounted<GranuleHistoryEntry> 
 
 	GranuleHistoryEntry() : startVersion(invalidVersion), endVersion(invalidVersion) {}
 	GranuleHistoryEntry(KeyRange range, UID granuleID, Version startVersion, Version endVersion)
-	  : range(range), granuleID(granuleID), startVersion(startVersion), endVersion(endVersion) {}
+	  : range(range),
+	    granuleID(granuleID),
+	    startVersion(startVersion),
+	    endVersion(endVersion) {}
 };
 
 struct BlobWorkerData : NonCopyable, ReferenceCounted<BlobWorkerData> {
@@ -229,7 +232,11 @@ struct BlobWorkerData : NonCopyable, ReferenceCounted<BlobWorkerData> {
 	bool isFullRestoreMode = false;
 
 	BlobWorkerData(UID id, Reference<AsyncVar<ServerDBInfo> const> dbInfo, Database db, IKeyValueStore* storage)
-	  : id(id), db(db), storage(storage), tenantData(BGTenantMap(dbInfo)), dbInfo(dbInfo),
+	  : id(id),
+	    db(db),
+	    storage(storage),
+	    tenantData(BGTenantMap(dbInfo)),
+	    dbInfo(dbInfo),
 	    initialSnapshotLock(new FlowLock(SERVER_KNOBS->BLOB_WORKER_INITIAL_SNAPSHOT_PARALLELISM)),
 	    resnapshotBudget(new FlowLock(SERVER_KNOBS->BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES)),
 	    deltaWritesBudget(new FlowLock(SERVER_KNOBS->BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES)),
@@ -249,5 +256,13 @@ struct BlobWorkerData : NonCopyable, ReferenceCounted<BlobWorkerData> {
 	void addGRVHistory(Version readVersion);
 	bool maybeInjectTargetedRestart();
 };
+
+Optional<CompressionFilter> getBlobFileCompressFilter();
+
+Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<BlobWorkerData> bwData,
+                                                            KeyRange keyRange,
+                                                            Arena* arena);
+
+Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(Reference<BlobWorkerData> bwData, KeyRange keyRange);
 
 #endif

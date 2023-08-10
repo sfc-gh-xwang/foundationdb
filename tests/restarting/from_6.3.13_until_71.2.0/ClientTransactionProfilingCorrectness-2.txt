@@ -1,3 +1,5 @@
+simHTTPServerEnabled=false
+
 testTitle=ClientTransactionProfilingCorrectness
 clearAfterTest=true
 timeout=2100

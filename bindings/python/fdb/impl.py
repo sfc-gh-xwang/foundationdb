@@ -291,7 +291,7 @@ def transactional(*tr_args, **tr_kwargs):
                 # We can't throw this from the decorator, as when a user runs
                 # >>> import fdb ; fdb.api_version(fdb.LATEST_API_VERSION)
                 # the code above uses @transactional before the API version is set
-                if fdb.get_api_version() >= 630 and inspect.isgeneratorfunction(func):
+                if inspect.isgeneratorfunction(func):
                     raise ValueError(
                         "Generators can not be wrapped with fdb.transactional"
                     )
@@ -311,7 +311,7 @@ def transactional(*tr_args, **tr_kwargs):
                     ret = None
                     try:
                         ret = func(*largs, **kwargs)
-                        if fdb.get_api_version() >= 630 and inspect.isgenerator(ret):
+                        if inspect.isgenerator(ret):
                             raise ValueError(
                                 "Generators can not be wrapped with fdb.transactional"
                             )
@@ -534,13 +534,7 @@ class TransactionRead(_FDBBase):
 
     def get_estimated_range_size_bytes(self, begin_key, end_key):
         if begin_key is None or end_key is None:
-            if fdb.get_api_version() >= 700:
-                raise Exception("Invalid begin key or end key")
-            else:
-                if begin_key is None:
-                    begin_key = b""
-                if end_key is None:
-                    end_key = b"\xff"
+            raise Exception("Invalid begin key or end key")
         return FutureInt64(
             self.capi.fdb_transaction_get_estimated_range_size_bytes(
                 self.tpointer, begin_key, len(begin_key), end_key, len(end_key)
@@ -666,7 +660,7 @@ class Transaction(TransactionRead):
         )
 
     def get_versionstamp(self):
-        return Key(self.capi.fdb_transaction_get_versionstamp(self.tpointer))
+        return Bytes(self.capi.fdb_transaction_get_versionstamp(self.tpointer))
 
     def on_error(self, error):
         if isinstance(error, FDBError):
@@ -1049,6 +1043,16 @@ class Key(FutureString):
         self.value = ctypes.string_at(key, key_length.value)
 
 
+class Bytes(FutureString):
+    def _getter(self):
+        bytes = ctypes.pointer(ctypes.c_byte())
+        bytes_length = ctypes.c_int()
+        self.capi.fdb_future_get_bytes(
+            self.fpointer, ctypes.byref(bytes), ctypes.byref(bytes_length)
+        )
+        self.value = ctypes.string_at(bytes, bytes_length.value)
+
+
 class FormerFuture(_FDBBase):
     def wait(self):
         return self
@@ -1336,7 +1340,7 @@ class Database(_TransactionCreator):
         return Transaction(pointer.value, self)
 
     def get_client_status(self):
-        return Key(self.capi.fdb_database_get_client_status(self.dpointer))
+        return Bytes(self.capi.fdb_database_get_client_status(self.dpointer))
 
 
 class Tenant(_TransactionCreator):
@@ -1361,20 +1365,11 @@ class Tenant(_TransactionCreator):
             )
         )
 
+    def get_client_status(self):
+        return Bytes(self.capi.fdb_tenant_get_client_status(self.tpointer))
+
 
 fill_operations()
-
-
-class Cluster(_FDBBase):
-    def __init__(self, cluster_file):
-        self.cluster_file = cluster_file
-        self.options = None
-
-    def open_database(self, name):
-        if name != b"DB":
-            raise FDBError(2013)  # invalid_database_name
-
-        return create_database(self.cluster_file)
 
 
 def create_database(cluster_file=None):
@@ -1383,10 +1378,6 @@ def create_database(cluster_file=None):
         optionalParamToBytes(cluster_file)[0], ctypes.byref(pointer)
     )
     return Database(pointer)
-
-
-def create_cluster(cluster_file=None):
-    return Cluster(cluster_file)
 
 
 class KeySelector(object):
@@ -1645,6 +1636,14 @@ def init_c_api():
     ]
     _capi.fdb_future_get_uint64.restype = ctypes.c_uint
     _capi.fdb_future_get_uint64.errcheck = check_error_code
+
+    _capi.fdb_future_get_bytes.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_byte)),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    _capi.fdb_future_get_bytes.restype = ctypes.c_int
+    _capi.fdb_future_get_bytes.errcheck = check_error_code
 
     _capi.fdb_future_get_key.argtypes = [
         ctypes.c_void_p,
@@ -2113,10 +2112,6 @@ def init(event_model=None):
             raise
 
 
-def init_v13(local_address, event_model=None):
-    return init(event_model)
-
-
 open_databases = {}
 
 cacheLock = threading.Lock()
@@ -2136,17 +2131,6 @@ def open(cluster_file=None, event_model=None):
             open_databases[cluster_file] = create_database(cluster_file)
 
         return open_databases[(cluster_file)]
-
-
-def open_v609(cluster_file=None, database_name=b"DB", event_model=None):
-    if database_name != b"DB":
-        raise FDBError(2013)  # invalid_database_name
-
-    return open(cluster_file, event_model)
-
-
-def open_v13(cluster_id_path, database_name, local_address=None, event_model=None):
-    return open_v609(cluster_id_path, database_name, event_model)
 
 
 @atexit.register

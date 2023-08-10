@@ -59,14 +59,31 @@ DESCR struct SlowAioSubmit {
 class AsyncFileKAIO final : public IAsyncFile, public ReferenceCounted<AsyncFileKAIO> {
 public:
 	struct AsyncFileKAIOMetrics {
+		// This is just the latency of the io_submit calls.
+		LatencySample submitLatencySample = { "AsyncFileKAIOSubmitLatency",
+			                                  UID(),
+			                                  FLOW_KNOBS->KAIO_LATENCY_LOGGING_INTERVAL,
+			                                  FLOW_KNOBS->KAIO_LATENCY_SKETCH_ACCURACY };
+
+		// This is the time spent performing reads, measured
+		// from when we launch the request with io_submit to
+		// when io_getevents returns a completion event.
 		LatencySample readLatencySample = { "AsyncFileKAIOReadLatency",
 			                                UID(),
 			                                FLOW_KNOBS->KAIO_LATENCY_LOGGING_INTERVAL,
 			                                FLOW_KNOBS->KAIO_LATENCY_SKETCH_ACCURACY };
+
+		// This is the time spent performing writess, measured
+		// from when we launch the request with io_submit to
+		// when io_getevents returns a completion event.
 		LatencySample writeLatencySample = { "AsyncFileKAIOWriteLatency",
 			                                 UID(),
 			                                 FLOW_KNOBS->KAIO_LATENCY_LOGGING_INTERVAL,
 			                                 FLOW_KNOBS->KAIO_LATENCY_SKETCH_ACCURACY };
+
+		// This is the time spent performing fsyncs. These are
+		// sychronous operations, so it's just a measurement
+		// of the fdatasync syscall.
 		LatencySample syncLatencySample = { "AsyncFileKAIOSyncLatency",
 			                                UID(),
 			                                FLOW_KNOBS->KAIO_LATENCY_LOGGING_INTERVAL,
@@ -364,7 +381,7 @@ public:
 #endif
 
 		KAIOLogEvent(logFile, id, OpLogEntry::SYNC, OpLogEntry::START);
-		double start_time = timer();
+		double start_time = timer_monotonic();
 
 		Future<Void> fsync = throwErrorIfFailed(
 		    Reference<AsyncFileKAIO>::addRef(this),
@@ -376,7 +393,7 @@ public:
 
 		fsync = map(fsync, [=](Void r) mutable {
 			KAIOLogEvent(logFile, id, OpLogEntry::SYNC, OpLogEntry::COMPLETE);
-			getMetrics().syncLatencySample.addMeasurement(timer() - start_time);
+			getMetrics().syncLatencySample.addMeasurement(timer_monotonic() - start_time);
 			return r;
 		});
 
@@ -415,15 +432,13 @@ public:
 			int64_t previousTruncateBytes = ctx.preSubmitTruncateBytes;
 			int64_t largestTruncate = 0;
 
-			double start = timer();
 			for (int i = 0; i < n; i++) {
-				auto io = ctx.queue.top();
+				IOBlock* io = ctx.queue.top();
 
 				KAIOLogBlockEvent(io, OpLogEntry::LAUNCH);
 
 				ctx.queue.pop();
 				toStart[i] = io;
-				io->startTime = start;
 
 				if (ctx.ioTimeout > 0) {
 					ctx.appendToRequestList(io);
@@ -438,13 +453,24 @@ public:
 					io->owner->truncate(io->owner->nextFileSize);
 				}
 			}
-			double truncateComplete = timer_monotonic();
+			double submitTime = timer_monotonic();
 			int rc = io_submit(ctx.iocx, n, (linux_iocb**)toStart);
 			double end = timer_monotonic();
 
+			// Record the start times for IO requests just prior to io_submit, intentionally avoiding
+			// time spent sychronously truncating files above, especially for other requests. We are only
+			// trying to track time spent in the kernel, from io_submit to io_getevents.
+			//
+			// Yes, we're recording the start times after the io_submit call to avoid including this
+			// loop in the measurement.
+			for (int i = 0; i < n; i++)
+				toStart[i]->startTime = submitTime;
+
+			getMetrics().submitLatencySample.addMeasurement(end - submitTime);
+
 			if (end - begin > FLOW_KNOBS->SLOW_LOOP_CUTOFF) {
-				ctx.slowAioSubmitMetric->submitDuration = end - truncateComplete;
-				ctx.slowAioSubmitMetric->truncateDuration = truncateComplete - begin;
+				ctx.slowAioSubmitMetric->submitDuration = end - submitTime;
+				ctx.slowAioSubmitMetric->truncateDuration = submitTime - begin;
 				ctx.slowAioSubmitMetric->numTruncates = ctx.countPreSubmitTruncate - previousTruncateCount;
 				ctx.slowAioSubmitMetric->truncateBytes = ctx.preSubmitTruncateBytes - previousTruncateBytes;
 				ctx.slowAioSubmitMetric->largestTruncate = largestTruncate;
@@ -452,8 +478,8 @@ public:
 
 				if (nondeterministicRandom()->random01() < end - begin) {
 					TraceEvent("SlowKAIOLaunch")
-					    .detail("IOSubmitTime", end - truncateComplete)
-					    .detail("TruncateTime", truncateComplete - begin)
+					    .detail("IOSubmitTime", end - submitTime)
+					    .detail("TruncateTime", submitTime - begin)
 					    .detail("TruncateCount", ctx.countPreSubmitTruncate - previousTruncateCount)
 					    .detail("TruncateBytes", ctx.preSubmitTruncateBytes - previousTruncateBytes)
 					    .detail("LargestTruncate", largestTruncate);
@@ -463,8 +489,9 @@ public:
 			ctx.submitMetric = false;
 			++ctx.countAIOSubmit;
 
-			double elapsed = timer_monotonic() - begin;
-			g_network->networkInfo.metrics.secSquaredSubmit += elapsed * elapsed / 2;
+			// This accounts for the total time, from when launch() was called until io_submit() returns.
+			double totalElapsed = end - begin;
+			g_network->networkInfo.metrics.secSquaredSubmit += totalElapsed * totalElapsed / 2;
 
 			//TraceEvent("Launched").detail("N", rc).detail("Queued", ctx.queue.size()).detail("Elapsed", elapsed).detail("Outstanding", ctx.outstanding+rc);
 			// printf("launched: %d/%d in %f us (%d outstanding; lowest prio %d)\n", rc, ctx.queue.size(), elapsed*1e6,
@@ -594,8 +621,14 @@ private:
 
 		uint32_t opsIssued;
 		Context()
-		  : iocx(0), evfd(-1), outstanding(0), ioStallBegin(0), fallocateSupported(true), fallocateZeroSupported(true),
-		    submittedRequestList(nullptr), opsIssued(0) {
+		  : iocx(0),
+		    evfd(-1),
+		    outstanding(0),
+		    ioStallBegin(0),
+		    fallocateSupported(true),
+		    fallocateZeroSupported(true),
+		    submittedRequestList(nullptr),
+		    opsIssued(0) {
 			setIOTimeout(0);
 		}
 
@@ -645,7 +678,10 @@ private:
 	static Context ctx;
 
 	explicit AsyncFileKAIO(int fd, int flags, std::string const& filename)
-	  : failed(false), fd(fd), flags(flags), filename(filename) {
+	  : failed(false),
+	    fd(fd),
+	    flags(flags),
+	    filename(filename) {
 		ASSERT(!FLOW_KNOBS->DISABLE_POSIX_KERNEL_AIO);
 		if (!g_network->isSimulated()) {
 			countFileLogicalWrites.init("AsyncFile.CountFileLogicalWrites"_sr, filename);
@@ -737,7 +773,7 @@ private:
 					break;
 			}
 
-			double currentTime = timer();
+			double currentTime = timer_monotonic();
 
 			++ctx.countAIOCollect;
 			// printf("io_getevents: collected %d/%d in %f us (%d queued)\n", n, ctx.outstanding, (timer()-before)*1e6,

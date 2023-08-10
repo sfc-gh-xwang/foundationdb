@@ -21,7 +21,7 @@
 #pragma once
 
 #include "fdbclient/CommitProxyInterface.h"
-#include "fdbclient/TagThrottle.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/GrvTransactionRateInfo.h"
 #include "fdbserver/LatencyBandsMap.h"
 
@@ -44,26 +44,30 @@ class GrvProxyTagThrottler {
 		uint64_t sequenceNumber;
 
 		explicit DelayedRequest(GetReadVersionRequest const& req)
-		  : startTime(now()), req(req), sequenceNumber(++lastSequenceNumber) {}
+		  : startTime(now()),
+		    req(req),
+		    sequenceNumber(++lastSequenceNumber) {}
 
 		void updateProxyTagThrottledDuration(LatencyBandsMap&);
 		bool isMaxThrottled(double maxThrottleDuration) const;
 	};
+
+	// Create a GrvTransactionRateInfo with the correct units and limits.
+	// If track-average-cost-on-client is enabled, then all the rate into
+	// will be in bytes per second, otherwise it will be in transactions per second.
+	static GrvTransactionRateInfo createGrvTransactionRateInfo(double rate);
 
 	struct TagQueue {
 		Optional<GrvTransactionRateInfo> rateInfo;
 		Deque<DelayedRequest> requests;
 
 		TagQueue() = default;
-		explicit TagQueue(double rate)
-		  : rateInfo(GrvTransactionRateInfo(SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
-		                                    SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
-		                                    rate)) {}
+		explicit TagQueue(double rate) : rateInfo(createGrvTransactionRateInfo(rate)) {}
 
 		void setRate(double rate);
 		bool isMaxThrottled(double maxThrottleDuration) const;
 		void rejectRequests(LatencyBandsMap&);
-		void endReleaseWindow(int64_t numStarted, double elapsed);
+		void endReleaseWindow(uint64_t numStarted, double elapsed);
 	};
 
 	// Track the budgets for each tag
@@ -73,18 +77,30 @@ class GrvProxyTagThrottler {
 	// Track latency bands for each tag
 	LatencyBandsMap latencyBandsMap;
 
+	// Get the cost of a GRV Request. If track-average-cost-on-client is enabled,
+	// the cost returned is in bytes per second, otherwise it's in transactions per second.
+	uint64_t getCost(GetReadVersionRequest const&) const;
+
 public:
 	explicit GrvProxyTagThrottler(double maxThrottleDuration);
 
 	// Called with rates received from ratekeeper
 	void updateRates(ThrottlingIdMap<double> const& newRates);
 
+	struct ReleaseTransactionsResult {
+		uint64_t batchPriorityTransactionsReleased{ 0 };
+		uint64_t batchPriorityRequestsReleased{ 0 };
+		uint64_t defaultPriorityTransactionsReleased{ 0 };
+		uint64_t defaultPriorityRequestsReleased{ 0 };
+		uint64_t rejectedRequests{ 0 };
+	};
+
 	// elapsed indicates the amount of time since the last epoch was run.
 	// If a request is ready to be executed, it is sent to the deque
 	// corresponding to its priority. If not, the request remains queued.
-	void releaseTransactions(double elapsed,
-	                         Deque<GetReadVersionRequest>& outBatchPriority,
-	                         Deque<GetReadVersionRequest>& outDefaultPriority);
+	ReleaseTransactionsResult releaseTransactions(double elapsed,
+	                                              Deque<GetReadVersionRequest>& outBatchPriority,
+	                                              Deque<GetReadVersionRequest>& outDefaultPriority);
 
 	void addRequest(GetReadVersionRequest const&);
 

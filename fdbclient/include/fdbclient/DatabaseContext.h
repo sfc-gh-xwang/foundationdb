@@ -33,6 +33,8 @@
 #include <unordered_map>
 #pragma once
 
+#include "fdbclient/BulkLoad.h"
+#include "fdbclient/BulkLoaderInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/KeyRangeMap.h"
@@ -60,7 +62,8 @@ public:
 private:
 	DatabaseContext* cx;
 	StorageServerInfo(DatabaseContext* cx, StorageServerInterface const& interf, LocalityData const& locality)
-	  : ReferencedInterface<StorageServerInterface>(interf, locality), cx(cx) {}
+	  : ReferencedInterface<StorageServerInterface>(interf, locality),
+	    cx(cx) {}
 };
 
 struct LocationInfo : MultiInterface<ReferencedInterface<StorageServerInterface>>, FastAllocated<LocationInfo> {
@@ -68,7 +71,8 @@ struct LocationInfo : MultiInterface<ReferencedInterface<StorageServerInterface>
 	explicit LocationInfo(const std::vector<Reference<ReferencedInterface<StorageServerInterface>>>& v)
 	  : Locations(v) {}
 	LocationInfo(const std::vector<Reference<ReferencedInterface<StorageServerInterface>>>& v, bool hasCaches)
-	  : Locations(v), hasCaches(hasCaches) {}
+	  : Locations(v),
+	    hasCaches(hasCaches) {}
 	LocationInfo(const LocationInfo&) = delete;
 	LocationInfo(LocationInfo&&) = delete;
 	LocationInfo& operator=(const LocationInfo&) = delete;
@@ -79,6 +83,7 @@ struct LocationInfo : MultiInterface<ReferencedInterface<StorageServerInterface>
 
 using CommitProxyInfo = ModelInterface<CommitProxyInterface>;
 using GrvProxyInfo = ModelInterface<GrvProxyInterface>;
+using BulkLoaderInfo = MultiInterface<ReferencedInterface<BulkLoaderInterface>>;
 
 struct WatchParameters : public ReferenceCounted<WatchParameters> {
 	const TenantInfo tenant;
@@ -101,8 +106,15 @@ struct WatchParameters : public ReferenceCounted<WatchParameters> {
 	                TaskPriority taskID,
 	                Optional<UID> debugID,
 	                UseProvisionalProxies useProvisionalProxies)
-	  : tenant(tenant), key(key), value(value), version(version), throttlingTag(throttlingTag),
-	    spanContext(spanContext), taskID(taskID), debugID(debugID), useProvisionalProxies(useProvisionalProxies) {}
+	  : tenant(tenant),
+	    key(key),
+	    value(value),
+	    version(version),
+	    throttlingTag(throttlingTag),
+	    spanContext(spanContext),
+	    taskID(taskID),
+	    debugID(debugID),
+	    useProvisionalProxies(useProvisionalProxies) {}
 };
 
 class WatchMetadata : public ReferenceCounted<WatchMetadata> {
@@ -185,9 +197,13 @@ struct ChangeFeedCacheRange {
 	KeyRange range;
 
 	ChangeFeedCacheRange(Key tenantPrefix, Key rangeId, KeyRange range)
-	  : tenantPrefix(tenantPrefix), rangeId(rangeId), range(range) {}
+	  : tenantPrefix(tenantPrefix),
+	    rangeId(rangeId),
+	    range(range) {}
 	ChangeFeedCacheRange(std::tuple<Key, Key, KeyRange> range)
-	  : tenantPrefix(std::get<0>(range)), rangeId(std::get<1>(range)), range(std::get<2>(range)) {}
+	  : tenantPrefix(std::get<0>(range)),
+	    rangeId(std::get<1>(range)),
+	    range(std::get<2>(range)) {}
 
 	bool operator==(const ChangeFeedCacheRange& rhs) const {
 		return tenantPrefix == rhs.tenantPrefix && rangeId == rhs.rangeId && range == rhs.range;
@@ -285,6 +301,7 @@ public:
 	bool isCurrentGrvProxy(UID proxyId) const;
 	Future<Void> onProxiesChanged() const;
 	Future<HealthMetrics> getHealthMetrics(bool detailed);
+	Future<Reference<BulkLoaderInfo>> getBulkLoaders();
 	// Get storage stats of a storage server from the cached healthy metrics if now() - lastUpdate < maxStaleness.
 	// Otherwise, ask GRVProxy for the up-to-date health metrics.
 	Future<Optional<HealthMetrics::StorageStats>> getStorageStats(const UID& id, double maxStaleness);
@@ -426,6 +443,42 @@ public:
 	                            Optional<Reference<Tenant>> tenant = {});
 	Future<bool> blobRestore(const KeyRange range, Optional<Version> version);
 
+	// bulk load functions
+
+	// external state management apis - exposed to clients, go through interface/authz
+	Future<BulkLoadID> startBulkLoad(KeyRange range, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> bulkLoadAllFilesRegistered(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> abortBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> cleanupBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+
+	// internal state management helper functions - not exposed to public clients at all
+	Future<Void> startBulkLoadInternal(BulkLoadID id,
+	                                   KeyRange range,
+	                                   Version maxReadVersion,
+	                                   Optional<Reference<Tenant>> tenant = {});
+	Future<Void> cleanupBulkLoadInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id,
+	                                      BulkLoadStatus::State desiredState,
+	                                      Optional<Reference<Tenant>> tenant = {});
+	Future<Void> updateBulkLoadState(BulkLoadID id,
+	                                 BulkLoadStatus::State desiredState,
+	                                 Optional<Reference<Tenant>> tenant = {});
+	Future<Version> getBulkLoadVersion(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+
+	// operational management
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoads(bool onlyActive,
+	                                                           Optional<Reference<Tenant>> tenant = {});
+	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+
+	// bulk data writing apis
+	Future<Standalone<VectorRef<BulkLoadFileToWriteRef>>>
+	getBulkLoadFilesToWrite(BulkLoadID id, int count, Optional<Reference<Tenant>> tenant = {});
+
+	Future<Void> markBulkLoadFilesWritten(BulkLoadID id,
+	                                      Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
+	                                      Optional<Reference<Tenant>> tenant = {});
+
 	// private:
 	explicit DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
 	                         Reference<AsyncVar<ClientDBInfo>> clientDBInfo,
@@ -558,6 +611,8 @@ public:
 	Counter transactionKeyServerLocationRequestsCompleted;
 	Counter transactionBlobGranuleLocationRequests;
 	Counter transactionBlobGranuleLocationRequestsCompleted;
+	Counter transactionBulkLoaderRequests;
+	Counter transactionBulkLoaderRequestsCompleted;
 	Counter transactionStatusRequests;
 	Counter transactionTenantLookupRequests;
 	Counter transactionTenantLookupRequestsCompleted;
@@ -725,6 +780,10 @@ public:
 	}
 
 	void addCost(ThrottlingId const&, uint64_t bytes);
+	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
+	double getAverageTransactionCost(ThrottlingId const&) const;
+
+	bool isThrottlingIdBusy(ThrottlingId const&) const;
 
 	// used in template functions to create a transaction
 	using TransactionT = ReadYourWritesTransaction;
@@ -766,6 +825,7 @@ public:
 	// If the database context is initialized with an error, the JSON contains just the error code
 	// { "InitializationError" : <error code> }
 	Standalone<StringRef> getClientStatus();
+	Standalone<StringRef> getTenantClientStatus(Tenant* tenant);
 
 private:
 	using WatchMapKey = std::pair<int64_t, Key>;
@@ -798,7 +858,8 @@ private:
 // Similar to tr.onError(), but doesn't require a DatabaseContext.
 struct Backoff {
 	Backoff(double backoff = CLIENT_KNOBS->DEFAULT_BACKOFF, double maxBackoff = CLIENT_KNOBS->DEFAULT_MAX_BACKOFF)
-	  : backoff(backoff), maxBackoff(maxBackoff) {}
+	  : backoff(backoff),
+	    maxBackoff(maxBackoff) {}
 
 	Future<Void> onError() {
 		double currentBackoff = backoff;

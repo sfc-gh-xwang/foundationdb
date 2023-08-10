@@ -50,7 +50,7 @@ public:
 	static Reference<ISingleThreadTransaction> create(Type, Database const&, Reference<Tenant> const&);
 
 	virtual void construct(Database const&) = 0;
-	virtual void construct(Database const&, Reference<Tenant> const&) {
+	virtual void construct(Reference<Tenant> const&) {
 		// By default, a transaction implementation does not support tenants.
 		ASSERT(false);
 	}
@@ -81,10 +81,12 @@ public:
 	virtual Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(KeyRange const& range, int64_t chunkSize) = 0;
 	virtual Future<int64_t> getEstimatedRangeSizeBytes(KeyRange const& keys) = 0;
 	virtual Future<Standalone<VectorRef<KeyRangeRef>>> getBlobGranuleRanges(KeyRange const& range, int rangeLimit) = 0;
-	virtual Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(KeyRange const& range,
-	                                                                            Version begin,
-	                                                                            Optional<Version> readVersion,
-	                                                                            Version* readVersionOut = nullptr) = 0;
+	virtual Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranules(
+	    KeyRange const& range,
+	    Version begin,
+	    Optional<Version> readVersion,
+	    Version* readVersionOut = nullptr,
+	    int64_t mutationByteLimit = std::numeric_limits<int64_t>::max()) = 0;
 	virtual Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> summarizeBlobGranules(KeyRange const& range,
 	                                                                                   Optional<Version> summaryVersion,
 	                                                                                   int rangeLimit) = 0;
@@ -103,6 +105,7 @@ public:
 	virtual SpanContext getSpanContext() const = 0;
 	virtual double getTagThrottledDuration() const = 0;
 	virtual int64_t getTotalCost() const = 0;
+	virtual void setExpectedCost(uint64_t value) = 0;
 	virtual int64_t getApproximateSize() const = 0;
 	virtual Future<Standalone<StringRef>> getVersionstamp() = 0;
 	virtual void setOption(FDBTransactionOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) = 0;

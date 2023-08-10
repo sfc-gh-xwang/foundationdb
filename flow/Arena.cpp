@@ -24,6 +24,7 @@
 #include "flow/ScopeExit.h"
 
 #include "flow/config.h"
+#include "include/flow/flow.h"
 
 // We don't align memory properly, and we need to tell lsan about that.
 extern "C" const char* __lsan_default_options(void) {
@@ -851,6 +852,25 @@ TEST_CASE("flow/StringRef/eat") {
 	return Void();
 }
 
+TEST_CASE("/flow/StringRef/concatenate") {
+	StringRef s1 = ""_sr;
+	StringRef s2 = "a"_sr;
+	StringRef s3 = "banana"_sr;
+	StringRef s4 = "\x00"_sr;
+
+	Arena arena;
+
+	ASSERT(concatenateStrings(arena, s1, s2, s3, s4) == "abanana\x00"_sr);
+	ASSERT(concatenateStrings(arena, s1) == ""_sr);
+	ASSERT(concatenateStrings(arena, s2) == "a"_sr);
+
+	ASSERT(concatenateStrings(s1, s2, s3, s4) == "abanana\x00"_sr);
+	ASSERT(concatenateStrings(s1) == ""_sr);
+	ASSERT(concatenateStrings(s2) == "a"_sr);
+
+	return Void();
+}
+
 struct TestOptionalMapClass {
 	StringRef value;
 	Optional<StringRef> optionalValue;
@@ -868,8 +888,10 @@ struct TestOptionalMapClass {
 	Optional<StringRef> optionalSub(int x) const { return optionalValue.map<StringRef>(&StringRef::substr, (int)x); }
 
 	TestOptionalMapClass(StringRef value, bool setOptional)
-	  : value(value), optionalValue(setOptional ? Optional<StringRef>(value) : Optional<StringRef>()),
-	    constValue(value), constOptionalValue(setOptional ? Optional<StringRef>(value) : Optional<StringRef>()) {}
+	  : value(value),
+	    optionalValue(setOptional ? Optional<StringRef>(value) : Optional<StringRef>()),
+	    constValue(value),
+	    constOptionalValue(setOptional ? Optional<StringRef>(value) : Optional<StringRef>()) {}
 };
 
 struct TestOptionalMapClassRef : public TestOptionalMapClass, public ReferenceCounted<TestOptionalMapClassRef> {

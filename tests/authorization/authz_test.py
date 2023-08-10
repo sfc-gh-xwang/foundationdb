@@ -391,6 +391,19 @@ def test_public_key_set_rollover(
     interim_set = public_keyset_from_keys([new_key, cluster.private_key])
     max_repeat = 10
 
+    def check_keyset_update_trace(trace_entries, expected_key_ids):
+        found = False
+        for _, ev_type, entry in trace_entries:
+            if ev_type == "AuthzActivePublicKeyIds":
+                print("active public key IDs trace:", entry.items())
+                if (
+                    sorted(entry.attrib["KeyIds"].split(","))
+                    == sorted(expected_key_ids)
+                    and entry.attrib["FromKeySetUpdate"] == "1"
+                ):
+                    found = True
+        assert found, "active public key IDs trace not found"
+
     print(f"interim keyset: {interim_set}")
     old_key_json = None
     with open(cluster.public_key_json_file, "r") as keyfile:
@@ -399,24 +412,40 @@ def test_public_key_set_rollover(
     delay = public_key_refresh_interval
 
     with KeyFileReverter(cluster.public_key_json_file, old_key_json, delay):
-        with open(cluster.public_key_json_file, "w") as keyfile:
-            keyfile.write(interim_set)
-        wait_until_tenant_tr_succeeds(
-            second_tenant, new_key, tenant_tr_gen, max_repeat, delay, token_claim_1h
-        )
+        with ScopedTraceChecker(
+            cluster,
+            functools.partial(
+                check_keyset_update_trace,
+                expected_key_ids=[new_key.kid, cluster.private_key.kid],
+            ),
+        ):
+            with open(cluster.public_key_json_file, "w") as keyfile:
+                keyfile.write(interim_set)
+            wait_until_tenant_tr_succeeds(
+                second_tenant, new_key, tenant_tr_gen, max_repeat, delay, token_claim_1h
+            )
+
         print("interim key set activated")
         final_set = public_keyset_from_keys([new_key])
         print(f"final keyset: {final_set}")
-        with open(cluster.public_key_json_file, "w") as keyfile:
-            keyfile.write(final_set)
-        wait_until_tenant_tr_fails(
-            default_tenant,
-            cluster.private_key,
-            tenant_tr_gen,
-            max_repeat,
-            delay,
-            token_claim_1h,
-        )
+
+        with ScopedTraceChecker(
+            cluster,
+            functools.partial(
+                check_keyset_update_trace,
+                expected_key_ids=[new_key.kid],
+            ),
+        ):
+            with open(cluster.public_key_json_file, "w") as keyfile:
+                keyfile.write(final_set)
+            wait_until_tenant_tr_fails(
+                default_tenant,
+                cluster.private_key,
+                tenant_tr_gen,
+                max_repeat,
+                delay,
+                token_claim_1h,
+            )
 
 
 def test_public_key_set_broken_file_tolerance(
@@ -673,6 +702,133 @@ def test_bad_token(cluster, default_tenant, tenant_tr_gen, token_claim_1h):
             assert (
                 e.code == 6000
             ), f"expected permission_denied for 'unknown key' case, got {e} instead"
+
+
+def test_malformed_tokens_trace(cluster, default_tenant, tenant_tr_gen, token_claim_1h):
+    # if token is not splittable by '.', server should not trace unless LOG_MALFORMED_TOKEN_STRINGS flow knob is enabled (false by default)
+    def check_token_parse_error_trace_unsplittable(
+        trace_entries, token_str_shouldnt_trace
+    ):
+        found = False
+        for _, ev_type, entry in trace_entries:
+            if (
+                ev_type == "InvalidToken"
+                and entry.attrib["Reason"] == "ParseError"
+                and entry.attrib["ErrorDetail"]
+                == "Token does not follow header.payload.signature structure"
+            ):
+                found = True
+            for key, value in entry.items():
+                if (
+                    key.find(token_str_shouldnt_trace) != -1
+                    or value.find(token_str_shouldnt_trace) != -1
+                ):
+                    pytest.fail(
+                        f'token string {token_str_shouldnt_trace} found in TraceEvent type {ev_type} at attribute "{key}"="{value}"'
+                    )
+        if not found:
+            pytest.fail(
+                "trace not found: InvalidToken trace with Reason=ParseError and ErrorDetail matching expected string"
+            )
+
+    unsplittable_bad_token = "token-which-cannot-be-split-by-period"
+    with ScopedTraceChecker(
+        cluster,
+        functools.partial(
+            check_token_parse_error_trace_unsplittable,
+            token_str_shouldnt_trace=unsplittable_bad_token,
+        ),
+    ):
+        tr = tenant_tr_gen(default_tenant)
+        tr.options.set_authorization_token(unsplittable_bad_token)
+        tr[b"abc"] = b"def"
+        try:
+            tr.commit().wait()
+            assert (
+                False
+            ), "expected permission denied for 'unsplittable_bad_token' case but write transaction went through"
+        except fdb.FDBError as e:
+            assert (
+                e.code == 6000
+            ), f"expected permission_denied for 'unsplittable_bad_token' case, got {e} instead"
+
+    # if token is splittable by '.' but had parse errors, the token should be traced up to but not including the second period
+    splittable_bad_token = "abcd.efghi.jklmn.opq"
+    token_fragment = "abcd.efghi"
+
+    def check_token_parse_error_trace_splittable(
+        trace_entries, whole_token_shouldnt_trace, token_fragment_should_trace
+    ):
+        found = False
+        for _, ev_type, entry in trace_entries:
+            if (
+                ev_type == "InvalidToken"
+                and entry.attrib["Reason"] == "ParseError"
+                and entry.attrib["SignInput"] == token_fragment_should_trace
+            ):
+                found = True
+            # check that the whole token is not logged
+            for key, value in entry.items():
+                if (
+                    key.find(whole_token_shouldnt_trace) != -1
+                    or value.find(whole_token_shouldnt_trace) != -1
+                ):
+                    pytest.fail(
+                        f'whole bad token {whole_token_shouldnt_trace} traced in event type {ev_type} at attribute "{key}"="{value}"'
+                    )
+        if not found:
+            pytest.fail(
+                f'trace not found: InvalidToken trace with Reason=ParseError and SignInput matching expected fragment "{token_fragment_should_trace}"'
+            )
+
+    with ScopedTraceChecker(
+        cluster,
+        functools.partial(
+            check_token_parse_error_trace_splittable,
+            whole_token_shouldnt_trace=splittable_bad_token,
+            token_fragment_should_trace=token_fragment,
+        ),
+    ):
+        tr = tenant_tr_gen(default_tenant)
+        tr.options.set_authorization_token(splittable_bad_token)
+        tr[b"abc"] = b"def"
+        try:
+            tr.commit().wait()
+            assert (
+                False
+            ), "expected permission denied for 'splittable_bad_token' case but write transaction went through"
+        except fdb.FDBError as e:
+            assert (
+                e.code == 6000
+            ), f"expected permission_denied for 'splittable_bad_token' case, got {e} instead"
+
+
+def test_active_public_key_ids_trace_as_expected(
+    cluster, active_public_key_ids_log_interval
+):
+    def check_public_key_ids_log(
+        trace_entries, expected_key_ids_string, min_expected_trace_count
+    ):
+        count = 0
+        for _, ev_type, entry in trace_entries:
+            if ev_type == "AuthzActivePublicKeyIds":
+                actual_key_ids_string = entry.attrib["KeyIds"]
+                assert actual_key_ids_string == expected_key_ids_string
+                count += 1
+        assert count >= min_expected_trace_count
+
+    assert active_public_key_ids_log_interval > 0
+    max_trace_count = 5
+    sleep_duration_seconds = active_public_key_ids_log_interval * max_trace_count
+    with ScopedTraceChecker(
+        cluster,
+        functools.partial(
+            check_public_key_ids_log,
+            expected_key_ids_string=cluster.private_key.kid,
+            min_expected_trace_count=max_trace_count - 2,
+        ),  # conservative estimate to account for any time fluctuations in server-side trace event creation
+    ):
+        time.sleep(sleep_duration_seconds)
 
 
 def test_authz_not_enabled_trace(build_dir):

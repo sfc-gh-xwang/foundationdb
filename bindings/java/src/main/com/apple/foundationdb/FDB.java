@@ -183,8 +183,8 @@ public class FDB {
 			}
 			return singleton;
 		}
-		if(version < 510)
-			throw new IllegalArgumentException("API version not supported (minimum 510)");
+		if(version < 710)
+			throw new IllegalArgumentException("API version not supported (minimum 710)");
 		if(version > ApiVersion.LATEST)
 			throw new IllegalArgumentException(String.format("API version not supported (maximum %d)", ApiVersion.LATEST));
 

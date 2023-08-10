@@ -173,7 +173,8 @@ protected:
 private:
 	struct VersionProperty {
 		VersionProperty(Reference<BackupContainerFileSystem> bc, const std::string& name)
-		  : bc(bc), path("properties/" + name) {}
+		  : bc(bc),
+		    path("properties/" + name) {}
 		Reference<BackupContainerFileSystem> bc;
 		std::string path;
 		Future<Optional<Version>> get();

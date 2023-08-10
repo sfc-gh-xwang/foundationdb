@@ -116,7 +116,19 @@ void LoadedTLSConfig::print(FILE* fp) {
 
 void ConfigureSSLContext(const LoadedTLSConfig& loaded, boost::asio::ssl::context& context) {
 	try {
-		context.set_options(boost::asio::ssl::context::default_workarounds);
+		auto tlsOptions = boost::asio::ssl::context::default_workarounds | boost::asio::ssl::context::no_sslv2 |
+		                  boost::asio::ssl::context::no_sslv3 | boost::asio::ssl::context::no_tlsv1 |
+		                  boost::asio::ssl::context::no_tlsv1_1;
+		if (!FLOW_KNOBS->TLS_V1_2_ALLOWED) {
+			TraceEvent("TLSV12Disabled");
+			context.set_options(boost::asio::ssl::context::no_tlsv1_2);
+		}
+		if (!FLOW_KNOBS->TLS_V1_3_ALLOWED) {
+			TraceEvent("TLSV13Disabled");
+			context.set_options(boost::asio::ssl::context::no_tlsv1_3);
+		}
+		context.set_options(tlsOptions);
+
 		auto verifyFailIfNoPeerCert = boost::asio::ssl::verify_fail_if_no_peer_cert;
 		// Servers get to accept connections without peer certs as "untrusted" clients
 		if (loaded.getEndpointType() == TLSEndpointType::SERVER)
@@ -283,7 +295,9 @@ LoadedTLSConfig TLSConfig::loadSync() const {
 }
 
 TLSPolicy::TLSPolicy(const LoadedTLSConfig& loaded, std::function<void()> on_failure)
-  : rules(), on_failure(std::move(on_failure)), is_client(loaded.getEndpointType() == TLSEndpointType::CLIENT) {
+  : rules(),
+    on_failure(std::move(on_failure)),
+    is_client(loaded.getEndpointType() == TLSEndpointType::CLIENT) {
 	set_verify_peers(loaded.getVerifyPeers());
 }
 

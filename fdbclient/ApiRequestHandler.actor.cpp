@@ -6,14 +6,41 @@
 
 #include "fdbclient/ApiRequestHandler.h"
 #include "fdbclient/BlobGranuleApiImpl.h"
+#include "fdbclient/BulkLoadApiImpl.h"
 
-Future<ApiResult> handleApiRequest(ISingleThreadTransaction* tr, ApiRequest req) {
+// this one fuction requires returning the error instead of throwing because it ends up as an FDBResult
+Future<ApiResult> handleTransactionApiRequest(ISingleThreadTransaction* tr, ApiRequest req) {
 	switch (req.getType()) {
 	case FDBApiRequest_ReadBGDescription:
 		return readBlobGranuleDescriptions(tr, req);
 		break;
 	default:
 		return unknown_api_request();
+	}
+}
+
+// all of these functions (so far) require throwing the error instead of returning because they end up as FDBFutures
+Future<ApiResult> handleDatabaseOrTenantApiRequest(DatabaseContext* db,
+                                                   ApiRequest req,
+                                                   Optional<Reference<Tenant>> tenant) {
+	switch (req.getType()) {
+	case FDBApiRequest_StartBulkLoad:
+		return startBulkLoad(db, req, tenant);
+		break;
+	case FDBApiRequest_BulkLoadAllFilesRegistered:
+		return bulkLoadAllFilesRegistered(db, req, tenant);
+		break;
+	case FDBApiRequest_AbortBulkLoad:
+		return abortBulkLoad(db, req, tenant);
+		break;
+	case FDBApiRequest_CleanupBulkLoad:
+		return cleanupBulkLoad(db, req, tenant);
+		break;
+	case FDBApiRequest_WaitBulkLoadComplete:
+		return waitBulkLoadComplete(db, req, tenant);
+		break;
+	default:
+		throw unknown_api_request();
 	}
 }
 

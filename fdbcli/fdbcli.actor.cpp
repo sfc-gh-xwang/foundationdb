@@ -40,7 +40,6 @@
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBOptions.g.h"
 #include "fdbclient/SystemData.h"
-#include "fdbclient/TagThrottle.h"
 #include "fdbclient/TenantManagement.actor.h"
 #include "fdbclient/Tuple.h"
 
@@ -249,7 +248,8 @@ private:
 
 		OptionGroup() {}
 		OptionGroup(OptionGroup<T>& base)
-		  : options(base.options.begin(), base.options.end()), legalOptions(base.legalOptions) {}
+		  : options(base.options.begin(), base.options.end()),
+		    legalOptions(base.legalOptions) {}
 
 		// Enable or disable an option. Returns true if option value changed
 		bool setOption(typename T::Option option, bool enabled, Optional<StringRef> arg) {
@@ -1023,10 +1023,10 @@ struct CLIOptions {
 			if (*endptr != '\0') {
 				fprintf(stderr, "ERROR: invalid client version %s\n", args.OptionArg());
 				return 1;
-			} else if (apiVersion < 700 || apiVersion > ApiVersion::LATEST_VERSION) {
-				// multi-version fdbcli only available after 7.0
+			} else if (apiVersion < 710 || apiVersion > ApiVersion::LATEST_VERSION) {
+				// Api versions older than 710 are deprecated
 				fprintf(stderr,
-				        "ERROR: api version %s is not supported. (Min: 700, Max: %d)\n",
+				        "ERROR: api version %s is not supported. (Min: 710, Max: %d)\n",
 				        args.OptionArg(),
 				        ApiVersion::LATEST_VERSION);
 				return 1;
@@ -1494,6 +1494,13 @@ ACTOR Future<int> cli(CLIOptions opt, LineNoise* plinenoise, Reference<ClusterCo
 
 				if (tokencmp(tokens[0], "blobkey")) {
 					bool _result = wait(makeInterruptable(blobKeyCommandActor(localDb, tenantEntry, tokens)));
+					if (!_result)
+						is_error = true;
+					continue;
+				}
+
+				if (tokencmp(tokens[0], "bulkload")) {
+					bool _result = wait(makeInterruptable(bulkLoadCommandActor(localDb, tenantEntry, tokens)));
 					if (!_result)
 						is_error = true;
 					continue;

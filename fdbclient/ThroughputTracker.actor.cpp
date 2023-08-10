@@ -20,15 +20,22 @@ public:
 			try {
 				ReportThroughputRequest req(std::move(self->throughput));
 				self->throughput.clear();
-				wait(basicLoadBalance(cx->getGrvProxies(UseProvisionalProxies::False),
-				                      &GrvProxyInterface::reportThroughput,
-				                      std::move(req),
-				                      TaskPriority::DefaultPromiseEndpoint,
-				                      AtMostOnce::True) ||
-				     timer);
-				if (timer.isReady()) {
-					CODE_PROBE(true, "ReportThroughputRequest timed out");
-					TraceEvent(SevWarn, "ReportThroughputRequestTimedOut");
+				choose {
+					when(ReportThroughputReply reply =
+					         wait(basicLoadBalance(cx->getGrvProxies(UseProvisionalProxies::False),
+					                               &GrvProxyInterface::reportThroughput,
+					                               std::move(req),
+					                               TaskPriority::DefaultPromiseEndpoint,
+					                               AtMostOnce::True))) {
+						if (isBusyThrottlingIdsTrackingEnabled()) {
+							self->busyThrottlingIds = std::move(reply.busyThrottlingIds);
+						}
+					}
+
+					when(wait(timer)) {
+						CODE_PROBE(true, "ReportThroughputRequest timed out");
+						TraceEvent(SevWarn, "ReportThroughputRequestTimedOut");
+					}
 				}
 			} catch (Error& e) {
 				if (e.code() == error_code_request_maybe_delivered) {
@@ -44,9 +51,55 @@ public:
 }; // class ThroughputTrackersImpl
 
 Future<Void> ThroughputTracker::run(DatabaseContext& cx) {
+	startTime = now();
 	return ThroughputTrackerImpl::run(this, &cx);
 }
 
 void ThroughputTracker::addCost(ThrottlingId const& throttlingId, uint64_t cost) {
 	throughput[throttlingId] += cost;
+	if (isClientAverageCostTrackingEnabled()) {
+		smoothThroughput[throttlingId].smoother.addDelta(cost);
+	}
+}
+
+void ThroughputTracker::addTransaction(ThrottlingId const& throttlingId, uint64_t numTransactions) {
+	smoothTransactionRate[throttlingId].smoother.addDelta(numTransactions);
+}
+
+double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttlingId) const {
+	if (now() - startTime < CLIENT_KNOBS->AVERAGE_COST_START_DELAY) {
+		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+	}
+
+	auto throughputIt = smoothThroughput.find(throttlingId);
+	auto transactionRateIt = smoothTransactionRate.find(throttlingId);
+
+	if (throughputIt == smoothThroughput.end() || transactionRateIt == smoothTransactionRate.end()) {
+		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+	} else {
+		auto const throughput = throughputIt->second.smoother.smoothRate();
+		auto const transactionRate = transactionRateIt->second.smoother.smoothRate();
+
+		// In this case, throughput is extremely low, and an
+		// average cost estimation cannot be made
+		if (throughput <= 0.0 || transactionRate < 1.0) {
+			return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+		}
+		return throughput / transactionRate;
+	}
+}
+
+bool isClientAverageCostTrackingEnabled() {
+	// TRACK_AVERAGE_COST_ON_CLIENTS depends on TRACK_THROUGHPUT_ON_CLIENTS
+	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS;
+}
+
+bool isBusyThrottlingIdsTrackingEnabled() {
+	// TRACK_BUSY_THROTTLING_IDS depends on TRACK_THROUGHPUT_ON_CLIENTS
+	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS &&
+	       CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS;
+}
+
+bool ThroughputTracker::isThrottlingIdBusy(ThrottlingId const& throttlingId) const {
+	return busyThrottlingIds.contains(throttlingId);
 }

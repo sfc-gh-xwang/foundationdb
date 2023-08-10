@@ -288,8 +288,14 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( MAX_GRV_BATCHERS,                        1000 );
 	init( GRV_BATCHER_EXPIRATION_TIMEOUT,          60.0 );
 	init( GRV_BATCHER_CLEANING_INTERVAL,            5.0 );
-	init( TRACK_THROUGHPUT_ON_CLIENTS,            false ); if( randomize && BUGGIFY ) TRACK_THROUGHPUT_ON_CLIENTS = true;
+	init( TRACK_THROUGHPUT_ON_CLIENTS,             true ); if( randomize && BUGGIFY ) TRACK_THROUGHPUT_ON_CLIENTS = false;
 	init( CLIENT_THROUGHPUT_REPORT_INTERVAL,        1.0 );
+	init( TRACK_AVERAGE_COST_ON_CLIENTS,            true ); if( randomize && BUGGIFY ) TRACK_AVERAGE_COST_ON_CLIENTS = false;
+	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
+	init( AVERAGE_COST_START_DELAY,                10.0 );
+	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
+	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); if ( randomize && BUGGIFY ) USE_SIMPLE_THROUGHPUT_QUOTA_CACHE = false;
+	init( TRACK_BUSY_THROTTLING_IDS,               true ); if ( randomize && BUGGIFY ) TRACK_BUSY_THROTTLING_IDS = false;
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
@@ -326,6 +332,13 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 	init( REST_KMS_ALLOW_NOT_SECURE_CONNECTION,     false ); if ( randomize && BUGGIFY ) REST_KMS_ALLOW_NOT_SECURE_CONNECTION = !REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 	init( SIM_KMS_VAULT_MAX_KEYS,                    4096 );
+
+	// Bulk Loading
+	init( ALLOW_BULK_LOADS,                         false );
+	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );
+	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); if ( randomize && BUGGIFY ) BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE = deterministicRandom()->randomInt(1, 10000000);
+
+	init( ENABLE_STORAGE_ENGINE_PARAM_INTERFACE,    false );
 
 	// clang-format on
 }
