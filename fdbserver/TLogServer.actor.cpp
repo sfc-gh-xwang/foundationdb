@@ -389,7 +389,7 @@ struct TLogData : NonCopyable {
 		uint32_t oldPeekRefcount; // during non-transition, all requests will use this refcount
 		uint32_t newPeekRefcount; // during transition, all new requests will use new window and this refcount
 
-		void resetExceptPromise() {
+		void reset() {
 			waitWindow = -1;
 			transitioning = false;
 			replied = true;
@@ -2149,7 +2149,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 				break;
 			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
 				if (!self->emptyVersionWaitMetaMap.contains(reqTag))
-					self->emptyVersionWaitMetaMap[reqTag].resetExceptPromise();
+					self->emptyVersionWaitMetaMap[reqTag].reset();
 				// snapshot transition state and wait window now and retain it for current request over it's lifetime
 				emptyVersionWaitTransition = self->emptyVersionWaitMetaMap[reqTag].transitioning;
 				emptyVersionWaitWindow = self->emptyVersionWaitMetaMap[reqTag].waitWindow;
@@ -2281,7 +2281,7 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 		return Void();
 
 	if (!self->emptyVersionWaitMetaMap.contains(req.tag))
-		self->emptyVersionWaitMetaMap[req.tag].resetExceptPromise();
+		self->emptyVersionWaitMetaMap[req.tag].reset();
 
 	// During transition no furthur emptyVersionWait for the tlog-ss pair should be sent to tlog
 	if (self->emptyVersionWaitMetaMap[req.tag].transitioning) {
@@ -3201,6 +3201,8 @@ ACTOR Future<Void> tLogCore(TLogData* self,
 		                              self->tlogPeekMsgCount = 0;
 		                              self->tlogEmptyPeekMsgCount = 0;
 		                              self->tlogVersionSyncMsgCount = 0;
+
+		                              te.detail("EmptyVersionWaitMetaMapSize", self->emptyVersionWaitMetaMap.size());
 	                              }));
 
 	logData->addActor.send(serveTLogInterface(self, tli, logData, warningCollectorInput));
