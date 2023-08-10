@@ -12245,7 +12245,12 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	loop {
 		choose {
 			when(waitNext(self->emptyVersionWaitEmergencyNotify.getFuture())) {
-				if (!self->logSystem || criticalSection) {
+				if (!self->logSystem) {
+					continue;
+				}
+
+				if (criticalSection) {
+					self->emptyVersionWaitEmergencyTransition = false;
 					continue;
 				}
 
