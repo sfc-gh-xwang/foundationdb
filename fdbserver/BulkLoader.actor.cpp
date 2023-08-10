@@ -118,6 +118,7 @@ BulkLoadFileID uidToFileID(UID id) {
 
 std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> self,
                                                      Reference<BlobConnectionProvider> bstore,
+                                                     Optional<Key> tenantPrefix,
                                                      Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx,
                                                      Optional<BlobGranuleCipherKeysMeta> cipherKeysMeta,
                                                      Version version,
@@ -144,6 +145,10 @@ std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> s
 
 		fp.response.fileName = filename;
 		fp.response.targetSize = SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES;
+		if (tenantPrefix.present()) {
+			arena.dependsOn(tenantPrefix->arena());
+			fp.response.tenantPrefix = tenantPrefix.get();
+		}
 		fp.response.cipherKeysCtx = cipherKeysCtx;
 		fp.response.type = BulkLoadFileType::SNAPSHOT;
 		fp.response.format = BulkLoadFileFormat::ROW_V1;
@@ -199,9 +204,11 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 			tr->reset();
 		}
 
+		state Optional<Key> tenantPrefix;
 		state KeyRange physicalRange = info.keyRange;
 		if (idKey.first != TenantInfo::INVALID_TENANT) {
-			physicalRange = physicalRange.withPrefix(TenantAPI::idToPrefix(idKey.first));
+			tenantPrefix = TenantAPI::idToPrefix(idKey.first);
+			physicalRange = physicalRange.withPrefix(tenantPrefix.get());
 		}
 
 		// before creating file pointers, load metadata and encryption keys for tenant
@@ -253,8 +260,8 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 			}
 
 			int batchSize = getFilePointerBatchSize(req.count - rep.filePointers.size());
-			state std::vector<CandidateFilePointer> candidateFilePointers =
-			    createFilePointers(self, bstore, cipherKeysCtx, cipherKeysMeta, version, batchSize, rep.arena);
+			state std::vector<CandidateFilePointer> candidateFilePointers = createFilePointers(
+			    self, bstore, tenantPrefix, cipherKeysCtx, cipherKeysMeta, version, batchSize, rep.arena);
 			wait(yield());
 
 			// try to commit file pointers to db

@@ -153,6 +153,11 @@ private:
 					    info("FileName= {0}",
 					         fdb::toCharsRef(fdb::ByteString(it->filename.begin, it->filename.length)));
 					    info("TargetSizeBytes= {0}", it->target_size_bytes);
+					    if (it->tenant_prefix.present) {
+						    info("TenantPrefix= {0}",
+						         fdb::toHexString(fdb::ByteString(it->tenant_prefix.prefix.key,
+						                                          it->tenant_prefix.prefix.key_length)));
+					    }
 					    ASSERT(it->target_size_bytes >= 0 && it->target_size_bytes <= 100000000);
 					    info("FileType= {0}", it->file_type);
 					    ASSERT(it->file_type == 1);

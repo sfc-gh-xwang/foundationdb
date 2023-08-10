@@ -238,6 +238,10 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		ASSERT(toWrite.type == BulkLoadFileType::SNAPSHOT);
 		ASSERT(toWrite.format == BulkLoadFileFormat::ROW_V1);
 
+		if (self->tenant.present()) {
+			filePrefix = filePrefix.withPrefix(self->tenant.get()->prefix());
+		}
+
 		state int64_t logicalSize = 0;
 		Value serialized = wait(self->createOneFile(toWrite, filePrefix, rowCount, valueSize, &logicalSize));
 		state int64_t physicalSize = serialized.size();
@@ -409,6 +413,10 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			for (int i = 0; i < batchSize; i++, prefix++) {
 				// sometimes skip file to make non-contiguous
 				if (filesWritten.empty() || deterministicRandom()->random01() < 0.8) {
+					ASSERT_EQ(filesToWrite[prefix].tenantPrefix.present(), self->tenant.present());
+					if (self->tenant.present()) {
+						ASSERT_EQ(filesToWrite[prefix].tenantPrefix.get(), self->tenant.get()->prefix());
+					}
 					std::string filePrefixStr = std::to_string(prefix);
 					Standalone<StringRef> filePrefix =
 					    range.begin.withSuffix("/"_sr).withSuffix(filePrefixStr).withSuffix("/"_sr);
