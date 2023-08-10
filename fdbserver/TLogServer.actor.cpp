@@ -384,7 +384,7 @@ struct TLogData : NonCopyable {
 	struct emptyVersionWaitMetadata {
 		double waitWindow; // "atomically" change (as appears to peek actor) with transisioning state
 		bool transitioning; // whether tlog-ss pair is currently in transitioning state
-		Promise<Void> applied; // signal tlogEmptyVersionWait actor to conclude current transition
+		PromiseStream<Void> applied; // signal tlogEmptyVersionWait actor to conclude current transition
 		bool replied; // whether current transition has been answered. ensure Promise is only delivered once
 		uint32_t oldPeekRefcount; // during non-transition, all requests will use this refcount
 		uint32_t newPeekRefcount; // during transition, all new requests will use new window and this refcount
@@ -2300,9 +2300,8 @@ ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequ
 		DebugLogTraceEvent("WaitStarted")
 		    .detail("Tag", req.tag)
 		    .detail("StructWindow", self->emptyVersionWaitMetaMap[req.tag].waitWindow);
-		self->emptyVersionWaitMetaMap[req.tag].applied = Promise<Void>();
 		self->emptyVersionWaitMetaMap[req.tag].replied = false;
-		wait(self->emptyVersionWaitMetaMap[req.tag].applied.getFuture());
+		waitNext(self->emptyVersionWaitMetaMap[req.tag].applied.getFuture());
 		DebugLogTraceEvent("WaitEnded");
 	}
 
