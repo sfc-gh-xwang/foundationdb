@@ -19,6 +19,8 @@
  */
 
 #include "fdbclient/ClientKnobs.h"
+#include "fdbclient/SystemData.h"
+#include "fdbserver/BlobGranuleServerCommon.actor.h"
 #include "fdbserver/DataDistribution.actor.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/Ratekeeper.h"
@@ -100,13 +102,18 @@ public:
 
 		self.addActor.send(self.quotaCache->run());
 		self.addActor.send(self.quotaThrottler.expireUnusedThrottlingIds());
-		if (SERVER_KNOBS->BW_THROTTLING_ENABLED) {
+
+		state Reference<BlobRestoreController> restoreController =
+		    makeReference<BlobRestoreController>(self.db, normalKeys);
+		bool isFullRestore = wait(BlobRestoreController::isRestoring(restoreController));
+		state bool isBwThrottlingEnabled = SERVER_KNOBS->BW_THROTTLING_ENABLED && !isFullRestore;
+		if (isBwThrottlingEnabled) {
 			self.addActor.send(self.blobMonitor.run(self.configurationMonitor, self.recoveryTracker));
 		}
 
 		// Perform one round of rate updates before starting the RateServer, so it has a
 		// valid rate to serve.
-		self.doRateupdate();
+		self.doRateupdate(isBwThrottlingEnabled);
 		self.addActor.send(self.rateServer.run(self.normalRateUpdater,
 		                                       self.batchRateUpdater,
 		                                       self.quotaThrottler,
@@ -138,7 +145,7 @@ public:
 		try {
 			loop choose {
 				when(wait(timeout)) {
-					self.doRateupdate();
+					self.doRateupdate(isBwThrottlingEnabled);
 					timeout = delayJittered(SERVER_KNOBS->METRIC_UPDATE_RATE);
 				}
 				when(HaltRatekeeperRequest req = waitNext(rkInterf.haltRatekeeper.getFuture())) {
@@ -210,7 +217,7 @@ void Ratekeeper::updateTagThrottling() {
 	quotaCache->updateThroughput(*clusterThroughputTracker);
 }
 
-void Ratekeeper::doRateupdate() {
+void Ratekeeper::doRateupdate(bool isBwThrottlingEnabled) {
 	double actualTps = rateServer.getSmoothReleasedTransactionRate();
 	actualTps = std::max(std::max(1.0, actualTps),
 	                     metricsTracker.getSmoothTotalDurableBytesRate() / CLIENT_KNOBS->TRANSACTION_SIZE_LIMIT);
@@ -228,6 +235,7 @@ void Ratekeeper::doRateupdate() {
 	                         recoveryTracker,
 	                         actualTpsHistory,
 	                         blobMonitor,
+	                         isBwThrottlingEnabled,
 	                         quotaThrottler.throttleCount());
 	batchRateUpdater.update(metricsTracker,
 	                        rateServer,
@@ -235,6 +243,7 @@ void Ratekeeper::doRateupdate() {
 	                        recoveryTracker,
 	                        actualTpsHistory,
 	                        blobMonitor,
+	                        isBwThrottlingEnabled,
 	                        quotaThrottler.throttleCount());
 	updateTagThrottling();
 
