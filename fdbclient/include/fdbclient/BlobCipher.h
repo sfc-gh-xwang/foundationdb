@@ -866,7 +866,7 @@ private:
 	EVP_MD_CTX* ctx;
 };
 
-int getIVLengthFromEncryptMode(EncryptCipherMode mode);
+int getIVLengthFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo);
 
 void generateCryptoSecureRandomBytes(unsigned char* buffer, int size);
 

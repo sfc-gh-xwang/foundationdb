@@ -24,9 +24,11 @@
 
 #include "fdbclient/BackupAgent.actor.h"
 #include "fdbclient/BackupContainer.h"
+#include "fdbclient/BlobCipher.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BlobGranuleFiles.actor.h"
 #include "flow/Arena.h"
+#include "flow/EncryptUtils.h"
 #include "flow/FastRef.h"
 #include "flow/Trace.h"
 #include "flow/flow.h"
@@ -403,11 +405,10 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestManifestCipherKeys(Reference<Asy
 	ASSERT(cipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(cipherKeys.cipherHeaderKey, *arena);
 
-	EncryptCipherMode encryptMode = encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE);
-	int ivLength = getIVLengthFromEncryptMode(encryptMode);
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(algo);
 	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
-	EncryptBlobCipher::generateIV(
-	    encryptMode, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
+	generateIV(algo, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
 
 	return cipherKeysCtx;
 }

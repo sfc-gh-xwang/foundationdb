@@ -1022,7 +1022,7 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 	if (pProxyCommitData->encryptMode.isEncryptionEnabled()) {
 		std::unordered_set<EncryptCipherDomainId> encryptDomainIds = { SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID,
 			                                                           FDB_DEFAULT_ENCRYPT_DOMAIN_ID };
-		if (FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED) {
+		if (isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
 			encryptDomainIds.insert(ENCRYPT_HEADER_DOMAIN_ID);
 		}
 		// For cluster aware encryption only the default domain id is needed

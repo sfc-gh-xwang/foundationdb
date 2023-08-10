@@ -2194,14 +2194,9 @@ int main(int argc, char* argv[]) {
 				}
 				g_knobs.setKnob("enable_blob_granule_compression",
 				                KnobValue::create(ini.GetBoolValue("META", "enableBlobGranuleEncryption", false)));
-				g_knobs.setKnob("encrypt_header_auth_token_enabled",
-				                KnobValue::create(ini.GetBoolValue("META", "encryptHeaderAuthTokenEnabled", false)));
-				g_knobs.setKnob("encrypt_header_auth_token_algo",
-				                KnobValue::create((int)ini.GetLongValue(
-				                    "META", "encryptHeaderAuthTokenAlgo", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ALGO)));
-				g_knobs.setKnob("encrypt_mode",
+				g_knobs.setKnob("encryption_at_rest_algo",
 				                KnobValue::create((std::string)ini.GetValue(
-				                    "META", "encryptMode", FLOW_KNOBS->ENCRYPT_MODE.c_str())));
+				                    "META", "encryptionAtRestAlgo", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO.c_str())));
 
 				g_knobs.setKnob(
 				    "shard_encode_location_metadata",

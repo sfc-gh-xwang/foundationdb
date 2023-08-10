@@ -423,14 +423,11 @@ public:
 		                   int len,
 		                   PhysicalPageID seed) {
 			Header* h = reinterpret_cast<Header*>(header);
-			Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
-			    cipherKeys.cipherTextKey,
-			    cipherKeys.cipherHeaderKey,
-			    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-			    getAuthTokenAlgoFromMode(
-			        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-			    encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE),
-			    BlobCipherMetrics::KV_REDWOOD);
+			Reference<EncryptBlobCipher> cipher =
+			    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
+			                                    cipherKeys.cipherHeaderKey,
+			                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+			                                    BlobCipherMetrics::KV_REDWOOD);
 			Arena arena;
 
 			BlobCipherEncryptHeaderRef headerRef;

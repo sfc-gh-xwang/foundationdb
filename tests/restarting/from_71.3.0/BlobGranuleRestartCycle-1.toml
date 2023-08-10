@@ -9,6 +9,10 @@ injectSSDelay = true
 # FIXME: re-enable rocks at some point
 storageEngineExcludeTypes = [4, 5]
 
+[[knobs]]
+encrypt_header_auth_token_algo = 0
+encrypt_header_auth_token_enabled = false
+
 [[test]]
 testTitle = 'BlobGranuleRestartCycle'
 clearAfterTest=false

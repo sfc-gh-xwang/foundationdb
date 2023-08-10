@@ -518,14 +518,11 @@ private:
 			ASSERT(cipherKeys.cipherTextKey.isValid());
 			ASSERT(cipherKeys.cipherHeaderKey.isValid());
 
-			Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-			    cipherKeys.cipherTextKey,
-			    cipherKeys.cipherHeaderKey,
-			    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-			    getAuthTokenAlgoFromMode(
-			        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-			    encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE),
-			    BlobCipherMetrics::KV_MEMORY);
+			Reference<EncryptBlobCipher> encryptor =
+			    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
+			                                    cipherKeys.cipherHeaderKey,
+			                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+			                                    BlobCipherMetrics::KV_MEMORY);
 			uint16_t encryptHeaderSize;
 			// TODO: If possible we want to avoid memcpy to the disk log by using the same arena used by IDiskQueue
 			Arena arena;

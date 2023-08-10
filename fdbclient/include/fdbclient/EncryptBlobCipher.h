@@ -35,25 +35,14 @@ class EncryptBlobCipher : public ReferenceCounted<EncryptBlobCipher>, NonCopyabl
 public:
 	static Reference<EncryptBlobCipher> getEncryptor(Reference<BlobCipherKey> tCipherKey,
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
-	                                                 const EncryptAuthTokenMode mode,
-	                                                 const EncryptAuthTokenAlgo algo,
-	                                                 const EncryptCipherMode encryptCipherMode,
+	                                                 EncryptionAtRestAlgo algo,
 	                                                 BlobCipherMetrics::UsageType usageType);
 	static Reference<EncryptBlobCipher> getEncryptor(Reference<BlobCipherKey> tCipherKey,
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
 	                                                 const uint8_t* iv,
 	                                                 const int ivLen,
-	                                                 const EncryptAuthTokenMode mode,
-	                                                 const EncryptAuthTokenAlgo algo,
-	                                                 const EncryptCipherMode encryptCipherMode,
+	                                                 EncryptionAtRestAlgo algo,
 	                                                 BlobCipherMetrics::UsageType usageType);
-
-	EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
-	                  Optional<Reference<BlobCipherKey>> hCipherKey,
-	                  const EncryptAuthTokenMode mode,
-	                  const EncryptAuthTokenAlgo algo,
-	                  const EncryptCipherMode encryptCipherMode,
-	                  const BlobCipherMetrics::UsageType usageType);
 	EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
 	                  Optional<Reference<BlobCipherKey>> hCipherKey,
 	                  const uint8_t* iv,
@@ -78,10 +67,6 @@ public:
 	                            double* encryptTime = nullptr) = 0;
 
 	StringRef getIVRef() { return ivRef; }
-	static void generateIV(EncryptCipherMode encryptMode,
-	                       Reference<BlobCipherKey> textCipherKey,
-	                       uint8_t* iv,
-	                       int ivLen);
 
 protected:
 	virtual void init() = 0;
@@ -114,12 +99,6 @@ public:
 	                           Optional<Reference<BlobCipherKey>> hCipherKey,
 	                           const uint8_t* iv,
 	                           const int ivLen,
-	                           const EncryptAuthTokenMode mode,
-	                           const EncryptAuthTokenAlgo algo,
-	                           const EncryptCipherMode encryptCipherMode,
-	                           BlobCipherMetrics::UsageType usageType);
-	EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> tCipherKey,
-	                           Optional<Reference<BlobCipherKey>> hCipherKey,
 	                           const EncryptAuthTokenMode mode,
 	                           const EncryptAuthTokenAlgo algo,
 	                           const EncryptCipherMode encryptCipherMode,
@@ -162,12 +141,6 @@ public:
 	                           Optional<Reference<BlobCipherKey>> hCipherKey,
 	                           const uint8_t* iv,
 	                           const int ivLen,
-	                           const EncryptAuthTokenMode mode,
-	                           const EncryptAuthTokenAlgo algo,
-	                           const EncryptCipherMode encryptCipherMode,
-	                           BlobCipherMetrics::UsageType usageType);
-	EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> tCipherKey,
-	                           Optional<Reference<BlobCipherKey>> hCipherKey,
 	                           const EncryptAuthTokenMode mode,
 	                           const EncryptAuthTokenAlgo algo,
 	                           const EncryptCipherMode encryptCipherMode,
@@ -356,5 +329,6 @@ void computeAuthToken(const std::vector<std::pair<const uint8_t*, size_t>>& payl
 
 EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptAuthTokenMode mode);
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo);
+void generateIV(EncryptionAtRestAlgo algo, Reference<BlobCipherKey> textCipherKey, uint8_t* iv, int ivLen);
 
 #endif // FDBCLIENT_ENCRYPT_BLOB_CIPHER_H

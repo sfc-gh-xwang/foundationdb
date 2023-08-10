@@ -79,6 +79,8 @@ static_assert(EncryptCipherMode::ENCRYPT_CIPHER_MODE_LAST <= std::numeric_limits
 
 EncryptCipherMode encryptModeFromString(const std::string& modeStr);
 
+typedef enum { AES_CTR = 0, AES_CTR_HMAC = 1, AES_CTR_CMAC = 2, AES_GCM = 3, LAST = 4 } EncryptionAtRestAlgo;
+
 // EncryptionHeader authentication modes
 // 1. NONE - No 'authentication token' generation needed for EncryptionHeader i.e. no protection against header OR
 // cipherText 'tampering' and/or bit rot/flip corruptions.
@@ -109,7 +111,6 @@ static_assert(EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_LAST <= std::
 bool isEncryptHeaderAuthTokenModeValid(const EncryptAuthTokenMode mode);
 bool isEncryptHeaderAuthTokenAlgoValid(const EncryptAuthTokenAlgo algo);
 bool isEncryptHeaderAuthTokenDetailsValid(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo);
-EncryptAuthTokenAlgo getAuthTokenAlgoFromMode(const EncryptAuthTokenMode mode);
 EncryptAuthTokenMode getRandomAuthTokenMode();
 EncryptAuthTokenAlgo getRandomAuthTokenAlgo();
 
@@ -135,5 +136,12 @@ bool isReservedEncryptDomain(EncryptCipherDomainId domainId);
 bool isEncryptHeaderDomain(EncryptCipherDomainId domainId);
 
 bool isCipherModeSupported(EncryptCipherMode mode);
+
+EncryptionAtRestAlgo encryptionAlgoFromString(const std::string& algoStr);
+EncryptAuthTokenAlgo authTokenAlgoFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo);
+EncryptCipherMode cipherModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo);
+EncryptAuthTokenMode authTokenModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo);
+bool isAuthenticatedEncryption(EncryptionAtRestAlgo algo);
+std::string getRandomAuthenticatedEncryptionAtRestAlgo();
 
 #endif

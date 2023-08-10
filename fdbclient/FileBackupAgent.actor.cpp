@@ -648,14 +648,11 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 			self->cipherKeys.textCipherKey = cipherKey;
 		}
 
-		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-		    self->cipherKeys.textCipherKey,
-		    self->cipherKeys.headerCipherKey,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE),
-		    BlobCipherMetrics::BACKUP);
+		Reference<EncryptBlobCipher> encryptor =
+		    EncryptBlobCipher::getEncryptor(self->cipherKeys.textCipherKey,
+		                                    self->cipherKeys.headerCipherKey,
+		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    BlobCipherMetrics::BACKUP);
 		int64_t payloadSize = self->wPtr - self->dataPayloadStart;
 		StringRef encryptedData;
 		BlobCipherEncryptHeaderRef headerRef;
@@ -777,7 +774,8 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		uint32_t headerSize = 0;
 		EncryptAuthTokenMode authTokenMode =
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
-		EncryptAuthTokenAlgo authTokenAlgo = getAuthTokenAlgoFromMode(authTokenMode);
+		EncryptAuthTokenAlgo authTokenAlgo =
+		    authTokenAlgoFromEncryptionAtRestAlgo(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO));
 		headerSize =
 		    BlobCipherEncryptHeaderRef::getHeaderSize(CLIENT_KNOBS->ENCRYPT_HEADER_FLAGS_VERSION,
 		                                              getEncryptCurrentAlgoHeaderVersion(authTokenMode, authTokenAlgo),

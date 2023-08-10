@@ -374,11 +374,10 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 	ASSERT(systemCipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(systemCipherKeys.cipherHeaderKey, *arena);
 
-	EncryptCipherMode encryptMode = encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE);
-	int ivLength = getIVLengthFromEncryptMode(encryptMode);
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(algo);
 	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
-	EncryptBlobCipher::generateIV(
-	    encryptMode, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
+	generateIV(algo, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
 		TraceEvent(SevDebug, "GetLatestGranuleCipherKey")
@@ -439,7 +438,9 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
-	if (encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE) == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
 		ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
 	} else {
 		ASSERT_EQ(ivRef.size(), AES_256_GCM_IV_LENGTH);

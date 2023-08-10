@@ -371,8 +371,8 @@ class TestConfig : public BasicTestConfig {
 			if (attrib == "allowCreatingTenants") {
 				allowCreatingTenants = strcmp(value.c_str(), "true") == 0;
 			}
-			if (attrib == "disableAesGcm") {
-				disableAesGcm = strcmp(value.c_str(), "true") == 0;
+			if (attrib == "disableAuthenticatedEncryption") {
+				disableAuthenticatedEncryption = strcmp(value.c_str(), "true") == 0;
 			}
 			if (attrib == "injectSSTargetedRestart") {
 				injectTargetedSSRestart = strcmp(value.c_str(), "true") == 0;
@@ -446,7 +446,7 @@ public:
 
 	bool allowDefaultTenant = true;
 	bool allowCreatingTenants = true;
-	bool disableAesGcm = false;
+	bool disableAuthenticatedEncryption = false;
 	bool injectTargetedSSRestart = false;
 	bool injectSSDelay = false;
 	// By default, tenant mode is set randomly
@@ -524,7 +524,7 @@ public:
 		    .add("simHTTPServerEnabled", &simHTTPServerEnabled)
 		    .add("allowDefaultTenant", &allowDefaultTenant)
 		    .add("allowCreatingTenants", &allowCreatingTenants)
-		    .add("disableAesGcm", &disableAesGcm)
+		    .add("disableAuthenticatedEncryption", &disableAuthenticatedEncryption)
 		    .add("randomlyRenameZoneId", &randomlyRenameZoneId)
 		    .add("injectTargetedSSRestart", &injectTargetedSSRestart)
 		    .add("injectSSDelay", &injectSSDelay)
@@ -1298,27 +1298,6 @@ IPAddress makeIPAddressForSim(bool isIPv6, std::array<int, 4> parts) {
 
 #include "fdbclient/MonitorLeader.h"
 
-void setEncryptionAlgoKnobs(bool disableAesGcm, IKnobCollection& g_knobs) {
-	if (disableAesGcm || BUGGIFY) {
-		g_knobs.setKnob("encrypt_mode", KnobValueRef::create(std::string{ "AES-256-CTR" }));
-		if (BUGGIFY) {
-			g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ true }));
-			g_knobs.setKnob("encrypt_header_auth_token_algo", KnobValueRef::create(int{ getRandomAuthTokenAlgo() }));
-		} else {
-			g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ false }));
-			g_knobs.setKnob("encrypt_header_auth_token_algo", KnobValueRef::create(int{ 0 }));
-		}
-	} else {
-		g_knobs.setKnob("encrypt_mode", KnobValueRef::create(std::string{ "AES-256-GCM" }));
-		g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ true }));
-		g_knobs.setKnob("encrypt_header_auth_token_algo", KnobValueRef::create(int{ 3 }));
-	}
-	TraceEvent("EncryptionAtRestKnobValues")
-	    .detail("EncryptMode", FLOW_KNOBS->ENCRYPT_MODE)
-	    .detail("AuthTokenAlgo", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ALGO)
-	    .detail("AuthTokenEnabled", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED);
-}
-
 // Configures the system according to the given specifications in order to run
 // simulation, but with the additional consideration that it is meant to act
 // like a "rebooted" machine, mostly used for restarting tests.
@@ -1384,14 +1363,10 @@ ACTOR Future<Void> restartSimulatedSystem(std::vector<Future<Void>>* systemActor
 			g_knobs.setKnob("remote_kv_store", KnobValueRef::create(bool{ false }));
 			TraceEvent(SevDebug, "DisableRemoteKVS");
 		}
-		// TODO: Currently redwood doesn't support in-instance swap between encryption modes
-		if (testConfig->disableAesGcm) {
-			g_knobs.setKnob("encrypt_mode", KnobValueRef::create(std::string{ "AES-256-CTR" }));
+		if (testConfig->disableAuthenticatedEncryption) {
+			g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
 		}
-		TraceEvent("EncryptionAtRestKnobValues")
-		    .detail("EncryptMode", FLOW_KNOBS->ENCRYPT_MODE)
-		    .detail("AuthTokenAlgo", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ALGO)
-		    .detail("AuthTokenEnabled", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED);
+		TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 		*pConnString = conn;
 		*pTesterCount = testerCount;
 		bool usingSSL = conn.toString().find(":tls") != std::string::npos || listenersPerProcess > 1;
@@ -2248,7 +2223,10 @@ void setupSimulatedSystem(std::vector<Future<Void>>* systemActors,
 		g_knobs.setKnob("remote_kv_store", KnobValueRef::create(bool{ false }));
 		TraceEvent(SevDebug, "DisableRemoteKVS");
 	}
-	setEncryptionAlgoKnobs(testConfig.disableAesGcm, g_knobs);
+	if (testConfig.disableAuthenticatedEncryption) {
+		g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
+	}
+	TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 	auto configDBType = testConfig.getConfigDBType();
 	startingConfigString += DatabaseConfiguration::configureStringFromJSON(startingConfigJSON);
 

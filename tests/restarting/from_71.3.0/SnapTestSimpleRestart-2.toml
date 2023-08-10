@@ -1,7 +1,8 @@
 [configuration]
 storageEngineExcludeTypes = [4, 5]
 buggify = false
-disableAesGcm = true
+# FIXME: Enable authenticated encryption after redwood allows in-instance swap
+disableAuthenticatedEncryption = true
 
 # verify all keys are even numbered
 [[test]]

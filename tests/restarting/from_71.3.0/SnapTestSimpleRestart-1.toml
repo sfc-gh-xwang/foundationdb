@@ -3,6 +3,10 @@ storageEngineExcludeTypes = [4, 5]
 generateFearless = false
 logAntiQuorum = 0
 
+[[knobs]]
+encrypt_header_auth_token_algo = 0
+encrypt_header_auth_token_enabled = false
+
 # write 1000 Keys ending with even number
 [[test]]
 testTitle = 'SnapSimplePre'

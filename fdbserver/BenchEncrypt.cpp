@@ -177,12 +177,8 @@ static void blob_cipher_encrypt(benchmark::State& state) {
 	const EncryptCipherDomainId minDomainId = 1;
 	const int pageLen = state.range(0);
 	const bool isInplace = state.range(1);
-	const EncryptAuthTokenAlgo authAlgo = (EncryptAuthTokenAlgo)state.range(2);
-	ASSERT_GE(authAlgo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE);
-	ASSERT_LT(authAlgo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_LAST);
-	const EncryptCipherMode encryptMode = getEncryptModeFromAlgo(authAlgo);
-	int ivSize = getIVLengthFromEncryptMode(encryptMode);
-	EncryptAuthTokenMode authTokenMode = getAuthTokenModeFromAlgo(authAlgo);
+	const EncryptionAtRestAlgo algo = (EncryptionAtRestAlgo)state.range(2);
+	int ivSize = getIVLengthFromEncryptionAtRestAlgo(algo);
 
 	SetupEncryptCipher();
 
@@ -198,8 +194,8 @@ static void blob_cipher_encrypt(benchmark::State& state) {
 	for (auto _ : state) {
 		Arena arena;
 		// create a new encryptor for each encrypt operation to simulate AESEncryptionEncoder.encode()
-		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-		    cipherKey, headerCipherKey, iv, ivSize, authTokenMode, authAlgo, encryptMode, BlobCipherMetrics::TEST);
+		Reference<EncryptBlobCipher> encryptor =
+		    EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, iv, ivSize, algo, BlobCipherMetrics::TEST);
 
 		BlobCipherEncryptHeaderRef header;
 		if (isInplace && encryptor->supportsInplaceEncryption()) {
@@ -215,12 +211,8 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 	const EncryptCipherDomainId minDomainId = 1;
 	const int pageLen = state.range(0);
 	const bool isInplace = state.range(1);
-	const EncryptAuthTokenAlgo authAlgo = (EncryptAuthTokenAlgo)state.range(2);
-	ASSERT_GE(authAlgo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE);
-	ASSERT_LT(authAlgo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_LAST);
-	const EncryptCipherMode encryptMode = getEncryptModeFromAlgo(authAlgo);
-	int ivSize = getIVLengthFromEncryptMode(encryptMode);
-	EncryptAuthTokenMode authTokenMode = getAuthTokenModeFromAlgo(authAlgo);
+	const EncryptionAtRestAlgo algo = (EncryptionAtRestAlgo)state.range(2);
+	int ivSize = getIVLengthFromEncryptionAtRestAlgo(algo);
 
 	SetupEncryptCipher();
 
@@ -234,8 +226,8 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 	deterministicRandom()->randomBytes(&orgData[0], pageLen);
 	Arena encryptArena;
 
-	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-	    cipherKey, headerCipherKey, iv, ivSize, authTokenMode, authAlgo, encryptMode, BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor =
+	    EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, iv, ivSize, algo, BlobCipherMetrics::TEST);
 
 	BlobCipherEncryptHeaderRef headerRef;
 	if (isInplace && encryptor->supportsInplaceEncryption()) {
@@ -251,6 +243,7 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 	                                 cipherDetails.textCipherDetails.baseCipherId,
 	                                 cipherDetails.textCipherDetails.salt);
 	Optional<Reference<BlobCipherKey>> hCipherKey;
+	EncryptAuthTokenMode authTokenMode = authTokenModeFromEncryptionAtRestAlgo(algo);
 	ASSERT(cipherDetails.headerCipherDetails.present() ||
 	       authTokenMode == EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE);
 	if (cipherDetails.headerCipherDetails.present()) {
@@ -265,7 +258,7 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 		memcpy(decryptData, orgData, pageLen);
 		// create decryptor for every decrypt operation to simulate AESEncryptionEncoder.decode()
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    tCipherKeyKey, hCipherKey, headerRef.getIV(), encryptMode, BlobCipherMetrics::TEST);
+		    tCipherKeyKey, hCipherKey, headerRef.getIV(), headerRef.getEncryptMode(), BlobCipherMetrics::TEST);
 		if (isInplace && decryptor->supportsInplaceDecryption()) {
 			decryptor->decryptInplace(&decryptData[0], pageLen, headerRef);
 		} else {
@@ -278,9 +271,7 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 static void blob_cipher_args(benchmark::internal::Benchmark* b) {
 	for (int pageLen : { 8000, 16000 }) {
 		for (bool isInplace : { false, true }) {
-			for (int i = EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE;
-			     i < EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_LAST;
-			     i++) {
+			for (int i = EncryptionAtRestAlgo::AES_CTR; i < EncryptionAtRestAlgo::LAST; i++) {
 				b->Args({ pageLen, isInplace, i });
 			}
 		}

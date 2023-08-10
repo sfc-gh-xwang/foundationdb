@@ -1,6 +1,10 @@
 [configuration]
 storageEngineExcludeTypes=[3]
 
+[[knobs]]
+encrypt_header_auth_token_algo = 0
+encrypt_header_auth_token_enabled = false
+
 [[test]]
 testTitle = 'SubmitBackup'
 simBackupAgents= 'BackupToFile'

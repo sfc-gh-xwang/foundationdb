@@ -5234,8 +5234,10 @@ public:
 		if (encryptionMode == EncryptionAtRestMode::DISABLED) {
 			expectedEncodingType = EncodingType::XXHash64;
 		} else {
-			expectedEncodingType = FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED ? EncodingType::AESEncryptionWithAuth
-			                                                                     : EncodingType::AESEncryption;
+			expectedEncodingType =
+			    isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))
+			        ? EncodingType::AESEncryptionWithAuth
+			        : EncodingType::AESEncryption;
 		}
 		// Randomly enable XOR encryption in simulation. Also ignore encoding type mismatch if XOR encryption is set but
 		// default encoding is expected.
@@ -10395,14 +10397,11 @@ TEST_CASE("Lredwood/correctness/btree") {
 	if (encodingType == EncodingType::AESEncryption) {
 		keyProvider = makeReference<RandomEncryptionKeyProvider<AESEncryption>>(
 		    RandomEncryptionKeyProvider<AESEncryption>::EncryptionDomainMode(encryptionDomainMode));
-		g_knobs.setKnob("encrypt_mode", KnobValueRef::create(std::string{ "AES-256-CTR" }));
-		g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ false }));
+		g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
 	} else if (encodingType == EncodingType::AESEncryptionWithAuth) {
 		keyProvider = makeReference<RandomEncryptionKeyProvider<AESEncryptionWithAuth>>(
 		    RandomEncryptionKeyProvider<AESEncryptionWithAuth>::EncryptionDomainMode(encryptionDomainMode));
-		g_knobs.setKnob("encrypt_mode", KnobValueRef::create(std::string{ "AES-256-CTR" }));
-		g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ true }));
-		g_knobs.setKnob("encrypt_header_auth_token_algo", KnobValueRef::create(int{ 1 }));
+		g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(getRandomAuthenticatedEncryptionAtRestAlgo()));
 	} else if (encodingType == EncodingType::XOREncryption_TestOnly) {
 		keyProvider = makeReference<XOREncryptionKeyProvider_TestOnly>(file);
 	}
@@ -11722,12 +11721,10 @@ TEST_CASE(":/redwood/performance/histograms") {
 namespace {
 void setAuthMode(EncodingType encodingType) {
 	auto& g_knobs = IKnobCollection::getMutableGlobalKnobCollection();
-	g_knobs.setKnob("encrypt_mode", KnobValueRef::create(std::string{ "AES-256-CTR" }));
 	if (encodingType == AESEncryption) {
-		g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ false }));
+		g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
 	} else {
-		g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ true }));
-		g_knobs.setKnob("encrypt_header_auth_token_algo", KnobValueRef::create(int{ 1 }));
+		g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(getRandomAuthenticatedEncryptionAtRestAlgo()));
 	}
 }
 } // anonymous namespace

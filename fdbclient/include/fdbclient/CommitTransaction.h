@@ -173,14 +173,11 @@ struct MutationRef {
 		BinaryWriter bw(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
 		bw << *this;
 
-		Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
-		    cipherKeys.cipherTextKey,
-		    cipherKeys.cipherHeaderKey,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE),
-		    usageType);
+		Reference<EncryptBlobCipher> cipher =
+		    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
+		                                    cipherKeys.cipherHeaderKey,
+		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    usageType);
 
 		StringRef serializedHeader;
 		StringRef payload;
@@ -206,20 +203,14 @@ struct MutationRef {
 		};
 		Reference<BlobCipherKey> textCipherKey = getCipherKey(domainId);
 		Reference<BlobCipherKey> headerCipherKey;
-		if (FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED) {
+		if (isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
 			headerCipherKey = getCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
 		}
 		BinaryWriter bw(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
 		bw << *this;
 
 		Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
-		    textCipherKey,
-		    headerCipherKey,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    encryptModeFromString(FLOW_KNOBS->ENCRYPT_MODE),
-		    usageType);
+		    textCipherKey, headerCipherKey, encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO), usageType);
 
 		BlobCipherEncryptHeaderRef header;
 		auto payload =
@@ -283,7 +274,7 @@ struct MutationRef {
 			ASSERT(cipherDetails.headerCipherDetails.get().isValid());
 			textAndHeaderKeys.cipherHeaderKey = getCipherKey(cipherDetails.headerCipherDetails.get());
 		} else {
-			ASSERT(!FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED);
+			ASSERT(!isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO)));
 		}
 		return textAndHeaderKeys;
 	}

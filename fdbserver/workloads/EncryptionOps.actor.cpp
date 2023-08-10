@@ -135,9 +135,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 	EncryptCipherBaseKeyId headerBaseCipherId;
 	EncryptCipherRandomSalt headerRandomSalt;
 
-	EncryptCipherMode encryptMode;
-	EncryptAuthTokenAlgo authAlgo;
-	EncryptAuthTokenMode authMode;
+	EncryptionAtRestAlgo algo;
 
 	EncryptionOpsWorkload(WorkloadContext const& wcx) : TestWorkload(wcx), enableTTLTest(false) {
 		mode = getOption(options, "fixedSize"_sr, 1);
@@ -177,24 +175,16 @@ struct EncryptionOpsWorkload : TestWorkload {
 
 	void setEncryptParams(StringRef runType) {
 		if (runType == "NoAuth"_sr) {
-			encryptMode = EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR;
-			authAlgo = EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE;
-			authMode = EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
+			algo = EncryptionAtRestAlgo::AES_CTR;
 			ivSize = AES_256_CTR_IV_LENGTH;
 		} else if (runType == "AesCmac"_sr) {
-			encryptMode = EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR;
-			authAlgo = EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC;
-			authMode = EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE;
+			algo = EncryptionAtRestAlgo::AES_CTR_CMAC;
 			ivSize = AES_256_CTR_IV_LENGTH;
 		} else if (runType == "AesHmac"_sr) {
-			encryptMode = EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR;
-			authAlgo = EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_HMAC_SHA;
-			authMode = EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE;
+			algo = EncryptionAtRestAlgo::AES_CTR_HMAC;
 			ivSize = AES_256_CTR_IV_LENGTH;
 		} else if (runType == "AesGcm"_sr) {
-			encryptMode = EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM;
-			authAlgo = EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM;
-			authMode = EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE;
+			algo = EncryptionAtRestAlgo::AES_GCM;
 			ivSize = AES_256_GCM_IV_LENGTH;
 		} else {
 			throw unsupported_operation();
@@ -338,7 +328,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 		uint8_t iv[ivSize];
 		deterministicRandom()->randomBytes(&iv[0], ivSize);
 		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-		    textCipherKey, headerCipherKey, &iv[0], ivSize, authMode, authAlgo, encryptMode, BlobCipherMetrics::TEST);
+		    textCipherKey, headerCipherKey, &iv[0], ivSize, algo, BlobCipherMetrics::TEST);
 
 		auto start = std::chrono::high_resolution_clock::now();
 		StringRef encrypted = encryptor->encrypt(payload, len, headerRef, arena);
@@ -353,6 +343,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 		       validateDetails.textCipherDetails == BlobCipherDetails(textCipherKey->getDomainId(),
 		                                                              textCipherKey->getBaseCipherId(),
 		                                                              textCipherKey->getSalt()));
+		EncryptAuthTokenMode authMode = authTokenModeFromEncryptionAtRestAlgo(algo);
 		if (authMode == ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE) {
 			ASSERT(!validateDetails.headerCipherDetails.present());
 		} else {
@@ -417,8 +408,8 @@ struct EncryptionOpsWorkload : TestWorkload {
 		ASSERT(cipherKey.isValid());
 		ASSERT(cipherKey->isEqual(orgCipherKey));
 
-		Reference<DecryptBlobCipher> decryptor =
-		    DecryptBlobCipher::getDecryptor(cipherKey, headerCipherKey, &iv[0], encryptMode, BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
+		    cipherKey, headerCipherKey, &iv[0], headerRef.getEncryptMode(), BlobCipherMetrics::TEST);
 
 		auto start = std::chrono::high_resolution_clock::now();
 		StringRef decrypted = decryptor->decrypt(encrypted.begin(), len, headerRef, arena);
@@ -494,8 +485,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 				TraceEvent("Failed")
 				    .detail("DomainId", encryptDomainId)
 				    .detail("BaseCipherId", cipherKey->getBaseCipherId())
-				    .detail("AuthTokenMode", authMode)
-				    .detail("AuthTokenAlgo", authAlgo);
+				    .detail("EncryptAlgo", algo);
 				throw;
 			}
 

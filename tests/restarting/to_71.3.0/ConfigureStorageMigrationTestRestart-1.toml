@@ -4,7 +4,7 @@ maxTLogVersion=6
 disableHostname=true
 storageEngineExcludeTypes=[4]
 tenantModes=['disabled']
-disableAesGcm = true
+disableAuthenticatedEncryption = true
 simHTTPServerEnabled=false
 
 [[test]]

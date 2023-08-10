@@ -8,7 +8,8 @@ injectTargetedSSRestart = true
 injectSSDelay = true
 # FIXME: re-enable rocks at some point
 storageEngineExcludeTypes = [4, 5]
-disableAesGcm = true
+# FIXME: Enable authenticated encryption after redwood allows in-instance swap
+disableAuthenticatedEncryption = true
 
 [[test]]
 testTitle = 'BlobGranuleRestartCycle'
