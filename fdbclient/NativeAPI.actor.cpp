@@ -7448,6 +7448,10 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 		trState->hybridReadOptions.withDefault(HybridReadOptions()).canReadDirty = true;
 		break;
 
+	case FDBTransactionOptions::HYBRID_UNTRUSTED_READ_VERSION:
+		trState->hybridReadOptions.withDefault(HybridReadOptions()).untrustedReadVersion = true;
+		break;
+
 	default:
 		break;
 	}
