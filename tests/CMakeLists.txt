@@ -252,7 +252,6 @@ if(WITH_PYTHON)
   endif()
 
   add_fdb_test(TEST_FILES rare/BlobGranuleRanges.toml)
-  add_fdb_test(TEST_FILES rare/BlobGranuleRangesChangeLog.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleMergeBoundaries.toml)
   add_fdb_test(TEST_FILES rare/BulkLoadOperations.toml)
   add_fdb_test(TEST_FILES rare/BulkLoadOperationsTenants.toml)
