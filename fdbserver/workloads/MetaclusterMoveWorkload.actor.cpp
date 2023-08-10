@@ -71,7 +71,9 @@ struct MetaclusterMoveWorkload : TestWorkload {
 
 		TestTenantData() {}
 		TestTenantData(TenantName name, ClusterName cluster, Optional<TenantGroupName> tenantGroup)
-		  : name(name), cluster(cluster), tenantGroup(tenantGroup) {}
+		  : name(name),
+		    cluster(cluster),
+		    tenantGroup(tenantGroup) {}
 	};
 
 	struct TenantGroupData {

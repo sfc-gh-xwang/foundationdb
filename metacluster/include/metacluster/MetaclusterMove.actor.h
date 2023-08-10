@@ -495,7 +495,10 @@ struct StartTenantMovementImpl {
 	                        ClusterName src,
 	                        ClusterName dst,
 	                        std::vector<std::string>& messages)
-	  : srcCtx(managementDb, src), dstCtx(managementDb, dst), tenantGroup(tenantGroup), messages(messages) {}
+	  : srcCtx(managementDb, src),
+	    dstCtx(managementDb, dst),
+	    tenantGroup(tenantGroup),
+	    messages(messages) {}
 
 	ACTOR static Future<Void> storeMoveRecord(StartTenantMovementImpl* self,
 	                                          Reference<typename DB::TransactionT> tr,
@@ -808,7 +811,10 @@ struct SwitchTenantMovementImpl {
 	                         ClusterName src,
 	                         ClusterName dst,
 	                         std::vector<std::string>& messages)
-	  : srcCtx(managementDb, src), dstCtx(managementDb, dst), tenantGroup(tenantGroup), messages(messages) {}
+	  : srcCtx(managementDb, src),
+	    dstCtx(managementDb, dst),
+	    tenantGroup(tenantGroup),
+	    messages(messages) {}
 
 	// returns true if this has already completed and this is a retry
 	ACTOR static Future<bool> initSwitch(SwitchTenantMovementImpl* self,
@@ -1053,7 +1059,10 @@ struct FinishTenantMovementImpl {
 	                         ClusterName src,
 	                         ClusterName dst,
 	                         std::vector<std::string>& messages)
-	  : srcCtx(managementDb, src), dstCtx(managementDb, dst), tenantGroup(tenantGroup), messages(messages) {}
+	  : srcCtx(managementDb, src),
+	    dstCtx(managementDb, dst),
+	    tenantGroup(tenantGroup),
+	    messages(messages) {}
 
 	ACTOR static Future<Void> initFinish(FinishTenantMovementImpl* self,
 	                                     Reference<typename DB::TransactionT> tr,
@@ -1329,7 +1338,10 @@ struct AbortTenantMovementImpl {
 	                        ClusterName src,
 	                        ClusterName dst,
 	                        std::vector<std::string>& messages)
-	  : srcCtx(managementDb, src), dstCtx(managementDb, dst), tenantGroup(tenantGroup), messages(messages) {}
+	  : srcCtx(managementDb, src),
+	    dstCtx(managementDb, dst),
+	    tenantGroup(tenantGroup),
+	    messages(messages) {}
 
 	// Returns true if this can be considered a complete abort
 	ACTOR static Future<bool> initAbort(AbortTenantMovementImpl* self,
