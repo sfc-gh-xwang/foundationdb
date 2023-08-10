@@ -285,6 +285,21 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return filesToWrite[0].fileName.toString();
 	}
 
+	ACTOR Future<Void> waitLoadComplete(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
+		// currently because data isn't actually loaded we throw an error. we catch this error and act as if load
+		// completed for now
+		try {
+			wait(cx->waitBulkLoadComplete(id, self->tenant));
+			ASSERT(false);
+		} catch (Error& e) {
+			if (e.code() == error_code_bulk_load_incomplete) {
+				return Void();
+			}
+			throw e;
+		}
+		return Void();
+	}
+
 	ACTOR Future<Void> doInjectAbort(Database cx,
 	                                 BulkLoadOpsWorkload* self,
 	                                 BulkLoadID id,
@@ -298,7 +313,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			*abortCompleted = true;
 		} catch (Error& e) {
 			if (e.code() == error_code_bulk_load_abort_failed) {
-				// ensure load completes without error if abort failed
+				// ensure load completes if abort failed
 				wait(loadDone);
 			} else {
 				throw e;
@@ -339,7 +354,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// if we do inject an abort, we wait to verify that either:
 		//  - bulk load completes and the abort injection gets bulk_load_abort_failed
 		//  - abort injection completes and the bulk load gets bulk_load_aborted
-		Future<Void> loadFuture = cx->waitBulkLoadComplete(id, self->tenant);
+		Future<Void> loadFuture = self->waitLoadComplete(cx, self, id);
 		Future<Void> abortFuture = injectAbort
 		                               ? self->doInjectAbort(cx, self, id, loadFuture, &injectedAbort, &abortCompleted)
 		                               : Future<Void>(Void());
@@ -614,7 +629,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
-		wait(cx->waitBulkLoadComplete(id, self->tenant));
+		wait(self->waitLoadComplete(cx, self, id));
 
 		try {
 			wait(cx->abortBulkLoad(id, self->tenant));
@@ -1010,7 +1025,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			ASSERT(e.code() == error_code_bulk_load_not_registering_files);
 		}
 
-		wait(cx->waitBulkLoadComplete(id, self->tenant));
+		wait(self->waitLoadComplete(cx, self, id));
 		wait(cx->cleanupBulkLoad(id, self->tenant));
 
 		return Void();
@@ -1095,7 +1110,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(success(self->writeOneFileToBlob(self, filesToWrite[0], range.begin.withSuffix("b"_sr), 1, 32)));
 
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
-		wait(cx->waitBulkLoadComplete(id, self->tenant));
+		wait(self->waitLoadComplete(cx, self, id));
 
 		wait(self->expectFileDeleted(self, filesToWrite[0].fileName.toString()));
 		// FIXME: once load actually keeps granules this needs to be inverted, we should check that the file is kept
