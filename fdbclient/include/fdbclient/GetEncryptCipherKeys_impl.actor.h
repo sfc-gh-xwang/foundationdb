@@ -41,21 +41,35 @@
 
 #define DEBUG_GET_CIPHER false
 
+namespace {
 ACTOR template <class T>
-Future<T> _monitorGetEncryptCipherKeys(Future<T> actor, Reference<GetEncryptCipherKeysMonitor> monitor) {
-	ASSERT(monitor.isValid());
+Future<T> monitorGetEncryptCipherKeys(Future<T> actor,
+                                      int* longRunningRequests,
+                                      Reference<AsyncVar<bool>> degradedVar) {
 	Future<Void> timer = delay(CLIENT_KNOBS->ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD, TaskPriority::DefaultDelay);
 	choose {
 		when(T t = wait(actor)) {
 			return t;
 		}
 		when(wait(timer)) {
-			monitor->incLongRunningRequests();
+			if (*longRunningRequests == 0) {
+				degradedVar->set(true);
+			}
+			(*longRunningRequests)++;
 			T t = wait(actor);
-			monitor->decLongRunningRequests();
+			(*longRunningRequests)--;
+			if (*longRunningRequests == 0) {
+				degradedVar->set(true);
+			}
 			return t;
 		}
 	}
+}
+} // anonymous namespace
+
+template <class T>
+Future<T> GetEncryptCipherKeysMonitor::monitor(Future<T> actor) {
+	return monitorGetEncryptCipherKeys(actor, &longRunningRequests, degradedVar);
 }
 
 template <class T>
@@ -198,7 +212,7 @@ Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> _get
 	Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> actor =
 	    _getLatestEncryptCipherKeysImpl(db, domainIds, usageType);
 	if (monitor.isValid()) {
-		actor = _monitorGetEncryptCipherKeys(actor, monitor);
+		actor = monitor->monitor(actor);
 	}
 	return actor;
 }
@@ -352,7 +366,7 @@ Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> _getEncr
 	Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> actor =
 	    _getEncryptCipherKeysImpl(db, cipherDetails, usageType);
 	if (monitor.isValid()) {
-		actor = _monitorGetEncryptCipherKeys(actor, monitor);
+		actor = monitor->monitor(actor);
 	}
 	return actor;
 }

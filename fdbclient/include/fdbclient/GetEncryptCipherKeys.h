@@ -51,19 +51,8 @@ public:
 
 	Reference<AsyncVar<bool>> degraded() const { return degradedVar; }
 
-	void incLongRunningRequests() {
-		if (longRunningRequests == 0) {
-			degradedVar->set(true);
-		}
-		longRunningRequests++;
-	}
-
-	void decLongRunningRequests() {
-		longRunningRequests--;
-		if (longRunningRequests == 0) {
-			degradedVar->set(false);
-		}
-	}
+	template <class T>
+	Future<T> monitor(Future<T> actor);
 
 private:
 	Reference<AsyncVar<bool>> degradedVar = makeReference<AsyncVar<bool>>(false);
