@@ -39,6 +39,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	Optional<Reference<Tenant>> tenant;
 	Reference<BlobConnectionProvider> bstore;
 
+	Optional<TenantName> listTenantName;
+	Optional<Reference<Tenant>> listTenant;
+
 	int32_t nextKey;
 
 	std::vector<Future<Void>> loadClients;
@@ -49,6 +52,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		stopTest = false;
 		tenantName = StringRef("bulkLoadOpsTenant" + std::to_string(clientId));
+		if (clientId == 0) {
+			listTenantName = StringRef("bulkLoadOpsListTenant" + std::to_string(clientId));
+		}
 
 		int64_t rand = wcx.sharedRandomNumber;
 		sequential = rand % 2;
@@ -121,6 +127,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			tenantData.addTenants(tenants);
 		}
 
+		if (self->listTenantName.present()) {
+			wait(success(self->setupTenant(cx, self->listTenantName.get())));
+			self->listTenant = makeReference<Tenant>(cx, self->listTenantName.get());
+			wait(self->listTenant.get()->ready());
+		}
+
 		KeyRange range = normalKeys;
 		if (self->tenant.present()) {
 			range = range.withPrefix(self->tenant.get()->prefix());
@@ -181,7 +193,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->unitClient);
 		TraceEvent("BulkLoadOpsUnitsComplete");
 
-		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp = wait(cx->listBulkLoads(false, self->tenant));
+		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp = wait(cx->listAllBulkLoads(false, self->tenant));
 		if (BLW_DEBUG) {
 			fmt::print("Found {0} loads at end of test:\n", loadsNotCleanedUp.size());
 			for (auto& it : loadsNotCleanedUp) {
@@ -547,9 +559,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Void> abortAndCleanupAfterUnit(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
-		wait(cx->abortBulkLoad(id, self->tenant));
-		wait(cx->cleanupBulkLoad(id, self->tenant));
+	ACTOR Future<Void> abortAndCleanupAfterUnit(Database cx, BulkLoadID id, Optional<Reference<Tenant>> tenant) {
+		wait(cx->abortBulkLoad(id, tenant));
+		wait(cx->cleanupBulkLoad(id, tenant));
 		return Void();
 	}
 
@@ -592,7 +604,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->delayCleanupWindow(cx, self));
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 
 		return Void();
 	}
@@ -646,7 +658,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 
 		return Void();
 	}
@@ -709,7 +721,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 
 		return Void();
 	}
@@ -734,22 +746,26 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 
 		return Void();
 	}
 
 	ACTOR Future<Void> listDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that the active bulk load is correctly listed
-		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listBulkLoads(true, self->tenant));
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->listTenant));
+		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listBulkLoads(true, self->listTenant));
+		state Standalone<VectorRef<BulkLoadIDRef>> otherTenantList = wait(cx->listBulkLoads(true, self->tenant));
 
-		// TODO: Create separate tenant for list bulk loads
+		ASSERT(list.size() == 1);
 		ASSERT(std::find(list.begin(), list.end(), id) != std::end(list));
-		ASSERT(list.size() >= 1);
+		ASSERT(std::find(otherTenantList.begin(), otherTenantList.end(), id) == std::end(otherTenantList));
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->listTenant));
+
+		wait(store(list, cx->listBulkLoads(true, self->listTenant)));
+		ASSERT(list.size() == 0);
 
 		return Void();
 	}
@@ -765,7 +781,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		ASSERT(list.size() >= 1);
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 
 		return Void();
 	}
@@ -777,7 +793,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		ASSERT(status.state != BulkLoadStatus::State::UNKNOWN);
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 
 		return Void();
 	}
@@ -797,7 +813,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		ASSERT(createVersion <= end);
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 
 		return Void();
 	}
@@ -854,7 +870,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		// cleanup
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 
 		return Void();
 	}
@@ -906,7 +922,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
 		}
 
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 		return Void();
 	}
 
@@ -951,7 +967,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
 		}
 
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 		return Void();
 	}
 
@@ -1018,7 +1034,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			ASSERT(e.code() == error_code_bulk_load_file_id_not_found);
 		}
 
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 		return Void();
 	}
 
@@ -1062,7 +1078,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			ASSERT(e.code() == error_code_bulk_load_file_missing);
 		}
 
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 		return Void();
 	}
 
@@ -1136,7 +1152,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
 		}
 
-		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
 		return Void();
 	}
 
