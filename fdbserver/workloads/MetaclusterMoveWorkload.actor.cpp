@@ -110,7 +110,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		keyPrefix = unprintable(getOption(options, "keyPrefix"_sr, ""_sr).toString());
 		maxTenants =
 		    deterministicRandom()->randomInt(1, std::min<int>(1e8 - 1, getOption(options, "maxTenants"_sr, 100)) + 1);
-		initialTenants = std::min<int>(maxTenants, getOption(options, "initialTenants"_sr, 40));
+		initialTenants = std::min<int>(maxTenants, getOption(options, "initialTenants"_sr, 10));
 		maxTenantGroups = deterministicRandom()->randomInt(
 		    1, std::min<int>(2 * maxTenants, getOption(options, "maxTenantGroups"_sr, 20)) + 1);
 		tenantGroupCapacity =

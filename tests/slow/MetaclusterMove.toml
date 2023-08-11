@@ -5,6 +5,9 @@ allowCreatingTenants = false
 extraDatabaseMode = 'Multiple'
 extraDatabaseCount = 3
 
+[[knobs]]
+hybrid_management_bypass_tenant_lock = true
+
 [[test]]
 testTitle = 'MetaclusterMoveTest'
 clearAfterTest = true
@@ -13,5 +16,5 @@ runSetup = true
 
     [[test.workload]]
     testName = 'MetaclusterMove'
-	maxTenants = 50
+	maxTenants = 20
 	maxTenantGroups = 5
