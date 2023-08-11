@@ -234,8 +234,11 @@ struct MutationRef {
 	                    double* decryptTime = nullptr) const {
 		StringRef plaintext;
 		const BlobCipherEncryptHeaderRef header = configurableEncryptionHeader();
-		Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(
-		    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, header.getIV(), header.getEncryptMode(), usageType);
+		Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
+		                                                                      cipherKeys.cipherHeaderKey,
+		                                                                      header.getIV(),
+		                                                                      header.getEncryptionAtRestAlgo(),
+		                                                                      usageType);
 		plaintext = cipher->decrypt(param2.begin(), param2.size(), header, arena, decryptTime);
 		if (buf != nullptr) {
 			*buf = plaintext;

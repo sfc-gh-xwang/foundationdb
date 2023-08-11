@@ -19,6 +19,7 @@
  */
 #ifndef FDBCLIENT_ENCRYPT_BLOB_CIPHER_H
 #define FDBCLIENT_ENCRYPT_BLOB_CIPHER_H
+#include "fdbclient/FDBTypes.h"
 #include "flow/EncryptUtils.h"
 #pragma once
 
@@ -184,7 +185,7 @@ public:
 	static Reference<DecryptBlobCipher> getDecryptor(Reference<BlobCipherKey> tCipherKey,
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
 	                                                 const uint8_t* iv,
-	                                                 const EncryptCipherMode encryptCipherMode,
+	                                                 const EncryptionAtRestAlgo encryptAlgo,
 	                                                 BlobCipherMetrics::UsageType usageType);
 
 	DecryptBlobCipher(Reference<BlobCipherKey> tCipherKey,

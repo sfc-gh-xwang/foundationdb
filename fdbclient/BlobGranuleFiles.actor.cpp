@@ -308,7 +308,7 @@ struct IndexBlockRef {
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(eKeys.textCipherKey,
 		                                                                         eKeys.headerCipherKey,
 		                                                                         cipherKeysCtx.ivRef.begin(),
-		                                                                         headerRef.getEncryptMode(),
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
 		                                                                         BlobCipherMetrics::BLOB_GRANULE);
 		if (decryptor->supportsInplaceDecryption()) {
 			decrypted = StringRef(idxRef.buffer.begin(), idxRef.buffer.size());
@@ -444,7 +444,7 @@ struct IndexBlobGranuleFileChunkRef {
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(eKeys.textCipherKey,
 		                                                                         eKeys.headerCipherKey,
 		                                                                         cipherKeysCtx.ivRef.begin(),
-		                                                                         headerRef.getEncryptMode(),
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
 		                                                                         BlobCipherMetrics::BLOB_GRANULE);
 		if (decryptor->supportsInplaceDecryption()) {
 			decrypted = StringRef(chunkRef.buffer.begin(), chunkRef.buffer.size());

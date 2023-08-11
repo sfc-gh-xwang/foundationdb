@@ -542,6 +542,7 @@ struct BlobCipherEncryptHeaderRef {
 	EncryptCipherDomainId getDomainId() const;
 	EncryptHeaderCipherKCVs getKCVs() const;
 	const uint8_t* getAuthToken() const;
+	EncryptionAtRestAlgo getEncryptionAtRestAlgo() const;
 
 	// API supports following validation:
 	// 1. Ensure input BlobCipherDetails (textDetails and/or headerDetails) matches with the input

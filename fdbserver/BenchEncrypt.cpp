@@ -258,7 +258,7 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 		memcpy(decryptData, orgData, pageLen);
 		// create decryptor for every decrypt operation to simulate AESEncryptionEncoder.decode()
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    tCipherKeyKey, hCipherKey, headerRef.getIV(), headerRef.getEncryptMode(), BlobCipherMetrics::TEST);
+		    tCipherKeyKey, hCipherKey, headerRef.getIV(), headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 		if (isInplace && decryptor->supportsInplaceDecryption()) {
 			decryptor->decryptInplace(&decryptData[0], pageLen, headerRef);
 		} else {

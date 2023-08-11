@@ -546,11 +546,12 @@ void DecryptBlobCipher::validateEncryptHeader(const uint8_t* ciphertext,
 Reference<DecryptBlobCipher> DecryptBlobCipher::getDecryptor(Reference<BlobCipherKey> tCipherKey,
                                                              Optional<Reference<BlobCipherKey>> hCipherKey,
                                                              const uint8_t* iv,
-                                                             const EncryptCipherMode encryptCipherMode,
+                                                             const EncryptionAtRestAlgo encryptAlgo,
                                                              BlobCipherMetrics::UsageType usageType) {
-	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
+	if (encryptAlgo == EncryptionAtRestAlgo::AES_CTR || encryptAlgo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    encryptAlgo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
 		return makeReference<DecryptBlobCipherAes256Ctr>(tCipherKey, hCipherKey, iv, usageType);
-	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
+	} else if (encryptAlgo == EncryptionAtRestAlgo::AES_GCM) {
 		return makeReference<DecryptBlobCipherAes256Gcm>(tCipherKey, hCipherKey, iv, usageType);
 	} else {
 		throw not_implemented();

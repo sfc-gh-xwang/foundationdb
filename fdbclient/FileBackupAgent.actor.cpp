@@ -610,7 +610,7 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
 		                                                                         cipherKeys.cipherHeaderKey,
 		                                                                         headerRef.getIV(),
-		                                                                         headerRef.getEncryptMode(),
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
 		                                                                         BlobCipherMetrics::RESTORE);
 		return decryptor->decrypt(dataP, dataLen, headerRef, *arena);
 	}

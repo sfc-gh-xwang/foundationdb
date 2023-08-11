@@ -409,7 +409,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 		ASSERT(cipherKey->isEqual(orgCipherKey));
 
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    cipherKey, headerCipherKey, &iv[0], headerRef.getEncryptMode(), BlobCipherMetrics::TEST);
+		    cipherKey, headerCipherKey, &iv[0], headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 
 		auto start = std::chrono::high_resolution_clock::now();
 		StringRef decrypted = decryptor->decrypt(encrypted.begin(), len, headerRef, arena);

@@ -476,7 +476,7 @@ public:
 			Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
 			                                                                      cipherKeys.cipherHeaderKey,
 			                                                                      headerRef.getIV(),
-			                                                                      headerRef.getEncryptMode(),
+			                                                                      headerRef.getEncryptionAtRestAlgo(),
 			                                                                      BlobCipherMetrics::KV_REDWOOD);
 			if (cipher->supportsInplaceDecryption()) {
 				cipher->decryptInplace(payload, len, headerRef, decryptTime);
