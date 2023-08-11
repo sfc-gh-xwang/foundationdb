@@ -124,7 +124,6 @@ logdir = {logdir}
 {authz_public_key_config}
 {custom_config}
 {use_future_protocol_version}
-knob_allow_bulk_loads=true
 knob_min_trace_severity=5
 tracer = log_file
 # logsize = 10MiB
