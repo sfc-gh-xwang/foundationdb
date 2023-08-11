@@ -218,7 +218,7 @@ typedef struct readgranulecontext {
 typedef FDBByteString FDBBulkLoadID;
 typedef FDBByteString FDBBulkLoadFileID;
 
-// TODO duplicate enum to here for file type/file format/compression?
+/* TODO duplicate enum to here for file type/file format/compression? */
 typedef struct FDBBulkLoadFileToWrite_ {
 	FDBBulkLoadFileID file_id;
 	FDBByteString filename;
