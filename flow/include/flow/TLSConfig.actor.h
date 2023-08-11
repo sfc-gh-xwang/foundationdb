@@ -99,7 +99,7 @@ public:
 	// If no environment setting exists, return an empty string
 	std::string getPassword() const;
 
-	bool getDisablePlainTextConnection() const;
+	bool getTlsRequired() const;
 
 	TLSEndpointType getEndpointType() const { return endpointType; }
 
@@ -114,7 +114,7 @@ private:
 	std::string tlsCertBytes, tlsKeyBytes, tlsCABytes;
 	std::string tlsPassword;
 	std::vector<std::string> tlsVerifyPeers;
-	bool tlsDisablePlainTextConnection;
+	bool tlsRequired;
 	TLSEndpointType endpointType = TLSEndpointType::UNSET;
 
 	friend class TLSConfig;
@@ -132,7 +132,7 @@ public:
 		OPT_TLS_VERIFY_PEERS,
 		OPT_TLS_CA_FILE,
 		OPT_TLS_PASSWORD,
-		OPT_TLS_DISABLE_PLAINTEXT_CONNECTION
+		OPT_TLS_REQUIRED
 	};
 
 	TLSConfig() = default;
@@ -168,7 +168,7 @@ public:
 		tlsCAPath = "";
 	}
 
-	void setDisablePlainTextConnection(const bool val) { tlsDisablePlainTextConnection = val; }
+	void setTlsRequired(const bool val) { tlsRequired = val; }
 
 	void setPassword(const std::string& password) { tlsPassword = password; }
 
@@ -196,7 +196,7 @@ public:
 	std::string getKeyPathSync() const;
 	std::string getCAPathSync() const;
 
-	bool getDisablePlainTextConnection() const;
+	bool getTlsRequired() const;
 
 private:
 	ACTOR static Future<LoadedTLSConfig> loadAsync(const TLSConfig* self);
@@ -206,7 +206,7 @@ private:
 	std::string tlsCertPath, tlsKeyPath, tlsCAPath;
 	std::string tlsCertBytes, tlsKeyBytes, tlsCABytes;
 	std::string tlsPassword;
-	bool tlsDisablePlainTextConnection = false;
+	bool tlsRequired = false;
 	std::vector<std::string> tlsVerifyPeers;
 	TLSEndpointType endpointType = TLSEndpointType::UNSET;
 };
@@ -263,7 +263,7 @@ public:
 #define TLS_VERIFY_PEERS_FLAG "--tls-verify-peers"
 #define TLS_CA_FILE_FLAG "--tls-ca-file"
 #define TLS_PASSWORD_FLAG "--tls-password"
-#define TLS_DISABLE_PLAINTEXT_CONNECTION_FLAG "--tls-disable-plaintext-connection"
+#define TLS_REQUIRED_FLAG "--tls-required"
 
 #define TLS_OPTION_FLAGS                                                                                               \
 	{ TLSConfig::OPT_TLS_PLUGIN, TLS_PLUGIN_FLAG, SO_REQ_SEP },                                                        \
@@ -272,7 +272,7 @@ public:
 	    { TLSConfig::OPT_TLS_VERIFY_PEERS, TLS_VERIFY_PEERS_FLAG, SO_REQ_SEP },                                        \
 	    { TLSConfig::OPT_TLS_PASSWORD, TLS_PASSWORD_FLAG, SO_REQ_SEP },                                                \
 	    { TLSConfig::OPT_TLS_CA_FILE, TLS_CA_FILE_FLAG, SO_REQ_SEP }, {                                                \
-		TLSConfig::OPT_TLS_DISABLE_PLAINTEXT_CONNECTION, TLS_DISABLE_PLAINTEXT_CONNECTION_FLAG, SO_NONE                \
+		TLSConfig::OPT_TLS_REQUIRED, TLS_REQUIRED_FLAG, SO_REQ_SEP                                                     \
 	}
 
 #define TLS_HELP                                                                                                       \
@@ -289,7 +289,7 @@ public:
 	"  " TLS_VERIFY_PEERS_FLAG " CONSTRAINTS\n"                                                                        \
 	"                 The constraints by which to validate TLS peers. The contents\n"                                  \
 	"                 and format of CONSTRAINTS are plugin-specific.\n"                                                \
-	"  " TLS_DISABLE_PLAINTEXT_CONNECTION_FLAG "\n"                                                                    \
+	"  " TLS_REQUIRED_FLAG " BOOLEAN\n"                                                                                \
 	"                 Disable non-TLS connections. All plaintext connection attempts will timeout.\n"
 
 #include "flow/unactorcompiler.h"
