@@ -2910,6 +2910,8 @@ Future<RangeReadResult> WorkerInterfacesSpecialKeyImpl::getRange(ReadYourWritesT
 
 namespace {
 
+// Binary search for the smallest domain id that, when Tuple-encoded, be no less than lowerBound.
+// It is possible to calculate such a domain id without binary search, but it would be tricky and error-prone.
 Optional<EncryptCipherDomainId> findNextEncryptDomainId(KeyRef prefix, KeyRef lowerBound) {
 	auto getKey = [&](EncryptCipherDomainId domainId) -> Key {
 		return Tuple::makeTuple(domainId).pack().withPrefix(prefix);
@@ -2938,6 +2940,7 @@ Optional<EncryptCipherDomainId> findNextEncryptDomainId(KeyRef prefix, KeyRef lo
 	return b;
 }
 
+// List latest encrypt cipher keys from worker, merge the result into merged.
 ACTOR static Future<Void> listLatestEncryptCipherKeysFromWorker(
     ClientWorkerInterface interf,
     Reference<FlowLock> connectLock,
@@ -2973,6 +2976,10 @@ ACTOR static Future<Void> listLatestEncryptCipherKeysFromWorker(
 	return Void();
 }
 
+// Serve range read into the special key space holding list of latest cipher keys by domain id.
+// KVs are in the following form:
+//   key: <prefix><domain_id>, where <domain_id> is encoded using Tuple, which preserves order after encode.
+//   value: object serialized vector of EncryptCipherKeyEntry.
 ACTOR static Future<RangeReadResult> latestEncryptCipherKeysGetRangeActor(ReadYourWritesTransaction* ryw,
                                                                           KeyRef prefix,
                                                                           KeyRangeRef kr) {
