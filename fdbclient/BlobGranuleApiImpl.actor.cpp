@@ -25,17 +25,6 @@ void nativeToApiBGEncryptionKey(FDBBGEncryptionKey* dest, const BlobGranuleCiphe
 	dest->base_key.key_length = source.baseCipher.size();
 }
 
-void nativeToApiBGEncryptionKeyCtx(FDBBGEncryptionCtxV2* dest, const BlobGranuleCipherKeysCtx& source, Arena& ar) {
-	dest->textKey = new (ar) FDBBGEncryptionKey();
-	nativeToApiBGEncryptionKey(dest->textKey, source.textCipherKey);
-	dest->textKCV = source.textCipherKey.baseCipherKCV;
-	dest->headerKey = new (ar) FDBBGEncryptionKey();
-	nativeToApiBGEncryptionKey(dest->headerKey, source.headerCipherKey);
-	dest->headerKCV = source.headerCipherKey.baseCipherKCV;
-	dest->iv.key = source.ivRef.begin();
-	dest->iv.key_length = source.ivRef.size();
-}
-
 void nativeToApiBGEncryptionCipherKey(FDBKey* dest, Reference<BlobCipherKey> source, Arena& ar) {
 	dest->key = new (ar) uint8_t[AES_256_KEY_LENGTH];
 	dest->key_length = AES_256_KEY_LENGTH;
@@ -548,6 +537,47 @@ Future<ApiResult> readBlobGranuleDescriptions(ISingleThreadTransaction* tr, ApiR
 	return readBlobGranuleDescriptionsImpl(tr, req);
 }
 
+/*
+ * Writing blob granule files
+ */
+
+// Has to go on main thread because this is an actor.
+// In next release this will be fixed and the code will be non-actor
+ThreadFuture<Value> writeBlobGranulesSnapshotFileV1(VectorRef<KeyValueRef> rows,
+                                                    int8_t compression,
+                                                    FDBBGTenantPrefix const* tenant_prefix,
+                                                    FDBBGEncryptionCtxV2 const* encryption_ctx) {
+	// ASSERT(!g_network->isOnMainThread());
+
+	CompressionFilter compressFilter = CompressionUtils::fromInt(compression);
+	Optional<KeyRef> tenantPrefix;
+	Optional<BlobGranuleCipherKeysCtx> encryptionCtx;
+	apiToNativeBGTenantPrefix(tenantPrefix, tenant_prefix);
+	apiToNativeBGEncryptionKeyCtxV2(encryptionCtx, encryption_ctx);
+
+	// copy rows for memory lifetime + type + add tenant prefix
+	Standalone<GranuleSnapshot> myRows;
+	myRows.reserve(myRows.arena(), rows.size());
+	if (!tenantPrefix.present()) {
+		myRows.append_deep(myRows.arena(), rows.begin(), rows.size());
+	} else {
+		for (auto& it : rows) {
+			myRows.push_back_deep(myRows.arena(), KeyValueRef(it.key.withPrefix(tenantPrefix.get()), it.value));
+		}
+	}
+
+	return onMainThread([myRows, compressFilter, encryptionCtx]() -> Future<Value> {
+		// this is only for debugging so it's not really necessary now
+		Standalone<StringRef> fname = "external"_sr;
+		return serializeChunkedSnapshot(fname,
+		                                &myRows,
+		                                256 * 1024, // FIXME: knob and/or determine dynamically
+		                                compressFilter,
+		                                encryptionCtx,
+		                                true);
+	});
+}
+
 /* -------------------------------------------------------------------------------------------
  * Conversion to previous version of Blob Granule API structures
  */
@@ -608,4 +638,15 @@ ReadBGDescriptionsApiResultV1 convertBlobGranulesDescriptionsToV1(ReadBGDescript
 		}
 	}
 	return res;
+}
+
+void nativeToApiBGEncryptionKeyCtx(FDBBGEncryptionCtxV2* dest, const BlobGranuleCipherKeysCtx& source, Arena& ar) {
+	dest->textKey = new (ar) FDBBGEncryptionKey();
+	nativeToApiBGEncryptionKey(dest->textKey, source.textCipherKey);
+	dest->textKCV = source.textCipherKey.baseCipherKCV;
+	dest->headerKey = new (ar) FDBBGEncryptionKey();
+	nativeToApiBGEncryptionKey(dest->headerKey, source.headerCipherKey);
+	dest->headerKCV = source.headerCipherKey.baseCipherKCV;
+	dest->iv.key = source.ivRef.begin();
+	dest->iv.key_length = source.ivRef.size();
 }

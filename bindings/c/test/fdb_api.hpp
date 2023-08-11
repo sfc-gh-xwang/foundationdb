@@ -218,6 +218,17 @@ struct GranuleDescriptionRefV1 : native::FDBBGFileDescriptionV1 {
 	}
 };
 
+struct BulkLoadFileToWriteRef : native::FDBBulkLoadFileToWrite {
+	BulkLoadFileToWriteRef(const BulkLoadFileToWriteRef&) = delete;
+	// FIXME: add helper functions
+};
+
+struct BulkLoadWrittenFileRef : native::FDBBulkLoadWrittenFile {
+	BulkLoadWrittenFileRef() {}
+	BulkLoadWrittenFileRef(const BulkLoadWrittenFileRef&) = delete;
+	// FIXME: add constructor with logical data?
+};
+
 inline uint8_t const* toBytePtr(char const* ptr) noexcept {
 	return reinterpret_cast<uint8_t const*>(ptr);
 }
@@ -367,6 +378,15 @@ public:
 };
 
 using ReadBlobGranulesDescriptionResultV1 = VectorRef<GranuleDescriptionRefV1>;
+
+class BulkLoadFilesToWriteResult : public Result<native::FDBBulkLoadFilesToWriteResult, BulkLoadFilesToWriteResult> {
+public:
+	VectorRef<BulkLoadFileToWriteRef*> files() const noexcept {
+		return VectorRef<BulkLoadFileToWriteRef*>((BulkLoadFileToWriteRef**)data()->files_arr, data()->files_count);
+	}
+};
+
+using BulkLoadFilesWrittenArray = VectorRef<BulkLoadWrittenFileRef>;
 
 class ReadRangeResult : public Result<native::FDBReadRangeResult, ReadRangeResult> {
 public:
@@ -575,6 +595,7 @@ struct Result {
 };
 
 using ReadBlobGranulesDescriptionResult = Result<fdb::ReadBlobGranulesDescriptionResult>;
+using BulkLoadFilesToWriteResult = Result<fdb::BulkLoadFilesToWriteResult>;
 
 } // namespace future_var
 
@@ -652,6 +673,7 @@ class Future {
 protected:
 	friend class Transaction;
 	friend class Database;
+	friend class IDatabaseOps;
 	friend std::hash<Future>;
 	std::shared_ptr<native::FDBFuture> f;
 
@@ -1109,6 +1131,17 @@ public:
 	virtual TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) = 0;
 	virtual TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) = 0;
 	virtual TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::BulkLoadFilesToWriteResult> bulkLoadGetFilesToWrite(BulkLoadID id, int count) = 0;
+	virtual TypedFuture<future_var::None> bulkLoadMarkFilesWritten(BulkLoadID id, BulkLoadFilesWrittenArray files) = 0;
+
+	// no difference between tenant and db here. This function is only here for convenience/as a proxy for testing
+	TypedFuture<future_var::KeyRef> writeSnapshotFile(VectorRef<KeyValueRef> data,
+	                                                  uint8_t compression,
+	                                                  native::FDBBGTenantPrefix const* tenantPrefix,
+	                                                  native::FDBBGEncryptionCtxV2 const* encryptionCtx) {
+		return native::fdb_writebg_snapshot_file(
+		    (native::FDBKeyValue*)data.begin(), data.size(), compression, tenantPrefix, encryptionCtx);
+	}
 };
 
 class Tenant final : public IDatabaseOps {
@@ -1236,6 +1269,15 @@ public:
 
 	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
 		return native::fdb_tenant_wait_bulk_load_complete(getTenant(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::BulkLoadFilesToWriteResult> bulkLoadGetFilesToWrite(BulkLoadID id, int count) override {
+		return native::fdb_tenant_bulk_load_get_files_to_write(getTenant(), id.data(), intSize(id), count);
+	}
+
+	TypedFuture<future_var::None> bulkLoadMarkFilesWritten(BulkLoadID id, BulkLoadFilesWrittenArray files) override {
+		return native::fdb_tenant_bulk_load_mark_files_written(
+		    getTenant(), id.data(), intSize(id), files.begin(), files.size());
 	}
 };
 
@@ -1391,6 +1433,15 @@ public:
 
 	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
 		return native::fdb_database_wait_bulk_load_complete(getDB(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::BulkLoadFilesToWriteResult> bulkLoadGetFilesToWrite(BulkLoadID id, int count) override {
+		return native::fdb_database_bulk_load_get_files_to_write(getDB(), id.data(), intSize(id), count);
+	}
+
+	TypedFuture<future_var::None> bulkLoadMarkFilesWritten(BulkLoadID id, BulkLoadFilesWrittenArray files) override {
+		return native::fdb_database_bulk_load_mark_files_written(
+		    getDB(), id.data(), intSize(id), files.begin(), files.size());
 	}
 };
 
