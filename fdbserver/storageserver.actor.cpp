@@ -12271,15 +12271,6 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					emergencySyncComplete = self->logSystem->pushEmptyVersionWaitWindow(emergencyWaitWindow, self->tag);
 				}
 			}
-			when(wait(emergencySyncComplete)) {
-				if (!self->logSystem)
-					continue;
-
-				resetWaitWindowStatistics(self);
-				self->emptyVerionWaitLastWindow = emergencyWaitWindow;
-				self->emptyVersionWaitEmergencyTransition = false;
-				emergencySyncComplete = Never();
-			}
 			when(wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL))) {
 				if (!self->logSystem)
 					continue;
@@ -12340,10 +12331,15 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 					syncComplete = self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag);
 				}
 			}
+		}
+		choose {
+			when(wait(emergencySyncComplete)) {
+				resetWaitWindowStatistics(self);
+				self->emptyVerionWaitLastWindow = emergencyWaitWindow;
+				self->emptyVersionWaitEmergencyTransition = false;
+				emergencySyncComplete = Never();
+			}
 			when(wait(syncComplete)) {
-				if (!self->logSystem)
-					continue;
-
 				resetWaitWindowStatistics(self);
 				self->emptyVerionWaitLastWindow = targetWaitWindow;
 				syncComplete = Never();
