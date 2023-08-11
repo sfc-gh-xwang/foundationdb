@@ -1232,6 +1232,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Bulk Load
 	init( BULK_LOAD_FILE_POINTER_BATCH_SIZE,                     100 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_POINTER_BATCH_SIZE = deterministicRandom()->randomInt(10, 100);
 	init( BULK_LOAD_PARALLEL_FILE_VALIDATIONS,                     1 ); if ( randomize && BUGGIFY ) BULK_LOAD_PARALLEL_FILE_VALIDATIONS = deterministicRandom()->randomInt(1, 10);
+	init( BULK_LOAD_FILE_VALIDATION_LEVEL,                         1 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_VALIDATION_LEVEL = deterministicRandom()->randomInt(0, 3);
 
 	// clang-format on
 

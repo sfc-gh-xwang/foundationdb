@@ -554,6 +554,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		OP_COUNT = 22 /* keep this last */
 	};
 
+	// FIXME: once file contents validation isn't asserting and throws an error instead, add unit tests for invalid file
+	// data
+
 	ACTOR Future<Void> expectAbortedBySystem(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
 		try {
 			// retry of all files registered might also throw bulk_load_aborted
@@ -991,7 +994,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> registerFilesAlreadyLoadingUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(success(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin), self->tenant)));
+		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 
 		try {
@@ -1093,8 +1096,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> unusedPointerCleanupUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		state std::string stagedFile =
-		    wait(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin.withSuffix("a"_sr)), self->tenant));
+		state std::string stagedFile = wait(self->stageSingleFile(
+		    cx, self, id, KeyRangeRef(range.begin.withSuffix("a"_sr), range.begin.withSuffix("b"_sr)), self->tenant));
 
 		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
 		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
@@ -1116,8 +1119,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> abortedPointerCleanupUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		state std::string stagedFile =
-		    wait(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin.withSuffix("a"_sr)), self->tenant));
+		state std::string stagedFile = wait(self->stageSingleFile(
+		    cx, self, id, KeyRangeRef(range.begin.withSuffix("a"_sr), range.begin.withSuffix("b"_sr)), self->tenant));
 
 		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
 		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
@@ -1179,6 +1182,11 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 			std::string nextRangeKey = "U_" + self->newKey();
 			state KeyRange range(KeyRangeRef(StringRef(nextRangeKey), strinc(StringRef(nextRangeKey))));
+
+			if (SERVER_KNOBS->BULK_LOAD_FILE_VALIDATION_LEVEL <= static_cast<int>(BulkLoadFileValidationLevel::NONE)) {
+				// we skip validation here so it won't catch this case
+				excludedTypes.insert(REGISTER_NONEXISTENT_FILE_UNIT);
+			}
 
 			// FIXME: no lock implemented yet so these succeed - unexclude when implemented!
 			excludedTypes.insert(WRITE_DURING_LOAD_UNIT);

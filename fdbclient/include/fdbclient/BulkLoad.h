@@ -147,6 +147,8 @@ struct BulkLoadWrittenFileRef {
 	}
 };
 
+enum class BulkLoadFileValidationLevel : int { NONE = 0, METADATA = 1, DATA = 2 };
+
 template <>
 struct Traceable<BulkLoadStatus::State> : std::true_type {
 	// FIXME: more human-readable string for debugging
