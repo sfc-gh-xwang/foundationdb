@@ -163,6 +163,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES fast/ChangeFeedOperationsMove.toml)
   add_fdb_test(TEST_FILES fast/DataLossRecovery.toml)
   add_fdb_test(TEST_FILES fast/EncryptionOps.toml)
+  add_fdb_test(TEST_FILES fast/EncryptKeyNotFound.toml)
 
   # EncryptionUnitTests is only a convenience file to run the different types of encryption tests at once. Do not enable in general ensembles
   add_fdb_test(TEST_FILES fast/EncryptionUnitTests.toml IGNORE)

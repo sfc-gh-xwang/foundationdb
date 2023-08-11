@@ -52,7 +52,8 @@ public:
 	static Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> getLatestEncryptCipherKeys(
 	    Reference<AsyncVar<T> const> db,
 	    std::unordered_set<EncryptCipherDomainId> domainIds,
-	    BlobCipherMetrics::UsageType usageType);
+	    BlobCipherMetrics::UsageType usageType,
+	    std::unordered_set<EncryptCipherDomainId>* nonExistentTenants = nullptr);
 
 	// Get latest cipher key for given a encryption domain. It tries to get the cipher key from the local cache.
 	// In case of cache miss, it fetches the cipher key from EncryptKeyProxy and put the result in the local cache
