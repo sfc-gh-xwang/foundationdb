@@ -3497,6 +3497,8 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<
 	}
 	if (trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady()) {
 		version = std::max(version, trState->readVersion());
+	} else {
+		ASSERT(justGranules);
 	}
 
 	return getBlobGranuleLocations(trState->cx,
@@ -8512,11 +8514,12 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 	state Standalone<VectorRef<BlobGranuleChunkRef>> results;
 	state double startTime = now();
 
+	// still get and wait even if we have an explicit read version so that we have it for the bg locations request
+	Version grv = wait(self->getReadVersion());
 	if (read.present()) {
 		rv = read.get();
 	} else {
-		Version _end = wait(self->getReadVersion());
-		rv = _end;
+		rv = grv;
 	}
 
 	// Right now just read whole blob range assignments from DB
