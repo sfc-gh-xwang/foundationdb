@@ -22,6 +22,7 @@ using BulkLoadIDRef = StringRef;
 using BulkLoadFileID = Standalone<StringRef>;
 using BulkLoadFileIDRef = StringRef;
 
+// key is logical tuple of tenantid, bulk load id. Tenant id is -1 when not set.
 using BulkLoadIDKey = std::pair<int64_t, BulkLoadID>;
 
 // Generally ordered such that valid state transitions only increase the number
