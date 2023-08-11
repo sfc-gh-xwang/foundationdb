@@ -1436,19 +1436,23 @@ void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
 	// need to set it.
 	if (setPersistentOptions || !newTr.transaction) {
 		Optional<StringRef> timeout;
+		auto opts = decltype(persistentOptions){};
+		auto sensitiveOpts = decltype(sensitivePersistentOptions){};
 		{
 			ThreadSpinLockHolder optionLockHolder(optionLock);
-			for (auto const& option : persistentOptions) {
-				if (option.first == FDBTransactionOptions::TIMEOUT) {
-					timeout = option.second.castTo<StringRef>();
-				} else if (newTr.transaction) {
-					newTr.transaction->setOption(option.first, option.second.castTo<StringRef>());
-				}
+			auto opts = persistentOptions;
+			auto sensitiveOpts = sensitivePersistentOptions;
+		}
+		for (auto const& option : opts) {
+			if (option.first == FDBTransactionOptions::TIMEOUT) {
+				timeout = option.second.castTo<StringRef>();
+			} else if (newTr.transaction) {
+				newTr.transaction->setOption(option.first, option.second.castTo<StringRef>());
 			}
-			if (newTr.transaction) {
-				for (auto const& option : sensitivePersistentOptions) {
-					newTr.transaction->setOption(option.first, option.second.castTo<StringRef>());
-				}
+		}
+		if (newTr.transaction) {
+			for (auto const& option : sensitiveOpts) {
+				newTr.transaction->setOption(option.first, option.second.castTo<StringRef>());
 			}
 		}
 
