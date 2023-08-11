@@ -2148,11 +2148,12 @@ inline void sampleNoWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats&
                                                Version version,
                                                double versionArrivalTime) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED) {
 		return;
+	}
 
 	bool popped = false;
-	while (!stats.tlogVersionQueue.empty() && stats.tlogVersionQueue.front().version <= version &&
+	while (!stats.tlogVersionQueue.empty() && stats.tlogVersionQueue.front().version < version &&
 	       stats.tlogVersionQueue.front().timestamp < versionArrivalTime) {
 		stats.tlogVersionQueue.pop_front();
 		popped = true;
