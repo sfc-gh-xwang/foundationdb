@@ -438,13 +438,6 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
-	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
-	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
-	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
-		ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
-	} else {
-		ASSERT_EQ(ivRef.size(), AES_256_GCM_IV_LENGTH);
-	}
 	cipherKeysCtx.ivRef = StringRef(*arena, ivRef);
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
