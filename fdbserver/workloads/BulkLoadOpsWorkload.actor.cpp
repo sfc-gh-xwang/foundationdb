@@ -773,15 +773,16 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	ACTOR Future<Void> listAllDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that the all bulk loads are correctly listed
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listBulkLoads(true, self->tenant));
+		state BulkLoadID listId = wait(cx->startBulkLoad(range, self->listTenant));
+		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listAllBulkLoads(true, self->tenant));
 
-		// TODO: Track all bulk loads in map, iterate to ensure they are all
-		// listed.
 		ASSERT(std::find(list.begin(), list.end(), id) != std::end(list));
-		ASSERT(list.size() >= 1);
+		ASSERT(std::find(list.begin(), list.end(), listId) != std::end(list));
+		ASSERT(list.size() >= 2);
 
 		// cleanup
 		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
+		wait(self->abortAndCleanupAfterUnit(cx, listId, self->listTenant));
 
 		return Void();
 	}
