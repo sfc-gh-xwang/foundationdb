@@ -1440,8 +1440,8 @@ void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
 		auto sensitiveOpts = decltype(sensitivePersistentOptions){};
 		{
 			ThreadSpinLockHolder optionLockHolder(optionLock);
-			auto opts = persistentOptions;
-			auto sensitiveOpts = sensitivePersistentOptions;
+			opts = persistentOptions;
+			sensitiveOpts = sensitivePersistentOptions;
 		}
 		for (auto const& option : opts) {
 			if (option.first == FDBTransactionOptions::TIMEOUT) {
