@@ -283,6 +283,7 @@ tracer = log_file
                         "knob_kms_connector_type=FDBPerfKmsConnector",
                     ]
                 )
+
             f.write(
                 conf_template.format(
                     etcdir=self.etc,

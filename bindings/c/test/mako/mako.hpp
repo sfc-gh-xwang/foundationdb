@@ -76,6 +76,8 @@ enum ArgKind {
 	ARG_TXNTRACE,
 	ARG_TXNTAGGING,
 	ARG_TXNTAGGINGPREFIX,
+	ARG_TXN_GRV_CACHE,
+	ARG_TXN_EXPECTED_COST,
 	ARG_STREAMING_MODE,
 	ARG_DISABLE_RYW,
 	ARG_CLIENT_THREADS_PER_VERSION,
@@ -194,6 +196,8 @@ struct Arguments {
 	int txntrace;
 	int txntagging;
 	char txntagging_prefix[TAGPREFIXLENGTH_MAX];
+	bool txn_grv_cache;
+	int txn_expected_cost;
 	FDBStreamingMode streaming_mode;
 	int64_t client_threads_per_version;
 	bool disable_client_bypass;

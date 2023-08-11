@@ -113,7 +113,7 @@ uint64_t GrvProxyTagThrottler::getCost(GetReadVersionRequest const& req) const {
 	if (isClientAverageCostTrackingEnabled()) {
 		// track-average-cost-on-client is enabled use the expectedTransactionCost.
 		if (req.expectedTotalCost.present()) {
-			return static_cast<double>(req.expectedTotalCost.get());
+			return static_cast<uint64_t>(req.expectedTotalCost.get());
 		} else {
 			// expectedTransactionCost not provided, use req.transactionCount * DEFAULT_EXPECTED_TRANSACTION_COST
 			return req.transactionCount * CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
@@ -265,7 +265,7 @@ ACTOR static Future<Void> mockClient(GrvProxyTagThrottler* throttler,
 		req.transactionCount = batchSize;
 		req.throttlingId = ThrottlingIdRef::fromTag(tag);
 		req.priority = priority;
-		if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+		if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS) {
 			req.expectedTotalCost = batchSize;
 		}
 		throttler->addRequest(req);

@@ -263,7 +263,7 @@ ThreadFuture<Standalone<StringRef>> DLTransaction::getVersionstamp() {
 	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* str;
 		int strLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &str, &strLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -541,7 +541,7 @@ ThreadFuture<Key> DLTenant::purgeBlobGranules(const KeyRangeRef& keyRange, Versi
 	return toThreadFuture<Key>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* key;
 		int keyLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &key, &keyLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &key, &keyLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -670,7 +670,7 @@ ThreadFuture<Standalone<StringRef>> DLTenant::getClientStatus() {
 	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* str;
 		int strLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &str, &strLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -833,7 +833,7 @@ ThreadFuture<Key> DLDatabase::purgeBlobGranules(const KeyRangeRef& keyRange, Ver
 	return toThreadFuture<Key>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* key;
 		int keyLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &key, &keyLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &key, &keyLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -962,7 +962,7 @@ ThreadFuture<Standalone<StringRef>> DLDatabase::getClientStatus() {
 	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* str;
 		int strLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &str, &strLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -1284,6 +1284,7 @@ void DLApi::init() {
 	                   headerVersion >= ApiVersion::withFutureGetBool().version());
 	loadClientFunction(&api->futureGetUInt64, lib, fdbCPath, "fdb_future_get_uint64", headerVersion >= 0);
 	loadClientFunction(&api->futureGetError, lib, fdbCPath, "fdb_future_get_error", headerVersion >= 0);
+	loadClientFunction(&api->futureGetBytes, lib, fdbCPath, "fdb_future_get_bytes", headerVersion >= 800000);
 	loadClientFunction(&api->futureGetKey, lib, fdbCPath, "fdb_future_get_key", headerVersion >= 0);
 	loadClientFunction(&api->futureGetValue, lib, fdbCPath, "fdb_future_get_value", headerVersion >= 0);
 	loadClientFunction(&api->futureGetStringArray, lib, fdbCPath, "fdb_future_get_string_array", headerVersion >= 0);
@@ -1314,6 +1315,10 @@ void DLApi::init() {
 	loadClientFunction(
 	    &api->resultGetKeyValueArray, lib, fdbCPath, "fdb_result_get_keyvalue_array", headerVersion >= 0);
 	loadClientFunction(&api->resultDestroy, lib, fdbCPath, "fdb_result_destroy", headerVersion >= 0);
+
+	if (api->futureGetBytes == nullptr) {
+		api->futureGetBytes = api->futureGetKey;
+	}
 }
 
 void DLApi::selectApiVersion(int apiVersion) {

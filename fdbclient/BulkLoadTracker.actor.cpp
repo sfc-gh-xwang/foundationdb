@@ -19,7 +19,7 @@ ACTOR Future<Void> trackNewBulkLoadsActor(BulkLoadTracker* self) {
 				BulkLoadMetadata::StatusMap::RangeResultType result =
 				    wait(BulkLoadMetadata::statusMap().getRange(tr, {}, {}, CLIENT_KNOBS->TOO_MANY));
 				ASSERT(!result.more);
-				std::unordered_set<BulkLoadID> newActiveBulkLoads;
+				std::set<BulkLoadIDKey> newActiveBulkLoads;
 				for (auto& it : result.results) {
 					newActiveBulkLoads.insert(it.first);
 					if (!self->activeBulkLoads.count(it.first)) {

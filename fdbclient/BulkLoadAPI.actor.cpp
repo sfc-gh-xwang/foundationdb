@@ -62,7 +62,8 @@ Future<REPLY_TYPE(Request)> doBulkLoadRequest(Reference<DatabaseContext> db,
 	}
 	if (tenant.present()) {
 		wait(tenant.get()->ready());
-		req.tenantInfo = TenantInfo(tenant.get()->id(), tenant.get()->authToken);
+		// FIXME: need to be able to get auth token from a tenant to construct TenantInfo! this won't work with authz
+		req.tenantInfo = TenantInfo(tenant.get()->id(), {});
 	}
 	// FIXME: cache the interfaces in db context
 
@@ -245,6 +246,21 @@ Future<Void> DatabaseContext::waitBulkLoadComplete(BulkLoadID id, Optional<Refer
 	    Reference<DatabaseContext>::addRef(this), tenant, req, &BulkLoaderInterface::waitCompleteRequest);
 }
 
+std::pair<BulkLoadIDKey, BulkLoadIDKey> getBulkLoadTenantRange(int64_t tenantId) {
+	BulkLoadIDKey startKey = { tenantId, ""_sr };
+	BulkLoadIDKey endKey = { tenantId + 1, ""_sr };
+	return std::make_pair(startKey, endKey);
+}
+
+ACTOR Future<BulkLoadIDKey> getBulkLoadKey(Optional<Reference<Tenant>> tenant, BulkLoadID id) {
+	state BulkLoadIDKey bulkLoadKey = { TenantInfo::INVALID_TENANT, id };
+	if (tenant.present()) {
+		wait(tenant.get()->ready());
+		bulkLoadKey = { tenant.get()->id(), id };
+	}
+	return bulkLoadKey;
+}
+
 ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
                                               BulkLoadID id,
                                               KeyRange range,
@@ -252,8 +268,9 @@ ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
                                               Optional<Reference<Tenant>> tenant) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
-	state BulkLoadInfo info(TenantInfo::INVALID_TENANT, range);
+	state BulkLoadInfo info(range);
 	state KeyRange physicalRange = range;
+	state BulkLoadIDKey idKey = { TenantInfo::INVALID_TENANT, id };
 
 	if (!CLIENT_KNOBS->ALLOW_BULK_LOADS) {
 		throw unsupported_operation();
@@ -265,8 +282,8 @@ ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
 
 	if (tenant.present()) {
 		wait(tenant.get()->ready());
-		info.tenantId = tenant.get()->id();
 		physicalRange = range.withPrefix(tenant.get()->prefix());
+		idKey = { tenant.get()->id(), id };
 	}
 
 	loop {
@@ -278,11 +295,8 @@ ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
 			}
 
 			// explicitly check info map to handle idempotency/retransmits
-			Optional<BulkLoadInfo> currentInfo = wait(BulkLoadMetadata::infoMap().get(tr, id));
+			Optional<BulkLoadInfo> currentInfo = wait(BulkLoadMetadata::infoMap().get(tr, idKey));
 			if (currentInfo.present()) {
-				if (currentInfo.get().tenantId != info.tenantId) {
-					throw bulk_load_tenant_mismatch();
-				}
 				if (currentInfo.get().keyRange != info.keyRange) {
 					throw bulk_load_range_conflict();
 				}
@@ -332,9 +346,9 @@ ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
 				throw bulk_load_range_not_empty();
 			}
 
-			BulkLoadMetadata::statusMap().set(tr, id, BulkLoadStatus(BulkLoadStatus::State::STARTED));
-			BulkLoadMetadata::versionMap().setVersionstamp(tr, id, Versionstamp(), 0);
-			BulkLoadMetadata::infoMap().set(tr, id, info);
+			BulkLoadMetadata::statusMap().set(tr, idKey, BulkLoadStatus(BulkLoadStatus::State::STARTED));
+			BulkLoadMetadata::versionMap().setVersionstamp(tr, idKey, Versionstamp(), 0);
+			BulkLoadMetadata::infoMap().set(tr, idKey, info);
 
 			wait(BulkLoadMetadata::rangeMap().updateRange(tr, physicalRange.begin, physicalRange.end, id, true));
 
@@ -361,7 +375,7 @@ Future<Void> DatabaseContext::startBulkLoadInternal(BulkLoadID id,
 ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
                                             BulkLoadID id,
                                             BulkLoadStatus::State desiredState,
-                                            Optional<int64_t> tenantIdToVerify) {
+                                            Optional<Reference<Tenant>> tenant) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
 	state KeyRange physicalRange;
@@ -369,6 +383,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 	if (BULKLOAD_DEBUG) {
 		fmt::print("UpdateBulkLoadState {0}: {1}\n", id.printable(), static_cast<int>(desiredState));
 	}
+	state BulkLoadIDKey bulkLoadKey = wait(getBulkLoadKey(tenant, id));
 	loop {
 		try {
 			SystemDBWriteLockedNow(db)->setOptions(tr);
@@ -376,7 +391,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 			if (BULKLOAD_DEBUG) {
 				fmt::print("UpdateBulkLoadState {0}: get current\n", id.printable());
 			}
-			state Optional<BulkLoadStatus> currentStatus = wait(BulkLoadMetadata::statusMap().get(tr, id));
+			Optional<BulkLoadStatus> currentStatus = wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadKey));
 			if (!currentStatus.present()) {
 				// idempotency
 				if (desiredState == BulkLoadStatus::State::CLEANUP) {
@@ -386,18 +401,6 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					return Void();
 				}
 				throw bulk_load_not_found();
-			}
-
-			if (tenantIdToVerify.present()) {
-				Optional<BulkLoadInfo> currentInfo = wait(BulkLoadMetadata::infoMap().get(tr, id));
-				if (currentInfo.get().tenantId != tenantIdToVerify.get()) {
-					TraceEvent("UpdateBulkLoadStateTenantMismatch")
-					    .detail("BulkLoadID", id)
-					    .detail("InfoTenant", currentInfo.get().tenantId)
-					    .detail("UserTenant", tenantIdToVerify.get());
-					throw bulk_load_tenant_mismatch();
-				}
-				tenantIdToVerify = {};
 			}
 
 			auto st = currentStatus.get().state;
@@ -426,7 +429,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 				}
 
 				// handle cleanup races and retransmits with starting a bulk load
-				Optional<Versionstamp> v = wait(BulkLoadMetadata::versionMap().get(tr, id));
+				Optional<Versionstamp> v = wait(BulkLoadMetadata::versionMap().get(tr, bulkLoadKey));
 				ASSERT(v.present());
 				Version minReadVersion = v.get().version + CLIENT_KNOBS->BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
 				// ensure we wait until any previous start bulk loads for the same id are guaranteed to have completed
@@ -446,24 +449,24 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					throw bulk_load_create_too_old();
 				}
 
-				BulkLoadMetadata::statusMap().erase(tr, id);
-				BulkLoadMetadata::infoMap().erase(tr, id);
-				BulkLoadMetadata::versionMap().erase(tr, id);
+				BulkLoadMetadata::statusMap().erase(tr, bulkLoadKey);
+				BulkLoadMetadata::infoMap().erase(tr, bulkLoadKey);
+				BulkLoadMetadata::versionMap().erase(tr, bulkLoadKey);
 			} else {
 				BulkLoadStatus newStatus = currentStatus.get();
 				newStatus.state = desiredState;
-				BulkLoadMetadata::statusMap().set(tr, id, newStatus);
+				BulkLoadMetadata::statusMap().set(tr, bulkLoadKey, newStatus);
 
 				// if cleaning up after abort or completed, clean up other metadata since it is no longer active
 				if (desiredState == BulkLoadStatus::State::DONE ||
 				    desiredState == BulkLoadStatus::State::ABORTED_COMPLETE) {
 					// load bulk load info to get range for load
-					Optional<BulkLoadInfo> info = wait(BulkLoadMetadata::infoMap().get(tr, id));
+					Optional<BulkLoadInfo> info = wait(BulkLoadMetadata::infoMap().get(tr, bulkLoadKey));
 					ASSERT(info.present());
 
 					physicalRange = info.get().keyRange;
-					if (info.get().tenantId != TenantInfo::INVALID_TENANT) {
-						physicalRange = physicalRange.withPrefix(TenantAPI::idToPrefix(info.get().tenantId));
+					if (bulkLoadKey.first != TenantInfo::INVALID_TENANT) {
+						physicalRange = physicalRange.withPrefix(TenantAPI::idToPrefix(bulkLoadKey.first));
 					}
 
 					// fmt::print("UpdateBulkLoadState {0}: Checking range [{1} - {2}) in map\n", id.printable(),
@@ -515,24 +518,25 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 
 Future<Void> DatabaseContext::updateBulkLoadState(BulkLoadID id,
                                                   BulkLoadStatus::State desiredState,
-                                                  Optional<int64_t> tenantIdToVerify) {
+                                                  Optional<Reference<Tenant>> tenant) {
 	// right now we don't need tenant, we will likely need it for authz though
-	return updateBulkLoadStateActor(Reference<DatabaseContext>::addRef(this), id, desiredState, tenantIdToVerify);
+	return updateBulkLoadStateActor(Reference<DatabaseContext>::addRef(this), id, desiredState, tenant);
 }
 
 ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
                                                  BulkLoadID id,
                                                  BulkLoadStatus::State desiredState,
-                                                 Optional<int64_t> tenantIdToVerify) {
+                                                 Optional<Reference<Tenant>> tenant) {
 	ASSERT(desiredState != BulkLoadStatus::State::UNKNOWN);
 	state Database cx(db);
+	state BulkLoadIDKey bulkLoadKey = wait(getBulkLoadKey(tenant, id));
 	loop {
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
 		loop {
 			try {
 				SystemDBWriteLockedNow(db)->setOptions(tr);
 
-				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, id));
+				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadKey));
 
 				if (!status.present()) {
 					CODE_PROBE(true, "bulk load cleaned up while waiting for state at least");
@@ -542,6 +546,7 @@ ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
 					throw bulk_load_not_found();
 				}
 				state BulkLoadStatus::State st = status.get().state;
+
 				if (st == BulkLoadStatus::State::ABORTED_COMPLETE || st == BulkLoadStatus::State::ABORTED) {
 					if (desiredState != BulkLoadStatus::State::ABORTED &&
 					    desiredState != BulkLoadStatus::State::ABORTED_COMPLETE) {
@@ -549,23 +554,11 @@ ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
 					}
 				}
 
-				if (tenantIdToVerify.present()) {
-					Optional<BulkLoadInfo> currentInfo = wait(BulkLoadMetadata::infoMap().get(tr, id));
-					if (currentInfo.get().tenantId != tenantIdToVerify.get()) {
-						TraceEvent("WaitBulkLoadStateAtLeastTenantMismatch")
-						    .detail("BulkLoadID", id)
-						    .detail("InfoTenant", currentInfo.get().tenantId)
-						    .detail("UserTenant", tenantIdToVerify.get());
-						throw bulk_load_tenant_mismatch();
-					}
-					tenantIdToVerify = {};
-				}
-
 				if (st >= desiredState) {
 					return Void();
 				}
 
-				state Future<Void> onChange = BulkLoadMetadata::statusMap().watch(tr, id);
+				state Future<Void> onChange = BulkLoadMetadata::statusMap().watch(tr, bulkLoadKey);
 				wait(tr->commit());
 				wait(onChange);
 				tr->reset();
@@ -576,34 +569,16 @@ ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
 	}
 }
 
-ACTOR Future<BulkLoadStatus> getBulkLoadStatusActor(Reference<DatabaseContext> db, BulkLoadID id) {
-	state Database cx(db);
-	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
-	loop {
-		try {
-			SystemDBWriteLockedNow(db)->setOptions(tr);
-
-			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, id));
-			if (!status.present()) {
-				throw bulk_load_not_found();
-			}
-			return status.get();
-		} catch (Error& e) {
-			wait(tr->onError(e));
-		}
-	}
-}
-
 ACTOR Future<Void> cleanupBulkLoadInternalActor(Reference<DatabaseContext> db,
                                                 BulkLoadID id,
-                                                Optional<int64_t> tenantIdToVerify) {
+                                                Optional<Reference<Tenant>> tenant) {
 	// FIXME: could merge this into 1 transaction somehow if desired, either with custom code or just making
 	// updateBulkLoadState ABORTED->ABORTED_COMPLETE handle this case?
 	if (BULKLOAD_DEBUG) {
 		fmt::print("CleanUpBulkLoad {0}: start\n", id.printable());
 	}
 	try {
-		BulkLoadStatus startStatus = wait(getBulkLoadStatusActor(db, id));
+		BulkLoadStatus startStatus = wait(db->getBulkLoadStatusInternal(id, tenant));
 		if (BULKLOAD_DEBUG) {
 			fmt::print("CleanUpBulkLoad {0}: status {1}\n", id.printable(), static_cast<int>(startStatus.state));
 		}
@@ -611,7 +586,7 @@ ACTOR Future<Void> cleanupBulkLoadInternalActor(Reference<DatabaseContext> db,
 			if (BULKLOAD_DEBUG) {
 				fmt::print("CleanUpBulkLoad {0}: waiting abort complete\n", id.printable());
 			}
-			wait(waitBulkLoadStateAtLeastActor(db, id, BulkLoadStatus::State::ABORTED_COMPLETE, tenantIdToVerify));
+			wait(waitBulkLoadStateAtLeastActor(db, id, BulkLoadStatus::State::ABORTED_COMPLETE, tenant));
 		}
 
 	} catch (Error& e) {
@@ -627,82 +602,178 @@ ACTOR Future<Void> cleanupBulkLoadInternalActor(Reference<DatabaseContext> db,
 	if (BULKLOAD_DEBUG) {
 		fmt::print("CleanUpBulkLoad {0}: finalizing\n", id.printable());
 	}
-	wait(updateBulkLoadStateActor(db, id, BulkLoadStatus::State::CLEANUP, tenantIdToVerify));
+	wait(updateBulkLoadStateActor(db, id, BulkLoadStatus::State::CLEANUP, tenant));
 	if (BULKLOAD_DEBUG) {
 		fmt::print("CleanUpBulkLoad {0}: done\n", id.printable());
 	}
 	return Void();
 }
 
-Future<Void> DatabaseContext::cleanupBulkLoadInternal(BulkLoadID id, Optional<int64_t> tenantIdToVerify) {
+Future<Void> DatabaseContext::cleanupBulkLoadInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
 	// right now we don't need tenant, we will likely need it for authz though
-	return cleanupBulkLoadInternalActor(Reference<DatabaseContext>::addRef(this), id, tenantIdToVerify);
+	return cleanupBulkLoadInternalActor(Reference<DatabaseContext>::addRef(this), id, tenant);
 }
 
 Future<Void> DatabaseContext::waitBulkLoadStateAtLeast(BulkLoadID id,
                                                        BulkLoadStatus::State desiredState,
-                                                       Optional<int64_t> tenantIdToVerify) {
-	return waitBulkLoadStateAtLeastActor(Reference<DatabaseContext>::addRef(this), id, desiredState, tenantIdToVerify);
+                                                       Optional<Reference<Tenant>> tenant) {
+	return waitBulkLoadStateAtLeastActor(Reference<DatabaseContext>::addRef(this), id, desiredState, tenant);
 }
 
-ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsActor(Reference<DatabaseContext> db, bool onlyActive) {
+ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternalActor(Reference<DatabaseContext> db,
+                                                                              bool onlyActive,
+                                                                              Optional<int64_t> tenantId) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
 	state Standalone<VectorRef<BulkLoadIDRef>> values;
+
+	if (BULKLOAD_DEBUG) {
+		fmt::print("ListBulkLoads: begin\n");
+	}
+
+	state Optional<BulkLoadIDKey> startKey;
+	state Optional<BulkLoadIDKey> endKey;
+	if (tenantId.present()) {
+		std::tie(startKey, endKey) = getBulkLoadTenantRange(tenantId.get());
+	}
 	loop {
 		try {
 			SystemDBWriteLockedNow(db)->setOptions(tr);
+
+			if (BULKLOAD_DEBUG) {
+				fmt::print("ListBulkLoads: get\n");
+			}
+
 			values = Standalone<VectorRef<BulkLoadIDRef>>();
 			BulkLoadMetadata::StatusMap::RangeResultType result =
-			    wait(BulkLoadMetadata::statusMap().getRange(tr, {}, {}, CLIENT_KNOBS->TOO_MANY)); // TODO
+			    wait(BulkLoadMetadata::statusMap().getRange(tr, startKey, endKey, CLIENT_KNOBS->TOO_MANY));
 			ASSERT(!result.more);
 			for (auto& it : result.results) {
 				if (!onlyActive || (it.second.state != BulkLoadStatus::State::ABORTED &&
 				                    it.second.state != BulkLoadStatus::State::ABORTED_COMPLETE &&
 				                    it.second.state != BulkLoadStatus::State::DONE)) {
-
-					values.push_back_deep(values.arena(), it.first);
+					values.push_back_deep(values.arena(), it.first.second);
 				}
 			}
 
-			return values;
+			if (BULKLOAD_DEBUG) {
+				fmt::print("ListBulkLoads: done ({0} result(s))\n", values.size());
+			}
 
+			return values;
 		} catch (Error& e) {
+			if (BULKLOAD_DEBUG) {
+				fmt::print("ListBulkLoads: error {0}\n", e.name());
+			}
 			wait(tr->onError(e));
 		}
 	}
+}
+
+Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listBulkLoadsInternal(bool onlyActive,
+                                                                                    Optional<int64_t> tenantId) {
+	return listBulkLoadsInternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenantId);
+}
+
+ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsExternalActor(Reference<DatabaseContext> db,
+                                                                              bool onlyActive,
+                                                                              Optional<Reference<Tenant>> tenant) {
+	BulkLoadListRequest req;
+	req.onlyActive = onlyActive;
+	if (BULKLOAD_DEBUG) {
+		fmt::print("ListExternal: begin\n");
+	}
+	BulkLoadListReply reply = wait(doBulkLoadRequest(db, tenant, req, &BulkLoaderInterface::listRequest));
+	return Standalone<VectorRef<BulkLoadIDRef>>(reply.list, reply.arena);
 }
 
 Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listBulkLoads(bool onlyActive,
                                                                             Optional<Reference<Tenant>> tenant) {
-	// FIXME: use/limit to tenant
-	return listBulkLoadsActor(Reference<DatabaseContext>::addRef(this), onlyActive);
+	return listBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenant);
 }
 
-Future<BulkLoadStatus> DatabaseContext::getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
-	return getBulkLoadStatusActor(Reference<DatabaseContext>::addRef(this), id);
+ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoadsExternalActor(Reference<DatabaseContext> db,
+                                                                                 bool onlyActive,
+                                                                                 Optional<Reference<Tenant>> tenant) {
+	BulkLoadListAllRequest req;
+	req.onlyActive = onlyActive;
+	if (BULKLOAD_DEBUG) {
+		fmt::print("ListAllExternal: begin\n");
+	}
+	BulkLoadListReply reply = wait(doBulkLoadRequest(db, tenant, req, &BulkLoaderInterface::listAllRequest));
+	return Standalone<VectorRef<BulkLoadIDRef>>(reply.list, reply.arena);
 }
 
-ACTOR Future<Version> getBulkLoadVersionActor(Reference<DatabaseContext> db, BulkLoadID id) {
+Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listAllBulkLoads(bool onlyActive,
+                                                                               Optional<Reference<Tenant>> tenant) {
+	return listBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenant);
+}
+
+ACTOR Future<BulkLoadStatus> getBulkLoadStatusInternalActor(Reference<DatabaseContext> db,
+                                                            BulkLoadID id,
+                                                            Optional<Reference<Tenant>> tenant) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
+	state BulkLoadIDKey bulkLoadKey = wait(getBulkLoadKey(tenant, id));
 	loop {
 		try {
 			SystemDBWriteLockedNow(db)->setOptions(tr);
 
-			Optional<Versionstamp> status = wait(BulkLoadMetadata::versionMap().get(tr, id));
+			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadKey));
 			if (!status.present()) {
 				throw bulk_load_not_found();
 			}
-			return status.get().version;
+			return status.get();
 		} catch (Error& e) {
 			wait(tr->onError(e));
 		}
 	}
 }
 
-Future<Version> DatabaseContext::getBulkLoadVersion(BulkLoadID id) {
-	return getBulkLoadVersionActor(Reference<DatabaseContext>::addRef(this), id);
+Future<BulkLoadStatus> DatabaseContext::getBulkLoadStatusInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
+	return getBulkLoadStatusInternalActor(Reference<DatabaseContext>::addRef(this), id, tenant);
+}
+
+ACTOR Future<BulkLoadStatus> getBulkLoadStatusExternalActor(Reference<DatabaseContext> db,
+                                                            BulkLoadID id,
+                                                            Optional<Reference<Tenant>> tenant) {
+	BulkLoadStatusRequest req;
+	req.arena.dependsOn(id.arena());
+	req.id = id;
+	if (BULKLOAD_DEBUG) {
+		fmt::print("StatusExternal {0}: begin\n", id.printable());
+	}
+	BulkLoadStatusReply reply = wait(doBulkLoadRequest(db, tenant, req, &BulkLoaderInterface::statusRequest));
+	return reply.status;
+}
+
+Future<BulkLoadStatus> DatabaseContext::getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
+	return getBulkLoadStatusExternalActor(Reference<DatabaseContext>::addRef(this), id, tenant);
+}
+
+ACTOR Future<Version> getBulkLoadVersionActor(Reference<DatabaseContext> db,
+                                              BulkLoadID id,
+                                              Optional<Reference<Tenant>> tenant) {
+	state Database cx(db);
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
+	state BulkLoadIDKey bulkLoadKey = wait(getBulkLoadKey(tenant, id));
+	loop {
+		try {
+			SystemDBWriteLockedNow(db)->setOptions(tr);
+
+			Optional<Versionstamp> versionstamp = wait(BulkLoadMetadata::versionMap().get(tr, bulkLoadKey));
+			if (!versionstamp.present()) {
+				throw bulk_load_not_found();
+			}
+			return versionstamp.get().version;
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+}
+
+Future<Version> DatabaseContext::getBulkLoadVersion(BulkLoadID id, Optional<Reference<Tenant>> tenant) {
+	return getBulkLoadVersionActor(Reference<DatabaseContext>::addRef(this), id, tenant);
 }
 
 ACTOR Future<Standalone<VectorRef<BulkLoadFileToWriteRef>>> getBulkLoadFilesToWriteActor(
@@ -768,6 +839,18 @@ bool TSS_doCompare(const BulkLoadFilesToWriteReply& src, const BulkLoadFilesToWr
 }
 
 template <>
+bool TSS_doCompare(const BulkLoadListReply& src, const BulkLoadListReply& tss) {
+	ASSERT(false);
+	return true;
+}
+
+template <>
+bool TSS_doCompare(const BulkLoadStatusReply& src, const BulkLoadStatusReply& tss) {
+	ASSERT(false);
+	return true;
+}
+
+template <>
 const char* TSS_mismatchTraceName(const BulkLoadFilesToWriteRequest& req) {
 	ASSERT(false);
 	return "";
@@ -778,6 +861,30 @@ void TSS_traceMismatch(TraceEvent& event,
                        const BulkLoadFilesToWriteRequest& req,
                        const BulkLoadFilesToWriteReply& src,
                        const BulkLoadFilesToWriteReply& tss) {
+	ASSERT(false);
+}
+
+template <>
+void TSS_traceMismatch(TraceEvent& event,
+                       const BulkLoadListRequest& req,
+                       const BulkLoadListReply& src,
+                       const BulkLoadListReply& tss) {
+	ASSERT(false);
+}
+
+template <>
+void TSS_traceMismatch(TraceEvent& event,
+                       const BulkLoadListAllRequest& req,
+                       const BulkLoadListReply& src,
+                       const BulkLoadListReply& tss) {
+	ASSERT(false);
+}
+
+template <>
+void TSS_traceMismatch(TraceEvent& event,
+                       const BulkLoadStatusRequest& req,
+                       const BulkLoadStatusReply& src,
+                       const BulkLoadStatusReply& tss) {
 	ASSERT(false);
 }
 
@@ -845,3 +952,45 @@ void TSS_traceMismatch(TraceEvent& event, const BulkLoadWaitCompleteRequest& req
 
 template <>
 void TSSMetrics::recordLatency(const BulkLoadWaitCompleteRequest& req, double ssLatency, double tssLatency) {}
+
+template <>
+const char* TSS_mismatchTraceName(const BulkLoadListRequest& req) {
+	ASSERT(false);
+	return "";
+}
+
+template <>
+void TSS_traceMismatch(TraceEvent& event, const BulkLoadListRequest& req, const Void& src, const Void& tss) {
+	ASSERT(false);
+}
+
+template <>
+void TSSMetrics::recordLatency(const BulkLoadListRequest& req, double ssLatency, double tssLatency) {}
+
+template <>
+const char* TSS_mismatchTraceName(const BulkLoadListAllRequest& req) {
+	ASSERT(false);
+	return "";
+}
+
+template <>
+void TSS_traceMismatch(TraceEvent& event, const BulkLoadListAllRequest& req, const Void& src, const Void& tss) {
+	ASSERT(false);
+}
+
+template <>
+void TSSMetrics::recordLatency(const BulkLoadListAllRequest& req, double ssLatency, double tssLatency) {}
+
+template <>
+const char* TSS_mismatchTraceName(const BulkLoadStatusRequest& req) {
+	ASSERT(false);
+	return "";
+}
+
+template <>
+void TSS_traceMismatch(TraceEvent& event, const BulkLoadStatusRequest& req, const Void& src, const Void& tss) {
+	ASSERT(false);
+}
+
+template <>
+void TSSMetrics::recordLatency(const BulkLoadStatusRequest& req, double ssLatency, double tssLatency) {}

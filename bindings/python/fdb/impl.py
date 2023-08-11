@@ -665,7 +665,7 @@ class Transaction(TransactionRead):
         )
 
     def get_versionstamp(self):
-        return Key(self.capi.fdb_transaction_get_versionstamp(self.tpointer))
+        return Bytes(self.capi.fdb_transaction_get_versionstamp(self.tpointer))
 
     def on_error(self, error):
         if isinstance(error, FDBError):
@@ -1048,6 +1048,16 @@ class Key(FutureString):
         self.value = ctypes.string_at(key, key_length.value)
 
 
+class Bytes(FutureString):
+    def _getter(self):
+        bytes = ctypes.pointer(ctypes.c_byte())
+        bytes_length = ctypes.c_int()
+        self.capi.fdb_future_get_bytes(
+            self.fpointer, ctypes.byref(bytes), ctypes.byref(bytes_length)
+        )
+        self.value = ctypes.string_at(bytes, bytes_length.value)
+
+
 class FormerFuture(_FDBBase):
     def wait(self):
         return self
@@ -1335,7 +1345,7 @@ class Database(_TransactionCreator):
         return Transaction(pointer.value, self)
 
     def get_client_status(self):
-        return Key(self.capi.fdb_database_get_client_status(self.dpointer))
+        return Bytes(self.capi.fdb_database_get_client_status(self.dpointer))
 
 
 class Tenant(_TransactionCreator):
@@ -1365,7 +1375,7 @@ class Tenant(_TransactionCreator):
         )
 
     def get_client_status(self):
-        return Key(self.capi.fdb_tenant_get_client_status(self.tpointer))
+        return Bytes(self.capi.fdb_tenant_get_client_status(self.tpointer))
 
 
 fill_operations()
@@ -1635,6 +1645,14 @@ def init_c_api():
     ]
     _capi.fdb_future_get_uint64.restype = ctypes.c_uint
     _capi.fdb_future_get_uint64.errcheck = check_error_code
+
+    _capi.fdb_future_get_bytes.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_byte)),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    _capi.fdb_future_get_bytes.restype = ctypes.c_int
+    _capi.fdb_future_get_bytes.errcheck = check_error_code
 
     _capi.fdb_future_get_key.argtypes = [
         ctypes.c_void_p,
