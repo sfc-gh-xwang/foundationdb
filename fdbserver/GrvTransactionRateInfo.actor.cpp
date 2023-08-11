@@ -153,13 +153,12 @@ TEST_CASE("/GrvTransactionRateInfo/Simple") {
 	state double testDuration = 60.0;
 	state double desiredRate = 20.0;
 	state double throttledRate = 10.0;
-	state MockClient client(throttledRate);
+	state MockClient client(desiredRate);
 	state GrvTransactionRateInfo rateInfo(
 	    /*rateWindow=*/2.0, /*maxEmptyQueueBudget=*/100, throttledRate, /*maxToStart=*/100000);
 	state int64_t counter = 0;
 
 	client.start();
-	rateInfo.setRate(throttledRate);
 	wait(timeout(runThrottlingTest(&rateInfo, &client, &counter), testDuration, Void()));
 	TraceEvent("GrvTransactionRateInfoSimpleTest").detail("Counter", counter);
 	ASSERT(isNear(testDuration * throttledRate, counter));
