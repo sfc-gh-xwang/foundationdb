@@ -534,7 +534,7 @@ tracer = log_file
                 "tls-key-file": self.server_key_file,
                 "tls-ca-file": self.client_ca_file,
                 "tls-verify-peers": self.tls_config.verify_peers,
-                "tls-required": str(self.tls_config.server_require_tls),
+                "tls-required": "true" if self.tls_config.server_require_tls else "false",
             }
             return "\n".join("{} = {}".format(k, v) for k, v in conf_map.items())
 
