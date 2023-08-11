@@ -720,16 +720,18 @@ ACTOR Future<Void> handleWaitCompleteRequest(Reference<BulkLoaderData> self,
 	}
 }
 
-ACTOR Future<Void> handleListRequest(Reference<BulkLoaderData> self,
-                                     Reference<BlobWorkerData> bwData,
-                                     BulkLoadListRequest req) {
+ACTOR template <typename Request>
+Future<Void> handleListRequest(Reference<BulkLoaderData> self, Reference<BlobWorkerData> bwData, Request req) {
 	state BulkLoadListReply rep;
 	wait(delay(0, TaskPriority::DefaultEndpoint));
 	++self->stats.listRequests;
 	++self->stats.activeRequests;
 	try {
-		Standalone<VectorRef<BulkLoadIDRef>> list =
-		    wait(self->db->listBulkLoadsInternal(req.onlyActive, req.tenantInfo.tenantId));
+		Optional<int64_t> tenantId = req.tenantInfo.tenantId;
+		if (std::is_same_v<Request, BulkLoadListAllRequest>) {
+			tenantId.reset();
+		}
+		Standalone<VectorRef<BulkLoadIDRef>> list = wait(self->db->listBulkLoadsInternal(req.onlyActive, tenantId));
 		rep.arena.dependsOn(list.arena());
 		rep.list = list;
 		req.reply.send(rep);
@@ -747,36 +749,6 @@ ACTOR Future<Void> handleListRequest(Reference<BulkLoaderData> self,
 			return Void();
 		}
 		TraceEvent(SevError, "BulkLoaderListError", self->id).error(e);
-		throw e;
-	}
-}
-
-ACTOR Future<Void> handleListAllRequest(Reference<BulkLoaderData> self,
-                                        Reference<BlobWorkerData> bwData,
-                                        BulkLoadListAllRequest req) {
-	state BulkLoadListReply rep;
-	wait(delay(0, TaskPriority::DefaultEndpoint));
-	++self->stats.listAllRequests;
-	++self->stats.activeRequests;
-	try {
-		Standalone<VectorRef<BulkLoadIDRef>> list = wait(self->db->listBulkLoadsInternal(req.onlyActive, {}));
-		rep.arena.dependsOn(list.arena());
-		rep.list = list;
-		req.reply.send(rep);
-		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
-			wait(Never());
-		}
-		--self->stats.activeRequests;
-		return Void();
-	} catch (Error& e) {
-		--self->stats.activeRequests;
-		if (canReplyWith(e)) {
-			TraceEvent("BulkLoaderListAllError", self->id).errorUnsuppressed(e).suppressFor(10.0);
-			++self->stats.errors;
-			req.reply.sendError(e);
-			return Void();
-		}
-		TraceEvent(SevError, "BulkLoaderListAllError", self->id).error(e);
 		throw e;
 	}
 }
@@ -845,7 +817,7 @@ ACTOR Future<Void> bulkLoader(BulkLoaderInterface interf,
 				self->addActor.send(handleListRequest(self, bwData, req));
 			}
 			when(BulkLoadListAllRequest req = waitNext(interf.listAllRequest.getFuture())) {
-				self->addActor.send(handleListAllRequest(self, bwData, req));
+				self->addActor.send(handleListRequest(self, bwData, req));
 			}
 			when(BulkLoadStatusRequest req = waitNext(interf.statusRequest.getFuture())) {
 				self->addActor.send(handleStatusRequest(self, bwData, req));

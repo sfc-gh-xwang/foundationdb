@@ -29,7 +29,6 @@ struct BulkLoaderStats {
 	Counter stateChangeRequests;
 	Counter waitCompleteRequests;
 	Counter listRequests;
-	Counter listAllRequests;
 	Counter statusRequests;
 
 	Counter errors;
@@ -48,7 +47,6 @@ struct BulkLoaderStats {
 	    stateChangeRequests("StateChangeRequests", cc),
 	    waitCompleteRequests("WaitCompleteRequests", cc),
 	    listRequests("ListRequests", cc),
-	    listAllRequests("ListAllRequests", cc),
 	    statusRequests("StatusRequests", cc),
 	    errors("Errors", cc),
 	    activeRequests(0) {
