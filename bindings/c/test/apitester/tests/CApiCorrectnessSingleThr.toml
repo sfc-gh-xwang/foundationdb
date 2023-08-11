@@ -4,6 +4,10 @@ minClients = 1
 maxClients = 3
 multiThreaded = false
 
+[[server]]
+knob_shard_read_sample_update_interval = 1.0
+knob_ops_read_units_per_sample = 1
+
 [[test.workload]]
 name = 'ApiCorrectness'
 minKeyLength = 1
@@ -12,8 +16,9 @@ minValueLength = 1
 maxValueLength = 1000
 maxKeysPerTransaction = 50
 initialSize = 100
-numRandomOperations = 100
+numRandomOperations = 10000
 readExistingKeysRatio = 0.9
+validateBusynessMetrics = true
 
 [[test.workload]]
 name = 'AtomicOpsCorrectness'
