@@ -22,7 +22,6 @@
 #include "fdbclient/ApiRequestHandler.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/BlobGranuleApiImpl.h"
-#include "flow/EncryptUtils.h"
 #include "flow/ProtocolVersion.h"
 #include <boost/asio/bind_executor.hpp>
 #include <cstdint>
@@ -793,16 +792,6 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_statu
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant) {
 	return (FDBFuture*)(TENANT(tenant)->getClientStatus().extractPtr());
-}
-
-extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_latest_encrypt_cipher_keys_status(
-    FDBDatabase* db,
-    int64_t const* domain_id) {
-	Optional<EncryptCipherDomainId> domainIdOpt;
-	if (domain_id != nullptr) {
-		domainIdOpt = *domain_id;
-	}
-	return (FDBFuture*)(DB(db)->getLatestEncryptCipherKeysStatus(domainIdOpt).extractPtr());
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_tenant_create_transaction(FDBTenant* tenant, FDBTransaction** out_transaction) {

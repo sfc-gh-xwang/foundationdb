@@ -899,9 +899,6 @@ public:
 	// API returns point in time list of all 'cached' cipherKeys for a given encryption domainId.
 	std::vector<Reference<BlobCipherKey>> getAllCiphers(const EncryptCipherDomainId& domainId);
 
-	// API returns point in time list of all 'cached' latest cipher key for all encryption domain.
-	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> getAllLatestCiphers();
-
 	// Iterate through latest cipher keys and apply f, beginning from beginDomainId, with number of domains no more than
 	// limit. Return true if the limit is hit and there are more domains in the cache.
 	bool iterateLatestCipherKeys(Optional<EncryptCipherDomainId> beginDomainId,

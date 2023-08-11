@@ -65,7 +65,6 @@
 #include "fdbserver/ConfigNode.h"
 #include "fdbserver/LocalConfiguration.h"
 #include "fdbserver/RemoteIKeyValueStore.actor.h"
-#include "fdbclient/BlobCipher.h"
 #include "fdbclient/ClientWorkerInterface.h"
 #include "fdbclient/MonitorLeader.h"
 #include "flow/Profiler.h"
@@ -2580,28 +2579,6 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				} catch (Error& e) {
 					profilerReq.reply.sendError(e);
 				}
-			}
-			when(GetLatestEncryptCipherKeysStatusRequest req =
-			         waitNext(interf.clientInterface.getLatestEncryptCipherKeysStatus.getFuture())) {
-
-				std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> latestCipherKeys;
-				auto cache = BlobCipherKeyCache::getInstance();
-				if (req.domainId.present()) {
-					Reference<BlobCipherKey> cipherKey = cache->getLatestCipherKey(req.domainId.get());
-					if (cipherKey.isValid()) {
-						latestCipherKeys[req.domainId.get()] = cipherKey;
-					}
-				} else {
-					// TODO(yiwu): paging
-					latestCipherKeys = cache->getAllLatestCiphers();
-				}
-				GetLatestEncryptCipherKeysStatusReply reply;
-				for (auto& domain : latestCipherKeys) {
-					EncryptCipherDomainId domainId = domain.first;
-					Reference<BlobCipherKey> cipherKey = domain.second;
-					reply.statuses[domainId][cipherKey->getBaseCipherId()].lastAccessTime = cipherKey->getAccessAtTS();
-				}
-				req.reply.send(reply);
 			}
 			when(ListLatestEncryptCipherKeysRequest _req =
 			         waitNext(interf.clientInterface.listLatestEncryptCipherKeys.getFuture())) {

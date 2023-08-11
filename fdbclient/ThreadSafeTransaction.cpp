@@ -245,12 +245,6 @@ ThreadFuture<Standalone<StringRef>> ThreadSafeDatabase::getClientStatus() {
 	return onMainThread([db] { return Future<Standalone<StringRef>>(db->getClientStatus()); });
 }
 
-ThreadFuture<Standalone<StringRef>> ThreadSafeDatabase::getLatestEncryptCipherKeysStatus(
-    Optional<EncryptCipherDomainId> domainId) {
-	DatabaseContext* db = this->db;
-	return onMainThread([db, domainId] { return db->getLatestEncryptCipherKeysStatus(domainId); });
-}
-
 ThreadFuture<ApiResult> ThreadSafeDatabase::execAsyncRequest(ApiRequest request) {
 	// FIXME: somehow share ApiRequest sanity check code?
 	if (!request.hasValidHeader()) {

@@ -35,7 +35,6 @@
 #include "boost/algorithm/string.hpp"
 
 #include "flow/CodeProbe.h"
-#include "flow/EncryptUtils.h"
 #include "fmt/format.h"
 
 #include "fdbclient/FDBOptions.g.h"
@@ -11864,78 +11863,6 @@ Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>> DatabaseContext::getHotRa
 
 	return getHotRangeMetricsActor(
 	    Reference<DatabaseContext>::addRef(this), ssi, ReadHotSubRangeRequest(keys, type, splitCount));
-}
-
-namespace {
-
-Optional<UID> getEncryptKeyProxyId(Reference<AsyncVar<ClientDBInfo>> clientInfo) {
-	return clientInfo->get().encryptKeyProxy.map(&EncryptKeyProxyInterface::id);
-}
-
-ACTOR static Future<Void> onEncryptKeyProxyChanged(Reference<AsyncVar<ClientDBInfo>> clientInfo) {
-	state Optional<UID> previousProxyId = getEncryptKeyProxyId(clientInfo);
-	loop {
-		wait(clientInfo->onChange());
-		Optional<UID> currentProxyId = getEncryptKeyProxyId(clientInfo);
-		if (currentProxyId.present() && currentProxyId != previousProxyId) {
-			return Void();
-		}
-	}
-}
-
-ACTOR static Future<Standalone<StringRef>> getLatsetEncryptCipherKeysStatusFromEKP(
-    Reference<AsyncVar<ClientDBInfo>> clientInfo,
-    Optional<EncryptCipherDomainId> domainId) {
-	Optional<EncryptKeyProxyInterface> encryptKeyProxy = clientInfo->get().encryptKeyProxy;
-	if (!encryptKeyProxy.present()) {
-		return Never();
-	}
-	EKPGetLatestEncryptCipherKeysStatusRequest req;
-	req.domainId = domainId;
-	try {
-		EKPGetLatestEncryptCipherKeysStatusReply reply =
-		    wait(encryptKeyProxy->getLatestEncryptCipherKeysStatus.getReply(req));
-		JsonBuilderObject statusObject;
-		for (auto& domain : reply.statuses) {
-			JsonBuilderObject domainObject;
-			EncryptCipherDomainId domainId = domain.first;
-			for (auto& cipherKey : domain.second) {
-				JsonBuilderObject cipherKeyObject;
-				EncryptCipherBaseKeyId cipherKeyId = cipherKey.first;
-				cipherKeyObject["last_access_time"] = std::to_string(cipherKey.second.lastAccessTime);
-				domainObject[Traceable<EncryptCipherBaseKeyId>::toString(cipherKeyId)] = cipherKeyObject;
-			}
-			statusObject[Traceable<EncryptCipherDomainId>::toString(domainId)] = domainObject;
-		}
-		return statusObject.getJson();
-	} catch (Error& e) {
-		TraceEvent(SevWarn, "GetLatsetEncryptCipherKeysStatusError").error(e);
-		throw;
-	}
-}
-
-} // anonymous namespace
-
-ACTOR static Future<Standalone<StringRef>> getLatestEncryptCipherKeysStatusActor(
-    Reference<DatabaseContext> db,
-    Optional<EncryptCipherDomainId> domainId) {
-	DatabaseConfiguration config = wait(getDatabaseConfiguration(Database(db.getPtr())));
-	if (config.encryptionAtRestMode == EncryptionAtRestMode::DISABLED) {
-		JsonBuilderObject emptyObject;
-		return emptyObject.getJson();
-	}
-	loop choose {
-		when(Standalone<StringRef> status = wait(getLatsetEncryptCipherKeysStatusFromEKP(db->clientInfo, domainId))) {
-			return status;
-		}
-		when(wait(onEncryptKeyProxyChanged(db->clientInfo))) {}
-	}
-}
-
-Future<Standalone<StringRef>> DatabaseContext::getLatestEncryptCipherKeysStatus(
-    Optional<EncryptCipherDomainId> domainId) {
-	return timeoutError(getLatestEncryptCipherKeysStatusActor(Reference<DatabaseContext>::addRef(this), domainId),
-	                    CLIENT_KNOBS->CLI_CONNECT_TIMEOUT);
 }
 
 int64_t getMaxKeySize(KeyRef const& key) {

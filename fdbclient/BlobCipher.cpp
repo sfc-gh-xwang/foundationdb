@@ -878,17 +878,6 @@ std::vector<Reference<BlobCipherKey>> BlobCipherKeyCache::getAllCiphers(const En
 	return keyIdCache->getAllCipherKeys();
 }
 
-std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> BlobCipherKeyCache::getAllLatestCiphers() {
-	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> result;
-	for (const auto& domain : domainCacheMap) {
-		Reference<BlobCipherKey> cipherKey = domain.second->getLatestCipherKey();
-		if (cipherKey.isValid()) {
-			result[domain.first] = cipherKey;
-		}
-	}
-	return result;
-}
-
 bool BlobCipherKeyCache::iterateLatestCipherKeys(
     Optional<EncryptCipherDomainId> beginDomainId,
     Optional<EncryptCipherDomainId> endDomainId,

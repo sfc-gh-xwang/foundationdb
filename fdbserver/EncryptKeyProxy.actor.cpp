@@ -234,7 +234,6 @@ using BlobMetadataDomainIdCache = std::unordered_map<BlobMetadataDomainId, BlobM
 
 struct EncryptKeyProxyData : NonCopyable, ReferenceCounted<EncryptKeyProxyData> {
 public:
-	Reference<AsyncVar<ServerDBInfo>> dbInfo;
 	UID myId;
 	ActorCollection actors;
 
@@ -271,9 +270,8 @@ public:
 	ActiveCounter<int> kmsLookupByDomainIdsOutstanding;
 	ActiveCounter<int> kmsBlobMetadataOutstanding;
 
-	explicit EncryptKeyProxyData(Reference<AsyncVar<ServerDBInfo>> dbInfo, UID id)
-	  : dbInfo(dbInfo),
-	    myId(id),
+	explicit EncryptKeyProxyData(UID id)
+	  : myId(id),
 	    ekpCacheMetrics("EKPMetrics", myId.toString()),
 	    baseCipherKeyIdCacheMisses("EKPCipherIdCacheMisses", ekpCacheMetrics),
 	    baseCipherKeyIdCacheHits("EKPCipherIdCacheHits", ekpCacheMetrics),
@@ -902,47 +900,6 @@ Future<Void> updateHealthStatus(Reference<EncryptKeyProxyData> ekpProxyData, Kms
 	return updateHealthStatusImpl(ekpProxyData, kmsConnectorInf);
 }
 
-ACTOR Future<Void> getLatestEncryptCipherKeysStatus(Reference<EncryptKeyProxyData> ekpProxyData,
-                                                    EKPGetLatestEncryptCipherKeysStatusRequest request) {
-	// Obtain list of workers
-	try {
-		loop choose {
-			when(std::vector<ClientWorkerInterface> workers = wait(brokenPromiseToNever(
-			         ekpProxyData->dbInfo->get().clusterInterface.clientInterface.getClientWorkers.getReply(
-			             GetClientWorkersRequest())))) {
-				// Collect result from workers
-				state std::vector<Future<GetLatestEncryptCipherKeysStatusReply>> workerResults;
-				for (auto& w : workers) {
-					GetLatestEncryptCipherKeysStatusRequest req;
-					req.domainId = request.domainId;
-					workerResults.push_back(w.getLatestEncryptCipherKeysStatus.getReply(req));
-				}
-				wait(waitForAll(workerResults));
-				// Merge the result
-				EKPGetLatestEncryptCipherKeysStatusReply reply;
-				for (auto& workerResult : workerResults) {
-					for (const auto& domain : workerResult.get().statuses) {
-						EncryptCipherDomainId domainId = domain.first;
-						auto& mergedDomain = reply.statuses[domainId];
-						for (const auto& cipherKey : domain.second) {
-							EncryptCipherBaseKeyId cipherKeyId = cipherKey.first;
-							auto& mergedCipherKey = mergedDomain[cipherKeyId];
-							mergedCipherKey.lastAccessTime =
-							    std::max(mergedCipherKey.lastAccessTime, cipherKey.second.lastAccessTime);
-						}
-					}
-				}
-				request.reply.send(reply);
-				return Void();
-			}
-			when(wait(ekpProxyData->dbInfo->onChange())) {}
-		}
-	} catch (Error& e) {
-		TraceEvent(SevWarn, "EKPGetLatestEncryptCipherKeysStatusError").error(e);
-		throw;
-	}
-}
-
 ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxyData,
                                          KmsConnectorInterface kmsConnectorInf,
                                          EKPGetLatestBlobMetadataRequest req) {
@@ -1103,9 +1060,6 @@ void refreshBlobMetadata(Reference<EncryptKeyProxyData> ekpProxyData, KmsConnect
 
 ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyData,
                                         KmsConnectorInterface kmsConnectorInf) {
-	TraceEvent("EKPActiveKmsConnectorInit", ekpProxyData->myId)
-	    .detail("ConnectorType", SERVER_KNOBS->KMS_CONNECTOR_TYPE);
-
 	if (g_network->isSimulated() && !SERVER_KNOBS->USE_REST_SIM_KMS_VAULT) {
 		// support restart tests
 		ekpProxyData->kmsConnector = std::make_unique<SimKmsConnector>(FDB_SIM_KMS_CONNECTOR_TYPE_STR);
@@ -1132,7 +1086,8 @@ ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyD
 ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
                                          Reference<AsyncVar<ServerDBInfo>> db,
                                          EncryptionAtRestMode encryptMode) {
-	state Reference<EncryptKeyProxyData> self = makeReference<EncryptKeyProxyData>(db, ekpInterface.id());
+
+	state Reference<EncryptKeyProxyData> self = makeReference<EncryptKeyProxyData>(ekpInterface.id());
 	state KmsConnectorInterface kmsConnectorInf;
 
 	try {
@@ -1192,11 +1147,6 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
 				self->actors.add(getEKPStatus(self, kmsConnectorInf, req));
 			}
-			when(EKPGetLatestEncryptCipherKeysStatusRequest req =
-			         waitNext(ekpInterface.getLatestEncryptCipherKeysStatus.getFuture())) {
-				ASSERT(encryptMode.isEncryptionEnabled());
-				self->actors.add(getLatestEncryptCipherKeysStatus(self, req));
-			}
 			when(wait(self->actors.getResult())) {}
 		}
 	} catch (Error& e) {
@@ -1211,8 +1161,8 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 }
 
 void testLookupLatestCipherDetails() {
-	Reference<EncryptKeyProxyData> ekpProxyData = makeReference<EncryptKeyProxyData>(
-	    makeReference<AsyncVar<ServerDBInfo>>(), deterministicRandom()->randomUniqueID());
+	Reference<EncryptKeyProxyData> ekpProxyData =
+	    makeReference<EncryptKeyProxyData>(deterministicRandom()->randomUniqueID());
 	Optional<TraceEvent> dbgTrace = TraceEvent("GetLatestCipherTest", ekpProxyData->myId);
 	int numHits = 0;
 	EKPGetLatestBaseCipherKeysReply latestCipherReply;
@@ -1244,8 +1194,8 @@ void testLookupLatestCipherDetails() {
 }
 
 void testLookupCipherDetails() {
-	Reference<EncryptKeyProxyData> ekpProxyData = makeReference<EncryptKeyProxyData>(
-	    makeReference<AsyncVar<ServerDBInfo>>(), deterministicRandom()->randomUniqueID());
+	Reference<EncryptKeyProxyData> ekpProxyData =
+	    makeReference<EncryptKeyProxyData>(deterministicRandom()->randomUniqueID());
 	Optional<TraceEvent> dbgTrace = TraceEvent("GetCipherTest", ekpProxyData->myId);
 	int numHits = 0;
 	EKPGetBaseCipherKeysByIdsReply keyIdsReply;

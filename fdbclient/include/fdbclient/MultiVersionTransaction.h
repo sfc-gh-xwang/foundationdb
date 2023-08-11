@@ -196,8 +196,6 @@ struct FdbCApi : public ThreadSafeReferenceCounted<FdbCApi> {
 
 	FDBFuture* (*databaseGetClientStatus)(FDBDatabase* db);
 
-	FDBFuture* (*databaseGetLatestEncryptCipherKeysStatus)(FDBDatabase* db, int64_t const* domainId);
-
 	FDBFuture* (*databaseExecAsync)(FDBDatabase* tr, FDBRequest* request);
 
 	// Tenant
@@ -602,9 +600,6 @@ public:
 
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
-
-	ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
-	    Optional<EncryptCipherDomainId> domainId) override;
 
 	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
 
@@ -1027,9 +1022,6 @@ public:
 
 	// Return a JSON string containing database client-side status information
 	ThreadFuture<Standalone<StringRef>> getClientStatus() override;
-
-	ThreadFuture<Standalone<StringRef>> getLatestEncryptCipherKeysStatus(
-	    Optional<EncryptCipherDomainId> domainId) override;
 
 	ThreadFuture<ApiResult> execAsyncRequest(ApiRequest request) override;
 

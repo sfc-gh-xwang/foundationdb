@@ -394,9 +394,6 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_status(FDBDataba
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant);
 
-DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_latest_encrypt_cipherKeys_status(FDBDatabase* db,
-                                                                                          int64_t const* domain_id);
-
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_tenant_create_transaction(FDBTenant* tenant,
                                                                        FDBTransaction** out_transaction);
 
