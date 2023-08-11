@@ -1372,7 +1372,7 @@ void Net2::initTLS(ETLSInitState targetState) {
 			    .detail("KeyPath", tlsConfig.getKeyPathSync())
 			    .detail("HasPassword", !loaded.getPassword().empty())
 			    .detail("VerifyPeers", boost::algorithm::join(loaded.getVerifyPeers(), "|"))
-			    .detail("DisablePlainTextConnection", tlsConfig.getDisablePlainTextConnection());
+			    .detail("TlsRequired", tlsConfig.getTlsRequired());
 			auto loadedTlsConfig = tlsConfig.loadSync();
 			ConfigureSSLContext(loadedTlsConfig, newContext);
 			activeTlsPolicy = makeReference<TLSPolicy>(loadedTlsConfig, onPolicyFailure);
@@ -1844,9 +1844,9 @@ Future<Reference<IConnection>> Net2::connect(NetworkAddress toAddr, tcp::socket*
 		return SSLConnection::connect(&this->reactor.ios, this->sslContextVar.get(), toAddr, existingSocket);
 	}
 
-	if (tlsConfig.getDisablePlainTextConnection()) {
-		TraceEvent(SevError, "PlainTextConnectionDisabled").detail("toAddr", toAddr);
-		throw connection_failed();
+	if (tlsConfig.getTlsRequired()) {
+		TraceEvent(SevError, "TLSRequired").detail("ToAddr", toAddr);
+		throw tls_required_error();
 	}
 
 	return Connection::connect(&this->reactor.ios, toAddr);
@@ -2002,6 +2002,11 @@ Reference<IListener> Net2::listen(NetworkAddress localAddr) {
 		if (localAddr.isTLS()) {
 			initTLS(ETLSInitState::LISTEN);
 			return Reference<IListener>(new SSLListener(reactor.ios, &this->sslContextVar, localAddr));
+		}
+
+		if (tlsConfig.getTlsRequired()) {
+			TraceEvent(SevError, "TLSRequired").detail("LocalAddr", localAddr);
+			throw tls_required_error();
 		}
 		return Reference<IListener>(new Listener(reactor.ios, localAddr));
 	} catch (boost::system::system_error const& e) {

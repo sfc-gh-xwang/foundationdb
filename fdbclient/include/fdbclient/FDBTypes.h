@@ -1830,6 +1830,27 @@ struct ReadOptions {
 	}
 };
 
+struct HybridReadOptions {
+	Optional<UID> debugID;
+	bool summarize;
+	bool canCollapseBegin;
+	bool canReadDirty;
+
+	HybridReadOptions(Optional<UID> debugID = Optional<UID>(),
+	                  bool summarize = false,
+	                  bool canCollapseBegin = true,
+	                  bool canReadDirty = false)
+	  : debugID(debugID),
+	    summarize(summarize),
+	    canCollapseBegin(canCollapseBegin),
+	    canReadDirty(canReadDirty){};
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, debugID, summarize, canCollapseBegin, canReadDirty);
+	}
+};
+
 // Can be used to identify types (e.g. IDatabase) that can be used to create transactions with a `createTransaction`
 // function
 template <typename, typename = void>

@@ -256,6 +256,7 @@ ERROR( all_external_clients_failed, 2124, "All external clients have failed." )
 ERROR( incompatible_client, 2125, "None of the available clients match the protocol version of the cluster." )
 ERROR( too_many_grv_batchers, 2126, "The client is running too many concurrent GRV batchers" )
 ERROR( restart_update_stream, 2127, "Restart update stream" )
+ERROR( tls_required_error, 2128, "Plaintext connections are disabled. TLS is required." )
 
 ERROR( tenant_name_required, 2130, "Tenant name must be specified to access data in the cluster" )
 ERROR( tenant_not_found, 2131, "Tenant does not exist" )

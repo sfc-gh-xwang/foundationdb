@@ -2651,8 +2651,8 @@ void setNetworkOption(FDBNetworkOptions::Option option, Optional<StringRef> valu
 		tlsConfig.clearVerifyPeers();
 		tlsConfig.addVerifyPeers(value.get().toString());
 		break;
-	case FDBNetworkOptions::TLS_DISABLE_PLAINTEXT_CONNECTION:
-		tlsConfig.setDisablePlainTextConnection(true);
+	case FDBNetworkOptions::TLS_REQUIRED:
+		tlsConfig.setTlsRequired(true);
 		break;
 	case FDBNetworkOptions::CLIENT_BUGGIFY_ENABLE:
 		enableBuggify(true, BuggifyType::Client);
@@ -7394,6 +7394,10 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 		trState->readOptions.withDefault(ReadOptions()).type = ReadType::HIGH;
 		break;
 
+	case FDBTransactionOptions::HYBRID_READ_DIRTY:
+		trState->hybridReadOptions.withDefault(HybridReadOptions()).canReadDirty = true;
+		break;
+
 	default:
 		break;
 	}
@@ -8422,8 +8426,14 @@ ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileReques
 
 		ASSERT(!rep.chunks.empty());
 
-		if (req.summarize || !streamRemainingMutations) {
+		if ((req.readOptions.present() && req.readOptions->summarize) || !streamRemainingMutations) {
 			return rep;
+		}
+
+		if (req.readOptions.present() && req.readOptions->debugID.present()) {
+			g_traceBatch.addEvent("ReadBlobGranulesDebug",
+			                      req.readOptions->debugID->first(),
+			                      "NativeAPI.readBlobGranules.ReqStreamStart");
 		}
 
 		state std::vector<Future<Void>> streamFutures;
@@ -8438,6 +8448,11 @@ ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileReques
 
 		try {
 			wait(waitForAll(streamFutures));
+			if (req.readOptions.present() && req.readOptions->debugID.present()) {
+				g_traceBatch.addEvent("ReadBlobGranulesDebug",
+				                      req.readOptions->debugID->first(),
+				                      "NativeAPI.readBlobGranules.ReqStreamDone");
+			}
 			return rep;
 		} catch (Error& e) {
 			if (e.code() != error_code_blob_granule_mutation_stream_too_old) {
@@ -8499,6 +8514,21 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 	if (self->getTenant().present()) {
 		// ensure tenant is populated for getBlobGranuleLocations request
 		wait(self->getTenant().get()->ready());
+	}
+
+	state Optional<HybridReadOptions> readOptions = self->trState->hybridReadOptions;
+	if (summarize) {
+		readOptions.withDefault(HybridReadOptions()).summarize = true;
+	}
+
+	state Optional<UID> rbgID;
+	if (readOptions.present() && readOptions->debugID.present()) {
+		rbgID = nondeterministicRandom()->randomUniqueID();
+		readOptions->debugID = rbgID;
+
+		g_traceBatch.addAttach(
+		    "ReadBlobGranulesAttachID", self->trState->hybridReadOptions->debugID->first(), rbgID->first());
+		g_traceBatch.addEvent("ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.Begin");
 	}
 
 	state bool moreMapping = false;
@@ -8583,8 +8613,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		req.beginVersion = begin;
 		req.readVersion = rv;
 		req.tenantInfo = self->getTenant().present() ? self->trState->getTenantInfo() : TenantInfo();
-		req.canCollapseBegin = true; // TODO make this a parameter once we support it
-		req.summarize = summarize;
+		req.readOptions = readOptions;
 
 		state bool streamRemainingMutations = true;
 		if (mutationByteLimit < req.granuleMutationBytesLimit) {
@@ -8594,6 +8623,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 			req.granuleMutationBytesLimit = 0;
 		} else if (BUGGIFY_WITH_PROB(0.1)) {
 			req.granuleMutationBytesLimit = deterministicRandom()->randomSkewedUInt32(1, 1000000);
+		}
+
+		if (rbgID.present()) {
+			g_traceBatch.addEvent("ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.ReqStart");
 		}
 
 		// use load balance with one option for now for retry and error handling
@@ -8608,6 +8641,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 						           begin,
 						           rv,
 						           bwInterf.id().toString().substr(0, 5));
+					}
+					if (rbgID.present()) {
+						g_traceBatch.addEvent(
+						    "ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.ReqEnd");
 					}
 					ASSERT(!rep.chunks.empty());
 					results.arena().dependsOn(rep.arena);
@@ -8684,6 +8721,9 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 				           bwInterf.id().toString().substr(0, 5),
 				           e.name());
 			}
+			if (rbgID.present()) {
+				g_traceBatch.addEvent("ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.Error");
+			}
 			// worker is up but didn't actually have granule, or connection failed
 			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_connection_failed ||
 			    e.code() == error_code_request_maybe_delivered) {
@@ -8691,6 +8731,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 			}
 			throw e;
 		}
+	}
+
+	if (rbgID.present()) {
+		g_traceBatch.addEvent("ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.Done");
 	}
 
 	self->trState->cx->anyBGReads = true;
