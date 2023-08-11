@@ -1,7 +1,5 @@
 [configuration]
 extraMachineCountDC = 2
-# FIXME: Enable authenticated encryption after redwood allows in-instance swap
-disableAuthenticatedEncryption = true
 
 [[test]]
 testTitle = 'CloggedConfigureDatabaseTest'

@@ -308,7 +308,7 @@ EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> 
 
 void EncryptBlobCipherAes256Ctr::init() {
 	ASSERT(textCipherKey.isValid());
-	if (isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
+	if (authTokenAlgo != EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE) {
 		ASSERT(headerCipherKeyOpt.present() && headerCipherKeyOpt.get().isValid());
 	}
 

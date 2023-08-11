@@ -273,8 +273,6 @@ struct MutationRef {
 		if (cipherDetails.headerCipherDetails.present()) {
 			ASSERT(cipherDetails.headerCipherDetails.get().isValid());
 			textAndHeaderKeys.cipherHeaderKey = getCipherKey(cipherDetails.headerCipherDetails.get());
-		} else {
-			ASSERT(!isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO)));
 		}
 		return textAndHeaderKeys;
 	}

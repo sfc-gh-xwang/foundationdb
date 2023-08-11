@@ -56,9 +56,11 @@ TEST_CASE("/fdbserver/IPager/ArenaPage/PageContentChecksum") {
 				g_knobs.setKnob("encryption_at_rest_algo",
 				                KnobValueRef::create(getRandomAuthenticatedEncryptionAtRestAlgo()));
 			}
+			page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 		} else if (encodingType == XOREncryption_TestOnly) {
 			page->encryptionKey.xorKey = deterministicRandom()->randomInt(0, std::numeric_limits<uint8_t>::max());
 			page->encryptionKey.xorWith = deterministicRandom()->randomInt(0, std::numeric_limits<uint8_t>::max());
+			page->encryptionAlgo = EncryptionAtRestAlgo::LAST;
 		}
 		page->setWriteInfo(pageID, 1 /*version*/);
 		page->preWrite(pageID);

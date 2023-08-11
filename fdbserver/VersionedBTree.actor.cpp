@@ -2860,6 +2860,7 @@ public:
 				}
 				ArenaPage::EncryptionKey k = wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader()));
 				page->encryptionKey = k;
+				page->encryptionAlgo = self->keyProvider->getEncryptionAtRestAlgo(page->getEncodingHeader());
 			}
 			double decryptTime = 0;
 			page->postReadPayload(pageID, &decryptTime);
@@ -2947,6 +2948,7 @@ public:
 				}
 				ArenaPage::EncryptionKey k = wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader()));
 				page->encryptionKey = k;
+				page->encryptionAlgo = self->keyProvider->getEncryptionAtRestAlgo(page->getEncodingHeader());
 			}
 			double decryptTime = 0;
 			page->postReadPayload(pageIDs.front(), &decryptTime);
@@ -5110,6 +5112,7 @@ public:
 		if (page->isEncrypted()) {
 			ArenaPage::EncryptionKey k = wait(self->m_keyProvider->getLatestDefaultEncryptionKey());
 			page->encryptionKey = k;
+			page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 		}
 
 		BTreePage* btpage = (BTreePage*)page->mutateData();
@@ -5227,6 +5230,13 @@ public:
 		return freedPages;
 	}
 
+	bool switchingEncryptionSchemes(EncodingType& encodingType, EncodingType& expectedEncodingType) {
+		return (encodingType == EncodingType::AESEncryption &&
+		        expectedEncodingType == EncodingType::AESEncryptionWithAuth) ||
+		       (encodingType == EncodingType::AESEncryptionWithAuth &&
+		        expectedEncodingType == EncodingType::AESEncryption);
+	}
+
 	void checkOrUpdateEncodingType(const std::string& event,
 	                               const EncryptionAtRestMode& encryptionMode,
 	                               EncodingType& encodingType) {
@@ -5246,6 +5256,13 @@ public:
 			if (encodingType == EncodingType::XXHash64 && g_network->isSimulated() && m_logID.hash() % 2 == 0) {
 				encodingType = EncodingType::XOREncryption_TestOnly;
 			}
+		} else if (switchingEncryptionSchemes(encodingType, expectedEncodingType)) {
+			// Switching from no auth -> auth (or vise-versa) is allowed but the current page will be written with the
+			// scheme it was created with
+			ASSERT(encryptionMode.isEncryptionEnabled());
+			TraceEvent(SevWarn, "RedwoodBTreeSwitchingEncryptionSchemes")
+			    .detail("CurrentEncodingType", encodingType)
+			    .detail("ExpectedEncodingType", expectedEncodingType);
 		} else if (encodingType != expectedEncodingType) {
 			// In simulation we could enable xor encryption for testing. Ignore encoding type mismatch in such a case.
 			if (!(g_network->isSimulated() && encodingType == EncodingType::XOREncryption_TestOnly &&
@@ -6202,6 +6219,7 @@ private:
 				    wait(enableEncryptionDomain ? self->m_keyProvider->getLatestEncryptionKey(p->domainId.get())
 				                                : self->m_keyProvider->getLatestDefaultEncryptionKey());
 				page->encryptionKey = k;
+				page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 			}
 
 			BTreePage* btPage = (BTreePage*)page->mutateData();

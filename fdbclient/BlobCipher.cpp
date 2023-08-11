@@ -213,6 +213,37 @@ EncryptAuthTokenMode BlobCipherEncryptHeaderRef::getAuthTokenMode() const {
 	    flags);
 }
 
+EncryptionAtRestAlgo BlobCipherEncryptHeaderRef::getEncryptionAtRestAlgo() const {
+	validateEncryptHeaderFlagVersion(flagsVersion());
+	ASSERT_EQ(flagsVersion(), 1);
+
+	BlobCipherEncryptHeaderFlagsV1 flags = std::get<BlobCipherEncryptHeaderFlagsV1>(this->flags);
+
+	validateEncryptHeaderAlgoHeaderVersion((EncryptCipherMode)flags.encryptMode,
+	                                       (EncryptAuthTokenMode)flags.authTokenMode,
+	                                       (EncryptAuthTokenAlgo)flags.authTokenAlgo,
+	                                       algoHeaderVersion());
+	ASSERT_EQ(algoHeaderVersion(), 1);
+
+	// TODO: Replace with "Overload visitor pattern" someday.
+	return std::visit(
+	    [](auto&& h) {
+		    using T = std::decay_t<decltype(h)>;
+		    if constexpr (std::is_same_v<T, AesCtrNoAuth>) {
+			    return EncryptionAtRestAlgo::AES_CTR;
+		    } else if constexpr (std::is_same_v<T, AesCtrWithHmac>) {
+			    return EncryptionAtRestAlgo::AES_CTR_HMAC;
+		    } else if constexpr (std::is_same_v<T, AesCtrWithCmac>) {
+			    return EncryptionAtRestAlgo::AES_CTR_CMAC;
+		    } else if constexpr (std::is_same_v<T, AesGcm>) {
+			    return EncryptionAtRestAlgo::AES_GCM;
+		    } else {
+			    static_assert(always_false_v<T>, "Unknown encryption authentication");
+		    }
+	    },
+	    algoHeader);
+}
+
 EncryptCipherMode BlobCipherEncryptHeaderRef::getEncryptMode() const {
 	// TODO: Replace with "Overload visitor pattern" someday.
 	return std::visit(

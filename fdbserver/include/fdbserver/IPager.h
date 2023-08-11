@@ -421,13 +421,12 @@ public:
 		                   const TextAndHeaderCipherKeys& cipherKeys,
 		                   uint8_t* payload,
 		                   int len,
-		                   PhysicalPageID seed) {
+		                   PhysicalPageID seed,
+		                   EncryptionAtRestAlgo algo) {
+			ASSERT_NE(algo, EncryptionAtRestAlgo::LAST);
 			Header* h = reinterpret_cast<Header*>(header);
-			Reference<EncryptBlobCipher> cipher =
-			    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
-			                                    cipherKeys.cipherHeaderKey,
-			                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
-			                                    BlobCipherMetrics::KV_REDWOOD);
+			Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
+			    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, algo, BlobCipherMetrics::KV_REDWOOD);
 			Arena arena;
 
 			BlobCipherEncryptHeaderRef headerRef;
@@ -552,6 +551,7 @@ public:
 		// Non-verifying header parse just to initialize members
 		p->postReadHeader(invalidPhysicalPageID, false);
 		p->encryptionKey = encryptionKey;
+		p->encryptionAlgo = encryptionAlgo;
 
 		return Reference<ArenaPage>(p);
 	}
@@ -566,6 +566,7 @@ public:
 		// Non-verifying header parse just to initialize component pointers
 		p->postReadHeader(invalidPhysicalPageID, false);
 		p->encryptionKey = encryptionKey;
+		p->encryptionAlgo = encryptionAlgo;
 
 		return Reference<ArenaPage>(p);
 	}
@@ -610,10 +611,10 @@ public:
 			XOREncryptionEncoder::encode(page->getEncodingHeader(), encryptionKey, pPayload, payloadSize, pageID);
 		} else if (page->encodingType == EncodingType::AESEncryption) {
 			AESEncryptionEncoder<AESEncryption>::encode(
-			    page->getEncodingHeader(), encryptionKey.aesKey, pPayload, payloadSize, pageID);
+			    page->getEncodingHeader(), encryptionKey.aesKey, pPayload, payloadSize, pageID, encryptionAlgo);
 		} else if (page->encodingType == EncodingType::AESEncryptionWithAuth) {
 			AESEncryptionEncoder<AESEncryptionWithAuth>::encode(
-			    page->getEncodingHeader(), encryptionKey.aesKey, pPayload, payloadSize, pageID);
+			    page->getEncodingHeader(), encryptionKey.aesKey, pPayload, payloadSize, pageID, encryptionAlgo);
 		} else {
 			throw page_encoding_not_supported();
 		}
@@ -725,6 +726,9 @@ public:
 
 	// Used by encodings that do encryption
 	EncryptionKey encryptionKey;
+
+	// Algorithm used for encryption
+	EncryptionAtRestAlgo encryptionAlgo = EncryptionAtRestAlgo::LAST;
 
 	// Whether encoding header is set
 	bool encodingHeaderAvailable = false;
