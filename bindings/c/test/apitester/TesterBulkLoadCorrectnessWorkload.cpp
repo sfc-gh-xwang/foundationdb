@@ -4,6 +4,7 @@
  * Copyright (c) 2023 Snowflake Computing
  */
 #include "TesterApiWorkload.h"
+#include "TesterBlobGranuleUtil.h"
 #include "TesterUtil.h"
 #include "test/fdb_api.hpp"
 #include <fmt/format.h>
@@ -210,7 +211,13 @@ private:
 				         newSt.logicalSize,
 				         newSt.physicalSize);
 
-				    // TODO: actually write file to disk, or do in writeSnapshotFile
+				    TesterGranuleContext testerContext(ctx->getBGBasePath());
+				    auto& fileToWrite = newSt.filesToWrite.files()[0];
+				    writeGranuleFile(&testerContext,
+				                     (const char*)fileToWrite->filename.begin,
+				                     fileToWrite->filename.length,
+				                     (const char*)fileBytes.begin(),
+				                     fileBytes.length());
 
 				    metadata->loadsStagingNeedToRegisterFiles.insert({ id, newSt });
 				    metadata->loadsStagingNeedToWriteFiles.erase(id);
