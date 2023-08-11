@@ -994,7 +994,7 @@ public:
 	struct EmptyVersionStats {
 		constexpr static FileIdentifier file_identifier = 15292782;
 
-		std::deque<StorageServer::EmptyVersionQueueEntry> tlogVersionQueue;
+		Deque<StorageServer::EmptyVersionQueueEntry> tlogVersionQueue;
 		ContinuousSample<double> safeWaitWindow =
 		    ContinuousSample<double>(2 * SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT);
 		double minWaitWindow = INT_MAX;
