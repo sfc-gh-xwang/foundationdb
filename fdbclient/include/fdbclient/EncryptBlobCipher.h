@@ -188,11 +188,6 @@ private:
 	                                   const BlobCipherEncryptHeaderFlagsV1&,
 	                                   BlobCipherEncryptHeaderRef*,
 	                                   const EncryptAuthTokenAlgo) override;
-	template <class Params>
-	void setCipherAlgoHeaderWithAuthV1(const uint8_t*,
-	                                   const int,
-	                                   const BlobCipherEncryptHeaderFlagsV1&,
-	                                   BlobCipherEncryptHeaderRef*);
 	void init() override;
 };
 

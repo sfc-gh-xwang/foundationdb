@@ -353,7 +353,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 		       validateDetails.textCipherDetails == BlobCipherDetails(textCipherKey->getDomainId(),
 		                                                              textCipherKey->getBaseCipherId(),
 		                                                              textCipherKey->getSalt()));
-		if (authMode == ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE) {
+		if (authMode == ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE || authAlgo == ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM) {
 			ASSERT(!validateDetails.headerCipherDetails.present());
 		} else {
 			ASSERT(validateDetails.headerCipherDetails.present() &&
@@ -399,7 +399,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 			AesGcm gcm = std::get<AesGcm>(headerRef.algoHeader);
 			memcpy(&iv[0], &gcm.v1.iv[0], ivSize);
 			textCipherDetails = gcm.v1.cipherTextDetails;
-			headerCipherDetails = gcm.v1.cipherHeaderDetails;
+			headerCipherDetails = BlobCipherDetails();
 		} else {
 			ASSERT(std::holds_alternative<AesCtrWithCmac>(headerRef.algoHeader));
 			AesCtrWithCmac aesCmac = std::get<AesCtrWithCmac>(headerRef.algoHeader);
