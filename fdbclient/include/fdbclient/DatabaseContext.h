@@ -457,18 +457,22 @@ public:
 	                                   KeyRange range,
 	                                   Version maxReadVersion,
 	                                   Optional<Reference<Tenant>> tenant = {});
-	Future<Void> cleanupBulkLoadInternal(BulkLoadID id, Optional<int64_t> tenantIdToVerify = {});
+	Future<Void> cleanupBulkLoadInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id,
 	                                      BulkLoadStatus::State desiredState,
-	                                      Optional<int64_t> tenantIdToVerify = {});
+	                                      Optional<Reference<Tenant>> tenant = {});
 	Future<Void> updateBulkLoadState(BulkLoadID id,
 	                                 BulkLoadStatus::State desiredState,
-	                                 Optional<int64_t> tenantIdToVerify = {});
-	Future<Version> getBulkLoadVersion(BulkLoadID id);
+	                                 Optional<Reference<Tenant>> tenant = {});
+	Future<Version> getBulkLoadVersion(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternal(bool onlyActive, Optional<int64_t> tenantId);
+	Future<BulkLoadStatus> getBulkLoadStatusInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant);
 
 	// operational management
 	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoads(bool onlyActive,
 	                                                           Optional<Reference<Tenant>> tenant = {});
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoads(bool onlyActive,
+	                                                              Optional<Reference<Tenant>> tenant = {});
 	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// bulk data writing apis

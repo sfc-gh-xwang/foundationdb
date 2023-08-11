@@ -60,6 +60,21 @@ using ValueRef = BytesRef;
 using BulkLoadID = ByteString;
 using BulkLoadIDRef = BytesRef;
 
+class Future;
+
+struct ReadMetrics {
+public:
+	ReadMetrics() {}
+	ReadMetrics(float serverBusyness, float rangeBusyness)
+	  : serverBusyness(serverBusyness),
+	    rangeBusyness(rangeBusyness) {}
+
+	inline static ReadMetrics fromFuture(fdb::Future const& f);
+
+	float serverBusyness = 0;
+	float rangeBusyness = 0;
+};
+
 struct KeyRangeRef : native::FDBKeyRange {
 	KeyRef beginKey() const noexcept { return KeyRef(native::FDBKeyRange::begin_key, begin_key_length); }
 	KeyRef endKey() const noexcept { return KeyRef(native::FDBKeyRange::end_key, end_key_length); }
@@ -222,11 +237,10 @@ CharsRef toCharsRef(const StringLike<Char>& s) noexcept {
 }
 
 // get charstring view from optional bytestring: e.g. std::optional<std::basic_string{_view}<uint8_t>>
-template <template <class...> class StringLike, class Char>
-CharsRef toCharsRef(const std::optional<StringLike<Char>>& s) noexcept {
-	static_assert(sizeof(Char) == 1);
+template <class T>
+CharsRef toCharsRef(const std::optional<T>& s) noexcept {
 	if (s) {
-		return CharsRef(reinterpret_cast<char const*>(s.value().data()), s.value().size());
+		return toCharsRef(s.value());
 	} else {
 		return CharsRef("[not set]");
 	}
@@ -516,6 +530,13 @@ struct GranuleSummaryRef : native::FDBGranuleSummary {
 	fdb::KeyRef endKey() const noexcept {
 		return fdb::KeyRef(native::FDBGranuleSummary::key_range.end_key,
 		                   native::FDBGranuleSummary::key_range.end_key_length);
+	}
+};
+
+struct ReadMetrics {
+	using Type = fdb::ReadMetrics;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept {
+		return Error(native::fdb_future_get_read_busyness(f, &out.serverBusyness, &out.rangeBusyness));
 	}
 };
 
@@ -1398,6 +1419,10 @@ inline void selectApiVersionCapped(int version) {
 	if (auto err = selectApiVersionCappedNothrow(version)) {
 		throwError(fmt::format("ERROR: fdb_select_api_version_capped({}): ", version), err);
 	}
+}
+
+ReadMetrics ReadMetrics::fromFuture(fdb::Future const& f) {
+	return f.get<future_var::ReadMetrics>();
 }
 
 } // namespace fdb

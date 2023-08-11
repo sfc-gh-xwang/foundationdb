@@ -378,7 +378,6 @@ ERROR( bulk_load_range_conflict, 2602, "Bulk load for key range already in progr
 ERROR( bulk_load_cleanup_failed, 2603, "Bulk load could not clean up because it is still in progress");
 ERROR( bulk_load_not_found, 2604, "Bulk load ID not found" );
 ERROR( bulk_load_range_not_empty, 2605, "Bulk load for key range already in progress" );
-ERROR( bulk_load_tenant_mismatch, 2606, "Bulk load id is for a different tenant" );
 
 // Bulk load file operations errors
 ERROR( bulk_load_file_id_not_found , 2620, "No file id for the given bulk load id exists");

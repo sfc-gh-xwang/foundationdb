@@ -169,12 +169,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	ACTOR Future<bool> _check(Database cx, BulkLoadOpsWorkload* self) {
-		// FIXME: REENABLE!
-		/*if (deterministicRandom()->coinflip()) {
-		    cx->internal = IsInternal::False;
-		}*/
-		// TODO: REMOVE
-		cx->internal = IsInternal::True;
+		if (deterministicRandom()->coinflip()) {
+			cx->internal = IsInternal::False;
+		}
 
 		TraceEvent("BulkLoadOpsCheck").detail("ClientId", self->clientId).log();
 
@@ -347,7 +344,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		// Validate bulk load state at end.
 
-		BulkLoadStatus status = wait(cx->getBulkLoadStatus(id));
+		BulkLoadStatus status = wait(cx->getBulkLoadStatus(id, self->tenant));
 		BulkLoadStatus::State current = status.state;
 
 		if (BLW_DEBUG) {
@@ -474,12 +471,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> bulkLoadClient(Database cx, BulkLoadOpsWorkload* self, int clientIdx) {
-		// FIXME: REENABLE!
-		/*if (deterministicRandom()->coinflip()) {
-		    cx->internal = IsInternal::False;
-		}*/
-		// TODO: REMOVE
-		cx->internal = IsInternal::True;
+		if (deterministicRandom()->coinflip()) {
+			cx->internal = IsInternal::False;
+		}
 
 		state bool completedAny = false;
 		if (BLW_DEBUG) {
@@ -519,6 +513,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		INVALID_LOAD_ID_UNIT,
 		WRITE_DURING_LOAD_UNIT,
 		READ_DURING_LOAD_UNIT,
+		LIST_DURING_LOAD_UNIT,
+		LIST_ALL_DURING_LOAD_UNIT,
+		STATUS_DURING_LOAD_UNIT,
 		SANITY_CHECK_VERSIONSTAMP_UNIT,
 		NON_EMPTY_RANGE_UNIT,
 		ALREADY_BLOB_RANGE_UNIT,
@@ -626,7 +623,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->abortBulkLoad(id, self->tenant));
 
 		try {
-			wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
+			wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::DONE, self->tenant));
 			ASSERT(false);
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_bulk_load_aborted);
@@ -671,10 +668,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->checkCorrectInvalidIDError(cx->abortBulkLoad(id, self->tenant)));
 		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadComplete(id, self->tenant)));
 		// don't test cleanup because it's idempotent if it was already cleaned up
-		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING)));
-		wait(self->checkCorrectInvalidIDError(cx->updateBulkLoadState(id, BulkLoadStatus::State::STAGING)));
-		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadStatus(id))));
-		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadVersion(id))));
+		wait(self->checkCorrectInvalidIDError(
+		    cx->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING, self->tenant)));
+		wait(self->checkCorrectInvalidIDError(
+		    cx->updateBulkLoadState(id, BulkLoadStatus::State::STAGING, self->tenant)));
+		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadStatus(id, self->tenant))));
+		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadVersion(id, self->tenant))));
 		wait(self->checkCorrectInvalidIDError(success(cx->getBulkLoadFilesToWrite(id, 1, self->tenant))));
 
 		Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
@@ -740,6 +739,49 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR Future<Void> listDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that the active bulk load is correctly listed
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listBulkLoads(true, self->tenant));
+
+		// TODO: Create separate tenant for list bulk loads
+		ASSERT(std::find(list.begin(), list.end(), id) != std::end(list));
+		ASSERT(list.size() >= 1);
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
+	ACTOR Future<Void> listAllDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that the all bulk loads are correctly listed
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listBulkLoads(true, self->tenant));
+
+		// TODO: Track all bulk loads in map, iterate to ensure they are all
+		// listed.
+		ASSERT(std::find(list.begin(), list.end(), id) != std::end(list));
+		ASSERT(list.size() >= 1);
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
+	ACTOR Future<Void> statusDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that the active bulk load has a valid status
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state BulkLoadStatus status = wait(cx->getBulkLoadStatus(id, self->tenant));
+		ASSERT(status.state != BulkLoadStatus::State::UNKNOWN);
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, self, id));
+
+		return Void();
+	}
+
 	ACTOR Future<Void> sanityCheckVersionstampUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that client cannot clean up a bulk load before it is done or aborted
 
@@ -749,7 +791,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 		state Version end = wait(self->doGRV(cx));
 
-		Version createVersion = wait(cx->getBulkLoadVersion(id));
+		Version createVersion = wait(cx->getBulkLoadVersion(id, self->tenant));
 
 		ASSERT(createVersion >= start);
 		ASSERT(createVersion <= end);
@@ -1099,12 +1141,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> bulkLoadUnitTests(Database cx, BulkLoadOpsWorkload* self) {
-		// FIXME: REENABLE!
-		/*if (deterministicRandom()->coinflip()) {
-		    cx->internal = IsInternal::False;
-		}*/
-		// TODO: REMOVE
-		cx->internal = IsInternal::True;
+		if (deterministicRandom()->coinflip()) {
+			cx->internal = IsInternal::False;
+		}
 
 		loop {
 			if (self->stopTest) {
@@ -1153,6 +1192,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->writeDuringLoadUnit(cx, self, range));
 			} else if (op == READ_DURING_LOAD_UNIT) {
 				wait(self->readDuringLoadUnit(cx, self, range));
+			} else if (op == LIST_DURING_LOAD_UNIT) {
+				wait(self->listDuringLoadUnit(cx, self, range));
+			} else if (op == LIST_ALL_DURING_LOAD_UNIT) {
+				wait(self->listAllDuringLoadUnit(cx, self, range));
+			} else if (op == STATUS_DURING_LOAD_UNIT) {
+				wait(self->statusDuringLoadUnit(cx, self, range));
 			} else if (op == SANITY_CHECK_VERSIONSTAMP_UNIT) {
 				wait(self->sanityCheckVersionstampUnit(cx, self, range));
 			} else if (op == NON_EMPTY_RANGE_UNIT) {

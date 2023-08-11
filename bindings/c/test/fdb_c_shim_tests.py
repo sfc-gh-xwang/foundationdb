@@ -12,7 +12,7 @@ from test_util import random_alphanum_string
 from fdb_version import CURRENT_VERSION, PREV_RELEASE_VERSION
 
 TESTER_STATS_INTERVAL_SEC = 5
-DEFAULT_TEST_FILE = "CApiCorrectnessMultiThr.toml"
+DEFAULT_TEST_FILE = "shim/CApiCorrectnessShim.toml"
 IMPLIBSO_ERROR_CODE = -6  # SIGABORT
 
 

@@ -4304,13 +4304,18 @@ ACTOR Future<Void> blobWorkerRecruiter(
 	}
 
 	state DatabaseConfiguration config = wait(getDatabaseConfiguration(self->db, true));
+	state double lastVerboseLogTs = 0.0;
 
 	loop {
 		try {
 			state RecruitBlobWorkerRequest recruitReq;
 
 			// SevDebug normally but SevInfo if we have no active workers
-			Severity excludeSeverity = self->workersById.empty() ? SevInfo : SevDebug;
+			Severity excludeSeverity = SevDebug;
+			if (self->workersById.empty() && now() - lastVerboseLogTs >= 10.0) {
+				excludeSeverity = SevInfo;
+				lastVerboseLogTs = now();
+			}
 
 			// workers that are used by existing blob workers should be excluded
 			for (auto const& [bwId, bwInterf] : self->workersById) {
@@ -5933,7 +5938,9 @@ ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
 	}
 }
 
-ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoadID id) {
+ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
+                                     BulkLoadIDKey idKey,
+                                     Optional<Reference<Tenant>> tenant) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bmData->db);
 	state Optional<BulkLoadInfo> info;
 	state bool deletedFiles = false;
@@ -5948,21 +5955,24 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 			// clean up file pointers if deleted in staging phase
 			// FIXME: do reads in parallel
 			if (!info.present()) {
-				wait(store(info, BulkLoadMetadata::infoMap().get(tr, id)));
+				wait(store(info, BulkLoadMetadata::infoMap().get(tr, idKey)));
 				if (!info.present()) {
 					throw bulk_load_not_found();
 				}
 			}
 
 			if (!bstore.isValid()) {
-				KeyRange physicalRange = info->getPhysicalKeyRange();
+				KeyRange physicalRange = info->keyRange;
+				if (tenant.present()) {
+					physicalRange = physicalRange.withPrefix(tenant.get()->prefix());
+				}
 				wait(store(bstore, getBStoreForGranule(bmData, physicalRange)));
 				ASSERT(bstore.isValid());
 			}
 
 			wait(checkManagerLock(tr, bmData));
 
-			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, id));
+			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
 			// since we cached info, on a re-read it could be non-present if bulk load finished by us or someone else
 			if (!status.present()) {
 				return true;
@@ -5973,7 +5983,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 			}
 
 			state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
-			    BulkLoadMetadata::allFilePointersForLoadRange(id);
+			    BulkLoadMetadata::allFilePointersForLoadRange(idKey.second);
 			state BulkLoadMetadata::CreatedFilePointersMap::RangeResultType createdPointers =
 			    wait(BulkLoadMetadata::createdFilePointersMap().getRange(
 			        tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY));
@@ -5986,7 +5996,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 
 			if (writtenPointers.results.empty()) {
 				CODE_PROBE(true, "bulk load aborted because no files written");
-				TraceEvent("BulkLoadAbortingNoFilesWritten", bmData->id).detail("BulkLoadID", id);
+				TraceEvent("BulkLoadAbortingNoFilesWritten", bmData->id).detail("BulkLoadID", idKey.second);
 				return false;
 			}
 
@@ -5997,7 +6007,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 				ASSERT(it.second.createdPointer.type == BulkLoadFileType::SNAPSHOT);
 				// FIXME: ASSERT that encrypt mode matches presence of cipher keys
 				BulkLoadWrittenFileRef f;
-				ASSERT(id == it.first.first);
+				ASSERT(idKey.second == it.first.first);
 				f.fileId = it.first.second;
 				f.keyRange = it.second.keyRange;
 				f.logicalSize = it.second.logicalSize;
@@ -6006,7 +6016,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 			}
 
 			try {
-				validateBulkLoadWrittenPointers(id, info.get(), filesToValidate);
+				validateBulkLoadWrittenPointers(idKey.second, info.get(), filesToValidate);
 			} catch (Error& e) {
 				if (e.code() == error_code_bulk_load_invalid_file_metadata) {
 					CODE_PROBE(true, "bulk load invalid file metadata when staging");
@@ -6019,7 +6029,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 				CODE_PROBE(!createdPointers.results.empty(), "unused bulk load file pointers");
 				// do deletes for each unused bulk file pointer in case a file was written there but it was not staged
 				for (auto& it : createdPointers.results) {
-					ASSERT(id == it.first.first);
+					ASSERT(idKey.second == it.first.first);
 					fileDeleteFutures.push_back(deleteFile(bstore, it.second.filename.toString()));
 				}
 			}
@@ -6051,7 +6061,9 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData, BulkLoad
 	return true;
 }
 
-ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID id) {
+ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData,
+                                          BulkLoadIDKey idKey,
+                                          Optional<Reference<Tenant>> tenant) {
 	state Database cx(bmData->db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
 	state Optional<BulkLoadInfo> info;
@@ -6067,22 +6079,25 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData, Bul
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 
-			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, id));
+			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
 			if (!status.present() || status->state != BulkLoadStatus::State::ABORTED) {
 				if (BM_BULKLOAD_DEBUG) {
-					fmt::print("CleanupAbortedBulkLoad {0}: already cleaned up\n", id.printable());
+					fmt::print("CleanupAbortedBulkLoad {0}: already cleaned up\n", idKey.second.printable());
 				}
 				CODE_PROBE(true, "cleanup aborted bulk load already done");
 				return Void();
 			}
 
 			if (!info.present()) {
-				wait(store(info, BulkLoadMetadata::infoMap().get(tr, id)));
+				wait(store(info, BulkLoadMetadata::infoMap().get(tr, idKey)));
 				ASSERT(info.present());
 			}
 
 			if (!bstore.isValid()) {
-				KeyRange physicalRange = info->getPhysicalKeyRange();
+				KeyRange physicalRange = info->keyRange;
+				if (tenant.present()) {
+					physicalRange = physicalRange.withPrefix(tenant.get()->prefix());
+				}
 				wait(store(bstore, getBStoreForGranule(bmData, physicalRange)));
 				ASSERT(bstore.isValid());
 			}
@@ -6091,7 +6106,7 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData, Bul
 
 			if (!deletedFiles) {
 				state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
-				    BulkLoadMetadata::allFilePointersForLoadRange(id);
+				    BulkLoadMetadata::allFilePointersForLoadRange(idKey.second);
 				state BulkLoadMetadata::CreatedFilePointersMap::RangeResultType createdPointers =
 				    wait(BulkLoadMetadata::createdFilePointersMap().getRange(
 				        tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY));
@@ -6103,13 +6118,13 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData, Bul
 				ASSERT(!writtenPointers.more);
 
 				for (auto& it : createdPointers.results) {
-					ASSERT(id == it.first.first);
+					ASSERT(idKey.second == it.first.first);
 					fileDeleteFutures.push_back(deleteFile(bstore, it.second.filename.toString()));
 				}
 
 				// FIXME: actually stage granules instead of just deleting their files!!
 				for (auto& it : writtenPointers.results) {
-					ASSERT(id == it.first.first);
+					ASSERT(idKey.second == it.first.first);
 					fileDeleteFutures.push_back(deleteFile(bstore, it.second.createdPointer.filename.toString()));
 				}
 
@@ -6129,10 +6144,10 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData, Bul
 	}
 
 	// change bulk load state to ABORTED_COMPLETE
-	wait(cx->updateBulkLoadState(id, BulkLoadStatus::State::ABORTED_COMPLETE));
+	wait(cx->updateBulkLoadState(idKey.second, BulkLoadStatus::State::ABORTED_COMPLETE, tenant));
 
 	if (BM_BULKLOAD_DEBUG) {
-		fmt::print("CleanupAbortedBulkLoad {0}: done\n", id.printable());
+		fmt::print("CleanupAbortedBulkLoad {0}: done\n", idKey.second.printable());
 	}
 
 	++bmData->stats.bulkLoadAbortsCleanedUp;
@@ -6141,16 +6156,21 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData, Bul
 }
 
 // FIXME: handle state transitions from STAGING to STAGING_BLOB_DONE
-ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID id, BulkLoadStatus::State state) {
+ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKey idKey, BulkLoadStatus::State state) {
 	if (BM_BULKLOAD_DEBUG) {
-		fmt::print("DBGBM {0}: TrackBL {1}: start\n", bmData->epoch, id.printable());
+		fmt::print("DBGBM {0}: TrackBL {1}: start\n", bmData->epoch, idKey.second.printable());
 	}
+	state Optional<Reference<Tenant>> tenant;
+	if (idKey.first != TenantInfo::INVALID_TENANT) {
+		tenant = makeReference<Tenant>(bmData->db, idKey.first);
+	}
+	state BulkLoadID id = idKey.second;
 	if (state == BulkLoadStatus::State::ABORTED) {
 		if (BM_BULKLOAD_DEBUG) {
 			fmt::print("DBGBM {0}: TrackBL {1}: already aborted, cleaning up\n", bmData->epoch, id.printable());
 		}
 		try {
-			wait(cleanupAbortedBulkLoad(bmData, id));
+			wait(cleanupAbortedBulkLoad(bmData, idKey, tenant));
 		} catch (Error& e) {
 			if (e.code() == error_code_bulk_load_not_found) {
 				// somebody else must already have finished cleanup
@@ -6169,13 +6189,13 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 
 	try {
 		if (state < BulkLoadStatus::State::STAGING) {
-			wait(bmData->db->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING));
+			wait(bmData->db->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING, tenant));
 		}
 
 		if (BM_BULKLOAD_DEBUG) {
 			fmt::print("DBGBM {0}: TrackBL {1}: staging blob\n", bmData->epoch, id.printable());
 		}
-		state bool success = wait(bulkLoadStageBlob(bmData, id));
+		state bool success = wait(bulkLoadStageBlob(bmData, idKey, tenant));
 		if (BM_BULKLOAD_DEBUG) {
 			fmt::print(
 			    "DBGBM {0}: TrackBL {1}: staged blob: {2}\n", bmData->epoch, id.printable(), success ? "T" : "F");
@@ -6190,10 +6210,10 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 			// TODO: do we also need to check manager lock as part of these transactions? should be idempotent by any
 			// manager
 			// FIXME: only change to STAGING_BLOB_DONE. Still monitor for aborts until we hit DONE though
-			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::DONE));
+			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::DONE, tenant));
 		} else {
 			++bmData->stats.bulkLoadStagingErrors;
-			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::ABORTED));
+			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::ABORTED, tenant));
 			// don't return, we have to do cleanup
 			throw bulk_load_aborted();
 		}
@@ -6216,7 +6236,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadID i
 				if (BM_BULKLOAD_DEBUG) {
 					fmt::print("DBGBM {0}: TrackBL {1}: cleaning up aborted load\n", bmData->epoch, id.printable());
 				}
-				wait(cleanupAbortedBulkLoad(bmData, id));
+				wait(cleanupAbortedBulkLoad(bmData, idKey, tenant));
 				if (BM_BULKLOAD_DEBUG) {
 					fmt::print("DBGBM {0}: TrackBL {1}: cleaned up aborted load\n", bmData->epoch, id.printable());
 				}
@@ -6340,7 +6360,7 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 
 		self->addActor.send(watchBackupEnabled(self));
 
-		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadID& id,
+		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
 		                                                         const BulkLoadStatus::State& state) {
 			return trackBulkLoad(self, id, state);
 		};

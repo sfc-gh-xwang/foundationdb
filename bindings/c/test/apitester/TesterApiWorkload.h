@@ -54,6 +54,9 @@ public:
 	// Generate a random operation and schedule the continuation when done
 	virtual void randomOperation(TTaskFct cont);
 
+	// Called when the last random operation has been completed
+	virtual void operationsCompleted();
+
 protected:
 	// Selected FDB API version
 	int apiVersion;

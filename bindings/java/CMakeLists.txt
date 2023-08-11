@@ -418,6 +418,7 @@ if(NOT OPEN_FOR_IDE)
     # add_fdbclient_test will set FDB_CLUSTER_FILE if it's not set already
     add_fdbclient_test(NAME java-integration
       API_TEST_BLOB_GRANULES_ENABLED
+      ACCELERATE_READ_METRICS
       COMMAND ${Java_JAVA_EXECUTABLE}
       -classpath "${target_jar}:${integration_jar_path}:${JUNIT_CLASSPATH}"
       -Djava.library.path=${CMAKE_BINARY_DIR}/lib
@@ -433,6 +434,7 @@ if(NOT OPEN_FOR_IDE)
 
     add_fdbclient_test(NAME java-integration-external-client
       API_TEST_BLOB_GRANULES_ENABLED
+      ACCELERATE_READ_METRICS
       COMMAND ${Java_JAVA_EXECUTABLE}
       -classpath "${target_jar}:${integration_jar_path}:${JUNIT_CLASSPATH}"
       -Djava.library.path=${CMAKE_BINARY_DIR}/lib
