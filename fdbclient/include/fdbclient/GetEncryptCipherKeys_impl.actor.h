@@ -19,8 +19,6 @@
  */
 
 #pragma once
-#include "flow/EncryptUtils.h"
-#include "flow/genericactors.actor.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_GETCIPHERKEYS_IMPL_ACTOR_G_H)
 #define FDBCLIENT_GETCIPHERKEYS_IMPL_ACTOR_G_H
 #include "fdbclient/GetEncryptCipherKeys_impl.actor.g.h"
@@ -32,8 +30,12 @@
 #include "fdbclient/SpecialKeySpace.actor.h"
 #include "fdbclient/SystemData.h"
 #include "fdbclient/Tuple.h"
+
+#include "flow/EncryptUtils.h"
 #include "flow/flow.h"
 #include "flow/genericactors.actor.h"
+
+#include <unordered_set>
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -109,7 +111,8 @@ ACTOR template <class T>
 Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> _getLatestEncryptCipherKeys(
     Reference<AsyncVar<T> const> db,
     std::unordered_set<EncryptCipherDomainId> domainIds,
-    BlobCipherMetrics::UsageType usageType) {
+    BlobCipherMetrics::UsageType usageType,
+    std::unordered_set<EncryptCipherDomainId>* nonExistentTenants) {
 	state Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
 	state std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys;
 	state EKPGetLatestBaseCipherKeysRequest request;
@@ -133,6 +136,8 @@ Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> _get
 	}
 	// Fetch any uncached cipher keys.
 	state double startTime = now();
+	state ActiveCounter<int>::Releaser holdingRequestCounter =
+	    BlobCipherMetrics::getInstance()->outstandingLatestCipherKeysRequests.take(1);
 	loop choose {
 		when(EKPGetLatestBaseCipherKeysReply reply =
 		         wait(_getUncachedLatestEncryptCipherKeys(db, request, usageType))) {
@@ -154,8 +159,14 @@ Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> _get
 			// Check for any missing cipher keys.
 			for (auto domainId : request.encryptDomainIds) {
 				if (cipherKeys.count(domainId) == 0) {
-					TraceEvent(SevWarn, "GetLatestEncryptCipherKeysKeyMissing").detail("DomainId", domainId);
-					throw encrypt_key_not_found();
+					TraceEvent(g_network->isSimulated() ? SevWarn : SevError, "GetLatestEncryptCipherKeysKeyMissing")
+					    .detail("DomainId", domainId);
+					if (nonExistentTenants == nullptr) {
+						// Caller doesn't expect 'tenant_not_found' scenario
+						throw encrypt_key_not_found();
+					} else {
+						nonExistentTenants->insert(domainId);
+					}
 				}
 			}
 			break;
@@ -174,7 +185,7 @@ Future<Reference<BlobCipherKey>> _getLatestEncryptCipherKey(Reference<AsyncVar<T
                                                             BlobCipherMetrics::UsageType usageType) {
 	std::unordered_set<EncryptCipherDomainId> domainIds{ domainId };
 	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKey =
-	    wait(_getLatestEncryptCipherKeys(db, domainIds, usageType));
+	    wait(_getLatestEncryptCipherKeys(db, domainIds, usageType, nullptr));
 
 	return cipherKey.at(domainId);
 }
@@ -264,6 +275,8 @@ Future<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> _getEncr
 	}
 	// Fetch any uncached cipher keys.
 	state double startTime = now();
+	state ActiveCounter<int>::Releaser holdingRequestCounter =
+	    BlobCipherMetrics::getInstance()->outstandingCipherKeyRequests.take(1);
 	loop choose {
 		when(EKPGetBaseCipherKeysByIdsReply reply = wait(_getUncachedEncryptCipherKeys(db, request, usageType))) {
 			std::unordered_map<BaseCipherIndex, EKPBaseCipherDetails, boost::hash<BaseCipherIndex>> baseCipherKeys;
@@ -312,7 +325,7 @@ Future<TextAndHeaderCipherKeys> _getLatestEncryptCipherKeysForDomain(Reference<A
 	// TODO: Do not fetch header cipher key if authentication is diabled.
 	std::unordered_set<EncryptCipherDomainId> domainIds = { domainId, ENCRYPT_HEADER_DOMAIN_ID };
 	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys =
-	    wait(_getLatestEncryptCipherKeys(db, domainIds, usageType));
+	    wait(_getLatestEncryptCipherKeys(db, domainIds, usageType, nullptr));
 	ASSERT(cipherKeys.count(domainId) > 0);
 	ASSERT(cipherKeys.count(ENCRYPT_HEADER_DOMAIN_ID) > 0);
 	TextAndHeaderCipherKeys result{ cipherKeys.at(domainId), cipherKeys.at(ENCRYPT_HEADER_DOMAIN_ID) };
@@ -367,8 +380,9 @@ template <class T>
 Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>>
 GetEncryptCipherKeys<T>::getLatestEncryptCipherKeys(Reference<AsyncVar<T> const> db,
                                                     std::unordered_set<EncryptCipherDomainId> domainIds,
-                                                    BlobCipherMetrics::UsageType usageType) {
-	return _getLatestEncryptCipherKeys(db, domainIds, usageType);
+                                                    BlobCipherMetrics::UsageType usageType,
+                                                    std::unordered_set<EncryptCipherDomainId>* nonExistentTenants) {
+	return _getLatestEncryptCipherKeys(db, domainIds, usageType, nonExistentTenants);
 }
 
 template <class T>

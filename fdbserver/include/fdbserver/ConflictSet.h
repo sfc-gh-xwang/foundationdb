@@ -43,6 +43,7 @@ struct ConflictBatch {
 		TransactionConflict = 0,
 		TransactionTooOld,
 		TransactionTenantFailure,
+		TransactionEncryptKeyNotFound,
 		TransactionCommitted,
 	};
 

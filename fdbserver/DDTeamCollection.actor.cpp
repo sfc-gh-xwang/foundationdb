@@ -27,7 +27,6 @@
 #include "fdbserver/BlobMigratorInterface.h"
 #include "flow/Trace.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
-#include <climits>
 
 namespace {
 
@@ -287,7 +286,7 @@ public:
 				}
 			}
 
-			// When relocating shards, DD would evaluate the CPU & LoadBytes of sourceTeam. If
+			// When relocating shards, DD would evaluate the CPU, LoadBytes, WriteLoad of sourceTeam. If
 			// both of metrics are below pivot values, we would return the source team to dataDistributionRelocator
 			if (req.teamSelect.isForRelocateShard() && SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
 				auto sourceTeam = self->evaluateSourceTeam(req);
@@ -300,11 +299,13 @@ public:
 					    .detail("SourceTeamInfo", sourceTeam.get()->getDesc())
 					    .detail("SourceTeamCpu", sourceTeam.get()->getAverageCPU())
 					    .detail("LowerPivotCpu", self->teamPivots.lowerPivotCPU)
-					    .detail("PivotCpu", self->teamPivots.pivotCPU)
-					    .detail("SourceTeamBytes", sourceTeam.get()->getLoadBytes())
-					    .detail("LowerPivotBytes", self->teamPivots.lowerPivotBytes)
-					    .detail("UpperPivotBytes", self->teamPivots.upperPivotBytes)
-					    .detail("PivotBytes", self->teamPivots.pivotLoadBytes);
+					    .detail("UpperPivotCpu", self->teamPivots.upperPivotCPU)
+					    .detail("SourceTeamDiskUsage", sourceTeam.get()->getLoadBytes())
+					    .detail("LowerPivotDiskUsage", self->teamPivots.lowerPivotBytes)
+					    .detail("UpperPivotDiskUsage", self->teamPivots.upperPivotBytes)
+					    .detail("SourceTeamWriteLoad", sourceTeam.get()->getWriteLoad())
+					    .detail("LowerPivotWriteLoad", self->teamPivots.lowerPivotWrite)
+					    .detail("UpperPivotWriteLoad", self->teamPivots.upperPivotWrite);
 					req.reply.send(std::make_pair(sourceTeam, foundSrc));
 					return Void();
 				}
@@ -3316,8 +3317,8 @@ void DDTeamCollection::updateLoadBytesPivot(std::vector<int64_t>& teamLoadBytes)
 		}
 	} else {
 		teamPivots.pivotLoadBytes = std::numeric_limits<int64_t>::max();
-		teamPivots.lowerPivotBytes = std::numeric_limits<int64_t>::max();
-		teamPivots.upperPivotBytes = std::numeric_limits<int64_t>::max();
+		teamPivots.lowerPivotBytes = std::numeric_limits<int64_t>::min();
+		teamPivots.upperPivotBytes = std::numeric_limits<int64_t>::min();
 	}
 }
 
@@ -3360,8 +3361,8 @@ void DDTeamCollection::updateCpuPivot(std::vector<double>& teamAverageCPU) {
 		}
 	} else {
 		teamPivots.pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
-		teamPivots.lowerPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
-		teamPivots.upperPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
+		teamPivots.lowerPivotCPU = 0;
+		teamPivots.upperPivotCPU = 0;
 	}
 
 	if (teamPivots.pivotCPU > SERVER_KNOBS->MAX_DEST_CPU_PERCENT) {
@@ -3369,6 +3370,21 @@ void DDTeamCollection::updateCpuPivot(std::vector<double>& teamAverageCPU) {
 		    .detail("PivotCPU", teamPivots.pivotCPU)
 		    .detail("MinTeamAvgCPU", teamPivots.minTeamAvgCPU)
 		    .detail("Primary", primary);
+	}
+}
+
+void DDTeamCollection::updateWriteLoadPivot(std::vector<double>& teamWriteLoad) {
+	if (!teamWriteLoad.empty()) {
+		size_t lowerPivot = teamWriteLoad.size() * std::min(1.0, SERVER_KNOBS->DD_LOWER_WRITE_PIVOT_RATIO);
+		std::nth_element(teamWriteLoad.begin(), teamWriteLoad.begin() + lowerPivot, teamWriteLoad.end());
+		size_t upperPivot = teamWriteLoad.size() * std::min(1.0, SERVER_KNOBS->DD_UPPER_WRITE_PIVOT_RATIO);
+		std::nth_element(teamWriteLoad.begin(), teamWriteLoad.begin() + upperPivot, teamWriteLoad.end());
+
+		teamPivots.lowerPivotWrite = teamWriteLoad[lowerPivot];
+		teamPivots.upperPivotWrite = teamWriteLoad[upperPivot];
+	} else {
+		teamPivots.lowerPivotWrite = std::numeric_limits<double>::min();
+		teamPivots.upperPivotWrite = std::numeric_limits<double>::min();
 	}
 }
 
@@ -3428,18 +3444,25 @@ void DDTeamCollection::updateTeamPivots(const double inflightPenalty) {
 		std::vector<double> teamAverageCPU;
 		std::vector<double> teamAvailableSpace;
 		std::vector<int64_t> teamLoadBytes;
+		std::vector<double> teamWriteLoad;
 		for (int i = 0; i < teams.size(); i++) {
 			if (teams[i]->isHealthy()) {
 				teamAverageCPU.emplace_back(teams[i]->getAverageCPU());
 				teamPivots.minTeamAvgCPU = std::min(teamPivots.minTeamAvgCPU, teamAverageCPU.back());
 				teamAvailableSpace.push_back(teams[i]->getMinAvailableSpaceRatio());
 				teamLoadBytes.push_back(teams[i]->getLoadBytes(true, inflightPenalty));
+				if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
+					teamWriteLoad.push_back(teams[i]->getWriteLoad());
+				}
 			}
 		}
 		updateCpuPivot(teamAverageCPU);
 		updateMedianAvailableSpacePivot(teamAvailableSpace);
 		updateLoadBytesPivot(teamLoadBytes);
 		updateTeamEligibility(inflightPenalty);
+		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
+			updateWriteLoadPivot(teamWriteLoad);
+		}
 		teamPivots.lastPivotsUpdate = now();
 	}
 }
@@ -3604,9 +3627,11 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(
 		if (sourceTeam.get()->hasHealthyAvailableSpace(teamPivots.pivotAvailableSpaceRatio)) {
 			ASSERT_LE(teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes);
 			ASSERT_LE(teamPivots.lowerPivotCPU, teamPivots.upperPivotCPU);
+			ASSERT_LE(teamPivots.lowerPivotWrite, teamPivots.upperPivotWrite);
 
 			int64_t sourceLoadBytes = sourceTeam.get()->getLoadBytes(true, req.inflightPenalty);
 			double sourceCPU = sourceTeam.get()->getAverageCPU();
+			double sourceWrite = sourceTeam.get()->getWriteLoad();
 
 			double probabilityLoadBytes = data_distribution::getProbabilityWithPivot<int64_t>(
 			    teamPivots.lowerPivotBytes, teamPivots.upperPivotBytes, sourceLoadBytes);
@@ -3614,12 +3639,18 @@ Optional<Reference<IDataDistributionTeam>> DDTeamCollection::evaluateSourceTeam(
 			double probabilityCPU = data_distribution::getProbabilityWithPivot<double>(
 			    teamPivots.lowerPivotCPU, teamPivots.upperPivotCPU, sourceCPU);
 
+			double probabilityWrite = data_distribution::getProbabilityWithPivot<double>(
+			    teamPivots.lowerPivotWrite, teamPivots.upperPivotWrite, sourceWrite);
+
 			ASSERT(probabilityLoadBytes >= 0 && probabilityLoadBytes <= 1);
 			ASSERT(probabilityCPU >= 0 && probabilityCPU <= 1);
+			ASSERT(probabilityWrite >= 0 && probabilityWrite <= 1);
 
-			if (probabilityLoadBytes * probabilityCPU == 0) {
-				// As long as either LoadBytes or CPU doesn't pass the normal pivot check, we won't do any prevention.
-			} else if (deterministicRandom()->random01() < (probabilityLoadBytes + probabilityCPU) / 2) {
+			if (probabilityLoadBytes * probabilityCPU * probabilityWrite == 0) {
+				// As long as either LoadBytes or CPU or WriteRate doesn't pass the normal pivot check, we won't do any
+				// prevention.
+			} else if (deterministicRandom()->random01() <
+			           (probabilityLoadBytes + probabilityCPU + probabilityWrite) / 3) {
 				return sourceTeam;
 			}
 		}

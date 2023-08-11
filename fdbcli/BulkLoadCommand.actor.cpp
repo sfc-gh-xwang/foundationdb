@@ -13,12 +13,13 @@
 
 namespace {
 
-ACTOR Future<Optional<BulkLoadInfo>> getBulkLoadInfo(BulkLoadID id, Database db) {
+ACTOR Future<Optional<BulkLoadInfo>> getBulkLoadInfo(BulkLoadID id, Database db, Optional<Reference<Tenant>> tenant) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 	loop {
 		try {
 			SystemDBWriteLockedNow(db.getReference())->setOptions(tr);
-			Optional<BulkLoadInfo> info = wait(BulkLoadMetadata::infoMap().get(tr, id));
+			int64_t tenantId = tenant.present() ? tenant.get()->id() : TenantInfo::INVALID_TENANT;
+			Optional<BulkLoadInfo> info = wait(BulkLoadMetadata::infoMap().get(tr, { tenantId, id }));
 			return info;
 		} catch (Error& e) {
 			wait(tr->onError(e));
@@ -31,10 +32,12 @@ ACTOR Future<Void> printBulkLoadStatus(BulkLoadID id, Database db, Optional<Refe
 	fmt::print("          ID: {}\n", id.printable());
 	fmt::print("       State: {}\n", status.toStateString());
 
-	Optional<BulkLoadInfo> info = wait(getBulkLoadInfo(id, db));
+	Optional<BulkLoadInfo> info = wait(getBulkLoadInfo(id, db, tenant));
 	if (info.present()) {
 		fmt::print("       Range: {}\n", info->keyRange.toString());
-		fmt::print("      Tenant: {}\n", info->tenantId);
+		if (tenant.present()) {
+			fmt::print("      Tenant: {}\n", tenant.get()->description());
+		}
 	}
 	return Void();
 }

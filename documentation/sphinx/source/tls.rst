@@ -116,7 +116,7 @@ The value for each setting can be specified in more than one way.  The actual va
 
 For the password, rather than using the command-line option, it is recommended to use the environment variable ``FDB_TLS_PASSWORD``, as command-line options are more visible to other processes running on the same host.
 
-Clients can disable non-TLS or plaintext connections by setting ``--tls-disable-plaintext-connection``.
+Clients can disable non-TLS or plaintext connections by setting ``--tls-required``.
 
 As with all other command-line options to ``fdbserver``, the TLS settings can be specified in the :ref:`[fdbserver] section of the configuration file <foundationdb-conf-fdbserver>`.
 

@@ -1246,7 +1246,7 @@ ACTOR Future<Void> clusterRecoveryCore(Reference<ClusterRecoveryData> self) {
 			            "larger than OldGenerations to resume recovery once the underlying problem has been fixed.");
 			wait(Future<Void>(Never()));
 		} else if (self->cstate.myDBState.oldTLogData.size() > CLIENT_KNOBS->RECOVERY_DELAY_START_GENERATION) {
-			TraceEvent(SevError, "RecoveryDelayedTooManyOldGenerations")
+			TraceEvent(g_network->isSimulated() ? SevWarnAlways : SevError, "RecoveryDelayedTooManyOldGenerations")
 			    .detail("OldGenerations", self->cstate.myDBState.oldTLogData.size())
 			    .detail("Reason",
 			            "Recovery is delayed because too many recoveries have happened since the last time the cluster "

@@ -20,9 +20,15 @@
 
 #include "fdbserver/BackupProgress.actor.h"
 
+#include "fdbclient/BlobCipher.h"
+#include "fdbclient/FDBTypes.h"
+#include "fdbclient/IKeyValueStore.actor.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/SystemData.h"
+#include "flow/Trace.h"
 #include "flow/UnitTest.h"
+#include "flow/flow.h"
+
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 void BackupProgress::addBackupStatus(const WorkerBackupStatus& status) {
@@ -143,34 +149,41 @@ std::map<std::tuple<LogEpoch, Version, int>, std::map<Tag, Version>> BackupProgr
 	return toRecruit;
 }
 
-// Save each tag's savedVersion for all epochs into "bStatus".
-ACTOR Future<Void> getBackupProgress(Database cx, UID dbgid, Reference<BackupProgress> bStatus, bool logging) {
-	state Transaction tr(cx);
+// Save each tag's savedVersion for all epochs into "backupProgress".
+void setBackupStatus(UID dbgid,
+                     Reference<BackupProgress> backupProgress,
+                     RangeReadResult workerStatuses,
+                     bool logging) {
+	for (auto& it : workerStatuses) {
+		const UID workerID = decodeBackupProgressKey(it.key);
+		const WorkerBackupStatus status = decodeBackupProgressValue(it.value);
+		backupProgress->addBackupStatus(status);
+		if (logging) {
+			TraceEvent("GotBackupProgress", dbgid)
+			    .detail("BackupWorker", workerID)
+			    .detail("Epoch", status.epoch)
+			    .detail("Version", status.version)
+			    .detail("Tag", status.tag.toString())
+			    .detail("TotalTags", status.totalTags);
+		}
+	}
+}
 
+ACTOR Future<Void> getBackupProgress(Database cx, UID dbgid, Reference<BackupProgress> backupProgress, bool logging) {
+	state Transaction tr(cx);
 	loop {
 		try {
 			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			state Future<ValueReadResult> fValue = tr.get(backupStartedKey);
-			state RangeReadResult results = wait(tr.getRange(backupProgressKeys, CLIENT_KNOBS->TOO_MANY));
-			ASSERT(!results.more && results.size() < CLIENT_KNOBS->TOO_MANY);
 
-			ValueReadResult value = wait(fValue);
-			bStatus->setBackupStartedValue(value);
-			for (auto& it : results) {
-				const UID workerID = decodeBackupProgressKey(it.key);
-				const WorkerBackupStatus status = decodeBackupProgressValue(it.value);
-				bStatus->addBackupStatus(status);
-				if (logging) {
-					TraceEvent("GotBackupProgress", dbgid)
-					    .detail("BackupWorker", workerID)
-					    .detail("Epoch", status.epoch)
-					    .detail("Version", status.version)
-					    .detail("Tag", status.tag.toString())
-					    .detail("TotalTags", status.totalTags);
-				}
-			}
+			ValueReadResult backupStartedValue = wait(tr.get(backupStartedKey));
+			backupProgress->setBackupStartedValue(backupStartedValue);
+
+			RangeReadResult workerStatuses = wait(tr.getRange(backupProgressKeys, CLIENT_KNOBS->TOO_MANY));
+			ASSERT(!workerStatuses.more && workerStatuses.size() < CLIENT_KNOBS->TOO_MANY);
+			setBackupStatus(dbgid, backupProgress, workerStatuses, logging);
+
 			return Void();
 		} catch (Error& e) {
 			wait(tr.onError(e));

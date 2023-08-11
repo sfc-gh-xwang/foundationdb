@@ -33,6 +33,7 @@
 #include "fdbserver/LogSystemDiskQueueAdapter.h"
 #include "fdbserver/MasterInterface.h"
 #include "fdbserver/ResolverInterface.h"
+#include "fdbserver/SSCommitCostCounter.h"
 #include "flow/IRandom.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -68,6 +69,7 @@ struct ProxyStats {
 	Counter blobGranuleLocationIn, blobGranuleLocationOut, blobGranuleLocationErrors;
 	Counter bulkLoadersIn, bulkLoadersOut, bulkLoadersErrors;
 	Counter txnExpensiveClearCostEstCount;
+	Counter encryptKeyNotFoundErrors;
 	Version lastCommitVersionAssigned;
 
 	LatencySample commitLatencySample;
@@ -152,6 +154,7 @@ struct ProxyStats {
 	    bulkLoadersOut("BulkLoadersOut", cc),
 	    bulkLoadersErrors("BulkLoadersErrors", cc),
 	    txnExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
+	    encryptKeyNotFoundErrors("EncryptKeyNotFoundErrors", cc),
 	    lastCommitVersionAssigned(0),
 	    commitLatencySample("CommitLatencyMetrics",
 	                        id,
@@ -275,7 +278,7 @@ struct ProxyCommitData {
 	NotifiedDouble lastCommitTime;
 
 	std::vector<double> commitComputePerOperation;
-	UIDTransactionTagMap<TransactionCommitCostEstimation> ssTrTagCommitCost;
+	SSCommitCostCounter ssTrTagCommitCost;
 	double lastMasterReset;
 	double lastResolverReset;
 	int localTLogCount = -1;
@@ -333,12 +336,8 @@ struct ProxyCommitData {
 	}
 
 	void updateSSTagCost(const UID& id, const TransactionTag& throttlingTag, MutationRef m, uint64_t cost) {
-		auto [it, _] = ssTrTagCommitCost.try_emplace(id, TransactionTagMap<TransactionCommitCostEstimation>());
-
-		auto& costItem = it->second[throttlingTag];
 		if (m.isAtomicOp() || m.type == MutationRef::Type::SetValue || m.type == MutationRef::Type::ClearRange) {
-			costItem.opsSum++;
-			costItem.costSum += cost;
+			ssTrTagCommitCost.addSSTagCost(id, throttlingTag, cost);
 		}
 	}
 
@@ -378,6 +377,8 @@ struct ProxyCommitData {
 	    lastStartCommit(0),
 	    lastCommitLatency(SERVER_KNOBS->REQUIRED_MIN_RECOVERY_DURATION),
 	    lastCommitTime(0),
+	    ssTrTagCommitCost(SERVER_KNOBS->CP_THROTTLE_TAGS_TRACKED,
+	                      SERVER_KNOBS->CP_MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
 	    lastMasterReset(now()),
 	    lastResolverReset(now()),
 	    encryptMode(encryptMode) {

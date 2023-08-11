@@ -256,6 +256,7 @@ ERROR( all_external_clients_failed, 2124, "All external clients have failed." )
 ERROR( incompatible_client, 2125, "None of the available clients match the protocol version of the cluster." )
 ERROR( too_many_grv_batchers, 2126, "The client is running too many concurrent GRV batchers" )
 ERROR( restart_update_stream, 2127, "Restart update stream" )
+ERROR( tls_required_error, 2128, "Plaintext connections are disabled. TLS is required." )
 
 ERROR( tenant_name_required, 2130, "Tenant name must be specified to access data in the cluster" )
 ERROR( tenant_not_found, 2131, "Tenant does not exist" )
@@ -377,7 +378,6 @@ ERROR( bulk_load_range_conflict, 2602, "Bulk load for key range already in progr
 ERROR( bulk_load_cleanup_failed, 2603, "Bulk load could not clean up because it is still in progress");
 ERROR( bulk_load_not_found, 2604, "Bulk load ID not found" );
 ERROR( bulk_load_range_not_empty, 2605, "Bulk load for key range already in progress" );
-ERROR( bulk_load_tenant_mismatch, 2606, "Bulk load id is for a different tenant" );
 
 // Bulk load file operations errors
 ERROR( bulk_load_file_id_not_found , 2620, "No file id for the given bulk load id exists");

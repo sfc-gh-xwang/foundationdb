@@ -286,6 +286,7 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	Reference<TransactionLogInfo> trLogInfo;
 	TransactionOptions options;
 	Optional<ReadOptions> readOptions;
+	Optional<HybridReadOptions> hybridReadOptions;
 
 	TaskPriority taskID;
 	SpanContext spanContext;
@@ -554,6 +555,7 @@ public:
 		} else {
 			trState->readOptions = ReadOptions(dID);
 		}
+		trState->hybridReadOptions.withDefault(HybridReadOptions()).debugID = dID;
 	}
 	VersionVector getVersionVector() const;
 	SpanContext getSpanContext() const { return trState->spanContext; }

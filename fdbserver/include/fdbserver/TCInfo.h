@@ -115,6 +115,7 @@ public:
 
 	std::pair<int64_t, int64_t> spaceBytes(bool includeInFlight = true) const;
 	int64_t loadBytes() const;
+	int64_t writeLoad() const;
 	bool hasHealthyAvailableSpace(double minAvailableSpaceRatio) const;
 
 	Future<Void> updateServerMetrics();
@@ -219,6 +220,8 @@ public:
 	int64_t getLoadBytes(bool includeInFlight = true, double inflightPenalty = 1.0) const override;
 
 	double getReadLoad(bool includeInFlight = true, double inflightPenalty = 1.0) const override;
+
+	double getWriteLoad() const override;
 
 	double getAverageCPU() const override;
 
