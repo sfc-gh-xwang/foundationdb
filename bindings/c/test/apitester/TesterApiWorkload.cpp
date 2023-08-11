@@ -94,8 +94,10 @@ void ApiWorkload::runTests() {
 
 void ApiWorkload::randomOperations() {
 	if (runUntilStop) {
-		if (stopReceived)
+		if (stopReceived) {
+			operationsCompleted();
 			return;
+		}
 		if (checkingProgress) {
 			int numLeft = numRandomOpLeft--;
 			if (numLeft == 0) {
@@ -105,8 +107,10 @@ void ApiWorkload::randomOperations() {
 		}
 	} else {
 		int numLeft = numRandomOpLeft--;
-		if (numLeft == 0)
+		if (numLeft == 0) {
+			operationsCompleted();
 			return;
+		}
 	}
 	randomOperation([this]() { randomOperations(); });
 }
@@ -115,6 +119,8 @@ void ApiWorkload::randomOperation(TTaskFct cont) {
 	// Must be overridden if used
 	ASSERT(false);
 }
+
+void ApiWorkload::operationsCompleted() {}
 
 fdb::Key ApiWorkload::randomKeyName() {
 	return keyPrefix + Random::get().randomByteStringLowerCase(minKeyLength, maxKeyLength);

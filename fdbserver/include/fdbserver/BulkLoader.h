@@ -28,6 +28,9 @@ struct BulkLoaderStats {
 	Counter startRequests;
 	Counter stateChangeRequests;
 	Counter waitCompleteRequests;
+	Counter listRequests;
+	Counter listAllRequests;
+	Counter statusRequests;
 
 	Counter errors;
 
@@ -44,6 +47,9 @@ struct BulkLoaderStats {
 	    startRequests("StartRequests", cc),
 	    stateChangeRequests("StateChangeRequests", cc),
 	    waitCompleteRequests("WaitCompleteRequests", cc),
+	    listRequests("ListRequests", cc),
+	    listAllRequests("ListAllRequests", cc),
+	    statusRequests("StatusRequests", cc),
 	    errors("Errors", cc),
 	    activeRequests(0) {
 		specialCounter(cc, "ActiveRequests", [this]() { return this->activeRequests; });

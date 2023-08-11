@@ -69,6 +69,7 @@ struct ProxyStats {
 	Counter blobGranuleLocationIn, blobGranuleLocationOut, blobGranuleLocationErrors;
 	Counter bulkLoadersIn, bulkLoadersOut, bulkLoadersErrors;
 	Counter txnExpensiveClearCostEstCount;
+	Counter encryptKeyNotFoundErrors;
 	Version lastCommitVersionAssigned;
 
 	LatencySample commitLatencySample;
@@ -153,6 +154,7 @@ struct ProxyStats {
 	    bulkLoadersOut("BulkLoadersOut", cc),
 	    bulkLoadersErrors("BulkLoadersErrors", cc),
 	    txnExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
+	    encryptKeyNotFoundErrors("EncryptKeyNotFoundErrors", cc),
 	    lastCommitVersionAssigned(0),
 	    commitLatencySample("CommitLatencyMetrics",
 	                        id,
