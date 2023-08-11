@@ -2183,8 +2183,9 @@ inline void sampleNoWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats&
 // Sample client request who has to wait for version
 inline void sampleWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& stats, double versionArrivalTime) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
 		return;
+	}
 
 	double waitTime = g_network->timer() - versionArrivalTime;
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
@@ -2197,8 +2198,9 @@ inline void sampleWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& s
 // edge-triggered dynamic empty version wait window emergency
 inline void emptyVersionWaitEdgeTriggeredEmergency(StorageServer* data) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
 		return;
+	}
 
 	double emergencyThreshold =
 	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION * data->emptyVerionWaitLastWindow;
@@ -2270,9 +2272,10 @@ Future<Version> waitForVersion(StorageServer* data,
 	}
 
 	bool emptyVersionWaitSample = true;
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB < 1)
+	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB < 1) {
 		emptyVersionWaitSample =
 		    deterministicRandom()->random01() < SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB;
+	}
 
 	if (version < data->oldestVersion.get() || version <= 0) {
 		// TraceEvent(SevDebug, "WFVThrow", data->thisServerID).detail("Version", version).detail("OldestVersion", data->oldestVersion.get());
@@ -12267,13 +12270,16 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	}
 
 	loop {
-		wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) ||
-		     self->emptyVersionWaitEmergencyTrigger.onTrigger());
-		self->emptyVersionWaitEmergencyTrigger.onTrigger(); // is this correct?
-
-		if (!self->logSystem) {
-			continue;
+		wait(self->db->onChange());
+		if (self->logSystem) {
+			break;
 		}
+	}
+
+	loop {
+		state Future<Void> emergency = self->emptyVersionWaitEmergencyTrigger.onTrigger();
+		wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) || emergency);
+		emergency = self->emptyVersionWaitEmergencyTrigger.onTrigger();
 
 		// Handle Emergency
 		if (self->emptyVersionWaitEmergencyTransition) {
