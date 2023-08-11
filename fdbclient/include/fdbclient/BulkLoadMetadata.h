@@ -39,6 +39,10 @@ typedef KeyBackedRangeMap<Standalone<StringRef>, BulkLoadID, NullCodec, ObjectCo
     RangeMap;
 typedef RangeMap::LocalSnapshot RangeMapSnapshot;
 
+// reservations for active bulk loads
+extern const KeyRangeRef bulkLoadReservationKeys;
+typedef KeyBackedMap<Standalone<StringRef>, int64_t, NullCodec, BinaryCodec<int64_t>> ReservationMap;
+
 // interfaces for active bulk loader endpoints
 extern const KeyRangeRef bulkLoaderListKeys;
 typedef KeyBackedObjectMap<UID, BulkLoaderInterface, _IncludeVersion, BinaryCodec<UID>> LoaderListMap;
@@ -109,6 +113,7 @@ StatusMap& statusMap();
 InfoMap& infoMap();
 VersionMap& versionMap();
 RangeMap& rangeMap();
+ReservationMap& reservationMap();
 LoaderListMap& loaderListMap();
 CreatedFilePointersMap& createdFilePointersMap();
 WrittenFilePointersMap& writtenFilePointersMap();

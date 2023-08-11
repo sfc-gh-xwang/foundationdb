@@ -12,6 +12,7 @@
 #include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/IKnobCollection.h"
+#include "fdbclient/TenantManagement.actor.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -729,6 +730,168 @@ DatabaseContext::getBulkLoadFilesToWrite(BulkLoadID id, int count, Optional<Refe
 	return getBulkLoadFilesToWriteActor(Reference<DatabaseContext>::addRef(this), id, count, tenant);
 }
 
+ACTOR Future<Optional<int64_t>> getStorageQuota(Reference<DatabaseContext> db, TenantGroupName group, BulkLoadID id) {
+	state Database cx(db);
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
+	loop {
+		try {
+			SystemDBWriteLockedNow(db)->setOptions(tr);
+
+			Optional<int64_t> value = wait(TenantMetadata::storageQuota().get(tr, group));
+			return value;
+		} catch (Error& e) {
+			TraceEvent(SevDebug, "BulkLoadReservationGetQuotaError")
+			    .error(e)
+			    .detail("BulkLoadId", id)
+			    .detail("TenantGroup", group);
+			wait(tr->onError(e));
+		}
+	}
+}
+
+ACTOR Future<int64_t> getStorageUsage(Reference<DatabaseContext> db, TenantGroupName group, BulkLoadID id) {
+	state Database cx(db);
+	state std::vector<std::pair<TenantName, int64_t>> tenants = wait(
+	    TenantAPI::listTenantGroupTenants(db, group, ""_sr, "\xff\xff"_sr, CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER + 1));
+	state int64_t usage = 0;
+	state int idx = 0;
+	for (; idx < tenants.size(); idx++) {
+		state int64_t tenantId = tenants[idx].second;
+		state ReadYourWritesTransaction tr(makeReference<Tenant>(cx, tenantId));
+		loop {
+			try {
+				state int64_t size = wait(tr.getEstimatedRangeSizeBytes(normalKeys));
+				usage += size;
+				break;
+			} catch (Error& e) {
+				if (e.code() == error_code_tenant_not_found) {
+					break;
+				} else {
+					TraceEvent(SevDebug, "BulkLoadReservationGetUsageError")
+					    .error(e)
+					    .detail("BulkLoadId", id)
+					    .detail("TenantId", tenantId);
+					wait(tr.onError(e));
+				}
+			}
+		}
+	}
+	return usage;
+}
+
+ACTOR Future<bool> makeReservationForBulkLoad(Reference<DatabaseContext> db,
+                                              BulkLoadID id,
+                                              Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
+                                              Optional<Reference<Tenant>> tenant) {
+	// We should've thrown an error upstream if a tenant is not present when it should be (i.e., for data clusters).
+	// Here, we can skip reservation for non-tenant bulk loads.
+	if (!tenant.present()) {
+		TraceEvent(SevDebug, "BulkLoadReservationNoTenant");
+		return true;
+	}
+	if (!tenant.get()->tenantGroup().present()) {
+		TraceEvent(SevDebug, "BulkLoadReservationNoTenantGroup");
+		return true;
+	}
+	state TenantGroupName group = tenant.get()->tenantGroup().get();
+
+	// Get total file size for this bulk load
+	state int64_t bulkLoadSize = 0;
+	for (const auto& file : files) {
+		bulkLoadSize += file.physicalSize;
+	}
+
+	if (bulkLoadSize == 0) {
+		TraceEvent(SevDebug, "BulkLoadReservationEmptyLoad");
+		return true;
+	}
+
+	// Get storage quota for this tenant group
+	state Optional<int64_t> quota = wait(getStorageQuota(db, group, id));
+
+	if (!quota.present()) {
+		TraceEvent(SevDebug, "BulkLoadReservationNoQuota");
+		return true;
+	}
+	if (bulkLoadSize > quota.get()) {
+		TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
+		    .detail("BulkLoadId", id)
+		    .detail("Quota", quota.get())
+		    .detail("BulkLoadSize", bulkLoadSize);
+		return false;
+	}
+
+	// Get current estimated storage usage for this tenant group
+	state int64_t usage = wait(getStorageUsage(db, group, id));
+
+	if (bulkLoadSize + usage > quota.get()) {
+		TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
+		    .detail("BulkLoadId", id)
+		    .detail("Quota", quota.get())
+		    .detail("BulkLoadSize", bulkLoadSize)
+		    .detail("TenantGroupCurrentUsage", usage);
+		return false;
+	}
+
+	// Get total reservations for this tenant group and add reservation for this bulk load
+	state Database cx(db);
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
+	loop {
+		try {
+			SystemDBWriteLockedNow(db)->setOptions(tr);
+			state Optional<int64_t> reservation = wait(BulkLoadMetadata::reservationMap().get(tr, group));
+			if (!reservation.present()) {
+				TraceEvent(SevDebug, "BulkLoadReservationNoPriorReservations");
+				return true;
+			}
+			if (bulkLoadSize + usage + reservation.get() > quota.get()) {
+				TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
+				    .detail("BulkLoadId", id)
+				    .detail("Quota", quota.get())
+				    .detail("BulkLoadSize", bulkLoadSize)
+				    .detail("TenantGroupCurrentUsage", usage)
+				    .detail("PriorReservations", reservation);
+				return false;
+			} else {
+				BulkLoadMetadata::reservationMap().set(tr, group, reservation.get() + bulkLoadSize);
+				wait(tr->commit());
+				return true;
+			}
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+}
+
+ACTOR Future<Void> makeReservationAndDoRequest(Reference<DatabaseContext> db,
+                                               BulkLoadID id,
+                                               Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
+                                               Optional<Reference<Tenant>> tenant) {
+	if (CLIENT_KNOBS->BULK_LOAD_STORAGE_RESERVATION_ENABLED) {
+		state bool reserved = wait(makeReservationForBulkLoad(db, id, files, tenant));
+		if (!reserved) {
+			TraceEvent(SevWarn, "MarkBulkLoadFilesWrittenReservationFailed");
+			state Database cx(db);
+			wait(cx->abortBulkLoad(id, tenant));
+			// TODO: `throw bulk_load_aborted();` here? Can we add more info about why?
+			return Void();
+		} else {
+			TraceEvent(SevDebug, "MarkBulkLoadFilesWrittenReservationSucceeded");
+		}
+	}
+
+	BulkLoadFilesWrittenRequest req;
+	req.arena.dependsOn(files.arena());
+	req.arena.dependsOn(id.arena());
+	req.id = id;
+	req.filesWritten = files;
+	if (BULKLOAD_DEBUG) {
+		fmt::print("MarkBulkLoadFilesWritten {0}: {1}\n", id.printable(), files.size());
+	}
+	wait(doBulkLoadRequest(db, tenant, req, &BulkLoaderInterface::filesWrittenRequest));
+	return Void();
+}
+
 Future<Void> DatabaseContext::markBulkLoadFilesWritten(BulkLoadID id,
                                                        Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
                                                        Optional<Reference<Tenant>> tenant) {
@@ -741,16 +904,8 @@ Future<Void> DatabaseContext::markBulkLoadFilesWritten(BulkLoadID id,
 		    .detail("Limit", CLIENT_KNOBS->BULK_LOAD_FILE_POINTER_TOO_MANY);
 		throw unsupported_operation();
 	}
-	BulkLoadFilesWrittenRequest req;
-	req.arena.dependsOn(files.arena());
-	req.arena.dependsOn(id.arena());
-	req.id = id;
-	req.filesWritten = files;
-	if (BULKLOAD_DEBUG) {
-		fmt::print("MarkBulkLoadFilesWritten {0}: {1}\n", id.printable(), files.size());
-	}
-	return doBulkLoadRequest(
-	    Reference<DatabaseContext>::addRef(this), tenant, req, &BulkLoaderInterface::filesWrittenRequest);
+
+	return makeReservationAndDoRequest(Reference<DatabaseContext>::addRef(this), id, files, tenant);
 }
 
 // TSS stubs required by load balance, but these requests are not to storage servers
