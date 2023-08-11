@@ -2193,6 +2193,23 @@ inline void sampleWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& s
 	++stats.negativeSampleNum;
 }
 
+// edge-triggered dynamic empty version wait window emergency
+inline void emptyVersionWaitEdgeTriggeredEmergency(StorageServer* data) {
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+		return;
+
+	double emergencyThreshold =
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION * data->emptyVerionWaitLastWindow;
+	if (!data->emptyVersionWaitEmergencyTransition &&
+	    (std::max(0., data->emptyVersionWaitMutationStats.minSafeWaitWindow) < emergencyThreshold ||
+	     std::max(0., data->emptyVerionWaitLastWindow + data->emptyVersionWaitNonMutationStats.minSafeWaitWindow) <
+	         emergencyThreshold)) {
+		data->emptyVersionWaitEmergencyTransition = true;
+		data->emptyVersionWaitEmergencyNotify.send(Void());
+	}
+}
+
 ACTOR Future<Version> waitForVersionActor(StorageServer* data,
                                           Version version,
                                           SpanContext spanContext,
@@ -2263,17 +2280,7 @@ Future<Version> waitForVersion(StorageServer* data,
 		if (emptyVersionWaitSample) {
 			sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitMutationStats, version, versionArrivalTime);
 			sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, version, versionArrivalTime);
-			// edge-triggered dynamic empty version wait window emergency
-			double emergencyThreshold =
-			    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION * data->emptyVerionWaitLastWindow;
-			if (!data->emptyVersionWaitEmergencyTransition &&
-			    (std::max(0., data->emptyVersionWaitMutationStats.minSafeWaitWindow) < emergencyThreshold ||
-			     std::max(0.,
-			              data->emptyVerionWaitLastWindow + data->emptyVersionWaitNonMutationStats.minSafeWaitWindow) <
-			         emergencyThreshold)) {
-				data->emptyVersionWaitEmergencyTransition = true;
-				data->emptyVersionWaitEmergencyNotify.send(Void());
-			}
+			emptyVersionWaitEdgeTriggeredEmergency(data);
 		}
 		return version;
 	}
@@ -2285,6 +2292,7 @@ Future<Version> waitForVersion(StorageServer* data,
 	if (deterministicRandom()->random01() < 0.001) {
 		TraceEvent("WaitForVersion1000x").log();
 	}
+	emptyVersionWaitEdgeTriggeredEmergency(data);
 	return waitForVersionActor(data, version, spanContext, emptyVersionWaitSample, versionArrivalTime);
 }
 
