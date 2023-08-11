@@ -3748,10 +3748,14 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		} else {
 			fmt::print("{}", req.readVersion);
 		}
-		if (req.summarize) {
+		if (req.readOptions.present() && req.readOptions->summarize) {
 			fmt::print(" (summary)");
 		}
 		fmt::print("\n");
+	}
+
+	if (req.readOptions.present() && req.readOptions->debugID.present()) {
+		g_traceBatch.addEvent("BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.Start");
 	}
 
 	state Optional<Key> tenantPrefix;
@@ -3778,7 +3782,8 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		}
 
 		// TODO remove requirement for canCollapseBegin once we implement early replying
-		ASSERT(req.beginVersion == 0 || req.canCollapseBegin);
+		bool canCollapseBegin = !req.readOptions.present() || req.readOptions->canCollapseBegin;
+		ASSERT(req.beginVersion == 0 || canCollapseBegin);
 		if (req.beginVersion != 0) {
 			ASSERT(req.beginVersion > 0);
 		}
@@ -3823,12 +3828,23 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			throw wrong_shard_server();
 		}
 
+		if (req.readOptions.present() && req.readOptions->debugID.present()) {
+			g_traceBatch.addEvent(
+			    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.HasGranules");
+		}
+
 		// do work for each range
 		state Key readThrough = req.keyRange.begin;
+		state bool anyTimeTravel = false;
 		for (auto m : granules) {
 			if (readThrough >= m->keyRange.end) {
 				// previous read did time travel that already included this granule
 				continue;
+			}
+
+			if (req.readOptions.present() && req.readOptions->debugID.present()) {
+				g_traceBatch.addEvent(
+				    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.GranuleStart");
 			}
 			state Reference<GranuleMetadata> metadata = m;
 			// state Version granuleBeginVersion = req.beginVersion;
@@ -3848,6 +3864,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			state std::vector<std::pair<KeyRange, GranuleFiles>> rangeGranulePair;
 
 			if (req.readVersion < metadata->historyVersion) {
+				if (req.readOptions.present() && req.readOptions->debugID.present()) {
+					g_traceBatch.addEvent(
+					    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.BeforeTT");
+				}
+				anyTimeTravel = true;
 				CODE_PROBE(true, "Granule Time Travel Read");
 				// this is a time travel query, find previous granule
 				if (metadata->historyLoaded.canBeSet()) {
@@ -3884,7 +3905,10 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 						throw blob_granule_transaction_too_old();
 					}
 				}
-
+				if (req.readOptions.present() && req.readOptions->debugID.present()) {
+					g_traceBatch.addEvent(
+					    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.AfterTT");
+				}
 			} else {
 				if (req.readVersion < metadata->initialSnapshotVersion) {
 					// a snapshot file must have been pruned
@@ -3892,6 +3916,10 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 				}
 
 				CODE_PROBE(true, "Granule Active Read");
+				if (req.readOptions.present() && req.readOptions->debugID.present()) {
+					g_traceBatch.addEvent(
+					    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.BeforeVersion");
+				}
 				// this is an active granule query
 				loop {
 					// skip check since CF doesn't start for bare metal recovery mode
@@ -3940,6 +3968,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 					}
 				}
 
+				if (req.readOptions.present() && req.readOptions->debugID.present()) {
+					g_traceBatch.addEvent(
+					    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.AfterVersion");
+				}
+
 				// if feed was popped by another worker and BW only got empty versions, it wouldn't itself see that it
 				// got popped, but we can still reject the in theory this should never happen with other protections but
 				// it's a useful and inexpensive sanity check
@@ -3970,6 +4003,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			// granule is up to date, do read
 			ASSERT(metadata->cancelled.canBeSet());
 
+			if (req.readOptions.present() && req.readOptions->debugID.present()) {
+				g_traceBatch.addEvent(
+				    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.Responding");
+			}
+
 			for (auto& item : rangeGranulePair) {
 				Version granuleBeginVersion = req.beginVersion;
 				// Right now we force a collapse if the version range crosses granule boundaries, for simplicity
@@ -3998,21 +4036,19 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 					continue;
 				}
 
+				bool summarize = req.readOptions.present() && req.readOptions->summarize;
+				bool canCollapseBegin = !req.readOptions.present() || req.readOptions->canCollapseBegin;
+
 				int64_t deltaBytes = 0;
-				item.second.getFiles(granuleBeginVersion,
-				                     req.readVersion,
-				                     req.canCollapseBegin,
-				                     chunk,
-				                     rep.arena,
-				                     deltaBytes,
-				                     req.summarize);
+				item.second.getFiles(
+				    granuleBeginVersion, req.readVersion, canCollapseBegin, chunk, rep.arena, deltaBytes, summarize);
 				bwData->stats.readReqDeltaBytesReturned += deltaBytes;
 				if (granuleBeginVersion > 0 && chunk.snapshotFile.present()) {
 					CODE_PROBE(true, "collapsed begin version request for efficiency");
 					didCollapse = true;
 				}
 
-				if (!req.summarize) {
+				if (!summarize) {
 					chunk.includedVersion = req.beginVersion - 1;
 					if (chunk.snapshotFile.present()) {
 						chunk.includedVersion = std::max(chunk.includedVersion, chunk.snapshotFile.get().fileVersion);
@@ -4144,9 +4180,17 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		if (didCollapse) {
 			++bwData->stats.readRequestsCollapsed;
 		}
+		if (anyTimeTravel) {
+			++bwData->stats.readRequestsTimeTravel;
+		}
 
 		double duration = g_network->timer() - req.requestTime();
 		bwData->stats.readLatencySample.addMeasurement(duration);
+
+		if (req.readOptions.present() && req.readOptions->debugID.present()) {
+			g_traceBatch.addEvent(
+			    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.Done");
+		}
 
 		ASSERT(!req.reply.isSet());
 		req.reply.send(rep);
@@ -4156,6 +4200,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		if (e.code() == error_code_operation_cancelled) {
 			req.reply.sendError(wrong_shard_server());
 			throw;
+		}
+
+		if (req.readOptions.present() && req.readOptions->debugID.present()) {
+			g_traceBatch.addEvent(
+			    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.Error");
 		}
 
 		if (e.code() == error_code_wrong_shard_server) {
@@ -4174,7 +4223,7 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 ACTOR Future<Void> handleBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, BlobGranuleFileRequest req) {
 	++bwData->stats.readRequests;
 	++bwData->stats.activeReadRequests;
-	if (req.summarize) {
+	if (req.readOptions.present() && req.readOptions->summarize) {
 		++bwData->stats.summaryReads;
 	}
 	// scope this actor outside of the choose-when so we do the timeout block before cancelling actor
@@ -4189,6 +4238,10 @@ ACTOR Future<Void> handleBlobGranuleFileRequest(Reference<BlobWorkerData> bwData
 				           req.keyRange.begin.printable(),
 				           req.keyRange.end.printable(),
 				           req.readVersion);
+			}
+			if (req.readOptions.present() && req.readOptions->debugID.present()) {
+				g_traceBatch.addEvent(
+				    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.TimedOut");
 			}
 			++bwData->stats.granuleRequestTimeouts;
 		}

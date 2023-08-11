@@ -347,6 +347,9 @@ description is not currently required but encouraged.
     <Option name="skip_grv_cache" code="1102"
             description="Specifically instruct this transaction to NOT use cached GRV. Primarily used for the read version cache's background updater to avoid attempting to read a cached entry in specific situations."
             hidden="true"/>
+    <Option name="hybrid_read_dirty" code="1200"
+            description="Allow hybrid reads even while storage servers and hybrid blob data are inconsistent due to bulk load operations"
+            hidden="true"/>
     <Option name="authorization_token" code="2000"
             description="Attach given authorization token to the transaction such that subsequent tenant-aware requests are authorized"
             paramType="String" paramDescription="A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload."
