@@ -3056,6 +3056,15 @@ KeyRef Tenant::prefix() const {
 	return StringRef(reinterpret_cast<const uint8_t*>(&bigEndianId), TenantAPI::PREFIX_SIZE);
 }
 
+void Tenant::setOption(FDBTenantOptions::Option option, Optional<StringRef> value) {
+	const auto& optionProps = FDBTenantOptions::optionInfo.getMustExist(option);
+	// Currently there is only one tenant option, which is also for transaction defaults.
+	ASSERT(optionProps.defaultFor == 2000); /*FDBTransactionOptions::AUTHORIZATION_TOKEN*/
+	ASSERT(optionProps.sensitive);
+	sensitiveTransactionDefaults.addOption((FDBTransactionOptions::Option)optionProps.defaultFor,
+	                                       value.castTo<WipedString>());
+}
+
 std::string Tenant::description() const {
 	StringRef nameStr = name.castTo<TenantNameRef>().orDefault("<unspecified>"_sr);
 	if (lookupFuture.canGet()) {

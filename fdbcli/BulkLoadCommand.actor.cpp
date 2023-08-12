@@ -73,7 +73,7 @@ ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
 		fmt::print("Bulk Load {} is started successfully.\n", id.printable());
 	} else if (tokencmp(tokens[1], "stop")) {
 		if (tokens.size() != 3) {
-			fmt::print("Missing bulk load ID\n");
+			fmt::print("Missing bulk load ID.\n");
 			printUsage(tokens[0]);
 			return false;
 		}
@@ -82,7 +82,7 @@ ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
 		fmt::print("Bulk Load {} is stopped successfully.\n", id.printable());
 	} else if (tokencmp(tokens[1], "status")) {
 		if (tokens.size() != 3) {
-			fmt::print("Missing bulk load ID\n");
+			fmt::print("Missing bulk load ID.\n");
 			printUsage(tokens[0]);
 			return false;
 		}
@@ -98,9 +98,9 @@ ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
 		wait(localDb->cleanupBulkLoad(id, tenant));
 		fmt::print("Bulk Load {} is cleaned up successfully.\n", id.printable());
 	} else if (tokencmp(tokens[1], "list")) {
-		Standalone<VectorRef<BulkLoadIDRef>> list = wait(localDb->listBulkLoads(false, tenant));
+		Standalone<VectorRef<BulkLoadIDRef>> list = wait(localDb->listBulkLoads(true, tenant));
 		if (list.empty()) {
-			fmt::print("No active bulk load\n");
+			fmt::print("No active bulk loads.\n");
 		}
 		int i = 0;
 		for (auto& id : list) {

@@ -140,6 +140,7 @@ set(GENERATED_JAVA_FILES
   ${GENERATED_JAVA_DIR}/MutationType.java
   ${GENERATED_JAVA_DIR}/NetworkOptions.java
   ${GENERATED_JAVA_DIR}/StreamingMode.java
+  ${GENERATED_JAVA_DIR}/TenantOptions.java
   ${GENERATED_JAVA_DIR}/TransactionOptions.java
   ${GENERATED_JAVA_DIR}/FDBException.java)
 
