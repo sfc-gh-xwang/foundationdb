@@ -265,7 +265,7 @@ private:
 	ReadYourWritesTransaction(Transaction&& transaction,
 	                          Error const& deferredError,
 	                          UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList,
-	                          Optional<WipedString> authToken);
+	                          UniqueOrderedSensitiveOptionList<FDBTransactionOptions> const& trSensitiveOptionList);
 	void resetTimeout();
 	void updateConflictMap(KeyRef const& key, WriteMap::iterator& it); // pre: it.segmentContains(key)
 	void updateConflictMap(

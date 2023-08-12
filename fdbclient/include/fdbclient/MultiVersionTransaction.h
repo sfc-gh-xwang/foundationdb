@@ -803,7 +803,7 @@ private:
 	ThreadFuture<T> executeOperation(ThreadFuture<T> (ITransaction::*func)(Args...), Args&&... args);
 
 	UniqueOrderedOptionList<FDBTransactionOptions> persistentOptions;
-	UniqueOrderedOptionList<FDBTransactionOptions, true /*IsValueSensitive*/> sensitivePersistentOptions;
+	UniqueOrderedSensitiveOptionList<FDBTransactionOptions> sensitivePersistentOptions;
 };
 
 struct ClientDesc {
@@ -912,11 +912,11 @@ public:
 
 		// Export transaction default option enum-value pairs to given container
 		void exportSensitiveTransactionDefaultOptions(
-		    UniqueOrderedOptionList<FDBTransactionOptions, true>& outOptionList);
+		    UniqueOrderedSensitiveOptionList<FDBTransactionOptions>& outOptionList);
 		// Reapply these options to underlying tenant object whenever database connection changes
 		std::vector<std::pair<FDBTenantOptions::Option, Optional<WipedString>>> sensitiveOptions;
 		// Propagate these options as defaults when creating a transaction from this tenant
-		UniqueOrderedOptionList<FDBTransactionOptions, true /*IsValueSensitive*/> sensitiveTransactionDefaultOptions;
+		UniqueOrderedSensitiveOptionList<FDBTransactionOptions> sensitiveTransactionDefaultOptions;
 		Reference<MultiVersionDatabase> db;
 
 		Mutex tenantLock;

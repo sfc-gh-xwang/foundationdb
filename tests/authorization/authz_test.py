@@ -106,7 +106,6 @@ def loop_until_success(tr: fdb.Transaction, func):
             tr.on_error(e).wait()
 
 
-"""
 # test that token option on a transaction should survive soft transaction resets,
 # be cleared by hard transaction resets, and also clearable by setting empty value
 def test_token_option(cluster, default_tenant, tenant_tr_gen, token_claim_1h):
@@ -205,7 +204,6 @@ def test_simple_tenant_access(
 
         value = loop_until_success(tr, read_back_value)
         assert value == b"def", "tenant write transaction not visible"
-"""
 
 
 def test_token_as_tenant_option(
@@ -265,7 +263,6 @@ def test_token_as_tenant_option(
     assert value == b"def", "tenant write transaction not visible"
 
 
-"""
 def test_cross_tenant_access_disallowed(
     cluster, default_tenant, tenant_gen, tenant_tr_gen, token_claim_1h
 ):
@@ -919,4 +916,3 @@ def test_authz_not_enabled_trace(build_dir):
     ) as cluster:
         cluster.add_trace_check(check_authz_disablement_traces)
         # safe to drop cluster immediately. TempCluster.__enter__ returns only after fdbcli "create database" succeeds.
-"""

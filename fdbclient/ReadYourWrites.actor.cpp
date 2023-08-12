@@ -1573,18 +1573,19 @@ ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx)
   : ReadYourWritesTransaction(Transaction(cx),
                               cx->deferredError,
                               cx.getTransactionDefaults(),
-                              Optional<WipedString>()) {}
+                              UniqueOrderedSensitiveOptionList<FDBTransactionOptions>{}) {}
 
 ReadYourWritesTransaction::ReadYourWritesTransaction(Reference<Tenant> const& tenant)
   : ReadYourWritesTransaction(Transaction(tenant),
                               tenant->database()->deferredError,
                               tenant->database().getTransactionDefaults(),
-                              tenant->authToken) {}
+                              tenant->getSensitiveTransactionDefaults()) {}
 
-ReadYourWritesTransaction::ReadYourWritesTransaction(Transaction&& transaction,
-                                                     Error const& deferredError,
-                                                     UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList,
-                                                     Optional<WipedString> authToken)
+ReadYourWritesTransaction::ReadYourWritesTransaction(
+    Transaction&& transaction,
+    Error const& deferredError,
+    UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList,
+    UniqueOrderedSensitiveOptionList<FDBTransactionOptions> const& trSensitiveOptionList)
   : ISingleThreadTransaction(deferredError),
     tr(std::move(transaction)),
 
@@ -1595,9 +1596,8 @@ ReadYourWritesTransaction::ReadYourWritesTransaction(Transaction&& transaction,
     specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
     options(tr) {
 	std::copy(trOptionList.begin(), trOptionList.end(), std::back_inserter(persistentOptions));
-	if (authToken.present()) {
-		sensitivePersistentOptions.push_back({ FDBTransactionOptions::AUTHORIZATION_TOKEN, authToken });
-	}
+	std::copy(
+	    trSensitiveOptionList.begin(), trSensitiveOptionList.end(), std::back_inserter(sensitivePersistentOptions));
 	applyPersistentOptions();
 }
 
@@ -2697,8 +2697,9 @@ void ReadYourWritesTransaction::reset() {
 	          tr.getDatabase().getTransactionDefaults().end(),
 	          std::back_inserter(persistentOptions));
 	auto tenant = tr.getTenant();
-	if (tenant.present() && tenant.get()->authToken.present()) {
-		sensitivePersistentOptions.push_back({ FDBTransactionOptions::AUTHORIZATION_TOKEN, tenant.get()->authToken });
+	if (tenant.present()) {
+		const auto& sensitiveDefaults = tenant.get()->getSensitiveTransactionDefaults();
+		std::copy(sensitiveDefaults.begin(), sensitiveDefaults.end(), std::back_inserter(sensitivePersistentOptions));
 	}
 	resetRyow();
 }

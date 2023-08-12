@@ -125,6 +125,9 @@ public:
 	typename OptionList::const_iterator end() const { return options.cend(); }
 };
 
+template <class T>
+using UniqueOrderedSensitiveOptionList = UniqueOrderedOptionList<T, true>;
+
 #define ADD_OPTION_INFO(                                                                                               \
     type, var, name, comment, parameterComment, hasParameter, hidden, persistent, sensitive, defaultFor, paramType)    \
 	type::optionInfo.insert(                                                                                           \

@@ -264,12 +264,17 @@ public:
 	std::string description() const;
 
 	Optional<TenantName> name;
-	Optional<WipedString> authToken;
+
+	const UniqueOrderedSensitiveOptionList<FDBTransactionOptions>& getSensitiveTransactionDefaults() const {
+		return sensitiveTransactionDefaults;
+	}
 
 private:
 	mutable int64_t bigEndianId = -1;
 	Future<TenantLookupInfo> lookupFuture;
 	Future<Database> dbFuture;
+
+	UniqueOrderedSensitiveOptionList<FDBTransactionOptions> sensitiveTransactionDefaults;
 };
 
 template <>

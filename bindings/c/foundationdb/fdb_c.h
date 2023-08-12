@@ -392,7 +392,7 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_wait_bulk_load_complete(FDB
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_status(FDBDatabase* db);
 
-DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_tenant_set_option(FDBTenant* d,
+DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_tenant_set_option(FDBTenant* tenant,
                                                                FDBTenantOption option,
                                                                uint8_t const* value,
                                                                int value_length);

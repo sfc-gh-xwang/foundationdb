@@ -2145,7 +2145,7 @@ void MultiVersionTenant::TenantState::updateTenant() {
 }
 
 void MultiVersionTenant::TenantState::exportSensitiveTransactionDefaultOptions(
-    UniqueOrderedOptionList<FDBTransactionOptions, true>& outOptionList) {
+    UniqueOrderedSensitiveOptionList<FDBTransactionOptions>& outOptionList) {
 	MutexHolder holder(tenantLock);
 	for (const auto& [key, value] : sensitiveTransactionDefaultOptions) {
 		outOptionList.addOption(key, value);
