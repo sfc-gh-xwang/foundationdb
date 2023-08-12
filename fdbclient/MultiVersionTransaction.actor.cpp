@@ -1409,6 +1409,7 @@ MultiVersionTransaction::MultiVersionTransaction(Reference<MultiVersionDatabase>
 
 void MultiVersionTransaction::setDefaultOptions(UniqueOrderedOptionList<FDBTransactionOptions> options) {
 	MutexHolder holder(db->dbState->optionLock);
+	ThreadSpinLockHolder optionLockHolder(optionLock);
 	std::copy(options.begin(), options.end(), std::back_inserter(persistentOptions));
 }
 
@@ -1435,7 +1436,14 @@ void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
 	// need to set it.
 	if (setPersistentOptions || !newTr.transaction) {
 		Optional<StringRef> timeout;
-		for (auto const& option : persistentOptions) {
+		auto opts = decltype(persistentOptions){};
+		auto sensitiveOpts = decltype(sensitivePersistentOptions){};
+		{
+			ThreadSpinLockHolder optionLockHolder(optionLock);
+			opts = persistentOptions;
+			sensitiveOpts = sensitivePersistentOptions;
+		}
+		for (auto const& option : opts) {
 			if (option.first == FDBTransactionOptions::TIMEOUT) {
 				timeout = option.second.castTo<StringRef>();
 			} else if (newTr.transaction) {
@@ -1443,7 +1451,7 @@ void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
 			}
 		}
 		if (newTr.transaction) {
-			for (auto const& option : sensitivePersistentOptions) {
+			for (auto const& option : sensitiveOpts) {
 				newTr.transaction->setOption(option.first, option.second.castTo<StringRef>());
 			}
 		}
@@ -1728,6 +1736,7 @@ void MultiVersionTransaction::setOption(FDBTransactionOptions::Option option, Op
 	}
 
 	if (itr->second.persistent) {
+		ThreadSpinLockHolder holder(optionLock);
 		if (itr->second.sensitive)
 			sensitivePersistentOptions.emplace_back(option, value.castTo<WipedString>());
 		else
@@ -1886,8 +1895,11 @@ TypedApiResult<T> MultiVersionTransaction::abortableTimeoutResult(ThreadFuture<V
 }
 
 void MultiVersionTransaction::reset() {
-	persistentOptions.clear();
-	sensitivePersistentOptions.clear();
+	{
+		ThreadSpinLockHolder holder(optionLock);
+		persistentOptions.clear();
+		sensitivePersistentOptions.clear();
+	}
 
 	// Reset the timeout state
 	Reference<ThreadSingleAssignmentVar<Void>> prevTimeoutTsav;
