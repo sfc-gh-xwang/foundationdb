@@ -3405,6 +3405,7 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
     Optional<UID> debugID,
     UseProvisionalProxies useProvisionalProxies,
     Version version,
+    bool lockAware,
     bool* more) {
 	state Span span("NAPI:getBlobGranuleLocations"_loc, spanContext);
 	if (debugID.present())
@@ -3427,6 +3428,7 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
 			                                                              reverse,
 			                                                              justGranules,
 			                                                              version,
+			                                                              lockAware,
 			                                                              keys.arena()),
 			                               TaskPriority::DefaultPromiseEndpoint))) {
 				++cx->transactionBlobGranuleLocationRequestsCompleted;
@@ -3471,13 +3473,24 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Database c
                                                                       Optional<UID> const& debugID,
                                                                       UseProvisionalProxies useProvisionalProxies,
                                                                       Version version,
+                                                                      bool lockAware,
                                                                       bool* more) {
 
 	ASSERT(!keys.empty());
 
 	// FIXME: wrap this with location caching for blob workers like getKeyRangeLocations has
-	return getBlobGranuleLocations_internal(
-	    cx, tenant, keys, limit, reverse, justGranules, spanContext, debugID, useProvisionalProxies, version, more);
+	return getBlobGranuleLocations_internal(cx,
+	                                        tenant,
+	                                        keys,
+	                                        limit,
+	                                        reverse,
+	                                        justGranules,
+	                                        spanContext,
+	                                        debugID,
+	                                        useProvisionalProxies,
+	                                        version,
+	                                        lockAware,
+	                                        more);
 }
 
 Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<TransactionState> trState,
@@ -3508,10 +3521,10 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<
 	                               reverse,
 	                               justGranules,
 	                               trState->spanContext,
-	                               trState->readOptions.present() ? trState->readOptions.get().debugID
-	                                                              : Optional<UID>(),
+	                               trState->readOptions.present() ? trState->readOptions->debugID : Optional<UID>(),
 	                               trState->useProvisionalProxies,
 	                               version,
+	                               trState->readOptions.present() ? trState->readOptions->lockAware : false,
 	                               more);
 }
 

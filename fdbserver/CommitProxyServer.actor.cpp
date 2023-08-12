@@ -2935,7 +2935,9 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 		}
 
 		// check on the logical range + tenant id
-		wait(checkTenantLock(commitData, req.tenant.tenantId, minVersion, keyRange));
+		if (!req.lockAware) {
+			wait(checkTenantLock(commitData, req.tenant.tenantId, minVersion, keyRange));
+		}
 
 		if (req.tenant.hasTenant()) {
 			keyRange = keyRange.withPrefix(req.tenant.prefix.get(), req.arena);
