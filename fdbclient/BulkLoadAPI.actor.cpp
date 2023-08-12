@@ -709,7 +709,7 @@ ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoadsExternalActor
 
 Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listAllBulkLoads(bool onlyActive,
                                                                                Optional<Reference<Tenant>> tenant) {
-	return listBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenant);
+	return listAllBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenant);
 }
 
 ACTOR Future<BulkLoadStatus> getBulkLoadStatusInternalActor(Reference<DatabaseContext> db,
