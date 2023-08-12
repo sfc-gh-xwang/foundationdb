@@ -31,6 +31,7 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/ServerKnobs.h"
+#include "fdbclient/TenantManagement.actor.h"
 #include "fdbrpc/simulator.h"
 #include "flow/CodeProbe.h"
 #include "flow/FastRef.h"
@@ -5933,9 +5934,109 @@ ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
 	}
 }
 
+ACTOR Future<int64_t> getStorageUsage(Database cx, BulkLoadIDKey idKey, TenantGroupName group) {
+	state std::vector<std::pair<TenantName, int64_t>> tenants = wait(TenantAPI::listTenantGroupTenants(
+	    cx.getReference(), group, ""_sr, "\xff\xff"_sr, CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER + 1));
+
+	state int64_t usage = 0;
+	state int idx = 0;
+	for (; idx < tenants.size(); idx++) {
+		state int64_t tenantId = tenants[idx].second;
+		state ReadYourWritesTransaction tr(makeReference<Tenant>(cx, tenantId));
+		loop {
+			try {
+				state int64_t size = wait(tr.getEstimatedRangeSizeBytes(normalKeys));
+				usage += size;
+				break;
+			} catch (Error& e) {
+				if (e.code() == error_code_tenant_not_found) {
+					break;
+				} else {
+					TraceEvent(SevDebug, "BulkLoadReservationGetUsageError")
+					    .error(e)
+					    .detail("BulkLoadId", idKey.second)
+					    .detail("TenantId", tenantId);
+					wait(tr.onError(e));
+				}
+			}
+		}
+	}
+	return usage;
+}
+
+// TODO: Improve tracing: trace the stats when returning true, and consolidate tracing to avoid
+// code duplication.
+ACTOR Future<bool> makeReservationForBulkLoad(Reference<ReadYourWritesTransaction> tr,
+                                              BulkLoadIDKey idKey,
+                                              Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
+                                              TenantGroupName group,
+                                              int64_t usage) {
+	// Get total file size for this bulk load
+	state int64_t bulkLoadSize = 0;
+	for (const auto& file : files) {
+		bulkLoadSize += file.logicalSize;
+	}
+
+	if (bulkLoadSize == 0) {
+		TraceEvent(SevDebug, "BulkLoadReservationEmptyLoad");
+		return true;
+	}
+
+	// Get storage quota for this tenant group
+	state Optional<int64_t> quota = wait(TenantMetadata::storageQuota().get(tr, group));
+	if (!quota.present()) {
+		TraceEvent(SevDebug, "BulkLoadReservationNoQuota");
+		// Track the reservations even if a quota is currently not set. Set `quota` to max to continue.
+		quota = std::numeric_limits<int64_t>::max();
+	}
+
+	if (bulkLoadSize + usage > quota.get()) {
+		TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
+		    .detail("BulkLoadId", idKey.second)
+		    .detail("TenantGroup", group)
+		    .detail("Quota", quota.get())
+		    .detail("BulkLoadSize", bulkLoadSize)
+		    .detail("TenantGroupCurrentUsage", usage);
+		return false;
+	}
+
+	// Get total reservations for this tenant group and add reservation for this bulk load
+	state Optional<int64_t> reservation = wait(BulkLoadMetadata::reservationMap().get(tr, group));
+	if (reservation.present() && bulkLoadSize + usage + reservation.get() > quota.get()) {
+		TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
+		    .detail("BulkLoadId", idKey.second)
+		    .detail("TenantGroup", group)
+		    .detail("Quota", quota.get())
+		    .detail("BulkLoadSize", bulkLoadSize)
+		    .detail("TenantGroupCurrentUsage", usage)
+		    .detail("PriorReservations", reservation);
+		return false;
+	} else {
+		if (!reservation.present()) {
+			TraceEvent(SevDebug, "BulkLoadReservationNoPriorReservations");
+			BulkLoadMetadata::reservationMap().set(tr, group, bulkLoadSize);
+		} else {
+			BulkLoadMetadata::reservationMap().set(tr, group, reservation.get() + bulkLoadSize);
+		}
+		return true;
+	}
+}
+
 ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
                                      BulkLoadIDKey idKey,
                                      Optional<Reference<Tenant>> tenant) {
+	// Get current estimated storage usage for this tenant group.
+	// This is expensive and is intentionally done outside the scope of `tr`, so it may be a bit stale.
+	state Optional<TenantGroupName> tenantGroup;
+	state int64_t usage = 0;
+	if (CLIENT_KNOBS->BULK_LOAD_STORAGE_RESERVATION_ENABLED) {
+		if (tenant.present() && tenant.get()->tenantGroup().present()) {
+			tenantGroup = tenant.get()->tenantGroup().get();
+			state int64_t _usage = wait(getStorageUsage(bmData->db, idKey, tenantGroup.get()));
+			usage = _usage;
+		}
+	}
+
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bmData->db);
 	state Optional<BulkLoadInfo> info;
 	state bool deletedFiles = false;
@@ -5996,7 +6097,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 			}
 
 			// convert to written pointers for validation
-			Standalone<VectorRef<BulkLoadWrittenFileRef>> filesToValidate;
+			state Standalone<VectorRef<BulkLoadWrittenFileRef>> filesToValidate;
 			filesToValidate.reserve(filesToValidate.arena(), writtenPointers.results.size());
 			for (auto& it : writtenPointers.results) {
 				ASSERT(it.second.createdPointer.type == BulkLoadFileType::SNAPSHOT);
@@ -6008,6 +6109,20 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 				f.logicalSize = it.second.logicalSize;
 				f.physicalSize = it.second.physicalSize;
 				filesToValidate.push_back(filesToValidate.arena(), f);
+			}
+
+			if (CLIENT_KNOBS->BULK_LOAD_STORAGE_RESERVATION_ENABLED && tenantGroup.present()) {
+				state bool reserved =
+				    wait(makeReservationForBulkLoad(tr, idKey, filesToValidate, tenantGroup.get(), usage));
+				if (!reserved) {
+					TraceEvent(SevWarn, "BulkLoadReservationFailed").detail("BulkLoadID", idKey.second);
+					// TODO: This causes the bulk load to be aborted. In the future, we could consider instead
+					// throwing an error for reservation failure, which could allow a caller to free up space
+					// or increase quota then retry this state change (without having to retry the files),
+					// or clean up the bulk load.
+					return false;
+				}
+				TraceEvent(SevDebug, "BulkLoadReservationSucceeded").detail("BulkLoadID", idKey.second);
 			}
 
 			try {
@@ -6157,7 +6272,12 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKe
 	}
 	state Optional<Reference<Tenant>> tenant;
 	if (idKey.first != TenantInfo::INVALID_TENANT) {
-		tenant = makeReference<Tenant>(bmData->db, idKey.first);
+		state Optional<TenantMapEntry> entry = wait(TenantAPI::tryGetTenant(bmData->db.getReference(), idKey.first));
+		if (entry.present()) {
+			tenant = makeReference<Tenant>(bmData->db, entry.get());
+		} else {
+			tenant = makeReference<Tenant>(bmData->db, idKey.first);
+		}
 	}
 	state BulkLoadID id = idKey.second;
 	if (state == BulkLoadStatus::State::ABORTED) {
