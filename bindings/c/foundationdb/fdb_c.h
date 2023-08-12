@@ -414,6 +414,11 @@ DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_bulk_load_mark_files_writte
 
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_status(FDBDatabase* db);
 
+DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_tenant_set_option(FDBTenant* tenant,
+                                                               FDBTenantOption option,
+                                                               uint8_t const* value,
+                                                               int value_length);
+
 DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant);
 
 DLLEXPORT WARN_UNUSED_RESULT fdb_error_t fdb_tenant_create_transaction(FDBTenant* tenant,

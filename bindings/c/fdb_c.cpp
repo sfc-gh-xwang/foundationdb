@@ -895,6 +895,14 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_statu
 	return (FDBFuture*)(DB(db)->getClientStatus().extractPtr());
 }
 
+extern "C" DLLEXPORT fdb_error_t fdb_tenant_set_option(FDBTenant* tenant,
+                                                       FDBTenantOption option,
+                                                       uint8_t const* value,
+                                                       int value_length) {
+	CATCH_AND_RETURN(TENANT(tenant)->setOption((FDBTenantOptions::Option)option,
+	                                           value ? StringRef(value, value_length) : Optional<StringRef>()););
+}
+
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_client_status(FDBTenant* tenant) {
 	return (FDBFuture*)(TENANT(tenant)->getClientStatus().extractPtr());
 }
