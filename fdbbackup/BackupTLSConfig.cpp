@@ -85,5 +85,13 @@ bool BackupTLSConfig::setupTLS() {
 			return false;
 		}
 	}
+	if (tlsRequired) {
+		try {
+			setNetworkOption(FDBNetworkOptions::TLS_REQUIRED, "true"_sr);
+		} catch (Error& e) {
+			std::cerr << "ERROR: cannot set TLS required to " << tlsRequired << " (" << e.what() << ")\n";
+			return false;
+		}
+	}
 	return true;
 }

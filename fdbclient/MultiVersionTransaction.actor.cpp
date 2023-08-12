@@ -1422,6 +1422,7 @@ MultiVersionTransaction::MultiVersionTransaction(Reference<MultiVersionDatabase>
 }
 
 void MultiVersionTransaction::setDefaultOptions() {
+	ThreadSpinLockHolder optionLockHolder(optionLock);
 	if (tenant.present()) {
 		tenant.get()->tenantState->exportSensitiveTransactionDefaultOptions(sensitivePersistentOptions);
 	}
@@ -1451,7 +1452,14 @@ void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
 	// need to set it.
 	if (setPersistentOptions || !newTr.transaction) {
 		Optional<StringRef> timeout;
-		for (auto const& option : persistentOptions) {
+		auto opts = decltype(persistentOptions){};
+		auto sensitiveOpts = decltype(sensitivePersistentOptions){};
+		{
+			ThreadSpinLockHolder optionLockHolder(optionLock);
+			opts = persistentOptions;
+			sensitiveOpts = sensitivePersistentOptions;
+		}
+		for (auto const& option : opts) {
 			if (option.first == FDBTransactionOptions::TIMEOUT) {
 				timeout = option.second.castTo<StringRef>();
 			} else if (newTr.transaction) {
@@ -1459,7 +1467,7 @@ void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
 			}
 		}
 		if (newTr.transaction) {
-			for (auto const& option : sensitivePersistentOptions) {
+			for (auto const& option : sensitiveOpts) {
 				newTr.transaction->setOption(option.first, option.second.castTo<StringRef>());
 			}
 		}
@@ -1744,7 +1752,7 @@ void MultiVersionTransaction::setOption(FDBTransactionOptions::Option option, Op
 	}
 
 	if (itr->second.persistent) {
-		ThreadSpinLockHolder holder(lock);
+		ThreadSpinLockHolder holder(optionLock);
 		if (itr->second.sensitive) {
 			sensitivePersistentOptions.addOption(option, value.castTo<WipedString>());
 		} else {
@@ -1904,8 +1912,11 @@ TypedApiResult<T> MultiVersionTransaction::abortableTimeoutResult(ThreadFuture<V
 }
 
 void MultiVersionTransaction::reset() {
-	persistentOptions.clear();
-	sensitivePersistentOptions.clear();
+	{
+		ThreadSpinLockHolder holder(optionLock);
+		persistentOptions.clear();
+		sensitivePersistentOptions.clear();
+	}
 
 	// Reset the timeout state
 	Reference<ThreadSingleAssignmentVar<Void>> prevTimeoutTsav;

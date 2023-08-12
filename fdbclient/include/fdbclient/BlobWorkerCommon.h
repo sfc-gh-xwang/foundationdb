@@ -41,6 +41,7 @@ struct BlobWorkerStats {
 	Counter granuleRequestTimeouts;
 	Counter readRequestsWithBegin;
 	Counter readRequestsCollapsed;
+	Counter readRequestsTimeTravel;
 	Counter flushGranuleReqs;
 	Counter compressionBytesRaw;
 	Counter compressionBytesFinal;
@@ -109,6 +110,7 @@ struct BlobWorkerStats {
 	    granuleRequestTimeouts("GranuleRequestTimeouts", cc),
 	    readRequestsWithBegin("ReadRequestsWithBegin", cc),
 	    readRequestsCollapsed("ReadRequestsCollapsed", cc),
+	    readRequestsTimeTravel("ReadRequestsTimeTravel", cc),
 	    flushGranuleReqs("FlushGranuleReqs", cc),
 	    compressionBytesRaw("CompressionBytesRaw", cc),
 	    compressionBytesFinal("CompressionBytesFinal", cc),

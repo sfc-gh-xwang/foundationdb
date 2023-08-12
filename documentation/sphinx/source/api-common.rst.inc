@@ -612,7 +612,7 @@
 
     Sets the passphrase for encrypted private key. Password should be set before setting the key for the password to be used.
 
-.. |option-tls-disable-plaintext-connection| replace::
+.. |option-tls-required| replace::
 
     Disable non-TLS connections from the client, allowing only TLS connections. Plaintext connections will timeout.
 

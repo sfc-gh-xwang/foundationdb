@@ -117,11 +117,10 @@ struct BlobGranuleFileRequest : TimedRequest {
 	KeyRangeRef keyRange;
 	Version beginVersion = 0;
 	Version readVersion;
-	bool canCollapseBegin = true;
 	TenantInfo tenantInfo;
-	bool summarize = false;
 	// default to max (no limit)
 	int64_t granuleMutationBytesLimit = std::numeric_limits<int64_t>::max();
+	Optional<HybridReadOptions> readOptions;
 	ReplyPromise<BlobGranuleFileReply> reply;
 
 	BlobGranuleFileRequest() {}
@@ -130,16 +129,8 @@ struct BlobGranuleFileRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar,
-		           keyRange,
-		           beginVersion,
-		           readVersion,
-		           canCollapseBegin,
-		           tenantInfo,
-		           summarize,
-		           granuleMutationBytesLimit,
-		           reply,
-		           arena);
+		serializer(
+		    ar, keyRange, beginVersion, readVersion, tenantInfo, granuleMutationBytesLimit, readOptions, reply, arena);
 	}
 };
 

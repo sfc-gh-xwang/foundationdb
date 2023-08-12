@@ -758,6 +758,7 @@ private:
 	const Reference<MultiVersionDatabase> db;
 	const Optional<Reference<MultiVersionTenant>> tenant;
 	ThreadSpinLock lock;
+	ThreadSpinLock optionLock;
 
 	struct TransactionInfo {
 		Reference<ITransaction> transaction;

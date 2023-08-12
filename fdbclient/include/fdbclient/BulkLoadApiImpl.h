@@ -17,5 +17,7 @@ Future<ApiResult> bulkLoadAllFilesRegistered(DatabaseContext* db, ApiRequest req
 Future<ApiResult> abortBulkLoad(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
 Future<ApiResult> cleanupBulkLoad(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
 Future<ApiResult> waitBulkLoadComplete(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
+Future<ApiResult> bulkLoadFilesToWrite(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
+Future<ApiResult> bulkLoadFilesWritten(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
 
 #endif

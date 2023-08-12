@@ -35,6 +35,11 @@ ReadRangeApiResult loadAndMaterializeBlobGranules(const ReadBGDescriptionsApiRes
                                                   const FDBReadBlobGranuleContext* granuleContext,
                                                   ApiVersion apiVersion);
 
+ThreadFuture<Value> writeBlobGranulesSnapshotFileV1(VectorRef<KeyValueRef> rows,
+                                                    int8_t compression,
+                                                    FDBBGTenantPrefix const* tenant_prefix,
+                                                    FDBBGEncryptionCtxV2 const* encryption_ctx);
+
 Future<ApiResult> readBlobGranuleDescriptions(ISingleThreadTransaction* tr, ApiRequest req);
 
 struct ReadBGDescriptionsApiResultV1 {
@@ -45,5 +50,6 @@ struct ReadBGDescriptionsApiResultV1 {
 };
 
 ReadBGDescriptionsApiResultV1 convertBlobGranulesDescriptionsToV1(ReadBGDescriptionsApiResult input) noexcept;
+void nativeToApiBGEncryptionKeyCtx(FDBBGEncryptionCtxV2* dest, const BlobGranuleCipherKeysCtx& source, Arena& ar);
 
 #endif
