@@ -2696,9 +2696,8 @@ void ReadYourWritesTransaction::reset() {
 	std::copy(tr.getDatabase().getTransactionDefaults().begin(),
 	          tr.getDatabase().getTransactionDefaults().end(),
 	          std::back_inserter(persistentOptions));
-	auto tenant = tr.getTenant();
-	if (tenant.present()) {
-		const auto& sensitiveDefaults = tenant.get()->getSensitiveTransactionDefaults();
+	if (tr.trState->hasTenant(ResolveDefaultTenant::False)) {
+		const auto& sensitiveDefaults = tr.getTenant().get()->getSensitiveTransactionDefaults();
 		std::copy(sensitiveDefaults.begin(), sensitiveDefaults.end(), std::back_inserter(sensitivePersistentOptions));
 	}
 	resetRyow();
