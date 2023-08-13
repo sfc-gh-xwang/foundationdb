@@ -475,7 +475,6 @@ TEST_CASE("/fdbclient/bulkload/validateBulkLoadWrittenPointers") {
 	Standalone<StringRef> keyZ = "z"_sr;
 	BulkLoadID id = "bulkloadid"_sr;
 	BulkLoadInfo info;
-	info.tenantId = 1;
 	info.keyRange = KeyRangeRef(keyA, keyD);
 
 	// check default pointer is valid

@@ -264,7 +264,8 @@ private:
 	// Only used to reduce the duplicated code in public constructors
 	ReadYourWritesTransaction(Transaction&& transaction,
 	                          Error const& deferredError,
-	                          UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList);
+	                          UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList,
+	                          UniqueOrderedSensitiveOptionList<FDBTransactionOptions> const& trSensitiveOptionList);
 	void resetTimeout();
 	void updateConflictMap(KeyRef const& key, WriteMap::iterator& it); // pre: it.segmentContains(key)
 	void updateConflictMap(

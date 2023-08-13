@@ -399,10 +399,15 @@ bool isHealthySingleton(ClusterControllerData* self,
 	}
 	// If any of the following conditions are met, we will switch the singleton's process:
 	// - if the current proc is used by some non-master, non-singleton role
+	//    - this also requires that the singleton being checked is not the EKP.
+	//      The EKP is special in that it does not prefer to colocate with the
+	//      sequencer, because it is recruited before the sequencer
 	// - if the current fitness is less than optimal (lower fitness is better)
 	// - if currently at peak fitness but on same process as master, and the new worker is on different process
 	bool shouldRerecruit =
-	    self->isUsedNotMaster(currWorker.details.interf.locality.processId()) || bestFitness < currFitness ||
+	    (!std::is_same_v<SingletonClass, EncryptKeyProxySingleton> &&
+	     self->isUsedNotMaster(currWorker.details.interf.locality.processId())) ||
+	    bestFitness < currFitness ||
 	    (currFitness == bestFitness && currWorker.details.interf.locality.processId() == self->masterProcessId &&
 	     newWorker.interf.locality.processId() != self->masterProcessId);
 	if (shouldRerecruit) {

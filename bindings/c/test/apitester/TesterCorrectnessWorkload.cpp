@@ -21,15 +21,24 @@
 #include "TesterUtil.h"
 #include "test/fdb_api.hpp"
 #include <memory>
+#include <set>
 #include <fmt/format.h>
 
 namespace FdbApiTester {
 
 class ApiCorrectnessWorkload : public ApiWorkload {
 public:
-	ApiCorrectnessWorkload(const WorkloadConfig& config) : ApiWorkload(config) {}
+	ApiCorrectnessWorkload(const WorkloadConfig& config) : ApiWorkload(config) {
+		validateBusynessMetrics = config.getBoolOption("validateBusynessMetrics", false);
+	}
 
 private:
+	bool validateBusynessMetrics;
+	int64_t rangeBusynessValueReads = 0;
+	int64_t rangeBusynessKeyReads = 0;
+	int64_t rangeBusynessRangeReads = 0;
+	TimePoint testStart;
+
 	enum OpType {
 		OP_INSERT,
 		OP_GET,
@@ -41,12 +50,38 @@ private:
 		OP_LAST = OP_COMMIT_READ
 	};
 
+	// Read required is used to indicate whether we expect a read to be sent to the cluster
+	// Reads that could use the RYW cache (reading the same key twice in a transaction) or that have
+	// an empty range, etc. might not communicate the server and should pass false.
+	void checkReadResult(fdb::Future const& readFuture, bool readRequired, int64_t& rangeBusynessCounter) {
+		if (apiVersion >= 800000) {
+			fdb::ReadMetrics readMetrics = fdb::ReadMetrics::fromFuture(readFuture);
+
+			ASSERT(readMetrics.serverBusyness >= 0);
+			ASSERT(readMetrics.serverBusyness <= 1);
+			ASSERT(readMetrics.rangeBusyness >= 0);
+			ASSERT(readMetrics.rangeBusyness <= 1);
+
+			if (validateBusynessMetrics && readRequired && microsecToSec(timeElapsedInUs(testStart)) > 5) {
+				ASSERT(readMetrics.serverBusyness > 0);
+			}
+
+			if (readMetrics.rangeBusyness > 0) {
+				++rangeBusynessCounter;
+			}
+		}
+	}
+
 	void randomCommitReadOp(TTaskFct cont, std::optional<int> tenantId) {
 		int numKeys = Random::get().randomInt(1, maxKeysPerTransaction);
 		auto kvPairs = std::make_shared<std::vector<fdb::KeyValue>>();
+		std::set<fdb::Key> deduplicatedKeys;
 		for (int i = 0; i < numKeys; i++) {
-			kvPairs->push_back(fdb::KeyValue{ randomKey(readExistingKeysRatio, tenantId), randomValue() });
+			fdb::Key k = randomKey(readExistingKeysRatio, tenantId);
+			kvPairs->push_back(fdb::KeyValue{ k, randomValue() });
+			deduplicatedKeys.insert(k);
 		}
+		bool allKeysUnique = deduplicatedKeys.size() == numKeys;
 		execTransaction(
 		    [kvPairs](auto ctx) {
 			    for (const fdb::KeyValue& kv : *kvPairs) {
@@ -55,22 +90,23 @@ private:
 			    }
 			    ctx->commit();
 		    },
-		    [this, kvPairs, cont, tenantId]() {
+		    [this, kvPairs, cont, tenantId, allKeysUnique]() {
 			    for (const fdb::KeyValue& kv : *kvPairs) {
 				    stores[tenantId].set(kv.key, kv.value);
 			    }
 			    auto results = std::make_shared<std::vector<std::optional<fdb::Value>>>();
 			    execTransaction(
-			        [kvPairs, results](auto ctx) {
+			        [kvPairs, results, allKeysUnique, this](auto ctx) {
 				        ctx->tx().setOption(FDB_TR_OPTION_USE_GRV_CACHE);
 				        auto futures = std::make_shared<std::vector<fdb::Future>>();
 				        for (const auto& kv : *kvPairs) {
 					        futures->push_back(ctx->tx().get(kv.key, false));
 				        }
-				        ctx->continueAfterAll(*futures, [ctx, futures, results]() {
+				        ctx->continueAfterAll(*futures, [ctx, futures, results, allKeysUnique, this]() {
 					        results->clear();
 					        for (auto& f : *futures) {
 						        results->push_back(copyValueRef(f.get<fdb::future_var::ValueRef>()));
+						        checkReadResult(f, allKeysUnique, rangeBusynessValueReads);
 					        }
 					        ASSERT(results->size() == futures->size());
 					        ctx->done();
@@ -100,19 +136,24 @@ private:
 		int numKeys = Random::get().randomInt(1, maxKeysPerTransaction);
 		auto keys = std::make_shared<std::vector<fdb::Key>>();
 		auto results = std::make_shared<std::vector<std::optional<fdb::Value>>>();
+		std::set<fdb::Key> deduplicatedKeys;
 		for (int i = 0; i < numKeys; i++) {
-			keys->push_back(randomKey(readExistingKeysRatio, tenantId));
+			fdb::Key k = randomKey(readExistingKeysRatio, tenantId);
+			keys->push_back(k);
+			deduplicatedKeys.insert(k);
 		}
+		bool allKeysUnique = deduplicatedKeys.size() == numKeys;
 		execTransaction(
-		    [keys, results](auto ctx) {
+		    [keys, results, allKeysUnique, this](auto ctx) {
 			    auto futures = std::make_shared<std::vector<fdb::Future>>();
 			    for (const auto& key : *keys) {
 				    futures->push_back(ctx->tx().get(key, false));
 			    }
-			    ctx->continueAfterAll(*futures, [ctx, futures, results]() {
+			    ctx->continueAfterAll(*futures, [ctx, futures, results, allKeysUnique, this]() {
 				    results->clear();
 				    for (auto& f : *futures) {
 					    results->push_back(copyValueRef(f.get<fdb::future_var::ValueRef>()));
+					    checkReadResult(f, allKeysUnique, rangeBusynessValueReads);
 				    }
 				    ASSERT(results->size() == futures->size());
 				    ctx->done();
@@ -153,17 +194,18 @@ private:
 			keysWithSelectors->back().second.key = keysWithSelectors->back().first.data();
 		}
 		execTransaction(
-		    [keysWithSelectors, results](auto ctx) {
+		    [keysWithSelectors, results, numKeys, this](auto ctx) {
 			    auto futures = std::make_shared<std::vector<fdb::Future>>();
 			    for (const auto& keyWithSelector : *keysWithSelectors) {
 				    auto key = keyWithSelector.first;
 				    auto selector = keyWithSelector.second;
 				    futures->push_back(ctx->tx().getKey(selector, false));
 			    }
-			    ctx->continueAfterAll(*futures, [ctx, futures, results]() {
+			    ctx->continueAfterAll(*futures, [ctx, futures, results, numKeys, this]() {
 				    results->clear();
 				    for (auto& f : *futures) {
 					    results->push_back(fdb::Key(f.get<fdb::future_var::KeyRef>()));
+					    checkReadResult(f, numKeys == 1, rangeBusynessKeyReads);
 				    }
 				    ASSERT(results->size() == futures->size());
 				    ctx->done();
@@ -203,6 +245,8 @@ private:
 	                  fdb::KeySelector begin,
 	                  fdb::Key endKey,
 	                  std::shared_ptr<std::vector<fdb::KeyValue>> results) {
+		bool willReadThrough = fdb::KeyRef(begin.key, begin.keyLength) < endKey;
+		fdb::Key beginKey(begin.key, begin.keyLength);
 		auto f = ctx->tx().getRange(begin,
 		                            fdb::key_select::firstGreaterOrEqual(endKey),
 		                            0 /*limit*/,
@@ -211,8 +255,9 @@ private:
 		                            0 /*iteration*/,
 		                            false /*snapshot*/,
 		                            false /*reverse*/);
-		ctx->continueAfter(f, [this, ctx, f, endKey, results]() {
+		ctx->continueAfter(f, [this, ctx, f, beginKey, endKey, results, willReadThrough]() {
 			auto out = copyKeyValueArray(f.get());
+			checkReadResult(f, willReadThrough, rangeBusynessRangeReads);
 			results->insert(results->end(), out.first.begin(), out.first.end());
 			const bool more = out.second;
 			if (more) {
@@ -261,7 +306,12 @@ private:
 		    getTenant(tenantId));
 	}
 
-	void randomOperation(TTaskFct cont) {
+	void runTests() override {
+		testStart = timeNow();
+		ApiWorkload::runTests();
+	}
+
+	void randomOperation(TTaskFct cont) override {
 		std::optional<int> tenantId = randomTenant();
 		OpType txType = (stores[tenantId].size() == 0) ? OP_INSERT : (OpType)Random::get().randomInt(0, OP_LAST);
 
@@ -287,6 +337,14 @@ private:
 		case OP_COMMIT_READ:
 			randomCommitReadOp(cont, tenantId);
 			break;
+		}
+	}
+
+	void operationsCompleted() override {
+		if (validateBusynessMetrics && apiVersion >= 800000) {
+			ASSERT(rangeBusynessValueReads > 0);
+			ASSERT(rangeBusynessKeyReads > 0);
+			ASSERT(rangeBusynessRangeReads > 0);
 		}
 	}
 };

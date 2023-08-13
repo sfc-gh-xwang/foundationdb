@@ -41,6 +41,8 @@
 namespace metacluster::util {
 
 FDB_BOOLEAN_PARAM(SkipMetaclusterCreation);
+FDB_BOOLEAN_PARAM(WaitForMetaclusterCreation);
+FDB_BOOLEAN_PARAM(WaitForDataClusterRegistration);
 
 // Helper function to compute metacluster capacity by passing the result of metacluster::listClusters
 std::pair<ClusterUsage, ClusterUsage> metaclusterCapacity(std::map<ClusterName, DataClusterMetadata> const& clusters);
@@ -63,7 +65,9 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
     Database db,
     Optional<int64_t> tenantIdPrefix = Optional<int64_t>(),
     Optional<DataClusterEntry> dataClusterConfig = DataClusterEntry(),
-    SkipMetaclusterCreation skipMetaclusterCreation = SkipMetaclusterCreation::False);
+    SkipMetaclusterCreation skipMetaclusterCreation = SkipMetaclusterCreation::False,
+    WaitForMetaclusterCreation waitForMetaclusterCreation = WaitForMetaclusterCreation::False,
+    WaitForDataClusterRegistration waitForDataClusterRegistration = WaitForDataClusterRegistration::False);
 
 ACTOR Future<Void> decommissionSimulatedMetacluster(SimulatedMetacluster metacluster);
 
