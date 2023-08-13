@@ -54,6 +54,7 @@
 #include "flow/CompressionUtils.h"
 #include "flow/EncryptUtils.h"
 #include "flow/Error.h"
+#include "flow/Platform.h"
 #include "flow/flow.h"
 #include "flow/IRandom.h"
 #include "flow/network.h"
@@ -5265,8 +5266,8 @@ ACTOR Future<Void> runReadDrivenCompaction(Reference<BlobWorkerData> bwData) {
 		}
 		processedAll = futures.empty();
 		if (!futures.empty()) {
-			// wait at least one second to throttle this actor a bit
-			wait(waitForAll(futures) && delay(1.0));
+			// wait at least BLOB_WORKER_RDC_MIN_WAVE_DELAY seconds to throttle this actor a bit
+			wait(waitForAll(futures) && delay(SERVER_KNOBS->BLOB_WORKER_RDC_MIN_WAVE_DELAY));
 		}
 	}
 }
