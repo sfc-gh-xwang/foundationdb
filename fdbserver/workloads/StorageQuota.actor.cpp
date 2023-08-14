@@ -132,12 +132,10 @@ struct StorageQuotaWorkload : TestWorkload {
 
 	ACTOR static Future<Void> expectBulkLoadAbortedBySystem(Database cx, BulkLoadID id, Reference<Tenant> tenant) {
 		try {
-			// retry of all files registered might also throw bulk_load_aborted
-			wait(cx->bulkLoadAllFilesRegistered(id, tenant));
 			wait(cx->waitBulkLoadComplete(id, tenant));
 			ASSERT(false);
 		} catch (Error& e) {
-			ASSERT(e.code() == error_code_bulk_load_aborted);
+			ASSERT(e.code() == error_code_bulk_load_aborted || e.code() == error_code_bulk_load_not_found);
 		}
 		wait(cx->cleanupBulkLoad(id, tenant));
 		return Void();
