@@ -164,27 +164,17 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 			printUsage(tokens[0]);
 			return false;
 		}
-		fmt::print("{0} blobbify range for [{1} - {2})\n",
-		           starting ? "Starting" : "Stopping",
-		           begin.printable(),
-		           end.printable());
 		state bool success = false;
 		if (starting) {
 			wait(store(success, localDb->blobbifyRange(KeyRangeRef(begin, end), tenant)));
 		} else {
 			wait(store(success, localDb->unblobbifyRange(KeyRangeRef(begin, end), tenant)));
 		}
-		if (success) {
-			fmt::print("{0} updated blob range [{1} - {2}) succeeded\n",
-			           starting ? "Starting" : "Stopping",
-			           begin.printable(),
-			           end.printable());
-		} else {
-			fmt::print("{0} blobbify range for [{1} - {2}) failed\n",
-			           starting ? "Starting" : "Stopping",
-			           begin.printable(),
-			           end.printable());
-		}
+		fmt::print("{0} blobbify range for [{1} - {2}) {3}\n",
+		           starting ? "Starting" : "Stopping",
+		           begin.printable(),
+		           end.printable(),
+		           success ? "succeeded" : "failed");
 		return success;
 	}
 
