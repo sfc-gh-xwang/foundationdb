@@ -22,6 +22,9 @@ using BulkLoadIDRef = StringRef;
 using BulkLoadFileID = Standalone<StringRef>;
 using BulkLoadFileIDRef = StringRef;
 
+// key is logical tuple of tenantid, bulk load id. Tenant id is -1 when not set.
+using BulkLoadIDKey = std::pair<int64_t, BulkLoadID>;
+
 // Generally ordered such that valid state transitions only increase the number
 // leaving space for future states with int gaps
 // Everything after STAGING are internal states of staging that are controlled by FDB. STARTED -> STAGING is done by the
@@ -82,32 +85,22 @@ public:
 
 struct BulkLoadInfo {
 	constexpr static FileIdentifier file_identifier = 3119155;
-	int64_t tenantId;
 	KeyRange keyRange;
-
-	KeyRange getPhysicalKeyRange() {
-		if (tenantId == TenantInfo::INVALID_TENANT) {
-			return keyRange;
-		}
-		return keyRange.withPrefix(TenantAPI::idToPrefix(tenantId));
-	}
 
 	// noarg for serialization
 	BulkLoadInfo() {}
 
-	BulkLoadInfo(int64_t tenantId, KeyRange keyRange) : tenantId(tenantId), keyRange(keyRange) {
-		ASSERT(!keyRange.empty());
-	}
+	BulkLoadInfo(KeyRange keyRange) : keyRange(keyRange) { ASSERT(!keyRange.empty()); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantId, keyRange);
+		serializer(ar, keyRange);
 	}
 };
 
-enum class BulkLoadFileType : uint8_t { SNAPSHOT = 0, DELTA = 1 };
+enum class BulkLoadFileType : uint8_t { SNAPSHOT = 1, DELTA = 2 };
 // file format (only row_v1 currently supported)
-enum class BulkLoadFileFormat : uint8_t { ROW_V1 = 0, COLUMNAR_V1 = 1 };
+enum class BulkLoadFileFormat : uint8_t { ROW_V1 = 1, COLUMNAR_V1 = 2 };
 
 struct BulkLoadFileToWriteRef {
 	constexpr static FileIdentifier file_identifier = 5109804;

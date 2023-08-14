@@ -54,6 +54,7 @@
 #include "flow/CompressionUtils.h"
 #include "flow/EncryptUtils.h"
 #include "flow/Error.h"
+#include "flow/Platform.h"
 #include "flow/flow.h"
 #include "flow/IRandom.h"
 #include "flow/network.h"
@@ -349,7 +350,9 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 				// loading tenants, and instead a persistent issue.
 				retryCount++;
 				TraceEvent(retryCount <= 10 ? SevDebug : SevWarn, "BlobWorkerUnknownTenantForCipherKeys", bwData->id)
-				    .detail("KeyRange", keyRange);
+				    .suppressFor(10.0)
+				    .detail("KeyRange", keyRange)
+				    .detail("Retries", retryCount);
 				wait(delay(0.1));
 			}
 		}
@@ -787,7 +790,12 @@ ACTOR Future<BlobFileIndex> writeDeltaFile(Reference<BlobWorkerData> bwData,
 	startTimer = g_network->timer();
 	try {
 		// before updating FDB, wait for the delta file version to be committed and previous delta files to finish
+		state ActiveCounter<int>::Releaser holdingBlockedCommittedVersionCounter =
+		    bwData->stats.granulesBlockedCommittedVersion.take(1);
+
 		wait(waitCommitted);
+		holdingBlockedCommittedVersionCounter.release();
+
 		BlobFileIndex prev = wait(previousDeltaFileFuture);
 		wait(delay(0, TaskPriority::BlobWorkerUpdateFDB));
 
@@ -1423,23 +1431,6 @@ ACTOR Future<BlobFileIndex> compactFromBlob(Reference<BlobWorkerData> bwData,
 	}
 }
 
-struct CounterHolder {
-	int* counter;
-	bool completed;
-
-	CounterHolder() : counter(nullptr), completed(true) {}
-	CounterHolder(int* counter) : counter(counter), completed(false) { (*counter)++; }
-
-	void complete() {
-		if (!completed) {
-			completed = true;
-			(*counter)--;
-		}
-	}
-
-	~CounterHolder() { complete(); }
-};
-
 ACTOR Future<BlobFileIndex> checkSplitAndReSnapshot(Reference<BlobWorkerData> bwData,
                                                     Reference<BlobConnectionProvider> bstore,
                                                     Reference<GranuleMetadata> metadata,
@@ -1448,15 +1439,15 @@ ACTOR Future<BlobFileIndex> checkSplitAndReSnapshot(Reference<BlobWorkerData> bw
                                                     Future<BlobFileIndex> lastDeltaBeforeSnapshot,
                                                     int64_t versionsSinceLastSnapshot) {
 
-	BlobFileIndex lastDeltaIdx = wait(lastDeltaBeforeSnapshot);
+	state BlobFileIndex lastDeltaIdx = wait(lastDeltaBeforeSnapshot);
+
+	state ActiveCounter<int>::Releaser holdingSplitCheckCounter = bwData->stats.granulesBlockedSplitCheck.take(1);
 	state Version reSnapshotVersion = lastDeltaIdx.version;
 	while (!bwData->statusStreamInitialized) {
 		wait(bwData->currentManagerStatusStream.onChange());
 	}
 
 	wait(delay(0, TaskPriority::BlobWorkerUpdateFDB));
-
-	state CounterHolder pendingCounter(&bwData->stats.granulesPendingSplitCheck);
 
 	if (BW_DEBUG) {
 		fmt::print("Granule [{0} - {1}) checking with BM for re-snapshot after {2} bytes\n",
@@ -1548,8 +1539,6 @@ ACTOR Future<BlobFileIndex> checkSplitAndReSnapshot(Reference<BlobWorkerData> bw
 		}
 	}
 
-	pendingCounter.complete();
-
 	if (BW_DEBUG) {
 		fmt::print("Granule [{0} - {1}) re-snapshotting after {2} bytes\n",
 		           metadata->keyRange.begin.printable(),
@@ -1564,6 +1553,8 @@ ACTOR Future<BlobFileIndex> checkSplitAndReSnapshot(Reference<BlobWorkerData> bw
 	while (metadata->files.deltaFiles.empty() || metadata->files.deltaFiles.back().version < reSnapshotVersion) {
 		wait(delay(FLOW_KNOBS->PREVENT_FAST_SPIN_DELAY));
 	}
+	holdingSplitCheckCounter.release();
+
 	std::vector<GranuleFiles> toSnapshot;
 	toSnapshot.push_back(metadata->files);
 	BlobFileIndex reSnapshotIdx =
@@ -2154,7 +2145,9 @@ ACTOR Future<Key> getTenantPrefix(Reference<BlobWorkerData> bwData, KeyRange key
 			CODE_PROBE(true, "Get prefix for unknown tenant");
 			retryCount++;
 			TraceEvent(retryCount <= 10 ? SevDebug : SevWarn, "BlobWorkerUnknownTenantPrefix", bwData->id)
-			    .detail("KeyRange", keyRange);
+			    .suppressFor(10.0)
+			    .detail("KeyRange", keyRange)
+			    .detail("Retries", retryCount);
 			wait(delay(0.1));
 		}
 	}
@@ -2984,6 +2977,9 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 					if (waitIdx > 0) {
 						++bwData->stats.blockInFlightSnapshots;
 					}
+					state ActiveCounter<int>::Releaser holdingBlockedOldSnapshotCounter =
+					    bwData->stats.granulesBlockedOldSnapshot.take(1);
+
 					while (waitIdx > 0) {
 						CODE_PROBE(true, "Granule blocking on previous snapshot");
 						// TODO don't duplicate code
@@ -3015,6 +3011,8 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 						wait(yield(TaskPriority::BlobWorkerUpdateStorage));
 					}
 				}
+
+				holdingBlockedOldSnapshotCounter.release();
 
 				// restart merge candidate checker
 				checkMergeCandidate = granuleCheckMergeCandidate(
@@ -3751,10 +3749,14 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		} else {
 			fmt::print("{}", req.readVersion);
 		}
-		if (req.summarize) {
+		if (req.readOptions.present() && req.readOptions->summarize) {
 			fmt::print(" (summary)");
 		}
 		fmt::print("\n");
+	}
+
+	if (req.readOptions.present() && req.readOptions->debugID.present()) {
+		g_traceBatch.addEvent("BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.Start");
 	}
 
 	state Optional<Key> tenantPrefix;
@@ -3781,7 +3783,8 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		}
 
 		// TODO remove requirement for canCollapseBegin once we implement early replying
-		ASSERT(req.beginVersion == 0 || req.canCollapseBegin);
+		bool canCollapseBegin = !req.readOptions.present() || req.readOptions->canCollapseBegin;
+		ASSERT(req.beginVersion == 0 || canCollapseBegin);
 		if (req.beginVersion != 0) {
 			ASSERT(req.beginVersion > 0);
 		}
@@ -3826,12 +3829,23 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			throw wrong_shard_server();
 		}
 
+		if (req.readOptions.present() && req.readOptions->debugID.present()) {
+			g_traceBatch.addEvent(
+			    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.HasGranules");
+		}
+
 		// do work for each range
 		state Key readThrough = req.keyRange.begin;
+		state bool anyTimeTravel = false;
 		for (auto m : granules) {
 			if (readThrough >= m->keyRange.end) {
 				// previous read did time travel that already included this granule
 				continue;
+			}
+
+			if (req.readOptions.present() && req.readOptions->debugID.present()) {
+				g_traceBatch.addEvent(
+				    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.GranuleStart");
 			}
 			state Reference<GranuleMetadata> metadata = m;
 			// state Version granuleBeginVersion = req.beginVersion;
@@ -3851,6 +3865,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			state std::vector<std::pair<KeyRange, GranuleFiles>> rangeGranulePair;
 
 			if (req.readVersion < metadata->historyVersion) {
+				if (req.readOptions.present() && req.readOptions->debugID.present()) {
+					g_traceBatch.addEvent(
+					    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.BeforeTT");
+				}
+				anyTimeTravel = true;
 				CODE_PROBE(true, "Granule Time Travel Read");
 				// this is a time travel query, find previous granule
 				if (metadata->historyLoaded.canBeSet()) {
@@ -3887,7 +3906,10 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 						throw blob_granule_transaction_too_old();
 					}
 				}
-
+				if (req.readOptions.present() && req.readOptions->debugID.present()) {
+					g_traceBatch.addEvent(
+					    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.AfterTT");
+				}
 			} else {
 				if (req.readVersion < metadata->initialSnapshotVersion) {
 					// a snapshot file must have been pruned
@@ -3895,6 +3917,10 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 				}
 
 				CODE_PROBE(true, "Granule Active Read");
+				if (req.readOptions.present() && req.readOptions->debugID.present()) {
+					g_traceBatch.addEvent(
+					    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.BeforeVersion");
+				}
 				// this is an active granule query
 				loop {
 					// skip check since CF doesn't start for bare metal recovery mode
@@ -3943,6 +3969,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 					}
 				}
 
+				if (req.readOptions.present() && req.readOptions->debugID.present()) {
+					g_traceBatch.addEvent(
+					    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.AfterVersion");
+				}
+
 				// if feed was popped by another worker and BW only got empty versions, it wouldn't itself see that it
 				// got popped, but we can still reject the in theory this should never happen with other protections but
 				// it's a useful and inexpensive sanity check
@@ -3973,6 +4004,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			// granule is up to date, do read
 			ASSERT(metadata->cancelled.canBeSet());
 
+			if (req.readOptions.present() && req.readOptions->debugID.present()) {
+				g_traceBatch.addEvent(
+				    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.Responding");
+			}
+
 			for (auto& item : rangeGranulePair) {
 				Version granuleBeginVersion = req.beginVersion;
 				// Right now we force a collapse if the version range crosses granule boundaries, for simplicity
@@ -4001,21 +4037,19 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 					continue;
 				}
 
+				bool summarize = req.readOptions.present() && req.readOptions->summarize;
+				bool canCollapseBegin = !req.readOptions.present() || req.readOptions->canCollapseBegin;
+
 				int64_t deltaBytes = 0;
-				item.second.getFiles(granuleBeginVersion,
-				                     req.readVersion,
-				                     req.canCollapseBegin,
-				                     chunk,
-				                     rep.arena,
-				                     deltaBytes,
-				                     req.summarize);
+				item.second.getFiles(
+				    granuleBeginVersion, req.readVersion, canCollapseBegin, chunk, rep.arena, deltaBytes, summarize);
 				bwData->stats.readReqDeltaBytesReturned += deltaBytes;
 				if (granuleBeginVersion > 0 && chunk.snapshotFile.present()) {
 					CODE_PROBE(true, "collapsed begin version request for efficiency");
 					didCollapse = true;
 				}
 
-				if (!req.summarize) {
+				if (!summarize) {
 					chunk.includedVersion = req.beginVersion - 1;
 					if (chunk.snapshotFile.present()) {
 						chunk.includedVersion = std::max(chunk.includedVersion, chunk.snapshotFile.get().fileVersion);
@@ -4147,9 +4181,17 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		if (didCollapse) {
 			++bwData->stats.readRequestsCollapsed;
 		}
+		if (anyTimeTravel) {
+			++bwData->stats.readRequestsTimeTravel;
+		}
 
 		double duration = g_network->timer() - req.requestTime();
 		bwData->stats.readLatencySample.addMeasurement(duration);
+
+		if (req.readOptions.present() && req.readOptions->debugID.present()) {
+			g_traceBatch.addEvent(
+			    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.Done");
+		}
 
 		ASSERT(!req.reply.isSet());
 		req.reply.send(rep);
@@ -4159,6 +4201,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		if (e.code() == error_code_operation_cancelled) {
 			req.reply.sendError(wrong_shard_server());
 			throw;
+		}
+
+		if (req.readOptions.present() && req.readOptions->debugID.present()) {
+			g_traceBatch.addEvent(
+			    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.Error");
 		}
 
 		if (e.code() == error_code_wrong_shard_server) {
@@ -4177,7 +4224,7 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 ACTOR Future<Void> handleBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, BlobGranuleFileRequest req) {
 	++bwData->stats.readRequests;
 	++bwData->stats.activeReadRequests;
-	if (req.summarize) {
+	if (req.readOptions.present() && req.readOptions->summarize) {
 		++bwData->stats.summaryReads;
 	}
 	// scope this actor outside of the choose-when so we do the timeout block before cancelling actor
@@ -4192,6 +4239,10 @@ ACTOR Future<Void> handleBlobGranuleFileRequest(Reference<BlobWorkerData> bwData
 				           req.keyRange.begin.printable(),
 				           req.keyRange.end.printable(),
 				           req.readVersion);
+			}
+			if (req.readOptions.present() && req.readOptions->debugID.present()) {
+				g_traceBatch.addEvent(
+				    "BlobWorkerDebug", req.readOptions->debugID->first(), "BlobWorker.doFileRequest.TimedOut");
 			}
 			++bwData->stats.granuleRequestTimeouts;
 		}
@@ -4678,7 +4729,9 @@ ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenantActor(Referen
 			// loading tenants, and instead a persistent issue.
 			retryCount++;
 			TraceEvent(retryCount <= 10 ? SevDebug : SevWarn, "BlobWorkerUnknownTenantForGranule", bwData->id)
-			    .detail("KeyRange", keyRange);
+			    .suppressFor(10.0)
+			    .detail("KeyRange", keyRange)
+			    .detail("Retries", retryCount);
 			wait(delay(0.1));
 		}
 	}
@@ -5213,8 +5266,8 @@ ACTOR Future<Void> runReadDrivenCompaction(Reference<BlobWorkerData> bwData) {
 		}
 		processedAll = futures.empty();
 		if (!futures.empty()) {
-			// wait at least one second to throttle this actor a bit
-			wait(waitForAll(futures) && delay(1.0));
+			// wait at least BLOB_WORKER_RDC_MIN_WAVE_DELAY seconds to throttle this actor a bit
+			wait(waitForAll(futures) && delay(SERVER_KNOBS->BLOB_WORKER_RDC_MIN_WAVE_DELAY));
 		}
 	}
 }
@@ -5242,7 +5295,7 @@ ACTOR Future<Void> monitorTenants(Reference<BlobWorkerData> bwData) {
 				}
 				bwData->tenantData.addTenants(tenants);
 
-				state Future<Void> watchChange = tr->watch(TenantMetadata::lastTenantId().key);
+				state Future<Void> watchChange = TenantMetadata::lastTenantModification().watch(tr);
 				wait(tr->commit());
 				bwData->addGRVHistory(tr->getReadVersion().get());
 				wait(watchChange);
@@ -5738,6 +5791,7 @@ ACTOR Future<Void> blobWorkerCore(BlobWorkerInterface bwInterf,
 	self->shuttingDown = true;
 
 	wait(self->granuleMetadata.clearAsync());
+	TraceEvent("BlobWorkerCoreRemovingSelf", self->id);
 	throw worker_removed();
 }
 
@@ -5761,7 +5815,7 @@ bool blobWorkerTerminated(Reference<BlobWorkerData> self, IKeyValueStore* persis
 
 #define PERSIST_PREFIX "\xff\xff"
 static const KeyRef persistID = PERSIST_PREFIX "ID"_sr;
-static const KeyRef persistEncryptionAtRestModeKey = "encryptionAtRestMode"_sr;
+static const KeyRef persistEncryptionAtRestModeKey = PERSIST_PREFIX "encryptionAtRestMode"_sr;
 
 ACTOR Future<Void> checkUpdateEncryptionAtRestMode(Reference<BlobWorkerData> self,
                                                    Future<DatabaseConfiguration> configF) {
@@ -5885,6 +5939,7 @@ ACTOR Future<UID> restorePersistentState(Reference<BlobWorkerData> self) {
 
 	if (!SERVER_KNOBS->BLOB_WORKER_DISK_ENABLED || !fID.get().present()) {
 		CODE_PROBE(true, "Restored uninitialized blob worker");
+		TraceEvent("BlobWorkerRestorePersistentStateRemovingSeld", self->id);
 		throw worker_removed();
 	}
 	UID recoveredID = BinaryReader::fromStringRef<UID>(fID.get().get(), Unversioned());

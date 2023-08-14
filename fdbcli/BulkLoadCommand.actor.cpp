@@ -13,12 +13,13 @@
 
 namespace {
 
-ACTOR Future<Optional<BulkLoadInfo>> getBulkLoadInfo(BulkLoadID id, Database db) {
+ACTOR Future<Optional<BulkLoadInfo>> getBulkLoadInfo(BulkLoadID id, Database db, Optional<Reference<Tenant>> tenant) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 	loop {
 		try {
 			SystemDBWriteLockedNow(db.getReference())->setOptions(tr);
-			Optional<BulkLoadInfo> info = wait(BulkLoadMetadata::infoMap().get(tr, id));
+			int64_t tenantId = tenant.present() ? tenant.get()->id() : TenantInfo::INVALID_TENANT;
+			Optional<BulkLoadInfo> info = wait(BulkLoadMetadata::infoMap().get(tr, { tenantId, id }));
 			return info;
 		} catch (Error& e) {
 			wait(tr->onError(e));
@@ -31,10 +32,12 @@ ACTOR Future<Void> printBulkLoadStatus(BulkLoadID id, Database db, Optional<Refe
 	fmt::print("          ID: {}\n", id.printable());
 	fmt::print("       State: {}\n", status.toStateString());
 
-	Optional<BulkLoadInfo> info = wait(getBulkLoadInfo(id, db));
+	Optional<BulkLoadInfo> info = wait(getBulkLoadInfo(id, db, tenant));
 	if (info.present()) {
 		fmt::print("       Range: {}\n", info->keyRange.toString());
-		fmt::print("      Tenant: {}\n", info->tenantId);
+		if (tenant.present()) {
+			fmt::print("      Tenant: {}\n", tenant.get()->description());
+		}
 	}
 	return Void();
 }
@@ -70,7 +73,7 @@ ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
 		fmt::print("Bulk Load {} is started successfully.\n", id.printable());
 	} else if (tokencmp(tokens[1], "stop")) {
 		if (tokens.size() != 3) {
-			fmt::print("Missing bulk load ID\n");
+			fmt::print("Missing bulk load ID.\n");
 			printUsage(tokens[0]);
 			return false;
 		}
@@ -79,7 +82,7 @@ ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
 		fmt::print("Bulk Load {} is stopped successfully.\n", id.printable());
 	} else if (tokencmp(tokens[1], "status")) {
 		if (tokens.size() != 3) {
-			fmt::print("Missing bulk load ID\n");
+			fmt::print("Missing bulk load ID.\n");
 			printUsage(tokens[0]);
 			return false;
 		}
@@ -95,9 +98,9 @@ ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
 		wait(localDb->cleanupBulkLoad(id, tenant));
 		fmt::print("Bulk Load {} is cleaned up successfully.\n", id.printable());
 	} else if (tokencmp(tokens[1], "list")) {
-		Standalone<VectorRef<BulkLoadIDRef>> list = wait(localDb->listBulkLoads(false, tenant));
+		Standalone<VectorRef<BulkLoadIDRef>> list = wait(localDb->listBulkLoads(true, tenant));
 		if (list.empty()) {
-			fmt::print("No active bulk load\n");
+			fmt::print("No active bulk loads.\n");
 		}
 		int i = 0;
 		for (auto& id : list) {

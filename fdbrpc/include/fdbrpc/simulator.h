@@ -336,6 +336,7 @@ public:
 	std::map<NetworkAddress, bool> corruptWorkerMap;
 	ConfigDBType configDBType;
 	bool blobGranulesEnabled;
+	std::unordered_set<int64_t> simEncryptKeyNotFoundIds;
 
 	// Used by workloads that perform reconfigurations
 	int testerCount;

@@ -211,13 +211,15 @@ public:
 	// Given an array that's ascend sorted by CPU percent, the pivot position is CPU_PIVOT_RATIO *
 	// team count. DD won't move shard to teams that has CPU > pivot CPU.
 	double CPU_PIVOT_RATIO;
-	// DD won't move out a shard from its source team, by re-evaluating the utilization of source team from TWO metrics:
-	// Disk Usage, CPU. For each metrics, DD would compare the source team's metrics to the lower and upper pivot of all
-	// teams to decide whether to leave the shard in source team.
+	// DD won't move out a shard from its source team, by re-evaluating the utilization of source team from THREE
+	// metrics: Disk Usage, CPU, Write Rate. For each metrics, DD would compare the source team's metrics to the lower
+	// and upper pivot of all teams to decide whether to leave the shard in source team.
 	double DD_LOWER_LOAD_BYTES_PIVOT_RATIO;
 	double DD_UPPER_LOAD_BYTES_PIVOT_RATIO;
 	double DD_LOWER_CPU_PIVOT_RATIO;
 	double DD_UPPER_CPU_PIVOT_RATIO;
+	double DD_LOWER_WRITE_PIVOT_RATIO;
+	double DD_UPPER_WRITE_PIVOT_RATIO;
 	// DD won't move shard to teams that has CPU > MAX_DEST_CPU_PERCENT
 	double MAX_DEST_CPU_PERCENT;
 	// The constant interval DD update pivot values for team selection. It should be >=
@@ -533,6 +535,13 @@ public:
 	double PROXY_COMPUTE_GROWTH_RATE;
 	int TXN_STATE_SEND_AMOUNT;
 	double REPORT_TRANSACTION_COST_ESTIMATION_DELAY;
+	// Limit to the number of throttling tags tracked
+	// per storage server by the commit proxy.
+	int64_t CP_THROTTLE_TAGS_TRACKED;
+	// Minimum write throughput (in pages/second, multiplied by fungibility ratio)
+	// that a tag must register on a commit proxy in order for commit proxy to send cost estimation to the
+	// RKMetricsTracker
+	int64_t CP_MIN_TAG_WRITE_PAGES_RATE;
 	bool PROXY_REJECT_BATCH_QUEUED_TOO_LONG;
 	bool PROXY_USE_RESOLVER_PRIVATE_MUTATIONS;
 	bool BURSTINESS_METRICS_ENABLED;
@@ -868,8 +877,9 @@ public:
 	int DD_SHARD_COMPARE_LIMIT; // when read-aware DD is enabled, at most how many shards are compared together
 	bool READ_SAMPLING_ENABLED;
 	// Rolling window duration over which the average bytes moved by DD is calculated for the 'MovingData' trace event.
-	double DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL;
+	double DD_MOVING_DATA_TRACE_INTERVAL;
 	int64_t MOVING_WINDOW_SAMPLE_SIZE;
+	bool READ_METRICS_INCLUDE_SYSTEM_KEYS;
 
 	// Storage Server
 	double STORAGE_LOGGING_DELAY;
@@ -893,6 +903,9 @@ public:
 	int STORAGE_COMMIT_BYTES;
 	int STORAGE_FETCH_BYTES;
 	double STORAGE_COMMIT_INTERVAL;
+	bool ENABLE_READ_RANGE_BUSYNESS_REPORTING;
+	double SHARD_READ_SAMPLE_UPDATE_INTERVAL;
+
 	int BYTE_SAMPLING_FACTOR;
 	int BYTE_SAMPLING_OVERHEAD;
 	double MIN_BYTE_SAMPLING_PROBABILITY; // Adjustable only for test of PhysicalShardMove. Should always be 0 for other
@@ -1161,6 +1174,7 @@ public:
 	int BLOB_WORKER_RESNAPSHOT_PARALLELISM;
 	int BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM;
 	int BLOB_WORKER_RDC_PARALLELISM;
+	double BLOB_WORKER_RDC_MIN_WAVE_DELAY;
 	// The resnapshot/delta parallelism knobs are deprecated and replaced by the budget_bytes knobs! FIXME: remove after
 	// next release
 	int64_t BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES;
@@ -1227,6 +1241,7 @@ public:
 	double KMS_LOGGING_INTERVAL;
 
 	double CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO;
+	bool ENABLE_CONSISTENCY_SCAN;
 
 	// Idempotency ids
 	double IDEMPOTENCY_ID_IN_MEMORY_LIFETIME;

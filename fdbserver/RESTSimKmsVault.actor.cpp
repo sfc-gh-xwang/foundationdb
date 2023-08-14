@@ -20,6 +20,7 @@
 
 #include "fdbclient/BlobMetadataUtils.h"
 #include "fdbclient/RESTUtils.h"
+#include "fdbclient/ServerKnobs.h"
 #include "fdbclient/SimKmsVault.h"
 
 #include "fdbclient/SystemData.h"
@@ -48,9 +49,11 @@
 #include <rapidjson/rapidjson.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+#include <sstream>
 #include <string>
 
 #include "flow/actorcompiler.h" // This must be the last #include.
+#include "flow/genericactors.actor.h"
 
 using DomIdVec = std::vector<EncryptCipherDomainId>;
 using BaseCipherDomIdVec = std::vector<std::pair<EncryptCipherBaseKeyId, Optional<EncryptCipherDomainId>>>;
@@ -72,6 +75,7 @@ const int fileFlags = IAsyncFile::OPEN_ATOMIC_WRITE_AND_CREATE | IAsyncFile::OPE
 
 Future<Void> discoverUrlFileReaper = Future<Void>();
 Optional<int> nServers;
+int64_t nEncryptKeyNotFoundErrors = 0;
 
 } // namespace
 
@@ -284,6 +288,13 @@ void addKmsUrlsToDoc(rapidjson::Document& doc) {
 	doc.AddMember(memberKey, kmsUrls, doc.GetAllocator());
 }
 
+bool simulateKeyNotFound(const int nDomains, const EncryptCipherDomainId domainId) {
+	if (g_simulator->simEncryptKeyNotFoundIds.empty()) {
+		return false;
+	}
+	return g_simulator->simEncryptKeyNotFoundIds.count(domainId) != 0;
+}
+
 // TODO: inject faults
 ACTOR Future<VaultResponse> handleFetchKeysByDomainIds(std::string content) {
 	state VaultResponse response;
@@ -321,6 +332,15 @@ ACTOR Future<VaultResponse> handleFetchKeysByDomainIds(std::string content) {
 	rapidjson::Value cipherDetails(rapidjson::kArrayType);
 	for (const auto& cipherDetail : doc[CIPHER_KEY_DETAILS_TAG].GetArray()) {
 		EncryptCipherDomainId domainId = cipherDetail[ENCRYPT_DOMAIN_ID_TAG].GetInt64();
+
+		if (simulateKeyNotFound(doc[CIPHER_KEY_DETAILS_TAG].Size(), domainId)) {
+			TraceEvent("RESTSimKmsSimulateKeyNotFound").detail("DomainId", domainId);
+			CODE_PROBE(true, "RESTSimKms simulate encrypt_key_not_found");
+			// Simualte KMS encrypt key lookup miss scenario
+			nEncryptKeyNotFoundErrors++;
+			continue;
+		}
+
 		Reference<SimKmsVaultKeyCtx> keyCtx = SimKmsVault::getByDomainId(domainId);
 		if (keyCtx.isValid()) {
 			addCipherDetailToRespDoc(result, cipherDetails, keyCtx, domainId);
@@ -730,6 +750,10 @@ Future<Void> initConfigFiles() {
 
 bool isVaultConfigFile(const std::string& file) {
 	return file.compare(REST_SIM_KMS_VAULT_DISCOVERY_FILE) == 0 || file.compare(REST_SIM_KMS_VAULT_TOKEN_FILE) == 0;
+}
+
+int64_t getEncryptKeyNotFoundErrorCount() {
+	return nEncryptKeyNotFoundErrors;
 }
 
 } // namespace RestSimKms

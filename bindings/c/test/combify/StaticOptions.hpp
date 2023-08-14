@@ -123,6 +123,7 @@ struct StaticOptions {
 	    tenantMode;
 	JsonOption<unsigned, "tenantCount", Optional> tenantCount;
 	JsonOption<unsigned, "randomSeed", Optional> randomSeed;
+	JsonOption<bool, "disableClientTrace", Optional> disableClientTrace;
 
 	void parseFrom(const rapidjson::Value& v) {
 		clusterFilePath.parseFrom(v);

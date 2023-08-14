@@ -192,6 +192,14 @@ struct Traceable<Reference<T>> : std::bool_constant<Traceable<T>::value> {
 	}
 };
 
+namespace std {
+template <class T>
+struct hash<Reference<T>> {
+	static constexpr std::hash<T*> hashFunc{};
+	std::size_t operator()(Reference<T> const& r) const { return hashFunc(r.getPtr()); }
+};
+} // namespace std
+
 template <class P, class... Args>
 Reference<P> makeReference(Args&&... args) {
 	return Reference<P>(new P(std::forward<Args>(args)...));

@@ -74,4 +74,10 @@ def CreateTmpFdbClusterArgParser(description):
         action="store_true",
         default=False,
     )
+    parser.add_argument(
+        "--accelerate-read-metrics-generation",
+        help="If set, read metrics will be collected and generated at a higher rate",
+        action="store_true",
+        default=False,
+    )
     return parser

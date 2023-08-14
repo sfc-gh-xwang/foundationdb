@@ -265,7 +265,7 @@ ACTOR static Future<Void> mockClient(GrvProxyTagThrottler* throttler,
 		req.transactionCount = batchSize;
 		req.throttlingId = ThrottlingIdRef::fromTag(tag);
 		req.priority = priority;
-		if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT) {
+		if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS) {
 			req.expectedTotalCost = batchSize;
 		}
 		throttler->addRequest(req);

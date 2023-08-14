@@ -2652,8 +2652,8 @@ void setNetworkOption(FDBNetworkOptions::Option option, Optional<StringRef> valu
 		tlsConfig.clearVerifyPeers();
 		tlsConfig.addVerifyPeers(value.get().toString());
 		break;
-	case FDBNetworkOptions::TLS_DISABLE_PLAINTEXT_CONNECTION:
-		tlsConfig.setDisablePlainTextConnection(true);
+	case FDBNetworkOptions::TLS_REQUIRED:
+		tlsConfig.setTlsRequired(true);
 		break;
 	case FDBNetworkOptions::CLIENT_BUGGIFY_ENABLE:
 		enableBuggify(true, BuggifyType::Client);
@@ -3146,6 +3146,15 @@ KeyRef Tenant::prefix() const {
 	return StringRef(reinterpret_cast<const uint8_t*>(&bigEndianId), TenantAPI::PREFIX_SIZE);
 }
 
+void Tenant::setOption(FDBTenantOptions::Option option, Optional<StringRef> value) {
+	const auto& optionProps = FDBTenantOptions::optionInfo.getMustExist(option);
+	// Currently there is only one tenant option, which is also for transaction defaults.
+	ASSERT(optionProps.defaultFor == 2000); /*FDBTransactionOptions::AUTHORIZATION_TOKEN*/
+	ASSERT(optionProps.sensitive);
+	sensitiveTransactionDefaults.addOption((FDBTransactionOptions::Option)optionProps.defaultFor,
+	                                       value.castTo<WipedString>());
+}
+
 std::string Tenant::description() const {
 	StringRef nameStr = name.castTo<TenantNameRef>().orDefault("<unspecified>"_sr);
 	if (lookupFuture.canGet()) {
@@ -3495,6 +3504,7 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
     Optional<UID> debugID,
     UseProvisionalProxies useProvisionalProxies,
     Version version,
+    bool lockAware,
     bool* more) {
 	state Span span("NAPI:getBlobGranuleLocations"_loc, spanContext);
 	if (debugID.present())
@@ -3517,6 +3527,7 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
 			                                                              reverse,
 			                                                              justGranules,
 			                                                              version,
+			                                                              lockAware,
 			                                                              keys.arena()),
 			                               TaskPriority::DefaultPromiseEndpoint))) {
 				++cx->transactionBlobGranuleLocationRequestsCompleted;
@@ -3561,13 +3572,24 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Database c
                                                                       Optional<UID> const& debugID,
                                                                       UseProvisionalProxies useProvisionalProxies,
                                                                       Version version,
+                                                                      bool lockAware,
                                                                       bool* more) {
 
 	ASSERT(!keys.empty());
 
 	// FIXME: wrap this with location caching for blob workers like getKeyRangeLocations has
-	return getBlobGranuleLocations_internal(
-	    cx, tenant, keys, limit, reverse, justGranules, spanContext, debugID, useProvisionalProxies, version, more);
+	return getBlobGranuleLocations_internal(cx,
+	                                        tenant,
+	                                        keys,
+	                                        limit,
+	                                        reverse,
+	                                        justGranules,
+	                                        spanContext,
+	                                        debugID,
+	                                        useProvisionalProxies,
+	                                        version,
+	                                        lockAware,
+	                                        more);
 }
 
 Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<TransactionState> trState,
@@ -3576,20 +3598,33 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<
                                                                       Reverse reverse,
                                                                       UseTenant useTenant,
                                                                       JustGranules justGranules,
+                                                                      Optional<Version> granuleReadVersion,
                                                                       bool* more) {
-	return getBlobGranuleLocations(
-	    trState->cx,
-	    useTenant ? trState->getTenantInfo(AllowInvalidTenantID::True) : TenantInfo(),
-	    keys,
-	    limit,
-	    reverse,
-	    justGranules,
-	    trState->spanContext,
-	    trState->readOptions.present() ? trState->readOptions.get().debugID : Optional<UID>(),
-	    trState->useProvisionalProxies,
-	    trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady() ? trState->readVersion()
-	                                                                                 : latestVersion,
-	    more);
+	// essentially take the max of any provided read version, either explicitly or from txn
+	// if none provided, use latestVersion
+	// this only works for with max because latestVersion is hardcoded to -2
+	Version version = latestVersion;
+	if (granuleReadVersion.present()) {
+		version = std::max(version, granuleReadVersion.get());
+	}
+	if (trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady()) {
+		version = std::max(version, trState->readVersion());
+	} else {
+		ASSERT(justGranules);
+	}
+
+	return getBlobGranuleLocations(trState->cx,
+	                               useTenant ? trState->getTenantInfo(AllowInvalidTenantID::True) : TenantInfo(),
+	                               keys,
+	                               limit,
+	                               reverse,
+	                               justGranules,
+	                               trState->spanContext,
+	                               trState->readOptions.present() ? trState->readOptions->debugID : Optional<UID>(),
+	                               trState->useProvisionalProxies,
+	                               version,
+	                               trState->readOptions.present() ? trState->readOptions->lockAware : false,
+	                               more);
 }
 
 ACTOR Future<Void> warmRange_impl(Reference<TransactionState> trState, KeyRange keys) {
@@ -3669,6 +3704,21 @@ ACTOR Future<TenantLookupInfo> lookupTenantImpl(DatabaseContext* cx, TenantName 
 
 Future<TenantLookupInfo> DatabaseContext::lookupTenant(TenantName tenant) {
 	return lookupTenantImpl(this, tenant);
+}
+
+ACTOR Future<TenantMode> getOrWaitForTenantModeImpl(DatabaseContext* cx) {
+	loop {
+		Optional<TenantMode> tenantMode = cx->getTenantMode();
+		if (tenantMode.present()) {
+			return tenantMode.get();
+		}
+		// otherwise we don't know the tenant mode yet, wait for non-provisional proxies
+		wait(cx->clientInfo->onChange());
+	}
+}
+
+Future<TenantMode> DatabaseContext::getOrWaitForTenantMode() {
+	return getOrWaitForTenantModeImpl(this);
 }
 
 TransactionState::TransactionState(Database cx,
@@ -3948,6 +3998,7 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 
 	state Optional<UID> getKeyID;
 	state Optional<ReadOptions> readOptions = trState->readOptions;
+	state ReadMetrics readMetrics;
 
 	state Span span("NAPI:getKey"_loc, trState->spanContext);
 	if (trState->readOptions.present() && trState->readOptions.get().debugID.present()) {
@@ -3966,11 +4017,11 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 	loop {
 		if (k.getKey() == allKeys.end) {
 			if (k.offset > 0) {
-				return allKeys.end;
+				return KeyReadResult(allKeys.end, readMetrics);
 			}
 			k.orEqual = false;
 		} else if (k.getKey() == allKeys.begin && k.offset <= 0) {
-			return Key();
+			return KeyReadResult(Key(), readMetrics);
 		}
 
 		Key locationKey(k.getKey(), k.arena());
@@ -4026,9 +4077,10 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 				                      getKeyID.get().first(),
 				                      "NativeAPI.getKey.After"); //.detail("NextKey",reply.sel.key).detail("Offset",
 				                                                 // reply.sel.offset).detail("OrEqual", k.orEqual);
+			readMetrics.combine(reply.readMetrics);
 			k = reply.sel;
 			if (!k.offset && k.orEqual) {
-				return KeyReadResult(std::move(k.getKey()), reply.readMetrics);
+				return KeyReadResult(std::move(k.getKey()), readMetrics);
 			}
 		} catch (Error& e) {
 			if (getKeyID.present())
@@ -5068,7 +5120,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					CODE_PROBE(true, "!GetKeyValuesFamilyReply.more and modifiedSelectors in getRange");
 
 					if (!rep.data.size()) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -5078,8 +5130,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -5107,7 +5161,7 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 					                             Reverse{ reverse ? (end - 1).isBackward() : begin.isBackward() });
 
 					if (e.code() == error_code_wrong_shard_server) {
-						RangeReadResultFamily result = wait(
+						RangeReadResultFamily resultConst = wait(
 						    getRangeFallback<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
 						        trState,
 						        originalBegin,
@@ -5117,8 +5171,10 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 						        matchIndex,
 						        reverse,
 						        useTenant));
+						RangeReadResultFamily result = resultConst;
 						getRangeFinished(
 						    trState, startTime, originalBegin, originalEnd, snapshot, conflictRange, reverse, result);
+						result.getReadMetrics().combine(output.getReadMetrics());
 						return result;
 					}
 
@@ -7041,7 +7097,7 @@ ACTOR static Future<Void> tryCommit(Reference<TransactionState> trState, CommitT
 			    e.code() != error_code_storage_quota_exceeded && e.code() != error_code_tenant_locked &&
 			    e.code() != error_code_tenant_name_required &&
 			    e.code() != error_code_management_cluster_invalid_access && e.code() != error_code_tenants_disabled &&
-			    e.code() != error_code_permission_denied) {
+			    e.code() != error_code_permission_denied && e.code() != error_code_encrypt_key_not_found) {
 				// Part of the reason that this block exists is that negative unit tests can trip over these cases
 				// and result in SevError logs being emitted. Gating against these status codes also means their
 				// existences must get surfaced and logged somewhere else during production system.
@@ -7476,6 +7532,10 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 
 	case FDBTransactionOptions::READ_PRIORITY_HIGH:
 		trState->readOptions.withDefault(ReadOptions()).type = ReadType::HIGH;
+		break;
+
+	case FDBTransactionOptions::HYBRID_READ_DIRTY:
+		trState->hybridReadOptions.withDefault(HybridReadOptions()).canReadDirty = true;
 		break;
 
 	default:
@@ -8309,6 +8369,9 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
 				trState->cx->invalidateCache(trState->tenant().mapRef(&Tenant::prefix), keys);
 				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
+			} else if (e.code() == error_code_tenant_not_found && trState->hasTenant()) {
+				TraceEvent(SevWarn, "GetRangeSplitPointsSSVersionBehind").error(e);
+				throw;
 			} else {
 				TraceEvent(SevError, "GetRangeSplitPoints").error(e);
 				throw;
@@ -8345,7 +8408,7 @@ ACTOR Future<Standalone<VectorRef<KeyRangeRef>>> getBlobGranuleRangesActor(Trans
 			remaining = std::min(remaining, deterministicRandom()->randomInt(1, 10));
 		}
 		std::vector<std::pair<KeyRange, UID>> blobGranuleMapping = wait(getBlobGranuleLocations(
-		    self->trState, currentRange, remaining, Reverse::False, UseTenant::True, JustGranules::True, &more));
+		    self->trState, currentRange, remaining, Reverse::False, UseTenant::True, JustGranules::True, {}, &more));
 		for (auto& it : blobGranuleMapping) {
 			if (!results.empty() && results.back().end > it.first.end) {
 				ASSERT(results.back().end > it.first.begin);
@@ -8503,8 +8566,14 @@ ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileReques
 
 		ASSERT(!rep.chunks.empty());
 
-		if (req.summarize || !streamRemainingMutations) {
+		if ((req.readOptions.present() && req.readOptions->summarize) || !streamRemainingMutations) {
 			return rep;
+		}
+
+		if (req.readOptions.present() && req.readOptions->debugID.present()) {
+			g_traceBatch.addEvent("ReadBlobGranulesDebug",
+			                      req.readOptions->debugID->first(),
+			                      "NativeAPI.readBlobGranules.ReqStreamStart");
 		}
 
 		state std::vector<Future<Void>> streamFutures;
@@ -8519,6 +8588,11 @@ ACTOR Future<BlobGranuleFileReply> getFullGranuleFileReply(BlobGranuleFileReques
 
 		try {
 			wait(waitForAll(streamFutures));
+			if (req.readOptions.present() && req.readOptions->debugID.present()) {
+				g_traceBatch.addEvent("ReadBlobGranulesDebug",
+				                      req.readOptions->debugID->first(),
+				                      "NativeAPI.readBlobGranules.ReqStreamDone");
+			}
 			return rep;
 		} catch (Error& e) {
 			if (e.code() != error_code_blob_granule_mutation_stream_too_old) {
@@ -8555,11 +8629,12 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 	state Standalone<VectorRef<BlobGranuleChunkRef>> results;
 	state double startTime = now();
 
+	// still get and wait even if we have an explicit read version so that we have it for the bg locations request
+	Version grv = wait(self->getReadVersion());
 	if (read.present()) {
 		rv = read.get();
 	} else {
-		Version _end = wait(self->getReadVersion());
-		rv = _end;
+		rv = grv;
 	}
 
 	// Right now just read whole blob range assignments from DB
@@ -8582,6 +8657,21 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		wait(self->getTenant().get()->ready());
 	}
 
+	state Optional<HybridReadOptions> readOptions = self->trState->hybridReadOptions;
+	if (summarize) {
+		readOptions.withDefault(HybridReadOptions()).summarize = true;
+	}
+
+	state Optional<UID> rbgID;
+	if (readOptions.present() && readOptions->debugID.present()) {
+		rbgID = nondeterministicRandom()->randomUniqueID();
+		readOptions->debugID = rbgID;
+
+		g_traceBatch.addAttach(
+		    "ReadBlobGranulesAttachID", self->trState->hybridReadOptions->debugID->first(), rbgID->first());
+		g_traceBatch.addEvent("ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.Begin");
+	}
+
 	state bool moreMapping = false;
 	state std::vector<std::pair<KeyRange, UID>> blobGranuleMapping =
 	    wait(getBlobGranuleLocations(self->trState,
@@ -8590,6 +8680,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 	                                 Reverse::False,
 	                                 UseTenant::True,
 	                                 JustGranules::False,
+	                                 rv,
 	                                 &moreMapping));
 
 	if (blobGranuleMapping.empty()) {
@@ -8664,8 +8755,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		req.beginVersion = begin;
 		req.readVersion = rv;
 		req.tenantInfo = self->getTenant().present() ? self->trState->getTenantInfo() : TenantInfo();
-		req.canCollapseBegin = true; // TODO make this a parameter once we support it
-		req.summarize = summarize;
+		req.readOptions = readOptions;
 
 		state bool streamRemainingMutations = true;
 		if (mutationByteLimit < req.granuleMutationBytesLimit) {
@@ -8675,6 +8765,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 			req.granuleMutationBytesLimit = 0;
 		} else if (BUGGIFY_WITH_PROB(0.1)) {
 			req.granuleMutationBytesLimit = deterministicRandom()->randomSkewedUInt32(1, 1000000);
+		}
+
+		if (rbgID.present()) {
+			g_traceBatch.addEvent("ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.ReqStart");
 		}
 
 		// use load balance with one option for now for retry and error handling
@@ -8689,6 +8783,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 						           begin,
 						           rv,
 						           bwInterf.id().toString().substr(0, 5));
+					}
+					if (rbgID.present()) {
+						g_traceBatch.addEvent(
+						    "ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.ReqEnd");
 					}
 					ASSERT(!rep.chunks.empty());
 					results.arena().dependsOn(rep.arena);
@@ -8765,6 +8863,9 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 				           bwInterf.id().toString().substr(0, 5),
 				           e.name());
 			}
+			if (rbgID.present()) {
+				g_traceBatch.addEvent("ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.Error");
+			}
 			// worker is up but didn't actually have granule, or connection failed
 			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_connection_failed ||
 			    e.code() == error_code_request_maybe_delivered) {
@@ -8772,6 +8873,10 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 			}
 			throw e;
 		}
+	}
+
+	if (rbgID.present()) {
+		g_traceBatch.addEvent("ReadBlobGranulesDebug", rbgID->first(), "NativeAPI.readBlobGranules.Done");
 	}
 
 	self->trState->cx->anyBGReads = true;
@@ -9912,17 +10017,30 @@ Reference<ChangeFeedStorageData> DatabaseContext::getStorageData(StorageServerIn
 }
 
 Version DatabaseContext::getMinimumChangeFeedVersion() {
-	Version minVersion = std::numeric_limits<Version>::max();
+	Version minUpdaterVersion = std::numeric_limits<Version>::max();
+	Version minNALFeedVersion = std::numeric_limits<Version>::max();
+	Version minUpdaterDesiredVersion = std::numeric_limits<Version>::max();
 	for (auto& it : changeFeedUpdaters) {
-		if (now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
-			minVersion = std::min(minVersion, it.second->version.get());
+		if (it.second->version.get() < minUpdaterVersion &&
+		    now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
+			minUpdaterVersion = it.second->version.get();
+			minUpdaterDesiredVersion = it.second->desired.get();
 		}
 	}
 	for (auto& it : notAtLatestChangeFeeds) {
 		if (now() - it.second->created > CLIENT_KNOBS->CHANGE_FEED_START_INTERVAL) {
-			minVersion = std::min(minVersion, it.second->getVersion());
+			minNALFeedVersion = std::min(minNALFeedVersion, it.second->getVersion());
 		}
 	}
+	Version minVersion = std::min(minUpdaterVersion, minNALFeedVersion);
+	TraceEvent("DBMinimumChangeFeedVersion")
+	    .suppressFor(10.0)
+	    .detail("FeedUpdaters", changeFeedUpdaters.size())
+	    .detail("NotAtLatestFeeds", notAtLatestChangeFeeds.size())
+	    .detail("MinVersion", minVersion)
+	    .detail("MinUpdaterVersion", minUpdaterVersion)
+	    .detail("MinUpdaterDesiredVersion", minUpdaterDesiredVersion)
+	    .detail("MinNALFeedVersion", minNALFeedVersion);
 	return minVersion;
 }
 
@@ -11583,6 +11701,32 @@ Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 
 // BlobGranule API.
 
+ACTOR Future<Void> checkTenantLock(Transaction* tr, Optional<Reference<Tenant>> tenant, KeyRange keyRange) {
+	if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
+		return Void();
+	}
+	state int64_t tenantId;
+	if (tenant.present()) {
+		// if tenant present, explicitly get id
+		tenantId = tenant.get()->id();
+	} else {
+		// otherwise assume raw access mode and infer it
+		TenantMode tenantMode = wait(tr->trState->cx->getOrWaitForTenantMode());
+		if (tenantMode == TenantMode::DISABLED || !TenantAPI::withinSingleTenant(keyRange)) {
+			return Void();
+		} else {
+			// in optional tenant mode this could return something that is a bogus tenant id, but that's fine because a
+			// non-existent tenant can't be locked
+			tenantId = TenantAPI::extractTenantIdFromKeyRef(keyRange.begin);
+		}
+	}
+	Optional<TenantMapEntry> tenantEntry = wait(TenantAPI::tryGetTenantTransaction(tr, tenantId));
+	if (tenantEntry.present() && tenantEntry.get().tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
+		throw tenant_locked();
+	}
+	return Void();
+}
+
 ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
                                          KeyRange range,
                                          Version purgeVersion,
@@ -11623,12 +11767,13 @@ ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 
+			state Future<Void> tenantLockCheck = checkTenantLock(&tr, tenant, range);
 			// must be aligned to blob range(s)
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedBegin =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.begin, keyAfter(purgeRange.begin)), 1);
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedEnd =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.end, keyAfter(purgeRange.end)), 1);
-			wait(success(blobbifiedBegin) && success(blobbifiedEnd));
+			wait(success(blobbifiedBegin) && success(blobbifiedEnd) && tenantLockCheck);
 			// If there are no blob ranges on the boundary that's okay as we allow purging of multiple full ranges.
 			if ((!blobbifiedBegin.get().empty() && blobbifiedBegin.get().front().begin < purgeRange.begin) ||
 			    (!blobbifiedEnd.get().empty() && blobbifiedEnd.get().front().begin < purgeRange.end)) {
@@ -11709,12 +11854,13 @@ Future<Void> DatabaseContext::waitPurgeGranulesComplete(Key purgeKey) {
 }
 
 ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
-                                     KeyRange range,
+                                     KeyRange originalRange,
                                      bool active,
                                      Optional<Reference<Tenant>> tenant) {
 	state Database db(cx);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 
+	state KeyRange range = originalRange;
 	if (tenant.present()) {
 		wait(tenant.get()->ready());
 		range = range.withPrefix(tenant.get()->prefix());
@@ -11734,28 +11880,56 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
+			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange));
+
 			Standalone<VectorRef<KeyRangeRef>> startBlobRanges = wait(getBlobRanges(&tr->getTransaction(), range, 1));
 
 			if (active) {
 				// Idempotent request.
 				if (!startBlobRanges.empty()) {
-					return startBlobRanges.front().begin == range.begin && startBlobRanges.front().end == range.end;
+					auto res = startBlobRanges.front().begin == range.begin && startBlobRanges.front().end == range.end;
+					if (!res && BG_REQUEST_DEBUG) {
+						// Repeating the blobify command precisely is a no-op, but we block partial overlaps.
+						fmt::print("Blob range actor failed: encountered range {}-{}, trying to work on {}-{}; "
+						           "disallowed overlap\n",
+						           startBlobRanges.front().begin,
+						           startBlobRanges.front().end,
+						           range.begin,
+						           range.end);
+					}
+					return res;
 				}
 			} else {
 				// An unblobbify request must be aligned to boundaries.
-				// It is okay to unblobbify multiple regions all at once.
+				// It is okay to unblobbify multiple regions all at once. Gaps in the existing blob ranges
+				// are allowed, so if we've blobbed [10,20) and [40,50), we can unblob both with a single
+				// unlob([10,50)) command.
 				if (startBlobRanges.empty()) {
 					// already unblobbified
 					return true;
 				} else if (startBlobRanges.front().begin < range.begin) {
 					// If there is a blob at the beginning of the range that overlaps the start
+					if (BG_REQUEST_DEBUG) {
+						fmt::print("unblobify {}-{} found range {}-{}, but cannot break existing ranges\n",
+						           range.begin,
+						           range.end,
+						           startBlobRanges.front().begin,
+						           startBlobRanges.front().end);
+					}
 					return false;
 				}
-				// if blob range does start at the specified, key, we need to make sure the end of also a boundary of a
-				// blob range
+				// if blob range does start at the specified, key, we need to make sure the end is also a
+				// boundary of a blob range
 				Standalone<VectorRef<KeyRangeRef>> endBlobRanges =
 				    wait(getBlobRanges(&tr->getTransaction(), singleKeyRange(range.end), 1));
 				if (!endBlobRanges.empty() && endBlobRanges.front().begin < range.end) {
+					if (BG_REQUEST_DEBUG) {
+						fmt::print("unblobify {}-{} found range {}-{}, but cannot break existing ranges\n",
+						           range.begin,
+						           range.end,
+						           endBlobRanges.front().begin,
+						           endBlobRanges.front().end);
+					}
 					return false;
 				}
 			}

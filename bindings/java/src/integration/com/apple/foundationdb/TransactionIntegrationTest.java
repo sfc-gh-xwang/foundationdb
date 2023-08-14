@@ -61,6 +61,19 @@ public class TransactionIntegrationTest {
         }
     }
 
+    @Test
+    public void testTenantOptionForAuthorization() throws Exception {
+        try (Database db = fdb.open()) {
+            byte[] tenantName = "testTenantOptionSettable".getBytes();
+            TenantManagement.createTenant(db, tenantName).join();
+            // Just make sure the API call goes through and doesn't throw.
+            try (Tenant tenant = db.openTenant(tenantName)) {
+                tenant.options().setAuthorizationToken("bad.token.for.checking.that.api.doesn't.break");
+                Transaction tr = tenant.createTransaction();
+            }
+        }
+    }
+
     private void doTestOperationsAfterCommit(Transaction tr) {
         tr.set("key1".getBytes(), "val1".getBytes());
         CompletableFuture<Void> commitFuture = tr.commit();

@@ -544,6 +544,9 @@ struct GetBlobGranuleLocationsRequest {
 	// updates from other proxies before answering.
 	Version minTenantVersion;
 
+	// If the transaction has the LOCK_AWARE option set, use this to bypass the tenant lock
+	bool lockAware;
+
 	GetBlobGranuleLocationsRequest() : limit(0), reverse(false), justGranules(false), minTenantVersion(latestVersion) {}
 	GetBlobGranuleLocationsRequest(SpanContext spanContext,
 	                               TenantInfo const& tenant,
@@ -553,6 +556,7 @@ struct GetBlobGranuleLocationsRequest {
 	                               bool reverse,
 	                               bool justGranules,
 	                               Version minTenantVersion,
+	                               bool lockAware,
 	                               Arena const& arena)
 	  : arena(arena),
 	    spanContext(spanContext),
@@ -562,13 +566,25 @@ struct GetBlobGranuleLocationsRequest {
 	    limit(limit),
 	    reverse(reverse),
 	    justGranules(justGranules),
-	    minTenantVersion(minTenantVersion) {}
+	    minTenantVersion(minTenantVersion),
+	    lockAware(lockAware) {}
 
 	bool verify() const { return tenant.isAuthorized(); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, begin, end, limit, reverse, reply, spanContext, tenant, minTenantVersion, justGranules, arena);
+		serializer(ar,
+		           begin,
+		           end,
+		           limit,
+		           reverse,
+		           reply,
+		           spanContext,
+		           tenant,
+		           minTenantVersion,
+		           justGranules,
+		           lockAware,
+		           arena);
 	}
 };
 
