@@ -1250,6 +1250,8 @@ public:
 	// Bulk Load
 	int BULK_LOAD_FILE_POINTER_BATCH_SIZE;
 	int BULK_LOAD_PARALLEL_FILE_VALIDATIONS;
+	bool BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT;
+	int BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

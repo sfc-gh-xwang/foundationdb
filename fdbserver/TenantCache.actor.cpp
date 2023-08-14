@@ -225,6 +225,31 @@ public:
 			}
 		}
 	}
+
+	ACTOR static Future<Void> abortBulkLoadsOverQuota(TenantCache* tenantCache) {
+		TraceEvent(SevInfo, "StorageQuotaAbortBulkLoadsStarting", tenantCache->id());
+		loop {
+			state std::unordered_set<int64_t> tenantIds = tenantCache->getTenantsOverQuota();
+			for (const auto tenantId : tenantIds) {
+				try {
+					// TODO: Add a function in DatabaseContext that can take a tenantId and abort all bulk loads
+					// for that tenant.
+					state Reference<Tenant> tenant = makeReference<Tenant>(tenantCache->dbcx(), tenantId);
+					state Standalone<VectorRef<BulkLoadIDRef>> loads =
+					    wait(tenantCache->dbcx()->listBulkLoads(/*onlyActive=*/true, tenant));
+					for (const auto& load : loads) {
+						wait(tenantCache->dbcx()->abortBulkLoad(load, tenant));
+					}
+				} catch (Error& e) {
+					TraceEvent("StorageQuotaAbortBulkLoadsError", tenantCache->id())
+					    .errorUnsuppressed(e)
+					    .suppressFor(1.0);
+					// TODO: what errors can be thrown by the functions above and how to handle them?
+				}
+			}
+			wait(delay(SERVER_KNOBS->BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL));
+		}
+	}
 };
 
 void TenantCache::insert(TenantMapEntry& tenant) {
@@ -333,6 +358,8 @@ Optional<Reference<TCTenantInfo>> TenantCache::tenantOwning(KeyRef key) const {
 }
 
 std::unordered_set<int64_t> TenantCache::getTenantsOverQuota() const {
+	// TODO: Potentially optimize this by caching the list and updating it when storage quota
+	// and/or usage is fetched.
 	std::unordered_set<int64_t> tenantsOverQuota;
 	for (const auto& [tenantGroup, storage] : tenantStorageMap) {
 		if (storage.usage > storage.quota) {
@@ -352,6 +379,10 @@ Future<Void> TenantCache::monitorStorageUsage() {
 
 Future<Void> TenantCache::monitorStorageQuota() {
 	return TenantCacheImpl::monitorStorageQuota(this);
+}
+
+Future<Void> TenantCache::abortBulkLoadsOverQuota() {
+	return TenantCacheImpl::abortBulkLoadsOverQuota(this);
 }
 
 class TenantCacheUnitTest {
