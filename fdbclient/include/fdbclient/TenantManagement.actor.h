@@ -789,6 +789,24 @@ Future<Void> renameTenant(Reference<DB> db,
 	}
 }
 
+ACTOR template <class Transaction>
+Future<std::map<TenantName, int64_t>> filterLockedTenants(Transaction tr, std::map<TenantName, int64_t> tenantInfo) {
+	state std::vector<Future<Optional<TenantMapEntry>>> futures;
+	for (const auto& [tName, tId] : tenantInfo) {
+		futures.push_back(tryGetTenantTransaction(tr, tId));
+	}
+	wait(waitForAll(futures));
+	std::map<TenantName, int64_t> results;
+	for (const auto& future : futures) {
+		const TenantMapEntry& entry = future.get().get();
+		if (entry.tenantLockState != TenantAPI::TenantLockState::LOCKED) {
+			continue;
+		}
+		results[entry.tenantName] = entry.id;
+	}
+	return results;
+}
+
 template <class Transaction>
 Future<Optional<TenantGroupEntry>> tryGetTenantGroupTransaction(Transaction tr, TenantGroupName name) {
 	tr->setOption(FDBTransactionOptions::RAW_ACCESS);

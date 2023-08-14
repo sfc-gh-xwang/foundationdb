@@ -105,14 +105,15 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
                             int& offset,
                             std::vector<metacluster::TenantState>& filters,
                             Optional<TenantGroupName>& tenantGroup,
-                            bool& useJson) {
+                            bool& useJson,
+                            bool& locked) {
 	for (int tokenNum = startIndex; tokenNum < tokens.size(); ++tokenNum) {
 		Optional<Value> value;
 		StringRef token = tokens[tokenNum];
 		StringRef param;
 		bool foundEquals;
 		param = token.eat("=", &foundEquals);
-		if (!foundEquals && !tokencmp(param, "JSON")) {
+		if (!foundEquals && !tokencmp(param, "JSON") && !tokencmp(param, "LOCKED")) {
 			fmt::print(stderr,
 			           "ERROR: invalid option string `{}'. String must specify a value using `=' or be `JSON'.\n",
 			           param.toString().c_str());
@@ -147,6 +148,8 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
 			tenantGroup = TenantGroupName(value.get().toString());
 		} else if (tokencmp(param, "JSON")) {
 			useJson = true;
+		} else if (tokencmp(param, "LOCKED")) {
+			locked = true;
 		} else {
 			fmt::print(stderr, "ERROR: unrecognized parameter `{}'.\n", param.toString().c_str());
 			return false;
@@ -551,16 +554,17 @@ void tenantListOutputJson(std::map<TenantName, int64_t> tenants) {
 
 // tenant list command
 ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
-	if (tokens.size() > 9) {
-		fmt::print(
-		    "Usage: tenant list [BEGIN] [END] "
-		    "[limit=<LIMIT>|offset=<OFFSET>|state=<STATE1>,<STATE2>,...|tenant_group=<TENANT_GROUP>] [JSON] ...\n\n");
+	if (tokens.size() > 10) {
+		fmt::print("Usage: tenant list [BEGIN] [END] "
+		           "[limit=<LIMIT>|offset=<OFFSET>|state=<STATE1>,<STATE2>,...|tenant_group=<TENANT_GROUP>] [LOCKED] "
+		           "[JSON] ...\n\n");
 		fmt::print("Lists the tenants in a cluster.\n");
 		fmt::print("Only tenants in the range BEGIN - END will be printed.\n");
 		fmt::print("An optional LIMIT can be specified to limit the number of results (default 100).\n");
 		fmt::print("Optionally skip over the first OFFSET results (default 0).\n");
 		fmt::print("Optional comma-separated tenant state(s) can be provided to filter the list.\n");
 		fmt::print("Optional tenant group can be provided to filter the list.\n");
+		fmt::print("If LOCKED is specified, then the output will only contain locked tenants.\n");
 		fmt::print("If JSON is specified, then the output will be in JSON format.\n");
 		fmt::print("Specifying [offset] and [state] is only supported in a metacluster.\n");
 		return false;
@@ -573,6 +577,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 	state std::vector<metacluster::TenantState> filters;
 	state Optional<TenantGroupName> tenantGroup;
 	state bool useJson = false;
+	state bool locked = false;
 
 	if (tokens.size() >= 3) {
 		beginTenant = tokens[2];
@@ -585,7 +590,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 		}
 	}
 	if (tokens.size() >= 5) {
-		if (!parseTenantListOptions(tokens, 4, limit, offset, filters, tenantGroup, useJson)) {
+		if (!parseTenantListOptions(tokens, 4, limit, offset, filters, tenantGroup, useJson, locked)) {
 			return false;
 		}
 	}
@@ -602,8 +607,9 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 			// State filters only apply to calls from the management cluster
 			// Tenant group filters can apply to management, data, and standalone clusters
 			if (clusterType == ClusterType::METACLUSTER_MANAGEMENT) {
-				std::vector<std::pair<TenantName, metacluster::MetaclusterTenantMapEntry>> tenants = wait(
-				    metacluster::listTenantMetadata(db, beginTenant, endTenant, limit, offset, filters, tenantGroup));
+				std::vector<std::pair<TenantName, metacluster::MetaclusterTenantMapEntry>> tenants =
+				    wait(metacluster::listTenantMetadata(
+				        db, beginTenant, endTenant, limit, offset, filters, tenantGroup, locked));
 				for (const auto& [tenantName, entry] : tenants) {
 					tenantInfo[tenantName] = entry.id;
 				}
@@ -631,6 +637,9 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 						jsonDoc.get("id", tId);
 						tenantInfo[tName] = tId;
 					}
+				}
+				if (locked) {
+					wait(store(tenantInfo, TenantAPI::filterLockedTenants(tr, tenantInfo)));
 				}
 			}
 
