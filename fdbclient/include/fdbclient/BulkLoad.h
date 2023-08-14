@@ -153,4 +153,8 @@ struct Traceable<BulkLoadStatus::State> : std::true_type {
 template <>
 struct fmt::formatter<BulkLoadStatus::State> : FormatUsingTraceable<BulkLoadStatus::State> {};
 
+BulkLoadID newBulkLoadID();
+
+UID bulkLoadIdToUID(BulkLoadID const& id);
+
 #endif

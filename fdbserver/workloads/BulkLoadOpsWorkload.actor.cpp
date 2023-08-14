@@ -49,6 +49,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	BulkLoadOpsWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
 		testDuration = getOption(options, "testDuration"_sr, 30.0);
 		concurrentLoads = getOption(options, "concurrentLoads"_sr, deterministicRandom()->randomInt(1, 100));
+		concurrentLoads = std::min(concurrentLoads, CLIENT_KNOBS->RANGE_LOCK_LIMIT);
 
 		stopTest = false;
 		tenantName = StringRef("bulkLoadOpsTenant" + std::to_string(clientId));
