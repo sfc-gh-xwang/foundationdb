@@ -231,20 +231,26 @@ public:
 		loop {
 			state std::unordered_set<int64_t> tenantIds = tenantCache->getTenantsOverQuota();
 			for (const auto tenantId : tenantIds) {
-				try {
-					// TODO: Add a function in DatabaseContext that can take a tenantId and abort all bulk loads
-					// for that tenant.
-					state Reference<Tenant> tenant = makeReference<Tenant>(tenantCache->dbcx(), tenantId);
-					state Standalone<VectorRef<BulkLoadIDRef>> loads =
-					    wait(tenantCache->dbcx()->listBulkLoads(/*onlyActive=*/true, tenant));
-					for (const auto& load : loads) {
-						wait(tenantCache->dbcx()->abortBulkLoad(load, tenant));
+				// TODO: Add a function in DatabaseContext that can take a tenantId and abort all bulk loads
+				// for that tenant.
+				state Reference<Tenant> tenant = makeReference<Tenant>(tenantCache->dbcx(), tenantId);
+				state Standalone<VectorRef<BulkLoadIDRef>> loads =
+				    wait(tenantCache->dbcx()->listBulkLoads(/*onlyActive=*/true, tenant));
+				state int idx = 0;
+				for (; idx < loads.size(); idx++) {
+					state BulkLoadIDRef id = loads[idx];
+					try {
+						wait(tenantCache->dbcx()->abortBulkLoad(id, tenant));
+						wait(tenantCache->dbcx()->cleanupBulkLoad(id, tenant));
+					} catch (Error& e) {
+						if (e.code() == error_code_bulk_load_abort_failed ||
+						    e.code() == error_code_bulk_load_not_found) {
+							continue;
+						}
+						// Any other errors would be unexpected; treat it as fatal
+						TraceEvent(SevInfo, "StorageQuotaAbortBulkLoadsError", tenantCache->id()).errorUnsuppressed(e);
+						throw e;
 					}
-				} catch (Error& e) {
-					TraceEvent(SevInfo, "StorageQuotaAbortBulkLoadsError", tenantCache->id())
-					    .errorUnsuppressed(e)
-					    .suppressFor(1.0);
-					// TODO: check what errors can be thrown by the functions above and how to handle them
 				}
 			}
 			wait(delay(SERVER_KNOBS->BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL));
