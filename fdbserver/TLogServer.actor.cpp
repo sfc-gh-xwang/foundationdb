@@ -384,8 +384,8 @@ struct TLogData : NonCopyable {
 	struct emptyVersionWaitMetadata {
 		double waitWindow; // "atomically" change (as appears to peek actor) with transisioning state
 		bool transitioning; // whether tlog-ss pair is currently in transitioning state
-		PromiseStream<Void> applied; // signal tlogEmptyVersionWait actor to conclude current transition
-		bool replied; // whether current transition has been answered. ensure Promise is only delivered once
+		AsyncTrigger applied; // signal tlogEmptyVersionWait actor to conclude current transition
+		bool replied; // whether current transition has been acked.
 		uint32_t oldPeekRefcount; // during non-transition, all requests will use this refcount
 		uint32_t newPeekRefcount; // during transition, all new requests will use new window and this refcount
 
@@ -396,8 +396,24 @@ struct TLogData : NonCopyable {
 			oldPeekRefcount = 0;
 			newPeekRefcount = 0;
 		}
+
+		void incRefcount(const bool transitioning) {
+			if (transitioning) {
+				++newPeekRefcount;
+			} else {
+				++oldPeekRefcount;
+			}
+		}
+
+		void decRefcount(const bool transitioning) {
+			if (transitioning) {
+				++newPeekRefcount;
+			} else {
+				++oldPeekRefcount;
+			}
+		}
 	};
-	std::unordered_map<Tag, emptyVersionWaitMetadata> emptyVersionWaitMetaMap;
+	std::unordered_map<Tag, emptyVersionWaitMetadata> emptyVersionWaitMetadataMap;
 
 	// Tlog side empty peek number monitoring
 	uint32_t tlogPeekMsgCount;
@@ -2148,15 +2164,13 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 				emptyVersionWaitWindow = 0;
 				break;
 			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
-				if (!self->emptyVersionWaitMetaMap.contains(reqTag))
-					self->emptyVersionWaitMetaMap[reqTag].reset();
+				if (!self->emptyVersionWaitMetadataMap.contains(reqTag)) {
+					self->emptyVersionWaitMetadataMap[reqTag].reset();
+				}
 				// snapshot transition state and wait window now and retain it for current request over it's lifetime
-				emptyVersionWaitTransition = self->emptyVersionWaitMetaMap[reqTag].transitioning;
-				emptyVersionWaitWindow = self->emptyVersionWaitMetaMap[reqTag].waitWindow;
-				if (emptyVersionWaitTransition)
-					++self->emptyVersionWaitMetaMap[reqTag].newPeekRefcount;
-				else
-					++self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount;
+				emptyVersionWaitTransition = self->emptyVersionWaitMetadataMap[reqTag].transitioning;
+				emptyVersionWaitWindow = self->emptyVersionWaitMetadataMap[reqTag].waitWindow;
+				self->emptyVersionWaitMetadataMap[reqTag].incRefcount(emptyVersionWaitTransition);
 				emptyVersionWaitRefcounted = true;
 				DebugLogTraceEvent("TlogEmptyVersionWaitWindowSanityCheck")
 				    .detail("Tag", reqTag)
@@ -2166,8 +2180,9 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		}
 
 		state double remainingDelay = emptyVersionWaitWindow - (g_network->timer() - blockStart);
-		if (remainingDelay <= 0)
+		if (remainingDelay <= 0) {
 			break;
+		}
 
 		requestWaited = true;
 		state Version waitUntilVersion = logData->version.get() + 1;
@@ -2183,27 +2198,25 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT &&
 	    emptyVersionWaitRefcounted) {
-		if (emptyVersionWaitTransition)
-			--self->emptyVersionWaitMetaMap[reqTag].newPeekRefcount;
-		else
-			--self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount;
+		self->emptyVersionWaitMetadataMap[reqTag].decRefcount(emptyVersionWaitTransition);
 		// Only when all following are satisfied we consider window applied and ack back:
 		// 1. Tlog has dynamic wait window info for the ss
 		// 2. Reply signal must be initiated by non-transitioning peek (those initiated before new window is applied)
 		// 3. All peeks with old wait window has been served (refcount = 0)
 		// 4. Haven't signaled empty version wait actor in this window update yet
-		if (!emptyVersionWaitTransition && self->emptyVersionWaitMetaMap[reqTag].oldPeekRefcount == 0 &&
-		    !self->emptyVersionWaitMetaMap[reqTag].replied) {
-			self->emptyVersionWaitMetaMap[reqTag].replied = true;
+		if (!emptyVersionWaitTransition && !self->emptyVersionWaitMetadataMap[reqTag].replied &&
+		    self->emptyVersionWaitMetadataMap[reqTag].oldPeekRefcount == 0) {
 			DebugLogTraceEvent("TlogEmptyVersionSyncApplied1")
 			    .detail("Tag", reqTag)
-			    .detail("Window", self->emptyVersionWaitMetaMap[reqTag].waitWindow);
-			self->emptyVersionWaitMetaMap[reqTag].applied.send(Void());
+			    .detail("Window", self->emptyVersionWaitMetadataMap[reqTag].waitWindow);
+			self->emptyVersionWaitMetadataMap[reqTag].replied = true;
+			self->emptyVersionWaitMetadataMap[reqTag].applied.trigger();
 		}
 	}
 
-	if (messages.getLength() <= 0)
+	if (messages.getLength() <= 0) {
 		++self->tlogEmptyPeekMsgCount;
+	}
 
 	TLogPeekReply reply;
 	reply.maxKnownVersion = logData->version.get();
@@ -2277,40 +2290,42 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequest req) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT)
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
 		return Void();
+	}
 
-	if (!self->emptyVersionWaitMetaMap.contains(req.tag))
-		self->emptyVersionWaitMetaMap[req.tag].reset();
+	if (!self->emptyVersionWaitMetadataMap.contains(req.tag)) {
+		self->emptyVersionWaitMetadataMap[req.tag].reset();
+	}
 
 	// During transition no furthur emptyVersionWait for the tlog-ss pair should be sent to tlog
-	if (self->emptyVersionWaitMetaMap[req.tag].transitioning) {
-		// discard additional requests when more-than-once delivery of the same wait window update is received
+	if (self->emptyVersionWaitMetadataMap[req.tag].transitioning) {
 		DebugLogTraceEvent("DiscardedSyncMessage").detail("Tag", req.tag).detail("WaitWindow", req.waitWindow);
 		return Void();
 	}
 
-	self->emptyVersionWaitMetaMap[req.tag].transitioning = true;
-	self->emptyVersionWaitMetaMap[req.tag].waitWindow = req.waitWindow;
+	self->emptyVersionWaitMetadataMap[req.tag].transitioning = true;
+	self->emptyVersionWaitMetadataMap[req.tag].waitWindow = req.waitWindow;
 
 	// 1. If no peek request is using window currently, window is effectively applied immediately, notify ss right away.
 	// 2. If >0 peek request is using window currently, window is effectively applied after all requests with the old
 	// window have been served.
-	if (self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount > 0) {
+	if (self->emptyVersionWaitMetadataMap[req.tag].oldPeekRefcount > 0) {
 		DebugLogTraceEvent("WaitStarted")
 		    .detail("Tag", req.tag)
-		    .detail("StructWindow", self->emptyVersionWaitMetaMap[req.tag].waitWindow);
-		self->emptyVersionWaitMetaMap[req.tag].replied = false;
-		waitNext(self->emptyVersionWaitMetaMap[req.tag].applied.getFuture());
+		    .detail("StructWindow", self->emptyVersionWaitMetadataMap[req.tag].waitWindow);
+		self->emptyVersionWaitMetadataMap[req.tag].replied = false;
+		wait(self->emptyVersionWaitMetadataMap[req.tag].applied.onTrigger());
 		DebugLogTraceEvent("WaitEnded");
 	}
 
-	self->emptyVersionWaitMetaMap[req.tag].transitioning = false;
-	self->emptyVersionWaitMetaMap[req.tag].oldPeekRefcount = self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount;
-	self->emptyVersionWaitMetaMap[req.tag].newPeekRefcount = 0;
+	self->emptyVersionWaitMetadataMap[req.tag].transitioning = false;
+	self->emptyVersionWaitMetadataMap[req.tag].oldPeekRefcount =
+	    self->emptyVersionWaitMetadataMap[req.tag].newPeekRefcount;
+	self->emptyVersionWaitMetadataMap[req.tag].newPeekRefcount = 0;
 	DebugLogTraceEvent("TlogEmptyVersionSyncApplied2")
 	    .detail("Tag", req.tag)
-	    .detail("StructWindow", self->emptyVersionWaitMetaMap[req.tag].waitWindow)
+	    .detail("StructWindow", self->emptyVersionWaitMetadataMap[req.tag].waitWindow)
 	    .detail("ReqWindow", req.waitWindow);
 	req.reply.send(Void());
 	return Void();
@@ -3175,35 +3190,35 @@ ACTOR Future<Void> tLogCore(TLogData* self,
 	logData->addActor.send(waitFailureServer(tli.waitFailure.getFuture()));
 	logData->addActor.send(logData->removed);
 	// FIXME: update tlogMetrics to include new information, or possibly only have one copy for the shared instance
-	logData->addActor.send(
-	    logData->cc.traceCounters("TLogMetrics",
-	                              logData->logId,
-	                              SERVER_KNOBS->STORAGE_LOGGING_DELAY,
-	                              logData->logId.toString() + "/TLogMetrics",
-	                              [self = self](TraceEvent& te) {
-		                              StorageBytes sbTlog = self->persistentData->getStorageBytes();
-		                              te.detail("KvstoreBytesUsed", sbTlog.used);
-		                              te.detail("KvstoreBytesFree", sbTlog.free);
-		                              te.detail("KvstoreBytesAvailable", sbTlog.available);
-		                              te.detail("KvstoreBytesTotal", sbTlog.total);
-		                              te.detail("KvstoreBytesTemp", sbTlog.temp);
+	logData->addActor.send(logData->cc.traceCounters(
+	    "TLogMetrics",
+	    logData->logId,
+	    SERVER_KNOBS->STORAGE_LOGGING_DELAY,
+	    logData->logId.toString() + "/TLogMetrics",
+	    [self = self](TraceEvent& te) {
+		    StorageBytes sbTlog = self->persistentData->getStorageBytes();
+		    te.detail("KvstoreBytesUsed", sbTlog.used);
+		    te.detail("KvstoreBytesFree", sbTlog.free);
+		    te.detail("KvstoreBytesAvailable", sbTlog.available);
+		    te.detail("KvstoreBytesTotal", sbTlog.total);
+		    te.detail("KvstoreBytesTemp", sbTlog.temp);
 
-		                              StorageBytes sbQueue = self->rawPersistentQueue->getStorageBytes();
-		                              te.detail("QueueDiskBytesUsed", sbQueue.used);
-		                              te.detail("QueueDiskBytesFree", sbQueue.free);
-		                              te.detail("QueueDiskBytesAvailable", sbQueue.available);
-		                              te.detail("QueueDiskBytesTotal", sbQueue.total);
-		                              te.detail("QueueDiskBytesTemp", sbQueue.temp);
+		    StorageBytes sbQueue = self->rawPersistentQueue->getStorageBytes();
+		    te.detail("QueueDiskBytesUsed", sbQueue.used);
+		    te.detail("QueueDiskBytesFree", sbQueue.free);
+		    te.detail("QueueDiskBytesAvailable", sbQueue.available);
+		    te.detail("QueueDiskBytesTotal", sbQueue.total);
+		    te.detail("QueueDiskBytesTemp", sbQueue.temp);
 
-		                              te.detail("TlogPeekMsgCount", self->tlogPeekMsgCount);
-		                              te.detail("TlogEmptyPeekMsgCount", self->tlogEmptyPeekMsgCount);
-		                              te.detail("VersionSyncMsgCount", self->tlogVersionSyncMsgCount);
-		                              self->tlogPeekMsgCount = 0;
-		                              self->tlogEmptyPeekMsgCount = 0;
-		                              self->tlogVersionSyncMsgCount = 0;
+		    te.detail("TlogPeekMsgCount", self->tlogPeekMsgCount);
+		    te.detail("TlogEmptyPeekMsgCount", self->tlogEmptyPeekMsgCount);
+		    te.detail("VersionSyncMsgCount", self->tlogVersionSyncMsgCount);
+		    self->tlogPeekMsgCount = 0;
+		    self->tlogEmptyPeekMsgCount = 0;
+		    self->tlogVersionSyncMsgCount = 0;
 
-		                              te.detail("EmptyVersionWaitMetaMapSize", self->emptyVersionWaitMetaMap.size());
-	                              }));
+		    te.detail("EmptyVersionWaitMetaMapSize", self->emptyVersionWaitMetadataMap.size());
+	    }));
 
 	logData->addActor.send(serveTLogInterface(self, tli, logData, warningCollectorInput));
 	logData->addActor.send(cleanupPeekTrackers(logData.getPtr()));
