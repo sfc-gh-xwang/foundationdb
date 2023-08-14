@@ -87,6 +87,8 @@ namespace vexillographer
                     "A set of options that can be set globally for the {@link FDB FoundationDB API}.") },
                 { Scope.DatabaseOption, new ScopeOptions(true, 
                     "A set of options that can be set on a {@link Database}.") },
+                { Scope.TenantOption, new ScopeOptions(true, 
+                    "A set of options that can be set on a {@link Tenant}.") },
                 { Scope.TransactionOption, new ScopeOptions(true, 
                     "A set of options that can be set on a {@link Transaction}.") },
                 { Scope.StreamingMode, new ScopeOptions(false, 

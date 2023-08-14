@@ -4304,13 +4304,18 @@ ACTOR Future<Void> blobWorkerRecruiter(
 	}
 
 	state DatabaseConfiguration config = wait(getDatabaseConfiguration(self->db, true));
+	state double lastVerboseLogTs = 0.0;
 
 	loop {
 		try {
 			state RecruitBlobWorkerRequest recruitReq;
 
 			// SevDebug normally but SevInfo if we have no active workers
-			Severity excludeSeverity = self->workersById.empty() ? SevInfo : SevDebug;
+			Severity excludeSeverity = SevDebug;
+			if (self->workersById.empty() && now() - lastVerboseLogTs >= 10.0) {
+				excludeSeverity = SevInfo;
+				lastVerboseLogTs = now();
+			}
 
 			// workers that are used by existing blob workers should be excluded
 			for (auto const& [bwId, bwInterf] : self->workersById) {
@@ -5604,7 +5609,7 @@ ACTOR Future<int64_t> bgccCheckGranule(Reference<BlobManagerData> bmData, KeyRan
 	state Reference<BlobConnectionProvider> bstore = wait(getBStoreForGranule(bmData, range));
 
 	std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blobResult =
-	    wait(readFromBlob(bmData->db, bstore, range, 0, fdbResult.second));
+	    wait(readFromBlob(bmData->db, bstore, range, 0, fdbResult.second, {}, LockAware::True));
 
 	if (!compareFDBAndBlob(fdbResult.first, blobResult, range, fdbResult.second, BM_DEBUG)) {
 		++bmData->stats.ccMismatches;
@@ -6355,12 +6360,14 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 
 		self->addActor.send(watchBackupEnabled(self));
 
-		BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
-		                                                         const BulkLoadStatus::State& state) {
-			return trackBulkLoad(self, id, state);
-		};
-		state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);
-		self->addActor.send(bulkLoadTracker.start());
+		if (CLIENT_KNOBS->ALLOW_BULK_LOADS) {
+			BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
+			                                                         const BulkLoadStatus::State& state) {
+				return trackBulkLoad(self, id, state);
+			};
+			state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);
+			self->addActor.send(bulkLoadTracker.start());
+		}
 
 		loop choose {
 			when(wait(self->iAmReplaced.getFuture())) {

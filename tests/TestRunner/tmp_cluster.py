@@ -100,6 +100,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    custom_config = {}
 
     if args.disable_tenants:
         enable_tenants = False
@@ -112,6 +113,11 @@ if __name__ == "__main__":
             server_chain_len=args.server_cert_chain_len,
             client_chain_len=args.client_cert_chain_len,
         )
+
+    if args.accelerate_read_metrics_generation:
+        custom_config["knob_shard_read_sample_update_interval"] = "1"
+        custom_config["knob_ops_read_units_per_sample"] = "1"
+
     errcode = 1
     with TempCluster(
         args.build_dir,
@@ -122,6 +128,7 @@ if __name__ == "__main__":
         authorization_kty=args.authorization_kty,
         authorization_keypair_id=args.authorization_keypair_id,
         remove_at_exit=not args.no_remove_at_exit,
+        custom_config=custom_config,
     ) as cluster:
         logger.info("log-dir: {}".format(cluster.log))
         logger.info("etc-dir: {}".format(cluster.etc))

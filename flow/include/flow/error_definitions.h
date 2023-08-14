@@ -256,6 +256,7 @@ ERROR( all_external_clients_failed, 2124, "All external clients have failed." )
 ERROR( incompatible_client, 2125, "None of the available clients match the protocol version of the cluster." )
 ERROR( too_many_grv_batchers, 2126, "The client is running too many concurrent GRV batchers" )
 ERROR( restart_update_stream, 2127, "Restart update stream" )
+ERROR( tls_required_error, 2128, "Plaintext connections are disabled. TLS is required." )
 
 ERROR( tenant_name_required, 2130, "Tenant name must be specified to access data in the cluster" )
 ERROR( tenant_not_found, 2131, "Tenant does not exist" )
@@ -271,6 +272,9 @@ ERROR( cluster_no_capacity, 2141, "Cluster does not have capacity to perform the
 ERROR( tenant_removed, 2142, "The tenant was removed" )
 ERROR( invalid_tenant_state, 2143, "Operation cannot be applied to tenant in its current state" )
 ERROR( tenant_locked, 2144, "Tenant is locked" )
+ERROR( invalid_tenant_move, 2145, "The tenant movement is invalid" )
+ERROR( tenant_move_failed, 2146, "The tenant movement failed internally but can be retried" )
+ERROR( tenant_move_record_missing, 2147, "There is no tenant movement in progress with the given specifications")
 
 ERROR( invalid_cluster_name, 2160, "Data cluster name cannot begin with \\xff" )
 ERROR( invalid_metacluster_operation, 2161, "Metacluster operation performed on non-metacluster" )

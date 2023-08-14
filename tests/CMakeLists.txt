@@ -149,7 +149,6 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES fast/BlobRestoreLarge.toml)
   add_fdb_test(TEST_FILES fast/BlobRestoreToVersion.toml)
   add_fdb_test(TEST_FILES fast/BlobRestoreTenantMode.toml)
-  add_fdb_test(TEST_FILES fast/CacheTest.toml)
   add_fdb_test(TEST_FILES fast/CloggedSideband.toml)
   add_fdb_test(TEST_FILES fast/CompressionUtilsUnit.toml IGNORE)
   add_fdb_test(TEST_FILES fast/ConfigureLocked.toml)
@@ -164,6 +163,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES fast/ChangeFeedOperationsMove.toml)
   add_fdb_test(TEST_FILES fast/DataLossRecovery.toml)
   add_fdb_test(TEST_FILES fast/EncryptionOps.toml)
+  add_fdb_test(TEST_FILES fast/EncryptKeyNotFound.toml)
 
   # EncryptionUnitTests is only a convenience file to run the different types of encryption tests at once. Do not enable in general ensembles
   add_fdb_test(TEST_FILES fast/EncryptionUnitTests.toml IGNORE)
@@ -252,7 +252,7 @@ if(WITH_PYTHON)
   endif()
 
   add_fdb_test(TEST_FILES rare/BlobGranuleRanges.toml)
-  add_fdb_test(TEST_FILES rare/BlobGranuleRangesChangeLog.toml)
+  add_fdb_test(TEST_FILES rare/BlobGranuleRangesBypassLock.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleMergeBoundaries.toml)
   add_fdb_test(TEST_FILES rare/BulkLoadOperations.toml)
   add_fdb_test(TEST_FILES rare/BulkLoadOperationsTenants.toml)
@@ -401,14 +401,8 @@ if(WITH_PYTHON)
     TEST_FILES restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-1.toml
     restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.1/ConfigureStorageMigrationTestRestart-1.toml
-	restarting/to_71.3.1/ConfigureStorageMigrationTestRestart-2.toml)
-  add_fdb_test(
     TEST_FILES restarting/to_71.3.0/CycleTestRestart-1.toml
     restarting/to_71.3.0/CycleTestRestart-2.toml)
-  add_fdb_test(
-    TEST_FILES restarting/to_71.3.1/CycleTestRestart-1.toml
-	restarting/to_71.3.1/CycleTestRestart-2.toml)
   add_fdb_test(
     TEST_FILES restarting/to_71.3.0/BlobGranuleRestartCycle-1.toml
     restarting/to_71.3.0/BlobGranuleRestartCycle-2.toml)
@@ -446,6 +440,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES slow/LowLatencyWithFailures.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterManagement.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterManagementConcurrency.toml)
+  add_fdb_test(TEST_FILES slow/MetaclusterMove.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterRecovery.toml)
   add_fdb_test(TEST_FILES slow/MoveKeysClean.toml)
   add_fdb_test(TEST_FILES slow/MoveKeysSideband.toml)
