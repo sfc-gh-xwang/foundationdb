@@ -5934,6 +5934,8 @@ ACTOR Future<Void> watchBackupEnabled(Reference<BlobManagerData> bmData) {
 	}
 }
 
+// TODO: Long term, get this info from TenantCache that already calculates and caches this value.
+// TODO: If not, parallelize the calls for different tenants.
 ACTOR Future<int64_t> getStorageUsage(Database cx, BulkLoadIDKey idKey, TenantGroupName group) {
 	state std::vector<std::pair<TenantName, int64_t>> tenants = wait(TenantAPI::listTenantGroupTenants(
 	    cx.getReference(), group, ""_sr, "\xff\xff"_sr, CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER + 1));
@@ -5964,8 +5966,6 @@ ACTOR Future<int64_t> getStorageUsage(Database cx, BulkLoadIDKey idKey, TenantGr
 	return usage;
 }
 
-// TODO: Improve tracing: trace the stats when returning true, and consolidate tracing to avoid
-// code duplication.
 ACTOR Future<bool> makeReservationForBulkLoad(Reference<ReadYourWritesTransaction> tr,
                                               BulkLoadIDKey idKey,
                                               Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
@@ -5978,48 +5978,52 @@ ACTOR Future<bool> makeReservationForBulkLoad(Reference<ReadYourWritesTransactio
 	}
 
 	if (bulkLoadSize == 0) {
-		TraceEvent(SevDebug, "BulkLoadReservationEmptyLoad");
+		TraceEvent(SevDebug, "BulkLoadReservationEmptyLoad").detail("BulkLoadId", idKey.second);
 		return true;
 	}
 
-	// Get storage quota for this tenant group
-	state Optional<int64_t> quota = wait(TenantMetadata::storageQuota().get(tr, group));
-	if (!quota.present()) {
-		TraceEvent(SevDebug, "BulkLoadReservationNoQuota");
-		// Track the reservations even if a quota is currently not set. Set `quota` to max to continue.
-		quota = std::numeric_limits<int64_t>::max();
-	}
-
-	if (bulkLoadSize + usage > quota.get()) {
-		TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
-		    .detail("BulkLoadId", idKey.second)
-		    .detail("TenantGroup", group)
-		    .detail("Quota", quota.get())
-		    .detail("BulkLoadSize", bulkLoadSize)
-		    .detail("TenantGroupCurrentUsage", usage);
-		return false;
-	}
-
-	// Get total reservations for this tenant group and add reservation for this bulk load
+	// Get prior reservations for this tenant group
 	state Optional<int64_t> reservation = wait(BulkLoadMetadata::reservationMap().get(tr, group));
-	if (reservation.present() && bulkLoadSize + usage + reservation.get() > quota.get()) {
-		TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
-		    .detail("BulkLoadId", idKey.second)
-		    .detail("TenantGroup", group)
-		    .detail("Quota", quota.get())
-		    .detail("BulkLoadSize", bulkLoadSize)
-		    .detail("TenantGroupCurrentUsage", usage)
-		    .detail("PriorReservations", reservation);
-		return false;
-	} else {
-		if (!reservation.present()) {
-			TraceEvent(SevDebug, "BulkLoadReservationNoPriorReservations");
-			BulkLoadMetadata::reservationMap().set(tr, group, bulkLoadSize);
-		} else {
-			BulkLoadMetadata::reservationMap().set(tr, group, reservation.get() + bulkLoadSize);
-		}
-		return true;
+	if (!reservation.present()) {
+		TraceEvent(SevDebug, "BulkLoadReservationNoPriorReservations").detail("BulkLoadId", idKey.second);
+		reservation = 0;
 	}
+
+	state int64_t newReservation = reservation.get() + bulkLoadSize;
+	state std::string quotaTrace = "not checked";
+
+	// Check the total of all reservations and usage against the quota if BULK_LOAD_STORAGE_RESERVATION_ENABLED
+	// is true and the storage quota for this tenant group is set
+	if (CLIENT_KNOBS->BULK_LOAD_STORAGE_RESERVATION_ENABLED) {
+		// Get storage quota for this tenant group
+		state Optional<int64_t> quota = wait(TenantMetadata::storageQuota().get(tr, group));
+		if (!quota.present()) {
+			quotaTrace = "not set";
+			TraceEvent(SevDebug, "BulkLoadReservationNoQuota").detail("BulkLoadId", idKey.second);
+		} else if (newReservation + usage > quota.get()) {
+			TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
+			    .detail("BulkLoadId", idKey.second)
+			    .detail("TenantGroup", group)
+			    .detail("Quota", quota.get())
+			    .detail("BulkLoadSize", bulkLoadSize)
+			    .detail("TenantGroupCurrentUsage", usage)
+			    .detail("PriorReservations", reservation);
+			return false;
+		} else {
+			quotaTrace = std::to_string(quota.get());
+		}
+	}
+
+	BulkLoadMetadata::reservationMap().set(tr, group, newReservation);
+	TraceEvent(SevDebug, "BulkLoadReservationSet")
+	    .detail("BulkLoadId", idKey.second)
+	    .detail("TenantGroup", group)
+	    .detail("Quota", quotaTrace)
+	    .detail("BulkLoadSize", bulkLoadSize)
+	    .detail("TenantGroupCurrentUsage", usage)
+	    .detail("PriorReservations", reservation)
+	    .detail("NewReservation", newReservation);
+	return true;
 }
 
 ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
@@ -6111,7 +6115,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 				filesToValidate.push_back(filesToValidate.arena(), f);
 			}
 
-			if (CLIENT_KNOBS->BULK_LOAD_STORAGE_RESERVATION_ENABLED && tenantGroup.present()) {
+			if (tenantGroup.present()) {
 				state bool reserved =
 				    wait(makeReservationForBulkLoad(tr, idKey, filesToValidate, tenantGroup.get(), usage));
 				if (!reserved) {
@@ -6120,8 +6124,12 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 					// throwing an error for reservation failure, which could allow a caller to free up space
 					// or increase quota then retry this state change (without having to retry the files),
 					// or clean up the bulk load.
+					// Alternately, even if the bulk load is aborted here, still propagate this info up to
+					// the client for visibility.
 					return false;
 				}
+				// TODO: Improve traces since `reserved` could mean that reservation was set but not checked (if
+				// CLIENT_KNOBS->BULK_LOAD_STORAGE_RESERVATION_ENABLED is false)
 				TraceEvent(SevDebug, "BulkLoadReservationSucceeded").detail("BulkLoadID", idKey.second);
 			}
 
@@ -6157,6 +6165,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 			}
 
 			wait(tr->commit());
+			TraceEvent(SevDebug, "BulkLoadReservationCommitDone").detail("BulkLoadID", idKey.second);
 			break;
 
 		} catch (Error& e) {
@@ -6244,7 +6253,6 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData,
 			}
 
 			BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
-			BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
 
 			wait(tr->commit());
 			break;

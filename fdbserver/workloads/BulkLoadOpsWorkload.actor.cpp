@@ -1176,6 +1176,15 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		                             });
 	}
 
+	static Future<Void> clearStorageQuota(Database cx, TenantGroupName tenantGroupName) {
+		return runRYWTransactionVoid(
+		    cx, [tenantGroupName = tenantGroupName](Reference<ReadYourWritesTransaction> tr) -> Future<Void> {
+			    tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			    TenantMetadata::storageQuota().erase(tr, tenantGroupName);
+			    return Void();
+		    });
+	}
+
 	static Future<Optional<int64_t>> getStorageQuota(Database cx, TenantGroupName tenantGroupName) {
 		return runRYWTransaction(cx, [tenantGroupName = tenantGroupName](Reference<ReadYourWritesTransaction> tr) {
 			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
@@ -1185,7 +1194,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	// TODO(kejriwal)
 	ACTOR Future<Void> reservationFailed(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
-		fmt::print("~~~~~~~ Testing reservationFailed ~~~~~~~\n");
 		if (!self->tenantRes.present() || !self->tenantResGroupName.present()) {
 			return Void();
 		}
@@ -1199,7 +1207,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		// cleanup
 		wait(cx->cleanupBulkLoad(id, self->tenantRes));
-		fmt::print("~~~~~~~ Testing reservationFailed ~~~~~~~\n");
+		wait(clearStorageQuota(cx, self->tenantResGroupName.get()));
 		return Void();
 	}
 
@@ -1246,6 +1254,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->bulkLoadAllFilesRegistered(id2, self->tenantRes));
 		wait(cx->waitBulkLoadComplete(id2, self->tenantRes));
 		wait(cx->cleanupBulkLoad(id2, self->tenantRes));
+
+		wait(clearStorageQuota(cx, self->tenantResGroupName.get()));
 		return Void();
 	}
 
@@ -1344,8 +1354,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				ASSERT(false);
 			}
 
-			// TODO(kejriwal): revert
-			self->stopTest = true;
 			wait(delay(1.0));
 		}
 	}

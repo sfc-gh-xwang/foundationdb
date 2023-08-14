@@ -12,7 +12,6 @@
 #include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/IKnobCollection.h"
-#include "fdbclient/TenantManagement.actor.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
