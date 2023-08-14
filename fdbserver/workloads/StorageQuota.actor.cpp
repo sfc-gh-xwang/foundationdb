@@ -85,6 +85,9 @@ struct StorageQuotaWorkload : TestWorkload {
 		ASSERT(entry1.tenantGroup.present() && entry1.tenantGroup.get() == self->group &&
 		       entry2.tenantGroup.present() && entry2.tenantGroup.get() == self->group);
 
+		// Start a bulk load. The key range doesn't matter since we're not actually trying to load data
+		state BulkLoadID bulkLoadID = wait(cx->startBulkLoad(singleKeyRange(""_sr), self->tenant));
+
 		// Get the size of the non-empty tenant. We will set the quota of the tenant group
 		// to just below the current size of this tenant.
 		state int64_t size = wait(getSize(cx, self->tenant));
@@ -105,6 +108,9 @@ struct StorageQuotaWorkload : TestWorkload {
 		state bool rejected2 = wait(tryWrite(self, cx, self->emptyTenant, /*bypassQuota=*/false, /*expectOk=*/false));
 		ASSERT(rejected2);
 
+		// The bulk load started earlier should also have been aborted by the system
+		wait(expectBulkLoadAbortedBySystem(cx, bulkLoadID, self->tenant));
+
 		// Check that transaction is able to commit if we use the FDBTransactionOptions to bypass quota.
 		state bool bypassed = wait(tryWrite(self, cx, self->tenant, /*bypassQuota=*/true, /*expectOk=*/true));
 		ASSERT(bypassed);
@@ -121,6 +127,19 @@ struct StorageQuotaWorkload : TestWorkload {
 		state bool committed2 = wait(tryWrite(self, cx, self->emptyTenant, /*bypassQuota=*/false, /*expectOk=*/true));
 		ASSERT(committed2);
 
+		return Void();
+	}
+
+	ACTOR static Future<Void> expectBulkLoadAbortedBySystem(Database cx, BulkLoadID id, Reference<Tenant> tenant) {
+		try {
+			// retry of all files registered might also throw bulk_load_aborted
+			wait(cx->bulkLoadAllFilesRegistered(id, tenant));
+			wait(cx->waitBulkLoadComplete(id, tenant));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_aborted);
+		}
+		wait(cx->cleanupBulkLoad(id, tenant));
 		return Void();
 	}
 
