@@ -2189,6 +2189,7 @@ inline void sampleWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& s
 	}
 
 	double waitTime = g_network->timer() - versionArrivalTime;
+	ASSERT_WE_THINK(waitTime >= 0);
 	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
 		stats.safeWaitWindow.addSample(-waitTime);
 	}
@@ -12270,13 +12271,14 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	}
 
 	loop {
-		wait(self->db->onChange());
-		if (self->logSystem) {
-			break;
+		// wait until logSystem is initialized
+		loop {
+			if (self->logSystem) {
+				break;
+			}
+			wait(self->db->onChange());
 		}
-	}
 
-	loop {
 		state Future<Void> emergency = self->emptyVersionWaitEmergencyTrigger.onTrigger();
 		wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) || emergency);
 		emergency = self->emptyVersionWaitEmergencyTrigger.onTrigger();
@@ -12310,17 +12312,17 @@ ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 
 		// Decide wait window
 		state double targetWaitWindow = 0;
+		bool useWaitMutationSamples = mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD *
+		                                                 (mutationSize + nonMutationSize);
 		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE == 0) {
 			targetWaitWindow =
-			    mutationSize >
-			            SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD * (mutationSize + nonMutationSize)
+			    useWaitMutationSamples
 			        ? 0 + self->emptyVersionWaitMutationStats.minWaitWindow *
 			                  SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR
 			        : (self->emptyVerionWaitLastWindow + self->emptyVersionWaitNonMutationStats.minWaitWindow) *
 			              SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
 		} else {
-			targetWaitWindow = mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD *
-			                                      (mutationSize + nonMutationSize)
+			targetWaitWindow = useWaitMutationSamples
 			                       ? 0 + self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
 			                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
 			                       : self->emptyVerionWaitLastWindow +
