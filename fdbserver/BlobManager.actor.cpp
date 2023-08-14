@@ -5610,7 +5610,7 @@ ACTOR Future<int64_t> bgccCheckGranule(Reference<BlobManagerData> bmData, KeyRan
 	state Reference<BlobConnectionProvider> bstore = wait(getBStoreForGranule(bmData, range));
 
 	std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blobResult =
-	    wait(readFromBlob(bmData->db, bstore, range, 0, fdbResult.second));
+	    wait(readFromBlob(bmData->db, bstore, range, 0, fdbResult.second, {}, LockAware::True));
 
 	if (!compareFDBAndBlob(fdbResult.first, blobResult, range, fdbResult.second, BM_DEBUG)) {
 		++bmData->stats.ccMismatches;

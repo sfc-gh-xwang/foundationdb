@@ -2861,7 +2861,6 @@ ACTOR static Future<Void> readRequestServer(CommitProxyInterface proxy,
 	}
 }
 
-// FIXME: how to support lock-aware?
 ACTOR static Future<Void> checkTenantLock(ProxyCommitData* commitData,
                                           int64_t tenantId,
                                           Version minVersion,
