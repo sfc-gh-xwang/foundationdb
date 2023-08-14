@@ -292,7 +292,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			wait(cx->waitBulkLoadComplete(id, self->tenant));
 			ASSERT(false);
 		} catch (Error& e) {
-			if (e.code() == error_code_bulk_load_incomplete) {
+			if (e.code() == error_code_api_not_implemented) {
 				return Void();
 			}
 			throw e;

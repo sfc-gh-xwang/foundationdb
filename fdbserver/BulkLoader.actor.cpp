@@ -49,7 +49,7 @@ bool canReplyWith(const Error& e) {
 	case error_code_bulk_load_create_too_old:
 	case error_code_bulk_load_file_missing:
 	case error_code_bulk_load_cannot_validate_file:
-	case error_code_bulk_load_incomplete:
+	case error_code_api_not_implemented:
 		return true;
 	default:
 		return false;
@@ -704,7 +704,7 @@ ACTOR Future<Void> handleWaitCompleteRequest(Reference<BulkLoaderData> self,
 		}
 		// TODO: Change back once we actually have data loading implemented!
 		// req.reply.send(Void());
-		req.reply.sendError(bulk_load_incomplete());
+		req.reply.sendError(api_not_implemented());
 		--self->stats.activeRequests;
 		return Void();
 	} catch (Error& e) {
