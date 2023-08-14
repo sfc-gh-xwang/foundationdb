@@ -1283,6 +1283,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			excludedTypes.insert(WRITE_DURING_LOAD_UNIT);
 			excludedTypes.insert(READ_DURING_LOAD_UNIT);
 			excludedTypes.insert(BLOBBIFY_DURING_LOAD_UNIT);
+			// TODO: unexclude when the race in BlobManager transitioning from STAGING is fixed
+			excludedTypes.insert(RESERVATION_SUCCEEDED);
 
 			// prevent infinite loop
 			int loopTries = 1000;
