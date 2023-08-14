@@ -154,8 +154,7 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 
 	if (begin >= end) {
 		fmt::print("Invalid blob range [{0} - {1})\n", begin.printable(), end.printable());
-		// XXX not convinced true is correct here? Matches previous behaviour.
-		return true;
+		return false;
 	}
 
 	if (tokencmp(subcommand, "start") || tokencmp(subcommand, "stop")) {
