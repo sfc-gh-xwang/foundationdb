@@ -392,7 +392,7 @@ struct TagPartitionedLogSystem final : ILogSystem, ReferenceCounted<TagPartition
 	template <class T>
 	static std::vector<T> getReadyNonError(std::vector<Future<T>> const& futures);
 
-	Future<Void> pushEmptyVersionWaitWindow(double waitWindow, const Tag& tag) final;
+	Future<Void> pushEmptyVersionWaitWindow(double waitWindow, Tag tag) final;
 
 	ACTOR static Future<Void> pushEmptyVersionWaitWindow_internal(TagPartitionedLogSystem const* self,
 	                                                              double waitWindow,
