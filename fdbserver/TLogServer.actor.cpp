@@ -407,9 +407,9 @@ struct TLogData : NonCopyable {
 
 		void decRefcount(const bool transitioning) {
 			if (transitioning) {
-				++newPeekRefcount;
+				--newPeekRefcount;
 			} else {
-				++oldPeekRefcount;
+				--oldPeekRefcount;
 			}
 		}
 	};
@@ -2157,7 +2157,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 			emptyVersionFirstEntry = false;
 
 			switch (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT) {
-			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED:
+			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_DISABLED:
 				emptyVersionWaitWindow = SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL;
 				break;
 			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY:
@@ -2176,6 +2176,8 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 				    .detail("Tag", reqTag)
 				    .detail("WaitWindow", emptyVersionWaitWindow);
 				break;
+			default:
+				ASSERT(false);
 			}
 		}
 

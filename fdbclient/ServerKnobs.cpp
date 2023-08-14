@@ -120,7 +120,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Dynamic Empty Version Wait
 	init( PEEK_BATCHING_EMPTY_MSG,                             false ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG = true;
 	init( PEEK_BATCHING_EMPTY_MSG_INTERVAL,                    0.001 ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG_INTERVAL = 0.01;
-	init( DYNAMIC_EMPTY_VERSION_WAIT,             EMPTY_VERSION_WAIT );
+	init( DYNAMIC_EMPTY_VERSION_WAIT,    EMPTY_VERSION_WAIT_DISABLED ); if ( randomize && BUGGIFY ) DYNAMIC_EMPTY_VERSION_WAIT = EMPTY_VERSION_WAIT;
 	// Dynamic Empty Version Wait: Sampling
 	init( DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB,                  1 ); 
 	init( DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH,         10000 ); 

@@ -2148,7 +2148,8 @@ inline void sampleNoWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats&
                                                Version version,
                                                double versionArrivalTime) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED) {
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+	        ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_DISABLED) {
 		return;
 	}
 
@@ -9788,12 +9789,11 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 			throw worker_removed();
 		}
 
-		// Track tlog sync version recv time right before we update local version
-		// log tlog identifier.
 		// We keep two queues at each SS to track empty version wait window
 		// 1. peekReply is nonempty + tlog reported no wait: must be mutation with no wait
 		// 2. peekReply is empty: must be Non-mutation and fully waited
-		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED) {
+		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT !=
+		    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_DISABLED) {
 			// NOTE: as of now in snowflake we should not run into cases where cursor is of any type other than
 			// ServerPeekCursor at this line in normal cases. It is possible this cursor is of type MergedPeekCursor
 			// under cluster recovery when we need to recover data from old tlogs, but it is very rare and we do not
@@ -9801,8 +9801,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 			// ServerPeekCursor in this if block.
 			double peekReplyRecvTime = g_network->timer();
 			if (cursor->getPeekReplySize() > 0 && cursor->getTlogWaitTime() == 0) {
-				// nonempty peeks with zero wait time, consider it as one datapoint in mutation queue, accurate because
-				// it is short-circuited on tlog and we're sure it did not wait
+				// nonempty peeks with zero wait time
 				if (data->emptyVersionWaitMutationStats.tlogVersionQueue.size() >=
 				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
 					// If queue piles up it means that there's not enough reads, so the queue is useless in this time
@@ -9816,7 +9815,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				data->emptyVersionWaitMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
 				                                                                  peekReplyRecvTime);
 			} else if (cursor->getPeekReplySize() == 0) {
-				// empty peeks, must have fully waited
+				// empty peeks must have fully waited
 				if (data->emptyVersionWaitNonMutationStats.tlogVersionQueue.size() >=
 				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
 					data->emptyVersionWaitNonMutationStats.tlogVersionQueue.clear();
@@ -12265,7 +12264,8 @@ void inline resetWaitWindowStatistics(StorageServer* self) {
 
 ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
 	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED) {
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+	        ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_DISABLED) {
 		return Void();
 	}
 

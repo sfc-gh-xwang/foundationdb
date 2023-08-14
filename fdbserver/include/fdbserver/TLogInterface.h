@@ -198,7 +198,10 @@ struct TLogPeekReply {
 	Version minKnownCommittedVersion;
 	Optional<Version> begin;
 	bool onlySpilled = false;
-	double timeWaited = -1;
+	double timeWaited = -1; // Time that a version waited on tlog.
+	                        // For now it can only be -1 (unassinged), 0 (never waited), 1 (fully waited)
+	                        // In the future we may decide to timestamp all version on tlog to obtain true time waited
+	                        // for versions that are partially waited (wait for part of the designated window)
 
 	template <class Ar>
 	void serialize(Ar& ar) {

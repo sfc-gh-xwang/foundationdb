@@ -115,7 +115,11 @@ public:
 	// Dynamic Empty Version Wait
 	bool PEEK_BATCHING_EMPTY_MSG; // Enable tlog empty version peeks batching.
 	double PEEK_BATCHING_EMPTY_MSG_INTERVAL; // Maximum wait time for a batch on tlog side.
-	enum DYNAMIC_EMPTY_VERSION_WAIT_MODE { DISABLED, EMPTY_VERSION_WAIT_LOG_ONLY, EMPTY_VERSION_WAIT };
+	enum DYNAMIC_EMPTY_VERSION_WAIT_MODE {
+		EMPTY_VERSION_WAIT_DISABLED,
+		EMPTY_VERSION_WAIT_LOG_ONLY,
+		EMPTY_VERSION_WAIT
+	};
 	int DYNAMIC_EMPTY_VERSION_WAIT; // 0. Disabled: disabled
 	                                // 1. EMPTY_VERSION_WAIT_LOG_ONLY: No batching + logging
 	                                // 2. EMPTY_VERSION_WAIT: dynamic wait window adjustment + logging
