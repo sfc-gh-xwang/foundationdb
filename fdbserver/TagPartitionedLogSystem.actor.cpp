@@ -3224,10 +3224,9 @@ ACTOR Future<Void> TagPartitionedLogSystem::pushEmptyVersionWaitWindow_internal(
                                                                                 Tag tag) {
 	std::vector<Future<Void>> sent;
 	for (auto& logSet : self->tLogs) {
-		for (auto& t : logSet->logServers) {
-			sent.push_back(brokenPromiseToNever(
-			    t->get().interf().emptyVersionWaitRequest.getReply(TlogEmptyVersionWaitRequest(waitWindow, tag))));
-		}
+		sent.push_back(brokenPromiseToNever(
+		    logSet->logServers[logSet->bestLocationFor(tag)]->get().interf().emptyVersionWaitRequest.getReply(
+		        TlogEmptyVersionWaitRequest(waitWindow, tag))));
 	}
 	wait(waitForAll(sent));
 	return Void();
