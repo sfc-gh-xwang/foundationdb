@@ -241,10 +241,10 @@ public:
 						wait(tenantCache->dbcx()->abortBulkLoad(load, tenant));
 					}
 				} catch (Error& e) {
-					TraceEvent("StorageQuotaAbortBulkLoadsError", tenantCache->id())
+					TraceEvent(SevInfo, "StorageQuotaAbortBulkLoadsError", tenantCache->id())
 					    .errorUnsuppressed(e)
 					    .suppressFor(1.0);
-					// TODO: what errors can be thrown by the functions above and how to handle them?
+					// TODO: check what errors can be thrown by the functions above and how to handle them
 				}
 			}
 			wait(delay(SERVER_KNOBS->BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL));
@@ -359,7 +359,8 @@ Optional<Reference<TCTenantInfo>> TenantCache::tenantOwning(KeyRef key) const {
 
 std::unordered_set<int64_t> TenantCache::getTenantsOverQuota() const {
 	// TODO: Potentially optimize this by caching the list and updating it when storage quota
-	// and/or usage is fetched.
+	// and/or usage is fetched. With that approach, we could also abort bulk loads when the
+	// list is updated with a new tenantGroup instead of a periodic actor.
 	std::unordered_set<int64_t> tenantsOverQuota;
 	for (const auto& [tenantGroup, storage] : tenantStorageMap) {
 		if (storage.usage > storage.quota) {

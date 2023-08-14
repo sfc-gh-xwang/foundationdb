@@ -1231,8 +1231,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Bulk Load
 	init( BULK_LOAD_FILE_POINTER_BATCH_SIZE,                     100 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_POINTER_BATCH_SIZE = deterministicRandom()->randomInt(10, 100);
 	init( BULK_LOAD_PARALLEL_FILE_VALIDATIONS,                     1 ); if ( randomize && BUGGIFY ) BULK_LOAD_PARALLEL_FILE_VALIDATIONS = deterministicRandom()->randomInt(1, 10);
-	init( BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT,             true); if ( randomize && BUGGIFY ) BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT = deterministicRandom()->coinflip();
-	init( BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL, 					   10); if ( randomize && BUGGIFY ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = deterministicRandom()->randomInt(1, 10);
+	init( BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT,            false); if ( isSimulated ) BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT = deterministicRandom()->coinflip();
+	init( BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL,                     10); if ( isSimulated ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = 5; if ( randomize && BUGGIFY ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = deterministicRandom()->randomInt(1, 5);
 
 	// clang-format on
 
