@@ -5,6 +5,7 @@
  */
 
 #include "fdbclient/BulkLoadApiImpl.h"
+#include "fdbclient/BlobGranuleApiImpl.h"
 #include "fdbclient/ApiRequestHandler.h"
 #include "flow/actorcompiler.h" // has to be last include
 
@@ -67,7 +68,7 @@ Future<ApiResult> cleanupBulkLoad(DatabaseContext* db, ApiRequest req, Optional<
 ACTOR Future<ApiResult> waitBulkLoadCompleteImpl(DatabaseContext* db,
                                                  ApiRequest req,
                                                  Optional<Reference<Tenant>> tenant) {
-	auto input = req.getTypedRequest<FDBCleanupBulkLoadRequest>();
+	auto input = req.getTypedRequest<FDBWaitBulkLoadCompleteRequest>();
 	BulkLoadID id((StringRef&)input->id);
 	wait(db->waitBulkLoadComplete(id, tenant));
 
@@ -76,4 +77,84 @@ ACTOR Future<ApiResult> waitBulkLoadCompleteImpl(DatabaseContext* db,
 
 Future<ApiResult> waitBulkLoadComplete(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant) {
 	return waitBulkLoadCompleteImpl(db, req, tenant);
+}
+
+void nativeToApiFileToWrite(FDBBulkLoadFileToWrite* dest, const BulkLoadFileToWriteRef& source, Arena& ar) {
+	dest->file_id.begin = source.fileId.begin();
+	dest->file_id.length = source.fileId.size();
+	dest->filename.begin = source.fileName.begin();
+	dest->filename.length = source.fileName.size();
+	dest->target_size_bytes = source.targetSize;
+	dest->file_type = static_cast<uint8_t>(source.type);
+	dest->file_format = static_cast<uint8_t>(source.format);
+	dest->compression = static_cast<uint8_t>(source.compression);
+
+	// FIXME: actually set tenant prefix!
+	dest->tenant_prefix.present = false;
+
+	dest->encryption_ctx = nullptr;
+	if (source.cipherKeysCtx.present()) {
+		dest->encryption_ctx = new (ar) FDBBGEncryptionCtxV2();
+		nativeToApiBGEncryptionKeyCtx(dest->encryption_ctx, source.cipherKeysCtx.get(), ar);
+	}
+}
+
+ACTOR Future<ApiResult> bulkLoadFilesToWriteImpl(DatabaseContext* db,
+                                                 ApiRequest req,
+                                                 Optional<Reference<Tenant>> tenant) {
+	auto input = req.getTypedRequest<FDBBulkLoadFilesToWriteRequest>();
+	BulkLoadID id((StringRef&)input->id);
+	Standalone<VectorRef<BulkLoadFileToWriteRef>> files = wait(db->getBulkLoadFilesToWrite(id, input->count, tenant));
+
+	auto res = TypedApiResult<FDBBulkLoadFilesToWriteResult>::create(FDBApiResult_BulkLoadFilesToWrite);
+
+	Arena& arena = res.arena();
+	arena.dependsOn(files.arena());
+
+	auto resp = res.getPtr();
+	resp->files_count = files.size();
+	resp->files_arr = new (arena) FDBBulkLoadFileToWrite*[files.size()];
+
+	for (int fileIdx = 0; fileIdx < files.size(); fileIdx++) {
+		const BulkLoadFileToWriteRef& file = files[fileIdx];
+		resp->files_arr[fileIdx] = new (arena) FDBBulkLoadFileToWrite();
+		nativeToApiFileToWrite(resp->files_arr[fileIdx], file, arena);
+	}
+	return res;
+}
+
+Future<ApiResult> bulkLoadFilesToWrite(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant) {
+	return bulkLoadFilesToWriteImpl(db, req, tenant);
+}
+
+void apiToNativeFileWritten(BulkLoadWrittenFileRef& dest, FDBBulkLoadWrittenFile const* source) {
+	dest.fileId = StringRef(source->file_id.begin, source->file_id.length);
+	dest.keyRange = KeyRangeRef(StringRef(source->key_range.begin_key, source->key_range.begin_key_length),
+	                            StringRef(source->key_range.end_key, source->key_range.end_key_length));
+	dest.logicalSize = source->logical_size;
+	dest.physicalSize = source->physical_size;
+}
+
+ACTOR Future<ApiResult> bulkLoadFilesWrittenImpl(DatabaseContext* db,
+                                                 ApiRequest req,
+                                                 Optional<Reference<Tenant>> tenant) {
+	auto input = req.getTypedRequest<FDBBulkLoadFilesWrittenRequest>();
+	BulkLoadID id((StringRef&)input->id);
+
+	// only need shallow copy because request still owns memory, just type conversion for native api
+	Standalone<VectorRef<BulkLoadWrittenFileRef>> files;
+	files.reserve(files.arena(), input->files_count);
+	for (int i = 0; i < input->files_count; i++) {
+		BulkLoadWrittenFileRef fileWritten;
+		apiToNativeFileWritten(fileWritten, input->files_arr[i]);
+		files.push_back(files.arena(), fileWritten);
+	}
+
+	wait(db->markBulkLoadFilesWritten(id, files, tenant));
+
+	return TypedApiResult<FDBVoidResult>::create(FDBApiResult_Void);
+}
+
+Future<ApiResult> bulkLoadFilesWritten(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant) {
+	return bulkLoadFilesWrittenImpl(db, req, tenant);
 }

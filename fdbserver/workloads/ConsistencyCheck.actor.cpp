@@ -280,7 +280,7 @@ struct ConsistencyCheckWorkload : TestWorkload {
 					// the allowed maximum number of teams
 					bool teamCollectionValid = wait(getTeamCollectionValid(cx, self->dbInfo));
 					if (!teamCollectionValid) {
-						TraceEvent(SevError, "ConsistencyCheck_TooManyTeams").log();
+						TraceEvent("ConsistencyCheck_TooManyTeams").log();
 						self->testFailure("The number of process or machine teams is larger than the allowed maximum "
 						                  "number of teams");
 					}

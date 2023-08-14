@@ -720,6 +720,75 @@ ACTOR Future<Void> handleWaitCompleteRequest(Reference<BulkLoaderData> self,
 	}
 }
 
+ACTOR template <typename Request>
+Future<Void> handleListRequest(Reference<BulkLoaderData> self, Reference<BlobWorkerData> bwData, Request req) {
+	state BulkLoadListReply rep;
+	wait(delay(0, TaskPriority::DefaultEndpoint));
+	++self->stats.listRequests;
+	++self->stats.activeRequests;
+	try {
+		Optional<int64_t> tenantId = req.tenantInfo.tenantId;
+		if (std::is_same_v<Request, BulkLoadListAllRequest>) {
+			tenantId.reset();
+		}
+		Standalone<VectorRef<BulkLoadIDRef>> list = wait(self->db->listBulkLoadsInternal(req.onlyActive, tenantId));
+		rep.arena.dependsOn(list.arena());
+		rep.list = list;
+		req.reply.send(rep);
+		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
+			wait(Never());
+		}
+		--self->stats.activeRequests;
+		return Void();
+	} catch (Error& e) {
+		--self->stats.activeRequests;
+		if (canReplyWith(e)) {
+			TraceEvent("BulkLoaderListError", self->id).errorUnsuppressed(e).suppressFor(10.0);
+			++self->stats.errors;
+			req.reply.sendError(e);
+			return Void();
+		}
+		TraceEvent(SevError, "BulkLoaderListError", self->id).error(e);
+		throw e;
+	}
+}
+
+ACTOR Future<Void> handleStatusRequest(Reference<BulkLoaderData> self,
+                                       Reference<BlobWorkerData> bwData,
+                                       BulkLoadStatusRequest req) {
+	state BulkLoadStatusReply rep;
+	wait(delay(0, TaskPriority::DefaultEndpoint));
+	++self->stats.statusRequests;
+	++self->stats.activeRequests;
+	try {
+		Optional<Reference<Tenant>> tenant;
+		if (req.tenantInfo.hasTenant()) {
+			tenant = makeReference<Tenant>(self->db, req.tenantInfo.tenantId);
+		}
+		BulkLoadStatus status = wait(self->db->getBulkLoadStatusInternal(req.id, tenant));
+		rep.status = status;
+		req.reply.send(rep);
+		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
+			wait(Never());
+		}
+		--self->stats.activeRequests;
+		return Void();
+	} catch (Error& e) {
+		--self->stats.activeRequests;
+		if (canReplyWith(e)) {
+			TraceEvent("BulkLoaderStatusError", self->id)
+			    .errorUnsuppressed(e)
+			    .suppressFor(10.0)
+			    .detail("BulkLoadID", req.id);
+			++self->stats.errors;
+			req.reply.sendError(e);
+			return Void();
+		}
+		TraceEvent(SevError, "BulkLoaderStatusError", self->id).error(e).detail("BulkLoadID", req.id);
+		throw e;
+	}
+}
+
 // currently relies on shared state with blob worker but wouldn't be too difficult to refactor.
 // Sharing brings efficiency though - only 1 tenant map
 ACTOR Future<Void> bulkLoader(BulkLoaderInterface interf,
@@ -743,6 +812,15 @@ ACTOR Future<Void> bulkLoader(BulkLoaderInterface interf,
 			}
 			when(BulkLoadWaitCompleteRequest req = waitNext(interf.waitCompleteRequest.getFuture())) {
 				self->addActor.send(handleWaitCompleteRequest(self, bwData, req));
+			}
+			when(BulkLoadListRequest req = waitNext(interf.listRequest.getFuture())) {
+				self->addActor.send(handleListRequest(self, bwData, req));
+			}
+			when(BulkLoadListAllRequest req = waitNext(interf.listAllRequest.getFuture())) {
+				self->addActor.send(handleListRequest(self, bwData, req));
+			}
+			when(BulkLoadStatusRequest req = waitNext(interf.statusRequest.getFuture())) {
+				self->addActor.send(handleStatusRequest(self, bwData, req));
 			}
 
 			when(wait(collection)) {

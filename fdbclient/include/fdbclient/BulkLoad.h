@@ -22,6 +22,7 @@ using BulkLoadIDRef = StringRef;
 using BulkLoadFileID = Standalone<StringRef>;
 using BulkLoadFileIDRef = StringRef;
 
+// key is logical tuple of tenantid, bulk load id. Tenant id is -1 when not set.
 using BulkLoadIDKey = std::pair<int64_t, BulkLoadID>;
 
 // Generally ordered such that valid state transitions only increase the number
@@ -97,9 +98,9 @@ struct BulkLoadInfo {
 	}
 };
 
-enum class BulkLoadFileType : uint8_t { SNAPSHOT = 0, DELTA = 1 };
+enum class BulkLoadFileType : uint8_t { SNAPSHOT = 1, DELTA = 2 };
 // file format (only row_v1 currently supported)
-enum class BulkLoadFileFormat : uint8_t { ROW_V1 = 0, COLUMNAR_V1 = 1 };
+enum class BulkLoadFileFormat : uint8_t { ROW_V1 = 1, COLUMNAR_V1 = 2 };
 
 struct BulkLoadFileToWriteRef {
 	constexpr static FileIdentifier file_identifier = 5109804;

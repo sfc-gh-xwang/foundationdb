@@ -104,8 +104,8 @@ description is not currently required but encouraged.
     <Option name="TLS_password" code="54"
             paramType="String" paramDescription="key passphrase"
             description="Set the passphrase for encrypted private key. Password should be set before setting the key for the password to be used." />
-    <Option name="TLS_disable_plaintext_connection" code="55"
-            description="Prevent client from connecting to a non-TLS endpoint by throwing network connection failed error." />
+    <Option name="TLS_required" code="55"
+            description="Prevent client/server from connecting/listening to a non-TLS endpoint by throwing tls_required error." />
     <Option name="disable_multi_version_client_api" code="60"
             description="Disables the multi-version client API and instead uses the local client directly. Must be set before setting up the network." />
     <Option name="callbacks_on_external_threads" code="61"
@@ -229,6 +229,13 @@ description is not currently required but encouraged.
             paramType="Int" paramDescription="integer between 0 and 100 expressing the probability a client will verify it can't read stale data"
             description="Enables verification of causal read risky by checking whether clients are able to read stale data when they detect a recovery, and logging an error if so." />
   </Scope>
+
+  <Scope name="TenantOption">
+    <Option name="authorization_token" code="20"
+            description="Attach given authorization token to the tenant such that transactions created from the tenant object as well as subsequent tenant-aware operations are authorized"
+            paramType="String" paramDescription="A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload, which contains the list of base64-encoded JSON tenant key prefixes. A tenant key prefix has the same memory layout as the big-endian form of a 64-bit integer which uniquely identifies a tenant in FDB."
+            defaultFor="2000" sensitive="true"/>
+  </Scope>
   
   <Scope name="TransactionOption">
     <Option name="causal_write_risky" code="10"
@@ -347,9 +354,12 @@ description is not currently required but encouraged.
     <Option name="skip_grv_cache" code="1102"
             description="Specifically instruct this transaction to NOT use cached GRV. Primarily used for the read version cache's background updater to avoid attempting to read a cached entry in specific situations."
             hidden="true"/>
+    <Option name="hybrid_read_dirty" code="1200"
+            description="Allow hybrid reads even while storage servers and hybrid blob data are inconsistent due to bulk load operations"
+            hidden="true"/>
     <Option name="authorization_token" code="2000"
             description="Attach given authorization token to the transaction such that subsequent tenant-aware requests are authorized"
-            paramType="String" paramDescription="A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload."
+            paramType="String" paramDescription="A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload, which contains the list of base64-encoded JSON tenant key prefixes. A tenant key prefix has the same memory layout as the big-endian form of a 64-bit integer which uniquely identifies a tenant in FDB."
             persistent="true" sensitive="true"/>
   </Scope>
 

@@ -206,6 +206,63 @@ def test_simple_tenant_access(
         assert value == b"def", "tenant write transaction not visible"
 
 
+def test_token_as_tenant_option(
+    cluster,
+    db,
+    default_tenant,
+    tenant_gen,
+    tenant_tr_gen,
+    token_claim_1h,
+    use_grv_cache,
+):
+    # test that token option on a tenant propagates to any transaction created from it
+    token = token_gen(cluster.private_key, token_claim_1h(default_tenant))
+    tenant = db.open_tenant(default_tenant)
+    tenant.options.set_authorization_token(token)
+    tr = tenant.create_transaction()
+
+    def commit_some_value(tr):
+        tr[b"abc"] = b"def"
+        return tr.commit().wait()
+
+    loop_until_success(tr, commit_some_value)
+
+    tr = tenant.create_transaction()
+
+    def read_back_value(tr):
+        return tr[b"abc"].value
+
+    value = loop_until_success(tr, read_back_value)
+    assert value == b"def", "tenant write transaction not visible"
+
+    # unlike authz token as normal transaction option, token set as tenant option is considered a "transaction default" and effectively SURVIVES a reset
+    tr.reset()
+    value = loop_until_success(tr, read_back_value)
+    assert value == b"def", "tenant write transaction not visible"
+
+    # create transaction again from tenant. should work.
+    tr = tenant.create_transaction()
+    value = loop_until_success(tr, read_back_value)
+    assert value == b"def", "tenant write transaction not visible"
+
+    tr.reset()
+    second_tenant = random_alphanum_bytes(10)
+    tenant_gen(second_tenant)
+    token_second_tenant = token_gen(cluster.private_key, token_claim_1h(second_tenant))
+    # set a token for the second tenant. should fail.
+    tr.options.set_authorization_token(token_second_tenant)
+    try:
+        value = read_back_value(tr)
+        assert False, "expected permission_denied, but succeeded"
+    except fdb.FDBError as e:
+        assert e.code == 6000, f"expected permission_denied, got {e} instead"
+
+    # resetting would revert the token option to tenant-defaults. should work.
+    tr.reset()
+    value = loop_until_success(tr, read_back_value)
+    assert value == b"def", "tenant write transaction not visible"
+
+
 def test_cross_tenant_access_disallowed(
     cluster, default_tenant, tenant_gen, tenant_tr_gen, token_claim_1h
 ):

@@ -50,6 +50,16 @@ struct CompressionUtils {
 		}
 	}
 
+	static CompressionFilter fromInt(const uint8_t value) {
+		if (value == 0) {
+			return CompressionFilter::NONE;
+		} else if (value == 1) {
+			return CompressionFilter::ZSTD;
+		} else {
+			throw not_implemented();
+		}
+	}
+
 	static std::string toString(const CompressionFilter filter) {
 		if (filter == CompressionFilter::NONE) {
 			return "NONE";

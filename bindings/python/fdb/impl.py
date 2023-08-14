@@ -66,6 +66,11 @@ class _DatabaseOptions(object):
         self._parent = weakref.proxy(db)
 
 
+class _TenantOptions(object):
+    def __init__(self, tenant):
+        self._parent = weakref.proxy(tenant)
+
+
 class _TransactionOptions(object):
     def __init__(self, tr):
         self._parent = weakref.proxy(tr)
@@ -178,7 +183,7 @@ def fill_operations():
         add_operation("bit_" + fname, v)
 
 
-for scope in ["DatabaseOption", "TransactionOption", "NetworkOption"]:
+for scope in ["DatabaseOption", "TenantOption", "TransactionOption", "NetworkOption"]:
     fill_options(scope)
 
 fill_options("ErrorPredicate", True)
@@ -1346,9 +1351,13 @@ class Database(_TransactionCreator):
 class Tenant(_TransactionCreator):
     def __init__(self, tpointer):
         self.tpointer = tpointer
+        self.options = _TenantOptions(self)
 
     def __del__(self):
         self.capi.fdb_tenant_destroy(self.tpointer)
+
+    def _set_option(self, option, param, length):
+        self.capi.fdb_tenant_set_option(self.tpointer, option, param, length)
 
     def create_transaction(self):
         pointer = ctypes.c_void_p()
@@ -1747,6 +1756,15 @@ def init_c_api():
     ]
     _capi.fdb_tenant_create_transaction.restype = ctypes.c_int
     _capi.fdb_tenant_create_transaction.errcheck = check_error_code
+
+    _capi.fdb_tenant_set_option.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_int,
+    ]
+    _capi.fdb_tenant_set_option.restype = ctypes.c_int
+    _capi.fdb_tenant_set_option.errcheck = check_error_code
 
     _capi.fdb_transaction_destroy.argtypes = [ctypes.c_void_p]
     _capi.fdb_transaction_destroy.restype = None

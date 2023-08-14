@@ -216,6 +216,26 @@ typedef struct readgranulecontext {
 } FDBReadBlobGranuleContext;
 
 typedef FDBByteString FDBBulkLoadID;
+typedef FDBByteString FDBBulkLoadFileID;
+
+/* TODO duplicate enum to here for file type/file format/compression? */
+typedef struct FDBBulkLoadFileToWrite_ {
+	FDBBulkLoadFileID file_id;
+	FDBByteString filename;
+	int64_t target_size_bytes;
+	uint8_t file_type;
+	uint8_t file_format;
+	uint8_t compression;
+	FDBBGTenantPrefix tenant_prefix;
+	FDBBGEncryptionCtxV2* encryption_ctx;
+} FDBBulkLoadFileToWrite;
+
+typedef struct FDBBulkLoadWrittenFile_ {
+	FDBBulkLoadFileID file_id;
+	FDBKeyRange key_range;
+	int64_t logical_size;
+	int64_t physical_size;
+} FDBBulkLoadWrittenFile;
 
 #ifdef __cplusplus
 }
