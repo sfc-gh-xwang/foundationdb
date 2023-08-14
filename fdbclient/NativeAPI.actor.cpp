@@ -8969,6 +8969,9 @@ ACTOR Future<Version> checkBlobSubrange(Database db,
 			if (useRawAccess) {
 				tr.setOption(FDBTransactionOptions::RAW_ACCESS);
 			}
+			if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
+				tr.setOption(FDBTransactionOptions::READ_LOCK_AWARE);
+			}
 			if (!summaryVersion.present()) {
 				// fill summary version at the start, so that retries use the same version
 				Version summaryVersion_ = wait(tr.getReadVersion());
@@ -9032,6 +9035,10 @@ ACTOR Future<Version> verifyBlobRangeActor(Reference<DatabaseContext> cx,
 				if (useRawAccess) {
 					tr.setOption(FDBTransactionOptions::RAW_ACCESS);
 				}
+				if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
+					tr.setOption(FDBTransactionOptions::READ_LOCK_AWARE);
+				}
+
 				wait(store(allRanges, tr.getBlobGranuleRanges(KeyRangeRef(curRegion.begin, range.end), loadSize)));
 				break;
 			} catch (Error& e) {
