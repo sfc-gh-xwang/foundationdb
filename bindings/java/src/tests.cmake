@@ -46,17 +46,18 @@ set(JUNIT_RESOURCES
 # Integration tests. These are tests that require a running FDB instance to complete
 # successfully. Make sure that they are in the src/integration folder
 set(JAVA_INTEGRATION_TESTS
-  src/integration/com/apple/foundationdb/DirectoryTest.java
-  src/integration/com/apple/foundationdb/RangeQueryIntegrationTest.java
   src/integration/com/apple/foundationdb/BasicMultiClientIntegrationTest.java
-  src/integration/com/apple/foundationdb/CycleMultiClientIntegrationTest.java
-  src/integration/com/apple/foundationdb/SidebandMultiThreadClientTest.java
-  src/integration/com/apple/foundationdb/RepeatableReadMultiThreadClientTest.java
-  src/integration/com/apple/foundationdb/MappedRangeQueryIntegrationTest.java
   src/integration/com/apple/foundationdb/BlobGranuleIntegrationTest.java
-  src/integration/com/apple/foundationdb/GetClientStatusIntegrationTest.java
-  src/integration/com/apple/foundationdb/TransactionIntegrationTest.java
+  src/integration/com/apple/foundationdb/CycleMultiClientIntegrationTest.java
+  src/integration/com/apple/foundationdb/DirectoryTest.java
   src/integration/com/apple/foundationdb/FutureIntegrationTest.java
+  src/integration/com/apple/foundationdb/GetClientStatusIntegrationTest.java
+  src/integration/com/apple/foundationdb/MappedRangeQueryIntegrationTest.java
+  src/integration/com/apple/foundationdb/RangeQueryIntegrationTest.java
+  src/integration/com/apple/foundationdb/ReadMetricsIntegrationTest.java
+  src/integration/com/apple/foundationdb/RepeatableReadMultiThreadClientTest.java
+  src/integration/com/apple/foundationdb/SidebandMultiThreadClientTest.java
+  src/integration/com/apple/foundationdb/TransactionIntegrationTest.java
   src/integration/com/apple/foundationdb/WatchesIntegrationTest.java
 )
 

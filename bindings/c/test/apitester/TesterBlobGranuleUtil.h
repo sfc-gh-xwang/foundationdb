@@ -44,6 +44,12 @@ public:
 
 fdb::native::FDBReadBlobGranuleContext createGranuleContext(const TesterGranuleContext* testerContext);
 
+void writeGranuleFile(TesterGranuleContext* context,
+                      const char* filename,
+                      int filenameLength,
+                      const char* data,
+                      int dataLength);
+
 } // namespace FdbApiTester
 
 #endif

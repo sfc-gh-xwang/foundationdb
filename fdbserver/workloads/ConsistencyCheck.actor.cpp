@@ -280,7 +280,7 @@ struct ConsistencyCheckWorkload : TestWorkload {
 					// the allowed maximum number of teams
 					bool teamCollectionValid = wait(getTeamCollectionValid(cx, self->dbInfo));
 					if (!teamCollectionValid) {
-						TraceEvent(SevError, "ConsistencyCheck_TooManyTeams").log();
+						TraceEvent("ConsistencyCheck_TooManyTeams").log();
 						self->testFailure("The number of process or machine teams is larger than the allowed maximum "
 						                  "number of teams");
 					}
@@ -333,9 +333,11 @@ struct ConsistencyCheckWorkload : TestWorkload {
 							self->testFailure("Blob workers incorrect");
 					}
 
-					// Check that each machine is operating as its desired class
+					// Check that each machine is operating as its desired
+					// class. Ignore the check if stateless process colocation
+					// is enabled, as it follows different recruitment rules.
 					bool usingDesiredClasses = wait(self->checkUsingDesiredClasses(cx, self));
-					if (!usingDesiredClasses)
+					if (!usingDesiredClasses && !SERVER_KNOBS->COLOCATE_STATELESS_PROCESSES)
 						self->testFailure("Cluster has machine(s) not using requested classes");
 
 					bool workerListCorrect = wait(self->checkWorkerList(cx, self));

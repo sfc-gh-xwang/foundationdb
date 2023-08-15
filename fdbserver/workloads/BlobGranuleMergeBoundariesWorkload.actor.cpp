@@ -26,6 +26,7 @@
 #include "fdbclient/TenantManagement.actor.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/workloads/workloads.actor.h"
+#include "fdbserver/workloads/BGCorrectnessUtils.h"
 #include "fdbserver/workloads/BulkSetup.actor.h"
 #include "flow/Arena.h"
 #include "flow/IRandom.h"
@@ -91,20 +92,9 @@ struct BlobGranuleMergeBoundariesWorkload : TestWorkload {
 	// key is always a 2-tuple with the same first element and a different last element
 	Key keyForIndex(int n) { return Tuple::makeTuple(7, n).pack(); }
 	Value value(int n) {
-		// FIXME: shared with BlobGranuleCorrectnessWorkload
 		int valLen = deterministicRandom()->randomInt(1, 2 * targetValueLen);
 		valLen = std::max(10, valLen);
-		std::string v(valLen, 'z');
-		auto valFormatted = format("%08x", n);
-		ASSERT(valFormatted.size() <= v.size());
-
-		for (int i = 0; i < valFormatted.size(); i++) {
-			v[i] = valFormatted[i];
-		}
-		// copy into an arena
-		// TODO do this in original arena? a bit more efficient that way
-		Arena a;
-		return Standalone<StringRef>(StringRef(a, v), a);
+		return genVal(n, valLen);
 	}
 	Standalone<KeyValueRef> operator()(int n) { return KeyValueRef(keyForIndex(n), value(n)); }
 
@@ -195,7 +185,7 @@ struct BlobGranuleMergeBoundariesWorkload : TestWorkload {
 			wait(delay(1.0));
 		}
 
-		state Transaction tr(cx, self->tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(self->tenant, cx);
 		loop {
 			try {
 				Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(tupleRange, 1000000));

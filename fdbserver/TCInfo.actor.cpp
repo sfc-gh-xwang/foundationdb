@@ -237,6 +237,10 @@ int64_t TCServerInfo::loadBytes() const {
 	return getMetrics().load.bytes;
 }
 
+int64_t TCServerInfo::writeLoad() const {
+	return getMetrics().load.bytesWrittenPerKSecond;
+}
+
 void TCServerInfo::removeTeam(Reference<TCTeamInfo> team) {
 	for (int t = 0; t < teams.size(); t++) {
 		if (teams[t] == team) {
@@ -437,6 +441,21 @@ double TCTeamInfo::getReadLoad(bool includeInFlight, double inflightPenalty) con
 	}
 	return (size == 0 ? 0 : sum / size) +
 	       (includeInFlight ? inflightPenalty * getReadInFlightToTeam() / servers.size() : 0);
+}
+
+// average write bandwidth within a team
+double TCTeamInfo::getWriteLoad() const {
+	double sum = 0;
+	int size = 0;
+	for (const auto& server : servers) {
+		if (server->metricsPresent()) {
+			auto replyValue = server->writeLoad();
+			ASSERT(replyValue >= 0);
+			sum += replyValue;
+			size += 1;
+		}
+	}
+	return size == 0 ? 0 : sum / size;
 }
 
 double TCTeamInfo::getAverageCPU() const {

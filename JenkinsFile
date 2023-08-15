@@ -61,8 +61,8 @@ pipeline {
         stage('Check Git Comment') {
             steps {
                 script {
-                    // Checking github comment is only needed if branch is PR-*
-                    if (env.BRANCH_NAME.startsWith("PR-")) {
+                    // Checking github comment is only needed if branch is PR-* and not needed when PR is just opened.
+                    if (env.BRANCH_NAME.startsWith("PR-") && !"${build_trigger_cause}".matches("Pull request(.*)opened")) {
                         def trigger_comment = "@fdb-ci precommit start"
 
                         if ("${build_trigger_cause}" == "GitHub pull request comment" &&

@@ -750,7 +750,7 @@ public:
 
 	// Return max epoch from all manifest files
 	ACTOR static Future<int64_t> lastBlobEpoc(Reference<BlobManifestLoader> self) {
-		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForRead("");
+		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForAccess("");
 		std::vector<BlobManifestFile> files = wait(BlobManifestFile::listAll(container));
 		ASSERT(!files.empty());
 		return files.front().epoch;
@@ -759,7 +759,7 @@ public:
 private:
 	// Load latest manifest to system space
 	ACTOR static Future<Void> load(Reference<BlobManifestLoader> self) {
-		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForRead("");
+		state Reference<BackupContainerFileSystem> container = self->blobConn_->getForAccess("");
 		std::vector<BlobManifestFile> files = wait(BlobManifestFile::listAll(container));
 
 		// Load tailer
@@ -869,7 +869,8 @@ private:
 					// A special key to be loaded at the end:
 					// Blob worker monitors lastTenantId to refresh tenant map. If we load it before
 					// rest of other part of tenant metadata, Blob worker may get partial tenant map. So delay it.
-					if (rows[i].key == TenantMetadata::lastTenantId().key) {
+					if (rows[i].key == TenantMetadata::lastTenantId().key ||
+					    rows[i].key == TenantMetadata::lastTenantModification().key) {
 						self->delayedRows_.push_back_deep(self->delayedRows_.arena(), rows[i]);
 					} else {
 						tr.set(rows[i].key, rows[i].value);

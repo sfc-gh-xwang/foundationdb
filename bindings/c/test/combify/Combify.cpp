@@ -82,7 +82,7 @@ auto nextIterationImpl = [](auto&... opts) -> optional<IterableOptionTier> {
 		    if (index < pivotPos) {
 			    // do nothing
 		    } else if (index == pivotPos) {
-			    assert(opt.hasNext());
+			    ASSERT(opt.hasNext());
 			    ++opt; // Shift pivotal parameter to next value.
 			    // Mark the tier of the shifted option so we know on which level we should refresh the test environment.
 			    ret = std::decay_t<decltype(opt)>::tier;
@@ -135,6 +135,11 @@ void TestEnv::setNetworkOptions() {
 		throw std::runtime_error(fmt::format("NOT ALL OPTIONS ARE VALID FOR A RUN: {}", shortSummary()));
 	}
 	fdb::selectApiVersion(fdb::maxApiVersion());
+	if (!staticOptions.disableClientTrace || !*staticOptions.disableClientTrace) {
+		fdb::network::setOption(FDB_NET_OPTION_TRACE_ENABLE, "./");
+		fdb::network::setOption(FDB_NET_OPTION_TRACE_FILE_IDENTIFIER,
+		                        fdb::toBytesRef(fmt::format("combify_client_{}", runCount)));
+	}
 	std::apply(
 	    [this](auto&... opts) {
 		    (
@@ -235,7 +240,7 @@ void TestEnv::assertNonZeroTenantCount() const {
 	if (!staticOptions.tenantCount) {
 		throw std::runtime_error(fmt::format("ATTEMPTED TENANT ACCESS IN TENANTLESS CONFIG: {}", shortSummary()));
 	}
-	assert(*staticOptions.tenantCount == tenants.size()); // By now tenant names and IDs should have been filled out.
+	ASSERT(*staticOptions.tenantCount == tenants.size()); // By now tenant names and IDs should have been filled out.
 	if (tenants.size() == 0) {
 		throw std::runtime_error(fmt::format("ATTEMPTED TENANT ACCESS IN ZERO-TENANT CONFIG: {}", shortSummary()));
 	}
@@ -248,7 +253,7 @@ const std::pair<fdb::ByteString, int64_t>& TestEnv::anyTenant() const {
 
 unsigned TestEnv::numTenants() const {
 	if (staticOptions.tenantCount) {
-		assert(*staticOptions.tenantCount == tenants.size());
+		ASSERT(*staticOptions.tenantCount == tenants.size());
 	}
 	return staticOptions.tenantCount ? tenants.size() : 0;
 }
@@ -304,6 +309,10 @@ std::tuple<optional<string>, string, string> runForked(Fn&& fn) {
 		throw std::runtime_error(
 		    fmt::format("FAILED TO OPEN CHILD STDOUT/STDERR/EXCEPTION PIPES: {}", strerror(errno)));
 	}
+	// Flush out stdout and stderr such that their buffers don't get duplicated to child process and print twice upon
+	// exit
+	fflush(stdout);
+	fflush(stderr);
 	auto pid = fork();
 	if (pid < 0) {
 		throw std::runtime_error(fmt::format("FAILED TO FORK PROCESS: {}", strerror(errno)));
@@ -330,13 +339,10 @@ std::tuple<optional<string>, string, string> runForked(Fn&& fn) {
 				errorMsg = string(e.what());
 			}
 		}
-		size_t len = std::string::npos;
 		if (errorMsg) {
-			len = errorMsg->size();
-			::write(childExc[1], &len, sizeof(len));
 			::write(childExc[1], errorMsg->data(), errorMsg->size());
 		} else {
-			::write(childExc[1], &len, sizeof(len));
+			::close(childExc[1]);
 		}
 		std::exit(0);
 	} else {
@@ -354,27 +360,26 @@ std::tuple<optional<string>, string, string> runForked(Fn&& fn) {
 		if (wpid < 0) {
 			throw std::runtime_error(fmt::format("SUBPROCESS WAITPID FAILED WITH {}", strerror(errno)));
 		}
+		auto errorMsg = optional<string>();
 		if (status != 0) {
-			throw std::runtime_error(fmt::format(
+			errorMsg = fmt::format(
 			    "CHILD PROCESS RETURNED ABNORMALLY WITH STATUS: EXITED({}) EXITSTATUS({}) SIGNALED({}) SIGNAL({})",
 			    WIFEXITED(status),
 			    WEXITSTATUS(status),
 			    WIFSIGNALED(status),
-			    WTERMSIG(status)));
+			    WTERMSIG(status));
 		}
 		// parent process: read back optional<string> whose value is set if something went wrong.
 		auto out = drainPipeFd(childStdout[0]);
 		auto err = drainPipeFd(childStderr[0]);
-
-		auto errorMsg = optional<string>();
-		size_t errLen = 0;
-		::read(childExc[0], &errLen, sizeof(errLen));
-		if (errLen != std::string::npos) {
-			errorMsg.emplace();
-			if (errLen > 0) {
-				errorMsg->resize(errLen);
-				::read(childExc[0], errorMsg->data(), errLen);
+		auto exc = drainPipeFd(childExc[0]);
+		if (!exc.empty()) {
+			if (!errorMsg) {
+				errorMsg.emplace();
+			} else {
+				errorMsg->append("\nadditional error message: ");
 			}
+			errorMsg->append(exc);
 		}
 		return { errorMsg, out, err };
 	}
@@ -432,7 +437,7 @@ void TestEnv::populateTenants() {
 	boost::archive::binary_iarchive ia(tenantIdPipe);
 	size_t len = 0;
 	ia >> len;
-	assert(len == tenants.size());
+	ASSERT(len == tenants.size());
 	// Fill out parent tenant IDs
 	for (auto& [_, tenantId] : tenants)
 		ia >> tenantId;
@@ -487,15 +492,20 @@ bool TestEnv::runTest(const TestCase& t) {
 
 	auto dbCleanupGuard = ScopeExit([this]() { cleanupDatabase(); });
 	if (exc) {
-		std::cout << "TEST FAILED WITH FOLLOWING EXCEPTION: " << std::quoted(*exc) << "\n";
+		fmt::print("  TEST FAILED WITH EXCEPTION\n"
+		           "	{}\n",
+		           *exc);
 	}
 
 	if (exc) {
-		if (!out.empty())
-			std::cout << "Test standard output:\n" << std::quoted(out) << "\n";
-		if (!err.empty())
-			std::cout << "Test standard error:\n" << std::quoted(err) << "\n";
+		if (!out.empty()) {
+			fmt::print("=== BEGIN TEST STDOUT ===\n{}===  END  TEST STDOUT ===\n", out);
+		}
+		if (!err.empty()) {
+			fmt::print("=== BEGIN TEST STDERR ===\n{}===  END  TEST STDERR ===\n", err);
+		}
 	}
+	runCount++;
 	return !exc.has_value();
 }
 

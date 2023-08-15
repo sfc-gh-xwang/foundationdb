@@ -299,7 +299,7 @@ public:
 	// report the expected cost per ThrottlingID along with each GRV requests.
 	// The QuotaThrottler will utilize this information to throttle transactions.
 	// Note: Must be used with in conjunction with TRACK_THROUGHPUT_ON_CLIENTS.
-	bool TRACK_AVERAGE_COST_ON_CLIENT;
+	bool TRACK_AVERAGE_COST_ON_CLIENTS;
 	// Default expected cost of a transaction, used as a fallback value when the average cost is not available
 	double DEFAULT_EXPECTED_TRANSACTION_COST;
 	// Report DEFAULT_EXPECTED_TRANSACTION_COST for the first AVERAGE_COST_START_DELAY seconds,
@@ -325,6 +325,7 @@ public:
 	int64_t BLOB_METADATA_REFRESH_INTERVAL;
 	bool DETERMINISTIC_BLOB_METADATA;
 	bool ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE;
+	bool HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK;
 
 	// The coordinator key/value in storage server might be inconsistent to the value stored in the cluster file.
 	// This might happen when a recovery is happening together with a cluster controller coordinator key change.
@@ -363,8 +364,13 @@ public:
 	// Bulk Loading
 	// knob guard to disallow starting bulk loads until implementation is completed
 	bool ALLOW_BULK_LOADS;
+	int BULK_LOAD_FILE_POINTER_TOO_MANY;
+	int64_t BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
 
 	bool ENABLE_STORAGE_ENGINE_PARAM_INTERFACE;
+
+	// Range Lock
+	int RANGE_LOCK_LIMIT;
 
 	ClientKnobs(Randomize randomize);
 	void initialize(Randomize randomize);

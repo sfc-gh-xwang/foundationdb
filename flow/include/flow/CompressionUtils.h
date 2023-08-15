@@ -27,8 +27,8 @@
 #include <unordered_set>
 
 enum class CompressionFilter {
-	NONE,
-	ZSTD,
+	NONE = 0,
+	ZSTD = 1,
 	LAST // Always the last member
 };
 
@@ -44,6 +44,16 @@ struct CompressionUtils {
 		if (filter == "NONE") {
 			return CompressionFilter::NONE;
 		} else if (filter == "ZSTD") {
+			return CompressionFilter::ZSTD;
+		} else {
+			throw not_implemented();
+		}
+	}
+
+	static CompressionFilter fromInt(const uint8_t value) {
+		if (value == 0) {
+			return CompressionFilter::NONE;
+		} else if (value == 1) {
 			return CompressionFilter::ZSTD;
 		} else {
 			throw not_implemented();

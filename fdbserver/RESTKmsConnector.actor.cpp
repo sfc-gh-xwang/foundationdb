@@ -228,9 +228,7 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	bool kmsStable;
 	RESTClient restClient;
 	ValidationTokenMap validationTokenMap;
-	PromiseStream<Future<Void>> addActor;
-	Future<Void> kmsStabilityChecker;
-	Future<Void> logger;
+	ActorCollection actors;
 
 	CounterCollection kmsConnectorMetrics;
 
@@ -243,8 +241,8 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	    kmsStable(true),
 	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
 	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
-		logger = kmsConnectorMetrics.traceCounters(
-		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics");
+		actors.add(kmsConnectorMetrics.traceCounters(
+		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics"));
 	}
 	explicit RESTKmsConnectorCtx(const UID& id)
 	  : uid(id),
@@ -253,8 +251,8 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	    kmsStable(true),
 	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
 	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
-		logger = kmsConnectorMetrics.traceCounters(
-		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics");
+		actors.add(kmsConnectorMetrics.traceCounters(
+		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics"));
 	}
 };
 
@@ -712,6 +710,25 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 		double expireAt = detail.HasMember(EXPIRE_AFTER_SEC) ? now() + detail[EXPIRE_AFTER_SEC].GetInt64()
 		                                                     : std::numeric_limits<double>::max();
 		result.emplace_back_deep(result.arena(), domainId, locations, refreshAt, expireAt);
+
+		if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
+			TraceEvent event("RESTParseBlobMetadataResponse", ctx->uid);
+			event.detail("DomainId", domainId);
+			event.detail("LocationCount", locations.size());
+			for (int i = 0; i < locations.size(); i++) {
+				event.detail("LocId" + std::to_string(i), locations[i].locationId);
+				if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::VERBOSE) {
+					// only log this at verbose level because it is expensive and likely contains credentials
+					event.detail("LocPath" + std::to_string(i), locations[i].path);
+				}
+			}
+			if (refreshAt != std::numeric_limits<double>::max()) {
+				event.detail("RefreshAt", refreshAt);
+			}
+			if (expireAt != std::numeric_limits<double>::max()) {
+				event.detail("ExpireAt", expireAt);
+			}
+		}
 	}
 
 	checkDocForNewKmsUrls(ctx, resp, doc);
@@ -1194,34 +1211,36 @@ Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSState
 
 ACTOR Future<Void> restConnectorCoreImpl(KmsConnectorInterface interf) {
 	state Reference<RESTKmsConnectorCtx> self = makeReference<RESTKmsConnectorCtx>(interf.id());
-	state Future<Void> collection = actorCollection(self->addActor.getFuture());
 
-	TraceEvent("RESTKmsConnectorInit", self->uid).log();
+	try {
+		TraceEvent("RESTKmsConnectorInit", self->uid).log();
 
-	self->kmsStabilityChecker =
-	    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL);
-	wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
-	wait(procureValidationTokens(self));
+		self->actors.add(
+		    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL));
+		wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
+		wait(procureValidationTokens(self));
 
-	loop {
-		choose {
-			when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
-				self->addActor.send(fetchEncryptionKeysByKeyIds(self, req));
-			}
-			when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
-				self->addActor.send(fetchEncryptionKeysByDomainIds(self, req));
-			}
-			when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
-				self->addActor.send(fetchBlobMetadata(self, req));
-			}
-			when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
-				self->addActor.send(getKMSState(self, req));
-			}
-			when(wait(collection)) {
-				// this should throw an error, not complete
-				ASSERT(false);
+		loop {
+			choose {
+				when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
+					self->actors.add(fetchEncryptionKeysByKeyIds(self, req));
+				}
+				when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
+					self->actors.add(fetchEncryptionKeysByDomainIds(self, req));
+				}
+				when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
+					self->actors.add(fetchBlobMetadata(self, req));
+				}
+				when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
+					self->actors.add(getKMSState(self, req));
+				}
+				when(wait(self->actors.getResult())) {}
 			}
 		}
+	} catch (Error& e) {
+		TraceEvent("RESTKmsConnectorError", self->uid).errorUnsuppressed(e);
+		self->actors = ActorCollection(false);
+		throw e;
 	}
 }
 

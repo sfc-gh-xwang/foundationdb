@@ -18,14 +18,15 @@
 // caller can know for sure whether it was successful or not)
 //        and/or allow client to explicitly clean up bulk loads when it knows for sure the load is complete
 struct BulkLoadTracker {
-	typedef std::function<Future<Void>(const BulkLoadID&, const BulkLoadStatus::State&)> Handler;
+	typedef std::function<Future<Void>(const BulkLoadIDKey&, const BulkLoadStatus::State&)> Handler;
 
 	Database db;
 	Handler handler;
 	PromiseStream<Future<Void>> addActor;
 	bool started;
 
-	std::unordered_set<BulkLoadID> activeBulkLoads;
+	// FIXME: define hash function and do unordered set
+	std::set<BulkLoadIDKey> activeBulkLoads;
 
 	BulkLoadTracker() {}
 

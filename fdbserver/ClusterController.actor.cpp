@@ -396,10 +396,15 @@ bool isHealthySingleton(ClusterControllerData* self,
 	}
 	// If any of the following conditions are met, we will switch the singleton's process:
 	// - if the current proc is used by some non-master, non-singleton role
+	//    - this also requires that the singleton being checked is not the EKP.
+	//      The EKP is special in that it does not prefer to colocate with the
+	//      sequencer, because it is recruited before the sequencer
 	// - if the current fitness is less than optimal (lower fitness is better)
 	// - if currently at peak fitness but on same process as master, and the new worker is on different process
 	bool shouldRerecruit =
-	    self->isUsedNotMaster(currWorker.details.interf.locality.processId()) || bestFitness < currFitness ||
+	    (!std::is_same_v<SingletonClass, EncryptKeyProxySingleton> &&
+	     self->isUsedNotMaster(currWorker.details.interf.locality.processId())) ||
+	    bestFitness < currFitness ||
 	    (currFitness == bestFitness && currWorker.details.interf.locality.processId() == self->masterProcessId &&
 	     newWorker.interf.locality.processId() != self->masterProcessId);
 	if (shouldRerecruit) {
@@ -931,6 +936,14 @@ ACTOR Future<Void> registerWorker(RegisterWorkerRequest req,
 	const WorkerInterface& w = req.wi;
 	if (req.clusterId.present() && self->clusterId->get().present() && req.clusterId != self->clusterId->get() &&
 	    req.processClass != ProcessClass::TesterClass) {
+		// The cluster ID of the registering worker does not match that of the
+		// cluster itself. This probably means the cluster file was manually
+		// changed for this stateful process. Note that processes with a
+		// modified cluster file can delete their own data when connecting to a
+		// new cluster. If this is intended, delete the `clusterId` file in the
+		// data directory for each of the rejected processes, then bounce them.
+
+		// Reject the worker's registration and log a message.
 		TraceEvent(g_network->isSimulated() ? SevWarnAlways : SevError, "WorkerBelongsToExistingCluster", self->id)
 		    .detail("WorkerClusterId", req.clusterId)
 		    .detail("ClusterControllerClusterId", self->clusterId->get())
