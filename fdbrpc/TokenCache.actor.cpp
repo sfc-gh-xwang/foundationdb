@@ -164,15 +164,16 @@ std::size_t hash_value(AuditEntry const& value) {
 struct TokenCacheImpl {
 	TokenCacheImpl();
 	LRUCache<StringRef, CacheEntry> cache;
-	boost::unordered_set<AuditEntry> usedTokens;
-	double lastResetTime;
+	LRUCache<AuditEntry, double> usedTokens;
 
 	bool validate(TenantId tenantId, StringRef token);
 	bool validateAndAdd(double currentTime, StringRef token, NetworkAddress const& peer, UID const& connDebugId);
-	void logTokenUsage(double currentTime, UID const& connDebugId, AuditEntry&& entry);
+	void logTokenUsage(double currentTime, UID const& connDebugId, AuditEntry entry);
 };
 
-TokenCacheImpl::TokenCacheImpl() : cache(FLOW_KNOBS->TOKEN_CACHE_SIZE), usedTokens(), lastResetTime(0) {}
+TokenCacheImpl::TokenCacheImpl()
+  : cache(FLOW_KNOBS->TOKEN_CACHE_SIZE),
+    usedTokens(FLOW_KNOBS->TOKEN_USAGE_DEDUP_CACHE_SIZE) {}
 
 TokenCache::TokenCache() : impl(new TokenCacheImpl()) {}
 TokenCache::~TokenCache() {
@@ -322,24 +323,27 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	return true;
 }
 
-void TokenCacheImpl::logTokenUsage(double currentTime, UID const& connDebugId, AuditEntry&& entry) {
-	if (currentTime > lastResetTime + FLOW_KNOBS->AUDIT_TIME_WINDOW ||
-	    usedTokens.size() > FLOW_KNOBS->TOKEN_USAGE_DEDUP_CACHE_SIZE) {
-		// clear usage cache every AUDIT_TIME_WINDOW seconds, or if dedup cache has hit the limit
-		usedTokens.clear();
-		lastResetTime = currentTime;
+void TokenCacheImpl::logTokenUsage(double currentTime, UID const& connDebugId, AuditEntry entry) {
+	Optional<double*> optionalFirstLoggedTime = usedTokens.get(entry);
+	if (optionalFirstLoggedTime.present()) {
+		double const firstLoggedTime = *optionalFirstLoggedTime.get();
+		if (firstLoggedTime + FLOW_KNOBS->AUDIT_TIME_WINDOW < currentTime) {
+			// reset timer for this entry and log again
+			*optionalFirstLoggedTime.get() = currentTime;
+		} else {
+			// within the dedup window; nothing to do.
+			return;
+		}
+	} else {
+		// found this for the first time. insert to cache and log.
+		usedTokens.insert(entry, currentTime);
 	}
-	auto [iter, inserted] = usedTokens.insert(std::move(entry));
-	if (inserted) {
-		// access in the context of this (client_ip, tenant, token_id) tuple hasn't been logged in current window. log
-		// usage.
-		CODE_PROBE(true, "Audit Logging Running");
-		TraceEvent("AuditTokenUsed"_audit, connDebugId)
-		    .detail("Client", iter->address)
-		    .detail("TenantId", fmt::format("{:#x}", iter->tenantId))
-		    .detail("TokenId", iter->tokenId)
-		    .log();
-	}
+	CODE_PROBE(true, "Audit Logging Running");
+	TraceEvent("AuditTokenUsed"_audit, connDebugId)
+	    .detail("Client", entry.address)
+	    .detail("TenantId", fmt::format("{:#x}", entry.tenantId))
+	    .detail("TokenId", entry.tokenId)
+	    .log();
 }
 
 namespace authz::jwt {
