@@ -90,7 +90,7 @@ AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& e
 	}
 });
 
-AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& env) {
+AddTest testReadSystemKey("SystemKeyReadRequiresTransactionOption", asTrustedClient, [](const TestEnv& env) {
 	// Access of system key is protected from the tenant use case. Thus only trusted client case is tested.
 	auto db = env.newDatabase();
 	for (auto const enableReadSystemKeys : { false, true }) {
@@ -111,7 +111,7 @@ AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& en
 			// Only when enableReadSystemKeys is set we hit this line
 			ASSERT(f.get().has_value(), "Unexpected null value from read");
 		} catch (fdb::Error e) {
-			ASSERT(!enableReadSystemKeys, "FDB_TR_OPTION_READ_SYSTEM_KEYS must be disabled");
+			ASSERT(!enableReadSystemKeys, "System key read failed although READ_SYSTEM_KEYS option was set");
 			ASSERT(e.code() == 2004); // key_outside_legal_range
 		}
 	}
@@ -162,7 +162,7 @@ AddTest testReadYourWrites("ReadYourWrites", ALL, [](const TestEnv& env) {
 	         std::nullopt, FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE }) {
 		auto tr = env.newNormalOrTenantTransaction();
 
-		// Read before committing. Herer we test 3 different cases:
+		// Read before committing. Here we test 3 different cases:
 		// 1) By default, read the snapshot = false after a write before commit should read the initial write
 		// 2) If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false should return null
 		// 3) If FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE is set, read with snapshot = true should succeed
@@ -526,7 +526,7 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 
 		    return tr.commit();
 	    },
-	    "FDBMutationBitAnd");
+	    "FDBMutationBitOr");
 
 	// Check results
 	for (auto const& keyVal :
@@ -538,7 +538,7 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 		tr = env.newNormalOrTenantTransaction();
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
-		ASSERT(f.get() == val,
+		ASSERT(f.get().value() == val,
 		       "unmatched val for {}: expected={}, actual={}",
 		       key,
 		       fdb::toCharsRef(val),
@@ -744,14 +744,14 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
 		        }
 
 		        if (f1.blockUntilReady() || f1.error()) {
-			        return static_cast<fdb::Future>(f1);
+			        return f1.eraseType();
 		        }
 
 		        versionstamp = std::string(f1.get().begin(), f1.get().end());
 		        // The cast here is a workaround to avoid runToCompletion to throw an error
 		        // because the return type of tr.getVersionstamp() is different from the
 		        // return type of tr.commit()
-		        return static_cast<fdb::Future>(f1);
+		        return f1.eraseType();
 	        },
 	        "AtomicOptionMutationTypeSetVersionstampedKey");
 
