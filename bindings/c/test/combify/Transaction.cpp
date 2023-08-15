@@ -526,7 +526,7 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 
 		    return tr.commit();
 	    },
-	    "FDBMutationBitAnd");
+	    "FDBMutationBitOr");
 
 	// Check results
 	for (auto const& keyVal :
