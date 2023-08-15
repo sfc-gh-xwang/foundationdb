@@ -2470,6 +2470,10 @@ void ReadYourWritesTransaction::setOption(FDBTransactionOptions::Option option, 
 	}
 }
 
+bool ReadYourWritesTransaction::rywEnabled() const {
+	return !readYourWritesDisabled();
+}
+
 void ReadYourWritesTransaction::setOptionImpl(FDBTransactionOptions::Option option, Optional<StringRef> value) {
 	switch (option) {
 	case FDBTransactionOptions::READ_YOUR_WRITES_DISABLE:

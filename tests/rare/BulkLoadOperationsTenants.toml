@@ -5,6 +5,7 @@ tenantModes = ['required']
 
 [[knobs]]
 allow_bulk_loads = true
+bulk_load_storage_reservation_enabled = true
 bg_metadata_source = "tenant"
 enable_rest_kms_communication = true
 

@@ -177,6 +177,45 @@ def test_simple_tenant_access(
                 "failed to find any AuditTokenUsed entry matching token from the testcase"
             )
 
+    # check_token_usage_trace only verifies within the time window of this test case
+    # Actual connection to database establishes much earlier.
+    # Make sure we're tracing the token usage in a way that allows tracing back to connection establishment
+    def check_trace_lineage(trace_entries, token_claim):
+        found = False
+        connection_ids = {}
+        for filename, ev_type, entry in trace_entries:
+            if ev_type == "IncomingConnection":
+                assert "ID" in entry.attrib
+                assert "FromAddr" in entry.attrib
+                connection_ids[entry.attrib["ID"]] = entry.attrib["FromAddr"]
+            elif ev_type == "AuditTokenUsed":
+                assert "Client" in entry.attrib
+                assert "TokenId" in entry.attrib
+                assert "TenantId" in entry.attrib
+                assert "ID" in entry.attrib
+                debug_id = entry.attrib["ID"]
+                jti_actual = entry.attrib["TokenId"]
+                jti_expect = token_claim["jti"]
+                tenantid_actual = entry.attrib["TenantId"]
+                tenantid_expect_bytes = base64.b64decode(token_claim["tenants"][0])
+                tenantid_expect = hex(int.from_bytes(tenantid_expect_bytes, "big"))
+                if jti_actual == jti_expect and tenantid_actual == tenantid_expect:
+                    found = True
+                    print("found trace token usage trace entry:", entry.items())
+                    # there must be a connection establishment log preceding the token usage
+                    assert debug_id in connection_ids
+                    peer_address = connection_ids[debug_id]
+                    print(f"found connection {debug_id} from {peer_address}")
+                    # and its "ID" and "FromAddr" should match "ID" and "Client" of token usage log
+                    assert (
+                        connection_ids[entry.attrib["ID"]].find(entry.attrib["Client"])
+                        == 0
+                    )
+        if not found:
+            pytest.fail(
+                "failed to find IncomingConnection log which matches AuditTokenUsed log's debug ID and connection log"
+            )
+
     token_claim = token_claim_1h(default_tenant)
     token = token_gen(cluster.private_key, token_claim)
     token_sig_part = to_str(token[token.rfind(b".") + 1 :])
@@ -204,6 +243,10 @@ def test_simple_tenant_access(
 
         value = loop_until_success(tr, read_back_value)
         assert value == b"def", "tenant write transaction not visible"
+    cluster.add_trace_check_to(
+        functools.partial(check_trace_lineage, token_claim=token_claim),
+        time.time(),
+    )
 
 
 def test_token_as_tenant_option(

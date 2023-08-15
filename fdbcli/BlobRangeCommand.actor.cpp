@@ -98,6 +98,20 @@ ACTOR Future<Void> doBlobCheck(Database db,
 	return Void();
 }
 
+ACTOR Future<Void> doBlobDebug(Database db,
+                               Optional<Reference<Tenant>> tenant,
+                               Key startKey,
+                               Key endKey,
+                               Optional<Version> readVersion) {
+	state Transaction tr(db);
+
+	state Version version = wait(tr.getReadVersion());
+	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
+	    wait(tr.readBlobGranules(KeyRangeRef(startKey, endKey), version, readVersion));
+	printGranuleChunks(chunks);
+	return Void();
+}
+
 ACTOR Future<Void> doBlobFlush(Database db,
                                Optional<Reference<Tenant>> tenant,
                                Key startKey,
@@ -126,102 +140,109 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
                                          Optional<TenantMapEntry> tenantEntry,
                                          std::vector<StringRef> tokens) {
 	// enables blob writing for the given range
+	// tokens:
+	// 0 -- literal "blobrange"
+	// 1 -- subcommand name
+	// 2 -- start of range
+	// 3 -- end of range
+	// 4 -- for some subcommands, the version to read
 	if (tokens.size() != 4 && tokens.size() != 5) {
 		printUsage(tokens[0]);
 		return false;
 	}
 
-	Optional<Reference<Tenant>> tenant;
+	state Optional<Reference<Tenant>> tenant;
 	if (tenantEntry.present()) {
 		tenant = Reference<Tenant>(new Tenant(localDb, tenantEntry.get().id));
 	}
 
-	Key begin = tokens[2];
-	Key end = tokens[3];
+	state StringRef subcommand = tokens[1];
+	state Key begin = tokens[2];
+	state Key end = tokens[3];
 
 	if (end > "\xff"_sr) {
 		// TODO is this something we want?
-		fmt::print("Cannot blobbify system keyspace! Problematic End Key: {0}\n", tokens[3].printable());
+		fmt::print("Cannot blobbify system keyspace! Problematic End Key: {0}\n", end.printable());
 		return false;
-	} else if (tokens[2] >= tokens[3]) {
-		fmt::print("Invalid blob range [{0} - {1})\n", tokens[2].printable(), tokens[3].printable());
-	} else {
-		if (tokencmp(tokens[1], "start") || tokencmp(tokens[1], "stop")) {
-			state bool starting = tokencmp(tokens[1], "start");
-			if (tokens.size() > 4) {
-				printUsage(tokens[0]);
-				return false;
-			}
-			fmt::print("{0} blobbify range for [{1} - {2})\n",
-			           starting ? "Starting" : "Stopping",
-			           tokens[2].printable(),
-			           tokens[3].printable());
-			state bool success = false;
-			if (starting) {
-				wait(store(success, localDb->blobbifyRange(KeyRangeRef(begin, end), tenant)));
-			} else {
-				wait(store(success, localDb->unblobbifyRange(KeyRangeRef(begin, end), tenant)));
-			}
-			if (success) {
-				fmt::print("{0} updated blob range [{1} - {2}) succeeded\n",
-				           starting ? "Starting" : "Stopping",
-				           tokens[2].printable(),
-				           tokens[3].printable());
-			} else {
-				fmt::print("{0} blobbify range for [{1} - {2}) failed\n",
-				           starting ? "Starting" : "Stopping",
-				           tokens[2].printable(),
-				           tokens[3].printable());
-			}
-			return success;
-		} else if (tokencmp(tokens[1], "purge") || tokencmp(tokens[1], "forcepurge") || tokencmp(tokens[1], "check") ||
-		           tokencmp(tokens[1], "flush") || tokencmp(tokens[1], "compact")) {
-			bool purge = tokencmp(tokens[1], "purge") || tokencmp(tokens[1], "forcepurge");
-			bool forcePurge = tokencmp(tokens[1], "forcepurge");
+	}
 
-			Optional<Version> version;
-			if (tokens.size() > 4) {
-				Version v;
-				int n = 0;
-				if (sscanf(tokens[4].toString().c_str(), "%" PRId64 "%n", &v, &n) != 1 || n != tokens[4].size()) {
-					printUsage(tokens[0]);
-					return false;
-				}
-				version = v;
-			}
+	if (begin >= end) {
+		fmt::print("Invalid blob range [{0} - {1})\n", begin.printable(), end.printable());
+		return false;
+	}
 
-			fmt::print("{0} blob range [{1} - {2}){3}",
-			           tokens[1].printable(),
-			           tokens[2].printable(),
-			           tokens[3].printable(),
-			           forcePurge ? " (force)" : "");
-			if (version.present()) {
-				fmt::print(" @ {0}", version.get());
-			}
-			fmt::print("\n");
-
-			if (purge) {
-				wait(doBlobPurge(localDb, tenant, begin, end, version, forcePurge));
-			} else {
-				if (tokencmp(tokens[1], "check")) {
-					wait(doBlobCheck(localDb, tenant, begin, end, version));
-				} else if (tokencmp(tokens[1], "flush")) {
-					wait(doBlobFlush(localDb, tenant, begin, end, version, false));
-				} else if (tokencmp(tokens[1], "compact")) {
-					wait(doBlobFlush(localDb, tenant, begin, end, version, true));
-				} else {
-					ASSERT(false);
-				}
-			}
-		} else {
+	if (tokencmp(subcommand, "start") || tokencmp(subcommand, "stop")) {
+		// Commands with no version parameter
+		state bool starting = tokencmp(subcommand, "start");
+		if (tokens.size() > 4) {
 			printUsage(tokens[0]);
 			return false;
 		}
+		state bool success = false;
+		if (starting) {
+			wait(store(success, localDb->blobbifyRange(KeyRangeRef(begin, end), tenant)));
+		} else {
+			wait(store(success, localDb->unblobbifyRange(KeyRangeRef(begin, end), tenant)));
+		}
+		fmt::print("{0} blobbify range for [{1} - {2}) {3}\n",
+		           starting ? "Starting" : "Stopping",
+		           begin.printable(),
+		           end.printable(),
+		           success ? "succeeded" : "failed");
+		return success;
 	}
-	return true;
+
+	if (tokencmp(subcommand, "purge") || tokencmp(subcommand, "forcepurge") || tokencmp(subcommand, "check") ||
+	    tokencmp(subcommand, "flush") || tokencmp(subcommand, "compact") || tokencmp(subcommand, "debug")) {
+		// Commands which can optionally take the version to work on
+		bool purge = tokencmp(subcommand, "purge") || tokencmp(subcommand, "forcepurge");
+		bool forcePurge = tokencmp(subcommand, "forcepurge");
+
+		Optional<Version> version;
+		if (tokens.size() > 4) {
+			Version v;
+			int n = 0;
+			if (sscanf(tokens[4].toString().c_str(), "%" PRId64 "%n", &v, &n) != 1 || n != tokens[4].size()) {
+				printUsage(tokens[0]);
+				return false;
+			}
+			version = v;
+		}
+
+		fmt::print("{0} blob range [{1} - {2}){3}",
+		           subcommand.printable(),
+		           begin.printable(),
+		           end.printable(),
+		           forcePurge ? " (force)" : "");
+		if (version.present()) {
+			fmt::print(" @ {0}", version.get());
+		}
+		fmt::print("\n");
+
+		if (purge) {
+			wait(doBlobPurge(localDb, tenant, begin, end, version, forcePurge));
+		} else {
+			if (tokencmp(subcommand, "check")) {
+				wait(doBlobCheck(localDb, tenant, begin, end, version));
+			} else if (tokencmp(subcommand, "flush")) {
+				wait(doBlobFlush(localDb, tenant, begin, end, version, false));
+			} else if (tokencmp(subcommand, "compact")) {
+				wait(doBlobFlush(localDb, tenant, begin, end, version, true));
+			} else if (tokencmp(subcommand, "debug")) {
+				wait(doBlobDebug(localDb, tenant, begin, end, version));
+			} else {
+				ASSERT(false);
+			}
+		}
+		return true;
+	}
+	printUsage(tokens[0]);
+	return false;
 }
 
 CommandFactory blobRangeFactory(
     "blobrange",
-    CommandHelp("blobrange <start|stop|check|purge|forcepurge|flush|compact> <startkey> <endkey> [version]", "", ""));
+    CommandHelp("blobrange <start|stop|check|debug|purge|forcepurge|flush|compact> <startkey> <endkey> [version]",
+                "",
+                ""));
 } // namespace fdb_cli

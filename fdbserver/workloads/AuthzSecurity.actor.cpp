@@ -696,11 +696,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                                               TenantInfo tenant,
 	                                                                               Version v) {
 		try {
-			GetBlobGranuleLocationsReply reply =
-			    wait(basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
-			                          &CommitProxyInterface::getBlobGranuleLocations,
-			                          GetBlobGranuleLocationsRequest(
-			                              SpanContext(), tenant, ""_sr, "\xff"_sr, 100, false, false, v, Arena())));
+			GetBlobGranuleLocationsReply reply = wait(
+			    basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
+			                     &CommitProxyInterface::getBlobGranuleLocations,
+			                     GetBlobGranuleLocationsRequest(
+			                         SpanContext(), tenant, ""_sr, "\xff"_sr, 100, false, false, v, false, Arena())));
 			return reply;
 		} catch (Error& e) {
 			if (e.code() == error_code_operation_cancelled) {

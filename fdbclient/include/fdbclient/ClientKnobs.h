@@ -370,8 +370,12 @@ public:
 	bool ALLOW_BULK_LOADS;
 	int BULK_LOAD_FILE_POINTER_TOO_MANY;
 	int64_t BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
+	bool BULK_LOAD_STORAGE_RESERVATION_ENABLED;
 
 	bool ENABLE_STORAGE_ENGINE_PARAM_INTERFACE;
+
+	// Range Lock
+	int RANGE_LOCK_LIMIT;
 
 	ClientKnobs(Randomize randomize);
 	void initialize(Randomize randomize);

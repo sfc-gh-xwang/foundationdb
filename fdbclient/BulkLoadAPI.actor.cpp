@@ -486,13 +486,40 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					// FIXME: any way to make this coalescing?
 					wait(BulkLoadMetadata::rangeMap().updateRange(
 					    tr, physicalRange.begin, physicalRange.end, ""_sr, true));
+
+					state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
+					    BulkLoadMetadata::allFilePointersForLoadRange(id);
+
+					// Calculate the bulk load size and remove the reservation
+					if (tenant.present() && tenant.get()->tenantGroup().present()) {
+						state TenantGroupName tenantGroup = tenant.get()->tenantGroup().get();
+
+						state Optional<int64_t> reservation =
+						    wait(BulkLoadMetadata::reservationMap().get(tr, tenantGroup));
+
+						if (reservation.present()) {
+							state int64_t bulkLoadSize = 0;
+							state BulkLoadMetadata::WrittenFilePointersMap::RangeResultType writtenPointers =
+							    wait(BulkLoadMetadata::writtenFilePointersMap().getRange(
+							        tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY));
+							ASSERT(!writtenPointers.more);
+							for (auto& it : writtenPointers.results) {
+								bulkLoadSize += it.second.logicalSize;
+							}
+
+							BulkLoadMetadata::reservationMap().set(
+							    tr, tenantGroup, std::max(reservation.get() - bulkLoadSize, (int64_t)0));
+						}
+					}
+
+					// The written file pointers are kept around until now so that the reservation can be removed
+					BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
 				} else if (desiredState == BulkLoadStatus::State::STAGING_BLOB_DONE) {
 					// clean up pointers once granules actually staged
 					// FIXME: convert these 3 lines into common function?
 					std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
 					    BulkLoadMetadata::allFilePointersForLoadRange(id);
 					BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
-					BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
 				}
 			}
 

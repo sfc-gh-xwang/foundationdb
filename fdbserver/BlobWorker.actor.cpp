@@ -54,6 +54,7 @@
 #include "flow/CompressionUtils.h"
 #include "flow/EncryptUtils.h"
 #include "flow/Error.h"
+#include "flow/Platform.h"
 #include "flow/flow.h"
 #include "flow/IRandom.h"
 #include "flow/network.h"
@@ -427,12 +428,14 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
                                                                 Arena* arena) {
 	state BlobGranuleCipherKeysCtx cipherKeysCtx;
 
+	state Future<BlobGranuleCipherKey> textF = lookupCipherKey(dbInfo, textCipherDetails, arena);
+	state Future<BlobGranuleCipherKey> headerF = lookupCipherKey(dbInfo, headerCipherDetails, arena);
 	// Fetch 'textCipher' key
-	BlobGranuleCipherKey textCipherKey = wait(lookupCipherKey(dbInfo, textCipherDetails, arena));
+	BlobGranuleCipherKey textCipherKey = wait(textF);
 	cipherKeysCtx.textCipherKey = textCipherKey;
 
 	// Fetch 'headerCipher' key
-	BlobGranuleCipherKey headerCipherKey = wait(lookupCipherKey(dbInfo, headerCipherDetails, arena));
+	BlobGranuleCipherKey headerCipherKey = wait(headerF);
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
@@ -2085,6 +2088,9 @@ ACTOR Future<Void> waitCommittedGrv(Reference<BlobWorkerData> bwData,
 ACTOR Future<Void> waitVersionCommitted(Reference<BlobWorkerData> bwData,
                                         Reference<GranuleMetadata> metadata,
                                         Version version) {
+	if (version <= metadata->knownCommittedVersion) {
+		return Void();
+	}
 	wait(waitCommittedGrv(bwData, metadata, version));
 	if (version > metadata->knownCommittedVersion) {
 		metadata->knownCommittedVersion = version;
@@ -3671,7 +3677,10 @@ bool canReplyWith(Error e) {
 } // namespace
 
 // assumes metadata is already readable and the query is reading from the active granule, not a history one
-ACTOR Future<Void> waitForVersion(Reference<GranuleMetadata> metadata, Version v) {
+ACTOR Future<Void> waitForVersion(Reference<BlobWorkerData> bwData,
+                                  Reference<GranuleMetadata> metadata,
+                                  Version v,
+                                  bool isReadVersionUntrusted) {
 	// if we don't have to wait for change feed version to catch up or wait for any pending file writes to
 	// complete, nothing to do
 
@@ -3687,7 +3696,7 @@ ACTOR Future<Void> waitForVersion(Reference<GranuleMetadata> metadata, Version v
 
 	ASSERT(metadata->activeCFData.get().isValid());
 
-	if (v <= metadata->activeCFData.get()->getVersion() &&
+	if (!isReadVersionUntrusted && v <= metadata->activeCFData.get()->getVersion() &&
 	    (v <= metadata->durableDeltaVersion.get() ||
 	     metadata->durableDeltaVersion.get() == metadata->pendingDeltaVersion.get()) &&
 	    (v <= metadata->durableSnapshotVersion.get() ||
@@ -3696,12 +3705,16 @@ ACTOR Future<Void> waitForVersion(Reference<GranuleMetadata> metadata, Version v
 		return Void();
 	}
 
-	// wait for change feed version to catch up to ensure we have all data
-	if (metadata->activeCFData.get()->getVersion() < v) {
-		// FIXME: add future version timeout and throw here, same as SS
+	// FIXME: add future version timeout and throw here, same as SS
+	if (isReadVersionUntrusted) {
+		// wait for change feed version to catch up and be known committed to ensure we have all data and don't miss
+		// rollbacks
+		wait(waitVersionCommitted(bwData, metadata, v));
+	} else if (metadata->activeCFData.get()->getVersion() < v) {
+		// wait for change feed version to catch up to ensure we have all data
 		wait(metadata->activeCFData.get()->whenAtLeast(v));
-		ASSERT(metadata->activeCFData.get()->getVersion() >= v);
 	}
+	ASSERT(metadata->activeCFData.get()->getVersion() >= v);
 
 	// wait for any pending delta and snapshot files as of the moment the change feed version caught up.
 	state Version pendingDeltaV = metadata->pendingDeltaVersion.get();
@@ -3929,7 +3942,9 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 					if (!metadata->activeCFData.get().isValid() || !metadata->cancelled.canBeSet()) {
 						throw wrong_shard_server();
 					}
-					Future<Void> waitForVersionFuture = waitForVersion(metadata, req.readVersion);
+					bool isReadVersionUntrusted = req.readOptions.present() && req.readOptions->untrustedReadVersion;
+					Future<Void> waitForVersionFuture =
+					    waitForVersion(bwData, metadata, req.readVersion, isReadVersionUntrusted);
 					if (waitForVersionFuture.isReady() && !waitForVersionFuture.isError()) {
 						// didn't wait, so no need to check rollback stuff
 						break;
@@ -4182,6 +4197,10 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 		}
 		if (anyTimeTravel) {
 			++bwData->stats.readRequestsTimeTravel;
+		}
+		if (req.readOptions.present() && req.readOptions->untrustedReadVersion) {
+			CODE_PROBE(true, "untrusted hybrid read version");
+			++bwData->stats.readRequestsUntrusted;
 		}
 
 		double duration = g_network->timer() - req.requestTime();
@@ -5265,8 +5284,8 @@ ACTOR Future<Void> runReadDrivenCompaction(Reference<BlobWorkerData> bwData) {
 		}
 		processedAll = futures.empty();
 		if (!futures.empty()) {
-			// wait at least one second to throttle this actor a bit
-			wait(waitForAll(futures) && delay(1.0));
+			// wait at least BLOB_WORKER_RDC_MIN_WAVE_DELAY seconds to throttle this actor a bit
+			wait(waitForAll(futures) && delay(SERVER_KNOBS->BLOB_WORKER_RDC_MIN_WAVE_DELAY));
 		}
 	}
 }
