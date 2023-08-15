@@ -380,42 +380,6 @@ TEST_CASE("fdb_future_release_memory") {
 	}
 }
 
-TEST_CASE("fdb_transaction_set_option snapshot_read_your_writes_disable") {
-	clear_data(db);
-
-	auto tr = db.createTransaction();
-	while (1) {
-		// Disable read your writes for snapshot reads.
-		tr.setOption(FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE);
-		tr.set("foo"_br, "bar"_br);
-		auto f1 = tr.get("foo"_br, /*snapshot*/ true);
-		auto f2 = tr.get("foo"_br, /*snapshot*/ false);
-
-		auto err = waitFuture(f1);
-		if (err) {
-			auto f3 = tr.onError(err);
-			fdbCheck(waitFuture(f3));
-			continue;
-		}
-
-		auto val = f1.get();
-		CHECK(!val.has_value());
-
-		//// Non-snapshot reads should still read writes in the transaction.
-		err = waitFuture(f2);
-		if (err) {
-			auto f3 = tr.onError(err);
-			fdbCheck(waitFuture(f3));
-			continue;
-		}
-
-		val = f2.get();
-		CHECK(val.has_value());
-		CHECK(fdb::toCharsRef(val).compare("bar") == 0);
-		break;
-	}
-}
-
 TEST_CASE("fdb_transaction_set_option timeout") {
 	auto tr = db.createTransaction();
 	// Set smallest possible timeout, retry until a timeout occurs.

@@ -18,6 +18,13 @@ auto applyKeyPrefix(const std::string& prefix, std::vector<std::pair<std::string
 	return out;
 }
 
+fdb::Error waitFuture(fdb::Future& f) {
+	if (auto err = f.blockUntilReady()) {
+		ASSERT(false, "Unexpected future unready: {}", err.what());
+	}
+	return f.error();
+}
+
 AddTest testWriteAndRead("BasicWriteAndReadBack", ALL, [](const TestEnv& env) {
 	auto tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
@@ -212,6 +219,42 @@ AddTest testReadYourWritesSnapshotRYW("ReadYourWritesSnapshotRYWEnabled", ALL, [
 	    "ReadYourWrites");
 
 	ASSERT(f.get().value() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f.get()));
+});
+
+AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+
+	while (1) {
+		// Disable read your writes for snapshot reads.
+		tr.setOption(FDB_TR_OPTION_SNAPSHOT_RYW_DISABLE);
+		tr.set("foo"_br, "bar"_br);
+		auto f1 = tr.get("foo"_br, /*snapshot*/ true);
+		auto f2 = tr.get("foo"_br, /*snapshot*/ false);
+
+		auto err = waitFuture(f1);
+		if (err) {
+			auto f3 = tr.onError(err);
+			if (auto err3 = waitFuture(f3)) {
+				ASSERT(false, "Unexpected failure: {}", err3.what());
+			}
+			continue;
+		}
+
+		ASSERT(!f1.get().has_value(), "Expect null value");
+		//// Non-snapshot reads should still read writes in the transaction.
+		err = waitFuture(f2);
+		if (err) {
+			auto f3 = tr.onError(err);
+			if (auto err3 = waitFuture(f3)) {
+				ASSERT(false, "Unexpected failure: {}", err3.what());
+			}
+			continue;
+		}
+
+		ASSERT(
+		    f2.get().value() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f2.get()));
+		break;
+	}
 });
 
 AddTest testGetRangeStreamingModeWantAllNoLimit("GetRangeStreamingModeWantAllNoLimit", ALL, [](const TestEnv& env) {
