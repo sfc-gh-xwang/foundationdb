@@ -744,7 +744,7 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
 		        }
 
 		        if (f1.blockUntilReady() || f1.error()) {
-			        return static_cast<fdb::Future>(f1);
+			        return f1.eraseType();
 		        }
 
 		        versionstamp = std::string(f1.get().begin(), f1.get().end());
