@@ -228,6 +228,8 @@ public:
 	virtual void debugTrace(BaseTraceEvent&& event) override;
 	void debugPrint(std::string const& message) override;
 
+	bool rywEnabled() const override;
+
 	std::vector<BaseTraceEvent> debugTraces;
 	std::vector<std::string> debugMessages;
 

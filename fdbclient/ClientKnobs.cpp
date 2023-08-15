@@ -341,6 +341,9 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 	init( ENABLE_STORAGE_ENGINE_PARAM_INTERFACE,    false );
 
+	// Range Lock
+	init( RANGE_LOCK_LIMIT, 						10000 ); if( randomize && BUGGIFY ) RANGE_LOCK_LIMIT = 20;
+
 	// clang-format on
 }
 
