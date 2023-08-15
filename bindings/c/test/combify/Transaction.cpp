@@ -751,7 +751,7 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
 		        // The cast here is a workaround to avoid runToCompletion to throw an error
 		        // because the return type of tr.getVersionstamp() is different from the
 		        // return type of tr.commit()
-		        return static_cast<fdb::Future>(f1);
+		        return f1.eraseType();
 	        },
 	        "AtomicOptionMutationTypeSetVersionstampedKey");
 
