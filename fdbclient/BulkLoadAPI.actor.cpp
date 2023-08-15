@@ -143,7 +143,6 @@ BulkLoadID newBulkLoadID() {
 	// TODO this is the same as granuleIDToCFKey - make common function?
 	BinaryWriter wr(Unversioned());
 	wr << randomUID;
-	fmt::print("New Bulk Load Id : {}\n", BinaryReader::fromStringRef<UID>(wr.toValue(), Unversioned()).toString());
 	return wr.toValue();
 }
 
@@ -194,7 +193,8 @@ ACTOR Future<BulkLoadID> startBulkLoadExternalActor(Reference<DatabaseContext> d
 			return id;
 		} catch (Error& e) {
 			if (e.code() == error_code_range_lock_limit_exceeded) {
-				CODE_PROBE(true, "Bulk load pending because too many range locks");
+				// SOMEDAY: throw this out after some retry or let the client detect timeout?
+				CODE_PROBE(true, "Bulk load pending because of too many range locks");
 				wait(delayJittered(10.0));
 			} else if (e.code() == error_code_bulk_load_create_too_old) {
 				CODE_PROBE(true, "start bulk load create too old", probe::decoration::rare);

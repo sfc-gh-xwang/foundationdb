@@ -36,7 +36,7 @@ bool isTransientFileValidationError(const Error& e) {
 }
 
 bool canReplyWith(const Error& e) {
-	if(RangeLockAPI::isRangeLockError(e)) {
+	if (RangeLockAPI::isRangeLockError(e)) {
 		return true;
 	}
 	switch (e.code()) {
