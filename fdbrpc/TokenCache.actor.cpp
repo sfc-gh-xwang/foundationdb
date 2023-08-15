@@ -198,7 +198,10 @@ bool TokenCache::validate(TenantId tenantId, StringRef token) {
 	    .detail("CurrentTime", currentTime)                                                                            \
 	    .detail("Token", toStringRef(arena, token).toStringView())
 
-bool TokenCacheImpl::validateAndAdd(double currentTime, StringRef token, NetworkAddress const& peer, UID const& connDebugId) {
+bool TokenCacheImpl::validateAndAdd(double currentTime,
+                                    StringRef token,
+                                    NetworkAddress const& peer,
+                                    UID const& connDebugId) {
 	Arena arena;
 	authz::jwt::TokenRef t;
 	StringRef signInput;
@@ -320,7 +323,8 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 }
 
 void TokenCacheImpl::logTokenUsage(double currentTime, UID const& connDebugId, AuditEntry&& entry) {
-	if (currentTime > lastResetTime + FLOW_KNOBS->AUDIT_TIME_WINDOW || usedTokens.size() > FLOW_KNOBS->TOKEN_USAGE_DEDUP_CACHE_SIZE) {
+	if (currentTime > lastResetTime + FLOW_KNOBS->AUDIT_TIME_WINDOW ||
+	    usedTokens.size() > FLOW_KNOBS->TOKEN_USAGE_DEDUP_CACHE_SIZE) {
 		// clear usage cache every AUDIT_TIME_WINDOW seconds, or if dedup cache has hit the limit
 		usedTokens.clear();
 		lastResetTime = currentTime;
