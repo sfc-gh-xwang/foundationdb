@@ -14,12 +14,15 @@ class Version:
         return self.major, self.minor, self.patch
 
     def _compare(self, other) -> int:
-        lhs: Tuple[int, int, int] = self.version_tuple()
+        lhs: Tuple[int, int, int] = Version.normalize(self.version_tuple())
         rhs: Tuple[int, int, int]
         if isinstance(other, Version):
             rhs = other.version_tuple()
         else:
             rhs = Version.parse(str(other)).version_tuple()
+
+        rhs = Version.normalize(rhs)
+
         if lhs < rhs:
             return -1
         elif lhs > rhs:
@@ -64,3 +67,11 @@ class Version:
         self.minor = 2**32 - 1
         self.patch = 2**32 - 1
         return self
+
+    # The version sequence 7.0, 7.1, 71.2. 71.3, 8.0 makes comparison difficult
+    # By converting 71 -> 7 for the first digit, comparison works as expected
+    @staticmethod
+    def normalize(version_tuple: Tuple[int, int, int]):
+        if version_tuple[0] == 71:
+            return (7,) + version_tuple[1:]
+        return version_tuple

@@ -1,6 +1,6 @@
 # API Versions
-set(FDB_AV_LATEST_VERSION                   "800000")
-set(FDB_AV_LATEST_BINDINGS_VERSION          "800000")
+set(FDB_AV_LATEST_VERSION                   "900000")
+set(FDB_AV_LATEST_BINDINGS_VERSION          "900000")
 
 # Features
 set(FDB_AV_BLOB_RANGE_API                   "710200")
