@@ -788,6 +788,103 @@ AddTest testAtomicOpMutationTypeMin("AtomicOpMutationTypeMin", ALL, [](const Tes
 	}
 });
 
+AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
+    "AtomicOptionMutationTypeSetVersionstampedKey",
+    ALL,
+    [](const TestEnv& env) {
+	    const std::string prefix("combify-atomic-op-mutation-type-set-versionstamped-key-");
+	    int offset = prefix.size() + 3;
+	    const char* p = reinterpret_cast<const char*>(&offset);
+	    char keybuf[] = { 'f',  'o',  'o',  '\0', '\0', '\0', '\0', '\0', '\0',
+		                  '\0', '\0', '\0', '\0', p[0], p[1], p[2], p[3] };
+	    std::string key = prefix + std::string(keybuf, 17);
+	    std::string versionstamp("");
+
+	    auto tr = env.newNormalOrTenantTransaction();
+	    while (1) {
+		    tr.atomicOp(fdb::toBytesRef(key), "bar"_br, FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_KEY);
+		    auto f1 = tr.getVersionstamp();
+		    auto f2 = tr.commit();
+
+		    auto err = waitFuture(f2);
+		    if (err) {
+			    auto f3 = tr.onError(err);
+			    if (auto err3 = waitFuture(f3)) {
+				    ASSERT(false, "Unexpected failure: {}", err3.what());
+			    }
+			    continue;
+		    }
+
+		    if (auto err = waitFuture(f1)) {
+			    ASSERT(false, "Unexpected failure: {}", err.what());
+		    }
+		    auto key = f1.get();
+		    versionstamp = std::string(key.begin(), key.end());
+		    break;
+	    }
+
+	    ASSERT(versionstamp.size() > 0, "Expect versionstamp's size > 0");
+
+	    tr = env.newNormalOrTenantTransaction();
+	    auto f = runToCompletion(
+	        tr,
+	        [&prefix, &versionstamp](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo" + versionstamp), false); },
+	        "CheckVersionstamp");
+
+	    ASSERT(f.get().has_value(), "Unexpected null value");
+	    ASSERT(f.get() == "bar"_br, "unmatched value: expected=bar, actual={}", fdb::toCharsRef(f.get()));
+    });
+
+AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
+    "AtomicOptionMutationTypeSetVersionstampedValue",
+    ALL,
+    [](const TestEnv& env) {
+	    const std::string prefix("combify-atomic-op-mutation-type-set-versionstamped-value-");
+	    char valbuf[] = { 'b', 'a', 'r', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', 3, 0, 0, 0 };
+	    std::string versionstamp("");
+	    std::string key = prefix + "foo";
+
+	    auto tr = env.newNormalOrTenantTransaction();
+
+	    while (1) {
+		    tr.atomicOp(fdb::toBytesRef(prefix + "foo"),
+		                fdb::BytesRef(reinterpret_cast<const uint8_t*>(valbuf), 17),
+		                FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_VALUE);
+		    auto f1 = tr.getVersionstamp();
+		    auto f2 = tr.commit();
+
+		    auto err = waitFuture(f2);
+		    if (err) {
+			    auto f3 = tr.onError(err);
+			    if (auto err3 = waitFuture(f3)) {
+				    ASSERT(false, "Unexpected failure: {}", err3.what());
+			    }
+			    continue;
+		    }
+
+		    if (auto err = waitFuture(f1)) {
+			    ASSERT(false, "Unexpected failure: {}", err.what());
+		    }
+		    auto key = f1.get();
+		    versionstamp = std::string(key.begin(), key.end());
+		    break;
+	    }
+
+	    ASSERT(versionstamp.size() > 0, "Expect versionstamp's size > 0");
+
+	    tr = env.newNormalOrTenantTransaction();
+	    auto f = runToCompletion(
+	        tr, [&key](auto tr) { return tr.get(fdb::toBytesRef(key), false); }, "CheckValue");
+
+	    auto expectedVal = "bar" + versionstamp;
+
+	    ASSERT(f.get().has_value(), "Unexpected null value");
+	    ASSERT(std::string(f.get()->begin(), f.get()->end()) == expectedVal,
+	           "unmatched value: expected={}, actual={}",
+	           fdb::toCharsRef(expectedVal),
+	           fdb::toCharsRef(f.get()));
+    });
+
 AddTest testAtomicOpMutationTypeByteMax("AtomicOpMutationTypeByteMax", ALL, [](const TestEnv& env) {
 	// The difference with FDB_MUTATION_TYPE_MAX is that strings will not be
 	// extended/truncated so lengths match.
@@ -895,6 +992,88 @@ AddTest testTransactionWatchReset("TransactionWatchReset", asTrustedClient, [](c
 		ASSERT(false, "Expect watch to fail");
 	} catch (fdb::Error e) {
 		ASSERT(e.code() == 1025); // transaction_cancelled
+	}
+});
+
+AddTest testTransactionMaxWatches("TransactionMaxWatches", asTrustedClient, [](const TestEnv& env) {
+	const std::string prefix("combify-transaction-max-watches-");
+	int64_t max_watches = 3;
+	auto db = env.newDatabase();
+	db.setOption(FDB_DB_OPTION_MAX_WATCHES, max_watches);
+
+	auto tr = db.createTransaction();
+	while (1) {
+		std::vector<fdb::Future> futures;
+		for (auto c = 'a'; c <= 'd'; c++) {
+			futures.push_back(tr.watch(fdb::toBytesRef(prefix + c)));
+		}
+
+		auto f = tr.commit();
+		if (auto err = waitFuture(f)) {
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+
+		std::binary_semaphore sem(0);
+		// Callbacks will be triggered with operation_cancelled errors once the
+		// too_many_watches error fires, as the other futures will go out of scope
+		// and be cleaned up. The future which too_many_watches occurs on is
+		// nondeterministic, so each future is checked.
+		for (auto& ft : futures) {
+			ft.then([&sem](fdb::Future f) {
+				ASSERT(!f.blockUntilReady(), "Unexpected future unready");
+				auto err = f.error();
+				if (err.code() != /*operation_cancelled*/ 1101 && !err.retryable()) {
+					ASSERT(err.code() == 1032); // too_many_watches
+				}
+				sem.release();
+			});
+		}
+
+		// We only expect 1 of the callbacks above to be fired because the max watches
+		// is set to 3 and there are four watches, leading to one of the future to fail
+		// and causing the callback to be called. The other three watches will wait
+		// because no changes have been made to any of the keys used in this test.
+		sem.acquire();
+		break;
+	}
+
+	// Reset available number of watches.
+	max_watches = 10000;
+	db.setOption(FDB_DB_OPTION_MAX_WATCHES, max_watches);
+});
+
+AddTest testTransactionWatch("TransactionWatch", asTrustedClient, [](const TestEnv& env) {
+	const std::string prefix("combify-transaction-watch-");
+	auto tr = env.newNormalOrTenantTransaction();
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "foo" } }));
+
+	std::binary_semaphore sem(0);
+	auto db = env.newDatabase();
+	tr = env.newNormalOrTenantTransaction();
+
+	while (1) {
+		auto f1 = tr.watch(fdb::toBytesRef(prefix + "foo"));
+		auto f2 = tr.commit();
+
+		auto err = waitFuture(f2);
+		if (err) {
+			auto f3 = tr.onError(err);
+			if (auto err = waitFuture(f3)) {
+				ASSERT(false, "Unexpected failure: {}", err.what());
+			}
+			continue;
+		}
+
+		f1.then([&sem](fdb::Future f) { sem.release(); });
+
+		// Update value for key "foo" to trigger the watch.
+		insertAll(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
+		sem.acquire();
+		break;
 	}
 });
 
