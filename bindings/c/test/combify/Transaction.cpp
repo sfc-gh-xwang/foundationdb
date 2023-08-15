@@ -111,7 +111,7 @@ AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& en
 			// Only when enableReadSystemKeys is set we hit this line
 			ASSERT(f.get().has_value(), "Unexpected null value from read");
 		} catch (fdb::Error e) {
-			ASSERT(!enableReadSystemKeys, "FDB_TR_OPTION_READ_SYSTEM_KEYS must be disabled");
+			ASSERT(!enableReadSystemKeys, "System key read failed although READ_SYSTEM_KEYS option was set");
 			ASSERT(e.code() == 2004); // key_outside_legal_range
 		}
 	}
