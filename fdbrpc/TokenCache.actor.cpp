@@ -140,11 +140,11 @@ struct CacheEntry {
 };
 
 struct AuditEntry {
-	NetworkAddress address;
+	IPAddress address;
 	TenantId tenantId;
 	Optional<Standalone<StringRef>> tokenId;
 	bool operator==(const AuditEntry& other) const noexcept = default;
-	explicit AuditEntry(NetworkAddress const& address, TenantId tenantId, CacheEntry const& cacheEntry)
+	explicit AuditEntry(IPAddress const& address, TenantId tenantId, CacheEntry const& cacheEntry)
 	  : address(address),
 	    tenantId(tenantId),
 	    tokenId(cacheEntry.tokenId.present() ? Standalone<StringRef>(cacheEntry.tokenId.get(), cacheEntry.arena)
@@ -168,8 +168,8 @@ struct TokenCacheImpl {
 	double lastResetTime;
 
 	bool validate(TenantId tenantId, StringRef token);
-	bool validateAndAdd(double currentTime, StringRef token, NetworkAddress const& peer);
-	void logTokenUsage(double currentTime, AuditEntry&& entry);
+	bool validateAndAdd(double currentTime, StringRef token, NetworkAddress const& peer, UID const& connDebugId);
+	void logTokenUsage(double currentTime, UID const& connDebugId, AuditEntry&& entry);
 };
 
 TokenCacheImpl::TokenCacheImpl() : cache(FLOW_KNOBS->TOKEN_CACHE_SIZE), usedTokens(), lastResetTime(0) {}
@@ -192,13 +192,13 @@ bool TokenCache::validate(TenantId tenantId, StringRef token) {
 }
 
 #define TRACE_INVALID_PARSED_TOKEN(reason, token)                                                                      \
-	TraceEvent(SevWarn, "InvalidToken"_audit)                                                                          \
+	TraceEvent(SevWarn, "InvalidToken"_audit, connDebugId)                                                             \
 	    .detail("From", peer)                                                                                          \
 	    .detail("Reason", reason)                                                                                      \
 	    .detail("CurrentTime", currentTime)                                                                            \
 	    .detail("Token", toStringRef(arena, token).toStringView())
 
-bool TokenCacheImpl::validateAndAdd(double currentTime, StringRef token, NetworkAddress const& peer) {
+bool TokenCacheImpl::validateAndAdd(double currentTime, StringRef token, NetworkAddress const& peer, UID const& connDebugId) {
 	Arena arena;
 	authz::jwt::TokenRef t;
 	StringRef signInput;
@@ -206,7 +206,7 @@ bool TokenCacheImpl::validateAndAdd(double currentTime, StringRef token, Network
 	bool verifyOutcome;
 	if ((err = authz::jwt::parseToken(arena, token, t, signInput)).present()) {
 		CODE_PROBE(true, "Token can't be parsed");
-		TraceEvent te(SevWarn, "InvalidToken");
+		TraceEvent te(SevWarn, "InvalidToken"_audit, connDebugId);
 		te.detail("From", peer);
 		te.detail("Reason", "ParseError");
 		te.detail("ErrorDetail", err.get());
@@ -277,11 +277,12 @@ bool TokenCacheImpl::validateAndAdd(double currentTime, StringRef token, Network
 
 bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	NetworkAddress peer = FlowTransport::transport().currentDeliveryPeerAddress();
+	UID connDebugId = FlowTransport::transport().currentDeliveryPeerDebugID();
 	auto cachedEntry = cache.get(token);
 	double currentTime = g_network->timer();
 
 	if (!cachedEntry.present()) {
-		if (validateAndAdd(currentTime, token, peer)) {
+		if (validateAndAdd(currentTime, token, peer, connDebugId)) {
 			cachedEntry = cache.get(token);
 		} else {
 			return false;
@@ -293,7 +294,7 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	auto& entry = cachedEntry.get();
 	if (entry->expirationTime < currentTime) {
 		CODE_PROBE(true, "Found expired token in cache");
-		TraceEvent(SevWarn, "InvalidToken"_audit).detail("From", peer).detail("Reason", "ExpiredInCache");
+		TraceEvent(SevWarn, "InvalidToken"_audit, connDebugId).detail("From", peer).detail("Reason", "ExpiredInCache");
 		return false;
 	}
 	bool tenantFound = false;
@@ -305,7 +306,7 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	}
 	if (!tenantFound) {
 		CODE_PROBE(true, "Valid token doesn't reference tenant");
-		TraceEvent(SevWarn, "InvalidToken"_audit)
+		TraceEvent(SevWarn, "InvalidToken"_audit, connDebugId)
 		    .detail("From", peer)
 		    .detail("Reason", "TenantTokenMismatch")
 		    .detail("RequestedTenant", fmt::format("{:#x}", tenantId))
@@ -314,13 +315,13 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	}
 	// audit logging
 	if (FLOW_KNOBS->AUDIT_LOGGING_ENABLED)
-		logTokenUsage(currentTime, AuditEntry(peer, tenantId, *cachedEntry.get()));
+		logTokenUsage(currentTime, connDebugId, AuditEntry(peer.ip, tenantId, *cachedEntry.get()));
 	return true;
 }
 
-void TokenCacheImpl::logTokenUsage(double currentTime, AuditEntry&& entry) {
-	if (currentTime > lastResetTime + FLOW_KNOBS->AUDIT_TIME_WINDOW) {
-		// clear usage cache every AUDIT_TIME_WINDOW seconds
+void TokenCacheImpl::logTokenUsage(double currentTime, UID const& connDebugId, AuditEntry&& entry) {
+	if (currentTime > lastResetTime + FLOW_KNOBS->AUDIT_TIME_WINDOW || usedTokens.size() > FLOW_KNOBS->TOKEN_USAGE_DEDUP_CACHE_SIZE) {
+		// clear usage cache every AUDIT_TIME_WINDOW seconds, or if dedup cache has hit the limit
 		usedTokens.clear();
 		lastResetTime = currentTime;
 	}
@@ -329,7 +330,7 @@ void TokenCacheImpl::logTokenUsage(double currentTime, AuditEntry&& entry) {
 		// access in the context of this (client_ip, tenant, token_id) tuple hasn't been logged in current window. log
 		// usage.
 		CODE_PROBE(true, "Audit Logging Running");
-		TraceEvent("AuditTokenUsed"_audit)
+		TraceEvent("AuditTokenUsed"_audit, connDebugId)
 		    .detail("Client", iter->address)
 		    .detail("TenantId", fmt::format("{:#x}", iter->tenantId))
 		    .detail("TokenId", iter->tokenId)
