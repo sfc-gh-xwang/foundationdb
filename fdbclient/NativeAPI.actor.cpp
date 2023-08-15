@@ -3058,6 +3058,7 @@ ACTOR Future<Database> getDatabaseFuture(Database cx, Future<Optional<ClusterNam
 			Optional<ClusterConnectionString> connectionString =
 			    wait(metacluster::metadata::management::dataClusterConnectionRecords().get(tr, assignedCluster.get()));
 			if (!connectionString.present()) {
+				// The assignedCluster is staled, caller should retry openning the tenant
 				throw cluster_removed();
 			}
 			Reference<IClusterConnectionRecord> connectionRecord =

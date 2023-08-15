@@ -415,8 +415,10 @@ struct TenantLookupInfo {
 	Optional<TenantGroupName> group;
 	Optional<ClusterName> assignedCluster;
 
-	TenantLookupInfo() = default;
-	TenantLookupInfo(int64_t id, Optional<TenantGroupName> const& group = {}, Optional<ClusterName> const& cluster = {})
+	explicit TenantLookupInfo() = default;
+	explicit TenantLookupInfo(int64_t id,
+	                          Optional<TenantGroupName> const& group = {},
+	                          Optional<ClusterName> const& cluster = {})
 	  : id(id),
 	    group(group),
 	    assignedCluster(cluster) {}
