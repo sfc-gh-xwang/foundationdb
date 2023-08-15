@@ -83,6 +83,7 @@ public:
 	void set(KeyRef const&, ValueRef const&) override;
 	void clear(KeyRangeRef const&) override { throw client_invalid_operation(); }
 	void clear(KeyRef const&) override;
+	bool rywEnabled() const override { return false; }
 
 	void fullReset();
 };

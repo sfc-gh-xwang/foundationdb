@@ -51,7 +51,7 @@ struct CreatedFilePointerRef {
 	StringRef filename;
 	BulkLoadFileType type;
 	// encryption metadata later to be stored in bgFileKeys
-	Optional<BlobGranuleCipherKeysMeta> cipherKeysMetaRef;
+	Optional<BlobGranuleCipherKeysMetaRef> cipherKeysMetaRef;
 
 	int expectedSize() const {
 		// FIXME: doesn't have cipherKeys

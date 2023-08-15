@@ -325,6 +325,7 @@ public:
 	int64_t BLOB_METADATA_REFRESH_INTERVAL;
 	bool DETERMINISTIC_BLOB_METADATA;
 	bool ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE;
+	bool HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK;
 
 	// The coordinator key/value in storage server might be inconsistent to the value stored in the cluster file.
 	// This might happen when a recovery is happening together with a cluster controller coordinator key change.
@@ -367,6 +368,9 @@ public:
 	int64_t BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE;
 
 	bool ENABLE_STORAGE_ENGINE_PARAM_INTERFACE;
+
+	// Range Lock
+	int RANGE_LOCK_LIMIT;
 
 	ClientKnobs(Randomize randomize);
 	void initialize(Randomize randomize);

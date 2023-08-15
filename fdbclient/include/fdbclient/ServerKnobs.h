@@ -1199,6 +1199,7 @@ public:
 	int BLOB_WORKER_RESNAPSHOT_PARALLELISM;
 	int BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM;
 	int BLOB_WORKER_RDC_PARALLELISM;
+	double BLOB_WORKER_RDC_MIN_WAVE_DELAY;
 	// The resnapshot/delta parallelism knobs are deprecated and replaced by the budget_bytes knobs! FIXME: remove after
 	// next release
 	int64_t BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES;
@@ -1275,6 +1276,7 @@ public:
 	// Bulk Load
 	int BULK_LOAD_FILE_POINTER_BATCH_SIZE;
 	int BULK_LOAD_PARALLEL_FILE_VALIDATIONS;
+	int BULK_LOAD_FILE_VALIDATION_LEVEL;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

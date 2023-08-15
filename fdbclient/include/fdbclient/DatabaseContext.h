@@ -783,6 +783,8 @@ public:
 		return clientInfo->get().tenantMode;
 	}
 
+	Future<TenantMode> getOrWaitForTenantMode();
+
 	void addCost(ThrottlingId const&, uint64_t bytes);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;

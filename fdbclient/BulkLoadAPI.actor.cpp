@@ -161,6 +161,9 @@ ACTOR Future<BulkLoadID> startBulkLoadExternalActor(Reference<DatabaseContext> d
                                                     Optional<Reference<Tenant>> tenant) {
 	// choose bulk load id on client side to guarantee idempotency for retransmits/duplication, and to not start extra
 	// random bulk loads
+	if (!CLIENT_KNOBS->ALLOW_BULK_LOADS) {
+		throw unsupported_operation();
+	}
 	state BulkLoadID id = newBulkLoadID();
 	loop {
 		try {
@@ -706,7 +709,7 @@ ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoadsExternalActor
 
 Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listAllBulkLoads(bool onlyActive,
                                                                                Optional<Reference<Tenant>> tenant) {
-	return listBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenant);
+	return listAllBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenant);
 }
 
 ACTOR Future<BulkLoadStatus> getBulkLoadStatusInternalActor(Reference<DatabaseContext> db,

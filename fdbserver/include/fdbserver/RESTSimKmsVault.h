@@ -54,6 +54,8 @@ Future<Void> initConfigFiles();
 Future<Void> cleanupConfigFiles();
 bool isVaultConfigFile(const std::string&);
 
+int64_t getEncryptKeyNotFoundErrorCount();
+
 } // namespace RestSimKms
 
 #endif

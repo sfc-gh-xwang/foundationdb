@@ -1155,6 +1155,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_WORKER_RESNAPSHOT_PARALLELISM,                     40 ); if( randomize && BUGGIFY ) BLOB_WORKER_RESNAPSHOT_PARALLELISM = deterministicRandom()->randomInt(1, 10);
 	init( BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM,             2000 ); if( randomize && BUGGIFY ) BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM = deterministicRandom()->randomInt(10, 100);
 	init( BLOB_WORKER_RDC_PARALLELISM,                             2 ); if( randomize && BUGGIFY ) BLOB_WORKER_RDC_PARALLELISM = deterministicRandom()->randomInt(1, 6);
+	init( BLOB_WORKER_RDC_MIN_WAVE_DELAY,                        1.0 ); if( randomize && BUGGIFY ) BLOB_WORKER_RDC_MIN_WAVE_DELAY = deterministicRandom()->randomInt(0, 1000) / 1000.0; 
 	init( BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES,        1024*1024*1024 ); if( randomize && BUGGIFY ) BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES = deterministicRandom()->random01() * 10 * BG_SNAPSHOT_FILE_TARGET_BYTES;
 	init( BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES,       1024*1024*1024 ); if( randomize && BUGGIFY ) BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES = (5 + 45*deterministicRandom()->random01()) * BG_DELTA_FILE_TARGET_BYTES;
 	init( BLOB_WORKER_TIMEOUT,                                  10.0 ); if( randomize && BUGGIFY ) BLOB_WORKER_TIMEOUT = 1.0;
@@ -1188,7 +1189,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_RESTORE_MANIFEST_RETENTION_MAX,                    10 );
 	init( BLOB_RESTORE_MLOGS_RETENTION_SECS,  isSimulated ?  180 : 3600 * 24 * 14 );
 	init( BLOB_RESTORE_LOAD_KEY_VERSION_MAP_STEP_SIZE,         10000 );
-	init( BLOB_RESTORE_SKIP_EMPTY_RANGES,                      true  );
+	init( BLOB_RESTORE_SKIP_EMPTY_RANGES,                      false );
 
 	init( BLOB_GRANULES_FLUSH_BATCH_SIZE,      isSimulated ?  2 : 64 );
 
@@ -1243,6 +1244,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Bulk Load
 	init( BULK_LOAD_FILE_POINTER_BATCH_SIZE,                     100 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_POINTER_BATCH_SIZE = deterministicRandom()->randomInt(10, 100);
 	init( BULK_LOAD_PARALLEL_FILE_VALIDATIONS,                     1 ); if ( randomize && BUGGIFY ) BULK_LOAD_PARALLEL_FILE_VALIDATIONS = deterministicRandom()->randomInt(1, 10);
+	init( BULK_LOAD_FILE_VALIDATION_LEVEL,                         1 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_VALIDATION_LEVEL = deterministicRandom()->randomInt(0, 3);
 
 	// clang-format on
 

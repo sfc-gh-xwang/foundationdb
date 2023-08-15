@@ -1,0 +1,12 @@
+[configuration]
+encryptModes = ['domain_aware']
+tenantModes = ['required']
+
+[[test]]
+testTitle = 'EncryptKeyNotFoundTest'
+
+    [[test.workload]]
+    testName = 'EncryptKeyNotFound'
+    numIterations = 86
+    numTenants = 25
+    numKeysNotFoundTenants = 5

@@ -38,6 +38,7 @@ if __name__ == "__main__":
             tenant_mode=tenant_mode,
             authorization_kty="EC" if authz_on else None,
             authorization_keypair_id="test_keyid" if authz_on else None,
+            remove_at_exit=True,
         ) as cluster:
             test_config = {
                 "clusterFilePath": str(cluster.cluster_file),
