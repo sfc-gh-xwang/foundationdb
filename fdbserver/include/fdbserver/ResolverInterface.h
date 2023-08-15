@@ -70,28 +70,37 @@ struct ResolverInterface {
 struct StateTransactionRef {
 	constexpr static FileIdentifier file_identifier = 6150271;
 	bool committed;
+	// metadata mutations
 	VectorRef<MutationRef> mutations;
 	// The tenants associated with this transaction. This field only existing when tenant mode is required. Because the
 	// applyMetadataEffect need to know whether the tenant access is valid to decide whether to apply metadata
 	Optional<VectorRef<int64_t>> tenantIds;
+	// The CP have to use normalKeyMutation in applyMetadataEffect to detect whether the mutation try to access locked
+	// ranges
+	VectorRef<MutationRef> normalKeyMutations;
 
 	StateTransactionRef() {}
 	StateTransactionRef(const bool committed,
 	                    VectorRef<MutationRef> const& mutations,
-	                    Optional<VectorRef<int64_t>> tenantIds)
+	                    Optional<VectorRef<int64_t>> tenantIds,
+	                    VectorRef<MutationRef> normalKeyMutations)
 	  : committed(committed),
 	    mutations(mutations),
-	    tenantIds(tenantIds) {}
+	    tenantIds(tenantIds),
+	    normalKeyMutations(normalKeyMutations) {}
 	StateTransactionRef(Arena& p, const StateTransactionRef& toCopy)
 	  : committed(toCopy.committed),
 	    mutations(p, toCopy.mutations),
-	    tenantIds(p, toCopy.tenantIds) {}
+	    tenantIds(p, toCopy.tenantIds),
+	    normalKeyMutations(p, toCopy.normalKeyMutations) {}
 
-	size_t expectedSize() const { return mutations.expectedSize() + tenantIds.expectedSize(); }
+	size_t expectedSize() const {
+		return mutations.expectedSize() + tenantIds.expectedSize() + normalKeyMutations.expectedSize();
+	}
 
 	template <class Archive>
 	void serialize(Archive& ar) {
-		serializer(ar, committed, mutations, tenantIds);
+		serializer(ar, committed, mutations, tenantIds, normalKeyMutations);
 	}
 };
 

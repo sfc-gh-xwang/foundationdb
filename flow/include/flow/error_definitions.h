@@ -408,6 +408,13 @@ ERROR( encrypt_mode_mismatch, 2710, "Encryption mode mismatch with configuration
 ERROR( encrypt_key_check_value_mismatch, 2711, "Encryption key-check-value mismatch")
 ERROR( encrypt_max_base_cipher_len, 2712, "Max BaseCipher buffer length violation")
 
+// 28XX - range lock related errors
+ERROR(range_lock_limit_exceeded, 2800, "Too many active range locks");
+ERROR(illegal_locked_range_access, 2801, "Attempt to access a locked range")
+ERROR(illegal_range_lock_param, 2802, "Attempt to lock system key, double lock a range, unmatched lockId etc.")
+ERROR(illegal_range_lock_operation, 2803, "Attempt to update range lock while update normal keys")
+
+
 // 4xxx Internal errors (those that should be generated only by bugs) are decimal 4xxx
 ERROR( unknown_error, 4000, "An unknown error occurred" )  // C++ exception not of type Error
 ERROR( internal_error, 4100, "An internal error occurred" )

@@ -373,6 +373,9 @@ struct CommitTransactionRef {
 	// The tenants associated with this transaction. This field only existing
 	// when tenant mode is required and this transaction has metadata mutations
 	Optional<VectorRef<int64_t>> tenantIds;
+	// Set by commit proxy if it found a transaction has both normalKey mutations and metadata mutations.
+	// The purpose is to send to resolver 0 and broadcast to other proxies.
+	VectorRef<MutationRef> normalKeyMutations;
 
 	template <class Ar>
 	force_inline void serialize(Ar& ar) {
@@ -385,7 +388,8 @@ struct CommitTransactionRef {
 			           report_conflicting_keys,
 			           lock_aware,
 			           spanContext,
-			           tenantIds);
+			           tenantIds,
+			           normalKeyMutations);
 		} else {
 			serializer(ar, read_conflict_ranges, write_conflict_ranges, mutations, read_snapshot);
 			if (ar.protocolVersion().hasReportConflictingKeys()) {
