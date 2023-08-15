@@ -1570,16 +1570,22 @@ public:
 };
 
 ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx)
-  : ReadYourWritesTransaction(Transaction(cx), cx->deferredError, cx.getTransactionDefaults()) {}
+  : ReadYourWritesTransaction(Transaction(cx),
+                              cx->deferredError,
+                              cx.getTransactionDefaults(),
+                              UniqueOrderedSensitiveOptionList<FDBTransactionOptions>{}) {}
 
 ReadYourWritesTransaction::ReadYourWritesTransaction(Reference<Tenant> const& tenant)
   : ReadYourWritesTransaction(Transaction(tenant),
                               tenant->database()->deferredError,
-                              tenant->database().getTransactionDefaults()) {}
+                              tenant->database().getTransactionDefaults(),
+                              tenant->getSensitiveTransactionDefaults()) {}
 
-ReadYourWritesTransaction::ReadYourWritesTransaction(Transaction&& transaction,
-                                                     Error const& deferredError,
-                                                     UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList)
+ReadYourWritesTransaction::ReadYourWritesTransaction(
+    Transaction&& transaction,
+    Error const& deferredError,
+    UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList,
+    UniqueOrderedSensitiveOptionList<FDBTransactionOptions> const& trSensitiveOptionList)
   : ISingleThreadTransaction(deferredError),
     tr(std::move(transaction)),
 
@@ -1590,6 +1596,8 @@ ReadYourWritesTransaction::ReadYourWritesTransaction(Transaction&& transaction,
     specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
     options(tr) {
 	std::copy(trOptionList.begin(), trOptionList.end(), std::back_inserter(persistentOptions));
+	std::copy(
+	    trSensitiveOptionList.begin(), trSensitiveOptionList.end(), std::back_inserter(sensitivePersistentOptions));
 	applyPersistentOptions();
 }
 
@@ -2449,11 +2457,21 @@ void ReadYourWritesTransaction::setOption(FDBTransactionOptions::Option option, 
 	setOptionImpl(option, value);
 	auto const& opt = FDBTransactionOptions::optionInfo.getMustExist(option);
 	if (opt.persistent) {
-		if (opt.sensitive)
+		if (opt.sensitive) {
+			sensitivePersistentOptions.erase(
+			    std::remove_if(sensitivePersistentOptions.begin(),
+			                   sensitivePersistentOptions.end(),
+			                   [option](const auto& pair) { return pair.first == option; }),
+			    sensitivePersistentOptions.end());
 			sensitivePersistentOptions.emplace_back(option, value.castTo<WipedString>());
-		else
+		} else {
 			persistentOptions.emplace_back(option, value.castTo<Standalone<StringRef>>());
+		}
 	}
+}
+
+bool ReadYourWritesTransaction::rywEnabled() const {
+	return !readYourWritesDisabled();
 }
 
 void ReadYourWritesTransaction::setOptionImpl(FDBTransactionOptions::Option option, Optional<StringRef> value) {
@@ -2682,6 +2700,10 @@ void ReadYourWritesTransaction::reset() {
 	std::copy(tr.getDatabase().getTransactionDefaults().begin(),
 	          tr.getDatabase().getTransactionDefaults().end(),
 	          std::back_inserter(persistentOptions));
+	if (tr.trState->hasTenant(ResolveDefaultTenant::False)) {
+		const auto& sensitiveDefaults = tr.getTenant().get()->getSensitiveTransactionDefaults();
+		std::copy(sensitiveDefaults.begin(), sensitiveDefaults.end(), std::back_inserter(sensitivePersistentOptions));
+	}
 	resetRyow();
 }
 

@@ -228,11 +228,17 @@ struct ClientTrCommitCostEstimation {
 
 struct CommitTransactionRequest : TimedRequest {
 	constexpr static FileIdentifier file_identifier = 93948;
-	enum { FLAG_IS_LOCK_AWARE = 0x1, FLAG_FIRST_IN_BATCH = 0x2, FLAG_BYPASS_STORAGE_QUOTA = 0x4 };
+	enum {
+		FLAG_IS_LOCK_AWARE = 0x1,
+		FLAG_FIRST_IN_BATCH = 0x2,
+		FLAG_BYPASS_STORAGE_QUOTA = 0x4,
+		FLAG_BYPASS_RANGE_LOCK = 0x8 // SOMEDAY: This flag is unused yet. We add this flag for reserve the bit.
+	};
 
 	bool isLockAware() const { return (flags & FLAG_IS_LOCK_AWARE) != 0; }
 	bool firstInBatch() const { return (flags & FLAG_FIRST_IN_BATCH) != 0; }
 	bool bypassStorageQuota() const { return (flags & FLAG_BYPASS_STORAGE_QUOTA) != 0; }
+	bool bypassRangeLock() const { return (flags & FLAG_BYPASS_RANGE_LOCK) != 0; }
 
 	Arena arena;
 	SpanContext spanContext;
@@ -540,6 +546,9 @@ struct GetBlobGranuleLocationsRequest {
 	// updates from other proxies before answering.
 	Version minTenantVersion;
 
+	// If the transaction has the LOCK_AWARE option set, use this to bypass the tenant lock
+	bool lockAware;
+
 	GetBlobGranuleLocationsRequest() : limit(0), reverse(false), justGranules(false), minTenantVersion(latestVersion) {}
 	GetBlobGranuleLocationsRequest(SpanContext spanContext,
 	                               TenantInfo const& tenant,
@@ -549,6 +558,7 @@ struct GetBlobGranuleLocationsRequest {
 	                               bool reverse,
 	                               bool justGranules,
 	                               Version minTenantVersion,
+	                               bool lockAware,
 	                               Arena const& arena)
 	  : arena(arena),
 	    spanContext(spanContext),
@@ -558,13 +568,25 @@ struct GetBlobGranuleLocationsRequest {
 	    limit(limit),
 	    reverse(reverse),
 	    justGranules(justGranules),
-	    minTenantVersion(minTenantVersion) {}
+	    minTenantVersion(minTenantVersion),
+	    lockAware(lockAware) {}
 
 	bool verify() const { return tenant.isAuthorized(); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, begin, end, limit, reverse, reply, spanContext, tenant, minTenantVersion, justGranules, arena);
+		serializer(ar,
+		           begin,
+		           end,
+		           limit,
+		           reverse,
+		           reply,
+		           spanContext,
+		           tenant,
+		           minTenantVersion,
+		           justGranules,
+		           lockAware,
+		           arena);
 	}
 };
 

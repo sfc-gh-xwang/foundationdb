@@ -16,6 +16,7 @@ set(SRCS
   src/fdb/directory/directoryPartition.go
   src/fdb/fdb.go
   src/fdb/range.go
+  src/fdb/tenant.go
   src/fdb/tuple/tuple_test.go
   src/fdb/database.go
   src/fdb/directory/directorySubspace.go

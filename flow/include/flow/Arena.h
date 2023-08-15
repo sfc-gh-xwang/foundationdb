@@ -383,6 +383,9 @@ private:
 
 extern std::string format(const char* form, ...);
 
+// Used to designate types that can be cast in TSAV without knowing the derived type
+class Castable {};
+
 #pragma pack(push, 4)
 class StringRef {
 public:

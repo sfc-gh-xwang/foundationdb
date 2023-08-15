@@ -34,6 +34,7 @@
 #include "fdbserver/LogSystemDiskQueueAdapter.h"
 #include "fdbserver/MasterInterface.h"
 #include "fdbserver/ResolverInterface.h"
+#include "fdbclient/RangeLock.h"
 #include "fdbserver/SSCommitCostCounter.h"
 #include "flow/IRandom.h"
 
@@ -70,6 +71,7 @@ struct ProxyStats {
 	Counter blobGranuleLocationIn, blobGranuleLocationOut, blobGranuleLocationErrors;
 	Counter bulkLoadersIn, bulkLoadersOut, bulkLoadersErrors;
 	Counter txnExpensiveClearCostEstCount;
+	Counter encryptKeyNotFoundErrors;
 	Version lastCommitVersionAssigned;
 
 	LatencySample commitLatencySample;
@@ -125,7 +127,8 @@ struct ProxyStats {
 	                    NotifiedVersion* pVersion,
 	                    NotifiedVersion* pCommittedVersion,
 	                    int64_t* commitBatchesMemBytesCountPtr,
-	                    std::map<int64_t, TenantName>* pTenantMap)
+	                    std::map<int64_t, TenantName>* pTenantMap,
+	                    KeyRangeMap<RangeLockInfo>* pRangeLocks)
 	  : cc("ProxyStats", id.toString()),
 	    txnCommitIn("TxnCommitIn", cc),
 	    txnCommitVersionAssigned("TxnCommitVersionAssigned", cc),
@@ -154,6 +157,7 @@ struct ProxyStats {
 	    bulkLoadersOut("BulkLoadersOut", cc),
 	    bulkLoadersErrors("BulkLoadersErrors", cc),
 	    txnExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
+	    encryptKeyNotFoundErrors("EncryptKeyNotFoundErrors", cc),
 	    lastCommitVersionAssigned(0),
 	    commitLatencySample("CommitLatencyMetrics",
 	                        id,
@@ -198,6 +202,7 @@ struct ProxyStats {
 		specialCounter(cc, "NumTenants", [pTenantMap]() { return pTenantMap ? pTenantMap->size() : 0; });
 		specialCounter(cc, "MaxCompute", [this]() { return this->getAndResetMaxCompute(); });
 		specialCounter(cc, "MinCompute", [this]() { return this->getAndResetMinCompute(); });
+		specialCounter(cc, "RangeLockBoundaries", [pRangeLocks]() { return pRangeLocks ? pRangeLocks->size() : 0; });
 		logger = cc.traceCounters("ProxyMetrics", id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, "ProxyMetrics");
 	}
 };
@@ -290,6 +295,10 @@ struct ProxyCommitData {
 
 	AsyncVar<bool> triggerCommit;
 
+	KeyRangeMap<RangeLockInfo> rangeLocks;
+	// Finish applied all txnStateStore mutations after recovery;
+	bool txnStateStoreApplied = false;
+
 	// The tag related to a storage server rarely change, so we keep a vector of tags for each key range to be slightly
 	// more CPU efficient. When a tag related to a storage server does change, we empty out all of these vectors to
 	// signify they must be repopulated. We do not repopulate them immediately to avoid a slow task.
@@ -352,7 +361,7 @@ struct ProxyCommitData {
 	                bool provisional)
 	  : dbgid(dbgid),
 	    commitBatchesMemBytesCount(0),
-	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap),
+	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap, &rangeLocks),
 	    master(master),
 	    logAdapter(nullptr),
 	    committedVersion(recoveryTransactionVersion),

@@ -76,8 +76,9 @@ Standalone<BlobMetadataDetailsRef> createRandomTestBlobMetadata(const std::strin
 	} else {
 		partitionCount = deterministicRandom()->randomInt(2, 12);
 	}
-	// guarantee unique location for each domain for now
-	BlobMetadataLocationId locIdBase = domainId * 100;
+	// guarantee unique location ids for each domain basing on domain id.
+	// Remove the top 2 byte tenant prefix from metacluster as we only have 1 metacluster per test
+	BlobMetadataLocationId locIdBase = (domainId & 0xffffffff) * 100;
 	TraceEvent ev(SevDebug, "SimBlobMetadata");
 	ev.detail("DomainId", domainId).detail("TypeNum", type).detail("PartitionCount", partitionCount);
 	if (type == 0) {

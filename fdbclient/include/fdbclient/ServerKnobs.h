@@ -211,13 +211,15 @@ public:
 	// Given an array that's ascend sorted by CPU percent, the pivot position is CPU_PIVOT_RATIO *
 	// team count. DD won't move shard to teams that has CPU > pivot CPU.
 	double CPU_PIVOT_RATIO;
-	// DD won't move out a shard from its source team, by re-evaluating the utilization of source team from TWO metrics:
-	// Disk Usage, CPU. For each metrics, DD would compare the source team's metrics to the lower and upper pivot of all
-	// teams to decide whether to leave the shard in source team.
+	// DD won't move out a shard from its source team, by re-evaluating the utilization of source team from THREE
+	// metrics: Disk Usage, CPU, Write Rate. For each metrics, DD would compare the source team's metrics to the lower
+	// and upper pivot of all teams to decide whether to leave the shard in source team.
 	double DD_LOWER_LOAD_BYTES_PIVOT_RATIO;
 	double DD_UPPER_LOAD_BYTES_PIVOT_RATIO;
 	double DD_LOWER_CPU_PIVOT_RATIO;
 	double DD_UPPER_CPU_PIVOT_RATIO;
+	double DD_LOWER_WRITE_PIVOT_RATIO;
+	double DD_UPPER_WRITE_PIVOT_RATIO;
 	// DD won't move shard to teams that has CPU > MAX_DEST_CPU_PERCENT
 	double MAX_DEST_CPU_PERCENT;
 	// The constant interval DD update pivot values for team selection. It should be >=
@@ -876,7 +878,7 @@ public:
 	int DD_SHARD_COMPARE_LIMIT; // when read-aware DD is enabled, at most how many shards are compared together
 	bool READ_SAMPLING_ENABLED;
 	// Rolling window duration over which the average bytes moved by DD is calculated for the 'MovingData' trace event.
-	double DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL;
+	double DD_MOVING_DATA_TRACE_INTERVAL;
 	int64_t MOVING_WINDOW_SAMPLE_SIZE;
 	bool READ_METRICS_INCLUDE_SYSTEM_KEYS;
 
@@ -1173,6 +1175,7 @@ public:
 	int BLOB_WORKER_RESNAPSHOT_PARALLELISM;
 	int BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM;
 	int BLOB_WORKER_RDC_PARALLELISM;
+	double BLOB_WORKER_RDC_MIN_WAVE_DELAY;
 	// The resnapshot/delta parallelism knobs are deprecated and replaced by the budget_bytes knobs! FIXME: remove after
 	// next release
 	int64_t BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES;
@@ -1249,6 +1252,7 @@ public:
 	// Bulk Load
 	int BULK_LOAD_FILE_POINTER_BATCH_SIZE;
 	int BULK_LOAD_PARALLEL_FILE_VALIDATIONS;
+	int BULK_LOAD_FILE_VALIDATION_LEVEL;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

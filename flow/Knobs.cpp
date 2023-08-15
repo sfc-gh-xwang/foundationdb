@@ -131,6 +131,8 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( TLS_HANDSHAKE_THREAD_STACKSIZE,                64 * 1024 );
 	init( TLS_MALLOC_ARENA_MAX,                                  6 );
 	init( TLS_HANDSHAKE_LIMIT,                                1000 );
+	init( TLS_V1_2_ALLOWED,                                  false );
+	init( TLS_V1_3_ALLOWED,                                   true );
 
 	init( NETWORK_TEST_CLIENT_COUNT,                            30 );
 	init( NETWORK_TEST_REPLY_SIZE,                           600e3 );
@@ -145,8 +147,9 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( PUBLIC_KEY_FILE_MAX_SIZE,                    1024 * 1024 );
 	init( PUBLIC_KEY_FILE_REFRESH_INTERVAL_SECONDS,            300 );
 	init( ACTIVE_PUBLIC_KEY_IDS_LOG_INTERVAL_SECONDS,           60 );
-	init( AUDIT_TIME_WINDOW,                                   5.0 );
+	init( AUDIT_TIME_WINDOW,                                  30.0 );
 	init( TOKEN_CACHE_SIZE,                                   2000 );
+	init( TOKEN_USAGE_DEDUP_CACHE_SIZE,                       1000 );
 	init( WIPE_SENSITIVE_DATA_FROM_PACKET_BUFFER,             true );
 
 	//AsyncFileCached

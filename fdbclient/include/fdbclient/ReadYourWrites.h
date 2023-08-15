@@ -228,6 +228,8 @@ public:
 	virtual void debugTrace(BaseTraceEvent&& event) override;
 	void debugPrint(std::string const& message) override;
 
+	bool rywEnabled() const override;
+
 	std::vector<BaseTraceEvent> debugTraces;
 	std::vector<std::string> debugMessages;
 
@@ -264,7 +266,8 @@ private:
 	// Only used to reduce the duplicated code in public constructors
 	ReadYourWritesTransaction(Transaction&& transaction,
 	                          Error const& deferredError,
-	                          UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList);
+	                          UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList,
+	                          UniqueOrderedSensitiveOptionList<FDBTransactionOptions> const& trSensitiveOptionList);
 	void resetTimeout();
 	void updateConflictMap(KeyRef const& key, WriteMap::iterator& it); // pre: it.segmentContains(key)
 	void updateConflictMap(

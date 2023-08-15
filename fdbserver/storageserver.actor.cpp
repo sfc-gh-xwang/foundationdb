@@ -278,7 +278,7 @@ class ShardInfo : public ReferenceCounted<ShardInfo>, NonCopyable {
 
 	int64_t shardSampledReads = -1;
 	int64_t totalSampledReads = -1;
-	double lastReadSampleCacheTime = 0;
+	double lastReadSampleCacheTime = -SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL;
 
 public:
 	// A shard has 3 mutual exclusive states: adding, readWrite and notAssigned.
@@ -1899,6 +1899,8 @@ double ShardInfo::getSampledReadRate(StorageServer* data) {
 		KeyRangeRef totalRange = allKeys;
 		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
 			if (keys.begin.startsWith(systemKeys.begin)) {
+				shardSampledReads = 0;
+				totalSampledReads = 0;
 				return 0;
 			} else if (keys.end.startsWith(systemKeys.begin)) {
 				sampleRange = KeyRangeRef(sampleRange.begin, systemKeys.begin);
@@ -1913,6 +1915,7 @@ double ShardInfo::getSampledReadRate(StorageServer* data) {
 
 	double readRate = shardSampledReads / std::max<double>(1.0, totalSampledReads);
 	ASSERT_LE(readRate, 1.0);
+	ASSERT_GE(readRate, 0.0);
 	return readRate;
 }
 
@@ -6983,12 +6986,15 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> tryReadBlobGranuleChunk
 			    .detail("FetchVersion", fetchVersion);
 			return chunks;
 		} catch (Error& e) {
-			if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES &&
-			    e.code() == error_code_blob_granule_transaction_too_old) {
-				CODE_PROBE(true, "Skip blob ranges for restore", probe::decoration::rare);
-				TraceEvent(SevWarn, "SkipBlobGranuleForRestore").error(e).detail("Keys", keys);
-				Standalone<VectorRef<BlobGranuleChunkRef>> empty;
-				return empty;
+			if (e.code() == error_code_blob_granule_transaction_too_old) {
+				if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES) {
+					CODE_PROBE(true, "Skip blob ranges for restore", probe::decoration::rare);
+					TraceEvent(SevWarn, "SkipBlobGranuleForRestore").error(e).detail("Keys", keys);
+					Standalone<VectorRef<BlobGranuleChunkRef>> empty;
+					return empty;
+				} else {
+					TraceEvent(SevWarn, "NotRestorableBlobGranule").error(e).detail("Keys", keys);
+				}
 			}
 			wait(tr->onError(e));
 		}
@@ -7056,14 +7062,18 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 				}
 				results.send(RangeReadResult(std::move(rows)));
 			} catch (Error& err) {
-				if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES &&
-				    (err.code() == error_code_file_not_found ||
-				     err.code() == error_code_blob_granule_transaction_too_old)) {
-					// skip no data ranges and restore as much data as we can
-					TraceEvent(SevWarn, "SkipBlobChunkForRestore").error(err).detail("ChunkRange", chunkRange);
-					RangeResult rows;
-					results.send(rows);
-					CODE_PROBE(true, "Skip blob chunks for restore", probe::decoration::rare);
+				if (err.code() == error_code_file_not_found ||
+				    err.code() == error_code_blob_granule_transaction_too_old) {
+					if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES) {
+						// skip no data ranges and restore as much data as we can
+						TraceEvent(SevWarn, "SkipBlobChunkForRestore").error(err).detail("ChunkRange", chunkRange);
+						RangeResult rows;
+						results.send(rows);
+						CODE_PROBE(true, "Skip blob chunks for restore", probe::decoration::rare);
+					} else {
+						TraceEvent(SevWarn, "NotRestorableBlobChunk").error(err).detail("ChunkRange", chunkRange);
+						throw;
+					}
 				} else {
 					throw;
 				}

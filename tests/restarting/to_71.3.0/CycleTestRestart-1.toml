@@ -3,7 +3,7 @@ maxTLogVersion = 6
 disableTss = true
 disableHostname = true
 allowCreatingTenants = false
-simHTTPServerEnabled=false
+simHTTPServerEnabled = false
 
 [[test]]
 testTitle = 'Clogged'

@@ -88,6 +88,7 @@ public:
 	    Reference<AsyncVar<T> const> db,
 	    std::unordered_set<EncryptCipherDomainId> domainIds,
 	    BlobCipherMetrics::UsageType usageType,
+	    std::unordered_set<EncryptCipherDomainId>* nonExistentTenants = nullptr,
 	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
 
 	// Get latest cipher key for given a encryption domain. It tries to get the cipher key from the local cache.
@@ -118,14 +119,6 @@ public:
 	    const Reference<AsyncVar<T> const>& db,
 	    BlobCipherMetrics::UsageType usageType,
 	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
-
-	/*
-	    static Future<TextAndHeaderCipherKeys> getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
-	                                                                BlobCipherEncryptHeader header,
-	                                                                BlobCipherMetrics::UsageType usageType,
-	                                                                Reference<GetEncryptCipherKeysMonitor> monitor =
-	   {});
-	*/
 
 	static Future<TextAndHeaderCipherKeys> getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
 	                                                            BlobCipherEncryptHeaderRef header,
