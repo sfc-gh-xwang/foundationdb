@@ -22,11 +22,13 @@
 #ifndef FDBCLIENT_FDBOPTIONS_H
 #define FDBCLIENT_FDBOPTIONS_H
 
-#include <string>
 #include <list>
 #include <map>
+#include <string>
+#include <type_traits>
 
 #include "flow/Arena.h"
+#include "flow/WipedString.h"
 
 struct FDBOptionInfo {
 	std::string name;
@@ -94,17 +96,18 @@ public:
 
 // An ordered list of options where each option is represented only once. Subsequent insertions will remove the option
 // from its original location and add it to the end with the new value.
-template <class T>
+template <class T, bool IsValueSensitive = false>
 class UniqueOrderedOptionList {
 public:
-	typedef std::list<std::pair<typename T::Option, Optional<Standalone<StringRef>>>> OptionList;
+	using ValueType = std::conditional_t<IsValueSensitive, Optional<WipedString>, Optional<Standalone<StringRef>>>;
+	typedef std::list<std::pair<typename T::Option, ValueType>> OptionList;
 
 private:
 	OptionList options;
 	std::map<typename T::Option, typename OptionList::iterator> optionsIndexMap;
 
 public:
-	void addOption(typename T::Option option, Optional<Standalone<StringRef>> value) {
+	void addOption(typename T::Option option, ValueType value) {
 		auto itr = optionsIndexMap.find(option);
 		if (itr != optionsIndexMap.end()) {
 			options.erase(itr->second);
@@ -113,9 +116,17 @@ public:
 		optionsIndexMap[option] = --options.end();
 	}
 
+	void clear() {
+		optionsIndexMap.clear();
+		options.clear();
+	}
+
 	typename OptionList::const_iterator begin() const { return options.cbegin(); }
 	typename OptionList::const_iterator end() const { return options.cend(); }
 };
+
+template <class T>
+using UniqueOrderedSensitiveOptionList = UniqueOrderedOptionList<T, true>;
 
 #define ADD_OPTION_INFO(                                                                                               \
     type, var, name, comment, parameterComment, hasParameter, hidden, persistent, sensitive, defaultFor, paramType)    \

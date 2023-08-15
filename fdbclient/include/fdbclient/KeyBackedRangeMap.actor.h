@@ -27,7 +27,10 @@
 
 #include "flow/FastRef.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
+#include "fdbclient/KeyRangeMap.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
+
+FDB_BOOLEAN_PARAM(CoalesceRange);
 
 // A local in-memory representation of a KeyBackedRangeMap snapshot
 // It is invalid to look up a range in this map which not within the range of
@@ -168,7 +171,8 @@ public:
 	                                     KeyType begin,
 	                                     KeyType end,
 	                                     ValueType valueUpdate,
-	                                     bool replace) {
+	                                     bool replace,
+	                                     CoalesceRange coalesceRange) {
 		kbt_debug("RANGEMAP updateRange start {} to {} value {}\n", begin, end, valueUpdate);
 
 		// In order to update and coalsce the range, we need all range boundaries from
@@ -220,7 +224,7 @@ public:
 						// Begin was not found and we've passed it.
 						ValueType val = replace ? valueUpdate : previous.orDefault(ValueType()).apply(valueUpdate);
 						// Set begin if the new val is different from the previous range value if it exists
-						if (previous != val) {
+						if (!coalesceRange || previous != val) {
 							self.kvMap.set(tr, begin, val);
 							previous = val;
 						}
@@ -240,7 +244,7 @@ public:
 						if (bv.first == end) {
 							// Case D
 							kbt_debug("RANGEMAP updateRange Case D\n");
-							if (previous == bv.second) {
+							if (coalesceRange && previous == bv.second) {
 								self.kvMap.erase(tr, end);
 							}
 							endFound = true;
@@ -250,7 +254,7 @@ public:
 					// Case B
 					kbt_debug("RANGEMAP updateRange Case B\n");
 					ValueType val = replace ? valueUpdate : bv.second.apply(valueUpdate);
-					if (previous == val) {
+					if (coalesceRange && previous == val) {
 						self.kvMap.erase(tr, begin);
 					} else {
 						self.kvMap.set(tr, begin, val);
@@ -282,7 +286,7 @@ public:
 		// If begin was never found or passed/created
 		if (!beginDone) {
 			ValueType val = replace ? valueUpdate : previous.orDefault(ValueType()).apply(valueUpdate);
-			if (previous != val) {
+			if (!coalesceRange || previous != val) {
 				kbt_debug("RANGEMAP updateRange set begin\n");
 				self.kvMap.set(tr, begin, valueUpdate);
 				previous = val;
@@ -293,7 +297,7 @@ public:
 		// The value that the range starting at end should have is in original, the unmodified value of the last
 		// range boundary visited.  If the previous range value leading up to end is not the same as original, then
 		// set end to original to restore the range >= end to what it was before this update.
-		if (!endFound && previous != original) {
+		if (!coalesceRange || (!endFound && previous != original)) {
 			kbt_debug("RANGEMAP updateRange set end\n");
 			self.kvMap.set(tr, end, original);
 		}
@@ -306,13 +310,14 @@ public:
 	                         KeyType const& begin,
 	                         KeyType const& end,
 	                         ValueType const& valueUpdate,
-	                         bool replace = false) const {
+	                         bool replace = false,
+	                         CoalesceRange coalesceRange = CoalesceRange::True) const {
 		if constexpr (is_transaction_creator<Transaction>) {
 			return runTransaction(tr, [=, self = *this](decltype(tr->createTransaction()) tr) {
-				return self.updateRange(tr, begin, end, valueUpdate, replace);
+				return self.updateRange(tr, begin, end, valueUpdate, replace, coalesceRange);
 			});
 		} else {
-			return updateRangeActor(*this, tr, begin, end, valueUpdate, replace);
+			return updateRangeActor(*this, tr, begin, end, valueUpdate, replace, coalesceRange);
 		}
 	}
 
@@ -330,7 +335,8 @@ public:
 		state KeySelector rangeBegin = KeySelector::firstGreaterOrEqual(beginKV.present() ? beginKV->key : begin);
 
 		// rangeEnd is past end so the result will include end if it exists
-		state KeySelector rangeEnd = KeySelector::firstGreaterThan(end);
+		Optional<typename Map::KVType> endKV = wait(self.kvMap.seekGreaterOrEqual(tr, end));
+		state KeySelector rangeEnd = KeySelector::firstGreaterThan(endKV.present() ? endKV->key : end);
 
 		state int readSize = BUGGIFY ? 1 : 100000;
 		state Future<RangeResultType> boundariesFuture =
@@ -368,7 +374,7 @@ public:
 	}
 
 	// Return a LocalSnapshot of all ranges from the map which cover the range of begin through end.
-	// If the map in the database does not have boundaries <=begin or >=end then these boundaries will be
+	// If the map in the database does not have boundaries <=begin or >=end ,then 'begin' and 'end' will be
 	// added to the returned snapshot with a default ValueType.
 	template <class Transaction>
 	Future<Reference<LocalSnapshot>> getSnapshot(Transaction tr, KeyType const& begin, KeyType const& end) const {
@@ -380,6 +386,9 @@ public:
 			return getSnapshotActor(*this, tr, begin, end);
 		}
 	}
+
+	KeyType unpack(StringRef const& keyString) { return kvMap.unpackKey(keyString); }
+	KeyType packKey(KeyType const& key) { return kvMap.packKey(key); }
 
 private:
 	Map kvMap;

@@ -119,6 +119,8 @@ public:
 	virtual void debugTrace(BaseTraceEvent&& event) = 0;
 	virtual void debugPrint(std::string const& message) = 0;
 
+	virtual bool rywEnabled() const = 0;
+
 	template <class... Args>
 	void debugFmtPrint(std::string const& message, Args&&... args) {
 		debugPrint(fmt::format(fmt::runtime(message), std::forward<Args>(args)...));

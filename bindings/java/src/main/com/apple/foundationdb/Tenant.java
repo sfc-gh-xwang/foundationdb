@@ -72,6 +72,13 @@ public interface Tenant extends AutoCloseable, TransactionContext {
 	Transaction createTransaction(Executor e, EventKeeper eventKeeper);
 
 	/**
+	 * Returns a set of options that can be set on a {@code Tenant}
+	 *
+	 * @return a set of tenant-specific options affecting this {@code Tenant}
+	 */
+	TenantOptions options();
+
+	/**
 	 * Returns the name of this {@code Tenant}.
 	 *
 	 * @return the name of this {@code Tenant} as a byte string.

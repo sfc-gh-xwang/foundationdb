@@ -296,11 +296,13 @@ protected:
 		double lastPivotsUpdate = 0.0;
 		double pivotAvailableSpaceRatio = 100.0;
 		double pivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
-		double lowerPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
-		double upperPivotCPU = SERVER_KNOBS->MAX_DEST_CPU_PERCENT;
+		double lowerPivotCPU = 0;
+		double upperPivotCPU = 0;
 		int64_t pivotLoadBytes = std::numeric_limits<int64_t>::max();
-		int64_t lowerPivotBytes = std::numeric_limits<int64_t>::max();
-		int64_t upperPivotBytes = std::numeric_limits<int64_t>::max();
+		int64_t lowerPivotBytes = std::numeric_limits<int64_t>::min();
+		int64_t upperPivotBytes = std::numeric_limits<int64_t>::min();
+		double lowerPivotWrite = std::numeric_limits<double>::min();
+		double upperPivotWrite = std::numeric_limits<double>::min();
 		double minTeamAvgCPU = std::numeric_limits<double>::max();
 	} teamPivots;
 
@@ -677,6 +679,8 @@ protected:
 	void updateMedianAvailableSpacePivot(std::vector<double>& teamAvailableSpace);
 
 	void updateCpuPivot(std::vector<double>& teamAverageCPU);
+
+	void updateWriteLoadPivot(std::vector<double>& teamWriteLoad);
 
 	void updateTeamEligibility(const double inflightPenalty);
 

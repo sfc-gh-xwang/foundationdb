@@ -99,8 +99,9 @@ void logWorkerUnavailable(Severity severity,
 	// Logging every possible options is a lot for every recruitment; logging all of the options with GoodFit or
 	// BestFit may work because there should only be like 30 tlog class processes. Plus, the recruitment happens
 	// only during initial database creation and recovery. So these trace events should be sparse.
-	if (fitness == ProcessClass::GoodFit || fitness == ProcessClass::BestFit || fitness == ProcessClass::NeverAssign) {
+	if (fitness == ProcessClass::GoodFit || fitness == ProcessClass::BestFit) {
 		TraceEvent(severity, "GetTLogTeamWorkerUnavailable", id)
+		    .suppressFor(5.0)
 		    .detail("TLogRecruitMethod", method)
 		    .detail("Reason", reason)
 		    .detail("WorkerID", details.interf.id())

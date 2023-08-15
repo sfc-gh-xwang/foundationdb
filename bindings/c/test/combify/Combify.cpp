@@ -139,6 +139,11 @@ void TestEnv::setNetworkOptions() {
 		throw std::runtime_error(fmt::format("NOT ALL OPTIONS ARE VALID FOR A RUN: {}", shortSummary()));
 	}
 	fdb::selectApiVersion(fdb::maxApiVersion());
+	if (!staticOptions.disableClientTrace || !*staticOptions.disableClientTrace) {
+		fdb::network::setOption(FDB_NET_OPTION_TRACE_ENABLE, "./");
+		fdb::network::setOption(FDB_NET_OPTION_TRACE_FILE_IDENTIFIER,
+		                        fdb::toBytesRef(fmt::format("combify_client_{}", runCount)));
+	}
 	std::apply(
 	    [this](auto&... opts) {
 		    (
@@ -504,6 +509,7 @@ bool TestEnv::runTest(const TestCase& t) {
 			fmt::print("=== BEGIN TEST STDERR ===\n{}===  END  TEST STDERR ===\n", err);
 		}
 	}
+	runCount++;
 	return !exc.has_value();
 }
 

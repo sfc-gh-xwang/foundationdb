@@ -28,6 +28,7 @@
 // TLS and blob credentials for backups and setup for these credentials.
 struct BackupTLSConfig {
 	std::string tlsCertPath, tlsKeyPath, tlsCAPath, tlsPassword, tlsVerifyPeers;
+	bool tlsRequired = false;
 	std::vector<std::string> blobCredentials;
 
 	// Returns if TLS setup is successful

@@ -109,6 +109,8 @@ class TestEnv : public TestOptions {
 	fdb::Database adminDb;
 	fdb::Database adminDatabase();
 
+	// Incremented at the end of each runTest(). Also used to identify client trace file [combify_client_x].
+	unsigned runCount;
 	const TestCase* currentTestCase;
 	void populateTenants();
 	void cleanupDatabase();

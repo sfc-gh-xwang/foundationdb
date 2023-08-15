@@ -29,7 +29,8 @@ import java.util.function.Function;
 import com.apple.foundationdb.async.AsyncUtil;
 import com.apple.foundationdb.tuple.ByteArrayUtil;
 
-class FDBTenant extends NativeObjectWrapper implements Tenant {
+class FDBTenant extends NativeObjectWrapper implements Tenant, OptionConsumer {
+	private TenantOptions options;
 	private final Database database;
 	private final byte[] name;
 	private final Executor executor;
@@ -43,10 +44,16 @@ class FDBTenant extends NativeObjectWrapper implements Tenant {
 	protected FDBTenant(long cPtr, Database database, byte[] name, Executor executor, EventKeeper eventKeeper) {
 		super(cPtr);
 		this.database = database;
+		this.options = new TenantOptions(this);
 		this.name = name;
 		this.executor = executor;
 		this.eventKeeper = eventKeeper;
 		this.idFuture = null;
+	}
+
+	@Override
+	public TenantOptions options() {
+		return options;
 	}
 
 	@Override
@@ -138,6 +145,16 @@ class FDBTenant extends NativeObjectWrapper implements Tenant {
 			}
 
 			throw err;
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
+	@Override
+	public void setOption(int code, byte[] value) {
+		pointerReadLock.lock();
+		try {
+			Tenant_setOption(getPtr(), code, value);
 		} finally {
 			pointerReadLock.unlock();
 		}
@@ -263,6 +280,7 @@ class FDBTenant extends NativeObjectWrapper implements Tenant {
 
 	private native long Tenant_createTransaction(long cPtr);
 	private native void Tenant_dispose(long cPtr);
+	private native void Tenant_setOption(long cPtr, int code, byte[] value) throws FDBException;
 	private native long Tenant_purgeBlobGranules(long cPtr, byte[] beginKey, byte[] endKey, long purgeVersion, boolean force);
 	private native long Tenant_waitPurgeGranulesComplete(long cPtr, byte[] purgeKey);
 	private native long Tenant_blobbifyRange(long cPtr, byte[] beginKey, byte[] endKey);

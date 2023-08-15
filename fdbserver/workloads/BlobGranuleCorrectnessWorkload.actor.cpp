@@ -30,6 +30,7 @@
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/SystemData.h"
 #include "fdbclient/TenantManagement.actor.h"
+#include "fdbclient/IClientApi.h"
 #include "fdbclient/Tuple.h"
 #include "fdbserver/BlobGranuleServerCommon.actor.h"
 #include "fdbserver/BlobGranuleValidation.actor.h"
@@ -41,6 +42,8 @@
 #include "flow/IRandom.h"
 #include "flow/flow.h"
 #include "flow/genericactors.actor.h"
+
+#include "metacluster/Metacluster.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -74,6 +77,12 @@ struct KeyData {
 };
 
 static std::vector<int> targetValSizes = { 40, 100, 500 };
+
+struct ExtraTenantData {
+	TenantName name;
+	Reference<Tenant> tenant;
+	KeyRange range;
+};
 
 struct ThreadData : ReferenceCounted<ThreadData>, NonCopyable {
 	// directory info
@@ -232,9 +241,20 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 	std::vector<Future<Void>> clients;
 	DatabaseConfiguration config;
 
+	std::vector<ExtraTenantData> extraTenants;
+	Future<Void> extraTenantsClient;
+
+	bool useMetacluster;
+	bool createMetacluster;
+
+	Reference<IDatabase> managementDb;
+	Database standaloneDb;
+
 	BlobGranuleCorrectnessWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
 		doSetup = !clientId; // only do this on the "first" client
 		testDuration = getOption(options, "testDuration"_sr, 120.0);
+		useMetacluster = getOption(options, "useMetacluster"_sr, false);
+		createMetacluster = doSetup && useMetacluster;
 
 		// randomize global test settings based on shared parameter to get similar workload across tests, but then vary
 		// different parameters within those constraints
@@ -296,21 +316,39 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		}
 	}
 
-	ACTOR Future<TenantMapEntry> setUpTenant(Database cx, TenantName tenantName) {
+	ACTOR Future<TenantMapEntry> setUpTenant(BlobGranuleCorrectnessWorkload* self, TenantName tenantName) {
 		if (BGW_DEBUG) {
 			fmt::print("Setting up blob granule range for tenant {0}\n", tenantName.printable());
 		}
 
-		Optional<TenantMapEntry> entry = wait(TenantAPI::createTenant(cx.getReference(), tenantName));
-		ASSERT(entry.present());
+		state TenantMapEntry entry;
 
-		if (BGW_DEBUG) {
-			fmt::print("Set up blob granule range for tenant {0}: {1}\n",
-			           tenantName.printable(),
-			           entry.get().prefix.printable());
+		if (self->useMetacluster) {
+			metacluster::MetaclusterTenantMapEntry metaclusterEntry;
+			metaclusterEntry.tenantName = tenantName;
+			// no tenant groups necessary
+			wait(metacluster::createTenant(self->managementDb,
+			                               metaclusterEntry,
+			                               metacluster::AssignClusterAutomatically::True,
+			                               metacluster::IgnoreCapacityLimit::False));
+			metacluster::MetaclusterTenantMapEntry result =
+			    wait(metacluster::getTenant(self->managementDb, tenantName));
+			entry = result.toTenantMapEntry();
+		} else {
+			Optional<TenantMapEntry> result =
+			    wait(TenantAPI::createTenant(self->standaloneDb.getReference(), tenantName));
+			ASSERT(result.present());
+			entry = result.get();
 		}
 
-		return entry.get();
+		ASSERT(entry.id != TenantInfo::INVALID_TENANT);
+
+		if (BGW_DEBUG) {
+			fmt::print(
+			    "Set up blob granule range for tenant {0}: {1}\n", tenantName.printable(), entry.prefix.printable());
+		}
+
+		return entry;
 	}
 
 	Future<Void> setup(Database const& cx) override { return _setup(cx, this); }
@@ -506,7 +544,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			}
 			state Reference<ThreadData> threadData = makeReference<ThreadData>(dirId, targetByteRate);
 
-			wait(threadData->openTenant(cx));
+			wait(threadData->openTenant(self->standaloneDb));
 			auto& tenantEntry = blobbifiedTenants[i].second;
 			threadData->tenantEntry = tenantEntry;
 			threadData->directoryRange = KeyRangeRef(tenantEntry.prefix, tenantEntry.prefix.withSuffix(normalKeys.end));
@@ -530,8 +568,9 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 
 		for (; directoryIdx < self->directories.size(); directoryIdx++) {
 			// Set up the blob range first
-			state TenantMapEntry tenantEntry = wait(self->setUpTenant(cx, self->directories[directoryIdx]->tenantName));
-			wait(self->directories[directoryIdx]->openTenant(cx));
+			state TenantMapEntry tenantEntry =
+			    wait(self->setUpTenant(self, self->directories[directoryIdx]->tenantName));
+			wait(self->directories[directoryIdx]->openTenant(self->standaloneDb));
 			self->directories[directoryIdx]->tenantEntry = tenantEntry;
 			self->directories[directoryIdx]->directoryRange =
 			    KeyRangeRef(tenantEntry.prefix, tenantEntry.prefix.withSuffix(normalKeys.end));
@@ -545,12 +584,38 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> _setup(Database cx, BlobGranuleCorrectnessWorkload* self) {
-		if (self->doSetup) {
-			// FIXME: run the actual FDBCLI command instead of copy/pasting its implementation
-			wait(success(ManagementAPI::changeConfig(cx.getReference(), "blob_granules_enabled=1", true)));
+		if (self->useMetacluster) {
+			metacluster::util::SkipMetaclusterCreation skipMetaclusterCreation(!self->createMetacluster);
+
+			Optional<metacluster::DataClusterEntry> entry;
+			if (!skipMetaclusterCreation) {
+				entry = metacluster::DataClusterEntry();
+				entry.get().capacity.numTenantGroups = 1e9;
+			}
+
+			metacluster::util::SimulatedMetacluster simMetacluster = wait(metacluster::util::createSimulatedMetacluster(
+			    cx,
+			    {},
+			    entry,
+			    skipMetaclusterCreation,
+			    metacluster::util::WaitForMetaclusterCreation(self->useMetacluster),
+			    metacluster::util::WaitForDataClusterRegistration(self->useMetacluster)));
+
+			self->managementDb = simMetacluster.managementDb;
+			ASSERT(simMetacluster.dataDbs.size() == 1);
+			self->standaloneDb = simMetacluster.dataDbs.begin()->second;
+		} else {
+			self->standaloneDb = cx;
 		}
 
-		DatabaseConfiguration dbConfig = wait(getDatabaseConfiguration(cx));
+		if (self->doSetup) {
+			// FIXME: run the actual FDBCLI command instead of copy/pasting its implementation.
+			// only do this on the data cluster
+			wait(success(
+			    ManagementAPI::changeConfig(self->standaloneDb.getReference(), "blob_granules_enabled=1", true)));
+		}
+
+		DatabaseConfiguration dbConfig = wait(getDatabaseConfiguration(self->standaloneDb));
 		if (g_network->isSimulated() && dbConfig.encryptionAtRestMode.isEncryptionEnabled()) {
 			TraceEvent("EncryptionAtRestPlainTextMarkerCheckEnabled")
 			    .detail("EncryptionMode", dbConfig.encryptionAtRestMode.toString())
@@ -561,9 +626,9 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		state BGTenantMap tenantData(self->dbInfo);
 
 		if (g_network->isSimulated() && g_simulator->restarted) {
-			wait(self->loadPreviousTenants(self, cx, &tenantData));
+			wait(self->loadPreviousTenants(self, self->standaloneDb, &tenantData));
 		} else {
-			wait(self->initializeTenants(self, cx, &tenantData));
+			wait(self->initializeTenants(self, self->standaloneDb, &tenantData));
 		}
 
 		// wait for tenant data to be loaded
@@ -936,6 +1001,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 
 				// pick read version
 				ASSERT(threadData->writeVersions.back() >= threadData->minSuccessfulReadVersion);
+				bool untrustedReadVersion = false;
 				size_t readVersionIdx;
 				// randomly choose up to date vs time travel read
 				if (deterministicRandom()->random01() < 0.5) {
@@ -954,6 +1020,19 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 							startIdx = readVersionIdx + 1;
 						}
 					}
+					// FIXME: enable check!
+					/*if (readVersionIdx < threadData->writeVersions.size() - 1 && BUGGIFY_WITH_PROB(0.1)) {
+					    int64_t diff =
+					        threadData->writeVersions[readVersionIdx + 1] - threadData->writeVersions[readVersionIdx];
+					    if (diff > 1) {
+					        int64_t increase = deterministicRandom()->randomInt(1, diff);
+					        TraceEvent("DBGPerturbingReadVersion")
+					            .detail("Original", readVersion)
+					            .detail("New", readVersion + increase);
+					        readVersion += increase;
+					        untrustedReadVersion = true;
+					    }
+					}*/
 				}
 
 				// randomly choose begin version or not
@@ -968,10 +1047,17 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 					beginVersion = threadData->writeVersions[beginVersionIdx];
 				}
 
-				threadData->maybeReopenTenant(cx);
+				threadData->maybeReopenTenant(self->standaloneDb);
 
 				std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob =
-				    wait(readFromBlob(cx, threadData->bstore, range, beginVersion, readVersion, threadData->tenant));
+				    wait(readFromBlob(cx,
+				                      threadData->bstore,
+				                      range,
+				                      beginVersion,
+				                      readVersion,
+				                      threadData->tenant,
+				                      LockAware::False,
+				                      untrustedReadVersion));
 				self->validateResult(threadData, blob, startKey, endKey, beginVersion, readVersion);
 
 				int resultBytes = blob.first.expectedSize();
@@ -1152,23 +1238,79 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		}
 	}
 
+	ACTOR Future<ExtraTenantData> createAndBlobbifyExtraTenant(BlobGranuleCorrectnessWorkload* self, TenantName name) {
+		TenantMapEntry entry = wait(self->setUpTenant(self, name));
+		state ExtraTenantData data;
+		data.name = name;
+		data.tenant = makeReference<Tenant>(self->standaloneDb, name);
+		bool success = wait(self->standaloneDb->blobbifyRange(normalKeys, data.tenant));
+		ASSERT(success);
+		return data;
+	}
+
+	ACTOR Future<Void> makeExtraTenants(BlobGranuleCorrectnessWorkload* self) {
+		state int desiredExtraTenants = deterministicRandom()->randomSkewedUInt32(10, 100);
+		int desiredBatches = deterministicRandom()->randomSkewedUInt32(1, desiredExtraTenants / 2);
+		state int tenantsPerBatch = desiredExtraTenants / desiredBatches;
+		state double expectedDelayBetweenBatches = self->testDuration / (desiredBatches + 1);
+
+		if (BGW_DEBUG) {
+			fmt::print("Expecting to create {0} extra tenants\n", desiredExtraTenants);
+		}
+
+		wait(delayJittered(deterministicRandom()->random01() * expectedDelayBetweenBatches));
+
+		loop {
+			// average out to expected delay between batches, and only sleep extra time that creating batch didn't take
+			state Future<Void> sleepAfter =
+			    delayJittered(deterministicRandom()->random01() * 2 * expectedDelayBetweenBatches);
+
+			state int toCreate = std::min<int>(desiredExtraTenants - self->extraTenants.size(),
+			                                   deterministicRandom()->randomInt(1, 2 * tenantsPerBatch + 1));
+			if (toCreate <= 0) {
+				return Void();
+			}
+
+			state std::vector<Future<ExtraTenantData>> newTenants;
+			newTenants.reserve(toCreate);
+			state int i;
+			for (i = 0; i < toCreate; i++) {
+				int idx = self->extraTenants.size() + i;
+				Standalone<StringRef> name = StringRef("bgExtraTenant_" + std::to_string(idx));
+				newTenants.push_back(self->createAndBlobbifyExtraTenant(self, name));
+			}
+
+			for (i = 0; i < toCreate; i++) {
+				ExtraTenantData newTenant = wait(newTenants[i]);
+				self->extraTenants.push_back(newTenant);
+			}
+
+			wait(sleepAfter);
+		}
+	}
+
 	Future<Void> start(Database const& cx) override {
 		clients.reserve(3 * directories.size());
 		for (auto& it : directories) {
 			// Wait for blob worker to initialize snapshot before starting test for that range
-			Future<Void> start = waitFirstSnapshot(this, cx, it, true);
-			it->summaryClient = validateGranuleSummaries(cx, normalKeys, it->tenant, it->triggerSummaryComplete);
+			Future<Void> start = waitFirstSnapshot(this, standaloneDb, it, true);
+			it->summaryClient =
+			    validateGranuleSummaries(standaloneDb, normalKeys, it->tenant, it->triggerSummaryComplete);
 			if (doForceFlushing && deterministicRandom()->random01() < 0.25) {
 				it->forceFlushingClient =
-				    validateForceFlushing(cx, it->directoryRange, testDuration, it->triggerSummaryComplete);
+				    validateForceFlushing(standaloneDb, it->directoryRange, testDuration, it->triggerSummaryComplete);
 			} else {
 				it->forceFlushingClient = Future<Void>(Void());
 			}
 			if (it->directoryID == 0 && deterministicRandom()->random01() < 0.1) {
-				it->reqWayInFuture = requestWayInTheFuture(cx, normalKeys, it->tenant);
+				it->reqWayInFuture = requestWayInTheFuture(standaloneDb, normalKeys, it->tenant);
 			}
-			clients.push_back(timeout(writeWorker(this, start, cx, it), testDuration, Void()));
-			clients.push_back(timeout(readWorker(this, start, cx, it), testDuration, Void()));
+			clients.push_back(timeout(writeWorker(this, start, standaloneDb, it), testDuration, Void()));
+			clients.push_back(timeout(readWorker(this, start, standaloneDb, it), testDuration, Void()));
+		}
+		if (g_network->isSimulated() && !g_simulator->willRestart && clientId == 0 &&
+		    deterministicRandom()->coinflip()) {
+			extraTenantsClient = makeExtraTenants(this);
 		}
 		return delay(testDuration);
 	}
@@ -1274,12 +1416,58 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		return result;
 	}
 
+	ACTOR Future<Void> checkExtraTenants(Database cx, BlobGranuleCorrectnessWorkload* self) {
+		if (self->extraTenants.empty()) {
+			fmt::print("Check Extra Tenants empty\n");
+			return Void();
+		}
+		CODE_PROBE(true, "extra tenants to check in BGCorrectness");
+		state std::unordered_set<int> completed;
+		loop {
+			// do verifies for all ranges, and when successful, add to completed
+			state std::vector<std::pair<int, Future<Version>>> attempts;
+			state int i;
+			for (i = 0; i < self->extraTenants.size(); i++) {
+				if (!completed.contains(i)) {
+					attempts.push_back(
+					    { i, cx->verifyBlobRange(normalKeys, latestVersion, self->extraTenants[i].tenant) });
+				}
+			}
+
+			if (attempts.empty()) {
+				if (BGW_DEBUG) {
+					fmt::print("Check Extra Tenants complete\n");
+				}
+				return Void();
+			}
+
+			fmt::print("Checking {0} extra tenants\n", attempts.size());
+			state int unsuccessful = 0;
+			for (i = 0; i < attempts.size(); i++) {
+				Version v = wait(attempts[i].second);
+				if (v != invalidVersion) {
+					// successful
+					completed.insert(attempts[i].first);
+				} else {
+					unsuccessful++;
+				}
+			}
+			fmt::print("Checking {0} extra tenants succeeded on {1}, failed for {2}\n",
+			           attempts.size(),
+			           attempts.size() - unsuccessful,
+			           unsuccessful);
+			if (unsuccessful > 0) {
+				wait(delayJittered(5.0));
+			}
+		}
+	}
+
 	ACTOR Future<bool> _check(Database cx, BlobGranuleCorrectnessWorkload* self) {
 		// check error counts, and do an availability check at the end
 		state std::vector<Future<bool>> results;
 
 		for (auto& it : self->directories) {
-			results.push_back(self->checkDirectory(cx, self, it));
+			results.push_back(self->checkDirectory(self->standaloneDb, self, it));
 		}
 		state bool allSuccessful = true;
 		for (auto& f : results) {
@@ -1287,10 +1475,13 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			allSuccessful &= dirSuccess;
 		}
 
+		self->extraTenantsClient.cancel();
+		wait(self->checkExtraTenants(self->standaloneDb, self));
+
 		// do feed cleanup check only after data is guaranteed to be available for each granule
 		state Future<Void> checkFeedCleanupFuture;
 		if (self->clientId == 0) {
-			checkFeedCleanupFuture = checkFeedCleanup(cx, BGW_DEBUG);
+			checkFeedCleanupFuture = checkFeedCleanup(self->standaloneDb, BGW_DEBUG);
 		} else {
 			checkFeedCleanupFuture = Future<Void>(Void());
 		}

@@ -213,8 +213,8 @@ func (o NetworkOptions) SetTLSPassword(param string) error {
 	return o.setOpt(54, []byte(param))
 }
 
-// Prevent client from connecting to a non-TLS endpoint by throwing network connection failed error.
-func (o NetworkOptions) SetTLSDisablePlaintextConnection() error {
+// Prevent client/server from connecting/listening to a non-TLS endpoint by throwing tls_required error.
+func (o NetworkOptions) SetTLSRequired() error {
 	return o.setOpt(55, nil)
 }
 
@@ -447,6 +447,13 @@ func (o DatabaseOptions) SetUseConfigDatabase() error {
 // Parameter: integer between 0 and 100 expressing the probability a client will verify it can't read stale data
 func (o DatabaseOptions) SetTestCausalReadRisky(param int64) error {
 	return o.setOpt(900, int64ToBytes(param))
+}
+
+// Attach given authorization token to the tenant such that transactions created from the tenant object as well as subsequent tenant-aware operations are authorized
+//
+// Parameter: A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload, which contains the list of base64-encoded JSON tenant key prefixes. A tenant key prefix has the same memory layout as the big-endian form of a 64-bit integer which uniquely identifies a tenant in FDB.
+func (o TenantOptions) SetAuthorizationToken(param string) error {
+	return o.setOpt(20, []byte(param))
 }
 
 // The transaction, if not self-conflicting, may be committed a second time after commit succeeds, in the event of a fault
@@ -709,7 +716,7 @@ func (o TransactionOptions) SetUseGrvCache() error {
 
 // Attach given authorization token to the transaction such that subsequent tenant-aware requests are authorized
 //
-// Parameter: A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload.
+// Parameter: A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload, which contains the list of base64-encoded JSON tenant key prefixes. A tenant key prefix has the same memory layout as the big-endian form of a 64-bit integer which uniquely identifies a tenant in FDB.
 func (o TransactionOptions) SetAuthorizationToken(param string) error {
 	return o.setOpt(2000, []byte(param))
 }

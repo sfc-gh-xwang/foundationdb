@@ -381,7 +381,8 @@ public:
 
 		for (auto& [throttlingId, stats] : throttlingStatistics) {
 			// Currently there is no differentiation between batch priority and default priority transactions
-			TraceEvent te("QuotaThrottler_GotTargetTransactionRate", id);
+			auto traceName = std::string("QuotaThrottler_GotTargetTransactionRate-").append(throttlingId.toString());
+			TraceEvent te(traceName.c_str(), id);
 			bool const traceEnabled = stats.canLog();
 			if (!traceEnabled) {
 				te.disable();
@@ -424,13 +425,16 @@ public:
 	                                            IRKClusterThroughputTracker const& clusterThroughputTracker,
 	                                            RKServerThroughputTracker const& serverThroughputTracker) {
 		ThrottlingIdMap<double> result;
+		lastBusyThrottlingIdCount = 0;
 
 		for (const auto& [throttlingId, throughput] :
 		     clusterThroughputTracker.getActiveThrottlingIds(SERVER_KNOBS->THROUGHPUT_QUOTA_TRACK_THRESHOLD)) {
 
 			auto& stats = throughputStatistics[throttlingId];
 
-			TraceEvent te("QuotaThrottler_GotTargetThroughput", id);
+			auto traceName = std::string("QuotaThrottler_GotTargetThroughput-").append(throttlingId.toString());
+			TraceEvent te(traceName.c_str(), id);
+			te.detail("Throughput", throughput);
 
 			bool const traceEnabled = stats.canLog();
 			if (!traceEnabled) {
@@ -451,8 +455,6 @@ public:
 				if (traceEnabled) {
 					stats.updateLastLogged();
 				}
-
-				te.detail("Throughput", throughput);
 
 				if (isBusyThrottlingIdsTrackingEnabled()) {
 					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
