@@ -538,7 +538,7 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 		tr = env.newNormalOrTenantTransaction();
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
-		ASSERT(f.get() == val,
+		ASSERT(f.get().value() == val,
 		       "unmatched val for {}: expected={}, actual={}",
 		       key,
 		       fdb::toCharsRef(val),
