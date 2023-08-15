@@ -3027,8 +3027,8 @@ Future<Optional<ClusterName>> getAssignedClusterFuture(Database cx, Tenant tenan
 	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
 		return Optional<ClusterName>();
 	}
-	state Reference<DatabaseContext> mgmtCx = cx.getReference();
-	state metacluster::MetaclusterTenantMapEntry entry = wait(metacluster::getTenant(mgmtCx, tenant));
+	Reference<DatabaseContext> mgmtCx = cx.getReference();
+	metacluster::MetaclusterTenantMapEntry entry = wait(metacluster::getTenant(mgmtCx, tenant));
 	return entry.assignedCluster;
 }
 
@@ -3049,15 +3049,16 @@ ACTOR Future<Database> getDatabaseFuture(Database cx, Future<Optional<ClusterNam
 	}
 	state Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	ASSERT(assignedCluster.present());
-	state Reference<DatabaseContext> mgmtCx = cx.getReference();
+	Reference<DatabaseContext> mgmtCx = cx.getReference();
 	state Reference<DatabaseContext::TransactionT> tr = mgmtCx->createTransaction();
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 			Optional<ClusterConnectionString> connectionString =
 			    wait(metacluster::metadata::management::dataClusterConnectionRecords().get(tr, assignedCluster.get()));
-			ASSERT(connectionString.present());
+			if (!connectionString.present()) {
+				throw cluster_removed();
+			}
 			Reference<IClusterConnectionRecord> connectionRecord =
 			    makeReference<ClusterConnectionMemoryRecord>(connectionString.get());
 			Database db = Database::createDatabase(connectionRecord, ApiVersion::LATEST_VERSION, IsInternal::False);
@@ -3071,7 +3072,8 @@ ACTOR Future<Database> getDatabaseFuture(Database cx, Future<Optional<ClusterNam
 ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<Database> dbFuture,
                                                          TenantName name,
                                                          Future<Optional<ClusterName>> assignedClusterFuture) {
-	state Database db = wait(dbFuture);
+	Database db = wait(dbFuture);
+	ASSERT_NE(db->clientInfo->get().clusterType, ClusterType::METACLUSTER_MANAGEMENT);
 	state TenantLookupInfo info = wait(db->lookupTenant(name));
 	state Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	info.assignedCluster = assignedCluster;
@@ -3081,7 +3083,7 @@ ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<Database> dbFutu
 ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(int64_t id,
                                                          Future<Optional<ClusterName>> assignedClusterFuture) {
 	state TenantLookupInfo info(id);
-	state Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	info.assignedCluster = assignedCluster;
 	return info;
 }
@@ -3089,7 +3091,7 @@ ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(int64_t id,
 ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<TenantLookupInfo> lookupInfo,
                                                          Future<Optional<ClusterName>> assignedClusterFuture) {
 	state TenantLookupInfo info = wait(lookupInfo);
-	state Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	if (info.assignedCluster.present()) {
 		ASSERT(assignedCluster.present());
 		ASSERT_EQ(info.assignedCluster, assignedCluster);
