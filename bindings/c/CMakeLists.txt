@@ -237,11 +237,11 @@ if(NOT OPEN_FOR_IDE)
   # Make sure that fdb_c.h is compatible with c90
   add_executable(fdb_c90_test test/fdb_c90_test.c)
   set_property(TARGET fdb_c90_test PROPERTY C_STANDARD 90)
-if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  target_compile_options(fdb_c90_test PRIVATE -Wall -Wextra -Wpedantic -Wno-gnu-line-marker -Werror)
-else ()
-  target_compile_options(fdb_c90_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-endif ()
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(fdb_c90_test PRIVATE -Wall -Wextra -Wpedantic -Wno-gnu-line-marker -Werror)
+  else()
+    target_compile_options(fdb_c90_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
   target_link_libraries(fdb_c90_test PRIVATE fdb_c)
 endif()
 
@@ -336,8 +336,7 @@ else()
       )
 
     # TODO: re-enable the downgrade step to "${FDB_PREV_RELEASE_VERSION}" in all the following
-    # fdb_c_upgrade_from_* tests once 71.3 binaries are available.
-
+    # fdb_c_upgrade_from_* tests once 8.0 binaries are available.
     add_python_venv_test(NAME fdb_c_upgrade_from_prev3_gradual
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
