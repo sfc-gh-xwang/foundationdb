@@ -162,7 +162,7 @@ AddTest testReadYourWrites("ReadYourWrites", ALL, [](const TestEnv& env) {
 	         std::nullopt, FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE }) {
 		auto tr = env.newNormalOrTenantTransaction();
 
-		// Read before committing. Herer we test 3 different cases:
+		// Read before committing. Here we test 3 different cases:
 		// 1) By default, read the snapshot = false after a write before commit should read the initial write
 		// 2) If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false should return null
 		// 3) If FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE is set, read with snapshot = true should succeed
