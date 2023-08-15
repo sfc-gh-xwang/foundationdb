@@ -3105,10 +3105,8 @@ ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<TenantLookupInfo
 
 ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(TenantMapEntry entry,
                                                          Future<Optional<ClusterName>> assignedClusterFuture) {
-	state TenantLookupInfo info(entry.id, entry.tenantGroup);
 	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
-	info.assignedCluster = assignedCluster;
-	return info;
+	return TenantLookupInfo(entry.id, entry.tenantGroup, assignedCluster);
 }
 
 Tenant::Tenant(Database cx, TenantName name) : name(name) {
@@ -3130,7 +3128,7 @@ Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<
 }
 
 Tenant::Tenant(Database cx, TenantMapEntry entry) : name(entry.tenantName) {
-	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedClusterFuture(cx, entry.tenantName);
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedClusterFuture(cx, entry.id);
 	dbFuture = getDatabaseFuture(cx, assignedClusterFuture);
 	lookupFuture = getTenantLookupInfoFuture(entry, assignedClusterFuture);
 }
