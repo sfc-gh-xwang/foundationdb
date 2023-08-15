@@ -2301,7 +2301,7 @@ ACTOR Future<Void> watchBlobRestoreCommand(ClusterControllerData* self) {
 					const auto& blobManager = self->db.serverInfo->get().blobManager;
 					if (blobManager.present()) {
 						self->addActor.send(BlobManagerSingleton(blobManager)
-						    .haltBlobGranules(*self, blobManager.get().locality.processId()));
+						                        .haltBlobGranules(*self, blobManager.get().locality.processId()));
 					}
 					const auto& blobMigrator = self->db.serverInfo->get().blobMigrator;
 					if (blobMigrator.present()) {
@@ -2542,7 +2542,8 @@ ACTOR Future<Void> monitorBlobManager(ClusterControllerData* self) {
 					when(wait(wfClient)) {
 						const auto& blobManager = self->db.serverInfo->get().blobManager;
 						TraceEvent("CCBlobManagerDied", self->id).detail("BMID", blobManager.get().id());
-						self->addActor.send(BlobManagerSingleton(blobManager).halt(*self, blobManager.get().locality.processId()));
+						self->addActor.send(
+						    BlobManagerSingleton(blobManager).halt(*self, blobManager.get().locality.processId()));
 						self->db.clearInterf(ProcessClass::BlobManagerClass);
 						break;
 					}
@@ -2554,11 +2555,11 @@ ACTOR Future<Void> monitorBlobManager(ClusterControllerData* self) {
 						if (!self->db.blobGranulesEnabled.get()) {
 							const auto& blobManager = self->db.serverInfo->get().blobManager;
 							self->addActor.send(BlobManagerSingleton(blobManager)
-							    .haltBlobGranules(*self, blobManager.get().locality.processId()));
+							                        .haltBlobGranules(*self, blobManager.get().locality.processId()));
 							if (self->db.blobRestoreEnabled.get()) {
 								const auto& blobMigrator = self->db.serverInfo->get().blobMigrator;
 								self->addActor.send(BlobMigratorSingleton(blobMigrator)
-								    .halt(*self, blobMigrator.get().locality.processId()));
+								                        .halt(*self, blobMigrator.get().locality.processId()));
 							}
 							break;
 						}
