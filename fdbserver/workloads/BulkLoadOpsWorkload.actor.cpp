@@ -1290,7 +1290,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		});
 	}
 
-	// TODO(kejriwal)
 	ACTOR Future<Void> reservationFailed(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		if (!self->tenantRes.present() || !self->tenantResGroupName.present()) {
 			return Void();
@@ -1339,14 +1338,16 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		wait(setStorageQuota(cx, self->tenantResGroupName.get(), writtenFile.logicalSize));
 
+		// Test the base case.
 		// The quota is the same as the size being written, this should succeed.
 		wait(cx->markBulkLoadFilesWritten(id1, filesWritten, self->tenantRes));
 		wait(cx->bulkLoadAllFilesRegistered(id1, self->tenantRes));
 		wait(cx->waitBulkLoadComplete(id1, self->tenantRes));
 		wait(cx->cleanupBulkLoad(id1, self->tenantRes));
 
+		// Test that reservations are cleared correctly.
 		// Another bulk load on the same tenant group should go through since the previous reservation
-		// should have been cleared.
+		// should have been cleared as the bulk load completed.
 		state BulkLoadID id2 = wait(cx->startBulkLoad(rangeSecond, self->tenantRes));
 		wait(success(self->stageSingleFile(cx, self, self->bstoreRes, id2, rangeSecond, self->tenantRes)));
 		wait(cx->bulkLoadAllFilesRegistered(id2, self->tenantRes));
