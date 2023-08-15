@@ -90,7 +90,7 @@ AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& e
 	}
 });
 
-AddTest testReadSystemKey("ReadSystemKey", asTrustedClient, [](const TestEnv& env) {
+AddTest testReadSystemKey("SystemKeyReadRequiresTransactionOption", asTrustedClient, [](const TestEnv& env) {
 	// Access of system key is protected from the tenant use case. Thus only trusted client case is tested.
 	auto db = env.newDatabase();
 	for (auto const enableReadSystemKeys : { false, true }) {
