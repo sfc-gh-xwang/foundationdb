@@ -90,71 +90,84 @@ AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& e
 	}
 });
 
-AddTest testReadSystemKey("SystemKeyReadRequiresTransactionOption", asTrustedClient, [](const TestEnv& env) {
+AddTest testReadSystemKeyFail("SystemKeyReadFailsWithoutTransactionOption", asTrustedClient, [](const TestEnv& env) {
 	// Access of system key is protected from the tenant use case. Thus only trusted client case is tested.
 	auto db = env.newDatabase();
-	for (auto const enableReadSystemKeys : { false, true }) {
-		auto tr = env.newTransaction(db);
-		try {
-			auto f = runToCompletion(
-			    tr,
-			    [enableReadSystemKeys](auto tr) {
-				    if (enableReadSystemKeys) {
-					    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
-				    }
-
-				    return tr.get("\xff/coordinators"_br, false);
-			    },
-			    "ReadSystemKey");
-
-			ASSERT(enableReadSystemKeys);
-			// Only when enableReadSystemKeys is set we hit this line
-			ASSERT(f.get().has_value(), "Unexpected null value from read");
-		} catch (fdb::Error e) {
-			ASSERT(!enableReadSystemKeys, "System key read failed although READ_SYSTEM_KEYS option was set");
-			ASSERT(e.code() == 2004); // key_outside_legal_range
-		}
+	auto tr = env.newTransaction(db);
+	try {
+		auto f = runToCompletion(
+		    tr, [](auto tr) { return tr.get("\xff/coordinators"_br, false); }, "ReadSystemKeyFail");
+		ASSERT(false, "Do not expect transaction to succeed");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2004); // key_outside_legal_range
 	}
 });
 
-AddTest testWriteSystemKey("WriteSystemKey", asTrustedClient, [](const TestEnv& env) {
+AddTest testReadSystemKey("SystemKeyReadRequiresTransactionOption", asTrustedClient, [](const TestEnv& env) {
+	// Access of system key is protected from the tenant use case. Thus only trusted client case is tested.
+	auto db = env.newDatabase();
+	auto tr = env.newTransaction(db);
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+		    return tr.get("\xff/coordinators"_br, false);
+	    },
+	    "ReadSystemKey");
+
+	// Only when enableReadSystemKeys is set we hit this line
+	ASSERT(f.get().has_value(), "Unexpected null value from read");
+});
+
+AddTest testWriteSystemKeyFail("WriteSystemKeyFailWithoutTransactionOption", asTrustedClient, [](const TestEnv& env) {
 	// Access of system key is protected from the tenant use case. Thus only trusted client case is tested.
 	auto db = env.newDatabase();
 	auto syskey = "\xff\x02"_br;
 
-	for (auto const enableWriteSystemKeys : { false, true }) {
-		auto tr = env.newTransaction(db);
-		try {
-			// Write a system key
-			runToCompletion(
-			    tr,
-			    [enableWriteSystemKeys, syskey](auto tr) {
-				    if (enableWriteSystemKeys) {
-					    tr.setOption(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
-				    }
+	auto tr = env.newTransaction(db);
+	try {
+		// Write a system key
+		runToCompletion(
+		    tr,
+		    [syskey](auto tr) {
+			    tr.set(syskey, "bar"_br);
+			    return tr.commit();
+		    },
+		    "WriteSystemKeyFail");
 
-				    tr.set(syskey, "bar"_br);
-				    return tr.commit();
-			    },
-			    "WriteSystemKey");
-
-			// Read and verify the system key value
-			tr = env.newTransaction(db);
-			auto f = runToCompletion(
-			    tr,
-			    [syskey](auto tr) {
-				    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
-				    return tr.get(syskey, false);
-			    },
-			    "ReadBackSystemKey");
-
-			ASSERT(enableWriteSystemKeys);
-			ASSERT(f.get() == "bar"_br, "unexpected read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
-		} catch (fdb::Error e) {
-			ASSERT(!enableWriteSystemKeys, "FDB_TR_OPTION_ACCESS_SYSTEM_KEYS must be disabled");
-			ASSERT(e.code() == 2004); // key_outside_legal_range
-		}
+		ASSERT(false, "Do not expect the write transaction to succeed");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2004); // key_outside_legal_range
 	}
+});
+
+AddTest testWriteSystemKey("WriteSystemKeyRequiresTransactionOption", asTrustedClient, [](const TestEnv& env) {
+	// Access of system key is protected from the tenant use case. Thus only trusted client case is tested.
+	auto db = env.newDatabase();
+	auto syskey = "\xff\x02"_br;
+
+	auto tr = env.newTransaction(db);
+	// Write a system key
+	runToCompletion(
+	    tr,
+	    [syskey](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_ACCESS_SYSTEM_KEYS);
+		    tr.set(syskey, "bar"_br);
+		    return tr.commit();
+	    },
+	    "WriteSystemKey");
+
+	// Read and verify the system key value
+	tr = env.newTransaction(db);
+	auto f = runToCompletion(
+	    tr,
+	    [syskey](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_READ_SYSTEM_KEYS);
+		    return tr.get(syskey, false);
+	    },
+	    "ReadBackSystemKey");
+
+	ASSERT(f.get().value() == "bar"_br, "unexpected read value: expected=bar actual={}", fdb::toCharsRef(f.get()));
 });
 
 AddTest testReadYourWrites("ReadYourWrites", ALL, [](const TestEnv& env) {
