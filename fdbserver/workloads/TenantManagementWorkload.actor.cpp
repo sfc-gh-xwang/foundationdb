@@ -1942,7 +1942,7 @@ struct TenantManagementWorkload : TestWorkload {
 			tenant = makeReference<Tenant>(self->dataDb, std::numeric_limits<int64_t>::max());
 		}
 
-		state bool useManagementCluster = self->useMetacluster && deterministicRandom()->random01() < 0.5;
+		state bool useManagementCluster = self->useMetacluster && deterministicRandom()->random01() < 0.7;
 		state Database db = useManagementCluster ? self->managementDbInternal : self->dataDb;
 		// verify management cluster type
 		if (useManagementCluster && db->clientInfo->get().clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
@@ -1974,11 +1974,19 @@ struct TenantManagementWorkload : TestWorkload {
 		if (tenant.present() && useManagementCluster) {
 			ASSERT_EQ(db->clientInfo->get().clusterType, ClusterType::METACLUSTER_MANAGEMENT);
 			// Test open tenant with three different constructors
-			state int openMode = deterministicRandom()->randomInt(0, 3);
+			state int openMode = deterministicRandom()->randomInt(0, 4);
 			try {
-				tenant = openMode == 0 && tName.present() ? makeReference<Tenant>(db, tName.get())
-				         : openMode == 1                  ? makeReference<Tenant>(db, tenant.get()->id())
-				                         : makeReference<Tenant>(db, tenant.get()->getLookupFuture(), tName);
+				if (openMode == 0 && tName.present()) {
+					tenant = makeReference<Tenant>(db, tName.get());
+				} else if (openMode == 1 && tenantExists) {
+					state Optional<TenantMapEntry> tEntry =
+					    wait(TenantAPI::tryGetTenant(self->dataDb.getReference(), tName.get()));
+					ASSERT(tEntry.present());
+					tenant = makeReference<Tenant>(db, tEntry.get());
+				} else {
+					tenant = openMode == 2 ? makeReference<Tenant>(db, tenant.get()->id())
+					                       : makeReference<Tenant>(db, tenant.get()->getLookupFuture(), tName);
+				}
 				wait(tenant.get()->ready());
 				if (!tenantExists) {
 					ASSERT(openMode == 0 && tName.present());

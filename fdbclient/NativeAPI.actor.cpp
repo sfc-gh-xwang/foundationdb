@@ -3102,6 +3102,14 @@ ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<TenantLookupInfo
 	return info;
 }
 
+ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(TenantMapEntry entry,
+                                                         Future<Optional<ClusterName>> assignedClusterFuture) {
+	state TenantLookupInfo info(entry.id, entry.tenantGroup);
+	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	info.assignedCluster = assignedCluster;
+	return info;
+}
+
 Tenant::Tenant(Database cx, TenantName name) : name(name) {
 	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedClusterFuture(cx, name);
 	dbFuture = getDatabaseFuture(cx, assignedClusterFuture);
@@ -3120,10 +3128,11 @@ Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<
 	lookupFuture = getTenantLookupInfoFuture(tenantLookupInfo, assignedClusterFuture);
 }
 
-Tenant::Tenant(Database cx, TenantMapEntry entry)
-  : name(entry.tenantName),
-    lookupFuture(TenantLookupInfo(entry.id, entry.tenantGroup)),
-    dbFuture(cx) {}
+Tenant::Tenant(Database cx, TenantMapEntry entry) : name(entry.tenantName) {
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedClusterFuture(cx, entry.tenantName);
+	dbFuture = getDatabaseFuture(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfoFuture(entry, assignedClusterFuture);
+}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
