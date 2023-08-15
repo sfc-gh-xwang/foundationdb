@@ -1835,19 +1835,22 @@ struct HybridReadOptions {
 	bool summarize;
 	bool canCollapseBegin;
 	bool canReadDirty;
+	bool untrustedReadVersion;
 
 	HybridReadOptions(Optional<UID> debugID = Optional<UID>(),
 	                  bool summarize = false,
 	                  bool canCollapseBegin = true,
-	                  bool canReadDirty = false)
+	                  bool canReadDirty = false,
+	                  bool untrustedReadVersion = false)
 	  : debugID(debugID),
 	    summarize(summarize),
 	    canCollapseBegin(canCollapseBegin),
-	    canReadDirty(canReadDirty){};
+	    canReadDirty(canReadDirty),
+	    untrustedReadVersion(untrustedReadVersion){};
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, debugID, summarize, canCollapseBegin, canReadDirty);
+		serializer(ar, debugID, summarize, canCollapseBegin, canReadDirty, untrustedReadVersion);
 	}
 };
 
