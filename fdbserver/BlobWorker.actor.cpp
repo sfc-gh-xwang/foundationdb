@@ -428,12 +428,14 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
                                                                 Arena* arena) {
 	state BlobGranuleCipherKeysCtx cipherKeysCtx;
 
+	state Future<BlobGranuleCipherKey> textF = lookupCipherKey(dbInfo, textCipherDetails, arena);
+	state Future<BlobGranuleCipherKey> headerF = lookupCipherKey(dbInfo, headerCipherDetails, arena);
 	// Fetch 'textCipher' key
-	BlobGranuleCipherKey textCipherKey = wait(lookupCipherKey(dbInfo, textCipherDetails, arena));
+	BlobGranuleCipherKey textCipherKey = wait(textF);
 	cipherKeysCtx.textCipherKey = textCipherKey;
 
 	// Fetch 'headerCipher' key
-	BlobGranuleCipherKey headerCipherKey = wait(lookupCipherKey(dbInfo, headerCipherDetails, arena));
+	BlobGranuleCipherKey headerCipherKey = wait(headerF);
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
