@@ -92,5 +92,4 @@ AddTest test3("TokenAsTenantOption", AND(asUntrustedClient, withTenantsMoreThan(
 	}
 });
 
->>>>>>> origin/main
 } // anonymous namespace
