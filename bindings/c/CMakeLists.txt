@@ -283,7 +283,7 @@ else()
   add_python_venv_test(
     NAME fdb_c_combify_test
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py ${CMAKE_BINARY_DIR}
-    TEST_TIMEOUT 300
+    TEST_TIMEOUT 600
   )
   add_unavailable_fdbclient_test(
     NAME disconnected_timeout_unit_tests

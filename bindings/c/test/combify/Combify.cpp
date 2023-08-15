@@ -515,7 +515,13 @@ bool TestEnv::runTest(const TestCase& t) {
 
 fdb::Transaction TestEnv::newNormalOrTenantTransaction() const {
 	auto db = newDatabase();
-	return *trustedClient ? newTransaction(db) : newTenantTransaction(db, tenants[0].first);
+	// For trusted client or if there is no tenant, return a new DB transaction
+	if (*trustedClient || tenants.empty()) {
+		return newTransaction(db);
+	}
+
+	// Otherwise, create a transaction from the first tenant	
+	return newTenantTransaction(db, tenants[0].first);
 }
 
 std::vector<const TestCase*> collectTestCases(const TestOptions& options) {

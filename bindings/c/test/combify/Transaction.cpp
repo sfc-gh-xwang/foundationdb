@@ -26,7 +26,7 @@ fdb::Error waitFuture(fdb::Future& f) {
 }
 
 AddTest testWriteAndRead("BasicWriteAndReadBack",
-                         OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                         OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                          [](const TestEnv& env) {
 	                         auto tr = env.newNormalOrTenantTransaction();
 	                         runToCompletion(
@@ -46,7 +46,7 @@ AddTest testWriteAndRead("BasicWriteAndReadBack",
                          });
 
 AddTest testGetReadVersion("BasicGetReadVersion",
-                           OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                           OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                            [](const TestEnv& env) {
 	                           auto tr = env.newNormalOrTenantTransaction();
 	                           auto f = runToCompletion(
@@ -56,7 +56,7 @@ AddTest testGetReadVersion("BasicGetReadVersion",
                            });
 
 AddTest testGetKey("BasicGetKey",
-                   OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                   OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                    [](const TestEnv& env) {
 	                   const std::string prefix("combify-basic-get-key-");
 	                   auto tr = env.newNormalOrTenantTransaction();
@@ -80,7 +80,7 @@ AddTest testGetKey("BasicGetKey",
 
 AddTest testGetValue(
     "BasicGetValue",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-basic-get-value-");
 	    auto tr = env.newNormalOrTenantTransaction();
@@ -190,7 +190,7 @@ AddTest testWriteSystemKey("WriteSystemKeyRequiresTransactionOption", asTrustedC
 });
 
 AddTest testReadYourWrites("ReadYourWrites",
-                           OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                           OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                            [](const TestEnv& env) {
 	                           // By default, read the snapshot = false after a write before commit should read the
 	                           // initial write
@@ -209,7 +209,8 @@ AddTest testReadYourWrites("ReadYourWrites",
                            });
 
 AddTest testReadYourWritesDisable("ReadYourWritesDisable",
-                                  OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                                  OR(asTrustedClient,
+                                     AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                                   [](const TestEnv& env) {
 	                                  // If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false
 	                                  // should return null
@@ -226,28 +227,28 @@ AddTest testReadYourWritesDisable("ReadYourWritesDisable",
 	                                  ASSERT(!f.get().has_value(), "Expect null value");
                                   });
 
-AddTest testReadYourWritesSnapshotRYW("ReadYourWritesSnapshotRYWEnabled",
-                                      OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
-                                      [](const TestEnv& env) {
-	                                      // If FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE is set, read with snapshot = true
-	                                      // should succeed
-	                                      auto tr = env.newNormalOrTenantTransaction();
-	                                      auto f = runToCompletion(
-	                                          tr,
-	                                          [](auto tr) {
-		                                          tr.setOption(FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE);
-		                                          tr.set("foo"_br, "bar"_br);
-		                                          return tr.get("foo"_br, /* snapshot */ true);
-	                                          },
-	                                          "ReadYourWrites");
+AddTest testReadYourWritesSnapshotRYW(
+    "ReadYourWritesSnapshotRYWEnabled",
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
+    [](const TestEnv& env) {
+	    // If FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE is set, read with snapshot = true
+	    // should succeed
+	    auto tr = env.newNormalOrTenantTransaction();
+	    auto f = runToCompletion(
+	        tr,
+	        [](auto tr) {
+		        tr.setOption(FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE);
+		        tr.set("foo"_br, "bar"_br);
+		        return tr.get("foo"_br, /* snapshot */ true);
+	        },
+	        "ReadYourWrites");
 
-	                                      ASSERT(f.get().value() == "bar"_br,
-	                                             "unmatched read value: expected=bar, actual={}",
-	                                             fdb::toCharsRef(f.get()));
-                                      });
+	    ASSERT(f.get().value() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f.get()));
+    });
 
 AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable",
-                                          OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                                          OR(asTrustedClient,
+                                             AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                                           [](const TestEnv& env) {
 	                                          auto tr = env.newNormalOrTenantTransaction();
 
@@ -287,7 +288,7 @@ AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable",
 
 AddTest testGetRangeStreamingModeWantAllNoLimit(
     "GetRangeStreamingModeWantAllNoLimit",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-get-range-streaming-mode-want-all-no-limit-");
 	    auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
@@ -332,7 +333,7 @@ AddTest testGetRangeStreamingModeWantAllNoLimit(
 
 AddTest testGetRangeStreamingModeWantAllNoLimitReverse(
     "GetRangeStreamingModeWantAllNoLimitReverse",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-get-range-streaming-mode-want-all-no-limit-reverse-");
 	    auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
@@ -377,7 +378,7 @@ AddTest testGetRangeStreamingModeWantAllNoLimitReverse(
 
 AddTest testGetRangeStreamingModeWantAllWithLimit(
     "GetRangeStreamingModeWantAllWithLimit",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-get-range-streaming-mode-want-all-with-limit-");
 	    auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
@@ -422,7 +423,7 @@ AddTest testGetRangeStreamingModeWantAllWithLimit(
 
 AddTest testGetRangeStreamingModeExactWithLimit(
     "GetRangeStreamingModeExactWithLimit",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-get-range-streaming-mode-exact-with-limit-");
 	    auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
@@ -460,7 +461,7 @@ AddTest testGetRangeStreamingModeExactWithLimit(
     });
 
 AddTest testClearKey("ClearKey",
-                     OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                     OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                      [](const TestEnv& env) {
 	                     const std::string prefix("combify-clear-key-");
 	                     auto tr = env.newNormalOrTenantTransaction();
@@ -513,22 +514,21 @@ AddTest testCancel("Cancel", asTrustedClient, [](const TestEnv& env) {
 	    "ReadKeyWithoutException");
 });
 
-AddTest testGetCommittedVersionReadOnly("GetCommittedVersionReadOnly",
-                                        OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
-                                        [](const TestEnv& env) {
-	                                        auto tr = env.newNormalOrTenantTransaction();
-	                                        runToCompletion(
-	                                            tr,
-	                                            [](auto tr) { return tr.get("foo"_br, /*snapshot*/ false); },
-	                                            "ReadOnlyTransaction");
+AddTest testGetCommittedVersionReadOnly(
+    "GetCommittedVersionReadOnly",
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
+    [](const TestEnv& env) {
+	    auto tr = env.newNormalOrTenantTransaction();
+	    runToCompletion(
+	        tr, [](auto tr) { return tr.get("foo"_br, /*snapshot*/ false); }, "ReadOnlyTransaction");
 
-	                                        ASSERT(tr.getCommittedVersion() == -1,
-	                                               "Unmatched committed version: expected=-1, actual={}",
-	                                               tr.getCommittedVersion());
-                                        });
+	    ASSERT(tr.getCommittedVersion() == -1,
+	           "Unmatched committed version: expected=-1, actual={}",
+	           tr.getCommittedVersion());
+    });
 
 AddTest testGetCommittedVersion("GetCommittedVersion",
-                                OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                                OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                                 [](const TestEnv& env) {
 	                                const std::string prefix("combify-get-committed-version-");
 	                                auto tr = env.newNormalOrTenantTransaction();
@@ -547,7 +547,7 @@ AddTest testGetCommittedVersion("GetCommittedVersion",
 
 AddTest testGetTagThrottledDuration(
     "GetTagThrottledDuration",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    auto tr = env.newNormalOrTenantTransaction();
 	    runToCompletion(
@@ -560,7 +560,7 @@ AddTest testGetTagThrottledDuration(
     });
 
 AddTest testGetTotalCost("GetTotalCost",
-                         OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                         OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                          [](const TestEnv& env) {
 	                         auto tr = env.newNormalOrTenantTransaction();
 	                         runToCompletion(
@@ -574,7 +574,7 @@ AddTest testGetTotalCost("GetTotalCost",
                          });
 
 AddTest testSetExpectedCost("SetExpectedCost",
-                            OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                            OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                             [](const TestEnv& env) {
 	                            auto tr = env.newNormalOrTenantTransaction();
 	                            tr.setExpectedCost(4096);
@@ -584,7 +584,7 @@ AddTest testSetExpectedCost("SetExpectedCost",
                             });
 
 AddTest testGetApproxSize("GetApproxSize",
-                          OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+                          OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                           [](const TestEnv& env) {
 	                          const std::string prefix("combify-get-approx-size-");
 	                          auto tr = env.newNormalOrTenantTransaction();
@@ -604,7 +604,7 @@ AddTest testGetApproxSize("GetApproxSize",
 /* Transaction Atomic Operations */
 AddTest testAtomicOpBitAnd(
     "AtomicOpBitAnd",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    // Test bitwise and on values of same length:
 	    //   db key = foo
@@ -679,7 +679,7 @@ AddTest testAtomicOpBitAnd(
 
 AddTest testAtomicOpBitOr(
     "AtomicOpBitOr",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    // Test bitwise or on values of same length:
 	    //   db key = foo
@@ -754,7 +754,7 @@ AddTest testAtomicOpBitOr(
 
 AddTest testAtomicOpCompareAndClear(
     "AtomicOpCompareAndClear",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    // Atomically remove a key-value pair from the database based on a value
 	    // comparison.
@@ -786,7 +786,7 @@ AddTest testAtomicOpCompareAndClear(
 
 AddTest testAtomicOpMutationTypeMax(
     "AtomicOpMutationTypeMax",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-atomic-op-mutation-type-max-");
 	    auto tr = env.newNormalOrTenantTransaction();
@@ -825,7 +825,7 @@ AddTest testAtomicOpMutationTypeMax(
 
 AddTest testAtomicOpMutationTypeMin(
     "AtomicOpMutationTypeMin",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-atomic-op-mutation-type-min-");
 	    auto tr = env.newNormalOrTenantTransaction();
@@ -864,7 +864,7 @@ AddTest testAtomicOpMutationTypeMin(
 
 AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
     "AtomicOptionMutationTypeSetVersionstampedKey",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-atomic-op-mutation-type-set-versionstamped-key-");
 	    int offset = prefix.size() + 3;
@@ -911,7 +911,7 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
 
 AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
     "AtomicOptionMutationTypeSetVersionstampedValue",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    const std::string prefix("combify-atomic-op-mutation-type-set-versionstamped-value-");
 	    char valbuf[] = { 'b', 'a', 'r', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', 3, 0, 0, 0 };
@@ -961,7 +961,7 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
 
 AddTest testAtomicOpMutationTypeByteMax(
     "AtomicOpMutationTypeByteMax",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    // The difference with FDB_MUTATION_TYPE_MAX is that strings will not be
 	    // extended/truncated so lengths match.
@@ -1000,7 +1000,7 @@ AddTest testAtomicOpMutationTypeByteMax(
 
 AddTest testAtomicOpMutationTypeByteMin(
     "AtomicOpMutationTypeByteMin",
-    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls)),
+    OR(asTrustedClient, AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
     [](const TestEnv& env) {
 	    // The difference with FDB_MUTATION_TYPE_MIN is that strings will not be
 	    // extended/truncated so lengths match.

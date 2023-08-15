@@ -8,6 +8,15 @@ import sys
 from local_cluster import TLSConfig
 from tmp_cluster import TempCluster
 
+
+def options_valid(tls_on, authz_on, tenant_mode, tenant_count):
+    # Authz shouldn't be set if tls is set false, and vice versa
+    if tls_on != authz_on:
+        return False
+
+    return True
+
+
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: {} [BUILD_DIRECTORY_PATH]".format(sys.argv[0]))
@@ -17,10 +26,10 @@ if __name__ == "__main__":
     # tenantModes = ["disabled", "optional_experimental", "required_experimental"]
     # tenantCounts = [0, 5]
     build_dir = sys.argv[1]
-    tls_options = [True]
-    authz_options = [True]
+    tls_options = [False, True]
+    authz_options = [False, True]
     tenant_modes = ["optional_experimental"]
-    tenant_counts = [3]
+    tenant_counts = [0, 3]
     test_ok = True
     binary_rel_path = "bin/fdb_c_combify_test"
     binary_abs_path = os.path.join(build_dir, binary_rel_path)
@@ -30,6 +39,10 @@ if __name__ == "__main__":
     for [tls_on, authz_on, tenant_mode, tenant_count] in itertools.product(
         tls_options, authz_options, tenant_modes, tenant_counts
     ):
+        # Skip if the combination of options is not valid
+        if not options_valid(tls_on, authz_on, tenant_mode, tenant_count):
+            continue
+
         with TempCluster(
             build_dir=build_dir,
             tls_config=TLSConfig(server_chain_len=2, client_chain_len=2)
