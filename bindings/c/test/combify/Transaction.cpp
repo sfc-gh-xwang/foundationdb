@@ -171,37 +171,47 @@ AddTest testWriteSystemKey("WriteSystemKeyRequiresTransactionOption", asTrustedC
 });
 
 AddTest testReadYourWrites("ReadYourWrites", ALL, [](const TestEnv& env) {
-	for (auto const option : std::vector<std::optional<FDBTransactionOption>>{
-	         std::nullopt, FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE, FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE }) {
-		auto tr = env.newNormalOrTenantTransaction();
+	// By default, read the snapshot = false after a write before commit should read the initial write
+	auto tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.set("foo"_br, "bar"_br);
+		    return tr.get("foo"_br, false);
+	    },
+	    "ReadYourWrites");
 
-		// Read before committing. Here we test 3 different cases:
-		// 1) By default, read the snapshot = false after a write before commit should read the initial write
-		// 2) If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false should return null
-		// 3) If FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE is set, read with snapshot = true should succeed
-		auto snapshot = false;
-		if (option == FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE) {
-			snapshot = true;
-		}
+	ASSERT(f.get().value() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f.get()));
+});
 
-		auto f1 = runToCompletion(
-		    tr,
-		    [option, snapshot](auto tr) {
-			    if (option.has_value()) {
-				    tr.setOption(option.value());
-			    }
-			    tr.set("foo"_br, "bar"_br);
-			    return tr.get("foo"_br, snapshot);
-		    },
-		    "ReadValue");
+AddTest testReadYourWritesDisable("ReadYourWritesDisable", ALL, [](const TestEnv& env) {
+	// If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false should return null
+	auto tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE);
+		    tr.set("foo"_br, "bar"_br);
+		    return tr.get("foo"_br, false);
+	    },
+	    "ReadYourWrites");
 
-		if (option == FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE) {
-			ASSERT(!f1.get().has_value(), "Expect null value");
-			continue;
-		}
+	ASSERT(!f.get().has_value(), "Expect null value");
+});
 
-		ASSERT(f1.get() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f1.get()));
-	}
+AddTest testReadYourWritesSnapshotRYW("ReadYourWritesSnapshotRYWEnabled", ALL, [](const TestEnv& env) {
+	// If FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE is set, read with snapshot = true should succeed
+	auto tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE);
+		    tr.set("foo"_br, "bar"_br);
+		    return tr.get("foo"_br, /* snapshot */ true);
+	    },
+	    "ReadYourWrites");
+
+	ASSERT(f.get().value() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f.get()));
 });
 
 AddTest testGetKeyValueArray("GetRange", ALL, [](const TestEnv& env) {
