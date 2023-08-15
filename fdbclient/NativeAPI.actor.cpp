@@ -97,6 +97,7 @@
 #include "flow/UnitTest.h"
 #include "flow/network.h"
 #include "flow/serialize.h"
+#include "fdbclient/RangeLockAPI.actor.h"
 
 #ifdef ADDRESS_SANITIZER
 #include <sanitizer/lsan_interface.h>
@@ -3118,6 +3119,11 @@ Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<
 	dbFuture = getDatabaseFuture(cx, assignedClusterFuture);
 	lookupFuture = getTenantLookupInfoFuture(tenantLookupInfo, assignedClusterFuture);
 }
+
+Tenant::Tenant(Database cx, TenantMapEntry entry)
+  : name(entry.tenantName),
+    lookupFuture(TenantLookupInfo(entry.id, entry.tenantGroup)),
+    dbFuture(cx) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
@@ -7099,7 +7105,8 @@ ACTOR static Future<Void> tryCommit(Reference<TransactionState> trState, CommitT
 			    e.code() != error_code_storage_quota_exceeded && e.code() != error_code_tenant_locked &&
 			    e.code() != error_code_tenant_name_required &&
 			    e.code() != error_code_management_cluster_invalid_access && e.code() != error_code_tenants_disabled &&
-			    e.code() != error_code_permission_denied && e.code() != error_code_encrypt_key_not_found) {
+			    e.code() != error_code_permission_denied && e.code() != error_code_encrypt_key_not_found &&
+			    !RangeLockAPI::isRangeLockError(e)) {
 				// Part of the reason that this block exists is that negative unit tests can trip over these cases
 				// and result in SevError logs being emitted. Gating against these status codes also means their
 				// existences must get surfaced and logged somewhere else during production system.
@@ -7538,6 +7545,10 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 
 	case FDBTransactionOptions::HYBRID_READ_DIRTY:
 		trState->hybridReadOptions.withDefault(HybridReadOptions()).canReadDirty = true;
+		break;
+
+	case FDBTransactionOptions::HYBRID_UNTRUSTED_READ_VERSION:
+		trState->hybridReadOptions.withDefault(HybridReadOptions()).untrustedReadVersion = true;
 		break;
 
 	default:

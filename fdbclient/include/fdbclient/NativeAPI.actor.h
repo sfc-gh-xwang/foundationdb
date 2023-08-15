@@ -251,6 +251,7 @@ public:
 	Tenant(Database cx, TenantName name);
 	explicit Tenant(Database cx, int64_t id);
 	Tenant(Database cx, Future<TenantLookupInfo> tenantLookupFuture, Optional<TenantName> name);
+	Tenant(Database cx, TenantMapEntry entry);
 
 	static Tenant* allocateOnForeignThread() { return (Tenant*)Tenant::operator new(sizeof(Tenant)); }
 

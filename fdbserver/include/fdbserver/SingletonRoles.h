@@ -56,11 +56,12 @@ struct RatekeeperSingleton : Singleton<RatekeeperInterface> {
 			cc.db.setRatekeeper(interface.get());
 		}
 	}
-	void halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
+	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present() && cc.id_worker.count(pid)) {
-			cc.id_worker[pid].haltRatekeeper =
-			    brokenPromiseToNever(interface.get().haltRatekeeper.getReply(HaltRatekeeperRequest(cc.id)));
+			return interface.get().haltRatekeeper.getReply(HaltRatekeeperRequest(cc.id));
 		}
+
+		return Void();
 	}
 	void recruit(ClusterControllerData& cc) const {
 		cc.lastRecruitTime = now();
@@ -81,11 +82,13 @@ struct DataDistributorSingleton : Singleton<DataDistributorInterface> {
 			cc.db.setDistributor(interface.get());
 		}
 	}
-	void halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
+	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present() && cc.id_worker.count(pid)) {
-			cc.id_worker[pid].haltDistributor =
-			    brokenPromiseToNever(interface.get().haltDataDistributor.getReply(HaltDataDistributorRequest(cc.id)));
+			return brokenPromiseToNever(
+			    interface.get().haltDataDistributor.getReply(HaltDataDistributorRequest(cc.id)));
 		}
+
+		return Void();
 	}
 	void recruit(ClusterControllerData& cc) const {
 		cc.lastRecruitTime = now();
@@ -106,11 +109,13 @@ struct ConsistencyScanSingleton : Singleton<ConsistencyScanInterface> {
 			cc.db.setConsistencyScan(interface.get());
 		}
 	}
-	void halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
+	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
-			cc.id_worker[pid].haltConsistencyScan =
-			    brokenPromiseToNever(interface.get().haltConsistencyScan.getReply(HaltConsistencyScanRequest(cc.id)));
+			return brokenPromiseToNever(
+			    interface.get().haltConsistencyScan.getReply(HaltConsistencyScanRequest(cc.id)));
 		}
+
+		return Void();
 	}
 	void recruit(ClusterControllerData& cc) const {
 		cc.lastRecruitTime = now();
@@ -131,22 +136,24 @@ struct BlobManagerSingleton : Singleton<BlobManagerInterface> {
 			cc.db.setBlobManager(interface.get());
 		}
 	}
-	void halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
+	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present() && cc.id_worker.count(pid)) {
-			cc.id_worker[pid].haltBlobManager =
-			    brokenPromiseToNever(interface.get().haltBlobManager.getReply(HaltBlobManagerRequest(cc.id)));
+			return brokenPromiseToNever(interface.get().haltBlobManager.getReply(HaltBlobManagerRequest(cc.id)));
 		}
+
+		return Void();
 	}
 	void recruit(ClusterControllerData& cc) const {
 		cc.lastRecruitTime = now();
 		cc.recruitBlobManager.set(true);
 	}
 
-	void haltBlobGranules(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
+	Future<Void> haltBlobGranules(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
-			cc.id_worker[pid].haltBlobManager =
-			    brokenPromiseToNever(interface.get().haltBlobGranules.getReply(HaltBlobGranulesRequest(cc.id)));
+			return brokenPromiseToNever(interface.get().haltBlobGranules.getReply(HaltBlobGranulesRequest(cc.id)));
 		}
+
+		return Void();
 	}
 };
 
@@ -163,12 +170,13 @@ struct BlobMigratorSingleton : Singleton<BlobMigratorInterface> {
 			cc.db.setBlobMigrator(interface.get());
 		}
 	}
-	void halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
+	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
 			TraceEvent("CCMG_Halt", cc.id).detail("Id", interface.get().id());
-			cc.id_worker[pid].haltBlobMigrator =
-			    brokenPromiseToNever(interface.get().haltBlobMigrator.getReply(HaltBlobMigratorRequest(cc.id)));
+			return brokenPromiseToNever(interface.get().haltBlobMigrator.getReply(HaltBlobMigratorRequest(cc.id)));
 		}
+
+		return Void();
 	}
 	void recruit(ClusterControllerData& cc) const {
 		cc.lastRecruitTime = now();
@@ -189,11 +197,13 @@ struct EncryptKeyProxySingleton : Singleton<EncryptKeyProxyInterface> {
 			cc.db.setEncryptKeyProxy(interface.get());
 		}
 	}
-	void halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
+	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present() && cc.id_worker.count(pid)) {
-			cc.id_worker[pid].haltEncryptKeyProxy =
-			    brokenPromiseToNever(interface.get().haltEncryptKeyProxy.getReply(HaltEncryptKeyProxyRequest(cc.id)));
+			return brokenPromiseToNever(
+			    interface.get().haltEncryptKeyProxy.getReply(HaltEncryptKeyProxyRequest(cc.id)));
 		}
+
+		return Void();
 	}
 	void recruit(ClusterControllerData& cc) const {
 		cc.lastRecruitTime = now();

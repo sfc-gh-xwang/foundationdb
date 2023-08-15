@@ -228,11 +228,17 @@ struct ClientTrCommitCostEstimation {
 
 struct CommitTransactionRequest : TimedRequest {
 	constexpr static FileIdentifier file_identifier = 93948;
-	enum { FLAG_IS_LOCK_AWARE = 0x1, FLAG_FIRST_IN_BATCH = 0x2, FLAG_BYPASS_STORAGE_QUOTA = 0x4 };
+	enum {
+		FLAG_IS_LOCK_AWARE = 0x1,
+		FLAG_FIRST_IN_BATCH = 0x2,
+		FLAG_BYPASS_STORAGE_QUOTA = 0x4,
+		FLAG_BYPASS_RANGE_LOCK = 0x8 // SOMEDAY: This flag is unused yet. We add this flag for reserve the bit.
+	};
 
 	bool isLockAware() const { return (flags & FLAG_IS_LOCK_AWARE) != 0; }
 	bool firstInBatch() const { return (flags & FLAG_FIRST_IN_BATCH) != 0; }
 	bool bypassStorageQuota() const { return (flags & FLAG_BYPASS_STORAGE_QUOTA) != 0; }
+	bool bypassRangeLock() const { return (flags & FLAG_BYPASS_RANGE_LOCK) != 0; }
 
 	Arena arena;
 	SpanContext spanContext;
