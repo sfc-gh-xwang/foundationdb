@@ -46,7 +46,7 @@ AddTest testGetKey("BasicGetKey", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-key-");
 	auto tr = env.newNormalOrTenantTransaction();
 
-	populateDBData(tr, applyKeyPrefix(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
 
 	tr = env.newNormalOrTenantTransaction();
 	auto f = runToCompletion(
@@ -65,7 +65,7 @@ AddTest testGetKey("BasicGetKey", ALL, [](const TestEnv& env) {
 AddTest testGetValue("BasicGetValue", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-value-");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 
 	tr = env.newNormalOrTenantTransaction();
 	auto f = runToCompletion(
@@ -78,7 +78,7 @@ AddTest testGetStringArray("GetKeyAddress", asTrustedClient, [](const TestEnv& e
 	// Access of key address is protected from the tenant use case. Thus only trusted client case is tested.
 	const std::string prefix("combify-get-string-array-");
 	auto db = env.newDatabase();
-	populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
+	insertAll(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 	auto tr = env.newTransaction(db);
 	auto f = runToCompletion(
 	    tr, [&prefix](auto tr) { return tr.getAddressForKey(fdb::toBytesRef(prefix + "foo")); }, "GetKeyAddress");
@@ -219,7 +219,7 @@ AddTest testGetKeyValueArray("GetRange", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-key-value-array-");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, data);
+	insertAll(tr, data);
 
 	// The following use cases are tested for getRange
 	// 1) FDB_STREAMING_MODE_WANT_ALL + no limit.
@@ -285,7 +285,7 @@ AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-clear-key-");
 	auto tr = env.newNormalOrTenantTransaction();
 
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 
 	tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
@@ -435,7 +435,7 @@ AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	//
 	const std::string prefix("combify-atomic-op-bit-and");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "c" }, { "baz", "abc" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "c" }, { "baz", "abc" } }));
 	auto fooKey = prefix + "foo";
 	auto barKey = prefix + "bar";
 	auto bazKey = prefix + "baz";
@@ -507,7 +507,7 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 	//
 	const std::string prefix("combify-atomic-op-bit-or");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
 	auto fooKey = prefix + "foo";
 	auto barKey = prefix + "bar";
 	auto bazKey = prefix + "baz";
@@ -551,7 +551,7 @@ AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const Tes
 	// comparison.
 	const std::string prefix("combify-atomic-op-compare-and-clear-");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "bar" }, { "fdb", "foundation" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "bar" }, { "fdb", "foundation" } }));
 
 	tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
@@ -578,7 +578,7 @@ AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const Tes
 AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-atomic-op-mutation-type-max-");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
 
 	tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
@@ -614,7 +614,7 @@ AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const Tes
 AddTest testAtomicOpMutationTypeMin("AtomicOpMutationTypeMin", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-atomic-op-mutation-type-min-");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
 
 	tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
@@ -652,7 +652,7 @@ AddTest testAtomicOpMutationTypeByteMax("AtomicOpMutationTypeByteMax", ALL, [](c
 	// extended/truncated so lengths match.
 	const std::string prefix("combify-atomic-op-mutation-type-byte-max-");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
 
 	tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
@@ -688,7 +688,7 @@ AddTest testAtomicOpMutationTypeByteMin("AtomicOpMutationTypeByteMin", ALL, [](c
 	// extended/truncated so lengths match.
 	const std::string prefix("combify-atomic-op-mutation-type-byte-min-");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
 
 	tr = env.newNormalOrTenantTransaction();
 	runToCompletion(
@@ -908,7 +908,7 @@ AddTest testTransactionMaxWatches("TransactionMaxWatches", asTrustedClient, [](c
 AddTest testTransactionWatch("TransactionWatch", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-transaction-watch-");
 	auto tr = env.newNormalOrTenantTransaction();
-	populateDBData(tr, applyKeyPrefix(prefix, { { "foo", "foo" } }));
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "foo" } }));
 
 	auto db = env.newDatabase();
 	tr = env.newNormalOrTenantTransaction();
@@ -927,7 +927,7 @@ AddTest testTransactionWatch("TransactionWatch", asTrustedClient, [](const TestE
 
 		    f1.then([&sem](fdb::Future f) { sem.release(); });
 		    // Update value for key "foo" to trigger the watch.
-		    populateDBData(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
+		    insertAll(db, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 		    sem.acquire();
 
 		    return static_cast<fdb::Future>(f1);

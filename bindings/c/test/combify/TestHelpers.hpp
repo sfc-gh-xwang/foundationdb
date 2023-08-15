@@ -118,7 +118,7 @@ inline auto setupAndStartNetworkGuarded() {
 	});
 }
 
-inline void populateDBData(fdb::Transaction tr, const std::vector<std::pair<std::string, std::string>>& data) {
+inline void insertAll(fdb::Transaction tr, const std::vector<std::pair<std::string, std::string>>& data) {
 	runToCompletion(
 	    tr,
 	    [&data](auto tr) {
@@ -131,8 +131,8 @@ inline void populateDBData(fdb::Transaction tr, const std::vector<std::pair<std:
 	    "PopulateDBData");
 }
 
-inline void populateDBData(fdb::Database db, const std::vector<std::pair<std::string, std::string>>& data) {
-	return populateDBData(db.createTransaction(), data);
+inline void insertAll(fdb::Database db, const std::vector<std::pair<std::string, std::string>>& data) {
+	return insertAll(db.createTransaction(), data);
 }
 
 } // namespace combify
