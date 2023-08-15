@@ -160,9 +160,10 @@ public:
 	string tokenForTenant(fdb::BytesRef tenantName) const;
 
 	// Returns a DB transaction for trustedClient and a tenant transaction for untrusted client.
-	// For simplicity, when tenant transaction is used, the first tenant is always used, allowing
-	// the caller to use this function to read its own writes. For advanced use case when testing
-	// multi-tenant case, consider using tenantByIndex and newTenantTransaction methods.
+	// If there is no tenant, return a DB transaction. For simplicity, when tenant transaction
+	// is used, the first tenant is always used, allowing the caller to use this function to read
+	// its own writes. For advanced use case when testing multi-tenant case, consider using tenant
+	// ByIndex and newTenantTransaction methods.
 	fdb::Transaction newNormalOrTenantTransaction() const;
 };
 

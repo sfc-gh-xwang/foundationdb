@@ -520,7 +520,7 @@ fdb::Transaction TestEnv::newNormalOrTenantTransaction() const {
 		return newTransaction(db);
 	}
 
-	// Otherwise, create a transaction from the first tenant	
+	// Otherwise, create a transaction from the first tenant
 	return newTenantTransaction(db, tenants[0].first);
 }
 
