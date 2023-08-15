@@ -214,69 +214,168 @@ AddTest testReadYourWritesSnapshotRYW("ReadYourWritesSnapshotRYWEnabled", ALL, [
 	ASSERT(f.get().value() == "bar"_br, "unmatched read value: expected=bar, actual={}", fdb::toCharsRef(f.get()));
 });
 
-AddTest testGetKeyValueArray("GetRange", ALL, [](const TestEnv& env) {
-	const std::string prefix("combify-get-key-value-array-");
+AddTest testGetRangeStreamingModeWantAllNoLimit("GetRangeStreamingModeWantAllNoLimit", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-get-range-streaming-mode-want-all-no-limit-");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
 	auto tr = env.newNormalOrTenantTransaction();
 	insertAll(tr, data);
 
-	// The following use cases are tested for getRange
-	// 1) FDB_STREAMING_MODE_WANT_ALL + no limit.
-	// 2) FDB_STREAMING_MODE_WANT_ALL + no limit + reverse order
-	// 3) FDB_STREAMING_MODE_WANT_ALL + limit = 2
-	// 4) FDB_STREAMING_MODE_EXACT + limit = 3
-	for (auto const& testConfigs : { std::make_tuple(false, FDB_STREAMING_MODE_WANT_ALL, 0),
-	                                 std::make_tuple(true, FDB_STREAMING_MODE_WANT_ALL, 0),
-	                                 std::make_tuple(false, FDB_STREAMING_MODE_WANT_ALL, 2),
-	                                 std::make_tuple(false, FDB_STREAMING_MODE_EXACT, 3) }) {
-		tr = env.newNormalOrTenantTransaction();
-		auto f = runToCompletion(
-		    tr,
-		    [&prefix, &testConfigs](auto tr) {
-			    auto const [reverse, mode, limit] = testConfigs;
-			    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(prefix + "a")),
-			                       fdb::key_select::lastLessOrEqual(fdb::toBytesRef(prefix + "d"), 1),
-			                       /* limit */ limit,
-			                       /* target_bytes */ 0,
-			                       /* FDBStreamingMode */ mode,
-			                       /* iteration */ 0,
-			                       /* snapshot */ false,
-			                       /* reverse */ reverse);
-		    },
-		    "GetRange");
+	// FDB_STREAMING_MODE_WANT_ALL + no limit.
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(prefix + "a")),
+		                       fdb::key_select::lastLessOrEqual(fdb::toBytesRef(prefix + "d"), 1),
+		                       /* limit */ 0,
+		                       /* target_bytes */ 0,
+		                       /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
+		                       /* iteration */ 0,
+		                       /* snapshot */ false,
+		                       /* reverse */ false);
+	    },
+	    "GetRange");
 
-		auto const [reverse, mode, limit] = testConfigs;
-		auto [kvs, count, more] = f.get();
-		ASSERT(count > 0, "count is expected to be larger than zero");
+	auto [kvs, count, more] = f.get();
+	ASSERT(count > 0, "count is expected to be larger than zero");
 
-		auto expectedUpperBound = (int)data.size();
-		if (limit > 0) {
-			expectedUpperBound = std::min(limit, expectedUpperBound);
-		}
+	auto expectedUpperBound = (int)data.size();
+	ASSERT(count <= expectedUpperBound, "unmatched count: expected<={}, actual={}", expectedUpperBound, count);
+	if (count < expectedUpperBound) {
+		ASSERT(more, "more is expected to be true if count < {}", expectedUpperBound);
+	}
 
-		if (mode == FDB_STREAMING_MODE_EXACT) {
-			ASSERT(count == limit, "unmatched count: expected={}, actual={}", limit, count);
-		} else {
-			ASSERT(count <= expectedUpperBound, "unmatched count: expected<={}, actual={}", expectedUpperBound, count);
-			if (count < expectedUpperBound) {
-				ASSERT(more, "more is expected to be true if count < {}", expectedUpperBound);
-			}
-		}
+	auto dataIdx = 0;
+	for (int i = 0; i < count; i++) {
+		auto kv = *kvs++;
+		auto key = std::string(kv.key().begin(), kv.key().end());
+		auto value = std::string(kv.value().begin(), kv.value().end());
+		auto& d = data[dataIdx++];
+		ASSERT(d.first == key, "unmatched key, expected={}, actual={}", d.first, key);
+		ASSERT(d.second == value, "unmatched value, expected={}, actual={}", d.second, value);
+	}
+});
 
-		auto dataIdx = reverse ? data.size() - 1 : 0;
-		for (int i = 0; i < count; i++) {
-			auto kv = *kvs++;
-			auto key = std::string(kv.key().begin(), kv.key().end());
-			auto value = std::string(kv.value().begin(), kv.value().end());
-			auto& d = data[dataIdx];
-			ASSERT(d.first == key, "unmatched key, expected={}, actual={}", d.first, key);
-			ASSERT(d.second == value, "unmatched value, expected={}, actual={}", d.second, value);
-			if (reverse) {
-				dataIdx--;
-			} else {
-				dataIdx++;
-			}
-		}
+AddTest testGetRangeStreamingModeWantAllNoLimitReverse(
+    "GetRangeStreamingModeWantAllNoLimitReverse",
+    ALL,
+    [](const TestEnv& env) {
+	    const std::string prefix("combify-get-range-streaming-mode-want-all-no-limit-reverse-");
+	    auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
+	    auto tr = env.newNormalOrTenantTransaction();
+	    insertAll(tr, data);
+
+	    // FDB_STREAMING_MODE_WANT_ALL + no limit + reverse order
+	    tr = env.newNormalOrTenantTransaction();
+	    auto f = runToCompletion(
+	        tr,
+	        [&prefix](auto tr) {
+		        return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(prefix + "a")),
+		                           fdb::key_select::lastLessOrEqual(fdb::toBytesRef(prefix + "d"), 1),
+		                           /* limit */ 0,
+		                           /* target_bytes */ 0,
+		                           /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
+		                           /* iteration */ 0,
+		                           /* snapshot */ false,
+		                           /* reverse */ true);
+	        },
+	        "GetRange");
+
+	    auto [kvs, count, more] = f.get();
+	    ASSERT(count > 0, "count is expected to be larger than zero");
+
+	    auto expectedUpperBound = (int)data.size();
+	    ASSERT(count <= expectedUpperBound, "unmatched count: expected<={}, actual={}", expectedUpperBound, count);
+	    if (count < expectedUpperBound) {
+		    ASSERT(more, "more is expected to be true if count < {}", expectedUpperBound);
+	    }
+
+	    auto dataIdx = data.size() - 1;
+	    for (int i = 0; i < count; i++) {
+		    auto kv = *kvs++;
+		    auto key = std::string(kv.key().begin(), kv.key().end());
+		    auto value = std::string(kv.value().begin(), kv.value().end());
+		    auto& d = data[dataIdx--];
+		    ASSERT(d.first == key, "unmatched key, expected={}, actual={}", d.first, key);
+		    ASSERT(d.second == value, "unmatched value, expected={}, actual={}", d.second, value);
+	    }
+    });
+
+AddTest testGetRangeStreamingModeWantAllWithLimit("GetRangeStreamingModeWantAllWithLimit", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-get-range-streaming-mode-want-all-with-limit-");
+	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
+	auto tr = env.newNormalOrTenantTransaction();
+	insertAll(tr, data);
+
+	// FDB_STREAMING_MODE_WANT_ALL + limit = 2
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(prefix + "a")),
+		                       fdb::key_select::lastLessOrEqual(fdb::toBytesRef(prefix + "d"), 1),
+		                       /* limit */ 2,
+		                       /* target_bytes */ 0,
+		                       /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
+		                       /* iteration */ 0,
+		                       /* snapshot */ false,
+		                       /* reverse */ false);
+	    },
+	    "GetRange");
+
+	auto [kvs, count, more] = f.get();
+	auto expectedUpperBound = (int)data.size();
+
+	ASSERT(count > 0, "count is expected to be larger than zero");
+	ASSERT(count <= expectedUpperBound, "unmatched count: expected<={}, actual={}", expectedUpperBound, count);
+	if (count < expectedUpperBound) {
+		ASSERT(more, "more is expected to be true if count < {}", expectedUpperBound);
+	}
+
+	auto dataIdx = 0;
+	for (int i = 0; i < count; i++) {
+		auto kv = *kvs++;
+		auto key = std::string(kv.key().begin(), kv.key().end());
+		auto value = std::string(kv.value().begin(), kv.value().end());
+		auto& d = data[dataIdx++];
+		ASSERT(d.first == key, "unmatched key, expected={}, actual={}", d.first, key);
+		ASSERT(d.second == value, "unmatched value, expected={}, actual={}", d.second, value);
+	}
+});
+
+AddTest testGetRangeStreamingModeExactWithLimit("GetRangeStreamingModeExactWithLimit", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-get-range-streaming-mode-exact-with-limit-");
+	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
+	auto tr = env.newNormalOrTenantTransaction();
+	insertAll(tr, data);
+
+	// FDB_STREAMING_MODE_EXACT + limit = 3
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [&prefix](auto tr) {
+		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(prefix + "a")),
+		                       fdb::key_select::lastLessOrEqual(fdb::toBytesRef(prefix + "d"), 1),
+		                       /* limit */ 3,
+		                       /* target_bytes */ 0,
+		                       /* FDBStreamingMode */ FDB_STREAMING_MODE_EXACT,
+		                       /* iteration */ 0,
+		                       /* snapshot */ false,
+		                       /* reverse */ false);
+	    },
+	    "GetRange");
+
+	auto [kvs, count, more] = f.get();
+	ASSERT(count == 3, "unmatched count: expected=3, actual={}", count);
+
+	auto dataIdx = 0;
+	for (int i = 0; i < count; i++) {
+		auto kv = *kvs++;
+		auto key = std::string(kv.key().begin(), kv.key().end());
+		auto value = std::string(kv.value().begin(), kv.value().end());
+		auto& d = data[dataIdx++];
+		ASSERT(d.first == key, "unmatched key, expected={}, actual={}", d.first, key);
+		ASSERT(d.second == value, "unmatched value, expected={}, actual={}", d.second, value);
 	}
 });
 
