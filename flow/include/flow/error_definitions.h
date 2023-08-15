@@ -227,6 +227,7 @@ ERROR( failed_to_restore_checkpoint, 2047, "Failed to restore a checkpoint" )
 ERROR( failed_to_create_checkpoint_shard_metadata, 2048, "Failed to dump shard metadata for a checkpoint to a sst file" )
 ERROR( address_parse_error, 2049, "Failed to parse address" )
 ERROR( unknown_api_request, 2050, "Unknown API request received" )
+ERROR( api_not_implemented, 2051, "The API exists but its implementation is incomplete" )
 
 ERROR( incompatible_protocol_version, 2100, "Incompatible protocol version" )
 ERROR( transaction_too_large, 2101, "Transaction exceeds byte limit" )
@@ -381,6 +382,7 @@ ERROR( bulk_load_range_conflict, 2602, "Bulk load for key range already in progr
 ERROR( bulk_load_cleanup_failed, 2603, "Bulk load could not clean up because it is still in progress");
 ERROR( bulk_load_not_found, 2604, "Bulk load ID not found" );
 ERROR( bulk_load_range_not_empty, 2605, "Bulk load for key range already in progress" );
+
 
 // Bulk load file operations errors
 ERROR( bulk_load_file_id_not_found , 2620, "No file id for the given bulk load id exists");
