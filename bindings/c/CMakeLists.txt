@@ -284,6 +284,11 @@ else()
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py ${CMAKE_BINARY_DIR}
     TEST_TIMEOUT 300
   )
+  add_python_venv_test(
+    NAME fdb_c_bulk_load_test
+    COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/bulk_load.py --build-dir ${CMAKE_BINARY_DIR}
+    TEST_TIMEOUT 300
+  )
   add_unavailable_fdbclient_test(
     NAME disconnected_timeout_unit_tests
     COMMAND $<TARGET_FILE:disconnected_timeout_unit_tests>
