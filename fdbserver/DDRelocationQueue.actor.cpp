@@ -597,9 +597,7 @@ DDQueue::DDQueue(DDQueueInitParams const& params)
     movedKeyServersEventHolder(makeReference<EventCacheHolder>("MovedKeyServers")),
     moveReusePhysicalShard(0),
     moveCreateNewPhysicalShard(0),
-    retryFindDstReasonCount(static_cast<int>(RetryFindDstReason::NumberOfTypes), 0),
-    relocateTotalCount(0),
-    relocateToSourceCount(0) {}
+    retryFindDstReasonCount(static_cast<int>(RetryFindDstReason::NumberOfTypes), 0) {}
 
 void DDQueue::startRelocation(int priority, int healthPriority) {
 	// Although PRIORITY_TEAM_REDUNDANT has lower priority than split and merge shard movement,
@@ -1919,9 +1917,9 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 					// In the case of merge, rd.completeSources would be the intersection set of two source server
 					// lists, while rd.src would be the union set.
 					const int nonOverlappingCount = nonOverlappedServerCount(rd.completeSources, destIds);
-					self->relocateTotalCount++;
+					self->relocateTotalCount.addSample(1);
 					if (nonOverlappingCount == 0) {
-						self->relocateToSourceCount++;
+						self->relocateToSourceCount.addSample(1);
 					}
 					self->bytesWritten += metrics.bytes;
 					self->moveBytesRate.addSample(metrics.bytes * nonOverlappingCount);
@@ -2453,8 +2451,8 @@ struct DDQueueImpl {
 						    .detail("HighestPriority", highestPriorityRelocation)
 						    .detail("BytesWritten", self->moveBytesRate.getTotal())
 						    .detail("BytesWrittenAverageRate", self->moveBytesRate.getAverage())
-						    .detail("RelocatorTotalCount", self->relocateTotalCount)
-						    .detail("RelocatorToSourceTeamCount", self->relocateToSourceCount)
+						    .detail("RelocatorTotalRate", self->relocateTotalCount.getAverage())
+						    .detail("RelocatorToSourceTeamRate", self->relocateToSourceCount.getAverage())
 						    .detail("PriorityRecoverMove",
 						            self->priority_relocations[SERVER_KNOBS->PRIORITY_RECOVER_MOVE])
 						    .detail("PriorityRebalanceUnderutilizedTeam",

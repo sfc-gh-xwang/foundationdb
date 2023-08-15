@@ -111,8 +111,8 @@ struct AuthzSecurityWorkload : TestWorkload {
 	    crossTenantBGStreamPositive, crossTenantBGStreamNegative, crossTenantBGReadPositive, crossTenantBGReadNegative,
 	    crossTenantGetGranulesPositive, crossTenantGetGranulesNegative, blobbifyNegative, unblobbifyNegative,
 	    listBlobNegative, verifyBlobNegative, flushBlobNegative, purgeBlobNegative;
-	BulkLoadCounter bulkLoadStart, bulkLoadStateChange, bulkLoadCleanup, bulkLoadWaitComplete, bulkLoadFilesToWrite,
-	    bulkLoadFilesWritten;
+	BulkLoadCounter bulkLoadStart, bulkLoadStateChange, bulkLoadCleanup, bulkLoadWaitComplete, bulkLoadList,
+	    bulkLoadListAll, bulkLoadStatus, bulkLoadFilesToWrite, bulkLoadFilesWritten;
 	std::vector<std::function<Future<Void>(Database cx)>> testFunctions;
 	bool checkBlobGranules, checkBlobManagement, checkBulkLoad;
 
@@ -144,8 +144,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	    purgeBlobNegative("PurgeBlobNegative"),
 	    bulkLoadStart("Start", false),
 	    bulkLoadStateChange("StateChange"),
-	    bulkLoadCleanup("Cleanup"),
+	    bulkLoadCleanup("Cleanup", false),
 	    bulkLoadWaitComplete("WaitComplete"),
+	    bulkLoadList("List", false),
+	    bulkLoadListAll("List", false),
+	    bulkLoadStatus("Status"),
 	    bulkLoadFilesToWrite("FilesToWrite"),
 	    bulkLoadFilesWritten("FilesWritten") {
 		testDuration = getOption(options, "testDuration"_sr, 15.0);
@@ -216,6 +219,9 @@ struct AuthzSecurityWorkload : TestWorkload {
 			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadFilesToWrite(this, cx); });
 			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadFilesWritten(this, cx); });
 			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadWaitComplete(this, cx); });
+			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadList(this, cx); });
+			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadListAll(this, cx); });
+			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadStatus(this, cx); });
 		}
 	}
 
@@ -278,10 +284,18 @@ struct AuthzSecurityWorkload : TestWorkload {
 		CODE_PROBE(bulkLoadStateChange.tenantMismatch.getValue(), "AuthzSecurity bulkLoadStateChangeMismatch > 0");
 		CODE_PROBE(bulkLoadCleanup.positive.getValue(), "AuthzSecurity bulkLoadCleanupPositive > 0");
 		CODE_PROBE(bulkLoadCleanup.negative.getValue(), "AuthzSecurity bulkLoadCleanupNegative > 0");
-		CODE_PROBE(bulkLoadCleanup.tenantMismatch.getValue(), "AuthzSecurity bulkLoadCleanupMismatch > 0");
 		CODE_PROBE(bulkLoadWaitComplete.positive.getValue(), "AuthzSecurity bulkLoadWaitCompletePositive > 0");
 		CODE_PROBE(bulkLoadWaitComplete.negative.getValue(), "AuthzSecurity bulkLoadWaitCompleteNegative > 0");
 		CODE_PROBE(bulkLoadWaitComplete.tenantMismatch.getValue(), "AuthzSecurity bulkLoadWaitCompleteMismatch > 0");
+		CODE_PROBE(bulkLoadList.positive.getValue(), "AuthzSecurity bulkLoadListPositive > 0");
+		CODE_PROBE(bulkLoadList.negative.getValue(), "AuthzSecurity bulkLoadListNegative > 0");
+		CODE_PROBE(bulkLoadList.tenantMismatch.getValue(), "AuthzSecurity bulkLoadListMismatch > 0");
+		CODE_PROBE(bulkLoadListAll.positive.getValue(), "AuthzSecurity bulkLoadListAllPositive > 0");
+		CODE_PROBE(bulkLoadListAll.negative.getValue(), "AuthzSecurity bulkLoadListAllNegative > 0");
+		CODE_PROBE(bulkLoadListAll.tenantMismatch.getValue(), "AuthzSecurity bulkLoadListAllMismatch > 0");
+		CODE_PROBE(bulkLoadStatus.positive.getValue(), "AuthzSecurity bulkLoadStatusPositive > 0");
+		CODE_PROBE(bulkLoadStatus.negative.getValue(), "AuthzSecurity bulkLoadStatusNegative > 0");
+		CODE_PROBE(bulkLoadStatus.tenantMismatch.getValue(), "AuthzSecurity bulkLoadStatusMismatch > 0");
 		CODE_PROBE(bulkLoadFilesToWrite.positive.getValue(), "AuthzSecurity bulkLoadFilesToWritePositive > 0");
 		CODE_PROBE(bulkLoadFilesToWrite.negative.getValue(), "AuthzSecurity bulkLoadFilesToWriteNegative > 0");
 		CODE_PROBE(bulkLoadFilesToWrite.tenantMismatch.getValue(), "AuthzSecurity bulkLoadFilesToWriteMismatch > 0");
@@ -326,6 +340,9 @@ struct AuthzSecurityWorkload : TestWorkload {
 			bulkLoadStateChange.getMetrics(m);
 			bulkLoadCleanup.getMetrics(m);
 			bulkLoadWaitComplete.getMetrics(m);
+			bulkLoadList.getMetrics(m);
+			bulkLoadListAll.getMetrics(m);
+			bulkLoadStatus.getMetrics(m);
 			bulkLoadFilesToWrite.getMetrics(m);
 			bulkLoadFilesWritten.getMetrics(m);
 		}
@@ -679,11 +696,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                                               TenantInfo tenant,
 	                                                                               Version v) {
 		try {
-			GetBlobGranuleLocationsReply reply =
-			    wait(basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
-			                          &CommitProxyInterface::getBlobGranuleLocations,
-			                          GetBlobGranuleLocationsRequest(
-			                              SpanContext(), tenant, ""_sr, "\xff"_sr, 100, false, false, v, Arena())));
+			GetBlobGranuleLocationsReply reply = wait(
+			    basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
+			                     &CommitProxyInterface::getBlobGranuleLocations,
+			                     GetBlobGranuleLocationsRequest(
+			                         SpanContext(), tenant, ""_sr, "\xff"_sr, 100, false, false, v, false, Arena())));
 			return reply;
 		} catch (Error& e) {
 			if (e.code() == error_code_operation_cancelled) {
@@ -1055,19 +1072,18 @@ struct AuthzSecurityWorkload : TestWorkload {
 				    .detail("Case", "CrossTenantBulkLoad" + counter->baseName + "Allowed")
 				    .detail("Subcase", "Negative")
 				    .log();
-			}
-			if (outcome.get().code() == error_code_permission_denied) {
+			} else if (outcome.get().code() == error_code_permission_denied) {
 				++counter->negative;
 			}
 		} else if (testCase == BulkLoadTestCase::TENANT_MISMATCH) {
-			// Should always fail. Expected to return bulk_load_tenant_mismatch, but expected to occasionally fail with
+			// Should always fail. Expected to return bulk_load_not_found, but expected to occasionally fail with
 			// different errors
 			if (!outcome.present()) {
 				TraceEvent(SevError, "AuthzSecurityError")
 				    .detail("Case", "CrossTenantBulkLoad" + counter->baseName + "Allowed")
 				    .detail("Subcase", "Mismatch")
 				    .log();
-			} else if (outcome.get().code() == error_code_bulk_load_tenant_mismatch) {
+			} else if (outcome.get().code() == error_code_bulk_load_not_found) {
 				++counter->tenantMismatch;
 			} else if (outcome.get().code() == error_code_permission_denied) {
 				TraceEvent(SevError, "AuthzSecurityError")
@@ -1369,6 +1385,91 @@ struct AuthzSecurityWorkload : TestWorkload {
 		}
 		CODE_PROBE(true, "Authz security attempting bulk load wait complete");
 		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, tryBulkLoadWaitComplete, &self->bulkLoadWaitComplete));
+		return Void();
+	}
+
+	ACTOR static Future<Optional<Error>> tryBulkLoadList(AuthzSecurityWorkload* self,
+	                                                     Database cx,
+	                                                     Reference<Tenant> tenant,
+	                                                     KeyRange keyRange,
+	                                                     WipedString token,
+	                                                     BulkLoaderInterface interf) {
+		BulkLoadListRequest req;
+		req.tenantInfo = TenantInfo(tenant->id(), token);
+		req.onlyActive = true;
+		ErrorOr<BulkLoadListReply> rep = wait(interf.listRequest.tryGetReply(req));
+		if (rep.isError()) {
+			return rep.getError();
+		}
+		return Optional<Error>();
+	}
+
+	ACTOR static Future<Void> testRandomBulkLoadList(AuthzSecurityWorkload* self, Database cx) {
+		// create bulk load under first tenant.
+		state KeyRange keyRange = singleKeyRange(self->randomString());
+		bool createdLoad = wait(self->createBulkLoadForTest(self, cx, keyRange));
+		if (!createdLoad) {
+			return Void();
+		}
+		CODE_PROBE(true, "Authz security attempting bulk load list");
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, tryBulkLoadList, &self->bulkLoadList));
+		return Void();
+	}
+
+	ACTOR static Future<Optional<Error>> tryBulkLoadListAll(AuthzSecurityWorkload* self,
+	                                                        Database cx,
+	                                                        Reference<Tenant> tenant,
+	                                                        KeyRange keyRange,
+	                                                        WipedString token,
+	                                                        BulkLoaderInterface interf) {
+		BulkLoadListAllRequest req;
+		req.tenantInfo = TenantInfo(tenant->id(), token);
+		req.onlyActive = true;
+		ErrorOr<BulkLoadListReply> rep = wait(interf.listAllRequest.tryGetReply(req));
+		if (rep.isError()) {
+			return rep.getError();
+		}
+		return Optional<Error>();
+	}
+
+	ACTOR static Future<Void> testRandomBulkLoadListAll(AuthzSecurityWorkload* self, Database cx) {
+		// create bulk load under first tenant.
+		state KeyRange keyRange = singleKeyRange(self->randomString());
+		bool createdLoad = wait(self->createBulkLoadForTest(self, cx, keyRange));
+		if (!createdLoad) {
+			return Void();
+		}
+		CODE_PROBE(true, "Authz security attempting bulk load list all");
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, tryBulkLoadListAll, &self->bulkLoadListAll));
+		return Void();
+	}
+
+	ACTOR static Future<Optional<Error>> tryBulkLoadStatus(AuthzSecurityWorkload* self,
+	                                                       Database cx,
+	                                                       Reference<Tenant> tenant,
+	                                                       KeyRange keyRange,
+	                                                       WipedString token,
+	                                                       BulkLoaderInterface interf) {
+		BulkLoadStatusRequest req;
+		req.arena.dependsOn(keyRange.arena());
+		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.tenantInfo = TenantInfo(tenant->id(), token);
+		ErrorOr<BulkLoadStatusReply> rep = wait(interf.statusRequest.tryGetReply(req));
+		if (rep.isError()) {
+			return rep.getError();
+		}
+		return Optional<Error>();
+	}
+
+	ACTOR static Future<Void> testRandomBulkLoadStatus(AuthzSecurityWorkload* self, Database cx) {
+		// create bulk load under first tenant.
+		state KeyRange keyRange = singleKeyRange(self->randomString());
+		bool createdLoad = wait(self->createBulkLoadForTest(self, cx, keyRange));
+		if (!createdLoad) {
+			return Void();
+		}
+		CODE_PROBE(true, "Authz security attempting bulk load status");
+		wait(runAndCheckRandomBulkLoadOp(self, cx, keyRange, tryBulkLoadStatus, &self->bulkLoadStatus));
 		return Void();
 	}
 

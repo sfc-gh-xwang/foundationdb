@@ -285,6 +285,7 @@ public:
 	virtual void clogInterface(const IPAddress& ip, double seconds, ClogMode mode = ClogDefault) = 0;
 	virtual void clogPair(const IPAddress& from, const IPAddress& to, double seconds) = 0;
 	virtual void unclogPair(const IPAddress& from, const IPAddress& to) = 0;
+	virtual double lastClogged() const = 0;
 	virtual std::vector<ProcessInfo*> getAllProcesses() const = 0;
 	virtual ProcessInfo* getProcessByAddress(NetworkAddress const& address) = 0;
 	virtual MachineInfo* getMachineByNetworkAddress(NetworkAddress const& address) = 0;
@@ -336,6 +337,7 @@ public:
 	std::map<NetworkAddress, bool> corruptWorkerMap;
 	ConfigDBType configDBType;
 	bool blobGranulesEnabled;
+	std::unordered_set<int64_t> simEncryptKeyNotFoundIds;
 
 	// Used by workloads that perform reconfigurations
 	int testerCount;

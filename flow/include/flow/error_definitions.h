@@ -227,6 +227,7 @@ ERROR( failed_to_restore_checkpoint, 2047, "Failed to restore a checkpoint" )
 ERROR( failed_to_create_checkpoint_shard_metadata, 2048, "Failed to dump shard metadata for a checkpoint to a sst file" )
 ERROR( address_parse_error, 2049, "Failed to parse address" )
 ERROR( unknown_api_request, 2050, "Unknown API request received" )
+ERROR( api_not_implemented, 2051, "The API exists but its implementation is incomplete" )
 
 ERROR( incompatible_protocol_version, 2100, "Incompatible protocol version" )
 ERROR( transaction_too_large, 2101, "Transaction exceeds byte limit" )
@@ -256,6 +257,7 @@ ERROR( all_external_clients_failed, 2124, "All external clients have failed." )
 ERROR( incompatible_client, 2125, "None of the available clients match the protocol version of the cluster." )
 ERROR( too_many_grv_batchers, 2126, "The client is running too many concurrent GRV batchers" )
 ERROR( restart_update_stream, 2127, "Restart update stream" )
+ERROR( tls_required_error, 2128, "Plaintext connections are disabled. TLS is required." )
 
 ERROR( tenant_name_required, 2130, "Tenant name must be specified to access data in the cluster" )
 ERROR( tenant_not_found, 2131, "Tenant does not exist" )
@@ -271,6 +273,9 @@ ERROR( cluster_no_capacity, 2141, "Cluster does not have capacity to perform the
 ERROR( tenant_removed, 2142, "The tenant was removed" )
 ERROR( invalid_tenant_state, 2143, "Operation cannot be applied to tenant in its current state" )
 ERROR( tenant_locked, 2144, "Tenant is locked" )
+ERROR( invalid_tenant_move, 2145, "The tenant movement is invalid" )
+ERROR( tenant_move_failed, 2146, "The tenant movement failed internally but can be retried" )
+ERROR( tenant_move_record_missing, 2147, "There is no tenant movement in progress with the given specifications")
 
 ERROR( invalid_cluster_name, 2160, "Data cluster name cannot begin with \\xff" )
 ERROR( invalid_metacluster_operation, 2161, "Metacluster operation performed on non-metacluster" )
@@ -377,7 +382,7 @@ ERROR( bulk_load_range_conflict, 2602, "Bulk load for key range already in progr
 ERROR( bulk_load_cleanup_failed, 2603, "Bulk load could not clean up because it is still in progress");
 ERROR( bulk_load_not_found, 2604, "Bulk load ID not found" );
 ERROR( bulk_load_range_not_empty, 2605, "Bulk load for key range already in progress" );
-ERROR( bulk_load_tenant_mismatch, 2606, "Bulk load id is for a different tenant" );
+
 
 // Bulk load file operations errors
 ERROR( bulk_load_file_id_not_found , 2620, "No file id for the given bulk load id exists");
@@ -404,6 +409,13 @@ ERROR( encrypt_unsupported, 2709, "Encryption not supported" )
 ERROR( encrypt_mode_mismatch, 2710, "Encryption mode mismatch with configuration")
 ERROR( encrypt_key_check_value_mismatch, 2711, "Encryption key-check-value mismatch")
 ERROR( encrypt_max_base_cipher_len, 2712, "Max BaseCipher buffer length violation")
+
+// 28XX - range lock related errors
+ERROR(range_lock_limit_exceeded, 2800, "Too many active range locks");
+ERROR(illegal_locked_range_access, 2801, "Attempt to access a locked range")
+ERROR(illegal_range_lock_param, 2802, "Attempt to lock system key, double lock a range, unmatched lockId etc.")
+ERROR(illegal_range_lock_operation, 2803, "Attempt to update range lock while update normal keys")
+
 
 // 4xxx Internal errors (those that should be generated only by bugs) are decimal 4xxx
 ERROR( unknown_error, 4000, "An unknown error occurred" )  // C++ exception not of type Error

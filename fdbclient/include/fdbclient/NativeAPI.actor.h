@@ -251,6 +251,7 @@ public:
 	Tenant(Database cx, TenantName name);
 	explicit Tenant(Database cx, int64_t id);
 	Tenant(Database cx, Future<TenantLookupInfo> tenantLookupFuture, Optional<TenantName> name);
+	Tenant(Database cx, TenantMapEntry entry);
 
 	static Tenant* allocateOnForeignThread() { return (Tenant*)Tenant::operator new(sizeof(Tenant)); }
 
@@ -260,14 +261,21 @@ public:
 	Optional<TenantGroupName> tenantGroup() const;
 	Future<TenantLookupInfo> getLookupFuture() const;
 	KeyRef prefix() const;
+	void setOption(FDBTenantOptions::Option option, Optional<StringRef> value = Optional<StringRef>());
 	std::string description() const;
 
 	Optional<TenantName> name;
+
+	const UniqueOrderedSensitiveOptionList<FDBTransactionOptions>& getSensitiveTransactionDefaults() const {
+		return sensitiveTransactionDefaults;
+	}
 
 private:
 	mutable int64_t bigEndianId = -1;
 	Future<TenantLookupInfo> lookupFuture;
 	Future<Database> dbFuture;
+
+	UniqueOrderedSensitiveOptionList<FDBTransactionOptions> sensitiveTransactionDefaults;
 };
 
 template <>
@@ -286,6 +294,7 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	Reference<TransactionLogInfo> trLogInfo;
 	TransactionOptions options;
 	Optional<ReadOptions> readOptions;
+	Optional<HybridReadOptions> hybridReadOptions;
 
 	TaskPriority taskID;
 	SpanContext spanContext;
@@ -554,6 +563,7 @@ public:
 		} else {
 			trState->readOptions = ReadOptions(dID);
 		}
+		trState->hybridReadOptions.withDefault(HybridReadOptions()).debugID = dID;
 	}
 	VersionVector getVersionVector() const;
 	SpanContext getSpanContext() const { return trState->spanContext; }

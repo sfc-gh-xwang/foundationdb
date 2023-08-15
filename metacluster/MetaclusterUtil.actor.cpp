@@ -109,9 +109,13 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
 				    return success(tr->get("\xff"_sr));
 			    }));
 		} else if (waitForDataClusterRegistration) {
-			while (simMetacluster.dataDbs[clusterName]->clientInfo->get().clusterType !=
-			       ClusterType::METACLUSTER_DATA) {
-				wait(simMetacluster.dataDbs[clusterName]->clientInfo->onChange());
+			loop {
+				Optional<DataClusterMetadata> metadata = wait(tryGetCluster(db.getReference(), clusterName));
+				if (metadata.present() && metadata.get().entry.clusterState == DataClusterState::READY) {
+					break;
+				}
+
+				wait(delay(1.0));
 			}
 		}
 	}

@@ -295,6 +295,7 @@ public:
 
 	bool currentDeliveryPeerIsTrusted() const;
 	NetworkAddress currentDeliveryPeerAddress() const;
+	UID currentDeliveryPeerDebugID() const;
 
 	Optional<PublicKey> getPublicKeyByName(StringRef name) const;
 	// Adds or replaces a public key

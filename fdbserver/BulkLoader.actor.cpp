@@ -39,7 +39,6 @@ bool canReplyWith(const Error& e) {
 	switch (e.code()) {
 	case error_code_bulk_load_not_found:
 	case error_code_bulk_load_not_registering_files:
-	case error_code_bulk_load_tenant_mismatch:
 	case error_code_bulk_load_file_id_not_found:
 	case error_code_bulk_load_invalid_file_metadata:
 	case error_code_bulk_load_aborted:
@@ -50,6 +49,7 @@ bool canReplyWith(const Error& e) {
 	case error_code_bulk_load_create_too_old:
 	case error_code_bulk_load_file_missing:
 	case error_code_bulk_load_cannot_validate_file:
+	case error_code_api_not_implemented:
 		return true;
 	default:
 		return false;
@@ -57,8 +57,8 @@ bool canReplyWith(const Error& e) {
 }
 
 // checks that load id exists and is in the STARTED state where it can load files
-ACTOR Future<Void> checkCanLoadFiles(Reference<ReadYourWritesTransaction> tr, BulkLoadID id) {
-	Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, id));
+ACTOR Future<Void> checkCanLoadFiles(Reference<ReadYourWritesTransaction> tr, BulkLoadIDKey idKey) {
+	Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
 	if (!status.present()) {
 		throw bulk_load_not_found();
 	}
@@ -71,30 +71,21 @@ ACTOR Future<Void> checkCanLoadFiles(Reference<ReadYourWritesTransaction> tr, Bu
 // FIXME: could cache initial state for bulk loads. Still want to do the validation with the transaction that the load
 // is still happening when actually doing the operations though
 ACTOR Future<Void> loadInitialState(Reference<ReadYourWritesTransaction> tr,
-                                    BulkLoadID id,
-                                    TenantInfo tenant,
+                                    BulkLoadIDKey idKey,
                                     BulkLoadInfo* info,
                                     Version* version) {
-	wait(checkCanLoadFiles(tr, id));
-	state Future<Optional<Versionstamp>> versionF = BulkLoadMetadata::versionMap().get(tr, id);
-	state Future<Optional<BulkLoadInfo>> infoF = BulkLoadMetadata::infoMap().get(tr, id);
+	wait(checkCanLoadFiles(tr, idKey));
+	state Future<Optional<Versionstamp>> versionF = BulkLoadMetadata::versionMap().get(tr, idKey);
+	state Future<Optional<BulkLoadInfo>> infoF = BulkLoadMetadata::infoMap().get(tr, idKey);
 	wait(success(versionF) && success(infoF));
 
 	*info = infoF.get().get();
 	*version = versionF.get().get().version;
 
-	if (info->tenantId != tenant.tenantId) {
-		TraceEvent("BulkLoadTenantMismatch")
-		    .detail("BulkLoadID", id)
-		    .detail("KnownTenantId", info->tenantId)
-		    .detail("ProvidedTenantId", tenant.tenantId);
-		throw bulk_load_tenant_mismatch();
-	}
-
 	if (DBG_BL_REQUEST) {
 		fmt::print("BL: {0} Loaded inital state: {1} [{2} - {3}) @ {4}\n",
-		           id.printable(),
-		           info->tenantId,
+		           idKey.second.printable(),
+		           idKey.first,
 		           info->keyRange.begin.printable(),
 		           info->keyRange.end.printable(),
 		           *version);
@@ -128,6 +119,7 @@ BulkLoadFileID uidToFileID(UID id) {
 
 std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> self,
                                                      Reference<BlobConnectionProvider> bstore,
+                                                     Optional<Key> tenantPrefix,
                                                      Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx,
                                                      Optional<BlobGranuleCipherKeysMeta> cipherKeysMeta,
                                                      Version version,
@@ -146,7 +138,9 @@ std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> s
 
 		fp.dbState.filename = filename;
 		fp.dbState.type = BulkLoadFileType::SNAPSHOT;
-		fp.dbState.cipherKeysMetaRef = cipherKeysMeta;
+		if (cipherKeysMeta.present()) {
+			fp.dbState.cipherKeysMetaRef = BlobGranuleCipherKeysMetaRef(arena, cipherKeysMeta.get());
+		}
 
 		Standalone<StringRef> fileId = uidToFileID(fileUID);
 		arena.dependsOn(fileId.arena());
@@ -154,6 +148,10 @@ std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> s
 
 		fp.response.fileName = filename;
 		fp.response.targetSize = SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES;
+		if (tenantPrefix.present()) {
+			arena.dependsOn(tenantPrefix->arena());
+			fp.response.tenantPrefix = tenantPrefix.get();
+		}
 		fp.response.cipherKeysCtx = cipherKeysCtx;
 		fp.response.type = BulkLoadFileType::SNAPSHOT;
 		fp.response.format = BulkLoadFileFormat::ROW_V1;
@@ -170,6 +168,7 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
                                              BulkLoadFilesToWriteRequest req) {
 	state BulkLoadFilesToWriteReply rep;
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);
+	state BulkLoadIDKey idKey = { req.tenantInfo.tenantId, req.id };
 
 	// downgrade priority since this is likely LoadBalancedEndpoint
 	wait(delay(0, TaskPriority::DefaultEndpoint));
@@ -190,7 +189,7 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-				wait(loadInitialState(tr, req.id, req.tenantInfo, &info, &version));
+				wait(loadInitialState(tr, idKey, &info, &version));
 				break;
 			} catch (Error& e) {
 				if (DBG_BL_REQUEST) {
@@ -208,7 +207,12 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 			tr->reset();
 		}
 
-		state KeyRange physicalRange = info.getPhysicalKeyRange();
+		state Optional<Key> tenantPrefix;
+		state KeyRange physicalRange = info.keyRange;
+		if (idKey.first != TenantInfo::INVALID_TENANT) {
+			tenantPrefix = TenantAPI::idToPrefix(idKey.first);
+			physicalRange = physicalRange.withPrefix(tenantPrefix.get());
+		}
 
 		// before creating file pointers, load metadata and encryption keys for tenant
 		state Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
@@ -259,8 +263,8 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 			}
 
 			int batchSize = getFilePointerBatchSize(req.count - rep.filePointers.size());
-			state std::vector<CandidateFilePointer> candidateFilePointers =
-			    createFilePointers(self, bstore, cipherKeysCtx, cipherKeysMeta, version, batchSize, rep.arena);
+			state std::vector<CandidateFilePointer> candidateFilePointers = createFilePointers(
+			    self, bstore, tenantPrefix, cipherKeysCtx, cipherKeysMeta, version, batchSize, rep.arena);
 			wait(yield());
 
 			// try to commit file pointers to db
@@ -275,7 +279,7 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 					tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 					tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-					wait(checkCanLoadFiles(tr, req.id));
+					wait(checkCanLoadFiles(tr, idKey));
 
 					for (int i = 0; i < candidateFilePointers.size(); i++) {
 						auto& fp = candidateFilePointers[i];
@@ -339,38 +343,105 @@ ACTOR Future<Void> handleFilesToWriteRequest(Reference<BulkLoaderData> self,
 }
 
 ACTOR Future<Void> validateBlobPointer(Reference<BulkLoaderData> self,
+                                       Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                        BulkLoadID id,
                                        BulkLoadInfo info,
                                        Reference<BlobConnectionProvider> bstore,
                                        BulkLoadWrittenFileRef file,
-                                       StringRef filename) {
+                                       Optional<Key> tenantPrefix,
+                                       BulkLoadMetadata::CreatedFilePointerRef created) {
+	if (SERVER_KNOBS->BULK_LOAD_FILE_VALIDATION_LEVEL <= static_cast<int>(BulkLoadFileValidationLevel::NONE)) {
+		return Void();
+	}
 	wait(self->fileValidationLock.take());
 	state FlowLock::Releaser holdingLock(self->fileValidationLock);
 	wait(delay(0, TaskPriority::BulkLoaderValidateFiles));
 
-	// FIXME: add configurable validation level { NONE, EXISTS, DATA };
-
 	try {
-		std::string fname = filename.toString();
+		std::string fname = created.filename.toString();
 		state Reference<BackupContainerFileSystem> blobConn = bstore->getForAccess(fname);
 		state Reference<IAsyncFile> reader = wait(blobConn->readFile(fname));
-		state Future<int64_t> sizeF = reader->size();
-		// read 1 byte from file to make sure it exists
-		state uint8_t data;
-		int readSize = wait(reader->read(&data, 1, 0));
-		ASSERT(readSize == 1);
-		int64_t size = wait(sizeF);
-		if (size != file.physicalSize) {
+		state int64_t fileSize = wait(reader->size());
+
+		if (fileSize != file.physicalSize) {
 			TraceEvent("BulkLoadInvalidFileSize")
 			    .detail("LoadID", id)
 			    .detail("FileID", file.fileId)
 			    .detail("UserProvidedSize", file.physicalSize)
-			    .detail("ActualSize", size);
+			    .detail("ActualSize", fileSize);
 			throw bulk_load_invalid_file_metadata();
 		}
+
+		// sometimes do randomly as sanity check even if not set
+		// TODO: knob for random sanity check level
+		// FIXME: better approach would be to always do this for at least 1 file in each bulk load
+		if (SERVER_KNOBS->BULK_LOAD_FILE_VALIDATION_LEVEL >= static_cast<int>(BulkLoadFileValidationLevel::DATA) ||
+		    EXPENSIVE_VALIDATION || deterministicRandom()->random01() < 0.01) {
+			CODE_PROBE(true, "bulk load validating whole file");
+			state Arena arena;
+			state uint8_t* data = new (arena) uint8_t[fileSize];
+			state Future<BlobGranuleCipherKeysCtx> cipherKeysF =
+			    (created.cipherKeysMetaRef.present())
+			        ? getGranuleCipherKeysFromKeysMetaRef(dbInfo, created.cipherKeysMetaRef.get(), &arena)
+			        : Never();
+
+			int readSize = wait(reader->read(data, fileSize, 0));
+			ASSERT(fileSize == readSize);
+
+			state Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
+			if (created.cipherKeysMetaRef.present()) {
+				BlobGranuleCipherKeysCtx cipherKeysCtx_ = wait(cipherKeysF);
+				cipherKeysCtx = cipherKeysCtx_;
+			}
+			StringRef dataRef(data, fileSize);
+			Optional<KeyRef> tenantPrefixRef;
+			if (tenantPrefix.present()) {
+				tenantPrefixRef = Optional<KeyRef>(tenantPrefix.get());
+			}
+			RangeResult kvPairs = bgReadSnapshotFile(dataRef, tenantPrefixRef, cipherKeysCtx, normalKeys);
+
+			// FIXME: throw exception if invalid instead of asserting for all of these
+			ASSERT(!kvPairs.empty());
+			if (kvPairs.front().key < file.keyRange.begin || kvPairs.back().key >= file.keyRange.end) {
+				fmt::print("ERROR: invalid bulk load snapshot data.\n");
+				fmt::print(
+				    "  File Range: [{0} - {1})\n", file.keyRange.begin.printable(), file.keyRange.end.printable());
+				fmt::print(
+				    "  Data Range: [{0} - {1})\n", kvPairs.front().key.printable(), kvPairs.back().key.printable());
+			}
+			ASSERT(kvPairs.front().key >= file.keyRange.begin);
+			ASSERT(kvPairs.back().key < file.keyRange.end);
+
+			// validate sorted and logical size
+			int64_t actualLogicalSize = kvPairs.back().key.size() + kvPairs.back().value.size();
+			for (int i = 0; i < kvPairs.size() - 1; i++) {
+				actualLogicalSize += kvPairs[i].key.size() + kvPairs.back().value.size();
+				ASSERT(kvPairs[i].key < kvPairs[i + 1].key);
+			}
+
+			// check that logical size is correct either with or without tenant prefix
+			// FIXME: logical size check should definitely not be fatal, but if it's way off we may want to reject the
+			// request or fail the load
+			int64_t logicalSizeWithTenantPrefix = actualLogicalSize;
+			if (tenantPrefix.present()) {
+				logicalSizeWithTenantPrefix += (tenantPrefix->size() * kvPairs.size());
+			}
+			ASSERT(actualLogicalSize == file.logicalSize || logicalSizeWithTenantPrefix == file.logicalSize);
+		} else {
+			CODE_PROBE(true, "bulk load validating file readability");
+			// read 1 byte from file to validate existence and readability
+			state uint8_t oneByte;
+			int readSize = wait(reader->read(&oneByte, 1, 0));
+			ASSERT(readSize == 1);
+		}
 	} catch (Error& e) {
-		if (e.code() == error_code_file_not_found) {
-			TraceEvent("BulkLoadInvalidFilenameMissing").detail("LoadID", id).detail("FileID", file.fileId);
+		if (e.code() == error_code_operation_cancelled) {
+			throw e;
+		} else if (e.code() == error_code_file_not_found) {
+			TraceEvent("BulkLoadInvalidFilenameMissing")
+			    .detail("LoadID", id)
+			    .detail("FileID", file.fileId)
+			    .detail("Filename", created.filename);
 			throw bulk_load_file_missing();
 		} else if (isTransientFileValidationError(e)) {
 			CODE_PROBE(true, "bulk load transient error validating file");
@@ -380,9 +451,16 @@ ACTOR Future<Void> validateBlobPointer(Reference<BulkLoaderData> self,
 			    .suppressFor(10.0)
 			    .detail("LoadID", id)
 			    .detail("FileID", file.fileId)
-			    .detail("Filename", filename);
+			    .detail("Filename", created.filename);
 			throw bulk_load_cannot_validate_file();
 		} else {
+			TraceEvent("BulkLoaderUnexpectedErrorValidatingFile")
+			    .errorUnsuppressed(e)
+			    .suppressFor(10.0)
+			    .detail("LoadID", id)
+			    .detail("FileID", file.fileId)
+			    .detail("Filename", created.filename);
+			// FIXME: maybe don't throw so we don't die?
 			throw e;
 		}
 	}
@@ -395,6 +473,7 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
                                              Reference<BlobWorkerData> bwData,
                                              BulkLoadFilesWrittenRequest req) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);
+	state BulkLoadIDKey idKey = { req.tenantInfo.tenantId, req.id };
 
 	// downgrade priority since this is likely LoadBalancedEndpoint
 	wait(delay(0, TaskPriority::DefaultEndpoint));
@@ -414,7 +493,7 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-				wait(loadInitialState(tr, req.id, req.tenantInfo, &info, &version));
+				wait(loadInitialState(tr, idKey, &info, &version));
 				break;
 			} catch (Error& e) {
 				if (DBG_BL_REQUEST) {
@@ -427,7 +506,12 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 			}
 		}
 
-		state KeyRange physicalRange = info.getPhysicalKeyRange();
+		state Optional<Key> tenantPrefix;
+		state KeyRange physicalRange = info.keyRange;
+		if (idKey.first != TenantInfo::INVALID_TENANT) {
+			tenantPrefix = TenantAPI::idToPrefix(idKey.first);
+			physicalRange = physicalRange.withPrefix(tenantPrefix.get());
+		}
 
 		// load volume info as well
 		state Reference<BlobConnectionProvider> bstore;
@@ -484,7 +568,7 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 					tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 					tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-					wait(checkCanLoadFiles(tr, req.id));
+					wait(checkCanLoadFiles(tr, idKey));
 
 					// handle idempotency by checking, if created pointer for fileid is gone, that written pointer
 					// exists and matches
@@ -535,8 +619,14 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 							// validated the files and added them to the set, the second time would bypass this check
 							// and immediately commit the change.
 							if (!validatedFiles.count(req.filesWritten[idx + batchIdx].fileId)) {
-								wait(validateBlobPointer(
-								    self, req.id, info, bstore, req.filesWritten[i], created.get().filename));
+								wait(validateBlobPointer(self,
+								                         bwData->dbInfo,
+								                         req.id,
+								                         info,
+								                         bstore,
+								                         req.filesWritten[i],
+								                         tenantPrefix,
+								                         created.get()));
 								validatedFiles.insert(req.filesWritten[idx + batchIdx].fileId);
 							}
 
@@ -652,10 +742,14 @@ ACTOR Future<Void> handleStateChangeRequest(Reference<BulkLoaderData> self,
 	++self->stats.stateChangeRequests;
 	++self->stats.activeRequests;
 	try {
+		Optional<Reference<Tenant>> tenant;
+		if (req.tenantInfo.hasTenant()) {
+			tenant = makeReference<Tenant>(self->db, req.tenantInfo.tenantId);
+		}
 		if (req.desired == BulkLoadStatus::State::CLEANUP) {
-			wait(self->db->cleanupBulkLoadInternal(req.id, req.tenantInfo.tenantId));
+			wait(self->db->cleanupBulkLoadInternal(req.id, tenant));
 		} else {
-			wait(self->db->updateBulkLoadState(req.id, req.desired, req.tenantInfo.tenantId));
+			wait(self->db->updateBulkLoadState(req.id, req.desired, tenant));
 		}
 		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
 			wait(Never());
@@ -689,12 +783,19 @@ ACTOR Future<Void> handleWaitCompleteRequest(Reference<BulkLoaderData> self,
 	wait(delay(0, TaskPriority::DefaultEndpoint));
 	++self->stats.waitCompleteRequests;
 	++self->stats.activeRequests;
+
 	try {
-		wait(self->db->waitBulkLoadStateAtLeast(req.id, BulkLoadStatus::State::DONE, req.tenantInfo.tenantId));
+		Optional<Reference<Tenant>> tenant;
+		if (req.tenantInfo.hasTenant()) {
+			tenant = makeReference<Tenant>(self->db, req.tenantInfo.tenantId);
+		}
+		wait(self->db->waitBulkLoadStateAtLeast(req.id, BulkLoadStatus::State::DONE, tenant));
 		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
 			wait(Never());
 		}
-		req.reply.send(Void());
+		// TODO: Change back once we actually have data loading implemented!
+		// req.reply.send(Void());
+		req.reply.sendError(api_not_implemented());
 		--self->stats.activeRequests;
 		return Void();
 	} catch (Error& e) {
@@ -709,6 +810,75 @@ ACTOR Future<Void> handleWaitCompleteRequest(Reference<BulkLoaderData> self,
 			return Void();
 		}
 		TraceEvent(SevError, "BulkLoaderWaitCompleteError", self->id).error(e).detail("BulkLoadID", req.id);
+		throw e;
+	}
+}
+
+ACTOR template <typename Request>
+Future<Void> handleListRequest(Reference<BulkLoaderData> self, Reference<BlobWorkerData> bwData, Request req) {
+	state BulkLoadListReply rep;
+	wait(delay(0, TaskPriority::DefaultEndpoint));
+	++self->stats.listRequests;
+	++self->stats.activeRequests;
+	try {
+		Optional<int64_t> tenantId = req.tenantInfo.tenantId;
+		if (std::is_same_v<Request, BulkLoadListAllRequest>) {
+			tenantId.reset();
+		}
+		Standalone<VectorRef<BulkLoadIDRef>> list = wait(self->db->listBulkLoadsInternal(req.onlyActive, tenantId));
+		rep.arena.dependsOn(list.arena());
+		rep.list = list;
+		req.reply.send(rep);
+		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
+			wait(Never());
+		}
+		--self->stats.activeRequests;
+		return Void();
+	} catch (Error& e) {
+		--self->stats.activeRequests;
+		if (canReplyWith(e)) {
+			TraceEvent("BulkLoaderListError", self->id).errorUnsuppressed(e).suppressFor(10.0);
+			++self->stats.errors;
+			req.reply.sendError(e);
+			return Void();
+		}
+		TraceEvent(SevError, "BulkLoaderListError", self->id).error(e);
+		throw e;
+	}
+}
+
+ACTOR Future<Void> handleStatusRequest(Reference<BulkLoaderData> self,
+                                       Reference<BlobWorkerData> bwData,
+                                       BulkLoadStatusRequest req) {
+	state BulkLoadStatusReply rep;
+	wait(delay(0, TaskPriority::DefaultEndpoint));
+	++self->stats.statusRequests;
+	++self->stats.activeRequests;
+	try {
+		Optional<Reference<Tenant>> tenant;
+		if (req.tenantInfo.hasTenant()) {
+			tenant = makeReference<Tenant>(self->db, req.tenantInfo.tenantId);
+		}
+		BulkLoadStatus status = wait(self->db->getBulkLoadStatusInternal(req.id, tenant));
+		rep.status = status;
+		req.reply.send(rep);
+		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
+			wait(Never());
+		}
+		--self->stats.activeRequests;
+		return Void();
+	} catch (Error& e) {
+		--self->stats.activeRequests;
+		if (canReplyWith(e)) {
+			TraceEvent("BulkLoaderStatusError", self->id)
+			    .errorUnsuppressed(e)
+			    .suppressFor(10.0)
+			    .detail("BulkLoadID", req.id);
+			++self->stats.errors;
+			req.reply.sendError(e);
+			return Void();
+		}
+		TraceEvent(SevError, "BulkLoaderStatusError", self->id).error(e).detail("BulkLoadID", req.id);
 		throw e;
 	}
 }
@@ -736,6 +906,15 @@ ACTOR Future<Void> bulkLoader(BulkLoaderInterface interf,
 			}
 			when(BulkLoadWaitCompleteRequest req = waitNext(interf.waitCompleteRequest.getFuture())) {
 				self->addActor.send(handleWaitCompleteRequest(self, bwData, req));
+			}
+			when(BulkLoadListRequest req = waitNext(interf.listRequest.getFuture())) {
+				self->addActor.send(handleListRequest(self, bwData, req));
+			}
+			when(BulkLoadListAllRequest req = waitNext(interf.listAllRequest.getFuture())) {
+				self->addActor.send(handleListRequest(self, bwData, req));
+			}
+			when(BulkLoadStatusRequest req = waitNext(interf.statusRequest.getFuture())) {
+				self->addActor.send(handleStatusRequest(self, bwData, req));
 			}
 
 			when(wait(collection)) {

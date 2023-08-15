@@ -31,6 +31,7 @@ namespace vexillographer
     {
         NetworkOption,
         DatabaseOption,
+        TenantOption,
         TransactionOption,
         StreamingMode,
         MutationType,
@@ -183,6 +184,8 @@ namespace vexillographer
                     return "NET_OPTION";
                 case Scope.DatabaseOption:
                     return "DB_OPTION";
+                case Scope.TenantOption:
+                    return "TENANT_OPTION";
                 case Scope.TransactionOption:
                     return "TR_OPTION";
                 case Scope.StreamingMode:

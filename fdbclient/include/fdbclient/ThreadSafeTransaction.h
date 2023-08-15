@@ -101,6 +101,7 @@ public:
 	~ThreadSafeTenant() override;
 
 	Reference<ITransaction> createTransaction() override;
+	void setOption(FDBTenantOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) override;
 
 	ThreadFuture<int64_t> getId() override;
 	ThreadFuture<Key> purgeBlobGranules(const KeyRangeRef& keyRange, Version purgeVersion, bool force) override;

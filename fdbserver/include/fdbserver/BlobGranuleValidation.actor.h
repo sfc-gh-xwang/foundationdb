@@ -41,7 +41,9 @@ ACTOR Future<std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>>>
     KeyRange range,
     Version beginVersion,
     Version readVersion,
-    Optional<Reference<Tenant>> tenant = Optional<Reference<Tenant>>());
+    Optional<Reference<Tenant>> tenant = Optional<Reference<Tenant>>(),
+    LockAware lockAware = LockAware::False,
+    bool untrustedReadVersion = false);
 
 ACTOR Future<std::pair<RangeResult, Version>> readFromFDB(Database cx, KeyRange range);
 

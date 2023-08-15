@@ -259,6 +259,7 @@ struct SimClogging {
 		if (!g_simulator->speedUpSimulation && !stableConnection && clogRecvUntil.count(to.ip))
 			t = std::max(t, clogRecvUntil[to.ip]);
 
+		_lastClogged = std::max(_lastClogged, t);
 		return t - tnow;
 	}
 
@@ -295,11 +296,16 @@ struct SimClogging {
 		return i->second;
 	}
 
+	double lastClogged() const { return _lastClogged; }
+
 private:
 	std::map<IPAddress, double> clogSendUntil, clogRecvUntil;
 	std::map<std::pair<IPAddress, IPAddress>, double> clogPairUntil;
 	std::map<std::pair<IPAddress, IPAddress>, double> clogPairLatency;
 	std::map<std::pair<NetworkAddress, NetworkAddress>, double> clogProcessPairUntil;
+
+	double _lastClogged = -1e9;
+
 	double halfLatency() const {
 		double a = deterministicRandom()->random01();
 		const double pFast = 0.999;
@@ -2388,6 +2394,8 @@ public:
 		TraceEvent("UncloggingPair").detail("From", from).detail("To", to);
 		g_clogging.unclogPair(from, to);
 	}
+
+	double lastClogged() const override { return g_clogging.lastClogged(); }
 
 	void processInjectBlobFault(ProcessInfo* machine, double failureRate) override {
 		CODE_PROBE(true, "Simulated process beginning blob fault", probe::context::sim2, probe::assert::simOnly);

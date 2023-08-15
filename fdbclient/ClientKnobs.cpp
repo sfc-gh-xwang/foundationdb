@@ -232,7 +232,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( BLOBSTORE_READ_CACHE_BLOCKS_PER_FILE,      2 );
 	init( BLOBSTORE_MULTIPART_MAX_PART_SIZE,  20000000 );
 	init( BLOBSTORE_MULTIPART_MIN_PART_SIZE,   5242880 );
-	init( BLOBSTORE_GLOBAL_CONNECTION_POOL,      false );
+	init( BLOBSTORE_GLOBAL_CONNECTION_POOL,       true );
 	init( BLOBSTORE_ENABLE_LOGGING,               true );
 	init( BLOBSTORE_STATS_LOGGING_INTERVAL,       10.0 );
 	init( BLOBSTORE_LATENCY_LOGGING_INTERVAL,    120.0 );
@@ -288,14 +288,14 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( MAX_GRV_BATCHERS,                        1000 );
 	init( GRV_BATCHER_EXPIRATION_TIMEOUT,          60.0 );
 	init( GRV_BATCHER_CLEANING_INTERVAL,            5.0 );
-	init( TRACK_THROUGHPUT_ON_CLIENTS,            false ); if( randomize && BUGGIFY ) TRACK_THROUGHPUT_ON_CLIENTS = true;
+	init( TRACK_THROUGHPUT_ON_CLIENTS,             true ); if( randomize && BUGGIFY ) TRACK_THROUGHPUT_ON_CLIENTS = false;
 	init( CLIENT_THROUGHPUT_REPORT_INTERVAL,        1.0 );
-	init( TRACK_AVERAGE_COST_ON_CLIENT,           false ); if( randomize && BUGGIFY ) TRACK_AVERAGE_COST_ON_CLIENT = true;
+	init( TRACK_AVERAGE_COST_ON_CLIENTS,            true ); if( randomize && BUGGIFY ) TRACK_AVERAGE_COST_ON_CLIENTS = false;
 	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
 	init( AVERAGE_COST_START_DELAY,                10.0 );
 	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
 	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); if ( randomize && BUGGIFY ) USE_SIMPLE_THROUGHPUT_QUOTA_CACHE = false;
-	init( TRACK_BUSY_THROTTLING_IDS,              false ); if ( randomize && BUGGIFY ) TRACK_BUSY_THROTTLING_IDS = true;
+	init( TRACK_BUSY_THROTTLING_IDS,               true ); if ( randomize && BUGGIFY ) TRACK_BUSY_THROTTLING_IDS = false;
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
@@ -306,7 +306,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( BG_TOO_MANY_GRANULES,                   20000 );
 	init( BLOB_METADATA_REFRESH_INTERVAL,          3600 ); if ( randomize && BUGGIFY ) { BLOB_METADATA_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 120); }
 	init( DETERMINISTIC_BLOB_METADATA,            false ); if( randomize && BUGGIFY_WITH_PROB(0.01) ) DETERMINISTIC_BLOB_METADATA = true;
-	init( ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE,  false ); if ( randomize && BUGGIFY ) { ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE = true; }
+	init( ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE,  true  );
+	init( HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,   false );
 
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_TIMES,        3 );
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_DELAY,      2.0 );
@@ -338,8 +339,12 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( ALLOW_BULK_LOADS,                         false );
 	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );
 	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); if ( randomize && BUGGIFY ) BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE = deterministicRandom()->randomInt(1, 10000000);
+	init( BULK_LOAD_STORAGE_RESERVATION_ENABLED, 	false ); if ( randomize && BUGGIFY ) BULK_LOAD_STORAGE_RESERVATION_ENABLED = deterministicRandom()->coinflip();
 
 	init( ENABLE_STORAGE_ENGINE_PARAM_INTERFACE,    false );
+
+	// Range Lock
+	init( RANGE_LOCK_LIMIT, 						10000 ); if( randomize && BUGGIFY ) RANGE_LOCK_LIMIT = 20;
 
 	// clang-format on
 }
