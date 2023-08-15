@@ -238,6 +238,10 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		ASSERT(toWrite.type == BulkLoadFileType::SNAPSHOT);
 		ASSERT(toWrite.format == BulkLoadFileFormat::ROW_V1);
 
+		if (self->tenant.present()) {
+			filePrefix = filePrefix.withPrefix(self->tenant.get()->prefix());
+		}
+
 		state int64_t logicalSize = 0;
 		Value serialized = wait(self->createOneFile(toWrite, filePrefix, rowCount, valueSize, &logicalSize));
 		state int64_t physicalSize = serialized.size();
@@ -285,6 +289,21 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return filesToWrite[0].fileName.toString();
 	}
 
+	ACTOR Future<Void> waitLoadComplete(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
+		// currently because data isn't actually loaded we throw an error. we catch this error and act as if load
+		// completed for now
+		try {
+			wait(cx->waitBulkLoadComplete(id, self->tenant));
+			ASSERT(false);
+		} catch (Error& e) {
+			if (e.code() == error_code_api_not_implemented) {
+				return Void();
+			}
+			throw e;
+		}
+		return Void();
+	}
+
 	ACTOR Future<Void> doInjectAbort(Database cx,
 	                                 BulkLoadOpsWorkload* self,
 	                                 BulkLoadID id,
@@ -298,7 +317,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			*abortCompleted = true;
 		} catch (Error& e) {
 			if (e.code() == error_code_bulk_load_abort_failed) {
-				// ensure load completes without error if abort failed
+				// ensure load completes if abort failed
 				wait(loadDone);
 			} else {
 				throw e;
@@ -339,7 +358,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// if we do inject an abort, we wait to verify that either:
 		//  - bulk load completes and the abort injection gets bulk_load_abort_failed
 		//  - abort injection completes and the bulk load gets bulk_load_aborted
-		Future<Void> loadFuture = cx->waitBulkLoadComplete(id, self->tenant);
+		Future<Void> loadFuture = self->waitLoadComplete(cx, self, id);
 		Future<Void> abortFuture = injectAbort
 		                               ? self->doInjectAbort(cx, self, id, loadFuture, &injectedAbort, &abortCompleted)
 		                               : Future<Void>(Void());
@@ -409,6 +428,10 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			for (int i = 0; i < batchSize; i++, prefix++) {
 				// sometimes skip file to make non-contiguous
 				if (filesWritten.empty() || deterministicRandom()->random01() < 0.8) {
+					ASSERT_EQ(filesToWrite[prefix].tenantPrefix.present(), self->tenant.present());
+					if (self->tenant.present()) {
+						ASSERT_EQ(filesToWrite[prefix].tenantPrefix.get(), self->tenant.get()->prefix());
+					}
 					std::string filePrefixStr = std::to_string(prefix);
 					Standalone<StringRef> filePrefix =
 					    range.begin.withSuffix("/"_sr).withSuffix(filePrefixStr).withSuffix("/"_sr);
@@ -546,6 +569,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		OP_COUNT = 22 /* keep this last */
 	};
 
+	// FIXME: once file contents validation isn't asserting and throws an error instead, add unit tests for invalid file
+	// data
+
 	ACTOR Future<Void> expectAbortedBySystem(Database cx, BulkLoadOpsWorkload* self, BulkLoadID id) {
 		try {
 			// retry of all files registered might also throw bulk_load_aborted
@@ -614,7 +640,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
-		wait(cx->waitBulkLoadComplete(id, self->tenant));
+		wait(self->waitLoadComplete(cx, self, id));
 
 		try {
 			wait(cx->abortBulkLoad(id, self->tenant));
@@ -983,7 +1009,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> registerFilesAlreadyLoadingUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		wait(success(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin), self->tenant)));
+		wait(success(self->stageSingleFile(cx, self, id, range, self->tenant)));
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 
 		try {
@@ -1010,7 +1036,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			ASSERT(e.code() == error_code_bulk_load_not_registering_files);
 		}
 
-		wait(cx->waitBulkLoadComplete(id, self->tenant));
+		wait(self->waitLoadComplete(cx, self, id));
 		wait(cx->cleanupBulkLoad(id, self->tenant));
 
 		return Void();
@@ -1085,8 +1111,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> unusedPointerCleanupUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		state std::string stagedFile =
-		    wait(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin.withSuffix("a"_sr)), self->tenant));
+		state std::string stagedFile = wait(self->stageSingleFile(
+		    cx, self, id, KeyRangeRef(range.begin.withSuffix("a"_sr), range.begin.withSuffix("b"_sr)), self->tenant));
 
 		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
 		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
@@ -1095,7 +1121,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(success(self->writeOneFileToBlob(self, filesToWrite[0], range.begin.withSuffix("b"_sr), 1, 32)));
 
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
-		wait(cx->waitBulkLoadComplete(id, self->tenant));
+		wait(self->waitLoadComplete(cx, self, id));
 
 		wait(self->expectFileDeleted(self, filesToWrite[0].fileName.toString()));
 		// FIXME: once load actually keeps granules this needs to be inverted, we should check that the file is kept
@@ -1108,8 +1134,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> abortedPointerCleanupUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
-		state std::string stagedFile =
-		    wait(self->stageSingleFile(cx, self, id, singleKeyRange(range.begin.withSuffix("a"_sr)), self->tenant));
+		state std::string stagedFile = wait(self->stageSingleFile(
+		    cx, self, id, KeyRangeRef(range.begin.withSuffix("a"_sr), range.begin.withSuffix("b"_sr)), self->tenant));
 
 		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite =
 		    wait(cx->getBulkLoadFilesToWrite(id, 1, self->tenant));
@@ -1171,6 +1197,11 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 			std::string nextRangeKey = "U_" + self->newKey();
 			state KeyRange range(KeyRangeRef(StringRef(nextRangeKey), strinc(StringRef(nextRangeKey))));
+
+			if (SERVER_KNOBS->BULK_LOAD_FILE_VALIDATION_LEVEL <= static_cast<int>(BulkLoadFileValidationLevel::NONE)) {
+				// we skip validation here so it won't catch this case
+				excludedTypes.insert(REGISTER_NONEXISTENT_FILE_UNIT);
+			}
 
 			// FIXME: no lock implemented yet so these succeed - unexclude when implemented!
 			excludedTypes.insert(WRITE_DURING_LOAD_UNIT);

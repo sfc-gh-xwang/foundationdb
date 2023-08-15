@@ -227,6 +227,7 @@ ERROR( failed_to_restore_checkpoint, 2047, "Failed to restore a checkpoint" )
 ERROR( failed_to_create_checkpoint_shard_metadata, 2048, "Failed to dump shard metadata for a checkpoint to a sst file" )
 ERROR( address_parse_error, 2049, "Failed to parse address" )
 ERROR( unknown_api_request, 2050, "Unknown API request received" )
+ERROR( api_not_implemented, 2051, "The API exists but its implementation is incomplete" )
 
 ERROR( incompatible_protocol_version, 2100, "Incompatible protocol version" )
 ERROR( transaction_too_large, 2101, "Transaction exceeds byte limit" )
@@ -382,6 +383,7 @@ ERROR( bulk_load_cleanup_failed, 2603, "Bulk load could not clean up because it 
 ERROR( bulk_load_not_found, 2604, "Bulk load ID not found" );
 ERROR( bulk_load_range_not_empty, 2605, "Bulk load for key range already in progress" );
 
+
 // Bulk load file operations errors
 ERROR( bulk_load_file_id_not_found , 2620, "No file id for the given bulk load id exists");
 ERROR( bulk_load_not_registering_files, 2621, "Bulk load for this id exists but is already done registering files");
@@ -407,6 +409,13 @@ ERROR( encrypt_unsupported, 2709, "Encryption not supported" )
 ERROR( encrypt_mode_mismatch, 2710, "Encryption mode mismatch with configuration")
 ERROR( encrypt_key_check_value_mismatch, 2711, "Encryption key-check-value mismatch")
 ERROR( encrypt_max_base_cipher_len, 2712, "Max BaseCipher buffer length violation")
+
+// 28XX - range lock related errors
+ERROR(range_lock_limit_exceeded, 2800, "Too many active range locks");
+ERROR(illegal_locked_range_access, 2801, "Attempt to access a locked range")
+ERROR(illegal_range_lock_param, 2802, "Attempt to lock system key, double lock a range, unmatched lockId etc.")
+ERROR(illegal_range_lock_operation, 2803, "Attempt to update range lock while update normal keys")
+
 
 // 4xxx Internal errors (those that should be generated only by bugs) are decimal 4xxx
 ERROR( unknown_error, 4000, "An unknown error occurred" )  // C++ exception not of type Error

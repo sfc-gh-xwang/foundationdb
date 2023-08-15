@@ -541,14 +541,12 @@ Future<ApiResult> readBlobGranuleDescriptions(ISingleThreadTransaction* tr, ApiR
  * Writing blob granule files
  */
 
-// Has to go on main thread because this is an actor.
+// Have to serialize the execution onMainThread because the snapshot file writer is an actor.
 // In next release this will be fixed and the code will be non-actor
 ThreadFuture<Value> writeBlobGranulesSnapshotFileV1(VectorRef<KeyValueRef> rows,
                                                     int8_t compression,
                                                     FDBBGTenantPrefix const* tenant_prefix,
                                                     FDBBGEncryptionCtxV2 const* encryption_ctx) {
-	// ASSERT(!g_network->isOnMainThread());
-
 	CompressionFilter compressFilter = CompressionUtils::fromInt(compression);
 	Optional<KeyRef> tenantPrefix;
 	Optional<BlobGranuleCipherKeysCtx> encryptionCtx;
@@ -640,6 +638,7 @@ ReadBGDescriptionsApiResultV1 convertBlobGranulesDescriptionsToV1(ReadBGDescript
 	return res;
 }
 
+// FIXME: can we convert to something like BlobGranuleCipherKeysCtx::toCApi(FDBBGEncryptionCtxV2& ctx, Arena& ar)?
 void nativeToApiBGEncryptionKeyCtx(FDBBGEncryptionCtxV2* dest, const BlobGranuleCipherKeysCtx& source, Arena& ar) {
 	dest->textKey = new (ar) FDBBGEncryptionKey();
 	nativeToApiBGEncryptionKey(dest->textKey, source.textCipherKey);

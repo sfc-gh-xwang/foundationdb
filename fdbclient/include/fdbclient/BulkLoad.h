@@ -37,6 +37,7 @@ public:
 	enum class State : uint8_t {
 		STARTED = 0,
 		STAGING = 10,
+		STAGING_BLOB_VALIDATED = 12,
 		STAGING_BLOB_DONE = 20,
 		STAGING_DDPREPARED = 30,
 		DONE = 90,
@@ -64,6 +65,8 @@ public:
 			return "Started";
 		case State::STAGING:
 			return "Staging";
+		case State::STAGING_BLOB_VALIDATED:
+			return "Staging blob validated";
 		case State::STAGING_BLOB_DONE:
 			return "Staging blob done";
 		case State::STAGING_DDPREPARED:
@@ -114,6 +117,9 @@ struct BulkLoadFileToWriteRef {
 	int64_t targetSize;
 
 	// The following are just config pass-throughs to the fdb client library on how the file should be written
+	// tenant prefix to prepend to keys
+	Optional<KeyRef> tenantPrefix;
+
 	// Encryption keys to write file with (if enabled)
 	Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
 
@@ -124,7 +130,7 @@ struct BulkLoadFileToWriteRef {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, fileId, fileName, targetSize, cipherKeysCtx, type, format, compression);
+		serializer(ar, fileId, fileName, targetSize, tenantPrefix, cipherKeysCtx, type, format, compression);
 	}
 };
 
@@ -143,6 +149,8 @@ struct BulkLoadWrittenFileRef {
 		serializer(ar, fileId, keyRange, logicalSize, physicalSize);
 	}
 };
+
+enum class BulkLoadFileValidationLevel : int { NONE = 0, METADATA = 1, DATA = 2 };
 
 template <>
 struct Traceable<BulkLoadStatus::State> : std::true_type {

@@ -44,7 +44,8 @@ struct ConflictBatch {
 		TransactionTooOld,
 		TransactionTenantFailure,
 		TransactionEncryptKeyNotFound,
-		TransactionCommitted,
+		TransactionRangeLockFailure,
+		TransactionCommitted, // Has to be the largest one
 	};
 
 	void addTransaction(const CommitTransactionRef& transaction, Version newOldestVersion);
