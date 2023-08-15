@@ -91,6 +91,11 @@ void nativeToApiFileToWrite(FDBBulkLoadFileToWrite* dest, const BulkLoadFileToWr
 
 	// FIXME: actually set tenant prefix!
 	dest->tenant_prefix.present = false;
+	if (source.tenantPrefix.present()) {
+		dest->tenant_prefix.present = true;
+		dest->tenant_prefix.prefix.key = source.tenantPrefix->begin();
+		dest->tenant_prefix.prefix.key_length = source.tenantPrefix->size();
+	}
 
 	dest->encryption_ctx = nullptr;
 	if (source.cipherKeysCtx.present()) {

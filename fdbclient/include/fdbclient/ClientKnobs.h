@@ -370,6 +370,9 @@ public:
 
 	bool ENABLE_STORAGE_ENGINE_PARAM_INTERFACE;
 
+	// Range Lock
+	int RANGE_LOCK_LIMIT;
+
 	ClientKnobs(Randomize randomize);
 	void initialize(Randomize randomize);
 };

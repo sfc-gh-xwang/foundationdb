@@ -1001,6 +1001,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 
 				// pick read version
 				ASSERT(threadData->writeVersions.back() >= threadData->minSuccessfulReadVersion);
+				bool untrustedReadVersion = false;
 				size_t readVersionIdx;
 				// randomly choose up to date vs time travel read
 				if (deterministicRandom()->random01() < 0.5) {
@@ -1019,6 +1020,19 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 							startIdx = readVersionIdx + 1;
 						}
 					}
+					// FIXME: enable check!
+					/*if (readVersionIdx < threadData->writeVersions.size() - 1 && BUGGIFY_WITH_PROB(0.1)) {
+					    int64_t diff =
+					        threadData->writeVersions[readVersionIdx + 1] - threadData->writeVersions[readVersionIdx];
+					    if (diff > 1) {
+					        int64_t increase = deterministicRandom()->randomInt(1, diff);
+					        TraceEvent("DBGPerturbingReadVersion")
+					            .detail("Original", readVersion)
+					            .detail("New", readVersion + increase);
+					        readVersion += increase;
+					        untrustedReadVersion = true;
+					    }
+					}*/
 				}
 
 				// randomly choose begin version or not
@@ -1036,7 +1050,14 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 				threadData->maybeReopenTenant(self->standaloneDb);
 
 				std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob =
-				    wait(readFromBlob(cx, threadData->bstore, range, beginVersion, readVersion, threadData->tenant));
+				    wait(readFromBlob(cx,
+				                      threadData->bstore,
+				                      range,
+				                      beginVersion,
+				                      readVersion,
+				                      threadData->tenant,
+				                      LockAware::False,
+				                      untrustedReadVersion));
 				self->validateResult(threadData, blob, startKey, endKey, beginVersion, readVersion);
 
 				int resultBytes = blob.first.expectedSize();

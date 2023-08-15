@@ -6169,6 +6169,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 				deletedFiles = true;
 			}
 
+			BulkLoadMetadata::statusMap().set(tr, idKey, BulkLoadStatus(BulkLoadStatus::State::STAGING_BLOB_VALIDATED));
 			wait(tr->commit());
 			TraceEvent(SevDebug, "BulkLoadReservationCommitDone").detail("BulkLoadID", idKey.second);
 			break;
@@ -6278,7 +6279,7 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData,
 	return Void();
 }
 
-// FIXME: handle state transitions from STAGING to STAGING_BLOB_DONE
+// FIXME: handle state transitions from STAGING_BLOB_VALIDATED to STAGING_BLOB_DONE
 ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKey idKey, BulkLoadStatus::State state) {
 	if (BM_BULKLOAD_DEBUG) {
 		fmt::print("DBGBM {0}: TrackBL {1}: start\n", bmData->epoch, idKey.second.printable());
