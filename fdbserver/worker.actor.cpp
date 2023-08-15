@@ -2209,9 +2209,9 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				                deterministicRandom()->coinflip())
 				             : true),
 				    dbInfo,
-					Optional<EncryptionAtRestMode>(),
-					0,
-					encryptionMonitor);
+				    Optional<EncryptionAtRestMode>(),
+				    0,
+				    encryptionMonitor);
 				Future<Void> kvClosed =
 				    kv->onClosed() ||
 				    rebootKVSPromise.getFuture() /* clear the onClosed() Future in actorCollection when rebooting */;
@@ -2975,8 +2975,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					             : true),
 					    dbInfo,
 					    req.encryptMode,
-						0,
-						encryptionMonitor);
+					    0,
+					    encryptionMonitor);
 
 					Future<Void> kvClosed =
 					    data->onClosed() ||
