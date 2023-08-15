@@ -225,6 +225,37 @@ public:
 			}
 		}
 	}
+
+	ACTOR static Future<Void> abortBulkLoadsOverQuota(TenantCache* tenantCache) {
+		TraceEvent(SevInfo, "StorageQuotaAbortBulkLoadsStarting", tenantCache->id());
+		loop {
+			state std::unordered_set<int64_t> tenantIds = tenantCache->getTenantsOverQuota();
+			for (const auto tenantId : tenantIds) {
+				// TODO: Add a function in DatabaseContext that can take a tenantId and abort all bulk loads
+				// for that tenant.
+				state Reference<Tenant> tenant = makeReference<Tenant>(tenantCache->dbcx(), tenantId);
+				state Standalone<VectorRef<BulkLoadIDRef>> loads =
+				    wait(tenantCache->dbcx()->listBulkLoads(/*onlyActive=*/true, tenant));
+				state int idx = 0;
+				for (; idx < loads.size(); idx++) {
+					state BulkLoadIDRef id = loads[idx];
+					try {
+						wait(tenantCache->dbcx()->abortBulkLoad(id, tenant));
+						wait(tenantCache->dbcx()->cleanupBulkLoad(id, tenant));
+					} catch (Error& e) {
+						if (e.code() == error_code_bulk_load_abort_failed ||
+						    e.code() == error_code_bulk_load_not_found) {
+							continue;
+						}
+						// Any other errors would be unexpected; treat it as fatal
+						TraceEvent(SevInfo, "StorageQuotaAbortBulkLoadsError", tenantCache->id()).errorUnsuppressed(e);
+						throw e;
+					}
+				}
+			}
+			wait(delay(SERVER_KNOBS->BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL));
+		}
+	}
 };
 
 void TenantCache::insert(TenantMapEntry& tenant) {
@@ -333,6 +364,9 @@ Optional<Reference<TCTenantInfo>> TenantCache::tenantOwning(KeyRef key) const {
 }
 
 std::unordered_set<int64_t> TenantCache::getTenantsOverQuota() const {
+	// TODO: Potentially optimize this by caching the list and updating it when storage quota
+	// and/or usage is fetched. With that approach, we could also abort bulk loads when the
+	// list is updated with a new tenantGroup instead of a periodic actor.
 	std::unordered_set<int64_t> tenantsOverQuota;
 	for (const auto& [tenantGroup, storage] : tenantStorageMap) {
 		if (storage.usage > storage.quota) {
@@ -352,6 +386,10 @@ Future<Void> TenantCache::monitorStorageUsage() {
 
 Future<Void> TenantCache::monitorStorageQuota() {
 	return TenantCacheImpl::monitorStorageQuota(this);
+}
+
+Future<Void> TenantCache::abortBulkLoadsOverQuota() {
+	return TenantCacheImpl::abortBulkLoadsOverQuota(this);
 }
 
 class TenantCacheUnitTest {
