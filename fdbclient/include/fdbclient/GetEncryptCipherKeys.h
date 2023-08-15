@@ -20,8 +20,6 @@
 
 #ifndef FDBCLIENT_GETCIPHERKEYS_H
 #define FDBCLIENT_GETCIPHERKEYS_H
-#include "flow/FastRef.h"
-#include "flow/TaskPriority.h"
 #pragma once
 
 #include "flow/EncryptUtils.h"
@@ -53,6 +51,27 @@ public:
 
 	template <class T>
 	Future<T> monitor(Future<T> actor);
+
+	struct Handle {
+		void set(GetEncryptCipherKeysMonitor* m) {
+			monitor = m;
+			if (monitor->longRunningRequests == 0) {
+				monitor->degradedVar->set(true);
+			}
+			monitor->longRunningRequests++;
+		}
+
+		~Handle() {
+			if (monitor != nullptr) {
+				monitor->longRunningRequests--;
+				if (monitor->longRunningRequests == 0) {
+					monitor->degradedVar->set(true);
+				}
+			}
+		}
+
+		GetEncryptCipherKeysMonitor* monitor = nullptr;
+	};
 
 private:
 	Reference<AsyncVar<bool>> degradedVar = makeReference<AsyncVar<bool>>(false);

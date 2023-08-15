@@ -19,10 +19,6 @@
  */
 
 #pragma once
-#include "flow/EncryptUtils.h"
-#include "flow/Error.h"
-#include "flow/TaskPriority.h"
-#include "flow/genericactors.actor.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_GETCIPHERKEYS_IMPL_ACTOR_G_H)
 #define FDBCLIENT_GETCIPHERKEYS_IMPL_ACTOR_G_H
 #include "fdbclient/GetEncryptCipherKeys_impl.actor.g.h"
@@ -43,24 +39,17 @@
 
 namespace {
 ACTOR template <class T>
-Future<T> monitorGetEncryptCipherKeys(Future<T> actor,
-                                      int* longRunningRequests,
-                                      Reference<AsyncVar<bool>> degradedVar) {
+Future<T> monitorGetEncryptCipherKeys(GetEncryptCipherKeysMonitor* self, Future<T> actor) {
 	Future<Void> timer = delay(CLIENT_KNOBS->ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD, TaskPriority::DefaultDelay);
+	state GetEncryptCipherKeysMonitor::Handle h;
 	choose {
 		when(T t = wait(actor)) {
 			return t;
 		}
 		when(wait(timer)) {
-			if (*longRunningRequests == 0) {
-				degradedVar->set(true);
-			}
-			(*longRunningRequests)++;
+			// Bookkeeping number of long running actors using RAII.
+			h.set(self);
 			T t = wait(actor);
-			(*longRunningRequests)--;
-			if (*longRunningRequests == 0) {
-				degradedVar->set(true);
-			}
 			return t;
 		}
 	}
@@ -69,7 +58,7 @@ Future<T> monitorGetEncryptCipherKeys(Future<T> actor,
 
 template <class T>
 Future<T> GetEncryptCipherKeysMonitor::monitor(Future<T> actor) {
-	return monitorGetEncryptCipherKeys(actor, &longRunningRequests, degradedVar);
+	return monitorGetEncryptCipherKeys(this, actor);
 }
 
 template <class T>
