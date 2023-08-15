@@ -2333,7 +2333,8 @@ ACTOR Future<Void> startTenantBalancer(ClusterControllerData* self) {
 					TraceEvent("CCHaltTenantBalancerAfterRecruit", self->id)
 					    .detail("TenantBalancerId", tenantBalancer.get().id())
 					    .detail("DcId", printable(self->clusterControllerDcId));
-					TenantBalancerSingleton(tenantBalancer).halt(*self, tenantBalancer.get().locality.processId());
+					self->addActor.send(
+					    TenantBalancerSingleton(tenantBalancer).halt(*self, tenantBalancer.get().locality.processId()));
 				}
 				if (!tenantBalancer.present() || tenantBalancer.get().id() != interf.get().id()) {
 					self->db.setTenantBalancer(interf.get());
@@ -2369,8 +2370,10 @@ ACTOR Future<Void> monitorTenantBalancer(ClusterControllerData* self) {
 			choose {
 				when(wait(waitFailureClient(self->db.serverInfo->get().tenantBalancer.get().waitFailure,
 				                            SERVER_KNOBS->TENANT_BALANCER_FAILURE_TIME))) {
-					TraceEvent("CCTenantBalancerDied", self->id)
-					    .detail("TenantBalancerId", self->db.serverInfo->get().tenantBalancer.get().id());
+					const auto& tenantBalancer = self->db.serverInfo->get().tenantBalancer;
+					TraceEvent("CCTenantBalancerDied", self->id).detail("TenantBalancerId", tenantBalancer.get().id());
+					self->addActor.send(
+					    TenantBalancerSingleton(tenantBalancer).halt(*self, tenantBalancer.get().locality.processId()));
 					self->db.clearInterf(ProcessClass::TenantBalancerClass);
 				}
 				when(wait(self->recruitTenantBalancer.onChange())) {}
