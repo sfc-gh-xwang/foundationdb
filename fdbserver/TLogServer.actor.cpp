@@ -380,6 +380,46 @@ struct TLogData : NonCopyable {
 	// and ends when the data is flushed and durable.
 	Reference<Histogram> timeUntilDurableDist;
 
+	// Track dynamic empty version wait window for each storage server
+	struct emptyVersionWaitMetadata {
+		double waitWindow; // "atomically" change (as appears to peek actor) with transisioning state
+		bool transitioning; // whether tlog-ss pair is currently in transitioning state
+		AsyncTrigger applied; // signal tlogEmptyVersionWait actor to conclude current transition
+		bool replied; // whether current transition has been acked.
+		uint32_t oldPeekRefcount; // during non-transition, all requests will use this refcount
+		uint32_t newPeekRefcount; // during transition, all new requests will use new window and this refcount
+
+		void reset() {
+			waitWindow = -1;
+			transitioning = false;
+			replied = true;
+			oldPeekRefcount = 0;
+			newPeekRefcount = 0;
+		}
+
+		void incRefcount(const bool transitioning) {
+			if (transitioning) {
+				++newPeekRefcount;
+			} else {
+				++oldPeekRefcount;
+			}
+		}
+
+		void decRefcount(const bool transitioning) {
+			if (transitioning) {
+				--newPeekRefcount;
+			} else {
+				--oldPeekRefcount;
+			}
+		}
+	};
+	std::unordered_map<Tag, emptyVersionWaitMetadata> emptyVersionWaitMetadataMap;
+
+	// Tlog side empty peek number monitoring
+	uint32_t tlogPeekMsgCount;
+	uint32_t tlogEmptyPeekMsgCount;
+	uint32_t tlogVersionSyncMsgCount;
+
 	TLogData(UID dbgid,
 	         UID workerID,
 	         IKeyValueStore* persistentData,
@@ -410,7 +450,10 @@ struct TLogData : NonCopyable {
 	    degraded(degraded),
 	    commitLatencyDist(Histogram::getHistogram("tLog"_sr, "commit"_sr, Histogram::Unit::milliseconds)),
 	    queueWaitLatencyDist(Histogram::getHistogram("tLog"_sr, "QueueWait"_sr, Histogram::Unit::milliseconds)),
-	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)) {
+	    timeUntilDurableDist(Histogram::getHistogram("tLog"_sr, "TimeUntilDurable"_sr, Histogram::Unit::milliseconds)),
+	    tlogPeekMsgCount(0),
+	    tlogEmptyPeekMsgCount(0),
+	    tlogVersionSyncMsgCount(0) {
 		cx = openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	}
 };
@@ -1767,7 +1810,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	state BinaryWriter messages2(Unversioned());
 	state int sequence = -1;
 	state UID peekId;
-	state double queueStart = now();
+	state double queueStart = g_network->timer();
 
 	if (reqTag.locality == tagLocalityTxs && reqTag.id >= logData->txsTags && logData->txsTags > 0) {
 		reqTag.id = reqTag.id % logData->txsTags;
@@ -1824,7 +1867,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		}
 	}
 
-	state double blockStart = now();
+	state double blockStart = g_network->timer();
 
 	if (reqReturnIfBlocked && logData->version.get() < reqBegin) {
 		replyPromise.sendError(end_of_stream());
@@ -1881,10 +1924,17 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		wait(delay(0, TaskPriority::TLogSpilledPeekReply));
 	}
 
-	state double workStart = now();
+	state double workStart = g_network->timer();
 	state Version poppedVer;
 	state Version endVersion;
 	state bool onlySpilled;
+
+	// Dynamic Empty Version Wait
+	state bool emptyVersionWaitTransition = false;
+	state bool emptyVersionWaitRefcounted = false;
+	state bool emptyVersionFirstEntry = true;
+	state double emptyVersionWaitWindow = 0;
+	state bool requestWaited = false;
 
 	// Run the peek logic in a loop to account for the case where there is no data to return to the caller, and we may
 	// want to wait a little bit instead of just sending back an empty message. This feature is controlled by a knob.
@@ -1896,11 +1946,11 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR && poppedVer <= reqBegin &&
 		    reqBegin > logData->persistentDataDurableVersion && !reqOnlySpilled && reqTag.locality >= 0 &&
 		    !reqReturnIfBlocked && tagRecovered) {
-			state double startTime = now();
+			state double startTime = g_network->timer();
 			// TODO (version vector) check if this should be included in "status details" json
 			// TODO (version vector) all tags may be too many, instead,  standard deviation?
 			wait(waitForMessagesForTag(logData, reqTag, reqBegin, SERVER_KNOBS->BLOCKING_PEEK_TIMEOUT));
-			double latency = now() - startTime;
+			double latency = g_network->timer() - startTime;
 			if (logData->blockingPeekLatencies.find(reqTag) == logData->blockingPeekLatencies.end()) {
 				UID ssID = nondeterministicRandom()->randomUniqueID();
 				std::string s = "BlockingPeekLatencies-" + reqTag.toString();
@@ -2098,23 +2148,76 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 		// Reply the peek request when
 		//   - Have data return to the caller, or
-		//   - Batching empty peek is disabled, or
-		//   - Batching empty peek interval has been reached.
-		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
-		    (now() - blockStart > SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL)) {
+		//   - Batching empty peek is disabled
+		if (messages.getLength() > 0 || !SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG) {
 			break;
 		}
 
+		if (emptyVersionFirstEntry) {
+			emptyVersionFirstEntry = false;
+
+			switch (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT) {
+			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_DISABLED:
+				emptyVersionWaitWindow = SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL;
+				break;
+			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY:
+				emptyVersionWaitWindow = 0;
+				break;
+			case ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT:
+				if (!self->emptyVersionWaitMetadataMap.contains(reqTag)) {
+					self->emptyVersionWaitMetadataMap[reqTag].reset();
+				}
+				// snapshot transition state and wait window now and retain it for current request over it's lifetime
+				emptyVersionWaitTransition = self->emptyVersionWaitMetadataMap[reqTag].transitioning;
+				emptyVersionWaitWindow = self->emptyVersionWaitMetadataMap[reqTag].waitWindow;
+				self->emptyVersionWaitMetadataMap[reqTag].incRefcount(emptyVersionWaitTransition);
+				emptyVersionWaitRefcounted = true;
+				DebugLogTraceEvent("TlogEmptyVersionWaitWindowSanityCheck")
+				    .detail("Tag", reqTag)
+				    .detail("WaitWindow", emptyVersionWaitWindow);
+				break;
+			default:
+				ASSERT(false);
+			}
+		}
+
+		state double remainingDelay = emptyVersionWaitWindow - (g_network->timer() - blockStart);
+		if (remainingDelay <= 0) {
+			break;
+		}
+
+		requestWaited = true;
 		state Version waitUntilVersion = logData->version.get() + 1;
 
 		// Currently, from `reqBegin` to logData->version are all empty peeks. Wait for more versions, or the empty
 		// batching interval has expired.
-		wait(logData->version.whenAtLeast(waitUntilVersion) ||
-		     delay(SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG_INTERVAL - (now() - blockStart)));
+		wait(logData->version.whenAtLeast(waitUntilVersion) || delay(remainingDelay));
 		if (logData->version.get() < waitUntilVersion) {
 			break; // We know that from `reqBegin` to logData->version are all empty messages. Skip re-executing the
 			       // peek logic.
 		}
+	}
+
+	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT &&
+	    emptyVersionWaitRefcounted) {
+		self->emptyVersionWaitMetadataMap[reqTag].decRefcount(emptyVersionWaitTransition);
+		// Only when all following are satisfied we consider window applied and ack back:
+		// 1. Tlog has dynamic wait window info for the ss
+		// 2. Reply signal must be initiated by non-transitioning peek (those initiated before new window is applied)
+		// 3. All peeks with old wait window has been served (refcount = 0)
+		// 4. Haven't signaled empty version wait actor in this window update yet
+		if (!emptyVersionWaitTransition && !self->emptyVersionWaitMetadataMap[reqTag].replied &&
+		    self->emptyVersionWaitMetadataMap[reqTag].oldPeekRefcount == 0) {
+			DebugLogTraceEvent("TlogEmptyVersionSyncApplied1")
+			    .detail("Tag", reqTag)
+			    .detail("Window", self->emptyVersionWaitMetadataMap[reqTag].waitWindow);
+			self->emptyVersionWaitMetadataMap[reqTag].replied = true;
+			self->emptyVersionWaitMetadataMap[reqTag].applied.trigger();
+		}
+	}
+
+	if (messages.getLength() <= 0) {
+		++self->tlogEmptyPeekMsgCount;
 	}
 
 	TLogPeekReply reply;
@@ -2125,6 +2228,9 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	reply.messages = messagesValue;
 	reply.end = endVersion;
 	reply.onlySpilled = onlySpilled;
+	// NOTE: we need to timestamp all peek requests when they come in if we want accurate elapsed wait time and utilize
+	// semi-waited requests as wait window datapoints
+	reply.timeWaited = requestWaited ? 1 : 0;
 
 	DebugLogTraceEvent("TLogPeekMessages4", self->dbgid)
 	    .detail("LogId", logData->logId)
@@ -2139,7 +2245,7 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 
 		double queueT = blockStart - queueStart;
 		double blockT = workStart - blockStart;
-		double workT = now() - workStart;
+		double workT = g_network->timer() - workStart;
 
 		trackerData.totalPeeks++;
 		trackerData.replyBytes += reply.messages.size();
@@ -2181,6 +2287,49 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 	}
 
 	replyPromise.send(reply);
+	return Void();
+}
+
+ACTOR Future<Void> tLogEmptyVersionWait(TLogData* self, TlogEmptyVersionWaitRequest req) {
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
+		return Void();
+	}
+
+	if (!self->emptyVersionWaitMetadataMap.contains(req.tag)) {
+		self->emptyVersionWaitMetadataMap[req.tag].reset();
+	}
+
+	// During transition no furthur emptyVersionWait for the tlog-ss pair should be sent to tlog
+	if (self->emptyVersionWaitMetadataMap[req.tag].transitioning) {
+		DebugLogTraceEvent("DiscardedSyncMessage").detail("Tag", req.tag).detail("WaitWindow", req.waitWindow);
+		return Void();
+	}
+
+	self->emptyVersionWaitMetadataMap[req.tag].transitioning = true;
+	self->emptyVersionWaitMetadataMap[req.tag].waitWindow = req.waitWindow;
+
+	// 1. If no peek request is using window currently, window is effectively applied immediately, notify ss right away.
+	// 2. If >0 peek request is using window currently, window is effectively applied after all requests with the old
+	// window have been served.
+	if (self->emptyVersionWaitMetadataMap[req.tag].oldPeekRefcount > 0) {
+		DebugLogTraceEvent("WaitStarted")
+		    .detail("Tag", req.tag)
+		    .detail("StructWindow", self->emptyVersionWaitMetadataMap[req.tag].waitWindow);
+		self->emptyVersionWaitMetadataMap[req.tag].replied = false;
+		wait(self->emptyVersionWaitMetadataMap[req.tag].applied.onTrigger());
+		DebugLogTraceEvent("WaitEnded");
+	}
+
+	self->emptyVersionWaitMetadataMap[req.tag].transitioning = false;
+	self->emptyVersionWaitMetadataMap[req.tag].oldPeekRefcount =
+	    self->emptyVersionWaitMetadataMap[req.tag].newPeekRefcount;
+	self->emptyVersionWaitMetadataMap[req.tag].newPeekRefcount = 0;
+	DebugLogTraceEvent("TlogEmptyVersionSyncApplied2")
+	    .detail("Tag", req.tag)
+	    .detail("StructWindow", self->emptyVersionWaitMetadataMap[req.tag].waitWindow)
+	    .detail("ReqWindow", req.waitWindow);
+	req.reply.send(Void());
 	return Void();
 }
 
@@ -2771,12 +2920,17 @@ ACTOR Future<Void> serveTLogInterface(TLogData* self,
 				logData->logSystem->set(Reference<ILogSystem>());
 			}
 		}
+		when(TlogEmptyVersionWaitRequest req = waitNext(tli.emptyVersionWaitRequest.getFuture())) {
+			++self->tlogVersionSyncMsgCount;
+			logData->addActor.send(tLogEmptyVersionWait(self, req));
+		}
 		when(TLogPeekStreamRequest req = waitNext(tli.peekStreamMessages.getFuture())) {
 			TraceEvent(SevDebug, "TLogPeekStream", logData->logId)
 			    .detail("Token", tli.peekStreamMessages.getEndpoint().token);
 			logData->addActor.send(tLogPeekStream(self, req, logData));
 		}
 		when(TLogPeekRequest req = waitNext(tli.peekMessages.getFuture())) {
+			++self->tlogPeekMsgCount;
 			logData->addActor.send(tLogPeekMessages(
 			    req.reply, self, logData, req.begin, req.tag, req.returnIfBlocked, req.onlySpilled, req.sequence));
 		}
@@ -3038,26 +3192,35 @@ ACTOR Future<Void> tLogCore(TLogData* self,
 	logData->addActor.send(waitFailureServer(tli.waitFailure.getFuture()));
 	logData->addActor.send(logData->removed);
 	// FIXME: update tlogMetrics to include new information, or possibly only have one copy for the shared instance
-	logData->addActor.send(logData->cc.traceCounters("TLogMetrics",
-	                                                 logData->logId,
-	                                                 SERVER_KNOBS->STORAGE_LOGGING_DELAY,
-	                                                 logData->logId.toString() + "/TLogMetrics",
-	                                                 [self = self](TraceEvent& te) {
-		                                                 StorageBytes sbTlog = self->persistentData->getStorageBytes();
-		                                                 te.detail("KvstoreBytesUsed", sbTlog.used);
-		                                                 te.detail("KvstoreBytesFree", sbTlog.free);
-		                                                 te.detail("KvstoreBytesAvailable", sbTlog.available);
-		                                                 te.detail("KvstoreBytesTotal", sbTlog.total);
-		                                                 te.detail("KvstoreBytesTemp", sbTlog.temp);
+	logData->addActor.send(logData->cc.traceCounters(
+	    "TLogMetrics",
+	    logData->logId,
+	    SERVER_KNOBS->STORAGE_LOGGING_DELAY,
+	    logData->logId.toString() + "/TLogMetrics",
+	    [self = self](TraceEvent& te) {
+		    StorageBytes sbTlog = self->persistentData->getStorageBytes();
+		    te.detail("KvstoreBytesUsed", sbTlog.used);
+		    te.detail("KvstoreBytesFree", sbTlog.free);
+		    te.detail("KvstoreBytesAvailable", sbTlog.available);
+		    te.detail("KvstoreBytesTotal", sbTlog.total);
+		    te.detail("KvstoreBytesTemp", sbTlog.temp);
 
-		                                                 StorageBytes sbQueue =
-		                                                     self->rawPersistentQueue->getStorageBytes();
-		                                                 te.detail("QueueDiskBytesUsed", sbQueue.used);
-		                                                 te.detail("QueueDiskBytesFree", sbQueue.free);
-		                                                 te.detail("QueueDiskBytesAvailable", sbQueue.available);
-		                                                 te.detail("QueueDiskBytesTotal", sbQueue.total);
-		                                                 te.detail("QueueDiskBytesTemp", sbQueue.temp);
-	                                                 }));
+		    StorageBytes sbQueue = self->rawPersistentQueue->getStorageBytes();
+		    te.detail("QueueDiskBytesUsed", sbQueue.used);
+		    te.detail("QueueDiskBytesFree", sbQueue.free);
+		    te.detail("QueueDiskBytesAvailable", sbQueue.available);
+		    te.detail("QueueDiskBytesTotal", sbQueue.total);
+		    te.detail("QueueDiskBytesTemp", sbQueue.temp);
+
+		    te.detail("TlogPeekMsgCount", self->tlogPeekMsgCount);
+		    te.detail("TlogEmptyPeekMsgCount", self->tlogEmptyPeekMsgCount);
+		    te.detail("VersionSyncMsgCount", self->tlogVersionSyncMsgCount);
+		    self->tlogPeekMsgCount = 0;
+		    self->tlogEmptyPeekMsgCount = 0;
+		    self->tlogVersionSyncMsgCount = 0;
+
+		    te.detail("EmptyVersionWaitMetaMapSize", self->emptyVersionWaitMetadataMap.size());
+	    }));
 
 	logData->addActor.send(serveTLogInterface(self, tli, logData, warningCollectorInput));
 	logData->addActor.send(cleanupPeekTrackers(logData.getPtr()));

@@ -91,6 +91,12 @@ ACTOR Future<bool> consistencyScanCommandActor(Database db, std::vector<StringRe
 						config.targetRoundTimeSeconds = boost::lexical_cast<int>(args.front().toString());
 						args.pop_front();
 					}
+				} else if (next == "minRoundTime") {
+					error = args.empty();
+					if (!error) {
+						config.minRoundTimeSeconds = boost::lexical_cast<int>(args.front().toString());
+						args.pop_front();
+					}
 				}
 			}
 
@@ -118,7 +124,7 @@ CommandFactory consistencyScanFactory(
     CommandHelp(
         // TODO:  Expose/document additional configuration options
         "consistencyscan [on|off] [restart] [stats] [clearstats] [maxRate <BYTES_PER_SECOND>] [targetInterval "
-        "<SECONDS>]",
+        "<SECONDS>] [minRoundTime <SECONDS>]",
         "Enables, disables, or sets options for the Consistency Scan role which repeatedly scans "
         "shard replicas for consistency.",
         "`on' enables the scan.\n\n"
@@ -128,6 +134,8 @@ CommandFactory consistencyScanFactory(
         "`maxRate <BYTES_PER_SECOND>' sets the maximum scan read speed rate to BYTES_PER_SECOND, post-replication.\n\n"
         "`targetInterval <SECONDS>' sets the target interval for the scan to SECONDS.  The scan will adjust speed "
         "to attempt to complete in that amount of time but it will not exceed BYTES_PER_SECOND\n\n"
+        "`minRoundTime <SECONDS>' sets the minimum scan round to SECONDS.  If a round completes faster than this, the "
+        "scanner will delay afterwards.\n\n"
         "`stats` dumps the current round and lifetime stats of the consistency scan. It is a convenience method to "
         "expose the stats which are also in status json.\n\n"
         "`clearstats` will clear all of the stats for the consistency scan but otherwise leave the configuration as "
