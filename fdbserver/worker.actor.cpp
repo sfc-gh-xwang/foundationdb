@@ -2580,30 +2580,31 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					profilerReq.reply.sendError(e);
 				}
 			}
-			when(ListLatestEncryptCipherKeysRequest _req =
+			when(ListLatestEncryptCipherKeysRequest req =
 			         waitNext(interf.clientInterface.listLatestEncryptCipherKeys.getFuture())) {
-				state ListLatestEncryptCipherKeysRequest req = _req;
-				state Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
-				state ListLatestEncryptCipherKeysReply reply;
-				state bool hasMore = true;
-				while (reply.list.size() < req.limit && hasMore) {
-					Optional<EncryptCipherDomainId> nextDomainId =
-					    (reply.list.size() == 0 ? req.beginDomainId : reply.list.back().first + 1);
-					size_t limit =
-					    std::min<size_t>(req.limit - reply.list.size(), CLIENT_KNOBS->ENCRYPT_LIST_CIPHER_KEYS_LIMIT);
-					hasMore = cipherKeyCache->iterateLatestCipherKeys(
-					    nextDomainId,
-					    req.endDomainId,
-					    limit,
-					    [&](const EncryptCipherDomainId& domainId, Reference<BlobCipherKey> cipherKey) {
-						    reply.list.emplace_back(
-						        reply.arena,
-						        domainId,
-						        EncryptCipherKeyEntry({ cipherKey->getBaseCipherId(), cipherKey->getAccessAtTS() }));
-					    });
-					wait(yield());
+				// In case we have huge number of encryption domains, we should yield once for a while when we iterate
+				// through the cipher key cache. But the cipher key cache maintains an unordered_map which can get
+				// re-hash in the middle, which make it difficult to iterate with yield in between.
+				std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> latestCipherKeys =
+				    BlobCipherKeyCache::getInstance()->listLatestCipherKeys();
+				ListLatestEncryptCipherKeysReply reply;
+				auto iter = req.beginDomainId.present() ? latestCipherKeys.lower_bound(req.beginDomainId.get())
+				                                        : latestCipherKeys.begin();
+				auto hasMore = [&]() -> bool {
+					return iter != latestCipherKeys.end() &&
+					       (!req.endDomainId.present() || iter->first < req.endDomainId.get()) &&
+					       reply.list.size() < req.limit;
+				};
+				while (hasMore()) {
+					EncryptCipherDomainId domainId = iter->first;
+					Reference<BlobCipherKey> cipherKey = iter->second;
+					reply.list.emplace_back(
+					    reply.arena,
+					    domainId,
+					    EncryptCipherKeyEntry({ cipherKey->getBaseCipherId(), cipherKey->getAccessAtTS() }));
+					iter++;
 				}
-				reply.hasMore = hasMore;
+				reply.hasMore = hasMore();
 				req.reply.send(reply);
 			}
 			when(RecruitMasterRequest req = waitNext(interf.master.getFuture())) {

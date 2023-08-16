@@ -878,25 +878,15 @@ std::vector<Reference<BlobCipherKey>> BlobCipherKeyCache::getAllCiphers(const En
 	return keyIdCache->getAllCipherKeys();
 }
 
-bool BlobCipherKeyCache::iterateLatestCipherKeys(
-    Optional<EncryptCipherDomainId> beginDomainId,
-    Optional<EncryptCipherDomainId> endDomainId,
-    size_t limit,
-    std::function<void(const EncryptCipherDomainId&, Reference<BlobCipherKey>)> f) const {
-	size_t count = 0;
-	auto cacheIter = beginDomainId.present() ? domainCacheMap.lower_bound(beginDomainId.get()) : domainCacheMap.begin();
-	auto hasMore = [&]() {
-		return cacheIter != domainCacheMap.end() && (!endDomainId.present() || cacheIter->first < endDomainId.get());
-	};
-	while (count < limit && hasMore()) {
-		Reference<BlobCipherKey> cipherKey = cacheIter->second->getLatestCipherKey();
+std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> BlobCipherKeyCache::listLatestCipherKeys() const {
+	std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys;
+	for (auto& domain : domainCacheMap) {
+		Reference<BlobCipherKey> cipherKey = domain.second->getLatestCipherKey();
 		if (cipherKey.isValid()) {
-			f(cacheIter->first, cipherKey);
+			cipherKeys[domain.first] = cipherKey;
 		}
-		count++;
-		cacheIter++;
 	}
-	return hasMore();
+	return cipherKeys;
 }
 
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo) {
