@@ -19,6 +19,7 @@
  */
 
 #include "fdbclient/DatabaseContext.h"
+#include "fdbclient/Knobs.h"
 #include "fdbclient/ReadYourWrites.h"
 
 #include "metacluster/Metacluster.h"
@@ -34,9 +35,18 @@ ACTOR Future<MetaclusterMetrics> getMetaclusterMetricsImpl(Database db) {
 		try {
 			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 			state std::map<ClusterName, DataClusterMetadata> clusters;
+			state std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> lockedTenants;
 			state int64_t tenantCount;
 			wait(store(clusters,
 			           metacluster::listClustersTransaction(tr, ""_sr, "\xff"_sr, CLIENT_KNOBS->MAX_DATA_CLUSTERS)) &&
+			     store(lockedTenants,
+			           listTenantMetadataTransaction(tr,
+			                                         ""_sr,
+			                                         "\xff"_sr,
+			                                         CLIENT_KNOBS->MAX_DATA_CLUSTERS *
+			                                             CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER,
+			                                         {},
+			                                         true)) &&
 			     store(tenantCount,
 			           metacluster::metadata::management::tenantMetadata().tenantCount.getD(tr, Snapshot::False, 0)));
 
@@ -44,12 +54,14 @@ ACTOR Future<MetaclusterMetrics> getMetaclusterMetricsImpl(Database db) {
 
 			MetaclusterMetrics metrics;
 			metrics.numTenants = tenantCount;
+			metrics.numLockedTenants = lockedTenants.size();
 			metrics.numDataClusters = clusters.size();
 			metrics.tenantGroupCapacity = capacityNumbers.first.numTenantGroups;
 			metrics.tenantGroupsAllocated = capacityNumbers.second.numTenantGroups;
 
 			TraceEvent("MetaclusterCapacity")
 			    .detail("TotalTenants", metrics.numTenants)
+			    .detail("LockedTenants", metrics.numLockedTenants)
 			    .detail("DataClusters", metrics.numDataClusters)
 			    .detail("TenantGroupCapacity", metrics.tenantGroupCapacity)
 			    .detail("TenantGroupsAllocated", metrics.tenantGroupsAllocated);
