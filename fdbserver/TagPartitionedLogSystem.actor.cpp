@@ -20,9 +20,6 @@
 
 #include "fdbserver/TagPartitionedLogSystem.actor.h"
 
-#include "fdbclient/FDBTypes.h"
-#include "flow/DebugTrace.h"
-#include "flow/Trace.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 ACTOR Future<Version> minVersionWhenReady(Future<Void> f, std::vector<Future<TLogCommitReply>> replies) {
