@@ -642,10 +642,10 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 					}
 				} else {
 					// Use filter-based TenantAPI:: call similar to how metacluster:: has one
-					std::vector<std::pair<TenantName, int64_t>> tenants =
-					    wait(TenantAPI::listTenants(db, beginTenant, endTenant, limit, tenantGroup, locked));
-					for (const auto& [tenantName, tenantId] : tenants) {
-						tenantInfo[tenantName] = tenantId;
+					std::vector<std::pair<TenantName, TenantMapEntry>> tenants =
+					    wait(TenantAPI::listTenantMetadata(db, beginTenant, endTenant, limit, tenantGroup, locked));
+					for (const auto& [tenantName, entry] : tenants) {
+						tenantInfo[tenantName] = entry.id;
 					}
 				}
 			}
