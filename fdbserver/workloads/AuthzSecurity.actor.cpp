@@ -35,7 +35,7 @@
 #include "fdbserver/TesterInterface.actor.h"
 #include "fdbserver/TLogInterface.h"
 #include "fdbserver/workloads/workloads.actor.h"
-
+#include "fdbclient/BulkLoad.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 FDB_BOOLEAN_PARAM(PositiveTestcase);
@@ -1169,7 +1169,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 
 		BulkLoadStartRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.id = newBulkLoadID(); // fake bulk load id but it works fine
 		req.keyRange = keyRange;
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		req.startReadVersion = readVersion;
@@ -1195,7 +1195,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                            BulkLoadStatus::State desired) {
 		BulkLoadStateChangeRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.id = newBulkLoadID(); // fake bulk load id but it works fine
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		req.desired = desired;
 		ErrorOr<Void> rep = wait(interf.stateChangeRequest.tryGetReply(req));
@@ -1290,7 +1290,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                             BulkLoaderInterface interf) {
 		BulkLoadFilesToWriteRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.id = newBulkLoadID(); // fake bulk load id but it works fine
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		req.count = 1;
 		ErrorOr<BulkLoadFilesToWriteReply> rep = wait(interf.filesToWriteRequest.tryGetReply(req));
@@ -1320,7 +1320,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                             BulkLoaderInterface interf) {
 		BulkLoadFilesWrittenRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.id = newBulkLoadID(); // fake bulk load id but it works fine
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 
 		BulkLoadWrittenFileRef writtenFile;
@@ -1362,7 +1362,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                             BulkLoaderInterface interf) {
 		BulkLoadWaitCompleteRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.id = newBulkLoadID(); // fake bulk load id but it works fine
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		ErrorOr<Void> rep = wait(interf.waitCompleteRequest.tryGetReply(req));
 		if (rep.isError()) {
@@ -1452,7 +1452,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                       BulkLoaderInterface interf) {
 		BulkLoadStatusRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.id = newBulkLoadID(); // fake bulk load id but it works fine
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		ErrorOr<BulkLoadStatusReply> rep = wait(interf.statusRequest.tryGetReply(req));
 		if (rep.isError()) {

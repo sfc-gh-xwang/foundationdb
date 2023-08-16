@@ -96,6 +96,7 @@
 #include "flow/UnitTest.h"
 #include "flow/network.h"
 #include "flow/serialize.h"
+#include "fdbclient/RangeLockAPI.actor.h"
 
 #ifdef ADDRESS_SANITIZER
 #include <sanitizer/lsan_interface.h>
@@ -3025,6 +3026,10 @@ Tenant::Tenant(Database cx, int64_t id) : lookupFuture(id), dbFuture(cx) {}
 Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
   : name(name),
     lookupFuture(tenantLookupInfo),
+    dbFuture(cx) {}
+Tenant::Tenant(Database cx, TenantMapEntry entry)
+  : name(entry.tenantName),
+    lookupFuture(TenantLookupInfo(entry.id, entry.tenantGroup)),
     dbFuture(cx) {}
 
 int64_t Tenant::id() const {
@@ -7007,7 +7012,8 @@ ACTOR static Future<Void> tryCommit(Reference<TransactionState> trState, CommitT
 			    e.code() != error_code_storage_quota_exceeded && e.code() != error_code_tenant_locked &&
 			    e.code() != error_code_tenant_name_required &&
 			    e.code() != error_code_management_cluster_invalid_access && e.code() != error_code_tenants_disabled &&
-			    e.code() != error_code_permission_denied && e.code() != error_code_encrypt_key_not_found) {
+			    e.code() != error_code_permission_denied && e.code() != error_code_encrypt_key_not_found &&
+			    !RangeLockAPI::isRangeLockError(e)) {
 				// Part of the reason that this block exists is that negative unit tests can trip over these cases
 				// and result in SevError logs being emitted. Gating against these status codes also means their
 				// existences must get surfaced and logged somewhere else during production system.
@@ -7446,6 +7452,10 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 
 	case FDBTransactionOptions::HYBRID_READ_DIRTY:
 		trState->hybridReadOptions.withDefault(HybridReadOptions()).canReadDirty = true;
+		break;
+
+	case FDBTransactionOptions::HYBRID_UNTRUSTED_READ_VERSION:
+		trState->hybridReadOptions.withDefault(HybridReadOptions()).untrustedReadVersion = true;
 		break;
 
 	default:
@@ -8879,6 +8889,9 @@ ACTOR Future<Version> checkBlobSubrange(Database db,
 			if (useRawAccess) {
 				tr.setOption(FDBTransactionOptions::RAW_ACCESS);
 			}
+			if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
+				tr.setOption(FDBTransactionOptions::READ_LOCK_AWARE);
+			}
 			if (!summaryVersion.present()) {
 				// fill summary version at the start, so that retries use the same version
 				Version summaryVersion_ = wait(tr.getReadVersion());
@@ -8942,6 +8955,10 @@ ACTOR Future<Version> verifyBlobRangeActor(Reference<DatabaseContext> cx,
 				if (useRawAccess) {
 					tr.setOption(FDBTransactionOptions::RAW_ACCESS);
 				}
+				if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
+					tr.setOption(FDBTransactionOptions::READ_LOCK_AWARE);
+				}
+
 				wait(store(allRanges, tr.getBlobGranuleRanges(KeyRangeRef(curRegion.begin, range.end), loadSize)));
 				break;
 			} catch (Error& e) {

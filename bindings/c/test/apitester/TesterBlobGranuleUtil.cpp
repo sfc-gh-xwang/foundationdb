@@ -21,6 +21,7 @@
 #include "TesterBlobGranuleUtil.h"
 #include "TesterUtil.h"
 #include <fstream>
+#include <filesystem>
 
 namespace FdbApiTester {
 
@@ -75,6 +76,24 @@ fdb::native::FDBReadBlobGranuleContext createGranuleContext(const TesterGranuleC
 	granuleContext.free_load_f = &granule_free_load;
 
 	return granuleContext;
+}
+
+void writeGranuleFile(TesterGranuleContext* ctx,
+                      const char* filename,
+                      int filenameLength,
+                      const char* data,
+                      int dataLength) {
+	// FIXME: only do this once?
+	// if no hybrid writes yet, directory many not exist and file write will fail
+	std::filesystem::path basePath = ctx->basePath;
+	std::filesystem::create_directories(basePath);
+
+	// write file
+	std::string path = ctx->basePath + std::string(filename, filenameLength);
+	std::ofstream fout(path, std::ios::out | std::ios::binary);
+	fout.write(data, dataLength);
+	fout.close();
+	ASSERT(!fout.fail());
 }
 
 } // namespace FdbApiTester

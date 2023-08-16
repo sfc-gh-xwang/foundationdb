@@ -446,6 +446,8 @@ tracer = log_file
             ]
         if self.use_future_protocol_version:
             args += ["--use-future-protocol-version"]
+        for knob, value in self.custom_config.items():
+            args += ["--{}={}".format(knob, value)]
         res = subprocess.run(
             args, env=self.process_env(), stderr=stderr, stdout=stdout, timeout=timeout
         )
@@ -534,7 +536,9 @@ tracer = log_file
                 "tls-key-file": self.server_key_file,
                 "tls-ca-file": self.client_ca_file,
                 "tls-verify-peers": self.tls_config.verify_peers,
-                "tls-required": "true" if self.tls_config.server_require_tls else "false",
+                "tls-required": "true"
+                if self.tls_config.server_require_tls
+                else "false",
             }
             return "\n".join("{} = {}".format(k, v) for k, v in conf_map.items())
 
@@ -776,6 +780,9 @@ tracer = log_file
 
     def add_trace_check_from(self, check_func, time_begin, filename_substr: str = ""):
         self.trace_check_entries.append((check_func, time_begin, None, filename_substr))
+
+    def add_trace_check_to(self, check_func, time_end, filename_substr: str = ""):
+        self.trace_check_entries.append((check_func, None, time_end, filename_substr))
 
     def add_trace_check_from_to(
         self, check_func, time_begin, time_end, filename_substr: str = ""
