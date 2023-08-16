@@ -114,9 +114,10 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
 		bool foundEquals;
 		param = token.eat("=", &foundEquals);
 		if (!foundEquals && !tokencmp(param, "JSON") && !tokencmp(param, "LOCKED")) {
-			fmt::print(stderr,
-			           "ERROR: invalid option string `{}'. String must specify a value using `=' or be `JSON'.\n",
-			           param.toString().c_str());
+			fmt::print(
+			    stderr,
+			    "ERROR: invalid option string `{}'. String must specify a value using `=' or be `JSON' or `LOCKED'.\n",
+			    param.toString().c_str());
 			return false;
 		}
 		value = token;
