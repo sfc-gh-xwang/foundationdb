@@ -57,6 +57,7 @@ ACTOR Future<bool> bulkLoadCommandActor(Database localDb,
 	state Optional<Reference<Tenant>> tenant;
 	if (tenantEntry.present()) {
 		tenant = Reference<Tenant>(new Tenant(localDb, tenantEntry.get().id));
+		tenant.get()->name = tenantEntry.get().tenantName;
 	}
 
 	Key command = tokens[1];
