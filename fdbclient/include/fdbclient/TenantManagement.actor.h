@@ -44,7 +44,6 @@
 namespace TenantAPI {
 
 FDB_BOOLEAN_PARAM(CheckTenantTombstone);
-FDB_BOOLEAN_PARAM(LockedTenants);
 
 static const int TENANT_ID_PREFIX_MIN_VALUE = 0;
 static const int TENANT_ID_PREFIX_MAX_VALUE = 32767;
@@ -600,7 +599,7 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenants(Reference<DB> db
 	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
 		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-		return listTenantsTransaction(tr, begin, end, limit);
+		return TenantAPI::listTenantsTransaction(tr, begin, end, limit);
 	});
 }
 
@@ -632,7 +631,7 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenantGroupTenants(Refer
 	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
 		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-		return listTenantGroupTenantsTransaction(tr, tenantGroup, begin, end, limit);
+		return TenantAPI::listTenantGroupTenantsTransaction(tr, tenantGroup, begin, end, limit);
 	});
 }
 
@@ -644,7 +643,8 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
     int limit,
     Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
     Optional<LockedTenants> locked = Optional<LockedTenants>()) {
-	std::vector<std::pair<TenantName, int64_t>> matchingTenants = wait(listTenantsTransaction(tr, begin, end, limit));
+	std::vector<std::pair<TenantName, int64_t>> matchingTenants =
+	    wait(TenantAPI::listTenantsTransaction(tr, begin, end, limit));
 
 	state std::vector<Future<TenantMapEntry>> tenantEntryFutures;
 	for (auto const& [name, id] : matchingTenants) {
@@ -691,7 +691,7 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadata(
 	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		return listTenantMetadataTransaction(tr, begin, end, limit, tenantGroup, locked);
+		return TenantAPI::listTenantMetadataTransaction(tr, begin, end, limit, tenantGroup, locked);
 	});
 }
 

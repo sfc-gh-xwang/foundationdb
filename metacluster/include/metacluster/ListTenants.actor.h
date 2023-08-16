@@ -26,7 +26,6 @@
 #define METACLUSTER_LISTTENANTS_ACTOR_H
 
 #include "fdbclient/Tenant.h"
-#include "fdbclient/TenantManagement.actor.h"
 #include "flow/flow.h"
 #include "flow/genericactors.actor.h"
 
@@ -84,7 +83,7 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenants(Reference<DB> db
 	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		return listTenantsTransaction(tr, begin, end, limit, offset);
+		return metacluster::listTenantsTransaction(tr, begin, end, limit, offset);
 	});
 }
 
@@ -136,12 +135,13 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
     Optional<TenantAPI::LockedTenants> locked = Optional<TenantAPI::LockedTenants>()) {
 	state std::vector<std::pair<TenantName, int64_t>> matchingTenants;
 	if (!tenantGroup.present()) {
-		wait(store(matchingTenants, listTenantsTransaction(tr, begin, end, limit)));
+		wait(store(matchingTenants, metacluster::listTenantsTransaction(tr, begin, end, limit)));
 	} else {
-		wait(store(matchingTenants, listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
+		wait(store(matchingTenants,
+		           metacluster::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
 	}
 	std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> results =
-	    wait(listTenantMetadataTransaction(tr, matchingTenants, locked));
+	    wait(metacluster::listTenantMetadataTransaction(tr, matchingTenants, locked));
 	return results;
 }
 
@@ -165,19 +165,21 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 			if (filters.empty()) {
 				state std::vector<std::pair<TenantName, int64_t>> ids;
 				if (!tenantGroup.present()) {
-					wait(store(ids, listTenantsTransaction(tr, begin, end, limit)));
+					wait(store(ids, metacluster::listTenantsTransaction(tr, begin, end, limit)));
 				} else {
-					wait(store(ids, listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
+					wait(store(
+					    ids, metacluster::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
 				}
-				wait(store(results, listTenantMetadataTransaction(tr, ids, locked)));
+				wait(store(results, metacluster::listTenantMetadataTransaction(tr, ids, locked)));
 				return results;
 			}
 
 			// read in batch
 			state int count = 0;
 			loop {
-				std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantBatch = wait(
-				    listTenantMetadataTransaction(tr, begin, end, std::max(limit + offset, 1000), tenantGroup, locked));
+				std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantBatch =
+				    wait(metacluster::listTenantMetadataTransaction(
+				        tr, begin, end, std::max(limit + offset, 1000), tenantGroup, locked));
 
 				if (tenantBatch.empty()) {
 					return results;
