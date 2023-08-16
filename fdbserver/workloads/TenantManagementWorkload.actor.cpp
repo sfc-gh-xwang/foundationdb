@@ -1944,7 +1944,7 @@ struct TenantManagementWorkload : TestWorkload {
 
 		state bool useManagementCluster = self->useMetacluster && deterministicRandom()->random01() < 0.7;
 		state Database db = useManagementCluster ? self->managementDbInternal : self->dataDb;
-		// verify management cluster type
+		// Verify management cluster type
 		if (useManagementCluster && db->clientInfo->get().clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
 			ASSERT_NE(self->managementDbInternal->clientInfo->get().clusterType, ClusterType::METACLUSTER_MANAGEMENT);
 			ASSERT(!self->managementDbInternal->getTenantMode().present());
@@ -1971,38 +1971,36 @@ struct TenantManagementWorkload : TestWorkload {
 			}
 		}
 
-		if (tenant.present() && useManagementCluster) {
-			ASSERT_EQ(db->clientInfo->get().clusterType, ClusterType::METACLUSTER_MANAGEMENT);
-			// Test open tenant with three different constructors
+		if (tenant.present()) {
+			// Test open tenant with four different constructors
 			state int openMode = deterministicRandom()->randomInt(0, 4);
 			try {
-				if (openMode == 0 && tName.present()) {
+				if (openMode == 0 && tenantExists) {
+					// If tName presents but tenant doesn't exist, using the tName might open another tenant
 					tenant = makeReference<Tenant>(db, tName.get());
 				} else if (openMode == 1 && tenantExists) {
-					state Optional<TenantMapEntry> tEntry =
-					    wait(TenantAPI::tryGetTenant(self->dataDb.getReference(), tName.get()));
-					ASSERT(tEntry.present());
-					tenant = makeReference<Tenant>(db, tEntry.get());
+					TenantMapEntry tEntry = TenantMapEntry(tData.tenant->id(), tName.get(), tData.tenantGroup);
+					tenant = makeReference<Tenant>(db, tEntry);
+				} else if (openMode == 2) {
+					tenant = makeReference<Tenant>(db, tenant.get()->id());
+				} else if (openMode == 3) {
+					tenant = makeReference<Tenant>(db, tenant.get()->getLookupFuture(), tName);
 				} else {
-					tenant = openMode == 2 ? makeReference<Tenant>(db, tenant.get()->id())
-					                       : makeReference<Tenant>(db, tenant.get()->getLookupFuture(), tName);
+					CODE_PROBE(true, "Using the original tenant");
+					useManagementCluster = false;
 				}
 				wait(tenant.get()->ready());
-				if (!tenantExists) {
-					ASSERT(openMode == 0 && tName.present());
-					auto itr = self->createdTenants.find(tName.get());
-					ASSERT(itr != self->createdTenants.end() && itr->second.tenant->id() == tenant.get()->id());
-					tenantExists = true;
-					tData = itr->second;
-					lockState = itr->second.lockState;
-				}
-				// verify assignedCluster value
+				// Verify assignedCluster value
 				Optional<ClusterName> assignedCluster = tenant.get()->getLookupFuture().get().assignedCluster;
-				ASSERT(assignedCluster.present());
-				ASSERT_EQ(assignedCluster.get(), self->dataClusterName);
+				if (useManagementCluster) {
+					ASSERT(assignedCluster.present());
+					ASSERT_EQ(assignedCluster.get(), self->dataClusterName);
+				} else {
+					ASSERT(!assignedCluster.present());
+				}
 			} catch (Error& e) {
 				if (e.code() == error_code_tenant_not_found) {
-					CODE_PROBE(true, "Attempted to open a non-existent tenant with management cluster");
+					CODE_PROBE(true, "Attempted to open a non-existent tenant");
 					ASSERT(!tenantExists);
 					return Void();
 				} else {
