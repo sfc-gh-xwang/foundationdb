@@ -19,8 +19,6 @@
  */
 
 #pragma once
-#include "fdbrpc/TenantName.h"
-#include "flow/Optional.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_TENANT_MANAGEMENT_ACTOR_G_H)
 #define FDBCLIENT_TENANT_MANAGEMENT_ACTOR_G_H
 #include "fdbclient/TenantManagement.actor.g.h"

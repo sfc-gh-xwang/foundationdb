@@ -22,7 +22,6 @@
 #include "fdbclient/Knobs.h"
 #include "fdbclient/ReadYourWrites.h"
 
-#include "fdbclient/TenantManagement.actor.h"
 #include "metacluster/Metacluster.h"
 #include "metacluster/MetaclusterMetrics.h"
 
