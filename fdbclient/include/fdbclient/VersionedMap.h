@@ -39,7 +39,7 @@
 namespace PTreeImpl {
 
 template <class T>
-struct PTree : public ReferenceCounted<PTree<T>>, FastAllocated<PTree<T>>, NonCopyable {
+struct PTree : public ReferenceCounted<PTree<T>>, TrackedFastAllocated<PTree<T>>, NonCopyable {
 	uint32_t priority;
 	Reference<PTree> pointer[3];
 	Version lastUpdateVersion;
@@ -680,6 +680,7 @@ public:
 	typedef PTreeImpl::PTree<MapPair<K, std::pair<T, Version>>> PTreeT;
 	typedef PTreeImpl::PTreeFinger<MapPair<K, std::pair<T, Version>>> PTreeFingerT;
 	typedef Reference<PTreeT> Tree;
+	typedef TrackedFastAllocated<PTreeT> PTreeSize;
 
 	Version oldestVersion, latestVersion;
 
