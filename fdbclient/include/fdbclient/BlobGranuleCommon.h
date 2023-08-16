@@ -436,4 +436,6 @@ struct BlobRangeChangeLogRef {
 	}
 };
 
+void printGranuleChunks(const VectorRef<BlobGranuleChunkRef>& chunks);
+
 #endif

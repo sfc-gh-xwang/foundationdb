@@ -446,6 +446,8 @@ tracer = log_file
             ]
         if self.use_future_protocol_version:
             args += ["--use-future-protocol-version"]
+        for knob, value in self.custom_config.items():
+            args += ["--{}={}".format(knob, value)]
         res = subprocess.run(
             args, env=self.process_env(), stderr=stderr, stdout=stdout, timeout=timeout
         )

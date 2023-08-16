@@ -380,7 +380,7 @@ public:
 		std::set<Optional<Standalone<StringRef>>> result;
 		for (auto& it : clusterControllerData->id_worker)
 			if (workerAvailable(self, it.second, checkStable) &&
-			    !conf.isExcludedServer(it.second.details.interf.addresses()) &&
+			    !conf.isExcludedServer(it.second.details.interf.addresses(), it.second.details.interf.locality) &&
 			    !isExcludedDegradedServer(clusterControllerData, it.second.details.interf.addresses()))
 				result.insert(it.second.details.interf.locality.dcId());
 		return result;
@@ -410,7 +410,7 @@ public:
 		for (auto& it : clusterControllerData->id_worker) {
 			auto fitness = it.second.details.processClass.machineClassFitness(role);
 			if (RecruiterImpl::workerAvailable(self, it.second, checkStable) &&
-			    !conf.isExcludedServer(it.second.details.interf.addresses()) &&
+			    !conf.isExcludedServer(it.second.details.interf.addresses(), it.second.details.interf.locality) &&
 			    !isExcludedDegradedServer(clusterControllerData, it.second.details.interf.addresses()) &&
 			    it.second.details.interf.locality.dcId() == dcId &&
 			    (!minWorker.present() ||
@@ -474,7 +474,7 @@ public:
 		for (auto& it : clusterControllerData->id_worker) {
 			auto fitness = it.second.details.processClass.machineClassFitness(ProcessClass::Storage);
 			if (workerAvailable(self, it.second, false) && it.second.details.recoveredDiskFiles &&
-			    !conf.isExcludedServer(it.second.details.interf.addresses()) &&
+			    !conf.isExcludedServer(it.second.details.interf.addresses(), it.second.details.interf.locality) &&
 			    !isExcludedDegradedServer(clusterControllerData, it.second.details.interf.addresses()) &&
 			    fitness != ProcessClass::NeverAssign &&
 			    (!dcId.present() || it.second.details.interf.locality.dcId() == dcId.get())) {
@@ -553,7 +553,7 @@ public:
 				                     dcIds);
 				continue;
 			}
-			if (conf.isExcludedServer(worker_details.interf.addresses())) {
+			if (conf.isExcludedServer(worker_details.interf.addresses(), worker_details.interf.locality)) {
 				logWorkerUnavailable(SevInfo,
 				                     clusterControllerData->id,
 				                     "simple",
@@ -733,7 +733,7 @@ public:
 				                     dcIds);
 				continue;
 			}
-			if (conf.isExcludedServer(worker_details.interf.addresses())) {
+			if (conf.isExcludedServer(worker_details.interf.addresses(), worker_details.interf.locality)) {
 				logWorkerUnavailable(SevInfo,
 				                     clusterControllerData->id,
 				                     "deprecated",
@@ -1000,7 +1000,7 @@ public:
 				                     dcIds);
 				continue;
 			}
-			if (conf.isExcludedServer(worker_details.interf.addresses())) {
+			if (conf.isExcludedServer(worker_details.interf.addresses(), worker_details.interf.locality)) {
 				logWorkerUnavailable(SevInfo,
 				                     clusterControllerData->id,
 				                     "complex",
@@ -2391,7 +2391,7 @@ WorkerFitnessInfo Recruiter::getWorkerForRoleInDatacenter(
 
 	for (auto const& [optionalWorkerId, workerInfo] : clusterControllerData->id_worker) {
 		auto fitness = workerInfo.details.processClass.machineClassFitness(role);
-		if (conf.isExcludedServer(workerInfo.details.interf.addresses()) ||
+		if (conf.isExcludedServer(workerInfo.details.interf.addresses(), workerInfo.details.interf.locality) ||
 		    isExcludedDegradedServer(clusterControllerData, workerInfo.details.interf.addresses())) {
 			fitness = std::max(fitness, ProcessClass::ExcludeFit);
 		}
