@@ -13081,37 +13081,3 @@ void versionedMapTest() {
 	printf("%d distinct after %d insertions\n", count, 1000 * 1000);
 	printf("Memory used: %f MB\n", (after - before) / 1e6);
 }
-
-static void versionedMapBound(benchmark::State& benchState) {
-	bool isLowerBound = benchState.range(0);
-	int64_t dataSize = benchState.range(1);
-	StorageServer::VersionedData data;
-	Arena arena;
-	ValueOrClearToRef value = ValueOrClearToRef::value("fixed_value"_sr);
-	// only insert half of the keys, so when we bench search (lower_bound/upper_bound), it could test the cases that
-	// the key exist and non-exist
-	RandomKeySetGenerator keyGen(dataSize * 2, "10..20/a..z");
-	int64_t i = 0;
-	for (auto& key : keyGen.keys) {
-		if (i++ % 2) {
-			data.insert(key, value);
-		}
-	}
-
-	for (auto _ : benchState) {
-		auto it = isLowerBound ? data.at(data.getLatestVersion()).lower_bound(keyGen.next())
-		                       : data.at(data.getLatestVersion()).upper_bound(keyGen.next());
-		benchmark::DoNotOptimize(it);
-	}
-}
-
-static void versionedMapBoundArguments(benchmark::internal::Benchmark* b) {
-	for (bool isLowerBound : { false, true }) {
-		for (int64_t dataSize : { 1e3, 1e5 }) {
-			b->Args({ isLowerBound, dataSize });
-		}
-	}
-	b->ArgNames({ "isLowerBound", "dataSize" });
-}
-
-BENCHMARK(versionedMapBound)->Iterations(1e6)->Apply(versionedMapBoundArguments);
