@@ -22,6 +22,7 @@
 #include "fdbclient/Knobs.h"
 #include "fdbclient/ReadYourWrites.h"
 
+#include "fdbclient/TenantManagement.actor.h"
 #include "metacluster/Metacluster.h"
 #include "metacluster/MetaclusterMetrics.h"
 
@@ -46,7 +47,7 @@ ACTOR Future<MetaclusterMetrics> getMetaclusterMetricsImpl(Database db) {
 			                                         CLIENT_KNOBS->MAX_DATA_CLUSTERS *
 			                                             CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER,
 			                                         {},
-			                                         true)) &&
+			                                         TenantAPI::LockedTenants::True)) &&
 			     store(tenantCount,
 			           metacluster::metadata::management::tenantMetadata().tenantCount.getD(tr, Snapshot::False, 0)));
 

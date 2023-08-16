@@ -26,6 +26,7 @@
 #define METACLUSTER_LISTTENANTS_ACTOR_H
 
 #include "fdbclient/Tenant.h"
+#include "fdbclient/TenantManagement.actor.h"
 #include "flow/flow.h"
 #include "flow/genericactors.actor.h"
 
@@ -92,7 +93,7 @@ ACTOR template <class Transaction>
 Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenantMetadataTransaction(
     Transaction tr,
     std::vector<std::pair<TenantName, int64_t>> tenantIds,
-    bool locked = false) {
+    Optional<TenantAPI::LockedTenants> locked = Optional<TenantAPI::LockedTenants>()) {
 
 	CODE_PROBE(true, "List tenant metadata");
 	state int idIdx = 0;
@@ -106,8 +107,13 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 	results.reserve(futures.size());
 	for (int i = 0; i < futures.size(); ++i) {
 		const MetaclusterTenantMapEntry& entry = futures[i].get().get();
-		if (locked && entry.tenantLockState != TenantAPI::TenantLockState::LOCKED) {
-			continue;
+		if (locked.present()) {
+			if (locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::LOCKED) {
+				continue;
+			}
+			if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
+				continue;
+			}
 		}
 
 		// Tenants being renamed show up in tenantIds twice, once under each name. The destination name will be
@@ -127,7 +133,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
     TenantNameRef end,
     int limit,
     Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
-    bool locked = false) {
+    Optional<TenantAPI::LockedTenants> locked = Optional<TenantAPI::LockedTenants>()) {
 	state std::vector<std::pair<TenantName, int64_t>> matchingTenants;
 	if (!tenantGroup.present()) {
 		wait(store(matchingTenants, listTenantsTransaction(tr, begin, end, limit)));
@@ -148,7 +154,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
     int offset = 0,
     std::vector<TenantState> filters = std::vector<TenantState>(),
     Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
-    bool locked = false) {
+    Optional<TenantAPI::LockedTenants> locked = Optional<TenantAPI::LockedTenants>()) {
 	state Reference<typename DB::TransactionT> tr = db->createTransaction();
 	state std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> results;
 

@@ -106,14 +106,14 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
                             std::vector<metacluster::TenantState>& filters,
                             Optional<TenantGroupName>& tenantGroup,
                             bool& useJson,
-                            bool& locked) {
+                            Optional<TenantAPI::LockedTenants>& locked) {
 	for (int tokenNum = startIndex; tokenNum < tokens.size(); ++tokenNum) {
 		Optional<Value> value;
 		StringRef token = tokens[tokenNum];
 		StringRef param;
 		bool foundEquals;
 		param = token.eat("=", &foundEquals);
-		if (!foundEquals && !tokencmp(param, "JSON") && !tokencmp(param, "LOCKED")) {
+		if (!foundEquals && !tokencmp(param, "JSON")) {
 			fmt::print(
 			    stderr,
 			    "ERROR: invalid option string `{}'. String must specify a value using `=' or be `JSON' or `LOCKED'.\n",
@@ -147,10 +147,18 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
 			}
 		} else if (tokencmp(param, "tenant_group")) {
 			tenantGroup = TenantGroupName(value.get().toString());
+		} else if (tokencmp(param, "locked")) {
+			StringRef lockedValue = value.get();
+			if (tokencmp(lockedValue, "true")) {
+				locked = TenantAPI::LockedTenants(true);
+			} else if (tokencmp(lockedValue, "false")) {
+				locked = TenantAPI::LockedTenants(false);
+			} else {
+				fmt::print(stderr, "ERROR: unrecognized lock specification `{}'.\n", lockedValue.toString());
+				return false;
+			}
 		} else if (tokencmp(param, "JSON")) {
 			useJson = true;
-		} else if (tokencmp(param, "LOCKED")) {
-			locked = true;
 		} else {
 			fmt::print(stderr, "ERROR: unrecognized parameter `{}'.\n", param.toString().c_str());
 			return false;
@@ -557,7 +565,8 @@ void tenantListOutputJson(std::map<TenantName, int64_t> tenants) {
 ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
 	if (tokens.size() > 10) {
 		fmt::print("Usage: tenant list [BEGIN] [END] "
-		           "[limit=<LIMIT>|offset=<OFFSET>|state=<STATE1>,<STATE2>,...|tenant_group=<TENANT_GROUP>] [LOCKED] "
+		           "[limit=<LIMIT>|offset=<OFFSET>|state=<STATE1>,<STATE2>,...|tenant_group=<TENANT_GROUP>|locked=["
+		           "true|false]]"
 		           "[JSON] ...\n\n");
 		fmt::print("Lists the tenants in a cluster.\n");
 		fmt::print("Only tenants in the range BEGIN - END will be printed.\n");
@@ -565,7 +574,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 		fmt::print("Optionally skip over the first OFFSET results (default 0).\n");
 		fmt::print("Optional comma-separated tenant state(s) can be provided to filter the list.\n");
 		fmt::print("Optional tenant group can be provided to filter the list.\n");
-		fmt::print("If LOCKED is specified, then the output will only contain locked tenants.\n");
+		fmt::print("Optional locked=true/false can be provided to specify only locked or unlocked tenants.\n");
 		fmt::print("If JSON is specified, then the output will be in JSON format.\n");
 		fmt::print("Specifying [offset] and [state] is only supported in a metacluster.\n");
 		return false;
@@ -577,8 +586,8 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 	state int offset = 0;
 	state std::vector<metacluster::TenantState> filters;
 	state Optional<TenantGroupName> tenantGroup;
+	state Optional<TenantAPI::LockedTenants> locked;
 	state bool useJson = false;
-	state bool locked = false;
 
 	if (tokens.size() >= 3) {
 		beginTenant = tokens[2];
@@ -615,15 +624,8 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 					tenantInfo[tenantName] = entry.id;
 				}
 			} else {
-				if (tenantGroup.present()) {
-					// For expediency: does not use special key space
-					// TODO: add special key support
-					std::vector<std::pair<TenantName, int64_t>> tenants =
-					    wait(TenantAPI::listTenantGroupTenants(db, tenantGroup.get(), beginTenant, endTenant, limit));
-					for (const auto& [tenantName, tenantId] : tenants) {
-						tenantInfo[tenantName] = tenantId;
-					}
-				} else {
+				// No need to filter, so go straight to special keys
+				if (!tenantGroup.present() && !locked.present()) {
 					// Hold the reference to the standalone's memory
 					state ThreadFuture<RangeReadResult> kvsFuture =
 					    tr->getRange(firstGreaterOrEqual(beginTenantKey), firstGreaterOrEqual(endTenantKey), limit);
@@ -638,9 +640,13 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 						jsonDoc.get("id", tId);
 						tenantInfo[tName] = tId;
 					}
-				}
-				if (locked) {
-					wait(store(tenantInfo, TenantAPI::filterLockedTenants(tr, tenantInfo)));
+				} else {
+					// Use filter-based TenantAPI:: call similar to how metacluster:: has one
+					std::vector<std::pair<TenantName, int64_t>> tenants =
+					    wait(TenantAPI::listTenants(db, beginTenant, endTenant, limit, tenantGroup, locked));
+					for (const auto& [tenantName, tenantId] : tenants) {
+						tenantInfo[tenantName] = tenantId;
+					}
 				}
 			}
 
@@ -1228,6 +1234,7 @@ std::vector<const char*> tenantHintGenerator(std::vector<StringRef> const& token
 			                                     "[offset=OFFSET]",
 			                                     "[state=<STATE1>,<STATE2>,...]",
 			                                     "[tenant_group=TENANT_GROUP]",
+			                                     "[locked=[true|false]]"
 			                                     "[JSON]" };
 		return std::vector<const char*>(opts.begin() + tokens.size() - 2, opts.end());
 	} else if (tokencmp(tokens[1], "get") && tokens.size() < 4) {

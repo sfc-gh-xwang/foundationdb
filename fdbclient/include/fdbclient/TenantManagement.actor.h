@@ -19,6 +19,8 @@
  */
 
 #pragma once
+#include "fdbrpc/TenantName.h"
+#include "flow/Optional.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_TENANT_MANAGEMENT_ACTOR_G_H)
 #define FDBCLIENT_TENANT_MANAGEMENT_ACTOR_G_H
 #include "fdbclient/TenantManagement.actor.g.h"
@@ -42,6 +44,7 @@
 namespace TenantAPI {
 
 FDB_BOOLEAN_PARAM(CheckTenantTombstone);
+FDB_BOOLEAN_PARAM(LockedTenants);
 
 static const int TENANT_ID_PREFIX_MIN_VALUE = 0;
 static const int TENANT_ID_PREFIX_MAX_VALUE = 32767;
@@ -590,10 +593,13 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenantsTransaction(Trans
 }
 
 template <class DB>
-Future<std::vector<std::pair<TenantName, int64_t>>> listTenants(Reference<DB> db,
-                                                                TenantName begin,
-                                                                TenantName end,
-                                                                int limit) {
+Future<std::vector<std::pair<TenantName, int64_t>>> listTenants(
+    Reference<DB> db,
+    TenantName begin,
+    TenantName end,
+    int limit,
+    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
+    Optional<LockedTenants> locked = Optional<LockedTenants>()) {
 	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
 		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
@@ -787,24 +793,6 @@ Future<Void> renameTenant(Reference<DB> db,
 			wait(safeThreadFutureToFuture(tr->onError(e)));
 		}
 	}
-}
-
-ACTOR template <class Transaction>
-Future<std::map<TenantName, int64_t>> filterLockedTenants(Transaction tr, std::map<TenantName, int64_t> tenantInfo) {
-	state std::vector<Future<Optional<TenantMapEntry>>> futures;
-	for (const auto& [tName, tId] : tenantInfo) {
-		futures.push_back(tryGetTenantTransaction(tr, tId));
-	}
-	wait(waitForAll(futures));
-	std::map<TenantName, int64_t> results;
-	for (const auto& future : futures) {
-		const TenantMapEntry& entry = future.get().get();
-		if (entry.tenantLockState != TenantAPI::TenantLockState::LOCKED) {
-			continue;
-		}
-		results[entry.tenantName] = entry.id;
-	}
-	return results;
 }
 
 template <class Transaction>
