@@ -52,6 +52,7 @@ struct TLogInterface {
 	RequestStream<struct TLogDisablePopRequest> disablePopRequest;
 	RequestStream<struct TLogEnablePopRequest> enablePopRequest;
 	RequestStream<struct TLogSnapRequest> snapRequest;
+	RequestStream<struct TlogEmptyVersionWaitRequest> emptyVersionWaitRequest;
 
 	TLogInterface() {}
 	explicit TLogInterface(const LocalityData& locality)
@@ -90,6 +91,7 @@ struct TLogInterface {
 		streams.push_back(enablePopRequest.getReceiver());
 		streams.push_back(snapRequest.getReceiver());
 		streams.push_back(peekStreamMessages.getReceiver(TaskPriority::TLogPeek));
+		streams.push_back(emptyVersionWaitRequest.getReceiver(TaskPriority::TlogEmptyVersionWait));
 		FlowTransport::transport().addEndpoints(streams);
 	}
 
@@ -118,6 +120,8 @@ struct TLogInterface {
 			snapRequest = RequestStream<struct TLogSnapRequest>(peekMessages.getEndpoint().getAdjustedEndpoint(10));
 			peekStreamMessages =
 			    RequestStream<struct TLogPeekStreamRequest>(peekMessages.getEndpoint().getAdjustedEndpoint(11));
+			emptyVersionWaitRequest =
+			    RequestStream<struct TlogEmptyVersionWaitRequest>(peekMessages.getEndpoint().getAdjustedEndpoint(12));
 		}
 	}
 };
@@ -194,10 +198,23 @@ struct TLogPeekReply {
 	Version minKnownCommittedVersion;
 	Optional<Version> begin;
 	bool onlySpilled = false;
+	double timeWaited = -1; // Time that a version waited on tlog.
+	                        // For now it can only be -1 (unassinged), 0 (never waited), 1 (fully waited)
+	                        // In the future we may decide to timestamp all version on tlog to obtain true time waited
+	                        // for versions that are partially waited (wait for part of the designated window)
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, messages, end, popped, maxKnownVersion, minKnownCommittedVersion, begin, onlySpilled, arena);
+		serializer(ar,
+		           messages,
+		           end,
+		           popped,
+		           maxKnownVersion,
+		           minKnownCommittedVersion,
+		           begin,
+		           onlySpilled,
+		           timeWaited,
+		           arena);
 	}
 };
 
@@ -429,6 +446,21 @@ struct TLogSnapRequest {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, reply, snapPayload, snapUID, role, arena);
+	}
+};
+
+struct TlogEmptyVersionWaitRequest {
+	constexpr static FileIdentifier file_identifier = 12074218;
+	double waitWindow;
+	Tag tag;
+	ReplyPromise<Void> reply;
+
+	TlogEmptyVersionWaitRequest() = default;
+	TlogEmptyVersionWaitRequest(double waitWindow, Tag tag) : waitWindow(waitWindow), tag(tag) {}
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, waitWindow, tag, reply);
 	}
 };
 

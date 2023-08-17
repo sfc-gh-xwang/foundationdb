@@ -131,7 +131,7 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( TLS_HANDSHAKE_THREAD_STACKSIZE,                64 * 1024 );
 	init( TLS_MALLOC_ARENA_MAX,                                  6 );
 	init( TLS_HANDSHAKE_LIMIT,                                1000 );
-	init( TLS_V1_2_ALLOWED,                                  false );
+	init( TLS_V1_2_ALLOWED,                                   true );
 	init( TLS_V1_3_ALLOWED,                                   true );
 
 	init( NETWORK_TEST_CLIENT_COUNT,                            30 );
