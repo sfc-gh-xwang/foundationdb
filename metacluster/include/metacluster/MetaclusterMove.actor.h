@@ -244,6 +244,8 @@ static Future<Void> switchMetadata(Reference<typename DB::TransactionT> tr,
 	state ClusterName newClusterName = aborting ? srcName : dstName;
 	state ClusterName oldClusterName = aborting ? dstName : srcName;
 	TraceEvent("TenantMoveSwitchBegin");
+	fmt::print(
+	    "Switching metadata: begin updating metadata oldCluster: {}, newCluster: {}\n", oldClusterName, newClusterName);
 
 	state std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantMetadataList;
 	state std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantMetadataListCheck;
@@ -271,6 +273,7 @@ static Future<Void> switchMetadata(Reference<typename DB::TransactionT> tr,
 		state TenantName tName = tenantPair.first;
 		state MetaclusterTenantMapEntry tenantEntry = tenantPair.second;
 		state int64_t tId = tenantEntry.id;
+		fmt::print("Switching metadata: updating metadata for tenant {}\n", tName);
 
 		// tenantMetadata().tenantMap update assigned cluster
 		if (tenantEntry.assignedCluster != oldClusterName) {
@@ -300,6 +303,7 @@ static Future<Void> switchMetadata(Reference<typename DB::TransactionT> tr,
 		metadata::management::clusterTenantIndex().insert(tr, Tuple::makeTuple(newClusterName, tName, tId));
 	}
 
+	fmt::print("Switching metadata: updating metadata for tenant group {}\n", tenantGroup);
 	// clusterTenantGroupIndex erase group index on old, create group index on new
 	metadata::management::clusterTenantGroupIndex().erase(tr, Tuple::makeTuple(oldClusterName, tenantGroup));
 	metadata::management::clusterTenantGroupIndex().insert(tr, Tuple::makeTuple(newClusterName, tenantGroup));
@@ -333,6 +337,9 @@ static Future<Void> switchMetadata(Reference<typename DB::TransactionT> tr,
 	metadata::management::tenantMetadata().tenantGroupMap.set(tr, tenantGroup, groupEntry.get());
 
 	TraceEvent("TenantMoveSwitchEnd");
+	fmt::print("Switching metadata: finished updating metadata oldCluster: {}, newCluster: {}\n",
+	           oldClusterName,
+	           newClusterName);
 	return Void();
 }
 
@@ -821,6 +828,7 @@ struct SwitchTenantMovementImpl {
 	ACTOR static Future<bool> initSwitch(SwitchTenantMovementImpl* self,
 	                                     Reference<typename DB::TransactionT> tr,
 	                                     Optional<metadata::management::MovementRecord> movementRecord) {
+		fmt::print("Tenant move switch: initializing state\n");
 		state ClusterName srcName = self->srcCtx.clusterName.get();
 		state ClusterName dstName = self->dstCtx.clusterName.get();
 		ASSERT(movementRecord.present());
@@ -833,6 +841,7 @@ struct SwitchTenantMovementImpl {
 			state bool dstExists = wait(metadata::management::clusterTenantGroupIndex().exists(
 			    tr, Tuple::makeTuple(dstName, self->tenantGroup)));
 			if (dstExists) {
+				fmt::print("Tenant move switch: switch already completed\n");
 				return true;
 			}
 			TraceEvent("TenantMoveSwitchGroupNotOnSourceOrDest")
@@ -846,6 +855,7 @@ struct SwitchTenantMovementImpl {
 		}
 
 		wait(findTenantsInGroup(tr, self->tenantGroup, &self->tenantsInGroup));
+		fmt::print("Tenant move switch: finished initializing state\n");
 		return false;
 	}
 
@@ -868,6 +878,7 @@ struct SwitchTenantMovementImpl {
 
 	ACTOR static Future<Void> checkTenantData(SwitchTenantMovementImpl* self, TenantName tenantName) {
 		state TenantName tName = tenantName;
+		fmt::print("Tenant move switch: beginning tenant data check for tenant {}\n", tName);
 		state Reference<ITenant> srcTenant = self->srcCtx.dataClusterDb->openTenant(tName);
 		state Reference<ITenant> dstTenant = self->dstCtx.dataClusterDb->openTenant(tName);
 		state Reference<ITransaction> srcTr = srcTenant->createTransaction();
@@ -886,8 +897,16 @@ struct SwitchTenantMovementImpl {
 		loop {
 			srcTr->reset();
 			dstTr->reset();
+			fmt::print("Tenant move switch: reading tenant data {} - {} for tenant {}\n",
+			           begin.toString(),
+			           end.toString(),
+			           tName);
 			wait(store(srcRange, readTenantData(srcTr, begin, end, limit, &resultFutureSrc)) &&
 			     store(dstRange, readTenantData(dstTr, begin, end, limit, &resultFutureDst)));
+			fmt::print("Tenant move switch: comparing tenant data {} - {} for tenant {}\n",
+			           begin.toString(),
+			           end.toString(),
+			           tName);
 			if (srcRange != dstRange) {
 				TraceEvent("TenantMoveSwitchDataMismatch")
 				    .detail("TenantName", tName)
@@ -902,7 +921,10 @@ struct SwitchTenantMovementImpl {
 				                tName));
 				throw invalid_tenant_move();
 			}
-
+			fmt::print("Tenant move switch: finished comparing tenant data {} - {} for tenant {}\n",
+			           begin.toString(),
+			           end.toString(),
+			           tName);
 			if (srcRange.more) {
 				begin = srcRange.nextBeginKeySelector();
 			} else {
@@ -932,6 +954,7 @@ struct SwitchTenantMovementImpl {
 			state TenantName tName = tenantPair.first;
 			state Reference<ITenant> srcTenant = self->srcCtx.dataClusterDb->openTenant(tName);
 			state Reference<ITenant> dstTenant = self->dstCtx.dataClusterDb->openTenant(tName);
+			fmt::print("Tenant move switch: getting hybrid ranges for tenant {}\n", tName);
 			state ThreadFuture<Standalone<VectorRef<KeyRangeRef>>> resultFutureSrc =
 			    srcTenant->listBlobbifiedRanges(normalKeys, CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER);
 			state Standalone<VectorRef<KeyRangeRef>> blobRanges = wait(safeThreadFutureToFuture(resultFutureSrc));
@@ -945,6 +968,7 @@ struct SwitchTenantMovementImpl {
 				blobFutures.push_back(safeThreadFutureToFuture(resultFuture));
 			}
 			TraceEvent("TenantMoveSwitchBlobRangesApplying").detail("TenantName", tName);
+			fmt::print("Tenant move switch: applying hybrid ranges for tenant {}\n", tName);
 
 			wait(waitForAll(blobFutures));
 
@@ -956,6 +980,7 @@ struct SwitchTenantMovementImpl {
 				}
 			}
 			TraceEvent("TenantMoveSwitchBlobRangeApplied").detail("TenantName", tName);
+			fmt::print("Tenant move switch: finished applying hybrid ranges for tenant {}\n", tName);
 		}
 		return Void();
 	}
