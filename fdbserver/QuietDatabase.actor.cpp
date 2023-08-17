@@ -19,12 +19,14 @@
  */
 
 #include <cinttypes>
+#include <cstdlib>
 #include <vector>
 #include <map>
 
 #include "fdbclient/FDBOptions.g.h"
 #include "fdbclient/SystemData.h"
 #include "fdbrpc/simulator.h"
+#include "flow/NetworkAddress.h"
 #include "flow/flow.h"
 #include "flow/ProcessEvents.h"
 #include "flow/Trace.h"
@@ -37,6 +39,7 @@
 #include "fdbclient/ManagementAPI.actor.h"
 #include <boost/lexical_cast.hpp>
 #include "flow/actorcompiler.h" // This must be the last #include.
+#include "fmt/core.h"
 
 ACTOR Future<std::vector<WorkerDetails>> getWorkers(Reference<AsyncVar<ServerDBInfo> const> dbInfo, int flags = 0) {
 	loop {
@@ -57,7 +60,6 @@ ACTOR Future<WorkerInterface> getMasterWorker(Database cx, Reference<AsyncVar<Se
 
 	loop {
 		state std::vector<WorkerDetails> workers = wait(getWorkers(dbInfo));
-
 		for (int i = 0; i < workers.size(); i++) {
 			if (workers[i].interf.address() == dbInfo->get().master.get().address()) {
 				TraceEvent("GetMasterWorker")
@@ -126,6 +128,57 @@ ACTOR Future<int64_t> getDataInFlight(Database cx, Reference<AsyncVar<ServerDBIn
 	WorkerInterface distributorInterf = wait(getDataDistributorWorker(cx, dbInfo));
 	int64_t dataInFlight = wait(getDataInFlight(cx, distributorInterf));
 	return dataInFlight;
+}
+
+// Gets the WorkerInterface representing the blob manager.
+ACTOR Future<WorkerInterface> getBlobManagerWorker(Database cx, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
+	TraceEvent("GetBlobManagerWorker").detail("Stage", "GettingWorkers");
+
+	loop {
+		if (!dbInfo->get().blobManager.present())
+			continue;
+		state std::vector<WorkerDetails> workers = wait(getWorkers(dbInfo));
+
+		for (int i = 0; i < workers.size(); i++) {
+			if (workers[i].interf.address() == dbInfo->get().blobManager.get().address()) {
+				TraceEvent("GetBlobManagerWorker")
+				    .detail("Stage", "GotWorkers")
+				    .detail("BlobManagerId", dbInfo->get().blobManager.get().id())
+				    .detail("WorkerId", workers[i].interf.id());
+				return workers[i].interf;
+			}
+		}
+
+		TraceEvent(SevWarn, "GetBlobManagerWorker")
+		    .detail("Error", "BlobManagerWorkerNotFound")
+		    .detail("BlobManagerId", dbInfo->get().blobManager.get().id())
+		    .detail("BlobManagerAddress", dbInfo->get().blobManager.get().address())
+		    .detail("WorkerCount", workers.size());
+	}
+}
+
+ACTOR Future<int64_t> getActiveGranuleSplits(WorkerInterface blobManagerWorker) {
+	try {
+		TraceEventFields md = wait(
+		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
+		return md.getInt64("ActiveGranuleSplitChecks");
+	} catch (Error& e) {
+		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
+		    .detail("Reason", "Failed to extract ActiveGranuleSplitChecks from BlobManagerMetrics");
+		throw;
+	}
+}
+
+ACTOR Future<int64_t> getActiveGranuleMerges(WorkerInterface blobManagerWorker) {
+	try {
+		TraceEventFields md = wait(
+		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
+		return md.getInt64("ActiveMerges");
+	} catch (Error& e) {
+		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
+		    .detail("Reason", "Failed to extract ActiveMerges from BlobManagerMetrics");
+		throw;
+	}
 }
 
 // Computes the queue size for storage servers and tlogs using the bytesInput and bytesDurable attributes
@@ -1024,7 +1077,10 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	state Future<bool> storageServersRecruiting;
 	state Future<int64_t> versionOffset;
 	state Future<Version> dcLag;
+	state Future<int64_t> activeGranuleSplits;
+	state Future<int64_t> activeGranuleMerges;
 	state Version maxDcLag = 30e6;
+	state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
 	state std::string traceMessage = "QuietDatabase" + phase + "Begin";
 	TraceEvent(traceMessage.c_str()).log();
 
@@ -1051,7 +1107,7 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	loop {
 		try {
 			TraceEvent("QuietDatabaseWaitingOnDataDistributor").log();
-			WorkerInterface distributorWorker = wait(getDataDistributorWorker(cx, dbInfo));
+			state WorkerInterface distributorWorker = wait(getDataDistributorWorker(cx, dbInfo));
 			UID distributorUID = dbInfo->get().distributor.get().id();
 			TraceEvent("QuietDatabaseGotDataDistributor", distributorUID)
 			    .detail("Locality", distributorWorker.locality.toString());
@@ -1065,6 +1121,13 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			storageServersRecruiting = getStorageServersRecruiting(cx, distributorWorker, distributorUID);
 			versionOffset = getVersionOffset(cx, distributorWorker, dbInfo);
 			dcLag = getDatacenterLag(cx, dbInfo);
+
+			if (config.blobGranulesEnabled) {
+				state WorkerInterface blobManagerWorker = wait(getBlobManagerWorker(cx, dbInfo));
+				activeGranuleSplits = getActiveGranuleSplits(blobManagerWorker);
+				activeGranuleMerges = getActiveGranuleMerges(blobManagerWorker);
+				wait(success(activeGranuleSplits) && success(activeGranuleMerges));
+			}
 
 			wait(success(dataInFlight) && success(tLogQueueInfo) && success(dataDistributionQueueSize) &&
 			     success(teamCollectionValid) && success(storageQueueSize) && success(dataDistributionActive) &&
@@ -1086,6 +1149,11 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			    .add(evt, "StorageServersRecruiting", storageServersRecruiting.get(), false, std::equal_to<>())
 			    .add(evt, "VersionOffset", versionOffset.get(), maxVersionOffset)
 			    .add(evt, "DatacenterLag", dcLag.get(), maxDcLag);
+
+			if (config.blobGranulesEnabled) {
+				check.add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits.get(), 0)
+				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges.get(), 0);
+			}
 
 			evt.detail("RecoveryCount", dbInfo->get().recoveryCount).detail("NumSuccesses", numSuccesses);
 			evt.log();
@@ -1148,6 +1216,16 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			if (versionOffset.isReady() && versionOffset.isError()) {
 				auto key = "NotReady" + std::to_string(notReadyCount++);
 				evt.detail(key.c_str(), "versionOffset");
+			}
+			if (config.blobGranulesEnabled) {
+				if (activeGranuleSplits.isReady() && activeGranuleSplits.isError()) {
+					auto key = "NotReady" + std::to_string(notReadyCount++);
+					evt.detail(key.c_str(), "activeGranuleSplits");
+				}
+				if (activeGranuleMerges.isReady() && activeGranuleMerges.isError()) {
+					auto key = "NotReady" + std::to_string(notReadyCount++);
+					evt.detail(key.c_str(), "activeGranuleMerges");
+				}
 			}
 			wait(delay(1.0));
 			numSuccesses = 0;
