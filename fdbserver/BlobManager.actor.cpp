@@ -441,8 +441,6 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	PromiseStream<Future<Void>> addActor;
 	Promise<Void> doLockCheck;
 
-	BlobManagerStats stats;
-
 	Reference<BlobConnectionProvider> bstore;
 
 	std::unordered_map<UID, BlobWorkerInterface> workersById;
@@ -473,6 +471,8 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	AsyncVar<int> recruitingStream;
 	ExclusionTracker exclusionTracker;
 
+	BlobManagerStats stats;
+
 	Promise<Void> foundBlobWorkers;
 	Promise<Void> doneRecovering;
 	Promise<Void> loadedClientRanges;
@@ -497,7 +497,6 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	  : id(id),
 	    db(db),
 	    dcId(dcId),
-	    stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, epoch, &workersById, &mergeHardBoundaries, &mergeBoundaries),
 	    knownBlobRanges(false, normalKeys.end),
 	    tenantData(BGTenantMap(dbInfo)),
 	    mergeCandidates(MergeCandidateInfo(MergeCandidateUnknown), normalKeys.end),
@@ -507,6 +506,7 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
 	    recruitingStream(0),
 	    exclusionTracker(db),
+	    stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, epoch, &workersById, &mergeHardBoundaries, &mergeBoundaries),
 	    epoch(epoch),
 	    dbInfo(dbInfo) {}
 
