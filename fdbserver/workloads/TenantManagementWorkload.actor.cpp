@@ -1948,36 +1948,41 @@ struct TenantManagementWorkload : TestWorkload {
 			return Void();
 		}
 		// Test re-open tenant with four different constructors
-		state Optional<Reference<Tenant>> newTenant;
+		state Optional<Reference<Tenant>> tmpTenant;
 		state int openMode = deterministicRandom()->randomInt(0, 4);
 		try {
 			if (openMode == 0) {
-				newTenant = tName.present() ? makeReference<Tenant>(db, tName.get())
+				tmpTenant = tName.present() ? makeReference<Tenant>(db, tName.get())
 				                            : makeReference<Tenant>(db, self->chooseTenantName(true));
 			} else if (openMode == 1) {
-				newTenant = makeReference<Tenant>(db, tenant.get()->id());
+				tmpTenant = makeReference<Tenant>(db, tenant.get()->id());
 			} else if (openMode == 2) {
-				Future<TenantLookupInfo> tLookupInfoFuture =
-				    tenantExists ? TenantLookupInfo(tData.tenant->id(), tData.tenantGroup)
-				                 : TenantLookupInfo(tenant.get()->id());
-				newTenant = makeReference<Tenant>(db, tLookupInfoFuture, tName);
+				Future<TenantLookupInfo> tLookupInfoFuture = Never();
+				if (db->clientInfo->get().clusterType != ClusterType::METACLUSTER_MANAGEMENT && tName.present()) {
+					tLookupInfoFuture = db->lookupTenant(tName.get());
+				} else if (tenantExists) {
+					tLookupInfoFuture = TenantLookupInfo(tData.tenant->id(), tData.tenantGroup);
+				} else {
+					tLookupInfoFuture = TenantLookupInfo(tenant.get()->id());
+				}
+				tmpTenant = makeReference<Tenant>(db, tLookupInfoFuture, tName);
 			} else if (openMode == 3) {
 				TenantMapEntry tEntry = tenantExists
 				                            ? TenantMapEntry(tData.tenant->id(), tName.get(), tData.tenantGroup)
 				                            : TenantMapEntry();
-				newTenant = makeReference<Tenant>(db, tEntry);
+				tmpTenant = makeReference<Tenant>(db, tEntry);
 			}
-			wait(newTenant.get()->ready());
+			wait(tmpTenant.get()->ready());
 			if (tenantExists) {
 				// Verify openning the same Tenant if tenant exists
-				ASSERT(newTenant.present());
-				ASSERT_EQ(newTenant.get()->id(), tenant.get()->id());
+				ASSERT(tmpTenant.present());
+				ASSERT_EQ(tmpTenant.get()->id(), tenant.get()->id());
 				if (openMode != 1) {
-					ASSERT_EQ(newTenant.flatMapRef(&Tenant::name).get(), tName.get());
-					ASSERT_EQ(newTenant.get()->tenantGroup(), tData.tenantGroup);
+					ASSERT_EQ(tmpTenant.flatMapRef(&Tenant::name).get(), tName.get());
+					ASSERT_EQ(tmpTenant.get()->tenantGroup(), tData.tenantGroup);
 				}
 				// Verify assignedCluster value
-				Optional<ClusterName> assignedCluster = newTenant.get()->getLookupFuture().get().assignedCluster;
+				Optional<ClusterName> assignedCluster = tmpTenant.get()->getLookupFuture().get().assignedCluster;
 				if (useManagementCluster) {
 					ASSERT(assignedCluster.present());
 					ASSERT_EQ(assignedCluster.get(), self->dataClusterName);
