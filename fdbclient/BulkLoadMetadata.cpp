@@ -14,6 +14,7 @@ const KeyRangeRef bulkLoadInfoKeys("\xff\x02/bulkLoadInfo/"_sr, "\xff\x02/bulkLo
 const StringRef bulkLoadChangeKey = "\xff\x02/bulkLoadChangeKey"_sr;
 const KeyRangeRef bulkLoadVersionKeys("\xff\x02/bulkLoadVersion/"_sr, "\xff\x02/bulkLoadVersion0"_sr);
 const KeyRangeRef bulkLoadRangeKeys("\xff\x02/bulkLoadRanges/"_sr, "\xff\x02/bulkLoadRanges0"_sr);
+const KeyRangeRef bulkLoadReservationKeys("\xff\x02/bulkLoadReservations/"_sr, "\xff\x02/bulkLoadReservations0"_sr);
 // put in the transaction state store in case we eventually want the commit proxies to be able to serve this directly
 // without reading the db for changes
 const KeyRangeRef bulkLoaderListKeys("\xff/bulkLoaderList/"_sr, "\xff/bulkLoaderList0"_sr);
@@ -45,6 +46,11 @@ VersionMap& versionMap() {
 
 RangeMap& rangeMap() {
 	static RangeMap instance(bulkLoadRangeKeys.begin, {}, ObjectCodec<BulkLoadID, _IncludeVersion>(IncludeVersion()));
+	return instance;
+}
+
+ReservationMap& reservationMap() {
+	static ReservationMap instance(bulkLoadReservationKeys.begin);
 	return instance;
 }
 

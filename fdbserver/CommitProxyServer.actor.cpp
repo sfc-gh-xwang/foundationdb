@@ -1823,7 +1823,9 @@ Future<Void> validateTransaction(CommitBatchContext* self, const int trIdx) {
 		self->trs[trIdx].reply.sendError(encrypt_key_not_found());
 		self->pProxyCommitData->stats.encryptKeyNotFoundErrors += 1;
 		CODE_PROBE(true, "Commit proxy transaction encrypt key not found");
-	} else if (self->committed[trIdx] == ConflictBatch::TransactionCommitted) {
+	} else {
+		// Check transaction validity with respect to tenants even if it will fail with a conflict. This allows us to
+		// report the appropriate non-retryable error instead.
 		Error e = validateAndProcessTenantAccess(self->trs[trIdx], self->pProxyCommitData, trTenantIds);
 		if (e.code() != error_code_success) {
 			self->trs[trIdx].reply.sendError(e);

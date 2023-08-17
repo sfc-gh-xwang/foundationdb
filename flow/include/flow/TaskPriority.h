@@ -44,6 +44,7 @@ enum class TaskPriority {
 	ClusterController = 8650,
 	MasterTLogRejoin = 8646,
 	ProxyStorageRejoin = 8645,
+	TlogEmptyVersionWait = 8630,
 	TLogQueuingMetrics = 8620,
 	TLogPop = 8610,
 	TLogPeekReply = 8600,

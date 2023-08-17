@@ -3027,6 +3027,10 @@ Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<
   : name(name),
     lookupFuture(tenantLookupInfo),
     dbFuture(cx) {}
+Tenant::Tenant(Database cx, TenantMapEntry entry)
+  : name(entry.tenantName),
+    lookupFuture(TenantLookupInfo(entry.id, entry.tenantGroup)),
+    dbFuture(cx) {}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
