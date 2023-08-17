@@ -15,7 +15,8 @@ def options_valid(tls_on, authz_on, tenant_mode, tenant_count):
     if tls_on != authz_on:
         return False
 
-    return True
+    # Currently restrict the tenant case to tls/authz enabled case
+    return (tls_on and tenant_count > 0) or (not tls_on and tenant_count == 0)
 
 
 if __name__ == "__main__":
