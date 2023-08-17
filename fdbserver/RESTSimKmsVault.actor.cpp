@@ -53,7 +53,6 @@
 #include <string>
 
 #include "flow/actorcompiler.h" // This must be the last #include.
-#include "flow/genericactors.actor.h"
 
 using DomIdVec = std::vector<EncryptCipherDomainId>;
 using BaseCipherDomIdVec = std::vector<std::pair<EncryptCipherBaseKeyId, Optional<EncryptCipherDomainId>>>;
@@ -295,9 +294,27 @@ bool simulateKeyNotFound(const int nDomains, const EncryptCipherDomainId domainI
 	return g_simulator->simEncryptKeyNotFoundIds.count(domainId) != 0;
 }
 
-// TODO: inject faults
-ACTOR Future<VaultResponse> handleFetchKeysByDomainIds(std::string content) {
-	state VaultResponse response;
+// Simulate KMS response to be following three buckets:
+// 1. Fast response: no delays are injected - assist FDB simulation test cases sensitive to reponse completion times
+// 2. Normal-case response: simulate KMS node delay latency - delay bounded to a reasonabe value (1 second)
+// 3. Worst-case response: simulate scenario where RESTKmsConnector request actor timeout
+
+double getResponseDelay() {
+	if (g_simulator->speedUpSimulation || !SERVER_KNOBS->REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY) {
+		// Fast execution path, avoid injecting delays
+		return 0.0;
+	}
+
+	CODE_PROBE(true, "RESTSimsKmsVault inject response delay");
+
+	// Simulate RESTCLIENT_REQUEST_TIMEOUT_SEC delay as the worst case, exercise RESTKmsConnector request timeout
+	// handling codepath; otherwise, bound max delay to 1 second
+	double maxDelayMS = BUGGIFY ? (FLOW_KNOBS->RESTCLIENT_REQUEST_TIMEOUT_SEC * 1000 + 1) : 1001;
+	return deterministicRandom()->randomSkewedUInt32(1, maxDelayMS) / 1000.0;
+}
+
+VaultResponse handleFetchKeysByDomainIds(std::string content) {
+	VaultResponse response;
 	rapidjson::Document doc;
 
 	doc.Parse(content.data());
@@ -364,13 +381,11 @@ ACTOR Future<VaultResponse> handleFetchKeysByDomainIds(std::string content) {
 	response.buff = std::string(sb.GetString(), sb.GetSize());
 	//TraceEvent(SevDebug, "FetchByDomainIdsResponseStr").detail("Str", response->buff);
 
-	// Simulate network slowness - simulate FDB transaction timeout scenario
-	wait(delayJittered(deterministicRandom()->randomInt(1, 6)));
 	return response;
 }
 
-ACTOR Future<VaultResponse> handleFetchKeysByKeyIds(std::string content) {
-	state VaultResponse response;
+VaultResponse handleFetchKeysByKeyIds(std::string content) {
+	VaultResponse response;
 	rapidjson::Document doc;
 
 	doc.Parse(content.data());
@@ -433,13 +448,11 @@ ACTOR Future<VaultResponse> handleFetchKeysByKeyIds(std::string content) {
 	response.buff = std::string(sb.GetString(), sb.GetSize());
 	//TraceEvent(SevDebug, "FetchByKeyIdsResponseStr").detail("Str", response.buff);
 
-	// Simulate network slowness - simulate FDB txn timeout scenario
-	wait(delayJittered(deterministicRandom()->randomInt(1, 6)));
 	return response;
 }
 
-ACTOR Future<VaultResponse> handleFetchBlobMetada(std::string content) {
-	state VaultResponse response;
+VaultResponse handleFetchBlobMetada(std::string content) {
+	VaultResponse response;
 	rapidjson::Document doc;
 
 	doc.Parse(content.data());
@@ -488,8 +501,6 @@ ACTOR Future<VaultResponse> handleFetchBlobMetada(std::string content) {
 	response.buff = std::string(sb.GetString(), sb.GetSize());
 	//TraceEvent(SevDebug, "FetchBlobMetadataResponeStr").detail("Str", response.buff);
 
-	// Simulate network slowness
-	wait(delayJittered(deterministicRandom()->randomInt(1, 6)));
 	return response;
 }
 
@@ -506,6 +517,7 @@ namespace RestSimKms {
 ACTOR Future<Void> simKmsVaultRequestHandler(Reference<HTTP::IncomingRequest> request,
                                              Reference<HTTP::OutgoingResponse> response) {
 	state VaultResponse vaultResponse;
+	state double responseDelay;
 
 	wait(delay(0.0));
 
@@ -518,11 +530,11 @@ ACTOR Future<Void> simKmsVaultRequestHandler(Reference<HTTP::IncomingRequest> re
 	}
 
 	if (resource.compare(REST_SIM_KMS_VAULT_GET_ENCRYPTION_KEYS_BY_KEY_IDS_RESOURCE) == 0) {
-		wait(store(vaultResponse, handleFetchKeysByKeyIds(request->data.content)));
+		vaultResponse = handleFetchKeysByKeyIds(request->data.content);
 	} else if (resource.compare(REST_SIM_KMS_VAULT_GET_ENCRYPTION_KEYS_BY_DOMAIN_IDS_RESOURCE) == 0) {
-		wait(store(vaultResponse, handleFetchKeysByDomainIds(request->data.content)));
+		vaultResponse = handleFetchKeysByDomainIds(request->data.content);
 	} else if (resource.compare(REST_SIM_KMS_VAULT_GET_BLOB_METADATA_RESOURCE) == 0) {
-		wait(store(vaultResponse, handleFetchBlobMetada(request->data.content)));
+		vaultResponse = handleFetchBlobMetada(request->data.content);
 	} else {
 		TraceEvent("RESTSimKmsVaultUnexpectedResource").detail("Resource", resource);
 		throw http_bad_response();
@@ -539,6 +551,12 @@ ACTOR Future<Void> simKmsVaultRequestHandler(Reference<HTTP::IncomingRequest> re
 	response->data.headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 	response->data.headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 
+	// Simulate KMS node response delay
+	responseDelay = getResponseDelay();
+	if (responseDelay > 0) {
+		wait(delay(responseDelay));
+	}
+
 	PacketWriter pw(response->data.content->getWriteBuffer(vaultResponse.buff.size()), nullptr, Unversioned());
 	pw.serializeBytes(vaultResponse.buff.data(), vaultResponse.buff.size());
 	response->data.contentLen = vaultResponse.buff.size();
@@ -546,7 +564,8 @@ ACTOR Future<Void> simKmsVaultRequestHandler(Reference<HTTP::IncomingRequest> re
 	if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::VERBOSE) {
 		TraceEvent("RESTSimKmsVaultResp")
 		    .detail("ResponseLen", response->data.contentLen)
-		    .detail("Code", response->code);
+		    .detail("Code", response->code)
+		    .detail("InjectedResponseDelay", responseDelay);
 	}
 
 	return Void();
@@ -989,7 +1008,7 @@ TEST_CASE("/restSimKmsVault/invalidHeader") {
 TEST_CASE("/restSimKmsVault/GetByDomainIds/missingVersion") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeEncryptDomainIdsRequestContent(domIds, FaultType::MISSING_VERSION);
-	VaultResponse response = wait(handleFetchKeysByDomainIds(requestContent));
+	VaultResponse response = handleFetchKeysByDomainIds(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1001,7 +1020,7 @@ TEST_CASE("/restSimKmsVault/GetByDomainIds/missingVersion") {
 TEST_CASE("/restSimKmsVault/GetByDomainIds/invalidVersion") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeEncryptDomainIdsRequestContent(domIds, FaultType::INVALID_VERSION);
-	VaultResponse response = wait(handleFetchKeysByDomainIds(requestContent));
+	VaultResponse response = handleFetchKeysByDomainIds(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1014,7 +1033,7 @@ TEST_CASE("/restSimKmsVault/GetByDomainIds/missingValidationTokens") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeEncryptDomainIdsRequestContent(domIds, FaultType::MISSING_VALIDATION_TOKEN);
 
-	VaultResponse response = wait(handleFetchKeysByDomainIds(requestContent));
+	VaultResponse response = handleFetchKeysByDomainIds(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1027,7 +1046,7 @@ TEST_CASE("/restSimKmsVault/GetByDomainIds") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeEncryptDomainIdsRequestContent(domIds);
 
-	VaultResponse response = wait(handleFetchKeysByDomainIds(requestContent));
+	VaultResponse response = handleFetchKeysByDomainIds(requestContent);
 	validateEncryptLookup(response, domIds);
 	return Void();
 }
@@ -1036,7 +1055,7 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds/missingVersion") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBaseCipherIdsRequestContent(domIds, FaultType::MISSING_VERSION);
 
-	VaultResponse response = wait(handleFetchKeysByKeyIds(requestContent));
+	VaultResponse response = handleFetchKeysByKeyIds(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1049,7 +1068,7 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds/invalidVersion") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBaseCipherIdsRequestContent(domIds, FaultType::INVALID_VERSION);
 
-	VaultResponse response = wait(handleFetchKeysByKeyIds(requestContent));
+	VaultResponse response = handleFetchKeysByKeyIds(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1062,7 +1081,7 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds/missingValidationTokens") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBaseCipherIdsRequestContent(domIds, FaultType::MISSING_VALIDATION_TOKEN);
 
-	VaultResponse response = wait(handleFetchKeysByKeyIds(requestContent));
+	VaultResponse response = handleFetchKeysByKeyIds(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1075,7 +1094,7 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBaseCipherIdsRequestContent(domIds);
 
-	VaultResponse response = wait(handleFetchKeysByKeyIds(requestContent));
+	VaultResponse response = handleFetchKeysByKeyIds(requestContent);
 	validateEncryptLookup(response, domIds);
 	return Void();
 }
@@ -1084,7 +1103,7 @@ TEST_CASE("/restSimKmsVault/GetBlobMetadata/missingVersion") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBlobDomainIdsRequestContent(domIds, FaultType::MISSING_VERSION);
 
-	VaultResponse response = wait(handleFetchBlobMetada(requestContent));
+	VaultResponse response = handleFetchBlobMetada(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1097,7 +1116,7 @@ TEST_CASE("/restSimKmsVault/GetBlobMetadata/invalidVersion") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBlobDomainIdsRequestContent(domIds, FaultType::INVALID_VERSION);
 
-	VaultResponse response = wait(handleFetchBlobMetada(requestContent));
+	VaultResponse response = handleFetchBlobMetada(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1110,7 +1129,7 @@ TEST_CASE("/restSimKmsVault/GetByKeyIds/missingValidationTokens") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBlobDomainIdsRequestContent(domIds, FaultType::MISSING_VALIDATION_TOKEN);
 
-	VaultResponse response = wait(handleFetchBlobMetada(requestContent));
+	VaultResponse response = handleFetchBlobMetada(requestContent);
 	ASSERT(response.failed);
 	Optional<ErrorDetail> detail = getErrorDetail(response.buff);
 	ASSERT(detail.present());
@@ -1123,7 +1142,7 @@ TEST_CASE("/restSimKmsVault/GetBlobMetadata/foo") {
 	state EncryptCipherDomainIdVec domIds;
 	std::string requestContent = getFakeBlobDomainIdsRequestContent(domIds);
 
-	VaultResponse response = wait(handleFetchBlobMetada(requestContent));
+	VaultResponse response = handleFetchBlobMetada(requestContent);
 	validateBlobLookup(response, domIds);
 	return Void();
 }

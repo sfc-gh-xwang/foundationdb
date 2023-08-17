@@ -1226,6 +1226,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_CURRENT_CIPHER_REQUEST_VERSION,                  1);
 	init( REST_KMS_MAX_CIPHER_REQUEST_VERSION,                      1);
 	init( REST_SIM_KMS_VAULT_DIR,                                  "");
+	init( REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY,             true ); if ( randomize && BUGGIFY ) { REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY = deterministicRandom()->coinflip(); }
 	init( REST_KMS_STABILITY_CHECK_INTERVAL,                      5.0);
 	init( KMS_LOGGING_INTERVAL,                                   5.0);
 
