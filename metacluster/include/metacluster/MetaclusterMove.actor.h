@@ -371,28 +371,30 @@ static Future<Void> checkValidDelete(Reference<typename DB::TransactionT> tr,
 	state std::vector<TenantMapEntry> deleteEntries = aborting ? dstEntries : srcEntries;
 	state std::vector<TenantMapEntry> otherEntries = aborting ? srcEntries : dstEntries;
 	state size_t iterLen = tenantsInGroup.size();
+	fmt::print("Check valid deletion: begin validating delete cluster: {}, other cluster: {}\n",
+	           deleteClusterName,
+	           otherClusterName);
 	if (iterLen != deleteEntries.size()) {
 		TraceEvent(SevError, "TenantMoveCheckValidDeleteEntriesSizeDiff")
 		    .detail("DeleteEntriesSize", deleteEntries.size())
 		    .detail("TenantsInGroup", iterLen);
-		fmt::print(
-		    "Tenant move check delete: The number of delete tenant entries does not match the expected number of "
-		    "tenants in the group {}:\n"
-		    "	# Delete tenant entries:				{}"
-		    "	# Tenants expected in tenant group:		{}",
-		    tenantGroup,
-		    deleteEntries.size(),
-		    iterLen);
+		fmt::print("Check valid deletion: The number of delete tenant entries does not match the expected number of "
+		           "tenants in the group {}:\n"
+		           "	# Delete tenant entries:				{}\n"
+		           "	# Tenants expected in tenant group:		{}\n",
+		           tenantGroup,
+		           deleteEntries.size(),
+		           iterLen);
 		throw invalid_tenant_move();
 	}
 	if (iterLen != otherEntries.size()) {
 		TraceEvent(SevError, "TenantMoveCheckValidDeleteOtherEntriesSizeDiff")
 		    .detail("OtherEntriesSize", otherEntries.size())
 		    .detail("TenantsInGroup", iterLen);
-		fmt::print("Tenant move check delete: The number of other new tenant entries does not match the expected "
+		fmt::print("Check valid deletion: The number of other new tenant entries does not match the expected "
 		           "number of tenants in the group {}:\n"
-		           "	# Other new tenant entries:				{}"
-		           "	# Tenants expected in tenant group:		{}",
+		           "	# Other new tenant entries:				{}\n"
+		           "	# Tenants expected in tenant group:		{}\n",
 		           tenantGroup,
 		           otherEntries.size(),
 		           iterLen);
@@ -404,6 +406,10 @@ static Future<Void> checkValidDelete(Reference<typename DB::TransactionT> tr,
 		state int64_t tId = tenantsInGroup[index].second;
 		state TenantMapEntry deleteEntry = deleteEntries[index];
 		state TenantMapEntry otherEntry = otherEntries[index];
+		fmt::print("Check valid deletion: begin validating tenant: {}, delete cluster: {}, other cluster: {}\n",
+		           tName,
+		           deleteClusterName,
+		           otherClusterName);
 
 		// Assert delete tenant is locked
 		if (deleteEntry.tenantLockState != TenantAPI::TenantLockState::LOCKED) {
@@ -467,7 +473,14 @@ static Future<Void> checkValidDelete(Reference<typename DB::TransactionT> tr,
 			    otherEntry.tenantGroup.get()));
 			throw invalid_tenant_move();
 		}
+		fmt::print("Check valid deletion: finished validating tenant: {}, delete cluster: {}, other cluster: {}\n",
+		           tName,
+		           deleteClusterName,
+		           otherClusterName);
 	}
+	fmt::print("Check valid deletion: finished validating delete cluster: {}, other cluster: {}\n",
+	           deleteClusterName,
+	           otherClusterName);
 	return Void();
 }
 
@@ -571,8 +584,10 @@ struct StartTenantMovementImpl {
 	ACTOR static Future<Void> initializeMove(StartTenantMovementImpl* self,
 	                                         Reference<typename DB::TransactionT> tr,
 	                                         Optional<metadata::management::MovementRecord> movementRecord) {
+		fmt::print("Tenant move start: initializing state\n");
 		wait(findTenantsInGroup(tr, self->tenantGroup, &self->tenantsInGroup));
 		wait(storeMoveRecord(self, tr, movementRecord));
+		fmt::print("Tenant move start: finished initializing state\n");
 		return Void();
 	}
 
@@ -586,6 +601,7 @@ struct StartTenantMovementImpl {
 			    .detail("AbortVersion", lastAbortVersion);
 			throw tenant_move_failed();
 		}
+		fmt::print("Tenant move start: locking source tenants\n");
 		std::vector<Future<Void>> lockFutures;
 		for (auto& tenantPair : self->tenantsInGroup) {
 			lockFutures.push_back(changeTenantLockState(self->srcCtx.managementDb,
@@ -595,6 +611,7 @@ struct StartTenantMovementImpl {
 		}
 
 		wait(waitForAll(lockFutures));
+		fmt::print("Tenant move start: finished locking source tenants\n");
 		return Void();
 	}
 
@@ -636,6 +653,7 @@ struct StartTenantMovementImpl {
 	getAllTenantSplitPointsFromSource(StartTenantMovementImpl* self, Reference<typename DB::TransactionT> tr) {
 		state std::vector<Future<Standalone<VectorRef<KeyRef>>>> getSplitPointFutures;
 		ASSERT(self->tenantsInGroup.size());
+		fmt::print("Tenant move start: getting tenant split points\n");
 		for (auto& tenantPair : self->tenantsInGroup) {
 			TenantName tenantName = tenantPair.first;
 			getSplitPointFutures.push_back(getTenantSplitPointsFromSource(self, tenantName));
@@ -653,6 +671,7 @@ struct StartTenantMovementImpl {
 			result.push_back(resultPair);
 		}
 
+		fmt::print("Tenant move start: finished getting tenant split points\n");
 		return result;
 	}
 
@@ -677,6 +696,7 @@ struct StartTenantMovementImpl {
 
 	void storeAllTenantsSplitPoints(Reference<typename DB::TransactionT> tr,
 	                                std::vector<std::pair<TenantName, Standalone<VectorRef<KeyRef>>>> allSplitPoints) {
+		fmt::print("Tenant move start: storing tenant split points\n");
 		for (const auto& [tName, splitPoints] : allSplitPoints) {
 			storeTenantSplitPoints(tr, tName, splitPoints);
 		}
@@ -686,6 +706,7 @@ struct StartTenantMovementImpl {
 		// Set the queue head to the first tenant and an empty key
 		metadata::management::emergency_movement::movementQueue().set(
 		    tr, std::make_pair(tenantGroup, moveRecord.runId.toString()), std::make_pair(firstTenant, Key()));
+		fmt::print("Tenant move start: finished storing tenant split points\n");
 	}
 
 	ACTOR static Future<Void> writeMovementMetadata(StartTenantMovementImpl* self,
@@ -734,6 +755,7 @@ struct StartTenantMovementImpl {
 			throw tenant_move_failed();
 		}
 
+		fmt::print("Tenant move start: creating locked destination tenants\n");
 		for (auto& tenantPair : self->tenantsInGroup) {
 			maxId = std::max(tenantPair.second, maxId);
 			TenantMapEntry entry(tenantPair.second, tenantPair.first, self->tenantGroup);
@@ -744,6 +766,7 @@ struct StartTenantMovementImpl {
 		}
 
 		wait(waitForAll(createFutures));
+		fmt::print("Tenant move start: finished creating locked destination tenants\n");
 		TenantMetadata::lastTenantId().set(tr, maxId);
 
 		// Set quotas for new tenants
@@ -1096,6 +1119,7 @@ struct FinishTenantMovementImpl {
 		ASSERT(movementRecord.present());
 		state ClusterName srcName = self->srcCtx.clusterName.get();
 		state ClusterName dstName = self->dstCtx.clusterName.get();
+		fmt::print("Tenant move finish: initializing state\n");
 
 		// Check that tenantGroup exists on dst
 		state bool exists = wait(
@@ -1114,11 +1138,14 @@ struct FinishTenantMovementImpl {
 
 		wait(findTenantsInGroup(tr, self->tenantGroup, &self->tenantsInGroup));
 		self->moveRecord = movementRecord.get();
+
+		fmt::print("Tenant move finish: finished initializing state\n");
 		return Void();
 	}
 
 	ACTOR static Future<Void> unlockDestinationTenants(FinishTenantMovementImpl* self) {
 		std::vector<Future<Void>> unlockFutures;
+		fmt::print("Tenant move finish: unlocking destination tenants\n");
 		for (auto& tenantPair : self->tenantsInGroup) {
 			unlockFutures.push_back(changeTenantLockState(self->srcCtx.managementDb,
 			                                              tenantPair.first,
@@ -1126,16 +1153,19 @@ struct FinishTenantMovementImpl {
 			                                              self->moveRecord.runId));
 		}
 		wait(waitForAll(unlockFutures));
+		fmt::print("Tenant move finish: finished unlocking destination tenants\n");
 		return Void();
 	}
 
 	ACTOR static Future<Void> purgeSourceBlobRanges(FinishTenantMovementImpl* self) {
 		state std::vector<Future<Void>> purgeFutures;
+		fmt::print("Tenant move finish: purging source blob ranges\n");
 		for (auto& tenantPair : self->tenantsInGroup) {
 			state TenantName tName = tenantPair.first;
 			purgeFutures.push_back(purgeAndVerifyTenant(self->srcCtx.dataClusterDb, tName));
 		}
 		wait(waitForAll(purgeFutures));
+		fmt::print("Tenant move finish: finished purging source blob ranges\n");
 		return Void();
 	}
 
@@ -1157,11 +1187,13 @@ struct FinishTenantMovementImpl {
 	ACTOR static Future<Void> deleteSourceData(FinishTenantMovementImpl* self, TenantName tName) {
 		state Reference<ITenant> srcTenant = self->srcCtx.dataClusterDb->openTenant(tName);
 		state Reference<ITransaction> srcTr = srcTenant->createTransaction();
+		fmt::print("Tenant move finish: deleting source data for tenant {}\n", tName);
 		loop {
 			try {
 				srcTr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				srcTr->clear(normalKeys);
 				wait(safeThreadFutureToFuture(srcTr->commit()));
+				fmt::print("Tenant move finish: finished deleting source data for tenant {}\n", tName);
 				return Void();
 			} catch (Error& e) {
 				wait(safeThreadFutureToFuture(srcTr->onError(e)));
@@ -1181,11 +1213,13 @@ struct FinishTenantMovementImpl {
 
 	ACTOR static Future<Void> deleteSourceTenants(FinishTenantMovementImpl* self, Reference<ITransaction> tr) {
 		state std::vector<Future<Void>> deleteFutures;
+		fmt::print("Tenant move finish: deleting source tenants\n");
 		for (auto& tenantPair : self->tenantsInGroup) {
 			int64_t tId = tenantPair.second;
 			deleteFutures.push_back(TenantAPI::deleteTenantTransaction(tr, tId, ClusterType::METACLUSTER_DATA));
 		}
 		wait(waitForAll(deleteFutures));
+		fmt::print("Tenant move finish: finished deleting source tenants\n");
 		return Void();
 	}
 
@@ -1375,6 +1409,7 @@ struct AbortTenantMovementImpl {
 	                                    Optional<metadata::management::MovementRecord> movementRecord) {
 		state ClusterName srcName = self->srcCtx.clusterName.get();
 		state ClusterName dstName = self->dstCtx.clusterName.get();
+		fmt::print("Tenant move abort: initializing state\n");
 		wait(findTenantsInGroup(tr, self->tenantGroup, &self->tenantsInGroup));
 		if (!movementRecord.present()) {
 			// Rare scenario where abort is called immediately after "start"
@@ -1383,6 +1418,7 @@ struct AbortTenantMovementImpl {
 			// Conflict should arise if "start" transaction is still in flight
 			self->vsFuture = tr->getVersionstamp();
 			metadata::management::emergency_movement::emergencyMovements().erase(tr, self->tenantGroup);
+			fmt::print("Tenant move abort: already complete\n");
 			return true;
 		} else {
 			self->moveRecord = movementRecord.get();
@@ -1396,6 +1432,7 @@ struct AbortTenantMovementImpl {
 		self->moveRecord.aborting = true;
 		self->vsFuture = tr->getVersionstamp();
 		metadata::management::emergency_movement::emergencyMovements().set(tr, self->tenantGroup, self->moveRecord);
+		fmt::print("Tenant move abort: finished initializing state\n");
 		return false;
 	}
 
@@ -1407,6 +1444,7 @@ struct AbortTenantMovementImpl {
 			// Retry already cleared the move record
 			return Void();
 		}
+		fmt::print("Tenant move abort: updating metadata\n");
 		state UID runId = movementRecord.get().runId;
 		metadata::management::emergency_movement::emergencyMovements().erase(tr, self->tenantGroup);
 		metadata::management::emergency_movement::movementQueue().erase(
@@ -1428,6 +1466,7 @@ struct AbortTenantMovementImpl {
 
 		int numTenants = self->tenantsInGroup.size();
 		metadata::management::clusterTenantCount().atomicOp(tr, dstName, -numTenants, MutationRef::AddValue);
+		fmt::print("Tenant move abort: finished updating metadata\n");
 		return Void();
 	}
 
@@ -1437,6 +1476,7 @@ struct AbortTenantMovementImpl {
 	                                           std::vector<TenantMapEntry> srcEntries,
 	                                           Optional<metadata::management::MovementRecord> movementRecord) {
 		ASSERT(movementRecord.present());
+		fmt::print("Tenant move abort: checking valid unlock\n");
 		state size_t iterLen = self->tenantsInGroup.size();
 		ASSERT_EQ(iterLen, srcEntries.size());
 		state int index = 0;
@@ -1460,11 +1500,13 @@ struct AbortTenantMovementImpl {
 				throw invalid_tenant_move();
 			}
 		}
+		fmt::print("Tenant move abort: finished checking valid unlock\n");
 		return Void();
 	}
 
 	ACTOR static Future<Void> unlockSourceTenants(AbortTenantMovementImpl* self) {
 		std::vector<Future<Void>> unlockFutures;
+		fmt::print("Tenant move abort: unlocking source tenants\n");
 		for (auto& tenantPair : self->tenantsInGroup) {
 			unlockFutures.push_back(changeTenantLockState(self->srcCtx.managementDb,
 			                                              tenantPair.first,
@@ -1472,6 +1514,7 @@ struct AbortTenantMovementImpl {
 			                                              self->moveRecord.runId));
 		}
 		wait(waitForAll(unlockFutures));
+		fmt::print("Tenant move abort: finished unlocking source tenants\n");
 		return Void();
 	}
 
@@ -1480,9 +1523,11 @@ struct AbortTenantMovementImpl {
 		state Reference<ITransaction> dstTr = dstTenant->createTransaction();
 		loop {
 			try {
+				fmt::print("Tenant move abort: deleting destination data on tenant {}\n", tName);
 				dstTr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				dstTr->clear(normalKeys);
 				wait(safeThreadFutureToFuture(dstTr->commit()));
+				fmt::print("Tenant move abort: finished deleting destination data on tenant {}\n", tName);
 				return Void();
 			} catch (Error& e) {
 				wait(safeThreadFutureToFuture(dstTr->onError(e)));
@@ -1503,23 +1548,27 @@ struct AbortTenantMovementImpl {
 	ACTOR static Future<Void> deleteDestinationTenants(AbortTenantMovementImpl* self, Reference<ITransaction> tr) {
 		state std::vector<Future<Void>> deleteFutures;
 
+		fmt::print("Tenant move abort: deleting destination tenants\n");
 		for (auto& tenantPair : self->tenantsInGroup) {
 			int64_t tId = tenantPair.second;
 			deleteFutures.push_back(TenantAPI::deleteTenantTransaction(tr, tId, ClusterType::METACLUSTER_DATA));
 		}
 
 		wait(waitForAll(deleteFutures));
+		fmt::print("Tenant move abort: finished deleting destination tenants\n");
 		return Void();
 	}
 
 	ACTOR static Future<Void> purgeDestinationBlobRanges(AbortTenantMovementImpl* self) {
 		state std::vector<Future<Void>> purgeFutures;
 
+		fmt::print("Tenant move abort: purging destination blob ranges\n");
 		for (auto& tenantPair : self->tenantsInGroup) {
 			state TenantName tName = tenantPair.first;
 			purgeFutures.push_back(purgeAndVerifyTenant(self->dstCtx.dataClusterDb, tName));
 		}
 		wait(waitForAll(purgeFutures));
+		fmt::print("Tenant move abort: finished purging destination blob ranges\n");
 
 		return Void();
 	}
