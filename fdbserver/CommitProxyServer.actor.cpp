@@ -4112,14 +4112,19 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 			                   masterLifetime.isEqual(commitData.db->get().masterLifetime))) {
 
 				if (trs.size() || lastCommitComplete.isReady()) {
+					// When encryption is enabled, cipher key fetching issue (e.g KMS outage) is detected by the
+					// encryption monitor. In that case, commit timeout is expected and timeout error is suppressed. But
+					// we still want to trigger recovery occassionally (with the COMMIT_PROXY_MAX_LIVENESS_TIMEOUT), in
+					// the hope that the cipher key fetching issue could be resolve by recovery (e.g, if one CP have
+					// networking issue connecting to EKP, and recovery may exclude the CP).
 					lastCommitComplete = transformError(
 					    timeoutError(
 					        timeoutErrorIfCleared(
 					            commitBatch(&commitData,
 					                        const_cast<std::vector<CommitTransactionRequest>*>(&batchedRequests.first),
 					                        batchBytes),
-					            SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT,
-					            commitData.encryptionMonitor->degraded()),
+					            commitData.encryptionMonitor->degraded(),
+					            SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT),
 					        SERVER_KNOBS->COMMIT_PROXY_MAX_LIVENESS_TIMEOUT),
 					    timed_out(),
 					    failed_to_progress());

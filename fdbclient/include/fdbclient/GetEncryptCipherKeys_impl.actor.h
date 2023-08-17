@@ -45,14 +45,13 @@ namespace {
 ACTOR template <class T>
 Future<T> monitorGetEncryptCipherKeys(GetEncryptCipherKeysMonitor* self, Future<T> actor) {
 	Future<Void> timer = delay(CLIENT_KNOBS->ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD, TaskPriority::DefaultDelay);
-	state GetEncryptCipherKeysMonitor::Handle h;
 	choose {
 		when(T t = wait(actor)) {
 			return t;
 		}
 		when(wait(timer)) {
-			// Bookkeeping number of long running actors using RAII.
-			h.set(self);
+			// Bookkeeping number of long running actors using RAII and set degraded state accordingly.
+			state ActiveCounter<int>::Releaser r = self->handleLongRunningRequest();
 			T t = wait(actor);
 			return t;
 		}

@@ -52,30 +52,25 @@ public:
 	template <class T>
 	Future<T> monitor(Future<T> actor);
 
-	struct Handle {
-		void set(GetEncryptCipherKeysMonitor* m) {
-			monitor = m;
-			if (monitor->longRunningRequests == 0) {
-				monitor->degradedVar->set(true);
-			}
-			monitor->longRunningRequests++;
+	ActiveCounter<int>::Releaser handleLongRunningRequest() {
+		// Check if we are transiting into degraded state before we bump longRunningRequests counter.
+		if (longRunningRequests.getValue() == 0) {
+			ASSERT(degradedVar->get() == false);
+			degradedVar->set(true);
 		}
-
-		~Handle() {
-			if (monitor != nullptr) {
-				monitor->longRunningRequests--;
-				if (monitor->longRunningRequests == 0) {
-					monitor->degradedVar->set(true);
-				}
+		return longRunningRequests.take(1, [this]() {
+			// Releaser callback fires after we decrease the longRunningRequests counter.
+			// Check if we are transiting away from degraded state.
+			if (longRunningRequests.getValue() == 0) {
+				ASSERT(degradedVar->get() == true);
+				degradedVar->set(false);
 			}
-		}
-
-		GetEncryptCipherKeysMonitor* monitor = nullptr;
-	};
+		});
+	}
 
 private:
 	Reference<AsyncVar<bool>> degradedVar = makeReference<AsyncVar<bool>>(false);
-	int longRunningRequests = 0;
+	ActiveCounter<int> longRunningRequests = { 0 };
 };
 
 template <class T>

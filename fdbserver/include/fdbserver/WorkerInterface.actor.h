@@ -1298,7 +1298,7 @@ Future<T> ioTimeoutErrorIfCleared(Future<T> what,
 	if (g_network->isSimulated() && !g_simulator->speedUpSimulation) {
 		time += std::max(0.0, FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS - now());
 	}
-	Future<Void> end = afterCleared<Void>(std::bind(lowPriorityDelay, time), condition);
+	Future<Void> end = lowPriorityDelayAfterCleared(condition, time);
 	choose {
 		when(T t = wait(what)) {
 			return t;
