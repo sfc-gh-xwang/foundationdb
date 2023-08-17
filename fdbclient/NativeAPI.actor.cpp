@@ -3023,7 +3023,7 @@ AddressExclusion AddressExclusion::parse(StringRef const& key) {
 }
 
 ACTOR template <class Tenant>
-Future<Optional<ClusterName>> getAssignedClusterFuture(Database cx, Tenant tenant) {
+Future<Optional<ClusterName>> getAssignedCluster(Database cx, Tenant tenant) {
 	ClusterType clusterType = cx->clientInfo->get().clusterType;
 	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
 		return Optional<ClusterName>();
@@ -3033,24 +3033,25 @@ Future<Optional<ClusterName>> getAssignedClusterFuture(Database cx, Tenant tenan
 	return entry.assignedCluster;
 }
 
-ACTOR Future<Optional<ClusterName>> getAssignedClusterFuture(Database cx, Future<TenantLookupInfo> tenantLookupInfo) {
+ACTOR Future<Optional<ClusterName>> getAssignedCluster(Database cx, Future<TenantLookupInfo> tenantLookupInfo) {
 	ClusterType clusterType = cx->clientInfo->get().clusterType;
 	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
 		return Optional<ClusterName>();
 	}
 	TenantLookupInfo info = wait(tenantLookupInfo);
-	Optional<ClusterName> assignedCluster = wait(getAssignedClusterFuture(cx, info.id));
+	Optional<ClusterName> assignedCluster = wait(getAssignedCluster(cx, info.id));
 	return assignedCluster;
 }
 
-ACTOR Future<Database> getDatabaseFuture(Database cx, Future<Optional<ClusterName>> assignedClusterFuture) {
+ACTOR Future<Database> openNamedDatabase(Database cx, Future<Optional<ClusterName>> assignedClusterFuture) {
+	CODE_PROBE(true, "Open named database");
 	ClusterType clusterType = cx->clientInfo->get().clusterType;
 	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
 		return cx;
 	}
 	state Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	ASSERT(assignedCluster.present());
-	Reference<DatabaseContext> mgmtCx = cx.getReference();
+	state Reference<DatabaseContext> mgmtCx = cx.getReference();
 	state Reference<DatabaseContext::TransactionT> tr = mgmtCx->createTransaction();
 	loop {
 		try {
@@ -3058,12 +3059,13 @@ ACTOR Future<Database> getDatabaseFuture(Database cx, Future<Optional<ClusterNam
 			Optional<ClusterConnectionString> connectionString =
 			    wait(metacluster::metadata::management::dataClusterConnectionRecords().get(tr, assignedCluster.get()));
 			if (!connectionString.present()) {
-				// The assignedCluster is staled, caller should retry openning the tenant
+				// The assignedCluster is stale, caller should retry openning the tenant
 				throw cluster_removed();
 			}
 			Reference<IClusterConnectionRecord> connectionRecord =
 			    makeReference<ClusterConnectionMemoryRecord>(connectionString.get());
-			Database db = Database::createDatabase(connectionRecord, ApiVersion::LATEST_VERSION, IsInternal::False);
+			Database db = Database::createDatabase(connectionRecord, mgmtCx->apiVersion.version(), mgmtCx->internal);
+
 			return db;
 		} catch (Error& e) {
 			wait(safeThreadFutureToFuture(tr->onError(e)));
@@ -3071,9 +3073,9 @@ ACTOR Future<Database> getDatabaseFuture(Database cx, Future<Optional<ClusterNam
 	}
 }
 
-ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<Database> dbFuture,
-                                                         TenantName name,
-                                                         Future<Optional<ClusterName>> assignedClusterFuture) {
+ACTOR Future<TenantLookupInfo> getTenantLookupInfo(Future<Database> dbFuture,
+                                                   TenantName name,
+                                                   Future<Optional<ClusterName>> assignedClusterFuture) {
 	Database db = wait(dbFuture);
 	ASSERT_NE(db->clientInfo->get().clusterType, ClusterType::METACLUSTER_MANAGEMENT);
 	state TenantLookupInfo info = wait(db->lookupTenant(name));
@@ -3082,16 +3084,15 @@ ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<Database> dbFutu
 	return info;
 }
 
-ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(int64_t id,
-                                                         Future<Optional<ClusterName>> assignedClusterFuture) {
+ACTOR Future<TenantLookupInfo> getTenantLookupInfo(int64_t id, Future<Optional<ClusterName>> assignedClusterFuture) {
 	state TenantLookupInfo info(id);
 	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	info.assignedCluster = assignedCluster;
 	return info;
 }
 
-ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<TenantLookupInfo> lookupInfo,
-                                                         Future<Optional<ClusterName>> assignedClusterFuture) {
+ACTOR Future<TenantLookupInfo> getTenantLookupInfo(Future<TenantLookupInfo> lookupInfo,
+                                                   Future<Optional<ClusterName>> assignedClusterFuture) {
 	state TenantLookupInfo info = wait(lookupInfo);
 	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	if (info.assignedCluster.present()) {
@@ -3103,34 +3104,34 @@ ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(Future<TenantLookupInfo
 	return info;
 }
 
-ACTOR Future<TenantLookupInfo> getTenantLookupInfoFuture(TenantMapEntry entry,
-                                                         Future<Optional<ClusterName>> assignedClusterFuture) {
+ACTOR Future<TenantLookupInfo> getTenantLookupInfo(TenantMapEntry entry,
+                                                   Future<Optional<ClusterName>> assignedClusterFuture) {
 	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
 	return TenantLookupInfo(entry.id, entry.tenantGroup, assignedCluster);
 }
 
 Tenant::Tenant(Database cx, TenantName name) : name(name) {
-	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedClusterFuture(cx, name);
-	dbFuture = getDatabaseFuture(cx, assignedClusterFuture);
-	lookupFuture = getTenantLookupInfoFuture(dbFuture, name, assignedClusterFuture);
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedCluster(cx, name);
+	dbFuture = openNamedDatabase(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfo(dbFuture, name, assignedClusterFuture);
 }
 
 Tenant::Tenant(Database cx, int64_t id) {
-	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedClusterFuture(cx, id);
-	dbFuture = getDatabaseFuture(cx, assignedClusterFuture);
-	lookupFuture = getTenantLookupInfoFuture(id, assignedClusterFuture);
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedCluster(cx, id);
+	dbFuture = openNamedDatabase(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfo(id, assignedClusterFuture);
 }
 
 Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name) : name(name) {
-	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedClusterFuture(cx, tenantLookupInfo);
-	dbFuture = getDatabaseFuture(cx, assignedClusterFuture);
-	lookupFuture = getTenantLookupInfoFuture(tenantLookupInfo, assignedClusterFuture);
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedCluster(cx, tenantLookupInfo);
+	dbFuture = openNamedDatabase(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfo(tenantLookupInfo, assignedClusterFuture);
 }
 
 Tenant::Tenant(Database cx, TenantMapEntry entry) : name(entry.tenantName) {
-	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedClusterFuture(cx, entry.id);
-	dbFuture = getDatabaseFuture(cx, assignedClusterFuture);
-	lookupFuture = getTenantLookupInfoFuture(entry, assignedClusterFuture);
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedCluster(cx, entry.id);
+	dbFuture = openNamedDatabase(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfo(entry, assignedClusterFuture);
 }
 
 int64_t Tenant::id() const {
