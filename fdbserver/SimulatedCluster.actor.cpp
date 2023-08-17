@@ -391,6 +391,8 @@ public:
 	Optional<bool> generateFearless, buggify;
 	Optional<std::string> config;
 	bool blobGranulesEnabled = false;
+	// Can be explicilty set in config. Otherwise, choose randomly if compatible with other options
+	Optional<bool> defaultBlobification;
 	bool randomlyRenameZoneId = false;
 	bool simHTTPServerEnabled = true;
 
@@ -468,6 +470,7 @@ public:
 		    .add("configDBType", &configDBType)
 		    .add("extraMachineCountDC", &extraMachineCountDC)
 		    .add("blobGranulesEnabled", &blobGranulesEnabled)
+		    .add("defaultBlobification", &defaultBlobification)
 		    .add("simHTTPServerEnabled", &simHTTPServerEnabled)
 		    .add("allowDefaultTenant", &allowDefaultTenant)
 		    .add("allowCreatingTenants", &allowCreatingTenants)
@@ -2817,6 +2820,15 @@ ACTOR void setupAndRun(std::string dataFolder,
 				}
 			}
 		}
+
+		if (!testConfig.defaultBlobification.has_value()) {
+			if (tenantMode == TenantMode::DISABLED) {
+				testConfig.defaultBlobification = deterministicRandom()->coinflip();
+			} else {
+				testConfig.defaultBlobification = false;
+			}
+		}
+
 		Future<Void> runTestsF = runTests(connFile,
 		                                  TEST_TYPE_FROM_FILE,
 		                                  TEST_ON_TESTERS,
@@ -2827,7 +2839,8 @@ ACTOR void setupAndRun(std::string dataFolder,
 		                                  UnitTestParameters(),
 		                                  defaultTenant,
 		                                  extraTenants,
-		                                  rebooting);
+		                                  rebooting,
+		                                  *testConfig.defaultBlobification);
 		wait(testConfig.longRunningTest ? runTestsF
 		                                : timeoutError(runTestsF,
 		                                               isBuggifyEnabled(BuggifyType::General)

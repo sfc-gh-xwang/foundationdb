@@ -2066,7 +2066,8 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
                             LocalityData locality,
                             Optional<TenantName> defaultTenant,
                             Standalone<VectorRef<TenantNameRef>> extraTenants,
-                            bool restartingTest) {
+                            bool restartingTest,
+                            bool defaultBlobification) {
 	state Database cx;
 	state Reference<AsyncVar<ServerDBInfo>> dbInfo(new AsyncVar<ServerDBInfo>);
 	state Future<Void> ccMonitor = monitorServerDBInfo(cc, LocalityData(), dbInfo); // FIXME: locality
@@ -2292,6 +2293,13 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 		}
 	}
 
+	if (useDB && defaultBlobification) {
+		bool success = wait(cx->blobbifyRange(normalKeys));
+		TraceEvent("DoneDefaultBlobification").detail("Success", success);
+		ASSERT(success);
+		CODE_PROBE(true, "Default blobbified normal key space");
+	}
+
 	enableConnectionFailures("Tester");
 	state Future<Void> disabler = disableConnectionFailuresAfter(FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS, "Tester");
 	state Future<Void> repairDataCenter;
@@ -2368,7 +2376,8 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
                             LocalityData locality,
                             Optional<TenantName> defaultTenant,
                             Standalone<VectorRef<TenantNameRef>> extraTenants,
-                            bool restartingTest) {
+                            bool restartingTest,
+                            bool defaultBlobification) {
 	state int flags = (at == TEST_ON_SERVERS ? 0 : GetWorkersRequest::TESTER_CLASS_ONLY) |
 	                  GetWorkersRequest::NON_EXCLUDED_PROCESSES_ONLY;
 	state Future<Void> testerTimeout = delay(600.0); // wait 600 sec for testers to show up
@@ -2399,7 +2408,16 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 	for (int i = 0; i < workers.size(); i++)
 		ts.push_back(workers[i].interf.testerInterface);
 
-	wait(runTests(cc, ci, ts, tests, startingConfiguration, locality, defaultTenant, extraTenants, restartingTest));
+	wait(runTests(cc,
+	              ci,
+	              ts,
+	              tests,
+	              startingConfiguration,
+	              locality,
+	              defaultTenant,
+	              extraTenants,
+	              restartingTest,
+	              defaultBlobification));
 	return Void();
 }
 
@@ -2439,7 +2457,8 @@ ACTOR Future<Void> runTests(Reference<IClusterConnectionRecord> connRecord,
                             UnitTestParameters testOptions,
                             Optional<TenantName> defaultTenant,
                             Standalone<VectorRef<TenantNameRef>> extraTenants,
-                            bool restartingTest) {
+                            bool restartingTest,
+                            bool defaultBlobification) {
 	state TestSet testSet;
 	state std::unique_ptr<KnobProtectiveGroup> knobProtectiveGroup(nullptr);
 	auto cc = makeReference<AsyncVar<Optional<ClusterControllerFullInterface>>>();
@@ -2526,7 +2545,8 @@ ACTOR Future<Void> runTests(Reference<IClusterConnectionRecord> connRecord,
 		                 locality,
 		                 defaultTenant,
 		                 extraTenants,
-		                 restartingTest);
+		                 restartingTest,
+		                 defaultBlobification);
 	} else {
 		tests = reportErrors(runTests(cc,
 		                              ci,
@@ -2537,7 +2557,8 @@ ACTOR Future<Void> runTests(Reference<IClusterConnectionRecord> connRecord,
 		                              locality,
 		                              defaultTenant,
 		                              extraTenants,
-		                              restartingTest),
+		                              restartingTest,
+		                              defaultBlobification),
 		                     "RunTests");
 	}
 

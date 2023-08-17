@@ -172,6 +172,9 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 	// Sets the whole user keyspace to be blobified
 	ACTOR Future<Void> setUpBlobRange(Database cx) {
 		bool success = wait(cx->blobbifyRange(normalKeys));
+		if (!success) {
+			TraceEvent(SevError, "CannotBlobifyRage").detail("Range", normalKeys);
+		}
 		ASSERT(success);
 		return Void();
 	}

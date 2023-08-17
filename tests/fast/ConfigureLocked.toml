@@ -1,5 +1,7 @@
 [configuration]
 configureLocked = true
+# FDBCORE-6010
+defaultBlobification = false
 
 [[test]]
 testTitle = 'ConfigureLocked'
