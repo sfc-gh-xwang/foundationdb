@@ -9,6 +9,16 @@ This document provides an overview of changes that an application developer may 
 
 For more details about API versions, see :ref:`api-versions`.
 
+.. _api-version-upgrade-guide-900000:
+
+API version 900000
+==================
+
+General
+-------
+
+* No changes are needed
+
 .. _api-version-upgrade-guide-800000:
 
 API version 800000

@@ -398,20 +398,20 @@ if(WITH_PYTHON)
     TEST_FILES restarting/from_71.3.0/StorefrontTestRestart-1.txt
     restarting/from_71.3.0/StorefrontTestRestart-2.txt)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-1.toml
-    restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-2.toml)
+    TEST_FILES restarting/to_8.0.0/ConfigureStorageMigrationTestRestart-1.toml
+    restarting/to_8.0.0/ConfigureStorageMigrationTestRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.0/CycleTestRestart-1.toml
-    restarting/to_71.3.0/CycleTestRestart-2.toml)
+    TEST_FILES restarting/to_8.0.0/CycleTestRestart-1.toml
+    restarting/to_8.0.0/CycleTestRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.0/BlobGranuleRestartCycle-1.toml
-    restarting/to_71.3.0/BlobGranuleRestartCycle-2.toml)
+    TEST_FILES restarting/to_8.0.0/BlobGranuleRestartCycle-1.toml
+    restarting/to_8.0.0/BlobGranuleRestartCycle-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.1/BlobGranuleRestartCorrectness-1.toml
-    restarting/to_71.3.1/BlobGranuleRestartCorrectness-2.toml)
+    TEST_FILES restarting/to_8.0.0/BlobGranuleRestartCorrectness-1.toml
+    restarting/to_8.0.0/BlobGranuleRestartCorrectness-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.0/BlobGranuleRestartLarge-1.toml
-    restarting/to_71.3.0/BlobGranuleRestartLarge-2.toml)
+    TEST_FILES restarting/to_8.0.0/BlobGranuleRestartLarge-1.toml
+    restarting/to_8.0.0/BlobGranuleRestartLarge-2.toml)
 
   add_fdb_test(TEST_FILES slow/ApiCorrectness.toml)
   add_fdb_test(TEST_FILES slow/ApiCorrectnessAtomicRestore.toml)
@@ -554,7 +554,11 @@ if(WITH_PYTHON)
       NAME authorization_venv_setup
       COMMAND bash -c ${authz_venv_cmd}
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(authorization_venv_setup PROPERTIES FIXTURES_SETUP authz_virtual_env TIMEOUT 60)
+    set_tests_properties(authorization_venv_setup
+      PROPERTIES
+        FIXTURES_SETUP authz_virtual_env
+        RESOURCE_LOCK authz_venv_setup_lock
+        TIMEOUT 60)
 
     set(authz_script_dir ${CMAKE_SOURCE_DIR}/tests/authorization)
     set(enable_grv_cache 0 1)

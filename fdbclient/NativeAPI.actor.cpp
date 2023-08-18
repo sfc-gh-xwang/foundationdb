@@ -11730,6 +11730,17 @@ Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 
 // BlobGranule API.
 
+ACTOR Future<Void> checkRangeLock(Transaction* tr, KeyRange physicalRange) {
+	if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK) {
+		return Void();
+	}
+	bool unlocked = wait(RangeLockAPI::isRangeUnlockedTransaction(tr, physicalRange.begin, physicalRange.end));
+	if (unlocked) {
+		return Void();
+	}
+	throw illegal_locked_range_access();
+}
+
 ACTOR Future<Void> checkTenantLock(Transaction* tr, Optional<Reference<Tenant>> tenant, KeyRange keyRange) {
 	if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
 		return Void();
@@ -11796,13 +11807,13 @@ ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 
-			state Future<Void> tenantLockCheck = checkTenantLock(&tr, tenant, range);
+			state Future<Void> lockCheck = checkTenantLock(&tr, tenant, range) && checkRangeLock(&tr, purgeRange);
 			// must be aligned to blob range(s)
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedBegin =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.begin, keyAfter(purgeRange.begin)), 1);
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedEnd =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.end, keyAfter(purgeRange.end)), 1);
-			wait(success(blobbifiedBegin) && success(blobbifiedEnd) && tenantLockCheck);
+			wait(success(blobbifiedBegin) && success(blobbifiedEnd) && lockCheck);
 			// If there are no blob ranges on the boundary that's okay as we allow purging of multiple full ranges.
 			if ((!blobbifiedBegin.get().empty() && blobbifiedBegin.get().front().begin < purgeRange.begin) ||
 			    (!blobbifiedEnd.get().empty() && blobbifiedEnd.get().front().begin < purgeRange.end)) {
@@ -11909,7 +11920,8 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange));
+			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
+			     checkRangeLock(&tr->getTransaction(), range));
 
 			Standalone<VectorRef<KeyRangeRef>> startBlobRanges = wait(getBlobRanges(&tr->getTransaction(), range, 1));
 

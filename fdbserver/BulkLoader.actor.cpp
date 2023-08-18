@@ -14,7 +14,7 @@
 #include "fdbclient/BulkLoadMetadata.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/BlobWorker.h"
-
+#include "fdbclient/RangeLockAPI.actor.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 #define DBG_BL_REQUEST false
@@ -36,6 +36,9 @@ bool isTransientFileValidationError(const Error& e) {
 }
 
 bool canReplyWith(const Error& e) {
+	if (RangeLockAPI::isRangeLockError(e)) {
+		return true;
+	}
 	switch (e.code()) {
 	case error_code_bulk_load_not_found:
 	case error_code_bulk_load_not_registering_files:

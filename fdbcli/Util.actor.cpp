@@ -31,6 +31,7 @@
 namespace fdb_cli {
 
 bool tokencmp(StringRef token, const char* command) {
+	// Careful: return sense is opposite to strcmp and memcmp (so true is equal and false is different)
 	if (token.size() != strlen(command))
 		return false;
 

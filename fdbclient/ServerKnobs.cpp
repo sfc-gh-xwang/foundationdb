@@ -114,14 +114,26 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( TLOG_POPPED_VER_LAG_THRESHOLD_FOR_TLOGPOP_TRACE,     250e6 );
 	init( BLOCKING_PEEK_TIMEOUT,                                 0.4 );
 	init( ENABLE_DETAILED_TLOG_POP_TRACE,                      false ); if ( randomize && BUGGIFY ) ENABLE_DETAILED_TLOG_POP_TRACE = true;
-	init( PEEK_BATCHING_EMPTY_MSG,                             false ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG = true;
-	init( PEEK_BATCHING_EMPTY_MSG_INTERVAL,                    0.001 ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG_INTERVAL = 0.01;
-	init( DYNAMIC_EMPTY_VERSION_WAIT,    EMPTY_VERSION_WAIT_LOG_ONLY );
-	init( SS_EMPTY_VERSION_WAIT_LESS_SKEW_STAT,                false ); 
-	init( SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL,               0.001 ); 
-	init( SS_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH,               1000 ); 
 	init( POP_FROM_LOG_DELAY,                                      1 ); if ( randomize && BUGGIFY ) POP_FROM_LOG_DELAY = 0;
 	init( TLOG_PULL_ASYNC_DATA_WARNING_TIMEOUT_SECS,             120 );
+
+	// Dynamic Empty Version Wait
+	init( PEEK_BATCHING_EMPTY_MSG,                             false ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG = true;
+	init( PEEK_BATCHING_EMPTY_MSG_INTERVAL,                    0.001 ); if ( randomize && BUGGIFY ) PEEK_BATCHING_EMPTY_MSG_INTERVAL = 0.01;
+	init( DYNAMIC_EMPTY_VERSION_WAIT,    EMPTY_VERSION_WAIT_DISABLED ); if ( randomize && BUGGIFY ) DYNAMIC_EMPTY_VERSION_WAIT = EMPTY_VERSION_WAIT;
+	// Dynamic Empty Version Wait: Sampling
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB,                  1 ); 
+	init( DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH,         10000 ); 
+	init( DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT,            true ); 
+	// Dynamic Empty Version Wait: Decision
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE,         0 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD,         0.1 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR, 0.95 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_CAP,                      0.020 );
+	// Dynamic Empty Version Wait: Syncing
+	init( DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION,        0.2 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL,                1 );
+	init( DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT,   2000 );
 
 	// disk snapshot max timeout, to be put in TLog, storage and coordinator nodes
 	init( MAX_FORKED_PROCESS_OUTPUT,                            1024 );
@@ -1214,6 +1226,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_CURRENT_CIPHER_REQUEST_VERSION,                  1);
 	init( REST_KMS_MAX_CIPHER_REQUEST_VERSION,                      1);
 	init( REST_SIM_KMS_VAULT_DIR,                                  "");
+	init( REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY,             true ); if ( randomize && BUGGIFY ) { REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY = deterministicRandom()->coinflip(); }
 	init( REST_KMS_STABILITY_CHECK_INTERVAL,                      5.0);
 	init( KMS_LOGGING_INTERVAL,                                   5.0);
 
@@ -1232,6 +1245,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	// Bulk Load
 	init( BULK_LOAD_FILE_POINTER_BATCH_SIZE,                     100 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_POINTER_BATCH_SIZE = deterministicRandom()->randomInt(10, 100);
 	init( BULK_LOAD_PARALLEL_FILE_VALIDATIONS,                     1 ); if ( randomize && BUGGIFY ) BULK_LOAD_PARALLEL_FILE_VALIDATIONS = deterministicRandom()->randomInt(1, 10);
+	init( BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT,            false); if ( isSimulated ) BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT = deterministicRandom()->coinflip();
+	init( BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL,                     10); if ( isSimulated ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = 5; if ( randomize && BUGGIFY ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = deterministicRandom()->randomInt(1, 5);
 	init( BULK_LOAD_FILE_VALIDATION_LEVEL,                         1 ); if ( randomize && BUGGIFY ) BULK_LOAD_FILE_VALIDATION_LEVEL = deterministicRandom()->randomInt(0, 3);
 
 	// clang-format on

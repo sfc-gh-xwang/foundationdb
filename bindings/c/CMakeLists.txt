@@ -237,11 +237,11 @@ if(NOT OPEN_FOR_IDE)
   # Make sure that fdb_c.h is compatible with c90
   add_executable(fdb_c90_test test/fdb_c90_test.c)
   set_property(TARGET fdb_c90_test PROPERTY C_STANDARD 90)
-if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  target_compile_options(fdb_c90_test PRIVATE -Wall -Wextra -Wpedantic -Wno-gnu-line-marker -Werror)
-else ()
-  target_compile_options(fdb_c90_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
-endif ()
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(fdb_c90_test PRIVATE -Wall -Wextra -Wpedantic -Wno-gnu-line-marker -Werror)
+  else()
+    target_compile_options(fdb_c90_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
   target_link_libraries(fdb_c90_test PRIVATE fdb_c)
 endif()
 
@@ -284,6 +284,11 @@ else()
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py ${CMAKE_BINARY_DIR}
     TEST_TIMEOUT 300
   )
+  # add_python_venv_test(
+  #   NAME fdb_c_bulk_load_test
+  #   COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/bulk_load.py --build-dir ${CMAKE_BINARY_DIR}
+  #   TEST_TIMEOUT 300
+  # )
   add_unavailable_fdbclient_test(
     NAME disconnected_timeout_unit_tests
     COMMAND $<TARGET_FILE:disconnected_timeout_unit_tests>
@@ -311,6 +316,18 @@ else()
     )
   endforeach()
 
+  add_python_venv_test(NAME download_old_binaries
+    COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/binary_download.py
+      --build-dir ${CMAKE_BINARY_DIR}
+      --versions "${FDB_PREV_RELEASE_VERSION}" "${FDB_PREV2_RELEASE_VERSION}" "${FDB_PREV3_RELEASE_VERSION}"
+  )
+
+  set_tests_properties(download_old_binaries
+    PROPERTIES
+      FIXTURES_SETUP old_binaries
+      RESOURCE_LOCK download_old_binaries_lock # ensures one run even if its dependent tests run in parallel
+      TIMEOUT 300)
+
   add_python_venv_test(NAME fdb_c_upgrade_to_future_version
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
     --build-dir ${CMAKE_BINARY_DIR}
@@ -336,8 +353,7 @@ else()
       )
 
     # TODO: re-enable the downgrade step to "${FDB_PREV_RELEASE_VERSION}" in all the following
-    # fdb_c_upgrade_from_* tests once 71.3 binaries are available.
-
+    # fdb_c_upgrade_from_* tests once 8.0 binaries are available.
     add_python_venv_test(NAME fdb_c_upgrade_from_prev3_gradual
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
@@ -407,6 +423,17 @@ else()
       --process-number 3
       --redundancy double
       )
+
+    set_tests_properties(
+      fdb_c_client_config_tests
+      fdb_c_upgrade_from_prev3_gradual
+      fdb_c_upgrade_from_prev3_direct
+      fdb_c_upgrade_from_prev2_gradual
+      fdb_c_upgrade_from_prev2_direct
+      fdb_c_upgrade_from_prev
+      fdb_c_wiggle_only
+      fdb_c_wiggle_and_upgrade
+      PROPERTIES FIXTURES_REQUIRED old_binaries)
 
   endif()
 endif()
@@ -502,6 +529,8 @@ elseif(NOT APPLE) # Linux Only
     --api-test-dir ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests
     ${SHIM_LIB_TEST_EXTRA_OPTIONS}
     )
+
+  set_tests_properties(fdb_c_shim_library_tests PROPERTIES FIXTURES_REQUIRED old_binaries)
 
 endif() # End Linux only
 

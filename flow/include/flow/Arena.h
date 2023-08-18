@@ -376,9 +376,9 @@ public:
 	}*/
 private:
 	template <class U>
-	Standalone(Standalone<U> const&); // unimplemented
+	Standalone(Standalone<U> const&) = delete; // unimplemented
 	template <class U>
-	Standalone<T> const& operator=(Standalone<U> const&); // unimplemented
+	Standalone<T> const& operator=(Standalone<U> const&) = delete; // unimplemented
 };
 
 extern std::string format(const char* form, ...);
