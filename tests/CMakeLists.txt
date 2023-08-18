@@ -554,7 +554,11 @@ if(WITH_PYTHON)
       NAME authorization_venv_setup
       COMMAND bash -c ${authz_venv_cmd}
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(authorization_venv_setup PROPERTIES FIXTURES_SETUP authz_virtual_env TIMEOUT 60)
+    set_tests_properties(authorization_venv_setup
+      PROPERTIES
+        FIXTURES_SETUP authz_virtual_env
+        RESOURCE_LOCK authz_venv_setup_lock
+        TIMEOUT 60)
 
     set(authz_script_dir ${CMAKE_SOURCE_DIR}/tests/authorization)
     set(enable_grv_cache 0 1)
