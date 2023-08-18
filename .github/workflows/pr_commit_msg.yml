@@ -2,9 +2,7 @@ name: PR lint
 
 on:
   pull_request:
-    branches:
-      - main
-      - release*
+    branches: [ "main", "release/*" ]
     types: ['opened', 'edited', 'reopened', 'synchronize']
 
 jobs:
