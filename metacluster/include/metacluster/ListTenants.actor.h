@@ -107,7 +107,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 	for (int i = 0; i < futures.size(); ++i) {
 		const MetaclusterTenantMapEntry& entry = futures[i].get().get();
 		if (locked.present()) {
-			if (locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::LOCKED) {
+			if (locked.get() && entry.tenantLockState == TenantAPI::TenantLockState::UNLOCKED) {
 				continue;
 			}
 			if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
