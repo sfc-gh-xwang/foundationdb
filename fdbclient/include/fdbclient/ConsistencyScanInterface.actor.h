@@ -225,6 +225,8 @@ struct ConsistencyScanState : public KeyBackedClass {
 
 		Key lastEndKey = ""_sr;
 
+		bool shouldStartNewRound(const ConsistencyScanState::Config& config, Version currentVersion);
+
 		/*
 		// TODO:  Ideas of more things to track:
 		int64_t shardsScanned = 0;
