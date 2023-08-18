@@ -61,6 +61,7 @@
 #include "fdbserver/QuietDatabase.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/WorkerInterface.actor.h"
+#include "flow/DebugTrace.h"
 #include "flow/Error.h"
 #include "flow/IRandom.h"
 #include "flow/UnitTest.h"
@@ -756,10 +757,10 @@ ACTOR Future<BlobGranuleSplitPoints> splitRange(Reference<BlobManagerData> bmDat
 			           range.end.printable(),
 			           writeHot ? "hot" : "normal");
 		}
-		TraceEvent(SevDebug, "BMSplitRangeBegin", bmData->id).detail("Range", range);
+		DebugBMTraceEvent(SevDebug, "BMSplitRangeBegin", bmData->id).detail("Range", range);
 		state StorageMetrics estimated = wait(bmData->db->getStorageMetrics(range, CLIENT_KNOBS->TOO_MANY));
 
-		TraceEvent(SevDebug, "BMSplitRangeGotEstimate", bmData->id)
+		DebugBMTraceEvent(SevDebug, "BMSplitRangeGotEstimate", bmData->id)
 		    .detail("Range", range)
 		    .detail("EstimatedBytes", estimated.bytes);
 
@@ -859,7 +860,7 @@ ACTOR Future<BlobGranuleSplitPoints> splitRange(Reference<BlobManagerData> bmDat
 			ASSERT(splitPoints.keys.size() >= 2);
 			ASSERT(splitPoints.keys.front() == range.begin);
 			ASSERT(splitPoints.keys.back() == range.end);
-			TraceEvent(SevDebug, "BMSplitRangeSplit", bmData->id)
+			DebugBMTraceEvent(SevDebug, "BMSplitRangeSplit", bmData->id)
 			    .detail("Range", range)
 			    .detail("NewRanges", splitPoints.keys.size() - 1);
 			return splitPoints;
@@ -868,7 +869,7 @@ ACTOR Future<BlobGranuleSplitPoints> splitRange(Reference<BlobManagerData> bmDat
 			if (BM_DEBUG) {
 				printf("Not splitting range\n");
 			}
-			TraceEvent(SevDebug, "BMSplitRangeNotSplitting", bmData->id).detail("Range", range);
+			DebugBMTraceEvent(SevDebug, "BMSplitRangeNotSplitting", bmData->id).detail("Range", range);
 			splitPoints.keys.push_back_deep(splitPoints.keys.arena(), range.begin);
 			splitPoints.keys.push_back_deep(splitPoints.keys.arena(), range.end);
 			return splitPoints;
@@ -904,7 +905,9 @@ ACTOR Future<UID> pickWorkerForAssign(Reference<BlobManagerData> bmData,
 			if (BM_DEBUG) {
 				fmt::print("BM {0} waiting for blob workers before assigning granules\n", bmData->epoch);
 			}
-			TraceEvent(SevDebug, "BMAssignNoWorkers", bmData->id).suppressFor(10.0).detail("Epoch", bmData->epoch);
+			DebugBMTraceEvent(SevDebug, "BMAssignNoWorkers", bmData->id)
+			    .suppressFor(10.0)
+			    .detail("Epoch", bmData->epoch);
 			bmData->restartRecruiting.trigger();
 			wait(bmData->recruitingStream.onChange() || bmData->foundBlobWorkers.getFuture());
 		}
@@ -1190,7 +1193,7 @@ ACTOR Future<Void> doRangeAssignment(Reference<BlobManagerData> bmData,
 				           workerID.get().toString());
 			}
 
-			TraceEvent(SevDebug, "BMAssignReQueue", bmData->id)
+			DebugBMTraceEvent(SevDebug, "BMAssignReQueue", bmData->id)
 			    .suppressFor(10.0)
 			    .detail("Epoch", bmData->epoch)
 			    .detail("Range", assignment.keyRange);
@@ -1260,7 +1263,7 @@ static bool handleRangeIsAssign(Reference<BlobManagerData> bmData, RangeAssignme
 					           i.end().printable(),
 					           i.cvalue().toString().substr(0, 5));
 				}
-				TraceEvent(SevDebug, "BMAssignOutOfDate", bmData->id)
+				DebugBMTraceEvent(SevDebug, "BMAssignOutOfDate", bmData->id)
 				    .suppressFor(10.0)
 				    .detail("Epoch", bmData->epoch)
 				    .detail("ReassignRange", assignment.keyRange)
@@ -1697,7 +1700,7 @@ ACTOR Future<Void> monitorClientRanges(Reference<BlobManagerData> bmData) {
 				           splitPoints.keys.size() - 1);
 			}
 
-			TraceEvent(SevDebug, "ClientBlobRangeSplit", bmData->id)
+			DebugBMTraceEvent(SevDebug, "ClientBlobRangeSplit", bmData->id)
 			    .suppressFor(10.0)
 			    .detail("Epoch", bmData->epoch)
 			    .detail("Range", KeyRangeRef(splitPoints.keys.front(), splitPoints.keys.back()))
@@ -2040,7 +2043,7 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
                                    bool writeHot,
                                    int64_t originalEpoch,
                                    int64_t originalSeqno) {
-	TraceEvent(SevDebug, "BMMaybeSplitRange", bmData->id)
+	DebugBMTraceEvent(SevDebug, "BMMaybeSplitRange", bmData->id)
 	    .detail("Epoch", bmData->epoch)
 	    .detail("Granule", granuleRange)
 	    .detail("GranuleID", granuleID)
@@ -2070,7 +2073,7 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 			           currentWorkerId.toString());
 		}
 
-		TraceEvent(SevDebug, "BMMaybeSplitRangeNoSplit", bmData->id)
+		DebugBMTraceEvent(SevDebug, "BMMaybeSplitRangeNoSplit", bmData->id)
 		    .detail("Epoch", bmData->epoch)
 		    .detail("GranuleID", granuleID)
 		    .detail("Granule", granuleRange)
@@ -2347,7 +2350,7 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 		           splitVersion);
 	}
 
-	TraceEvent(SevDebug, "BMMaybeSplitRangeComplete", bmData->id)
+	DebugBMTraceEvent(SevDebug, "BMMaybeSplitRangeComplete", bmData->id)
 	    .detail("Epoch", bmData->epoch)
 	    .detail("Granule", granuleRange)
 	    .detail("GranuleID", granuleID)
@@ -2381,7 +2384,7 @@ ACTOR Future<bool> forceGranuleFlush(Reference<BlobManagerData> bmData,
 		fmt::print("Flushing Granules [{0} - {1}) @ {2}\n", beginKey.printable(), endKey.printable(), version);
 	}
 
-	TraceEvent(SevDebug, "BMForceGranuleFlush", bmData->id)
+	DebugBMTraceEvent(SevDebug, "BMForceGranuleFlush", bmData->id)
 	    .detail("Epoch", bmData->epoch)
 	    .detail("Granule", keyRange)
 	    .detail("Version", version);
@@ -2424,7 +2427,7 @@ ACTOR Future<bool> forceGranuleFlush(Reference<BlobManagerData> bmData,
 		           version);
 	}
 
-	TraceEvent(SevDebug, "BMForceGranuleFlushComplete", bmData->id)
+	DebugBMTraceEvent(SevDebug, "BMForceGranuleFlushComplete", bmData->id)
 	    .detail("Epoch", bmData->epoch)
 	    .detail("Granule", keyRange)
 	    .detail("Version", version);
@@ -2807,7 +2810,7 @@ static void attemptStartMerge(Reference<BlobManagerData> bmData,
 		           mergeRange.end.printable(),
 		           toMerge.size());
 	}
-	TraceEvent(SevDebug, "BMGranuleMergeStart", bmData->id)
+	DebugBMTraceEvent(SevDebug, "BMGranuleMergeStart", bmData->id)
 	    .detail("Epoch", bmData->epoch)
 	    .detail("NewGranule", mergeRange)
 	    .detail("OldGranules", toMerge.size());
@@ -3185,7 +3188,7 @@ ACTOR Future<Void> monitorBlobWorkerStatus(Reference<BlobManagerData> bmData, Bl
 							           rep.granuleRange.end.printable(),
 							           newEval.toString());
 						}
-						TraceEvent(SevDebug, "BlobManagerGotGranuleStreamRepeat");
+						DebugBMTraceEvent(SevDebug, "BlobManagerGotGranuleStreamRepeat");
 						ignore = true;
 					} else if (newEval < lastBoundaryEval.cvalue()) {
 						CODE_PROBE(true, "BM got out-of-date split request");
@@ -3202,7 +3205,7 @@ ACTOR Future<Void> monitorBlobWorkerStatus(Reference<BlobManagerData> bmData, Bl
 							           lastBoundaryEval.cvalue().toString());
 						}
 
-						TraceEvent(SevDebug, "BlobManagerGotGranuleStreamIgnore")
+						DebugBMTraceEvent(SevDebug, "BlobManagerGotGranuleStreamIgnore")
 						    .detail("Granule", rep.granuleRange)
 						    .detail("NewEval", newEval.toString())
 						    .detail("LastGranule", KeyRangeRef(lastBoundaryEval.begin(), lastBoundaryEval.end()))
@@ -3288,7 +3291,7 @@ ACTOR Future<Void> monitorBlobWorkerStatus(Reference<BlobManagerData> bmData, Bl
 							    RangeAssignmentData(AssignRequestType::Continue); // continue assignment and re-snapshot
 							handleRangeAssign(bmData, raContinue);
 						}
-						TraceEvent(SevDebug, "BlobManagerGotGranuleSplitBlockedByMerge", bmData->id)
+						DebugBMTraceEvent(SevDebug, "BlobManagerGotGranuleSplitBlockedByMerge", bmData->id)
 						    .detail("Epoch", bmData->epoch)
 						    .detail("Granule", rep.granuleRange)
 						    .detail("BlockedVersion", rep.blockedVersion)
@@ -3311,7 +3314,7 @@ ACTOR Future<Void> monitorBlobWorkerStatus(Reference<BlobManagerData> bmData, Bl
 							           existingInProgress.get().second.toString());
 						}
 
-						TraceEvent(SevDebug, "BlobManagerGotGranuleStreamAlreadyProcessing")
+						DebugBMTraceEvent(SevDebug, "BlobManagerGotGranuleStreamAlreadyProcessing")
 						    .detail("Granule", rep.granuleRange)
 						    .detail("NewEval", newEval.toString())
 						    .detail("LastGranule", existingInProgress.get().first.begin)
@@ -3379,7 +3382,7 @@ ACTOR Future<Void> monitorBlobWorkerStatus(Reference<BlobManagerData> bmData, Bl
 				throw e;
 			}
 
-			TraceEvent(SevDebug, "BlobManagerGotGranuleStreamError").errorUnsuppressed(e).suppressFor(10.0);
+			DebugBMTraceEvent(SevDebug, "BlobManagerGotGranuleStreamError").errorUnsuppressed(e).suppressFor(10.0);
 
 			// on known network errors or stream close errors, throw
 			if (e.code() == error_code_broken_promise) {
@@ -6164,8 +6167,9 @@ ACTOR Future<int64_t> getStorageUsage(Database cx, BulkLoadIDKey idKey, TenantGr
 				if (e.code() == error_code_tenant_not_found) {
 					break;
 				} else {
-					TraceEvent(SevDebug, "BulkLoadReservationGetUsageError")
-					    .error(e)
+					TraceEvent("BulkLoadReservationGetUsageError")
+					    .errorUnsuppressed(e)
+					    .suppressFor(10.0)
 					    .detail("BulkLoadId", idKey.second)
 					    .detail("TenantId", tenantId);
 					wait(tr.onError(e));
@@ -6188,14 +6192,14 @@ ACTOR Future<bool> makeReservationForBulkLoad(Reference<ReadYourWritesTransactio
 	}
 
 	if (bulkLoadSize == 0) {
-		TraceEvent(SevDebug, "BulkLoadReservationEmptyLoad").detail("BulkLoadId", idKey.second);
+		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadReservationEmptyLoad").detail("BulkLoadId", idKey.second);
 		return true;
 	}
 
 	// Get prior reservations for this tenant group
 	state Optional<int64_t> reservation = wait(BulkLoadMetadata::reservationMap().get(tr, group));
 	if (!reservation.present()) {
-		TraceEvent(SevDebug, "BulkLoadReservationNoPriorReservations").detail("BulkLoadId", idKey.second);
+		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadReservationNoPriorReservations").detail("BulkLoadId", idKey.second);
 		reservation = 0;
 	}
 
@@ -6209,9 +6213,9 @@ ACTOR Future<bool> makeReservationForBulkLoad(Reference<ReadYourWritesTransactio
 		state Optional<int64_t> quota = wait(TenantMetadata::storageQuota().get(tr, group));
 		if (!quota.present()) {
 			quotaTrace = "not set";
-			TraceEvent(SevDebug, "BulkLoadReservationNoQuota").detail("BulkLoadId", idKey.second);
+			DebugBulkLoadTraceEvent(SevDebug, "BulkLoadReservationNoQuota").detail("BulkLoadId", idKey.second);
 		} else if (newReservation + usage > quota.get()) {
-			TraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
+			DebugBulkLoadTraceEvent(SevDebug, "BulkLoadReservationExceedsQuota")
 			    .detail("BulkLoadId", idKey.second)
 			    .detail("TenantGroup", group)
 			    .detail("Quota", quota.get())
@@ -6225,7 +6229,7 @@ ACTOR Future<bool> makeReservationForBulkLoad(Reference<ReadYourWritesTransactio
 	}
 
 	BulkLoadMetadata::reservationMap().set(tr, group, newReservation);
-	TraceEvent(SevDebug, "BulkLoadReservationSet")
+	DebugBulkLoadTraceEvent(SevDebug, "BulkLoadReservationSet")
 	    .detail("BulkLoadId", idKey.second)
 	    .detail("TenantGroup", group)
 	    .detail("Quota", quotaTrace)
@@ -6340,7 +6344,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 				}
 				// TODO: Improve traces since `reserved` could mean that reservation was set but not checked (if
 				// CLIENT_KNOBS->BULK_LOAD_STORAGE_RESERVATION_ENABLED is false)
-				TraceEvent(SevDebug, "BulkLoadReservationSucceeded").detail("BulkLoadID", idKey.second);
+				DebugBulkLoadTraceEvent(SevDebug, "BulkLoadReservationSucceeded").detail("BulkLoadID", idKey.second);
 			}
 
 			try {
@@ -6376,7 +6380,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 
 			BulkLoadMetadata::statusMap().set(tr, idKey, BulkLoadStatus(BulkLoadStatus::State::STAGING_BLOB_VALIDATED));
 			wait(tr->commit());
-			TraceEvent(SevDebug, "BulkLoadReservationCommitDone").detail("BulkLoadID", idKey.second);
+			DebugBulkLoadTraceEvent(SevDebug, "BulkLoadReservationCommitDone").detail("BulkLoadID", idKey.second);
 			break;
 
 		} catch (Error& e) {

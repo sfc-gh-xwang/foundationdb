@@ -52,6 +52,7 @@
 
 #include "flow/Arena.h"
 #include "flow/CompressionUtils.h"
+#include "flow/DebugTrace.h"
 #include "flow/EncryptUtils.h"
 #include "flow/Error.h"
 #include "flow/Platform.h"
@@ -165,7 +166,7 @@ bool GranuleMetadata::updateReadStats(Version readVersion, const BlobGranuleChun
 			           keyRange.begin.printable(),
 			           keyRange.end.printable());
 		}
-		TraceEvent(SevDebug, "BWRDCTriggered").suppressFor(10.0).detail("Granule", keyRange);
+		DebugBWTraceEvent(SevDebug, "BWRDCTriggered").suppressFor(10.0).detail("Granule", keyRange);
 		return true;
 	}
 	return false;
@@ -191,7 +192,7 @@ bool BlobWorkerData::managerEpochOk(int64_t epoch) {
 			fmt::print(
 			    "BW {0} got request from old epoch {1}, notifying them they are out of date\n", id.toString(), epoch);
 		}
-		TraceEvent(SevDebug, "BWNotifyingOldBMReplaced", id)
+		DebugBWTraceEvent(SevDebug, "BWNotifyingOldBMReplaced", id)
 		    .suppressFor(10.0)
 		    .detail("OldBMEpoch", epoch)
 		    .detail("CurrentBMEpoch", currentManagerEpoch);
@@ -202,7 +203,7 @@ bool BlobWorkerData::managerEpochOk(int64_t epoch) {
 			if (BW_DEBUG) {
 				fmt::print("BW {0} found new manager epoch {1}\n", id.toString(), currentManagerEpoch);
 			}
-			TraceEvent(SevDebug, "BlobWorkerFoundNewManager", id).detail("Epoch", epoch);
+			DebugBWTraceEvent(SevDebug, "BlobWorkerFoundNewManager", id).detail("Epoch", epoch);
 		}
 
 		return true;
@@ -319,7 +320,7 @@ void checkGranuleLock(int64_t epoch, int64_t seqno, int64_t ownerEpoch, int64_t 
 			           ownerEpoch,
 			           ownerSeqno);
 		}
-		TraceEvent(SevDebug, "GranuleLockChanged")
+		DebugBWTraceEvent(SevDebug, "GranuleLockChanged")
 		    .detail("ProposedEpoch", epoch)
 		    .detail("ProposedSeqno", seqno)
 		    .detail("CurrentEpoch", ownerEpoch)
@@ -638,7 +639,7 @@ ACTOR Future<Void> updateGranuleSplitState(Transaction* tr,
 			if (BW_DEBUG) {
 				fmt::print("{0} destroying old granule {1}\n", currentGranuleID.toString(), parentGranuleID.toString());
 			}
-			TraceEvent(SevDebug, "DestroyingParentGranuleFeed")
+			DebugBWTraceEvent(SevDebug, "DestroyingParentGranuleFeed")
 			    .detail("CurrentGranule", currentGranuleID)
 			    .detail("ParentGranule", parentGranuleID);
 
@@ -665,7 +666,7 @@ ACTOR Future<Void> updateGranuleSplitState(Transaction* tr,
 					           parentGranuleID.toString().c_str());
 				}
 
-				TraceEvent(SevDebug, "StoppingParentGranuleFeed")
+				DebugBWTraceEvent(SevDebug, "StoppingParentGranuleFeed")
 				    .detail("CurrentGranule", currentGranuleID)
 				    .detail("ParentGranule", parentGranuleID);
 
@@ -1062,7 +1063,7 @@ ACTOR Future<BlobFileIndex> writeSnapshot(Reference<BlobWorkerData> bwData,
 		           bytesRead);
 	}
 
-	TraceEvent(SevDebug, "GranuleSnapshotRowsReady")
+	DebugBWTraceEvent(SevDebug, "GranuleSnapshotRowsReady")
 	    .detail("Filename", fileName)
 	    .detail("Granule", keyRange)
 	    .detail("Version", version)
@@ -4073,7 +4074,7 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 					chunk.includedVersion = req.readVersion;
 					rep.chunks.push_back(rep.arena, chunk);
 					readThrough = chunk.keyRange.end;
-					TraceEvent(SevDebug, "EmptyGranuleSnapshotFile", bwData->id)
+					DebugBWTraceEvent(SevDebug, "EmptyGranuleSnapshotFile", bwData->id)
 					    .detail("Chunk", chunk.keyRange)
 					    .detail("Version", req.readVersion);
 					continue;
@@ -5373,7 +5374,7 @@ void handleGetGranuleAssignmentsRequest(Reference<BlobWorkerData> self, const Ge
 		           reply.assignments.size(),
 		           req.managerEpoch);
 	}
-	TraceEvent(SevDebug, "BWAssignmentsRequest", self->id)
+	DebugBWTraceEvent(SevDebug, "BWAssignmentsRequest", self->id)
 	    .detail("RequestingManager", req.managerEpoch)
 	    .detail("Count", reply.assignments.size());
 
@@ -5417,7 +5418,7 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 			           req.granuleRange.end.printable(),
 			           req.flushVersion);
 		}
-		TraceEvent(SevDebug, "BWFlushGranuleRequest", self->id)
+		DebugBWTraceEvent(SevDebug, "BWFlushGranuleRequest", self->id)
 		    .detail("RequestingManager", req.managerEpoch)
 		    .detail("Range", req.granuleRange)
 		    .detail("Version", req.flushVersion)
@@ -5524,7 +5525,7 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 				}
 			}
 
-			TraceEvent(SevDebug, "BWFlushGranuleRequestWaitingDurable", self->id)
+			DebugBWTraceEvent(SevDebug, "BWFlushGranuleRequestWaitingDurable", self->id)
 			    .detail("RequestingManager", req.managerEpoch)
 			    .detail("Range", req.granuleRange)
 			    .detail("Version", req.flushVersion)
@@ -5576,7 +5577,7 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 	}
 
 	if (req.compactAfter) {
-		TraceEvent(SevDebug, "BWFlushGranuleRequestWaitingRecompact", self->id)
+		DebugBWTraceEvent(SevDebug, "BWFlushGranuleRequestWaitingRecompact", self->id)
 		    .detail("RequestingManager", req.managerEpoch)
 		    .detail("Range", req.granuleRange)
 		    .detail("Version", req.flushVersion)
@@ -5606,7 +5607,7 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 		}
 	}
 
-	TraceEvent(SevDebug, "BWFlushGranuleRequestDone", self->id)
+	DebugBWTraceEvent(SevDebug, "BWFlushGranuleRequestDone", self->id)
 	    .detail("RequestingManager", req.managerEpoch)
 	    .detail("Range", req.granuleRange)
 	    .detail("Version", req.flushVersion)
