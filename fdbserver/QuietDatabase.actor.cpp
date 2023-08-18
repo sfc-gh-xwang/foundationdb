@@ -181,6 +181,18 @@ ACTOR Future<int64_t> getActiveGranuleMerges(WorkerInterface blobManagerWorker) 
 	}
 }
 
+ACTOR Future<int> getBlobWorkerRecruitments(WorkerInterface blobManagerWorker) {
+	try {
+		TraceEventFields md = wait(
+		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
+		return md.getInt("ActiveBlobWorkerRecruitments");
+	} catch (Error& e) {
+		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
+		    .detail("Reason", "Failed to extract ActiveBlobWorkerRecruitments");
+		throw;
+	}
+}
+
 // Computes the queue size for storage servers and tlogs using the bytesInput and bytesDurable attributes
 int64_t getQueueSize(const TraceEventFields& md) {
 	double inputRate, durableRate;
@@ -1079,6 +1091,7 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	state Future<Version> dcLag;
 	state Future<int64_t> activeGranuleSplits;
 	state Future<int64_t> activeGranuleMerges;
+	state Future<int> activeBlobWorkerRecruitments;
 	state Version maxDcLag = 30e6;
 	state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
 	state std::string traceMessage = "QuietDatabase" + phase + "Begin";
@@ -1126,7 +1139,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				state WorkerInterface blobManagerWorker = wait(getBlobManagerWorker(cx, dbInfo));
 				activeGranuleSplits = getActiveGranuleSplits(blobManagerWorker);
 				activeGranuleMerges = getActiveGranuleMerges(blobManagerWorker);
-				wait(success(activeGranuleSplits) && success(activeGranuleMerges));
+				activeBlobWorkerRecruitments = getBlobWorkerRecruitments(blobManagerWorker);
+				wait(success(activeGranuleSplits) && success(activeGranuleMerges) &&
+				     success(activeBlobWorkerRecruitments));
 			}
 
 			wait(success(dataInFlight) && success(tLogQueueInfo) && success(dataDistributionQueueSize) &&
@@ -1152,7 +1167,8 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 
 			if (config.blobGranulesEnabled) {
 				check.add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits.get(), 0)
-				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges.get(), 0);
+				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges.get(), 0)
+				    .add(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments.get(), 0);
 			}
 
 			evt.detail("RecoveryCount", dbInfo->get().recoveryCount).detail("NumSuccesses", numSuccesses);
@@ -1225,6 +1241,10 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				if (activeGranuleMerges.isReady() && activeGranuleMerges.isError()) {
 					auto key = "NotReady" + std::to_string(notReadyCount++);
 					evt.detail(key.c_str(), "activeGranuleMerges");
+				}
+				if (activeBlobWorkerRecruitments.isReady() && activeBlobWorkerRecruitments.isError()) {
+					auto key = "NotReady" + std::to_string(notReadyCount++);
+					evt.detail(key.c_str(), "activeBlobWorkerRecruitments");
 				}
 			}
 			wait(delay(1.0));
