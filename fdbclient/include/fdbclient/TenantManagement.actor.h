@@ -655,12 +655,7 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
 	for (auto const& f : tenantEntryFutures) {
 		TenantMapEntry entry = f.get();
 		if (tenantGroup.present()) {
-			// Filter out entries with no tenant group
-			if (!entry.tenantGroup.present()) {
-				continue;
-			}
-			// Filter out entries with a different tenant group
-			if (tenantGroup.get() != entry.tenantGroup.get()) {
+			if (tenantGroup != entry.tenantGroup) {
 				continue;
 			}
 		}
