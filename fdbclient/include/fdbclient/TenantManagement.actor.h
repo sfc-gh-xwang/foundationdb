@@ -660,7 +660,7 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
 			}
 		}
 		if (locked.present()) {
-			if (locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::LOCKED) {
+			if (locked.get() && entry.tenantLockState == TenantAPI::TenantLockState::UNLOCKED) {
 				continue;
 			}
 			if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
