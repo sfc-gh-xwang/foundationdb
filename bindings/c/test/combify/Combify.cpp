@@ -583,6 +583,12 @@ int main(int argc, char** argv) {
 	combify::optional<combify::IterableOptionTier> shiftedTier;
 	std::vector<std::pair<const combify::TestCase*, combify::TestOptions>> failedCases;
 	do {
+		// Skip if a combination is unfit
+		if (!env->allOptionsValid()) {
+			fmt::print("\n{} Combination unfit, skipping \n", env->shortSummary());
+			continue;
+		}
+
 		auto cases = combify::collectTestCases(*env);
 		fmt::print("\n{} [{} cases]\n", env->shortSummaryIterable(), cases.size());
 		if (cases.empty()) {

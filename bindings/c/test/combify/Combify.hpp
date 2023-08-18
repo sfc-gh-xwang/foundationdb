@@ -232,7 +232,9 @@ constexpr auto withoutTenants = [](const TestOptions& o) -> bool {
 
 constexpr auto asTrustedClient = [](const TestOptions& o) -> bool { return *o.trustedClient; };
 
-constexpr auto asUntrustedClient = [](const TestOptions& o) -> bool { return !*o.trustedClient; };
+constexpr auto asUntrustedClient = [](const TestOptions& o) -> bool {
+	return !*o.trustedClient && withTls(o) && withAuthZ(o);
+};
 
 template <class TestFn>
 concept TestFunction = requires(TestFn&& testFn) {
