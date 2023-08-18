@@ -737,7 +737,7 @@ struct LogData : NonCopyable, public ReferenceCounted<LogData> {
 	    newPersistentDataVersion(invalidVersion),
 	    tLogData(tLogData),
 	    unrecoveredBefore(1),
-	    recoveredAt(1),
+	    recoveredAt(0),
 	    recoveryTxnVersion(1),
 	    logSystem(new AsyncVar<Reference<ILogSystem>>()),
 	    remoteTag(remoteTag),
