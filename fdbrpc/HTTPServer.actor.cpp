@@ -404,9 +404,10 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doHelloBadMD5Req(Reference<IConn
 	return response;
 }
 
-// can't run as regular unit test right now because it needs special setup
 TEST_CASE("/HTTP/Server/HelloWorld") {
-	ASSERT(g_network->isSimulated());
+	if (!g_network->isSimulated()) {
+		return Void();
+	}
 	fmt::print("Registering sim server\n");
 	state std::string hostname = "helloworld-" + deterministicRandom()->randomUniqueID().toString();
 	wait(g_simulator->registerSimHTTPServer(hostname, "80", makeReference<HelloWorldRequestHandler>()));
@@ -419,7 +420,9 @@ TEST_CASE("/HTTP/Server/HelloWorld") {
 }
 
 TEST_CASE("/HTTP/Server/HelloError") {
-	ASSERT(g_network->isSimulated());
+	if (!g_network->isSimulated()) {
+		return Void();
+	}
 	fmt::print("Registering sim server\n");
 	state std::string hostname = "helloerror-" + deterministicRandom()->randomUniqueID().toString();
 	wait(g_simulator->registerSimHTTPServer(hostname, "80", makeReference<HelloErrorRequestHandler>()));
@@ -432,7 +435,9 @@ TEST_CASE("/HTTP/Server/HelloError") {
 }
 
 TEST_CASE("/HTTP/Server/HelloBadMD5") {
-	ASSERT(g_network->isSimulated());
+	if (!g_network->isSimulated()) {
+		return Void();
+	}
 	fmt::print("Registering sim server\n");
 	state std::string hostname = "hellobadmd5-" + deterministicRandom()->randomUniqueID().toString();
 	wait(g_simulator->registerSimHTTPServer(hostname, "80", makeReference<HelloBadMD5RequestHandler>()));
