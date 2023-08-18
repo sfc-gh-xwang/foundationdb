@@ -1930,13 +1930,13 @@ struct TenantManagementWorkload : TestWorkload {
 		}
 	}
 
-	ACTOR static Future<Void> reopenTenantAndVerify(TenantManagementWorkload* self,
-	                                                Optional<Reference<Tenant>> tenant,
-	                                                Optional<TenantName> tName,
-	                                                bool tenantExists,
-	                                                TenantTestData tData) {
+	ACTOR static Future<Optional<Reference<Tenant>>> reopenTenantAndVerify(TenantManagementWorkload* self,
+	                                                                       Optional<Reference<Tenant>> tenant,
+	                                                                       Optional<TenantName> tName,
+	                                                                       bool tenantExists,
+	                                                                       TenantTestData tData) {
 		if (!tenant.present()) {
-			return Void();
+			return tenant;
 		}
 		// Test re-open with management cluster / data cluster
 		state bool useManagementCluster = self->useMetacluster && deterministicRandom()->random01() < 0.7;
@@ -1945,17 +1945,17 @@ struct TenantManagementWorkload : TestWorkload {
 		if (useManagementCluster && db->clientInfo->get().clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
 			ASSERT_NE(self->managementDbInternal->clientInfo->get().clusterType, ClusterType::METACLUSTER_MANAGEMENT);
 			ASSERT(!self->managementDbInternal->getTenantMode().present());
-			return Void();
+			return tenant;
 		}
 		// Test re-open tenant with four different constructors
-		state Optional<Reference<Tenant>> tmpTenant;
+		state Optional<Reference<Tenant>> newTenant;
 		state int openMode = deterministicRandom()->randomInt(0, 4);
 		try {
 			if (openMode == 0) {
-				tmpTenant = tName.present() ? makeReference<Tenant>(db, tName.get())
+				newTenant = tName.present() ? makeReference<Tenant>(db, tName.get())
 				                            : makeReference<Tenant>(db, self->chooseTenantName(true));
 			} else if (openMode == 1) {
-				tmpTenant = makeReference<Tenant>(db, tenant.get()->id());
+				newTenant = makeReference<Tenant>(db, tenant.get()->id());
 			} else if (openMode == 2) {
 				Future<TenantLookupInfo> tLookupInfoFuture = Never();
 				if (db->clientInfo->get().clusterType != ClusterType::METACLUSTER_MANAGEMENT && tName.present()) {
@@ -1965,24 +1965,24 @@ struct TenantManagementWorkload : TestWorkload {
 				} else {
 					tLookupInfoFuture = TenantLookupInfo(tenant.get()->id());
 				}
-				tmpTenant = makeReference<Tenant>(db, tLookupInfoFuture, tName);
+				newTenant = makeReference<Tenant>(db, tLookupInfoFuture, tName);
 			} else if (openMode == 3) {
 				TenantMapEntry tEntry = tenantExists
 				                            ? TenantMapEntry(tData.tenant->id(), tName.get(), tData.tenantGroup)
 				                            : TenantMapEntry();
-				tmpTenant = makeReference<Tenant>(db, tEntry);
+				newTenant = tenantExists ? makeReference<Tenant>(db, tEntry) : tenant;
 			}
-			wait(tmpTenant.get()->ready());
+			wait(newTenant.get()->ready());
 			if (tenantExists) {
-				// Verify openning the same Tenant if tenant exists
-				ASSERT(tmpTenant.present());
-				ASSERT_EQ(tmpTenant.get()->id(), tenant.get()->id());
+				// Verify opening the same Tenant if tenant exists
+				ASSERT(newTenant.present());
+				ASSERT_EQ(newTenant.get()->id(), tenant.get()->id());
 				if (openMode != 1) {
-					ASSERT_EQ(tmpTenant.flatMapRef(&Tenant::name).get(), tName.get());
-					ASSERT_EQ(tmpTenant.get()->tenantGroup(), tData.tenantGroup);
+					ASSERT_EQ(newTenant.flatMapRef(&Tenant::name).get(), tName.get());
+					ASSERT_EQ(newTenant.get()->tenantGroup(), tData.tenantGroup);
 				}
 				// Verify assignedCluster value
-				Optional<ClusterName> assignedCluster = tmpTenant.get()->getLookupFuture().get().assignedCluster;
+				Optional<ClusterName> assignedCluster = newTenant.get()->getLookupFuture().get().assignedCluster;
 				if (useManagementCluster) {
 					ASSERT(assignedCluster.present());
 					ASSERT_EQ(assignedCluster.get(), self->dataClusterName);
@@ -1994,13 +1994,13 @@ struct TenantManagementWorkload : TestWorkload {
 			if (e.code() == error_code_tenant_not_found) {
 				CODE_PROBE(true, "Attempted to open a non-existent tenant");
 				ASSERT(!tenantExists);
-				return Void();
+				return tenant;
 			} else {
 				TraceEvent(SevError, "ReopenTenantFailure").errorUnsuppressed(e).detail("Tenant", tenant);
 				ASSERT(false);
 			}
 		}
-		return Void();
+		return newTenant;
 	}
 
 	ACTOR static Future<Void> operateOnTenantKey(TenantManagementWorkload* self) {
@@ -2033,7 +2033,25 @@ struct TenantManagementWorkload : TestWorkload {
 			}
 		}
 
-		wait(reopenTenantAndVerify(self, tenant, tName, tenantExists, tData));
+		Optional<Reference<Tenant>> newTenant = wait(reopenTenantAndVerify(self, tenant, tName, tenantExists, tData));
+		tenant = newTenant;
+		if (!tenantExists && newTenant.present()) {
+			// Might have opened a different tenant
+			if (newTenant.get()->id() == TenantInfo::INVALID_TENANT) {
+				CODE_PROBE(true, "Invalid tenant");
+				return Void();
+			}
+			// Re-check if the newly opened tenant exists and update corresponding information
+			for (auto itr : self->createdTenants) {
+				if (itr.second.tenant->id() == newTenant.get()->id()) {
+					tenantExists = true;
+					tName = itr.first;
+					tData = itr.second;
+					lockState = itr.second.lockState;
+					break;
+				}
+			}
+		}
 
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(
 		    ReadYourWritesTransaction::fromTenantOrDefault(tenant, self->dataDb));
