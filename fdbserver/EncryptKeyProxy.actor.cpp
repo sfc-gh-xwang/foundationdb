@@ -487,7 +487,8 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 			keysByIdsReq.debugId = keysByIds.debugId;
 			state double startTime = now();
 			state ActiveCounter<int>::Releaser holdingRequestCounter = ekpProxyData->kmsLookupByIdsOutstanding.take(1);
-			KmsConnLookupEKsByKeyIdsRep keysByIdsRep = wait(kmsConnectorInf.ekLookupByIds.getReply(keysByIdsReq));
+			KmsConnLookupEKsByKeyIdsRep keysByIdsRep =
+			    wait(brokenPromiseToNever(kmsConnectorInf.ekLookupByIds.getReply(keysByIdsReq)));
 			ekpProxyData->kmsLookupByIdsReqLatency.addMeasurement(now() - startTime);
 			holdingRequestCounter.release();
 
@@ -642,7 +643,7 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 			state ActiveCounter<int>::Releaser holdingRequestCounter =
 			    ekpProxyData->kmsLookupByDomainIdsOutstanding.take(1);
 			KmsConnLookupEKsByDomainIdsRep keysByDomainIdRep =
-			    wait(kmsConnectorInf.ekLookupByDomainIds.getReply(keysByDomainIdReq));
+			    wait(brokenPromiseToNever(kmsConnectorInf.ekLookupByDomainIds.getReply(keysByDomainIdReq)));
 			ekpProxyData->kmsLookupByDomainIdsReqLatency.addMeasurement(now() - startTime);
 			holdingRequestCounter.release();
 
@@ -737,8 +738,9 @@ ACTOR Future<bool> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyDa
 		req.debugId = debugId;
 		req.encryptDomainIds.push_back(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID);
 		++ekpProxyData->numHealthCheckRequests;
-		KmsConnLookupEKsByDomainIdsRep rep = wait(timeoutError(kmsConnectorInf.ekLookupByDomainIds.getReply(req),
-		                                                       FLOW_KNOBS->EKP_HEALTH_CHECK_REQUEST_TIMEOUT));
+		KmsConnLookupEKsByDomainIdsRep rep =
+		    wait(timeoutError(brokenPromiseToNever(kmsConnectorInf.ekLookupByDomainIds.getReply(req)),
+		                      FLOW_KNOBS->EKP_HEALTH_CHECK_REQUEST_TIMEOUT));
 		if (rep.cipherKeyDetails.size() < 1) {
 			TraceEvent(SevWarn, "KMSHealthCheckResponseEmpty");
 			throw encrypt_key_not_found();
@@ -795,7 +797,8 @@ ACTOR Future<Void> getEKPStatus(Reference<EncryptKeyProxyData> ekpProxyData,
 
 	KmsConnGetKMSStateReq getKMSStateReq;
 	try {
-		KmsConnGetKMSStateRep getKMSStateRep = wait(kmsConnectorInf.getKMSStateReq.getReply(getKMSStateReq));
+		KmsConnGetKMSStateRep getKMSStateRep =
+		    wait(brokenPromiseToNever(kmsConnectorInf.getKMSStateReq.getReply(getKMSStateReq)));
 		status.restKMSUrls = getKMSStateRep.restKMSUrls;
 		status.kmsStable = getKMSStateRep.kmsStable;
 		req.reply.send(status);
@@ -844,7 +847,8 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 		}
 
 		state double startTime = now();
-		KmsConnLookupEKsByDomainIdsRep rep = wait(kmsConnectorInf.ekLookupByDomainIds.getReply(req));
+		KmsConnLookupEKsByDomainIdsRep rep =
+		    wait(brokenPromiseToNever(kmsConnectorInf.ekLookupByDomainIds.getReply(req)));
 		ekpProxyData->kmsLookupByDomainIdsReqLatency.addMeasurement(now() - startTime);
 		for (const auto& item : rep.cipherKeyDetails) {
 			const auto itr = ekpProxyData->baseCipherDomainIdCache.find(item.encryptDomainId);
@@ -954,7 +958,8 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 		try {
 			state double startTime = now();
 			state ActiveCounter<int>::Releaser holdingRequestCounter = ekpProxyData->kmsBlobMetadataOutstanding.take(1);
-			KmsConnBlobMetadataRep kmsRep = wait(kmsConnectorInf.blobMetadataReq.getReply(kmsReq));
+			KmsConnBlobMetadataRep kmsRep =
+			    wait(brokenPromiseToNever(kmsConnectorInf.blobMetadataReq.getReply(kmsReq)));
 			ekpProxyData->kmsBlobMetadataReqLatency.addMeasurement(now() - startTime);
 			holdingRequestCounter.release();
 
@@ -1026,7 +1031,7 @@ ACTOR Future<Void> refreshBlobMetadataCore(Reference<EncryptKeyProxyData> ekpPro
 		}
 
 		startTime = now();
-		KmsConnBlobMetadataRep rep = wait(kmsConnectorInf.blobMetadataReq.getReply(req));
+		KmsConnBlobMetadataRep rep = wait(brokenPromiseToNever(kmsConnectorInf.blobMetadataReq.getReply(req)));
 		ekpProxyData->kmsBlobMetadataReqLatency.addMeasurement(now() - startTime);
 		for (auto& item : rep.metadataDetails) {
 			ekpProxyData->insertIntoBlobMetadataCache(item.domainId, item);

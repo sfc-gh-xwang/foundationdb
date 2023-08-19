@@ -2,6 +2,7 @@
 
 import json
 import os
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from pathlib import Path
 import subprocess
 import platform
@@ -140,9 +141,32 @@ class FdbBinaryDownloader:
         if make_executable:
             make_executable_path(local_file)
 
+    def assert_old_binary_exists(self, version, bin_name, is_executable):
+        release = self.latest_release_for(version)
+        local_file = self.download_dir.joinpath(release, bin_name)
+        assert local_file.exists(), f"{local_file} does not exist"
+        assert local_file.is_file(), f"{local_file} is not a file"
+        if is_executable:
+            assert os.access(
+                local_file, os.X_OK
+            ), f"{local_file} is not executable for this script"
+        else:
+            assert os.access(
+                local_file, os.R_OK
+            ), f"{local_file} is not readable for this script"
+
     # Download client library of the given version
     def download_client_library(self, version):
         return self.download_old_binary(version, "libfdb_c.so", "libfdb_c.so", False)
+
+    # Assert that client and server binaries exist for one version.
+    def assert_old_binaries_exist_for_version(self, version):
+        if is_local_build_version(version):
+            return
+        self.assert_old_binary_exists(version, "fdbserver", True)
+        self.assert_old_binary_exists(version, "fdbmonitor", True)
+        self.assert_old_binary_exists(version, "fdbcli", True)
+        self.assert_old_binary_exists(version, "libfdb_c.so", False)
 
     # Download all old binaries required for testing the specified upgrade path
     def download_old_binaries(self, version):
@@ -153,3 +177,37 @@ class FdbBinaryDownloader:
         self.download_old_binary(version, "fdbmonitor", "fdbmonitor", True)
         self.download_old_binary(version, "fdbcli", "fdbcli", True)
         self.download_client_library(version)
+
+
+if __name__ == "__main__":
+    parser = ArgumentParser(
+        formatter_class=RawDescriptionHelpFormatter,
+        description="A script for downloading old FDB binaries from s3 for testing upgrade scenarios.",
+    )
+    parser.add_argument(
+        "--build-dir",
+        "-b",
+        metavar="BUILD_DIRECTORY",
+        help="FDB build directory",
+        required=True,
+    )
+    parser.add_argument(
+        "--versions",
+        nargs="+",
+        help="A space-separated list of FDB versions to download",
+        required=True,
+    )
+    args = parser.parse_args()
+    versions = set(args.versions)
+    for version in versions:
+        assert (
+            version != CURRENT_VERSION
+        ), f"{CURRENT_VERSION} is not a downloadable old version"
+        assert (
+            version != FUTURE_VERSION
+        ), f"{FUTURE_VERSION} is not a downloadable old version"
+
+    logger.info("Downloading versions: {}".format(", ".join(versions)))
+    dl = FdbBinaryDownloader(args.build_dir)
+    for version in versions:
+        dl.download_old_binaries(version)

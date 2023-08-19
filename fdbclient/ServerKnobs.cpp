@@ -1177,6 +1177,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_MAX,                   5.0 );
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_EXPONENT,              1.5 );
 	init( BLOB_MANAGER_CONCURRENT_MERGE_CHECKS,                   64 ); if( randomize && BUGGIFY ) BLOB_MANAGER_CONCURRENT_MERGE_CHECKS = 1 << deterministicRandom()->randomInt(0, 7);
+	init( BLOB_MANAGER_PURGE_GRANULE_PARALLELISM,               1000 ); if( randomize && BUGGIFY ) BLOB_MANAGER_PURGE_GRANULE_PARALLELISM = deterministicRandom()->randomSkewedUInt32(1, 100);
 	init( BLOB_MANIFEST_BACKUP,                                false );
 	init( BLOB_MANIFEST_BACKUP_INTERVAL,  isSimulated ?  5.0 : 600.0 );
 	init( BLOB_MIGRATOR_CHECK_INTERVAL,     isSimulated ?  1.0 : 5.0 );
@@ -1226,6 +1227,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_CURRENT_CIPHER_REQUEST_VERSION,                  1);
 	init( REST_KMS_MAX_CIPHER_REQUEST_VERSION,                      1);
 	init( REST_SIM_KMS_VAULT_DIR,                                  "");
+	init( REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY,             true ); if ( randomize && BUGGIFY ) { REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY = deterministicRandom()->coinflip(); }
 	init( REST_KMS_STABILITY_CHECK_INTERVAL,                      5.0);
 	init( KMS_LOGGING_INTERVAL,                                   5.0);
 
