@@ -1402,6 +1402,8 @@ Future<T> brokenPromiseToMaybeDelivered(Future<T> in) {
 	}
 }
 
+ACTOR Future<Void> brokenPromiseToReady(Future<Void> f);
+
 ACTOR template <class T, class U>
 void tagAndForward(Promise<T>* pOutputPromise, U value, Future<Void> signal) {
 	state Promise<T> out(std::move(*pOutputPromise));
