@@ -5079,7 +5079,7 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 
 	if (force) {
 		// before setting force purge in the database, make sure all ranges to purge are actually blobbified to avoid
-		// races
+		// races leaving orphaned files/change feeds
 		// FIXME: this can also apply to non-force-purges but for retention purges it's not as bad since it'll likely
 		// get another one soon
 		std::vector<Future<Void>> waitForBlobbifies;
@@ -5093,12 +5093,20 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 		    .detail("Count", waitForBlobbifies.size())
 		    .detail("PurgeID", purgeID);
 
-		wait(waitForAll(waitForBlobbifies));
-
-		TraceEvent(SevDebug, "PurgeGranulesWaitForBlobbifiesDone", self->id)
-		    .detail("Epoch", self->epoch)
-		    .detail("PurgeVersion", purgeVersion)
-		    .detail("PurgeID", purgeID);
+		choose {
+			when(wait(waitForAll(waitForBlobbifies))) {
+				TraceEvent(SevDebug, "PurgeGranulesWaitForBlobbifiesDone", self->id)
+				    .detail("Epoch", self->epoch)
+				    .detail("PurgeVersion", purgeVersion)
+				    .detail("PurgeID", purgeID);
+			}
+			when(wait(delay(SERVER_KNOBS->FORCE_PURGE_WAIT_BLOBBIFY_TIMEOUT))) {
+				TraceEvent(SevWarn, "PurgeGranulesWaitForBlobbifiesTimedOut", self->id)
+				    .detail("Epoch", self->epoch)
+				    .detail("PurgeVersion", purgeVersion)
+				    .detail("PurgeID", purgeID);
+			}
+		}
 
 		// TODO could clean this up after force purge is done, but it's safer not to
 		self->forcePurgingRanges.insert(range, true);
