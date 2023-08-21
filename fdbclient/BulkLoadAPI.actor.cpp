@@ -141,13 +141,17 @@ BulkLoadID newBulkLoadID() {
 	// for now just generate UID and convert to string - we assume no 128-bit UID collisions
 	UID randomUID = deterministicRandom()->randomUniqueID();
 	// TODO this is the same as granuleIDToCFKey - make common function?
-	BinaryWriter wr(Unversioned());
-	wr << randomUID;
-	return wr.toValue();
+	return bulkLoadUIDToId(randomUID);
 }
 
 UID bulkLoadIdToUID(BulkLoadID const& id) {
 	return BinaryReader::fromStringRef<UID>(id, Unversioned());
+}
+
+BulkLoadID bulkLoadUIDToId(UID const& uid) {
+	BinaryWriter wr(Unversioned());
+	wr << uid;
+	return wr.toValue();
 }
 
 ACTOR Future<Version> doGRV(Database cx) {
