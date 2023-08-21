@@ -664,6 +664,30 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
 	return results;
 }
 
+// Scan the tenant index to get a list of tenant IDs, and then lookup the metadata for each ID individually
+ACTOR template <class Transaction>
+Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTransaction(
+    Transaction tr,
+    std::vector<std::pair<TenantName, int64_t>> tenantIds) {
+
+	CODE_PROBE(true, "TenantAPI list tenant metadata");
+	state int idIdx = 0;
+	state std::vector<Future<Optional<TenantMapEntry>>> futures;
+	for (; idIdx < tenantIds.size(); ++idIdx) {
+		futures.push_back(tryGetTenantTransaction(tr, tenantIds[idIdx].second));
+	}
+	wait(waitForAll(futures));
+
+	std::vector<std::pair<TenantName, TenantMapEntry>> results;
+	results.reserve(futures.size());
+	for (int i = 0; i < futures.size(); ++i) {
+		const TenantMapEntry& entry = futures[i].get().get();
+		results.emplace_back(entry.tenantName, entry);
+	}
+
+	return results;
+}
+
 ACTOR template <class DB>
 Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadata(
     Reference<DB> db,
@@ -687,8 +711,10 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadata(
 					wait(store(ids,
 					           TenantAPI::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
 				}
+				wait(store(results, TenantAPI::listTenantMetadataTransaction(tr, ids)));
 				return results;
 			}
+
 			// read in batch
 			state int count = 0;
 			loop {
@@ -700,6 +726,7 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadata(
 					return results;
 				}
 
+				// Extra filtering and offset calculations
 				for (auto const& [name, entry] : tenantBatch) {
 					// If provided "locked", skip the entry if its lock state doesn't match
 					if (locked.present()) {

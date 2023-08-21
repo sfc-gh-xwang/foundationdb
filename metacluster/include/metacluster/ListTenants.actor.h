@@ -93,7 +93,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
     Transaction tr,
     std::vector<std::pair<TenantName, int64_t>> tenantIds) {
 
-	CODE_PROBE(true, "List tenant metadata");
+	CODE_PROBE(true, "Metacluster list tenant metadata");
 	state int idIdx = 0;
 	state std::vector<Future<Optional<MetaclusterTenantMapEntry>>> futures;
 	for (; idIdx < tenantIds.size(); ++idIdx) {
@@ -160,6 +160,8 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 					wait(store(
 					    ids, metacluster::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
 				}
+
+				wait(store(results, metacluster::listTenantMetadataTransaction(tr, ids)));
 				return results;
 			}
 
@@ -174,7 +176,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 					return results;
 				}
 
-				// Filtering and offset calculations
+				// Extra filtering and offset calculations
 				for (auto const& [name, entry] : tenantBatch) {
 					// If provided filters, skip this entry if its state doesn't match what's provided
 					if (!filters.empty() && !std::count(filters.begin(), filters.end(), entry.tenantState)) {
