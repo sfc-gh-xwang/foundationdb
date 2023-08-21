@@ -332,15 +332,6 @@ TEST_CASE("FDB_DB_OPTION_TRANSACTION_TIMEOUT") {
 	db.setOption(FDB_DB_OPTION_TRANSACTION_TIMEOUT, timeout);
 }
 
-TEST_CASE("fdb_transaction_set_option size_limit") {
-	auto tr = db.createTransaction();
-
-	int64_t size_limit = 32;
-	tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, size_limit);
-	tr.set("foo"_br, "foundation database is amazing"_br);
-	auto f1 = tr.commit();
-	CHECK(waitFuture(f1).code() == 2101);
-}
 //
 // Setting the transaction size limit as a database option causes issues when
 // outside the bounds of acceptable values. TODO: Needs investigating...
@@ -383,21 +374,6 @@ TEST_CASE("fdb_transaction_set_option size_limit") {
 //                                     (const uint8_t *)&size_limit,
 //                                     sizeof(size_limit)));
 // }
-
-TEST_CASE("FDB_DB_OPTION_TRANSACTION_SIZE_LIMIT") {
-	int64_t size_limit = 32;
-	db.setOption(FDB_DB_OPTION_TRANSACTION_SIZE_LIMIT, size_limit);
-
-	auto tr = db.createTransaction();
-	tr.set("foo"_br, "foundation database is amazing"_br);
-	auto f1 = tr.commit();
-
-	CHECK(waitFuture(f1).code() == 2101); // transaction_too_large
-
-	// Set size limit back to default.
-	size_limit = 10000000;
-	db.setOption(FDB_DB_OPTION_TRANSACTION_SIZE_LIMIT, size_limit);
-}
 
 TEST_CASE("fdb_transaction_set_read_version old_version") {
 	auto tr = db.createTransaction();

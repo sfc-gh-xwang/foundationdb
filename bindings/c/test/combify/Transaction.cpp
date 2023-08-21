@@ -667,6 +667,49 @@ AddTest testTransactionOptionSizeLimitTooLarge("TransactionOptionSizeLimitTooLar
 	}
 });
 
+AddTest testTransactionExceedsSizeLimit("TransactionExceedsSizeLimit", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+	auto sizeLimit = 32;
+
+	try {
+		runToCompletion(
+		    tr,
+		    [sizeLimit](auto tr) {
+			    tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, sizeLimit);
+			    tr.set("foo"_br, "foundation database is amazing"_br);
+			    return tr.commit();
+		    },
+		    "SetKeyExceedSizeLimit");
+		ASSERT(false, "unexpected transaction successful return");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2101, "unmatched error code: expected=2101 (transaction_too_large), actual={}", e.code());
+	}
+});
+
+AddTest testDBTransactionExceedsSizeLimit("DBTransactionExceedsSizeLimit", asTrustedClient, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto sizeLimit = 32;
+	db.setOption(FDB_DB_OPTION_TRANSACTION_SIZE_LIMIT, sizeLimit);
+	auto tr = env.newTransaction(db);
+
+	try {
+		runToCompletion(
+		    tr,
+		    [](auto tr) {
+			    tr.set("foo"_br, "foundation database is amazing"_br);
+			    return tr.commit();
+		    },
+		    "SetKeyExceedSizeLimit");
+		ASSERT(false, "unexpected transaction successful return");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2101, "unmatched error code: expected=2101 (transaction_too_large), actual={}", e.code());
+	}
+
+	// Set size limit back to default.
+	sizeLimit = 10000000;
+	db.setOption(FDB_DB_OPTION_TRANSACTION_SIZE_LIMIT, sizeLimit);
+});
+
 /* Transaction Atomic Operations */
 AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	// Test bitwise and on values of same length:
