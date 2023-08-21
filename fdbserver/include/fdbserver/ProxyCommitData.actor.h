@@ -200,7 +200,8 @@ struct ProxyStats {
 			return *commitBatchesMemBytesCountPtr;
 		});
 		specialCounter(cc, "NumTenants", [pTenantMap]() { return pTenantMap ? pTenantMap->size() : 0; });
-		specialCounter(cc, "LockedTenants", [pLockedTenants]() { return pLockedTenants ? pLockedTenants->size() : 0; });
+		specialCounter(
+		    cc, "NumLockedTenants", [pLockedTenants]() { return pLockedTenants ? pLockedTenants->size() : 0; });
 		specialCounter(cc, "MaxCompute", [this]() { return this->getAndResetMaxCompute(); });
 		specialCounter(cc, "MinCompute", [this]() { return this->getAndResetMinCompute(); });
 		specialCounter(cc, "RangeLockBoundaries", [pRangeLocks]() { return pRangeLocks ? pRangeLocks->size() : 0; });
