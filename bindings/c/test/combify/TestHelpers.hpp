@@ -59,8 +59,8 @@ concept AnyFuture = TemplateInstance<T, fdb::TypedFuture> || std::same_as<T, fdb
 
 template <class Func>
 concept TransactionLambda = requires(Func&& fn) {
-	                            { fn(std::declval<fdb::Transaction>()) } -> AnyFuture;
-                            };
+	{ fn(std::declval<fdb::Transaction>()) } -> AnyFuture;
+};
 
 // Utility function to avoid having to repeatedly write transaction retry loops.
 // Function shall take a transaction object as parameter and return some future.
@@ -116,6 +116,23 @@ inline auto setupAndStartNetworkGuarded() {
 		fdb::network::stop();
 		thread.join();
 	});
+}
+
+inline void insertAll(fdb::Transaction tr, const std::vector<std::pair<std::string, std::string>>& data) {
+	runToCompletion(
+	    tr,
+	    [&data](auto tr) {
+		    // Insert data
+		    for (const auto& d : data) {
+			    tr.set(fdb::toBytesRef(d.first), fdb::toBytesRef(d.second));
+		    }
+		    return tr.commit();
+	    },
+	    "PopulateDBData");
+}
+
+inline void insertAll(fdb::Database db, const std::vector<std::pair<std::string, std::string>>& data) {
+	return insertAll(db.createTransaction(), data);
 }
 
 } // namespace combify

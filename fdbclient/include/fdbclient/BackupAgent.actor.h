@@ -19,6 +19,7 @@
  */
 
 #pragma once
+#include "fdbclient/SystemData.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_BACKUP_AGENT_ACTOR_G_H)
 #define FDBCLIENT_BACKUP_AGENT_ACTOR_G_H
 #include "fdbclient/BackupAgent.actor.g.h"
@@ -891,6 +892,15 @@ inline Reference<IBackupContainer> TupleCodec<Reference<IBackupContainer>>::unpa
 
 	return IBackupContainer::openContainer(url, proxy, encryptionKeyFileName);
 }
+
+class EmergencyBackupConfig : public KeyBackedTaskConfig {
+public:
+	EmergencyBackupConfig(UID uid = UID()) : KeyBackedTaskConfig(emergencyBackupPrefix, uid) {}
+	EmergencyBackupConfig(Reference<Task> task) : KeyBackedTaskConfig(emergencyBackupPrefix, task) {}
+
+	KeyBackedProperty<Reference<IBackupContainer>> backupContainer() { return configSpace.pack(__FUNCTION__sr); }
+	KeyBackedProperty<std::vector<KeyRange>> backupRanges() { return configSpace.pack(__FUNCTION__sr); }
+};
 
 class BackupConfig : public KeyBackedTaskConfig {
 public:

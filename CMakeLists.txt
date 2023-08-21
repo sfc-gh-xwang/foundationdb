@@ -129,8 +129,6 @@ include(EnableCsharp)
 # actor compiler, we need mono
 include(CompileActorCompiler)
 
-include(CompileCoverageTool)
-
 # with the actor compiler, we can now make the flow commands available
 include(FlowCommands)
 

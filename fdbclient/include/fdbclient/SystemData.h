@@ -550,6 +550,11 @@ extern const KeyRangeRef backupStatusPrefixRange;
 // Key range reserved by file backup agent to storing configuration and state information
 extern const KeyRangeRef fileBackupPrefixRange;
 
+// Key range reserved by emergency backup worker for replicating important stored configuration and state information
+// These KeyRange are placed in transaction state store so they can sustain any storage disaster
+extern const KeyRangeRef emergencyBackupKeyRange;
+extern const KeyRef emergencyBackupPrefix;
+
 // Key range reserved by file restore agent (currently part of backup agent functionally separate) for storing
 // configuration and state information
 extern const KeyRangeRef fileRestorePrefixRange;

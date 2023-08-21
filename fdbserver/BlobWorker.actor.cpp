@@ -52,6 +52,7 @@
 
 #include "flow/Arena.h"
 #include "flow/CompressionUtils.h"
+#include "flow/DebugTrace.h"
 #include "flow/EncryptUtils.h"
 #include "flow/Error.h"
 #include "flow/Platform.h"
@@ -165,6 +166,7 @@ bool GranuleMetadata::updateReadStats(Version readVersion, const BlobGranuleChun
 			           keyRange.begin.printable(),
 			           keyRange.end.printable());
 		}
+		DebugBWTraceEvent(SevDebug, "BWRDCTriggered").suppressFor(10.0).detail("Granule", keyRange);
 		return true;
 	}
 	return false;
@@ -190,6 +192,10 @@ bool BlobWorkerData::managerEpochOk(int64_t epoch) {
 			fmt::print(
 			    "BW {0} got request from old epoch {1}, notifying them they are out of date\n", id.toString(), epoch);
 		}
+		DebugBWTraceEvent(SevDebug, "BWNotifyingOldBMReplaced", id)
+		    .suppressFor(10.0)
+		    .detail("OldBMEpoch", epoch)
+		    .detail("CurrentBMEpoch", currentManagerEpoch);
 		return false;
 	} else {
 		if (epoch > currentManagerEpoch) {
@@ -197,7 +203,7 @@ bool BlobWorkerData::managerEpochOk(int64_t epoch) {
 			if (BW_DEBUG) {
 				fmt::print("BW {0} found new manager epoch {1}\n", id.toString(), currentManagerEpoch);
 			}
-			TraceEvent(SevDebug, "BlobWorkerFoundNewManager", id).detail("Epoch", epoch);
+			DebugBWTraceEvent(SevDebug, "BlobWorkerFoundNewManager", id).detail("Epoch", epoch);
 		}
 
 		return true;
@@ -314,6 +320,11 @@ void checkGranuleLock(int64_t epoch, int64_t seqno, int64_t ownerEpoch, int64_t 
 			           ownerEpoch,
 			           ownerSeqno);
 		}
+		DebugBWTraceEvent(SevDebug, "GranuleLockChanged")
+		    .detail("ProposedEpoch", epoch)
+		    .detail("ProposedSeqno", seqno)
+		    .detail("CurrentEpoch", ownerEpoch)
+		    .detail("CurrentSeqno", ownerSeqno);
 		throw granule_assignment_conflict();
 	}
 }
@@ -628,6 +639,9 @@ ACTOR Future<Void> updateGranuleSplitState(Transaction* tr,
 			if (BW_DEBUG) {
 				fmt::print("{0} destroying old granule {1}\n", currentGranuleID.toString(), parentGranuleID.toString());
 			}
+			DebugBWTraceEvent(SevDebug, "DestroyingParentGranuleFeed")
+			    .detail("CurrentGranule", currentGranuleID)
+			    .detail("ParentGranule", parentGranuleID);
 
 			wait(updateChangeFeed(tr, granuleIDToCFKey(parentGranuleID), ChangeFeedStatus::CHANGE_FEED_DESTROY));
 
@@ -651,6 +665,10 @@ ACTOR Future<Void> updateGranuleSplitState(Transaction* tr,
 					           currentGranuleID.toString().c_str(),
 					           parentGranuleID.toString().c_str());
 				}
+
+				DebugBWTraceEvent(SevDebug, "StoppingParentGranuleFeed")
+				    .detail("CurrentGranule", currentGranuleID)
+				    .detail("ParentGranule", parentGranuleID);
 
 				wait(updateChangeFeed(
 				    tr, KeyRef(granuleIDToCFKey(parentGranuleID)), ChangeFeedStatus::CHANGE_FEED_STOP));
@@ -736,6 +754,7 @@ ACTOR Future<BlobFileIndex> writeDeltaFile(Reference<BlobWorkerData> bwData,
                                            int64_t deltaFileBudget) {
 	wait(startDeltaFileWrite);
 	state FlowLock::Releaser holdingLock(*bwData->deltaWritesBudget, deltaFileBudget);
+	state ActiveCounter<int>::Releaser holdingActiveDFCounter = bwData->stats.deltaFilesWriting.take(1);
 
 	wait(delay(0, TaskPriority::BlobWorkerUpdateStorage));
 
@@ -847,12 +866,11 @@ ACTOR Future<BlobFileIndex> writeDeltaFile(Reference<BlobWorkerData> bwData,
 					wait(delay(deterministicRandom()->random01()));
 				}
 
-				if (BW_DEBUG) {
-					TraceEvent(SevDebug, "DeltaFileWritten")
-					    .detail("FileName", fname)
-					    .detail("Encrypted", cipherKeysCtx.present())
-					    .detail("Compressed", compressFilter.present());
-				}
+				TraceEvent(SevDebug, "DeltaFileWritten")
+				    .detail("FileName", fname)
+				    .detail("Version", currentDeltaVersion)
+				    .detail("Encrypted", cipherKeysCtx.present())
+				    .detail("Compressed", compressFilter.present());
 
 				double duration = g_network->timer() - startTimer;
 				bwData->stats.deltaUpdateSample.addMeasurement(duration);
@@ -875,6 +893,9 @@ ACTOR Future<BlobFileIndex> writeDeltaFile(Reference<BlobWorkerData> bwData,
 		if (BW_DEBUG) {
 			fmt::print("deleting delta file {0} after error {1}\n", fname, e.name());
 		}
+		TraceEvent(SevDebug, "DeltaFileCleanupOnError")
+		    .detail("FileName", fname)
+		    .detail("Version", currentDeltaVersion);
 		CODE_PROBE(true, "Granule cleaning up delta file after error");
 		++bwData->stats.s3DeleteReqs;
 		bwData->addActor.send(writeBStore->deleteFile(fname));
@@ -991,6 +1012,7 @@ ACTOR Future<BlobFileIndex> writeSnapshot(Reference<BlobWorkerData> bwData,
 	state bool canStopEarly =
 	    (SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET == 0 || SERVER_KNOBS->BG_ENABLE_SPLIT_TRUNCATED);
 	state bool injectTooBig = initialSnapshot && g_network->isSimulated() && BUGGIFY_WITH_PROB(0.1);
+	state ActiveCounter<int>::Releaser holdingActiveSnapshotCounter = bwData->stats.snapshotFilesWriting.take(1);
 
 	wait(delay(0, TaskPriority::BlobWorkerUpdateStorage));
 
@@ -1040,6 +1062,13 @@ ACTOR Future<BlobFileIndex> writeSnapshot(Reference<BlobWorkerData> bwData,
 		           snapshot.size(),
 		           bytesRead);
 	}
+
+	DebugBWTraceEvent(SevDebug, "GranuleSnapshotRowsReady")
+	    .detail("Filename", fileName)
+	    .detail("Granule", keyRange)
+	    .detail("Version", version)
+	    .detail("Rows", snapshot.size())
+	    .detail("Bytes", bytesRead);
 
 	if (g_network->isSimulated()) {
 		if (snapshot.size() > 0) {
@@ -1172,12 +1201,10 @@ ACTOR Future<BlobFileIndex> writeSnapshot(Reference<BlobWorkerData> bwData,
 		wait(delay(deterministicRandom()->random01()));
 	}
 
-	if (BW_DEBUG) {
-		TraceEvent(SevDebug, "SnapshotFileWritten")
-		    .detail("FileName", fileName)
-		    .detail("Encrypted", cipherKeysCtx.present())
-		    .detail("Compressed", compressFilter.present());
-	}
+	TraceEvent(SevDebug, "SnapshotFileWritten")
+	    .detail("FileName", fileName)
+	    .detail("Version", version)
+	    .detail("SerializedSize", serializedSize);
 
 	if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
 		wait(Never());
@@ -1302,7 +1329,9 @@ ACTOR Future<BlobFileIndex> compactFromBlob(Reference<BlobWorkerData> bwData,
 	requiredBudget *= 2;
 	// ensure it fits in budget
 	requiredBudget = std::min(requiredBudget, SERVER_KNOBS->BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES);
-	wait(bwData->resnapshotBudget->take(TaskPriority::DefaultYield, requiredBudget));
+	Future<Void> budgetFuture = bwData->resnapshotBudget->take(TaskPriority::DefaultYield, requiredBudget);
+	CODE_PROBE(!budgetFuture.isReady(), "BW snapshot file write contention");
+	wait(budgetFuture);
 	state FlowLock::Releaser holdingLock(*bwData->resnapshotBudget, requiredBudget);
 	wait(delay(0, TaskPriority::BlobWorkerUpdateStorage));
 	if (BW_DEBUG) {
@@ -2829,6 +2858,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 					                               previousFuture,
 					                               waitVersionCommitted(bwData, metadata, lastDeltaVersion),
 					                               oldChangeFeedDataComplete);
+					++bwData->stats.emptyDeltaFiles;
 				} else {
 					int64_t deltaFileBudget = std::min((int64_t)metadata->bufferedDeltaBytes,
 					                                   SERVER_KNOBS->BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES);
@@ -2876,6 +2906,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 				// Wait on delta file starting here. If we have too many pending delta file writes, we need to not
 				// continue to consume from the change feed, as that will pile on even more delta files to write
 				if (!startDeltaFileWrite.isReady()) {
+					CODE_PROBE(true, "BW delta file write contention");
 					wait(startDeltaFileWrite);
 					// If we were waiting on a lock callback, ensure the writeDeltaFile callback goes first with a
 					// delay(0) here, to create the flow lock releaser, before returning control to this actor which
@@ -3239,6 +3270,7 @@ ACTOR Future<Void> blobGranuleLoadHistory(Reference<BlobWorkerData> bwData,
 						                              curHistory.value.parentBoundaries[pIdx + 1]);
 						state Version parentVersion = curHistory.value.parentVersions[pIdx];
 						ValueReadResult v = wait(tr.get(blobGranuleHistoryKeyFor(parentRange, parentVersion)));
+						++bwData->stats.historyDAGReads;
 						if (v.present()) {
 							next = GranuleHistory(parentRange, parentVersion, decodeBlobGranuleHistoryValue(v.get()));
 							ASSERT(next.version != invalidVersion);
@@ -4045,7 +4077,7 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 					chunk.includedVersion = req.readVersion;
 					rep.chunks.push_back(rep.arena, chunk);
 					readThrough = chunk.keyRange.end;
-					TraceEvent(SevDebug, "EmptyGranuleSnapshotFile", bwData->id)
+					DebugBWTraceEvent(SevDebug, "EmptyGranuleSnapshotFile", bwData->id)
 					    .detail("Chunk", chunk.keyRange)
 					    .detail("Version", req.readVersion);
 					continue;
@@ -5345,6 +5377,10 @@ void handleGetGranuleAssignmentsRequest(Reference<BlobWorkerData> self, const Ge
 		           reply.assignments.size(),
 		           req.managerEpoch);
 	}
+	DebugBWTraceEvent(SevDebug, "BWAssignmentsRequest", self->id)
+	    .detail("RequestingManager", req.managerEpoch)
+	    .detail("Count", reply.assignments.size());
+
 	req.reply.send(reply);
 }
 } // namespace
@@ -5385,6 +5421,12 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 			           req.granuleRange.end.printable(),
 			           req.flushVersion);
 		}
+		DebugBWTraceEvent(SevDebug, "BWFlushGranuleRequest", self->id)
+		    .detail("RequestingManager", req.managerEpoch)
+		    .detail("Range", req.granuleRange)
+		    .detail("Version", req.flushVersion)
+		    .detail("Compact", req.compactAfter);
+
 		choose {
 			when(wait(metadata->readable.getFuture())) {}
 			when(wait(granuleCancelled.getFuture())) {
@@ -5486,6 +5528,12 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 				}
 			}
 
+			DebugBWTraceEvent(SevDebug, "BWFlushGranuleRequestWaitingDurable", self->id)
+			    .detail("RequestingManager", req.managerEpoch)
+			    .detail("Range", req.granuleRange)
+			    .detail("Version", req.flushVersion)
+			    .detail("Compact", req.compactAfter);
+
 			if (BW_DEBUG) {
 				fmt::print("BW {0} flushing granule [{1} - {2}) @ {3}: waiting durable\n",
 				           self->id.toString().substr(0, 5),
@@ -5532,6 +5580,11 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 	}
 
 	if (req.compactAfter) {
+		DebugBWTraceEvent(SevDebug, "BWFlushGranuleRequestWaitingRecompact", self->id)
+		    .detail("RequestingManager", req.managerEpoch)
+		    .detail("Range", req.granuleRange)
+		    .detail("Version", req.flushVersion)
+		    .detail("Compact", req.compactAfter);
 		// if delta is now durable, wait for re-snapshot
 		choose {
 			when(wait(metadata->durableSnapshotVersion.whenAtLeast(req.flushVersion))) {
@@ -5557,28 +5610,52 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 		}
 	}
 
+	DebugBWTraceEvent(SevDebug, "BWFlushGranuleRequestDone", self->id)
+	    .detail("RequestingManager", req.managerEpoch)
+	    .detail("Range", req.granuleRange)
+	    .detail("Version", req.flushVersion)
+	    .detail("Compact", req.compactAfter);
+
 	req.reply.send(Void());
 	return Void();
 }
 
 ACTOR Future<Void> simForceFileWriteContention(Reference<BlobWorkerData> bwData) {
-	// take the file write contention lock down to just 1 or 2 open writes
-	int64_t amountToLeave = (1 + 2 * deterministicRandom()->random01()) * SERVER_KNOBS->BG_DELTA_FILE_TARGET_BYTES;
-	state int64_t amountToTake = SERVER_KNOBS->BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES - amountToLeave;
+	// take the file write contention lock down to just a couple open slots
+	state int64_t amountToTake;
+	state Reference<FlowLock> lock;
+
+	bool takeSnapshot = deterministicRandom()->coinflip();
+	double filesToLeave = 1 + 2 * deterministicRandom()->random01();
+	if (takeSnapshot) {
+		amountToTake = SERVER_KNOBS->BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES -
+		               filesToLeave * 2 *
+		                   (SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES + SERVER_KNOBS->BG_DELTA_BYTES_BEFORE_COMPACT);
+		lock = bwData->resnapshotBudget;
+	} else {
+		amountToTake = SERVER_KNOBS->BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES -
+		               filesToLeave * SERVER_KNOBS->BG_DELTA_FILE_TARGET_BYTES;
+		lock = bwData->deltaWritesBudget;
+	}
 
 	if (amountToTake <= 0) {
 		return Void();
 	}
+
 	if (BW_DEBUG) {
-		fmt::print("BW {0} forcing file contention down to {1}\n", bwData->id.toString().substr(0, 5), amountToTake);
+		fmt::print("BW {0} forcing {1} file contention down to {1}\n",
+		           bwData->id.toString().substr(0, 5),
+		           takeSnapshot ? "snapshot" : "delta",
+		           amountToTake);
 	}
 
-	wait(bwData->deltaWritesBudget->take(TaskPriority::DefaultYield, amountToTake));
+	wait(lock->take(TaskPriority::DefaultYield, amountToTake));
 	if (BW_DEBUG) {
 		fmt::print("BW {0} force acquired {1} file write bytes\n", bwData->id.toString().substr(0, 5), amountToTake);
 	}
-	state FlowLock::Releaser holdingLock(*bwData->deltaWritesBudget, amountToTake);
-	state Future<Void> delayFor = delay(deterministicRandom()->randomInt(10, 60));
+	CODE_PROBE(true, "sim forced bw file contention");
+	state FlowLock::Releaser holdingLock(*lock, amountToTake);
+	state Future<Void> delayFor = delayJittered(deterministicRandom()->randomInt(10, 60));
 	loop {
 		choose {
 			when(wait(delayFor)) {
@@ -5662,6 +5739,10 @@ ACTOR Future<Void> blobWorkerCore(BlobWorkerInterface bwInterf,
 						           req.reply.getEndpoint().token.toString().c_str(),
 						           req.managerEpoch);
 					}
+
+					TraceEvent("BWNewManagerStream", self->id)
+					    .suppressFor(5.0)
+					    .detail("ManagerEpoch", req.managerEpoch);
 
 					// send an error to the old stream before closing it, so it doesn't get broken_promise
 					// and mark this endpoint as failed
@@ -5934,12 +6015,14 @@ ACTOR Future<Void> blobWorker(BlobWorkerInterface bwInterf,
 		wait(blobWorkerCore(bwInterf, blInterf, self));
 		return Void();
 	} catch (Error& e) {
+		TraceEvent("BlobWorkerInitError", self->id).error(e);
 		if (!recruitReply.isSet()) {
 			// if any errors came up while initializing the blob worker, let the blob manager know
 			// that recruitment failed
 			if (BW_DEBUG) {
 				fmt::print("BW got init error {0}\n", e.name());
 			}
+
 			recruitReply.sendError(recruitment_failed());
 		}
 		if (blobWorkerTerminated(self, persistentData, e)) {

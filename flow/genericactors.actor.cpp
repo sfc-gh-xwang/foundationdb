@@ -164,6 +164,17 @@ ACTOR Future<Void> lowPriorityDelay(double waitTime) {
 	return Void();
 }
 
+ACTOR Future<Void> brokenPromiseToReady(Future<Void> f) {
+	try {
+		wait(f);
+	} catch (Error& e) {
+		if (e.code() != error_code_broken_promise) {
+			throw;
+		}
+	}
+	return Void();
+}
+
 namespace {
 
 struct DummyState {

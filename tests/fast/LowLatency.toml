@@ -2,6 +2,9 @@
 buggify = false
 minimumReplication = 2
 
+[[knobs]]
+rest_sim_kms_vault_inject_response_delay = false
+
 [[test]]
 testTitle = 'Clogged'
 connectionFailuresDisableDuration = 100000

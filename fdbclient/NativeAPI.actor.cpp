@@ -1524,6 +1524,10 @@ ACTOR Future<UID> getClusterId(Database db) {
 void DatabaseContext::initializeSpecialCounters() {
 	specialCounter(cc, "OutstandingWatches", [this] { return outstandingWatches; });
 	specialCounter(cc, "WatchMapSize", [this] { return watchMap.size(); });
+	specialCounter(ccFeed, "ActiveFeedStreams", [this] { return activeFeedStreams.getValue(); });
+	specialCounter(ccFeed, "ActiveFeedDiskStreams", [this] { return activeFeedDiskStreams.getValue(); });
+	specialCounter(ccFeed, "ChangeFeedCaches", [this] { return changeFeedCaches.size(); });
+	specialCounter(ccFeed, "UncommittedFeedBytes", [this] { return uncommittedCFBytes; });
 }
 
 DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
@@ -1619,6 +1623,10 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
     feedPops("FeedPops", ccFeed),
     feedPopsFallback("FeedPopsFallback", ccFeed),
+    feedDiskBytesRead("FeedDiskBytesRead", ccFeed),
+    feedDiskBytesWritten("FeedDiskBytesWritten", ccFeed),
+    activeFeedStreams(0),
+    activeFeedDiskStreams(0),
     latencies(),
     readLatencies(),
     readRangeLatencies(),
@@ -1973,6 +1981,10 @@ DatabaseContext::DatabaseContext(const Error& err)
     feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
     feedPops("FeedPops", ccFeed),
     feedPopsFallback("FeedPopsFallback", ccFeed),
+    feedDiskBytesRead("FeedDiskBytesRead", ccFeed),
+    feedDiskBytesWritten("FeedDiskBytesWritten", ccFeed),
+    activeFeedStreams(0),
+    activeFeedDiskStreams(0),
     latencies(),
     readLatencies(),
     readRangeLatencies(),
@@ -10549,7 +10561,9 @@ void writeMutationsToCache(Reference<ChangeFeedCacheData> cacheData,
 		Value durableValue = changeFeedCacheValue(cacheOut);
 		db->storage->set(KeyValueRef(durableKey, durableValue));
 		cacheData->latest = cacheOut.back().version;
-		db->uncommittedCFBytes += durableKey.size() + durableValue.size();
+		size_t mutationBytes = durableKey.size() + durableValue.size();
+		db->uncommittedCFBytes += mutationBytes;
+		db->feedDiskBytesWritten += mutationBytes;
 		if (db->uncommittedCFBytes > CLIENT_KNOBS->CHANGE_FEED_CACHE_FLUSH_BYTES) {
 			db->commitChangeFeedStorage->set(true);
 		}
@@ -11031,6 +11045,7 @@ ACTOR Future<bool> getChangeFeedStreamFromDisk(Reference<DatabaseContext> db,
                                                KeyRange range,
                                                Key tenantPrefix) {
 	state bool foundEnd = false;
+	state ActiveCounter<int>::Releaser holdingActiveDiskStreamsCounter = db->activeFeedDiskStreams.take(1);
 	loop {
 		Key beginKey = changeFeedCacheKey(tenantPrefix, rangeID, range, *begin);
 		Key endKey = changeFeedCacheKey(tenantPrefix, rangeID, range, MAX_VERSION);
@@ -11038,6 +11053,7 @@ ACTOR Future<bool> getChangeFeedStreamFromDisk(Reference<DatabaseContext> db,
 		                                                    CLIENT_KNOBS->CHANGE_FEED_CACHE_LIMIT_BYTES,
 		                                                    CLIENT_KNOBS->CHANGE_FEED_CACHE_LIMIT_BYTES));
 		state int idx = 0;
+		db->feedDiskBytesRead += res.expectedSize();
 
 		while (!foundEnd && idx < res.size()) {
 			Standalone<VectorRef<MutationsAndVersionRef>> mutations = decodeChangeFeedCacheValue(res[idx].value);
@@ -11276,6 +11292,7 @@ ACTOR Future<Void> durableChangeFeedMonitor(Reference<DatabaseContext> db,
 	state Reference<ChangeFeedCacheData> data;
 	state Error err = success();
 	state Version originalBegin = begin;
+	state ActiveCounter<int>::Releaser holdingActiveStreamsCounter = db->activeFeedStreams.take(1);
 	results->endVersion = end;
 	db->usedAnyChangeFeeds = true;
 	try {
@@ -11637,6 +11654,17 @@ Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 
 // BlobGranule API.
 
+ACTOR Future<Void> checkRangeLock(Transaction* tr, KeyRange physicalRange) {
+	if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK) {
+		return Void();
+	}
+	bool unlocked = wait(RangeLockAPI::isRangeUnlockedTransaction(tr, physicalRange.begin, physicalRange.end));
+	if (unlocked) {
+		return Void();
+	}
+	throw illegal_locked_range_access();
+}
+
 ACTOR Future<Void> checkTenantLock(Transaction* tr, Optional<Reference<Tenant>> tenant, KeyRange keyRange) {
 	if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
 		return Void();
@@ -11703,13 +11731,13 @@ ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 
-			state Future<Void> tenantLockCheck = checkTenantLock(&tr, tenant, range);
+			state Future<Void> lockCheck = checkTenantLock(&tr, tenant, range) && checkRangeLock(&tr, purgeRange);
 			// must be aligned to blob range(s)
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedBegin =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.begin, keyAfter(purgeRange.begin)), 1);
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedEnd =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.end, keyAfter(purgeRange.end)), 1);
-			wait(success(blobbifiedBegin) && success(blobbifiedEnd) && tenantLockCheck);
+			wait(success(blobbifiedBegin) && success(blobbifiedEnd) && lockCheck);
 			// If there are no blob ranges on the boundary that's okay as we allow purging of multiple full ranges.
 			if ((!blobbifiedBegin.get().empty() && blobbifiedBegin.get().front().begin < purgeRange.begin) ||
 			    (!blobbifiedEnd.get().empty() && blobbifiedEnd.get().front().begin < purgeRange.end)) {
@@ -11816,7 +11844,8 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange));
+			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
+			     checkRangeLock(&tr->getTransaction(), range));
 
 			Standalone<VectorRef<KeyRangeRef>> startBlobRanges = wait(getBlobRanges(&tr->getTransaction(), range, 1));
 
