@@ -91,8 +91,7 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenants(Reference<DB> db
 ACTOR template <class Transaction>
 Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenantMetadataTransaction(
     Transaction tr,
-    std::vector<std::pair<TenantName, int64_t>> tenantIds,
-    Optional<TenantAPI::LockedTenants> locked = Optional<TenantAPI::LockedTenants>()) {
+    std::vector<std::pair<TenantName, int64_t>> tenantIds) {
 
 	CODE_PROBE(true, "List tenant metadata");
 	state int idIdx = 0;
@@ -106,14 +105,6 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 	results.reserve(futures.size());
 	for (int i = 0; i < futures.size(); ++i) {
 		const MetaclusterTenantMapEntry& entry = futures[i].get().get();
-		if (locked.present()) {
-			if (locked.get() && entry.tenantLockState == TenantAPI::TenantLockState::UNLOCKED) {
-				continue;
-			}
-			if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
-				continue;
-			}
-		}
 
 		// Tenants being renamed show up in tenantIds twice, once under each name. The destination name will be
 		// different from the tenant entry and is filtered from the list
@@ -131,8 +122,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
     TenantNameRef begin,
     TenantNameRef end,
     int limit,
-    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
-    Optional<TenantAPI::LockedTenants> locked = Optional<TenantAPI::LockedTenants>()) {
+    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>()) {
 	state std::vector<std::pair<TenantName, int64_t>> matchingTenants;
 	if (!tenantGroup.present()) {
 		wait(store(matchingTenants, metacluster::listTenantsTransaction(tr, begin, end, limit)));
@@ -141,7 +131,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 		           metacluster::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
 	}
 	std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> results =
-	    wait(metacluster::listTenantMetadataTransaction(tr, matchingTenants, locked));
+	    wait(metacluster::listTenantMetadataTransaction(tr, matchingTenants));
 	return results;
 }
 
@@ -178,16 +168,26 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 			loop {
 				std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantBatch =
 				    wait(metacluster::listTenantMetadataTransaction(
-				        tr, begin, end, std::max(limit + offset, 1000), tenantGroup, locked));
+				        tr, begin, end, std::max(limit + offset, 1000), tenantGroup));
 
 				if (tenantBatch.empty()) {
 					return results;
 				}
 
+				// Filtering and offset calculations
 				for (auto const& [name, entry] : tenantBatch) {
 					// If provided filters, skip this entry if its state doesn't match what's provided
 					if (!filters.empty() && !std::count(filters.begin(), filters.end(), entry.tenantState)) {
 						continue;
+					}
+					// If provided "locked", skip the entry if its lock state doesn't match
+					if (locked.present()) {
+						if (locked.get() && entry.tenantLockState == TenantAPI::TenantLockState::UNLOCKED) {
+							continue;
+						}
+						if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
+							continue;
+						}
 					}
 					++count;
 					if (count > offset) {

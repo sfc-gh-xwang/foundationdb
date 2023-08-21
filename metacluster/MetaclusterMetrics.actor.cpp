@@ -40,13 +40,15 @@ ACTOR Future<MetaclusterMetrics> getMetaclusterMetricsImpl(Database db) {
 			wait(store(clusters,
 			           metacluster::listClustersTransaction(tr, ""_sr, "\xff"_sr, CLIENT_KNOBS->MAX_DATA_CLUSTERS)) &&
 			     store(lockedTenants,
-			           listTenantMetadataTransaction(tr,
-			                                         ""_sr,
-			                                         "\xff"_sr,
-			                                         CLIENT_KNOBS->MAX_DATA_CLUSTERS *
-			                                             CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER,
-			                                         {},
-			                                         TenantAPI::LockedTenants::True)) &&
+			           metacluster::listTenantMetadata(db.getReference(),
+			                                           ""_sr,
+			                                           "\xff"_sr,
+			                                           CLIENT_KNOBS->MAX_DATA_CLUSTERS *
+			                                               CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER,
+			                                           0,
+			                                           {},
+			                                           {},
+			                                           TenantAPI::LockedTenants::True)) &&
 			     store(tenantCount,
 			           metacluster::metadata::management::tenantMetadata().tenantCount.getD(tr, Snapshot::False, 0)));
 
