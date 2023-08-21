@@ -1451,4 +1451,105 @@ AddTest testTransactionWatch("TransactionWatch", asTrustedClient, [](const TestE
 	}
 });
 
+/* Special key operations */
+AddTest testSpecialKeySpaceValidTxnID("SpecialKeySpaceValidTxnID", asTrustedClient, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) { return tr.get("\xff\xff/tracing/transaction_id"_br, /* snapshot */ false); },
+	    "SpecialKeySpaceValidTxnID");
+	ASSERT(f.get().has_value(), "Unexpected null value from read");
+	UID id = UID::fromString(std::string(f.get()->begin(), f.get()->end()));
+	ASSERT(id.first() > 0, "Expect id::first to be positive");
+	ASSERT(id.second() > 0, "Expect id::second to be positive");
+});
+
+AddTest testSpecialKeySpaceCustomTxID("SpecialKeySpaceCustomTxID", asTrustedClient, [](const TestEnv& env) {
+	UID id(123456789, 987654321);
+
+	auto tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [&id](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
+		    tr.set("\xff\xff/tracing/transaction_id"_br, fdb::toBytesRef(id.toString()));
+		    return tr.get("\xff\xff/tracing/transaction_id"_br, /* snapshot */ false);
+	    },
+	    "SpecialKeySpaceCustomTxID");
+
+	ASSERT(f.get().has_value(), "Unexpected null value from read");
+	UID id2 = UID::fromString(std::string(f.get()->begin(), f.get()->end()));
+	ASSERT(id == id2, "unmatched id value: expect={}, actual={}", id.toString(), id2.toString());
+});
+
+AddTest
+    testSpecialKeySpaceSetTxIDAfterWrite("SpecialKeySpaceSetTxIDAfterWrite", asTrustedClient, [](const TestEnv& env) {
+	    const std::string prefix("combify-special-key-set-tx-id-after-write-");
+	    auto tr = env.newNormalOrTenantTransaction();
+	    auto f = runToCompletion(
+	        tr,
+	        [&prefix](auto tr) {
+		        tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
+		        tr.set(fdb::toBytesRef(prefix + "foo"), fdb::toBytesRef(prefix + "bar"));
+		        tr.set("\xff\xff/tracing/transaction_id"_br, "0"_br);
+		        return tr.get("\xff\xff/tracing/transaction_id"_br, /* snapshot */ false);
+	        },
+	        "SpecialKeySpaceSetTxIDAfterWrite");
+
+	    ASSERT(f.get().has_value(), "Unexpected null value from read");
+	    UID id = UID::fromString(std::string(f.get()->begin(), f.get()->end()));
+	    ASSERT(id.first() > 0, "Expect id::first to be positive");
+	    ASSERT(id.second() > 0, "Expect id::second to be positive");
+    });
+
+AddTest testSpecialKeySpaceDisableTracing("SpecialKeySpaceDisableTracing", asTrustedClient, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
+		    tr.set("\xff\xff/tracing/token"_br, "false"_br);
+		    return tr.get("\xff\xff/tracing/token"_br, /* snapshot */ false);
+	    },
+	    "SpecialKeySpaceDisableTracing");
+
+	ASSERT(f.get().has_value(), "Unexpected null value from read");
+	uint64_t token = std::stoul(std::string(f.get()->begin(), f.get()->end()));
+	ASSERT(token == 0, "unmatched token value: expected=0, actual={}", token);
+});
+
+AddTest testSpecialKeySpaceTracingGetRange("SpecialKeySpaceTracingGetRange", asTrustedClient, [](const TestEnv& env) {
+	std::string tracingBegin = "\xff\xff/tracing/";
+	std::string tracingEnd = "\xff\xff/tracing0";
+
+	auto tr = env.newNormalOrTenantTransaction();
+	tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
+
+	auto f = runToCompletion(
+	    tr,
+	    [&tracingBegin, &tracingEnd](auto tr) {
+		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(tracingBegin)),
+		                       fdb::key_select::lastLessThan(fdb::toBytesRef(tracingEnd), 1),
+		                       /* limit */ 0,
+		                       /* target_bytes */ 0,
+		                       /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
+		                       /* iteration */ 0,
+		                       /* snapshot */ false,
+		                       /* reverse */ false);
+	    },
+	    "SpecialKeySpaceTracingGetRange");
+
+	auto [kv, count, more] = f.get();
+	ASSERT(!more, "Unexpected more from the return");
+	ASSERT(count == 2, "unmatched count value: expected=2, actual={}", count);
+
+	auto tracingBeginTidKey = fdb::toCharsRef(kv[1].key());
+	ASSERT(tracingBeginTidKey == tracingBegin + "transaction_id");
+
+	auto tracingBeginTidVal = std::string(kv[1].value().begin(), kv[1].value().end());
+	UID id = UID::fromString(tracingBeginTidVal);
+	ASSERT(id.first() > 0, "Expect id::first to be positive");
+	ASSERT(id.second() > 0, "Expect id::second to be positive");
+});
+
 } // anonymous namespace
