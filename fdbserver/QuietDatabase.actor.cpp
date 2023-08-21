@@ -42,6 +42,20 @@
 #include "flow/actorcompiler.h" // This must be the last #include.
 #include "fmt/core.h"
 
+namespace {
+constexpr double epsilon = 1e-6;
+
+// Extracts the rate field from a Counter metric.
+double extractRateFromTraceEvent(const TraceEventFields& message, const std::string& metric_name) {
+	double rate, roughness;
+	int64_t count;
+
+	sscanf(message.getValue(metric_name).c_str(), "%lf %lf %" SCNd64, &rate, &roughness, &count);
+	return rate;
+}
+
+} // namespace
+
 ACTOR Future<std::vector<WorkerDetails>> getWorkers(Reference<AsyncVar<ServerDBInfo> const> dbInfo, int flags = 0) {
 	loop {
 		choose {
@@ -136,9 +150,9 @@ ACTOR Future<WorkerInterface> getBlobManagerWorker(Database cx, Reference<AsyncV
 	TraceEvent("GetBlobManagerWorker").detail("Stage", "GettingWorkers");
 
 	loop {
+		state std::vector<WorkerDetails> workers = wait(getWorkers(dbInfo));
 		if (!dbInfo->get().blobManager.present())
 			continue;
-		state std::vector<WorkerDetails> workers = wait(getWorkers(dbInfo));
 
 		for (int i = 0; i < workers.size(); i++) {
 			if (workers[i].interf.address() == dbInfo->get().blobManager.get().address()) {
@@ -514,6 +528,105 @@ ACTOR Future<int64_t> getMaxStorageServerQueueSize(Database cx,
 	TraceEvent("MaxStorageServerQueueSize").detail("Stage", "ComputingMax").detail("MessageCount", messages.size());
 
 	return extractMaxQueueSize(messages, servers);
+}
+
+ACTOR Future<std::vector<Future<TraceEventFields>>> getBlobWorkerMetrics(
+    Database cx,
+    Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
+
+	TraceEvent("GetBlobWorkerMetrics").detail("Stage", "ContactingBlobWorkers");
+
+	Future<std::vector<BlobWorkerInterface>> blobWorkersFuture = getBlobWorkers(cx);
+	state Future<std::vector<WorkerDetails>> workersFuture = getWorkers(dbInfo);
+
+	state std::vector<BlobWorkerInterface> blobWorkers = wait(blobWorkersFuture);
+	state std::vector<WorkerDetails> workers = wait(workersFuture);
+
+	TraceEvent("GetBlobWorkerMetrics").detail("Stage", "FetchingMetrics");
+	std::map<NetworkAddress, WorkerInterface> workersMap;
+	for (auto worker : workers) {
+		workersMap[worker.interf.address()] = worker.interf;
+	}
+
+	state std::vector<Future<TraceEventFields>> messages;
+	for (int i = 0; i < blobWorkers.size(); i++) {
+		auto itr = workersMap.find(blobWorkers[i].address());
+		if (itr == workersMap.end()) {
+			TraceEvent("QuietDatabaseFailure")
+			    .detail("Reason", "Could not find worker for blob worker")
+			    .detail("BlobWorker", blobWorkers[i].id());
+			throw attribute_not_found();
+		}
+		messages.push_back(itr->second.eventLogRequest.getReply(EventLogRequest("BlobWorkerMetrics"_sr)));
+	}
+	TraceEvent("GetBlobWorkerMetrics").detail("Stage", "FetchedMetrics");
+
+	return messages;
+}
+
+ACTOR Future<int64_t> getChangeFeedBytes(std::vector<Future<TraceEventFields>> messages) {
+	TraceEvent("GetChangeFeedBytes").detail("Stage", "WaitingOnMetrics");
+	wait(waitForAll(messages));
+	TraceEvent("GetChangeFeedBytes").detail("Stage", "ComputingSum").detail("MessageCount", messages.size());
+
+	state bool anyActiveChangeFeeds = false;
+	state int j = 0;
+	for (; j < messages.size(); ++j) {
+		try {
+			double cfByteRate = extractRateFromTraceEvent(messages[j].get(), "ChangeFeedInputBytes");
+			anyActiveChangeFeeds |= cfByteRate > epsilon;
+		} catch (Error& e) {
+			TraceEvent("QuietDatabaseFailure")
+			    .detail("Reason", "Failed to extract changeFeedInputBytes from BlobWorkerMetrics");
+			throw attribute_not_found();
+		}
+	}
+	return anyActiveChangeFeeds;
+}
+
+// Returns true if there are were any ongoing writes currently or in the last-5-second.
+ACTOR Future<bool> getActiveBlobWrites(std::vector<Future<TraceEventFields>> messages) {
+	TraceEvent("GetActiveBlobWrites").detail("Stage", "WaitingOnMetrics");
+	wait(waitForAll(messages));
+	TraceEvent("GetActiveBlobWrites").detail("Stage", "ComputingSum").detail("MessageCount", messages.size());
+
+	state bool anyActiveWrites = false;
+	state int j = 0;
+	for (; j < messages.size(); ++j) {
+		try {
+			double putRate = extractRateFromTraceEvent(messages[j].get(), "S3PutReqs");
+			anyActiveWrites |= putRate > epsilon;
+		} catch (Error& e) {
+			TraceEvent("QuietDatabaseFailure").detail("Reason", "Failed to extract S3PutReqs from BlobWorkerMetrics");
+			throw attribute_not_found();
+		}
+
+		try {
+			double deleteRate = extractRateFromTraceEvent(messages[j].get(), "S3DeleteReqs");
+			anyActiveWrites |= deleteRate > epsilon;
+		} catch (Error& e) {
+			TraceEvent("QuietDatabaseFailure")
+			    .detail("Reason", "Failed to extract S3DeleteReqs from BlobWorkerMetrics");
+			throw attribute_not_found();
+		}
+
+		try {
+			anyActiveWrites |= messages[j].get().getInt64("DeltaFilesWriting") > 0;
+		} catch (Error& e) {
+			TraceEvent("QuietDatabaseFailure")
+			    .detail("Reason", "Failed to extract DeltaFilesWriting from BlobWorkerMetrics");
+			throw attribute_not_found();
+		}
+
+		try {
+			anyActiveWrites |= messages[j].get().getInt64("SnapshotFilesWriting") > 0;
+		} catch (Error& e) {
+			TraceEvent("QuietDatabaseFailure")
+			    .detail("Reason", "Failed to extract SnapshotFilesWriting from BlobWorkerMetrics");
+			throw attribute_not_found();
+		}
+	}
+	return anyActiveWrites;
 }
 
 // Gets the size of the data distribution queue.  If reportInFlight is true, then data in flight is considered part of
@@ -1070,9 +1183,11 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	state Future<bool> storageServersRecruiting;
 	state Future<int64_t> versionOffset;
 	state Future<Version> dcLag;
-	state Future<int64_t> activeGranuleSplits;
-	state Future<int64_t> activeGranuleMerges;
-	state Future<int> activeBlobWorkerRecruitments;
+	state Future<int64_t> activeGranuleSplits = Never();
+	state Future<int64_t> activeGranuleMerges = Never();
+	state Future<int> activeBlobWorkerRecruitments = Never();
+	state Future<int64_t> pendingChangeFeedBytes = Never();
+	state Future<bool> activeBlobWrites = Never();
 	state Version maxDcLag = 30e6;
 	state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
 	state std::string traceMessage = "QuietDatabase" + phase + "Begin";
@@ -1121,8 +1236,16 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				activeGranuleSplits = getActiveGranuleSplits(blobManagerWorker);
 				activeGranuleMerges = getActiveGranuleMerges(blobManagerWorker);
 				activeBlobWorkerRecruitments = getBlobWorkerRecruitments(blobManagerWorker);
+
+				state Future<std::vector<Future<TraceEventFields>>> blobWorkerMetrics =
+				    getBlobWorkerMetrics(cx, dbInfo);
+				wait(success(blobWorkerMetrics));
+
+				pendingChangeFeedBytes = getChangeFeedBytes(blobWorkerMetrics.get());
+				activeBlobWrites = getActiveBlobWrites(blobWorkerMetrics.get());
 				wait(success(activeGranuleSplits) && success(activeGranuleMerges) &&
-				     success(activeBlobWorkerRecruitments));
+				     success(activeBlobWorkerRecruitments) && success(activeBlobWrites) &&
+				     success(pendingChangeFeedBytes));
 			}
 
 			wait(success(dataInFlight) && success(tLogQueueInfo) && success(dataDistributionQueueSize) &&
@@ -1149,7 +1272,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			if (config.blobGranulesEnabled) {
 				check.add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits.get(), 0)
 				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges.get(), 0)
-				    .add(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments.get(), 0);
+				    .add(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments.get(), 0)
+				    .add(evt, "ActiveBlobWrites", activeBlobWrites.get(), false)
+				    .add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
 			}
 
 			evt.detail("RecoveryCount", dbInfo->get().recoveryCount).detail("NumSuccesses", numSuccesses);
@@ -1173,8 +1298,8 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			    e.code() != error_code_timed_out)
 				TraceEvent(("QuietDatabase" + phase + "Error").c_str()).error(e);
 
-			// Client invalid operation occurs if we don't get back a message from one of the servers, often corrected
-			// by retrying
+			// Client invalid operation occurs if we don't get back a message from one of the servers, often
+			// corrected by retrying
 			if (e.code() != error_code_attribute_not_found && e.code() != error_code_timed_out)
 				throw;
 
@@ -1219,13 +1344,30 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 					auto key = "NotReady" + std::to_string(notReadyCount++);
 					evt.detail(key.c_str(), "activeGranuleSplits");
 				}
+
 				if (activeGranuleMerges.isReady() && activeGranuleMerges.isError()) {
 					auto key = "NotReady" + std::to_string(notReadyCount++);
 					evt.detail(key.c_str(), "activeGranuleMerges");
 				}
+
 				if (activeBlobWorkerRecruitments.isReady() && activeBlobWorkerRecruitments.isError()) {
 					auto key = "NotReady" + std::to_string(notReadyCount++);
 					evt.detail(key.c_str(), "activeBlobWorkerRecruitments");
+				}
+
+				if (blobWorkerMetrics.isReady() && blobWorkerMetrics.isError()) {
+					auto key = "NotReady" + std::to_string(notReadyCount++);
+					evt.detail(key.c_str(), "blobWorkerMetrics");
+				}
+
+				if (pendingChangeFeedBytes.isReady() && pendingChangeFeedBytes.isError()) {
+					auto key = "NotReady" + std::to_string(notReadyCount++);
+					evt.detail(key.c_str(), "pendingChangeFeedBytes");
+				}
+
+				if (activeBlobWrites.isReady() && activeBlobWrites.isError()) {
+					auto key = "NotReady" + std::to_string(notReadyCount++);
+					evt.detail(key.c_str(), "activeBlobWrites");
 				}
 			}
 			wait(delay(1.0));
