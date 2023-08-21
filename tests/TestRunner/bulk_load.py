@@ -39,44 +39,52 @@ if __name__ == "__main__":
         cluster.__enter__()
 
         tenant_name = "test_tenant"
-        cluster.fdbcli_exec("tenant create {}".format(tenant_name), timeout=10)
+        cmd = "tenant create {}".format(tenant_name)
+        print("fdb> {}".format(cmd))
+        print(cluster.fdbcli_exec_and_get(cmd, timeout=10).decode())
 
-        bl_list = cluster.fdbcli_exec_and_get(
-            "usetenant {}; bulkload list".format(tenant_name), timeout=10
-        ).strip()
+        cmd = "usetenant {}; bulkload list".format(tenant_name)
+        print("fdb> {}".format(cmd))
+        bl_list = cluster.fdbcli_exec_and_get(cmd, timeout=10).decode().strip()
         print(bl_list)
-        assert bl_list.find(b"No active bulk loads.") != -1
+        assert bl_list.find("No active bulk loads.") != -1
+
+        cmd = "usetenant {}; bulkload start d e".format(tenant_name)
+        print("fdb> {}".format(cmd))
+        print(cluster.fdbcli_exec_and_get(cmd, timeout=10).decode())
+
+        cmd = "usetenant {}; bulkload list".format(tenant_name)
+        print("fdb> {}".format(cmd))
+        bl_list = cluster.fdbcli_exec_and_get(cmd, timeout=10).decode().strip()
+        print(bl_list)
+        assert len(bl_list.split(". ")) == 2
+
+        bulk_load_id = bl_list.split(". ")[1]
+        cmd = "usetenant {}; bulkload status {}".format(tenant_name, bulk_load_id)
+        print("fdb> {}".format(cmd))
+        bl_status = cluster.fdbcli_exec_and_get(
+            cmd,
+            timeout=10,
+        ).decode()
+        print(bl_status)
+        assert bl_status.find("Tenant: {}".format(tenant_name)) != -1
+
+        cmd = "usetenant {}; bulkload stop {}".format(tenant_name, bulk_load_id)
+        print("fdb> {}".format(cmd))
         print(
             cluster.fdbcli_exec_and_get(
-                "usetenant {}; bulkload start d e".format(tenant_name), timeout=10
-            )
+                cmd,
+                timeout=10,
+            ).decode()
         )
-        bl_list = (
+
+        cmd = "usetenant {}; bulkload cleanup {}".format(tenant_name, bulk_load_id)
+        print("fdb> {}".format(cmd))
+        print(
             cluster.fdbcli_exec_and_get(
-                "usetenant {}; bulkload list".format(tenant_name), timeout=10
-            )
-            .strip()
-            .split(b". ")
-        )
-        assert len(bl_list) == 2
-        print(bl_list)
-        bulk_load_id = bl_list[1].decode("raw_unicode_escape")
-        bl_status = cluster.fdbcli_exec_and_get(
-            "usetenant {}; bulkload status {}".format(tenant_name, bulk_load_id),
-            timeout=10,
-        )
-        print(bl_status)
-        assert (
-            bl_status.find(bytes("Tenant: {}".format(tenant_name), encoding="utf8"))
-            != -1
-        )
-        cluster.fdbcli_exec(
-            "usetenant {}; bulkload stop {}".format(tenant_name, bulk_load_id),
-            timeout=10,
-        )
-        cluster.fdbcli_exec(
-            "usetenant {}; bulkload cleanup {}".format(tenant_name, bulk_load_id),
-            timeout=10,
+                cmd,
+                timeout=10,
+            ).decode()
         )
         errcode = 0
     finally:
