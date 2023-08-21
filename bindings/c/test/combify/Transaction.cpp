@@ -897,6 +897,170 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 	}
 });
 
+AddTest testAtomicOpBitXor("AtomicOpBitXor", ALL, [](const TestEnv& env) {
+	// Test bitwise xor on values of same length:
+	//   db key = foo
+	//   db value = 'a' == 97
+	//   param = 'b' == 98
+	//
+	//   'a' == 97 == 0b01100001
+	// ^ 'b' == 98 == 0b01100010
+	//   -----------------------
+	//                0b00000011 == 0x3
+	//
+	// Test bitwise xor on extended database value:
+	//   db key = bar
+	//   db value = 'b' == 98
+	//   param = "ad"
+	//
+	//   'b' == 98 -> 0b0110001000000000 (zero extended on right to match length of param)
+	// ^ "ad"   ==    0b0110000101100100
+	//   -------------------------------
+	//                0b0000001101100100 == 0x3 followed by 0x64
+	//
+	// Test bitwise xor on truncated database value:
+	//   db key = baz
+	//   db value = "abc"
+	//   param = 'd' == 100
+	//
+	//   "abc"  ->  0b01100001 (truncated to "a" to match length of param)
+	// ^ 'd' == 100 0b01100100
+	//   ---------------------
+	//              0b00000101 == 0x5
+	//
+	const std::string prefix("combify-atomic-op-xor-");
+	auto tr = env.newNormalOrTenantTransaction();
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	char param[] = { 'a', 'd' };
+	int potentialCommitCount = 0;
+
+	while (1) {
+		tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "b"_br, FDB_MUTATION_TYPE_BIT_XOR);
+		tr.atomicOp(fdb::toBytesRef(prefix + "bar"),
+		            fdb::BytesRef(reinterpret_cast<const uint8_t*>(param), 2),
+		            FDB_MUTATION_TYPE_BIT_XOR);
+		tr.atomicOp(fdb::toBytesRef(prefix + "baz"), "d"_br, FDB_MUTATION_TYPE_BIT_XOR);
+
+		++potentialCommitCount;
+		auto f = tr.commit();
+		if (auto err = waitFuture(f)) {
+			if (err.retryableNotCommitted()) {
+				--potentialCommitCount;
+			}
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+		break;
+	}
+
+	if (potentialCommitCount != 1) {
+		fmt::print("Transaction may not have committed exactly once. Suppressing assertions");
+		return;
+	}
+
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "ReadFoo");
+	ASSERT(f.get().has_value(), "unexpected null value from read");
+	ASSERT(f.get()->size() == 1, "Unmatched value size: expected=1, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 0x3, "Unmatched value size: expected=0x3, actual={}", f.get()->data()[0]);
+
+	tr = env.newNormalOrTenantTransaction();
+	f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "bar"), false); }, "ReadBar");
+	ASSERT(f.get().has_value(), "unexpected null value from read");
+	ASSERT(f.get()->size() == 2, "Unmatched value size: expected=2, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 0x3, "Unmatched value size: expected=0x3, actual={}", f.get()->data()[0]);
+	ASSERT(f.get()->data()[0] == 0x64, "Unmatched value size: expected=0x64, actual={}", f.get()->data()[1]);
+
+	tr = env.newNormalOrTenantTransaction();
+	f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "baz"), false); }, "ReadBaz");
+	ASSERT(f.get().has_value(), "unexpected null value from read");
+	ASSERT(f.get()->size() == 1, "Unmatched value size: expected=1, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 0x5, "Unmatched value size: expected=0x5, actual={}", f.get()->data()[0]);
+});
+
+AddTest testAtomicOpAppendIfFits("AtomicOpAppendIfFits", ALL, [](const TestEnv& env) {
+	// Atomically append a value to an existing key-value pair, or insert the
+	// key-value pair if an existing key-value pair doesn't exist.
+	const std::string prefix("combify-atomic-append-if-fits-");
+	auto tr = env.newNormalOrTenantTransaction();
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "f" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	int potentialCommitCount = 0;
+
+	while (1) {
+		tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "db"_br, FDB_MUTATION_TYPE_APPEND_IF_FITS);
+		tr.atomicOp(fdb::toBytesRef(prefix + "bar"), "foundation"_br, FDB_MUTATION_TYPE_APPEND_IF_FITS);
+		++potentialCommitCount;
+
+		auto f = tr.commit();
+		if (auto err = waitFuture(f)) {
+			if (err.retryableNotCommitted()) {
+				--potentialCommitCount;
+			}
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+		break;
+	}
+
+	tr = env.newNormalOrTenantTransaction();
+	auto foo = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "ReadFoo");
+	tr = env.newNormalOrTenantTransaction();
+	auto bar = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "bar"), false); }, "ReadBar");
+	ASSERT(foo.get().has_value(), "unexpected null value from reading foo");
+	ASSERT(bar.get().has_value(), "unexpected null value from reading bar");
+
+	if (potentialCommitCount != 1) {
+		fmt::print("Transaction may not have committed exactly once. Suppressing assertions");
+		return;
+	}
+
+	ASSERT(
+	    foo.get().value() == "fdb"_br, "unmatched value for foo: expected=fdb, actual={}", fdb::toCharsRef(foo.get()));
+	ASSERT(bar.get().value() == "foundation"_br,
+	       "unmatched value for bar: expected=foundation, actual={}",
+	       fdb::toCharsRef(bar.get()));
+});
+
+AddTest testAtomicOpSetVersionstampedKeyInvalidIndex(
+    "AtomicOpSetVersionstampedKeyInvalidIndex",
+    ALL,
+    [](const TestEnv& env) {
+	    // Only 9 bytes available starting at index 4 (ten bytes needed), should
+	    // return an error.
+	    char keybuf[] = { 'f', 'o', 'o', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', 4, 0, 0, 0 };
+
+	    auto tr = env.newNormalOrTenantTransaction();
+	    try {
+		    auto f = runToCompletion(
+		        tr,
+		        [keybuf](auto tr) {
+			        tr.atomicOp(fdb::BytesRef(reinterpret_cast<const uint8_t*>(keybuf), 17),
+			                    "bar"_br,
+			                    FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_KEY);
+			        return tr.commit();
+		        },
+		        "AtomicOpSetVersionstampedKeyInvalidIndex");
+		    ASSERT(false, "Unexpected transaction successful return");
+	    } catch (fdb::Error e) {
+		    ASSERT(e.code() != 0);
+	    }
+    });
+
 AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const TestEnv& env) {
 	// Atomically remove a key-value pair from the database based on a value
 	// comparison.
