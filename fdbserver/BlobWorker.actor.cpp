@@ -1329,7 +1329,9 @@ ACTOR Future<BlobFileIndex> compactFromBlob(Reference<BlobWorkerData> bwData,
 	requiredBudget *= 2;
 	// ensure it fits in budget
 	requiredBudget = std::min(requiredBudget, SERVER_KNOBS->BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES);
-	wait(bwData->resnapshotBudget->take(TaskPriority::DefaultYield, requiredBudget));
+	Future<Void> budgetFuture = bwData->resnapshotBudget->take(TaskPriority::DefaultYield, requiredBudget);
+	CODE_PROBE(!budgetFuture.isReady(), "BW snapshot file write contention");
+	wait(budgetFuture);
 	state FlowLock::Releaser holdingLock(*bwData->resnapshotBudget, requiredBudget);
 	wait(delay(0, TaskPriority::BlobWorkerUpdateStorage));
 	if (BW_DEBUG) {
@@ -2904,6 +2906,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 				// Wait on delta file starting here. If we have too many pending delta file writes, we need to not
 				// continue to consume from the change feed, as that will pile on even more delta files to write
 				if (!startDeltaFileWrite.isReady()) {
+					CODE_PROBE(true, "BW delta file write contention");
 					wait(startDeltaFileWrite);
 					// If we were waiting on a lock callback, ensure the writeDeltaFile callback goes first with a
 					// delay(0) here, to create the flow lock releaser, before returning control to this actor which
@@ -5618,23 +5621,41 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 }
 
 ACTOR Future<Void> simForceFileWriteContention(Reference<BlobWorkerData> bwData) {
-	// take the file write contention lock down to just 1 or 2 open writes
-	int64_t amountToLeave = (1 + 2 * deterministicRandom()->random01()) * SERVER_KNOBS->BG_DELTA_FILE_TARGET_BYTES;
-	state int64_t amountToTake = SERVER_KNOBS->BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES - amountToLeave;
+	// take the file write contention lock down to just a couple open slots
+	state int64_t amountToTake;
+	state Reference<FlowLock> lock;
+
+	bool takeSnapshot = deterministicRandom()->coinflip();
+	double filesToLeave = 1 + 2 * deterministicRandom()->random01();
+	if (takeSnapshot) {
+		amountToTake = SERVER_KNOBS->BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES -
+		               filesToLeave * 2 *
+		                   (SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES + SERVER_KNOBS->BG_DELTA_BYTES_BEFORE_COMPACT);
+		lock = bwData->resnapshotBudget;
+	} else {
+		amountToTake = SERVER_KNOBS->BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES -
+		               filesToLeave * SERVER_KNOBS->BG_DELTA_FILE_TARGET_BYTES;
+		lock = bwData->deltaWritesBudget;
+	}
 
 	if (amountToTake <= 0) {
 		return Void();
 	}
+
 	if (BW_DEBUG) {
-		fmt::print("BW {0} forcing file contention down to {1}\n", bwData->id.toString().substr(0, 5), amountToTake);
+		fmt::print("BW {0} forcing {1} file contention down to {1}\n",
+		           bwData->id.toString().substr(0, 5),
+		           takeSnapshot ? "snapshot" : "delta",
+		           amountToTake);
 	}
 
-	wait(bwData->deltaWritesBudget->take(TaskPriority::DefaultYield, amountToTake));
+	wait(lock->take(TaskPriority::DefaultYield, amountToTake));
 	if (BW_DEBUG) {
 		fmt::print("BW {0} force acquired {1} file write bytes\n", bwData->id.toString().substr(0, 5), amountToTake);
 	}
-	state FlowLock::Releaser holdingLock(*bwData->deltaWritesBudget, amountToTake);
-	state Future<Void> delayFor = delay(deterministicRandom()->randomInt(10, 60));
+	CODE_PROBE(true, "sim forced bw file contention");
+	state FlowLock::Releaser holdingLock(*lock, amountToTake);
+	state Future<Void> delayFor = delayJittered(deterministicRandom()->randomInt(10, 60));
 	loop {
 		choose {
 			when(wait(delayFor)) {
