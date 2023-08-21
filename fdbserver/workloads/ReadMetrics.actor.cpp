@@ -85,7 +85,7 @@ struct ReadMetricsWorkload : KVWorkload {
 	bool highFrequency;
 
 	ReadMetricsWorkload(WorkloadContext const& wcx) : KVWorkload(wcx) {
-		testDuration = getOption(options, "testDuration"_sr, 300.0);
+		testDuration = getOption(options, "testDuration"_sr, 600.0);
 		actorCount = getOption(options, "actorCount"_sr, 20);
 		numDistinctOperations = getOption(options, "numDistinctOperations"_sr, 10);
 

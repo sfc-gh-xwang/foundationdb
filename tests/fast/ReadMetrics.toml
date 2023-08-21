@@ -13,4 +13,4 @@ testTitle = 'ReadMetricsTest'
 
     [[test.workload]]
     testName = 'ReadMetrics'
-    testDuration = 300.0
+    testDuration = 600.0
