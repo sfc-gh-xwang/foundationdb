@@ -114,10 +114,9 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
 		bool foundEquals;
 		param = token.eat("=", &foundEquals);
 		if (!foundEquals && !tokencmp(param, "JSON")) {
-			fmt::print(
-			    stderr,
-			    "ERROR: invalid option string `{}'. String must specify a value using `=' or be `JSON' or `LOCKED'.\n",
-			    param.toString().c_str());
+			fmt::print(stderr,
+			           "ERROR: invalid option string `{}'. String must specify a value using `=' or be `JSON'.\n",
+			           param.toString().c_str());
 			return false;
 		}
 		value = token;
@@ -576,7 +575,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 		fmt::print("Optional tenant group can be provided to filter the list.\n");
 		fmt::print("Optional locked=true/false can be provided to specify only locked or unlocked tenants.\n");
 		fmt::print("If JSON is specified, then the output will be in JSON format.\n");
-		fmt::print("Specifying [offset] and [state] is only supported in a metacluster.\n");
+		fmt::print("Specifying [state] is only supported in a metacluster.\n");
 		return false;
 	}
 
@@ -642,8 +641,8 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 					}
 				} else {
 					// Use filter-based TenantAPI:: call similar to how metacluster:: has one
-					std::vector<std::pair<TenantName, TenantMapEntry>> tenants =
-					    wait(TenantAPI::listTenantMetadata(db, beginTenant, endTenant, limit, tenantGroup, locked));
+					std::vector<std::pair<TenantName, TenantMapEntry>> tenants = wait(
+					    TenantAPI::listTenantMetadata(db, beginTenant, endTenant, limit, offset, tenantGroup, locked));
 					for (const auto& [tenantName, entry] : tenants) {
 						tenantInfo[tenantName] = entry.id;
 					}
@@ -1192,7 +1191,7 @@ void tenantGenerator(const char* text,
 		const char* opts[] = { "JSON", nullptr };
 		arrayGenerator(text, line, opts, lc);
 	} else if (tokens.size() >= 4 && tokencmp(tokens[1], "list")) {
-		const char* opts[] = { "limit=", "offset=", "state=", "tenant_group=", "JSON", nullptr };
+		const char* opts[] = { "limit=", "offset=", "state=", "tenant_group=", "locked=", "JSON", nullptr };
 		arrayGenerator(text, line, opts, lc);
 	} else if (tokencmp(tokens[1], "configure")) {
 		if (tokens.size() == 3) {

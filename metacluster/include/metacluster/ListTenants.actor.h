@@ -162,7 +162,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 		try {
 			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::READ_LOCK_AWARE);
-			if (filters.empty()) {
+			if (filters.empty() && !locked.present() && offset == 0) {
 				state std::vector<std::pair<TenantName, int64_t>> ids;
 				if (!tenantGroup.present()) {
 					wait(store(ids, metacluster::listTenantsTransaction(tr, begin, end, limit)));
@@ -170,7 +170,6 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 					wait(store(
 					    ids, metacluster::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
 				}
-				wait(store(results, metacluster::listTenantMetadataTransaction(tr, ids, locked)));
 				return results;
 			}
 
@@ -186,19 +185,21 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 				}
 
 				for (auto const& [name, entry] : tenantBatch) {
-					if (std::count(filters.begin(), filters.end(), entry.tenantState)) {
-						++count;
-						if (count > offset) {
-							results.emplace_back(name, entry);
-							if (count - offset == limit) {
-								ASSERT(count - offset == results.size());
-								return results;
-							}
+					// If provided filters, skip this entry if its state doesn't match what's provided
+					if (!filters.empty() && !std::count(filters.begin(), filters.end(), entry.tenantState)) {
+						continue;
+					}
+					++count;
+					if (count > offset) {
+						results.emplace_back(name, entry);
+						if (count - offset == limit) {
+							ASSERT(count - offset == results.size());
+							return results;
 						}
 					}
 				}
 
-				CODE_PROBE(true, "List tenant multiple batches");
+				CODE_PROBE(true, "Metacluster list tenant multiple batches");
 				begin = keyAfter(tenantBatch.back().first);
 			}
 		} catch (Error& e) {

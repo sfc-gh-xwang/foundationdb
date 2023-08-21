@@ -673,19 +673,60 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
 	return results;
 }
 
-template <class DB>
+ACTOR template <class DB>
 Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadata(
     Reference<DB> db,
     TenantName begin,
     TenantName end,
     int limit,
+    int offset = 0,
     Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
     Optional<LockedTenants> locked = Optional<LockedTenants>()) {
-	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
-		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		return TenantAPI::listTenantMetadataTransaction(tr, begin, end, limit, tenantGroup, locked);
-	});
+	state Reference<typename DB::TransactionT> tr = db->createTransaction();
+	state std::vector<std::pair<TenantName, TenantMapEntry>> results;
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::READ_LOCK_AWARE);
+			if (!locked.present() && offset == 0) {
+				state std::vector<std::pair<TenantName, int64_t>> ids;
+				if (!tenantGroup.present()) {
+					wait(store(ids, TenantAPI::listTenantsTransaction(tr, begin, end, limit)));
+				} else {
+					wait(store(ids,
+					           TenantAPI::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
+				}
+				return results;
+			}
+			// read in batch
+			state int count = 0;
+			loop {
+				std::vector<std::pair<TenantName, TenantMapEntry>> tenantBatch =
+				    wait(TenantAPI::listTenantMetadataTransaction(
+				        tr, begin, end, std::max(limit + offset, 1000), tenantGroup, locked));
+
+				if (tenantBatch.empty()) {
+					return results;
+				}
+
+				for (auto const& [name, entry] : tenantBatch) {
+					++count;
+					if (count > offset) {
+						results.emplace_back(name, entry);
+						if (count - offset == limit) {
+							ASSERT(count - offset == results.size());
+							return results;
+						}
+					}
+				}
+
+				CODE_PROBE(true, "TenantAPI list tenant multiple batches");
+				begin = keyAfter(tenantBatch.back().first);
+			}
+		} catch (Error& e) {
+			wait(safeThreadFutureToFuture(tr->onError(e)));
+		}
+	}
 }
 
 ACTOR template <class Transaction>
