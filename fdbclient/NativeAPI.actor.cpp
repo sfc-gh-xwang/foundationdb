@@ -1515,6 +1515,10 @@ ACTOR Future<UID> getClusterId(Database db) {
 void DatabaseContext::initializeSpecialCounters() {
 	specialCounter(cc, "OutstandingWatches", [this] { return outstandingWatches; });
 	specialCounter(cc, "WatchMapSize", [this] { return watchMap.size(); });
+	specialCounter(ccFeed, "ActiveFeedStreams", [this] { return activeFeedStreams.getValue(); });
+	specialCounter(ccFeed, "ActiveFeedDiskStreams", [this] { return activeFeedDiskStreams.getValue(); });
+	specialCounter(ccFeed, "ChangeFeedCaches", [this] { return changeFeedCaches.size(); });
+	specialCounter(ccFeed, "UncommittedFeedBytes", [this] { return uncommittedCFBytes; });
 }
 
 DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
@@ -1610,6 +1614,10 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
     feedPops("FeedPops", ccFeed),
     feedPopsFallback("FeedPopsFallback", ccFeed),
+    feedDiskBytesRead("FeedDiskBytesRead", ccFeed),
+    feedDiskBytesWritten("FeedDiskBytesWritten", ccFeed),
+    activeFeedStreams(0),
+    activeFeedDiskStreams(0),
     latencies(),
     readLatencies(),
     readRangeLatencies(),
@@ -1964,6 +1972,10 @@ DatabaseContext::DatabaseContext(const Error& err)
     feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
     feedPops("FeedPops", ccFeed),
     feedPopsFallback("FeedPopsFallback", ccFeed),
+    feedDiskBytesRead("FeedDiskBytesRead", ccFeed),
+    feedDiskBytesWritten("FeedDiskBytesWritten", ccFeed),
+    activeFeedStreams(0),
+    activeFeedDiskStreams(0),
     latencies(),
     readLatencies(),
     readRangeLatencies(),
@@ -10540,7 +10552,9 @@ void writeMutationsToCache(Reference<ChangeFeedCacheData> cacheData,
 		Value durableValue = changeFeedCacheValue(cacheOut);
 		db->storage->set(KeyValueRef(durableKey, durableValue));
 		cacheData->latest = cacheOut.back().version;
-		db->uncommittedCFBytes += durableKey.size() + durableValue.size();
+		size_t mutationBytes = durableKey.size() + durableValue.size();
+		db->uncommittedCFBytes += mutationBytes;
+		db->feedDiskBytesWritten += mutationBytes;
 		if (db->uncommittedCFBytes > CLIENT_KNOBS->CHANGE_FEED_CACHE_FLUSH_BYTES) {
 			db->commitChangeFeedStorage->set(true);
 		}
@@ -11022,6 +11036,7 @@ ACTOR Future<bool> getChangeFeedStreamFromDisk(Reference<DatabaseContext> db,
                                                KeyRange range,
                                                Key tenantPrefix) {
 	state bool foundEnd = false;
+	state ActiveCounter<int>::Releaser holdingActiveDiskStreamsCounter = db->activeFeedDiskStreams.take(1);
 	loop {
 		Key beginKey = changeFeedCacheKey(tenantPrefix, rangeID, range, *begin);
 		Key endKey = changeFeedCacheKey(tenantPrefix, rangeID, range, MAX_VERSION);
@@ -11029,6 +11044,7 @@ ACTOR Future<bool> getChangeFeedStreamFromDisk(Reference<DatabaseContext> db,
 		                                                    CLIENT_KNOBS->CHANGE_FEED_CACHE_LIMIT_BYTES,
 		                                                    CLIENT_KNOBS->CHANGE_FEED_CACHE_LIMIT_BYTES));
 		state int idx = 0;
+		db->feedDiskBytesRead += res.expectedSize();
 
 		while (!foundEnd && idx < res.size()) {
 			Standalone<VectorRef<MutationsAndVersionRef>> mutations = decodeChangeFeedCacheValue(res[idx].value);
@@ -11267,6 +11283,7 @@ ACTOR Future<Void> durableChangeFeedMonitor(Reference<DatabaseContext> db,
 	state Reference<ChangeFeedCacheData> data;
 	state Error err = success();
 	state Version originalBegin = begin;
+	state ActiveCounter<int>::Releaser holdingActiveStreamsCounter = db->activeFeedStreams.take(1);
 	results->endVersion = end;
 	db->usedAnyChangeFeeds = true;
 	try {

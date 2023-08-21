@@ -688,6 +688,15 @@ private:
 		}
 	}
 
+	void checkSetEmergencyBackupKeys(MutationRef m) {
+		if (!m.param1.startsWith(emergencyBackupPrefix)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+	}
+
 	void checkSetOtherKeys(MutationRef m) {
 		if (initialCommit)
 			return;
@@ -904,6 +913,15 @@ private:
 		}
 		if (!initialCommit) {
 			txnStateStore->clear(range & backupProgressKeys);
+		}
+	}
+
+	void checkClearEmergencyBackupKeys(KeyRangeRef range) {
+		if (!emergencyBackupKeyRange.intersects(range)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->clear(range & emergencyBackupKeyRange);
 		}
 	}
 
@@ -1474,6 +1492,7 @@ public:
 				checkSetRangeLockKeys(m);
 				checkSetBackupStartedKey(m);
 				checkSetBackupProgressKeys(m);
+				checkSetEmergencyBackupKeys(m);
 				checkSetOtherKeys(m);
 			} else if (m.type == MutationRef::ClearRange && isSystemKey(m.param2)) {
 				KeyRangeRef range(m.param1, m.param2);
@@ -1494,6 +1513,7 @@ public:
 				checkClearMetaclusterRegistration(range);
 				checkClearRangeLockKeys(range);
 				checkClearBackupProgressKeys(range);
+				checkClearEmergencyBackupKeys(range);
 				checkClearMiscRangeKeys(range);
 			}
 		}

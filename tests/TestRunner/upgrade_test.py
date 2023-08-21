@@ -75,7 +75,7 @@ class UpgradeTest:
         self.tmp_dir = self.build_dir.joinpath("tmp", random_alphanum_string(16))
         self.tmp_dir.mkdir(parents=True)
         self.downloader = FdbBinaryDownloader(args.build_dir)
-        self.download_old_binaries()
+        self.assert_old_binaries_exist()
         self.create_external_lib_dir()
         self.testing_future_version = FUTURE_VERSION in self.upgrade_path
         self.future_version_client_lib_path = (
@@ -118,10 +118,11 @@ class UpgradeTest:
         self.determine_api_version()
         self.disable_log_dump = args.disable_log_dump
 
-    # Download all old binaries required for testing the specified upgrade path
-    def download_old_binaries(self):
+    # Check that all old binaries required for testing the specified upgrade path exists
+    # and are accessible by the system user running this script
+    def assert_old_binaries_exist(self):
         for version in self.used_versions:
-            self.downloader.download_old_binaries(version)
+            self.downloader.assert_old_binaries_exist_for_version(version)
 
     # Create a directory for external client libraries for MVC and fill it
     # with the libraries necessary for the specified upgrade path
