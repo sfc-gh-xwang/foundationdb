@@ -332,7 +332,7 @@ else()
   add_python_venv_test(NAME fdb_c_upgrade_to_future_version
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
     --build-dir ${CMAKE_BINARY_DIR}
-    --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+    --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
     --upgrade-path "${FDB_CURRENT_VERSION}" "${FDB_FUTURE_VERSION}" "${FDB_CURRENT_VERSION}"
     --process-number 3
     )
@@ -340,7 +340,7 @@ else()
   add_python_venv_test(NAME fdb_c_upgrade_to_future_version_blob_granules
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
     --build-dir ${CMAKE_BINARY_DIR}
-    --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/ApiBlobGranulesCorrectness.toml
+    --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/BlobGranulesCorrectness.toml
     --upgrade-path "${FDB_CURRENT_VERSION}" "${FDB_FUTURE_VERSION}" "${FDB_CURRENT_VERSION}"
     --blob-granules-enabled
     --process-number 3
@@ -358,7 +358,7 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev3_gradual
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV3_RELEASE_VERSION}" "${FDB_PREV2_RELEASE_VERSION}" "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
@@ -366,7 +366,7 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev3_direct
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV3_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
@@ -374,7 +374,7 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev2_gradual
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV2_RELEASE_VERSION}" "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
@@ -382,7 +382,7 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev2_direct
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV2_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
@@ -390,25 +390,41 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
     
-    # FIXME: re-enable after 71.3.2 is published and prev_release_version is changed to it
-    # add_python_venv_test(NAME fdb_c_upgrade_from_prev_blob_granule
-    #  COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
-    #  --build-dir ${CMAKE_BINARY_DIR}
-    #  --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/ApiBlobGranulesCorrectness.toml
-    #  --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}" "${FDB_PREV_RELEASE_VERSION}"
-    #  --blob-granules-enabled
-    #  --process-number 3
-    #  )
+    add_python_venv_test(NAME fdb_c_upgrade_from_prev_blob_granule
+      COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
+      --build-dir ${CMAKE_BINARY_DIR}
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/BlobGranulesCorrectness.toml
+      --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
+      --blob-granules-enabled
+      --process-number 3
+    )
+
+    add_python_venv_test(NAME fdb_c_upgrade_from_prev_tenant
+      COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
+      --build-dir ${CMAKE_BINARY_DIR}
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectnessTenant.toml
+      --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
+      --process-number 3
+    )
+    
+    add_python_venv_test(NAME fdb_c_upgrade_from_prev_blob_granule_tenant
+      COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
+      --build-dir ${CMAKE_BINARY_DIR}
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/BlobGranulesCorrectnessTenant.toml
+      --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
+      --blob-granules-enabled
+      --process-number 3
+    )
 
     add_python_venv_test(NAME fdb_c_wiggle_only
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_CURRENT_VERSION}" "wiggle"
       --disable-log-dump
       --process-number 3
@@ -418,7 +434,7 @@ else()
     add_python_venv_test(NAME fdb_c_wiggle_and_upgrade
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "wiggle" "${FDB_CURRENT_VERSION}"
       --disable-log-dump
       --process-number 3
