@@ -639,8 +639,7 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
     TenantName begin,
     TenantName end,
     int limit,
-    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
-    Optional<LockedTenants> locked = Optional<LockedTenants>()) {
+    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>()) {
 	std::vector<std::pair<TenantName, int64_t>> matchingTenants =
 	    wait(TenantAPI::listTenantsTransaction(tr, begin, end, limit));
 
@@ -656,14 +655,6 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
 		TenantMapEntry entry = f.get();
 		if (tenantGroup.present()) {
 			if (tenantGroup != entry.tenantGroup) {
-				continue;
-			}
-		}
-		if (locked.present()) {
-			if (locked.get() && entry.tenantLockState == TenantAPI::TenantLockState::UNLOCKED) {
-				continue;
-			}
-			if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
 				continue;
 			}
 		}
@@ -703,13 +694,22 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadata(
 			loop {
 				std::vector<std::pair<TenantName, TenantMapEntry>> tenantBatch =
 				    wait(TenantAPI::listTenantMetadataTransaction(
-				        tr, begin, end, std::max(limit + offset, 1000), tenantGroup, locked));
+				        tr, begin, end, std::max(limit + offset, 1000), tenantGroup));
 
 				if (tenantBatch.empty()) {
 					return results;
 				}
 
 				for (auto const& [name, entry] : tenantBatch) {
+					// If provided "locked", skip the entry if its lock state doesn't match
+					if (locked.present()) {
+						if (locked.get() && entry.tenantLockState == TenantAPI::TenantLockState::UNLOCKED) {
+							continue;
+						}
+						if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
+							continue;
+						}
+					}
 					++count;
 					if (count > offset) {
 						results.emplace_back(name, entry);
