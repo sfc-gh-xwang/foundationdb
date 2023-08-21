@@ -870,17 +870,6 @@ ACTOR Future<Void> shardSplitter(DataDistributionTracker* self,
 	return Void();
 }
 
-ACTOR Future<Void> brokenPromiseToReady(Future<Void> f) {
-	try {
-		wait(f);
-	} catch (Error& e) {
-		if (e.code() != error_code_broken_promise) {
-			throw;
-		}
-	}
-	return Void();
-}
-
 static bool shardMergeFeasible(DataDistributionTracker* self, KeyRange const& keys, KeyRangeRef adjRange) {
 	if (!SERVER_KNOBS->DD_TENANT_AWARENESS_ENABLED) {
 		return true;
