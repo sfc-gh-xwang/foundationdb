@@ -711,6 +711,48 @@ AddTest testDBTransactionExceedsSizeLimit("DBTransactionExceedsSizeLimit", asTru
 });
 
 /* Transaction Atomic Operations */
+AddTest testAtomicOpAdd("AtomicOpAdd", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-atomic-op-add-");
+	auto tr = env.newNormalOrTenantTransaction();
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "\x00" } }));
+
+	tr = env.newNormalOrTenantTransaction();
+	int8_t param = 1;
+	int potentialCommitCount = 0;
+
+	while (1) {
+		tr.atomicOp(fdb::toBytesRef(prefix + "foo"),
+		            fdb::BytesRef(reinterpret_cast<const uint8_t*>(&param), sizeof(param)),
+		            FDB_MUTATION_TYPE_ADD);
+
+		if (potentialCommitCount + 1 == 256) {
+			// Trying to commit again might overflow the one unsigned byte we're looking at
+			break;
+		}
+
+		potentialCommitCount++;
+		auto f = tr.commit();
+		if (auto err = waitFuture(f)) {
+			if (err.retryableNotCommitted()) {
+				--potentialCommitCount;
+			}
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+		break;
+	}
+
+	tr = env.newNormalOrTenantTransaction();
+	auto f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "ReadFoo");
+	ASSERT(f.get().has_value(), "unexpected null value from read");
+	ASSERT(uint8_t(f.get()->data()[0]) > 0);
+	ASSERT(uint8_t(f.get()->data()[0]) <= potentialCommitCount);
+});
+
 AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	// Test bitwise and on values of same length:
 	//   db key = foo

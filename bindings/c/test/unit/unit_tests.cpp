@@ -694,41 +694,6 @@ TEST_CASE("fdb_transaction_get_mapped_range_fail_on_mapper_not_tuple") {
 	ASSERT(result.err.code() == error_code_mapper_not_tuple);
 }
 
-TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_ADD") {
-	insert_data(db, create_data({ { "foo", "\x00" } }));
-
-	auto tr = db.createTransaction();
-	int8_t param = 1;
-	int potentialCommitCount = 0;
-	while (1) {
-		tr.atomicOp(fdb::toBytesRef(key("foo")),
-		            fdb::BytesRef(reinterpret_cast<const uint8_t*>(&param), sizeof(param)),
-		            FDB_MUTATION_TYPE_ADD);
-		if (potentialCommitCount + 1 == 256) {
-			// Trying to commit again might overflow the one unsigned byte we're looking at
-			break;
-		}
-		++potentialCommitCount;
-		auto f1 = tr.commit();
-		auto err = waitFuture(f1);
-		if (err) {
-			if (err.retryableNotCommitted()) {
-				--potentialCommitCount;
-			}
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-		break;
-	}
-
-	auto value = getValue(fdb::toBytesRef(key("foo")), /* snapshot */ false, {});
-	REQUIRE(value.has_value());
-	CHECK(value->size() == 1);
-	CHECK(uint8_t(value->data()[0]) > 0);
-	CHECK(uint8_t(value->data()[0]) <= potentialCommitCount);
-}
-
 TEST_CASE("fdb_transaction_atomic_op FDB_MUTATION_TYPE_BIT_XOR") {
 	// Test bitwise xor on values of same length:
 	//   db key = foo
