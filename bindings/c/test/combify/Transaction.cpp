@@ -630,6 +630,43 @@ AddTest testGetApproxSize("GetApproxSize", ALL, [](const TestEnv& env) {
 	ASSERT(f.get() >= 3, "Unmatched transaction approx size: expected>=3, actual={}", f.get());
 });
 
+/* Transaction Options */
+AddTest testTransactionOptionSizeLimitTooSmall("TransactionOptionSizeLimitTooSmall", ALL, [](const TestEnv& env) {
+	// Size limit must be at least 32 to be valid, so test a smaller size.
+	auto tr = env.newNormalOrTenantTransaction();
+	try {
+		auto f = runToCompletion(
+		    tr,
+		    [](auto tr) {
+			    tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, 31);
+			    tr.set("foo"_br, "bar"_br);
+			    return tr.commit();
+		    },
+		    "SetKeyTransactionOptionSizeTooSmall");
+		ASSERT(false, "unexpected transaction successful return");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2006, "unmatched error code: expected=2006 (invalid_option_value), actual={}", e.code());
+	}
+});
+
+AddTest testTransactionOptionSizeLimitTooLarge("TransactionOptionSizeLimitTooLarge", ALL, [](const TestEnv& env) {
+	// Size limit must be less than or equal to 10,000,000.
+	auto tr = env.newNormalOrTenantTransaction();
+	try {
+		auto f = runToCompletion(
+		    tr,
+		    [](auto tr) {
+			    tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, 10000001);
+			    tr.set("foo"_br, "bar"_br);
+			    return tr.commit();
+		    },
+		    "SetKeyInvalidOption");
+		ASSERT(false, "unexpected transaction successful return");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2006, "unmatched error code: expected=2006 (invalid_option_value), actual={}", e.code());
+	}
+});
+
 /* Transaction Atomic Operations */
 AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	// Test bitwise and on values of same length:

@@ -332,28 +332,6 @@ TEST_CASE("FDB_DB_OPTION_TRANSACTION_TIMEOUT") {
 	db.setOption(FDB_DB_OPTION_TRANSACTION_TIMEOUT, timeout);
 }
 
-TEST_CASE("fdb_transaction_set_option size_limit too small") {
-	auto tr = db.createTransaction();
-
-	// Size limit must be at least 32 to be valid, so test a smaller size.
-	int64_t size_limit = 31;
-	tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, size_limit);
-	tr.set("foo"_br, "bar"_br);
-	auto f1 = tr.commit();
-	CHECK(waitFuture(f1).code() == 2006); // invalid_option_value
-}
-
-TEST_CASE("fdb_transaction_set_option size_limit too large") {
-	auto tr = db.createTransaction();
-
-	// Size limit must be less than or equal to 10,000,000.
-	int64_t size_limit = 10000001;
-	tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, size_limit);
-	tr.set("foo"_br, "bar"_br);
-	auto f1 = tr.commit();
-	CHECK(waitFuture(f1).code() == 2006); // invalid_option_value
-}
-
 TEST_CASE("fdb_transaction_set_option size_limit") {
 	auto tr = db.createTransaction();
 
