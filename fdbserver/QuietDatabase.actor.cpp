@@ -24,6 +24,7 @@
 #include <map>
 
 #include "fdbclient/FDBOptions.g.h"
+#include "fdbclient/FDBTypes.h"
 #include "fdbclient/SystemData.h"
 #include "fdbrpc/simulator.h"
 #include "flow/NetworkAddress.h"
@@ -297,10 +298,10 @@ ACTOR Future<std::pair<int64_t, int64_t>> getTLogQueueInfo(Database cx,
 	return std::make_pair(maxQueueSize, maxPoppedVersionLag);
 }
 
-// Returns a vector of blob worker interfaces which have been persisted under the system key space
-ACTOR Future<std::vector<BlobWorkerInterface>> getBlobWorkers(Database cx,
-                                                              bool use_system_priority = false,
-                                                              Version* grv = nullptr) {
+ACTOR Future<RangeReadResult> rangeRead(KeyRangeRef keyRange,
+                                        Database cx,
+                                        bool use_system_priority = false,
+                                        Version* grv = nullptr) {
 	state Transaction tr(cx);
 	loop {
 		if (use_system_priority) {
@@ -309,74 +310,54 @@ ACTOR Future<std::vector<BlobWorkerInterface>> getBlobWorkers(Database cx,
 		tr.setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 		tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 		try {
-			RangeReadResult blobWorkersList = wait(tr.getRange(blobWorkerListKeys, CLIENT_KNOBS->TOO_MANY));
-			ASSERT(!blobWorkersList.more && blobWorkersList.size() < CLIENT_KNOBS->TOO_MANY);
-
-			std::vector<BlobWorkerInterface> blobWorkers;
-			blobWorkers.reserve(blobWorkersList.size());
-			for (int i = 0; i < blobWorkersList.size(); i++) {
-				blobWorkers.push_back(decodeBlobWorkerListValue(blobWorkersList[i].value));
-			}
+			RangeReadResult rangeReadResult = wait(tr.getRange(keyRange, CLIENT_KNOBS->TOO_MANY));
+			ASSERT(!rangeReadResult.more && rangeReadResult.size() < CLIENT_KNOBS->TOO_MANY);
 			if (grv) {
 				*grv = tr.getReadVersion().get();
 			}
-			return blobWorkers;
+			return rangeReadResult;
 		} catch (Error& e) {
 			wait(tr.onError(e));
 		}
 	}
+}
+
+// Returns a vector of blob worker interfaces which have been persisted under the system key space
+ACTOR Future<std::vector<BlobWorkerInterface>> getBlobWorkers(Database cx,
+                                                              bool use_system_priority = false,
+                                                              Version* grv = nullptr) {
+
+	RangeReadResult blobWorkersList = wait(rangeRead(blobWorkerListKeys, cx, use_system_priority, grv));
+	std::vector<BlobWorkerInterface> blobWorkers;
+	blobWorkers.reserve(blobWorkersList.size());
+	for (int i = 0; i < blobWorkersList.size(); i++) {
+		blobWorkers.push_back(decodeBlobWorkerListValue(blobWorkersList[i].value));
+	}
+	return blobWorkers;
 }
 
 ACTOR Future<std::vector<std::pair<UID, UID>>> getBlobWorkerAffinity(Database cx,
                                                                      bool use_system_priority = false,
                                                                      Version* grv = nullptr) {
-	state Transaction tr(cx);
-	loop {
-		if (use_system_priority) {
-			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-		}
-		tr.setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-		try {
-			RangeReadResult blobWorkerAffinity = wait(tr.getRange(blobWorkerAffinityKeys, CLIENT_KNOBS->TOO_MANY));
 
-			std::vector<std::pair<UID, UID>> affinities;
-			affinities.reserve(blobWorkerAffinity.size());
-			for (int i = 0; i < blobWorkerAffinity.size(); i++) {
-				affinities.push_back(std::make_pair(decodeBlobWorkerAffinityKey(blobWorkerAffinity[i].key),
-				                                    decodeBlobWorkerAffinityValue(blobWorkerAffinity[i].value)));
-			}
-			if (grv) {
-				*grv = tr.getReadVersion().get();
-			}
-			return affinities;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
+	RangeReadResult blobWorkerAffinity = wait(rangeRead(blobWorkerAffinityKeys, cx, use_system_priority, grv));
+	std::vector<std::pair<UID, UID>> affinities;
+	affinities.reserve(blobWorkerAffinity.size());
+	for (int i = 0; i < blobWorkerAffinity.size(); i++) {
+		affinities.push_back(std::make_pair(decodeBlobWorkerAffinityKey(blobWorkerAffinity[i].key),
+		                                    decodeBlobWorkerAffinityValue(blobWorkerAffinity[i].value)));
 	}
+	return affinities;
 }
 
 ACTOR Future<std::vector<StorageServerInterface>> getStorageServers(Database cx, bool use_system_priority = false) {
-	state Transaction tr(cx);
-	loop {
-		if (use_system_priority) {
-			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-		}
-		tr.setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-		try {
-			RangeReadResult serverList = wait(tr.getRange(serverListKeys, CLIENT_KNOBS->TOO_MANY));
-			ASSERT(!serverList.more && serverList.size() < CLIENT_KNOBS->TOO_MANY);
 
-			std::vector<StorageServerInterface> servers;
-			servers.reserve(serverList.size());
-			for (int i = 0; i < serverList.size(); i++)
-				servers.push_back(decodeServerListValue(serverList[i].value));
-			return servers;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
+	RangeReadResult serverList = wait(rangeRead(serverListKeys, cx, use_system_priority));
+	std::vector<StorageServerInterface> servers;
+	servers.reserve(serverList.size());
+	for (int i = 0; i < serverList.size(); i++)
+		servers.push_back(decodeServerListValue(serverList[i].value));
+	return servers;
 }
 
 ACTOR Future<std::pair<std::vector<WorkerInterface>, int>>
