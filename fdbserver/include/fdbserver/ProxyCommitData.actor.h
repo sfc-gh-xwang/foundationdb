@@ -127,6 +127,7 @@ struct ProxyStats {
 	                    NotifiedVersion* pCommittedVersion,
 	                    int64_t* commitBatchesMemBytesCountPtr,
 	                    std::map<int64_t, TenantName>* pTenantMap,
+	                    std::set<int64_t>* pLockedTenants,
 	                    KeyRangeMap<RangeLockInfo>* pRangeLocks)
 	  : cc("ProxyStats", id.toString()),
 	    txnCommitIn("TxnCommitIn", cc),
@@ -199,6 +200,7 @@ struct ProxyStats {
 			return *commitBatchesMemBytesCountPtr;
 		});
 		specialCounter(cc, "NumTenants", [pTenantMap]() { return pTenantMap ? pTenantMap->size() : 0; });
+		specialCounter(cc, "LockedTenants", [pLockedTenants]() { return pLockedTenants ? pLockedTenants->size() : 0; });
 		specialCounter(cc, "MaxCompute", [this]() { return this->getAndResetMaxCompute(); });
 		specialCounter(cc, "MinCompute", [this]() { return this->getAndResetMinCompute(); });
 		specialCounter(cc, "RangeLockBoundaries", [pRangeLocks]() { return pRangeLocks ? pRangeLocks->size() : 0; });
@@ -359,7 +361,7 @@ struct ProxyCommitData {
 	                bool provisional)
 	  : dbgid(dbgid),
 	    commitBatchesMemBytesCount(0),
-	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap, &rangeLocks),
+	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap, &lockedTenants, &rangeLocks),
 	    master(master),
 	    logAdapter(nullptr),
 	    committedVersion(recoveryTransactionVersion),
