@@ -50,7 +50,6 @@ public:
 	NetworkAddress getPeerAddress() const override;
 	bool hasTrustedPeer() const override;
 	UID getDebugID() const override;
-	boost::asio::ip::tcp::socket& getSocket() override { return socket; }
 	static Future<std::vector<NetworkAddress>> resolveTCPEndpoint(const std::string& host,
 	                                                              const std::string& service,
 	                                                              DNSCache* dnsCache);
