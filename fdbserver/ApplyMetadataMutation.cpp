@@ -779,8 +779,14 @@ private:
 				    .detail("Id", tenantEntry.id)
 				    .detail("Version", version);
 
+				auto itr = tenantMap->find(tenantEntry.id);
+				Optional<TenantName> oldTenantName = (itr != tenantMap->end()) ? itr->second : Optional<TenantName>{};
+
 				(*tenantMap)[tenantEntry.id] = tenantEntry.tenantName;
 				if (tenantNameIndex) {
+					if (oldTenantName.present()) {
+						tenantNameIndex->erase(oldTenantName.get());
+					}
 					(*tenantNameIndex)[tenantEntry.tenantName] =
 					    TenantLookupInfo(tenantEntry.id, tenantEntry.tenantGroup);
 				}

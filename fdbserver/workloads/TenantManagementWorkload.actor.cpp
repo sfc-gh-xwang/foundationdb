@@ -1403,6 +1403,11 @@ struct TenantManagementWorkload : TestWorkload {
 		    wait(TenantAPI::tryGetTenant(self->dataDb.getReference(), newTenantName));
 		ASSERT(!oldTenantEntry.present());
 		ASSERT(newTenantEntry.present());
+		try {
+			Reference<Tenant> tenant = makeReference<Tenant>(self->dataDb, oldTenantName);
+		} catch (Error& e) {
+			ASSERT_EQ(error_code_tenant_not_found, e.code());
+		}
 		TenantTestData tData = self->createdTenants[oldTenantName];
 		tData.tenant->name = newTenantName;
 		self->createdTenants[newTenantName] = tData;
@@ -2042,13 +2047,23 @@ struct TenantManagementWorkload : TestWorkload {
 				return Void();
 			}
 			// Re-check if the newly opened tenant exists and update corresponding information
-			for (auto itr : self->createdTenants) {
-				if (itr.second.tenant->id() == newTenant.get()->id()) {
+			tName = tenant.flatMapRef(&Tenant::name);
+			if (tName.present()) {
+				auto itr = self->createdTenants.find(tName.get());
+				if (itr != self->createdTenants.end() && itr->second.tenant->id() == tenant.get()->id()) {
 					tenantExists = true;
-					tName = itr.first;
-					tData = itr.second;
-					lockState = itr.second.lockState;
-					break;
+					tData = itr->second;
+					lockState = itr->second.lockState;
+				}
+			} else {
+				for (auto itr : self->createdTenants) {
+					if (itr.second.tenant->id() == newTenant.get()->id()) {
+						tenantExists = true;
+						tName = itr.first;
+						tData = itr.second;
+						lockState = itr.second.lockState;
+						break;
+					}
 				}
 			}
 		}
