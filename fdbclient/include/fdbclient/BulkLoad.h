@@ -37,6 +37,7 @@ public:
 	enum class State : uint8_t {
 		STARTED = 0,
 		STAGING = 10,
+		STAGING_BLOB_VALIDATED = 12,
 		STAGING_BLOB_DONE = 20,
 		STAGING_DDPREPARED = 30,
 		DONE = 90,
@@ -64,6 +65,8 @@ public:
 			return "Started";
 		case State::STAGING:
 			return "Staging";
+		case State::STAGING_BLOB_VALIDATED:
+			return "Staging blob validated";
 		case State::STAGING_BLOB_DONE:
 			return "Staging blob done";
 		case State::STAGING_DDPREPARED:
@@ -98,9 +101,9 @@ struct BulkLoadInfo {
 	}
 };
 
-enum class BulkLoadFileType : uint8_t { SNAPSHOT = 0, DELTA = 1 };
+enum class BulkLoadFileType : uint8_t { SNAPSHOT = 1, DELTA = 2 };
 // file format (only row_v1 currently supported)
-enum class BulkLoadFileFormat : uint8_t { ROW_V1 = 0, COLUMNAR_V1 = 1 };
+enum class BulkLoadFileFormat : uint8_t { ROW_V1 = 1, COLUMNAR_V1 = 2 };
 
 struct BulkLoadFileToWriteRef {
 	constexpr static FileIdentifier file_identifier = 5109804;
@@ -114,6 +117,9 @@ struct BulkLoadFileToWriteRef {
 	int64_t targetSize;
 
 	// The following are just config pass-throughs to the fdb client library on how the file should be written
+	// tenant prefix to prepend to keys
+	Optional<KeyRef> tenantPrefix;
+
 	// Encryption keys to write file with (if enabled)
 	Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
 
@@ -124,7 +130,7 @@ struct BulkLoadFileToWriteRef {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, fileId, fileName, targetSize, cipherKeysCtx, type, format, compression);
+		serializer(ar, fileId, fileName, targetSize, tenantPrefix, cipherKeysCtx, type, format, compression);
 	}
 };
 
@@ -144,6 +150,8 @@ struct BulkLoadWrittenFileRef {
 	}
 };
 
+enum class BulkLoadFileValidationLevel : int { NONE = 0, METADATA = 1, DATA = 2 };
+
 template <>
 struct Traceable<BulkLoadStatus::State> : std::true_type {
 	// FIXME: more human-readable string for debugging
@@ -152,5 +160,11 @@ struct Traceable<BulkLoadStatus::State> : std::true_type {
 
 template <>
 struct fmt::formatter<BulkLoadStatus::State> : FormatUsingTraceable<BulkLoadStatus::State> {};
+
+BulkLoadID newBulkLoadID();
+
+UID bulkLoadIdToUID(BulkLoadID const& id);
+
+BulkLoadID bulkLoadUIDToId(UID const& uid);
 
 #endif

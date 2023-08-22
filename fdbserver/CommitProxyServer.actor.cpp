@@ -68,6 +68,7 @@
 #include "flow/Knobs.h"
 #include "flow/Trace.h"
 #include "fdbclient/Tracing.h"
+#include "fdbclient/RangeLock.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -102,6 +103,25 @@ ACTOR void discardCommit(UID id, Future<LogSystemDiskQueueAdapter::CommitMessage
 	TraceEvent("Discarding", id).detail("Count", cm.messages.size());
 	cm.acknowledge.send(Void());
 	ASSERT(dummyCommitState.isReady());
+}
+
+bool accessLockedRange(const ProxyCommitData* self, MutationRef m) {
+	if (isRangeMutation(m)) {
+		auto ranges = self->rangeLocks.intersectingRanges(KeyRangeRef(m.param1, m.param2));
+		for (auto it = ranges.begin(); it != ranges.end(); ++it) {
+			if (it->value().status != RangeLockInfo::UNLOCKED) {
+				DisabledTraceEvent(SevDebug, "AccessLockedRange", self->dbgid)
+				    .detail("M", m)
+				    .detail("It", it->value().toString());
+				return true;
+			}
+		}
+	} else if (isSingleKeyMutation(MutationRef::Type(m.type))) {
+		if (self->rangeLocks[m.param1].status != RangeLockInfo::UNLOCKED) {
+			return true;
+		}
+	}
+	return false;
 }
 
 struct ResolutionRequestBuilder {
@@ -198,33 +218,12 @@ struct ResolutionRequestBuilder {
 		}
 	}
 
-	void addTransaction(CommitTransactionRequest& trRequest, Version ver, int transactionNumberInBatch) {
+	void updateResolutionInfos(bool isTXNStateTransaction,
+	                           CommitTransactionRequest& trRequest,
+	                           VectorRef<int64_t>& tenantIds,
+	                           VectorRef<MutationRef>& normalKeyMutations) {
 		auto& trIn = trRequest.transaction;
-		// SOMEDAY: There are a couple of unnecessary O( # resolvers ) steps here
-		outTr.assign(requests.size(), nullptr);
-		ASSERT(transactionNumberInBatch >= 0 && transactionNumberInBatch < 32768);
 
-		bool isTXNStateTransaction = false;
-		DisabledTraceEvent("AddTransaction", self->dbgid).detail("TenantMode", (int)self->getTenantMode());
-		bool needParseTenantId = !trRequest.tenantInfo.hasTenant() && self->getTenantMode() == TenantMode::REQUIRED;
-		VectorRef<int64_t> tenantIds;
-		for (auto& m : trIn.mutations) {
-			DEBUG_MUTATION("AddTr", ver, m, self->dbgid).detail("Idx", transactionNumberInBatch);
-			if (m.type == MutationRef::SetVersionstampedKey) {
-				transformVersionstampMutation(m, &MutationRef::param1, requests[0].version, transactionNumberInBatch);
-				trIn.write_conflict_ranges.push_back(requests[0].arena, singleKeyRange(m.param1, requests[0].arena));
-			} else if (m.type == MutationRef::SetVersionstampedValue) {
-				transformVersionstampMutation(m, &MutationRef::param2, requests[0].version, transactionNumberInBatch);
-			}
-			if (isMetadataMutation(m)) {
-				isTXNStateTransaction = true;
-				auto& tr = getOutTransaction(0, trIn.read_snapshot);
-				tr.mutations.push_back(requests[0].arena, m);
-				tr.lock_aware = trRequest.isLockAware();
-			} else if (needParseTenantId && !isSystemKey(m.param1) && isSingleKeyMutation((MutationRef::Type)m.type)) {
-				tenantIds.push_back(requests[0].arena, TenantAPI::extractTenantIdFromMutation(m));
-			}
-		}
 		if (isTXNStateTransaction && !trRequest.isLockAware()) {
 			// This mitigates https://github.com/apple/foundationdb/issues/3647. Since this transaction is not lock
 			// aware, if this transaction got a read version then \xff/dbLocked must not have been set at this
@@ -251,8 +250,54 @@ struct ResolutionRequestBuilder {
 			if (self->getTenantMode() == TenantMode::REQUIRED) {
 				tr.tenantIds = tenantIds;
 			}
+
+			// send all mutations to resolver 0
+			tr.normalKeyMutations = normalKeyMutations;
+		}
+	}
+	// return value indicate whether the trRequest is added into batch
+	void addTransaction(CommitTransactionRequest& trRequest, Version ver, int transactionNumberInBatch) {
+		auto& trIn = trRequest.transaction;
+		// SOMEDAY: There are a couple of unnecessary O( # resolvers ) steps here
+		outTr.assign(requests.size(), nullptr);
+		ASSERT(transactionNumberInBatch >= 0 && transactionNumberInBatch < 32768);
+
+		bool isTXNStateTransaction = false;
+		DisabledTraceEvent("AddTransaction", self->dbgid).detail("TenantMode", (int)self->getTenantMode());
+		bool needParseTenantId = !trRequest.tenantInfo.hasTenant() && self->getTenantMode() == TenantMode::REQUIRED;
+		VectorRef<int64_t> tenantIds;
+		VectorRef<MutationRef> normalKeyMutations;
+
+		// Step1: doing early check and mutation transformation.
+		for (auto& m : trIn.mutations) {
+			DEBUG_MUTATION("AddTr", ver, m, self->dbgid)
+			    .detail("Idx", transactionNumberInBatch)
+			    .detail("TxnStateStoreVersion", self->version.get());
+			if (m.type == MutationRef::SetVersionstampedKey) {
+				transformVersionstampMutation(m, &MutationRef::param1, requests[0].version, transactionNumberInBatch);
+				trIn.write_conflict_ranges.push_back(requests[0].arena, singleKeyRange(m.param1, requests[0].arena));
+			} else if (m.type == MutationRef::SetVersionstampedValue) {
+				transformVersionstampMutation(m, &MutationRef::param2, requests[0].version, transactionNumberInBatch);
+			}
+
+			if (isMetadataMutation(m)) {
+				isTXNStateTransaction = true;
+				auto& tr = getOutTransaction(0, trIn.read_snapshot);
+				tr.mutations.push_back(requests[0].arena, m);
+				tr.lock_aware = trRequest.isLockAware();
+			} else if (!isSystemKey(m.param1)) {
+				normalKeyMutations.push_back(requests[0].arena, m);
+				if (needParseTenantId && isSingleKeyMutation((MutationRef::Type)m.type)) {
+					tenantIds.push_back(requests[0].arena, TenantAPI::extractTenantIdFromMutation(m));
+				}
+			}
 		}
 
+		// Step2: if the transaction passes early check. Go ahead adding necessary conflict ranges into resolver
+		// requests
+		updateResolutionInfos(isTXNStateTransaction, trRequest, tenantIds, normalKeyMutations);
+
+		// Step3: build transactionResolverMap and clear states of a failed transaction
 		std::vector<int> resolversUsed;
 		for (int r = 0; r < outTr.size(); r++)
 			if (outTr[r]) {
@@ -770,7 +815,7 @@ CommitBatchContext::CommitBatchContext(ProxyCommitData* const pProxyCommitData_,
     localBatchNumber(++pProxyCommitData->localCommitBatchesStarted),
     toCommit(pProxyCommitData->logSystem, pProxyCommitData->localTLogCount),
     span("MP:commitBatch"_loc),
-    committed(trs.size()) {
+    committed(trs.size(), ConflictBatch::TransactionCommitted) {
 
 	evaluateBatchSize();
 
@@ -1407,27 +1452,63 @@ TEST_CASE("/CommitProxy/SplitRange/replaceRawClearRanges") {
 	return Void();
 }
 
-// Return success and properly split clear range mutations if all tenant check pass. Otherwise, return corresponding
-// error
+// 1. check each mutation accessing a valid range;
+// 2. if rawTenantProcessing==true, properly split clear range mutations if pass all checks;
+// Return corresponding error or success.
 Error validateAndProcessTenantAccess(Arena& arena,
                                      VectorRef<MutationRef>& mutations,
                                      ProxyCommitData* const pProxyCommitData,
                                      std::vector<int64_t>& trTenantIds,
+                                     bool rawTenantProcess,
                                      Optional<UID> debugId = Optional<UID>(),
                                      const char* context = "") {
 	bool changeTenant = false;
+	bool changeRangeLock = false;
+	// include clear type
+	bool containNormalKeyMutation = false;
+	// don't include clear type
 	bool writeNormalKey = false;
 
 	std::vector<std::pair<int, std::vector<MutationRef>>> idxSplitMutations;
 	int newMutationSize = mutations.size();
 	KeyRangeRef tenantMapRange = TenantMetadata::tenantMap().subspace;
+
 	for (int i = 0; i < mutations.size(); ++i) {
 		auto& mutation = mutations[i];
-		Optional<int64_t> tenantId;
-		bool validAccess = true;
-		changeTenant = changeTenant || TenantAPI::tenantMapChanging(mutation, tenantMapRange);
+		bool normalKeyMutation = !isSystemKey(mutation.param1);
 
-		if (mutation.type == MutationRef::ClearRange) {
+		// Step 1: check range lock
+		if (normalKeyMutation) {
+			containNormalKeyMutation = true;
+			if (accessLockedRange(pProxyCommitData, mutation)) {
+				TraceEvent(SevWarn, "IllegalLockedRangeAccess", pProxyCommitData->dbgid)
+				    .suppressFor(10.0)
+				    .detail("M", mutation)
+				    .detail("Reason", "Illegal write to locked range");
+				CODE_PROBE(true, "Commit proxy transaction tenant failure");
+				return illegal_locked_range_access();
+			}
+		} else {
+			changeRangeLock = changeRangeLock || RangeLockAPI::rangeLockChanging(mutation);
+		}
+		if (containNormalKeyMutation && changeRangeLock) {
+			TraceEvent(SevWarn, "IllegalRangeLockOperation", pProxyCommitData->dbgid)
+			    .suppressFor(10.0)
+			    .detail("Reason", "Range lock change and normal key change in same transaction");
+			CODE_PROBE(true, "Update normal keys while changing the range lock");
+			return illegal_range_lock_operation();
+		}
+
+		if (!rawTenantProcess)
+			continue;
+
+		// Step 2: check tenant access and process clear range mutation
+		Optional<int64_t> tenantId;
+		bool validTenant = true;
+
+		if (!normalKeyMutation) {
+			changeTenant = changeTenant || TenantAPI::tenantMapChanging(mutation, tenantMapRange);
+		} else if (mutation.type == MutationRef::ClearRange) {
 			int newClearSize = processClearRangeMutation(
 			    arena, pProxyCommitData->tenantMap, mutation, i, newMutationSize, idxSplitMutations, &trTenantIds);
 
@@ -1440,8 +1521,8 @@ Error validateAndProcessTenantAccess(Arena& arena,
 				    .detail("OldMutationSize", mutations.size())
 				    .detail("NewClears", newClearSize);
 			}
-		} else if (!isSystemKey(mutation.param1)) {
-			validAccess = validTenantAccess(mutation, pProxyCommitData->tenantMap, tenantId);
+		} else if (normalKeyMutation) {
+			validTenant = validTenantAccess(mutation, pProxyCommitData->tenantMap, tenantId);
 			writeNormalKey = true;
 		}
 
@@ -1453,16 +1534,17 @@ Error validateAndProcessTenantAccess(Arena& arena,
 			    .detail("ChangeTenant", changeTenant)
 			    .detail("WriteNormalKey", writeNormalKey)
 			    .detail("TenantId", tenantId)
-			    .detail("ValidAccess", validAccess)
+			    .detail("validTenantAccess", validTenant)
 			    .detail("MutationType", getTypeString(mutation.type))
 			    .detail("Mutation1", mutation.param1)
 			    .detail("Mutation2", mutation.param2);
 		}
 
-		if (!validAccess) {
+		if (!validTenant) {
 			TraceEvent(SevWarn, "IllegalTenantAccess", pProxyCommitData->dbgid)
 			    .suppressFor(10.0)
 			    .detail("Reason", "Raw write to unknown tenant");
+			CODE_PROBE(true, "Commit proxy transaction tenant failure");
 			return illegal_tenant_access();
 		}
 
@@ -1473,13 +1555,17 @@ Error validateAndProcessTenantAccess(Arena& arena,
 			CODE_PROBE(true, "Writing normal keys while changing the tenant map");
 			return illegal_tenant_access();
 		}
+
 		if (tenantId.present()) {
 			ASSERT(tenantId.get() != TenantInfo::INVALID_TENANT);
 			trTenantIds.push_back(tenantId.get());
 		}
 	}
 
-	replaceRawClearRanges(arena, mutations, idxSplitMutations, newMutationSize);
+	if (rawTenantProcess) {
+		replaceRawClearRanges(arena, mutations, idxSplitMutations, newMutationSize);
+	}
+
 	return success();
 }
 
@@ -1496,18 +1582,23 @@ Error validateAndProcessTenantAccess(CommitTransactionRequest& tr,
 		return tenant_locked();
 	}
 
-	// only do the mutation check when the transaction use raw_access option and the tenant mode is required
-	if (pProxyCommitData->getTenantMode() != TenantMode::REQUIRED || tr.tenantInfo.hasTenant()) {
-		if (tr.tenantInfo.hasTenant()) {
-			trTenantIds.push_back(tr.tenantInfo.tenantId);
-		}
-		return success();
+	// When the transaction use raw_access option and the tenant mode is required, we need to do extra processing of
+	// mutations
+	bool rawTenantProcess = pProxyCommitData->getTenantMode() == TenantMode::REQUIRED && !tr.tenantInfo.hasTenant();
+	if (tr.tenantInfo.hasTenant()) {
+		trTenantIds.push_back(tr.tenantInfo.tenantId);
 	}
+
+	bool doRangeLockCheck = !RangeLockAPI::noLockedRange(&pProxyCommitData->rangeLocks);
+
+	if (!doRangeLockCheck && !rawTenantProcess)
+		return success();
 
 	return validateAndProcessTenantAccess(tr.arena,
 	                                      tr.transaction.mutations,
 	                                      pProxyCommitData,
 	                                      trTenantIds,
+	                                      rawTenantProcess,
 	                                      tr.debugID,
 	                                      "validateAndProcessTenantAccess");
 }
@@ -1517,6 +1608,8 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
                                                   int64_t trIdx,
                                                   std::vector<int64_t> domainIds) {
 	ASSERT_NE(self->pProxyCommitData->encryptMode, EncryptionAtRestMode::DISABLED);
+
+	//TraceEvent(SevDebug, "ValidateEncryptionKeyExistenceStart");
 
 	try {
 		std::unordered_set<int64_t> lookupDomains;
@@ -1545,6 +1638,8 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
 		}
 	}
 
+	//TraceEvent(SevDebug, "ValidateEncryptionKeyExistenceStop");
+
 	return Void();
 }
 
@@ -1563,26 +1658,58 @@ void applyMetadataEffect(CommitBatchContext* self) {
 		     transactionIndex < self->resolution[0].stateMutations[versionIndex].size() && !self->forceRecovery;
 		     transactionIndex++) {
 			bool committed = true;
+			// aggregate resolver decision
 			for (int resolver = 0; resolver < self->resolution.size(); resolver++) {
 				committed =
 				    committed && self->resolution[resolver].stateMutations[versionIndex][transactionIndex].committed;
 			}
 
-			if (committed && self->pProxyCommitData->getTenantMode() == TenantMode::REQUIRED) {
-				auto& tenantIds = self->resolution[0].stateMutations[versionIndex][transactionIndex].tenantIds;
-				ASSERT(tenantIds.present());
-				// fail transaction if it contain both of tenant changes and normal key writing
+			// tenant id check and lock check
+			if (committed) {
+				VectorRef<MutationRef>& normalKeyMutations =
+				    self->resolution[0].stateMutations[versionIndex][transactionIndex].normalKeyMutations;
 				auto& mutations = self->resolution[0].stateMutations[versionIndex][transactionIndex].mutations;
-				committed =
-				    tenantIds.get().empty() || std::none_of(mutations.begin(), mutations.end(), [&](MutationRef m) {
-					    return TenantAPI::tenantMapChanging(m, tenantMapRange);
-				    });
+				auto& tenantIds = self->resolution[0].stateMutations[versionIndex][transactionIndex].tenantIds;
 
-				// check if all tenant ids are valid if committed == true
-				committed = committed &&
-				            std::all_of(tenantIds.get().begin(), tenantIds.get().end(), [self](const int64_t& tid) {
-					            return self->pProxyCommitData->tenantMap.count(tid);
-				            });
+				// tenantIds must be set when the mode is required
+				bool doTenantCheck =
+				    self->pProxyCommitData->getTenantMode() == TenantMode::REQUIRED && !tenantIds.get().empty();
+				// we can skip range lock check if no normal key mutations or no locked ranges
+				bool doRangeLockCheck =
+				    !normalKeyMutations.empty() && !RangeLockAPI::noLockedRange(&self->pProxyCommitData->rangeLocks);
+
+				if (doTenantCheck || doRangeLockCheck) {
+					// check metadata mutations
+					committed = std::none_of(mutations.begin(), mutations.end(), [&](MutationRef m) {
+						bool result = false;
+						if (doTenantCheck) {
+							// fail transaction if it contains both of tenant changes and normal key writing
+							result = TenantAPI::tenantMapChanging(m, tenantMapRange);
+						}
+						if (doRangeLockCheck) {
+							// fail transaction if it contains both of range changes and normal key writing
+							result |= RangeLockAPI::rangeLockChanging(m);
+						}
+						return result;
+					});
+
+					// check if all tenant ids are valid if committed == true
+					if (doTenantCheck) {
+						committed =
+						    committed &&
+						    std::all_of(tenantIds.get().begin(), tenantIds.get().end(), [self](const int64_t& tid) {
+							    return self->pProxyCommitData->tenantMap.count(tid);
+						    });
+					}
+					// check normalKey mutations
+					if (doRangeLockCheck) {
+						committed = committed && std::none_of(normalKeyMutations.begin(),
+						                                      normalKeyMutations.end(),
+						                                      [self](const MutationRef& m) {
+							                                      return accessLockedRange(self->pProxyCommitData, m);
+						                                      });
+					}
+				}
 
 				if (self->debugID.present()) {
 					TraceEvent(SevDebug, "TenantAccessCheck_ApplyMetadataEffect", self->debugID.get())
@@ -1641,12 +1768,12 @@ void determineCommittedTransactions(CommitBatchContext* self) {
 	auto pProxyCommitData = self->pProxyCommitData;
 	const auto& trs = self->trs;
 
-	ASSERT(self->transactionResolverMap.size() == self->committed.size());
+	ASSERT_EQ(self->transactionResolverMap.size(), self->committed.size());
 	// For each commitTransactionRef, it is only sent to resolvers specified in transactionResolverMap
 	// Thus, we use this nextTr to track the correct transaction index on each resolver.
 	self->nextTr.resize(self->resolution.size());
 	for (int t = 0; t < trs.size(); t++) {
-		uint8_t commit = ConflictBatch::TransactionCommitted;
+		uint8_t commit = self->committed[t];
 		for (int r : self->transactionResolverMap[t]) {
 			commit = std::min(self->resolution[r].committed[self->nextTr[r]++], commit);
 		}
@@ -1683,8 +1810,8 @@ void determineCommittedTransactions(CommitBatchContext* self) {
 }
 
 // Utility routine providing following transaction validations:
-// 1. Validate Tenant access properties, if failed, marks the transaction as 'failed'
-// 2. If cluster supports encryption, validate presence of disired encryption key(s). If cipher-keys are not found,
+// 1. Validate Range Lock and Tenant access properties, if failed, marks the transaction as 'failed'
+// 2. If cluster supports encryption, validate presence of desired encryption key(s). If cipher-keys are not found,
 // marks the transaction as 'failed'
 Future<Void> validateTransaction(CommitBatchContext* self, const int trIdx) {
 	std::vector<int64_t> trTenantIds;
@@ -1694,10 +1821,14 @@ Future<Void> validateTransaction(CommitBatchContext* self, const int trIdx) {
 		self->pProxyCommitData->stats.encryptKeyNotFoundErrors += 1;
 		CODE_PROBE(true, "Commit proxy transaction encrypt key not found");
 	} else {
+		// Check transaction validity with respect to tenants even if it will fail with a conflict. This allows us to
+		// report the appropriate non-retryable error instead.
 		Error e = validateAndProcessTenantAccess(self->trs[trIdx], self->pProxyCommitData, trTenantIds);
 		if (e.code() != error_code_success) {
 			self->trs[trIdx].reply.sendError(e);
-			self->committed[trIdx] = ConflictBatch::TransactionTenantFailure;
+			self->committed[trIdx] = e.code() == error_code_illegal_tenant_access
+			                             ? ConflictBatch::TransactionTenantFailure
+			                             : ConflictBatch::TransactionRangeLockFailure;
 			CODE_PROBE(true, "Commit proxy transaction tenant failure");
 		} else if (self->pProxyCommitData->encryptMode != EncryptionAtRestMode::DISABLED) {
 			return validateEncryptionKeyExistence(self, trIdx, trTenantIds);
@@ -1712,6 +1843,7 @@ Future<Void> validateTransaction(CommitBatchContext* self, const int trIdx) {
 ACTOR Future<Void> applyMetadataToCommittedTransactions(CommitBatchContext* self) {
 	state ProxyCommitData* const pProxyCommitData = self->pProxyCommitData;
 	state int trIdx;
+
 	for (trIdx = 0; trIdx < self->trs.size() && !self->forceRecovery; trIdx++) {
 		wait(validateTransaction(self, trIdx));
 
@@ -2519,7 +2651,8 @@ ACTOR Future<Void> reply(CommitBatchContext* self) {
 		} else if (self->committed[t] == ConflictBatch::TransactionTooOld) {
 			tr.reply.sendError(transaction_too_old());
 		} else if (self->committed[t] == ConflictBatch::TransactionTenantFailure ||
-		           self->committed[t] == ConflictBatch::TransactionEncryptKeyNotFound) {
+		           self->committed[t] == ConflictBatch::TransactionEncryptKeyNotFound ||
+		           self->committed[t] == ConflictBatch::TransactionRangeLockFailure) {
 			// We already sent the error
 			ASSERT(tr.reply.isSet());
 		} else {
@@ -2861,6 +2994,32 @@ ACTOR static Future<Void> readRequestServer(CommitProxyInterface proxy,
 	}
 }
 
+ACTOR static Future<Void> checkTenantLock(ProxyCommitData* commitData,
+                                          int64_t tenantId,
+                                          Version minVersion,
+                                          KeyRange keyRange) {
+	if (tenantId == TenantInfo::INVALID_TENANT) {
+		// otherwise assume raw access mode and infer it
+		TenantMode tenantMode = wait(commitData->cx->getOrWaitForTenantMode());
+		if (tenantMode == TenantMode::DISABLED || !TenantAPI::withinSingleTenant(keyRange)) {
+			return Void();
+		} else {
+			// in optional tenant mode this could return something that is a bogus tenant id, but that's fine because a
+			// non-existent tenant can't be locked
+			tenantId = TenantAPI::extractTenantIdFromKeyRef(keyRange.begin);
+		}
+	}
+	if (minVersion > commitData->version.get()) {
+		CODE_PROBE(true, "tenant lock check waiting for CP version");
+		wait(commitData->version.whenAtLeast(minVersion));
+	}
+	if (commitData->lockedTenants.count(tenantId)) {
+		CODE_PROBE(true, "tenant lock active in hybrid locations request");
+		throw tenant_locked();
+	}
+	return Void();
+}
+
 // Right now this just proxies a call to read the system keyspace for tenant+authorization purposes, but this will
 // eventually be extended to have this mapping in the transaction state store
 ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRequest req,
@@ -2876,6 +3035,7 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 		req.reply.sendError(unsupported_operation());
 		return Void();
 	}
+
 	// We can't respond to these requests until we have valid txnStateStore
 	wait(commitData->validState.getFuture());
 	state int i = 0;
@@ -2895,24 +3055,29 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 		return Void();
 	}
 
-	state GetBlobGranuleLocationsReply rep;
-	state KeyRange keyRange;
-	if (req.end.present()) {
-		keyRange = KeyRangeRef(req.begin, req.end.get());
-	} else {
-		keyRange = KeyRangeRef(req.begin, keyAfter(req.begin, req.arena));
-	}
-	if (req.tenant.hasTenant()) {
-		keyRange = keyRange.withPrefix(req.tenant.prefix.get(), req.arena);
-	}
-
-	req.limit = std::min(req.limit, CLIENT_KNOBS->BG_TOO_MANY_GRANULES);
-
-	ASSERT(!keyRange.empty());
-
 	// FIXME: add retry loop? likely less expensive to handle retryable errors here than to propagate back to client?
 	state Transaction tr(commitData->cx);
 	try {
+		state GetBlobGranuleLocationsReply rep;
+		state KeyRange keyRange;
+		if (req.end.present()) {
+			keyRange = KeyRangeRef(req.begin, req.end.get());
+		} else {
+			keyRange = KeyRangeRef(req.begin, keyAfter(req.begin, req.arena));
+		}
+
+		// check on the logical range + tenant id
+		if (!req.lockAware) {
+			wait(checkTenantLock(commitData, req.tenant.tenantId, minVersion, keyRange));
+		}
+
+		if (req.tenant.hasTenant()) {
+			keyRange = keyRange.withPrefix(req.tenant.prefix.get(), req.arena);
+		}
+
+		req.limit = std::min(req.limit, CLIENT_KNOBS->BG_TOO_MANY_GRANULES);
+
+		ASSERT(!keyRange.empty());
 		// TODO: could skip GRV, and keeps consistent with tenant mapping? Appears to be other issues though
 		// tr.setVersion(minVersion);
 		// FIXME: could use streaming range read for large mappings?

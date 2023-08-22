@@ -72,13 +72,21 @@ ACTOR Future<std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>>>
     KeyRange range,
     Version beginVersion,
     Version readVersion,
-    Optional<Reference<Tenant>> tenant) {
+    Optional<Reference<Tenant>> tenant,
+    LockAware lockAware,
+    bool untrustedReadVersion) {
 	state RangeResult out;
 	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks;
 	state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
 
 	loop {
 		try {
+			if (lockAware) {
+				tr.setOption(FDBTransactionOptions::READ_LOCK_AWARE);
+			}
+			if (untrustedReadVersion) {
+				tr.setOption(FDBTransactionOptions::HYBRID_UNTRUSTED_READ_VERSION);
+			}
 			Standalone<VectorRef<BlobGranuleChunkRef>> chunks_ =
 			    wait(tr.readBlobGranules(range, beginVersion, readVersion));
 			chunks = chunks_;
@@ -165,28 +173,6 @@ bool compareFDBAndBlob(RangeResult fdb,
 		}
 	}
 	return correct;
-}
-
-void printGranuleChunks(const Standalone<VectorRef<BlobGranuleChunkRef>>& chunks) {
-	printf("Chunks:\n");
-	for (auto& chunk : chunks) {
-		printf("[%s - %s)\n", chunk.keyRange.begin.printable().c_str(), chunk.keyRange.end.printable().c_str());
-
-		printf("  SnapshotFile:\n    %s\n",
-		       chunk.snapshotFile.present() ? chunk.snapshotFile.get().toString().c_str() : "<none>");
-		printf("  DeltaFiles:\n");
-		for (auto& df : chunk.deltaFiles) {
-			printf("    %s\n", df.toString().c_str());
-		}
-		printf("  Deltas: (%d)", chunk.newDeltas.size());
-		if (chunk.newDeltas.size() > 0) {
-			fmt::print(" with version [{0} - {1}]",
-			           chunk.newDeltas[0].version,
-			           chunk.newDeltas[chunk.newDeltas.size() - 1].version);
-		}
-		fmt::print("  IncludedVersion: {}\n", chunk.includedVersion);
-	}
-	printf("\n");
 }
 
 ACTOR Future<Void> clearAndAwaitMerge(Database cx, KeyRange range) {

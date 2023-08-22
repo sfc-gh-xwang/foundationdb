@@ -74,6 +74,7 @@ public:
 	void reset() override;
 	void debugTransaction(UID dID) override;
 	void checkDeferredError() const override;
+	bool rywEnabled() const override { return false; }
 
 	void fullReset();
 };

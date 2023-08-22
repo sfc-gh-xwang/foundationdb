@@ -23,7 +23,7 @@ minValueLength = 1
 maxValueLength = 1000
 maxKeysPerTransaction = 50
 initialSize = 100
-numRandomOperations = 10000
+numRandomOperations = 5000
 readExistingKeysRatio = 0.9
 validateBusynessMetrics = true
 

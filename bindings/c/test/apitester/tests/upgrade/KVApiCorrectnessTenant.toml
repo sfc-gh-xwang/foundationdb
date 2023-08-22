@@ -1,5 +1,5 @@
 [[test]]
-title = 'Mixed Workload for Upgrade Tests with a Multi-Threaded Client'
+title = 'Key-Value API Workload for Upgrade Tests with Multiple Tenants'
 multiThreaded = true
 buggify = true
 databasePerTransaction = false
@@ -11,6 +11,8 @@ minClientThreads = 2
 maxClientThreads = 4
 minClients = 2
 maxClients = 2
+minTenants = 1
+maxTenants = 5
 
     [[test.workload]]
     name = 'ApiCorrectness'

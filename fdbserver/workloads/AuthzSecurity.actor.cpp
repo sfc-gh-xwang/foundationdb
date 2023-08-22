@@ -35,7 +35,7 @@
 #include "fdbserver/TesterInterface.actor.h"
 #include "fdbserver/TLogInterface.h"
 #include "fdbserver/workloads/workloads.actor.h"
-
+#include "fdbclient/BulkLoad.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 FDB_BOOLEAN_PARAM(PositiveTestcase);
@@ -115,6 +115,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	    bulkLoadListAll, bulkLoadStatus, bulkLoadFilesToWrite, bulkLoadFilesWritten;
 	std::vector<std::function<Future<Void>(Database cx)>> testFunctions;
 	bool checkBlobGranules, checkBlobManagement, checkBulkLoad;
+	std::unordered_map<Key, BulkLoadID> bulkLoadIDs;
 
 	AuthzSecurityWorkload(WorkloadContext const& wcx)
 	  : TestWorkload(wcx),
@@ -696,11 +697,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                                               TenantInfo tenant,
 	                                                                               Version v) {
 		try {
-			GetBlobGranuleLocationsReply reply =
-			    wait(basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
-			                          &CommitProxyInterface::getBlobGranuleLocations,
-			                          GetBlobGranuleLocationsRequest(
-			                              SpanContext(), tenant, ""_sr, "\xff"_sr, 100, false, false, v, Arena())));
+			GetBlobGranuleLocationsReply reply = wait(
+			    basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
+			                     &CommitProxyInterface::getBlobGranuleLocations,
+			                     GetBlobGranuleLocationsRequest(
+			                         SpanContext(), tenant, ""_sr, "\xff"_sr, 100, false, false, v, false, Arena())));
 			return reply;
 		} catch (Error& e) {
 			if (e.code() == error_code_operation_cancelled) {
@@ -1167,9 +1168,13 @@ struct AuthzSecurityWorkload : TestWorkload {
 			}
 		}
 
+		state BulkLoadID id = newBulkLoadID();
+		self->bulkLoadIDs[keyRange.begin] = id;
+
 		BulkLoadStartRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.arena.dependsOn(id.arena());
+		req.id = id;
 		req.keyRange = keyRange;
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		req.startReadVersion = readVersion;
@@ -1193,9 +1198,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                            WipedString token,
 	                                                            BulkLoaderInterface interf,
 	                                                            BulkLoadStatus::State desired) {
+		BulkLoadID id = self->bulkLoadIDs[keyRange.begin];
 		BulkLoadStateChangeRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.arena.dependsOn(id.arena());
+		req.id = id;
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		req.desired = desired;
 		ErrorOr<Void> rep = wait(interf.stateChangeRequest.tryGetReply(req));
@@ -1288,9 +1295,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                             KeyRange keyRange,
 	                                                             WipedString token,
 	                                                             BulkLoaderInterface interf) {
+		BulkLoadID id = self->bulkLoadIDs[keyRange.begin];
 		BulkLoadFilesToWriteRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.arena.dependsOn(id.arena());
+		req.id = id;
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		req.count = 1;
 		ErrorOr<BulkLoadFilesToWriteReply> rep = wait(interf.filesToWriteRequest.tryGetReply(req));
@@ -1318,9 +1327,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                             KeyRange keyRange,
 	                                                             WipedString token,
 	                                                             BulkLoaderInterface interf) {
+		BulkLoadID id = self->bulkLoadIDs[keyRange.begin];
 		BulkLoadFilesWrittenRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.arena.dependsOn(id.arena());
+		req.id = id;
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 
 		BulkLoadWrittenFileRef writtenFile;
@@ -1360,9 +1371,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                             KeyRange keyRange,
 	                                                             WipedString token,
 	                                                             BulkLoaderInterface interf) {
+		BulkLoadID id = self->bulkLoadIDs[keyRange.begin];
 		BulkLoadWaitCompleteRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.arena.dependsOn(id.arena());
+		req.id = id;
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		ErrorOr<Void> rep = wait(interf.waitCompleteRequest.tryGetReply(req));
 		if (rep.isError()) {
@@ -1450,9 +1463,11 @@ struct AuthzSecurityWorkload : TestWorkload {
 	                                                       KeyRange keyRange,
 	                                                       WipedString token,
 	                                                       BulkLoaderInterface interf) {
+		BulkLoadID id = self->bulkLoadIDs[keyRange.begin];
 		BulkLoadStatusRequest req;
 		req.arena.dependsOn(keyRange.arena());
-		req.id = keyRange.begin; // fake bulk load id but it works fine
+		req.arena.dependsOn(id.arena());
+		req.id = id;
 		req.tenantInfo = TenantInfo(tenant->id(), token);
 		ErrorOr<BulkLoadStatusReply> rep = wait(interf.statusRequest.tryGetReply(req));
 		if (rep.isError()) {

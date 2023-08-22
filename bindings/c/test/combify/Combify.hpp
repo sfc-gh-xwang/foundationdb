@@ -17,6 +17,7 @@
 #include <cctype>
 #include <concepts>
 #include <list>
+#include <map>
 #include <string>
 #include <string_view>
 #include <optional>
@@ -108,6 +109,8 @@ class TestEnv : public TestOptions {
 	fdb::Database adminDb;
 	fdb::Database adminDatabase();
 
+	// Incremented at the end of each runTest(). Also used to identify client trace file [combify_client_x].
+	unsigned runCount;
 	const TestCase* currentTestCase;
 	void populateTenants();
 	void cleanupDatabase();
@@ -155,12 +158,19 @@ public:
 	// Will throw if authorization is not enabled in test options or tenantName is not among the elements of
 	// tenantNames().
 	string tokenForTenant(fdb::BytesRef tenantName) const;
+
+	// Returns a DB transaction for trustedClient and a tenant transaction for untrusted client.
+	// If there is no tenant, return a DB transaction. For simplicity, when tenant transaction
+	// is used, the first tenant is always used, allowing the caller to use this function to read
+	// its own writes. For advanced use case when testing multi-tenant case, consider using tenant
+	// ByIndex and newTenantTransaction methods.
+	fdb::Transaction newNormalOrTenantTransaction() const;
 };
 
 template <class PredicateFunc>
 concept Predicate = requires(PredicateFunc&& fn) {
-	                    { fn(std::declval<const TestOptions&>()) } -> std::same_as<bool>;
-                    };
+	{ fn(std::declval<const TestOptions&>()) } -> std::same_as<bool>;
+};
 
 // Returns whether server/client options under which the testcase is expected to run
 using AffinityPredicateType = std::function<bool(const TestOptions&)>;
@@ -222,12 +232,14 @@ constexpr auto withoutTenants = [](const TestOptions& o) -> bool {
 
 constexpr auto asTrustedClient = [](const TestOptions& o) -> bool { return *o.trustedClient; };
 
-constexpr auto asUntrustedClient = [](const TestOptions& o) -> bool { return !*o.trustedClient; };
+constexpr auto asUntrustedClient = [](const TestOptions& o) -> bool {
+	return !*o.trustedClient && withTls(o) && withAuthZ(o);
+};
 
 template <class TestFn>
 concept TestFunction = requires(TestFn&& testFn) {
-	                       { testFn(std::declval<const TestEnv&>()) } -> std::same_as<void>;
-                       };
+	{ testFn(std::declval<const TestEnv&>()) } -> std::same_as<void>;
+};
 
 using TestFunctionType = std::function<void(const TestEnv&)>;
 

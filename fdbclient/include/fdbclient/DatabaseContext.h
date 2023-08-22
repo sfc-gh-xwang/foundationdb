@@ -652,6 +652,10 @@ public:
 	Counter feedNonRetriableErrors;
 	Counter feedPops;
 	Counter feedPopsFallback;
+	Counter feedDiskBytesRead;
+	Counter feedDiskBytesWritten;
+	ActiveCounter<int> activeFeedStreams;
+	ActiveCounter<int> activeFeedDiskStreams;
 
 	DDSketch<double> latencies, readLatencies, readRangeLatencies, commitLatencies, GRVLatencies, keyLocationLatencies,
 	    mutationsPerCommit, bytesPerCommit;
@@ -782,6 +786,8 @@ public:
 
 		return clientInfo->get().tenantMode;
 	}
+
+	Future<TenantMode> getOrWaitForTenantMode();
 
 	void addCost(ThrottlingId const&, uint64_t bytes);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);

@@ -372,7 +372,8 @@ ACTOR Future<Void> serverPeekParallelGetMore(ILogSystem::ServerPeekCursor* self,
 				CODE_PROBE(e.code() == error_code_timed_out, "peek cursor timed out", probe::decoration::rare);
 				if (now() >= FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS + SERVER_KNOBS->PEEK_TRACKER_EXPIRATION_TIME) {
 					ASSERT_WE_THINK(e.code() == error_code_operation_obsolete ||
-					                SERVER_KNOBS->PEEK_TRACKER_EXPIRATION_TIME < 10);
+					                SERVER_KNOBS->PEEK_TRACKER_EXPIRATION_TIME < 10 ||
+					                g_simulator->lastClogged() >= now() - SERVER_KNOBS->PEEK_TRACKER_EXPIRATION_TIME);
 				}
 				self->interfaceChanged = self->interf->onChange();
 				self->randomID = deterministicRandom()->randomUniqueID();

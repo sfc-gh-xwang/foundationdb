@@ -194,7 +194,7 @@ public:
 		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
 
 		// To avoid timeouts:
-#ifdef ADDRESS_SANITIZER
+#if defined(USE_SANITIZER) || defined(VALGRIND)
 		testDuration = 60.0;
 		warmupTime = 10.0;
 #endif
@@ -226,10 +226,10 @@ public:
 	}
 
 	Future<bool> check(Database const&) override {
-		// When running with ASAN, we purposefully shorten the duration to avoid timeouts.
+		// When running with sanitizers, we purposefully shorten the duration to avoid timeouts.
 		// Therefore, we cannot make strong assumptions about the achieved throughput, so
 		// we skip the check phase
-#ifdef ADDRESS_SANITIZER
+#if defined(USE_SANITIZER) || defined(VALGRIND)
 		return true;
 #else
 		if (clientId != 0) {
@@ -261,7 +261,7 @@ public:
 			passed = passed && tagPassed;
 		}
 		return passed;
-#endif // #ifdef ADDRESS_SANITIZER
+#endif // #if defined(USE_SANITIZER) || defined(VALGRIND)
 	}
 
 	void getMetrics(std::vector<PerfMetric>& m) override {

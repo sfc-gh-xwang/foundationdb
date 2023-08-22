@@ -103,13 +103,15 @@ struct ThrottlingWorkload : KVWorkload {
 			wait(TokenBucket::startTransaction(&self->tokenBucket));
 			tr.reset();
 			try {
-				state int i;
-				for (i = 0; i < self->readsPerTransaction; ++i) {
-					state ValueReadResult value = wait(tr.get(self->getRandomKey()));
+				state int opNum;
+				state std::vector<Future<ValueReadResult>> futures;
+				for (opNum = 0; opNum < self->readsPerTransaction; ++opNum) {
+					futures.push_back(tr.get(self->getRandomKey()));
 				}
-				for (i = 0; i < self->writesPerTransaction; ++i) {
+				for (opNum = 0; opNum < self->writesPerTransaction; ++opNum) {
 					tr.set(self->getRandomKey(), getRandomValue());
 				}
+				wait(waitForAll(futures));
 				wait(tr.commit());
 				if (deterministicRandom()->randomInt(0, 1000) == 0)
 					TraceEvent("TransactionCommittedx1000").log();

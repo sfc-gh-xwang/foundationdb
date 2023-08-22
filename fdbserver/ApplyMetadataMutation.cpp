@@ -35,6 +35,7 @@
 #include "flow/CodeProbe.h"
 #include "flow/Error.h"
 #include "flow/Trace.h"
+#include "fdbclient/RangeLock.h"
 
 Reference<StorageInfo> getStorageInfo(UID id,
                                       std::map<UID, Reference<StorageInfo>>* storageCache,
@@ -110,6 +111,7 @@ public:
 	    tenantNameIndex(&proxyCommitData_.tenantNameIndex),
 	    lockedTenants(&proxyCommitData_.lockedTenants),
 	    encryptMode(encryptMode),
+	    rangeLocks(&proxyCommitData_.rangeLocks),
 	    initialCommit(initialCommit_),
 	    provisionalCommitProxy(provisionalCommitProxy_) {
 		if (encryptMode.isEncryptionEnabled()) {
@@ -191,6 +193,8 @@ private:
 	std::unordered_map<TenantName, TenantLookupInfo>* tenantNameIndex = nullptr;
 	std::set<int64_t>* lockedTenants = nullptr;
 	EncryptionAtRestMode encryptMode;
+
+	KeyRangeMap<RangeLockInfo>* rangeLocks = nullptr;
 
 	// true if the mutations were already written to the txnStateStore as part of recovery
 	bool initialCommit = false;
@@ -684,6 +688,15 @@ private:
 		}
 	}
 
+	void checkSetEmergencyBackupKeys(MutationRef m) {
+		if (!m.param1.startsWith(emergencyBackupPrefix)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+		}
+	}
+
 	void checkSetOtherKeys(MutationRef m) {
 		if (initialCommit)
 			return;
@@ -696,6 +709,25 @@ private:
 
 			txnStateStore->set(KeyValueRef(m.param1, m.param2));
 		}
+	}
+
+	void checkSetRangeLockKeys(MutationRef m) {
+		if (!m.param1.startsWith(RangeLockAPI::rangeLockKeys.begin))
+			return;
+
+		if (!initialCommit)
+			txnStateStore->set(KeyValueRef(m.param1, m.param2));
+
+		if (rangeLocks == nullptr)
+			return;
+
+		Key mapKey = RangeLockAPI::unpackRangeLockMapKey(m.param1);
+		auto info = ObjectReader::fromStringRef<RangeLockInfo>(m.param2, IncludeVersion());
+		rangeLocks->rawInsert(mapKey, info);
+		TraceEvent(SevDebug, "SendingPrivatized_RangeLock", dbgid)
+		    .detail("Version", version)
+		    .detail("Key", mapKey)
+		    .detail("RangeLockValue", info.toString());
 	}
 
 	void checkSetMinRequiredCommitVersionKey(MutationRef m) {
@@ -881,6 +913,15 @@ private:
 		}
 		if (!initialCommit) {
 			txnStateStore->clear(range & backupProgressKeys);
+		}
+	}
+
+	void checkClearEmergencyBackupKeys(KeyRangeRef range) {
+		if (!emergencyBackupKeyRange.intersects(range)) {
+			return;
+		}
+		if (!initialCommit) {
+			txnStateStore->clear(range & emergencyBackupKeyRange);
 		}
 	}
 
@@ -1329,6 +1370,26 @@ private:
 		}
 	}
 
+	void checkClearRangeLockKeys(KeyRangeRef range) {
+		if (!RangeLockAPI::rangeLockKeys.intersects(range)) {
+			return;
+		}
+
+		KeyRangeRef rangeToClear = range & RangeLockAPI::rangeLockKeys;
+		if (!initialCommit)
+			txnStateStore->clear(rangeToClear);
+
+		TraceEvent e(SevDebug, "SendingPrivatized_ClearRangeLock", dbgid);
+
+		if (rangeLocks) {
+			Key begin = RangeLockAPI::unpackRangeLockMapKey(range.begin);
+			Key end = RangeLockAPI::unpackRangeLockMapKey(range.end);
+			rangeLocks->rawErase(KeyRange(KeyRangeRef(begin, end)));
+			e.detail("UnlockBegin", begin).detail("UnlockEnd", end).detail("Boundaries", rangeLocks->size());
+		}
+		e.detail("M", range);
+	}
+
 	// If we accumulated private mutations for cached key-ranges, we also need to
 	// tag them with the relevant storage servers. This is done to make the storage
 	// servers aware of the cached key-ranges
@@ -1428,8 +1489,10 @@ public:
 				checkSetVersionEpochKey(m);
 				checkSetTenantMapPrefix(m);
 				checkSetMetaclusterRegistration(m);
+				checkSetRangeLockKeys(m);
 				checkSetBackupStartedKey(m);
 				checkSetBackupProgressKeys(m);
+				checkSetEmergencyBackupKeys(m);
 				checkSetOtherKeys(m);
 			} else if (m.type == MutationRef::ClearRange && isSystemKey(m.param2)) {
 				KeyRangeRef range(m.param1, m.param2);
@@ -1448,7 +1511,9 @@ public:
 				checkClearVersionEpochKeys(m, range);
 				checkClearTenantMapPrefix(range);
 				checkClearMetaclusterRegistration(range);
+				checkClearRangeLockKeys(range);
 				checkClearBackupProgressKeys(range);
+				checkClearEmergencyBackupKeys(range);
 				checkClearMiscRangeKeys(range);
 			}
 		}

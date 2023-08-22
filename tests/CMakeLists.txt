@@ -254,6 +254,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES rare/BlobGranuleRanges.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleRangesBypassLock.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleMergeBoundaries.toml)
+  add_fdb_test(TEST_FILES rare/BlobGranuleBigTuples.toml)
   add_fdb_test(TEST_FILES rare/BulkLoadOperations.toml)
   add_fdb_test(TEST_FILES rare/BulkLoadOperationsTenants.toml)
   add_fdb_test(TEST_FILES rare/CheckRelocation.toml)
@@ -398,26 +399,20 @@ if(WITH_PYTHON)
     TEST_FILES restarting/from_71.3.0/StorefrontTestRestart-1.txt
     restarting/from_71.3.0/StorefrontTestRestart-2.txt)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-1.toml
-    restarting/to_71.3.0/ConfigureStorageMigrationTestRestart-2.toml)
+    TEST_FILES restarting/to_8.0.0/ConfigureStorageMigrationTestRestart-1.toml
+    restarting/to_8.0.0/ConfigureStorageMigrationTestRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.1/ConfigureStorageMigrationTestRestart-1.toml
-	restarting/to_71.3.1/ConfigureStorageMigrationTestRestart-2.toml)
+    TEST_FILES restarting/to_8.0.0/CycleTestRestart-1.toml
+    restarting/to_8.0.0/CycleTestRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.0/CycleTestRestart-1.toml
-    restarting/to_71.3.0/CycleTestRestart-2.toml)
+    TEST_FILES restarting/to_8.0.0/BlobGranuleRestartCycle-1.toml
+    restarting/to_8.0.0/BlobGranuleRestartCycle-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.1/CycleTestRestart-1.toml
-	restarting/to_71.3.1/CycleTestRestart-2.toml)
+    TEST_FILES restarting/to_8.0.0/BlobGranuleRestartCorrectness-1.toml
+    restarting/to_8.0.0/BlobGranuleRestartCorrectness-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/to_71.3.0/BlobGranuleRestartCycle-1.toml
-    restarting/to_71.3.0/BlobGranuleRestartCycle-2.toml)
-  add_fdb_test(
-    TEST_FILES restarting/to_71.3.1/BlobGranuleRestartCorrectness-1.toml
-    restarting/to_71.3.1/BlobGranuleRestartCorrectness-2.toml)
-  add_fdb_test(
-    TEST_FILES restarting/to_71.3.0/BlobGranuleRestartLarge-1.toml
-    restarting/to_71.3.0/BlobGranuleRestartLarge-2.toml)
+    TEST_FILES restarting/to_8.0.0/BlobGranuleRestartLarge-1.toml
+    restarting/to_8.0.0/BlobGranuleRestartLarge-2.toml)
 
   add_fdb_test(TEST_FILES slow/ApiCorrectness.toml)
   add_fdb_test(TEST_FILES slow/ApiCorrectnessAtomicRestore.toml)
@@ -446,6 +441,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES slow/LowLatencyWithFailures.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterManagement.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterManagementConcurrency.toml)
+  add_fdb_test(TEST_FILES slow/MetaclusterMove.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterRecovery.toml)
   add_fdb_test(TEST_FILES slow/MoveKeysClean.toml)
   add_fdb_test(TEST_FILES slow/MoveKeysSideband.toml)
@@ -478,6 +474,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES slow/ParallelRestoreOldBackupCorrectnessCycle.toml IGNORE)
   add_fdb_test(TEST_FILES slow/ParallelRestoreOldBackupCorrectnessMultiCycles.toml IGNORE)
   add_fdb_test(TEST_FILES slow/ParallelRestoreOldBackupWriteDuringReadAtomicRestore.toml IGNORE)
+  add_fdb_test(TEST_FILES slow/RangeLockAPITestOrdered.toml)
   add_fdb_test(TEST_FILES negative/ResolverIgnoreTooOld.toml)
   add_fdb_test(TEST_FILES negative/ResolverIgnoreReads.toml)
   add_fdb_test(TEST_FILES negative/ResolverIgnoreWrites.toml)
@@ -543,10 +540,11 @@ if(WITH_PYTHON)
 
     set(authz_venv_dir ${CMAKE_CURRENT_BINARY_DIR}/authorization_test_venv)
     set(authz_venv_activate ". ${authz_venv_dir}/bin/activate")
-    set(authz_venv_stamp_file ${authz_venv_dir}/venv.ready)
+    set(authz_venv_stamp_file ${authz_venv_dir}/venv-${CURRENT_GIT_VERSION}.ready)
     set(authz_venv_cmd "")
     string(APPEND authz_venv_cmd "[[ ! -f ${authz_venv_stamp_file} ]] && ")
-    string(APPEND authz_venv_cmd "${Python3_EXECUTABLE} -m venv ${authz_venv_dir} ")
+    string(APPEND authz_venv_cmd "rm -rf ${authz_venv_dir} ")
+    string(APPEND authz_venv_cmd "&& ${Python3_EXECUTABLE} -m venv ${authz_venv_dir} ")
     string(APPEND authz_venv_cmd "&& ${authz_venv_activate} ")
     string(APPEND authz_venv_cmd "&& pip install --upgrade pip ")
     string(APPEND authz_venv_cmd "&& pip install -r ${CMAKE_SOURCE_DIR}/tests/authorization/requirements.txt ")
@@ -557,7 +555,11 @@ if(WITH_PYTHON)
       NAME authorization_venv_setup
       COMMAND bash -c ${authz_venv_cmd}
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(authorization_venv_setup PROPERTIES FIXTURES_SETUP authz_virtual_env TIMEOUT 60)
+    set_tests_properties(authorization_venv_setup
+      PROPERTIES
+        FIXTURES_SETUP authz_virtual_env
+        RESOURCE_LOCK authz_venv_setup_lock
+        TIMEOUT 60)
 
     set(authz_script_dir ${CMAKE_SOURCE_DIR}/tests/authorization)
     set(enable_grv_cache 0 1)

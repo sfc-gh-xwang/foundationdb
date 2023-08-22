@@ -42,14 +42,17 @@
 struct DDRangeConfig {
 	constexpr static FileIdentifier file_identifier = 9193856;
 
-	DDRangeConfig(Optional<int> replicationFactor = {}, Optional<int> teamID = {})
+	DDRangeConfig(Optional<int> replicationFactor = {}, Optional<int> teamID = {}, Optional<UID> bulkLoadID = {})
 	  : replicationFactor(replicationFactor),
-	    teamID(teamID) {}
+	    teamID(teamID),
+	    bulkLoadID(bulkLoadID) {}
 
 	Optional<int> replicationFactor;
 	// Ranges with different team IDs should be assigned to different storage teams
 	// Shards with the same team ID can be assigned to the same storage team but nothing enforces/prefers this.
 	Optional<int> teamID;
+
+	Optional<UID> bulkLoadID;
 
 	DDRangeConfig apply(DDRangeConfig const& update) const {
 		DDRangeConfig result = *this;
@@ -59,6 +62,9 @@ struct DDRangeConfig {
 		if (update.teamID.present()) {
 			result.teamID = update.teamID;
 		}
+		if (update.bulkLoadID.present()) {
+			result.bulkLoadID = update.bulkLoadID;
+		}
 
 		return result;
 	}
@@ -66,11 +72,13 @@ struct DDRangeConfig {
 	bool operator==(DDRangeConfig const& rhs) const = default;
 
 	// String description of the range config
-	std::string toString() const { return fmt::format("replication={} teamID={}", replicationFactor, teamID); }
+	std::string toString() const {
+		return fmt::format("replication={} teamID={} bulkLoadID={}", replicationFactor, teamID, bulkLoadID);
+	}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, replicationFactor, teamID);
+		serializer(ar, replicationFactor, teamID, bulkLoadID);
 	}
 
 	json_spirit::mObject toJSON() const {
@@ -80,6 +88,9 @@ struct DDRangeConfig {
 		}
 		if (replicationFactor.present()) {
 			doc["replicationFactor"] = *replicationFactor;
+		}
+		if (bulkLoadID.present()) {
+			doc["bulkLoadID"] = bulkLoadID.get().toString();
 		}
 		return doc;
 	}

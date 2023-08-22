@@ -1416,6 +1416,7 @@ ACTOR static Future<Void> abortFiveZeroBackup(FileBackupAgent* backupAgent,
 	state Subspace statusSpace = backupAgent->subspace.get(BackupAgentBase::keyStates).get(uid.toString());
 	state Subspace globalConfig = backupAgent->subspace.get(BackupAgentBase::keyConfig).get(uid.toString());
 	state Subspace newConfigSpace = uidPrefixKey("uid->config/"_sr.withPrefix(fileBackupPrefixRange.begin), uid);
+	state Subspace emergencyConfigSpace = uidPrefixKey("uid->config/"_sr.withPrefix(emergencyBackupPrefix), uid);
 
 	ValueReadResult statusStr = wait(tr->get(statusSpace.pack(FileBackupAgent::keyStateStatus)));
 	state EBackupState status =
@@ -1436,6 +1437,7 @@ ACTOR static Future<Void> abortFiveZeroBackup(FileBackupAgent* backupAgent,
 
 	// Clear the new-style config space
 	tr->clear(newConfigSpace.range());
+	tr->clear(emergencyConfigSpace.range());
 
 	Key statusKey = StringRef(statusSpace.pack(FileBackupAgent::keyStateStatus));
 
@@ -5368,8 +5370,9 @@ public:
 			prevConfig.clear(tr);
 		}
 
-		state BackupConfig config(deterministicRandom()->randomUniqueID());
-		state UID uid = config.getUid();
+		state UID uid = deterministicRandom()->randomUniqueID();
+		state BackupConfig config(uid);
+		state EmergencyBackupConfig emergencyConfig(uid);
 
 		// This check will ensure that current backupUid is later than the last backup Uid
 		state Standalone<StringRef> nowStr = BackupAgentBase::getCurrentTime();
@@ -5433,6 +5436,7 @@ public:
 		}
 
 		config.clear(tr);
+		emergencyConfig.clear(tr);
 
 		state Key destUidValue(BinaryWriter::toValue(uid, Unversioned()));
 		if (normalizedRanges.size() == 1 || isDefaultBackup(normalizedRanges)) {
@@ -5473,8 +5477,10 @@ public:
 		config.tag().set(tr, tagName);
 		config.stateEnum().set(tr, EBackupState::STATE_SUBMITTED);
 		config.backupContainer().set(tr, bc);
+		emergencyConfig.backupContainer().set(tr, bc);
 		config.stopWhenDone().set(tr, stopWhenDone);
 		config.backupRanges().set(tr, normalizedRanges);
+		emergencyConfig.backupRanges().set(tr, normalizedRanges);
 		config.initialSnapshotIntervalSeconds().set(tr, initialSnapshotIntervalSeconds);
 		config.snapshotIntervalSeconds().set(tr, snapshotIntervalSeconds);
 		config.partitionedLogEnabled().set(tr, partitionedLog);

@@ -134,7 +134,7 @@ API versioning
 
 Prior to including ``fdb_c.h``, you must define the ``FDB_API_VERSION`` macro. This, together with the :func:`fdb_select_api_version()` function, allows programs written against an older version of the API to compile and run with newer versions of the C library. The current version of the FoundationDB C API is |api-version|. ::
 
-  #define FDB_API_VERSION 800000
+  #define FDB_API_VERSION 900000
   #include <foundationdb/fdb_c.h>
 
 .. function:: fdb_error_t fdb_select_api_version(int version)
@@ -920,6 +920,12 @@ Applications must provide error handling and an appropriate retry loop around th
 .. function:: FDBFuture* fdb_transaction_get_total_cost(FDBTransaction* transaction)
 
   |future-return0| the cost of the transaction so far (in bytes) in the returned future, as computed by the tag throttler, and used for tag throttling if throughput quotas are specified. |future-return1| call :func:`fdb_future_get_int64()` to extract the cost, |future-return2|
+
+.. function:: void fdb_transaction_set_expected_cost(FDBTransaction* transaction, uint64_t value)
+
+   Sets the expected cost of a transaction in bytes to help the tag throttler throttle more accurately.
+
+   This value will be ignored unless both ``CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS`` and ``CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS`` are enabled.
 
 .. function:: FDBFuture* fdb_transaction_get_approximate_size(FDBTransaction* transaction)
 

@@ -308,6 +308,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( DETERMINISTIC_BLOB_METADATA,            false ); if( randomize && BUGGIFY_WITH_PROB(0.01) ) DETERMINISTIC_BLOB_METADATA = true;
 	init( ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE,  true  );
 	init( HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,   false );
+	init( HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK,    false );
 
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_TIMES,        3 );
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_DELAY,      2.0 );
@@ -339,8 +340,12 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( ALLOW_BULK_LOADS,                         false );
 	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );
 	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); if ( randomize && BUGGIFY ) BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE = deterministicRandom()->randomInt(1, 10000000);
+	init( BULK_LOAD_STORAGE_RESERVATION_ENABLED, 	false ); if ( randomize && BUGGIFY ) BULK_LOAD_STORAGE_RESERVATION_ENABLED = deterministicRandom()->coinflip();
 
 	init( ENABLE_STORAGE_ENGINE_PARAM_INTERFACE,    false );
+
+	// Range Lock
+	init( RANGE_LOCK_LIMIT, 						10000 ); if( randomize && BUGGIFY ) RANGE_LOCK_LIMIT = 20;
 
 	// clang-format on
 }
