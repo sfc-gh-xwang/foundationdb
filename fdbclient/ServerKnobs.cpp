@@ -1156,8 +1156,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM,             2000 ); if( randomize && BUGGIFY ) BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM = deterministicRandom()->randomInt(10, 100);
 	init( BLOB_WORKER_RDC_PARALLELISM,                             2 ); if( randomize && BUGGIFY ) BLOB_WORKER_RDC_PARALLELISM = deterministicRandom()->randomInt(1, 6);
 	init( BLOB_WORKER_RDC_MIN_WAVE_DELAY,                        1.0 ); if( randomize && BUGGIFY ) BLOB_WORKER_RDC_MIN_WAVE_DELAY = deterministicRandom()->randomInt(0, 1000) / 1000.0; 
-	init( BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES,        1024*1024*1024 ); if( randomize && BUGGIFY ) BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES = deterministicRandom()->random01() * 10 * BG_SNAPSHOT_FILE_TARGET_BYTES;
-	init( BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES,       1024*1024*1024 ); if( randomize && BUGGIFY ) BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES = (5 + 45*deterministicRandom()->random01()) * BG_DELTA_FILE_TARGET_BYTES;
+	init( BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES,        1024*1024*1024 );
+	init( BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES,       1024*1024*1024 );
 	init( BLOB_WORKER_TIMEOUT,                                  10.0 ); if( randomize && BUGGIFY ) BLOB_WORKER_TIMEOUT = 1.0;
 	// more than MVCC window since behind delta files can block for that window for committed check
 	init( BLOB_WORKER_REQUEST_TIMEOUT,                          10.0 ); if( randomize && BUGGIFY ) BLOB_WORKER_REQUEST_TIMEOUT = 1.0;
@@ -1177,6 +1177,12 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_MAX,                   5.0 );
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_EXPONENT,              1.5 );
 	init( BLOB_MANAGER_CONCURRENT_MERGE_CHECKS,                   64 ); if( randomize && BUGGIFY ) BLOB_MANAGER_CONCURRENT_MERGE_CHECKS = 1 << deterministicRandom()->randomInt(0, 7);
+	init( FORCE_PURGE_WAIT_BLOBBIFY_TIMEOUT, isSimulated ? 20.0 : 600.0 ); if( randomize && BUGGIFY ) FORCE_PURGE_WAIT_BLOBBIFY_TIMEOUT = 1 + 30 * deterministicRandom()->random01();
+	init( BLOB_MANAGER_PURGE_GRANULE_PARALLELISM,               1000 ); if( randomize && BUGGIFY ) BLOB_MANAGER_PURGE_GRANULE_PARALLELISM = deterministicRandom()->randomSkewedUInt32(1, 100);
+	init( BLOB_MANAGER_ENABLE_MEDIAN_ASSIGNMENT_LIMITING,       true ); if( randomize && BUGGIFY ) BLOB_MANAGER_ENABLE_MEDIAN_ASSIGNMENT_LIMITING = false;
+	init( BLOB_MANAGER_MEDIAN_ASSIGNMENT_ALLOWANCE,              2.0 ); if( randomize && BUGGIFY ) BLOB_MANAGER_MEDIAN_ASSIGNMENT_ALLOWANCE = (1.0 + deterministicRandom()->random01() * 2);
+	init( BLOB_MANAGER_MEDIAN_ASSIGNMENT_MIN_SAMPLES_PER_WORKER,   3 );
+	init( BLOB_MANAGER_MEDIAN_ASSIGNMENT_MAX_SAMPLES_PER_WORKER,  10 );
 	init( BLOB_MANIFEST_BACKUP,                                false );
 	init( BLOB_MANIFEST_BACKUP_INTERVAL,  isSimulated ?  5.0 : 600.0 );
 	init( BLOB_MIGRATOR_CHECK_INTERVAL,     isSimulated ?  1.0 : 5.0 );
@@ -1226,6 +1232,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_CURRENT_CIPHER_REQUEST_VERSION,                  1);
 	init( REST_KMS_MAX_CIPHER_REQUEST_VERSION,                      1);
 	init( REST_SIM_KMS_VAULT_DIR,                                  "");
+	init( REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY,             true ); if ( randomize && BUGGIFY ) { REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY = deterministicRandom()->coinflip(); }
 	init( REST_KMS_STABILITY_CHECK_INTERVAL,                      5.0);
 	init( KMS_LOGGING_INTERVAL,                                   5.0);
 

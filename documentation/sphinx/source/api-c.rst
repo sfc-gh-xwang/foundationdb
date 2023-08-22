@@ -921,6 +921,12 @@ Applications must provide error handling and an appropriate retry loop around th
 
   |future-return0| the cost of the transaction so far (in bytes) in the returned future, as computed by the tag throttler, and used for tag throttling if throughput quotas are specified. |future-return1| call :func:`fdb_future_get_int64()` to extract the cost, |future-return2|
 
+.. function:: void fdb_transaction_set_expected_cost(FDBTransaction* transaction, uint64_t value)
+
+   Sets the expected cost of a transaction in bytes to help the tag throttler throttle more accurately.
+
+   This value will be ignored unless both ``CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS`` and ``CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS`` are enabled.
+
 .. function:: FDBFuture* fdb_transaction_get_approximate_size(FDBTransaction* transaction)
 
   |future-return0| the approximate transaction size so far in the returned future, which is the summation of the estimated size of mutations, read conflict ranges, and write conflict ranges. |future-return1| call :func:`fdb_future_get_int64()` to extract the size, |future-return2|

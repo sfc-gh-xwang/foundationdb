@@ -1609,6 +1609,8 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
                                                   std::vector<int64_t> domainIds) {
 	ASSERT_NE(self->pProxyCommitData->encryptMode, EncryptionAtRestMode::DISABLED);
 
+	//TraceEvent(SevDebug, "ValidateEncryptionKeyExistenceStart");
+
 	try {
 		std::unordered_set<int64_t> lookupDomains;
 		for (const auto domainId : domainIds) {
@@ -1635,6 +1637,8 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
 			throw;
 		}
 	}
+
+	//TraceEvent(SevDebug, "ValidateEncryptionKeyExistenceStop");
 
 	return Void();
 }
@@ -1839,6 +1843,7 @@ Future<Void> validateTransaction(CommitBatchContext* self, const int trIdx) {
 ACTOR Future<Void> applyMetadataToCommittedTransactions(CommitBatchContext* self) {
 	state ProxyCommitData* const pProxyCommitData = self->pProxyCommitData;
 	state int trIdx;
+
 	for (trIdx = 0; trIdx < self->trs.size() && !self->forceRecovery; trIdx++) {
 		wait(validateTransaction(self, trIdx));
 

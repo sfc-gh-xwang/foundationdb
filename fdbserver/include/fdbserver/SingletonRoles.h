@@ -58,7 +58,7 @@ struct RatekeeperSingleton : Singleton<RatekeeperInterface> {
 	}
 	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
-			return brokenPromiseToNever(interface.get().haltRatekeeper.getReply(HaltRatekeeperRequest(cc.id)));
+			return brokenPromiseToReady(interface.get().haltRatekeeper.getReply(HaltRatekeeperRequest(cc.id)));
 		}
 
 		return Void();
@@ -84,7 +84,7 @@ struct DataDistributorSingleton : Singleton<DataDistributorInterface> {
 	}
 	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
-			return brokenPromiseToNever(
+			return brokenPromiseToReady(
 			    interface.get().haltDataDistributor.getReply(HaltDataDistributorRequest(cc.id)));
 		}
 
@@ -111,7 +111,7 @@ struct ConsistencyScanSingleton : Singleton<ConsistencyScanInterface> {
 	}
 	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
-			return brokenPromiseToNever(
+			return brokenPromiseToReady(
 			    interface.get().haltConsistencyScan.getReply(HaltConsistencyScanRequest(cc.id)));
 		}
 
@@ -138,7 +138,7 @@ struct BlobManagerSingleton : Singleton<BlobManagerInterface> {
 	}
 	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
-			return brokenPromiseToNever(interface.get().haltBlobManager.getReply(HaltBlobManagerRequest(cc.id)));
+			return brokenPromiseToReady(interface.get().haltBlobManager.getReply(HaltBlobManagerRequest(cc.id)));
 		}
 
 		return Void();
@@ -150,7 +150,7 @@ struct BlobManagerSingleton : Singleton<BlobManagerInterface> {
 
 	Future<Void> haltBlobGranules(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
-			return brokenPromiseToNever(interface.get().haltBlobGranules.getReply(HaltBlobGranulesRequest(cc.id)));
+			return brokenPromiseToReady(interface.get().haltBlobGranules.getReply(HaltBlobGranulesRequest(cc.id)));
 		}
 
 		return Void();
@@ -173,7 +173,7 @@ struct BlobMigratorSingleton : Singleton<BlobMigratorInterface> {
 	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
 			TraceEvent("CCMG_Halt", cc.id).detail("Id", interface.get().id());
-			return brokenPromiseToNever(interface.get().haltBlobMigrator.getReply(HaltBlobMigratorRequest(cc.id)));
+			return brokenPromiseToReady(interface.get().haltBlobMigrator.getReply(HaltBlobMigratorRequest(cc.id)));
 		}
 
 		return Void();
@@ -199,7 +199,7 @@ struct EncryptKeyProxySingleton : Singleton<EncryptKeyProxyInterface> {
 	}
 	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present()) {
-			return brokenPromiseToNever(
+			return brokenPromiseToReady(
 			    interface.get().haltEncryptKeyProxy.getReply(HaltEncryptKeyProxyRequest(cc.id)));
 		}
 

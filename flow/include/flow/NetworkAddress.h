@@ -35,7 +35,22 @@ struct NetworkAddress {
 	uint16_t flags;
 	bool fromHostname;
 
-	enum { FLAG_PUBLIC = 0, FLAG_PRIVATE = 1, FLAG_TLS = 2 };
+	enum {
+		FLAG_PUBLIC = 0,
+		FLAG_PRIVATE = 1 << 0,
+		FLAG_TLS = 1 << 1,
+
+		// EXPERIMENTAL. We can't represent arbitrary unix domain sockets
+		// because we don't want to add a variable length string to the
+		// NetworkAddress struct. Instead, we add this flag, and only accept
+		//
+		//   * public addresses of the form /tmp/fdb.####.socket, where
+		//     #### is encoded in port.
+		//
+		//   * private addresses for which we don't even attempt to
+		//     encode the system-chosen socket name.
+		FLAG_UNIX = 1 << 2,
+	};
 
 	NetworkAddress()
 	  : ip(IPAddress(0)),
@@ -63,6 +78,20 @@ struct NetworkAddress {
 	NetworkAddress(const IPAddress& ip, uint16_t port)
 	  : NetworkAddress(ip, port, false, false, NetworkAddressFromHostname::False) {}
 
+private:
+	NetworkAddress(const IPAddress& address, uint16_t port, uint16_t flags, NetworkAddressFromHostname fromHostname)
+	  : ip(address),
+	    port(port),
+	    flags(flags),
+	    fromHostname(fromHostname) {}
+
+public:
+	// EXPERIMENTAL: Unix domain sockets are represented by a path name.
+	static NetworkAddress Unix(std::string pathname, bool isPublic);
+
+	// EXPERIMENTAL: only applies to public Unix network addresses.
+	std::string unixPathname() const;
+
 	bool operator==(NetworkAddress const& r) const { return ip == r.ip && port == r.port && flags == r.flags; }
 	bool operator!=(NetworkAddress const& r) const { return !(*this == r); }
 	bool operator<(NetworkAddress const& r) const {
@@ -80,6 +109,7 @@ struct NetworkAddress {
 	bool isPublic() const { return !(flags & FLAG_PRIVATE); }
 	bool isTLS() const { return (flags & FLAG_TLS) != 0; }
 	bool isV6() const { return ip.isV6(); }
+	bool isUnix() const { return (flags & FLAG_UNIX) != 0; }
 
 	size_t hash() const {
 		size_t result = 0;
