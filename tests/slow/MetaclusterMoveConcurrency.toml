@@ -1,0 +1,19 @@
+[configuration]
+blobGranulesEnabled = true
+allowDefaultTenant = false
+allowCreatingTenants = false
+extraDatabaseMode = 'Multiple'
+extraDatabaseCount = 3
+
+[[knobs]]
+hybrid_management_bypass_tenant_lock = true
+
+[[test]]
+testTitle = 'MetaclusterMoveConcurrencyTest'
+clearAfterTest = true
+timeout = 2100
+runSetup = true
+
+    [[test.workload]]
+    testName = 'MetaclusterMoveConcurrency'
+	maxTenantGroups = 5
