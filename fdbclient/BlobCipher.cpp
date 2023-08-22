@@ -1498,7 +1498,7 @@ void testConfigurableEncryptionAesCtrWithAuthSerGcm(const int minDomainId) {
 	AesGcm withAuth;
 	withAuth.v1.cipherTextDetails = BlobCipherDetails(1, 2, 23);
 	deterministicRandom()->randomBytes(&withAuth.v1.iv[0], AES_256_CTR_IV_LENGTH);
-	deterministicRandom()->randomBytes(&withAuth.v1.authToken[0], AesGcm::authTokenSize);
+	deterministicRandom()->randomBytes(&withAuth.v1.authToken[0], AES_256_GCM_TAG_LENGTH);
 	Standalone<StringRef> serAlgo = AesGcm::toStringRef(withAuth);
 	ASSERT_EQ(serAlgo.size(), sizeof(withAuth));
 
@@ -1772,8 +1772,8 @@ void testConfigurableEncryptionHeaderSingleAuthModeGcm(int minDomainId) {
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	const int bufLen = deterministicRandom()->randomInt(786, 2127) + 512;
 	Arena arena;
-	uint8_t iv[AesGcm::ivSize];
-	deterministicRandom()->randomBytes(&iv[0], AesGcm::ivSize);
+	uint8_t iv[AES_256_GCM_IV_LENGTH];
+	deterministicRandom()->randomBytes(&iv[0], AES_256_GCM_IV_LENGTH);
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
@@ -1781,7 +1781,7 @@ void testConfigurableEncryptionHeaderSingleAuthModeGcm(int minDomainId) {
 	    EncryptBlobCipher::getEncryptor(cipherKey,
 	                                    Optional<Reference<BlobCipherKey>>(),
 	                                    iv,
-	                                    AesGcm::ivSize,
+	                                    AES_256_GCM_IV_LENGTH,
 	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
 	                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM,
 	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM,
@@ -1796,7 +1796,7 @@ void testConfigurableEncryptionHeaderSingleAuthModeGcm(int minDomainId) {
 	AesGcm algoHeader = std::get<AesGcm>(headerRef.algoHeader);
 
 	const uint8_t* headerIV = headerRef.getIV();
-	ASSERT_EQ(memcmp(&headerIV[0], &iv[0], AesGcm::ivSize), 0);
+	ASSERT_EQ(memcmp(&headerIV[0], &iv[0], AES_256_GCM_IV_LENGTH), 0);
 
 	EncryptHeaderCipherDetails validateDetails = headerRef.getCipherDetails();
 	ASSERT(validateDetails.textCipherDetails.isValid() &&
@@ -1811,8 +1811,8 @@ void testConfigurableEncryptionHeaderSingleAuthModeGcm(int minDomainId) {
 
 	AesGcm validateAlgo = std::get<AesGcm>(validateHeader.algoHeader);
 	ASSERT(validateAlgo.v1.cipherTextDetails == algoHeader.v1.cipherTextDetails);
-	ASSERT_EQ(memcmp(&iv[0], &validateAlgo.v1.iv[0], AesGcm::ivSize), 0);
-	ASSERT_EQ(memcmp(&algoHeader.v1.authToken[0], &validateAlgo.v1.authToken[0], AesGcm::authTokenSize), 0);
+	ASSERT_EQ(memcmp(&iv[0], &validateAlgo.v1.iv[0], AES_256_GCM_IV_LENGTH), 0);
+	ASSERT_EQ(memcmp(&algoHeader.v1.authToken[0], &validateAlgo.v1.authToken[0], AES_256_GCM_TAG_LENGTH), 0);
 
 	TraceEvent("HeaderSize")
 	    .detail("Flags", sizeof(flags))
@@ -1981,8 +1981,8 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	const int bufLen = deterministicRandom()->randomInt(786, 2127) + 512;
 	Arena arena;
-	uint8_t iv[AesGcm::ivSize];
-	deterministicRandom()->randomBytes(&iv[0], AesGcm::ivSize);
+	uint8_t iv[AES_256_GCM_IV_LENGTH];
+	deterministicRandom()->randomBytes(&iv[0], AES_256_GCM_IV_LENGTH);
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
@@ -1990,7 +1990,7 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	    EncryptBlobCipher::getEncryptor(cipherKey,
 	                                    Optional<Reference<BlobCipherKey>>(),
 	                                    iv,
-	                                    AesGcm::ivSize,
+	                                    AES_256_GCM_IV_LENGTH,
 	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
 	                                    authAlgo,
 	                                    encryptMode,
@@ -2011,7 +2011,7 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 
 	// validate IV
 	AesGcm withAuth = std::get<AesGcm>(headerRef.algoHeader);
-	ASSERT_EQ(memcmp(&iv[0], &withAuth.v1.iv[0], AesGcm::ivSize), 0);
+	ASSERT_EQ(memcmp(&iv[0], &withAuth.v1.iv[0], AES_256_GCM_IV_LENGTH), 0);
 	ASSERT_NE(memcmp(&orgData[0], encryptedBuf.begin(), bufLen), 0);
 	// validate cipherKey details
 	ASSERT_EQ(withAuth.v1.cipherTextDetails.encryptDomainId, cipherKey->getDomainId());
@@ -2263,8 +2263,8 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	const int bufLen = deterministicRandom()->randomInt(786, 2127) + 512;
 	Arena arena;
-	uint8_t iv[AesGcm::ivSize];
-	deterministicRandom()->randomBytes(&iv[0], AesGcm::ivSize);
+	uint8_t iv[AES_256_GCM_IV_LENGTH];
+	deterministicRandom()->randomBytes(&iv[0], AES_256_GCM_IV_LENGTH);
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
@@ -2272,7 +2272,7 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 	    EncryptBlobCipher::getEncryptor(cipherKey,
 	                                    Optional<Reference<BlobCipherKey>>(),
 	                                    iv,
-	                                    AesGcm::ivSize,
+	                                    AES_256_GCM_IV_LENGTH,
 	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
 	                                    authAlgo,
 	                                    encryptMode,
@@ -2293,7 +2293,7 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 
 	// validate IV
 	AesGcm withAuth = std::get<AesGcm>(headerRef.algoHeader);
-	ASSERT_EQ(memcmp(&iv[0], &withAuth.v1.iv[0], AesGcm::ivSize), 0);
+	ASSERT_EQ(memcmp(&iv[0], &withAuth.v1.iv[0], AES_256_GCM_IV_LENGTH), 0);
 	ASSERT_NE(memcmp(&orgData[0], encryptedBuf.begin(), bufLen), 0);
 	// validate cipherKey details
 	ASSERT_EQ(withAuth.v1.cipherTextDetails.encryptDomainId, cipherKey->getDomainId());

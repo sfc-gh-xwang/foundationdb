@@ -373,7 +373,7 @@ struct AesGcmV1 {
 		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + ivSize + authTokenSize;
 	}
 
-	static std::string authAlgoName() { return "Gcm"; }
+	static std::string authAlgoName() { return "AesGcm"; }
 	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_GCM_AUTH_VERSION; }
 
 	template <class Ar>
@@ -385,9 +385,6 @@ struct AesGcmV1 {
 };
 
 struct AesGcm {
-	static constexpr int authTokenSize = AES_256_GCM_TAG_LENGTH;
-	static constexpr int ivSize = AES_256_GCM_IV_LENGTH;
-
 	// Serializable fields
 
 	// Algorithm header version
@@ -420,7 +417,7 @@ struct AesGcm {
 		serializer(ar, version);
 		if (ar.isDeserializing && version != 1) {
 			TraceEvent(SevWarn, "BlobCipherEncryptHeaderUnsupportedAlgoHeaderVersion")
-			    .detail("HeaderType", "AesCtrWith" + AesGcmV1::authAlgoName())
+			    .detail("HeaderType", AesGcmV1::authAlgoName())
 			    .detail("Version", version);
 			throw not_implemented();
 		}
