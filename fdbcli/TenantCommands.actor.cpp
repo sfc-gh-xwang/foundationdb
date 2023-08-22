@@ -624,7 +624,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 				}
 			} else {
 				// No need to filter, so go straight to special keys
-				if (!tenantGroup.present() && !locked.present()) {
+				if (!tenantGroup.present() && !locked.present() && offset == 0) {
 					// Hold the reference to the standalone's memory
 					state ThreadFuture<RangeReadResult> kvsFuture =
 					    tr->getRange(firstGreaterOrEqual(beginTenantKey), firstGreaterOrEqual(endTenantKey), limit);
