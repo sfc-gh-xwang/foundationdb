@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+# Example usage:
+#
+# $ devGetTestDurations <ensemble_id_1> > durations1
+# $ devGetTestDurations <ensemble_id_2> > durations2
+# $ test_duration_stats.py [-f TestName] durations1 durations2
+
 import argparse
 import math
 import sys
@@ -9,7 +15,7 @@ parser.add_argument("-f", "--filter", type=str, help="Filter string for test fil
 parser.add_argument(
     "filenames",
     nargs="+",
-    help="One or more files with ascending ordered set of test runtimes",
+    help="One or more files with ascending ordered set of test runtimes. These can be produced using devGetTestDurations.",
 )
 
 args = parser.parse_args()
