@@ -43,7 +43,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	int opsPerTransaction;
 	bool provideExpectedCost;
 	bool useGrvCache;
-	enum class OpType {
+	enum OpType {
 		READ,
 		SET,
 		CLEAR,
@@ -63,15 +63,6 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 			ASSERT(false);
 			return "";
 		}
-	}
-
-	static OpType getOpTypeFromInt(int opTypeInt) {
-		if (opTypeInt == 0)
-			return OpType::READ;
-		else if (opTypeInt == 1)
-			return OpType::SET;
-		else
-			return OpType::CLEAR;
 	}
 
 	void finishTransaction(Transaction const& tr, TransactionTag const& tag, bool isTagThrottled = false) {
@@ -231,10 +222,7 @@ public:
 		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, deterministicRandom()->randomInt(5, 10));
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
 		useGrvCache = getOption(options, "useGrvCache"_sr, deterministicRandom()->coinflip());
-		{
-			int const opTypeInt = getOption(options, "opType"_sr, deterministicRandom()->randomInt(0, 3));
-			opType = getOpTypeFromInt(opTypeInt);
-		}
+		opType = static_cast<OpType>(getOption(options, "opType"_sr, deterministicRandom()->randomInt(0, 3)));
 
 		// To avoid timeouts:
 #if defined(USE_SANITIZER) || defined(VALGRIND)
