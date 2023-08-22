@@ -23,7 +23,6 @@
 #pragma once
 
 #include "fdbclient/FDBTypes.h"
-#include "fdbrpc/FailureMonitor.h"
 #include "fdbclient/Status.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/ClientWorkerInterface.h"

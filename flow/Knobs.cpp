@@ -20,6 +20,7 @@
 
 #include "flow/EncryptUtils.h"
 #include "flow/Error.h"
+#include "flow/IRandom.h"
 #include "flow/flow.h"
 #include "flow/Knobs.h"
 #include "flow/BooleanParam.h"
@@ -332,7 +333,7 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( RESTCLIENT_CONNECT_TIMEOUT,                            1 );
 	init( RESTCLIENT_MAX_CONNECTION_LIFE,                      120 );
 	init( RESTCLIENT_REQUEST_TRIES,                             10 );
-	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                        6 );
+	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                        6 ); if ( randomize && BUGGIFY ) { RESTCLIENT_REQUEST_TIMEOUT_SEC = deterministicRandom()->randomInt(1, 6); }
 	init( REST_LOG_LEVEL,                                        3 );
 }
 // clang-format on

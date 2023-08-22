@@ -452,8 +452,6 @@ struct Sim2Conn final : IConnection, ReferenceCounted<Sim2Conn> {
 	NetworkAddress getPeerAddress() const override { return peerEndpoint; }
 	UID getDebugID() const override { return dbgid; }
 
-	boost::asio::ip::tcp::socket& getSocket() override { throw operation_failed(); }
-
 	bool opened, closedByCaller, stableConnection, trustedPeer;
 
 private:

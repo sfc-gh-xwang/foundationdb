@@ -9817,11 +9817,12 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
 					// If queue piles up it means that there's not enough reads, so the queue is useless in this time
 					// window anyway, we do a cheap clear() and let it build up again
-					data->emptyVersionWaitMutationStats.tlogVersionQueue.clear();
 					TraceEvent("EmptyVersionMutationQueueCleared", data->thisServerID)
+					    .suppressFor(5.0)
 					    .detail("QueueTimewindow",
 					            data->emptyVersionWaitMutationStats.tlogVersionQueue.back().timestamp -
 					                data->emptyVersionWaitMutationStats.tlogVersionQueue.front().timestamp);
+					data->emptyVersionWaitMutationStats.tlogVersionQueue.clear();
 				}
 				data->emptyVersionWaitMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
 				                                                                  peekReplyRecvTime);
@@ -9829,11 +9830,12 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				// empty peeks must have fully waited
 				if (data->emptyVersionWaitNonMutationStats.tlogVersionQueue.size() >=
 				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
-					data->emptyVersionWaitNonMutationStats.tlogVersionQueue.clear();
 					TraceEvent("EmptyVersionNonMutationQueueCleared", data->thisServerID)
+					    .suppressFor(5.0)
 					    .detail("QueueTimewindow",
 					            data->emptyVersionWaitNonMutationStats.tlogVersionQueue.back().timestamp -
 					                data->emptyVersionWaitNonMutationStats.tlogVersionQueue.front().timestamp);
+					data->emptyVersionWaitNonMutationStats.tlogVersionQueue.clear();
 				}
 				data->emptyVersionWaitNonMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
 				                                                                     peekReplyRecvTime);

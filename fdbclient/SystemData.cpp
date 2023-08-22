@@ -1171,6 +1171,10 @@ const KeyRangeRef fileRestorePrefixRange("\xff\x02/restore-agent/"_sr, "\xff\x02
 // Backup Agent configuration constant variables
 const KeyRangeRef fileBackupPrefixRange("\xff\x02/backup-agent/"_sr, "\xff\x02/backup-agent0"_sr);
 
+// Emergency Backup Worker variables
+const KeyRangeRef emergencyBackupKeyRange("\xff/backup-agent/"_sr, "\xff/backup-agent0"_sr);
+const KeyRef emergencyBackupPrefix = emergencyBackupKeyRange.begin;
+
 // DR Agent configuration constant variables
 const KeyRangeRef databaseBackupPrefixRange("\xff\x02/db-backup-agent/"_sr, "\xff\x02/db-backup-agent0"_sr);
 

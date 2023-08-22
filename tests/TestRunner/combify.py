@@ -1,3 +1,4 @@
+import argparse
 import itertools
 import json
 import os
@@ -8,19 +9,62 @@ import sys
 from local_cluster import TLSConfig
 from tmp_cluster import TempCluster
 
+
+def options_valid(tls_on, authz_on, tenant_mode, tenant_count):
+    # Authz shouldn't be set if tls is set false, and vice versa
+    if tls_on != authz_on:
+        return False
+
+    # Currently restrict the tenant case to tls/authz enabled case
+    return (tls_on and tenant_count > 0) or (not tls_on and tenant_count == 0)
+
+
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: {} [BUILD_DIRECTORY_PATH]".format(sys.argv[0]))
         sys.exit(1)
+
+    # Create an ArgumentParser instance
+    parser = argparse.ArgumentParser(description="Parser for combify.py")
+
+    # The build directory path is required
+    parser.add_argument("build_dir", help="Build directory path.")
+
+    # The following options allow users to pin values of specified options
+    parser.add_argument(
+        "--tls_option", required=False, type=bool, help="Enable/disable TLS"
+    )
+    parser.add_argument(
+        "--authz_option", required=False, type=bool, help="Enable/disable AuthZ"
+    )
+    parser.add_argument(
+        "--tenant_mode",
+        required=False,
+        type=str,
+        choices=["disabled", "optional_experimental", "required_experimental"],
+        help="Specify a tenant mode: disabled, optional_experimental, required_experimental",
+    )
+    parser.add_argument(
+        "--tenant_count", required=False, type=int, help="Tenant counts"
+    )
+
+    options = parser.parse_args()
+
     # tlsEnabled = [True, False]
     # authzEnabled = [True, False]
     # tenantModes = ["disabled", "optional_experimental", "required_experimental"]
     # tenantCounts = [0, 5]
-    build_dir = sys.argv[1]
-    tls_options = [True]
-    authz_options = [True]
-    tenant_modes = ["optional_experimental"]
-    tenant_counts = [3]
+    build_dir = options.build_dir
+    tls_options = [False, True] if options.tls_option is None else [options.tls_option]
+    authz_options = (
+        [False, True] if options.authz_option is None else [options.authz_option]
+    )
+    tenant_modes = (
+        ["optional_experimental"]
+        if options.tenant_mode is None
+        else [options.tenant_mode]
+    )
+    tenant_counts = [0, 3] if options.tenant_count is None else [options.tenant_count]
     test_ok = True
     binary_rel_path = "bin/fdb_c_combify_test"
     binary_abs_path = os.path.join(build_dir, binary_rel_path)
@@ -30,6 +74,10 @@ if __name__ == "__main__":
     for [tls_on, authz_on, tenant_mode, tenant_count] in itertools.product(
         tls_options, authz_options, tenant_modes, tenant_counts
     ):
+        # Skip if the combination of options is not valid
+        if not options_valid(tls_on, authz_on, tenant_mode, tenant_count):
+            continue
+
         with TempCluster(
             build_dir=build_dir,
             tls_config=TLSConfig(server_chain_len=2, client_chain_len=2)

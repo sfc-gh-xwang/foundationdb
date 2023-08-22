@@ -20,8 +20,6 @@
 
 #include "fdbserver/TagPartitionedLogSystem.actor.h"
 
-#include "fdbclient/FDBTypes.h"
-#include "flow/DebugTrace.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 ACTOR Future<Version> minVersionWhenReady(Future<Void> f, std::vector<Future<TLogCommitReply>> replies) {
@@ -3226,9 +3224,11 @@ ACTOR Future<Void> TagPartitionedLogSystem::pushEmptyVersionWaitWindow_internal(
                                                                                 Tag tag) {
 	std::vector<Future<Void>> sent;
 	for (auto& logSet : self->tLogs) {
-		for (auto& t : logSet->logServers) {
+		// Only push wait window to primary tlogs for each tag
+		if (logSet->locality >= 0) {
 			sent.push_back(brokenPromiseToNever(
-			    t->get().interf().emptyVersionWaitRequest.getReply(TlogEmptyVersionWaitRequest(waitWindow, tag))));
+			    logSet->logServers[logSet->bestLocationFor(tag)]->get().interf().emptyVersionWaitRequest.getReply(
+			        TlogEmptyVersionWaitRequest(waitWindow, tag))));
 		}
 	}
 	wait(waitForAll(sent));
