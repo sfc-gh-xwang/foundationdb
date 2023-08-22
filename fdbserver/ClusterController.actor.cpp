@@ -2318,6 +2318,12 @@ ACTOR Future<Void> watchBlobRestoreCommand(ClusterControllerData* self) {
 			}
 			wait(BlobRestoreController::onPhaseChange(restoreController, BlobRestorePhase::INIT));
 		} catch (Error& e) {
+			// If we cannot to update restore phase because it has been advanced by others, simply watch again without
+			// exitting the loop
+			if (e.code() == error_code_blob_restore_unexpected_phase) {
+				continue;
+			}
+
 			TraceEvent("WatchBlobRestoreCommand", self->id).error(e);
 			throw e;
 		}
