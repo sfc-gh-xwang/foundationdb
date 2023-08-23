@@ -669,7 +669,7 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
     TenantName end,
     int limit,
     Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>()) {
-	std::vector<std::pair<TenantName, int64_t>> matchingTenants;
+	state std::vector<std::pair<TenantName, int64_t>> matchingTenants;
 	if (!tenantGroup.present()) {
 		wait(store(matchingTenants, listTenantsTransaction(tr, begin, end, limit)));
 	} else {
