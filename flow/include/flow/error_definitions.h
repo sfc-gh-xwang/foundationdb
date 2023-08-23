@@ -357,6 +357,7 @@ ERROR( blob_restore_invalid_manifest_url, 2386, "Invalid manifest URL" )
 ERROR( blob_restore_corrupted_manifest, 2387, "Corrupted manifest" )
 ERROR( blob_restore_missing_manifest, 2388, "Missing manifest" )
 ERROR( blob_migrator_replaced, 2389, "Blob migrator is replaced")
+ERROR( blob_restore_unexpected_phase, 2390, "Unexpected blob restore phase")
 
 // 2400 - json errors
 ERROR( key_not_found, 2400, "Expected key is missing")

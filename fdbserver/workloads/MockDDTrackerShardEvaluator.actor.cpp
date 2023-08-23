@@ -127,17 +127,17 @@ public:
 		Reference<PhysicalShardCollection> physicalShardCollection = makeReference<PhysicalShardCollection>();
 		Reference<AsyncVar<bool>> zeroHealthyTeams = makeReference<AsyncVar<bool>>(false);
 
-		shardTracker = makeReference<DataDistributionTracker>(
-		    DataDistributionTrackerInitParams{ .db = mock,
-		                                       .distributorId = ddcx.id(),
-		                                       .readyToStart = Promise<Void>(),
-		                                       .output = output,
-		                                       .shardsAffectedByTeamFailure = ddcx.shardsAffectedByTeamFailure,
-		                                       .physicalShardCollection = physicalShardCollection,
-		                                       .anyZeroHealthyTeams = zeroHealthyTeams,
-		                                       .shards = &shards,
-		                                       .trackerCancelled = &ddcx.trackerCancelled,
-		                                       .ddTenantCache = {} });
+		shardTracker = makeReference<DataDistributionTracker>(DataDistributionTrackerInitParams{
+		    .db = mock,
+		    .distributorId = ddcx.id(),
+		    .readyToStart = Promise<Void>(),
+		    .output = output,
+		    .shardsAffectedByTeamFailure = makeReference<ShardsAffectedByTeamFailure>(),
+		    .physicalShardCollection = physicalShardCollection,
+		    .anyZeroHealthyTeams = zeroHealthyTeams,
+		    .shards = &shards,
+		    .trackerCancelled = &ddcx.trackerCancelled,
+		    .ddTenantCache = {} });
 		actors.add(DataDistributionTracker::run(shardTracker,
 		                                        initData,
 		                                        getShardMetrics.getFuture(),

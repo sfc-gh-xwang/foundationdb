@@ -19,6 +19,8 @@
  */
 
 #include "fdbclient/ClientKnobs.h"
+#include "fdbclient/SystemData.h"
+#include "fdbserver/BlobGranuleServerCommon.actor.h"
 #include "fdbserver/DataDistribution.actor.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/Ratekeeper.h"
@@ -27,6 +29,7 @@
 #include "fdbserver/QuietDatabase.h"
 #include "flow/OwningResource.h"
 
+#include "flow/Trace.h"
 #include "flow/actorcompiler.h" // must be last include
 
 namespace {
@@ -97,6 +100,20 @@ public:
 		self.addActor.send(self.metricsTracker.run());
 		self.addActor.send(traceRole(Role::RATEKEEPER, rkInterf.id()));
 
+		self.addActor.send(self.quotaCache->run());
+		self.addActor.send(self.quotaThrottler.expireUnusedThrottlingIds());
+
+		state Reference<BlobRestoreController> restoreController =
+		    makeReference<BlobRestoreController>(self.db, normalKeys);
+		bool isFullRestore = wait(BlobRestoreController::isRestoring(restoreController));
+		state bool isBwThrottlingEnabled = SERVER_KNOBS->BW_THROTTLING_ENABLED && !isFullRestore;
+		if (isBwThrottlingEnabled) {
+			self.addActor.send(self.blobMonitor.run(self.configurationMonitor, self.recoveryTracker));
+		}
+
+		// Perform one round of rate updates before starting the RateServer, so it has a
+		// valid rate to serve.
+		self.doRateupdate(isBwThrottlingEnabled);
 		self.addActor.send(self.rateServer.run(self.normalRateUpdater,
 		                                       self.batchRateUpdater,
 		                                       self.quotaThrottler,
@@ -105,12 +122,6 @@ public:
 		                                       self.recoveryTracker,
 		                                       self.clientThroughputTracker,
 		                                       self.serverThroughputTracker));
-
-		self.addActor.send(self.quotaCache->run());
-		self.addActor.send(self.quotaThrottler.expireUnusedThrottlingIds());
-		if (SERVER_KNOBS->BW_THROTTLING_ENABLED) {
-			self.addActor.send(self.blobMonitor.run(self.configurationMonitor, self.recoveryTracker));
-		}
 
 		TraceEvent("RkTLogQueueSizeParameters", rkInterf.id())
 		    .detail("Target", SERVER_KNOBS->TARGET_BYTES_PER_TLOG)
@@ -134,36 +145,7 @@ public:
 		try {
 			loop choose {
 				when(wait(timeout)) {
-					double actualTps = self.rateServer.getSmoothReleasedTransactionRate();
-					actualTps = std::max(std::max(1.0, actualTps),
-					                     self.metricsTracker.getSmoothTotalDurableBytesRate() /
-					                         CLIENT_KNOBS->TRANSACTION_SIZE_LIMIT);
-
-					if (self.actualTpsHistory.size() > SERVER_KNOBS->MAX_TPS_HISTORY_SAMPLES) {
-						self.actualTpsHistory.pop_front();
-					}
-					self.actualTpsHistory.push_back(actualTps);
-
-					self.recoveryTracker.cleanupOldRecoveries();
-
-					self.normalRateUpdater.update(self.metricsTracker,
-					                              self.rateServer,
-					                              self.configurationMonitor,
-					                              self.recoveryTracker,
-					                              self.actualTpsHistory,
-					                              self.blobMonitor,
-					                              self.quotaThrottler.throttleCount());
-					self.batchRateUpdater.update(self.metricsTracker,
-					                             self.rateServer,
-					                             self.configurationMonitor,
-					                             self.recoveryTracker,
-					                             self.actualTpsHistory,
-					                             self.blobMonitor,
-					                             self.quotaThrottler.throttleCount());
-					self.updateTagThrottling();
-
-					self.rateServer.updateLastLimited(self.batchRateUpdater.getTpsLimit());
-					self.rateServer.cleanupExpiredGrvProxies();
+					self.doRateupdate(isBwThrottlingEnabled);
 					timeout = delayJittered(SERVER_KNOBS->METRIC_UPDATE_RATE);
 				}
 				when(HaltRatekeeperRequest req = waitNext(rkInterf.haltRatekeeper.getFuture())) {
@@ -233,6 +215,40 @@ void Ratekeeper::updateTagThrottling() {
 		clusterThroughputTracker = &clientThroughputTracker;
 	}
 	quotaCache->updateThroughput(*clusterThroughputTracker);
+}
+
+void Ratekeeper::doRateupdate(bool isBwThrottlingEnabled) {
+	double actualTps = rateServer.getSmoothReleasedTransactionRate();
+	actualTps = std::max(std::max(1.0, actualTps),
+	                     metricsTracker.getSmoothTotalDurableBytesRate() / CLIENT_KNOBS->TRANSACTION_SIZE_LIMIT);
+
+	if (actualTpsHistory.size() > SERVER_KNOBS->MAX_TPS_HISTORY_SAMPLES) {
+		actualTpsHistory.pop_front();
+	}
+	actualTpsHistory.push_back(actualTps);
+
+	recoveryTracker.cleanupOldRecoveries();
+
+	normalRateUpdater.update(metricsTracker,
+	                         rateServer,
+	                         configurationMonitor,
+	                         recoveryTracker,
+	                         actualTpsHistory,
+	                         blobMonitor,
+	                         isBwThrottlingEnabled,
+	                         quotaThrottler.throttleCount());
+	batchRateUpdater.update(metricsTracker,
+	                        rateServer,
+	                        configurationMonitor,
+	                        recoveryTracker,
+	                        actualTpsHistory,
+	                        blobMonitor,
+	                        isBwThrottlingEnabled,
+	                        quotaThrottler.throttleCount());
+	updateTagThrottling();
+
+	rateServer.updateLastLimited(batchRateUpdater.getTpsLimit());
+	rateServer.cleanupExpiredGrvProxies();
 }
 
 ACTOR Future<Void> ratekeeper(RatekeeperInterface rkInterf, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {

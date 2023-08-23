@@ -83,7 +83,8 @@ public:
 	// child process, also reduce latency for this kind of connection
 	virtual bool isStableConnection() const { throw unsupported_operation(); }
 
-	virtual boost::asio::ip::tcp::socket& getSocket() = 0;
+	// Abstraction leak. There is exactly one place where this is used, when connecting to S3 via an HTTP proxy.
+	virtual boost::asio::ip::tcp::socket& getTCPSocket() { throw unsupported_operation(); }
 };
 
 // forward declare SendBuffer, declared in serialize.h
