@@ -28,6 +28,7 @@
 namespace metacluster {
 struct MetaclusterMetrics {
 	int numTenants = 0;
+	int numLockedTenants = 0;
 	int numDataClusters = 0;
 	int tenantGroupCapacity = 0;
 	int tenantGroupsAllocated = 0;

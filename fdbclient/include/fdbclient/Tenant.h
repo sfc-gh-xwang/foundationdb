@@ -33,6 +33,9 @@
 FDB_BOOLEAN_PARAM(EnforceValidTenantId);
 
 namespace TenantAPI {
+
+FDB_BOOLEAN_PARAM(LockedTenants);
+
 KeyRef idToPrefix(Arena& p, int64_t id);
 Key idToPrefix(int64_t id);
 int64_t prefixToId(KeyRef prefix, EnforceValidTenantId = EnforceValidTenantId::True);
