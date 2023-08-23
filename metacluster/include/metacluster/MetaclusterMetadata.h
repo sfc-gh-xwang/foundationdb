@@ -92,13 +92,6 @@ KeyBackedProperty<Versionstamp> maxRestoreId();
 
 // Metadata used only on the management cluster
 namespace management {
-struct ConnectionStringCodec {
-	static inline Standalone<StringRef> pack(ClusterConnectionString const& val) { return StringRef(val.toString()); }
-	static inline ClusterConnectionString unpack(Standalone<StringRef> const& val) {
-		return ClusterConnectionString(val.toString());
-	}
-};
-
 // This enum class can be used to track the state of the data movement
 // The state written to the cluster will be the last attempted
 // step of the movement
@@ -145,10 +138,6 @@ TenantMetadataSpecification<MetaclusterTenantTypes>& tenantMetadata();
 
 // A map from cluster name to the metadata associated with a cluster
 KeyBackedObjectMap<ClusterName, DataClusterEntry, decltype(IncludeVersion())>& dataClusters();
-
-// A map from cluster name to the connection string for the cluster
-KeyBackedMap<ClusterName, ClusterConnectionString, TupleCodec<ClusterName>, ConnectionStringCodec>&
-dataClusterConnectionRecords();
 
 // A set of non-full clusters where the key is the tuple (num tenant groups allocated, cluster name).
 KeyBackedSet<Tuple>& clusterCapacityIndex();
