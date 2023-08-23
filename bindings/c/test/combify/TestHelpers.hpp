@@ -35,7 +35,7 @@
 	} while (0)
 #endif /*ASSERT*/
 
-// UID mirros the one defined in flow. Client test should not depend on flow.
+// UID mirrors the one defined in flow as client test should not depend on flow.
 struct UID {
 	uint64_t part[2];
 	constexpr UID(uint64_t a, uint64_t b) : part{ a, b } {}
