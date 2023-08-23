@@ -834,7 +834,8 @@ ACTOR Future<ISimulator::KillType> simulatedFDBDRebooter(Reference<IClusterConne
 					    .detail("RandomId", randomId)
 					    .backtrace();
 
-				if (e.code() == error_code_io_timeout && !onShutdown.isReady()) {
+				if ((e.code() == error_code_io_timeout || e.code() == error_code_inconsistent_disk_queue) &&
+				    !onShutdown.isReady()) {
 					onShutdown = ISimulator::KillType::RebootProcess;
 				}
 
@@ -845,7 +846,8 @@ ACTOR Future<ISimulator::KillType> simulatedFDBDRebooter(Reference<IClusterConne
 				ASSERT(destructed ||
 				       g_simulator->getCurrentProcess() == process); // simulatedFDBD catch called on different process
 				TraceEvent(e.code() == error_code_actor_cancelled || e.code() == error_code_file_not_found ||
-				                   e.code() == error_code_incompatible_software_version || destructed
+				                   e.code() == error_code_incompatible_software_version ||
+				                   e.code() == error_code_inconsistent_disk_queue || destructed
 				               ? SevInfo
 				               : SevError,
 				           "SimulatedFDBDTerminated")
