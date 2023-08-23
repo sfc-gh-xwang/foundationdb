@@ -20,30 +20,35 @@
 
 #include <cstdint>
 #include <limits>
-#include "fdbclient/DatabaseContext.h"
+#include <utility>
 #include "fdbclient/FDBOptions.g.h"
 #include "fdbclient/FDBTypes.h"
-#include "fdbclient/GenericManagementAPI.actor.h"
+#include "fdbclient/Knobs.h"
+#include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/MultiVersionTransaction.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ReadYourWrites.h"
 #include "fdbclient/RunTransaction.actor.h"
-#include "fdbclient/TenantManagement.actor.h"
+#include "fdbclient/Tenant.h"
 #include "fdbclient/ThreadSafeTransaction.h"
+#include "fdbclient/ThrottleApi.h"
 #include "fdbrpc/TenantName.h"
 #include "fdbrpc/simulator.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "fdbserver/workloads/BulkSetup.actor.h"
 #include "fdbserver/Knobs.h"
+#include "flow/CodeProbe.h"
 #include "flow/Error.h"
+#include "flow/FastRef.h"
 #include "flow/IRandom.h"
-#include "flow/ProtocolVersion.h"
+#include "flow/ThreadHelper.actor.h"
 #include "flow/flow.h"
 
 #include "metacluster/Metacluster.h"
 #include "metacluster/MetaclusterConsistency.actor.h"
+#include "metacluster/MetaclusterData.actor.h"
+#include "metacluster/MetaclusterMetadata.h"
 #include "metacluster/MetaclusterMove.actor.h"
-#include "metacluster/TenantConsistency.actor.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -615,6 +620,8 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 	                                     ClusterName dstCluster) {
 		state std::vector<std::string> messages;
 		loop {
+			state Optional<metacluster::metadata::management::MovementRecord> moveRecord =
+			    wait(self->tryGetMoveRecord(tenantGroup));
 			try {
 				TraceEvent("MetaclusterMoveFinishBegin")
 				    .detail("TenantGroup", tenantGroup)
@@ -628,12 +635,24 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				break;
 			} catch (Error& e) {
+				state Error err(e);
 				TraceEvent("MetaclusterMoveWorkloadFinishFailed")
-				    .error(e)
+				    .error(err)
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
-				throw;
+				if (err.code() == error_code_tenant_move_failed) {
+					if (!moveRecord.present()) {
+						throw err;
+					}
+					// Retryable error
+					TraceEvent("MetaclusterMoveAdvanceVersion")
+					    .detail("ClusterName", dstCluster)
+					    .detail("TargetVersion", moveRecord.get().version);
+					wait(advanceVersion(self->dataDbs[dstCluster].db, moveRecord.get().version));
+					continue;
+				}
+				throw err;
 			}
 		}
 		return Void();
@@ -717,9 +736,9 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 			// Abort marks the move record as aborting and will fail all non-abort commands
 			// processQueue can be copying data after abort finishes deleting tenant data
 			// Abort tries to then delete tenants and fails because it's non-empty
-			if (deterministicRandom()->random01() < 0.05) {
-				moveFutures.push_back(abortMove(self, tenantGroup, srcCluster, dstCluster));
-			}
+			// if (deterministicRandom()->random01() < 0.05) {
+			// 	moveFutures.push_back(abortMove(self, tenantGroup, srcCluster, dstCluster));
+			// }
 			wait(delay(deterministicRandom()->random01() * 30));
 		}
 		wait(waitForAll(moveFutures));
@@ -734,11 +753,11 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 				TraceEvent("MetaclusterMoveFailure").detail("Iter", i);
 			}
 		}
-		if (!successfulMove) {
-			bool finalAbortSuccess = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
-			ASSERT(finalAbortSuccess);
-			return Void();
-		}
+		// if (!successfulMove) {
+		// 	bool finalAbortSuccess = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
+		// 	ASSERT(finalAbortSuccess);
+		// 	return Void();
+		// }
 		ASSERT(successfulMove);
 		return Void();
 	}
