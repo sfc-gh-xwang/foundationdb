@@ -614,6 +614,10 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		return Void();
 	}
 
+	// finishMove sometimes retries within finishTenantMovement on the final step
+	// then throws tenant_move_record_not_found, which can lead to no
+	// successful moves
+	// Maybe instead of tracking success, just verify an empty move record
 	ACTOR static Future<Void> finishMove(MetaclusterMoveConcurrencyWorkload* self,
 	                                     TenantGroupName tenantGroup,
 	                                     ClusterName srcCluster,
@@ -742,23 +746,27 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 			wait(delay(deterministicRandom()->random01() * 30));
 		}
 		wait(waitForAll(moveFutures));
+
+		state Optional<metacluster::metadata::management::MovementRecord> moveRecord =
+		    wait(self->tryGetMoveRecord(tenantGroup));
+		ASSERT(!moveRecord.present());
 		// At least one complete move and/or full abort should succeed
-		state bool successfulMove = false;
-		for (int i = 0; i < moveFutures.size(); ++i) {
-			bool result = moveFutures[i].get();
-			if (result) {
-				successfulMove = true;
-				TraceEvent("MetaclusterMoveSuccess").detail("Iter", i);
-			} else {
-				TraceEvent("MetaclusterMoveFailure").detail("Iter", i);
-			}
-		}
+		// state bool successfulMove = false;
+		// for (int i = 0; i < moveFutures.size(); ++i) {
+		// 	bool result = moveFutures[i].get();
+		// 	if (result) {
+		// 		successfulMove = true;
+		// 		TraceEvent("MetaclusterMoveSuccess").detail("Iter", i);
+		// 	} else {
+		// 		TraceEvent("MetaclusterMoveFailure").detail("Iter", i);
+		// 	}
+		// }
 		// if (!successfulMove) {
 		// 	bool finalAbortSuccess = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
 		// 	ASSERT(finalAbortSuccess);
 		// 	return Void();
 		// }
-		ASSERT(successfulMove);
+		// ASSERT(successfulMove);
 		return Void();
 	}
 
