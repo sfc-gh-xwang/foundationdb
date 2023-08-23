@@ -359,6 +359,7 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 
 	void addReadCost(uint64_t bytes);
 	void addWriteCost(uint64_t bytes);
+	void addClearCost();
 	void flushWriteCost();
 	int64_t getTotalCost() const;
 
