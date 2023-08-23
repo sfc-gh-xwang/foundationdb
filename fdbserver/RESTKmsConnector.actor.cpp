@@ -228,7 +228,7 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	double lastKmsUrlsRefreshTs;
 	double lastKmsUrlDiscoverTS;
 	bool kmsStable;
-	RESTClient restClient;
+	Reference<RESTClient> restClient;
 	ValidationTokenMap validationTokenMap;
 	ActorCollection actors;
 
@@ -241,6 +241,7 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	    lastKmsUrlsRefreshTs(0),
 	    lastKmsUrlDiscoverTS(0.0),
 	    kmsStable(true),
+	    restClient(makeReference<RESTClient>()),
 	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
 	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
 		actors.add(kmsConnectorMetrics.traceCounters(
@@ -251,6 +252,7 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	    lastKmsUrlsRefreshTs(0),
 	    lastKmsUrlDiscoverTS(0.0),
 	    kmsStable(true),
+	    restClient(makeReference<RESTClient>()),
 	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
 	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
 		actors.add(kmsConnectorMetrics.traceCounters(
@@ -844,7 +846,7 @@ Future<T> kmsRequestImpl(
 				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 				Reference<HTTP::IncomingResponse> resp =
-				    wait(ctx->restClient.doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
+				    wait(ctx->restClient->doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
 				urlCtx->nRequests++;
 
 				try {
@@ -1216,7 +1218,7 @@ ACTOR Future<Void> procureValidationTokens(Reference<RESTKmsConnectorCtx> ctx) {
 // TODO(yiwu): make RESTClient periodically report and clear the stats.
 void updateKMSStability(Reference<RESTKmsConnectorCtx> self) {
 	bool stable = true;
-	for (auto& s : self->restClient.statsMap) {
+	for (auto& s : self->restClient->statsMap) {
 		if (s.second->requests_failed > 0) {
 			stable = false;
 		}
