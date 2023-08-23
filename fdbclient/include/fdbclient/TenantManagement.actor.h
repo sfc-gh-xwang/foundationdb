@@ -633,37 +633,6 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenantGroupTenants(Refer
 	});
 }
 
-ACTOR template <class Transaction>
-Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTransaction(
-    Transaction tr,
-    TenantName begin,
-    TenantName end,
-    int limit,
-    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>()) {
-	std::vector<std::pair<TenantName, int64_t>> matchingTenants =
-	    wait(TenantAPI::listTenantsTransaction(tr, begin, end, limit));
-
-	state std::vector<Future<TenantMapEntry>> tenantEntryFutures;
-	for (auto const& [name, id] : matchingTenants) {
-		tenantEntryFutures.push_back(getTenantTransaction(tr, id));
-	}
-
-	wait(waitForAll(tenantEntryFutures));
-
-	std::vector<std::pair<TenantName, TenantMapEntry>> results;
-	for (auto const& f : tenantEntryFutures) {
-		TenantMapEntry entry = f.get();
-		if (tenantGroup.present()) {
-			if (tenantGroup != entry.tenantGroup) {
-				continue;
-			}
-		}
-		results.emplace_back(entry.tenantName, entry);
-	}
-
-	return results;
-}
-
 // Scan the tenant index to get a list of tenant IDs, and then lookup the metadata for each ID individually
 ACTOR template <class Transaction>
 Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTransaction(
@@ -682,9 +651,32 @@ Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTra
 	results.reserve(futures.size());
 	for (int i = 0; i < futures.size(); ++i) {
 		const TenantMapEntry& entry = futures[i].get().get();
-		results.emplace_back(entry.tenantName, entry);
+
+		// Tenants being renamed show up in tenantIds twice, once under each name. The destination name will be
+		// different from the tenant entry and is filtered from the list
+		if (entry.tenantName == tenantIds[i].first) {
+			results.emplace_back(entry.tenantName, entry);
+		}
 	}
 
+	return results;
+}
+
+ACTOR template <class Transaction>
+Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTransaction(
+    Transaction tr,
+    TenantName begin,
+    TenantName end,
+    int limit,
+    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>()) {
+	std::vector<std::pair<TenantName, int64_t>> matchingTenants;
+	if (!tenantGroup.present()) {
+		wait(store(matchingTenants, listTenantsTransaction(tr, begin, end, limit)));
+	} else {
+		wait(store(matchingTenants, listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
+	}
+	std::vector<std::pair<TenantName, TenantMapEntry>> results =
+	    wait(listTenantMetadataTransaction(tr, matchingTenants));
 	return results;
 }
 
