@@ -421,6 +421,30 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		return true;
 	}
 
+	ACTOR static Future<bool> abortMoveMultiple(MetaclusterMoveWorkload* self,
+	                                            TenantGroupName tenantGroup,
+	                                            ClusterName srcCluster,
+	                                            ClusterName dstCluster) {
+		state std::vector<Future<ErrorOr<bool>>> abortFutures;
+		state int numAborts = deterministicRandom()->randomInt(1, 3);
+		for (; numAborts > 0; numAborts--) {
+			abortFutures.push_back(errorOr(abortMove(self, tenantGroup, srcCluster, dstCluster)));
+			wait(delay(deterministicRandom()->random01() * 5));
+		}
+		wait(waitForAll(abortFutures));
+
+		// Check for at least one successful abort
+		state bool abortSuccess = false;
+		for (auto const& f : abortFutures) {
+			ErrorOr<bool> result = f.get();
+			if (!result.isError() && result.get()) {
+				abortSuccess = true;
+			}
+		}
+
+		return abortSuccess;
+	}
+
 	// returns true if move is aborted
 	ACTOR static Future<bool> startMove(MetaclusterMoveWorkload* self,
 	                                    TenantGroupName tenantGroup,
@@ -456,7 +480,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				CODE_PROBE(true, "Metacluster move start timed out");
 				if (deterministicRandom()->random01() < 0.2) {
-					bool aborted = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
+					bool aborted = wait(abortMoveMultiple(self, tenantGroup, srcCluster, dstCluster));
 					TraceEvent("MetaclusterMoveStartAttemptedAbort")
 					    .detail("TenantGroup", tenantGroup)
 					    .detail("SourceCluster", srcCluster)
@@ -545,7 +569,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				CODE_PROBE(true, "Metacluster move switch timed out");
 				if (deterministicRandom()->random01() < 0.2) {
-					bool aborted = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
+					bool aborted = wait(abortMoveMultiple(self, tenantGroup, srcCluster, dstCluster));
 					TraceEvent("MetaclusterMoveSwitchAttemptedAbort")
 					    .detail("TenantGroup", tenantGroup)
 					    .detail("SourceCluster", srcCluster)
@@ -618,7 +642,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					if (!moveRecord.present()) {
 						return false;
 					}
-					state bool aborted = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
+					state bool aborted = wait(abortMoveMultiple(self, tenantGroup, srcCluster, dstCluster));
 					TraceEvent("MetaclusterMoveFinishAttemptedAbort")
 					    .detail("TenantGroup", tenantGroup)
 					    .detail("SourceCluster", srcCluster)
