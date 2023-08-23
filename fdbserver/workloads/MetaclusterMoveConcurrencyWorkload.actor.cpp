@@ -491,60 +491,6 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		}
 	}
 
-	ACTOR static Future<bool> checkGroupExists(MetaclusterMoveConcurrencyWorkload* self,
-	                                           ClusterName cluster,
-	                                           TenantGroupName tenantGroup) {
-		state Reference<ITransaction> tr = self->managementDb->createTransaction();
-		loop {
-			try {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				state bool exists = wait(metacluster::metadata::management::clusterTenantGroupIndex().exists(
-				    tr, Tuple::makeTuple(cluster, tenantGroup)));
-				return exists;
-			} catch (Error& e) {
-				wait(safeThreadFutureToFuture(tr->onError(e)));
-			}
-		}
-	}
-
-	// returns true if abort fully finished
-	ACTOR static Future<bool> abortMove(MetaclusterMoveConcurrencyWorkload* self,
-	                                    TenantGroupName tenantGroup,
-	                                    ClusterName srcCluster,
-	                                    ClusterName dstCluster) {
-		state std::vector<std::string> messages;
-		loop {
-			try {
-				TraceEvent("MetaclusterMoveAbortBegin")
-				    .detail("TenantGroup", tenantGroup)
-				    .detail("SourceCluster", srcCluster)
-				    .detail("DestinationCluster", dstCluster);
-				wait(metacluster::abortTenantMovement(
-				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages));
-				TraceEvent(SevDebug, "MetaclusterMoveAbortComplete")
-				    .detail("TenantGroup", tenantGroup)
-				    .detail("SourceCluster", srcCluster)
-				    .detail("DestinationCluster", dstCluster);
-				// Aborting after finish returns success but is actually a no-op
-				// Check that the group was actually aborted to src AND we switched to dst
-				// in the test data before updating test data
-				bool exists = wait(checkGroupExists(self, srcCluster, tenantGroup));
-				if (self->tenantGroups[tenantGroup].cluster == dstCluster && exists) {
-					updateTestData(self, tenantGroup, srcCluster, dstCluster);
-				}
-				break;
-			} catch (Error& e) {
-				TraceEvent("MetaclusterMoveAbortFailed")
-				    .error(e)
-				    .detail("TenantGroup", tenantGroup)
-				    .detail("SourceCluster", srcCluster)
-				    .detail("DestinationCluster", dstCluster);
-				return false;
-			}
-		}
-		return true;
-	}
-
 	ACTOR static Future<Void> startMove(MetaclusterMoveConcurrencyWorkload* self,
 	                                    TenantGroupName tenantGroup,
 	                                    ClusterName srcCluster,
@@ -552,20 +498,20 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		state std::vector<std::string> messages;
 		loop {
 			try {
-				TraceEvent("MetaclusterMoveStartBegin")
+				TraceEvent("MetaclusterMoveConcurrencyStartBegin")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
 				wait(metacluster::startTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages));
-				TraceEvent(SevDebug, "MetaclusterMoveStartComplete")
+				TraceEvent(SevDebug, "MetaclusterMoveConcurrencyStartComplete")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
 				break;
 			} catch (Error& e) {
 				state Error err(e);
-				TraceEvent("MetaclusterMoveWorkloadStartFailed")
+				TraceEvent("MetaclusterMoveConcurrencyWorkloadStartFailed")
 				    .error(err)
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
@@ -588,13 +534,13 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		state std::vector<std::string> messages;
 		loop {
 			try {
-				TraceEvent("MetaclusterMoveSwitchBegin")
+				TraceEvent("MetaclusterMoveConcurrencySwitchBegin")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
 				wait(metacluster::switchTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages));
-				TraceEvent(SevDebug, "MetaclusterMoveSwitchComplete")
+				TraceEvent(SevDebug, "MetaclusterMoveConcurrencySwitchComplete")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
@@ -603,7 +549,7 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 				}
 				break;
 			} catch (Error& e) {
-				TraceEvent("MetaclusterMoveWorkloadSwitchFailed")
+				TraceEvent("MetaclusterMoveConcurrencyWorkloadSwitchFailed")
 				    .error(e)
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
@@ -627,20 +573,20 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 			state Optional<metacluster::metadata::management::MovementRecord> moveRecord =
 			    wait(self->tryGetMoveRecord(tenantGroup));
 			try {
-				TraceEvent("MetaclusterMoveFinishBegin")
+				TraceEvent("MetaclusterMoveConcurrencyFinishBegin")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
 				wait(metacluster::finishTenantMovement(
 				    self->managementDb, tenantGroup, srcCluster, dstCluster, &messages));
-				TraceEvent(SevDebug, "MetaclusterMoveFinishComplete")
+				TraceEvent(SevDebug, "MetaclusterMoveConcurrencyFinishComplete")
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
 				break;
 			} catch (Error& e) {
 				state Error err(e);
-				TraceEvent("MetaclusterMoveWorkloadFinishFailed")
+				TraceEvent("MetaclusterMoveConcurrencyWorkloadFinishFailed")
 				    .error(err)
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
@@ -650,7 +596,7 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 						throw err;
 					}
 					// Retryable error
-					TraceEvent("MetaclusterMoveAdvanceVersion")
+					TraceEvent("MetaclusterMoveConcurrencyAdvanceVersion")
 					    .detail("ClusterName", dstCluster)
 					    .detail("TargetVersion", moveRecord.get().version);
 					wait(advanceVersion(self->dataDbs[dstCluster].db, moveRecord.get().version));
@@ -663,40 +609,31 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 	}
 
 	// returns true if full move is successful
-	ACTOR static Future<bool> moveTenantGroup(MetaclusterMoveConcurrencyWorkload* self,
+	ACTOR static Future<Void> moveTenantGroup(MetaclusterMoveConcurrencyWorkload* self,
 	                                          TenantGroupName tenantGroup,
 	                                          ClusterName srcCluster,
 	                                          ClusterName dstCluster) {
-		state std::vector<std::string> messages;
-		state bool success = false;
 		try {
 			wait(startMove(self, tenantGroup, srcCluster, dstCluster));
 		} catch (Error& e) {
-			TraceEvent("MetaclusterMoveStartError").error(e);
-			success = false;
+			TraceEvent("MetaclusterMoveConcurrencyStartError").error(e);
 		}
 		try {
 			wait(processQueue(self, tenantGroup, srcCluster, dstCluster));
 		} catch (Error& e) {
-			TraceEvent("MetaclusterMoveProcessQueueError").error(e);
-			success = false;
+			TraceEvent("MetaclusterMoveConcurrencyProcessQueueError").error(e);
 		}
 		try {
 			wait(switchMove(self, tenantGroup, srcCluster, dstCluster));
 		} catch (Error& e) {
-			TraceEvent("MetaclusterMoveSwitchError").error(e);
-			success = false;
+			TraceEvent("MetaclusterMoveConcurrencySwitchError").error(e);
 		}
 		try {
-			// The actor that finishes the move successfully may have failed earlier
-			// but the final success means the entire move was successful
 			wait(finishMove(self, tenantGroup, srcCluster, dstCluster));
-			success = true;
 		} catch (Error& e) {
-			TraceEvent("MetaclusterMoveFinishError").error(e);
-			success = false;
+			TraceEvent("MetaclusterMoveConcurrencyFinishError").error(e);
 		}
-		return success;
+		return Void();
 	}
 
 	Future<Void> start(Database const& cx) override {
@@ -733,40 +670,18 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		}
 
 		state int numMoves = 5;
-		state std::vector<Future<bool>> moveFutures;
+		state std::vector<Future<Void>> moveFutures;
 		for (; numMoves > 0; numMoves--) {
 			moveFutures.push_back(moveTenantGroup(self, tenantGroup, srcCluster, dstCluster));
-			// Abort interaction with processQueue is complicated
-			// Abort marks the move record as aborting and will fail all non-abort commands
-			// processQueue can be copying data after abort finishes deleting tenant data
-			// Abort tries to then delete tenants and fails because it's non-empty
-			// if (deterministicRandom()->random01() < 0.05) {
-			// 	moveFutures.push_back(abortMove(self, tenantGroup, srcCluster, dstCluster));
-			// }
 			wait(delay(deterministicRandom()->random01() * 30));
 		}
 		wait(waitForAll(moveFutures));
 
+		// At least one complete move should succeed
+		// This will be indicated by the move metadata being erased
 		state Optional<metacluster::metadata::management::MovementRecord> moveRecord =
 		    wait(self->tryGetMoveRecord(tenantGroup));
 		ASSERT(!moveRecord.present());
-		// At least one complete move and/or full abort should succeed
-		// state bool successfulMove = false;
-		// for (int i = 0; i < moveFutures.size(); ++i) {
-		// 	bool result = moveFutures[i].get();
-		// 	if (result) {
-		// 		successfulMove = true;
-		// 		TraceEvent("MetaclusterMoveSuccess").detail("Iter", i);
-		// 	} else {
-		// 		TraceEvent("MetaclusterMoveFailure").detail("Iter", i);
-		// 	}
-		// }
-		// if (!successfulMove) {
-		// 	bool finalAbortSuccess = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
-		// 	ASSERT(finalAbortSuccess);
-		// 	return Void();
-		// }
-		// ASSERT(successfulMove);
 		return Void();
 	}
 

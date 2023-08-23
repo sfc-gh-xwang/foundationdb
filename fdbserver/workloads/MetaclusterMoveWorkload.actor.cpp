@@ -427,6 +427,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	                                            ClusterName dstCluster) {
 		state std::vector<Future<ErrorOr<bool>>> abortFutures;
 		state int numAborts = deterministicRandom()->randomInt(1, 3);
+		state int totalNumAborts = numAborts;
 		for (; numAborts > 0; numAborts--) {
 			abortFutures.push_back(errorOr(abortMove(self, tenantGroup, srcCluster, dstCluster)));
 			wait(delay(deterministicRandom()->random01() * 5));
@@ -437,7 +438,18 @@ struct MetaclusterMoveWorkload : TestWorkload {
 		state bool abortSuccess = false;
 		for (auto const& f : abortFutures) {
 			ErrorOr<bool> result = f.get();
-			if (!result.isError() && result.get()) {
+			// The errors that bubble out are NOT:
+			// 	- error_code_invalid_tenant_move
+			//  - error_code_tenant_move_record_missing
+			// error_code_tenant_not_found is possible because of simultaneous operations
+			// Re-throw all other error types
+			if (result.isError()) {
+				if (totalNumAborts > 1 && result.getError().code() == error_code_tenant_not_found) {
+					continue;
+				}
+				throw result.getError();
+			}
+			if (result.get()) {
 				abortSuccess = true;
 			}
 		}
