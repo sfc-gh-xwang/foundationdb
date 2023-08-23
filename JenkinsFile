@@ -29,8 +29,17 @@ pipeline {
                         abortPreviousBuilds()
                         labels = getLabels()
                     }
+
                     build_trigger_cause = "${currentBuild.getBuildCauses()[0].shortDescription}"
                     println("Build Trigger Cause : ${build_trigger_cause}")
+
+                    //check if Build is triggered by tag creation events
+                    if (build_trigger_cause.startsWith("Push event for tag")) {
+                        //execute this step only if tag name begins with `release`
+                        if (env.BRANCH_NAME.startsWith("release")) {
+                            tagCreationWorkflow()
+                        }
+                    }
                 }
             }
         }
@@ -341,6 +350,29 @@ def getLabels() {
     labels = sh(script:"jq -r '.labels[].name' pr.json; rm pr.json", returnStdout: true)
     labels = labels.split("\n")
     return labels
+}
+
+//All steps related to tag creation workflow goes here
+def tagCreationWorkflow() {
+    stage('RELEASE TAG') {
+        script {
+            def job_params = [ string(name: 'GIT_REMOTE', value: "${repo_url}"),
+                               string(name: 'GIT_SPECIFIER', value: "${scmInfo.GIT_BRANCH}"),
+                               string(name: 'BUILD_TEST_PROFILE', value: "release_80.yml"),
+                               booleanParam(name: 'ALWAYS_TEST', value: true) ]
+
+            def j = build job: 'RELEASE_80',
+                    parameters: job_params,
+                    propagate: false,
+                    wait: true
+
+            if ("${j.result}" == "SUCCESS") {
+                currentBuild.result = 'SUCCESS'
+            } else {
+                currentBuild.result = 'FAILURE'
+            }
+        }
+    }
 }
 
 //Aborting previous runs if any in progress
