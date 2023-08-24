@@ -857,23 +857,24 @@ struct MetaclusterMoveWorkload : TestWorkload {
 	                                       ClusterName dstDb) {
 		state UID runId = self->moveRecord.runId;
 		loop {
-			state Optional<MoveBlock> block = wait(runTransaction(
+			state Optional<MoveBlock> moveBlock = wait(runTransaction(
 			    self->managementDb, [self = self, tenantGroup = tenantGroup](Reference<ITransaction> tr) {
 				    return getNextMoveBlock(self, tr, tenantGroup);
 			    }));
 
-			if (!block.present()) {
+			if (!moveBlock.present()) {
 				return Void();
 			}
 
-			wait(copyTenantData(self, tenantGroup, block.get(), srcDb, dstDb));
+			wait(copyTenantData(self, tenantGroup, moveBlock.get(), srcDb, dstDb));
 
 			wait(runTransactionVoid(
 			    self->managementDb,
-			    [runId = runId, tenantGroup = tenantGroup, block = block](Reference<ITransaction> tr) {
+			    [runId = runId, tenantGroup = tenantGroup, moveBlock = moveBlock](Reference<ITransaction> tr) {
 				    tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 				    metacluster::metadata::management::emergency_movement::splitPointsMap().erase(
-				        tr, Tuple::makeTuple(tenantGroup, runId.toString(), block.get().tenant, block.get().begin));
+				        tr,
+				        Tuple::makeTuple(tenantGroup, runId.toString(), moveBlock.get().tenant, moveBlock.get().begin));
 				    return Future<Void>(Void());
 			    }));
 		}
