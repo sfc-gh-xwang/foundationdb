@@ -3175,9 +3175,10 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					startRole(Role::TENANT_BALANCER, recruited.id(), interf.id());
 					DUMPTOKEN(recruited.haltTenantBalancer);
 					DUMPTOKEN(recruited.getMovementStatus);
-					DUMPTOKEN(recruited.getActiveMovements);
+					DUMPTOKEN(recruited.listMovements);
 					DUMPTOKEN(recruited.moveTenantsToCluster);
 					DUMPTOKEN(recruited.abortMovement);
+					DUMPTOKEN(recruited.persistInterface);
 					DUMPTOKEN(recruited.waitFailure);
 					Future<Void> tenantBalancerProcess = tenantBalancer(recruited, dbInfo, connRecord);
 					errorForwarders.add(forwardError(errors,

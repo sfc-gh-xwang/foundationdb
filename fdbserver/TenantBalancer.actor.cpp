@@ -28,7 +28,7 @@ struct TenantBalancer {
 	    connRecord(connRecord),
 	    tenantBalancerMetrics("TenantBalancer", tbi.id().toString()),
 	    getMovementStatusRequests("GetMovementStatusRequests", tenantBalancerMetrics),
-	    getActiveMovementsRequests("GetActiveMovementsRequests", tenantBalancerMetrics),
+	    listMovementsRequests("ListMovementsRequests", tenantBalancerMetrics),
 	    moveTenantsToClusterRequests("MoveTenantsToClusterRequests", tenantBalancerMetrics),
 	    abortMovementRequests("AbortMovementRequests", tenantBalancerMetrics) {
 		managementDb =
@@ -44,7 +44,7 @@ struct TenantBalancer {
 
 	CounterCollection tenantBalancerMetrics;
 	Counter getMovementStatusRequests;
-	Counter getActiveMovementsRequests;
+	Counter listMovementsRequests;
 	Counter moveTenantsToClusterRequests;
 	Counter abortMovementRequests;
 };
@@ -74,15 +74,15 @@ ACTOR Future<Void> getMovementStatus(TenantBalancer* self, GetMovementStatusRequ
 	return Void();
 }
 
-ACTOR Future<Void> getActiveMovements(TenantBalancer* self, GetActiveMovementsRequest req) {
-	++self->getActiveMovementsRequests;
-	TraceEvent(SevDebug, "TenantBalancerGetActiveMovements", self->tbi.id()).log();
+ACTOR Future<Void> listMovements(TenantBalancer* self, ListMovementsRequest req) {
+	++self->listMovementsRequests;
+	TraceEvent(SevDebug, "TenantBalancerListMovements", self->tbi.id()).log();
 
 	try {
-		GetActiveMovementsReply reply;
+		ListMovementsReply reply;
 		req.reply.send(reply);
 	} catch (Error& e) {
-		TraceEvent(SevDebug, "TenantBalancerGetActiveMovementsError", self->tbi.id()).error(e);
+		TraceEvent("TenantBalancerListMovementsError", self->tbi.id()).error(e);
 		req.reply.sendError(e);
 	}
 	return Void();
@@ -113,7 +113,7 @@ ACTOR Future<Void> abortMovement(TenantBalancer* self, AbortMovementRequest req)
 		AbortMovementReply reply;
 		req.reply.send(reply);
 	} catch (Error& e) {
-		TraceEvent(SevDebug, "TenantBalancerAbortMovementError", self->tbi.id())
+		TraceEvent("TenantBalancerAbortMovementError", self->tbi.id())
 		    .error(e)
 		    .detail("TenantGroup", req.tenantGroupName);
 		req.reply.sendError(e);
@@ -133,8 +133,8 @@ ACTOR Future<Void> tenantBalancerCore(TenantBalancer* self) {
 		when(GetMovementStatusRequest req = waitNext(self->tbi.getMovementStatus.getFuture())) {
 			self->actors.add(getMovementStatus(self, req));
 		}
-		when(GetActiveMovementsRequest req = waitNext(self->tbi.getActiveMovements.getFuture())) {
-			self->actors.add(getActiveMovements(self, req));
+		when(ListMovementsRequest req = waitNext(self->tbi.listMovements.getFuture())) {
+			self->actors.add(listMovements(self, req));
 		}
 		when(MoveTenantGroupRequest req = waitNext(self->tbi.moveTenantsToCluster.getFuture())) {
 			self->actors.add(moveTenantGroup(self, req));

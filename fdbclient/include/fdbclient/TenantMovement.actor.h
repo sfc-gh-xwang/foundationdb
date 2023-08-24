@@ -121,26 +121,26 @@ static Future<TenantMovementStatus> getTenantMovementStatus(IDatabase management
 
 ACTOR
 template <typename IDatabase>
-static Future<std::vector<TenantMovementInfo>> getActiveMovements(IDatabase managementDb) {
-	state GetActiveMovementsRequest req;
+static Future<std::vector<TenantMovementInfo>> listMovements(IDatabase managementDb) {
+	state ListMovementsRequest req;
 	state Future<Void> init = Void();
-	state Future<ErrorOr<GetActiveMovementsReply>> replyFuture = Never();
+	state Future<ErrorOr<ListMovementsReply>> replyFuture = Never();
 	state std::vector<TenantMovementInfo> tenantMovementInfo;
 	try {
 		state Future<Void> onTbiChanged = wait(getTbiChangedFuture(managementDb));
 		loop choose {
-			when(ErrorOr<GetActiveMovementsReply> reply =
+			when(ErrorOr<ListMovementsReply> reply =
 			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
 				if (reply.isError()) {
 					throw reply.getError();
 				}
-				tenantMovementInfo = reply.get().activeMovements;
+				tenantMovementInfo = reply.get().movements;
 				break;
 			}
 			when(wait(onTbiChanged || init)) {
 				init = Never();
 				state Optional<TenantBalancerInterface> tbi = wait(getTenantBalancerInterface(managementDb));
-				replyFuture = tbi.present() ? tbi.get().getActiveMovements.tryGetReply(req) : Never();
+				replyFuture = tbi.present() ? tbi.get().listMovements.tryGetReply(req) : Never();
 				Future<Void> _onTbiChanged = wait(getTbiChangedFuture(managementDb));
 				onTbiChanged = _onTbiChanged;
 			}

@@ -124,28 +124,27 @@ struct MoveTenantGroupRequest {
 	}
 };
 
-struct GetActiveMovementsReply {
+struct ListMovementsReply {
 	constexpr static FileIdentifier file_identifier = 2320458;
 	Arena arena;
 
-	std::vector<TenantMovementInfo> activeMovements;
+	std::vector<TenantMovementInfo> movements;
 
-	GetActiveMovementsReply() = default;
-	explicit GetActiveMovementsReply(std::vector<TenantMovementInfo> movements)
-	  : activeMovements(std::move(movements)) {}
+	ListMovementsReply() = default;
+	explicit ListMovementsReply(std::vector<TenantMovementInfo> _movements) : movements(std::move(_movements)) {}
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, activeMovements, arena);
+		serializer(ar, movements, arena);
 	}
 };
 
-struct GetActiveMovementsRequest {
+struct ListMovementsRequest {
 	constexpr static FileIdentifier file_identifier = 11980148;
 
-	ReplyPromise<GetActiveMovementsReply> reply;
+	ReplyPromise<ListMovementsReply> reply;
 
-	GetActiveMovementsRequest() = default;
+	ListMovementsRequest() = default;
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
@@ -219,7 +218,7 @@ struct TenantBalancerInterface {
 
 	RequestStream<HaltTenantBalancerRequest> haltTenantBalancer;
 	RequestStream<GetMovementStatusRequest> getMovementStatus;
-	RequestStream<GetActiveMovementsRequest> getActiveMovements;
+	RequestStream<ListMovementsRequest> listMovements;
 	RequestStream<MoveTenantGroupRequest> moveTenantsToCluster;
 	RequestStream<AbortMovementRequest> abortMovement;
 	RequestStream<PersistInterfaceRequest> persistInterface;
@@ -241,7 +240,7 @@ struct TenantBalancerInterface {
 		           uniqueId,
 		           haltTenantBalancer,
 		           getMovementStatus,
-		           getActiveMovements,
+		           listMovements,
 		           moveTenantsToCluster,
 		           abortMovement,
 		           persistInterface,
@@ -259,7 +258,7 @@ struct TenantBalancerInterface {
 		std::vector<std::pair<FlowReceiver*, TaskPriority>> streams;
 		streams.push_back(haltTenantBalancer.getReceiver());
 		streams.push_back(getMovementStatus.getReceiver());
-		streams.push_back(getActiveMovements.getReceiver());
+		streams.push_back(listMovements.getReceiver());
 		streams.push_back(moveTenantsToCluster.getReceiver());
 		streams.push_back(abortMovement.getReceiver());
 		streams.push_back(persistInterface.getReceiver());
