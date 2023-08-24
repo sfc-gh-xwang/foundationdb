@@ -2245,6 +2245,7 @@ ACTOR static Future<JsonBuilderObject> workloadStatusFetcher(
 
 		if (commitProxyStats.size() > 0) {
 			(*tenants)["num_tenants"] = commitProxyStats[0].getUint64("NumTenants");
+			(*tenants)["num_locked_tenants"] = commitProxyStats[0].getUint64("NumLockedTenants");
 		}
 	} catch (Error& e) {
 		if (e.code() == error_code_actor_cancelled)
@@ -3459,6 +3460,7 @@ ACTOR Future<StatusReply> clusterGetStatus(
 				} else if (!metaclusterMetrics.error.present()) { // clusterType == ClusterType::METACLUSTER_MANAGEMENT
 					metacluster["num_data_clusters"] = metaclusterMetrics.numDataClusters;
 					tenants["num_tenants"] = metaclusterMetrics.numTenants;
+					tenants["num_locked_tenants"] = metaclusterMetrics.numLockedTenants;
 					tenants["tenant_group_capacity"] = metaclusterMetrics.tenantGroupCapacity;
 					tenants["tenant_groups_allocated"] = metaclusterMetrics.tenantGroupsAllocated;
 				} else {

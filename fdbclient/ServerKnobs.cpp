@@ -947,7 +947,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CHANGEFEEDSTREAM_LIMIT_BYTES,                          1e6 ); if( randomize && BUGGIFY ) CHANGEFEEDSTREAM_LIMIT_BYTES = 1;
 	init( BLOBWORKERSTATUSSTREAM_LIMIT_BYTES,                    1e4 ); if( randomize && BUGGIFY ) BLOBWORKERSTATUSSTREAM_LIMIT_BYTES = 1;
 	init( BW_MUTATION_STREAM_LIMIT_BYTES,                        2e5 ); if( randomize && BUGGIFY ) BW_MUTATION_STREAM_LIMIT_BYTES = deterministicRandom()->randomSkewedUInt32(1, 1e4);
-	init( ENABLE_CLEAR_RANGE_EAGER_READS,                       true ); if( randomize && BUGGIFY ) ENABLE_CLEAR_RANGE_EAGER_READS = deterministicRandom()->coinflip();
+	init( ENABLE_CLEAR_RANGE_EAGER_READS,                       false); if( randomize && BUGGIFY ) ENABLE_CLEAR_RANGE_EAGER_READS = deterministicRandom()->coinflip();
 	init( CHECKPOINT_TRANSFER_BLOCK_BYTES,                      40e6 );
 	init( QUICK_GET_VALUE_FALLBACK,                             true );
 	init( QUICK_GET_KEY_VALUES_FALLBACK,                        true );
@@ -1224,6 +1224,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_CONNECTOR_GET_ENCRYPTION_KEYS_ENDPOINT,         "");
 	init( REST_KMS_CONNECTOR_GET_LATEST_ENCRYPTION_KEYS_ENDPOINT,  "");
 	init( REST_KMS_CONNECTOR_GET_BLOB_METADATA_ENDPOINT,           "");
+	init( REST_KMS_CONNECTOR_INIT_REQUEST_RETRY_DELAY,           0.05);
+	init( REST_KMS_CONNECTOR_MAX_REQUEST_RETRY_DELAY,            60.0);
 	// Details to fetch validation token from a localhost file
 	// acceptable format: "<token_name1>$<absolute_file_path1>,<token_name2>$<absolute_file_path2>,.."
 	// NOTE: 'token-name" can NOT contain '$' character
