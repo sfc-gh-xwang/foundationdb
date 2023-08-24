@@ -609,8 +609,15 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 				}
 
 				if (config.enabled && statsCurrentRound.complete) {
-					state Future<Void> delayBeforeNextRound =
-					    delay(std::max<double>(statsCurrentRound.startTime + config.minRoundTimeSeconds - now(), 0.0));
+					double delayTime =
+					    std::max<double>(statsCurrentRound.startTime + config.minRoundTimeSeconds - now(), 0.0);
+					// if delayTime is 0 means it should not wait and start a new round now, but shouldStartNewRound()
+					// uses version for the check, which may not exactly matches the clock time, so just delay 1 second
+					// if it's not ready to start a new round yet.
+					if (delayTime == 0 && !statsCurrentRound.shouldStartNewRound(config, tr->getReadVersion().get())) {
+						delayTime = 1;
+					}
+					state Future<Void> delayBeforeNextRound = delay(delayTime);
 					memState->stats.waitingBetweenRounds = true;
 					updates.push_back(delayBeforeNextRound);
 				} else {
