@@ -43,7 +43,7 @@ ACTOR Future<MetaclusterMetrics> getMetaclusterMetricsImpl(Database db) {
 			           metacluster::listTenantMetadata(db.getReference(),
 			                                           ""_sr,
 			                                           "\xff"_sr,
-			                                           CLIENT_KNOBS->TOO_MANY,
+			                                           CLIENT_KNOBS->TOO_MANY, // Stops counting if limit is reached
 			                                           0,
 			                                           {},
 			                                           {},
