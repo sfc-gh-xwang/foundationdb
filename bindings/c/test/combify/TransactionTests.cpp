@@ -1439,8 +1439,8 @@ AddTest testSpecialKeySpaceDisableTracing("SpecialKeySpaceDisableTracing", asTru
 });
 
 AddTest testSpecialKeySpaceTracingGetRange("SpecialKeySpaceTracingGetRange", asTrustedClient, [](const TestEnv& env) {
-	std::string tracingBegin = "\xff\xff/tracing/";
-	std::string tracingEnd = "\xff\xff/tracing0";
+	auto tracingBegin = "\xff\xff/tracing/"_br;
+	auto tracingEnd = "\xff\xff/tracing0"_br;
 
 	auto tr = env.newNormalOrTenantTransaction();
 	tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
@@ -1448,8 +1448,8 @@ AddTest testSpecialKeySpaceTracingGetRange("SpecialKeySpaceTracingGetRange", asT
 	auto f = runToCompletion(
 	    tr,
 	    [&tracingBegin, &tracingEnd](auto tr) {
-		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(fdb::toBytesRef(tracingBegin)),
-		                       fdb::key_select::lastLessThan(fdb::toBytesRef(tracingEnd), 1),
+		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(tracingBegin),
+		                       fdb::key_select::lastLessThan(tracingEnd, 1),
 		                       /* limit */ 0,
 		                       /* target_bytes */ 0,
 		                       /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
@@ -1463,8 +1463,8 @@ AddTest testSpecialKeySpaceTracingGetRange("SpecialKeySpaceTracingGetRange", asT
 	ASSERT(!more, "Unexpected more from the return");
 	ASSERT(count == 2, "unmatched count value: expected=2, actual={}", count);
 
-	auto tracingBeginTidKey = fdb::toCharsRef(kv[1].key());
-	ASSERT(tracingBeginTidKey == tracingBegin + "transaction_id");
+	auto tracingBeginTidKey = kv[1].key();
+	ASSERT(tracingBeginTidKey == "\xff\xff/tracing/transaction_id"_br);
 
 	auto tracingBeginTidVal = std::string(kv[1].value().begin(), kv[1].value().end());
 	UID id = UID::fromString(tracingBeginTidVal);
