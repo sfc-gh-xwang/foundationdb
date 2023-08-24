@@ -378,11 +378,24 @@ TEST_CASE("FDB_DB_OPTION_TRANSACTION_TIMEOUT") {
 TEST_CASE("fdb_transaction_set_read_version old_version") {
 	auto tr = db.createTransaction();
 
-	tr.setReadVersion(1);
-	auto f1 = tr.get("foo"_br, /*snapshot*/ true);
+	while (1) {
+		tr.setReadVersion(1);
+		auto f1 = tr.get("foo"_br, /*snapshot*/ true);
 
-	auto err = waitFuture(f1);
-	CHECK(err.code() == 1007); // transaction_too_old
+		auto err = waitFuture(f1);
+		// We expect this transaction to fail
+		CHECK(err);
+		// We only expect retryable failure for this test case
+		CHECK(err.retryable());
+		// In case the failure is not what we expect, which is possible to happen,
+		// we retry this test case
+		if (err.code() != 1007) { // transaction_too_old
+			auto f2 = tr.onError(err);
+			fdbCheck(waitFuture(f2));
+			continue;
+		}
+		break;
+	}
 }
 
 TEST_CASE("fdb_transaction_set_read_version future_version") {
