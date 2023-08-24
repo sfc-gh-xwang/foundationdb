@@ -110,6 +110,11 @@ pipeline {
             when { expression { run_ci } }
             steps {
                 script {
+                    if (labels.contains("bypass_all_checks")) {
+                        msg = "Skipped due to label 'bypass_all_checks'"
+                        createCheck("FDB Build Image", msg, msg, "completed", "success");
+                        return
+                    }
                     def dryrun = "true"
                     def isLatest = "false"
                     def isRelease = "false"
@@ -245,10 +250,10 @@ void trigger_job(jobName, profile) {
         def logLines = logContent.split("\n")
         def testCount = 0
         def buildCount = 0
-        def details = []
         def jobConclusion = "failure"
         def failureCount = 0
         def summary = ""
+        def details = ""
 
         //Parsing line "2023-04-03 14:31:28  Build job run status:FAILURE http://job_url_link" to get build_info
         for (line in logLines) {
@@ -260,7 +265,19 @@ void trigger_job(jobName, profile) {
                     jobConclusion = "failure"
                     failureCount += 1
                 }
-                summary += "Build Status: " + build_info[0] + ", Build Job URL : " + build_info[1] + " , "
+
+                def build_summary = "+ **Build Status:** `" + build_info[0] + "` " + build_info[1] + "pipeline-console \\n"
+                summary += build_summary
+                details += build_summary
+                def build_id = build_info[1].tokenize('/')[-1]
+                def buildlogs = Jenkins.getInstance().getItemByFullName("FDB_Build/Build").getBuildByNumber(build_id.toInteger()).logFile.text
+                def build_log = buildlogs.split("\n")
+                //Capture error's from the build log
+                for (build_line in build_log) {
+                    if (build_line.contains("ERROR:")) {
+                        details += build_line + "\\n"
+                    }
+                }
             }
             if (line.contains("Test job run status:")) {
                 testCount += 1
@@ -275,8 +292,19 @@ void trigger_job(jobName, profile) {
                     failureCount += 1
                 }
 
-                summary += " Test " + Integer.toString(testCount) + ": Status: " + build_info[0] +
-                           " Test Job URL : " + build_info[1] + " ,"
+                def test_summary = "+ **Test " + Integer.toString(testCount) + ": Status:** `" + build_info[0] +
+                           "` " + build_info[1] + "\\n"
+
+                summary += test_summary
+                details += test_summary
+                def build_id = build_info[1].tokenize('/')[-1]
+                def buildlogs = Jenkins.getInstance().getItemByFullName("FDB_Joshua_jobs/Joshua").getBuildByNumber(build_id.toInteger()).logFile.text
+                def build_log = buildlogs.split("\n")
+                for (build_line in build_log) {
+                    if (build_line.contains("ensmebleId=")) {
+                        details += "      Ensemble ID : " + build_line.tokenize('=')[-1] + "\\n"
+                    }
+                }
             }
         }
 
@@ -289,7 +317,7 @@ void trigger_job(jobName, profile) {
         }
 
         title = "Failure count : " + Integer.toString(failureCount)
-        createCheck(jobName, title, summary, "completed", jobConclusion);
+        createCheck(jobName, title, summary, "completed", jobConclusion, details);
 
         if (jobConclusion == "failure") {
             // In case if any of the build or test fails we will mark current build as FAILURE
@@ -298,7 +326,7 @@ void trigger_job(jobName, profile) {
     }
 }
 
-void createCheck(context, title, summary, jobStatus, jobConclusion) {
+void createCheck(context, title, summary, jobStatus, jobConclusion, details="") {
     withCredentials([usernamePassword(credentialsId: 'Jenkins-FDB-GithubApp ',
     usernameVariable: 'GITHUB_USER',
     passwordVariable: 'GITHUB_TOKEN')]) {
@@ -310,15 +338,18 @@ void createCheck(context, title, summary, jobStatus, jobConclusion) {
                   -X POST https://api.github.com/repos/snowflakedb/frostdb/check-runs \\
                  -d '{"name":"${context}","head_sha":"${scmInfo["GIT_COMMIT"]}",
                       "status":"in_progress",
+                      "details_url":"${currentBuild.absoluteUrl}/pipeline-console",
                       "output":{"title":"${title}","summary":"${summary}"}'
             """
         }
         if ("${jobStatus}" == "completed") {
             sh """curl -S -u "$GITHUB_USER:$GITHUB_TOKEN" \\
                   -X POST https://api.github.com/repos/snowflakedb/frostdb/check-runs \\
-                 -d '{"name":"${context}","head_sha":"${scmInfo["GIT_COMMIT"]}",
+                  -d '{"name":"${context}","head_sha":"${scmInfo["GIT_COMMIT"]}",
                       "status":"completed", "conclusion":"${jobConclusion}",
-                      "output":{"title":"${title}","summary":"${summary}"}'
+                      "details_url":"${currentBuild.absoluteUrl}/pipeline-console",
+                      "output":{"title":"${title}","summary":"${summary}", "text" : "${details}"}
+                      }'
             """
         }
     }
