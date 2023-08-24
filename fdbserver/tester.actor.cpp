@@ -2219,7 +2219,22 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 			    .detail("Tenant", defaultTenant)
 			    .detail("TenantGroup", entry.tenantGroup);
 
-			wait(success(TenantAPI::createTenant(cx.getReference(), defaultTenant.get(), entry)));
+			Optional<TenantMapEntry> builtTenant =
+			    wait(TenantAPI::createTenant(cx.getReference(), defaultTenant.get(), entry));
+
+			// createTenant returns nothing if we conflicted on the id, which should never happen here,
+			// because (a) it's a fresh cluster, and (b) we told it to allocate a fresh id.
+			ASSERT(builtTenant.has_value());
+
+			if (defaultBlobification) {
+				TraceEvent("BlobbifyDefaultTenant");
+				state Reference<Tenant> tenantRef(new Tenant(cx, builtTenant.get()));
+				bool success = wait(cx->blobbifyRange(normalKeys, tenantRef));
+				TraceEvent("BlobbifiedDefaultTenant").detail("Success", success);
+				ASSERT(success);
+				CODE_PROBE(true, "Blobbified default tenant");
+				tenantRef.clear();
+			}
 		}
 
 		// If the initial test marked a zone as healthy and didn't clear it, do so now before running the second test
@@ -2304,7 +2319,7 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 		}
 	}
 
-	if (useDB && defaultBlobification) {
+	if (useDB && defaultBlobification && !defaultTenant.present()) {
 		bool success = wait(cx->blobbifyRange(normalKeys));
 		TraceEvent("DoneDefaultBlobification").detail("Success", success);
 		ASSERT(success);
