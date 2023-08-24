@@ -85,6 +85,9 @@ struct StorageQuotaWorkload : TestWorkload {
 		ASSERT(entry1.tenantGroup.present() && entry1.tenantGroup.get() == self->group &&
 		       entry2.tenantGroup.present() && entry2.tenantGroup.get() == self->group);
 
+		// Start a bulk load. The key range doesn't matter since we're not actually trying to load data
+		state BulkLoadID bulkLoadID = wait(cx->startBulkLoad(singleKeyRange(""_sr), self->tenant));
+
 		// Get the size of the non-empty tenant. We will set the quota of the tenant group
 		// to just below the current size of this tenant.
 		state int64_t size = wait(getSize(cx, self->tenant));
@@ -105,6 +108,9 @@ struct StorageQuotaWorkload : TestWorkload {
 		state bool rejected2 = wait(tryWrite(self, cx, self->emptyTenant, /*bypassQuota=*/false, /*expectOk=*/false));
 		ASSERT(rejected2);
 
+		// The bulk load started earlier should also have been aborted by the system
+		wait(expectBulkLoadAbortedBySystem(cx, bulkLoadID, self->tenant));
+
 		// Check that transaction is able to commit if we use the FDBTransactionOptions to bypass quota.
 		state bool bypassed = wait(tryWrite(self, cx, self->tenant, /*bypassQuota=*/true, /*expectOk=*/true));
 		ASSERT(bypassed);
@@ -124,8 +130,19 @@ struct StorageQuotaWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR static Future<Void> expectBulkLoadAbortedBySystem(Database cx, BulkLoadID id, Reference<Tenant> tenant) {
+		try {
+			wait(cx->waitBulkLoadComplete(id, tenant));
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_aborted || e.code() == error_code_bulk_load_not_found);
+		}
+		wait(cx->cleanupBulkLoad(id, tenant));
+		return Void();
+	}
+
 	ACTOR static Future<int64_t> getSize(Database cx, Reference<Tenant> tenant) {
-		state ReadYourWritesTransaction tr(cx, tenant);
+		state ReadYourWritesTransaction tr(tenant);
 		state double totalDelay = 0.0;
 		state int64_t previousSize = -1;
 
@@ -183,7 +200,7 @@ struct StorageQuotaWorkload : TestWorkload {
 		// the storage usage and quota related monitors to fetch and propagate the latest information
 		// about the tenants that are over storage quota.
 		for (i = 0; i < 10; i++) {
-			state Transaction tr(cx, tenant);
+			state Transaction tr(tenant);
 			if (bypassQuota) {
 				tr.setOption(FDBTransactionOptions::BYPASS_STORAGE_QUOTA);
 			}

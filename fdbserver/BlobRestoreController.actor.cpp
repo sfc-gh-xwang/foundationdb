@@ -82,7 +82,7 @@ ACTOR Future<Void> BlobRestoreController::setPhase(Reference<BlobRestoreControll
 				throw blob_migrator_replaced();
 			}
 			if (phase > newPhase) {
-				CODE_PROBE(true, "Blob migrator unexpected phase");
+				CODE_PROBE(true, "Blob migrator unexpected phase", probe::decoration::rare);
 				TraceEvent("BlobMigratorUnexpectedPhase").detail("Phase", newPhase).detail("Current", phase);
 				throw restore_error();
 			}

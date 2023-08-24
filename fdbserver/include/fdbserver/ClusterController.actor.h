@@ -442,7 +442,7 @@ public:
 		// still need master for recovery.
 		ProcessClass::Fitness oldMasterFit =
 		    masterWorker->second.details.processClass.machineClassFitness(ProcessClass::Master);
-		if (db.config.isExcludedServer(dbi.master.get().addresses())) {
+		if (db.config.isExcludedServer(dbi.master.get().addresses(), dbi.master.get().locality)) {
 			oldMasterFit = std::max(oldMasterFit, ProcessClass::ExcludeFit);
 		}
 
@@ -478,7 +478,7 @@ public:
 		                                                                   true,
 		                                                                   statelessCount);
 		auto newMasterFit = mworker.worker.processClass.machineClassFitness(ProcessClass::Master);
-		if (db.config.isExcludedServer(mworker.worker.interf.addresses())) {
+		if (db.config.isExcludedServer(mworker.worker.interf.addresses(), mworker.worker.interf.locality)) {
 			newMasterFit = std::max(newMasterFit, ProcessClass::ExcludeFit);
 		}
 

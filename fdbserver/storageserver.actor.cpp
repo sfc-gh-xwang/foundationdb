@@ -30,6 +30,7 @@
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/DatabaseConfiguration.h"
 #include "fdbclient/RandomKeyValueUtils.h"
+#include "fdbrpc/ContinuousSample.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/ApiVersion.h"
 #include "flow/network.h"
@@ -276,6 +277,10 @@ class ShardInfo : public ReferenceCounted<ShardInfo>, NonCopyable {
 	    desiredShardId(0LL),
 	    version(0) {}
 
+	int64_t shardSampledReads = -1;
+	int64_t totalSampledReads = -1;
+	double lastReadSampleCacheTime = -SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL;
+
 public:
 	// A shard has 3 mutual exclusive states: adding, readWrite and notAssigned.
 	std::unique_ptr<AddingShard> adding;
@@ -285,6 +290,8 @@ public:
 	uint64_t shardId;
 	uint64_t desiredShardId;
 	Version version;
+
+	double getSampledReadRate(StorageServer* data);
 
 	static ShardInfo* newNotAssigned(KeyRange keys) { return new ShardInfo(keys, nullptr, nullptr); }
 	static ShardInfo* newReadWrite(KeyRange keys, StorageServer* data) { return new ShardInfo(keys, nullptr, data); }
@@ -909,6 +916,9 @@ public:
 	Optional<TenantGroupName> getTenantGroup(Version, TenantInfo, bool lockAware) const;
 
 	std::vector<StorageServerShard> getStorageServerShards(KeyRangeRef range);
+	void insertReadShards(std::unordered_set<Reference<ShardInfo>>& shardSet, KeyRangeRef range);
+	ReadMetrics getReadMetrics(std::unordered_set<Reference<ShardInfo>> const& shards);
+	ReadMetrics getReadMetrics(KeyRef const& key);
 
 	class CurrentRunningFetchKeys {
 		std::unordered_map<UID, double> startTimeMap;
@@ -981,8 +991,31 @@ public:
 		}
 	};
 
-	std::deque<StorageServer::EmptyVersionQueueEntry> versionQueue;
-	double lastVersionSampleTime;
+	struct EmptyVersionStats {
+		constexpr static FileIdentifier file_identifier = 15292782;
+
+		Deque<StorageServer::EmptyVersionQueueEntry> tlogVersionQueue;
+		ContinuousSample<double> safeWaitWindow =
+		    ContinuousSample<double>(2 * SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT);
+		double minWaitWindow = INT_MAX;
+		double minSafeWaitWindow = INT_MAX;
+		uint64_t positiveSampleNum = 0;
+		uint64_t negativeSampleNum = 0;
+
+		void resetExceptQueue() {
+			safeWaitWindow.clear();
+			minWaitWindow = INT_MAX;
+			minSafeWaitWindow = INT_MAX;
+			positiveSampleNum = 0;
+			negativeSampleNum = 0;
+		}
+	};
+	EmptyVersionStats emptyVersionWaitMutationStats;
+	EmptyVersionStats emptyVersionWaitNonMutationStats;
+
+	double emptyVerionWaitLastWindow;
+	bool emptyVersionWaitEmergencyTransition;
+	AsyncTrigger emptyVersionWaitEmergencyTrigger;
 
 	std::map<Version, Standalone<VerUpdateRef>> const& getMutationLog() const { return mutationLog; }
 	std::map<Version, Standalone<VerUpdateRef>>& getMutableMutationLog() { return mutationLog; }
@@ -1480,6 +1513,23 @@ public:
 			specialCounter(cc, "ActiveChangeFeeds", [self]() { return self->uidChangeFeed.size(); });
 			specialCounter(cc, "ActiveChangeFeedQueries", [self]() { return self->activeFeedQueries; });
 			specialCounter(cc, "ChangeFeedMemoryBytes", [self]() { return self->changeFeedMemoryBytes; });
+			specialCounter(cc, "BlockedFeedClients", [self]() { return self->changeFeedClientVersions.size(); });
+			specialCounter(cc, "BlockedFeedStreams", [self]() {
+				int64_t total = 0;
+				for (auto& it : self->changeFeedClientVersions) {
+					total += it.second.size();
+				}
+				return total;
+			});
+			specialCounter(cc, "BlockedFeedVersion", [self]() {
+				Version minVersion = std::numeric_limits<Version>::max();
+				for (auto& client : self->changeFeedClientVersions) {
+					for (auto& stream : client.second) {
+						minVersion = std::min(minVersion, stream.second);
+					}
+				}
+				return minVersion;
+			});
 		}
 	} counters;
 
@@ -1536,7 +1586,10 @@ public:
 	    poppedAllAfter(std::numeric_limits<Version>::max()),
 	    cpuUsage(0.0),
 	    diskUsage(0.0),
-	    lastVersionSampleTime(0),
+	    emptyVersionWaitMutationStats(),
+	    emptyVersionWaitNonMutationStats(),
+	    emptyVerionWaitLastWindow(0),
+	    emptyVersionWaitEmergencyTransition(false),
 	    storage(this, storage),
 	    shardChangeCounter(0),
 	    lastTLogVersion(0),
@@ -1862,6 +1915,34 @@ public:
 	bool isUsingStorageEngineParams() const { return storageEngineParams.isValid(); }
 };
 
+double ShardInfo::getSampledReadRate(StorageServer* data) {
+	if (now() - lastReadSampleCacheTime >= SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL) {
+		lastReadSampleCacheTime = now();
+
+		KeyRangeRef sampleRange = keys;
+		KeyRangeRef totalRange = allKeys;
+		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
+			if (keys.begin.startsWith(systemKeys.begin)) {
+				shardSampledReads = 0;
+				totalSampledReads = 0;
+				return 0;
+			} else if (keys.end.startsWith(systemKeys.begin)) {
+				sampleRange = KeyRangeRef(sampleRange.begin, systemKeys.begin);
+			}
+
+			totalRange = normalKeys;
+		}
+
+		shardSampledReads = data->metrics.opsReadSample.getEstimate(sampleRange);
+		totalSampledReads = data->metrics.opsReadSample.getEstimate(totalRange);
+	}
+
+	double readRate = shardSampledReads / std::max<double>(1.0, totalSampledReads);
+	ASSERT_LE(readRate, 1.0);
+	ASSERT_GE(readRate, 0.0);
+	return readRate;
+}
+
 const StringRef StorageServer::CurrentRunningFetchKeys::emptyString = ""_sr;
 const KeyRangeRef StorageServer::CurrentRunningFetchKeys::emptyKeyRange =
     KeyRangeRef(StorageServer::CurrentRunningFetchKeys::emptyString,
@@ -2062,7 +2143,83 @@ void updateProcessStats(StorageServer* self) {
 #pragma region Queries
 #endif
 
-ACTOR Future<Version> waitForVersionActor(StorageServer* data, Version version, SpanContext spanContext) {
+// Sample client request who does not have to wait for version
+inline void sampleNoWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& stats,
+                                               Version version,
+                                               double versionArrivalTime) {
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+	        ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_DISABLED) {
+		return;
+	}
+
+	bool popped = false;
+	while (!stats.tlogVersionQueue.empty() && stats.tlogVersionQueue.front().version < version &&
+	       stats.tlogVersionQueue.front().timestamp < versionArrivalTime) {
+		stats.tlogVersionQueue.pop_front();
+		popped = true;
+	}
+
+	// It is possible that version queue will append more tlog versions after a client request version came in
+	// In that case, we need to handle the following:
+	// tlog version       100  110  120  130  140       150  160
+	//  req version                                155   |
+	//  req version wait finish                     |    |        155
+	//  sample interval                             |----| (negative)
+	if (!stats.tlogVersionQueue.empty() && (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
+		double interval = versionArrivalTime - stats.tlogVersionQueue.front().timestamp;
+		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
+			stats.safeWaitWindow.addSample(interval);
+		}
+		stats.minWaitWindow = std::min(interval, stats.minWaitWindow);
+		if (interval > 0) {
+			stats.minSafeWaitWindow = std::min(interval, stats.minSafeWaitWindow);
+			++stats.positiveSampleNum;
+		} else {
+			++stats.negativeSampleNum;
+		}
+	}
+}
+
+// Sample client request who has to wait for version
+inline void sampleWaitRequestWaitWindowStats(StorageServer::EmptyVersionStats& stats, double versionArrivalTime) {
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
+		return;
+	}
+
+	double waitTime = g_network->timer() - versionArrivalTime;
+	ASSERT_WE_THINK(waitTime >= 0);
+	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE > 0) {
+		stats.safeWaitWindow.addSample(-waitTime);
+	}
+	stats.minWaitWindow = std::min(-waitTime, stats.minWaitWindow);
+	++stats.negativeSampleNum;
+}
+
+// edge-triggered dynamic empty version wait window emergency
+inline void emptyVersionWaitEdgeTriggeredEmergency(StorageServer* data) {
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT != ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT) {
+		return;
+	}
+
+	double emergencyThreshold =
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION * data->emptyVerionWaitLastWindow;
+	if (!data->emptyVersionWaitEmergencyTransition &&
+	    (std::max(0., data->emptyVersionWaitMutationStats.minSafeWaitWindow) < emergencyThreshold ||
+	     std::max(0., data->emptyVerionWaitLastWindow + data->emptyVersionWaitNonMutationStats.minSafeWaitWindow) <
+	         emergencyThreshold)) {
+		data->emptyVersionWaitEmergencyTransition = true;
+		data->emptyVersionWaitEmergencyTrigger.trigger();
+	}
+}
+
+ACTOR Future<Version> waitForVersionActor(StorageServer* data,
+                                          Version version,
+                                          SpanContext spanContext,
+                                          bool emptyVersionWaitSample,
+                                          double versionArrivalTimestamp) {
 	state Span span("SS:WaitForVersion"_loc, spanContext);
 	choose {
 		when(wait(data->version.whenAtLeast(version))) {
@@ -2070,9 +2227,17 @@ ACTOR Future<Version> waitForVersionActor(StorageServer* data, Version version, 
 			// wait( delay(0) );  // don't do a whole bunch of these at once
 			if (version < data->oldestVersion.get())
 				throw transaction_too_old(); // just in case
+			if (emptyVersionWaitSample) {
+				sampleWaitRequestWaitWindowStats(data->emptyVersionWaitMutationStats, versionArrivalTimestamp);
+				sampleWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, versionArrivalTimestamp);
+			}
 			return version;
 		}
 		when(wait(delay(SERVER_KNOBS->FUTURE_VERSION_DELAY))) {
+			if (emptyVersionWaitSample) {
+				sampleWaitRequestWaitWindowStats(data->emptyVersionWaitMutationStats, versionArrivalTimestamp);
+				sampleWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, versionArrivalTimestamp);
+			}
 			if (deterministicRandom()->random01() < 0.001)
 				TraceEvent(SevWarn, "ShardServerFutureVersion1000x", data->thisServerID)
 				    .detail("Version", version)
@@ -2100,15 +2265,29 @@ Version getLatestCommitVersion(VersionVector& ssLatestCommitVersions, Tag& tag) 
 	return commitVersion;
 }
 
-Future<Version> waitForVersion(StorageServer* data, Version version, SpanContext spanContext) {
+Future<Version> waitForVersion(StorageServer* data,
+                               Version version,
+                               SpanContext spanContext,
+                               double versionArrivalTime) {
 	if (version == latestVersion) {
 		version = std::max(Version(1), data->version.get());
+	}
+
+	bool emptyVersionWaitSample = true;
+	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB < 1) {
+		emptyVersionWaitSample =
+		    deterministicRandom()->random01() < SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB;
 	}
 
 	if (version < data->oldestVersion.get() || version <= 0) {
 		// TraceEvent(SevDebug, "WFVThrow", data->thisServerID).detail("Version", version).detail("OldestVersion", data->oldestVersion.get());
 		return transaction_too_old();
 	} else if (version <= data->version.get()) {
+		if (emptyVersionWaitSample) {
+			sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitMutationStats, version, versionArrivalTime);
+			sampleNoWaitRequestWaitWindowStats(data->emptyVersionWaitNonMutationStats, version, versionArrivalTime);
+			emptyVersionWaitEdgeTriggeredEmergency(data);
+		}
 		return version;
 	}
 
@@ -2119,17 +2298,19 @@ Future<Version> waitForVersion(StorageServer* data, Version version, SpanContext
 	if (deterministicRandom()->random01() < 0.001) {
 		TraceEvent("WaitForVersion1000x").log();
 	}
-	return waitForVersionActor(data, version, spanContext);
+	emptyVersionWaitEdgeTriggeredEmergency(data);
+	return waitForVersionActor(data, version, spanContext, emptyVersionWaitSample, versionArrivalTime);
 }
 
 Future<Version> waitForVersion(StorageServer* data,
                                Version commitVersion,
                                Version readVersion,
-                               SpanContext spanContext) {
+                               SpanContext spanContext,
+                               double versionArrivalTime) {
 	ASSERT(commitVersion == invalidVersion || commitVersion < readVersion);
 
 	if (commitVersion == invalidVersion) {
-		return waitForVersion(data, readVersion, spanContext);
+		return waitForVersion(data, readVersion, spanContext, versionArrivalTime);
 	}
 
 	if (readVersion == latestVersion) {
@@ -2163,7 +2344,8 @@ Future<Version> waitForVersion(StorageServer* data,
 	if (deterministicRandom()->random01() < 0.001) {
 		TraceEvent("WaitForVersion1000x");
 	}
-	return waitForVersionActor(data, std::max(commitVersion, data->oldestVersion.get()), spanContext);
+	return waitForVersionActor(
+	    data, std::max(commitVersion, data->oldestVersion.get()), spanContext, false, versionArrivalTime);
 }
 
 ACTOR Future<Version> waitForVersionNoTooOld(StorageServer* data, Version version) {
@@ -2250,35 +2432,35 @@ std::vector<StorageServerShard> StorageServer::getStorageServerShards(KeyRangeRe
 	return res;
 }
 
-ReadMetrics getReadMetrics() {
-	// For now, return 0.0 for range busyness. Eventually, this will be determined by looking at how much is
-	// attributable to the ranges associated with the read, which will be added as parameters to this function.
-	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, 0.0);
+void StorageServer::insertReadShards(std::unordered_set<Reference<ShardInfo>>& shardSet, KeyRangeRef range) {
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		for (auto shard : shards.intersectingRanges(range)) {
+			shardSet.insert(shard->value());
+		}
+	}
 }
 
-// Lightweight blocking function that updates requested version to version queue for statistics
-inline void sampleRequestVersions(StorageServer* self, const Version& version, const double& timestamp) {
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
-		return;
-	if (timestamp - self->lastVersionSampleTime > SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL) {
-		DisabledTraceEvent("EmptyVersionSSRecv", self->thisServerID).detail("Timestamp", timestamp);
-		bool popped = false;
-		while (!self->versionQueue.empty() && self->versionQueue.front().version <= version) {
-			self->versionQueue.pop_front();
-			popped = true;
+ReadMetrics StorageServer::getReadMetrics(std::unordered_set<Reference<ShardInfo>> const& shards) {
+	double rangeBusyness = 0;
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		for (auto const& shard : shards) {
+			rangeBusyness += shard->getSampledReadRate(this);
 		}
 
-		// NOTE: This current approach collects pessimistic statistics
-		if (!self->versionQueue.empty() && (SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_LESS_SKEW_STAT || popped)) {
-			double emptyVersionSafeWait = timestamp - self->versionQueue.front().timestamp;
-			if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
-			    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY)
-				TraceEvent("EmptyVersionWaitWindow", self->thisServerID)
-				    .detail("QueueSize", self->versionQueue.size())
-				    .detail("WaitWindow", emptyVersionSafeWait);
-		}
-		self->lastVersionSampleTime = timestamp;
+		rangeBusyness = std::min(1.0, rangeBusyness);
 	}
+
+	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
+}
+
+ReadMetrics StorageServer::getReadMetrics(KeyRef const& key) {
+	double rangeBusyness = 0;
+	if (SERVER_KNOBS->ENABLE_READ_RANGE_BUSYNESS_REPORTING) {
+		Reference<ShardInfo> shard = shards[key];
+		rangeBusyness = shard->getSampledReadRate(this);
+	}
+
+	return ReadMetrics::fromFloats(g_network->networkInfo.metrics.lastRunLoopBusyness, rangeBusyness);
 }
 
 ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
@@ -2306,9 +2488,6 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 		state double queueWaitEnd = g_network->timer();
 		data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-		// Track request version recv time right before we need to wait for the version
-		sampleRequestVersions(data, req.version, now());
-
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent("GetValueDebug",
 			                      req.options.get().debugID.get().first(),
@@ -2316,8 +2495,10 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 
 		state Optional<Value> v;
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext));
-		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
+		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext, queueWaitEnd));
+		double versionWaitTime = g_network->timer() - queueWaitEnd;
+
+		data->counters.readVersionWaitSample.addMeasurement(versionWaitTime);
 
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent("GetValueDebug",
@@ -2400,7 +2581,7 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 		// if (cached)
 		//	TraceEvent(SevDebug, "SSGetValueCached").detail("Key", req.key);
 
-		GetValueReply reply(v, cached, getReadMetrics());
+		GetValueReply reply(v, cached, data->getReadMetrics(req.key));
 		reply.penalty = data->getPenalty();
 		req.reply.send(reply);
 	} catch (Error& e) {
@@ -3862,6 +4043,14 @@ KeyRef addPrefix(KeyRef const& key, Optional<KeyRef> prefix, Arena& arena) {
 	}
 }
 
+KeyRef keyAfterWithPrefix(KeyRef const& key, Optional<KeyRef> prefix, Arena& arena) {
+	if (prefix.present()) {
+		return concatenateStrings(arena, prefix.get(), key, "\x00"_sr);
+	} else {
+		return keyAfter(key, arena);
+	}
+}
+
 KeyValueRef removePrefix(KeyValueRef const& src, Optional<KeyRef> prefix) {
 	if (prefix.present()) {
 		return KeyValueRef(src.key.removePrefix(prefix.get()), src.value);
@@ -3972,9 +4161,9 @@ ACTOR Future<GetValueReqAndResultRef> quickGetValue(StorageServer* data,
 	++data->counters.quickGetValueMiss;
 	if (SERVER_KNOBS->QUICK_GET_VALUE_FALLBACK) {
 		Optional<Reference<Tenant>> tenant = pOriginalReq->tenantInfo.hasTenant()
-		                                         ? makeReference<Tenant>(pOriginalReq->tenantInfo.tenantId)
+		                                         ? makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)
 		                                         : Optional<Reference<Tenant>>();
-		state Transaction tr(data->cx, tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, data->cx);
 		tr.setVersion(version);
 		// TODO: is DefaultPromiseEndpoint the best priority for this?
 		tr.trState->taskID = TaskPriority::DefaultPromiseEndpoint;
@@ -4247,7 +4436,8 @@ ACTOR Future<Key> findKey(StorageServer* data,
                           KeyRange range,
                           int* pOffset,
                           SpanContext parentSpan,
-                          Optional<ReadOptions> options)
+                          Optional<ReadOptions> options,
+                          std::unordered_set<Reference<ShardInfo>>* shards)
 // Attempts to find the key indicated by sel in the data at version, within range.
 // Precondition: selectorInRange(sel, range)
 // If it is found, offset is set to 0 and a key is returned which falls inside range.
@@ -4306,6 +4496,16 @@ ACTOR Future<Key> findKey(StorageServer* data,
 	if (skipEqualKey && rep.data.size() && rep.data[0].key == sel.getKey())
 		++index;
 
+	Key returnKey;
+	if (forward) {
+		returnKey = more ? keyAfter(rep.data.back().key) : range.end;
+	} else {
+		returnKey = more ? rep.data.back().key : range.begin;
+	}
+
+	data->insertReadShards(*shards,
+	                       forward ? KeyRangeRef(sel.getKey(), returnKey) : KeyRangeRef(returnKey, sel.getKey()));
+
 	if (index < rep.data.size()) {
 		*pOffset = 0;
 
@@ -4331,15 +4531,12 @@ ACTOR Future<Key> findKey(StorageServer* data,
 			CODE_PROBE(true, "Key selector read range had more results");
 
 			ASSERT(rep.data.size());
-			Key returnKey = forward ? keyAfter(rep.data.back().key) : rep.data.back().key;
-
 			// This is possible if key/value pairs are very large and only one result is returned on a last less than
 			// query SOMEDAY: graceful handling of exceptionally sized values
 			ASSERT(returnKey != sel.getKey());
-			return returnKey;
-		} else {
-			return forward ? range.end : range.begin;
 		}
+
+		return returnKey;
 	}
 }
 
@@ -4473,16 +4670,13 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request version recv time right before we need to wait for the version
-	sampleRequestVersions(data, req.version, now());
-
 	try {
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent(
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getKeyValues.Before");
 
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context));
+		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context, queueWaitEnd));
 		DisabledTraceEvent("VVV", data->thisServerID)
 		    .detail("Version", version)
 		    .detail("ReqVersion", req.version)
@@ -4521,16 +4715,17 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
 		    req.begin.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.begin.getKey())
-		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options);
+		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options, &readShards);
 		state Future<Key> fEnd =
 		    req.end.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.end.getKey())
-		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options);
+		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options, &readShards);
 		state Key begin = wait(fBegin);
 		state Key end = wait(fEnd);
 
@@ -4563,7 +4758,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 			none.version = version;
 			none.more = false;
 			none.penalty = data->getPenalty();
-			none.readMetrics = getReadMetrics();
+			none.readMetrics = data->getReadMetrics(readShards);
 
 			data->checkChangeCounter(changeCounter,
 			                         KeyRangeRef(std::min<KeyRef>(req.begin.getKey(), req.end.getKey()),
@@ -4623,8 +4818,17 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 				    addPrefix(r.data[r.data.size() - 1].key, req.tenantInfo.prefix, req.arena), bytesReadPerKSecond);
 			}
 
+			KeyRef readBegin = (req.limit < 0 && r.data.size() > 0 && r.more)
+			                       ? addPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
+			                       : begin;
+			KeyRef readEnd = (req.limit >= 0 && r.data.size() > 0 && r.more)
+			                     ? keyAfterWithPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
+			                     : end;
+
+			data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
+
 			r.penalty = data->getPenalty();
-			r.readMetrics = getReadMetrics();
+			r.readMetrics = data->getReadMetrics(readShards);
 			if (g_network->isSimulated()) {
 				maybeInjectConsistencyScanCorruption(data->thisServerID, req, r);
 			}
@@ -4724,9 +4928,9 @@ ACTOR Future<GetRangeReqAndResultRef> quickGetKeyValues(
 	++data->counters.quickGetKeyValuesMiss;
 	if (SERVER_KNOBS->QUICK_GET_KEY_VALUES_FALLBACK) {
 		Optional<Reference<Tenant>> tenant = pOriginalReq->tenantInfo.hasTenant()
-		                                         ? makeReference<Tenant>(pOriginalReq->tenantInfo.tenantId)
+		                                         ? makeReference<Tenant>(data->cx, pOriginalReq->tenantInfo.tenantId)
 		                                         : Optional<Reference<Tenant>>();
-		state Transaction tr(data->cx, tenant);
+		state Transaction tr = Transaction::fromTenantOrDefault(tenant, data->cx);
 		tr.setVersion(version);
 		if (pOriginalReq->options.present() && pOriginalReq->options.get().debugID.present()) {
 			tr.debugTransaction(pOriginalReq->options.get().debugID.get());
@@ -5660,16 +5864,13 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request version recv time right before we need to wait for the version
-	sampleRequestVersions(data, req.version, now());
-
 	try {
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent(
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getMappedKeyValues.Before");
 		// VERSION_VECTOR change
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context));
+		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context, queueWaitEnd));
 		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
 
 		data->checkTenantEntry(
@@ -5701,16 +5902,17 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
 		    req.begin.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.begin.getKey())
-		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options);
+		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options, &readShards);
 		state Future<Key> fEnd =
 		    req.end.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.end.getKey())
-		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options);
+		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options, &readShards);
 		state Key begin = wait(fBegin);
 		state Key end = wait(fEnd);
 
@@ -5757,7 +5959,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 			none.version = version;
 			none.more = false;
 			none.penalty = data->getPenalty();
-			none.readMetrics = getReadMetrics();
+			none.readMetrics = data->getReadMetrics(readShards);
 
 			data->checkChangeCounter(changeCounter,
 			                         KeyRangeRef(std::min<KeyRef>(req.begin.getKey(), req.end.getKey()),
@@ -5769,14 +5971,14 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 			// because readRange is cheap when reading additional bytes
 			state int bytesForIndex =
 			    std::min(req.limitBytes, (int)(req.limitBytes * SERVER_KNOBS->FRACTION_INDEX_BYTELIMIT_PREFETCH));
-			GetKeyValuesReply getKeyValuesReply = wait(readRange(data,
-			                                                     version,
-			                                                     KeyRangeRef(begin, end),
-			                                                     req.limit,
-			                                                     &bytesForIndex,
-			                                                     span.context,
-			                                                     req.options,
-			                                                     req.tenantInfo.prefix));
+			state GetKeyValuesReply getKeyValuesReply = wait(readRange(data,
+			                                                           version,
+			                                                           KeyRangeRef(begin, end),
+			                                                           req.limit,
+			                                                           &bytesForIndex,
+			                                                           span.context,
+			                                                           req.options,
+			                                                           req.tenantInfo.prefix));
 
 			// Unlock read lock before the subqueries because each
 			// subquery will route back to getValueQ or getKeyValuesQ with a new request having the same
@@ -5809,8 +6011,19 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 				//                ASSERT(r.data.size() <= std::abs(req.limit));
 			}
 
+			KeyRef readBegin = (req.limit < 0 && getKeyValuesReply.data.size() > 0 && getKeyValuesReply.more)
+			                       ? addPrefix(getKeyValuesReply.data.back().key, req.tenantInfo.prefix, req.arena)
+			                       : begin;
+			KeyRef readEnd =
+			    (req.limit >= 0 && getKeyValuesReply.data.size() > 0 && getKeyValuesReply.more)
+			        ? keyAfterWithPrefix(getKeyValuesReply.data.back().key, req.tenantInfo.prefix, req.arena)
+			        : end;
+
+			data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
+
 			r.penalty = data->getPenalty();
-			r.readMetrics = getReadMetrics();
+			// Note: this does not include metrics for the mapped keys
+			r.readMetrics = data->getReadMetrics(readShards);
 			req.reply.send(r);
 
 			resultSize = req.limitBytes - remainingLimitBytes;
@@ -5865,15 +6078,14 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 	// so we need to downgrade here
 	wait(delay(0, TaskPriority::DefaultEndpoint));
 
-	sampleRequestVersions(data, req.version, now());
-
 	try {
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent(
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getKeyValuesStream.Before");
 
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context));
+		state Version version =
+		    wait(waitForVersion(data, commitVersion, req.version, span.context, g_network->timer()));
 
 		data->checkTenantEntry(version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
 		if (req.tenantInfo.hasTenant()) {
@@ -5903,16 +6115,17 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
+		state std::unordered_set<Reference<ShardInfo>> readShards;
 		state int offset1 = 0;
 		state int offset2;
 		state Future<Key> fBegin =
 		    req.begin.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.begin.getKey())
-		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options);
+		        : findKey(data, req.begin, version, searchRange, &offset1, span.context, req.options, &readShards);
 		state Future<Key> fEnd =
 		    req.end.isFirstGreaterOrEqual()
 		        ? Future<Key>(req.end.getKey())
-		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options);
+		        : findKey(data, req.end, version, searchRange, &offset2, span.context, req.options, &readShards);
 		state Key begin = wait(fBegin);
 		state Key end = wait(fEnd);
 		if (req.options.present() && req.options.get().debugID.present())
@@ -5945,7 +6158,7 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 			GetKeyValuesStreamReply none;
 			none.version = version;
 			none.more = false;
-			none.readMetrics = getReadMetrics();
+			none.readMetrics = data->getReadMetrics(readShards);
 
 			data->checkChangeCounter(changeCounter,
 			                         KeyRangeRef(std::min<KeyRef>(req.begin.getKey(), req.end.getKey()),
@@ -5984,7 +6197,15 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 				                                      req.tenantInfo.prefix));
 				readLock.release();
 				GetKeyValuesStreamReply r(_r);
-				r.readMetrics = getReadMetrics();
+
+				KeyRef readBegin =
+				    (req.limit < 0 && r.more) ? addPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena) : begin;
+				KeyRef readEnd = (req.limit >= 0 && r.more)
+				                     ? keyAfterWithPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena)
+				                     : end;
+
+				data->insertReadShards(readShards, KeyRangeRef(readBegin, readEnd));
+				r.readMetrics = data->getReadMetrics(readShards);
 
 				if (req.options.present() && req.options.get().debugID.present())
 					g_traceBatch.addEvent("TransactionDebug",
@@ -6014,13 +6235,10 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 					totalByteSize += r.data[i].expectedSize();
 				}
 
-				KeyRef lastKey;
-				if (!r.data.empty()) {
-					lastKey = addPrefix(r.data.back().key, req.tenantInfo.prefix, req.arena);
-				}
 				if (totalByteSize > 0 && SERVER_KNOBS->READ_SAMPLING_ENABLED) {
 					int64_t bytesReadPerKSecond = std::max(totalByteSize, SERVER_KNOBS->EMPTY_READ_PENALTY) / 2;
 					KeyRef firstKey = addPrefix(r.data[0].key, req.tenantInfo.prefix, req.arena);
+					KeyRef lastKey = (req.limit >= 0) ? readEnd.substr(0, readEnd.size() - 1) : readBegin;
 					data->metrics.notifyBytesReadPerKSecond(firstKey, bytesReadPerKSecond);
 					data->metrics.notifyBytesReadPerKSecond(lastKey, bytesReadPerKSecond);
 				}
@@ -6038,9 +6256,9 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 				ASSERT(r.data.size());
 
 				if (req.limit >= 0) {
-					begin = keyAfter(lastKey);
+					begin = readEnd;
 				} else {
-					end = lastKey;
+					end = readBegin;
 				}
 
 				// lock.release();
@@ -6080,12 +6298,9 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 	state double queueWaitEnd = g_network->timer();
 	data->counters.readQueueWaitSample.addMeasurement(queueWaitEnd - req.requestTime());
 
-	// Track request version recv time right before we need to wait for the version
-	sampleRequestVersions(data, req.version, now());
-
 	try {
 		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext));
+		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext, queueWaitEnd));
 		data->counters.readVersionWaitSample.addMeasurement(g_network->timer() - queueWaitEnd);
 
 		tenantGroup =
@@ -6095,11 +6310,13 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 		}
 		state uint64_t changeCounter = data->shardChangeCounter;
 
-		KeyRange shard = getShardKeyRange(data, req.sel);
+		state KeyRange shard = getShardKeyRange(data, req.sel);
 		KeyRangeRef searchRange = TenantAPI::clampRangeToTenant(shard, req.tenantInfo, req.arena);
 
 		state int offset;
-		Key absoluteKey = wait(findKey(data, req.sel, version, searchRange, &offset, req.spanContext, req.options));
+		state std::unordered_set<Reference<ShardInfo>> readShards;
+		Key absoluteKey =
+		    wait(findKey(data, req.sel, version, searchRange, &offset, req.spanContext, req.options, &readShards));
 
 		data->checkChangeCounter(changeCounter,
 		                         KeyRangeRef(std::min<KeyRef>(req.sel.getKey(), absoluteKey),
@@ -6131,7 +6348,7 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 		//	TraceEvent(SevDebug, "SSGetKeyCached").detail("Key", k).detail("Begin",
 		// shard.begin).detail("End", shard.end);
 
-		GetKeyReply reply(updated, cached, getReadMetrics());
+		GetKeyReply reply(updated, cached, data->getReadMetrics(readShards));
 		reply.penalty = data->getPenalty();
 
 		req.reply.send(reply);
@@ -6858,12 +7075,15 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> tryReadBlobGranuleChunk
 			    .detail("FetchVersion", fetchVersion);
 			return chunks;
 		} catch (Error& e) {
-			if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES &&
-			    e.code() == error_code_blob_granule_transaction_too_old) {
-				CODE_PROBE(true, "Skip blob ranges for restore", probe::decoration::rare);
-				TraceEvent(SevWarn, "SkipBlobGranuleForRestore").error(e).detail("Keys", keys);
-				Standalone<VectorRef<BlobGranuleChunkRef>> empty;
-				return empty;
+			if (e.code() == error_code_blob_granule_transaction_too_old) {
+				if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES) {
+					CODE_PROBE(true, "Skip blob ranges for restore", probe::decoration::rare);
+					TraceEvent(SevWarn, "SkipBlobGranuleForRestore").error(e).detail("Keys", keys);
+					Standalone<VectorRef<BlobGranuleChunkRef>> empty;
+					return empty;
+				} else {
+					TraceEvent(SevWarn, "NotRestorableBlobGranule").error(e).detail("Keys", keys);
+				}
 			}
 			wait(tr->onError(e));
 		}
@@ -6931,14 +7151,18 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 				}
 				results.send(RangeReadResult(std::move(rows)));
 			} catch (Error& err) {
-				if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES &&
-				    (err.code() == error_code_file_not_found ||
-				     err.code() == error_code_blob_granule_transaction_too_old)) {
-					// skip no data ranges and restore as much data as we can
-					TraceEvent(SevWarn, "SkipBlobChunkForRestore").error(err).detail("ChunkRange", chunkRange);
-					RangeResult rows;
-					results.send(rows);
-					CODE_PROBE(true, "Skip blob chunks for restore", probe::decoration::rare);
+				if (err.code() == error_code_file_not_found ||
+				    err.code() == error_code_blob_granule_transaction_too_old) {
+					if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES) {
+						// skip no data ranges and restore as much data as we can
+						TraceEvent(SevWarn, "SkipBlobChunkForRestore").error(err).detail("ChunkRange", chunkRange);
+						RangeResult rows;
+						results.send(rows);
+						CODE_PROBE(true, "Skip blob chunks for restore", probe::decoration::rare);
+					} else {
+						TraceEvent(SevWarn, "NotRestorableBlobChunk").error(err).detail("ChunkRange", chunkRange);
+						throw;
+					}
 				} else {
 					throw;
 				}
@@ -9482,20 +9706,6 @@ ACTOR Future<Void> tssDelayForever() {
 	}
 }
 
-inline void sampleTlogUpdateVersions(StorageServer* self, const Version& version, const double& timestamp) {
-	if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT == ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::DISABLED)
-		return;
-	DisabledTraceEvent("EmptyVersionTlogRecv", self->thisServerID).detail("Timestamp", timestamp);
-	// If queue piles up it means that there's not enough reads, so the queue is useless in this time
-	// window anyway, we do a cheap clear() and let it build up again
-	if (self->versionQueue.size() >= SERVER_KNOBS->SS_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
-		TraceEvent("VersionQueueTlogCleared", self->thisServerID)
-		    .detail("QueueTimewindow", self->versionQueue.back().timestamp - self->versionQueue.front().timestamp);
-		self->versionQueue.clear();
-	}
-	self->versionQueue.emplace_back(version, timestamp);
-}
-
 ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 	state double updateStart = g_network->timer();
 	state double decryptionTime = 0;
@@ -9587,9 +9797,47 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 			throw worker_removed();
 		}
 
-		// Track tlog sync version recv time right before we update local version
-		// log tlog identifier
-		sampleTlogUpdateVersions(data, cursor->getMaxKnownVersion(), now());
+		// We keep two queues at each SS to track empty version wait window
+		// 1. peekReply is nonempty + tlog reported no wait: must be mutation with no wait
+		// 2. peekReply is empty: must be Non-mutation and fully waited
+		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT !=
+		    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_DISABLED) {
+			// NOTE: as of now in snowflake we should not run into cases where cursor is of any type other than
+			// ServerPeekCursor at this line in normal cases. It is possible this cursor is of type MergedPeekCursor
+			// under cluster recovery when we need to recover data from old tlogs, but it is very rare and we do not
+			// need DynamicEmptyVersionWait feature to work in that case. Therefore we simply assume cursor is of
+			// ServerPeekCursor in this if block.
+			double peekReplyRecvTime = g_network->timer();
+			if (cursor->getPeekReplySize() > 0 && cursor->getTlogWaitTime() == 0) {
+				// nonempty peeks with zero wait time
+				if (data->emptyVersionWaitMutationStats.tlogVersionQueue.size() >=
+				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
+					// If queue piles up it means that there's not enough reads, so the queue is useless in this time
+					// window anyway, we do a cheap clear() and let it build up again
+					TraceEvent("EmptyVersionMutationQueueCleared", data->thisServerID)
+					    .suppressFor(5.0)
+					    .detail("QueueTimewindow",
+					            data->emptyVersionWaitMutationStats.tlogVersionQueue.back().timestamp -
+					                data->emptyVersionWaitMutationStats.tlogVersionQueue.front().timestamp);
+					data->emptyVersionWaitMutationStats.tlogVersionQueue.clear();
+				}
+				data->emptyVersionWaitMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
+				                                                                  peekReplyRecvTime);
+			} else if (cursor->getPeekReplySize() == 0) {
+				// empty peeks must have fully waited
+				if (data->emptyVersionWaitNonMutationStats.tlogVersionQueue.size() >=
+				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
+					TraceEvent("EmptyVersionNonMutationQueueCleared", data->thisServerID)
+					    .suppressFor(5.0)
+					    .detail("QueueTimewindow",
+					            data->emptyVersionWaitNonMutationStats.tlogVersionQueue.back().timestamp -
+					                data->emptyVersionWaitNonMutationStats.tlogVersionQueue.front().timestamp);
+					data->emptyVersionWaitNonMutationStats.tlogVersionQueue.clear();
+				}
+				data->emptyVersionWaitNonMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
+				                                                                     peekReplyRecvTime);
+			}
+		}
 
 		++data->counters.updateBatches;
 		data->lastTLogVersion = cursor->getMaxKnownVersion();
@@ -11992,6 +12240,134 @@ ACTOR Future<Void> setStorageEngineParamsActor(StorageServer* self, SetStorageEn
 	return Void();
 }
 
+void inline traceWaitWindowDecision(StorageServer* self, double targetWaitWindow, double lastWaitWindow) {
+	TraceEvent("EmptyVersionWaitWindowUpdate", self->thisServerID)
+	    .suppressFor(5)
+	    // Decision
+	    .detail("Sacrifice", SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
+	    .detail("MutationSampleSize", self->emptyVersionWaitMutationStats.safeWaitWindow.getPopulationSize())
+	    .detail("NonMutationSampleSize", self->emptyVersionWaitNonMutationStats.safeWaitWindow.getPopulationSize())
+	    .detail("WaitWindowDecision", targetWaitWindow)
+	    .detail("WaitWindowLast", lastWaitWindow)
+	    // Mutations
+	    .detail("MutationPositiveNum", self->emptyVersionWaitMutationStats.positiveSampleNum)
+	    .detail("MutationNegativeNum", self->emptyVersionWaitMutationStats.negativeSampleNum)
+	    .detail("MutationMinWaitWindow", self->emptyVersionWaitMutationStats.minWaitWindow)
+	    .detail("MutationMinSafeWaitWindow", self->emptyVersionWaitMutationStats.minSafeWaitWindow)
+	    .detail("MutationPercentileWaitWindow",
+	            self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
+	                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE))
+	    // Non mutations
+	    .detail("NonMutationPositiveNum", self->emptyVersionWaitNonMutationStats.positiveSampleNum)
+	    .detail("NonMutationNegativeNum", self->emptyVersionWaitNonMutationStats.negativeSampleNum)
+	    .detail("NonMutationMinWaitWindow", self->emptyVersionWaitNonMutationStats.minWaitWindow)
+	    .detail("NonMutationMinSafeWaitWindow", self->emptyVersionWaitNonMutationStats.minSafeWaitWindow)
+	    .detail("NonMutationPercentileWaitWindow",
+	            self->emptyVersionWaitNonMutationStats.safeWaitWindow.percentile(
+	                SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE));
+}
+
+void inline resetWaitWindowStatistics(StorageServer* self) {
+	self->emptyVersionWaitMutationStats.resetExceptQueue();
+	self->emptyVersionWaitNonMutationStats.resetExceptQueue();
+}
+
+ACTOR Future<Void> syncWaitWindowWithTlog(StorageServer* self) {
+	if (!SERVER_KNOBS->PEEK_BATCHING_EMPTY_MSG ||
+	    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+	        ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_DISABLED) {
+		return Void();
+	}
+
+	loop {
+		// wait until logSystem is initialized
+		loop {
+			if (self->logSystem) {
+				break;
+			}
+			wait(self->db->onChange());
+		}
+
+		state Future<Void> emergency = self->emptyVersionWaitEmergencyTrigger.onTrigger();
+		wait(delay(SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL) || emergency);
+		emergency = self->emptyVersionWaitEmergencyTrigger.onTrigger();
+
+		// Handle Emergency
+		if (self->emptyVersionWaitEmergencyTransition) {
+			state double emergencyWaitWindow = 0;
+			traceWaitWindowDecision(self, emergencyWaitWindow, self->emptyVerionWaitLastWindow);
+			if (emergencyWaitWindow != self->emptyVerionWaitLastWindow) {
+				wait(self->logSystem->pushEmptyVersionWaitWindow(emergencyWaitWindow, self->tag) ||
+				     self->db->onChange());
+			}
+			resetWaitWindowStatistics(self);
+			self->emptyVerionWaitLastWindow = emergencyWaitWindow;
+			self->emptyVersionWaitEmergencyTransition = false;
+			continue;
+		}
+
+		state uint64_t mutationSize = self->emptyVersionWaitMutationStats.positiveSampleNum +
+		                              self->emptyVersionWaitMutationStats.negativeSampleNum;
+		state uint64_t nonMutationSize = self->emptyVersionWaitNonMutationStats.positiveSampleNum +
+		                                 self->emptyVersionWaitNonMutationStats.negativeSampleNum;
+		state uint64_t sampleCount = mutationSize + nonMutationSize;
+
+		if (sampleCount < SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT) {
+			TraceEvent("EmptyVersionWaitWindowSkip", self->thisServerID)
+			    .suppressFor(30)
+			    .detail("SketchSize", sampleCount);
+			continue;
+		}
+
+		// Decide wait window
+		state double targetWaitWindow = 0;
+		bool useWaitMutationSamples = mutationSize > SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD *
+		                                                 (mutationSize + nonMutationSize);
+		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE == 0) {
+			targetWaitWindow =
+			    useWaitMutationSamples
+			        ? 0 + self->emptyVersionWaitMutationStats.minWaitWindow *
+			                  SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR
+			        : (self->emptyVerionWaitLastWindow + self->emptyVersionWaitNonMutationStats.minWaitWindow) *
+			              SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR;
+		} else {
+			targetWaitWindow = useWaitMutationSamples
+			                       ? 0 + self->emptyVersionWaitMutationStats.safeWaitWindow.percentile(
+			                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE)
+			                       : self->emptyVerionWaitLastWindow +
+			                             self->emptyVersionWaitNonMutationStats.safeWaitWindow.percentile(
+			                                 SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE);
+		}
+
+		// Log-only mode reporting
+		if (SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT ==
+		    ServerKnobs::DYNAMIC_EMPTY_VERSION_WAIT_MODE::EMPTY_VERSION_WAIT_LOG_ONLY) {
+			traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWindow);
+			resetWaitWindowStatistics(self);
+			self->emptyVerionWaitLastWindow = targetWaitWindow;
+			continue;
+		}
+
+		// It is possible the distribution gives negative results because of requests waiting
+		// for versions even if we have already set waitWindow to zero. We keep sending the minimum wait
+		// window possible to tlog (zero)
+		targetWaitWindow = std::max(targetWaitWindow, .0);
+
+		// Cap delay window growth to be below maximum allowed version wait.
+		targetWaitWindow = std::min(targetWaitWindow, SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_CAP);
+
+		// Boradcast wait window decision to all tlog and wait for reply
+		// Skip sending wait window if new decision is the same as the last one sent.
+		traceWaitWindowDecision(self, targetWaitWindow, self->emptyVerionWaitLastWindow);
+		if (targetWaitWindow != self->emptyVerionWaitLastWindow) {
+			wait(self->logSystem->pushEmptyVersionWaitWindow(targetWaitWindow, self->tag) || self->db->onChange());
+		}
+
+		resetWaitWindowStatistics(self);
+		self->emptyVerionWaitLastWindow = targetWaitWindow;
+	}
+}
+
 ACTOR Future<Void> storageServerCore(StorageServer* self, StorageServerInterface ssi) {
 	state Future<Void> doUpdate = Void();
 	state bool updateReceived = false; // true iff the current update() actor assigned to doUpdate has already
@@ -12020,6 +12396,7 @@ ACTOR Future<Void> storageServerCore(StorageServer* self, StorageServerInterface
 	self->actors.add(traceRole(Role::STORAGE_SERVER, ssi.id()));
 	self->actors.add(reportStorageServerState(self));
 	self->actors.add(storageEngineConsistencyCheck(self));
+	self->actors.add(syncWaitWindowWithTlog(self));
 
 	self->throttlingCounter.startNewInterval();
 	self->actors.add(

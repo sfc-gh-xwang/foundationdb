@@ -1,6 +1,6 @@
 # API Versions
-set(FDB_AV_LATEST_VERSION                   "800000")
-set(FDB_AV_LATEST_BINDINGS_VERSION          "800000")
+set(FDB_AV_LATEST_VERSION                   "900000")
+set(FDB_AV_LATEST_BINDINGS_VERSION          "900000")
 
 # Features
 set(FDB_AV_BLOB_RANGE_API                   "710200")
@@ -22,5 +22,7 @@ set(FDB_AV_INITIALIZE_TRACE_ON_SETUP        "710300")
 set(FDB_AV_TENANT_GET_ID                    "710300")
 set(FDB_AV_EVOLVABLE_API                    "800000")
 set(FDB_AV_TENANT_GET_CLIENT_STATUS         "800000")
+set(FDB_AV_TENANT_SET_OPTION                "800000")
 set(FDB_AV_SET_EXPECTED_COST                "800000")
 set(FDB_AV_COLUMNAR_CACHE_SKEW_HANDLING     "800000")
+set(FDB_AV_READ_METRICS                     "800000")

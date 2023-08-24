@@ -144,6 +144,7 @@ public:
 	virtual ~ITenant() {}
 
 	virtual Reference<ITransaction> createTransaction() = 0;
+	virtual void setOption(FDBTenantOptions::Option option, Optional<StringRef> value = Optional<StringRef>()) = 0;
 
 	virtual ThreadFuture<int64_t> getId() = 0;
 	virtual ThreadFuture<Key> purgeBlobGranules(const KeyRangeRef& keyRange, Version purgeVersion, bool force) = 0;

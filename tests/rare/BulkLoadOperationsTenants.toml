@@ -1,0 +1,44 @@
+[configuration]
+blobGranulesEnabled = true
+allowDefaultTenant = false
+tenantModes = ['required']
+
+[[knobs]]
+allow_bulk_loads = true
+bulk_load_storage_reservation_enabled = true
+bg_metadata_source = "tenant"
+enable_rest_kms_communication = true
+
+[[test]]
+testTitle = 'BulkLoadOpsWorkload'
+
+    [[test.workload]]
+    testName = 'BulkLoadOps'
+    testDuration = 30.0
+
+    [[test.workload]]
+    testName = 'RandomClogging'
+    testDuration = 30.0
+
+    [[test.workload]]
+    testName = 'Rollback'
+    meanDelay = 20.0
+    testDuration = 30.0
+
+    [[test.workload]]
+    testName = 'Attrition'
+    machinesToKill = 10
+    machinesToLeave = 3
+    reboot = true
+    testDuration = 30.0
+
+    [[test.workload]]
+    testName = 'Attrition'
+    machinesToKill = 10
+    machinesToLeave = 3
+    reboot = true
+    testDuration = 30.0
+
+    [[test.workload]]
+    testName = 'BlobFailureInjection'
+    testDuration = 30.0

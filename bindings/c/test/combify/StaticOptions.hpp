@@ -89,7 +89,11 @@ struct JsonOption<AuthZConfig, NAME, MUST_EXIST> : JsonOptionCommonTraits<AuthZC
 		}
 		auto memberItr = v.FindMember(NAME.value);
 		if (memberItr == v.MemberEnd()) {
-			detail::throwNoSuchField(name);
+			if constexpr (MUST_EXIST::value) {
+				detail::throwNoSuchField(name);
+			} else {
+				return;
+			}
 		}
 		auto& authzConfigJson = memberItr->value;
 		value.emplace(); // default construct AuthZConfig
@@ -123,6 +127,7 @@ struct StaticOptions {
 	    tenantMode;
 	JsonOption<unsigned, "tenantCount", Optional> tenantCount;
 	JsonOption<unsigned, "randomSeed", Optional> randomSeed;
+	JsonOption<bool, "disableClientTrace", Optional> disableClientTrace;
 
 	void parseFrom(const rapidjson::Value& v) {
 		clusterFilePath.parseFrom(v);

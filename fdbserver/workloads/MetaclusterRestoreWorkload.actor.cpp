@@ -393,8 +393,8 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		}
 	}
 
-	ACTOR static Future<Void> writeTenantData(Database db, Reference<Tenant> tenant) {
-		state ReadYourWritesTransaction tr(db, tenant);
+	ACTOR static Future<Void> writeTenantData(Reference<Tenant> tenant) {
+		state ReadYourWritesTransaction tr(tenant);
 		loop {
 			try {
 				tr.set("restoreTenantKey"_sr, "value"_sr);
@@ -411,7 +411,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		state metacluster::MetaclusterTenantMapEntry entry = wait(metacluster::getTenant(self->managementDb, tenant));
 		state Database db = self->dataDbs[entry.assignedCluster].db;
 
-		state ReadYourWritesTransaction tr(db, makeReference<Tenant>(entry.id));
+		state ReadYourWritesTransaction tr(makeReference<Tenant>(db, entry.id));
 		loop {
 			try {
 				tr.clear(normalKeys);
@@ -426,11 +426,10 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR static Future<Void> checkTenantData(Database db,
-	                                          Reference<Tenant> tenant,
+	ACTOR static Future<Void> checkTenantData(Reference<Tenant> tenant,
 	                                          bool hasData,
 	                                          RestoreTenantData::AccessTime createTime) {
-		state ReadYourWritesTransaction tr(db, tenant);
+		state ReadYourWritesTransaction tr(tenant);
 		loop {
 			try {
 				RangeReadResult result = wait(tr.getRange(normalKeys, 1));
@@ -910,7 +909,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 				}
 
 				if (hasTenantData) {
-					wait(writeTenantData(dataDb.db, makeReference<Tenant>(createdEntry.id)));
+					wait(writeTenantData(makeReference<Tenant>(dataDb.db, createdEntry.id)));
 				}
 
 				return Void();
@@ -1324,10 +1323,10 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 						ASSERT_LE(tenantData.createTime, RestoreTenantData::AccessTime::DURING_BACKUP);
 					}
 
-					dataCheckFutures.push_back(checkTenantData(self->dataDbs[tenantData.cluster].db,
-					                                           makeReference<Tenant>(tenantId),
-					                                           tenantData.hasData,
-					                                           tenantData.createTime));
+					dataCheckFutures.push_back(
+					    checkTenantData(makeReference<Tenant>(self->dataDbs[tenantData.cluster].db, tenantId),
+					                    tenantData.hasData,
+					                    tenantData.createTime));
 				} else {
 					ASSERT_EQ(tenantItr->second.tenantState, metacluster::TenantState::ERROR);
 					ASSERT_GE(tenantData.createTime, RestoreTenantData::AccessTime::DURING_BACKUP);

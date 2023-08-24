@@ -1033,9 +1033,10 @@ ProcessData decodeWorkerListValue(ValueRef const& value) {
 	return s;
 }
 
-const KeyRangeRef backupProgressKeys("\xff\x02/backupProgress/"_sr, "\xff\x02/backupProgress0"_sr);
+const KeyRangeRef backupProgressKeys("\xff/backupProgress/"_sr, "\xff/backupProgress0"_sr);
 const KeyRef backupProgressPrefix = backupProgressKeys.begin;
-const KeyRef backupStartedKey = "\xff\x02/backupStarted"_sr;
+const KeyRef deprecatedBackupStartedKey = "\xff\x02/backupStarted"_sr;
+const KeyRef backupStartedKey = "\xff/backupStarted"_sr;
 extern const KeyRef backupPausedKey = "\xff\x02/backupPaused"_sr;
 
 const Key backupProgressKeyFor(UID workerID) {
@@ -1169,6 +1170,10 @@ const KeyRangeRef fileRestorePrefixRange("\xff\x02/restore-agent/"_sr, "\xff\x02
 
 // Backup Agent configuration constant variables
 const KeyRangeRef fileBackupPrefixRange("\xff\x02/backup-agent/"_sr, "\xff\x02/backup-agent0"_sr);
+
+// Emergency Backup Worker variables
+const KeyRangeRef emergencyBackupKeyRange("\xff/backup-agent/"_sr, "\xff/backup-agent0"_sr);
+const KeyRef emergencyBackupPrefix = emergencyBackupKeyRange.begin;
 
 // DR Agent configuration constant variables
 const KeyRangeRef databaseBackupPrefixRange("\xff\x02/db-backup-agent/"_sr, "\xff\x02/db-backup-agent0"_sr);

@@ -968,7 +968,7 @@ struct CLIOptions {
 	std::string tlsVerifyPeers;
 	std::string tlsCAPath;
 	std::string tlsPassword;
-	bool tlsDisablePlainTextConnection = false;
+	bool tlsRequired = false;
 	uint64_t memLimit = 8uLL << 30;
 
 	std::vector<std::pair<std::string, std::string>> knobs;
@@ -1088,8 +1088,8 @@ struct CLIOptions {
 		case TLSConfig::OPT_TLS_VERIFY_PEERS:
 			tlsVerifyPeers = args.OptionArg();
 			break;
-		case TLSConfig::OPT_TLS_DISABLE_PLAINTEXT_CONNECTION:
-			tlsDisablePlainTextConnection = true;
+		case TLSConfig::OPT_TLS_REQUIRED:
+			tlsRequired = args.OptionArg();
 			break;
 
 		case OPT_HELP:
@@ -1494,6 +1494,13 @@ ACTOR Future<int> cli(CLIOptions opt, LineNoise* plinenoise, Reference<ClusterCo
 
 				if (tokencmp(tokens[0], "blobkey")) {
 					bool _result = wait(makeInterruptable(blobKeyCommandActor(localDb, tenantEntry, tokens)));
+					if (!_result)
+						is_error = true;
+					continue;
+				}
+
+				if (tokencmp(tokens[0], "bulkload")) {
+					bool _result = wait(makeInterruptable(bulkLoadCommandActor(localDb, tenantEntry, tokens)));
 					if (!_result)
 						is_error = true;
 					continue;
@@ -2530,9 +2537,9 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	if (opt.tlsDisablePlainTextConnection) {
+	if (opt.tlsRequired) {
 		try {
-			setNetworkOption(FDBNetworkOptions::TLS_DISABLE_PLAINTEXT_CONNECTION);
+			setNetworkOption(FDBNetworkOptions::TLS_REQUIRED);
 		} catch (Error& e) {
 			fprintf(stderr, "ERROR: cannot disable non-TLS connections (%s)\n", e.what());
 			return 1;
@@ -2553,7 +2560,7 @@ int main(int argc, char** argv) {
 		printf("\tCertificate Path: %s\n", tlsConfig.getCertificatePathSync().c_str());
 		printf("\tKey Path: %s\n", tlsConfig.getKeyPathSync().c_str());
 		printf("\tCA Path: %s\n", tlsConfig.getCAPathSync().c_str());
-		printf("\tPlaintext Connection Disable: %s\n", tlsConfig.getDisablePlainTextConnection() ? "true" : "false");
+		printf("\tRequired: %s\n", tlsConfig.getTlsRequired() ? "true" : "false");
 		try {
 			LoadedTLSConfig loaded = tlsConfig.loadSync();
 			printf("\tPassword: %s\n", loaded.getPassword().empty() ? "Not configured" : "Exists, but redacted");

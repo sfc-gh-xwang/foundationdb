@@ -54,6 +54,17 @@ public:
 	bool operator!=(const IPAddress& addr) const;
 	bool operator<(const IPAddress& addr) const;
 
+	size_t hash() const {
+		size_t result = 0;
+		if (isV6()) {
+			uint16_t* ptr = (uint16_t*)toV6().data();
+			result = ((size_t)ptr[5] << 32) | ((size_t)ptr[6] << 16) | ptr[7];
+		} else {
+			result = toV4();
+		}
+		return result;
+	}
+
 	template <class Ar>
 	void serialize(Ar& ar) {
 		if constexpr (is_fb_function<Ar>) {
@@ -88,6 +99,11 @@ public:
 private:
 	std::variant<uint32_t, IPAddressStore> addr;
 };
+
+// for boost::hash_combine()
+inline std::size_t hash_value(const IPAddress& ip) noexcept {
+	return ip.hash();
+}
 
 template <>
 struct Traceable<IPAddress> : std::true_type {

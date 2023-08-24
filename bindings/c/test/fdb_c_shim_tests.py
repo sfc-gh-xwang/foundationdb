@@ -12,7 +12,7 @@ from test_util import random_alphanum_string
 from fdb_version import CURRENT_VERSION, PREV_RELEASE_VERSION
 
 TESTER_STATS_INTERVAL_SEC = 5
-DEFAULT_TEST_FILE = "CApiCorrectnessMultiThr.toml"
+DEFAULT_TEST_FILE = "shim/CApiCorrectnessShim.toml"
 IMPLIBSO_ERROR_CODE = -6  # SIGABORT
 
 
@@ -27,7 +27,7 @@ def api_version_from_str(ver_str):
     if ver_tuple[0] > 70:
         return ver_tuple[0] * 10000 + ver_tuple[1] * 100
     if ver_tuple[0] >= 8:
-        return ver_tuple[0] * 100000 + ver_tuple[1] * 100
+        return ver_tuple[0] * 100000
     return ver_tuple[0] * 100 + ver_tuple[1] * 10
 
 

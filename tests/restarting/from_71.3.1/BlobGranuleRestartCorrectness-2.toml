@@ -5,6 +5,7 @@ allowDefaultTenant = false
 tenantModes = ['optional', 'required']
 injectTargetedSSRestart = true
 injectSSDelay = true
+disableAuthenticatedEncryption = true
 
 [[knobs]]
 bg_metadata_source = "tenant"

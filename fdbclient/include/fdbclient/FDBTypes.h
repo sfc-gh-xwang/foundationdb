@@ -779,9 +779,7 @@ public:
 		rangeBusyness = std::max(rangeBusyness, other.rangeBusyness);
 	}
 
-	static BusynessT busynessFloatToInt(float value) {
-		return std::clamp<BusynessT>(value * scalingFactor, 0, scalingFactor);
-	}
+	static BusynessT busynessFloatToInt(float value) { return std::clamp<float>(value, 0, 1.0) * scalingFactor; }
 
 	static ReadMetrics fromFloats(float serverBusyness, float rangeBusyness) {
 		return ReadMetrics(busynessFloatToInt(serverBusyness), busynessFloatToInt(rangeBusyness));
@@ -799,7 +797,7 @@ private:
 	BusynessT rangeBusyness = 0;
 };
 
-class ReadResultBase {
+class ReadResultBase : public Castable {
 public:
 	constexpr static FileIdentifier file_identifier = 6066542;
 
@@ -1834,6 +1832,30 @@ struct ReadOptions {
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, type, cacheResult, debugID, consistencyCheckStartVersion, lockAware);
+	}
+};
+
+struct HybridReadOptions {
+	Optional<UID> debugID;
+	bool summarize;
+	bool canCollapseBegin;
+	bool canReadDirty;
+	bool untrustedReadVersion;
+
+	HybridReadOptions(Optional<UID> debugID = Optional<UID>(),
+	                  bool summarize = false,
+	                  bool canCollapseBegin = true,
+	                  bool canReadDirty = false,
+	                  bool untrustedReadVersion = false)
+	  : debugID(debugID),
+	    summarize(summarize),
+	    canCollapseBegin(canCollapseBegin),
+	    canReadDirty(canReadDirty),
+	    untrustedReadVersion(untrustedReadVersion){};
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, debugID, summarize, canCollapseBegin, canReadDirty, untrustedReadVersion);
 	}
 };
 

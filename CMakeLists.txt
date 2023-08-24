@@ -24,7 +24,7 @@ if(POLICY CMP0135)
 endif()
 
 project(foundationdb
-  VERSION 8.0.0
+  VERSION 9.0.0
   DESCRIPTION "FoundationDB is a scalable, fault-tolerant, ordered key-value store with full ACID transactions."
   HOMEPAGE_URL "http://www.foundationdb.org/"
   LANGUAGES C CXX ASM)
@@ -110,8 +110,9 @@ configure_file(${CMAKE_SOURCE_DIR}/versions.target.cmake ${CMAKE_CURRENT_BINARY_
 file(WRITE ${CMAKE_BINARY_DIR}/version.txt ${FDB_VERSION})
 
 set(FDB_CURRENT_VERSION ${PROJECT_VERSION})
-set(FDB_FUTURE_VERSION "9.0.0")
-set(FDB_PREV_RELEASE_VERSION "71.3.1")
+set(FDB_FUTURE_VERSION "10.0.0")
+# TODO add 8.0.0 to our prev version once it is available
+set(FDB_PREV_RELEASE_VERSION "71.3.4")
 set(FDB_PREV2_RELEASE_VERSION "71.2.9")
 set(FDB_PREV3_RELEASE_VERSION "7.1.4")
 
@@ -127,8 +128,6 @@ include(EnableCsharp)
 # First thing we need is the actor compiler - and to compile and run the
 # actor compiler, we need mono
 include(CompileActorCompiler)
-
-include(CompileCoverageTool)
 
 # with the actor compiler, we can now make the flow commands available
 include(FlowCommands)

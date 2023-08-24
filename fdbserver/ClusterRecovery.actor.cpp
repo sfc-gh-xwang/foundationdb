@@ -20,6 +20,7 @@
 
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/MetaclusterRegistration.h"
+#include "fdbclient/SystemData.h"
 #include "fdbrpc/sim_validation.h"
 #include "fdbserver/ApplyMetadataMutation.h"
 #include "fdbserver/BackupProgress.actor.h"
@@ -319,7 +320,7 @@ ACTOR static Future<Optional<Version>> getMinBackupVersion(Reference<ClusterReco
 		try {
 			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			ValueReadResult value = wait(tr.get(backupStartedKey));
+			ValueReadResult value = wait(tr.get(deprecatedBackupStartedKey));
 			Optional<Version> minVersion;
 			if (value.present()) {
 				auto uidVersions = decodeBackupStartedValue(value.get());
@@ -1245,7 +1246,7 @@ ACTOR Future<Void> clusterRecoveryCore(Reference<ClusterRecoveryData> self) {
 			            "larger than OldGenerations to resume recovery once the underlying problem has been fixed.");
 			wait(Future<Void>(Never()));
 		} else if (self->cstate.myDBState.oldTLogData.size() > CLIENT_KNOBS->RECOVERY_DELAY_START_GENERATION) {
-			TraceEvent(SevError, "RecoveryDelayedTooManyOldGenerations")
+			TraceEvent(g_network->isSimulated() ? SevWarnAlways : SevError, "RecoveryDelayedTooManyOldGenerations")
 			    .detail("OldGenerations", self->cstate.myDBState.oldTLogData.size())
 			    .detail("Reason",
 			            "Recovery is delayed because too many recoveries have happened since the last time the cluster "

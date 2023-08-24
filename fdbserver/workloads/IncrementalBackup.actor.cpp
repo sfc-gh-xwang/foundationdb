@@ -193,6 +193,7 @@ struct IncrementalBackupWorkload : TestWorkload {
 						clearTr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 						clearTr.setOption(FDBTransactionOptions::LOCK_AWARE);
 						clearTr.clear(fileBackupPrefixRange);
+						clearTr.clear(emergencyBackupKeyRange);
 						wait(clearTr.commit());
 						break;
 					} catch (Error& e) {

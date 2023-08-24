@@ -177,6 +177,45 @@ def test_simple_tenant_access(
                 "failed to find any AuditTokenUsed entry matching token from the testcase"
             )
 
+    # check_token_usage_trace only verifies within the time window of this test case
+    # Actual connection to database establishes much earlier.
+    # Make sure we're tracing the token usage in a way that allows tracing back to connection establishment
+    def check_trace_lineage(trace_entries, token_claim):
+        found = False
+        connection_ids = {}
+        for filename, ev_type, entry in trace_entries:
+            if ev_type == "IncomingConnection":
+                assert "ID" in entry.attrib
+                assert "FromAddr" in entry.attrib
+                connection_ids[entry.attrib["ID"]] = entry.attrib["FromAddr"]
+            elif ev_type == "AuditTokenUsed":
+                assert "Client" in entry.attrib
+                assert "TokenId" in entry.attrib
+                assert "TenantId" in entry.attrib
+                assert "ID" in entry.attrib
+                debug_id = entry.attrib["ID"]
+                jti_actual = entry.attrib["TokenId"]
+                jti_expect = token_claim["jti"]
+                tenantid_actual = entry.attrib["TenantId"]
+                tenantid_expect_bytes = base64.b64decode(token_claim["tenants"][0])
+                tenantid_expect = hex(int.from_bytes(tenantid_expect_bytes, "big"))
+                if jti_actual == jti_expect and tenantid_actual == tenantid_expect:
+                    found = True
+                    print("found trace token usage trace entry:", entry.items())
+                    # there must be a connection establishment log preceding the token usage
+                    assert debug_id in connection_ids
+                    peer_address = connection_ids[debug_id]
+                    print(f"found connection {debug_id} from {peer_address}")
+                    # and its "ID" and "FromAddr" should match "ID" and "Client" of token usage log
+                    assert (
+                        connection_ids[entry.attrib["ID"]].find(entry.attrib["Client"])
+                        == 0
+                    )
+        if not found:
+            pytest.fail(
+                "failed to find IncomingConnection log which matches AuditTokenUsed log's debug ID and connection log"
+            )
+
     token_claim = token_claim_1h(default_tenant)
     token = token_gen(cluster.private_key, token_claim)
     token_sig_part = to_str(token[token.rfind(b".") + 1 :])
@@ -204,6 +243,67 @@ def test_simple_tenant_access(
 
         value = loop_until_success(tr, read_back_value)
         assert value == b"def", "tenant write transaction not visible"
+    cluster.add_trace_check_to(
+        functools.partial(check_trace_lineage, token_claim=token_claim),
+        time.time(),
+    )
+
+
+def test_token_as_tenant_option(
+    cluster,
+    db,
+    default_tenant,
+    tenant_gen,
+    tenant_tr_gen,
+    token_claim_1h,
+    use_grv_cache,
+):
+    # test that token option on a tenant propagates to any transaction created from it
+    token = token_gen(cluster.private_key, token_claim_1h(default_tenant))
+    tenant = db.open_tenant(default_tenant)
+    tenant.options.set_authorization_token(token)
+    tr = tenant.create_transaction()
+
+    def commit_some_value(tr):
+        tr[b"abc"] = b"def"
+        return tr.commit().wait()
+
+    loop_until_success(tr, commit_some_value)
+
+    tr = tenant.create_transaction()
+
+    def read_back_value(tr):
+        return tr[b"abc"].value
+
+    value = loop_until_success(tr, read_back_value)
+    assert value == b"def", "tenant write transaction not visible"
+
+    # unlike authz token as normal transaction option, token set as tenant option is considered a "transaction default" and effectively SURVIVES a reset
+    tr.reset()
+    value = loop_until_success(tr, read_back_value)
+    assert value == b"def", "tenant write transaction not visible"
+
+    # create transaction again from tenant. should work.
+    tr = tenant.create_transaction()
+    value = loop_until_success(tr, read_back_value)
+    assert value == b"def", "tenant write transaction not visible"
+
+    tr.reset()
+    second_tenant = random_alphanum_bytes(10)
+    tenant_gen(second_tenant)
+    token_second_tenant = token_gen(cluster.private_key, token_claim_1h(second_tenant))
+    # set a token for the second tenant. should fail.
+    tr.options.set_authorization_token(token_second_tenant)
+    try:
+        value = read_back_value(tr)
+        assert False, "expected permission_denied, but succeeded"
+    except fdb.FDBError as e:
+        assert e.code == 6000, f"expected permission_denied, got {e} instead"
+
+    # resetting would revert the token option to tenant-defaults. should work.
+    tr.reset()
+    value = loop_until_success(tr, read_back_value)
+    assert value == b"def", "tenant write transaction not visible"
 
 
 def test_cross_tenant_access_disallowed(
@@ -391,6 +491,19 @@ def test_public_key_set_rollover(
     interim_set = public_keyset_from_keys([new_key, cluster.private_key])
     max_repeat = 10
 
+    def check_keyset_update_trace(trace_entries, expected_key_ids):
+        found = False
+        for _, ev_type, entry in trace_entries:
+            if ev_type == "AuthzActivePublicKeyIds":
+                print("active public key IDs trace:", entry.items())
+                if (
+                    sorted(entry.attrib["KeyIds"].split(","))
+                    == sorted(expected_key_ids)
+                    and entry.attrib["FromKeySetUpdate"] == "1"
+                ):
+                    found = True
+        assert found, "active public key IDs trace not found"
+
     print(f"interim keyset: {interim_set}")
     old_key_json = None
     with open(cluster.public_key_json_file, "r") as keyfile:
@@ -399,24 +512,40 @@ def test_public_key_set_rollover(
     delay = public_key_refresh_interval
 
     with KeyFileReverter(cluster.public_key_json_file, old_key_json, delay):
-        with open(cluster.public_key_json_file, "w") as keyfile:
-            keyfile.write(interim_set)
-        wait_until_tenant_tr_succeeds(
-            second_tenant, new_key, tenant_tr_gen, max_repeat, delay, token_claim_1h
-        )
+        with ScopedTraceChecker(
+            cluster,
+            functools.partial(
+                check_keyset_update_trace,
+                expected_key_ids=[new_key.kid, cluster.private_key.kid],
+            ),
+        ):
+            with open(cluster.public_key_json_file, "w") as keyfile:
+                keyfile.write(interim_set)
+            wait_until_tenant_tr_succeeds(
+                second_tenant, new_key, tenant_tr_gen, max_repeat, delay, token_claim_1h
+            )
+
         print("interim key set activated")
         final_set = public_keyset_from_keys([new_key])
         print(f"final keyset: {final_set}")
-        with open(cluster.public_key_json_file, "w") as keyfile:
-            keyfile.write(final_set)
-        wait_until_tenant_tr_fails(
-            default_tenant,
-            cluster.private_key,
-            tenant_tr_gen,
-            max_repeat,
-            delay,
-            token_claim_1h,
-        )
+
+        with ScopedTraceChecker(
+            cluster,
+            functools.partial(
+                check_keyset_update_trace,
+                expected_key_ids=[new_key.kid],
+            ),
+        ):
+            with open(cluster.public_key_json_file, "w") as keyfile:
+                keyfile.write(final_set)
+            wait_until_tenant_tr_fails(
+                default_tenant,
+                cluster.private_key,
+                tenant_tr_gen,
+                max_repeat,
+                delay,
+                token_claim_1h,
+            )
 
 
 def test_public_key_set_broken_file_tolerance(
@@ -772,6 +901,34 @@ def test_malformed_tokens_trace(cluster, default_tenant, tenant_tr_gen, token_cl
             assert (
                 e.code == 6000
             ), f"expected permission_denied for 'splittable_bad_token' case, got {e} instead"
+
+
+def test_active_public_key_ids_trace_as_expected(
+    cluster, active_public_key_ids_log_interval
+):
+    def check_public_key_ids_log(
+        trace_entries, expected_key_ids_string, min_expected_trace_count
+    ):
+        count = 0
+        for _, ev_type, entry in trace_entries:
+            if ev_type == "AuthzActivePublicKeyIds":
+                actual_key_ids_string = entry.attrib["KeyIds"]
+                assert actual_key_ids_string == expected_key_ids_string
+                count += 1
+        assert count >= min_expected_trace_count
+
+    assert active_public_key_ids_log_interval > 0
+    max_trace_count = 5
+    sleep_duration_seconds = active_public_key_ids_log_interval * max_trace_count
+    with ScopedTraceChecker(
+        cluster,
+        functools.partial(
+            check_public_key_ids_log,
+            expected_key_ids_string=cluster.private_key.kid,
+            min_expected_trace_count=max_trace_count - 2,
+        ),  # conservative estimate to account for any time fluctuations in server-side trace event creation
+    ):
+        time.sleep(sleep_duration_seconds)
 
 
 def test_authz_not_enabled_trace(build_dir):

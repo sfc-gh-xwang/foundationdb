@@ -285,6 +285,30 @@ Reference<ITransaction> ThreadSafeTenant::createTransaction() {
 	return Reference<ITransaction>(new ThreadSafeTransaction(db->db, type, name, tenant));
 }
 
+void ThreadSafeTenant::setOption(FDBTenantOptions::Option option, Optional<StringRef> value) {
+	auto itr = FDBTenantOptions::optionInfo.find(option);
+	if (itr != FDBTenantOptions::optionInfo.end()) {
+		TraceEvent("SetTenantOption").detail("Option", itr->second.name);
+	} else {
+		TraceEvent("UnknownTenantOption").detail("Option", option);
+		throw invalid_option();
+	}
+	DatabaseContext* db = this->db->db;
+	Tenant* tenant = this->tenant;
+	auto setOptionInMainThread = [db, tenant, option](auto passValue) {
+		onMainThreadVoid([db, tenant, option, passValue]() {
+			db->checkDeferredError();
+			tenant->setOption(option, passValue.template castTo<StringRef>());
+		});
+	};
+	if (itr->second.sensitive) {
+		setOptionInMainThread(value.castTo<WipedString>());
+	} else {
+		Optional<Standalone<StringRef>> passValue = value.castTo<Standalone<StringRef>>();
+		setOptionInMainThread(passValue);
+	}
+}
+
 ThreadFuture<int64_t> ThreadSafeTenant::getId() {
 	Tenant* tenant = this->tenant;
 	return onMainThread([tenant]() -> Future<int64_t> {
@@ -431,9 +455,9 @@ ThreadSafeTransaction::ThreadSafeTransaction(DatabaseContext* cx,
 		if (tenantPtr) {
 			Reference<Tenant> tenant = Reference<Tenant>::addRef(tenantPtr);
 			if (type == ISingleThreadTransaction::Type::RYW) {
-				new (tr) ReadYourWritesTransaction(db, tenant);
+				new (tr) ReadYourWritesTransaction(tenant);
 			} else {
-				tr->construct(db, tenant);
+				tr->construct(tenant);
 			}
 		} else {
 			if (type == ISingleThreadTransaction::Type::RYW) {

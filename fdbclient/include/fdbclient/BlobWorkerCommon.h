@@ -21,6 +21,7 @@
 #ifndef FDBCLIENT_BLOBWORKERCOMMON_H
 #define FDBCLIENT_BLOBWORKERCOMMON_H
 
+#include "flow/genericactors.actor.h"
 #include "fdbrpc/Stats.h"
 
 struct BlobWorkerStats {
@@ -40,6 +41,8 @@ struct BlobWorkerStats {
 	Counter granuleRequestTimeouts;
 	Counter readRequestsWithBegin;
 	Counter readRequestsCollapsed;
+	Counter readRequestsTimeTravel;
+	Counter readRequestsUntrusted;
 	Counter flushGranuleReqs;
 	Counter compressionBytesRaw;
 	Counter compressionBytesFinal;
@@ -48,13 +51,13 @@ struct BlobWorkerStats {
 	Counter readDrivenCompactions;
 	Counter oldFeedSnapshots;
 	Counter blockInFlightSnapshots;
+	Counter emptyDeltaFiles;
+	Counter historyDAGReads;
 
 	int64_t numRangesAssigned;
 	int64_t mutationBytesBuffered;
 	int activeReadRequests;
 	int activeMutationStreamRequests;
-	// TODO: add gauge for granules blocking on old snapshots, once this guage is fixed
-	int granulesPendingSplitCheck;
 	Version minimumCFVersion;
 	Version cfVersionLag;
 	int notAtLatestChangeFeeds;
@@ -70,6 +73,12 @@ struct BlobWorkerStats {
 	Reference<FlowLock> initialSnapshotLock;
 	Reference<FlowLock> resnapshotBudget;
 	Reference<FlowLock> deltaWritesBudget;
+
+	ActiveCounter<int> granulesBlockedSplitCheck;
+	ActiveCounter<int> granulesBlockedOldSnapshot;
+	ActiveCounter<int> granulesBlockedCommittedVersion;
+	ActiveCounter<int> deltaFilesWriting;
+	ActiveCounter<int> snapshotFilesWriting;
 
 	Future<Void> logger;
 
@@ -106,6 +115,8 @@ struct BlobWorkerStats {
 	    granuleRequestTimeouts("GranuleRequestTimeouts", cc),
 	    readRequestsWithBegin("ReadRequestsWithBegin", cc),
 	    readRequestsCollapsed("ReadRequestsCollapsed", cc),
+	    readRequestsTimeTravel("ReadRequestsTimeTravel", cc),
+	    readRequestsUntrusted("ReadRequestsUntrusted", cc),
 	    flushGranuleReqs("FlushGranuleReqs", cc),
 	    compressionBytesRaw("CompressionBytesRaw", cc),
 	    compressionBytesFinal("CompressionBytesFinal", cc),
@@ -114,11 +125,12 @@ struct BlobWorkerStats {
 	    readDrivenCompactions("ReadDrivenCompactions", cc),
 	    oldFeedSnapshots("OldFeedSnapshots", cc),
 	    blockInFlightSnapshots("BlockInFlightSnapshots", cc),
+	    emptyDeltaFiles("EmptyDeltaFiles", cc),
+	    historyDAGReads("HistoryDAGReads", cc),
 	    numRangesAssigned(0),
 	    mutationBytesBuffered(0),
 	    activeReadRequests(0),
 	    activeMutationStreamRequests(0),
-	    granulesPendingSplitCheck(0),
 	    minimumCFVersion(0),
 	    cfVersionLag(0),
 	    notAtLatestChangeFeeds(0),
@@ -134,12 +146,16 @@ struct BlobWorkerStats {
 	    deltaUpdateSample("DeltaUpdateMetrics", id, sampleLoggingInterval, fileOpLatencySketchAccuracy),
 	    initialSnapshotLock(initialSnapshotLock),
 	    resnapshotBudget(resnapshotBudget),
-	    deltaWritesBudget(deltaWritesBudget) {
+	    deltaWritesBudget(deltaWritesBudget),
+	    granulesBlockedSplitCheck(0),
+	    granulesBlockedOldSnapshot(0),
+	    granulesBlockedCommittedVersion(0),
+	    deltaFilesWriting(0),
+	    snapshotFilesWriting(0) {
 		specialCounter(cc, "NumRangesAssigned", [this]() { return this->numRangesAssigned; });
 		specialCounter(cc, "MutationBytesBuffered", [this]() { return this->mutationBytesBuffered; });
 		specialCounter(cc, "ActiveReadRequests", [this]() { return this->activeReadRequests; });
 		specialCounter(cc, "ActiveMutationStreamRequests", [this]() { return this->activeMutationStreamRequests; });
-		specialCounter(cc, "GranulesPendingSplitCheck", [this]() { return this->granulesPendingSplitCheck; });
 		specialCounter(cc, "MinimumChangeFeedVersion", [this]() { return this->minimumCFVersion; });
 		specialCounter(cc, "CFVersionLag", [this]() { return this->cfVersionLag; });
 		specialCounter(cc, "NotAtLatestChangeFeeds", [this]() { return this->notAtLatestChangeFeeds; });
@@ -151,6 +167,15 @@ struct BlobWorkerStats {
 		specialCounter(cc, "ReSnapshotBytesWaiting", [this]() { return this->resnapshotBudget->waiters(); });
 		specialCounter(cc, "DeltaFileWriteBytesActive", [this]() { return this->deltaWritesBudget->activePermits(); });
 		specialCounter(cc, "DeltaFileWriteBytesWaiting", [this]() { return this->deltaWritesBudget->waiters(); });
+		specialCounter(
+		    cc, "GranulesBlockedSplitCheck", [this]() { return this->granulesBlockedSplitCheck.getValue(); });
+		specialCounter(
+		    cc, "GranulesBlockedOldSnapshot", [this]() { return this->granulesBlockedOldSnapshot.getValue(); });
+		specialCounter(cc, "GranulesBlockedCommittedVersion", [this]() {
+			return this->granulesBlockedCommittedVersion.getValue();
+		});
+		specialCounter(cc, "DeltaFilesWriting", [this]() { return this->deltaFilesWriting.getValue(); });
+		specialCounter(cc, "SnapshotFilesWriting", [this]() { return this->snapshotFilesWriting.getValue(); });
 
 		logger = cc.traceCounters("BlobWorkerMetrics", id, interval, "BlobWorkerMetrics");
 	}

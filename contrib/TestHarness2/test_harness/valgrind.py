@@ -1,6 +1,9 @@
 import enum
+import sys
+import traceback
 import xml
 import xml.sax.handler
+import xml.sax.saxutils
 from pathlib import Path
 from typing import List
 
@@ -146,8 +149,28 @@ class ValgrindHandler(xml.sax.handler.ContentHandler):
             assert state in [ValgrindParseState.STACK, ValgrindParseState.STACK_AUX]
 
 
-def parse_valgrind_output(valgrind_out_file: Path) -> List[ValgrindError]:
+def parse_valgrind_output(
+    valgrind_out_file: Path, hide_parse_errors: bool = False
+) -> List[ValgrindError]:
     handler = ValgrindHandler()
-    with valgrind_out_file.open("r") as f:
-        xml.sax.parse(f, handler)
-        return handler.result
+
+    file_contents = "[file not read]"
+    try:
+        with valgrind_out_file.open("r") as f:
+            file_contents = f.read()
+        xml.sax.parseString(file_contents, handler)
+    except Exception as e:
+        # This is a slight abuse of the valgrind fields, but it's sufficient for
+        # this rare case
+        if not hide_parse_errors:
+            parse_error = ValgrindError()
+            parse_error.what.what = "ValgrindParseError - %s" % str(e)
+            _, _, exc_traceback = sys.exc_info()
+            parse_error.what.backtrace = repr(traceback.format_tb(exc_traceback))
+            file_contents_aux = ValgrindWhat()
+            file_contents_aux.what = "FileContents"
+            file_contents_aux.backtrace = xml.sax.saxutils.escape(file_contents)
+            parse_error.aux.append(file_contents_aux)
+            handler.result.append(parse_error)
+
+    return handler.result

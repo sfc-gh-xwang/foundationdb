@@ -80,7 +80,9 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 		auto const throughput = throughputIt->second.smoother.smoothRate();
 		auto const transactionRate = transactionRateIt->second.smoother.smoothRate();
 
-		if (throughput <= 0 || transactionRate <= 0) {
+		// In this case, throughput is extremely low, and an
+		// average cost estimation cannot be made
+		if (throughput <= 0.0 || transactionRate < 1.0) {
 			return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
 		}
 		return throughput / transactionRate;
@@ -88,14 +90,14 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 }
 
 bool isClientAverageCostTrackingEnabled() {
-	// TRACK_AVERAGE_COST_ON_CLIENT depends on TRACK_THROUGHPUT_ON_CLIENTS
-	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT;
+	// TRACK_AVERAGE_COST_ON_CLIENTS depends on TRACK_THROUGHPUT_ON_CLIENTS
+	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS;
 }
 
 bool isBusyThrottlingIdsTrackingEnabled() {
 	// TRACK_BUSY_THROTTLING_IDS depends on TRACK_THROUGHPUT_ON_CLIENTS
 	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS &&
-	       CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENT;
+	       CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS;
 }
 
 bool ThroughputTracker::isThrottlingIdBusy(ThrottlingId const& throttlingId) const {

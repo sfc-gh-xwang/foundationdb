@@ -112,22 +112,47 @@ public:
 	double POP_FROM_LOG_DELAY;
 	double TLOG_PULL_ASYNC_DATA_WARNING_TIMEOUT_SECS;
 
-	// Empty Version Peek Batching
+	// Dynamic Empty Version Wait
 	bool PEEK_BATCHING_EMPTY_MSG; // Enable tlog empty version peeks batching.
 	double PEEK_BATCHING_EMPTY_MSG_INTERVAL; // Maximum wait time for a batch on tlog side.
-	enum DYNAMIC_EMPTY_VERSION_WAIT_MODE { DISABLED, EMPTY_VERSION_WAIT_LOG_ONLY, EMPTY_VERSION_WAIT };
-	int DYNAMIC_EMPTY_VERSION_WAIT; // Choose from DYNAMIC_EMPTY_VERSION_WAIT_MODE.
-	bool SS_EMPTY_VERSION_WAIT_LESS_SKEW_STAT; // Whether to log non-queue-popping samples in empty version wait window
-	                                           // logging. Enabling this will result in less skewed logging but trace
-	                                           // many more lines.
-	double SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL; // Interval of sampling incoming requests at each storage server for
-	                                              // empty version wait window logging. Sampling too frequently may
-	                                              // incur extra storage server CPU cost and latency penalty for reads.
-	int SS_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH; // Max size limit of empty version wait window logging queue. Tlog
-	                                            // samples will be discarded once limit is reached. It is advised to
-	                                            // keep this window big enough to capture tlog sync time window of
-	                                            // multiple times the size of SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL
-	                                            // for collected statistics to make sense.AA
+	enum DYNAMIC_EMPTY_VERSION_WAIT_MODE {
+		EMPTY_VERSION_WAIT_DISABLED,
+		EMPTY_VERSION_WAIT_LOG_ONLY,
+		EMPTY_VERSION_WAIT
+	};
+	int DYNAMIC_EMPTY_VERSION_WAIT; // 0. Disabled: disabled
+	                                // 1. EMPTY_VERSION_WAIT_LOG_ONLY: No batching + logging
+	                                // 2. EMPTY_VERSION_WAIT: dynamic wait window adjustment + logging
+	double DYNAMIC_EMPTY_VERSION_WAIT_SAMPLE_PROB; // Probability of sampling client requests, default 1 (sample all).
+	int DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH; // Max size limit of empty version wait window logging queue. Tlog
+	                                                 // samples will be discarded once limit is reached. It is advised
+	                                                 // to keep this window big enough to capture tlog sync time window
+	                                                 // of multiple times the size of
+	                                                 // SS_EMPTY_VERSION_WAIT_SAMPLE_INTERVAL for collected statistics
+	                                                 // to make sense.
+	bool DYNAMIC_EMPTY_VERSION_WAIT_LESS_SKEW_STAT; // Whether to log non-queue-popping samples in empty version wait
+	                                                // window logging. Dsiabling this will result in more skewed logging
+	                                                // but reduce storage server CPU cost. By default enabled.
+	double DYNAMIC_EMPTY_VERSION_WAIT_SACRIFICE_PERCENTILE; // Percentage of read requests to sacriface based on safe
+	                                                        // delay window.
+	double DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_THRESHOLD; // If number of samples in mutation distribution is greater
+	                                                      // than this amount * total number of mutations, we rely on
+	                                                      // mutation distribution to make a decision/
+	double
+	    DYNAMIC_EMPTY_VERSION_WAIT_MUTATION_SMOOTHING_FACTOR; // Smoothing factor to multiply a decision by. Makes
+	                                                          // decision more pessimistic but help reduce latency loss
+	                                                          // when true window fluctuates around decision window.
+	double DYNAMIC_EMPTY_VERSION_WAIT_CAP; // Hard cap for largest safe delay window decisions.
+	double DYNAMIC_EMPTY_VERSION_WAIT_EMERGENCY_DEVIATION; // Percentage deviation from last window to trigger an
+	                                                       // emergency resend.
+	double DYNAMIC_EMPTY_VERSION_WAIT_SYNC_INTERVAL; // Interval of pushing calculated delay window from ss to tlogs.
+	                                                 // IMPORTANT: This have huge impact on tlog CPU utilization
+	                                                 // especially on larger clusters. All ss will broadcast sync
+	                                                 // request to all tlogs following this interval. A cluster with 100
+	                                                 // ss with interval set to 0.01s will result in each tlog receiving
+	                                                 // 10000 more sync messages per second!
+	int DYNAMIC_EMPTY_VERSION_WAIT_SYNC_SAMPLE_REQUIREMENT; // Minimum amount of collected samples required to make a
+	                                                        // new window decision.
 
 	// Data distribution queue
 	double HEALTH_POLL_TIME;
@@ -211,13 +236,15 @@ public:
 	// Given an array that's ascend sorted by CPU percent, the pivot position is CPU_PIVOT_RATIO *
 	// team count. DD won't move shard to teams that has CPU > pivot CPU.
 	double CPU_PIVOT_RATIO;
-	// DD won't move out a shard from its source team, by re-evaluating the utilization of source team from TWO metrics:
-	// Disk Usage, CPU. For each metrics, DD would compare the source team's metrics to the lower and upper pivot of all
-	// teams to decide whether to leave the shard in source team.
+	// DD won't move out a shard from its source team, by re-evaluating the utilization of source team from THREE
+	// metrics: Disk Usage, CPU, Write Rate. For each metrics, DD would compare the source team's metrics to the lower
+	// and upper pivot of all teams to decide whether to leave the shard in source team.
 	double DD_LOWER_LOAD_BYTES_PIVOT_RATIO;
 	double DD_UPPER_LOAD_BYTES_PIVOT_RATIO;
 	double DD_LOWER_CPU_PIVOT_RATIO;
 	double DD_UPPER_CPU_PIVOT_RATIO;
+	double DD_LOWER_WRITE_PIVOT_RATIO;
+	double DD_UPPER_WRITE_PIVOT_RATIO;
 	// DD won't move shard to teams that has CPU > MAX_DEST_CPU_PERCENT
 	double MAX_DEST_CPU_PERCENT;
 	// The constant interval DD update pivot values for team selection. It should be >=
@@ -533,6 +560,13 @@ public:
 	double PROXY_COMPUTE_GROWTH_RATE;
 	int TXN_STATE_SEND_AMOUNT;
 	double REPORT_TRANSACTION_COST_ESTIMATION_DELAY;
+	// Limit to the number of throttling tags tracked
+	// per storage server by the commit proxy.
+	int64_t CP_THROTTLE_TAGS_TRACKED;
+	// Minimum write throughput (in pages/second, multiplied by fungibility ratio)
+	// that a tag must register on a commit proxy in order for commit proxy to send cost estimation to the
+	// RKMetricsTracker
+	int64_t CP_MIN_TAG_WRITE_PAGES_RATE;
 	bool PROXY_REJECT_BATCH_QUEUED_TOO_LONG;
 	bool PROXY_USE_RESOLVER_PRIVATE_MUTATIONS;
 	bool BURSTINESS_METRICS_ENABLED;
@@ -780,6 +814,11 @@ public:
 	// Interval at which to expire inactive throttlingIds from the
 	// client throughput tracker running on ratekeeper:
 	double CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL;
+	// If true, a throttlingId will potentially have a limiting rate
+	// computed even if no quota is set. This rate is computed based
+	// on storage server saturation for storage servers being affected
+	// by the throttlingId in question.
+	bool THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;
@@ -863,8 +902,9 @@ public:
 	int DD_SHARD_COMPARE_LIMIT; // when read-aware DD is enabled, at most how many shards are compared together
 	bool READ_SAMPLING_ENABLED;
 	// Rolling window duration over which the average bytes moved by DD is calculated for the 'MovingData' trace event.
-	double DD_TRACE_MOVE_BYTES_AVERAGE_INTERVAL;
+	double DD_MOVING_DATA_TRACE_INTERVAL;
 	int64_t MOVING_WINDOW_SAMPLE_SIZE;
+	bool READ_METRICS_INCLUDE_SYSTEM_KEYS;
 
 	// Storage Server
 	double STORAGE_LOGGING_DELAY;
@@ -888,6 +928,9 @@ public:
 	int STORAGE_COMMIT_BYTES;
 	int STORAGE_FETCH_BYTES;
 	double STORAGE_COMMIT_INTERVAL;
+	bool ENABLE_READ_RANGE_BUSYNESS_REPORTING;
+	double SHARD_READ_SAMPLE_UPDATE_INTERVAL;
+
 	int BYTE_SAMPLING_FACTOR;
 	int BYTE_SAMPLING_OVERHEAD;
 	double MIN_BYTE_SAMPLING_PROBABILITY; // Adjustable only for test of PhysicalShardMove. Should always be 0 for other
@@ -1156,6 +1199,7 @@ public:
 	int BLOB_WORKER_RESNAPSHOT_PARALLELISM;
 	int BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM;
 	int BLOB_WORKER_RDC_PARALLELISM;
+	double BLOB_WORKER_RDC_MIN_WAVE_DELAY;
 	// The resnapshot/delta parallelism knobs are deprecated and replaced by the budget_bytes knobs! FIXME: remove after
 	// next release
 	int64_t BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES;
@@ -1179,6 +1223,8 @@ public:
 	double BLOB_MANAGER_STATUS_EXP_BACKOFF_MAX;
 	double BLOB_MANAGER_STATUS_EXP_BACKOFF_EXPONENT;
 	int BLOB_MANAGER_CONCURRENT_MERGE_CHECKS;
+	double FORCE_PURGE_WAIT_BLOBBIFY_TIMEOUT;
+	int BLOB_MANAGER_PURGE_GRANULE_PARALLELISM;
 	double BGCC_TIMEOUT;
 	double BGCC_MIN_INTERVAL;
 	bool BLOB_MANIFEST_BACKUP;
@@ -1218,10 +1264,12 @@ public:
 	int REST_KMS_CURRENT_CIPHER_REQUEST_VERSION;
 	int REST_KMS_MAX_CIPHER_REQUEST_VERSION;
 	std::string REST_SIM_KMS_VAULT_DIR;
+	bool REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY;
 	double REST_KMS_STABILITY_CHECK_INTERVAL;
 	double KMS_LOGGING_INTERVAL;
 
 	double CONSISTENCY_SCAN_ACTIVE_THROTTLE_RATIO;
+	bool ENABLE_CONSISTENCY_SCAN;
 
 	// Idempotency ids
 	double IDEMPOTENCY_ID_IN_MEMORY_LIFETIME;
@@ -1230,6 +1278,10 @@ public:
 
 	// Bulk Load
 	int BULK_LOAD_FILE_POINTER_BATCH_SIZE;
+	int BULK_LOAD_PARALLEL_FILE_VALIDATIONS;
+	bool BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT;
+	int BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL;
+	int BULK_LOAD_FILE_VALIDATION_LEVEL;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

@@ -29,7 +29,7 @@ public:
 		return std::pair(conn, newFileName);
 	}
 
-	Reference<BackupContainerFileSystem> getForRead(std::string filePath) { return conn; }
+	Reference<BackupContainerFileSystem> getForAccess(std::string filePath) { return conn; }
 
 	SingleBlobConnectionProvider(std::string url, bool useBackupPath) {
 		conn = BackupContainerFileSystem::openContainerFS(url, {}, {}, useBackupPath);
@@ -56,7 +56,7 @@ struct StorageLocationBlobConnectionProvider : BlobConnectionProvider {
 		return std::pair(connections[writePartition], std::to_string(locationId) + "/" + newFileName);
 	}
 
-	Reference<BackupContainerFileSystem> getForRead(std::string filePath) {
+	Reference<BackupContainerFileSystem> getForAccess(std::string filePath) {
 		CODE_PROBE(isExpired(), "storage location blob connection using expired blob metadata for read!");
 		size_t slash = filePath.find("/");
 		ASSERT(slash != std::string::npos);

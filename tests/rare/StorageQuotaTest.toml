@@ -1,6 +1,12 @@
 [configuration]
 allowDefaultTenant = false
+blobGranulesEnabled = true
 tenantModes = ['optional', 'required']
+
+[[knobs]]
+storage_quota_enabled = true
+allow_bulk_loads = true
+bulk_load_aware_storage_quota_enforcement = true
 
 [[test]]
 testTitle = 'TenantCreation'

@@ -263,7 +263,7 @@ ThreadFuture<Standalone<StringRef>> DLTransaction::getVersionstamp() {
 	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* str;
 		int strLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &str, &strLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -501,6 +501,16 @@ Reference<ITransaction> DLTenant::createTransaction() {
 	return Reference<ITransaction>(new DLTransaction(api, tr));
 }
 
+void DLTenant::setOption(FDBTenantOptions::Option option, Optional<StringRef> value) {
+	if (!api->tenantSetOption) {
+		throw unsupported_operation();
+	}
+	throwIfError(api->tenantSetOption(tenant,
+	                                  static_cast<FDBTenantOption>(option),
+	                                  value.present() ? value.get().begin() : nullptr,
+	                                  value.present() ? value.get().size() : 0));
+}
+
 ThreadFuture<int64_t> DLTenant::getId() {
 	if (!api->tenantGetId) {
 		return unsupported_operation();
@@ -531,7 +541,7 @@ ThreadFuture<Key> DLTenant::purgeBlobGranules(const KeyRangeRef& keyRange, Versi
 	return toThreadFuture<Key>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* key;
 		int keyLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &key, &keyLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &key, &keyLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -660,7 +670,7 @@ ThreadFuture<Standalone<StringRef>> DLTenant::getClientStatus() {
 	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* str;
 		int strLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &str, &strLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -823,7 +833,7 @@ ThreadFuture<Key> DLDatabase::purgeBlobGranules(const KeyRangeRef& keyRange, Ver
 	return toThreadFuture<Key>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* key;
 		int keyLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &key, &keyLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &key, &keyLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -952,7 +962,7 @@ ThreadFuture<Standalone<StringRef>> DLDatabase::getClientStatus() {
 	return toThreadFuture<Standalone<StringRef>>(api, f, [](FdbCApi::FDBFuture* f, FdbCApi* api) {
 		const uint8_t* str;
 		int strLength;
-		FdbCApi::fdb_error_t error = api->futureGetKey(f, &str, &strLength);
+		FdbCApi::fdb_error_t error = api->futureGetBytes(f, &str, &strLength);
 		ASSERT(!error);
 
 		// The memory for this is stored in the FDBFuture and is released when the future gets destroyed
@@ -1119,6 +1129,11 @@ void DLApi::init() {
 	                   headerVersion >= ApiVersion::withEvolvableApi().version());
 	loadClientFunction(
 	    &api->tenantCreateTransaction, lib, fdbCPath, "fdb_tenant_create_transaction", headerVersion >= 0);
+	loadClientFunction(&api->tenantSetOption,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_tenant_set_option",
+	                   headerVersion >= ApiVersion::withTenantSetOption().version());
 	loadClientFunction(&api->tenantPurgeBlobGranules,
 	                   lib,
 	                   fdbCPath,
@@ -1269,6 +1284,11 @@ void DLApi::init() {
 	                   headerVersion >= ApiVersion::withFutureGetBool().version());
 	loadClientFunction(&api->futureGetUInt64, lib, fdbCPath, "fdb_future_get_uint64", headerVersion >= 0);
 	loadClientFunction(&api->futureGetError, lib, fdbCPath, "fdb_future_get_error", headerVersion >= 0);
+	loadClientFunction(&api->futureGetBytes,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_future_get_bytes",
+	                   headerVersion >= ApiVersion::withReadMetrics().version());
 	loadClientFunction(&api->futureGetKey, lib, fdbCPath, "fdb_future_get_key", headerVersion >= 0);
 	loadClientFunction(&api->futureGetValue, lib, fdbCPath, "fdb_future_get_value", headerVersion >= 0);
 	loadClientFunction(&api->futureGetStringArray, lib, fdbCPath, "fdb_future_get_string_array", headerVersion >= 0);
@@ -1290,8 +1310,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_future_get_result",
 	                   headerVersion >= ApiVersion::withEvolvableApi().version());
-	loadClientFunction(
-	    &api->futureGetReadBusyness, lib, fdbCPath, "fdb_future_get_read_busyness", headerVersion >= 800000);
+	loadClientFunction(&api->futureGetReadBusyness,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_future_get_read_busyness",
+	                   headerVersion >= ApiVersion::withReadMetrics().version());
 	loadClientFunction(&api->futureSetCallback, lib, fdbCPath, "fdb_future_set_callback", headerVersion >= 0);
 	loadClientFunction(&api->futureCancel, lib, fdbCPath, "fdb_future_cancel", headerVersion >= 0);
 	loadClientFunction(&api->futureDestroy, lib, fdbCPath, "fdb_future_destroy", headerVersion >= 0);
@@ -1299,6 +1322,10 @@ void DLApi::init() {
 	loadClientFunction(
 	    &api->resultGetKeyValueArray, lib, fdbCPath, "fdb_result_get_keyvalue_array", headerVersion >= 0);
 	loadClientFunction(&api->resultDestroy, lib, fdbCPath, "fdb_result_destroy", headerVersion >= 0);
+
+	if (api->futureGetBytes == nullptr) {
+		api->futureGetBytes = api->futureGetKey;
+	}
 }
 
 void DLApi::selectApiVersion(int apiVersion) {
@@ -1392,19 +1419,21 @@ FDBAllocatorIfc* DLApi::getAllocatorInterface() {
 
 // MultiVersionTransaction
 MultiVersionTransaction::MultiVersionTransaction(Reference<MultiVersionDatabase> db,
-                                                 Optional<Reference<MultiVersionTenant>> tenant,
-                                                 UniqueOrderedOptionList<FDBTransactionOptions> defaultOptions)
+                                                 Optional<Reference<MultiVersionTenant>> tenant)
   : db(db),
     tenant(tenant),
     startTime(timer_monotonic()),
     timeoutTsav(new ThreadSingleAssignmentVar<Void>()) {
-	setDefaultOptions(defaultOptions);
+	setDefaultOptions();
 	updateTransaction(false);
 }
 
-void MultiVersionTransaction::setDefaultOptions(UniqueOrderedOptionList<FDBTransactionOptions> options) {
-	MutexHolder holder(db->dbState->optionLock);
-	std::copy(options.begin(), options.end(), std::back_inserter(persistentOptions));
+void MultiVersionTransaction::setDefaultOptions() {
+	ThreadSpinLockHolder optionLockHolder(optionLock);
+	if (tenant.present()) {
+		tenant.get()->tenantState->exportSensitiveTransactionDefaultOptions(sensitivePersistentOptions);
+	}
+	db->dbState->exportTransactionDefaultOptions(persistentOptions);
 }
 
 void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
@@ -1430,7 +1459,14 @@ void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
 	// need to set it.
 	if (setPersistentOptions || !newTr.transaction) {
 		Optional<StringRef> timeout;
-		for (auto const& option : persistentOptions) {
+		auto opts = decltype(persistentOptions){};
+		auto sensitiveOpts = decltype(sensitivePersistentOptions){};
+		{
+			ThreadSpinLockHolder optionLockHolder(optionLock);
+			opts = persistentOptions;
+			sensitiveOpts = sensitivePersistentOptions;
+		}
+		for (auto const& option : opts) {
 			if (option.first == FDBTransactionOptions::TIMEOUT) {
 				timeout = option.second.castTo<StringRef>();
 			} else if (newTr.transaction) {
@@ -1438,7 +1474,7 @@ void MultiVersionTransaction::updateTransaction(bool setPersistentOptions) {
 			}
 		}
 		if (newTr.transaction) {
-			for (auto const& option : sensitivePersistentOptions) {
+			for (auto const& option : sensitiveOpts) {
 				newTr.transaction->setOption(option.first, option.second.castTo<StringRef>());
 			}
 		}
@@ -1723,10 +1759,12 @@ void MultiVersionTransaction::setOption(FDBTransactionOptions::Option option, Op
 	}
 
 	if (itr->second.persistent) {
-		if (itr->second.sensitive)
-			sensitivePersistentOptions.emplace_back(option, value.castTo<WipedString>());
-		else
-			persistentOptions.emplace_back(option, value.castTo<Standalone<StringRef>>());
+		ThreadSpinLockHolder holder(optionLock);
+		if (itr->second.sensitive) {
+			sensitivePersistentOptions.addOption(option, value.castTo<WipedString>());
+		} else {
+			persistentOptions.addOption(option, value.castTo<Standalone<StringRef>>());
+		}
 	}
 
 	auto tr = getTransaction();
@@ -1881,8 +1919,11 @@ TypedApiResult<T> MultiVersionTransaction::abortableTimeoutResult(ThreadFuture<V
 }
 
 void MultiVersionTransaction::reset() {
-	persistentOptions.clear();
-	sensitivePersistentOptions.clear();
+	{
+		ThreadSpinLockHolder holder(optionLock);
+		persistentOptions.clear();
+		sensitivePersistentOptions.clear();
+	}
 
 	// Reset the timeout state
 	Reference<ThreadSingleAssignmentVar<Void>> prevTimeoutTsav;
@@ -1905,7 +1946,7 @@ void MultiVersionTransaction::reset() {
 		prevTimeout.cancel();
 	}
 
-	setDefaultOptions(db->dbState->transactionDefaultOptions);
+	setDefaultOptions();
 	updateTransaction(false);
 }
 
@@ -1953,9 +1994,36 @@ MultiVersionTenant::~MultiVersionTenant() {
 }
 
 Reference<ITransaction> MultiVersionTenant::createTransaction() {
-	return Reference<ITransaction>(new MultiVersionTransaction(tenantState->db,
-	                                                           Reference<MultiVersionTenant>::addRef(this),
-	                                                           tenantState->db->dbState->transactionDefaultOptions));
+	return Reference<ITransaction>(
+	    new MultiVersionTransaction(tenantState->db, Reference<MultiVersionTenant>::addRef(this)));
+}
+
+void MultiVersionTenant::setOption(FDBTenantOptions::Option option, Optional<StringRef> value) {
+	auto itr = FDBTenantOptions::optionInfo.find(option);
+	if (itr == FDBTenantOptions::optionInfo.end()) {
+		TraceEvent("UnknownTenantOption").detail("Option", option);
+		throw invalid_option();
+	}
+	auto const& optionProps = itr->second;
+	int defaultFor = optionProps.defaultFor;
+	// Note: Currently the only tenant option (authorization token) is sensitive, AND is for setting transaction
+	// defaults.
+	//       Adapt accordingly once we add non-transaction-default and/or non-sensitive options.
+	ASSERT(optionProps.sensitive);
+	ASSERT(defaultFor == 2000); /*FDBTransactionOptions::AUTHORIZATION_TOKEN*/
+	ASSERT(FDBTransactionOptions::optionInfo.find((FDBTransactionOptions::Option)defaultFor) !=
+	       FDBTransactionOptions::optionInfo.end());
+	auto optionArg = value.castTo<WipedString>();
+	{
+		MutexHolder holder(tenantState->tenantLock);
+
+		tenantState->sensitiveTransactionDefaultOptions.addOption((FDBTransactionOptions::Option)defaultFor, optionArg);
+		tenantState->sensitiveOptions.push_back({ option, optionArg });
+	}
+	auto currentTenant = tenantState->tenantVar->get();
+	if (currentTenant.value) {
+		currentTenant.value->setOption(option, value);
+	}
 }
 
 template <class T, class... Args>
@@ -2076,6 +2144,15 @@ void MultiVersionTenant::TenantState::updateTenant() {
 	if (closed) {
 		return;
 	}
+	if (tenant) {
+		// Currently there are only sensitive tenant options
+		for (const auto& [option, value] : sensitiveOptions) {
+			auto itr = FDBTenantOptions::optionInfo.find(option);
+			ASSERT(itr != FDBTenantOptions::optionInfo.end());
+			ASSERT(itr->second.sensitive);
+			tenant->setOption(option, value.castTo<StringRef>());
+		}
+	}
 
 	tenantUpdater = mapThreadFuture<Void, Void>(currentDb.onChange, [self](ErrorOr<Void> result) {
 		if (!result.isError()) {
@@ -2083,6 +2160,14 @@ void MultiVersionTenant::TenantState::updateTenant() {
 		}
 		return result;
 	});
+}
+
+void MultiVersionTenant::TenantState::exportSensitiveTransactionDefaultOptions(
+    UniqueOrderedSensitiveOptionList<FDBTransactionOptions>& outOptionList) {
+	MutexHolder holder(tenantLock);
+	for (const auto& [key, value] : sensitiveTransactionDefaultOptions) {
+		outOptionList.addOption(key, value);
+	}
 }
 
 void MultiVersionTenant::TenantState::close() {
@@ -2194,8 +2279,7 @@ Reference<ITenant> MultiVersionDatabase::openTenant(TenantNameRef tenantName) {
 
 Reference<ITransaction> MultiVersionDatabase::createTransaction() {
 	return Reference<ITransaction>(new MultiVersionTransaction(Reference<MultiVersionDatabase>::addRef(this),
-	                                                           Optional<Reference<MultiVersionTenant>>(),
-	                                                           dbState->transactionDefaultOptions));
+	                                                           Optional<Reference<MultiVersionTenant>>()));
 }
 
 void MultiVersionDatabase::setOption(FDBDatabaseOptions::Option option, Optional<StringRef> value) {
@@ -2589,6 +2673,14 @@ void MultiVersionDatabase::DatabaseState::updateDatabase(Reference<IDatabase> ne
 	ASSERT(protocolVersionMonitor.isValid());
 	protocolVersionMonitor.cancel();
 	protocolVersionMonitor = monitorProtocolVersion();
+}
+
+void MultiVersionDatabase::DatabaseState::exportTransactionDefaultOptions(
+    UniqueOrderedOptionList<FDBTransactionOptions>& outOptionList) {
+	MutexHolder holder(optionLock);
+	for (const auto& [key, value] : transactionDefaultOptions) {
+		outOptionList.addOption(key, value);
+	}
 }
 
 // Cleans up state for the version monitor to break reference cycles

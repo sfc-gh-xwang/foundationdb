@@ -29,4 +29,13 @@ constexpr bool debugLogTraces = false;
 constexpr bool debugRelocationTraces = false;
 #define DebugRelocationTraceEvent(...) DebugTraceEvent(debugRelocationTraces, __VA_ARGS__)
 
+constexpr bool debugBMTraces = false;
+#define DebugBMTraceEvent(...) DebugTraceEvent(debugBMTraces, __VA_ARGS__)
+
+constexpr bool debugBWTraces = false;
+#define DebugBWTraceEvent(...) DebugTraceEvent(debugBWTraces, __VA_ARGS__)
+
+constexpr bool debugBulkLoadTraces = false;
+#define DebugBulkLoadTraceEvent(...) DebugTraceEvent(debugBulkLoadTraces, __VA_ARGS__)
+
 #endif // FOUNDATIONDB_DEBUGTRACE_H

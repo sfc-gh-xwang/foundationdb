@@ -41,10 +41,14 @@ namespace combify {
 
 // Network or database option can have a transaction implication:
 // e.g. trustedClient option affects whether AuthZ token transaction option should be set.
+// Clang-format is disabled for the concept definition below as it is currently lacking
+// concepts syntax support: https://stackoverflow.com/questions/62219221/using-clang-format-with-c20-concepts
+// clang-format off
 template <class Opt>
 concept HasTransactionImplication = requires(const Opt& o) {
-	                                    { o.apply(std::declval<fdb::Transaction>()) } -> std::same_as<void>;
-                                    };
+	{ o.apply(std::declval<fdb::Transaction>()) } -> std::same_as<void>;
+};
+// clang-format on
 
 using namespace fdb::literals;
 
@@ -135,6 +139,11 @@ void TestEnv::setNetworkOptions() {
 		throw std::runtime_error(fmt::format("NOT ALL OPTIONS ARE VALID FOR A RUN: {}", shortSummary()));
 	}
 	fdb::selectApiVersion(fdb::maxApiVersion());
+	if (!staticOptions.disableClientTrace || !*staticOptions.disableClientTrace) {
+		fdb::network::setOption(FDB_NET_OPTION_TRACE_ENABLE, "./");
+		fdb::network::setOption(FDB_NET_OPTION_TRACE_FILE_IDENTIFIER,
+		                        fdb::toBytesRef(fmt::format("combify_client_{}", runCount)));
+	}
 	std::apply(
 	    [this](auto&... opts) {
 		    (
@@ -500,7 +509,19 @@ bool TestEnv::runTest(const TestCase& t) {
 			fmt::print("=== BEGIN TEST STDERR ===\n{}===  END  TEST STDERR ===\n", err);
 		}
 	}
+	runCount++;
 	return !exc.has_value();
+}
+
+fdb::Transaction TestEnv::newNormalOrTenantTransaction() const {
+	auto db = newDatabase();
+	// For trusted client or if there is no tenant, return a new DB transaction
+	if (*trustedClient || tenants.empty()) {
+		return newTransaction(db);
+	}
+
+	// Otherwise, create a transaction from the first tenant
+	return newTenantTransaction(db, tenants[0].first);
 }
 
 std::vector<const TestCase*> collectTestCases(const TestOptions& options) {
@@ -562,6 +583,12 @@ int main(int argc, char** argv) {
 	combify::optional<combify::IterableOptionTier> shiftedTier;
 	std::vector<std::pair<const combify::TestCase*, combify::TestOptions>> failedCases;
 	do {
+		// Skip if a combination is unfit
+		if (!env->allOptionsValid()) {
+			fmt::print("\n{} Combination unfit, skipping \n", env->shortSummary());
+			continue;
+		}
+
 		auto cases = combify::collectTestCases(*env);
 		fmt::print("\n{} [{} cases]\n", env->shortSummaryIterable(), cases.size());
 		if (cases.empty()) {
