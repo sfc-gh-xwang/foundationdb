@@ -92,6 +92,10 @@ struct CreateTenantImpl {
 				// The tenant already exists and is either completely created or has a different
 				// configuration
 				CODE_PROBE(true, "Create tenant that already exists");
+				TraceEvent("MetaclusterCreateTenantAlreadyExists")
+				    .detail("TenantName", self->tenantEntry.tenantName)
+				    .detail("TenantId", self->tenantEntry.id)
+				    .detail("ExistingEntryState", tenantStateToString(existingEntry.get().tenantState));
 				throw tenant_already_exists();
 			} else if (!self->replaceExistingTenantId.present() ||
 			           self->replaceExistingTenantId.get() != existingEntry.get().id) {
@@ -131,6 +135,9 @@ struct CreateTenantImpl {
 			}
 		} else if (self->replaceExistingTenantId.present()) {
 			CODE_PROBE(true, "Tenant removed during creation", probe::decoration::rare);
+			TraceEvent("MetaclusterCreateTenantCheckExistingRemovedDuringCreation")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			throw tenant_removed();
 		}
 
@@ -245,9 +252,6 @@ struct CreateTenantImpl {
 		// If the tenant already exists, we either throw an error from this function or move on to the next phase
 		bool tenantExists = wait(checkForExistingTenant(self, tr));
 		if (tenantExists) {
-			TraceEvent("MetaclusterCreateTenantMgmtAlreadyExists")
-			    .detail("TenantName", self->tenantEntry.tenantName)
-			    .detail("TenantId", self->tenantEntry.id);
 			return Void();
 		}
 
@@ -353,7 +357,7 @@ struct CreateTenantImpl {
 		state Optional<MetaclusterTenantMapEntry> managementEntry =
 		    wait(tryGetTenantTransaction(tr, self->tenantEntry.id));
 		if (!managementEntry.present()) {
-			TraceEvent("MetaclusterCreateTenantRemovedDuringCreation")
+			TraceEvent("MetaclusterCreateTenantMarkReadyRemovedDuringCreation")
 			    .detail("TenantName", self->tenantEntry.tenantName)
 			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Tenant removed during creation");
@@ -396,39 +400,34 @@ struct CreateTenantImpl {
 		}
 
 		loop {
-			TraceEvent("MetaclusterCreateTenantStoreMgmtBegin")
+			TraceEvent("MetaclusterCreateTenantStoringMgmtCluster")
 			    .detail("TenantName", self->tenantEntry.tenantName)
 			    .detail("TenantId", self->tenantEntry.id);
 			wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 				return assignTenantAndStoreInManagementCluster(self, tr);
 			}));
-			TraceEvent("MetaclusterCreateTenantStoreMgmtFinished")
-			    .detail("TenantName", self->tenantEntry.tenantName)
-			    .detail("TenantId", self->tenantEntry.id);
 
 			self->replaceExistingTenantId = {};
 			try {
-				TraceEvent("MetaclusterCreateTenantStoreDataBegin")
+				TraceEvent("MetaclusterCreateTenantStoringDataCluster")
 				    .detail("TenantName", self->tenantEntry.tenantName)
 				    .detail("TenantId", self->tenantEntry.id);
 				wait(self->ctx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return storeTenantInDataCluster(self, tr); }));
-				TraceEvent("MetaclusterCreateTenantStoreDataFinished")
+
+				TraceEvent("MetaclusterCreateTenantMarkingReady")
 				    .detail("TenantName", self->tenantEntry.tenantName)
 				    .detail("TenantId", self->tenantEntry.id);
-
 				wait(self->ctx.runManagementTransaction(
 				    [self = self](Reference<typename DB::TransactionT> tr) { return markTenantReady(self, tr); }));
 
-				TraceEvent("MetaclusterCreateTenantMarkedReady")
-				    .detail("TenantName", self->tenantEntry.tenantName)
-				    .detail("TenantId", self->tenantEntry.id);
 				return Void();
 			} catch (Error& e) {
+				TraceEvent("MetaclusterCreateTenantError")
+				    .error(e)
+				    .detail("TenantName", self->tenantEntry.tenantName)
+				    .detail("TenantId", self->tenantEntry.id);
 				if (e.code() == error_code_tenant_creation_permanently_failed) {
-					TraceEvent("MetaclusterCreateTenantPermanentlyFailed")
-					    .detail("TenantName", self->tenantEntry.tenantName)
-					    .detail("TenantId", self->tenantEntry.id);
 					// If the data cluster has permanently failed to create the tenant, then we can reassign it in
 					// the management cluster and start over
 					self->replaceExistingTenantId = self->tenantEntry.id;

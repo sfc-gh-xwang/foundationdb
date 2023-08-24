@@ -531,7 +531,6 @@ struct StartTenantMovementImpl {
 		}
 
 		if (!movementRecord.present()) {
-			TraceEvent("TenantMoveStartStoreNewMoveRecord").detail("TenantGroup", self->tenantGroup);
 			self->moveRecord.runId = deterministicRandom()->randomUniqueID();
 			self->moveRecord.srcCluster = srcName;
 			self->moveRecord.dstCluster = dstName;
@@ -565,7 +564,6 @@ struct StartTenantMovementImpl {
 			}
 			self->vsFuture = tr->getVersionstamp();
 		} else {
-			TraceEvent("TenantMoveStartExistingMoveRecord").detail("TenantGroup", self->tenantGroup);
 			CODE_PROBE(true, "Start move found existing record");
 			self->moveRecord = movementRecord.get();
 			wait(storeReadVersion<DB>(&self->mgmtStartVersion, tr));
@@ -704,7 +702,6 @@ struct StartTenantMovementImpl {
 	                                                Optional<metadata::management::MovementRecord> movementRecord) {
 		state Future<std::vector<std::pair<TenantName, Standalone<VectorRef<KeyRef>>>>> splitPointsFuture =
 		    getAllTenantSplitPointsFromSource(self, tr);
-		TraceEvent("TenantMoveStartGetSplitPoints").detail("TenantGroup", self->tenantGroup);
 
 		ASSERT(movementRecord.present());
 		if (movementRecord.get().mState == metadata::management::MovementState::START_LOCK) {
@@ -714,7 +711,6 @@ struct StartTenantMovementImpl {
 
 			metadata::management::emergency_movement::emergencyMovements().set(tr, self->tenantGroup, updatedMoveRec);
 			std::vector<std::pair<TenantName, Standalone<VectorRef<KeyRef>>>> allSplitPoints = wait(splitPointsFuture);
-			TraceEvent("TenantMoveStartWriteSplitPoints").detail("TenantGroup", self->tenantGroup);
 			self->storeAllTenantsSplitPoints(tr, allSplitPoints);
 		} else {
 			CODE_PROBE(true, "Write movement metadata already complete");
@@ -1000,9 +996,6 @@ struct SwitchTenantMovementImpl {
 				state ThreadFuture<bool> resultFuture = dstTenant->blobbifyRangeBlocking(blobRange);
 				blobFutures.push_back(safeThreadFutureToFuture(resultFuture));
 			}
-			TraceEvent("TenantMoveSwitchBlobRangesApplying")
-			    .detail("TenantGroup", self->tenantGroup)
-			    .detail("TenantName", tName);
 
 			wait(waitForAll(blobFutures));
 
@@ -1016,9 +1009,6 @@ struct SwitchTenantMovementImpl {
 					throw tenant_move_failed();
 				}
 			}
-			TraceEvent("TenantMoveSwitchBlobRangeApplied")
-			    .detail("TenantGroup", self->tenantGroup)
-			    .detail("TenantName", tName);
 		}
 		return Void();
 	}
@@ -1320,9 +1310,6 @@ struct FinishTenantMovementImpl {
 					throw tenant_move_failed();
 				}
 				CODE_PROBE(true, "Move waiting for version to catch up");
-				TraceEvent("TenantMoveFinishWaitingForVersion")
-				    .detail("TenantGroup", self->tenantGroup)
-				    .detail("VersionDiff", versionDiff);
 				wait(delay(1.0));
 			}
 			fmt::print("Tenant move finish: check valid deletion begin\n");
@@ -1715,11 +1702,9 @@ struct AbortTenantMovementImpl {
 		TraceEvent("TenantMoveAbortGetDstEntriesFinished").detail("TenantGroup", self->tenantGroup);
 		if (runDelete) {
 			CODE_PROBE(true, "Normal tenant deletion during abort");
-			TraceEvent("TenantMoveAbortRunDelete").detail("TenantGroup", self->tenantGroup);
 			try {
 				state std::vector<TenantMapEntry> srcEntries = wait(self->srcCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return getTenantEntries(self->tenantsInGroup, tr); }));
-				TraceEvent("TenantMoveAbortCheckDeleteBegin").detail("TenantGroup", self->tenantGroup);
 				wait(runMoveManagementTransaction(self->tenantGroup,
 				                                  self->srcCtx,
 				                                  self->dstCtx,
@@ -1739,14 +1724,13 @@ struct AbortTenantMovementImpl {
 					                                                              &self->messages,
 					                                                              Aborting::True);
 				                                  }));
-				TraceEvent("TenantMoveAbortCheckDeleteFinished").detail("TenantGroup", self->tenantGroup);
 				fmt::print("Tenant move abort: deleting destination data begin\n");
-				TraceEvent("TenantMoveAbortDeleteDstDataBegin").detail("TenantGroup", self->tenantGroup);
+				TraceEvent("TenantMoveAbortDeleteDstBegin").detail("TenantGroup", self->tenantGroup);
 				wait(deleteAllDestinationData(self));
 				wait(self->dstCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return deleteDestinationTenants(self, tr); }));
 				fmt::print("Tenant move abort: deleting destination data finished\n");
-				TraceEvent("TenantMoveAbortDeleteDstDataFinished").detail("TenantGroup", self->tenantGroup);
+				TraceEvent("TenantMoveAbortDeleteDstFinished").detail("TenantGroup", self->tenantGroup);
 			} catch (Error& e) {
 				TraceEvent("TenantMoveAbortStartCreateDeleteError").error(e);
 				CODE_PROBE(true, "Tenant not found during tenant deletion");

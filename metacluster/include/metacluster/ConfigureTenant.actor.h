@@ -159,12 +159,14 @@ struct ConfigureTenantImpl {
 
 		if (!tenantEntry.present()) {
 			CODE_PROBE(true, "Configure non-existent tenant");
+			TraceEvent("MetaclusterConfigureTenantNotFound").detail("TenantName", self->tenantName);
 			throw tenant_not_found();
 		}
 
 		if (tenantEntry.get().tenantState != TenantState::READY &&
 		    tenantEntry.get().tenantState != TenantState::UPDATING_CONFIGURATION) {
 			CODE_PROBE(true, "Configure tenant in invalid state");
+			TraceEvent("MetaclusterConfigureTenantInvalidState").detail("TenantName", self->tenantName);
 			throw invalid_tenant_state();
 		}
 
@@ -303,6 +305,7 @@ struct ConfigureTenantImpl {
 					TraceEvent(SevError, "ConfigureTenantStateWithOtherProperties").detail("Tenant", self->tenantName);
 					throw invalid_tenant_configuration();
 				} else {
+					TraceEvent("MetaclusterConfigureTenantForceMarkReady").detail("TenantName", self->tenantName);
 					wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 						return forceMarkManagementTenantAsReady(self, tr);
 					}));
@@ -311,10 +314,12 @@ struct ConfigureTenantImpl {
 			}
 		}
 
+		TraceEvent("MetaclusterConfigureTenantUpdatingMgmtCluster").detail("TenantName", self->tenantName);
 		bool configUpdated = wait(self->ctx.runManagementTransaction(
 		    [self = self](Reference<typename DB::TransactionT> tr) { return updateManagementCluster(self, tr); }));
 
 		if (configUpdated) {
+			TraceEvent("MetaclusterConfigureTenantUpdatingDataCluster").detail("TenantName", self->tenantName);
 			wait(self->ctx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return updateDataCluster(self, tr); }));
 			wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
