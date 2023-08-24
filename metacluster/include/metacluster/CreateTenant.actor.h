@@ -172,6 +172,10 @@ struct CreateTenantImpl {
 			DataClusterMetadata dataClusterMetadata =
 			    wait(getClusterTransaction(tr, self->tenantEntry.assignedCluster));
 			if (!dataClusterMetadata.entry.hasCapacity() && !self->ignoreCapacityLimit) {
+				TraceEvent("MetaclusterCreateTenantDataClusterNoCapacity")
+				    .detail("TenantName", self->tenantEntry.tenantName)
+				    .detail("TenantId", self->tenantEntry.id)
+				    .detail("DataCluster", self->tenantEntry.assignedCluster);
 				CODE_PROBE(true, "Selected cluster has no capacity");
 				throw cluster_no_capacity();
 			}
@@ -186,6 +190,9 @@ struct CreateTenantImpl {
 			        Snapshot::False,
 			        Reverse::True));
 			if (availableClusters.results.empty()) {
+				TraceEvent("MetaclusterCreateTenantMetaclusterNoCapacity")
+				    .detail("TenantName", self->tenantEntry.tenantName)
+				    .detail("TenantId", self->tenantEntry.id);
 				CODE_PROBE(true, "Metacluster has no capacity");
 				throw metacluster_no_capacity();
 			}
@@ -238,6 +245,9 @@ struct CreateTenantImpl {
 		// If the tenant already exists, we either throw an error from this function or move on to the next phase
 		bool tenantExists = wait(checkForExistingTenant(self, tr));
 		if (tenantExists) {
+			TraceEvent("MetaclusterCreateTenantMgmtAlreadyExists")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			return Void();
 		}
 
@@ -275,6 +285,9 @@ struct CreateTenantImpl {
 		    metadata::management::clusterTenantCount().getD(tr, self->tenantEntry.assignedCluster, Snapshot::False, 0));
 
 		if (clusterTenantCount > CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER) {
+			TraceEvent("MetaclusterCreateTenantClusterCapacityExceeded")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Cluster tenant capacity exceeded");
 			throw cluster_no_capacity();
 		}
@@ -290,8 +303,14 @@ struct CreateTenantImpl {
 		// then we fail with an error.
 		if (self->ctx.dataClusterMetadata.get().entry.clusterState == DataClusterState::REMOVING) {
 			CODE_PROBE(true, "Tenant created in cluster being removed", probe::decoration::rare);
+			TraceEvent("MetaclusterCreateTenantClusterRemoving")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			throw cluster_removed();
 		} else if (self->ctx.dataClusterMetadata.get().entry.clusterState == DataClusterState::RESTORING) {
+			TraceEvent("MetaclusterCreateTenantClusterRestoring")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Tenant created in cluster being restored", probe::decoration::rare);
 			throw cluster_restoring();
 		}
@@ -320,6 +339,9 @@ struct CreateTenantImpl {
 		// If the tenant map entry is empty, then we encountered a tombstone indicating that the tenant was
 		// simultaneously removed.
 		if (!dataClusterTenant.first.present()) {
+			TraceEvent("MetaclusterCreateTenantTombstoneFound")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Tenant creation encountered tombstone");
 			throw tenant_removed();
 		}
@@ -331,6 +353,9 @@ struct CreateTenantImpl {
 		state Optional<MetaclusterTenantMapEntry> managementEntry =
 		    wait(tryGetTenantTransaction(tr, self->tenantEntry.id));
 		if (!managementEntry.present()) {
+			TraceEvent("MetaclusterCreateTenantRemovedDuringCreation")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Tenant removed during creation");
 			throw tenant_removed();
 		}
@@ -349,35 +374,61 @@ struct CreateTenantImpl {
 
 	ACTOR static Future<Void> run(CreateTenantImpl* self) {
 		if (!self->tenantEntry.assignedCluster.empty() && self->assignClusterAutomatically) {
+			TraceEvent("MetaclusterCreateTenantInvalidAssignedClusterConf")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Tenant creation invalid assigned cluster configuration", probe::decoration::rare);
 			throw invalid_tenant_configuration();
 		}
 		if (self->assignClusterAutomatically && self->ignoreCapacityLimit) {
-			TraceEvent("MetaclusterCreateTenantIgnoreCapacityAutoAssign").log();
+			TraceEvent("MetaclusterCreateTenantIgnoreCapacityAutoAssign")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Tenant creation ignoring capacity limit with auto-assignment on");
 			throw invalid_tenant_configuration();
 		}
 		if (self->tenantEntry.tenantName.startsWith("\xff"_sr)) {
+			TraceEvent("MetaclusterCreateTenantInvalidName")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Tenant creation with invalid name");
 			throw invalid_tenant_name();
 		}
 
 		loop {
+			TraceEvent("MetaclusterCreateTenantStoreMgmtBegin")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 			wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 				return assignTenantAndStoreInManagementCluster(self, tr);
 			}));
+			TraceEvent("MetaclusterCreateTenantStoreMgmtFinished")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id);
 
 			self->replaceExistingTenantId = {};
 			try {
+				TraceEvent("MetaclusterCreateTenantStoreDataBegin")
+				    .detail("TenantName", self->tenantEntry.tenantName)
+				    .detail("TenantId", self->tenantEntry.id);
 				wait(self->ctx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return storeTenantInDataCluster(self, tr); }));
+				TraceEvent("MetaclusterCreateTenantStoreDataFinished")
+				    .detail("TenantName", self->tenantEntry.tenantName)
+				    .detail("TenantId", self->tenantEntry.id);
 
 				wait(self->ctx.runManagementTransaction(
 				    [self = self](Reference<typename DB::TransactionT> tr) { return markTenantReady(self, tr); }));
 
+				TraceEvent("MetaclusterCreateTenantMarkedReady")
+				    .detail("TenantName", self->tenantEntry.tenantName)
+				    .detail("TenantId", self->tenantEntry.id);
 				return Void();
 			} catch (Error& e) {
 				if (e.code() == error_code_tenant_creation_permanently_failed) {
+					TraceEvent("MetaclusterCreateTenantPermanentlyFailed")
+					    .detail("TenantName", self->tenantEntry.tenantName)
+					    .detail("TenantId", self->tenantEntry.id);
 					// If the data cluster has permanently failed to create the tenant, then we can reassign it in
 					// the management cluster and start over
 					self->replaceExistingTenantId = self->tenantEntry.id;
