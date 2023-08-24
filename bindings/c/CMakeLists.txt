@@ -173,8 +173,9 @@ set(COMBIFY_CORE_SRCS
 )
 
 set(COMBIFY_TEST_SRCS
-  test/combify/Authorization.cpp
-  test/combify/Transaction.cpp
+  test/combify/AuthorizationTests.cpp
+  test/combify/FutureTests.cpp
+  test/combify/TransactionTests.cpp
 )
 
 if(OPEN_FOR_IDE)
@@ -283,7 +284,7 @@ else()
   add_python_venv_test(
     NAME fdb_c_combify_test
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py ${CMAKE_BINARY_DIR}
-    TEST_TIMEOUT 600
+    TEST_TIMEOUT 900
   )
   # add_python_venv_test(
   #   NAME fdb_c_bulk_load_test
