@@ -560,10 +560,6 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		return Void();
 	}
 
-	// finishMove sometimes retries within finishTenantMovement on the final step
-	// then throws tenant_move_record_not_found, which can lead to no
-	// successful moves
-	// Maybe instead of tracking success, just verify an empty move record
 	ACTOR static Future<Void> finishMove(MetaclusterMoveConcurrencyWorkload* self,
 	                                     TenantGroupName tenantGroup,
 	                                     ClusterName srcCluster,
@@ -608,7 +604,6 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		return Void();
 	}
 
-	// returns true if full move is successful
 	ACTOR static Future<Void> moveTenantGroup(MetaclusterMoveConcurrencyWorkload* self,
 	                                          TenantGroupName tenantGroup,
 	                                          ClusterName srcCluster,

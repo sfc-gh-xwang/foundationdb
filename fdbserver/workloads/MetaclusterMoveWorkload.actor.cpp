@@ -406,6 +406,10 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
+				// Retryable error
+				if (e.code() == error_code_tenant_move_failed) {
+					continue;
+				}
 				// Abort failed
 				if (e.code() == error_code_invalid_tenant_move) {
 					return false;
