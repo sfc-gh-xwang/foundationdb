@@ -18,13 +18,6 @@ auto applyKeyPrefix(const std::string& prefix, std::vector<std::pair<std::string
 	return out;
 }
 
-fdb::Error waitFuture(fdb::Future& f) {
-	if (auto err = f.blockUntilReady()) {
-		ASSERT(false, "Unexpected future unready: {}", err.what());
-	}
-	return f.error();
-}
-
 /* Transaction getter and setters */
 AddTest testWriteAndRead("BasicWriteAndReadBack", ALL, [](const TestEnv& env) {
 	auto tr = env.newNormalOrTenantTransaction();

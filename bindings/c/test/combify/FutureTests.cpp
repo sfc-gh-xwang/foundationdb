@@ -10,23 +10,26 @@ using namespace fdb::literals;
 /* Transaction future operation  */
 AddTest testFutureCallback("FutureCallback", ALL, [](const TestEnv& env) {
 	auto tr = env.newNormalOrTenantTransaction();
-	runToCompletion(
-	    tr,
-	    [](auto tr) {
-		    auto f = tr.get("foo"_br, /* snapshot */ true);
+	while (1) {
+		auto f = tr.get("foo"_br, /* snapshot */ true);
 
-		    std::binary_semaphore sem(0);
-		    f.then([&sem](fdb::Future f) { sem.release(); });
+		std::binary_semaphore sem(0);
+		f.then([&sem](fdb::Future f) { sem.release(); });
 
-		    if (f.blockUntilReady() || f.error()) {
-			    return f;
-		    }
+		auto err = waitFuture(f);
+		// Wait until callback is called
+		sem.acquire();
 
-		    // Wait until callback is called
-		    sem.acquire();
-		    return f;
-	    },
-	    "FutureCallback");
+		if (err) {
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+
+		break;
+	}
 });
 
 AddTest testFutureCancelAfterCompletion("FutureCancelAfterCompletion", ALL, [](const TestEnv& env) {
