@@ -599,7 +599,7 @@ if (NOT OPEN_FOR_IDE)
   endif()
 
   # Tests with shim layer and primary client of the previous version
-  if (NOT APPLE AND NOT SANITIZER)
+  if (NOT APPLE AND NOT USE_SANITIZER)
     foreach(test_file ${PREV_VERSION_API_TEST_FILES})
       get_filename_component(file_name "${test_file}" NAME_WE)
       set(test_name "fdb_c_api_shim_prev_${file_name}")
