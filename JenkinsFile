@@ -21,7 +21,8 @@ pipeline {
                                          'ajbeamon',
                                          'dadkins',
                                          'yajin']
-                    user_id = ""
+
+                    user_id = sh(script: "git show -s --pretty=%ae | cut -d '@' -f 1 | cut -d '-' -f 3", returnStdout: true).trim()
                     labels = []
                     run_ci = true
                     if (env.BRANCH_NAME.startsWith("PR-")) {
@@ -70,8 +71,9 @@ pipeline {
         stage('Check Git Comment') {
             steps {
                 script {
-                    // Checking github comment is only needed if branch is PR-* and not needed when PR is just opened.
-                    if (env.BRANCH_NAME.startsWith("PR-") && !"${build_trigger_cause}".matches("Pull request(.*)opened")) {
+                    // Checking github comment is only needed if branch is PR-* and not needed when PR is just opened or rerun requested.
+                    if (env.BRANCH_NAME.startsWith("PR-") && !"${build_trigger_cause}".matches("Pull request(.*)opened")
+                                && !"${build_trigger_cause}".startsWith("Rerun request")) {
                         def trigger_comment = "@fdb-ci precommit start"
 
                         if ("${build_trigger_cause}" == "GitHub pull request comment" &&
