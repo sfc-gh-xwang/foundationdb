@@ -24,6 +24,7 @@ void RKRateUpdater::update(IRKMetricsTracker const& metricsTracker,
                            IRKRecoveryTracker const& recoveryTracker,
                            Deque<double> const& actualTpsHistory,
                            IRKBlobMonitor& blobMonitor,
+                           bool isBwThrottlingEnabled,
                            int throttledTags) {
 	// double controlFactor = ;  // dt / eFoldingTime
 	double actualTps = getActualTps(rateServer, metricsTracker);
@@ -253,7 +254,7 @@ void RKRateUpdater::update(IRKMetricsTracker const& metricsTracker,
 	}
 
 	// Update version_transactions
-	if (configurationMonitor.areBlobGranulesEnabled() && SERVER_KNOBS->BW_THROTTLING_ENABLED) {
+	if (configurationMonitor.areBlobGranulesEnabled() && isBwThrottlingEnabled) {
 		Version maxVersion = 0;
 		int64_t totalReleased = 0;
 		int64_t batchReleased = 0;
@@ -278,8 +279,7 @@ void RKRateUpdater::update(IRKMetricsTracker const& metricsTracker,
 		}
 	}
 
-	if (configurationMonitor.areBlobGranulesEnabled() && SERVER_KNOBS->BW_THROTTLING_ENABLED &&
-	    blobMonitor.hasAnyRanges()) {
+	if (configurationMonitor.areBlobGranulesEnabled() && isBwThrottlingEnabled && blobMonitor.hasAnyRanges()) {
 		Version lastBWVer = 0;
 		auto lastIter = version_transactions.end();
 		auto const& blobWorkerVersionHistory = blobMonitor.getVersionHistory();

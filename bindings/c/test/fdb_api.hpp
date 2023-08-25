@@ -1011,6 +1011,14 @@ public:
 		                                                                 mutationByteLimit);
 	}
 
+	TypedFuture<future_var::ReadBlobGranulesDescriptionResult> readBlobGranulesDescriptionV2(KeyRef begin,
+	                                                                                         KeyRef end,
+	                                                                                         int64_t beginVersion,
+	                                                                                         int64_t readVersion) {
+		return native::fdb_transaction_read_blob_granules_description_v2(
+		    tr.get(), begin.data(), intSize(begin), end.data(), intSize(end), beginVersion, readVersion);
+	}
+
 	TypedFuture<future_var::ReadBlobGranulesDescriptionResultV1> readBlobGranulesDescriptionV1(
 	    KeyRef begin,
 	    KeyRef end,

@@ -1105,8 +1105,12 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 				}
 			}
 		}
-		getCipherKeys = GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-		    pProxyCommitData->db, encryptDomainIds, BlobCipherMetrics::TLOG, &nonExistentTenants);
+		getCipherKeys =
+		    GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(pProxyCommitData->db,
+		                                                                   encryptDomainIds,
+		                                                                   BlobCipherMetrics::TLOG,
+		                                                                   &nonExistentTenants,
+		                                                                   pProxyCommitData->encryptionMonitor);
 	}
 
 	self->releaseFuture = releaseResolvingAfter(pProxyCommitData, self->releaseDelay, self->localBatchNumber);
@@ -1622,9 +1626,12 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
 			}
 		}
 		// API throws encrypt_key_not_found for domainId(s) missing corresponding encryption keys
-		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> extraCipherKeys =
-		    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-		        self->pProxyCommitData->db, lookupDomains, BlobCipherMetrics::TLOG_POST_RESOLUTION));
+		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> extraCipherKeys = wait(
+		    GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(self->pProxyCommitData->db,
+		                                                                   lookupDomains,
+		                                                                   BlobCipherMetrics::TLOG_POST_RESOLUTION,
+		                                                                   nullptr,
+		                                                                   self->pProxyCommitData->encryptionMonitor));
 		self->cipherKeys.insert(extraCipherKeys.begin(), extraCipherKeys.end());
 	} catch (Error& e) {
 		if (e.code() == error_code_encrypt_key_not_found) {
@@ -1928,8 +1935,8 @@ ACTOR Future<WriteMutationRefVar> writeMutationEncryptedMutation(CommitBatchCont
 	ASSERT(encryptedMutation.isEncrypted());
 	Reference<AsyncVar<ServerDBInfo> const> dbInfo = self->pProxyCommitData->db;
 	headerRef = encryptedMutation.configurableEncryptionHeader();
-	TextAndHeaderCipherKeys cipherKeys =
-	    wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(dbInfo, headerRef, BlobCipherMetrics::TLOG));
+	TextAndHeaderCipherKeys cipherKeys = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
+	    dbInfo, headerRef, BlobCipherMetrics::TLOG, self->pProxyCommitData->encryptionMonitor));
 	decryptedMutation = encryptedMutation.decrypt(cipherKeys, *arena, BlobCipherMetrics::TLOG);
 
 	ASSERT(decryptedMutation.type == mutation->type);
@@ -2198,12 +2205,13 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 					// check whether clear is sampled
 					if (checkSample && !trCost->get().clearIdxCosts.empty() &&
 					    trCost->get().clearIdxCosts[0].first == mutationNum) {
-						for (const auto& ssInfo : ranges.begin().value().src_info) {
+						auto const& ssInfos = ranges.begin().value().src_info;
+						for (auto const& ssInfo : ssInfos) {
 							auto id = ssInfo->interf.id();
 							pProxyCommitData->updateSSTagCost(id,
 							                                  trs[self->transactionNum].throttlingTag.get(),
 							                                  m,
-							                                  trCost->get().clearIdxCosts[0].second);
+							                                  trCost->get().clearIdxCosts[0].second / ssInfos.size());
 						}
 						trCost->get().clearIdxCosts.pop_front();
 					}
@@ -2217,12 +2225,14 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 						// check whether clear is sampled
 						if (checkSample && !trCost->get().clearIdxCosts.empty() &&
 						    trCost->get().clearIdxCosts[0].first == mutationNum) {
-							for (const auto& ssInfo : r.value().src_info) {
+							auto const& ssInfos = r.value().src_info;
+							for (auto const& ssInfo : ssInfos) {
 								auto id = ssInfo->interf.id();
 								pProxyCommitData->updateSSTagCost(id,
 								                                  trs[self->transactionNum].throttlingTag.get(),
 								                                  m,
-								                                  trCost->get().clearIdxCosts[0].second);
+								                                  trCost->get().clearIdxCosts[0].second /
+								                                      ssInfos.size());
 							}
 							trCost->get().clearIdxCosts.pop_front();
 						}
@@ -3759,9 +3769,12 @@ ACTOR Future<Void> processCompleteTransactionStateRequest(TransactionStateResolv
 
 	state std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> systemCipherKeys;
 	if (pContext->pCommitData->encryptMode.isEncryptionEnabled()) {
-		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cks =
-		    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-		        pContext->pCommitData->db, ENCRYPT_CIPHER_SYSTEM_DOMAINS, BlobCipherMetrics::TLOG));
+		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cks = wait(
+		    GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(pContext->pCommitData->db,
+		                                                                   ENCRYPT_CIPHER_SYSTEM_DOMAINS,
+		                                                                   BlobCipherMetrics::TLOG,
+		                                                                   nullptr,
+		                                                                   pContext->pCommitData->encryptionMonitor));
 		systemCipherKeys = cks;
 	}
 
@@ -4109,12 +4122,20 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 			                   masterLifetime.isEqual(commitData.db->get().masterLifetime))) {
 
 				if (trs.size() || lastCommitComplete.isReady()) {
+					// When encryption is enabled, cipher key fetching issue (e.g KMS outage) is detected by the
+					// encryption monitor. In that case, commit timeout is expected and timeout error is suppressed. But
+					// we still want to trigger recovery occassionally (with the COMMIT_PROXY_MAX_LIVENESS_TIMEOUT), in
+					// the hope that the cipher key fetching issue could be resolve by recovery (e.g, if one CP have
+					// networking issue connecting to EKP, and recovery may exclude the CP).
 					lastCommitComplete = transformError(
 					    timeoutError(
-					        commitBatch(&commitData,
-					                    const_cast<std::vector<CommitTransactionRequest>*>(&batchedRequests.first),
-					                    batchBytes),
-					        SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT),
+					        timeoutErrorIfCleared(
+					            commitBatch(&commitData,
+					                        const_cast<std::vector<CommitTransactionRequest>*>(&batchedRequests.first),
+					                        batchBytes),
+					            commitData.encryptionMonitor->degraded(),
+					            SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT),
+					        SERVER_KNOBS->COMMIT_PROXY_MAX_LIVENESS_TIMEOUT),
 					    timed_out(),
 					    failed_to_progress());
 					addActor.send(lastCommitComplete);

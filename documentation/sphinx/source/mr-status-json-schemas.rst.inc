@@ -981,6 +981,7 @@
       },
       "tenants" : {
          "num_tenants" : 1, // on data cluster, local count; on management cluster, total metacluster count
+         "num_locked_tenants" : 0,
          "num_tenant_groups" : 10,
          "tenant_group_capacity" : 20,
       },

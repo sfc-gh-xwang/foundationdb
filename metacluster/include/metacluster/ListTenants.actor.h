@@ -83,7 +83,7 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenants(Reference<DB> db
 	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		return listTenantsTransaction(tr, begin, end, limit, offset);
+		return metacluster::listTenantsTransaction(tr, begin, end, limit, offset);
 	});
 }
 
@@ -93,7 +93,7 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
     Transaction tr,
     std::vector<std::pair<TenantName, int64_t>> tenantIds) {
 
-	CODE_PROBE(true, "List tenant metadata");
+	CODE_PROBE(true, "Metacluster list tenant metadata");
 	state int idIdx = 0;
 	state std::vector<Future<Optional<MetaclusterTenantMapEntry>>> futures;
 	for (; idIdx < tenantIds.size(); ++idIdx) {
@@ -125,12 +125,13 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
     Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>()) {
 	state std::vector<std::pair<TenantName, int64_t>> matchingTenants;
 	if (!tenantGroup.present()) {
-		wait(store(matchingTenants, listTenantsTransaction(tr, begin, end, limit)));
+		wait(store(matchingTenants, metacluster::listTenantsTransaction(tr, begin, end, limit)));
 	} else {
-		wait(store(matchingTenants, listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
+		wait(store(matchingTenants,
+		           metacluster::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
 	}
 	std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> results =
-	    wait(listTenantMetadataTransaction(tr, matchingTenants));
+	    wait(metacluster::listTenantMetadataTransaction(tr, matchingTenants));
 	return results;
 }
 
@@ -142,7 +143,8 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
     int limit,
     int offset = 0,
     std::vector<TenantState> filters = std::vector<TenantState>(),
-    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>()) {
+    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
+    Optional<TenantAPI::LockedTenants> locked = Optional<TenantAPI::LockedTenants>()) {
 	state Reference<typename DB::TransactionT> tr = db->createTransaction();
 	state std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> results;
 
@@ -150,14 +152,16 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 		try {
 			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::READ_LOCK_AWARE);
-			if (filters.empty()) {
+			if (filters.empty() && !locked.present() && offset == 0) {
 				state std::vector<std::pair<TenantName, int64_t>> ids;
 				if (!tenantGroup.present()) {
-					wait(store(ids, listTenantsTransaction(tr, begin, end, limit)));
+					wait(store(ids, metacluster::listTenantsTransaction(tr, begin, end, limit)));
 				} else {
-					wait(store(ids, listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
+					wait(store(
+					    ids, metacluster::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
 				}
-				wait(store(results, listTenantMetadataTransaction(tr, ids)));
+
+				wait(store(results, metacluster::listTenantMetadataTransaction(tr, ids)));
 				return results;
 			}
 
@@ -165,26 +169,39 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 			state int count = 0;
 			loop {
 				std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantBatch =
-				    wait(listTenantMetadataTransaction(tr, begin, end, std::max(limit + offset, 1000), tenantGroup));
+				    wait(metacluster::listTenantMetadataTransaction(
+				        tr, begin, end, std::max(limit + offset, 1000), tenantGroup));
 
 				if (tenantBatch.empty()) {
 					return results;
 				}
 
+				// Extra filtering and offset calculations
 				for (auto const& [name, entry] : tenantBatch) {
-					if (std::count(filters.begin(), filters.end(), entry.tenantState)) {
-						++count;
-						if (count > offset) {
-							results.emplace_back(name, entry);
-							if (count - offset == limit) {
-								ASSERT(count - offset == results.size());
-								return results;
-							}
+					// If provided filters, skip this entry if its state doesn't match what's provided
+					if (!filters.empty() && !std::count(filters.begin(), filters.end(), entry.tenantState)) {
+						continue;
+					}
+					// If provided "locked", skip the entry if its lock state doesn't match
+					if (locked.present()) {
+						if (locked.get() && entry.tenantLockState == TenantAPI::TenantLockState::UNLOCKED) {
+							continue;
+						}
+						if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
+							continue;
+						}
+					}
+					++count;
+					if (count > offset) {
+						results.emplace_back(name, entry);
+						if (count - offset == limit) {
+							ASSERT(count - offset == results.size());
+							return results;
 						}
 					}
 				}
 
-				CODE_PROBE(true, "List tenant multiple batches");
+				CODE_PROBE(true, "Metacluster list tenant multiple batches");
 				begin = keyAfter(tenantBatch.back().first);
 			}
 		} catch (Error& e) {

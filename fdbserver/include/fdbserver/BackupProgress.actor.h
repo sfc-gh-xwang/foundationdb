@@ -105,7 +105,15 @@ private:
 	Optional<Value> backupStartedValue;
 };
 
-ACTOR Future<Void> getBackupProgress(Database cx, UID dbgid, Reference<BackupProgress> backupProgress, bool logging);
+void getBackupProgressFromTxnStateStore(Database cx,
+                                        UID dbgid,
+                                        Reference<BackupProgress> backupProgress,
+                                        Reference<IKeyValueStore> txnStateStore,
+                                        bool logging);
+ACTOR Future<Void> getBackupProgressFromStorage(Database cx,
+                                                UID dbgid,
+                                                Reference<BackupProgress> backupProgress,
+                                                bool logging);
 
 #include "flow/unactorcompiler.h"
 #endif
