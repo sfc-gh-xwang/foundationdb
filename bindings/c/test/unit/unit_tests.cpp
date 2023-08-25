@@ -375,39 +375,6 @@ TEST_CASE("FDB_DB_OPTION_TRANSACTION_TIMEOUT") {
 //                                     sizeof(size_limit)));
 // }
 
-TEST_CASE("fdb_transaction_set_read_version old_version") {
-	auto tr = db.createTransaction();
-
-	while (1) {
-		tr.setReadVersion(1);
-		auto f1 = tr.get("foo"_br, /*snapshot*/ true);
-
-		auto err = waitFuture(f1);
-		// We expect this transaction to fail
-		CHECK(err);
-		// We only expect retryable failure for this test case
-		CHECK(err.retryable());
-		// In case the failure is not what we expect, which is possible to happen,
-		// we retry this test case
-		if (err.code() != 1007) { // transaction_too_old
-			auto f2 = tr.onError(err);
-			fdbCheck(waitFuture(f2));
-			continue;
-		}
-		break;
-	}
-}
-
-TEST_CASE("fdb_transaction_set_read_version future_version") {
-	auto tr = db.createTransaction();
-
-	tr.setReadVersion(1UL << 62);
-	auto f1 = tr.get("foo"_br, /*snapshot*/ true);
-
-	auto err = waitFuture(f1);
-	CHECK(err.code() == 1009); // future_version
-}
-
 const std::string EMPTY = Tuple().pack().toString();
 const KeyRef RECORD = "RECORD"_sr;
 const KeyRef INDEX = "INDEX"_sr;
@@ -1455,6 +1422,23 @@ TEST_CASE("Blob Granule Functions") {
 		tr.reset();
 		break;
 	}
+}
+
+TEST_CASE("fdb_transaction_set_read_version future_version") {
+	// This test is problematic in that if it is the first test that runs, it can hit an 
+	// transaction too old error instead of future version because the minAcceptableReadVersion
+	// value is initialized to be int64::max. Furthermore, this test has not been included
+	// in a retry loop. Last but not least, testing this scenario in the mist of a protocol
+	// version change error can be tricky because that led to a new database context to be
+	// initialized and thus wiping out the minAcceptableReadVersion value. For now, we keep
+	// this test case at the end to avoid these pitfalls.  
+	auto tr = db.createTransaction();
+
+	tr.setReadVersion(1UL << 62);
+	auto f1 = tr.get("foo"_br, /*snapshot*/ true);
+
+	auto err = waitFuture(f1);
+	CHECK(err.code() == 1009); // future_version
 }
 
 int main(int argc, char** argv) {

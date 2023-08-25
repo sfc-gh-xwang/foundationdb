@@ -550,6 +550,28 @@ AddTest testGetApproxSize("GetApproxSize", ALL, [](const TestEnv& env) {
 	ASSERT(f.get() >= 3, "Unmatched transaction approx size: expected>=3, actual={}", f.get());
 });
 
+AddTest testSetReadVersionOldVersion("SetReadVersionOldVersion", ALL, [](const TestEnv& env) {
+	auto tr = env.newNormalOrTenantTransaction();
+	while (1) {
+		tr.setReadVersion(1);
+		auto f = tr.get("foo"_br, true);
+		auto err = waitFuture(f);
+
+		ASSERT(err, "Expect the transaction to fail");
+		ASSERT(err.retryable(), "Unexpected transaction failure: ", err.what());
+		if (err.code() == 1007 /* transaction_too_old */) {
+			break;
+		}
+		
+		// Retry upon other transient errors
+		auto f2 = tr.onError(err);
+		if (auto err2 = waitFuture(f2)) {
+			ASSERT(false, "Unexpected failure: {}", err2.what());
+		}
+		continue;
+	}
+});
+
 /* Transaction Options */
 AddTest testTransactionOptionSizeLimitTooSmall("TransactionOptionSizeLimitTooSmall", ALL, [](const TestEnv& env) {
 	// Size limit must be at least 32 to be valid, so test a smaller size.
