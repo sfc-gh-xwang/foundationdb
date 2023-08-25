@@ -1497,7 +1497,7 @@ void testConfigurableEncryptionAesCtrWithAuthSerGcm(const int minDomainId) {
 
 	AesGcm withAuth;
 	withAuth.v1.cipherTextDetails = BlobCipherDetails(1, 2, 23);
-	deterministicRandom()->randomBytes(&withAuth.v1.iv[0], AES_256_CTR_IV_LENGTH);
+	deterministicRandom()->randomBytes(&withAuth.v1.iv[0], AES_256_GCM_IV_LENGTH);
 	deterministicRandom()->randomBytes(&withAuth.v1.authToken[0], AES_256_GCM_TAG_LENGTH);
 	Standalone<StringRef> serAlgo = AesGcm::toStringRef(withAuth);
 	ASSERT_EQ(serAlgo.size(), sizeof(withAuth));
