@@ -60,7 +60,11 @@ class TempCluster(LocalCluster):
             authorization_keypair_id=authorization_keypair_id,
             custom_config=custom_config,
         )
-        self.set_env_var("LD_LIBRARY_PATH", self.downloader.lib_dir(cluster_version))
+        self.set_env_var(
+            "LD_LIBRARY_PATH",
+            "%s:%s"
+            % (self.downloader.lib_dir(cluster_version), os.getenv("LD_LIBRARY_PATH")),
+        )
 
     def __enter__(self):
         super().__enter__()
