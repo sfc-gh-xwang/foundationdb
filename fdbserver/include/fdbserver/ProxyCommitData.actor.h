@@ -26,6 +26,7 @@
 #define FDBSERVER_PROXYCOMMITDATA_ACTOR_H
 
 #include "fdbclient/FDBTypes.h"
+#include "fdbclient/GetEncryptCipherKeys.h"
 #include "fdbclient/Tenant.h"
 #include "fdbrpc/Stats.h"
 #include "fdbserver/Knobs.h"
@@ -127,6 +128,7 @@ struct ProxyStats {
 	                    NotifiedVersion* pCommittedVersion,
 	                    int64_t* commitBatchesMemBytesCountPtr,
 	                    std::map<int64_t, TenantName>* pTenantMap,
+	                    std::set<int64_t>* pLockedTenants,
 	                    KeyRangeMap<RangeLockInfo>* pRangeLocks)
 	  : cc("ProxyStats", id.toString()),
 	    txnCommitIn("TxnCommitIn", cc),
@@ -199,6 +201,8 @@ struct ProxyStats {
 			return *commitBatchesMemBytesCountPtr;
 		});
 		specialCounter(cc, "NumTenants", [pTenantMap]() { return pTenantMap ? pTenantMap->size() : 0; });
+		specialCounter(
+		    cc, "NumLockedTenants", [pLockedTenants]() { return pLockedTenants ? pLockedTenants->size() : 0; });
 		specialCounter(cc, "MaxCompute", [this]() { return this->getAndResetMaxCompute(); });
 		specialCounter(cc, "MinCompute", [this]() { return this->getAndResetMinCompute(); });
 		specialCounter(cc, "RangeLockBoundaries", [pRangeLocks]() { return pRangeLocks ? pRangeLocks->size() : 0; });
@@ -287,6 +291,7 @@ struct ProxyCommitData {
 	int localTLogCount = -1;
 
 	EncryptionAtRestMode encryptMode;
+	Reference<GetEncryptCipherKeysMonitor> encryptionMonitor;
 
 	PromiseStream<ExpectedIdempotencyIdCountForKey> expectedIdempotencyIdCountForKey;
 	Standalone<VectorRef<MutationRef>> idempotencyClears;
@@ -359,7 +364,7 @@ struct ProxyCommitData {
 	                bool provisional)
 	  : dbgid(dbgid),
 	    commitBatchesMemBytesCount(0),
-	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap, &rangeLocks),
+	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap, &lockedTenants, &rangeLocks),
 	    master(master),
 	    logAdapter(nullptr),
 	    committedVersion(recoveryTransactionVersion),
@@ -388,7 +393,8 @@ struct ProxyCommitData {
 	                      SERVER_KNOBS->CP_MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
 	    lastMasterReset(now()),
 	    lastResolverReset(now()),
-	    encryptMode(encryptMode) {
+	    encryptMode(encryptMode),
+	    encryptionMonitor(makeReference<GetEncryptCipherKeysMonitor>()) {
 		commitComputePerOperation.resize(SERVER_KNOBS->PROXY_COMPUTE_BUCKETS, 0.0);
 	}
 };

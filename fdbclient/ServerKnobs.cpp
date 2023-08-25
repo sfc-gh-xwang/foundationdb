@@ -572,6 +572,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE,                  1e5 ); if ( randomize && BUGGIFY ) BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE = 100;
 	init( BULK_LOADERS_MAX_QUEUE_SIZE,                           1e4 ); if ( randomize && BUGGIFY ) BULK_LOADERS_MAX_QUEUE_SIZE = 100;
 	init( COMMIT_PROXY_LIVENESS_TIMEOUT,                        20.0 );
+	init( COMMIT_PROXY_MAX_LIVENESS_TIMEOUT,                   600.0 ); if ( randomize && BUGGIFY ) COMMIT_PROXY_MAX_LIVENESS_TIMEOUT = 20.0;
 
 	init( COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE,         0.0005 ); if( randomize && BUGGIFY ) COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE = 0.005;
 	init( COMMIT_TRANSACTION_BATCH_INTERVAL_MIN,                0.001 ); if( randomize && BUGGIFY ) COMMIT_TRANSACTION_BATCH_INTERVAL_MIN = 0.1;
@@ -662,6 +663,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BACKUP_FILE_BLOCK_BYTES,                       1024 * 1024 );
 	init( BACKUP_LOCK_BYTES,                                     3e9 ); if(randomize && BUGGIFY) BACKUP_LOCK_BYTES = deterministicRandom()->randomInt(1024, 4096) * 256 * 1024;
 	init( BACKUP_UPLOAD_DELAY,                                  10.0 ); if(randomize && BUGGIFY) BACKUP_UPLOAD_DELAY = deterministicRandom()->random01() * 60;
+	init( USE_EMERGENCY_BACKUP_WORKER,                         false );
 
 	//Cluster Controller
 	init( CLUSTER_CONTROLLER_LOGGING_DELAY,                      5.0 );
@@ -802,10 +804,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 
 	init( MAX_TRANSACTIONS_PER_BYTE,                            1000 );
 
-	init( MIN_AVAILABLE_SPACE,                                   1e8 );
-	init( MIN_AVAILABLE_SPACE_RATIO,                            0.05 );
-	init( MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER,              0.01 );
-	init( TARGET_AVAILABLE_SPACE_RATIO,                         0.30 );
+	init( MIN_AVAILABLE_SPACE,                                   1e8 ); if( isSimulated ) MIN_AVAILABLE_SPACE /= 10;
+	init( MIN_AVAILABLE_SPACE_RATIO,                            0.05 ); if( isSimulated ) MIN_AVAILABLE_SPACE_RATIO /= 10;
+	init( MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER,              0.01 ); if( isSimulated ) MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER /= 10;
+	init( TARGET_AVAILABLE_SPACE_RATIO,                         0.30 ); if( isSimulated ) TARGET_AVAILABLE_SPACE_RATIO /= 10;
 
 	init( MAX_TL_SS_VERSION_DIFFERENCE,                         1e99 ); // if( randomize && BUGGIFY ) MAX_TL_SS_VERSION_DIFFERENCE = std::max(1.0, 0.25 * VERSIONS_PER_SECOND); // spring starts at half this value //FIXME: this knob causes ratekeeper to clamp on idle cluster in simulation that have a large number of logs
 	init( MAX_TL_SS_VERSION_DIFFERENCE_BATCH,                   1e99 );
@@ -945,7 +947,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CHANGEFEEDSTREAM_LIMIT_BYTES,                          1e6 ); if( randomize && BUGGIFY ) CHANGEFEEDSTREAM_LIMIT_BYTES = 1;
 	init( BLOBWORKERSTATUSSTREAM_LIMIT_BYTES,                    1e4 ); if( randomize && BUGGIFY ) BLOBWORKERSTATUSSTREAM_LIMIT_BYTES = 1;
 	init( BW_MUTATION_STREAM_LIMIT_BYTES,                        2e5 ); if( randomize && BUGGIFY ) BW_MUTATION_STREAM_LIMIT_BYTES = deterministicRandom()->randomSkewedUInt32(1, 1e4);
-	init( ENABLE_CLEAR_RANGE_EAGER_READS,                       true ); if( randomize && BUGGIFY ) ENABLE_CLEAR_RANGE_EAGER_READS = deterministicRandom()->coinflip();
+	init( ENABLE_CLEAR_RANGE_EAGER_READS,                       false); if( randomize && BUGGIFY ) ENABLE_CLEAR_RANGE_EAGER_READS = deterministicRandom()->coinflip();
 	init( CHECKPOINT_TRANSFER_BLOCK_BYTES,                      40e6 );
 	init( QUICK_GET_VALUE_FALLBACK,                             true );
 	init( QUICK_GET_KEY_VALUES_FALLBACK,                        true );
@@ -1222,6 +1224,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_CONNECTOR_GET_ENCRYPTION_KEYS_ENDPOINT,         "");
 	init( REST_KMS_CONNECTOR_GET_LATEST_ENCRYPTION_KEYS_ENDPOINT,  "");
 	init( REST_KMS_CONNECTOR_GET_BLOB_METADATA_ENDPOINT,           "");
+	init( REST_KMS_CONNECTOR_INIT_REQUEST_RETRY_DELAY,           0.05);
+	init( REST_KMS_CONNECTOR_MAX_REQUEST_RETRY_DELAY,            60.0);
 	// Details to fetch validation token from a localhost file
 	// acceptable format: "<token_name1>$<absolute_file_path1>,<token_name2>$<absolute_file_path2>,.."
 	// NOTE: 'token-name" can NOT contain '$' character

@@ -103,8 +103,12 @@ class FdbBinaryDownloader:
         else:
             return self.download_dir.joinpath(self.latest_release_for(version))
 
-    def lib_path(self, version):
-        return self.lib_dir(version).joinpath("libfdb_c.so")
+    def lib_path(self, version, external=True):
+        lib_name = "libfdb_c_external.so" if external else "libfdb_c.so"
+        if is_local_build_version(version) and external:
+            return self.build_dir.joinpath("bindings", "c", lib_name)
+        else:
+            return self.lib_dir(version).joinpath(lib_name)
 
     # Download an old binary of a given version from a remote repository
     def download_old_binary(
@@ -157,7 +161,21 @@ class FdbBinaryDownloader:
 
     # Download client library of the given version
     def download_client_library(self, version):
-        return self.download_old_binary(version, "libfdb_c.so", "libfdb_c.so", False)
+        self.download_old_binary(version, "libfdb_c.so", "libfdb_c.so", False)
+        # Create another copy for use as external library
+        # (We need two different library copies in configurations with  a single external thread and
+        # MVC bypass disabled)
+        external_lib_path = self.lib_path(version, external=True)
+        if external_lib_path.exists():
+            return
+        primary_lib_path = self.lib_path(version, external=False)
+        # Avoid race conditions in case of parallel test execution by first copying to a temporary file
+        # and then renaming it atomically
+        tmp_path = Path(
+            "{}.{}".format(str(external_lib_path), random_alphanum_string(8))
+        )
+        shutil.copyfile(primary_lib_path, tmp_path)
+        os.rename(tmp_path, external_lib_path)
 
     # Assert that client and server binaries exist for one version.
     def assert_old_binaries_exist_for_version(self, version):

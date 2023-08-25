@@ -44,7 +44,6 @@
 #include "metacluster/DecommissionMetacluster.actor.h"
 #include "metacluster/DeleteTenant.actor.h"
 #include "metacluster/GetCluster.actor.h"
-#include "metacluster/GetTenant.actor.h"
 #include "metacluster/GetTenantGroup.actor.h"
 #include "metacluster/ListClusters.actor.h"
 #include "metacluster/ListTenantGroups.actor.h"

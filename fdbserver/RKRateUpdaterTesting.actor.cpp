@@ -175,6 +175,7 @@ struct RKRateUpdaterTestEnvironment {
 		                   recoveryTracker,
 		                   actualTpsHistory,
 		                   blobMonitor,
+		                   /*isBwThrottlingEnabled*/ true,
 		                   /*tagsThrottled=*/0);
 	}
 };

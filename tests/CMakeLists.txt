@@ -593,7 +593,7 @@ if(WITH_PYTHON)
           NAME ${authz_test_name}
           WORKING_DIRECTORY ${authz_venv_dir}
           COMMAND bash -c ${authz_test_cmd})
-        set_tests_properties(${authz_test_name} PROPERTIES ENVIRONMENT "PYTHONPATH=${CMAKE_SOURCE_DIR}/tests/TestRunner;${ld_env_name}=${CMAKE_BINARY_DIR}/lib")
+        set_tests_properties(${authz_test_name} PROPERTIES ENVIRONMENT "PYTHONPATH=${CMAKE_SOURCE_DIR}/tests/TestRunner:${CMAKE_BINARY_DIR}/tests/TestRunner;${ld_env_name}=${CMAKE_BINARY_DIR}/lib")
         set_tests_properties(${authz_test_name} PROPERTIES FIXTURES_REQUIRED authz_virtual_env)
         set_tests_properties(${authz_test_name} PROPERTIES TIMEOUT 120)
       endforeach()

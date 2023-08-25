@@ -3397,9 +3397,11 @@ void DDTeamCollection::updateTeamEligibility(const double inflightPenalty) {
 			bool lowCPU = team->hasLowerCpu(teamPivots.pivotCPU);
 			healthyCount++;
 
-			DisabledTraceEvent(SevDebug, "EligiblityTeamDebug")
-			    .detail("TeamId", team->getTeamID())
+			DisabledTraceEvent(SevDebug, "EligibilityTeamDebug")
+			    .detail("Team", team->getDesc())
 			    .detail("CPU", team->getAverageCPU())
+			    .detail("HasLowerLoadBytes", team->hasLowerLoadBytes(teamPivots.pivotLoadBytes, inflightPenalty))
+			    .detail("HasHealthyAvailableSpace", team->hasHealthyAvailableSpace(teamPivots.pivotAvailableSpaceRatio))
 			    .detail("AvailableSpace", team->getMinAvailableSpace())
 			    .detail("AvailableSpaceRatio", team->getMinAvailableSpaceRatio());
 
