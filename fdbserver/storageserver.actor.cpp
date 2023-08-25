@@ -583,6 +583,10 @@ static int mvccStorageBytes(MutationRef const& m) {
 	return mvccStorageBytes(m.param1.size() + m.param2.size());
 }
 
+static int mvccStorageBytesNoPTree(MutationRef const& m) {
+	return mvccStorageBytesNoPTree(m.param1.size() + m.param2.size());
+}
+
 struct FetchInjectionInfo {
 	Arena arena;
 	std::vector<VerUpdateRef> changes;
@@ -1093,13 +1097,17 @@ public:
 		if (lastArena.getSize() >= 65536)
 			lastArena = Arena(4096);
 		u.arena() = lastArena;
-		counters.bytesInput += VERSION_OVERHEAD;
+		counters.bytesInputOld += VERSION_OVERHEAD;
+		counters.bytesInputNoPTree += VERSION_OVERHEAD;
+		counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + VersionedData::PTreeSize::allocated;
 		return u;
 	}
 
 	MutationRef addMutationToMutationLog(Standalone<VerUpdateRef>& mLV, MutationRef const& m) {
 		byteSampleApplyMutation(m, mLV.version);
-		counters.bytesInput += mvccStorageBytes(m);
+		counters.bytesInputOld += mvccStorageBytes(m);
+		counters.bytesInputNoPTree += mvccStorageBytesNoPTree(m);
+		counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + VersionedData::PTreeSize::allocated;
 		return mLV.push_back_deep(mLV.arena(), m);
 	}
 
@@ -1310,7 +1318,10 @@ public:
 		// Bytes of the mutations that have been removed from memory because they durable. The counting is same as
 		// bytesInput, instead of the actual bytes taken in the storages, so that (bytesInput - bytesDurable) can
 		// reflect the current memory footprint of MVCC.
-		Counter bytesDurable;
+		Counter bytesDurableOld;
+
+		Counter bytesDurableNoPTree;
+		Counter memoryUsageDurable;
 
 		// Bytes fetched by fetchChangeFeed for data movements.
 		Counter feedBytesFetched;
@@ -1396,7 +1407,9 @@ public:
 		    kvClearRanges("KVClearRanges", cc),
 		    kvClearSingleKey("KVClearSingleKey", cc),
 		    kvSystemClearRanges("KVSystemClearRanges", cc),
-		    bytesDurable("BytesDurable", cc),
+		    bytesDurableOld("BytesDurableOld", cc),
+		    bytesDurableNoPTree("BytesDurableNoPTree", cc),
+		    memoryUsageDurable("BytesDurable", cc),
 		    feedBytesFetched("FeedBytesFetched", cc),
 		    sampledBytesCleared("SampledBytesCleared", cc),
 		    atomicMutations("AtomicMutations", cc),
@@ -1531,6 +1544,8 @@ public:
 				}
 				return minVersion;
 			});
+			specialCounter(cc, "PTreeAllocated", []() { return VersionedData::PTreeSize::allocated; });
+			specialCounter(cc, "PTreeReleased", []() { return VersionedData::PTreeSize::released; });
 		}
 	} counters;
 
@@ -1774,7 +1789,13 @@ public:
 		}
 	}
 
-	Counter::Value queueSize() const { return counters.bytesInput.getValue() - counters.bytesDurable.getValue(); }
+	Counter::Value queueSize() const {
+		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+			return counters.memoryUsageInput.getValue() - counters.memoryUsageDurable.getValue();
+		} else {
+			return counters.bytesInputOld.getValue() - counters.bytesDurableOld.getValue();
+		}
+	}
 
 	// penalty used by loadBalance() to balance requests among SSes. We prefer SS with less write queue size.
 	double getPenalty() const override {
@@ -1867,7 +1888,9 @@ public:
 		feedMemoryBytesByVersion.back().second += bytes;
 		changeFeedMemoryBytes += bytes;
 		if (SERVER_KNOBS->STORAGE_INCLUDE_FEED_STORAGE_QUEUE) {
-			counters.bytesInput += bytes;
+			counters.bytesInputOld += bytes;
+			counters.bytesInputNoPTree += bytes;
+			counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + VersionedData::PTreeSize::allocated;
 		}
 	}
 
@@ -1908,7 +1931,11 @@ public:
 
 	void getStorageMetrics(const GetStorageMetricsRequest& req) override {
 		StorageBytes sb = storage.getStorageBytes();
-		metrics.getStorageMetrics(req, sb, counters.bytesInput.getRate(), versionLag, lastUpdate);
+		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+			metrics.getStorageMetrics(req, sb, counters.memoryUsageInput.getRate(), versionLag, lastUpdate);
+		} else {
+			metrics.getStorageMetrics(req, sb, counters.bytesInputOld.getRate(), versionLag, lastUpdate);
+		}
 	}
 
 	void getSplitMetrics(const SplitMetricsRequest& req) override { this->metrics.splitMetrics(req); }
@@ -6389,8 +6416,13 @@ void getQueuingMetrics(StorageServer* self, StorageQueuingMetricsRequest const& 
 	StorageQueuingMetricsReply reply;
 	reply.localTime = now();
 	reply.instanceID = self->instanceID;
-	reply.bytesInput = self->counters.bytesInput.getValue();
-	reply.bytesDurable = self->counters.bytesDurable.getValue();
+	if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+		reply.bytesInput = self->counters.memoryUsageInput.getValue();
+		reply.bytesDurable = self->counters.memoryUsageDurable.getValue();
+	} else {
+		reply.bytesInput = self->counters.bytesInputOld.getValue();
+		reply.bytesDurable = self->counters.bytesDurableOld.getValue();
+	}
 
 	reply.storageBytes = self->storage.getStorageBytes();
 	reply.localRateLimit = self->currentRate();
@@ -6473,8 +6505,10 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 			verData.createNewVersion(data->version.get() + 1);
 
 		int64_t bytesDurable = VERSION_OVERHEAD;
+		int64_t bytesDurableNoTree = VERSION_OVERHEAD;
 		for (const auto& m : v.mutations) {
 			bytesDurable += mvccStorageBytes(m);
+			bytesDurableNoTree += mvccStorageBytesNoPTree(m);
 			auto i = verData.atLatest().find(m.param1);
 			if (i) {
 				ASSERT(i.key() == m.param1);
@@ -6493,7 +6527,10 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 				}
 			}
 		}
-		data->counters.bytesDurable += bytesDurable;
+		data->counters.bytesDurableOld += bytesDurable;
+		data->counters.bytesDurableNoPTree += bytesDurableNoTree;
+		data->counters.memoryUsageDurable =
+		    data->counters.bytesDurableNoPTree.getValue() + StorageServer::VersionedData::PTreeSize::released;
 	}
 
 	int64_t feedBytesDurable = 0;
@@ -6504,7 +6541,10 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 	}
 	data->changeFeedMemoryBytes -= feedBytesDurable;
 	if (SERVER_KNOBS->STORAGE_INCLUDE_FEED_STORAGE_QUEUE) {
-		data->counters.bytesDurable += feedBytesDurable;
+		data->counters.bytesDurableOld += feedBytesDurable;
+		data->counters.bytesDurableNoPTree += feedBytesDurable;
+		data->counters.memoryUsageDurable =
+		    data->counters.bytesDurableNoPTree.getValue() + StorageServer::VersionedData::PTreeSize::released;
 	}
 
 	if (EXPENSIVE_VALIDATION) {
@@ -9735,10 +9775,16 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 			hardLimitOverage = SERVER_KNOBS->STORAGE_HARD_LIMIT_BYTES_OVERAGE_SPEED_UP_SIM;
 		}
 		state double waitStartT = 0;
+		state int64_t bytesInput = 0;
+		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+			bytesInput = data->counters.memoryUsageInput.getValue();
+		} else {
+			bytesInput = data->counters.bytesInputOld.getValue();
+		}
 		if (data->queueSize() >= hardLimit && data->durableVersion.get() < data->desiredOldestVersion.get() &&
 		    ((data->desiredOldestVersion.get() - SERVER_KNOBS->STORAGE_HARD_LIMIT_VERSION_OVERAGE >
 		      data->lastDurableVersionEBrake) ||
-		     (data->counters.bytesInput.getValue() - hardLimitOverage > data->lastBytesInputEBrake))) {
+		     (bytesInput - hardLimitOverage > data->lastBytesInputEBrake))) {
 
 			while (data->queueSize() >= hardLimit && data->durableVersion.get() < data->desiredOldestVersion.get()) {
 				if (now() - waitStartT >= 1) {
@@ -9755,7 +9801,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				data->behind = true;
 				wait(delayJittered(.005, TaskPriority::TLogPeekReply));
 			}
-			data->lastBytesInputEBrake = data->counters.bytesInput.getValue();
+			data->lastBytesInputEBrake = bytesInput;
 			data->lastDurableVersionEBrake = data->durableVersion.get();
 		}
 

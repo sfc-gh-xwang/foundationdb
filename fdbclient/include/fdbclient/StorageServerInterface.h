@@ -1393,4 +1393,10 @@ inline int mvccStorageBytes(int mutationBytes) {
 	       (mutationBytes + MutationRef::OVERHEAD_BYTES) * 2;
 }
 
+inline int mvccStorageBytesNoPTree(int mutationBytes) {
+	// Why * 2:
+	// - The mutation will be stored in both mutation log;
+	return mutationBytes + MutationRef::OVERHEAD_BYTES;
+}
+
 #endif

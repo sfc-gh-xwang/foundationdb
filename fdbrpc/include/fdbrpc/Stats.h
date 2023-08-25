@@ -121,6 +121,7 @@ public:
 
 	void operator+=(Value delta);
 	void operator++() { *this += 1; }
+	void operator=(Value v) { *this += v - getValue(); }
 	void clear();
 	void resetInterval() override;
 
