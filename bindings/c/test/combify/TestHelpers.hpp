@@ -55,7 +55,7 @@ struct UID {
 
 inline fdb::Error waitFuture(fdb::Future& f) {
 	if (auto err = f.blockUntilReady()) {
-		ASSERT(false, "Unexpected future unready: {}", err.what());
+		ASSERT(false, "Error while waiting for future completion: {}", err.what());
 	}
 	return f.error();
 }
