@@ -343,7 +343,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 		       validateDetails.textCipherDetails == BlobCipherDetails(textCipherKey->getDomainId(),
 		                                                              textCipherKey->getBaseCipherId(),
 		                                                              textCipherKey->getSalt()));
-		if (algo == ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE || algo == ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM) {
+		if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_GCM) {
 			ASSERT(!validateDetails.headerCipherDetails.present());
 		} else {
 			ASSERT(validateDetails.headerCipherDetails.present() &&
