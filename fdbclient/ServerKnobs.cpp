@@ -803,10 +803,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 
 	init( MAX_TRANSACTIONS_PER_BYTE,                            1000 );
 
-	init( MIN_AVAILABLE_SPACE,                                   1e8 );
-	init( MIN_AVAILABLE_SPACE_RATIO,                            0.05 );
-	init( MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER,              0.01 );
-	init( TARGET_AVAILABLE_SPACE_RATIO,                         0.30 );
+	init( MIN_AVAILABLE_SPACE,                                   1e8 ); if( isSimulated ) MIN_AVAILABLE_SPACE /= 10;
+	init( MIN_AVAILABLE_SPACE_RATIO,                            0.05 ); if( isSimulated ) MIN_AVAILABLE_SPACE_RATIO /= 10;
+	init( MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER,              0.01 ); if( isSimulated ) MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER /= 10;
+	init( TARGET_AVAILABLE_SPACE_RATIO,                         0.30 ); if( isSimulated ) TARGET_AVAILABLE_SPACE_RATIO /= 10;
 
 	init( MAX_TL_SS_VERSION_DIFFERENCE,                         1e99 ); // if( randomize && BUGGIFY ) MAX_TL_SS_VERSION_DIFFERENCE = std::max(1.0, 0.25 * VERSIONS_PER_SECOND); // spring starts at half this value //FIXME: this knob causes ratekeeper to clamp on idle cluster in simulation that have a large number of logs
 	init( MAX_TL_SS_VERSION_DIFFERENCE_BATCH,                   1e99 );
