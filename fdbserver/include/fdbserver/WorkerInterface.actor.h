@@ -617,13 +617,15 @@ struct InitializeBackupRequest {
 	Version startVersion;
 	Optional<Version> endVersion;
 	ReplyPromise<struct InitializeBackupReply> reply;
+	bool isEmergency = false;
 
 	InitializeBackupRequest() = default;
 	explicit InitializeBackupRequest(UID id) : reqId(id) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, reqId, recruitedEpoch, backupEpoch, routerTag, totalTags, startVersion, endVersion, reply);
+		serializer(
+		    ar, reqId, recruitedEpoch, backupEpoch, routerTag, totalTags, startVersion, endVersion, reply, isEmergency);
 	}
 };
 
@@ -1205,6 +1207,9 @@ ACTOR Future<Void> storageCacheServer(StorageServerInterface interf,
 ACTOR Future<Void> backupWorker(BackupInterface bi,
                                 InitializeBackupRequest req,
                                 Reference<AsyncVar<ServerDBInfo> const> db);
+ACTOR Future<Void> emergencyBackupWorker(BackupInterface bi,
+                                         InitializeBackupRequest req,
+                                         Reference<AsyncVar<ServerDBInfo> const> db);
 
 void registerThreadForProfiling();
 

@@ -2786,10 +2786,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 
 					ReplyPromise<InitializeBackupReply> backupReady = req.reply;
 					backupWorkerCache.set(req.reqId, backupReady.getFuture());
-					Future<Void> backupProcess = backupWorker(recruited, req, dbInfo);
+					Future<Void> backupProcess = req.isEmergency ? emergencyBackupWorker(recruited, req, dbInfo)
+					                                             : backupWorker(recruited, req, dbInfo);
 					backupProcess = backupWorkerCache.removeOnReady(req.reqId, backupProcess);
 					errorForwarders.add(forwardError(errors, Role::BACKUP, recruited.id(), backupProcess));
-					TraceEvent("BackupInitRequest", req.reqId).detail("BackupId", recruited.id());
+					TraceEvent("BackupInitRequest", req.reqId)
+					    .detail("BackupId", recruited.id())
+					    .detail("IsEmergency", req.isEmergency);
 					InitializeBackupReply reply(recruited, req.backupEpoch);
 					backupReady.send(reply);
 				} else {
