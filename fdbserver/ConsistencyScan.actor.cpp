@@ -598,8 +598,7 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 				                      tr->getReadVersion().get() - (CLIENT_KNOBS->CORE_VERSIONSPERSECOND * 60 * 60 *
 				                                                    24 * config.roundHistoryDays)));
 
-				state std::vector<Future<Void>> updates;
-				updates.push_back(cs.trigger.watch(tr));
+				state Future<Void> onChange = cs.trigger.watch(tr);
 
 				wait(tr->commit());
 
@@ -617,9 +616,8 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 					if (delayTime == 0 && !statsCurrentRound.shouldStartNewRound(config, tr->getReadVersion().get())) {
 						delayTime = 1;
 					}
-					state Future<Void> delayBeforeNextRound = delay(delayTime);
+					onChange = onChange || delay(delayTime);
 					memState->stats.waitingBetweenRounds = true;
-					updates.push_back(delayBeforeNextRound);
 				} else {
 					memState->stats.waitingBetweenRounds = false;
 				}
@@ -628,7 +626,7 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 					TraceEvent(SevDebug, "ConsistencyScanProgressDisabledWatching", memState->csId);
 				}
 
-				wait(waitForAny(updates));
+				wait(onChange);
 				tr->reset();
 			} catch (Error& e) {
 				TraceEvent("ConsistencyScan_MainLoopError", memState->csId).error(e);
