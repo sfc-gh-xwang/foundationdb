@@ -100,6 +100,12 @@ auto nextIterationImpl = [](auto&... opts) -> optional<IterableOptionTier> {
 };
 
 bool TestOptions::allOptionsValid() const {
+	// Check iterable options are not violating constraints. For instance, GRV caching is only
+	// supported when multi-version client is used
+	if (withoutMultiVersion(*this) && withGrvCache(*this)) {
+		return false;
+	}
+
 	size_t count = 0;
 	std::apply(
 	    [this, &count](const auto&... opts) {
