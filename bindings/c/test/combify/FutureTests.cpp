@@ -9,7 +9,8 @@ using namespace fdb::literals;
 
 /* Transaction future operation  */
 AddTest testFutureCallback("FutureCallback", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	while (1) {
 		auto f = tr.get("foo"_br, /* snapshot */ true);
 
@@ -33,7 +34,8 @@ AddTest testFutureCallback("FutureCallback", ALL, [](const TestEnv& env) {
 });
 
 AddTest testFutureCancelAfterCompletion("FutureCancelAfterCompletion", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.get("foo"_br, false); }, "FutureCancelAfterCompletion");
 
@@ -45,7 +47,8 @@ AddTest testFutureCancelAfterCompletion("FutureCancelAfterCompletion", ALL, [](c
 });
 
 AddTest testFutureReleaseMemory("FutureReleaseMemory", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.get("foo"_br, false); }, "FutureReleaseMemory");
 
@@ -69,7 +72,8 @@ AddTest testFutureReleaseMemory("FutureReleaseMemory", ALL, [](const TestEnv& en
 });
 
 AddTest testFutureBlockFromCallback("FutureBlockFromCallback", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	auto f1 = tr.get("foo"_br, /*snapshot*/ true);
 	std::binary_semaphore sem(0);
 	f1.then([&sem, &tr](fdb::Future f) {

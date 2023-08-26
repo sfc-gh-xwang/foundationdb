@@ -513,8 +513,7 @@ bool TestEnv::runTest(const TestCase& t) {
 	return !exc.has_value();
 }
 
-fdb::Transaction TestEnv::newNormalOrTenantTransaction() const {
-	auto db = newDatabase();
+fdb::Transaction TestEnv::newNormalOrTenantTransaction(fdb::Database db) const {
 	// For trusted client or if there is no tenant, return a new DB transaction
 	if (*trustedClient || tenants.empty()) {
 		return newTransaction(db);
