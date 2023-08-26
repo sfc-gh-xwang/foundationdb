@@ -68,7 +68,7 @@ AddTest testFutureReleaseMemory("FutureReleaseMemory", ALL, [](const TestEnv& en
 	f.releaseMemory();
 	f.releaseMemory();
 	err = f.getNothrow(value);
-	ASSERT(err.code() == 1102, "unmatched error code: expect=1102 (future_released), actua=={}", err.code());
+	ASSERT(err.code() == 1102, "unmatched error code: expect=1102 (future_released), actual={}", err.code());
 });
 
 AddTest testFutureBlockFromCallback("FutureBlockFromCallback", ALL, [](const TestEnv& env) {

@@ -1427,7 +1427,7 @@ TEST_CASE("Blob Granule Functions") {
 TEST_CASE("fdb_transaction_set_read_version future_version") {
 	// This test is problematic in that if it is the first test that runs, it can hit an
 	// transaction too old error instead of future version because the minAcceptableReadVersion
-	// value is initialized to be int64::max. Furthermore, this test has not been included
+	// value is initialized to be INT64_MAX. Furthermore, this test has not been included
 	// in a retry loop. Last but not least, testing this scenario in the mist of a protocol
 	// version change error can be tricky because that led to a new database context to be
 	// initialized and thus wiping out the minAcceptableReadVersion value. For now, we keep
