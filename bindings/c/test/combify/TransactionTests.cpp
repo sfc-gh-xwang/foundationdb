@@ -201,7 +201,7 @@ AddTest testReadYourWritesDisable("ReadYourWritesDisable",
                                   [](const TestEnv& env) {
 	                                  // If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false
 	                                  // should return null
-					  auto db = env.newDatabase();
+	                                  auto db = env.newDatabase();
 	                                  auto tr = env.newNormalOrTenantTransaction(db);
 	                                  auto f = runToCompletion(
 	                                      tr,
@@ -236,7 +236,7 @@ AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable",
                                           OR(asTrustedClient,
                                              AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                                           [](const TestEnv& env) {
-					  	  auto db = env.newDatabase();
+	                                          auto db = env.newDatabase();
 	                                          auto tr = env.newNormalOrTenantTransaction(db);
 
 	                                          while (1) {
@@ -444,7 +444,7 @@ AddTest testGetRangeStreamingModeExactWithLimit("GetRangeStreamingModeExactWithL
 
 AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-clear-key-");
-	
+
 	auto db = env.newDatabase();
 	auto tr = env.newNormalOrTenantTransaction(db);
 
@@ -584,13 +584,47 @@ AddTest testSetReadVersionOldVersion("SetReadVersionOldVersion", ALL, [](const T
 		if (err.code() == 1007 /* transaction_too_old */) {
 			break;
 		}
-		
+
 		// Retry upon other transient errors
 		auto f2 = tr.onError(err);
 		if (auto err2 = waitFuture(f2)) {
 			ASSERT(false, "Unexpected failure: {}", err2.what());
 		}
 		continue;
+	}
+});
+
+AddTest testSetReadVersionFutureVersion("SetReadVersionFutureVersion", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-set-readversion-Future-version-");
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	while (1) {
+		// Perform a read version so that we have a valid version number that is not int64::max.
+		// This is to avoid the condition situation where a get call to a fresh cluster could hit
+		// transaction_too_old error because the initial minAcceptableReadVersion is int64::max
+		runToCompletion(
+		    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
+
+		auto tr2 = env.newNormalOrTenantTransaction(db);
+		tr2.setReadVersion(1UL << 62);
+		auto f = tr2.get(fdb::toBytesRef(prefix + "foo"), false);
+
+		if (auto err = waitFuture(f)) {
+			if (err.code() == 1009 /* future_version */) {
+				break;
+			}
+
+			// We only expect retriable errors if it is not future_version
+			ASSERT(err.retryable(), "Unexpected transaction failure: ", err.what());
+			// Retry upon transient errors
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+
+		ASSERT(false, "Unexpected successful transaction");
 	}
 });
 
