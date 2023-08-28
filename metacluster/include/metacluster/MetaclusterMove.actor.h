@@ -833,6 +833,7 @@ struct StartTenantMovementImpl {
 		    .detail("TenantGroup", self->tenantGroup)
 		    .detail("DataCluster", self->dstCtx.clusterName);
 
+		TraceEvent("TenantMoveStartSuccess").detail("TenantGroup", self->tenantGroup);
 		return Void();
 	}
 
@@ -1112,6 +1113,7 @@ struct SwitchTenantMovementImpl {
 			                                                            Aborting::False);
 		                                  }));
 		fmt::print("Tenant move switch: updating metadata finished\n");
+		TraceEvent("TenantMoveSwitchSuccess").detail("TenantGroup", self->tenantGroup);
 		return Void();
 	}
 
@@ -1430,6 +1432,7 @@ struct FinishTenantMovementImpl {
 		                                                Optional<metadata::management::MovementRecord> movementRecord) {
 			                                  return finalizeMovement(self, tr, movementRecord);
 		                                  }));
+		TraceEvent("TenantMoveFinishSuccess").detail("TenantGroup", self->tenantGroup);
 		return Void();
 	}
 
@@ -1904,6 +1907,7 @@ struct AbortTenantMovementImpl {
 			throw invalid_tenant_move();
 		}
 		wait(abortFuture);
+		TraceEvent("TenantMoveAbortSuccess").detail("TenantGroup", self->tenantGroup);
 		return Void();
 	}
 
