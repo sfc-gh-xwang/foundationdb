@@ -195,13 +195,14 @@ struct DeleteTenantImpl {
 		}
 
 		// Delete tenant on the data cluster
-		TraceEvent("MetaclusterDeleteTenantFromData")
+		TraceEvent("MetaclusterDeleteTenantFromDataCluster")
 		    .detail("TenantName", self->tenantName)
-		    .detail("TenantId", self->tenantId);
+		    .detail("TenantId", self->tenantId)
+		    .detail("DataCluster", self->ctx.clusterName);
 		wait(self->ctx.runDataClusterTransaction([self = self](Reference<ITransaction> tr) {
 			return TenantAPI::deleteTenantTransaction(tr, self->tenantId, ClusterType::METACLUSTER_DATA);
 		}));
-		TraceEvent("MetaclusterDeleteTenantFromMgmt")
+		TraceEvent("MetaclusterDeleteTenantFromMgmtCluster")
 		    .detail("TenantName", self->tenantName)
 		    .detail("TenantId", self->tenantId);
 		wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
