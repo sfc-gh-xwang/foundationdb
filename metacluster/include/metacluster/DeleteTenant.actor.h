@@ -209,6 +209,10 @@ struct DeleteTenantImpl {
 			return deleteTenantFromManagementCluster(self, tr);
 		}));
 
+		TraceEvent("MetaclusterDeleteTenantSuccess")
+		    .detail("TenantName", self->tenantEntry.tenantName)
+		    .detail("TenantId", self->tenantEntry.id);
+
 		return Void();
 	}
 	Future<Void> run() { return run(this); }

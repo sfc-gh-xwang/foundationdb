@@ -427,6 +427,10 @@ struct CreateTenantImpl {
 				wait(self->ctx.runManagementTransaction(
 				    [self = self](Reference<typename DB::TransactionT> tr) { return markTenantReady(self, tr); }));
 
+				TraceEvent("MetaclusterCreateTenantSuccess")
+				    .detail("TenantName", self->tenantEntry.tenantName)
+				    .detail("TenantId", self->tenantEntry.id)
+				    .detail("AssignedCluster", self->tenantEntry.assignedCluster);
 				return Void();
 			} catch (Error& e) {
 				TraceEvent("MetaclusterCreateTenantError")

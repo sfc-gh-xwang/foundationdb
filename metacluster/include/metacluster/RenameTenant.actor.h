@@ -266,6 +266,10 @@ struct RenameTenantImpl {
 		wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 			return finishRenameFromManagementCluster(self, tr);
 		}));
+		TraceEvent("MetaclusterRenameTenantSuccess")
+		    .detail("OldName", self->oldName)
+		    .detail("NewName", self->newName)
+		    .detail("TenantId", self->tenantId);
 		return Void();
 	}
 	Future<Void> run() { return run(this); }
