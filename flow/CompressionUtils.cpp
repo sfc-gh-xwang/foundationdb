@@ -144,6 +144,24 @@ CompressionFilter CompressionUtils::getRandomFilter() {
 void forceLinkCompressionUtilsTest() {}
 
 namespace {
+TEST_CASE("/CompressionUtils/noCompression") {
+	Arena arena;
+	const int size = deterministicRandom()->randomInt(512, 1024);
+	Standalone<StringRef> uncompressed = makeString(size);
+	deterministicRandom()->randomBytes(mutateString(uncompressed), size);
+
+	Standalone<StringRef> compressed = CompressionUtils::compress(CompressionFilter::NONE, uncompressed, arena);
+	ASSERT_EQ(compressed.compare(uncompressed), 0);
+
+	StringRef verify = CompressionUtils::decompress(CompressionFilter::NONE, compressed, arena);
+	ASSERT_EQ(verify.compare(uncompressed), 0);
+
+	TraceEvent("NoCompressionDone");
+
+	return Void();
+}
+
+#ifdef ZSTD_LIB_SUPPORTED
 void testCompression(CompressionFilter filter) {
 	Arena arena;
 	const int size = deterministicRandom()->randomInt(512, 1024);
@@ -174,25 +192,6 @@ void testCompression2(CompressionFilter filter) {
 	ASSERT_EQ(verify.compare(uncompressed), 0);
 }
 
-} // namespace
-
-TEST_CASE("/CompressionUtils/noCompression") {
-	Arena arena;
-	const int size = deterministicRandom()->randomInt(512, 1024);
-	Standalone<StringRef> uncompressed = makeString(size);
-	deterministicRandom()->randomBytes(mutateString(uncompressed), size);
-
-	Standalone<StringRef> compressed = CompressionUtils::compress(CompressionFilter::NONE, uncompressed, arena);
-	ASSERT_EQ(compressed.compare(uncompressed), 0);
-
-	StringRef verify = CompressionUtils::decompress(CompressionFilter::NONE, compressed, arena);
-	ASSERT_EQ(verify.compare(uncompressed), 0);
-
-	TraceEvent("NoCompressionDone");
-
-	return Void();
-}
-#ifdef ZSTD_LIB_SUPPORTED
 TEST_CASE("/CompressionUtils/zstdCompression") {
 	testCompression(CompressionFilter::ZSTD);
 	TraceEvent("ZstdCompressionDone");
@@ -207,3 +206,5 @@ TEST_CASE("/CompressionUtils/zstdCompression2") {
 	return Void();
 }
 #endif
+
+} // namespace

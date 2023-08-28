@@ -21,6 +21,7 @@
 #define VMX_ALIGN 16
 #define VMX_ALIGN_MASK (VMX_ALIGN - 1)
 
+#ifdef __powerpc64
 #ifdef REFLECT
 static unsigned int crc32_align(unsigned int crc, unsigned char* p, unsigned long len) {
 	while (len--)
@@ -33,7 +34,7 @@ static unsigned int crc32_align(unsigned int crc, unsigned char* p, unsigned lon
 		crc = crc_table[((crc >> 24) ^ *p++) & 0xff] ^ (crc << 8);
 	return crc;
 }
-#endif
+#endif // !REFLECT
 
 #ifndef CRC32_FUNCTION
 #define CRC32_FUNCTION crc32_vpmsum
@@ -45,7 +46,6 @@ static unsigned int crc32_align(unsigned int crc, unsigned char* p, unsigned lon
 unsigned int CRC32_FUNCTION_ASM(unsigned int crc, unsigned char* p, unsigned long len);
 
 unsigned int CRC32_FUNCTION(unsigned int crc, unsigned char* p, unsigned long len) {
-#ifdef __powerpc64 // avoid link failures on systems without CRC32_FUNCTION_ASM declared
 	unsigned int prealign;
 	unsigned int tail;
 
@@ -77,6 +77,6 @@ out:
 #ifdef CRC_XOR
 	crc ^= 0xffffffff;
 #endif
-#endif
 	return crc;
 }
+#endif // __powerpc64

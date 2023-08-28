@@ -226,11 +226,6 @@ GetMappedRangeResult getMappedRange(fdb::Transaction& tr,
 	return result;
 }
 
-// Clears all data in the database.
-void clear_data(fdb::Database db) {
-	insert_data(db, {});
-}
-
 enum TenantOp { CREATE, DELETE };
 
 void tenantHelper(fdb::BytesRef name, TenantOp op) {

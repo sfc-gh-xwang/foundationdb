@@ -73,7 +73,7 @@ static Future<metadata::management::MovementRecord> getMovementRecordNoValidatio
 	return moveRecord.get();
 }
 
-static Future<Void> clearDataClusterQuota(Reference<ITransaction> tr, TenantGroupName tenantGroup) {
+static inline Future<Void> clearDataClusterQuota(Reference<ITransaction> tr, TenantGroupName tenantGroup) {
 	tr->clear(ThrottleApi::getTagQuotaKey(tenantGroup));
 	TenantMetadata::storageQuota().erase(tr, tenantGroup);
 	return Void();
