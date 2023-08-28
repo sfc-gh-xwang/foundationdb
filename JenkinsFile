@@ -84,9 +84,9 @@ pipeline {
                             user_id = "${currentBuild.getBuildCauses()[0].commentAuthor}".split("-")[2]
                             createCheck("github_comment", "Criteria Satisfied", "", "completed", "success");
 
-                            //Check CI is initiated by @fdb-build-cop member when labels are used
+                            //Check CI is initiated by @fdb-build-cop member when labels are `bypass_all_checks` or `bypass_test_failures` used
                             println("labels " + labels.size())
-                            if (labels.size() > 0 && labels[0] != "")  {
+                            if (labels.contains("bypass_all_checks") || labels.contains("bypass_test_failures"))  {
                                 if (buildcop_members.contains(user_id)) {
                                     msg = user_id + " approved labels " + labels.join(", ") + " and started CI"
                                     createCheck("labels_check", msg, msg, "completed", "success");
