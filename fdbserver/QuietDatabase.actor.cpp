@@ -46,16 +46,6 @@
 
 namespace {
 constexpr double epsilon = 1e-6;
-
-// Extracts the rate field from a Counter metric.
-double extractRateFromTraceEvent(const TraceEventFields& message, const std::string& metric_name) {
-	double rate, roughness;
-	int64_t count;
-
-	sscanf(message.getValue(metric_name).c_str(), "%lf %lf %" SCNd64, &rate, &roughness, &count);
-	return rate;
-}
-
 } // namespace
 
 ACTOR Future<std::vector<WorkerDetails>> getWorkers(Reference<AsyncVar<ServerDBInfo> const> dbInfo, int flags = 0) {
@@ -552,6 +542,29 @@ ACTOR Future<std::vector<Future<TraceEventFields>>> getBlobWorkerMetrics(
 	return messages;
 }
 
+double extractBlobWorkerRate(const TraceEventFields& message, const std::string& metricName) {
+	double rate, roughness;
+	int64_t count;
+	try {
+		sscanf(message.getValue(metricName).c_str(), "%lf %lf %" SCNd64, &rate, &roughness, &count);
+		return rate;
+	} catch (Error& e) {
+		TraceEvent("QuietDatabaseFailure")
+		    .detail("Reason", fmt::format("Failed to extract {} from BlobWorkerMetrics", metricName));
+		throw attribute_not_found();
+	}
+}
+
+int64_t extractBlobWorkerField(const TraceEventFields& md, const std::string& fieldName) {
+	try {
+		return md.getInt64(fieldName);
+	} catch (Error& e) {
+		TraceEvent("QuietDatabaseFailure")
+		    .detail("Reason", fmt::format("Failed to extract {} from BlobWorkerMetrics", fieldName));
+		throw;
+	}
+}
+
 ACTOR Future<int64_t> getChangeFeedBytes(std::vector<Future<TraceEventFields>> messages) {
 	TraceEvent("GetChangeFeedBytes").detail("Stage", "WaitingOnMetrics");
 	wait(waitForAll(messages));
@@ -560,14 +573,8 @@ ACTOR Future<int64_t> getChangeFeedBytes(std::vector<Future<TraceEventFields>> m
 	state bool anyActiveChangeFeeds = false;
 	state int j = 0;
 	for (; j < messages.size(); ++j) {
-		try {
-			double cfByteRate = extractRateFromTraceEvent(messages[j].get(), "ChangeFeedInputBytes");
-			anyActiveChangeFeeds |= cfByteRate > epsilon;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure")
-			    .detail("Reason", "Failed to extract changeFeedInputBytes from BlobWorkerMetrics");
-			throw attribute_not_found();
-		}
+		double cfByteRate = extractBlobWorkerRate(messages[j].get(), "ChangeFeedInputBytes");
+		anyActiveChangeFeeds |= cfByteRate > epsilon;
 	}
 	return anyActiveChangeFeeds;
 }
@@ -578,43 +585,31 @@ ACTOR Future<bool> getActiveBlobWrites(std::vector<Future<TraceEventFields>> mes
 	wait(waitForAll(messages));
 	TraceEvent("GetActiveBlobWrites").detail("Stage", "ComputingSum").detail("MessageCount", messages.size());
 
-	state bool anyActiveWrites = false;
 	state int j = 0;
 	for (; j < messages.size(); ++j) {
-		try {
-			double putRate = extractRateFromTraceEvent(messages[j].get(), "S3PutReqs");
-			anyActiveWrites |= putRate > epsilon;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure").detail("Reason", "Failed to extract S3PutReqs from BlobWorkerMetrics");
-			throw attribute_not_found();
+		double putRate = extractBlobWorkerRate(messages[j].get(), "S3PutReqs");
+		if (putRate > 0) {
+			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActivePuts");
+			return true;
 		}
 
-		try {
-			double deleteRate = extractRateFromTraceEvent(messages[j].get(), "S3DeleteReqs");
-			anyActiveWrites |= deleteRate > epsilon;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure")
-			    .detail("Reason", "Failed to extract S3DeleteReqs from BlobWorkerMetrics");
-			throw attribute_not_found();
+		double deleteRate = extractBlobWorkerRate(messages[j].get(), "S3DeleteReqs");
+		if (deleteRate > 0) {
+			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActiveDeletes");
+			return true;
 		}
 
-		try {
-			anyActiveWrites |= messages[j].get().getInt64("DeltaFilesWriting") > 0;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure")
-			    .detail("Reason", "Failed to extract DeltaFilesWriting from BlobWorkerMetrics");
-			throw attribute_not_found();
+		if (extractBlobWorkerField(messages[j].get(), "DeltaFilesWriting") > 0) {
+			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActiveDeltaFileWrites");
+			return true;
 		}
 
-		try {
-			anyActiveWrites |= messages[j].get().getInt64("SnapshotFilesWriting") > 0;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure")
-			    .detail("Reason", "Failed to extract SnapshotFilesWriting from BlobWorkerMetrics");
-			throw attribute_not_found();
+		if (extractBlobWorkerField(messages[j].get(), "SnapshotFilesWriting") > 0) {
+			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActiveSnapshotFileWrites");
+			return true;
 		}
 	}
-	return anyActiveWrites;
+	return false;
 }
 
 // Gets the size of the data distribution queue.  If reportInFlight is true, then data in flight is considered part of
