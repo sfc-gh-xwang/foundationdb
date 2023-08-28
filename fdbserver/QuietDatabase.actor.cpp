@@ -542,7 +542,9 @@ ACTOR Future<std::vector<Future<TraceEventFields>>> getBlobWorkerMetrics(
 	return messages;
 }
 
-double extractBlobWorkerRate(const TraceEventFields& message, const std::string& metricName) {
+double extractBlobWorkerRate(const std::string& blobWorkerID,
+                             const TraceEventFields& message,
+                             const std::string& metricName) {
 	double rate, roughness;
 	int64_t count;
 	try {
@@ -550,17 +552,21 @@ double extractBlobWorkerRate(const TraceEventFields& message, const std::string&
 		return rate;
 	} catch (Error& e) {
 		TraceEvent("QuietDatabaseFailure")
-		    .detail("Reason", fmt::format("Failed to extract {} from BlobWorkerMetrics", metricName));
+		    .detail("Reason", fmt::format("Failed to extract {} from BlobWorkerMetrics", metricName))
+		    .detail("BlobWorkerID", blobWorkerID);
 		throw attribute_not_found();
 	}
 }
 
-int64_t extractBlobWorkerField(const TraceEventFields& md, const std::string& fieldName) {
+int64_t extractBlobWorkerField(const std::string& blobWorkerID,
+                               const TraceEventFields& md,
+                               const std::string& fieldName) {
 	try {
 		return md.getInt64(fieldName);
 	} catch (Error& e) {
 		TraceEvent("QuietDatabaseFailure")
-		    .detail("Reason", fmt::format("Failed to extract {} from BlobWorkerMetrics", fieldName));
+		    .detail("Reason", fmt::format("Failed to extract {} from BlobWorkerMetrics", fieldName))
+		    .detail("BlobWorkerID", blobWorkerID);
 		throw;
 	}
 }
@@ -573,7 +579,9 @@ ACTOR Future<int64_t> getChangeFeedBytes(std::vector<Future<TraceEventFields>> m
 	state bool anyActiveChangeFeeds = false;
 	state int j = 0;
 	for (; j < messages.size(); ++j) {
-		double cfByteRate = extractBlobWorkerRate(messages[j].get(), "ChangeFeedInputBytes");
+		const TraceEventFields& message = messages[j].get();
+		std::string blobWorkerID = message.getValue("ID");
+		double cfByteRate = extractBlobWorkerRate(blobWorkerID, message, "ChangeFeedInputBytes");
 		anyActiveChangeFeeds |= cfByteRate > epsilon;
 	}
 	return anyActiveChangeFeeds;
@@ -587,25 +595,34 @@ ACTOR Future<bool> getActiveBlobWrites(std::vector<Future<TraceEventFields>> mes
 
 	state int j = 0;
 	for (; j < messages.size(); ++j) {
-		double putRate = extractBlobWorkerRate(messages[j].get(), "S3PutReqs");
+		const TraceEventFields& message = messages[j].get();
+		std::string blobWorkerID = message.getValue("ID");
+
+		double putRate = extractBlobWorkerRate(blobWorkerID, message, "S3PutReqs");
 		if (putRate > 0) {
-			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActivePuts");
+			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActivePuts").detail("BlobWorkerID", blobWorkerID);
 			return true;
 		}
 
-		double deleteRate = extractBlobWorkerRate(messages[j].get(), "S3DeleteReqs");
+		double deleteRate = extractBlobWorkerRate(blobWorkerID, message, "S3DeleteReqs");
 		if (deleteRate > 0) {
-			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActiveDeletes");
+			TraceEvent("GetActiveBlobWrites")
+			    .detail("Stage", "FoundActiveDeletes")
+			    .detail("BlobWorkerID", blobWorkerID);
 			return true;
 		}
 
-		if (extractBlobWorkerField(messages[j].get(), "DeltaFilesWriting") > 0) {
-			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActiveDeltaFileWrites");
+		if (extractBlobWorkerField(blobWorkerID, message, "DeltaFilesWriting") > 0) {
+			TraceEvent("GetActiveBlobWrites")
+			    .detail("Stage", "FoundActiveDeltaFileWrites")
+			    .detail("BlobWorkerID", blobWorkerID);
 			return true;
 		}
 
-		if (extractBlobWorkerField(messages[j].get(), "SnapshotFilesWriting") > 0) {
-			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActiveSnapshotFileWrites");
+		if (extractBlobWorkerField(blobWorkerID, message, "SnapshotFilesWriting") > 0) {
+			TraceEvent("GetActiveBlobWrites")
+			    .detail("Stage", "FoundActiveSnapshotFileWrites")
+			    .detail("BlobWorkerID", blobWorkerID);
 			return true;
 		}
 	}
