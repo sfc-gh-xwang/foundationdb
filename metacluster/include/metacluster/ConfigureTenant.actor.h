@@ -347,8 +347,8 @@ struct ConfigureTenantImpl {
 			wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 				return markManagementTenantAsReady(self, tr);
 			}));
-			TraceEvent("MetaclusterConfigureTenantSuccess").detail("TenantName", self->tenantName);
 		}
+		TraceEvent("MetaclusterConfigureTenantSuccess").detail("TenantName", self->tenantName);
 
 		return Void();
 	}
