@@ -6779,6 +6779,8 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 			self->addActor.send(bulkLoadTracker.start());
 		}
 
+		CODE_PROBE(true, "blobManager started");
+
 		loop choose {
 			when(wait(self->iAmReplaced.getFuture())) {
 				if (BM_DEBUG) {
