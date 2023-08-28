@@ -1543,7 +1543,10 @@ struct AbortTenantMovementImpl {
 		for (auto& f : tenantFutures) {
 			if (f.get().tenantState != TenantState::READY) {
 				CODE_PROBE(true, "Simultaneous abort returned from config change before setting ready state");
-				TraceEvent("TenantMoveAbortReadyStateNotSetAfterUnlock");
+				TraceEvent("TenantMoveAbortReadyStateNotSetAfterUnlock")
+				    .detail("SourceCluster", self->srcCtx.clusterName)
+				    .detail("DestinationCluster", self->dstCtx.clusterName)
+				    .detail("TenantGroup", self->tenantGroup);
 				throw tenant_move_failed();
 			}
 		}
