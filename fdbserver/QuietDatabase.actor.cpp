@@ -35,6 +35,7 @@
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ReadYourWrites.h"
 #include "fdbclient/RunRYWTransaction.actor.h"
+#include "fdbrpc/SimulatorProcessInfo.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/WorkerInterface.actor.h"
 #include "fdbclient/ManagementAPI.actor.h"
@@ -946,6 +947,34 @@ ACTOR Future<Void> reconfigureAfter(Database cx,
 	return Void();
 }
 
+int getSimulatedRoleCount(std::string const& role, int expectedCount) {
+	if (!g_network->isSimulated() || !g_simulator->extraDatabases.empty()) {
+		return -1;
+	}
+
+	std::vector<ISimulator::ProcessInfo*> allProcesses = g_simulator->getAllProcesses();
+
+	// FIXME: this doesn't actually check that there aren't multiple of the same role running on the same process
+	std::set<NetworkAddress> roleAddresses;
+	for (int i = 0; i < allProcesses.size(); i++) {
+		if (g_simulator->hasRole(allProcesses[i]->address, role)) {
+			roleAddresses.insert(allProcesses[i]->address);
+		}
+	}
+
+	if (roleAddresses.size() != expectedCount) {
+		TraceEvent ev("QuietDatabaseUnexpectedRoleCount");
+		ev.detail("Role", role).detail("ExpectedCount", expectedCount).detail("Count", roleAddresses.size());
+
+		int i = 0;
+		for (auto const& address : roleAddresses) {
+			ev.detail(fmt::format("Process{}", ++i), address);
+		}
+	}
+
+	return roleAddresses.size();
+}
+
 struct QuietDatabaseChecker {
 	ProcessEvents::Callback timeoutCallback = [this](StringRef name, std::any const& msg, Error const& e) {
 		logFailure(name, std::any_cast<StringRef>(msg), e);
@@ -1174,6 +1203,7 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	state QuietDatabaseChecker checker(isBuggifyEnabled(BuggifyType::General) ? 4000.0 : 1000.0);
 	state Future<Void> reconfig =
 	    reconfigureAfter(cx, 100 + (deterministicRandom()->random01() * 100), dbInfo, "QuietDatabase");
+	state Future<DatabaseConfiguration> configFuture;
 	state Future<int64_t> dataInFlight;
 	state Future<std::pair<int64_t, int64_t>> tLogQueueInfo;
 	state Future<int64_t> dataDistributionQueueSize;
@@ -1221,6 +1251,7 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			TraceEvent("QuietDatabaseGotDataDistributor", distributorUID)
 			    .detail("Locality", distributorWorker.locality.toString());
 
+			configFuture = getDatabaseConfiguration(cx, true);
 			dataInFlight = getDataInFlight(cx, distributorWorker);
 			tLogQueueInfo = getTLogQueueInfo(cx, dbInfo);
 			dataDistributionQueueSize = getDataDistributionQueueSize(cx, distributorWorker, dataInFlightGate == 0);
@@ -1248,9 +1279,24 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				     success(pendingChangeFeedBytes));
 			}
 
-			wait(success(dataInFlight) && success(tLogQueueInfo) && success(dataDistributionQueueSize) &&
-			     success(teamCollectionValid) && success(storageQueueSize) && success(dataDistributionActive) &&
-			     success(storageServersRecruiting) && success(versionOffset) && success(dcLag));
+			wait(success(configFuture) && success(dataInFlight) && success(tLogQueueInfo) &&
+			     success(dataDistributionQueueSize) && success(teamCollectionValid) && success(storageQueueSize) &&
+			     success(dataDistributionActive) && success(storageServersRecruiting) && success(versionOffset) &&
+			     success(dcLag));
+
+			DatabaseConfiguration config = configFuture.get();
+
+			int ratekeeperCount = getSimulatedRoleCount("Ratekeeper", 1);
+			int ddCount = getSimulatedRoleCount("DataDistributor", 1);
+			int consistencyScanCount = getSimulatedRoleCount("ConsistencyScan", 1);
+			int expectedBlobManagerCount = config.blobGranulesEnabled ? 1 : 0;
+			int blobManagerCount = getSimulatedRoleCount("BlobManager", expectedBlobManagerCount);
+			// FIXME: add blob migrator once it's always on
+			int blobMigratorCount = -1; // getSimulatedRoleCount("BlobMigrator", TODO ? 1 : 0);
+			int expectedEkpCount =
+			    config.encryptionAtRestMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION ? 1
+			                                                                                                     : 0;
+			int ekpCount = getSimulatedRoleCount("EncryptKeyProxy", expectedEkpCount);
 
 			maxVersionOffset += dbInfo->get().recoveryCount * SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT;
 
@@ -1275,6 +1321,17 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				    .add(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments.get(), 0)
 				    .add(evt, "ActiveBlobWrites", activeBlobWrites.get(), false)
 				    .add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
+			}
+			// These checks are currently disabled because they are occasionally failing
+			if (false && g_network->isSimulated() && g_simulator->extraDatabases.empty()) {
+				check.add(evt, "RatekeeperCount", ratekeeperCount, 1, std::equal_to<>())
+				    .add(evt, "DataDistributorCount", ddCount, 1, std::equal_to<>())
+				    .add(evt, "ConsistencyScanCount", consistencyScanCount, 1, std::equal_to<>())
+				    .add(evt, "BlobManagementCount", blobManagerCount, expectedBlobManagerCount, std::equal_to<>())
+				    .add(evt, "BlobMigratorCount", blobMigratorCount, -1, std::equal_to<>())
+
+				    // This check fails much more than the others
+				    .add(evt, "EncryptKeyProxyCount", ekpCount, expectedEkpCount, std::equal_to<>());
 			}
 
 			evt.detail("RecoveryCount", dbInfo->get().recoveryCount).detail("NumSuccesses", numSuccesses);
