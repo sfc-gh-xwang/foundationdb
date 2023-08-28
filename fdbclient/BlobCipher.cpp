@@ -155,7 +155,16 @@ const uint8_t* BlobCipherEncryptHeaderRef::getIV() const {
 	                                       algoHeaderVersion());
 	ASSERT_EQ(algoHeaderVersion(), 1);
 
-	return std::visit([](auto& h) { return h.v1.iv; }, algoHeader);
+	return std::visit(
+	    [](auto& h) {
+		    using T = std::decay_t<decltype(h)>;
+		    if constexpr (std::is_same_v<T, AesGcm>) {
+			    return get<AesGcmV1>(h.headerVersions).iv;
+		    } else {
+			    return h.v1.iv;
+		    }
+	    },
+	    algoHeader);
 }
 
 int BlobCipherEncryptHeaderRef::getIVSize() const {
@@ -187,8 +196,10 @@ const EncryptHeaderCipherDetails BlobCipherEncryptHeaderRef::getCipherDetails() 
 	return std::visit(
 	    [](auto&& h) {
 		    using T = std::decay_t<decltype(h)>;
-		    if constexpr (std::is_same_v<T, AesCtrNoAuth> || std::is_same_v<T, AesGcm>) {
+		    if constexpr (std::is_same_v<T, AesCtrNoAuth>) {
 			    return EncryptHeaderCipherDetails(h.v1.cipherTextDetails);
+		    } else if constexpr (std::is_same_v<T, AesGcm>) {
+			    return EncryptHeaderCipherDetails(get<AesGcmV1>(h.headerVersions).cipherTextDetails);
 		    } else if constexpr (std::is_same_v<T, AesCtrWithHmac> || std::is_same_v<T, AesCtrWithCmac>) {
 			    return EncryptHeaderCipherDetails(h.v1.cipherTextDetails, h.v1.cipherHeaderDetails);
 		    } else {
@@ -276,12 +287,21 @@ const uint8_t* BlobCipherEncryptHeaderRef::getAuthToken() const {
 		return get<AesCtrWithCmac>(algoHeader).v1.authToken;
 	} else {
 		ASSERT(std::holds_alternative<AesGcm>(algoHeader));
-		return get<AesGcm>(algoHeader).v1.authToken;
+		return get<AesGcmV1>(get<AesGcm>(algoHeader).headerVersions).authToken;
 	}
 }
 
 EncryptCipherDomainId BlobCipherEncryptHeaderRef::getDomainId() const {
-	return std::visit([](auto& h) { return h.v1.cipherTextDetails.encryptDomainId; }, algoHeader);
+	return std::visit(
+	    [](auto& h) {
+		    using T = std::decay_t<decltype(h)>;
+		    if constexpr (std::is_same_v<T, AesGcm>) {
+			    return get<AesGcmV1>(h.headerVersions).cipherTextDetails.encryptDomainId;
+		    } else {
+			    return h.v1.cipherTextDetails.encryptDomainId;
+		    }
+	    },
+	    algoHeader);
 }
 
 EncryptHeaderCipherKCVs BlobCipherEncryptHeaderRef::getKCVs() const {
@@ -300,8 +320,10 @@ EncryptHeaderCipherKCVs BlobCipherEncryptHeaderRef::getKCVs() const {
 	return std::visit(
 	    [](auto&& h) {
 		    using T = std::decay_t<decltype(h)>;
-		    if constexpr (std::is_same_v<T, AesCtrNoAuth> || std::is_same_v<T, AesGcm>) {
+		    if constexpr (std::is_same_v<T, AesCtrNoAuth>) {
 			    return EncryptHeaderCipherKCVs(h.v1.textKCV);
+		    } else if constexpr (std::is_same_v<T, AesGcm>) {
+			    return EncryptHeaderCipherKCVs(get<AesGcmV1>(h.headerVersions).textKCV);
 		    } else if constexpr (std::is_same_v<T, AesCtrWithHmac> || std::is_same_v<T, AesCtrWithCmac>) {
 			    return EncryptHeaderCipherKCVs(h.v1.textKCV, h.v1.headerKCV);
 		    } else {
@@ -340,10 +362,14 @@ void BlobCipherEncryptHeaderRef::validateEncryptionHeaderDetails(const BlobCiphe
 	     &persistedTextKCV,
 	     &persistedHeaderKCV](auto&& h) {
 		    using T = std::decay_t<decltype(h)>;
-		    if constexpr (std::is_same_v<T, AesCtrNoAuth> || std::is_same_v<T, AesGcm>) {
+		    if constexpr (std::is_same_v<T, AesCtrNoAuth>) {
 			    persistedTextCipherDetails = h.v1.cipherTextDetails;
 			    persistedIV = (uint8_t*)&h.v1.iv[0];
 			    persistedTextKCV = h.v1.textKCV;
+		    } else if constexpr (std::is_same_v<T, AesGcm>) {
+			    persistedTextCipherDetails = get<AesGcmV1>(h.headerVersions).cipherTextDetails;
+			    persistedIV = (uint8_t*)&get<AesGcmV1>(h.headerVersions).iv[0];
+			    persistedTextKCV = get<AesGcmV1>(h.headerVersions).textKCV;
 		    } else if constexpr (std::is_same_v<T, AesCtrWithHmac> || std::is_same_v<T, AesCtrWithCmac>) {
 			    persistedTextCipherDetails = h.v1.cipherTextDetails;
 			    persistedHeaderCipherDetails = h.v1.cipherHeaderDetails;
@@ -1564,7 +1590,7 @@ void testConfigurableEncryptionAesCtrWithAuthSer(const int minDomainId) {
 	deterministicRandom()->randomBytes(&withAuth.v1.iv[0], AES_256_CTR_IV_LENGTH);
 	deterministicRandom()->randomBytes(&withAuth.v1.authToken[0], Params::authTokenSize);
 	Standalone<StringRef> serAlgo = AesWithAuth<Params>::toStringRef(withAuth);
-	ASSERT_EQ(serAlgo.size(), sizeof(withAuth));
+	ASSERT_EQ(serAlgo.size(), AesWithAuth<Params>::getSize());
 
 	size += AesWithAuth<Params>::getSize();
 
@@ -1593,11 +1619,11 @@ void testConfigurableEncryptionAesCtrWithAuthSerGcm(const int minDomainId) {
 	headerRef.flags = flags;
 
 	AesGcm withAuth;
-	withAuth.v1.cipherTextDetails = BlobCipherDetails(1, 2, 23);
-	deterministicRandom()->randomBytes(&withAuth.v1.iv[0], AES_256_GCM_IV_LENGTH);
-	deterministicRandom()->randomBytes(&withAuth.v1.authToken[0], AES_256_GCM_TAG_LENGTH);
+	get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails = BlobCipherDetails(1, 2, 23);
+	deterministicRandom()->randomBytes(&get<AesGcmV1>(withAuth.headerVersions).iv[0], AES_256_GCM_IV_LENGTH);
+	deterministicRandom()->randomBytes(&get<AesGcmV1>(withAuth.headerVersions).authToken[0], AES_256_GCM_TAG_LENGTH);
 	Standalone<StringRef> serAlgo = AesGcm::toStringRef(withAuth);
-	ASSERT_EQ(serAlgo.size(), sizeof(withAuth));
+	ASSERT_EQ(serAlgo.size(), AesGcm::getSize());
 
 	size += AesGcm::getSize();
 
@@ -1873,9 +1899,13 @@ void testConfigurableEncryptionHeaderSingleAuthModeGcm(int minDomainId) {
 	ASSERT(validateFlags == flags);
 
 	AesGcm validateAlgo = std::get<AesGcm>(validateHeader.algoHeader);
-	ASSERT(validateAlgo.v1.cipherTextDetails == algoHeader.v1.cipherTextDetails);
-	ASSERT_EQ(memcmp(&iv[0], &validateAlgo.v1.iv[0], AES_256_GCM_IV_LENGTH), 0);
-	ASSERT_EQ(memcmp(&algoHeader.v1.authToken[0], &validateAlgo.v1.authToken[0], AES_256_GCM_TAG_LENGTH), 0);
+	ASSERT(get<AesGcmV1>(validateAlgo.headerVersions).cipherTextDetails ==
+	       get<AesGcmV1>(algoHeader.headerVersions).cipherTextDetails);
+	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(validateAlgo.headerVersions).iv[0], AES_256_GCM_IV_LENGTH), 0);
+	ASSERT_EQ(memcmp(&get<AesGcmV1>(algoHeader.headerVersions).authToken[0],
+	                 &get<AesGcmV1>(validateAlgo.headerVersions).authToken[0],
+	                 AES_256_GCM_TAG_LENGTH),
+	          0);
 
 	TraceEvent("HeaderSize")
 	    .detail("Flags", sizeof(flags))
@@ -2060,22 +2090,24 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 
 	// validate IV
 	AesGcm withAuth = std::get<AesGcm>(headerRef.algoHeader);
-	ASSERT_EQ(memcmp(&iv[0], &withAuth.v1.iv[0], AES_256_GCM_IV_LENGTH), 0);
+	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(withAuth.headerVersions).iv[0], AES_256_GCM_IV_LENGTH), 0);
 	ASSERT_NE(memcmp(&orgData[0], encryptedBuf.begin(), bufLen), 0);
 	// validate cipherKey details
-	ASSERT_EQ(withAuth.v1.cipherTextDetails.encryptDomainId, cipherKey->getDomainId());
-	ASSERT_EQ(withAuth.v1.cipherTextDetails.baseCipherId, cipherKey->getBaseCipherId());
-	ASSERT_EQ(withAuth.v1.cipherTextDetails.salt, cipherKey->getSalt());
+	ASSERT_EQ(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.encryptDomainId, cipherKey->getDomainId());
+	ASSERT_EQ(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.baseCipherId, cipherKey->getBaseCipherId());
+	ASSERT_EQ(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.salt, cipherKey->getSalt());
 
-	Reference<BlobCipherKey> tCipherKey = cipherKeyCache->getCipherKey(withAuth.v1.cipherTextDetails.encryptDomainId,
-	                                                                   withAuth.v1.cipherTextDetails.baseCipherId,
-	                                                                   withAuth.v1.cipherTextDetails.salt);
+	Reference<BlobCipherKey> tCipherKey =
+	    cipherKeyCache->getCipherKey(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.encryptDomainId,
+	                                 get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.baseCipherId,
+	                                 get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.salt);
 	ASSERT(tCipherKey->isEqual(cipherKey));
-	Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(tCipherKey,
-	                                                                         Optional<Reference<BlobCipherKey>>(),
-	                                                                         &withAuth.v1.iv[0],
-	                                                                         headerRef.getEncryptionAtRestAlgo(),
-	                                                                         BlobCipherMetrics::TEST);
+	Reference<DecryptBlobCipher> decryptor =
+	    DecryptBlobCipher::getDecryptor(tCipherKey,
+	                                    Optional<Reference<BlobCipherKey>>(),
+	                                    &get<AesGcmV1>(withAuth.headerVersions).iv[0],
+	                                    headerRef.getEncryptionAtRestAlgo(),
+	                                    BlobCipherMetrics::TEST);
 	StringRef decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, headerRef, arena);
 
 	ASSERT_EQ(decryptedBuf.size(), bufLen);
@@ -2087,9 +2119,9 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	    .detail("HeaderEncryptMode", flags.encryptMode)
 	    .detail("HeaderEncryptAuthTokenMode", flags.authTokenMode)
 	    .detail("HeaderEncryptAuthTokenAlgo", flags.authTokenAlgo)
-	    .detail("TextDomainId", withAuth.v1.cipherTextDetails.encryptDomainId)
-	    .detail("TextBaseCipherId", withAuth.v1.cipherTextDetails.baseCipherId)
-	    .detail("TextSalt", withAuth.v1.cipherTextDetails.salt);
+	    .detail("TextDomainId", get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.encryptDomainId)
+	    .detail("TextBaseCipherId", get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.baseCipherId)
+	    .detail("TextSalt", get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.salt);
 
 	// induce encryption header corruption - encryptionMode corrupted
 	BlobCipherEncryptHeaderRef corruptedHeaderRef = BlobCipherEncryptHeaderRef(headerRef);
@@ -2382,16 +2414,17 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 
 	// validate IV
 	AesGcm withAuth = std::get<AesGcm>(headerRef.algoHeader);
-	ASSERT_EQ(memcmp(&iv[0], &withAuth.v1.iv[0], AES_256_GCM_IV_LENGTH), 0);
+	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(withAuth.headerVersions).iv[0], AES_256_GCM_IV_LENGTH), 0);
 	ASSERT_NE(memcmp(&orgData[0], encryptedBuf.begin(), bufLen), 0);
 	// validate cipherKey details
-	ASSERT_EQ(withAuth.v1.cipherTextDetails.encryptDomainId, cipherKey->getDomainId());
-	ASSERT_EQ(withAuth.v1.cipherTextDetails.baseCipherId, cipherKey->getBaseCipherId());
-	ASSERT_EQ(withAuth.v1.cipherTextDetails.salt, cipherKey->getSalt());
+	ASSERT_EQ(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.encryptDomainId, cipherKey->getDomainId());
+	ASSERT_EQ(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.baseCipherId, cipherKey->getBaseCipherId());
+	ASSERT_EQ(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.salt, cipherKey->getSalt());
 
-	Reference<BlobCipherKey> tCipherKey = cipherKeyCache->getCipherKey(withAuth.v1.cipherTextDetails.encryptDomainId,
-	                                                                   withAuth.v1.cipherTextDetails.baseCipherId,
-	                                                                   withAuth.v1.cipherTextDetails.salt);
+	Reference<BlobCipherKey> tCipherKey =
+	    cipherKeyCache->getCipherKey(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.encryptDomainId,
+	                                 get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.baseCipherId,
+	                                 get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.salt);
 	ASSERT(tCipherKey->isEqual(cipherKey));
 	TraceEvent("TestConfigurableEncryptionInvalidEncryptKeySingleAuthTokenEnd").detail("Mode", authAlgoStr);
 }

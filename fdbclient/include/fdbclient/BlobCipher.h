@@ -393,18 +393,19 @@ struct AesGcm {
 	// Algorithm header version
 	uint8_t version = 1;
 	// List of supported versions.
-	union {
-		AesGcmV1 v1;
-	};
+	std::variant<AesGcmV1> headerVersions;
 
 	AesGcm() { ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion()); }
 
-	AesGcm(AesGcmV1& v) : v1(v) {
+	AesGcm(AesGcmV1& v) : headerVersions(v) {
 		// Only V1 is supported
 		ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion());
 	}
 
-	static uint32_t getSize() { return AesGcmV1::getSize() + 1; }
+	static uint32_t getSize() {
+		// 1 byte of std::variant index
+		return AesGcmV1::getSize() + 1 + 1;
+	}
 
 	static Standalone<StringRef> toStringRef(const AesGcm& algoHeader) {
 		BinaryWriter wr(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
@@ -424,7 +425,7 @@ struct AesGcm {
 			    .detail("Version", version);
 			throw not_implemented();
 		}
-		serializer(ar, v1);
+		serializer(ar, headerVersions);
 	}
 };
 
