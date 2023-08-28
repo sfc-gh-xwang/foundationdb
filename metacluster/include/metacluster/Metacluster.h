@@ -37,7 +37,7 @@
 // * TenantConsistency.actor.h - a metadata consistency check useful for testing of tenants
 // * MetaclusterData.actor.h - functionality to read all metacluster metadata into objects
 
-#include "metacluster/ConfigureCluster.h"
+#include "metacluster/ConfigureCluster.actor.h"
 #include "metacluster/ConfigureTenant.actor.h"
 #include "metacluster/CreateMetacluster.actor.h"
 #include "metacluster/CreateTenant.actor.h"

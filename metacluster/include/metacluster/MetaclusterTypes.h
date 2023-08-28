@@ -65,6 +65,8 @@ enum class DataClusterState { REGISTERING, READY, REMOVING, RESTORING };
 enum class AutoTenantAssignment { ENABLED, DISABLED };
 
 struct DataClusterEntry {
+	using ConfigValue = std::variant<int>;
+
 	constexpr static FileIdentifier file_identifier = 929511;
 
 	static std::string clusterStateToString(DataClusterState clusterState);
@@ -85,6 +87,9 @@ struct DataClusterEntry {
 	  : id(id),
 	    capacity(capacity),
 	    allocated(allocated) {}
+
+	void configure(std::string const& parameter, ConfigValue const& value);
+	void configure(std::map<std::string, ConfigValue> const& parameters);
 
 	// Returns true if all configurable properties match
 	bool matchesConfiguration(DataClusterEntry const& other) const { return capacity == other.capacity; }

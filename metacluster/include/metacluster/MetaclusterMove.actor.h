@@ -47,7 +47,7 @@
 
 #include "fdbrpc/TenantName.h"
 
-#include "metacluster/ConfigureCluster.h"
+#include "metacluster/ConfigureCluster.actor.h"
 #include "metacluster/ListTenants.actor.h"
 #include "metacluster/Metacluster.h"
 #include "metacluster/MetaclusterInternal.actor.h"
@@ -539,8 +539,7 @@ struct StartTenantMovementImpl {
 				throw cluster_no_capacity();
 			}
 			updatedEntry.allocated.numTenantGroups++;
-			updateClusterMetadata(
-			    tr, dstName, clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry, IsRestoring::False);
+			updateClusterMetadata(tr, dstName, clusterMetadata.entry, updatedEntry, IsRestoring::False);
 
 			// clusterTenantCount to accommodate for capacity calculations
 			int numTenants = self->tenantsInGroup.size();
@@ -1189,7 +1188,7 @@ struct FinishTenantMovementImpl {
 		DataClusterMetadata clusterMetadata = srcCtx.dataClusterMetadata.get();
 		DataClusterEntry updatedEntry = clusterMetadata.entry;
 		updatedEntry.allocated.numTenantGroups--;
-		updateClusterMetadata(tr, srcName, clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry);
+		updateClusterMetadata(tr, srcName, clusterMetadata.entry, updatedEntry);
 
 		// clusterTenantCount() reduce tenant count of source
 		int numTenants = tenantsInGroup.size();
@@ -1428,8 +1427,7 @@ struct AbortTenantMovementImpl {
 		DataClusterMetadata clusterMetadata = wait(getClusterTransaction(tr, self->dstCtx.clusterName.get()));
 		DataClusterEntry updatedEntry = clusterMetadata.entry;
 		updatedEntry.allocated.numTenantGroups--;
-		updateClusterMetadata(
-		    tr, dstName, clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry, IsRestoring::False);
+		updateClusterMetadata(tr, dstName, clusterMetadata.entry, updatedEntry, IsRestoring::False);
 
 		int numTenants = self->tenantsInGroup.size();
 		metadata::management::clusterTenantCount().atomicOp(tr, dstName, -numTenants, MutationRef::AddValue);

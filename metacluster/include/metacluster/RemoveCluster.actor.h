@@ -29,7 +29,7 @@
 #include "flow/flow.h"
 #include "flow/genericactors.actor.h"
 
-#include "metacluster/ConfigureCluster.h"
+#include "metacluster/ConfigureCluster.actor.h"
 #include "metacluster/MetaclusterInternal.actor.h"
 #include "metacluster/MetaclusterOperationContext.actor.h"
 #include "metacluster/MetaclusterTypes.h"
@@ -102,11 +102,8 @@ struct RemoveClusterImpl {
 
 			metadata::activeRestoreIds().erase(tr, self->clusterName);
 
-			updateClusterMetadata(tr,
-			                      self->ctx.clusterName.get(),
-			                      self->ctx.dataClusterMetadata.get(),
-			                      Optional<ClusterConnectionString>(),
-			                      updatedEntry);
+			updateClusterMetadata(
+			    tr, self->ctx.clusterName.get(), self->ctx.dataClusterMetadata.get().entry, updatedEntry);
 		}
 
 		metadata::management::clusterCapacityIndex().erase(
