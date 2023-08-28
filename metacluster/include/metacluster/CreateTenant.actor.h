@@ -135,9 +135,10 @@ struct CreateTenantImpl {
 			}
 		} else if (self->replaceExistingTenantId.present()) {
 			CODE_PROBE(true, "Tenant removed during creation", probe::decoration::rare);
-			TraceEvent("MetaclusterCreateTenantCheckExistingRemovedDuringCreation")
+			TraceEvent("MetaclusterCreateTenantRemovedDuringCreation")
 			    .detail("TenantName", self->tenantEntry.tenantName)
-			    .detail("TenantId", self->tenantEntry.id);
+			    .detail("TenantId", self->tenantEntry.id)
+			    .detail("Phase", "CheckExisting");
 			throw tenant_removed();
 		}
 
@@ -289,7 +290,7 @@ struct CreateTenantImpl {
 		    metadata::management::clusterTenantCount().getD(tr, self->tenantEntry.assignedCluster, Snapshot::False, 0));
 
 		if (clusterTenantCount > CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER) {
-			TraceEvent("MetaclusterCreateTenantClusterCapacityExceeded")
+			TraceEvent("MetaclusterCreateTenantTooManyTenants")
 			    .detail("TenantName", self->tenantEntry.tenantName)
 			    .detail("TenantId", self->tenantEntry.id);
 			CODE_PROBE(true, "Cluster tenant capacity exceeded");
@@ -343,9 +344,10 @@ struct CreateTenantImpl {
 		// If the tenant map entry is empty, then we encountered a tombstone indicating that the tenant was
 		// simultaneously removed.
 		if (!dataClusterTenant.first.present()) {
-			TraceEvent("MetaclusterCreateTenantTombstoneFound")
+			TraceEvent("MetaclusterCreateTenantRemovedDuringCreation")
 			    .detail("TenantName", self->tenantEntry.tenantName)
-			    .detail("TenantId", self->tenantEntry.id);
+			    .detail("TenantId", self->tenantEntry.id)
+			    .detail("Phase", "DataClusterCreate");
 			CODE_PROBE(true, "Tenant creation encountered tombstone");
 			throw tenant_removed();
 		}
@@ -357,9 +359,10 @@ struct CreateTenantImpl {
 		state Optional<MetaclusterTenantMapEntry> managementEntry =
 		    wait(tryGetTenantTransaction(tr, self->tenantEntry.id));
 		if (!managementEntry.present()) {
-			TraceEvent("MetaclusterCreateTenantMarkReadyRemovedDuringCreation")
+			TraceEvent("MetaclusterCreateTenantRemovedDuringCreation")
 			    .detail("TenantName", self->tenantEntry.tenantName)
-			    .detail("TenantId", self->tenantEntry.id);
+			    .detail("TenantId", self->tenantEntry.id)
+			    .detail("Phase", "MarkReady");
 			CODE_PROBE(true, "Tenant removed during creation");
 			throw tenant_removed();
 		}
@@ -400,18 +403,21 @@ struct CreateTenantImpl {
 		}
 
 		loop {
-			TraceEvent("MetaclusterCreateTenantStoringMgmtCluster")
-			    .detail("TenantName", self->tenantEntry.tenantName)
-			    .detail("TenantId", self->tenantEntry.id);
+			TraceEvent("MetaclusterCreateTenantStoringMgmtCluster").detail("TenantName", self->tenantEntry.tenantName);
 			wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 				return assignTenantAndStoreInManagementCluster(self, tr);
 			}));
+			TraceEvent("MetaclusterCreateTenantStoredMgmtCluster")
+			    .detail("TenantName", self->tenantEntry.tenantName)
+			    .detail("TenantId", self->tenantEntry.id)
+			    .detail("AssignedCluster", self->tenantEntry.assignedCluster);
 
 			self->replaceExistingTenantId = {};
 			try {
 				TraceEvent("MetaclusterCreateTenantStoringDataCluster")
 				    .detail("TenantName", self->tenantEntry.tenantName)
-				    .detail("TenantId", self->tenantEntry.id);
+				    .detail("TenantId", self->tenantEntry.id)
+				    .detail("DataCluster", self->ctx.clusterName);
 				wait(self->ctx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return storeTenantInDataCluster(self, tr); }));
 
