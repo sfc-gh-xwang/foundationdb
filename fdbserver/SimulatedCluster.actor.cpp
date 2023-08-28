@@ -1483,6 +1483,7 @@ private:
 	void setSpecificConfig(const TestConfig& testConfig);
 	void setDatacenters(const TestConfig& testConfig);
 	void setTenantMode(const TestConfig& testConfig);
+	void setBlobGranules(const TestConfig& testConfig);
 	void setEncryptionAtRestMode(const TestConfig& testConfig);
 	void setStorageEngine(const TestConfig& testConfig);
 	void setRegions(const TestConfig& testConfig);
@@ -1602,6 +1603,12 @@ void SimulationConfig::setTenantMode(const TestConfig& testConfig) {
 		tenantMode = TenantMode::OPTIONAL_TENANT;
 	}
 	set_config("tenant_mode=" + tenantMode.toString());
+}
+
+void SimulationConfig::setBlobGranules(const TestConfig& testConfig) {
+	if (testConfig.blobGranulesEnabled) {
+		set_config("blob_granules_enabled=1");
+	}
 }
 
 void SimulationConfig::setEncryptionAtRestMode(const TestConfig& testConfig) {
@@ -2118,6 +2125,7 @@ void SimulationConfig::generateNormalConfig(const TestConfig& testConfig) {
 	}
 	setSpecificConfig(testConfig);
 	setTenantMode(testConfig);
+	setBlobGranules(testConfig);
 	setEncryptionAtRestMode(testConfig);
 	setStorageEngine(testConfig);
 	setReplicationType(testConfig);
