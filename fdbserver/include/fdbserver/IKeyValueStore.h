@@ -19,6 +19,7 @@
  */
 #ifndef FDBSERVER_IKEYVALUESTORE_H
 #define FDBSERVER_IKEYVALUESTORE_H
+#include "fdbclient/GetEncryptCipherKeys.h"
 #pragma once
 
 #include "fdbclient/IKeyValueStore.actor.h"
@@ -32,7 +33,8 @@ extern IKeyValueStore* keyValueStoreRedwoodV1(std::string const& filename,
                                               UID logID,
                                               Reference<AsyncVar<struct ServerDBInfo> const> db = {},
                                               Optional<EncryptionAtRestMode> encryptionMode = {},
-                                              int64_t pageCacheBytes = 0);
+                                              int64_t pageCacheBytes = 0,
+                                              Reference<GetEncryptCipherKeysMonitor> encryptionMonitor = {});
 extern IKeyValueStore* keyValueStoreRocksDB(std::string const& path,
                                             UID logID,
                                             KeyValueStoreType storeType,
@@ -74,7 +76,8 @@ IKeyValueStore* openKVStore(KeyValueStoreType storeType,
                             bool openRemotely = false,
                             Reference<AsyncVar<struct ServerDBInfo> const> db = {},
                             Optional<EncryptionAtRestMode> encryptionMode = {},
-                            int64_t pageCacheBytes = 0);
+                            int64_t pageCacheBytes = 0,
+                            Reference<GetEncryptCipherKeysMonitor> encryptionMonitor = {});
 
 void GenerateIOLogChecksumFile(std::string filename);
 Future<Void> KVFileCheck(std::string const& filename, bool const& integrity);

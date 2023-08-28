@@ -18,6 +18,8 @@
  * limitations under the License.
  */
 
+#include <cmath>
+
 #include "fmt/format.h"
 #include "fdbserver/NetworkTest.h"
 #include "flow/Knobs.h"
@@ -59,10 +61,14 @@ struct LatencyStats {
 };
 
 NetworkTestInterface::NetworkTestInterface(NetworkAddress remote)
-  : test(Endpoint::wellKnown({ remote }, WLTOKEN_NETWORKTEST)) {}
+  : test(Endpoint::wellKnown({ remote }, WLTOKEN_NETWORKTEST)),
+    testStream(Endpoint::wellKnown({ remote }, WLTOKEN_NETWORKTEST + 1)),
+    start(Endpoint::wellKnown({ remote }, WLTOKEN_NETWORKTEST + 2)) {}
 
 NetworkTestInterface::NetworkTestInterface(INetwork* local) {
 	test.makeWellKnownEndpoint(WLTOKEN_NETWORKTEST, TaskPriority::DefaultEndpoint);
+	testStream.makeWellKnownEndpoint(WLTOKEN_NETWORKTEST + 1, TaskPriority::DefaultEndpoint);
+	start.makeWellKnownEndpoint(WLTOKEN_NETWORKTEST + 2, TaskPriority::DefaultEndpoint);
 }
 
 ACTOR Future<Void> networkTestServer() {
@@ -634,6 +640,477 @@ struct P2PNetworkTest {
 	Future<Void> run() { return run_impl(this); }
 };
 
+static Standalone<StringRef> randString(int length) {
+	Standalone<StringRef> str = makeString(length);
+	deterministicRandom()->randomBytes(mutateString(str), length);
+	return str;
+}
+
+// Fixed message sizes, ranging up to ~8MB, matching netpipe tests.
+static const std::vector<int> message_sizes = {
+	1,       2,       3,       4,       6,       8,       12,      13,      16,      19,      21,      24,      27,
+	29,      32,      35,      45,      48,      51,      61,      64,      67,      93,      96,      99,      125,
+	128,     131,     189,     192,     195,     253,     256,     259,     381,     384,     387,     509,     512,
+	515,     765,     768,     771,     1021,    1024,    1027,    1533,    1536,    1539,    2045,    2048,    2051,
+	3069,    3072,    3075,    4093,    4096,    4099,    6141,    6144,    6147,    8189,    8192,    8195,    12285,
+	12288,   12291,   16381,   16384,   16387,   24573,   24576,   24579,   32765,   32768,   32771,   49149,   49152,
+	49155,   65533,   65536,   65539,   98301,   98304,   98307,   131069,  131072,  131075,  196605,  196608,  196611,
+	262141,  262144,  262147,  393213,  393216,  393219,  524285,  524288,  524291,  786429,  786432,  786435,  1048573,
+	1048576, 1048579, 1572861, 1572864, 1572867, 2097149, 2097152, 2097155, 3145725, 3145728, 3145731, 4194301, 4194304,
+	4194307, 6291453, 6291456, 6291459, 8388605, 8388608, 8388611,
+};
+
+class PingPongTest {
+private:
+	// parameters
+	std::string listenAddress; // server only
+	std::string remoteAddress; // client only
+	bool streaming; // streaming mode (as opposed to ping-pong)
+
+	// Shoot for each trial to be approximately this long.
+	const double target_time = 0.25;
+
+	// Internal state.
+	Reference<IListener> listener;
+	Reference<IConnection> conn;
+
+public:
+	PingPongTest(std::string listenAddress, std::string remoteAddress, bool streaming)
+	  : listenAddress(listenAddress),
+	    remoteAddress(remoteAddress),
+	    streaming(streaming) {}
+
+private:
+	static Standalone<StringRef> randString(int length) {
+		Standalone<StringRef> str = makeString(length);
+		deterministicRandom()->randomBytes(mutateString(str), length);
+		return str;
+	}
+
+	ACTOR static Future<Void> send(PingPongTest* self, const void* buf, int size) {
+		state UnsentPacketQueue packets;
+		PacketWriter writer(packets.getWriteBuffer(size), /* reliable */ nullptr, Unversioned());
+		writer.serializeBytes(buf, size);
+		loop {
+			int sent = self->conn->write(packets.getUnsent(), FLOW_KNOBS->MAX_PACKET_SEND_BYTES);
+			ASSERT(sent >= 0);
+			if (sent > 0) {
+				packets.sent(sent);
+			}
+			if (packets.empty()) {
+				break;
+			}
+
+			if (sent == 0) {
+				wait(self->conn->onWritable());
+				wait(yield(TaskPriority::WriteSocket));
+			}
+		}
+		return Void();
+	}
+
+	ACTOR static Future<Void> receive(PingPongTest* self, void* buf, int size) {
+		state int offset = 0;
+		loop {
+			int received = self->conn->read((uint8_t*)buf + offset, (uint8_t*)buf + size);
+			ASSERT(received >= 0);
+			offset += received;
+			if (offset == size) {
+				break;
+			}
+
+			if (received == 0) {
+				wait(self->conn->onReadable());
+				wait(delay(0, TaskPriority::ReadSocket));
+			}
+		}
+		return Void();
+	}
+
+	// Before each run, the client syncs with the server, letting them know
+	// how many messages to expect along with their size.
+	ACTOR static Future<Void> client_handshake(PingPongTest* self, int nmessages, int message_size) {
+		// Protocol:
+		//   send (nmessages, message_size) to server
+		//   recv ("ok") from server
+		wait(send(self, &nmessages, sizeof(int)));
+		wait(send(self, &message_size, sizeof(int)));
+
+		state char* ok = new char[3];
+		wait(receive(self, ok, 2));
+		ASSERT(ok[0] == 'o' && ok[1] == 'k');
+		delete[] ok;
+
+		return Void();
+	}
+
+	// This is the server portion of the client/server handshake.
+	ACTOR static Future<Void> server_handshake(PingPongTest* self, int* nmessages, int* message_size) {
+		// Protocol:
+		//   recv (nmessages, message_size) from client
+		//   send ("ok") to client
+		wait(receive(self, nmessages, sizeof(int)));
+		wait(receive(self, message_size, sizeof(int)));
+		wait(send(self, "ok", 2));
+
+		return Void();
+	}
+
+	// The client sends/receives nmessages of size message_size.
+	// It returns the estimated one-way latency.
+	ACTOR static Future<double> client(PingPongTest* self, int nmessages, int message_size) {
+		wait(client_handshake(self, nmessages, message_size));
+
+		state Standalone<StringRef> sendBuf = randString(message_size);
+		state Standalone<StringRef> recvBuf = makeString(message_size);
+
+		state double before = timer_monotonic();
+		state int i;
+		for (i = 0; i < nmessages; i++) {
+			wait(send(self, sendBuf.begin(), sendBuf.size()));
+			wait(receive(self, (void*)recvBuf.begin(), recvBuf.size()));
+		}
+		double after = timer_monotonic();
+
+		// Estimate one-way latency as half of a round trip.
+		return (after - before) / (2 * nmessages);
+	}
+
+	// The server bounces messages back to the client.
+	ACTOR static Future<Void> server(PingPongTest* self) {
+		state int nmessages;
+		state int message_size;
+		wait(server_handshake(self, &nmessages, &message_size));
+
+		state Standalone<StringRef> sendBuf = randString(message_size);
+		state Standalone<StringRef> recvBuf = makeString(message_size);
+
+		// Test loop.
+		state int i;
+		for (i = 0; i < nmessages; i++) {
+			wait(receive(self, (void*)recvBuf.begin(), recvBuf.size()));
+			wait(send(self, sendBuf.begin(), sendBuf.size()));
+		}
+
+		return Void();
+	}
+
+	// The client sends a stream of nmessages of size message_size.
+	// It returns the estimated one-way latency.
+	ACTOR static Future<double> client_streaming(PingPongTest* self, int nmessages, int message_size) {
+		wait(client_handshake(self, nmessages, message_size));
+
+		state Standalone<StringRef> sendBuf = randString(message_size);
+
+		state int i;
+		for (i = 0; i < nmessages; i++) {
+			wait(send(self, sendBuf.begin(), sendBuf.size()));
+		}
+
+		// To avoid just measuring how long it takes to buffer,
+		// let server compute latency.
+		state double latency;
+		wait(receive(self, &latency, sizeof(double)));
+		return latency;
+	}
+
+	// The server receives a stream of messages from a client,
+	// and computes the latency to receive each message.
+	ACTOR static Future<Void> server_streaming(PingPongTest* self) {
+		state int nmessages;
+		state int message_size;
+		wait(server_handshake(self, &nmessages, &message_size));
+
+		state Standalone<StringRef> recvBuf = makeString(message_size);
+
+		// Test loop.
+		state double before = timer_monotonic();
+		state int i;
+		for (i = 0; i < nmessages; i++) {
+			wait(receive(self, (void*)recvBuf.begin(), recvBuf.size()));
+		}
+		double after = timer_monotonic();
+
+		state double latency = (after - before) / nmessages;
+		wait(send(self, &latency, sizeof(double)));
+		return Void();
+	}
+
+	ACTOR static Future<Void> do_run(PingPongTest* self) {
+		state bool sending = false;
+		state bool receiving = false;
+
+		// Setup.
+		if (!self->listenAddress.empty()) {
+			NetworkAddress addr = NetworkAddress::parse(self->listenAddress);
+			self->listener = INetworkConnections::net()->listen(addr);
+			Reference<IConnection> conn = wait(self->listener->accept());
+			self->conn = conn;
+			wait(self->conn->acceptHandshake());
+			receiving = true;
+		}
+		if (!self->remoteAddress.empty()) {
+			NetworkAddress addr = NetworkAddress::parse(self->remoteAddress);
+			Reference<IConnection> conn = wait(INetworkConnections::net()->connect(addr));
+			self->conn = conn;
+			wait(self->conn->connectHandshake());
+			sending = true;
+		}
+
+		// Sanity check. Send or receive, not both.
+		ASSERT(sending ^ receiving);
+
+		// Bootstrap one-way ping latency.
+		state double lastLatency;
+		if (sending) {
+			double latency = wait(client(self, 100, 1));
+			lastLatency = latency;
+		} else {
+			wait(server(self));
+		}
+
+		state int i;
+		for (i = 0; i < message_sizes.size(); i++) {
+			state int message_size = message_sizes[i];
+
+			// Choose the number of messages to hit target
+			// time, using one-way latency from the last
+			// round as an estimate of what latency will
+			// be for this round.
+			state int nmessages = ::ceil(self->target_time / (lastLatency * 2));
+			if (sending) {
+				::printf("%3d: %7d bytes %6d times --> ", i, message_size, nmessages);
+
+				double latency = wait(self->streaming ? client_streaming(self, nmessages, message_size)
+				                                      : client(self, nmessages, message_size));
+
+				::printf(" %8.2lf MBps @ %10.3lf usec\n", message_size / (latency * 1024 * 1024), latency * 1e6);
+
+				// easy to plot format
+				::fprintf(stderr, "%8d %12.9lf\n", message_size, latency);
+
+				lastLatency = latency;
+			} else {
+				wait(self->streaming ? server_streaming(self) : server(self););
+			}
+		}
+
+		return Void();
+	}
+
+public:
+	Future<Void> run() { return do_run(this); }
+};
+
+class FlowTransportTest {
+private:
+	// parameters
+	std::string listenAddress; // server only
+	std::string remoteAddress; // client only
+	bool streaming; // streaming mode (as opposed to ping-pong)
+
+	// Shoot for each trial to be approximately this long.
+	const double target_time = 0.25;
+
+	// Internal state.
+	NetworkTestInterface interf;
+	// Reference<IListener> listener;
+	// Reference<IConnection> conn;
+
+public:
+	FlowTransportTest(std::string listenAddress, std::string remoteAddress, bool streaming)
+	  : listenAddress(listenAddress),
+	    remoteAddress(remoteAddress),
+	    streaming(streaming) {}
+
+private:
+	// Before each run, the client syncs with the server, letting them know
+	// how many messages to expect along with their size.
+	ACTOR static Future<Void> client_handshake(FlowTransportTest* self, int nmessages, int message_size) {
+		// Protocol:
+		//   send (nmessages, message_size) to server
+		//   recv ("ok") from server
+		wait(self->interf.start.getReply(NetworkTestStartRequest(nmessages, message_size)));
+
+		return Void();
+	}
+
+	// This is the server portion of the client/server handshake.
+	ACTOR static Future<Void> server_handshake(FlowTransportTest* self, int* nmessages, int* message_size) {
+		// Protocol:
+		//   recv (nmessages, message_size) from client
+		//   send ("ok") to client
+		NetworkTestStartRequest req = waitNext(self->interf.start.getFuture());
+		*nmessages = req.nmessages;
+		*message_size = req.message_size;
+		req.reply.send(Void());
+
+		return Void();
+	}
+
+	// The client sends/receives nmessages of size message_size.
+	// It returns the estimated one-way latency.
+	ACTOR static Future<double> client(FlowTransportTest* self, int nmessages, int message_size) {
+		wait(client_handshake(self, nmessages, message_size));
+
+		state Standalone<StringRef> sendBuf = randString(message_size);
+
+		state double before = timer_monotonic();
+		state int i;
+		for (i = 0; i < nmessages; i++) {
+			NetworkTestReply reply = wait(self->interf.test.getReply(NetworkTestRequest(sendBuf, message_size)));
+		}
+		double after = timer_monotonic();
+
+		// Estimate one-way latency as half of a round trip.
+		return (after - before) / (2 * nmessages);
+	}
+
+	// The server bounces messages back to the client.
+	ACTOR static Future<Void> server(FlowTransportTest* self) {
+		state int nmessages;
+		state int message_size;
+		wait(server_handshake(self, &nmessages, &message_size));
+
+		state Standalone<StringRef> sendBuf = randString(message_size);
+
+		::printf("%7d bytes %6d times --> ", message_size, nmessages);
+		// Test loop.
+		state int i;
+		for (i = 0; i < nmessages; i++) {
+			NetworkTestRequest request = waitNext(self->interf.test.getFuture());
+			ASSERT(request.replySize == message_size);
+			request.reply.send(NetworkTestReply(Value(sendBuf)));
+		}
+
+		return Void();
+	}
+
+	// The client asks the server to send a stream of nmessages of size message_size.
+	// It returns the estimated one-way latency.
+	ACTOR static Future<double> client_streaming(FlowTransportTest* self, int nmessages, int message_size) {
+		wait(client_handshake(self, nmessages, message_size));
+
+		NetworkTestStreamingRequest request;
+		state ReplyPromiseStream<NetworkTestStreamingReply> stream = self->interf.testStream.getReplyStream(request);
+
+		// Test loop.
+		state double before = timer_monotonic();
+		state int i;
+		for (i = 0; i < nmessages; i++) {
+			NetworkTestStreamingReply reply = waitNext(stream.getFuture());
+			ASSERT(reply.index == i);
+		}
+		double after = timer_monotonic();
+
+		// average latency
+		return (after - before) / nmessages;
+	}
+
+	// The server sends a stream of messages to the client.
+	ACTOR static Future<Void> server_streaming(FlowTransportTest* self) {
+		state int nmessages;
+		state int message_size;
+		wait(server_handshake(self, &nmessages, &message_size));
+
+		state Standalone<StringRef> sendBuf = randString(message_size);
+		state NetworkTestStreamingRequest request = waitNext(self->interf.testStream.getFuture());
+
+		state int i;
+		for (i = 0; i < nmessages; i++) {
+			request.reply.send(NetworkTestStreamingReply{ i, Value(sendBuf) });
+		}
+
+		return Void();
+	}
+
+	ACTOR static Future<Void> do_run(FlowTransportTest* self) {
+		state bool sending = false;
+		state bool receiving = false;
+
+		// Setup.
+		if (!self->listenAddress.empty()) {
+			NetworkAddress addr = NetworkAddress::parse(self->listenAddress);
+			::printf("Binding %s\n", self->listenAddress.c_str());
+			try {
+				const Future<Void>& errorF = FlowTransport::transport().bind(addr, addr);
+				if (errorF.isReady())
+					errorF.get();
+			} catch (Error& e) {
+				fprintf(stderr, "Binding %s failed (%s)\n", self->listenAddress.c_str(), e.what());
+				flushAndExit(FDB_EXIT_ERROR);
+			}
+			self->interf = NetworkTestInterface(g_network);
+			receiving = true;
+		}
+		if (!self->remoteAddress.empty()) {
+			NetworkAddress addr = NetworkAddress::parse(self->remoteAddress);
+			self->interf = NetworkTestInterface(addr);
+			sending = true;
+		}
+
+		// Sanity check. Send or receive, not both.
+		ASSERT(sending ^ receiving);
+
+		// Bootstrap one-way ping latency.
+		::printf("Bootstrapping ping latency.\n");
+		state double lastLatency;
+		if (sending) {
+			double latency = wait(client(self, 100, 1));
+			lastLatency = latency;
+			::printf("Estimated latency = %10.3lf usec\n", lastLatency * 1e6);
+		} else {
+			wait(server(self));
+		}
+
+		state int i;
+		for (i = 0; i < message_sizes.size(); i++) {
+			state int message_size = message_sizes[i];
+
+			// Choose the number of messages to hit target
+			// time, using one-way latency from the last
+			// round as an estimate of what latency will
+			// be for this round.
+			if (sending) {
+				int nmessages = ::ceil(self->target_time / (lastLatency * 2));
+				::printf("%3d: %7d bytes %6d times --> ", i, message_size, nmessages);
+
+				double latency = wait(self->streaming ? client_streaming(self, nmessages, message_size)
+				                                      : client(self, nmessages, message_size));
+
+				::printf(" %8.2lf MBps @ %10.3lf usec\n", message_size / (latency * 1024 * 1024), latency * 1e6);
+
+				// easy to plot format
+				::fprintf(stderr, "%8d %12.9lf\n", message_size, latency);
+
+				lastLatency = latency;
+			} else {
+				::printf("%3d: ", i);
+				wait(self->streaming ? server_streaming(self) : server(self););
+				::printf("DONE\n");
+			}
+		}
+
+		if (receiving) {
+			// BUG: The last server response won't
+			// actually get sent unless we introduce this
+			// artifical wait for a request that's never
+			// coming. It will timeout, and hopefully
+			// connectionWriter will have done its thing
+			// and actually sent the response so the
+			// client can finish. delay() is not
+			// sufficient to get connectionWriter to
+			// flush.
+			NetworkTestStartRequest req = waitNext(self->interf.start.getFuture());
+		}
+
+		return Void();
+	}
+
+public:
+	Future<Void> run() { return do_run(this); }
+};
+
 // Peer-to-Peer network test.
 // One or more instances can be run and set to talk to each other.
 // Each instance
@@ -660,5 +1137,67 @@ TEST_CASE(":/network/p2ptest") {
 	                         params.get("waitWriteMilliseconds").orDefault("0"));
 
 	wait(p2p.run());
+	return Void();
+}
+
+// Ping-pong network test.
+//
+// Bounces one packet back and forth between client and server.
+//
+// Start server with
+//    bin/fdbserver -r unittests -f :/network/pingpongtest --test-listen <addr>
+// then client with
+//    bin/fdbserver -r unittests -f :/network/pingpongtest --test-remote <addr>
+//
+// The test will automatically vary the message size and choose an appropriate number
+// of trials. The output will contain message size, throughput, and average latency.
+TEST_CASE(":/network/pingpongtest") {
+	state PingPongTest pp(params.get("listen").orDefault(""), params.get("remote").orDefault(""), false);
+	wait(pp.run());
+	return Void();
+}
+
+// Streaming network test.
+//
+// Sends a stream of packets between client and server.
+//
+// Start server with
+//    bin/fdbserver -r unittests -f :/network/streamingtest --test-listen <addr>
+// then client with
+//    bin/fdbserver -r unittests -f :/network/streamingtest --test-remote <addr>
+//
+// The test will automatically vary the message size and choose an appropriate number
+// of trials. The output will contain message size, throughput, and average latency.
+TEST_CASE(":/network/streamingtest") {
+	state PingPongTest pp(params.get("listen").orDefault(""), params.get("remote").orDefault(""), true);
+	wait(pp.run());
+	return Void();
+}
+
+// FlowTransport ping-long network test.
+//
+// Same as the ping-pong test, but with FlowTransport involved.
+//
+// Start server with
+//    bin/fdbserver -r unittests -f :/network/flowtransport/pingpongtest --test-listen <addr>
+// then client with
+//    bin/fdbserver -r unittests -f :/network/flowtransport/pingpongtest --test-remote <addr>
+TEST_CASE(":/network/flowtransport/pingpongtest") {
+	state FlowTransportTest pp(params.get("listen").orDefault(""), params.get("remote").orDefault(""), false);
+	wait(pp.run());
+	return Void();
+}
+
+// FlowTransport streaming network test.
+//
+// Same as the streaming test, but with FlowTransport involved.
+//
+// Start server with
+//    bin/fdbserver -r unittests -f :/network/flowtransport/streamingtest --test-listen <addr>
+// then client with
+//    bin/fdbserver -r unittests -f :/network/flowtransport/streamingtest --test-remote <addr>
+TEST_CASE(":/network/flowtransport/streamingtest") {
+	state FlowTransportTest pp(params.get("listen").orDefault(""), params.get("remote").orDefault(""), true);
+	wait(pp.run());
 	return Void();
 }

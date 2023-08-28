@@ -43,9 +43,27 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	int opsPerTransaction;
 	bool provideExpectedCost;
 	bool useGrvCache;
-	bool performReads;
+	enum OpType {
+		READ,
+		SET,
+		CLEAR,
+	} opType;
 
 	double startTime;
+
+	std::string getOpTypeStr() const {
+		switch (opType) {
+		case OpType::READ:
+			return "READ";
+		case OpType::SET:
+			return "SET";
+		case OpType::CLEAR:
+			return "CLEAR";
+		default:
+			ASSERT(false);
+			return "";
+		}
+	}
 
 	void finishTransaction(Transaction const& tr, TransactionTag const& tag, bool isTagThrottled = false) {
 		if (now() > startTime + warmupTime) {
@@ -70,7 +88,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		    .detail("WarmupTime", warmupTime)
 		    .detail("OpsPerTranaction", opsPerTransaction)
 		    .detail("ProvideExpectedCost", provideExpectedCost)
-		    .detail("PerformReads", performReads);
+		    .detail("OpType", getOpTypeStr());
 	}
 
 	ACTOR static Future<Void> loggerActor(ExpectStableThroughputWorkload* self) {
@@ -119,7 +137,10 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		}
 	}
 
-	ACTOR static Future<Void> runWriteTransaction(ExpectStableThroughputWorkload* self, Database cx, int tagIndex) {
+	ACTOR static Future<Void> runWriteTransaction(ExpectStableThroughputWorkload* self,
+	                                              Database cx,
+	                                              int tagIndex,
+	                                              bool isClear) {
 		state Transaction tr(cx);
 		state TransactionTag throttlingTag = ThroughputQuotaUtil::getTransactionTag(self->tagPrefix, tagIndex);
 		loop {
@@ -136,7 +157,11 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 				// Get read version in order to enforce throttling
 				wait(success(tr.getReadVersion()));
 				for (int i = 0; i < self->opsPerTransaction; ++i) {
-					tr.set(self->getKey(i), ""_sr);
+					if (isClear) {
+						tr.clear(self->getKey(i));
+					} else {
+						tr.set(self->getKey(i), ""_sr);
+					}
 				}
 				wait(tr.commit());
 				self->finishTransaction(tr, throttlingTag);
@@ -149,10 +174,16 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	}
 
 	Future<Void> runTransaction(Database const& cx, int tagIndex) {
-		if (performReads) {
+		switch (opType) {
+		case OpType::READ:
 			return runReadTransaction(this, cx, tagIndex);
-		} else {
-			return runWriteTransaction(this, cx, tagIndex);
+		case OpType::SET:
+			return runWriteTransaction(this, cx, tagIndex, /*isClear=*/false);
+		case OpType::CLEAR:
+			return runWriteTransaction(this, cx, tagIndex, /*isClear=*/true);
+		default:
+			ASSERT(false);
+			return Void();
 		}
 	}
 
@@ -164,7 +195,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 
 	double getAttemptedTransactionRatePerActor() const {
 		double transactionCostInPages = opsPerTransaction;
-		if (!performReads) {
+		if (opType != OpType::READ) {
 			transactionCostInPages *= CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO;
 		}
 		return attemptedThroughputPagesRate / (transactionCostInPages * numActors);
@@ -191,7 +222,7 @@ public:
 		opsPerTransaction = getOption(options, "opsPerTransaction"_sr, deterministicRandom()->randomInt(5, 10));
 		provideExpectedCost = getOption(options, "provideExpectedCost"_sr, deterministicRandom()->coinflip());
 		useGrvCache = getOption(options, "useGrvCache"_sr, deterministicRandom()->coinflip());
-		performReads = getOption(options, "performReads"_sr, deterministicRandom()->coinflip());
+		opType = static_cast<OpType>(getOption(options, "opType"_sr, deterministicRandom()->randomInt(0, 3)));
 
 		// To avoid timeouts:
 #if defined(USE_SANITIZER) || defined(VALGRIND)
@@ -247,7 +278,7 @@ public:
 			// Global ratekeeper throttling is known to restrict throughput independent of quota-based throttling
 			// if certain knobs are buggified and the workload performs writes. We work around this by only enforcing a
 			// throughput lower bound if the workload is only performing reads.
-			if (performReads) {
+			if (opType == OpType::READ) {
 				tagPassed = tagPassed && (metrics.totalCost.getTotal() >=
 				                          static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance));
 			}

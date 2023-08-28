@@ -334,9 +334,9 @@ void ApiWorkload::randomClearOp(TTaskFct cont, std::optional<int> tenantId) {
 	execTransaction(
 	    [keys](auto ctx) {
 		    for (const auto& key : *keys) {
-			    ctx->makeSelfConflicting();
 			    ctx->tx().clear(key);
 		    }
+		    ctx->makeSelfConflicting();
 		    ctx->commit();
 	    },
 	    [this, keys, cont, tenantId]() {
