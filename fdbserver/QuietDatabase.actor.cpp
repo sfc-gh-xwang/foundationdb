@@ -19,6 +19,7 @@
  */
 
 #include <cinttypes>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 #include <map>
@@ -173,40 +174,26 @@ ACTOR Future<WorkerInterface> getBlobManagerWorker(Database cx, Reference<AsyncV
 	}
 }
 
-ACTOR Future<int64_t> getActiveGranuleSplits(WorkerInterface blobManagerWorker) {
+int64_t extractBlobManagerField(const UID& blobManagerId, const TraceEventFields& md, const std::string& fieldName) {
 	try {
-		TraceEventFields md = wait(
-		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
-		return md.getInt64("ActiveGranuleSplitChecks");
+		return md.getInt64(fieldName);
 	} catch (Error& e) {
-		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
-		    .detail("Reason", "Failed to extract ActiveGranuleSplitChecks from BlobManagerMetrics");
+		TraceEvent("QuietDatabaseFailure", blobManagerId)
+		    .detail("Reason", fmt::format("Failed to extract {} from BlobManagerMetrics", fieldName));
 		throw;
 	}
 }
 
-ACTOR Future<int64_t> getActiveGranuleMerges(WorkerInterface blobManagerWorker) {
-	try {
-		TraceEventFields md = wait(
-		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
-		return md.getInt64("ActiveMerges");
-	} catch (Error& e) {
-		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
-		    .detail("Reason", "Failed to extract ActiveMerges from BlobManagerMetrics");
-		throw;
-	}
+int64_t getActiveGranuleSplits(const TraceEventFields& blobManagerMetrics, const UID& blobManagerID) {
+	return extractBlobManagerField(blobManagerID, blobManagerMetrics, "ActiveGranuleSplitChecks");
 }
 
-ACTOR Future<int> getBlobWorkerRecruitments(WorkerInterface blobManagerWorker) {
-	try {
-		TraceEventFields md = wait(
-		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
-		return md.getInt("ActiveBlobWorkerRecruitments");
-	} catch (Error& e) {
-		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
-		    .detail("Reason", "Failed to extract ActiveBlobWorkerRecruitments");
-		throw;
-	}
+int64_t getActiveGranuleMerges(const TraceEventFields& blobManagerMetrics, const UID& blobManagerID) {
+	return extractBlobManagerField(blobManagerID, blobManagerMetrics, "ActiveMerges");
+}
+
+int64_t getBlobWorkerRecruitments(const TraceEventFields& blobManagerMetrics, const UID& blobManagerID) {
+	return extractBlobManagerField(blobManagerID, blobManagerMetrics, "ActiveBlobWorkerRecruitments");
 }
 
 // Computes the queue size for storage servers and tlogs using the bytesInput and bytesDurable attributes
@@ -585,7 +572,7 @@ ACTOR Future<int64_t> getChangeFeedBytes(std::vector<Future<TraceEventFields>> m
 	return anyActiveChangeFeeds;
 }
 
-// Returns true if there are were any ongoing writes currently or in the last-5-second.
+// Returns true if there are were any ongoing writes currently or in the last 5 seconds.
 ACTOR Future<bool> getActiveBlobWrites(std::vector<Future<TraceEventFields>> messages) {
 	TraceEvent("GetActiveBlobWrites").detail("Stage", "WaitingOnMetrics");
 	wait(waitForAll(messages));
@@ -1213,9 +1200,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	state Future<bool> storageServersRecruiting;
 	state Future<int64_t> versionOffset;
 	state Future<Version> dcLag;
-	state Future<int64_t> activeGranuleSplits = Never();
-	state Future<int64_t> activeGranuleMerges = Never();
-	state Future<int> activeBlobWorkerRecruitments = Never();
+	state int64_t activeGranuleSplits = INT64_MAX;
+	state int64_t activeGranuleMerges = INT64_MAX;
+	state int64_t activeBlobWorkerRecruitments = INT64_MAX;
 	state Future<int64_t> pendingChangeFeedBytes = Never();
 	state Future<bool> activeBlobWrites = Never();
 	state Version maxDcLag = 30e6;
@@ -1264,19 +1251,20 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 
 			if (config.blobGranulesEnabled) {
 				state WorkerInterface blobManagerWorker = wait(getBlobManagerWorker(cx, dbInfo));
-				activeGranuleSplits = getActiveGranuleSplits(blobManagerWorker);
-				activeGranuleMerges = getActiveGranuleMerges(blobManagerWorker);
-				activeBlobWorkerRecruitments = getBlobWorkerRecruitments(blobManagerWorker);
-
+				state Future<TraceEventFields> blobManagerMetrics =
+				    blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr));
 				state Future<std::vector<Future<TraceEventFields>>> blobWorkerMetrics =
 				    getBlobWorkerMetrics(cx, dbInfo);
-				wait(success(blobWorkerMetrics));
+				wait(success(blobManagerMetrics) && success(blobWorkerMetrics));
+
+				activeGranuleSplits = getActiveGranuleSplits(blobManagerMetrics.get(), blobManagerWorker.id());
+				activeGranuleMerges = getActiveGranuleMerges(blobManagerMetrics.get(), blobManagerWorker.id());
+				activeBlobWorkerRecruitments =
+				    getBlobWorkerRecruitments(blobManagerMetrics.get(), blobManagerWorker.id());
 
 				pendingChangeFeedBytes = getChangeFeedBytes(blobWorkerMetrics.get());
 				activeBlobWrites = getActiveBlobWrites(blobWorkerMetrics.get());
-				wait(success(activeGranuleSplits) && success(activeGranuleMerges) &&
-				     success(activeBlobWorkerRecruitments) && success(activeBlobWrites) &&
-				     success(pendingChangeFeedBytes));
+				wait(success(activeBlobWrites) && success(pendingChangeFeedBytes));
 			}
 
 			wait(success(configFuture) && success(dataInFlight) && success(tLogQueueInfo) &&
@@ -1316,9 +1304,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			    .add(evt, "DatacenterLag", dcLag.get(), maxDcLag);
 
 			if (config.blobGranulesEnabled) {
-				check.add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits.get(), 0)
-				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges.get(), 0)
-				    .add(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments.get(), 0)
+				check.add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits, 0)
+				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges, 0)
+				    .add<int64_t>(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments, 0)
 				    .add(evt, "ActiveBlobWrites", activeBlobWrites.get(), false)
 				    .add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
 			}
@@ -1395,19 +1383,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				evt.detail(key.c_str(), "versionOffset");
 			}
 			if (config.blobGranulesEnabled) {
-				if (activeGranuleSplits.isReady() && activeGranuleSplits.isError()) {
+				if (blobManagerMetrics.isReady() && blobManagerMetrics.isError()) {
 					auto key = "NotReady" + std::to_string(notReadyCount++);
-					evt.detail(key.c_str(), "activeGranuleSplits");
-				}
-
-				if (activeGranuleMerges.isReady() && activeGranuleMerges.isError()) {
-					auto key = "NotReady" + std::to_string(notReadyCount++);
-					evt.detail(key.c_str(), "activeGranuleMerges");
-				}
-
-				if (activeBlobWorkerRecruitments.isReady() && activeBlobWorkerRecruitments.isError()) {
-					auto key = "NotReady" + std::to_string(notReadyCount++);
-					evt.detail(key.c_str(), "activeBlobWorkerRecruitments");
+					evt.detail(key.c_str(), "blobManagerMetrics");
 				}
 
 				if (blobWorkerMetrics.isReady() && blobWorkerMetrics.isError()) {
