@@ -337,7 +337,8 @@ struct BlobManagerStats {
 	                          int64_t epoch,
 	                          std::unordered_map<UID, BlobWorkerInterface>* workers,
 	                          std::map<Key, bool>* mergeHardBoundaries,
-	                          std::unordered_map<Key, BlobGranuleMergeBoundary>* mergeBoundaries)
+	                          std::unordered_map<Key, BlobGranuleMergeBoundary>* mergeBoundaries,
+	                          AsyncVar<int>* recruitingStream)
 	  : cc("BlobManagerStats", id.toString()),
 	    granuleSplits("GranuleSplits", cc),
 	    granuleWriteHotSplits("GranuleWriteHotSplits", cc),
@@ -384,6 +385,8 @@ struct BlobManagerStats {
 		specialCounter(
 		    cc, "ActiveGranuleSplitChecks", [this]() -> int { return this->activeGranuleSplitChecks.getValue(); });
 		specialCounter(cc, "ActivePurges", [this]() -> int { return this->activePurges.getValue(); });
+		specialCounter(
+		    cc, "ActiveBlobWorkerRecruitments", [recruitingStream]() -> int { return recruitingStream->get(); });
 		logger = cc.traceCounters("BlobManagerMetrics", id, interval, "BlobManagerMetrics");
 	}
 };
@@ -441,8 +444,6 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	PromiseStream<Future<Void>> addActor;
 	Promise<Void> doLockCheck;
 
-	BlobManagerStats stats;
-
 	Reference<BlobConnectionProvider> bstore;
 
 	std::unordered_map<UID, BlobWorkerInterface> workersById;
@@ -473,6 +474,8 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	AsyncVar<int> recruitingStream;
 	ExclusionTracker exclusionTracker;
 
+	BlobManagerStats stats;
+
 	Promise<Void> foundBlobWorkers;
 	Promise<Void> doneRecovering;
 	Promise<Void> loadedClientRanges;
@@ -497,7 +500,6 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	  : id(id),
 	    db(db),
 	    dcId(dcId),
-	    stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, epoch, &workersById, &mergeHardBoundaries, &mergeBoundaries),
 	    knownBlobRanges(false, normalKeys.end),
 	    tenantData(BGTenantMap(dbInfo)),
 	    mergeCandidates(MergeCandidateInfo(MergeCandidateUnknown), normalKeys.end),
@@ -507,6 +509,13 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
 	    recruitingStream(0),
 	    exclusionTracker(db),
+	    stats(id,
+	          SERVER_KNOBS->WORKER_LOGGING_INTERVAL,
+	          epoch,
+	          &workersById,
+	          &mergeHardBoundaries,
+	          &mergeBoundaries,
+	          &recruitingStream),
 	    epoch(epoch),
 	    dbInfo(dbInfo) {}
 
