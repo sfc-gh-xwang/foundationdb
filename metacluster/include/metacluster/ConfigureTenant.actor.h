@@ -90,7 +90,11 @@ struct ConfigureTenantImpl {
 		else if (!desiredGroup.present()) {
 			if (!self->ctx.dataClusterMetadata.get().entry.hasCapacity() && !self->ignoreCapacityLimit) {
 				CODE_PROBE(true, "Remove tenant group failed due to capacity limits");
-				TraceEvent("MetaclusterConfigureTenantRemoveGroupNoCapacity").detail("TenantName", self->tenantName);
+				TraceEvent("MetaclusterConfigureTenantRemoveGroupNoCapacity")
+				    .detail("TenantName", self->tenantName)
+				    .detail("TenantId", tenantEntry.id)
+				    .detail("TenantGroup", tenantEntry.tenantGroup)
+				    .detail("DesiredGroup", desiredGroup);
 				throw cluster_no_capacity();
 			}
 
@@ -112,7 +116,11 @@ struct ConfigureTenantImpl {
 		if (!tenantGroupEntry.present()) {
 			if (!self->ctx.dataClusterMetadata.get().entry.hasCapacity() && !self->ignoreCapacityLimit) {
 				CODE_PROBE(true, "Set tenant group to new group failed due to capacity limits");
-				TraceEvent("MetaclusterConfigureTenantNewGroupNoCapacity").detail("TenantName", self->tenantName);
+				TraceEvent("MetaclusterConfigureTenantNewGroupNoCapacity")
+				    .detail("TenantName", self->tenantName)
+				    .detail("TenantId", tenantEntry.id)
+				    .detail("TenantGroup", tenantEntry.tenantGroup)
+				    .detail("DesiredGroup", desiredGroup);
 				throw cluster_no_capacity();
 			}
 
@@ -161,14 +169,19 @@ struct ConfigureTenantImpl {
 
 		if (!tenantEntry.present()) {
 			CODE_PROBE(true, "Configure non-existent tenant");
-			TraceEvent("MetaclusterConfigureTenantUpdateMgmtTenantNotFound").detail("TenantName", self->tenantName);
+			TraceEvent("MetaclusterConfigureTenantNotFound")
+			    .detail("TenantName", self->tenantName)
+			    .detail("Phase", "UpdateManagementCluster");
 			throw tenant_not_found();
 		}
 
 		if (tenantEntry.get().tenantState != TenantState::READY &&
 		    tenantEntry.get().tenantState != TenantState::UPDATING_CONFIGURATION) {
 			CODE_PROBE(true, "Configure tenant in invalid state");
-			TraceEvent("MetaclusterConfigureTenantInvalidState").detail("TenantName", self->tenantName);
+			TraceEvent("MetaclusterConfigureTenantInvalidState")
+			    .detail("TenantName", self->tenantName)
+			    .detail("TenantId", tenantEntry.get().id)
+			    .detail("CurrentState", tenantStateToString(tenantEntry.get().tenantState));
 			throw invalid_tenant_state();
 		}
 
@@ -275,7 +288,9 @@ struct ConfigureTenantImpl {
 
 		if (!tenantEntry.present()) {
 			CODE_PROBE(true, "Configure tenant state for non-existent tenant", probe::decoration::rare);
-			TraceEvent("MetaclusterConfigureTenantForceMarkTenantNotFound").detail("TenantName", self->tenantName);
+			TraceEvent("MetaclusterConfigureTenantNotFound")
+			    .detail("TenantName", self->tenantName)
+			    .detail("Phase", "ForceMarkReady");
 			throw tenant_not_found();
 		}
 
@@ -323,13 +338,16 @@ struct ConfigureTenantImpl {
 		    [self = self](Reference<typename DB::TransactionT> tr) { return updateManagementCluster(self, tr); }));
 
 		if (configUpdated) {
-			TraceEvent("MetaclusterConfigureTenantUpdatingDataCluster").detail("TenantName", self->tenantName);
+			TraceEvent("MetaclusterConfigureTenantUpdatingDataCluster")
+			    .detail("TenantName", self->tenantName)
+			    .detail("DataCluster", self->ctx.clusterName);
 			wait(self->ctx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return updateDataCluster(self, tr); }));
 			TraceEvent("MetaclusterConfigureTenantMarkingMgmtReady").detail("TenantName", self->tenantName);
 			wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 				return markManagementTenantAsReady(self, tr);
 			}));
+			TraceEvent("MetaclusterConfigureTenantSuccess").detail("TenantName", self->tenantName);
 		}
 
 		return Void();
