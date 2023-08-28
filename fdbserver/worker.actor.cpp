@@ -1584,7 +1584,8 @@ ACTOR Future<Void> storageServerRollbackRebooter(std::set<std::pair<UID, KeyValu
                                                  int64_t memoryLimit,
                                                  IKeyValueStore* store,
                                                  bool validateDataFiles,
-                                                 Promise<Void>* rebootKVStore) {
+                                                 Promise<Void>* rebootKVStore,
+                                                 Reference<GetEncryptCipherKeysMonitor> encryptionMonitor) {
 	state TrackRunningStorage _(id, storeType, locality, filename, runningStorages, storageCleaners);
 	loop {
 		ErrorOr<Void> e = wait(errorOr(prevStorageServer));
@@ -1653,8 +1654,13 @@ ACTOR Future<Void> storageServerRollbackRebooter(std::set<std::pair<UID, KeyValu
 		DUMPTOKEN(recruited.changeFeedVersionUpdate);
 
 		Future<ErrorOr<Void>> storeError = errorOr(store->getError());
-		prevStorageServer =
-		    storageServer(store, recruited, db, folder, Promise<Void>(), Reference<IClusterConnectionRecord>(nullptr));
+		prevStorageServer = storageServer(store,
+		                                  recruited,
+		                                  db,
+		                                  folder,
+		                                  Promise<Void>(),
+		                                  Reference<IClusterConnectionRecord>(nullptr),
+		                                  encryptionMonitor);
 		prevStorageServer = handleIOErrors(prevStorageServer, storeError, id, store->onClosed());
 	}
 }
@@ -2199,6 +2205,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				LocalLineage _;
 				getCurrentLineage()->modify(&RoleLineage::role) = ProcessClass::ClusterRole::Storage;
 
+				Reference<GetEncryptCipherKeysMonitor> encryptionMonitor = makeReference<GetEncryptCipherKeysMonitor>();
 				IKeyValueStore* kv = openKVStore(
 				    s.storeType,
 				    s.filename,
@@ -2212,7 +2219,10 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				                s.storeType != KeyValueStoreType::SSD_SHARDED_ROCKSDB &&
 				                deterministicRandom()->coinflip())
 				             : true),
-				    dbInfo);
+				    dbInfo,
+				    Optional<EncryptionAtRestMode>(),
+				    0,
+				    encryptionMonitor);
 				Future<Void> kvClosed =
 				    kv->onClosed() ||
 				    rebootKVSPromise.getFuture() /* clear the onClosed() Future in actorCollection when rebooting */;
@@ -2261,7 +2271,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 
 				Future<ErrorOr<Void>> storeError = errorOr(kv->getError());
 				Promise<Void> recovery;
-				Future<Void> f = storageServer(kv, recruited, dbInfo, folder, recovery, connRecord);
+				Future<Void> f = storageServer(kv, recruited, dbInfo, folder, recovery, connRecord, encryptionMonitor);
 				recoveries.push_back(recovery.getFuture());
 
 				f = handleIOErrors(f, storeError, s.storeID, kvClosed);
@@ -2279,7 +2289,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				                                  memoryLimit,
 				                                  kv,
 				                                  validateDataFiles,
-				                                  &rebootKVSPromise);
+				                                  &rebootKVSPromise,
+				                                  encryptionMonitor);
 				errorForwarders.add(forwardError(errors, ssRole, recruited.id(), f));
 			} else if (s.storedComponent == DiskStore::TLogData) {
 				LocalLineage _;
@@ -2789,10 +2800,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 
 					ReplyPromise<InitializeBackupReply> backupReady = req.reply;
 					backupWorkerCache.set(req.reqId, backupReady.getFuture());
-					Future<Void> backupProcess = backupWorker(recruited, req, dbInfo);
+					Future<Void> backupProcess = req.isEmergency ? emergencyBackupWorker(recruited, req, dbInfo)
+					                                             : backupWorker(recruited, req, dbInfo);
 					backupProcess = backupWorkerCache.removeOnReady(req.reqId, backupProcess);
 					errorForwarders.add(forwardError(errors, Role::BACKUP, recruited.id(), backupProcess));
-					TraceEvent("BackupInitRequest", req.reqId).detail("BackupId", recruited.id());
+					TraceEvent("BackupInitRequest", req.reqId)
+					    .detail("BackupId", recruited.id())
+					    .detail("IsEmergency", req.isEmergency);
 					InitializeBackupReply reply(recruited, req.backupEpoch);
 					backupReady.send(reply);
 				} else {
@@ -2961,6 +2975,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                   folder,
 					                   isTss ? testingStoragePrefix.toString() : fileStoragePrefix.toString(),
 					                   recruited.id());
+					Reference<GetEncryptCipherKeysMonitor> encryptionMonitor =
+					    makeReference<GetEncryptCipherKeysMonitor>();
 					IKeyValueStore* data = openKVStore(
 					    req.storeType,
 					    filename,
@@ -2975,7 +2991,9 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                deterministicRandom()->coinflip())
 					             : true),
 					    dbInfo,
-					    req.encryptMode);
+					    req.encryptMode,
+					    0,
+					    encryptionMonitor);
 
 					Future<Void> kvClosed =
 					    data->onClosed() ||
@@ -2992,7 +3010,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                               isTss ? req.tssPairIDAndVersion.get().second : 0,
 					                               storageReady,
 					                               dbInfo,
-					                               folder);
+					                               folder,
+					                               encryptionMonitor);
 					s = handleIOErrors(s, storeError, recruited.id(), kvClosed);
 					s = storageCache.removeOnReady(req.reqId, s);
 					s = storageServerRollbackRebooter(&runningStorages,
@@ -3009,7 +3028,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                                  memoryLimit,
 					                                  data,
 					                                  false,
-					                                  &rebootKVSPromise2);
+					                                  &rebootKVSPromise2,
+					                                  encryptionMonitor);
 					errorForwarders.add(forwardError(errors, ssRole, recruited.id(), s));
 				} else if (storageCache.exists(req.reqId)) {
 					forwardPromise(req.reply, storageCache.get(req.reqId));
