@@ -1,21 +1,7 @@
 /*
- * MetaclusterManagementConcurrencyWorkload.actor.cpp
+ * MetaclusterMoveConcurrencyWorkload.actor.cpp
  *
- * This source file is part of the FoundationDB open source project
- *
- * Copyright 2013-2022 Apple Inc. and the FoundationDB project authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright (c) 2023 Snowflake Computing
  */
 
 #include <cstdint>
@@ -134,47 +120,6 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		}
 
 		return tenantGroup;
-	}
-
-	static void updateTestData(MetaclusterMoveConcurrencyWorkload* self,
-	                           TenantGroupName tenantGroup,
-	                           ClusterName newCluster,
-	                           ClusterName oldCluster) {
-		// Update tenantGroups
-		auto groupData = self->tenantGroups[tenantGroup];
-		auto groupTenants = groupData.tenants;
-		groupData.cluster = newCluster;
-		self->tenantGroups[tenantGroup] = groupData;
-
-		// Update dataDbs
-		auto newData = self->dataDbs[newCluster];
-		auto oldData = self->dataDbs[oldCluster];
-
-		// Take the set difference and update the old data
-		std::set<int64_t> result;
-		std::set_difference(oldData.tenants.begin(),
-		                    oldData.tenants.end(),
-		                    groupTenants.begin(),
-		                    groupTenants.end(),
-		                    std::inserter(result, result.end()));
-		oldData.tenants = result;
-
-		// Add all tenants to the new data
-		newData.tenants.insert(groupTenants.begin(), groupTenants.end());
-
-		// Erase tenant group from old data and add to new one
-		oldData.tenantGroups.erase(tenantGroup);
-		newData.tenantGroups.insert(tenantGroup);
-
-		self->dataDbs[oldCluster] = oldData;
-		self->dataDbs[newCluster] = newData;
-
-		// Update createdTenants
-		for (const auto& tId : groupTenants) {
-			self->createdTenants[tId].tenantGroup = tenantGroup;
-			ASSERT_EQ(self->createdTenants[tId].cluster, oldCluster);
-			self->createdTenants[tId].cluster = newCluster;
-		}
 	}
 
 	// Used to gradually increase capacity so that the tenants are somewhat evenly distributed across the clusters
@@ -544,9 +489,6 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
-				if (self->tenantGroups[tenantGroup].cluster == srcCluster) {
-					updateTestData(self, tenantGroup, dstCluster, srcCluster);
-				}
 				break;
 			} catch (Error& e) {
 				TraceEvent("MetaclusterMoveConcurrencyWorkloadSwitchFailed")
@@ -677,6 +619,11 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		state Optional<metacluster::metadata::management::MovementRecord> moveRecord =
 		    wait(self->tryGetMoveRecord(tenantGroup));
 		ASSERT(!moveRecord.present());
+		// Check that the tenant group ends up where it's supposed to be
+		state Optional<metacluster::MetaclusterTenantGroupEntry> tenantGroupEntry =
+		    wait(metacluster::tryGetTenantGroup(self->managementDb, tenantGroup));
+		ASSERT(tenantGroupEntry.present());
+		ASSERT_EQ(tenantGroupEntry.get().assignedCluster, dstCluster);
 		return Void();
 	}
 

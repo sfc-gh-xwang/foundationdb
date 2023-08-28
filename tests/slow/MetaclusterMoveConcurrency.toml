@@ -16,4 +16,4 @@ runSetup = true
 
     [[test.workload]]
     testName = 'MetaclusterMoveConcurrency'
-	maxTenantGroups = 5
+    maxTenantGroups = 5

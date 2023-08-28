@@ -1542,6 +1542,8 @@ struct AbortTenantMovementImpl {
 		wait(waitForAll(tenantFutures));
 		for (auto& f : tenantFutures) {
 			if (f.get().tenantState != TenantState::READY) {
+				CODE_PROBE(true, "Simultaneous abort returned from config change before setting ready state");
+				TraceEvent("TenantMoveAbortReadyStateNotSetAfterUnlock");
 				throw tenant_move_failed();
 			}
 		}
