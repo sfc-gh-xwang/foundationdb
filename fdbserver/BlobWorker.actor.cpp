@@ -3056,9 +3056,8 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 						waitIdx--;
 						wait(yield(TaskPriority::BlobWorkerUpdateStorage));
 					}
+					holdingBlockedOldSnapshotCounter.release();
 				}
-
-				holdingBlockedOldSnapshotCounter.release();
 
 				// restart merge candidate checker
 				checkMergeCandidate = granuleCheckMergeCandidate(
