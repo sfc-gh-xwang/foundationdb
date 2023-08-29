@@ -54,6 +54,20 @@ void Counter::operator+=(Value delta) {
 	metric += delta;
 }
 
+void Counter::operator=(Value value) {
+	if (metric == value)
+		return; //< Otherwise last_event will be reset
+
+	interval_delta = value - interval_start_value;
+
+	auto t = now();
+	auto elapsed = t - last_event;
+	interval_sq_time += elapsed * elapsed;
+	last_event = t;
+
+	metric = value;
+}
+
 double Counter::getRate() const {
 	double elapsed = now() - interval_start;
 	return elapsed > 0 ? interval_delta / elapsed : 0;
