@@ -427,6 +427,9 @@ public:
 					return Void();
 				}
 			}
+			if (self->allowGetTeamBuggify && BUGGIFY_WITH_PROB(0.05)) {
+				bestOption.reset();
+			}
 			if (g_network->isSimulated() && !bestOption.present()) {
 				TraceEvent(SevDebug, "GetTeamReturnEmpty")
 				    .detail("Request", req.getDesc())
