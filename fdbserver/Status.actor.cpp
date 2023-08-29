@@ -283,6 +283,7 @@ static JsonBuilderObject getError(const TraceEventFields& errorFields) {
 
 namespace {
 
+#ifdef __linux__
 void reportCgroupCpuStat(JsonBuilderObject& object, const TraceEventFields& eventFields) {
 	JsonBuilderObject cgroupCpuStatObj;
 	std::string val;
@@ -299,6 +300,7 @@ void reportCgroupCpuStat(JsonBuilderObject& object, const TraceEventFields& even
 		object["cgroup_cpu_stat"] = cgroupCpuStatObj;
 	}
 }
+#endif // __linux__
 
 JsonBuilderObject machineStatusFetcher(WorkerEvents mMetrics,
                                        std::vector<WorkerDetails> workers,
