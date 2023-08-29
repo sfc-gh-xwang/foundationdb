@@ -379,7 +379,7 @@ void MockStorageServer::addActor(Future<Void> future) {
 	actors.add(future);
 }
 
-Future<Void> MockStorageServer::waitGetSplitPoints(const SplitRangeRequest& req) {
+Future<Void> MockStorageServer::getSplitPoints(const SplitRangeRequest& req) {
 	return Void();
 }
 

@@ -685,7 +685,7 @@ private:
 public: // Methods for IStorageMetricsService
 	void addActor(Future<Void> future) override { actors_.add(future); }
 
-	Future<Void> waitGetSplitPoints(SplitRangeRequest const& req) override {
+	Future<Void> getSplitPoints(SplitRangeRequest const& req) override {
 		dprint("Unsupported SplitRangeRequest\n");
 		req.reply.sendError(broken_promise());
 		return Void();
