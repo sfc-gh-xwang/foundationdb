@@ -629,6 +629,43 @@ AddTest testSetReadVersionFutureVersion("SetReadVersionFutureVersion", ALL, [](c
 });
 
 /* Transaction Options */
+AddTest testTransactionOptionTimeout("TransactionOptionTimeout", ALL, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	// Set smallest possible timeout, retry until a timeout occurs.
+	int64_t timeout = 1;
+	tr.setOption(FDB_TR_OPTION_TIMEOUT, timeout);
+
+	fdb::Error err;
+	while (!err) {
+		auto f1 = tr.get("foo"_br, /* snapshot */ false);
+		err = waitFuture(f1);
+		if (err) {
+			auto f2 = tr.onError(err);
+			err = waitFuture(f2);
+		}
+	}
+	ASSERT(err.code() == 1031 /* transaction_timed_out */, "Unexpected failure, expect=1031, actual={}", err.code());
+});
+
+AddTest testDBTransactionOptionTimeout("DBTransactionOptionTimeout", ALL, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	// Set smallest possible timeout, retry until a timeout occurs.
+	int64_t timeout = 1;
+	db.setOption(FDB_DB_OPTION_TRANSACTION_TIMEOUT, timeout);
+	auto tr = env.newNormalOrTenantTransaction(db);
+	fdb::Error err;
+	while (!err) {
+		auto f1 = tr.get("foo"_br, /* snapshot */ false);
+		err = waitFuture(f1);
+		if (err) {
+			auto f2 = tr.onError(err);
+			err = waitFuture(f2);
+		}
+	}
+	ASSERT(err.code() == 1031 /* transaction_timed_out */, "Unexpected failure, expect=1031, actual={}", err.code());
+});
+
 AddTest testTransactionOptionSizeLimitTooSmall("TransactionOptionSizeLimitTooSmall", ALL, [](const TestEnv& env) {
 	// Size limit must be at least 32 to be valid, so test a smaller size.
 	auto db = env.newDatabase();

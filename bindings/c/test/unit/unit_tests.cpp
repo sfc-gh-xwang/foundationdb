@@ -292,46 +292,6 @@ TEST_CASE("strinc_str") {
 	CHECK(strinc_str(std::string(terminated, 3)).compare("ac") == 0);
 }
 
-TEST_CASE("fdb_transaction_set_option timeout") {
-	auto tr = db.createTransaction();
-	// Set smallest possible timeout, retry until a timeout occurs.
-	int64_t timeout = 1;
-	tr.setOption(FDB_TR_OPTION_TIMEOUT, timeout);
-
-	fdb::Error err;
-	while (!err) {
-		auto f1 = tr.get("foo"_br, /* snapshot */ false);
-		err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			err = waitFuture(f2);
-		}
-	}
-	CHECK(err.code() == 1031); // transaction_timed_out
-}
-
-TEST_CASE("FDB_DB_OPTION_TRANSACTION_TIMEOUT") {
-	// Set smallest possible timeout, retry until a timeout occurs.
-	int64_t timeout = 1;
-	db.setOption(FDB_DB_OPTION_TRANSACTION_TIMEOUT, timeout);
-
-	auto tr = db.createTransaction();
-	fdb::Error err;
-	while (!err) {
-		auto f1 = tr.get("foo"_br, /* snapshot */ false);
-		err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			err = waitFuture(f2);
-		}
-	}
-	CHECK(err.code() == 1031); // transaction_timed_out
-
-	// Reset transaction timeout (disable timeout).
-	timeout = 0;
-	db.setOption(FDB_DB_OPTION_TRANSACTION_TIMEOUT, timeout);
-}
-
 //
 // Setting the transaction size limit as a database option causes issues when
 // outside the bounds of acceptable values. TODO: Needs investigating...
