@@ -185,7 +185,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 			ivSize = AES_256_CTR_IV_LENGTH;
 		} else if (runType == "AesGcm"_sr) {
 			algo = EncryptionAtRestAlgo::AES_GCM;
-			ivSize = AES_256_GCM_IV_LENGTH;
+			ivSize = AesGcmParams::ivSize;
 		} else {
 			throw unsupported_operation();
 		}

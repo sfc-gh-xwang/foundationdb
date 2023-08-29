@@ -339,9 +339,15 @@ struct AesWithAuthV1 {
 	}
 };
 
-struct AesGcmV1 {
+struct AesGcmParams {
 	static constexpr int authTokenSize = AES_256_GCM_TAG_LENGTH;
 	static constexpr int ivSize = AES_256_GCM_IV_LENGTH;
+
+	static std::string authAlgoName() { return "Gcm"; }
+	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_GCM_AUTH_VERSION; }
+};
+
+struct AesGcmV1 {
 	using Self = AesGcmV1;
 
 	// Serializable fields
@@ -351,9 +357,9 @@ struct AesGcmV1 {
 	// Text cipher Key Check Value
 	EncryptCipherKeyCheckValue textKCV;
 	// Initialization vector
-	uint8_t iv[ivSize];
+	uint8_t iv[AesGcmParams::ivSize];
 	// Authentication token
-	uint8_t authToken[authTokenSize];
+	uint8_t authToken[AesGcmParams::authTokenSize];
 
 	AesGcmV1() = default;
 	AesGcmV1(const BlobCipherDetails& textDetails,
@@ -362,28 +368,27 @@ struct AesGcmV1 {
 	         const int ivLen)
 	  : cipherTextDetails(textDetails),
 	    textKCV(tKCV) {
-		ASSERT_EQ(ivLen, ivSize);
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 		memcpy(&iv[0], ivBuf, ivLen);
-		memset(&authToken[0], 0, authTokenSize);
+		memset(&authToken[0], 0, AesGcmParams::authTokenSize);
 	}
 
 	bool operator==(const Self& o) const {
 		return cipherTextDetails == o.cipherTextDetails && textKCV == o.textKCV &&
-		       memcmp(&iv[0], &o.iv[0], ivSize) == 0 && memcmp(&authToken[0], &o.authToken[0], authTokenSize) == 0;
+		       memcmp(&iv[0], &o.iv[0], AesGcmParams::ivSize) == 0 &&
+		       memcmp(&authToken[0], &o.authToken[0], AesGcmParams::authTokenSize) == 0;
 	}
 
 	static uint32_t getSize() {
-		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + ivSize + authTokenSize;
+		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + AesGcmParams::ivSize +
+		       AesGcmParams::authTokenSize;
 	}
-
-	static std::string authAlgoName() { return "AesGcm"; }
-	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_GCM_AUTH_VERSION; }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, cipherTextDetails, textKCV);
-		ar.serializeBytes(iv, ivSize);
-		ar.serializeBytes(authToken, authTokenSize);
+		ar.serializeBytes(iv, AesGcmParams::ivSize);
+		ar.serializeBytes(authToken, AesGcmParams::authTokenSize);
 	}
 };
 
@@ -395,11 +400,11 @@ struct AesGcm {
 	// List of supported versions.
 	std::variant<AesGcmV1> headerVersions;
 
-	AesGcm() { ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion()); }
+	AesGcm() { ASSERT_EQ(1, AesGcmParams::getDefaultHeaderVersion()); }
 
 	AesGcm(AesGcmV1& v) : headerVersions(v) {
 		// Only V1 is supported
-		ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion());
+		ASSERT_EQ(1, AesGcmParams::getDefaultHeaderVersion());
 	}
 
 	static uint32_t getSize() {
@@ -421,7 +426,7 @@ struct AesGcm {
 		serializer(ar, version);
 		if (ar.isDeserializing && version != 1) {
 			TraceEvent(SevWarn, "BlobCipherEncryptHeaderUnsupportedAlgoHeaderVersion")
-			    .detail("HeaderType", AesGcmV1::authAlgoName())
+			    .detail("HeaderType", AesGcmParams::authAlgoName())
 			    .detail("Version", version);
 			throw not_implemented();
 		}

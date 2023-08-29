@@ -458,7 +458,7 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
 	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
 		ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
 	} else {
-		ASSERT_EQ(ivRef.size(), AES_256_GCM_IV_LENGTH);
+		ASSERT_EQ(ivRef.size(), AesGcmParams::ivSize);
 	}
 	cipherKeysCtx.ivRef = StringRef(*arena, ivRef);
 

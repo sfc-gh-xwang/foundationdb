@@ -40,7 +40,7 @@ EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
 	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
 		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
 	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
-		ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 	} else {
 		throw not_implemented();
 	}
@@ -163,7 +163,7 @@ EncryptBlobCipherAes256Gcm::EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> 
 	ASSERT_EQ(encryptCipherMode, EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM);
 	ASSERT_EQ(mode, EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
 	ASSERT_EQ(algo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM);
-	ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
+	ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 	init();
 }
 
@@ -264,7 +264,7 @@ void EncryptBlobCipherAes256Gcm::setCipherAlgoHeaderWithAuthV1(const uint8_t* ci
 	    ivRef.begin(),
 	    ivRef.size());
 	// compute tag
-	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AES_256_GCM_TAG_LENGTH, &algoHeader.authToken[0]) != 1) {
+	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AesGcmParams::authTokenSize, &algoHeader.authToken[0]) != 1) {
 		throw encrypt_ops_error();
 	}
 	headerRef->algoHeader = AesGcm(algoHeader);
@@ -597,7 +597,7 @@ StringRef DecryptBlobCipherAes256Gcm::decrypt(const uint8_t* ciphertext,
 
 	uint8_t* tag = const_cast<uint8_t*>(headerRef.getAuthToken());
 	ASSERT(tag != nullptr);
-	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AES_256_GCM_TAG_LENGTH, tag)) {
+	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AesGcmParams::authTokenSize, tag)) {
 		TraceEvent(SevWarn, "BlobCipherDecryptTagSetFailed")
 		    .detail("BaseCipherId", textCipherKey->getBaseCipherId())
 		    .detail("EncryptDomainId", textCipherKey->getDomainId());
@@ -974,7 +974,7 @@ void generateIV(EncryptionAtRestAlgo algo, Reference<BlobCipherKey> textCipherKe
 		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
 		maxValue = std::numeric_limits<uint128_t>::max();
 	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
-		ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 		maxValue = std::numeric_limits<uint96_t>::max();
 	} else {
 		throw not_implemented();
