@@ -13,9 +13,10 @@ static void bench_ptree_allocation(benchmark::State& benchState) {
 		benchmark::DoNotOptimize(p);
 		delete p;
 	}
-
 	benchState.counters["allocated"] = static_cast<double>(TrackedFastAllocated<PTreeImpl::PTree<int>>::allocated);
-	benchState.counters["released"] = static_cast<double>(TrackedFastAllocated<PTreeImpl::PTree<int>>::released);
+
+	ASSERT_EQ(TrackedFastAllocated<PTreeImpl::PTree<int>>::allocated,
+	          TrackedFastAllocated<PTreeImpl::PTree<int>>::released);
 }
 BENCHMARK(bench_ptree_allocation);
 
@@ -41,6 +42,8 @@ static void bench_vm_insert(benchmark::State& benchState) {
 		benchState.counters["size"] =
 		    static_cast<double>(VersionedData::PTreeSize::allocated - VersionedData::PTreeSize::released);
 	}
+
+	ASSERT_EQ(VersionedData::PTreeSize::allocated, VersionedData::PTreeSize::released);
 
 	benchState.SetItemsProcessed(numVersions * numKeys * benchState.iterations());
 }
