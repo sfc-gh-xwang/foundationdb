@@ -634,18 +634,6 @@ TEST_CASE("fdb_transaction_get_mapped_range_fail_on_mapper_not_tuple") {
 	ASSERT(result.err.code() == error_code_mapper_not_tuple);
 }
 
-TEST_CASE("fdb_database_get_server_protocol") {
-	// We don't really have any expectations other than "don't crash" here
-	auto protocolFuture = db.getServerProtocol(0);
-	fdbCheck(waitFuture(protocolFuture));
-	uint64_t out = protocolFuture.get();
-
-	// Passing in an expected version that's different than the cluster version
-	protocolFuture = db.getServerProtocol(0x0FDB00A200090000LL);
-	fdbCheck(waitFuture(protocolFuture));
-	fdbCheck(protocolFuture.getNothrow(out));
-}
-
 TEST_CASE("fdb_transaction_add_conflict_range") {
 	bool success = false;
 
@@ -894,39 +882,6 @@ TEST_CASE("fdb_error_predicate") {
 	CHECK(!fdb::Error(1025).retryableNotCommitted()); // transaction_cancelled
 	CHECK(!fdb::Error(1031).retryableNotCommitted()); // transaction_timed_out
 	CHECK(!fdb::Error(1040).retryableNotCommitted()); // proxy_memory_limit_exceeded
-}
-
-TEST_CASE("block_from_callback") {
-	auto tr = db.createTransaction();
-	auto f1 = tr.get("foo"_br, /*snapshot*/ true);
-	std::binary_semaphore sem(0);
-	f1.then([&sem, &tr](fdb::Future f) {
-		auto f2 = tr.get("bar"_br, /*snapshot*/ true);
-		auto err = f2.blockUntilReady();
-		if (err) {
-			CHECK(err.code() == /*blocked_from_network_thread*/ 2026);
-		}
-		sem.release();
-	});
-	sem.acquire();
-}
-
-// monitors network busyness for 2 sec (40 readings)
-TEST_CASE("monitor_network_busyness") {
-	bool containsGreaterZero = false;
-	for (int i = 0; i < 40; i++) {
-		double busyness = db.getMainThreadBusyness();
-		// make sure the busyness is between 0 and 1
-		CHECK(busyness >= 0);
-		CHECK(busyness <= 1);
-		if (busyness > 0) {
-			containsGreaterZero = true;
-		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(50));
-	}
-
-	// assert that at least one of the busyness readings was greater than 0
-	CHECK(containsGreaterZero);
 }
 
 // Commit a transaction and confirm it has not been reset

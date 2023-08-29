@@ -174,6 +174,7 @@ set(COMBIFY_CORE_SRCS
 
 set(COMBIFY_TEST_SRCS
   test/combify/AuthorizationTests.cpp
+  test/combify/DatabaseTests.cpp
   test/combify/FutureTests.cpp
   test/combify/TransactionTests.cpp
 )

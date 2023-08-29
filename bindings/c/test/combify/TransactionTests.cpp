@@ -648,24 +648,6 @@ AddTest testTransactionOptionTimeout("TransactionOptionTimeout", ALL, [](const T
 	ASSERT(err.code() == 1031 /* transaction_timed_out */, "Unexpected failure, expect=1031, actual={}", err.code());
 });
 
-AddTest testDBTransactionOptionTimeout("DBTransactionOptionTimeout", ALL, [](const TestEnv& env) {
-	auto db = env.newDatabase();
-	// Set smallest possible timeout, retry until a timeout occurs.
-	int64_t timeout = 1;
-	db.setOption(FDB_DB_OPTION_TRANSACTION_TIMEOUT, timeout);
-	auto tr = env.newNormalOrTenantTransaction(db);
-	fdb::Error err;
-	while (!err) {
-		auto f1 = tr.get("foo"_br, /* snapshot */ false);
-		err = waitFuture(f1);
-		if (err) {
-			auto f2 = tr.onError(err);
-			err = waitFuture(f2);
-		}
-	}
-	ASSERT(err.code() == 1031 /* transaction_timed_out */, "Unexpected failure, expect=1031, actual={}", err.code());
-});
-
 AddTest testTransactionOptionSizeLimitTooSmall("TransactionOptionSizeLimitTooSmall", ALL, [](const TestEnv& env) {
 	// Size limit must be at least 32 to be valid, so test a smaller size.
 	auto db = env.newDatabase();
@@ -722,30 +704,6 @@ AddTest testTransactionExceedsSizeLimit("TransactionExceedsSizeLimit", ALL, [](c
 	} catch (fdb::Error e) {
 		ASSERT(e.code() == 2101, "unmatched error code: expected=2101 (transaction_too_large), actual={}", e.code());
 	}
-});
-
-AddTest testDBTransactionExceedsSizeLimit("DBTransactionExceedsSizeLimit", asTrustedClient, [](const TestEnv& env) {
-	auto db = env.newDatabase();
-	auto sizeLimit = 32;
-	db.setOption(FDB_DB_OPTION_TRANSACTION_SIZE_LIMIT, sizeLimit);
-	auto tr = env.newTransaction(db);
-
-	try {
-		runToCompletion(
-		    tr,
-		    [](auto tr) {
-			    tr.set("foo"_br, "foundation database is amazing"_br);
-			    return tr.commit();
-		    },
-		    "SetKeyExceedSizeLimit");
-		ASSERT(false, "unexpected transaction successful return");
-	} catch (fdb::Error e) {
-		ASSERT(e.code() == 2101, "unmatched error code: expected=2101 (transaction_too_large), actual={}", e.code());
-	}
-
-	// Set size limit back to default.
-	sizeLimit = 10000000;
-	db.setOption(FDB_DB_OPTION_TRANSACTION_SIZE_LIMIT, sizeLimit);
 });
 
 /* Transaction Atomic Operations */
