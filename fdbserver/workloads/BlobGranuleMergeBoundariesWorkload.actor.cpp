@@ -84,6 +84,9 @@ struct BlobGranuleMergeBoundariesWorkload : TestWorkload {
 
 	ACTOR Future<Void> setUpBlobRange(Database cx, BlobGranuleMergeBoundariesWorkload* self) {
 		bool success = wait(cx->blobbifyRange(normalKeys, self->tenant));
+		if (!success) {
+			TraceEvent(Severity::SevError, "FailedToBlobifyMergeBoundaries").detail("Tenant", self->tenant.has_value());
+		}
 		ASSERT(success);
 		return Void();
 	}
