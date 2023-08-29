@@ -328,6 +328,8 @@ struct ConfigureTenantImpl {
 					wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 						return forceMarkManagementTenantAsReady(self, tr);
 					}));
+					TraceEvent("MetaclusterConfigureTenantForceMarkReadySuccess")
+					    .detail("TenantName", self->tenantName);
 					return Void();
 				}
 			}

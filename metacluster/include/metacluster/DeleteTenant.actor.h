@@ -210,8 +210,8 @@ struct DeleteTenantImpl {
 		}));
 
 		TraceEvent("MetaclusterDeleteTenantSuccess")
-		    .detail("TenantName", self->tenantEntry.tenantName)
-		    .detail("TenantId", self->tenantEntry.id);
+		    .detail("TenantName", self->tenantName)
+		    .detail("TenantId", self->tenantId);
 
 		return Void();
 	}

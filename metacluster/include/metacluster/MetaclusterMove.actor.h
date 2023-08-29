@@ -482,6 +482,7 @@ static Future<Void> storeReadVersion(Versionstamp* version, Reference<typename D
 
 template <class DB>
 struct StartTenantMovementImpl {
+	UID moveId = deterministicRandom()->randomUniqueID();
 	MetaclusterOperationContext<DB> srcCtx;
 	MetaclusterOperationContext<DB> dstCtx;
 
@@ -519,7 +520,7 @@ struct StartTenantMovementImpl {
 		    metadata::management::clusterTenantGroupIndex().exists(tr, Tuple::makeTuple(srcName, self->tenantGroup)));
 
 		if (!exists) {
-			TraceEvent("TenantMoveStartGroupNotOnSource")
+			TraceEvent("TenantMoveStartGroupNotOnSource", self->moveId)
 			    .detail("TenantGroup", self->tenantGroup)
 			    .detail("ClusterName", srcName);
 			self->messages.push_back(
@@ -542,7 +543,7 @@ struct StartTenantMovementImpl {
 			state DataClusterMetadata clusterMetadata = self->dstCtx.dataClusterMetadata.get();
 			state DataClusterEntry updatedEntry = clusterMetadata.entry;
 			if (!updatedEntry.hasCapacity()) {
-				TraceEvent("TenantMoveStartClusterNoCapacity").detail("DstCluster", dstName);
+				TraceEvent("TenantMoveStartClusterNoCapacity", self->moveId).detail("DstCluster", dstName);
 				self->messages.push_back(
 				    fmt::format("Tenant move start: destination cluster {} has no more capacity.\n", dstName));
 				CODE_PROBE(true, "Move failed due to lack of tenant group capacity");
@@ -558,7 +559,7 @@ struct StartTenantMovementImpl {
 			int64_t clusterTenantCount =
 			    wait(metadata::management::clusterTenantCount().getD(tr, dstName, Snapshot::False, 0));
 			if (clusterTenantCount > CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER) {
-				TraceEvent("TenantMoveStartTooManyTenants").detail("TenantGroup", self->tenantGroup);
+				TraceEvent("TenantMoveStartTooManyTenants", self->moveId).detail("TenantGroup", self->tenantGroup);
 				CODE_PROBE(true, "Cluster tenant capacity exceeded", probe::decoration::rare);
 				throw cluster_no_capacity();
 			}
@@ -585,7 +586,7 @@ struct StartTenantMovementImpl {
 		    wait(metadata::data::emergency_movement::lastTenantMoveAbort().getD(tr, Snapshot::False, Versionstamp()));
 		if (self->mgmtStartVersion <= lastAbortVersion) {
 			// If lock happened before the abort, fail with an error
-			TraceEvent("TenantMoveStartAbortLockSerialization")
+			TraceEvent("TenantMoveStartAbortLockSerialization", self->moveId)
 			    .detail("StartVersion", self->mgmtStartVersion)
 			    .detail("AbortVersion", lastAbortVersion);
 			CODE_PROBE(true, "Lock tenants after aborted", probe::decoration::rare);
@@ -739,7 +740,7 @@ struct StartTenantMovementImpl {
 		    wait(metadata::data::emergency_movement::lastTenantMoveAbort().getD(tr, Snapshot::False, Versionstamp()));
 		if (self->mgmtStartVersion <= lastAbortVersion) {
 			// If create happened before the abort, fail with an error
-			TraceEvent("TenantMoveStartAbortCreateSerialization")
+			TraceEvent("TenantMoveStartAbortCreateSerialization", self->moveId)
 			    .detail("StartVersion", self->mgmtStartVersion)
 			    .detail("AbortVersion", lastAbortVersion);
 			CODE_PROBE(true, "Create destination tenants after abort", probe::decoration::rare);
@@ -767,7 +768,7 @@ struct StartTenantMovementImpl {
 	ACTOR static Future<Void> run(StartTenantMovementImpl* self) {
 		wait(self->dstCtx.initializeContext());
 		fmt::print("Tenant move start: initializing state begin\n");
-		TraceEvent("TenantMoveStartInitStateBegin").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveStartInitStateBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 		wait(runMoveManagementTransaction(self->tenantGroup,
 		                                  self->srcCtx,
 		                                  self->dstCtx,
@@ -780,7 +781,7 @@ struct StartTenantMovementImpl {
 			                                  return initializeMove(self, tr, movementRecord);
 		                                  }));
 		fmt::print("Tenant move start: initializing state finished\n");
-		TraceEvent("TenantMoveStartInitStateFinished").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveStartInitStateFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		// Default versionstamp is invalidVersion
 		if (self->mgmtStartVersion == Versionstamp()) {
 			state Standalone<StringRef> result = wait(safeThreadFutureToFuture(self->vsFuture.get()));
@@ -789,13 +790,13 @@ struct StartTenantMovementImpl {
 		}
 		if (self->moveRecord.mState < metadata::management::MovementState::START_CREATE) {
 			fmt::print("Tenant move start: locking source tenants begin\n");
-			TraceEvent("TenantMoveStartLockSrcTenantsBegin")
+			TraceEvent("TenantMoveStartLockSrcTenantsBegin", self->moveId)
 			    .detail("TenantGroup", self->tenantGroup)
 			    .detail("DataCluster", self->srcCtx.clusterName);
 			wait(self->srcCtx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return lockSourceTenants(self, tr); }));
 			fmt::print("Tenant move start: locking source tenants finished\n");
-			TraceEvent("TenantMoveStartLockSrcTenantsFinished")
+			TraceEvent("TenantMoveStartLockSrcTenantsFinished", self->moveId)
 			    .detail("TenantGroup", self->tenantGroup)
 			    .detail("DataCluster", self->srcCtx.clusterName);
 		} else {
@@ -807,7 +808,7 @@ struct StartTenantMovementImpl {
 
 		if (self->moveRecord.mState < metadata::management::MovementState::START_CREATE) {
 			fmt::print("Tenant move start: writing move metadata begin\n");
-			TraceEvent("TenantMoveStartMetadataBegin").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveStartMetadataBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 			wait(runMoveManagementTransaction(
 			    self->tenantGroup,
 			    self->srcCtx,
@@ -819,21 +820,21 @@ struct StartTenantMovementImpl {
 				    return writeMovementMetadata(self, tr, movementRecord);
 			    }));
 			fmt::print("Tenant move start: writing move metadata finished\n");
-			TraceEvent("TenantMoveStartMetadataFinished").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveStartMetadataFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		}
 
 		fmt::print("Tenant move start: creating locked destination tenants begin\n");
-		TraceEvent("TenantMoveStartCreateDstTenantsBegin")
+		TraceEvent("TenantMoveStartCreateDstTenantsBegin", self->moveId)
 		    .detail("TenantGroup", self->tenantGroup)
 		    .detail("DataCluster", self->dstCtx.clusterName);
 		wait(self->dstCtx.runDataClusterTransaction(
 		    [self = self](Reference<ITransaction> tr) { return createLockedDestinationTenants(self, tr); }));
 		fmt::print("Tenant move start: creating locked destination tenants finished\n");
-		TraceEvent("TenantMoveStartCreateDstTenantsFinished")
-		    .detail("TenantGroup", self->tenantGroup)
-		    .detail("DataCluster", self->dstCtx.clusterName);
 
-		TraceEvent("TenantMoveStartSuccess").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveStartSuccess", self->moveId)
+		    .detail("TenantGroup", self->tenantGroup)
+		    .detail("SourceCluster", self->srcCtx.clusterName)
+		    .detail("DestinationCluster", self->dstCtx.clusterName);
 		return Void();
 	}
 
@@ -842,6 +843,7 @@ struct StartTenantMovementImpl {
 
 template <class DB>
 struct SwitchTenantMovementImpl {
+	UID moveId = deterministicRandom()->randomUniqueID();
 	MetaclusterOperationContext<DB> srcCtx;
 	MetaclusterOperationContext<DB> dstCtx;
 
@@ -882,7 +884,7 @@ struct SwitchTenantMovementImpl {
 				CODE_PROBE(true, "Switch already completed");
 				return true;
 			}
-			TraceEvent("TenantMoveSwitchGroupNotOnSourceOrDest")
+			TraceEvent("TenantMoveSwitchGroupNotOnSourceOrDest", self->moveId)
 			    .detail("TenantGroup", self->tenantGroup)
 			    .detail("SourceName", srcName)
 			    .detail("DestName", dstName);
@@ -917,7 +919,7 @@ struct SwitchTenantMovementImpl {
 	ACTOR static Future<Void> checkTenantData(SwitchTenantMovementImpl* self, TenantName tenantName) {
 		state TenantName tName = tenantName;
 		fmt::print("Tenant move switch: beginning tenant data check for tenant {}\n", tName);
-		TraceEvent("TenantMoveSwitchCheckTenantDataBegin")
+		TraceEvent("TenantMoveSwitchCheckTenantDataBegin", self->moveId)
 		    .detail("TenantGroup", self->tenantGroup)
 		    .detail("TenantName", tenantName);
 		state Reference<ITenant> srcTenant = self->srcCtx.dataClusterDb->openTenant(tName);
@@ -940,7 +942,7 @@ struct SwitchTenantMovementImpl {
 			wait(store(srcRange, readTenantData(srcTr, begin, end, limit, &resultFutureSrc)) &&
 			     store(dstRange, readTenantData(dstTr, begin, end, limit, &resultFutureDst)));
 			if (srcRange != dstRange) {
-				TraceEvent("TenantMoveSwitchDataMismatch")
+				TraceEvent("TenantMoveSwitchDataMismatch", self->moveId)
 				    .detail("TenantName", tName)
 				    .detail("Begin", begin)
 				    .detail("End", end)
@@ -954,7 +956,7 @@ struct SwitchTenantMovementImpl {
 				CODE_PROBE(true, "Switch validation found data mismatch");
 				throw invalid_tenant_move();
 			}
-			TraceEvent("TenantMoveSwitchFinishedCheckingRange")
+			TraceEvent("TenantMoveSwitchFinishedCheckingRange", self->moveId)
 			    .detail("TenantName", tName)
 			    .detail("Begin", begin.toString())
 			    .detail("End", end.toString())
@@ -967,7 +969,7 @@ struct SwitchTenantMovementImpl {
 			}
 		}
 		fmt::print("Tenant move switch: finished tenant data check for tenant {}\n", tName);
-		TraceEvent("TenantMoveSwitchCheckTenantDataFinished")
+		TraceEvent("TenantMoveSwitchCheckTenantDataFinished", self->moveId)
 		    .detail("TenantGroup", self->tenantGroup)
 		    .detail("TenantName", tenantName);
 		return Void();
@@ -1010,7 +1012,7 @@ struct SwitchTenantMovementImpl {
 
 			for (const auto& blobResult : blobFutures) {
 				if (!blobResult.get()) {
-					TraceEvent("TenantMoveSwitchBlobbifyFailed")
+					TraceEvent("TenantMoveSwitchBlobbifyFailed", self->moveId)
 					    .detail("TenantGroup", self->tenantGroup)
 					    .detail("TenantName", tName);
 					self->messages.push_back(fmt::format("Tenant move switch: blobbify failed for tenant {}\n", tName));
@@ -1026,7 +1028,7 @@ struct SwitchTenantMovementImpl {
 		wait(self->dstCtx.initializeContext());
 
 		fmt::print("Tenant move switch: initializing state begin\n");
-		TraceEvent("TenantMoveSwitchInitStateBegin").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveSwitchInitStateBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 		bool alreadySwitched = wait(
 		    runMoveManagementTransaction(self->tenantGroup,
 		                                 self->srcCtx,
@@ -1040,15 +1042,15 @@ struct SwitchTenantMovementImpl {
 			                                 return initSwitch(self, tr, movementRecord);
 		                                 }));
 		fmt::print("Tenant move switch: initializing state finished\n");
-		TraceEvent("TenantMoveSwitchInitStateFinished").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveSwitchInitStateFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		if (alreadySwitched) {
 			return Void();
 		}
 
 		if (self->moveRecord.mState < metadata::management::MovementState::SWITCH_HYBRID) {
-			TraceEvent("TenantMoveSwitchCheckAllDataBegin").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveSwitchCheckAllDataBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 			wait(checkAllTenantData(self));
-			TraceEvent("TenantMoveSwitchCheckAllDataFinished").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveSwitchCheckAllDataFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		} else {
 			CODE_PROBE(true, "Switch retried after switching hybrid");
 		}
@@ -1076,10 +1078,10 @@ struct SwitchTenantMovementImpl {
 
 		if (!alreadyApplied) {
 			fmt::print("Tenant move switch: applying hybrid ranges begin\n");
-			TraceEvent("TenantMoveSwitchApplyHybridBegin").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveSwitchApplyHybridBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 			wait(applyHybridRanges(self));
 			fmt::print("Tenant move switch: applying hybrid ranges finished\n");
-			TraceEvent("TenantMoveSwitchApplyHybridFinished").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveSwitchApplyHybridFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		}
 
 		wait(runMoveManagementTransaction(
@@ -1113,7 +1115,10 @@ struct SwitchTenantMovementImpl {
 			                                                            Aborting::False);
 		                                  }));
 		fmt::print("Tenant move switch: updating metadata finished\n");
-		TraceEvent("TenantMoveSwitchSuccess").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveSwitchSuccess", self->moveId)
+		    .detail("TenantGroup", self->tenantGroup)
+		    .detail("SourceCluster", self->srcCtx.clusterName)
+		    .detail("DestinationCluster", self->dstCtx.clusterName);
 		return Void();
 	}
 
@@ -1122,6 +1127,7 @@ struct SwitchTenantMovementImpl {
 
 template <class DB>
 struct FinishTenantMovementImpl {
+	UID moveId = deterministicRandom()->randomUniqueID();
 	MetaclusterOperationContext<DB> srcCtx;
 	MetaclusterOperationContext<DB> dstCtx;
 
@@ -1155,7 +1161,7 @@ struct FinishTenantMovementImpl {
 		    metadata::management::clusterTenantGroupIndex().exists(tr, Tuple::makeTuple(dstName, self->tenantGroup)));
 
 		if (!exists) {
-			TraceEvent("TenantMoveFinishGroupNotOnDestination")
+			TraceEvent("TenantMoveFinishGroupNotOnDestination", self->moveId)
 			    .detail("TenantGroup", self->tenantGroup)
 			    .detail("DstClusterName", dstName);
 			self->messages.push_back(
@@ -1281,7 +1287,7 @@ struct FinishTenantMovementImpl {
 	ACTOR static Future<Void> run(FinishTenantMovementImpl* self) {
 		wait(self->dstCtx.initializeContext());
 		fmt::print("Tenant move finish: initializing state begin\n");
-		TraceEvent("TenantMoveFinishInitStateBegin").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveFinishInitStateBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 		wait(runMoveManagementTransaction(self->tenantGroup,
 		                                  self->srcCtx,
 		                                  self->dstCtx,
@@ -1293,14 +1299,14 @@ struct FinishTenantMovementImpl {
 			                                  return initFinish(self, tr, movementRecord);
 		                                  }));
 		fmt::print("Tenant move finish: initializing state finished\n");
-		TraceEvent("TenantMoveFinishInitStateFinished").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveFinishInitStateFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		if (self->moveRecord.mState == metadata::management::MovementState::SWITCH_METADATA) {
-			TraceEvent("TenantMoveFinishGetTenantsBegin").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveFinishGetTenantsBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 			state std::vector<TenantMapEntry> srcEntries = wait(self->srcCtx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return getTenantEntries(self->tenantsInGroup, tr); }));
 			state std::vector<TenantMapEntry> dstEntries = wait(self->dstCtx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return getTenantEntries(self->tenantsInGroup, tr); }));
-			TraceEvent("TenantMoveFinishGetTenantsFinished").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveFinishGetTenantsFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 			loop {
 				int64_t versionDiff = wait(self->dstCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return checkDestinationVersion(self, tr); }));
@@ -1308,7 +1314,7 @@ struct FinishTenantMovementImpl {
 					break;
 				}
 				if (versionDiff <= -1e8) {
-					TraceEvent("MetaclusterMoveFinishVersionsTooFar")
+					TraceEvent("MetaclusterMoveFinishVersionsTooFar", self->moveId)
 					    .detail("DstCluster", self->dstCtx.clusterName.get())
 					    .detail("VersionDiff", versionDiff);
 					self->messages.push_back(fmt::format(
@@ -1323,7 +1329,7 @@ struct FinishTenantMovementImpl {
 				wait(delay(1.0));
 			}
 			fmt::print("Tenant move finish: check valid deletion begin\n");
-			TraceEvent("TenantMoveFinishCheckDeleteBegin").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveFinishCheckDeleteBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 			wait(runMoveManagementTransaction(self->tenantGroup,
 			                                  self->srcCtx,
 			                                  self->dstCtx,
@@ -1349,7 +1355,7 @@ struct FinishTenantMovementImpl {
 				                                                              Aborting::False);
 			                                  }));
 			fmt::print("Tenant move finish: check valid deletion finished\n");
-			TraceEvent("TenantMoveFinishCheckDeleteFinished").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveFinishCheckDeleteFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		} else {
 			CODE_PROBE(true, "Finish retried after switching metadata");
 		}
@@ -1367,12 +1373,12 @@ struct FinishTenantMovementImpl {
 		    }));
 		try {
 			fmt::print("Tenant move finish: purging source blob ranges begin\n");
-			TraceEvent("TenantMoveFinishPurgeSrcBlobBegin").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveFinishPurgeSrcBlobBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 			wait(purgeSourceBlobRanges(self));
 			fmt::print("Tenant move finish: purging source blob ranges finished\n");
-			TraceEvent("TenantMoveFinishPurgeSrcBlobFinished").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveFinishPurgeSrcBlobFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		} catch (Error& e) {
-			TraceEvent("TenantMoveFinishPurgeSourceBlobRangesError").error(e);
+			TraceEvent("TenantMoveFinishPurgeSourceBlobRangesError", self->moveId).error(e);
 			// If tenant is not found, this is a retry and the tenants have been deleted already
 			if (e.code() != error_code_tenant_not_found) {
 				throw e;
@@ -1380,20 +1386,20 @@ struct FinishTenantMovementImpl {
 			CODE_PROBE(true, "Purge blob ranges had tenant not found");
 		}
 		fmt::print("Tenant move finish: unlocking destination tenants begin\n");
-		TraceEvent("TenantMoveFinishUnlockDstBegin").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveFinishUnlockDstBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 		wait(unlockDestinationTenants(self));
 		fmt::print("Tenant move finish: unlocking destination tenants finished\n");
-		TraceEvent("TenantMoveFinishUnlockDstFinished").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveFinishUnlockDstFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		wait(self->srcCtx.runDataClusterTransaction(
 		    [self = self](Reference<ITransaction> tr) { return clearDataClusterQuota(tr, self->tenantGroup); }));
 		try {
 			fmt::print("Tenant move finish: delete source data begin\n");
-			TraceEvent("TenantMoveFinishDeleteSrcDataBegin").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveFinishDeleteSrcDataBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 			wait(deleteAllSourceData(self));
 			fmt::print("Tenant move finish: delete source data finished\n");
-			TraceEvent("TenantMoveFinishDeleteSrcDataFinished").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveFinishDeleteSrcDataFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		} catch (Error& e) {
-			TraceEvent("TenantMoveFinishDeleteSourceDataError").error(e);
+			TraceEvent("TenantMoveFinishDeleteSourceDataError", self->moveId).error(e);
 			// If tenant is not found, this is a retry and the tenants have been deleted already
 			if (e.code() != error_code_tenant_not_found) {
 				throw e;
@@ -1404,17 +1410,17 @@ struct FinishTenantMovementImpl {
 
 		try {
 			fmt::print("Tenant move finish: delete source tenants begin\n");
-			TraceEvent("TenantMoveFinishDeleteSrcTenantsBegin")
+			TraceEvent("TenantMoveFinishDeleteSrcTenantsBegin", self->moveId)
 			    .detail("TenantGroup", self->tenantGroup)
 			    .detail("DataCluster", self->srcCtx.clusterName);
 			wait(self->srcCtx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return deleteSourceTenants(self, tr); }));
 			fmt::print("Tenant move finish: delete source tenants finished\n");
-			TraceEvent("TenantMoveFinishDeleteSrcTenantsFinished")
+			TraceEvent("TenantMoveFinishDeleteSrcTenantsFinished", self->moveId)
 			    .detail("TenantGroup", self->tenantGroup)
 			    .detail("DataCluster", self->srcCtx.clusterName);
 		} catch (Error& e) {
-			TraceEvent("TenantMoveFinishDeleteSourceTenantsError").error(e);
+			TraceEvent("TenantMoveFinishDeleteSourceTenantsError", self->moveId).error(e);
 			// If tenant is not found, this is a retry and the tenants have been deleted already
 			if (e.code() != error_code_tenant_not_found) {
 				throw e;
@@ -1432,7 +1438,10 @@ struct FinishTenantMovementImpl {
 		                                                Optional<metadata::management::MovementRecord> movementRecord) {
 			                                  return finalizeMovement(self, tr, movementRecord);
 		                                  }));
-		TraceEvent("TenantMoveFinishSuccess").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveFinishSuccess", self->moveId)
+		    .detail("TenantGroup", self->tenantGroup)
+		    .detail("SourceCluster", self->srcCtx.clusterName)
+		    .detail("DestinationCluster", self->dstCtx.clusterName);
 		return Void();
 	}
 
@@ -1441,6 +1450,7 @@ struct FinishTenantMovementImpl {
 
 template <class DB>
 struct AbortTenantMovementImpl {
+	UID moveId = deterministicRandom()->randomUniqueID();
 	MetaclusterOperationContext<DB> srcCtx;
 	MetaclusterOperationContext<DB> dstCtx;
 
@@ -1484,7 +1494,7 @@ struct AbortTenantMovementImpl {
 			self->moveRecord = movementRecord.get();
 		}
 		if (self->moveRecord.mState == metadata::management::MovementState::FINISH_UNLOCK) {
-			TraceEvent("TenantMoveAbortNotAllowedAfterDestUnlocked");
+			TraceEvent("TenantMoveAbortNotAllowedAfterDestUnlocked", self->moveId);
 			self->messages.push_back(fmt::format("Tenant move abort: disallowed after tenants have been unlocked"));
 			CODE_PROBE(true, "Abort move that is finishing unlock");
 			throw invalid_tenant_move();
@@ -1547,7 +1557,7 @@ struct AbortTenantMovementImpl {
 			Tuple indexTuple = Tuple::makeTuple(self->srcCtx.clusterName.get(), tName, tId);
 			bool result = wait(metadata::management::clusterTenantIndex().exists(tr, indexTuple));
 			if (!result) {
-				TraceEvent(SevError, "TenantMoveAbortUnlockTenantClusterMismatch")
+				TraceEvent(SevError, "TenantMoveAbortUnlockTenantClusterMismatch", self->moveId)
 				    .detail("TenantName", tName)
 				    .detail("TenantID", tId)
 				    .detail("ExpectedCluster", self->srcCtx.clusterName.get());
@@ -1628,7 +1638,7 @@ struct AbortTenantMovementImpl {
 		    [self = self](Reference<ITransaction> tr) { return getTenantEntries(self->tenantsInGroup, tr); }));
 
 		fmt::print("Tenant move abort: checking valid unlock begin\n");
-		TraceEvent("TenantMoveAbortCheckUnlockBegin").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveAbortCheckUnlockBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 		wait(runMoveManagementTransaction(
 		    self->tenantGroup,
 		    self->srcCtx,
@@ -1640,11 +1650,11 @@ struct AbortTenantMovementImpl {
 			    return checkValidUnlock(self, tr, srcEntries, movementRecord);
 		    }));
 		fmt::print("Tenant move abort: checking valid unlock finished\n");
-		TraceEvent("TenantMoveAbortCheckUnlockFinished").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveAbortCheckUnlockFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		wait(unlockSourceTenants(self));
 
 		fmt::print("Tenant move abort: clearing move metadata begin\n");
-		TraceEvent("TenantMoveAbortClearMetadataBegin").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveAbortClearMetadataBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 		wait(runMoveManagementTransaction(
 		    self->tenantGroup,
 		    self->srcCtx,
@@ -1656,7 +1666,7 @@ struct AbortTenantMovementImpl {
 			    return clearMovementMetadataAbort(self, tr, movementRecord);
 		    }));
 		fmt::print("Tenant move abort: clearing move metadata finished\n");
-		TraceEvent("TenantMoveAbortClearMetadataFinished").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveAbortClearMetadataFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 
 		return Void();
 	}
@@ -1669,7 +1679,7 @@ struct AbortTenantMovementImpl {
 				Versionstamp vs(result);
 				self->abortVersion = vs;
 			} catch (Error& e) {
-				TraceEvent("TenantMoveWriteAbortVersionError").error(e).backtrace();
+				TraceEvent("TenantMoveWriteAbortVersionError", self->moveId).error(e).backtrace();
 				throw e;
 			}
 		}
@@ -1681,7 +1691,7 @@ struct AbortTenantMovementImpl {
 		// If no tenant entries exist on dst, they are already deleted or were never created
 		state std::vector<TenantMapEntry> dstEntries;
 		state bool runDelete = true;
-		TraceEvent("TenantMoveAbortGetDstEntriesBegin").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveAbortGetDstEntriesBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 		loop {
 			try {
 				wait(
@@ -1691,13 +1701,13 @@ struct AbortTenantMovementImpl {
 				break;
 			} catch (Error& e) {
 				state Error err(e);
-				TraceEvent("TenantMoveAbortStartCreateGetTenantEntriesError").error(err);
+				TraceEvent("TenantMoveAbortStartCreateGetTenantEntriesError", self->moveId).error(err);
 				// Timing issues can make it so that abort doesn't see the created tenants on dst
 				// Delete every tenant regardless if our initial "get" doesn't see any
 				// This will succeed (no-op) or result in a conflict
 				if (err.code() == error_code_tenant_not_found) {
 					CODE_PROBE(true, "Delete tenants during abort before they are created");
-					TraceEvent("TenantMoveAbortStartCreateDestinationEntriesNotFound")
+					TraceEvent("TenantMoveAbortStartCreateDestinationEntriesNotFound", self->moveId)
 					    .detail("TenantGroup", self->tenantGroup)
 					    .detail("NumTenants", self->tenantsInGroup.size());
 					try {
@@ -1714,7 +1724,7 @@ struct AbortTenantMovementImpl {
 				throw err;
 			}
 		}
-		TraceEvent("TenantMoveAbortGetDstEntriesFinished").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveAbortGetDstEntriesFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		if (runDelete) {
 			CODE_PROBE(true, "Normal tenant deletion during abort");
 			try {
@@ -1740,18 +1750,18 @@ struct AbortTenantMovementImpl {
 					                                                              Aborting::True);
 				                                  }));
 				fmt::print("Tenant move abort: deleting destination data begin\n");
-				TraceEvent("TenantMoveAbortDeleteDstBegin")
+				TraceEvent("TenantMoveAbortDeleteDstBegin", self->moveId)
 				    .detail("TenantGroup", self->tenantGroup)
 				    .detail("DataCluster", self->dstCtx.clusterName);
 				wait(deleteAllDestinationData(self));
 				wait(self->dstCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return deleteDestinationTenants(self, tr); }));
 				fmt::print("Tenant move abort: deleting destination data finished\n");
-				TraceEvent("TenantMoveAbortDeleteDstFinished")
+				TraceEvent("TenantMoveAbortDeleteDstFinished", self->moveId)
 				    .detail("TenantGroup", self->tenantGroup)
 				    .detail("DataCluster", self->dstCtx.clusterName);
 			} catch (Error& e) {
-				TraceEvent("TenantMoveAbortStartCreateDeleteError").error(e);
+				TraceEvent("TenantMoveAbortStartCreateDeleteError", self->moveId).error(e);
 				CODE_PROBE(true, "Tenant not found during tenant deletion");
 				if (e.code() != error_code_tenant_not_found) {
 					throw e;
@@ -1780,10 +1790,10 @@ struct AbortTenantMovementImpl {
 	ACTOR static Future<Void> abortSwitchHybrid(AbortTenantMovementImpl* self) {
 		// Okay to run even if step is uncompleted or partially completed
 		fmt::print("Tenant move abort: purging destination blob ranges begin\n");
-		TraceEvent("TenantMovePurgeDstBlobBegin").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMovePurgeDstBlobBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 		wait(purgeDestinationBlobRanges(self));
 		fmt::print("Tenant move abort: purging destination blob ranges finished\n");
-		TraceEvent("TenantMovePurgeDstBlobFinished").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMovePurgeDstBlobFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 
 		// Update state and unwind with other steps
 		wait(runMoveManagementTransaction(
@@ -1808,7 +1818,7 @@ struct AbortTenantMovementImpl {
 		ASSERT(optionalGroupEntry.present());
 		if (optionalGroupEntry.get().assignedCluster == self->dstCtx.clusterName.get()) {
 			fmt::print("Tenant move abort: updating metadata begin\n");
-			TraceEvent("TenantMoveAbortUpdateMetadataBegin").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveAbortUpdateMetadataBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 			wait(runMoveManagementTransaction(
 			    self->tenantGroup,
 			    self->srcCtx,
@@ -1827,7 +1837,7 @@ struct AbortTenantMovementImpl {
 				                              Aborting::True);
 			    }));
 			fmt::print("Tenant move abort: updating metadata finished\n");
-			TraceEvent("TenantMoveAbortUpdateMetadataFinished").detail("TenantGroup", self->tenantGroup);
+			TraceEvent("TenantMoveAbortUpdateMetadataFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 		} else {
 			CODE_PROBE(true, "Abort switch already pointing to source");
 		}
@@ -1854,7 +1864,7 @@ struct AbortTenantMovementImpl {
 		loop {
 			try {
 				fmt::print("Tenant move abort: initializing state begin\n");
-				TraceEvent("TenantMoveAbortInitStateBegin").detail("TenantGroup", self->tenantGroup);
+				TraceEvent("TenantMoveAbortInitStateBegin", self->moveId).detail("TenantGroup", self->tenantGroup);
 				state bool exitSignal = wait(runMoveManagementTransaction(
 				    self->tenantGroup,
 				    self->srcCtx,
@@ -1866,7 +1876,7 @@ struct AbortTenantMovementImpl {
 					    return initAbort(self, tr, movementRecord);
 				    }));
 				fmt::print("Tenant move abort: initializing state finished\n");
-				TraceEvent("TenantMoveAbortInitStateFinished").detail("TenantGroup", self->tenantGroup);
+				TraceEvent("TenantMoveAbortInitStateFinished", self->moveId).detail("TenantGroup", self->tenantGroup);
 				wait(self->srcCtx.runDataClusterTransaction(
 				    [self = self](Reference<ITransaction> tr) { return writeDataAbortVersion(self, tr); }));
 				wait(self->dstCtx.runDataClusterTransaction(
@@ -1907,7 +1917,10 @@ struct AbortTenantMovementImpl {
 			throw invalid_tenant_move();
 		}
 		wait(abortFuture);
-		TraceEvent("TenantMoveAbortSuccess").detail("TenantGroup", self->tenantGroup);
+		TraceEvent("TenantMoveAbortSuccess", self->moveId)
+		    .detail("TenantGroup", self->tenantGroup)
+		    .detail("SourceCluster", self->srcCtx.clusterName)
+		    .detail("DestinationCluster", self->dstCtx.clusterName);
 		return Void();
 	}
 
