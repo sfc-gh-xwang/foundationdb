@@ -8382,7 +8382,12 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 			for (int i = 0; i < nLocs; i++) {
 				partBegin = (i == 0) ? keys.begin : locations[i].range.begin;
 				partEnd = (i == nLocs - 1) ? keys.end : locations[i].range.end;
-				SplitRangeRequest req(trState->getTenantInfo(), KeyRangeRef(partBegin, partEnd), chunkSize);
+				SplitRangeRequest req(trState->getTenantInfo(),
+				                      trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady()
+				                          ? trState->readVersion()
+				                          : latestVersion,
+				                      KeyRangeRef(partBegin, partEnd),
+				                      chunkSize);
 				fReplies[i] = loadBalance(locations[i].locations->locations(),
 				                          &StorageServerInterface::getRangeSplitPoints,
 				                          req,

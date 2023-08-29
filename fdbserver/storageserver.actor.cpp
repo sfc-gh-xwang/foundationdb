@@ -1871,14 +1871,7 @@ public:
 		}
 	}
 
-	void getSplitPoints(SplitRangeRequest const& req) override {
-		try {
-			checkTenantEntry(version.get(), req.tenantInfo, true);
-			metrics.getSplitPoints(req, req.tenantInfo.prefix);
-		} catch (Error& e) {
-			req.reply.sendError(e);
-		}
-	}
+	Future<Void> waitGetSplitPoints(SplitRangeRequest const& req) override;
 
 	void maybeInjectTargetedRestart(Version v) {
 		// inject an SS restart at most once per test
@@ -2417,6 +2410,21 @@ void StorageServer::checkTenantEntry(Version version, TenantInfo tenantInfo, boo
 	if (tenantInfo.hasTenant()) {
 		findTenantEntry(version, tenantInfo.tenantId, lockAware);
 	}
+}
+
+ACTOR Future<Void> waitGetSplitPoints_internal(StorageServer* self, SplitRangeRequest req) {
+	try {
+		state Version minVersion = wait(waitForMinVersion(self, req.minVersion));
+		self->checkTenantEntry(minVersion, req.tenantInfo, true);
+		self->metrics.getSplitPoints(req, req.tenantInfo.prefix);
+	} catch (Error& e) {
+		req.reply.sendError(e);
+	}
+	return Void();
+}
+
+Future<Void> StorageServer::waitGetSplitPoints(SplitRangeRequest const& req) {
+	return waitGetSplitPoints_internal(this, req);
 }
 
 Optional<TenantGroupName> StorageServer::getTenantGroup(Version version, TenantInfo tenantInfo, bool lockAware) const {
