@@ -2414,6 +2414,8 @@ void StorageServer::checkTenantEntry(Version version, TenantInfo tenantInfo, boo
 
 ACTOR Future<Void> waitGetSplitPoints_internal(StorageServer* self, SplitRangeRequest req) {
 	try {
+		// The call to `waitForMinVersion()` can throw `future_version()`.
+		// It is okay for the caller to retry after a delay to give the server some time to catch up.
 		state Version minVersion = wait(waitForMinVersion(self, req.minVersion));
 		self->checkTenantEntry(minVersion, req.tenantInfo, true);
 		self->metrics.getSplitPoints(req, req.tenantInfo.prefix);

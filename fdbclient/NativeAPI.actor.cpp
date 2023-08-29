@@ -8419,8 +8419,9 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 				trState->cx->invalidateCache(trState->tenant().mapRef(&Tenant::prefix), keys);
 				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
 			} else if (e.code() == error_code_tenant_not_found && trState->hasTenant()) {
-				TraceEvent(SevWarn, "GetRangeSplitPointsSSVersionBehind").error(e);
-				throw;
+				ASSERT(false); // storage server should wait until versions catch up
+			} else if (e.code() == error_code_future_version) {
+				wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
 			} else {
 				TraceEvent(SevError, "GetRangeSplitPoints").error(e);
 				throw;
