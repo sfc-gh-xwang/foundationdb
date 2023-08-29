@@ -256,7 +256,8 @@ struct MetaclusterManagementConcurrencyWorkload : TestWorkload {
 			configParams["max_tenant_groups"] = newNumTenantGroups;
 		}
 		if (deterministicRandom()->coinflip()) {
-			configParams["auto_tenant_assignment"] = deterministicRandom()->randomInt(0, 2);
+			configParams["auto_tenant_assignment"] =
+			    (metacluster::AutoTenantAssignment)deterministicRandom()->randomInt(0, 2);
 		}
 		if (deterministicRandom()->coinflip()) {
 			connectionString = dataDb.getReference()->getConnectionRecord()->getConnectionString();

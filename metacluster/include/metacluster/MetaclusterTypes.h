@@ -65,7 +65,7 @@ enum class DataClusterState { REGISTERING, READY, REMOVING, RESTORING };
 enum class AutoTenantAssignment { ENABLED, DISABLED };
 
 struct DataClusterEntry {
-	using ConfigValue = std::variant<int>;
+	using ConfigValue = std::variant<int, AutoTenantAssignment>;
 
 	constexpr static FileIdentifier file_identifier = 929511;
 

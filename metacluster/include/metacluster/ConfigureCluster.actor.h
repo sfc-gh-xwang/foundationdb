@@ -52,14 +52,14 @@ void updateClusterMetadata(Transaction tr,
 	} else if (previousEntry.clusterState == DataClusterState::REMOVING) {
 		CODE_PROBE(true, "Attempting to configure cluster that is being removed");
 		throw cluster_removed();
-	} else if (!isRestoring && previousEntry.clusterState == DataClusterState::RESTORING &&
+	} else if (isRestoring) {
+		ASSERT(previousEntry.clusterState == DataClusterState::RESTORING &&
+		       updatedEntry.clusterState == DataClusterState::RESTORING);
+	} else if (previousEntry.clusterState == DataClusterState::RESTORING &&
 	           (updatedEntry.clusterState != DataClusterState::READY &&
 	            updatedEntry.clusterState != DataClusterState::REMOVING)) {
 		CODE_PROBE(true, "Attempting to configure cluster that is being restored");
 		throw cluster_restoring();
-	} else if (isRestoring) {
-		ASSERT(previousEntry.clusterState == DataClusterState::RESTORING &&
-		       updatedEntry.clusterState == DataClusterState::RESTORING);
 	}
 	metadata::management::dataClusters().set(tr, name, updatedEntry);
 	internal::updateClusterCapacityIndex(tr, name, previousEntry, updatedEntry);

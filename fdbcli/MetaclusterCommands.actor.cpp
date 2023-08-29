@@ -73,9 +73,9 @@ parseClusterConfiguration(std::vector<StringRef> const& tokens, int startIndex, 
 			std::transform(
 			    value.begin(), value.end(), value.begin(), [](unsigned char ch) { return std::tolower(ch); });
 			if (value == "disabled") {
-				configParams[param] = (int)metacluster::AutoTenantAssignment::DISABLED;
+				configParams[param] = metacluster::AutoTenantAssignment::DISABLED;
 			} else if (value == "enabled") {
-				configParams[param] = (int)metacluster::AutoTenantAssignment::ENABLED;
+				configParams[param] = metacluster::AutoTenantAssignment::ENABLED;
 			} else {
 				fmt::print(stderr, "ERROR: invalid configuration `{}' for `auto_tenant_assignment'.\n", value);
 				return {};
@@ -368,13 +368,13 @@ ACTOR Future<bool> metaclusterConfigureCommand(Reference<IDatabase> db, std::vec
 	}
 
 	auto config = parseClusterConfiguration(tokens, 3, tokens.size());
-			if (!config.present()) {
-				return false;
-			}
+	if (!config.present()) {
+		return false;
+	}
 
 	try {
 		wait(metacluster::configureCluster(db, tokens[2], config.get().first, config.get().second));
-		} catch (Error& e) {
+	} catch (Error& e) {
 		if (e.code() == error_code_invalid_data_cluster) {
 			fmt::print(
 			    "ERROR: The cluster associated with the specified connection string is not a valid data cluster\n");

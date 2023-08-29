@@ -893,7 +893,8 @@ struct MetaclusterManagementWorkload : TestWorkload {
 			configParams["max_tenant_groups"] = deterministicRandom()->randomInt(0, 4);
 		}
 		if (deterministicRandom()->coinflip()) {
-			configParams["auto_tenant_assignment"] = deterministicRandom()->randomInt(0, 2);
+			configParams["auto_tenant_assignment"] =
+			    (metacluster::AutoTenantAssignment)deterministicRandom()->randomInt(0, 2);
 		}
 		if (deterministicRandom()->coinflip()) {
 			// Half the time, use the current connection string. Otherwise, use the connection string from a different
@@ -931,7 +932,7 @@ struct MetaclusterManagementWorkload : TestWorkload {
 			if (configParams.count("max_tenant_groups")) {
 				int allocatedGroups = dataDb->tenantGroups.size() + dataDb->ungroupedTenants.size();
 				int64_t tenantGroupDelta = std::max<int64_t>(entry.capacity.numTenantGroups, allocatedGroups) -
-				    std::max<int64_t>(dataDb->tenantGroupCapacity, allocatedGroups);
+				                           std::max<int64_t>(dataDb->tenantGroupCapacity, allocatedGroups);
 
 				self->totalTenantGroupCapacity += tenantGroupDelta;
 				dataDb->tenantGroupCapacity = entry.capacity.numTenantGroups;

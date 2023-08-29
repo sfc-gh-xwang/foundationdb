@@ -73,10 +73,8 @@ void DataClusterEntry::configure(std::string const& parameter, ConfigValue const
 		capacity.numTenantGroups = std::get<int>(value);
 	} else if (parameter == "auto_tenant_assignment") {
 		CODE_PROBE(true, "Configure auto_tenant_assignment");
-		ASSERT(std::holds_alternative<int>(value));
-		int val = std::get<int>(value);
-		ASSERT(val == 0 || val == 1);
-		autoTenantAssignment = (AutoTenantAssignment)val;
+		ASSERT(std::holds_alternative<AutoTenantAssignment>(value));
+		autoTenantAssignment = std::get<AutoTenantAssignment>(value);
 	} else {
 		CODE_PROBE(true, "Invalid data cluster configuration parameter");
 		TraceEvent(SevWarnAlways, "UnknownClusterConfigurationParameter").detail("Parameter", parameter);
