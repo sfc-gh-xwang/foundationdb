@@ -530,8 +530,13 @@ struct RolesInfo {
 			obj.setKeyRawNumber("kvstore_total_size", storageMetrics.getValue("KvstoreSizeTotal"));
 			obj.setKeyRawNumber("kvstore_total_nodes", storageMetrics.getValue("KvstoreNodeTotal"));
 			obj.setKeyRawNumber("kvstore_inline_keys", storageMetrics.getValue("KvstoreInlineKey"));
-			obj["input_bytes"] = StatusCounter(storageMetrics.getValue("BytesInput")).getStatus();
-			obj["durable_bytes"] = StatusCounter(storageMetrics.getValue("BytesDurable")).getStatus();
+			if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+				obj["input_bytes"] = StatusCounter(storageMetrics.getValue("BytesInput")).getStatus();
+				obj["durable_bytes"] = StatusCounter(storageMetrics.getValue("BytesDurable")).getStatus();
+			} else {
+				obj["input_bytes"] = StatusCounter(storageMetrics.getValue("BytesInputOld")).getStatus();
+				obj["durable_bytes"] = StatusCounter(storageMetrics.getValue("BytesDurableOld")).getStatus();
+			}
 			obj.setKeyRawNumber("query_queue_max", storageMetrics.getValue("QueryQueueMax"));
 			obj["total_queries"] = StatusCounter(storageMetrics.getValue("QueryQueue")).getStatus();
 			obj["finished_queries"] = StatusCounter(storageMetrics.getValue("FinishedQueries")).getStatus();
