@@ -609,22 +609,20 @@ AddTest testSetReadVersionFutureVersion("SetReadVersionFutureVersion", ALL, [](c
 		tr2.setReadVersion(1UL << 62);
 		auto f = tr2.get(fdb::toBytesRef(prefix + "foo"), false);
 
-		if (auto err = waitFuture(f)) {
-			if (err.code() == 1009 /* future_version */) {
-				break;
-			}
-
-			// We only expect retriable errors if it is not future_version
-			ASSERT(err.retryable(), "Unexpected transaction failure: ", err.what());
-			// Retry upon transient errors
-			auto f2 = tr.onError(err);
-			if (auto err2 = waitFuture(f2)) {
-				ASSERT(false, "Unexpected failure: {}", err2.what());
-			}
-			continue;
+		auto err = waitFuture(f);
+		ASSERT(err, "Expect the transaction to fail");
+		if (err.code() == 1009 /* future_version */) {
+			break;
 		}
 
-		ASSERT(false, "Unexpected successful transaction");
+		// We only expect retriable errors if it is not future_version
+		ASSERT(err.retryable(), "Unexpected transaction failure: ", err.what());
+		// Retry upon transient errors
+		auto f2 = tr.onError(err);
+		if (auto err2 = waitFuture(f2)) {
+			ASSERT(false, "Unexpected failure: {}", err2.what());
+		}
+		continue;
 	}
 });
 
