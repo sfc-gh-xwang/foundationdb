@@ -884,6 +884,24 @@ TEST_CASE("fdb_error_predicate") {
 	CHECK(!fdb::Error(1040).retryableNotCommitted()); // proxy_memory_limit_exceeded
 }
 
+// monitors network busyness for 2 sec (40 readings)
+TEST_CASE("monitor_network_busyness") {
+	bool containsGreaterZero = false;
+	for (int i = 0; i < 40; i++) {
+		double busyness = db.getMainThreadBusyness();
+		// make sure the busyness is between 0 and 1
+		CHECK(busyness >= 0);
+		CHECK(busyness <= 1);
+		if (busyness > 0) {
+			containsGreaterZero = true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
+
+	// assert that at least one of the busyness readings was greater than 0
+	CHECK(containsGreaterZero);
+}
+
 // Commit a transaction and confirm it has not been reset
 TEST_CASE("commit_does_not_reset") {
 	auto tr = db.createTransaction();
