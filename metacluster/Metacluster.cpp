@@ -66,6 +66,28 @@ std::string DataClusterEntry::autoTenantAssignmentToString(AutoTenantAssignment 
 	}
 }
 
+void DataClusterEntry::configure(std::string const& parameter, ConfigValue const& value) {
+	if (parameter == "max_tenant_groups") {
+		CODE_PROBE(true, "Configure max_tenant_groups");
+		ASSERT(std::holds_alternative<int>(value));
+		capacity.numTenantGroups = std::get<int>(value);
+	} else if (parameter == "auto_tenant_assignment") {
+		CODE_PROBE(true, "Configure auto_tenant_assignment");
+		ASSERT(std::holds_alternative<AutoTenantAssignment>(value));
+		autoTenantAssignment = std::get<AutoTenantAssignment>(value);
+	} else {
+		CODE_PROBE(true, "Invalid data cluster configuration parameter");
+		TraceEvent(SevWarnAlways, "UnknownClusterConfigurationParameter").detail("Parameter", parameter);
+		throw invalid_cluster_configuration();
+	}
+}
+
+void DataClusterEntry::configure(std::map<std::string, ConfigValue> const& parameters) {
+	for (auto const& [p, v] : parameters) {
+		configure(p, v);
+	}
+}
+
 json_spirit::mObject DataClusterEntry::toJson() const {
 	json_spirit::mObject obj;
 	obj["id"] = id.toString();

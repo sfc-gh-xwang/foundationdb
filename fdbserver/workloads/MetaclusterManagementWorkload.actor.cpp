@@ -86,6 +86,7 @@ struct MetaclusterManagementWorkload : TestWorkload {
 	bool metaclusterCreated;
 
 	Reference<IDatabase> managementDb;
+	Database managementDbInternal;
 	MetaclusterVersion managementVersion;
 
 	std::map<ClusterName, Reference<DataClusterData>> dataDbs;
@@ -182,6 +183,7 @@ struct MetaclusterManagementWorkload : TestWorkload {
 			wait(loadExistingMetacluster(self));
 		}
 
+		self->managementDbInternal = cx;
 		return Void();
 	}
 
@@ -880,96 +882,80 @@ struct MetaclusterManagementWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR static Future<Optional<metacluster::DataClusterEntry>> configureImpl(
-	    MetaclusterManagementWorkload* self,
-	    ClusterName clusterName,
-	    Reference<DataClusterData> dataDb,
-	    Optional<int64_t> numTenantGroups,
-	    Optional<ClusterConnectionString> connectionString,
-	    Optional<metacluster::AutoTenantAssignment> autoTenantAssignment) {
-		state Reference<ITransaction> tr = self->managementDb->createTransaction();
-		loop {
-			try {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				Optional<metacluster::DataClusterMetadata> clusterMetadata =
-				    wait(metacluster::tryGetClusterTransaction(tr, clusterName));
-				state Optional<metacluster::DataClusterEntry> entry;
-
-				if (clusterMetadata.present()) {
-					if (numTenantGroups.present()) {
-						if (!entry.present()) {
-							entry = clusterMetadata.get().entry;
-						}
-						entry.get().capacity.numTenantGroups = numTenantGroups.get();
-					}
-					if (autoTenantAssignment.present()) {
-						if (!entry.present()) {
-							entry = clusterMetadata.get().entry;
-						}
-						entry.get().autoTenantAssignment = autoTenantAssignment.get();
-					}
-					metacluster::updateClusterMetadata(tr, clusterName, clusterMetadata.get(), connectionString, entry);
-
-					wait(buggifiedCommit(tr, BUGGIFY_WITH_PROB(0.1)));
-				}
-
-				return entry;
-			} catch (Error& e) {
-				wait(safeThreadFutureToFuture(tr->onError(e)));
-			}
-		}
-	}
-
 	ACTOR static Future<Void> configureCluster(MetaclusterManagementWorkload* self) {
 		state ClusterName clusterName = self->chooseClusterName();
 		state Reference<DataClusterData> dataDb = self->dataDbs[clusterName];
-		state Optional<metacluster::DataClusterEntry> updatedEntry;
+		state Optional<Reference<DataClusterData>> connectionStringDb;
 
-		state Optional<int64_t> newNumTenantGroups;
+		state std::map<std::string, metacluster::DataClusterEntry::ConfigValue> configParams;
 		state Optional<ClusterConnectionString> connectionString;
-		state Optional<metacluster::AutoTenantAssignment> autoTenantAssignment;
 		if (deterministicRandom()->coinflip()) {
-			newNumTenantGroups = deterministicRandom()->randomInt(0, 4);
+			configParams["max_tenant_groups"] = deterministicRandom()->randomInt(0, 4);
 		}
 		if (deterministicRandom()->coinflip()) {
-			connectionString = dataDb->db->getConnectionRecord()->getConnectionString();
+			configParams["auto_tenant_assignment"] =
+			    (metacluster::AutoTenantAssignment)deterministicRandom()->randomInt(0, 2);
 		}
 		if (deterministicRandom()->coinflip()) {
-			autoTenantAssignment = deterministicRandom()->coinflip() ? metacluster::AutoTenantAssignment::DISABLED
-			                                                         : metacluster::AutoTenantAssignment::ENABLED;
+			// Half the time, use the current connection string. Otherwise, use the connection string from a different
+			// cluster
+			if (deterministicRandom()->coinflip()) {
+				connectionStringDb = dataDb;
+				connectionString = dataDb->db->getConnectionRecord()->getConnectionString();
+			} else if (deterministicRandom()->coinflip()) {
+				connectionStringDb = self->dataDbs[self->chooseClusterName()];
+				connectionString = connectionStringDb.get()->db->getConnectionRecord()->getConnectionString();
+			} else {
+				connectionString = self->managementDbInternal->getConnectionRecord()->getConnectionString();
+			}
 		}
 
 		try {
 			loop {
-				Optional<Optional<metacluster::DataClusterEntry>> result = wait(
-				    timeout(configureImpl(
-				                self, clusterName, dataDb, newNumTenantGroups, connectionString, autoTenantAssignment),
-				            deterministicRandom()->randomInt(1, 30)));
+				Future<Void> configFuture =
+				    metacluster::configureCluster(self->managementDb, clusterName, connectionString, configParams);
+				Optional<Void> result = wait(timeout(configFuture, deterministicRandom()->randomInt(1, 30)));
 				if (result.present()) {
-					updatedEntry = result.get();
 					break;
 				}
 			}
 
+			ASSERT(!connectionString.present() ||
+			       connectionString.get() == dataDb->db->getConnectionRecord()->getConnectionString());
 			ASSERT(self->metaclusterCreated);
-			ASSERT(self->isValidVersion());
+			ASSERT(dataDb->registered);
+			ASSERT(self->isValidVersion(connectionStringDb));
 
-			if (updatedEntry.present()) {
+			metacluster::DataClusterEntry entry;
+			entry.configure(configParams);
+
+			if (configParams.count("max_tenant_groups")) {
 				int allocatedGroups = dataDb->tenantGroups.size() + dataDb->ungroupedTenants.size();
-				int64_t tenantGroupDelta =
-				    std::max<int64_t>(updatedEntry.get().capacity.numTenantGroups, allocatedGroups) -
-				    std::max<int64_t>(dataDb->tenantGroupCapacity, allocatedGroups);
+				int64_t tenantGroupDelta = std::max<int64_t>(entry.capacity.numTenantGroups, allocatedGroups) -
+				                           std::max<int64_t>(dataDb->tenantGroupCapacity, allocatedGroups);
 
 				self->totalTenantGroupCapacity += tenantGroupDelta;
-				dataDb->tenantGroupCapacity = updatedEntry.get().capacity.numTenantGroups;
-				dataDb->autoTenantAssignment = updatedEntry.get().autoTenantAssignment;
+				dataDb->tenantGroupCapacity = entry.capacity.numTenantGroups;
+			}
+			if (configParams.count("auto_tenant_assignment")) {
+				dataDb->autoTenantAssignment = entry.autoTenantAssignment;
 			}
 		} catch (Error& e) {
 			if (e.code() == error_code_unsupported_metacluster_version) {
-				ASSERT(!self->isValidVersion());
+				ASSERT(!self->isValidVersion(connectionStringDb));
 				return Void();
 			} else if (e.code() == error_code_invalid_metacluster_operation) {
-				ASSERT(!self->metaclusterCreated);
+				if (self->metaclusterCreated) {
+					ASSERT(connectionString.present());
+					ASSERT(connectionString.get() != dataDb->db->getConnectionRecord()->getConnectionString());
+				}
+				return Void();
+			} else if (e.code() == error_code_metacluster_mismatch) {
+				ASSERT(connectionString.present());
+				ASSERT(connectionString.get() != dataDb->db->getConnectionRecord()->getConnectionString());
+				return Void();
+			} else if (e.code() == error_code_cluster_removed) {
+				ASSERT(!dataDb->registered);
 				return Void();
 			}
 
