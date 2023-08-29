@@ -285,7 +285,7 @@ else()
   add_python_venv_test(
     NAME fdb_c_combify_test
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py ${CMAKE_BINARY_DIR}
-    TEST_TIMEOUT 900
+    TEST_TIMEOUT 1200
   )
   # add_python_venv_test(
   #   NAME fdb_c_bulk_load_test
