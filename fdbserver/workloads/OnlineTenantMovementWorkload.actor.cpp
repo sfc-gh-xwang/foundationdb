@@ -212,7 +212,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 			} else if (operation == 3) {
 				wait(listMovements(self));
 			}
-			wait(delay(0.1));
+			wait(yield());
 		}
 		return Void();
 	}
