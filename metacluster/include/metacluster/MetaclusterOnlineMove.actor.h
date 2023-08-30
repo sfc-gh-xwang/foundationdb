@@ -3,17 +3,20 @@
  * Copyright (c) 2023 Snowflake Computing
  */
 #pragma once
-#if defined(NO_INTELLISENSE) && !defined(FDBCLIENT_TENANT_MOVEMENT_ACTOR_G_H)
-#define FDBCLIENT_TENANT_MOVEMENT_ACTOR_G_H
-#include "fdbclient/TenantMovement.actor.g.h"
-#elif !defined(FDBCLIENT_TENANT_MOVEMENT_ACTOR_H)
-#define FDBCLIENT_TENANT_MOVEMENT_ACTOR_H
+#if defined(NO_INTELLISENSE) && !defined(METACLUSTER_ONLINE_MOVE_ACTOR_G_H)
+#define METACLUSTER_ONLINE_MOVE_ACTOR_G_H
+#include "metacluster/MetaclusterOnlineMove.actor.g.h"
+#elif !defined(METACLUSTER_ONLINE_MOVE_ACTOR_H)
+#define METACLUSTER_ONLINE_MOVE_ACTOR_H
 
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/TenantBalancer.h"
 #include "fdbclient/TenantBalancerInterface.h"
 #include "flow/actorcompiler.h" // has to be last include
 
+namespace metacluster {
+
+namespace internal {
 ACTOR
 template <typename IDatabase>
 static Future<std::pair<Optional<TenantBalancerInterface>, Future<Void>>> getTenantBalancerInterface(
@@ -35,8 +38,9 @@ static Future<std::pair<Optional<TenantBalancerInterface>, Future<Void>>> getTen
 	}
 	return std::make_pair(interf, onTbiChanged);
 }
+} // namespace internal
 
-namespace MetaclusterAPI {
+namespace online_movement {
 
 ACTOR
 template <typename IDatabase>
@@ -58,7 +62,7 @@ static Future<Void> moveTenantGroup(IDatabase managementDb, TenantGroupName tena
 			when(wait(onTbiChanged || init)) {
 				init = Never();
 				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
-				    wait(getTenantBalancerInterface(managementDb));
+				    wait(internal::getTenantBalancerInterface(managementDb));
 				tbi = res.first;
 				onTbiChanged = res.second;
 				replyFuture = tbi.present() ? tbi.get().moveTenantsToCluster.tryGetReply(req) : Never();
@@ -94,7 +98,7 @@ static Future<TenantMovementStatus> getTenantMovementStatus(IDatabase management
 			when(wait(onTbiChanged || init)) {
 				init = Never();
 				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
-				    wait(getTenantBalancerInterface(managementDb));
+				    wait(internal::getTenantBalancerInterface(managementDb));
 				tbi = res.first;
 				onTbiChanged = res.second;
 				replyFuture = tbi.present() ? tbi.get().getMovementStatus.tryGetReply(req) : Never();
@@ -130,7 +134,7 @@ static Future<std::vector<TenantMovementInfo>> listMovements(IDatabase managemen
 			when(wait(onTbiChanged || init)) {
 				init = Never();
 				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
-				    wait(getTenantBalancerInterface(managementDb));
+				    wait(internal::getTenantBalancerInterface(managementDb));
 				tbi = res.first;
 				onTbiChanged = res.second;
 				replyFuture = tbi.present() ? tbi.get().listMovements.tryGetReply(req) : Never();
@@ -164,7 +168,7 @@ static Future<Void> abortTenantMovement(IDatabase managementDb, TenantGroupName 
 			when(wait(onTbiChanged || init)) {
 				init = Never();
 				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
-				    wait(getTenantBalancerInterface(managementDb));
+				    wait(internal::getTenantBalancerInterface(managementDb));
 				tbi = res.first;
 				onTbiChanged = res.second;
 				replyFuture = tbi.present() ? tbi.get().abortMovement.tryGetReply(req) : Never();
@@ -178,7 +182,8 @@ static Future<Void> abortTenantMovement(IDatabase managementDb, TenantGroupName 
 	return Void();
 }
 
-} // namespace MetaclusterAPI
+} // namespace online_movement
+} // namespace metacluster
 
 #include "flow/unactorcompiler.h"
 #endif

@@ -10,7 +10,6 @@
 #include "fdbclient/MultiVersionTransaction.h"
 #include "fdbclient/TenantBalancerInterface.h"
 #include "fdbclient/TenantManagement.actor.h"
-#include "fdbclient/TenantMovement.actor.h"
 #include "fdbclient/ThreadSafeTransaction.h"
 #include "fdbclient/RunRYWTransaction.actor.h"
 #include "fdbrpc/simulator.h"
@@ -133,7 +132,8 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		state TenantGroupName tenantGroup = self->chooseTenantGroup();
 		state ClusterName dstClusterName = self->chooseClusterName();
 		try {
-			wait(MetaclusterAPI::moveTenantGroup(self->simMetacluster.managementDb, tenantGroup, dstClusterName));
+			wait(metacluster::online_movement::moveTenantGroup(
+			    self->simMetacluster.managementDb, tenantGroup, dstClusterName));
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
 				throw;
@@ -145,7 +145,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 	ACTOR static Future<Void> abortTenantMovement(OnlineTenantMovementWorkload* self) {
 		state TenantGroupName tenantGroup = self->chooseTenantGroup();
 		try {
-			wait(MetaclusterAPI::abortTenantMovement(self->simMetacluster.managementDb, tenantGroup));
+			wait(metacluster::online_movement::abortTenantMovement(self->simMetacluster.managementDb, tenantGroup));
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
 				throw;
@@ -158,8 +158,8 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		state TenantGroupName tenantGroup = self->chooseTenantGroup();
 		state TenantMovementStatus status;
 		try {
-			TenantMovementStatus _status =
-			    wait(MetaclusterAPI::getTenantMovementStatus(self->simMetacluster.managementDb, tenantGroup));
+			TenantMovementStatus _status = wait(
+			    metacluster::online_movement::getTenantMovementStatus(self->simMetacluster.managementDb, tenantGroup));
 			status = _status;
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
@@ -173,7 +173,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		state std::vector<TenantMovementInfo> tenantMovementInfo;
 		try {
 			std::vector<TenantMovementInfo> _info =
-			    wait(MetaclusterAPI::listMovements(self->simMetacluster.managementDb));
+			    wait(metacluster::online_movement::listMovements(self->simMetacluster.managementDb));
 			tenantMovementInfo = std::move(_info);
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
