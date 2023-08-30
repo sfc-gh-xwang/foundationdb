@@ -87,7 +87,11 @@ using BooleanOption = IntegralChoiceOption<NAME, TIER, bool, false, true>;
 struct ForceMultiVersionOption : BooleanOption<"forceMultiVersion", IterableOptionTier::Network> {
 	bool validForStaticConfig(const StaticOptions&) const { return true; }
 
-	void apply(const StaticOptions&) const { fdb::network::setOption(FDB_NET_OPTION_DISABLE_CLIENT_BYPASS); }
+	void apply(const StaticOptions&) const {
+		if (value()) {
+			fdb::network::setOption(FDB_NET_OPTION_DISABLE_CLIENT_BYPASS);
+		}
+	}
 };
 
 struct TrustedClientOption : BooleanOption<"trustedClient", IterableOptionTier::Network> {
@@ -127,7 +131,11 @@ struct TrustedClientOption : BooleanOption<"trustedClient", IterableOptionTier::
 struct UseGrvCacheOption : BooleanOption<"grvCache", IterableOptionTier::Transaction> {
 	bool validForStaticConfig(const StaticOptions&) const { return true; }
 
-	void apply(fdb::Transaction tr) const { tr.setOption(FDB_TR_OPTION_USE_GRV_CACHE); }
+	void apply(fdb::Transaction tr) const {
+		if (value()) {
+			tr.setOption(FDB_TR_OPTION_USE_GRV_CACHE);
+		}
+	}
 };
 
 } // namespace combify
