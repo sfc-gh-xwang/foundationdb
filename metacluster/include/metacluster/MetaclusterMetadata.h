@@ -108,8 +108,6 @@ struct MovementRecord {
 	Version version = invalidVersion;
 	bool aborting = false;
 
-	MovementRecord() : runId(UID()), srcCluster(ClusterName()), dstCluster(ClusterName()) {}
-
 	bool operator==(const MovementRecord& mr) const {
 		return runId == mr.runId && srcCluster == mr.srcCluster && dstCluster == mr.dstCluster && mState == mr.mState &&
 		       version == mr.version && aborting == mr.aborting;

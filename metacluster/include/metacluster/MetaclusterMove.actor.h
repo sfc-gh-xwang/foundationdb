@@ -487,7 +487,7 @@ struct StartTenantMovementImpl {
 
 	// Initialization parameters
 	TenantGroupName tenantGroup;
-	metadata::management::MovementRecord moveRecord = metadata::management::MovementRecord();
+	metadata::management::MovementRecord moveRecord;
 	std::vector<std::string>& messages;
 
 	// Parameters filled in during the run
@@ -852,7 +852,7 @@ struct SwitchTenantMovementImpl {
 	std::vector<std::string>& messages;
 
 	// Parameters filled in during the run
-	metadata::management::MovementRecord moveRecord = metadata::management::MovementRecord();
+	metadata::management::MovementRecord moveRecord;
 	std::vector<std::pair<TenantName, int64_t>> tenantsInGroup;
 
 	SwitchTenantMovementImpl(Reference<DB> managementDb,
@@ -1137,7 +1137,7 @@ struct FinishTenantMovementImpl {
 
 	// Initialization parameters
 	TenantGroupName tenantGroup;
-	metadata::management::MovementRecord moveRecord = metadata::management::MovementRecord();
+	metadata::management::MovementRecord moveRecord;
 	std::vector<std::string>& messages;
 
 	// Parameters filled in during the run
@@ -1469,7 +1469,7 @@ struct AbortTenantMovementImpl {
 
 	// Initialization parameters
 	TenantGroupName tenantGroup;
-	metadata::management::MovementRecord moveRecord = metadata::management::MovementRecord();
+	metadata::management::MovementRecord moveRecord;
 	std::vector<std::string>& messages;
 
 	// Parameters filled in during the run
