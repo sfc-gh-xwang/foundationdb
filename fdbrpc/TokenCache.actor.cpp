@@ -512,8 +512,7 @@ TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
 	auto privateKey = mkcert::makeEcP256();
 	auto publicKey = privateKey.toPublic();
 	auto pubKeyName = "somePublicKey"_sr;
-	auto publicKeyClearGuard = ScopeExit(
-		[pubKeyName]() { FlowTransport::transport().removePublicKey(pubKeyName); });
+	auto publicKeyClearGuard = ScopeExit([pubKeyName]() { FlowTransport::transport().removePublicKey(pubKeyName); });
 	FlowTransport::transport().addPublicKey(pubKeyName, publicKey);
 	auto fakeSignature = Standalone<StringRef>();
 	auto modifyHeader = [](Arena& arena, StringRef signInput, auto&& modifier) {
@@ -554,7 +553,7 @@ TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
 		fmt::print("Testing alg=none case\n");
 		auto arena = Arena();
 		authz::jwt::TokenRef tokenSpec =
-			authz::jwt::makeRandomTokenSpec(arena, *deterministicRandom(), authz::Algorithm::ES256);
+		    authz::jwt::makeRandomTokenSpec(arena, *deterministicRandom(), authz::Algorithm::ES256);
 		tokenSpec.keyId = pubKeyName;
 		auto signInput = authz::jwt::makeSignInput(arena, tokenSpec);
 		auto modifiedSignInput = modifyHeader(arena, signInput, [](rapidjson::Document& d) {
@@ -571,8 +570,8 @@ TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
 		// use this part for different, "spoofed signature" test case
 		fakeSignature = Standalone<StringRef>(sigPart);
 		ASSERT(!TokenCache::instance().validate(
-					tokenSpec.tenants.get()[0],
-					authz::jwt::signToken(arena, modifiedSignInput, authz::Algorithm::ES256, privateKey)));
+		    tokenSpec.tenants.get()[0],
+		    authz::jwt::signToken(arena, modifiedSignInput, authz::Algorithm::ES256, privateKey)));
 	}
 	{
 		// missing signature
@@ -608,8 +607,8 @@ TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
 			algItr->value.SetString("RS256");
 		});
 		ASSERT(!TokenCache::instance().validate(
-					tokenSpec.tenants.get()[0],
-					authz::jwt::signToken(arena, rsaSignInput, authz::Algorithm::RS256, rsaPrivateKey)));
+		    tokenSpec.tenants.get()[0],
+		    authz::jwt::signToken(arena, rsaSignInput, authz::Algorithm::RS256, rsaPrivateKey)));
 	}
 	{
 		// algorithm confusion: HS256
@@ -626,8 +625,7 @@ TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
 			algItr->value.SetString("HS256");
 		});
 		ASSERT(!TokenCache::instance().validate(
-					tokenSpec.tenants.get()[0],
-					hs256SignInput.withSuffix("."_sr, arena).withSuffix(fakeSignature, arena)));
+		    tokenSpec.tenants.get()[0], hs256SignInput.withSuffix("."_sr, arena).withSuffix(fakeSignature, arena)));
 	}
 	return Void();
 }
