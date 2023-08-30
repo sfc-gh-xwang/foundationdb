@@ -1288,7 +1288,7 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 
 			int ratekeeperCount = getSimulatedRoleCount("Ratekeeper", 1);
 			int ddCount = getSimulatedRoleCount("DataDistributor", 1);
-			__attribute__((unused)) int consistencyScanCount = getSimulatedRoleCount("ConsistencyScan", 1);
+			int consistencyScanCount = getSimulatedRoleCount("ConsistencyScan", 1);
 			int expectedBlobManagerCount = config.blobGranulesEnabled ? 1 : 0;
 			int blobManagerCount = getSimulatedRoleCount("BlobManager", expectedBlobManagerCount);
 			// FIXME: add blob migrator once it's always on
