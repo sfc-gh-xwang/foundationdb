@@ -626,6 +626,60 @@ AddTest testSetReadVersionFutureVersion("SetReadVersionFutureVersion", ALL, [](c
 	}
 });
 
+AddTest testTransactionAddConflictRange("TransactionAddConflictChange", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-add-conflict-change-");
+	auto db = env.newDatabase();
+	bool success = false;
+	bool retry = true;
+
+	while (retry) {
+		auto tr = env.newNormalOrTenantTransaction(db);
+		runToCompletion(
+		    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
+
+		auto tr2 = env.newNormalOrTenantTransaction(db);
+		runToCompletion(
+		    tr2,
+		    [&prefix](auto tr2) {
+			    tr2.addConflictRange(fdb::toBytesRef(prefix + "a"),
+			                         fdb::toBytesRef(fdb::strinc(prefix + "a")),
+			                         FDB_CONFLICT_RANGE_TYPE_WRITE);
+			    return tr2.commit();
+		    },
+		    "AddConflictRange1");
+
+		while (1) {
+			tr.addConflictRange(fdb::toBytesRef(prefix + "a"),
+			                    fdb::toBytesRef(fdb::strinc(prefix + "a")),
+			                    FDB_CONFLICT_RANGE_TYPE_READ);
+			tr.addConflictRange(fdb::toBytesRef(prefix + "a"),
+			                    fdb::toBytesRef(fdb::strinc(prefix + "a")),
+			                    FDB_CONFLICT_RANGE_TYPE_WRITE);
+			auto f1 = tr.commit();
+			auto err = waitFuture(f1);
+			if (err.code() == 1020) { // not_committed
+				// Test should pass if transactions conflict.
+				success = true;
+				retry = false;
+			} else if (err) {
+				auto f2 = tr.onError(err);
+				if (auto err2 = waitFuture(f2)) {
+					ASSERT(false, "Unexpected failure: {}", err2.what());
+				}
+				retry = true;
+			} else {
+				// If the transaction succeeded, something went wrong.
+				ASSERT(false, "Unexpected successful transaction");
+			}
+			break;
+		}
+	}
+
+	// Double check that failure was achieved and the loop wasn't just broken out
+	// of.
+	ASSERT(success);
+});
+
 /* Transaction Options */
 AddTest testTransactionOptionTimeout("TransactionOptionTimeout", ALL, [](const TestEnv& env) {
 	auto db = env.newDatabase();
