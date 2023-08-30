@@ -507,3 +507,125 @@ TEST_CASE("/fdbrpc/authz/TokenCache/GoodTokens") {
 	fmt::print("TEST OK\n");
 	return Void();
 }
+
+TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
+	auto privateKey = mkcert::makeEcP256();
+	auto publicKey = privateKey.toPublic();
+	auto pubKeyName = "somePublicKey"_sr;
+	auto publicKeyClearGuard = ScopeExit([pubKeyName]() { FlowTransport::transport().removePublicKey(pubKeyName); });
+	FlowTransport::transport().addPublicKey(pubKeyName, publicKey);
+	auto fakeSignature = Standalone<StringRef>();
+	auto modifyHeader = [](Arena& arena, StringRef signInput, auto&& modifier) {
+		auto headerPart = signInput.eat("."_sr);
+		auto headerStr = base64::url::decode(arena, headerPart).get();
+		auto payloadPart = signInput;
+		rapidjson::Document d;
+		d.Parse(reinterpret_cast<const char*>(headerStr.begin()), headerStr.size());
+		ASSERT(!d.HasParseError());
+		rapidjson::StringBuffer wrBuf;
+		rapidjson::Writer<rapidjson::StringBuffer> wr(wrBuf);
+		modifier(d);
+		d.Accept(wr);
+		auto newHeaderStr = StringRef(reinterpret_cast<const uint8_t*>(wrBuf.GetString()), wrBuf.GetSize());
+		fmt::print("New header after modifier: {}\n", newHeaderStr.toStringView());
+		auto newHeaderPart = base64::url::encode(arena, newHeaderStr);
+		return newHeaderPart.withSuffix("."_sr, arena).withSuffix(payloadPart, arena);
+	};
+
+	[[maybe_unused]] auto modifyPayload = [](Arena& arena, StringRef signInput, auto&& modifier) {
+		auto headerPart = signInput.eat("."_sr);
+		auto payloadPart = signInput;
+		auto payloadStr = base64::url::decode(arena, payloadPart).get();
+		rapidjson::Document d;
+		d.Parse(reinterpret_cast<const char*>(payloadStr.begin()), payloadStr.size());
+		ASSERT(!d.HasParseError());
+		rapidjson::StringBuffer wrBuf;
+		rapidjson::Writer<rapidjson::StringBuffer> wr(wrBuf);
+		modifier(d);
+		d.Accept(wr);
+		auto newPayloadStr = StringRef(reinterpret_cast<const uint8_t*>(wrBuf.GetString()), wrBuf.GetSize());
+		fmt::print("New payload after modifier: {}\n", newPayloadStr.toStringView());
+		auto newPayloadPart = base64::url::encode(arena, newPayloadStr);
+		return headerPart.withSuffix("."_sr, arena).withSuffix(newPayloadPart, arena);
+	};
+	{
+		// alg=none
+		fmt::print("Testing alg=none case\n");
+		auto arena = Arena();
+		authz::jwt::TokenRef tokenSpec =
+		    authz::jwt::makeRandomTokenSpec(arena, *deterministicRandom(), authz::Algorithm::ES256);
+		tokenSpec.keyId = pubKeyName;
+		auto signInput = authz::jwt::makeSignInput(arena, tokenSpec);
+		auto modifiedSignInput = modifyHeader(arena, signInput, [](rapidjson::Document& d) {
+			auto algItr = d.FindMember("alg");
+			ASSERT(algItr != d.MemberEnd());
+			algItr->value.SetString("none");
+		});
+		// Test that we don't accept it unsigned, even if it's alg=none
+		ASSERT(!TokenCache::instance().validate(tokenSpec.tenants.get()[0], modifiedSignInput));
+		// Test that we don't accept it, even if it's signed by the proper key, because it's alg=none
+		auto algNoneToken = authz::jwt::signToken(arena, modifiedSignInput, authz::Algorithm::ES256, privateKey);
+		auto sigPart = algNoneToken;
+		sigPart.eat("."_sr).eat("."_sr);
+		// use this part for different, "spoofed signature" test case
+		fakeSignature = Standalone<StringRef>(sigPart);
+		ASSERT(!TokenCache::instance().validate(
+		    tokenSpec.tenants.get()[0],
+		    authz::jwt::signToken(arena, modifiedSignInput, authz::Algorithm::ES256, privateKey)));
+	}
+	{
+		// missing signature
+		fmt::print("Testing missing signature case\n");
+		auto arena = Arena();
+		auto tokenSpec = authz::jwt::makeRandomTokenSpec(arena, *deterministicRandom(), authz::Algorithm::ES256);
+		tokenSpec.keyId = pubKeyName;
+		auto signInput = authz::jwt::makeSignInput(arena, tokenSpec);
+		ASSERT(!TokenCache::instance().validate(tokenSpec.tenants.get()[0], signInput));
+	}
+	{
+		// spoofed signature
+		fmt::print("Testing spoofed signature case\n");
+		auto arena = Arena();
+		ASSERT(!fakeSignature.empty());
+		auto tokenSpec = authz::jwt::makeRandomTokenSpec(arena, *deterministicRandom(), authz::Algorithm::ES256);
+		tokenSpec.keyId = pubKeyName;
+		auto signInput = authz::jwt::makeSignInput(arena, tokenSpec);
+		auto tokenWithFakeSig = signInput.withSuffix("."_sr, arena).withSuffix(fakeSignature, arena);
+		ASSERT(!TokenCache::instance().validate(tokenSpec.tenants.get()[0], tokenWithFakeSig));
+	}
+	{
+		// algorithm confusion: RS256
+		auto rsaPrivateKey = mkcert::makeRsa4096Bit();
+		fmt::print("Testing algorithm confusion case: RS256\n");
+		auto arena = Arena();
+		auto tokenSpec = authz::jwt::makeRandomTokenSpec(arena, *deterministicRandom(), authz::Algorithm::ES256);
+		tokenSpec.keyId = pubKeyName;
+		auto signInput = authz::jwt::makeSignInput(arena, tokenSpec);
+		auto rsaSignInput = modifyHeader(arena, signInput, [](rapidjson::Document& d) {
+			auto algItr = d.FindMember("alg");
+			ASSERT(algItr != d.MemberEnd());
+			algItr->value.SetString("RS256");
+		});
+		ASSERT(!TokenCache::instance().validate(
+		    tokenSpec.tenants.get()[0],
+		    authz::jwt::signToken(arena, rsaSignInput, authz::Algorithm::RS256, rsaPrivateKey)));
+	}
+	{
+		// algorithm confusion: HS256
+		fmt::print("Testing algorithm confusion case: HS256\n");
+		// As we don't implement HS256, we simply test that it fails to parse-validate
+		auto arena = Arena();
+		ASSERT(!fakeSignature.empty());
+		auto tokenSpec = authz::jwt::makeRandomTokenSpec(arena, *deterministicRandom(), authz::Algorithm::ES256);
+		tokenSpec.keyId = pubKeyName;
+		auto signInput = authz::jwt::makeSignInput(arena, tokenSpec);
+		auto hs256SignInput = modifyHeader(arena, signInput, [](rapidjson::Document& d) {
+			auto algItr = d.FindMember("alg");
+			ASSERT(algItr != d.MemberEnd());
+			algItr->value.SetString("HS256");
+		});
+		ASSERT(!TokenCache::instance().validate(
+		    tokenSpec.tenants.get()[0], hs256SignInput.withSuffix("."_sr, arena).withSuffix(fakeSignature, arena)));
+	}
+	return Void();
+}
