@@ -384,6 +384,7 @@ void BlobCipherEncryptHeaderRef::validateEncryptionHeaderDetails(const BlobCiphe
 
 	// Validate encryption header 'cipherHeader' details sanity
 	if (flags.authTokenMode != ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE &&
+	    flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM &&
 	    headerCipherDetails != persistedHeaderCipherDetails) {
 		TraceEvent(SevError, "ValidateEncryptHeaderMismatch")
 		    .detail("HeaderDomainId", headerCipherDetails.encryptDomainId)
