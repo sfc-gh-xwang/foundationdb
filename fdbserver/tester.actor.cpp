@@ -2222,6 +2222,17 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 			wait(success(TenantAPI::createTenant(cx.getReference(), defaultTenant.get(), entry)));
 		}
 
+		// If the initial test marked a zone as healthy and didn't clear it, do so now before running the second test
+		if (restartingTest) {
+			wait(runRYWTransactionVoid(cx, [](Reference<ReadYourWritesTransaction> tr) -> Future<Void> {
+				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr->clear(healthyZoneKey);
+				return Void();
+			}));
+			TraceEvent("ClearedIgnoreSSFailureInRestartingTest").log();
+		}
+
 		std::vector<Future<Void>> tenantFutures;
 		for (auto tenant : extraTenants) {
 			TenantMapEntry entry;
