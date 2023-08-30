@@ -136,7 +136,7 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 					metacluster::DataClusterEntry updatedEntry = clusterMetadata.entry;
 					updatedEntry.capacity.numTenantGroups = self->tenantGroupCapacity;
 					metacluster::updateClusterMetadata(
-					    tr, self->dataDbIndex[dbIndex], clusterMetadata, {}, updatedEntry);
+					    tr, self->dataDbIndex[dbIndex], clusterMetadata.entry, updatedEntry);
 				}
 				wait(safeThreadFutureToFuture(tr->commit()));
 				break;
