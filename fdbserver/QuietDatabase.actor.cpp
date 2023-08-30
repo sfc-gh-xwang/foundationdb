@@ -1325,7 +1325,7 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			if (g_network->isSimulated() && g_simulator->extraDatabases.empty()) {
 				check.add(evt, "RatekeeperCount", ratekeeperCount, 1, std::equal_to<>())
 				    .add(evt, "DataDistributorCount", ddCount, 1, std::equal_to<>())
-					// FIXME: consistency scan occasionally has duplicates. Change to std::equal_to once fixed
+				    // FIXME: consistency scan occasionally has duplicates. Change to std::equal_to once fixed
 				    .add(evt, "ConsistencyScanCount", consistencyScanCount, 1, std::greater_equal<>())
 				    .add(evt, "BlobManagementCount", blobManagerCount, expectedBlobManagerCount, std::equal_to<>())
 				    .add(evt, "BlobMigratorCount", blobMigratorCount, -1, std::equal_to<>())
