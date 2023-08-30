@@ -3469,10 +3469,11 @@ void DDTeamCollection::updateTeamPivots(const double inflightPenalty) {
 		updateCpuPivot(teamAverageCPU);
 		updateMedianAvailableSpacePivot(teamAvailableSpace);
 		updateLoadBytesPivot(teamLoadBytes);
-		updateTeamEligibility(inflightPenalty);
 		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
 			updateWriteLoadPivot(teamWriteLoad);
 		}
+
+		updateTeamEligibility(inflightPenalty);
 		teamPivots.lastPivotsUpdate = now();
 	}
 }
