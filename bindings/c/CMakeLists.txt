@@ -601,9 +601,7 @@ if (NOT OPEN_FOR_IDE)
   endif()
 
   # Tests with shim layer and primary client of the previous version
-  # FIXME: Temporary disabled due to binary incompatibility between 8.0 and 71.3.4
-  # Reenable for 71.3.5 patch
-  if (FALSE) # (NOT APPLE AND NOT USE_SANITIZER)
+  if (NOT APPLE AND NOT USE_SANITIZER)
     foreach(test_file ${PREV_VERSION_API_TEST_FILES})
       get_filename_component(file_name "${test_file}" NAME_WE)
       set(test_name "fdb_c_api_shim_prev_${file_name}")
