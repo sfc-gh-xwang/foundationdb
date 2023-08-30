@@ -2359,7 +2359,7 @@ double MultiVersionDatabase::getMainThreadBusyness() {
 	ASSERT(g_network);
 	double localClientBusyness = g_network->networkInfo.metrics.networkBusyness;
 	auto db = dbState->dbVar->get();
-	if (db.value && db.value.isValid()) {
+	if (db.value) {
 		return std::max(db.value->getMainThreadBusyness(), localClientBusyness);
 	}
 
