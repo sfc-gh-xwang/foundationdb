@@ -2357,10 +2357,15 @@ void MultiVersionDatabase::setSharedState(DatabaseSharedState* p) {
 // and the external client's busyness.
 double MultiVersionDatabase::getMainThreadBusyness() {
 	ASSERT(g_network);
-
 	double localClientBusyness = g_network->networkInfo.metrics.networkBusyness;
-	if (dbState->db) {
-		return std::max(dbState->db->getMainThreadBusyness(), localClientBusyness);
+	Reference<IDatabase> db;
+	{
+		MutexHolder holder(dbState->optionLock);
+		db = dbState->db;
+	}
+
+	if (db) {
+		return std::max(db->getMainThreadBusyness(), localClientBusyness);
 	}
 
 	return localClientBusyness;
@@ -2458,7 +2463,10 @@ void MultiVersionDatabase::DatabaseState::setDatabase(Reference<IDatabase> db) {
 	if (db.isValid()) {
 		initializationState = InitializationState::CREATED;
 	}
-	this->db = db;
+	{
+		MutexHolder holder(optionLock);
+		this->db = db;
+	}
 	dbVar->set(db, true);
 }
 

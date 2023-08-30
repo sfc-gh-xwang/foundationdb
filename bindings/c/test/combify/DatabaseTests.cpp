@@ -67,4 +67,22 @@ AddTest testDBGetServerProtocol("DBGetServerProtocol", ALL, [](const TestEnv& en
 	ASSERT(!err, "Unexpected failure: {}", err.what());
 });
 
+AddTest testMonitorNetworkBusyness("DBMonitorNetworkBusyness", ALL, [](const TestEnv& env) {
+	// monitors network busyness for 2 sec (40 readings)
+	auto db = env.newDatabase();
+	bool containsGreaterZero = false;
+	for (int i = 0; i < 40; i++) {
+		double busyness = db.getMainThreadBusyness();
+		// make sure the busyness is between 0 and 1
+		ASSERT(busyness >= 0, "busyness is expected to be equal or greater than 0, actual: {}", busyness);
+		ASSERT(busyness <= 1, "busyness is expected to be equal or smaller than 1, actual: {}", busyness);
+		if (busyness > 0) {
+			containsGreaterZero = true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
+
+	// assert that at least one of the busyness readings was greater than 0
+	ASSERT(containsGreaterZero);
+});
 } // namespace
