@@ -158,9 +158,9 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		state TenantGroupName tenantGroup = self->chooseTenantGroup();
 		state TenantMovementStatus status;
 		try {
-			TenantMovementStatus _status = wait(
+			store(
+			    status,
 			    metacluster::online_movement::getTenantMovementStatus(self->simMetacluster.managementDb, tenantGroup));
-			status = _status;
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
 				throw;
@@ -172,9 +172,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 	ACTOR static Future<Void> listMovements(OnlineTenantMovementWorkload* self) {
 		state std::vector<TenantMovementInfo> tenantMovementInfo;
 		try {
-			std::vector<TenantMovementInfo> _info =
-			    wait(metacluster::online_movement::listMovements(self->simMetacluster.managementDb));
-			tenantMovementInfo = std::move(_info);
+			store(tenantMovementInfo, metacluster::online_movement::listMovements(self->simMetacluster.managementDb));
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
 				throw;
