@@ -16,39 +16,24 @@
 
 ACTOR
 template <typename IDatabase>
-static Future<Future<Void>> getTbiChangedFuture(Reference<IDatabase> db) {
+static Future<std::pair<Optional<TenantBalancerInterface>, Future<Void>>> getTenantBalancerInterface(
+    Reference<IDatabase> db) {
 	state Reference<ITransaction> tr = db->createTransaction();
-	state Future<Void> future = Never();
+	state Optional<TenantBalancerInterface> interf;
+	state Future<Void> onTbiChanged = Never();
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			store(interf, TenantBalancerMetadata::getTenantBalancerInterface().getD(tr));
 			state ThreadFuture<Void> threadFuture = TenantBalancerMetadata::getTenantBalancerInterface().watch(tr);
+			onTbiChanged = safeThreadFutureToFuture(threadFuture);
 			wait(safeThreadFutureToFuture(tr->commit()));
-			future = safeThreadFutureToFuture(threadFuture);
 			break;
 		} catch (Error& e) {
 			wait(safeThreadFutureToFuture(tr->onError(e)));
 		}
 	}
-	return future;
-}
-
-ACTOR
-template <typename IDatabase>
-static Future<Optional<TenantBalancerInterface>> getTenantBalancerInterface(Reference<IDatabase> db) {
-	state Reference<ITransaction> tr = db->createTransaction();
-	state TenantBalancerInterface interf;
-	loop {
-		try {
-			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			TenantBalancerInterface _interf = wait(TenantBalancerMetadata::getTenantBalancerInterface().getD(tr));
-			interf = _interf;
-			break;
-		} catch (Error& e) {
-			wait(safeThreadFutureToFuture(tr->onError(e)));
-		}
-	}
-	return interf;
+	return std::make_pair(interf, onTbiChanged);
 }
 
 namespace MetaclusterAPI {
@@ -60,7 +45,8 @@ static Future<Void> moveTenantGroup(IDatabase managementDb, TenantGroupName tena
 	state Future<Void> init = Void();
 	state Future<ErrorOr<MoveTenantGroupReply>> replyFuture = Never();
 	try {
-		state Future<Void> onTbiChanged = wait(getTbiChangedFuture(managementDb));
+		state Optional<TenantBalancerInterface> tbi;
+		state Future<Void> onTbiChanged = Never();
 		loop choose {
 			when(ErrorOr<MoveTenantGroupReply> reply =
 			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
@@ -71,10 +57,11 @@ static Future<Void> moveTenantGroup(IDatabase managementDb, TenantGroupName tena
 			}
 			when(wait(onTbiChanged || init)) {
 				init = Never();
-				state Optional<TenantBalancerInterface> tbi = wait(getTenantBalancerInterface(managementDb));
+				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
+				    wait(getTenantBalancerInterface(managementDb));
+				tbi = res.first;
+				onTbiChanged = res.second;
 				replyFuture = tbi.present() ? tbi.get().moveTenantsToCluster.tryGetReply(req) : Never();
-				Future<Void> _onTbiChanged = wait(getTbiChangedFuture(managementDb));
-				onTbiChanged = _onTbiChanged;
 			}
 		}
 	} catch (Error& e) {
@@ -93,7 +80,8 @@ static Future<TenantMovementStatus> getTenantMovementStatus(IDatabase management
 	state Future<ErrorOr<GetMovementStatusReply>> replyFuture = Never();
 	state TenantMovementStatus status;
 	try {
-		state Future<Void> onTbiChanged = wait(getTbiChangedFuture(managementDb));
+		state Optional<TenantBalancerInterface> tbi;
+		state Future<Void> onTbiChanged = Never();
 		loop choose {
 			when(ErrorOr<GetMovementStatusReply> reply =
 			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
@@ -105,10 +93,11 @@ static Future<TenantMovementStatus> getTenantMovementStatus(IDatabase management
 			}
 			when(wait(onTbiChanged || init)) {
 				init = Never();
-				state Optional<TenantBalancerInterface> tbi = wait(getTenantBalancerInterface(managementDb));
+				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
+				    wait(getTenantBalancerInterface(managementDb));
+				tbi = res.first;
+				onTbiChanged = res.second;
 				replyFuture = tbi.present() ? tbi.get().getMovementStatus.tryGetReply(req) : Never();
-				Future<Void> _onTbiChanged = wait(getTbiChangedFuture(managementDb));
-				onTbiChanged = _onTbiChanged;
 			}
 		}
 	} catch (Error& e) {
@@ -127,7 +116,8 @@ static Future<std::vector<TenantMovementInfo>> listMovements(IDatabase managemen
 	state Future<ErrorOr<ListMovementsReply>> replyFuture = Never();
 	state std::vector<TenantMovementInfo> tenantMovementInfo;
 	try {
-		state Future<Void> onTbiChanged = wait(getTbiChangedFuture(managementDb));
+		state Optional<TenantBalancerInterface> tbi;
+		state Future<Void> onTbiChanged = Never();
 		loop choose {
 			when(ErrorOr<ListMovementsReply> reply =
 			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
@@ -139,10 +129,11 @@ static Future<std::vector<TenantMovementInfo>> listMovements(IDatabase managemen
 			}
 			when(wait(onTbiChanged || init)) {
 				init = Never();
-				state Optional<TenantBalancerInterface> tbi = wait(getTenantBalancerInterface(managementDb));
+				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
+				    wait(getTenantBalancerInterface(managementDb));
+				tbi = res.first;
+				onTbiChanged = res.second;
 				replyFuture = tbi.present() ? tbi.get().listMovements.tryGetReply(req) : Never();
-				Future<Void> _onTbiChanged = wait(getTbiChangedFuture(managementDb));
-				onTbiChanged = _onTbiChanged;
 			}
 		}
 	} catch (Error& e) {
@@ -160,7 +151,8 @@ static Future<Void> abortTenantMovement(IDatabase managementDb, TenantGroupName 
 	state Future<Void> init = Void();
 	state Future<ErrorOr<AbortMovementReply>> replyFuture = Never();
 	try {
-		state Future<Void> onTbiChanged = wait(getTbiChangedFuture(managementDb));
+		state Optional<TenantBalancerInterface> tbi;
+		state Future<Void> onTbiChanged = Never();
 		loop choose {
 			when(ErrorOr<AbortMovementReply> reply =
 			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
@@ -171,10 +163,11 @@ static Future<Void> abortTenantMovement(IDatabase managementDb, TenantGroupName 
 			}
 			when(wait(onTbiChanged || init)) {
 				init = Never();
-				state Optional<TenantBalancerInterface> tbi = wait(getTenantBalancerInterface(managementDb));
+				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
+				    wait(getTenantBalancerInterface(managementDb));
+				tbi = res.first;
+				onTbiChanged = res.second;
 				replyFuture = tbi.present() ? tbi.get().abortMovement.tryGetReply(req) : Never();
-				Future<Void> _onTbiChanged = wait(getTbiChangedFuture(managementDb));
-				onTbiChanged = _onTbiChanged;
 			}
 		}
 	} catch (Error& e) {
