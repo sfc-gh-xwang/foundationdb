@@ -572,6 +572,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE,                  1e5 ); if ( randomize && BUGGIFY ) BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE = 100;
 	init( BULK_LOADERS_MAX_QUEUE_SIZE,                           1e4 ); if ( randomize && BUGGIFY ) BULK_LOADERS_MAX_QUEUE_SIZE = 100;
 	init( COMMIT_PROXY_LIVENESS_TIMEOUT,                        20.0 );
+	init( COMMIT_PROXY_MAX_LIVENESS_TIMEOUT,                   600.0 ); if ( randomize && BUGGIFY ) COMMIT_PROXY_MAX_LIVENESS_TIMEOUT = 20.0;
 
 	init( COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE,         0.0005 ); if( randomize && BUGGIFY ) COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE = 0.005;
 	init( COMMIT_TRANSACTION_BATCH_INTERVAL_MIN,                0.001 ); if( randomize && BUGGIFY ) COMMIT_TRANSACTION_BATCH_INTERVAL_MIN = 0.1;
@@ -662,6 +663,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BACKUP_FILE_BLOCK_BYTES,                       1024 * 1024 );
 	init( BACKUP_LOCK_BYTES,                                     3e9 ); if(randomize && BUGGIFY) BACKUP_LOCK_BYTES = deterministicRandom()->randomInt(1024, 4096) * 256 * 1024;
 	init( BACKUP_UPLOAD_DELAY,                                  10.0 ); if(randomize && BUGGIFY) BACKUP_UPLOAD_DELAY = deterministicRandom()->random01() * 60;
+	init( USE_EMERGENCY_BACKUP_WORKER,                         false );
 
 	//Cluster Controller
 	init( CLUSTER_CONTROLLER_LOGGING_DELAY,                      5.0 );
@@ -801,10 +803,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 
 	init( MAX_TRANSACTIONS_PER_BYTE,                            1000 );
 
-	init( MIN_AVAILABLE_SPACE,                                   1e8 );
-	init( MIN_AVAILABLE_SPACE_RATIO,                            0.05 );
-	init( MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER,              0.01 );
-	init( TARGET_AVAILABLE_SPACE_RATIO,                         0.30 );
+	init( MIN_AVAILABLE_SPACE,                                   1e8 ); if( isSimulated ) MIN_AVAILABLE_SPACE /= 10;
+	init( MIN_AVAILABLE_SPACE_RATIO,                            0.05 ); if( isSimulated ) MIN_AVAILABLE_SPACE_RATIO /= 10;
+	init( MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER,              0.01 ); if( isSimulated ) MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER /= 10;
+	init( TARGET_AVAILABLE_SPACE_RATIO,                         0.30 ); if( randomize && BUGGIFY ) TARGET_AVAILABLE_SPACE_RATIO /= 10;
 
 	init( MAX_TL_SS_VERSION_DIFFERENCE,                         1e99 ); // if( randomize && BUGGIFY ) MAX_TL_SS_VERSION_DIFFERENCE = std::max(1.0, 0.25 * VERSIONS_PER_SECOND); // spring starts at half this value //FIXME: this knob causes ratekeeper to clamp on idle cluster in simulation that have a large number of logs
 	init( MAX_TL_SS_VERSION_DIFFERENCE_BATCH,                   1e99 );
@@ -944,7 +946,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CHANGEFEEDSTREAM_LIMIT_BYTES,                          1e6 ); if( randomize && BUGGIFY ) CHANGEFEEDSTREAM_LIMIT_BYTES = 1;
 	init( BLOBWORKERSTATUSSTREAM_LIMIT_BYTES,                    1e4 ); if( randomize && BUGGIFY ) BLOBWORKERSTATUSSTREAM_LIMIT_BYTES = 1;
 	init( BW_MUTATION_STREAM_LIMIT_BYTES,                        2e5 ); if( randomize && BUGGIFY ) BW_MUTATION_STREAM_LIMIT_BYTES = deterministicRandom()->randomSkewedUInt32(1, 1e4);
-	init( ENABLE_CLEAR_RANGE_EAGER_READS,                       true ); if( randomize && BUGGIFY ) ENABLE_CLEAR_RANGE_EAGER_READS = deterministicRandom()->coinflip();
+	init( ENABLE_CLEAR_RANGE_EAGER_READS,                       false); if( randomize && BUGGIFY ) ENABLE_CLEAR_RANGE_EAGER_READS = deterministicRandom()->coinflip();
 	init( CHECKPOINT_TRANSFER_BLOCK_BYTES,                      40e6 );
 	init( QUICK_GET_VALUE_FALLBACK,                             true );
 	init( QUICK_GET_KEY_VALUES_FALLBACK,                        true );
@@ -1156,8 +1158,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM,             2000 ); if( randomize && BUGGIFY ) BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM = deterministicRandom()->randomInt(10, 100);
 	init( BLOB_WORKER_RDC_PARALLELISM,                             2 ); if( randomize && BUGGIFY ) BLOB_WORKER_RDC_PARALLELISM = deterministicRandom()->randomInt(1, 6);
 	init( BLOB_WORKER_RDC_MIN_WAVE_DELAY,                        1.0 ); if( randomize && BUGGIFY ) BLOB_WORKER_RDC_MIN_WAVE_DELAY = deterministicRandom()->randomInt(0, 1000) / 1000.0; 
-	init( BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES,        1024*1024*1024 ); if( randomize && BUGGIFY ) BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES = deterministicRandom()->random01() * 10 * BG_SNAPSHOT_FILE_TARGET_BYTES;
-	init( BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES,       1024*1024*1024 ); if( randomize && BUGGIFY ) BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES = (5 + 45*deterministicRandom()->random01()) * BG_DELTA_FILE_TARGET_BYTES;
+	init( BLOB_WORKER_RESNAPSHOT_BUDGET_BYTES,        1024*1024*1024 );
+	init( BLOB_WORKER_DELTA_WRITE_BUDGET_BYTES,       1024*1024*1024 );
 	init( BLOB_WORKER_TIMEOUT,                                  10.0 ); if( randomize && BUGGIFY ) BLOB_WORKER_TIMEOUT = 1.0;
 	// more than MVCC window since behind delta files can block for that window for committed check
 	init( BLOB_WORKER_REQUEST_TIMEOUT,                          10.0 ); if( randomize && BUGGIFY ) BLOB_WORKER_REQUEST_TIMEOUT = 1.0;
@@ -1177,6 +1179,12 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_MAX,                   5.0 );
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_EXPONENT,              1.5 );
 	init( BLOB_MANAGER_CONCURRENT_MERGE_CHECKS,                   64 ); if( randomize && BUGGIFY ) BLOB_MANAGER_CONCURRENT_MERGE_CHECKS = 1 << deterministicRandom()->randomInt(0, 7);
+	init( FORCE_PURGE_WAIT_BLOBBIFY_TIMEOUT, isSimulated ? 20.0 : 600.0 ); if( randomize && BUGGIFY ) FORCE_PURGE_WAIT_BLOBBIFY_TIMEOUT = 1 + 30 * deterministicRandom()->random01();
+	init( BLOB_MANAGER_PURGE_GRANULE_PARALLELISM,               1000 ); if( randomize && BUGGIFY ) BLOB_MANAGER_PURGE_GRANULE_PARALLELISM = deterministicRandom()->randomSkewedUInt32(1, 100);
+	init( BLOB_MANAGER_ENABLE_MEDIAN_ASSIGNMENT_LIMITING,       true ); if( randomize && BUGGIFY ) BLOB_MANAGER_ENABLE_MEDIAN_ASSIGNMENT_LIMITING = false;
+	init( BLOB_MANAGER_MEDIAN_ASSIGNMENT_ALLOWANCE,              2.0 ); if( randomize && BUGGIFY ) BLOB_MANAGER_MEDIAN_ASSIGNMENT_ALLOWANCE = (1.0 + deterministicRandom()->random01() * 2);
+	init( BLOB_MANAGER_MEDIAN_ASSIGNMENT_MIN_SAMPLES_PER_WORKER,   3 );
+	init( BLOB_MANAGER_MEDIAN_ASSIGNMENT_MAX_SAMPLES_PER_WORKER,  10 );
 	init( BLOB_MANIFEST_BACKUP,                                false );
 	init( BLOB_MANIFEST_BACKUP_INTERVAL,  isSimulated ?  5.0 : 600.0 );
 	init( BLOB_MIGRATOR_CHECK_INTERVAL,     isSimulated ?  1.0 : 5.0 );
@@ -1215,6 +1223,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_CONNECTOR_GET_ENCRYPTION_KEYS_ENDPOINT,         "");
 	init( REST_KMS_CONNECTOR_GET_LATEST_ENCRYPTION_KEYS_ENDPOINT,  "");
 	init( REST_KMS_CONNECTOR_GET_BLOB_METADATA_ENDPOINT,           "");
+	init( REST_KMS_CONNECTOR_INIT_REQUEST_RETRY_DELAY,           0.05);
+	init( REST_KMS_CONNECTOR_MAX_REQUEST_RETRY_DELAY,            60.0);
 	// Details to fetch validation token from a localhost file
 	// acceptable format: "<token_name1>$<absolute_file_path1>,<token_name2>$<absolute_file_path2>,.."
 	// NOTE: 'token-name" can NOT contain '$' character
@@ -1226,6 +1236,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REST_KMS_CURRENT_CIPHER_REQUEST_VERSION,                  1);
 	init( REST_KMS_MAX_CIPHER_REQUEST_VERSION,                      1);
 	init( REST_SIM_KMS_VAULT_DIR,                                  "");
+	init( REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY,             true ); if ( randomize && BUGGIFY ) { REST_SIM_KMS_VAULT_INJECT_RESPONSE_DELAY = deterministicRandom()->coinflip(); }
 	init( REST_KMS_STABILITY_CHECK_INTERVAL,                      5.0);
 	init( KMS_LOGGING_INTERVAL,                                   5.0);
 

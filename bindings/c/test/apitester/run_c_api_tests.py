@@ -34,7 +34,9 @@ import toml
 # fmt: off
 from tmp_cluster import TempCluster
 from local_cluster import TLSConfig
-from test_util import get_logger, initialize_logger_level
+from test_util import get_logger, initialize_logger_level, api_version_from_str
+from binary_download import FdbBinaryDownloader
+from fdb_version import CURRENT_VERSION
 # fmt: on
 
 TESTER_STATS_INTERVAL_SEC = 5
@@ -59,9 +61,7 @@ def dump_client_logs(log_dir):
 def run_tester(args, cluster, test_file):
     build_dir = Path(args.build_dir).resolve()
     tester_binary = Path(args.api_tester_bin).resolve()
-    external_client_library = build_dir.joinpath(
-        "bindings", "c", "libfdb_c_external.so"
-    )
+    downloader = FdbBinaryDownloader(build_dir)
     log_dir = Path(cluster.log).joinpath("client")
     log_dir.mkdir(exist_ok=True)
     cmd = [
@@ -79,14 +79,14 @@ def run_tester(args, cluster, test_file):
         str(log_dir),
         "--verbosity",
         args.logging_level,
+        "--external-client-library",
+        downloader.lib_path(args.cluster_version, external=True),
+        "--api-version",
+        str(api_version_from_str(args.cluster_version)),
     ]
 
     if args.run_with_gdb:
         cmd = ["gdb", "--args"] + cmd
-
-    if args.external_client_library is not None:
-        external_client_library = Path(args.external_client_library).resolve()
-        cmd += ["--external-client-library", external_client_library]
 
     if args.retain_client_lib_copies:
         cmd += ["--retain-client-lib-copies"]
@@ -111,8 +111,14 @@ def run_tester(args, cluster, test_file):
         knob_name, knob_value = knob.split("=")
         cmd += ["--knob-" + knob_name, knob_value]
 
+    env_vars = os.environ.copy()
+    if args.primary_client_version is not None:
+        env_vars["FDB_LOCAL_CLIENT_LIBRARY_PATH"] = downloader.lib_path(
+            args.primary_client_version, external=False
+        )
+
     logger.info("Running tester '%s'..." % " ".join(map(str, cmd)))
-    proc = Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
+    proc = Popen(cmd, stdout=sys.stdout, stderr=sys.stderr, env=env_vars)
     timed_out = False
     ret_code = 1
     try:
@@ -183,6 +189,7 @@ def run_test(args, test_file):
         enable_encryption_at_rest=config.enable_encryption_at_rest,
         tls_config=tls_config,
         custom_config=config.server_knobs,
+        cluster_version=args.cluster_version,
     ) as cluster:
         ret_code = run_tester(args, cluster, test_file)
         if not cluster.check_cluster_logs():
@@ -222,11 +229,6 @@ def parse_args(argv):
         type=str,
         help="Path to the fdb_c_api_tester executable.",
         required=True,
-    )
-    parser.add_argument(
-        "--external-client-library",
-        type=str,
-        help="Path to the external client library.",
     )
     parser.add_argument(
         "--retain-client-lib-copies",
@@ -280,6 +282,18 @@ def parse_args(argv):
     )
     parser.add_argument(
         "--run-with-gdb", help="Execute the tester binary from gdb", action="store_true"
+    )
+    parser.add_argument(
+        "--primary-client-version",
+        type=str,
+        default=None,
+        help="Primary FDB client version for shim library tests",
+    )
+    parser.add_argument(
+        "--cluster-version",
+        type=str,
+        default=CURRENT_VERSION,
+        help="FDB cluster version to be used for testing",
     )
 
     return parser.parse_args(argv)

@@ -38,65 +38,55 @@
 
 namespace fdb_cli {
 
-Optional<std::pair<Optional<ClusterConnectionString>, Optional<metacluster::DataClusterEntry>>>
-parseClusterConfiguration(std::vector<StringRef> const& tokens,
-                          metacluster::DataClusterEntry const& defaults,
-                          int startIndex,
-                          int endIndex) {
-	Optional<metacluster::DataClusterEntry> entry;
+Optional<
+    std::pair<Optional<ClusterConnectionString>, std::map<std::string, metacluster::DataClusterEntry::ConfigValue>>>
+parseClusterConfiguration(std::vector<StringRef> const& tokens, int startIndex, int endIndex) {
+	std::map<std::string, metacluster::DataClusterEntry::ConfigValue> configParams;
 	Optional<ClusterConnectionString> connectionString;
 
 	std::set<std::string> usedParams;
 	for (int tokenNum = startIndex; tokenNum < endIndex; ++tokenNum) {
 		StringRef token = tokens[tokenNum];
 		bool foundEquals;
-		StringRef param = token.eat("=", &foundEquals);
+		std::string param = token.eat("=", &foundEquals).toString();
 		if (!foundEquals) {
-			fmt::print(stderr,
-			           "ERROR: invalid configuration string `{}'. String must specify a value using `='.\n",
-			           param.toString().c_str());
+			fmt::print(
+			    stderr, "ERROR: invalid configuration string `{}'. String must specify a value using `='.\n", param);
 			return {};
 		}
 		std::string value = token.toString();
-		if (!usedParams.insert(value).second) {
-			fmt::print(
-			    stderr, "ERROR: configuration parameter `{}' specified more than once.\n", param.toString().c_str());
+		if (!usedParams.insert(param).second) {
+			fmt::print(stderr, "ERROR: configuration parameter `{}' specified more than once.\n", param);
 			return {};
 		}
-		if (tokencmp(param, "max_tenant_groups")) {
-			if (!entry.present()) {
-				entry = defaults;
-			}
-
+		if (param == "max_tenant_groups") {
+			int numTenantGroups;
 			int n;
-			if (sscanf(value.c_str(), "%d%n", &entry.get().capacity.numTenantGroups, &n) != 1 || n != value.size() ||
-			    entry.get().capacity.numTenantGroups < 0) {
-				fmt::print(stderr, "ERROR: invalid number of tenant groups `{}'.\n", value.c_str());
+			if (sscanf(value.c_str(), "%d%n", &numTenantGroups, &n) != 1 || n != value.size() || numTenantGroups < 0) {
+				fmt::print(stderr, "ERROR: invalid number of tenant groups `{}'.\n", value);
 				return {};
 			}
-		} else if (tokencmp(param, "connection_string")) {
+			configParams[param] = numTenantGroups;
+		} else if (param == "connection_string") {
 			connectionString = ClusterConnectionString(value);
-		} else if (tokencmp(param, "auto_tenant_assignment")) {
+		} else if (param == "auto_tenant_assignment") {
 			std::transform(
 			    value.begin(), value.end(), value.begin(), [](unsigned char ch) { return std::tolower(ch); });
-			if (!entry.present()) {
-				entry = defaults;
-			}
 			if (value == "disabled") {
-				entry.get().autoTenantAssignment = metacluster::AutoTenantAssignment::DISABLED;
+				configParams[param] = metacluster::AutoTenantAssignment::DISABLED;
 			} else if (value == "enabled") {
-				entry.get().autoTenantAssignment = metacluster::AutoTenantAssignment::ENABLED;
+				configParams[param] = metacluster::AutoTenantAssignment::ENABLED;
 			} else {
-				fmt::print(stderr, "ERROR: invalid configuration `{}' for `auto_tenant_assignment'.\n", value.c_str());
+				fmt::print(stderr, "ERROR: invalid configuration `{}' for `auto_tenant_assignment'.\n", value);
 				return {};
 			}
 		} else {
-			fmt::print(stderr, "ERROR: unrecognized configuration parameter `{}'.\n", param.toString().c_str());
+			fmt::print(stderr, "ERROR: unrecognized configuration parameter `{}'.\n", param);
 			return {};
 		}
 	}
 
-	return std::make_pair(connectionString, entry);
+	return std::make_pair(connectionString, configParams);
 }
 
 void printMetaclusterConfigureOptionsUsage() {
@@ -160,8 +150,7 @@ ACTOR Future<bool> metaclusterRegisterCommand(Reference<IDatabase> db, std::vect
 		return false;
 	}
 
-	metacluster::DataClusterEntry defaultEntry;
-	auto config = parseClusterConfiguration(tokens, defaultEntry, 3, tokens.size());
+	auto config = parseClusterConfiguration(tokens, 3, tokens.size());
 	if (!config.present()) {
 		return false;
 	} else if (!config.get().first.present()) {
@@ -169,8 +158,9 @@ ACTOR Future<bool> metaclusterRegisterCommand(Reference<IDatabase> db, std::vect
 		return false;
 	}
 
-	wait(metacluster::registerCluster(
-	    db, tokens[2], config.get().first.get(), config.get().second.orDefault(defaultEntry)));
+	metacluster::DataClusterEntry entry;
+	entry.configure(config.get().second);
+	wait(metacluster::registerCluster(db, tokens[2], config.get().first.get(), entry));
 
 	fmt::print("The cluster `{}' has been added\n", printable(tokens[2]).c_str());
 	return true;
@@ -302,8 +292,7 @@ ACTOR Future<bool> metaclusterRestoreCommand(Reference<IDatabase> db, std::vecto
 	state StringRef restoreType = tokens.back();
 
 	// connection string
-	metacluster::DataClusterEntry defaultEntry;
-	auto config = parseClusterConfiguration(tokens, defaultEntry, expectedTokens - 2, expectedTokens - 1);
+	auto config = parseClusterConfiguration(tokens, expectedTokens - 2, expectedTokens - 1);
 	if (!config.present()) {
 		return false;
 	} else if (!config.get().first.present()) {
@@ -378,30 +367,26 @@ ACTOR Future<bool> metaclusterConfigureCommand(Reference<IDatabase> db, std::vec
 		return false;
 	}
 
-	state Reference<ITransaction> tr = db->createTransaction();
+	auto config = parseClusterConfiguration(tokens, 3, tokens.size());
+	if (!config.present()) {
+		return false;
+	}
 
-	loop {
-		try {
-			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			tr->setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
-			Optional<metacluster::DataClusterMetadata> metadata =
-			    wait(metacluster::tryGetClusterTransaction(tr, tokens[2]));
-			if (!metadata.present()) {
-				throw cluster_not_found();
-			}
-
-			auto config = parseClusterConfiguration(tokens, metadata.get().entry, 3, tokens.size());
-			if (!config.present()) {
-				return false;
-			}
-
-			metacluster::updateClusterMetadata(tr, tokens[2], metadata.get(), config.get().first, config.get().second);
-
-			wait(safeThreadFutureToFuture(tr->commit()));
-			break;
-		} catch (Error& e) {
-			wait(safeThreadFutureToFuture(tr->onError(e)));
+	try {
+		wait(metacluster::configureCluster(db, tokens[2], config.get().first, config.get().second));
+	} catch (Error& e) {
+		if (e.code() == error_code_invalid_data_cluster) {
+			fmt::print(
+			    "ERROR: The cluster associated with the specified connection string is not a valid data cluster\n");
+		} else if (e.code() == error_code_metacluster_mismatch) {
+			fmt::print(stderr,
+			           "ERROR: The cluster associated with the specified connection string does not match the "
+			           "registered cluster\n");
+		} else {
+			fmt::print(stderr, "ERROR: {} ({})\n", e.what(), e.code());
 		}
+
+		return false;
 	}
 
 	return true;

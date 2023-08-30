@@ -20,6 +20,7 @@
 
 #include "flow/EncryptUtils.h"
 #include "flow/Error.h"
+#include "flow/IRandom.h"
 #include "flow/flow.h"
 #include "flow/Knobs.h"
 #include "flow/BooleanParam.h"
@@ -315,9 +316,10 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	if ( randomize && BUGGIFY) { ENCRYPT_CIPHER_KEY_CACHE_TTL = deterministicRandom()->randomInt(2, 10) * 60; }
 	init( ENCRYPT_KEY_REFRESH_INTERVAL,   isSimulated ? 60 : 8 * 60 );
 	if ( randomize && BUGGIFY) { ENCRYPT_KEY_REFRESH_INTERVAL = deterministicRandom()->randomInt(2, 10); }
-	init( ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,                    10 );
-	if ( randomize && BUGGIFY) { ENCRYPT_KEY_HEALTH_CHECK_INTERVAL = deterministicRandom()->randomInt(10, 60); }
-	init( EKP_HEALTH_CHECK_REQUEST_TIMEOUT,                    10.0);
+	init( ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,                     3 );
+	if ( randomize && BUGGIFY) { ENCRYPT_KEY_HEALTH_CHECK_INTERVAL = deterministicRandom()->randomInt(3, 60); }
+	init( EKP_HEALTH_CHECK_REQUEST_TIMEOUT,                    2.0 );
+	if ( randomize && BUGGIFY) { ENCRYPT_KEY_HEALTH_CHECK_INTERVAL = deterministicRandom()->randomInt(2, 30); }
 	init( ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING,           false ); if( randomize && BUGGIFY ) ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING = true;
 	init( ENCRYPT_KEY_CACHE_LOGGING_INTERVAL,                  5.0 );
 	init( ENCRYPT_KEY_CACHE_LATENCY_LOGGING_INTERVAL,         60.0 );
@@ -332,7 +334,7 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( RESTCLIENT_CONNECT_TIMEOUT,                            1 );
 	init( RESTCLIENT_MAX_CONNECTION_LIFE,                      120 );
 	init( RESTCLIENT_REQUEST_TRIES,                             10 );
-	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                        6 );
+	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                        6 ); if ( randomize && BUGGIFY ) { RESTCLIENT_REQUEST_TIMEOUT_SEC = deterministicRandom()->randomInt(1, 6); }
 	init( REST_LOG_LEVEL,                                        3 );
 }
 // clang-format on

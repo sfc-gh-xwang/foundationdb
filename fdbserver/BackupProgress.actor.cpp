@@ -25,7 +25,6 @@
 #include "fdbclient/IKeyValueStore.actor.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/SystemData.h"
-#include "flow/Trace.h"
 #include "flow/UnitTest.h"
 #include "flow/flow.h"
 
@@ -169,7 +168,23 @@ void setBackupStatus(UID dbgid,
 	}
 }
 
-ACTOR Future<Void> getBackupProgress(Database cx, UID dbgid, Reference<BackupProgress> backupProgress, bool logging) {
+void getBackupProgressFromTxnStateStore(Database cx,
+                                        UID dbgid,
+                                        Reference<BackupProgress> backupProgress,
+                                        Reference<IKeyValueStore> txnStateStore,
+                                        bool logging) {
+	ValueReadResult backupStartedValue = txnStateStore->readValue(backupStartedKey).get();
+	backupProgress->setBackupStartedValue(backupStartedValue);
+
+	RangeReadResult workerStatuses = txnStateStore->readRange(backupProgressKeys, CLIENT_KNOBS->TOO_MANY).get();
+	ASSERT(!workerStatuses.more && workerStatuses.size() < CLIENT_KNOBS->TOO_MANY);
+	setBackupStatus(dbgid, backupProgress, workerStatuses, logging);
+}
+
+ACTOR Future<Void> getBackupProgressFromStorage(Database cx,
+                                                UID dbgid,
+                                                Reference<BackupProgress> backupProgress,
+                                                bool logging) {
 	state Transaction tr(cx);
 	loop {
 		try {

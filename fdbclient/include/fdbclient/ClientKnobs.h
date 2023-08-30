@@ -326,6 +326,7 @@ public:
 	bool DETERMINISTIC_BLOB_METADATA;
 	bool ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE;
 	bool HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK;
+	bool HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK;
 
 	// The coordinator key/value in storage server might be inconsistent to the value stored in the cluster file.
 	// This might happen when a recovery is happening together with a cluster controller coordinator key change.
@@ -356,7 +357,9 @@ public:
 	int ENCRYPT_HEADER_AES_CTR_NO_AUTH_VERSION;
 	int ENCRYPT_HEADER_AES_CTR_AES_CMAC_AUTH_VERSION;
 	int ENCRYPT_HEADER_AES_CTR_HMAC_SHA_AUTH_VERSION;
+	int ENCRYPT_HEADER_AES_GCM_AUTH_VERSION;
 	int ENCRYPT_LIST_CIPHER_KEYS_LIMIT;
+	double ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD;
 
 	// REST KMS configurations
 	bool REST_KMS_ALLOW_NOT_SECURE_CONNECTION;

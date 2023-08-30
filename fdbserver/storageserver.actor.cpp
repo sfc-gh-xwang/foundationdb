@@ -1280,6 +1280,7 @@ public:
 	Optional<LatencyBandConfig> latencyBandConfig;
 
 	Optional<EncryptionAtRestMode> encryptionMode;
+	Reference<GetEncryptCipherKeysMonitor> getEncryptCipherKeysMonitor;
 
 	struct Counters : CommonStorageCounters {
 
@@ -1547,6 +1548,7 @@ public:
 	StorageServer(IKeyValueStore* storage,
 	              Reference<AsyncVar<ServerDBInfo> const> const& db,
 	              StorageServerInterface const& ssi,
+	              Reference<GetEncryptCipherKeysMonitor> encryptionMonitor,
 	              Reference<StorageEngineParamSet> storageEngineParams = {})
 	  : shardAware(false),
 	    tlogCursorReadsLatencyHistogram(Histogram::getHistogram(STORAGESERVER_HISTOGRAM_GROUP,
@@ -1634,6 +1636,7 @@ public:
 	                      /*minRateTracked=*/SERVER_KNOBS->MIN_TAG_READ_PAGES_RATE *
 	                          CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
 	    busiestWriteTagContext(ssi.id()),
+	    getEncryptCipherKeysMonitor(encryptionMonitor),
 	    counters(this),
 	    storageServerSourceTLogIDEventHolder(
 	        makeReference<EventCacheHolder>(ssi.id().toString() + "/StorageServerSourceTLogID")),
@@ -9814,11 +9817,12 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
 					// If queue piles up it means that there's not enough reads, so the queue is useless in this time
 					// window anyway, we do a cheap clear() and let it build up again
-					data->emptyVersionWaitMutationStats.tlogVersionQueue.clear();
 					TraceEvent("EmptyVersionMutationQueueCleared", data->thisServerID)
+					    .suppressFor(5.0)
 					    .detail("QueueTimewindow",
 					            data->emptyVersionWaitMutationStats.tlogVersionQueue.back().timestamp -
 					                data->emptyVersionWaitMutationStats.tlogVersionQueue.front().timestamp);
+					data->emptyVersionWaitMutationStats.tlogVersionQueue.clear();
 				}
 				data->emptyVersionWaitMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
 				                                                                  peekReplyRecvTime);
@@ -9826,11 +9830,12 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				// empty peeks must have fully waited
 				if (data->emptyVersionWaitNonMutationStats.tlogVersionQueue.size() >=
 				    SERVER_KNOBS->DYNAMIC_EMPTY_VERSION_WAIT_QUEUE_MAX_LENGTH) {
-					data->emptyVersionWaitNonMutationStats.tlogVersionQueue.clear();
 					TraceEvent("EmptyVersionNonMutationQueueCleared", data->thisServerID)
+					    .suppressFor(5.0)
 					    .detail("QueueTimewindow",
 					            data->emptyVersionWaitNonMutationStats.tlogVersionQueue.back().timestamp -
 					                data->emptyVersionWaitNonMutationStats.tlogVersionQueue.front().timestamp);
+					data->emptyVersionWaitNonMutationStats.tlogVersionQueue.clear();
 				}
 				data->emptyVersionWaitNonMutationStats.tlogVersionQueue.emplace_back(cursor->getMaxKnownVersion(),
 				                                                                     peekReplyRecvTime);
@@ -10693,7 +10698,10 @@ ACTOR Future<Void> updateStorage(StorageServer* data) {
 		durableDelay =
 		    (bytesLeft > 0) ? delay(SERVER_KNOBS->STORAGE_COMMIT_INTERVAL, TaskPriority::UpdateStorage) : Void();
 
-		wait(ioTimeoutError(durable, SERVER_KNOBS->MAX_STORAGE_COMMIT_TIME, "StorageCommit"));
+		wait(ioTimeoutErrorIfCleared(durable,
+		                             SERVER_KNOBS->MAX_STORAGE_COMMIT_TIME,
+		                             data->getEncryptCipherKeysMonitor->degraded(),
+		                             "StorageCommit"));
 		data->storageCommitLatencyHistogram->sampleSeconds(now() - beforeStorageCommit);
 
 		debug_advanceMinCommittedVersion(data->thisServerID, data->storageMinRecoverVersion);
@@ -12809,8 +12817,9 @@ ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
                                  Version tssSeedVersion,
                                  ReplyPromise<InitializeStorageReply> recruitReply,
                                  Reference<AsyncVar<ServerDBInfo> const> db,
-                                 std::string folder) {
-	state StorageServer self(persistentData, db, ssi);
+                                 std::string folder,
+                                 Reference<GetEncryptCipherKeysMonitor> encryptionMonitor) {
+	state StorageServer self(persistentData, db, ssi, encryptionMonitor);
 	self.shardAware = SERVER_KNOBS->SHARD_ENCODE_LOCATION_METADATA && persistentData->shardAware();
 	state Future<Void> ssCore;
 	self.initialClusterVersion = startVersion;
@@ -12908,8 +12917,9 @@ ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
                                  Reference<AsyncVar<ServerDBInfo> const> db,
                                  std::string folder,
                                  Promise<Void> recovered,
-                                 Reference<IClusterConnectionRecord> connRecord) {
-	state StorageServer self(persistentData, db, ssi);
+                                 Reference<IClusterConnectionRecord> connRecord,
+                                 Reference<GetEncryptCipherKeysMonitor> encryptionMonitor) {
+	state StorageServer self(persistentData, db, ssi, encryptionMonitor);
 	state Future<Void> ssCore;
 	self.folder = folder;
 	self.checkpointFolder = joinPath(self.folder, serverCheckpointFolder);

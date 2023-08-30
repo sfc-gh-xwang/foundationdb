@@ -165,4 +165,6 @@ BulkLoadID newBulkLoadID();
 
 UID bulkLoadIdToUID(BulkLoadID const& id);
 
+BulkLoadID bulkLoadUIDToId(UID const& uid);
+
 #endif

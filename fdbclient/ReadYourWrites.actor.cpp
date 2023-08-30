@@ -26,6 +26,7 @@
 #include "fdbclient/SpecialKeySpace.actor.h"
 #include "fdbclient/StatusClient.h"
 #include "fdbclient/MonitorLeader.h"
+#include "flow/Trace.h"
 #include "flow/Util.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -1379,8 +1380,14 @@ public:
 		return Void();
 	}
 
-	ACTOR static void simulateTimeoutInFlightCommit(ReadYourWritesTransaction* ryw_) {
-		state Reference<ReadYourWritesTransaction> ryw = Reference<ReadYourWritesTransaction>::addRef(ryw_);
+	ACTOR static void scheduleDelayedInFlightCommit(Reference<ReadYourWritesTransaction> ryw) {
+		wait(delay(deterministicRandom()->random01() * 5));
+		TraceEvent("ClientBuggifyInFlightCommit").log();
+		wait(ryw->tr.commit());
+		TraceEvent("ClientBuggifyInFlightCommitSucceeded").log();
+	}
+
+	ACTOR static Future<Void> simulateTimeoutInFlightCommit(ReadYourWritesTransaction* ryw) {
 		ASSERT(ryw->options.timeoutInSeconds > 0);
 		// An actual in-flight commit (i.e. one that's past the point where cancelling the transaction would stop it)
 		// would already have a read version. We need to get a read version too, otherwise committing a conflicting
@@ -1389,9 +1396,9 @@ public:
 		wait(success(ryw->getReadVersion()));
 		if (!ryw->resetPromise.isSet())
 			ryw->resetPromise.sendError(transaction_timed_out());
-		wait(delay(deterministicRandom()->random01() * 5));
-		TraceEvent("ClientBuggifyInFlightCommit").log();
-		wait(ryw->tr.commit());
+		// We are not waiting for the inflight commit. It will be performed asynchronously after a delay
+		scheduleDelayedInFlightCommit(Reference<ReadYourWritesTransaction>::addRef(ryw));
+		return Void();
 	}
 
 	ACTOR static Future<Void> commit(ReadYourWritesTransaction* ryw) {
@@ -1419,7 +1426,7 @@ public:
 			if (ryw->resetPromise.isSet())
 				throw ryw->resetPromise.getFuture().getError();
 			if (CLIENT_BUGGIFY && ryw->options.timeoutInSeconds > 0) {
-				simulateTimeoutInFlightCommit(ryw);
+				wait(simulateTimeoutInFlightCommit(ryw));
 				throw transaction_timed_out();
 			}
 			wait(ryw->resetPromise.getFuture() || ryw->tr.commit());
@@ -1439,7 +1446,7 @@ public:
 		}
 
 		if (CLIENT_BUGGIFY && ryw->options.timeoutInSeconds > 0) {
-			simulateTimeoutInFlightCommit(ryw);
+			wait(simulateTimeoutInFlightCommit(ryw));
 			throw transaction_timed_out();
 		}
 		wait(ryw->resetPromise.getFuture() || ryw->tr.commit());

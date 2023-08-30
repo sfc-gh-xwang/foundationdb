@@ -15,25 +15,10 @@ import time
 from fdb_version import CURRENT_VERSION, PREV_RELEASE_VERSION, PREV2_RELEASE_VERSION
 from binary_download import FdbBinaryDownloader
 from local_cluster import LocalCluster, PortProvider, TLSConfig
-from test_util import random_alphanum_string
+from test_util import random_alphanum_string, api_version_from_str
 
 args = None
 downloader = None
-
-
-def version_from_str(ver_str):
-    ver = [int(s) for s in ver_str.split(".")]
-    assert len(ver) == 3, "Invalid version string {}".format(ver_str)
-    return ver
-
-
-def api_version_from_str(ver_str):
-    ver_tuple = version_from_str(ver_str)
-    if ver_tuple[0] > 70:
-        return ver_tuple[0] * 10000 + ver_tuple[1] * 100
-    if ver_tuple[0] >= 8:
-        return ver_tuple[0] * 100000 + ver_tuple[1] * 100
-    return ver_tuple[0] * 100 + ver_tuple[1] * 10
 
 
 class TestCluster(LocalCluster):

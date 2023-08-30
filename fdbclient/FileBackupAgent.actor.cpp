@@ -21,6 +21,7 @@
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseConfiguration.h"
+#include "fdbclient/EncryptBlobCipher.h"
 #include "fdbclient/TenantEntryCache.actor.h"
 #include "fdbclient/TenantManagement.actor.h"
 #include "fdbclient/BlobRestoreCommon.h"
@@ -607,9 +608,12 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		if (cipherDetails.headerCipherDetails.present()) {
 			cipherDetails.headerCipherDetails.get().validateCipherDetailsWithCipherKey(cipherKeys.cipherHeaderKey);
 		}
-		DecryptBlobCipherAes256Ctr decryptor(
-		    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, headerRef.getIV(), BlobCipherMetrics::RESTORE);
-		return decryptor.decrypt(dataP, dataLen, headerRef, *arena);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
+		                                                                         cipherKeys.cipherHeaderKey,
+		                                                                         headerRef.getIV(),
+		                                                                         headerRef.getEncryptMode(),
+		                                                                         BlobCipherMetrics::RESTORE);
+		return decryptor->decrypt(dataP, dataLen, headerRef, *arena);
 	}
 
 	static Future<StringRef> decrypt(Database cx,
@@ -644,17 +648,21 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 			Reference<BlobCipherKey> cipherKey = wait(refreshKey(self, self->cipherKeys.textCipherKey->getDomainId()));
 			self->cipherKeys.textCipherKey = cipherKey;
 		}
-		EncryptBlobCipherAes265Ctr encryptor(
+
+		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
 		    self->cipherKeys.textCipherKey,
 		    self->cipherKeys.headerCipherKey,
 		    self->cipherKeys.ivRef.begin(),
-		    AES_256_IV_LENGTH,
+		    AES_256_CTR_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
+		    getAuthTokenAlgoFromMode(
+		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
+		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
 		    BlobCipherMetrics::BACKUP);
 		int64_t payloadSize = self->wPtr - self->dataPayloadStart;
 		StringRef encryptedData;
 		BlobCipherEncryptHeaderRef headerRef;
-		encryptedData = encryptor.encrypt(self->dataPayloadStart, payloadSize, &headerRef, *self->arena);
+		encryptedData = encryptor->encrypt(self->dataPayloadStart, payloadSize, &headerRef, *self->arena);
 		Standalone<StringRef> serialized = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
 		self->arena->dependsOn(serialized.arena());
 		ASSERT(serialized.size() == self->encryptHeader.size());
@@ -680,8 +688,8 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		self->cipherKeys.headerCipherKey = textAndHeaderCipherKeys.cipherHeaderKey;
 
 		// Set ivRef
-		self->cipherKeys.ivRef = makeString(AES_256_IV_LENGTH, *self->arena);
-		deterministicRandom()->randomBytes(mutateString(self->cipherKeys.ivRef), AES_256_IV_LENGTH);
+		self->cipherKeys.ivRef = makeString(AES_256_CTR_IV_LENGTH, *self->arena);
+		deterministicRandom()->randomBytes(mutateString(self->cipherKeys.ivRef), AES_256_CTR_IV_LENGTH);
 		return Void();
 	}
 
@@ -1408,6 +1416,7 @@ ACTOR static Future<Void> abortFiveZeroBackup(FileBackupAgent* backupAgent,
 	state Subspace statusSpace = backupAgent->subspace.get(BackupAgentBase::keyStates).get(uid.toString());
 	state Subspace globalConfig = backupAgent->subspace.get(BackupAgentBase::keyConfig).get(uid.toString());
 	state Subspace newConfigSpace = uidPrefixKey("uid->config/"_sr.withPrefix(fileBackupPrefixRange.begin), uid);
+	state Subspace emergencyConfigSpace = uidPrefixKey("uid->config/"_sr.withPrefix(emergencyBackupPrefix), uid);
 
 	ValueReadResult statusStr = wait(tr->get(statusSpace.pack(FileBackupAgent::keyStateStatus)));
 	state EBackupState status =
@@ -1428,6 +1437,7 @@ ACTOR static Future<Void> abortFiveZeroBackup(FileBackupAgent* backupAgent,
 
 	// Clear the new-style config space
 	tr->clear(newConfigSpace.range());
+	tr->clear(emergencyConfigSpace.range());
 
 	Key statusKey = StringRef(statusSpace.pack(FileBackupAgent::keyStateStatus));
 
@@ -5360,8 +5370,9 @@ public:
 			prevConfig.clear(tr);
 		}
 
-		state BackupConfig config(deterministicRandom()->randomUniqueID());
-		state UID uid = config.getUid();
+		state UID uid = deterministicRandom()->randomUniqueID();
+		state BackupConfig config(uid);
+		state EmergencyBackupConfig emergencyConfig(uid);
 
 		// This check will ensure that current backupUid is later than the last backup Uid
 		state Standalone<StringRef> nowStr = BackupAgentBase::getCurrentTime();
@@ -5425,6 +5436,7 @@ public:
 		}
 
 		config.clear(tr);
+		emergencyConfig.clear(tr);
 
 		state Key destUidValue(BinaryWriter::toValue(uid, Unversioned()));
 		if (normalizedRanges.size() == 1 || isDefaultBackup(normalizedRanges)) {
@@ -5465,8 +5477,10 @@ public:
 		config.tag().set(tr, tagName);
 		config.stateEnum().set(tr, EBackupState::STATE_SUBMITTED);
 		config.backupContainer().set(tr, bc);
+		emergencyConfig.backupContainer().set(tr, bc);
 		config.stopWhenDone().set(tr, stopWhenDone);
 		config.backupRanges().set(tr, normalizedRanges);
+		emergencyConfig.backupRanges().set(tr, normalizedRanges);
 		config.initialSnapshotIntervalSeconds().set(tr, initialSnapshotIntervalSeconds);
 		config.snapshotIntervalSeconds().set(tr, snapshotIntervalSeconds);
 		config.partitionedLogEnabled().set(tr, partitionedLog);

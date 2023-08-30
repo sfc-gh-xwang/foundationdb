@@ -813,7 +813,7 @@ ACTOR Future<Reference<IConnection>> proxyConnectImpl(std::string remoteHost,
 	             }));
 	state Reference<IConnection> connection = wait(INetworkConnections::net()->connect(proxyHost, proxyService));
 	wait(sendProxyConnectRequest(connection, remoteHost, remoteService));
-	boost::asio::ip::tcp::socket socket = std::move(connection->getSocket());
+	boost::asio::ip::tcp::socket socket = std::move(connection->getTCPSocket());
 	Reference<IConnection> remoteConnection = wait(INetworkConnections::net()->connect(remoteEndpoint, &socket));
 	return remoteConnection;
 }

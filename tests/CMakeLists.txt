@@ -254,6 +254,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES rare/BlobGranuleRanges.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleRangesBypassLock.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleMergeBoundaries.toml)
+  add_fdb_test(TEST_FILES rare/BlobGranuleBigTuples.toml)
   add_fdb_test(TEST_FILES rare/BulkLoadOperations.toml)
   add_fdb_test(TEST_FILES rare/BulkLoadOperationsTenants.toml)
   add_fdb_test(TEST_FILES rare/CheckRelocation.toml)
@@ -441,6 +442,7 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES slow/MetaclusterManagement.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterManagementConcurrency.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterMove.toml)
+  add_fdb_test(TEST_FILES slow/MetaclusterMoveConcurrency.toml)
   add_fdb_test(TEST_FILES slow/MetaclusterRecovery.toml)
   add_fdb_test(TEST_FILES slow/MoveKeysClean.toml)
   add_fdb_test(TEST_FILES slow/MoveKeysSideband.toml)
@@ -554,7 +556,11 @@ if(WITH_PYTHON)
       NAME authorization_venv_setup
       COMMAND bash -c ${authz_venv_cmd}
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(authorization_venv_setup PROPERTIES FIXTURES_SETUP authz_virtual_env TIMEOUT 60)
+    set_tests_properties(authorization_venv_setup
+      PROPERTIES
+        FIXTURES_SETUP authz_virtual_env
+        RESOURCE_LOCK authz_venv_setup_lock
+        TIMEOUT 60)
 
     set(authz_script_dir ${CMAKE_SOURCE_DIR}/tests/authorization)
     set(enable_grv_cache 0 1)
@@ -588,7 +594,7 @@ if(WITH_PYTHON)
           NAME ${authz_test_name}
           WORKING_DIRECTORY ${authz_venv_dir}
           COMMAND bash -c ${authz_test_cmd})
-        set_tests_properties(${authz_test_name} PROPERTIES ENVIRONMENT "PYTHONPATH=${CMAKE_SOURCE_DIR}/tests/TestRunner;${ld_env_name}=${CMAKE_BINARY_DIR}/lib")
+        set_tests_properties(${authz_test_name} PROPERTIES ENVIRONMENT "PYTHONPATH=${CMAKE_SOURCE_DIR}/tests/TestRunner:${CMAKE_BINARY_DIR}/tests/TestRunner;${ld_env_name}=${CMAKE_BINARY_DIR}/lib")
         set_tests_properties(${authz_test_name} PROPERTIES FIXTURES_REQUIRED authz_virtual_env)
         set_tests_properties(${authz_test_name} PROPERTIES TIMEOUT 120)
       endforeach()

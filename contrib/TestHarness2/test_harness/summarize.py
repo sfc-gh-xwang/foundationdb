@@ -452,31 +452,22 @@ class Summary:
         if self.max_rss is not None:
             self.out.attributes["PeakMemory"] = str(self.max_rss)
         if self.valgrind_out_file is not None:
-            try:
-                valgrind_errors = parse_valgrind_output(self.valgrind_out_file)
-                for valgrind_error in valgrind_errors:
-                    if valgrind_error.kind.startswith("Leak"):
-                        continue
-                    self.error = True
-                    child = SummaryTree("ValgrindError")
-                    child.attributes["Severity"] = "40"
-                    child.attributes["What"] = valgrind_error.what.what
-                    child.attributes["Backtrace"] = valgrind_error.what.backtrace
-                    aux_count = 0
-                    for aux in valgrind_error.aux:
-                        child.attributes["WhatAux{}".format(aux_count)] = aux.what
-                        child.attributes[
-                            "BacktraceAux{}".format(aux_count)
-                        ] = aux.backtrace
-                        aux_count += 1
-                    self.out.append(child)
-            except Exception as e:
+            valgrind_errors = parse_valgrind_output(
+                self.valgrind_out_file, hide_parse_errors=self.was_killed
+            )
+            for valgrind_error in valgrind_errors:
+                if valgrind_error.kind.startswith("Leak"):
+                    continue
                 self.error = True
-                child = SummaryTree("ValgrindParseError")
+                child = SummaryTree("ValgrindError")
                 child.attributes["Severity"] = "40"
-                child.attributes["ErrorMessage"] = str(e)
-                _, _, exc_traceback = sys.exc_info()
-                child.attributes["Trace"] = repr(traceback.format_tb(exc_traceback))
+                child.attributes["What"] = valgrind_error.what.what
+                child.attributes["Backtrace"] = valgrind_error.what.backtrace
+                aux_count = 0
+                for aux in valgrind_error.aux:
+                    child.attributes["WhatAux{}".format(aux_count)] = aux.what
+                    child.attributes["BacktraceAux{}".format(aux_count)] = aux.backtrace
+                    aux_count += 1
                 self.out.append(child)
         if not self.test_end_found:
             child = SummaryTree("TestUnexpectedlyNotFinished")

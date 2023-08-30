@@ -173,7 +173,10 @@ set(COMBIFY_CORE_SRCS
 )
 
 set(COMBIFY_TEST_SRCS
-  test/combify/Authorization.cpp
+  test/combify/AuthorizationTests.cpp
+  test/combify/DatabaseTests.cpp
+  test/combify/FutureTests.cpp
+  test/combify/TransactionTests.cpp
 )
 
 if(OPEN_FOR_IDE)
@@ -282,7 +285,7 @@ else()
   add_python_venv_test(
     NAME fdb_c_combify_test
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py ${CMAKE_BINARY_DIR}
-    TEST_TIMEOUT 300
+    TEST_TIMEOUT 1200
   )
   add_python_venv_test(
     NAME fdb_c_bulk_load_test
@@ -301,25 +304,22 @@ else()
     ${CMAKE_CURRENT_BINARY_DIR}/libfdb_c_external.so
   )
 
-  file(GLOB API_TEST_FILES "${CMAKE_CURRENT_SOURCE_DIR}/test/apitester/tests/*.toml")
-  foreach(test_file ${API_TEST_FILES})
-    get_filename_component(file_name "${test_file}" NAME_WE)
-    set(test_name "fdb_c_api_test_${file_name}")
-    add_python_venv_test(NAME "${test_name}"
-      COMMAND python ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/run_c_api_tests.py
-        --build-dir ${CMAKE_BINARY_DIR}
-        --api-tester-bin $<TARGET_FILE:fdb_c_api_tester>
-        --external-client-library ${CMAKE_CURRENT_BINARY_DIR}/libfdb_c_external.so
-        --test-file ${test_file}
-        --retain-client-lib-copies
-      TEST_TIMEOUT 300
-    )
-  endforeach()
+  add_python_venv_test(NAME download_old_binaries
+    COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/binary_download.py
+      --build-dir ${CMAKE_BINARY_DIR}
+      --versions "${FDB_PREV_RELEASE_VERSION}" "${FDB_PREV2_RELEASE_VERSION}" "${FDB_PREV3_RELEASE_VERSION}"
+  )
+
+  set_tests_properties(download_old_binaries
+    PROPERTIES
+      FIXTURES_SETUP old_binaries
+      RESOURCE_LOCK download_old_binaries_lock # ensures one run even if its dependent tests run in parallel
+      TIMEOUT 300)
 
   add_python_venv_test(NAME fdb_c_upgrade_to_future_version
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
     --build-dir ${CMAKE_BINARY_DIR}
-    --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+    --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
     --upgrade-path "${FDB_CURRENT_VERSION}" "${FDB_FUTURE_VERSION}" "${FDB_CURRENT_VERSION}"
     --process-number 3
     )
@@ -327,7 +327,7 @@ else()
   add_python_venv_test(NAME fdb_c_upgrade_to_future_version_blob_granules
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
     --build-dir ${CMAKE_BINARY_DIR}
-    --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/ApiBlobGranulesCorrectness.toml
+    --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/BlobGranulesCorrectness.toml
     --upgrade-path "${FDB_CURRENT_VERSION}" "${FDB_FUTURE_VERSION}" "${FDB_CURRENT_VERSION}"
     --blob-granules-enabled
     --process-number 3
@@ -345,7 +345,7 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev3_gradual
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV3_RELEASE_VERSION}" "${FDB_PREV2_RELEASE_VERSION}" "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
@@ -353,7 +353,7 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev3_direct
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV3_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
@@ -361,7 +361,7 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev2_gradual
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV2_RELEASE_VERSION}" "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
@@ -369,7 +369,7 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev2_direct
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV2_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
@@ -377,25 +377,41 @@ else()
     add_python_venv_test(NAME fdb_c_upgrade_from_prev
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
       --process-number 3
       )
     
-    # FIXME: re-enable after 71.3.2 is published and prev_release_version is changed to it
-    # add_python_venv_test(NAME fdb_c_upgrade_from_prev_blob_granule
-    #  COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
-    #  --build-dir ${CMAKE_BINARY_DIR}
-    #  --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/ApiBlobGranulesCorrectness.toml
-    #  --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}" "${FDB_PREV_RELEASE_VERSION}"
-    #  --blob-granules-enabled
-    #  --process-number 3
-    #  )
+    add_python_venv_test(NAME fdb_c_upgrade_from_prev_blob_granule
+      COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
+      --build-dir ${CMAKE_BINARY_DIR}
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/BlobGranulesCorrectness.toml
+      --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
+      --blob-granules-enabled
+      --process-number 3
+    )
+
+    add_python_venv_test(NAME fdb_c_upgrade_from_prev_tenant
+      COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
+      --build-dir ${CMAKE_BINARY_DIR}
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectnessTenant.toml
+      --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
+      --process-number 3
+    )
+    
+    add_python_venv_test(NAME fdb_c_upgrade_from_prev_blob_granule_tenant
+      COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
+      --build-dir ${CMAKE_BINARY_DIR}
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/BlobGranulesCorrectnessTenant.toml
+      --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "${FDB_CURRENT_VERSION}"
+      --blob-granules-enabled
+      --process-number 3
+    )
 
     add_python_venv_test(NAME fdb_c_wiggle_only
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_CURRENT_VERSION}" "wiggle"
       --disable-log-dump
       --process-number 3
@@ -405,12 +421,26 @@ else()
     add_python_venv_test(NAME fdb_c_wiggle_and_upgrade
       COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/upgrade_test.py
       --build-dir ${CMAKE_BINARY_DIR}
-      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/MixedApiWorkloadMultiThr.toml
+      --test-file ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests/upgrade/KVApiCorrectness.toml
       --upgrade-path "${FDB_PREV_RELEASE_VERSION}" "wiggle" "${FDB_CURRENT_VERSION}"
       --disable-log-dump
       --process-number 3
       --redundancy double
       )
+
+    set_tests_properties(
+      fdb_c_client_config_tests
+      fdb_c_upgrade_from_prev3_gradual
+      fdb_c_upgrade_from_prev3_direct
+      fdb_c_upgrade_from_prev2_gradual
+      fdb_c_upgrade_from_prev2_direct
+      fdb_c_upgrade_from_prev
+      fdb_c_upgrade_from_prev_blob_granule
+      fdb_c_upgrade_from_prev_tenant
+      fdb_c_upgrade_from_prev_blob_granule_tenant
+      fdb_c_wiggle_only
+      fdb_c_wiggle_and_upgrade
+      PROPERTIES FIXTURES_REQUIRED old_binaries)
 
   endif()
 endif()
@@ -501,13 +531,94 @@ elseif(NOT APPLE) # Linux Only
     COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/test/fdb_c_shim_tests.py
     --build-dir ${CMAKE_BINARY_DIR}
     --unit-tests-bin $<TARGET_FILE:fdb_c_shim_unit_tests>
-    --api-tester-bin $<TARGET_FILE:fdb_c_shim_api_tester>
     --shim-lib-tester-bin $<TARGET_FILE:fdb_c_shim_lib_tester>
-    --api-test-dir ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/tests
     ${SHIM_LIB_TEST_EXTRA_OPTIONS}
     )
 
+  set_tests_properties(fdb_c_shim_library_tests PROPERTIES FIXTURES_REQUIRED old_binaries)
+
 endif() # End Linux only
+
+if (NOT OPEN_FOR_IDE)
+  # We have a broader set of API tests located in test/apitester/tests and a narrower set of
+  # tests for testing various version configuration scenarios in test/apitester/tests/version:
+  # - Using external client of a previous release
+  # - Accessing current version client over the shim layer
+  # - Accessing previous version client over the shim layer
+  # After a version update, move files from "version/current" to "version/prev"
+  file(GLOB API_TEST_FILES "${CMAKE_CURRENT_SOURCE_DIR}/test/apitester/tests/*.toml")
+  file(GLOB CURRENT_VERSION_API_TEST_FILES "${CMAKE_CURRENT_SOURCE_DIR}/test/apitester/tests/version/current/*.toml")
+  file(GLOB PREV_VERSION_API_TEST_FILES "${CMAKE_CURRENT_SOURCE_DIR}/test/apitester/tests/version/prev/*.toml")
+  list (APPEND CURRENT_VERSION_API_TEST_FILES ${PREV_VERSION_API_TEST_FILES})
+
+  # Test both primary and external client of the current version
+  foreach(test_file ${API_TEST_FILES})
+    get_filename_component(file_name "${test_file}" NAME_WE)
+    set(test_name "fdb_c_api_${file_name}")
+    add_python_venv_test(NAME "${test_name}"
+      COMMAND python ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/run_c_api_tests.py
+        --build-dir ${CMAKE_BINARY_DIR}
+        --api-tester-bin $<TARGET_FILE:fdb_c_api_tester>
+        --test-file ${test_file}
+        --retain-client-lib-copies
+      TEST_TIMEOUT 300
+    )
+  endforeach()
+
+  # Test primary client of current version and external client of the previous version
+  if (NOT USE_SANITIZER)
+    foreach(test_file ${PREV_VERSION_API_TEST_FILES})
+      get_filename_component(file_name "${test_file}" NAME_WE)
+      set(test_name "fdb_c_api_prev_${file_name}")
+      add_python_venv_test(NAME "${test_name}"
+        COMMAND python ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/run_c_api_tests.py
+          --build-dir ${CMAKE_BINARY_DIR}
+          --api-tester-bin $<TARGET_FILE:fdb_c_api_tester>
+          --test-file ${test_file}
+          --retain-client-lib-copies
+          --cluster-version "${FDB_PREV_RELEASE_VERSION}"
+        TEST_TIMEOUT 300
+      )
+      set_tests_properties("${test_name}" PROPERTIES FIXTURES_REQUIRED old_binaries)
+    endforeach()
+  endif()
+
+  # Test shim layer and primary client of the current version
+  if (NOT APPLE)
+    foreach(test_file ${CURRENT_VERSION_API_TEST_FILES})
+      get_filename_component(file_name "${test_file}" NAME_WE)
+      set(test_name "fdb_c_api_shim_${file_name}")
+      add_python_venv_test(NAME "${test_name}"
+        COMMAND python ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/run_c_api_tests.py
+          --build-dir ${CMAKE_BINARY_DIR}
+          --api-tester-bin $<TARGET_FILE:fdb_c_shim_api_tester>
+          --test-file ${test_file}
+          --retain-client-lib-copies
+          --primary-client-version "${FDB_CURRENT_VERSION}"
+        TEST_TIMEOUT 300
+      )
+    endforeach()
+  endif()
+
+  # Tests with shim layer and primary client of the previous version
+  if (NOT APPLE AND NOT USE_SANITIZER)
+    foreach(test_file ${PREV_VERSION_API_TEST_FILES})
+      get_filename_component(file_name "${test_file}" NAME_WE)
+      set(test_name "fdb_c_api_shim_prev_${file_name}")
+      add_python_venv_test(NAME "${test_name}"
+        COMMAND python ${CMAKE_SOURCE_DIR}/bindings/c/test/apitester/run_c_api_tests.py
+          --build-dir ${CMAKE_BINARY_DIR}
+          --api-tester-bin $<TARGET_FILE:fdb_c_shim_api_tester>
+          --test-file ${test_file}
+          --retain-client-lib-copies
+          --primary-client-version "${FDB_PREV_RELEASE_VERSION}"
+          --cluster-version "${FDB_PREV_RELEASE_VERSION}"
+        TEST_TIMEOUT 300
+      )
+      set_tests_properties("${test_name}" PROPERTIES FIXTURES_REQUIRED old_binaries)
+    endforeach()
+  endif()
+endif()
 
 # TODO: re-enable once the old vcxproj-based build system is removed.
 #generate_export_header(fdb_c EXPORT_MACRO_NAME "DLLEXPORT"

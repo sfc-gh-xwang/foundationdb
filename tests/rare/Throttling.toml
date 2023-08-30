@@ -3,6 +3,10 @@
 # storage servers in the other datacenters.
 generateFearless = false
 
+[[knobs]]
+# A short commit window increases the risk that this workload won't get any work done
+max_write_transaction_life_versions = 5000000
+
 [[test]]
 testTitle='ThrottlingTest'
     [[test.workload]]

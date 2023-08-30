@@ -34,10 +34,11 @@
 #include "fdbserver/ServerDBInfo.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/WorkerInterface.actor.h"
-#include "flow/Error.h"
 
+#include "flow/Error.h"
 #include "flow/IRandom.h"
 #include "fdbclient/Tracing.h"
+
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 #define SevDebugMemory SevVerbose
@@ -629,7 +630,7 @@ ACTOR Future<Void> monitorBackupProgress(BackupData* self) {
 		// check all workers have started by checking their progress is larger
 		// than the backup's start version.
 		state Reference<BackupProgress> progress(new BackupProgress(self->myId, {}));
-		wait(getBackupProgress(self->cx, self->myId, progress, /*logging=*/false));
+		wait(getBackupProgressFromStorage(self->cx, self->myId, progress, /*logging=*/false));
 		state std::map<Tag, Version> tagVersions = progress->getEpochStatus(self->recruitedEpoch);
 		state std::map<UID, Version> savedLogVersions;
 		if (tagVersions.size() != self->totalTags) {
@@ -1130,7 +1131,10 @@ ACTOR Future<Void> backupWorker(BackupInterface interf,
 	state Future<Void> pull;
 	state Future<Void> done;
 
+	ASSERT(!req.isEmergency);
+
 	TraceEvent("BackupWorkerStart", self.myId)
+	    .detail("IsEmergency", req.isEmergency)
 	    .detail("Tag", req.routerTag.toString())
 	    .detail("TotalTags", req.totalTags)
 	    .detail("StartVersion", req.startVersion)
@@ -1194,5 +1198,28 @@ ACTOR Future<Void> backupWorker(BackupInterface interf,
 			throw err;
 		}
 	}
+	return Void();
+}
+
+ACTOR Future<Void> emergencyBackupWorker(BackupInterface interf,
+                                         InitializeBackupRequest req,
+                                         Reference<AsyncVar<ServerDBInfo> const> db) {
+	state BackupData self(interf.id(), db, req);
+	state PromiseStream<Future<Void>> addActor;
+	state Future<Void> error = actorCollection(addActor.getFuture());
+	state Future<Void> dbInfoChange = Void();
+	state Future<Void> pull;
+	state Future<Void> done;
+
+	ASSERT(req.isEmergency);
+	TraceEvent("BackupWorkerStart", self.myId)
+	    .detail("IsEmergency", req.isEmergency)
+	    .detail("Tag", req.routerTag.toString())
+	    .detail("TotalTags", req.totalTags)
+	    .detail("StartVersion", req.startVersion)
+	    .detail("EndVersion", req.endVersion.present() ? req.endVersion.get() : -1)
+	    .detail("LogEpoch", req.recruitedEpoch)
+	    .detail("BackupEpoch", req.backupEpoch);
+
 	return Void();
 }
