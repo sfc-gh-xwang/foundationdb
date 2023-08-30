@@ -1558,6 +1558,29 @@ struct AbortTenantMovementImpl {
 		return Void();
 	}
 
+	// Simultaneous aborts can start configuration changes that don't get finished
+	// and the abort will just progress further without failing, preventing any
+	// retries to continue the configuration changes
+	// Explicitly check the state and throw a retryable error if in this scenario
+	ACTOR static Future<Void> checkSourceTenantStates(AbortTenantMovementImpl* self) {
+		state std::vector<Future<MetaclusterTenantMapEntry>> tenantFutures;
+		for (auto& tenantPair : self->tenantsInGroup) {
+			tenantFutures.push_back(metacluster::getTenant(self->srcCtx.managementDb, tenantPair.first));
+		}
+		wait(waitForAll(tenantFutures));
+		for (auto& f : tenantFutures) {
+			if (f.get().tenantState != TenantState::READY) {
+				CODE_PROBE(true, "Simultaneous abort returned from config change before setting ready state");
+				TraceEvent("TenantMoveAbortReadyStateNotSetAfterUnlock")
+				    .detail("SourceCluster", self->srcCtx.clusterName)
+				    .detail("DestinationCluster", self->dstCtx.clusterName)
+				    .detail("TenantGroup", self->tenantGroup);
+				throw tenant_move_failed();
+			}
+		}
+		return Void();
+	}
+
 	ACTOR static Future<Void> abortStartLock(AbortTenantMovementImpl* self) {
 		state std::vector<TenantMapEntry> srcEntries = wait(self->srcCtx.runDataClusterTransaction(
 		    [self = self](Reference<ITransaction> tr) { return getTenantEntries(self->tenantsInGroup, tr); }));
@@ -1575,6 +1598,7 @@ struct AbortTenantMovementImpl {
 		    }));
 		fmt::print("Tenant move abort: checking valid unlock finished\n");
 		wait(unlockSourceTenants(self));
+		wait(checkSourceTenantStates(self));
 
 		fmt::print("Tenant move abort: clearing move metadata begin\n");
 		wait(runMoveManagementTransaction(

@@ -406,6 +406,10 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("TenantGroup", tenantGroup)
 				    .detail("SourceCluster", srcCluster)
 				    .detail("DestinationCluster", dstCluster);
+				// Retryable error
+				if (e.code() == error_code_tenant_move_failed) {
+					continue;
+				}
 				// Abort failed
 				if (e.code() == error_code_invalid_tenant_move) {
 					return false;
@@ -419,6 +423,42 @@ struct MetaclusterMoveWorkload : TestWorkload {
 			}
 		}
 		return true;
+	}
+
+	ACTOR static Future<bool> abortMoveMultiple(MetaclusterMoveWorkload* self,
+	                                            TenantGroupName tenantGroup,
+	                                            ClusterName srcCluster,
+	                                            ClusterName dstCluster) {
+		state std::vector<Future<ErrorOr<bool>>> abortFutures;
+		state int numAborts = deterministicRandom()->randomInt(1, 3);
+		state int totalNumAborts = numAborts;
+		for (; numAborts > 0; numAborts--) {
+			abortFutures.push_back(errorOr(abortMove(self, tenantGroup, srcCluster, dstCluster)));
+			wait(delay(deterministicRandom()->random01() * 5));
+		}
+		wait(waitForAll(abortFutures));
+
+		// Check for at least one successful abort
+		state bool abortSuccess = false;
+		for (auto const& f : abortFutures) {
+			ErrorOr<bool> result = f.get();
+			// The errors that bubble out are NOT:
+			// 	- error_code_invalid_tenant_move
+			//  - error_code_tenant_move_record_missing
+			// error_code_tenant_not_found is possible because of simultaneous operations
+			// Re-throw all other error types
+			if (result.isError()) {
+				if (totalNumAborts > 1 && result.getError().code() == error_code_tenant_not_found) {
+					continue;
+				}
+				throw result.getError();
+			}
+			if (result.get()) {
+				abortSuccess = true;
+			}
+		}
+
+		return abortSuccess;
 	}
 
 	// returns true if move is aborted
@@ -456,7 +496,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				CODE_PROBE(true, "Metacluster move start timed out");
 				if (deterministicRandom()->random01() < 0.2) {
-					bool aborted = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
+					bool aborted = wait(abortMoveMultiple(self, tenantGroup, srcCluster, dstCluster));
 					TraceEvent("MetaclusterMoveStartAttemptedAbort")
 					    .detail("TenantGroup", tenantGroup)
 					    .detail("SourceCluster", srcCluster)
@@ -545,7 +585,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    .detail("DestinationCluster", dstCluster);
 				CODE_PROBE(true, "Metacluster move switch timed out");
 				if (deterministicRandom()->random01() < 0.2) {
-					bool aborted = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
+					bool aborted = wait(abortMoveMultiple(self, tenantGroup, srcCluster, dstCluster));
 					TraceEvent("MetaclusterMoveSwitchAttemptedAbort")
 					    .detail("TenantGroup", tenantGroup)
 					    .detail("SourceCluster", srcCluster)
@@ -618,7 +658,7 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					if (!moveRecord.present()) {
 						return false;
 					}
-					state bool aborted = wait(abortMove(self, tenantGroup, srcCluster, dstCluster));
+					state bool aborted = wait(abortMoveMultiple(self, tenantGroup, srcCluster, dstCluster));
 					TraceEvent("MetaclusterMoveFinishAttemptedAbort")
 					    .detail("TenantGroup", tenantGroup)
 					    .detail("SourceCluster", srcCluster)
