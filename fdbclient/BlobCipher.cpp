@@ -355,7 +355,7 @@ void BlobCipherEncryptHeaderRef::validateEncryptionHeaderDetails(const BlobCiphe
 	Optional<EncryptCipherKeyCheckValue> persistedHeaderKCV;
 
 	// TODO: Replace with "Overload visitor pattern" someday.
-	return std::visit(
+	std::visit(
 	    [&persistedTextCipherDetails,
 	     &persistedHeaderCipherDetails,
 	     &persistedIV,
