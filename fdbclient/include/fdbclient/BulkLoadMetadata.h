@@ -55,7 +55,7 @@ struct CreatedFilePointerRef {
 	StringRef filename;
 	BulkLoadFileType type;
 	// encryption metadata later to be stored in bgFileKeys
-	Optional<BlobGranuleCipherKeysMetaRef> cipherKeysMetaRef;
+	Optional<BlobGranuleCipherKeysMeta> cipherKeysMeta;
 
 	int expectedSize() const {
 		// FIXME: doesn't have cipherKeys
@@ -66,11 +66,11 @@ struct CreatedFilePointerRef {
 	CreatedFilePointerRef(Arena& to, CreatedFilePointerRef other)
 	  : filename(to, other.filename),
 	    type(other.type),
-	    cipherKeysMetaRef(other.cipherKeysMetaRef) {}
+	    cipherKeysMeta(other.cipherKeysMeta) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, filename, type, cipherKeysMetaRef);
+		serializer(ar, filename, type, cipherKeysMeta);
 	}
 };
 
