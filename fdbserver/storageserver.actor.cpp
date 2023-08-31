@@ -2420,7 +2420,9 @@ ACTOR Future<Void> getSplitPoints_internal(StorageServer* self, SplitRangeReques
 		self->checkTenantEntry(minVersion, req.tenantInfo, true);
 		self->metrics.getSplitPoints(req, req.tenantInfo.prefix);
 	} catch (Error& e) {
-		req.reply.sendError(e);
+		if (!canReplyWith(e))
+			throw;
+		self->sendErrorWithPenalty(req.reply, e, self->getPenalty());
 	}
 	return Void();
 }
