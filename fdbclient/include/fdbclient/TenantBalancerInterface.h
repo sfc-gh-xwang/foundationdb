@@ -91,12 +91,12 @@ struct GetMovementStatusRequest {
 	}
 };
 
-struct MoveTenantGroupReply {
+struct StartMoveTenantGroupReply {
 	constexpr static FileIdentifier file_identifier = 3708530;
 	UID movementId;
 
-	MoveTenantGroupReply() = default;
-	explicit MoveTenantGroupReply(UID id) : movementId(id) {}
+	StartMoveTenantGroupReply() = default;
+	explicit StartMoveTenantGroupReply(UID id) : movementId(id) {}
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
@@ -104,17 +104,17 @@ struct MoveTenantGroupReply {
 	}
 };
 
-struct MoveTenantGroupRequest {
+struct StartMoveTenantGroupRequest {
 	constexpr static FileIdentifier file_identifier = 3571712;
 	Arena arena;
 
 	TenantGroupNameRef tenantGroupName;
 	ClusterNameRef destinationCluster;
 
-	ReplyPromise<MoveTenantGroupReply> reply;
+	ReplyPromise<StartMoveTenantGroupReply> reply;
 
-	MoveTenantGroupRequest() = default;
-	explicit MoveTenantGroupRequest(TenantGroupName tenantGroupName, ClusterName destinationCluster)
+	StartMoveTenantGroupRequest() = default;
+	explicit StartMoveTenantGroupRequest(TenantGroupName tenantGroupName, ClusterName destinationCluster)
 	  : tenantGroupName(arena, tenantGroupName),
 	    destinationCluster(arena, destinationCluster) {}
 
@@ -219,7 +219,7 @@ struct TenantBalancerInterface {
 	RequestStream<HaltTenantBalancerRequest> haltTenantBalancer;
 	RequestStream<GetMovementStatusRequest> getMovementStatus;
 	RequestStream<ListMovementsRequest> listMovements;
-	RequestStream<MoveTenantGroupRequest> moveTenantsToCluster;
+	RequestStream<StartMoveTenantGroupRequest> startMoveTenantGroup;
 	RequestStream<AbortMovementRequest> abortMovement;
 	RequestStream<PersistInterfaceRequest> persistInterface;
 	RequestStream<ReplyPromise<Void>> waitFailure;
@@ -241,7 +241,7 @@ struct TenantBalancerInterface {
 		           haltTenantBalancer,
 		           getMovementStatus,
 		           listMovements,
-		           moveTenantsToCluster,
+		           startMoveTenantGroup,
 		           abortMovement,
 		           persistInterface,
 		           waitFailure,
@@ -259,7 +259,7 @@ struct TenantBalancerInterface {
 		streams.push_back(haltTenantBalancer.getReceiver());
 		streams.push_back(getMovementStatus.getReceiver());
 		streams.push_back(listMovements.getReceiver());
-		streams.push_back(moveTenantsToCluster.getReceiver());
+		streams.push_back(startMoveTenantGroup.getReceiver());
 		streams.push_back(abortMovement.getReceiver());
 		streams.push_back(persistInterface.getReceiver());
 		FlowTransport::transport().addEndpoints(streams);

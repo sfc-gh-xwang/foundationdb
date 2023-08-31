@@ -44,15 +44,17 @@ namespace online_movement {
 
 ACTOR
 template <typename IDatabase>
-static Future<Void> moveTenantGroup(IDatabase managementDb, TenantGroupName tenantGroup, ClusterName dstClusterName) {
-	state MoveTenantGroupRequest req(tenantGroup, dstClusterName);
+static Future<Void> startMoveTenantGroup(IDatabase managementDb,
+                                         TenantGroupName tenantGroup,
+                                         ClusterName dstClusterName) {
+	state StartMoveTenantGroupRequest req(tenantGroup, dstClusterName);
 	state Future<Void> init = Void();
-	state Future<ErrorOr<MoveTenantGroupReply>> replyFuture = Never();
+	state Future<ErrorOr<StartMoveTenantGroupReply>> replyFuture = Never();
 	try {
 		state Optional<TenantBalancerInterface> tbi;
 		state Future<Void> onTbiChanged = Never();
 		loop choose {
-			when(ErrorOr<MoveTenantGroupReply> reply =
+			when(ErrorOr<StartMoveTenantGroupReply> reply =
 			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
 				if (reply.isError()) {
 					throw reply.getError();
@@ -65,7 +67,7 @@ static Future<Void> moveTenantGroup(IDatabase managementDb, TenantGroupName tena
 				    wait(internal::getTenantBalancerInterface(managementDb));
 				tbi = res.first;
 				onTbiChanged = res.second;
-				replyFuture = tbi.present() ? tbi.get().moveTenantsToCluster.tryGetReply(req) : Never();
+				replyFuture = tbi.present() ? tbi.get().startMoveTenantGroup.tryGetReply(req) : Never();
 			}
 		}
 	} catch (Error& e) {

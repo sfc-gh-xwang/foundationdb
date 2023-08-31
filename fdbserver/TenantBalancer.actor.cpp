@@ -29,7 +29,7 @@ struct TenantBalancer {
 	    tenantBalancerMetrics("TenantBalancer", tbi.id().toString()),
 	    getMovementStatusRequests("GetMovementStatusRequests", tenantBalancerMetrics),
 	    listMovementsRequests("ListMovementsRequests", tenantBalancerMetrics),
-	    moveTenantsToClusterRequests("MoveTenantsToClusterRequests", tenantBalancerMetrics),
+	    startMoveTenantGroupRequests("StartMoveTenantGroupRequests", tenantBalancerMetrics),
 	    abortMovementRequests("AbortMovementRequests", tenantBalancerMetrics) {
 		managementDb =
 		    openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::False, EnableLocalityLoadBalance::True);
@@ -45,7 +45,7 @@ struct TenantBalancer {
 	CounterCollection tenantBalancerMetrics;
 	Counter getMovementStatusRequests;
 	Counter listMovementsRequests;
-	Counter moveTenantsToClusterRequests;
+	Counter startMoveTenantGroupRequests;
 	Counter abortMovementRequests;
 };
 
@@ -88,16 +88,16 @@ ACTOR Future<Void> listMovements(TenantBalancer* self, ListMovementsRequest req)
 	return Void();
 }
 
-ACTOR Future<Void> moveTenantGroup(TenantBalancer* self, MoveTenantGroupRequest req) {
-	++self->moveTenantsToClusterRequests;
-	TraceEvent("TenantBalancerMoveTenantsToCluster", self->tbi.id()).log();
+ACTOR Future<Void> startMoveTenantGroup(TenantBalancer* self, StartMoveTenantGroupRequest req) {
+	++self->startMoveTenantGroupRequests;
+	TraceEvent("TenantBalancerStartMoveTenantGroup", self->tbi.id()).log();
 	wait(delay(0.1));
 
 	try {
-		MoveTenantGroupReply reply;
+		StartMoveTenantGroupReply reply;
 		req.reply.send(reply);
 	} catch (Error& e) {
-		TraceEvent("TenantBalancerMoveTenantGroupError", self->tbi.id())
+		TraceEvent("TenantBalancerStartMoveTenantGroupError", self->tbi.id())
 		    .error(e)
 		    .detail("TenantGroup", req.tenantGroupName);
 		req.reply.sendError(e);
@@ -136,8 +136,8 @@ ACTOR Future<Void> tenantBalancerCore(TenantBalancer* self) {
 		when(ListMovementsRequest req = waitNext(self->tbi.listMovements.getFuture())) {
 			self->actors.add(listMovements(self, req));
 		}
-		when(MoveTenantGroupRequest req = waitNext(self->tbi.moveTenantsToCluster.getFuture())) {
-			self->actors.add(moveTenantGroup(self, req));
+		when(StartMoveTenantGroupRequest req = waitNext(self->tbi.startMoveTenantGroup.getFuture())) {
+			self->actors.add(startMoveTenantGroup(self, req));
 		}
 		when(AbortMovementRequest req = waitNext(self->tbi.abortMovement.getFuture())) {
 			self->actors.add(abortMovement(self, req));

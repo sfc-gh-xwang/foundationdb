@@ -128,11 +128,11 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 		return tenantGroup;
 	}
 
-	ACTOR static Future<Void> moveTenantGroup(OnlineTenantMovementWorkload* self) {
+	ACTOR static Future<Void> startMoveTenantGroup(OnlineTenantMovementWorkload* self) {
 		state TenantGroupName tenantGroup = self->chooseTenantGroup();
 		state ClusterName dstClusterName = self->chooseClusterName();
 		try {
-			wait(metacluster::online_movement::moveTenantGroup(
+			wait(metacluster::online_movement::startMoveTenantGroup(
 			    self->simMetacluster.managementDb, tenantGroup, dstClusterName));
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
@@ -204,7 +204,7 @@ struct OnlineTenantMovementWorkload : public TestWorkload {
 			state Future<Void> logger = delayedTrace();
 			state int operation = deterministicRandom()->randomInt(0, 4);
 			if (operation == 0) {
-				wait(moveTenantGroup(self));
+				wait(startMoveTenantGroup(self));
 			} else if (operation == 1) {
 				wait(abortTenantMovement(self));
 			} else if (operation == 2) {

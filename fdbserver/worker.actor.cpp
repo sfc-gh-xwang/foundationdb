@@ -3196,7 +3196,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					DUMPTOKEN(recruited.haltTenantBalancer);
 					DUMPTOKEN(recruited.getMovementStatus);
 					DUMPTOKEN(recruited.listMovements);
-					DUMPTOKEN(recruited.moveTenantsToCluster);
+					DUMPTOKEN(recruited.startMoveTenantGroup);
 					DUMPTOKEN(recruited.abortMovement);
 					DUMPTOKEN(recruited.persistInterface);
 					DUMPTOKEN(recruited.waitFailure);
