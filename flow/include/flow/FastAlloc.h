@@ -282,33 +282,6 @@ public:
 	static void operator delete(void*, void*) {}
 };
 
-template <class Object>
-class TrackedFastAllocated : public FastAllocated<Object> {
-public:
-	static unsigned long long allocated;
-	static unsigned long long released;
-
-	[[nodiscard]] static void* operator new(size_t s) {
-		void* p = FastAllocated<Object>::operator new(s);
-		allocated += s;
-		return p;
-	}
-
-	static void operator delete(void* s) {
-		FastAllocated<Object>::operator delete(s);
-		released += sizeof(Object);
-	}
-
-	// Redefine placement new so you can still use it
-	static void* operator new(size_t, void* p) { return p; }
-	static void operator delete(void*, void*) {}
-};
-
-template <class Object>
-unsigned long long TrackedFastAllocated<Object>::allocated = 0;
-template <class Object>
-unsigned long long TrackedFastAllocated<Object>::released = 0;
-
 [[nodiscard]] inline void* allocateFast(int size) {
 	if (size <= 16)
 		return FastAllocator<16>::allocate();

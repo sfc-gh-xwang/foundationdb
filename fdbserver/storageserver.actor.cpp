@@ -1099,7 +1099,7 @@ public:
 		u.arena() = lastArena;
 		counters.bytesInputOld += VERSION_OVERHEAD;
 		counters.bytesInputNoPTree += VERSION_OVERHEAD;
-		counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + VersionedData::PTreeSize::allocated;
+		counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		return u;
 	}
 
@@ -1107,7 +1107,7 @@ public:
 		byteSampleApplyMutation(m, mLV.version);
 		counters.bytesInputOld += mvccStorageBytes(m);
 		counters.bytesInputNoPTree += mvccStorageBytesNoPTree(m);
-		counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + VersionedData::PTreeSize::allocated;
+		counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		return mLV.push_back_deep(mLV.arena(), m);
 	}
 
@@ -1544,8 +1544,16 @@ public:
 				}
 				return minVersion;
 			});
-			specialCounter(cc, "PTreeAllocated", []() { return VersionedData::PTreeSize::allocated; });
-			specialCounter(cc, "PTreeReleased", []() { return VersionedData::PTreeSize::released; });
+			specialCounter(cc, "PTreeAllocated", [self]() {
+				self->counters.memoryUsageInput =
+				    self->counters.bytesInputNoPTree.getValue() + self->data().ptreeSize.allocated;
+				return self->data().ptreeSize.allocated;
+			});
+			specialCounter(cc, "PTreeReleased", [self]() {
+				self->counters.memoryUsageDurable =
+				    self->counters.bytesDurableNoPTree.getValue() + self->data().ptreeSize.released;
+				return self->data().ptreeSize.released;
+			});
 		}
 	} counters;
 
@@ -1791,7 +1799,8 @@ public:
 
 	Counter::Value queueSize() const {
 		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
-			return counters.memoryUsageInput.getValue() - counters.memoryUsageDurable.getValue();
+			return (counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated) -
+			       (counters.bytesDurableNoPTree.getValue() + data().ptreeSize.released);
 		} else {
 			return counters.bytesInputOld.getValue() - counters.bytesDurableOld.getValue();
 		}
@@ -1890,7 +1899,7 @@ public:
 		if (SERVER_KNOBS->STORAGE_INCLUDE_FEED_STORAGE_QUEUE) {
 			counters.bytesInputOld += bytes;
 			counters.bytesInputNoPTree += bytes;
-			counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + VersionedData::PTreeSize::allocated;
+			counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		}
 	}
 
@@ -6417,8 +6426,8 @@ void getQueuingMetrics(StorageServer* self, StorageQueuingMetricsRequest const& 
 	reply.localTime = now();
 	reply.instanceID = self->instanceID;
 	if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
-		reply.bytesInput = self->counters.memoryUsageInput.getValue();
-		reply.bytesDurable = self->counters.memoryUsageDurable.getValue();
+		reply.bytesInput = self->counters.bytesInputNoPTree.getValue() + self->data().ptreeSize.allocated;
+		reply.bytesDurable = self->counters.bytesDurableNoPTree.getValue() + self->data().ptreeSize.released;
 	} else {
 		reply.bytesInput = self->counters.bytesInputOld.getValue();
 		reply.bytesDurable = self->counters.bytesDurableOld.getValue();
@@ -6529,8 +6538,7 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 		}
 		data->counters.bytesDurableOld += bytesDurable;
 		data->counters.bytesDurableNoPTree += bytesDurableNoTree;
-		data->counters.memoryUsageDurable =
-		    data->counters.bytesDurableNoPTree.getValue() + StorageServer::VersionedData::PTreeSize::released;
+		data->counters.memoryUsageDurable = data->counters.bytesDurableNoPTree.getValue() + data->data().ptreeSize.released;
 	}
 
 	int64_t feedBytesDurable = 0;
@@ -6543,8 +6551,7 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 	if (SERVER_KNOBS->STORAGE_INCLUDE_FEED_STORAGE_QUEUE) {
 		data->counters.bytesDurableOld += feedBytesDurable;
 		data->counters.bytesDurableNoPTree += feedBytesDurable;
-		data->counters.memoryUsageDurable =
-		    data->counters.bytesDurableNoPTree.getValue() + StorageServer::VersionedData::PTreeSize::released;
+		data->counters.memoryUsageDurable = data->counters.bytesDurableNoPTree.getValue() + data->data().ptreeSize.released;
 	}
 
 	if (EXPENSIVE_VALIDATION) {
@@ -9777,7 +9784,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 		state double waitStartT = 0;
 		state int64_t bytesInput = 0;
 		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
-			bytesInput = data->counters.memoryUsageInput.getValue();
+			bytesInput = data->counters.bytesInputNoPTree.getValue() + data->data().ptreeSize.allocated;
 		} else {
 			bytesInput = data->counters.bytesInputOld.getValue();
 		}

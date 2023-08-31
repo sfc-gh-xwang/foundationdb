@@ -38,14 +38,20 @@
 // PTree also supports efficient finger searches.
 namespace PTreeImpl {
 
+struct PTreeSize {
+	uint64_t allocated = 0;
+	uint64_t released = 0;
+};
+
 template <class T>
-struct PTree : public ReferenceCounted<PTree<T>>, TrackedFastAllocated<PTree<T>>, NonCopyable {
+struct PTree : public ReferenceCounted<PTree<T>>, FastAllocated<PTree<T>>, NonCopyable {
 	uint32_t priority;
 	Reference<PTree> pointer[3];
 	Version lastUpdateVersion;
 	bool updated;
 	bool replacedPointer;
 	T data;
+	PTreeSize* size;
 
 	const Reference<PTree>& child(bool which, Version at) const {
 		if (updated && lastUpdateVersion <= at && which == replacedPointer)
@@ -56,16 +62,38 @@ struct PTree : public ReferenceCounted<PTree<T>>, TrackedFastAllocated<PTree<T>>
 	const Reference<PTree>& left(Version at) const { return child(false, at); }
 	const Reference<PTree>& right(Version at) const { return child(true, at); }
 
-	PTree(const T& data, Version ver) : lastUpdateVersion(ver), updated(false), data(data) {
+	PTree(const T& data, Version ver, PTreeSize* size)
+	  : lastUpdateVersion(ver),
+	    updated(false),
+	    data(data),
+	    size(size) {
 		priority = deterministicRandom()->randomUInt32();
+		if (size) {
+			size->allocated += sizeof(PTree<T>);
+		}
 	}
-	PTree(uint32_t pri, T const& data, Reference<PTree> const& left, Reference<PTree> const& right, Version ver)
+	PTree(uint32_t pri,
+	      T const& data,
+	      Reference<PTree> const& left,
+	      Reference<PTree> const& right,
+	      Version ver,
+	      PTreeSize* size = nullptr)
 	  : priority(pri),
 	    lastUpdateVersion(ver),
 	    updated(false),
-	    data(data) {
+	    data(data),
+	    size(size) {
 		pointer[0] = left;
 		pointer[1] = right;
+		if (size) {
+			size->allocated += sizeof(PTree<T>);
+		}
+	}
+
+	~PTree() {
+		if (size) {
+			size->released += sizeof(PTree<T>);
+		}
 	}
 
 private:
@@ -133,7 +161,8 @@ template <class T>
 static Reference<PTree<T>> update(Reference<PTree<T>> const& node,
                                   bool which,
                                   Reference<PTree<T>> const& ptr,
-                                  Version at) {
+                                  Version at,
+                                  PTreeSize* size) {
 	if (ptr.getPtr() == node->child(which, at).getPtr() /* && node->replacedVersion <= at*/) {
 		return node;
 	}
@@ -144,9 +173,9 @@ static Reference<PTree<T>> update(Reference<PTree<T>> const& node,
 			// and should drop its reference count
 			Reference<PTree<T>> r;
 			if (which)
-				r = makeReference<PTree<T>>(node->priority, node->data, node->child(0, at), ptr, at);
+				r = makeReference<PTree<T>>(node->priority, node->data, node->child(0, at), ptr, at, size);
 			else
-				r = makeReference<PTree<T>>(node->priority, node->data, ptr, node->child(1, at), at);
+				r = makeReference<PTree<T>>(node->priority, node->data, ptr, node->child(1, at), at, size);
 			node->pointer[2].clear();
 			return r;
 		} else {
@@ -159,9 +188,9 @@ static Reference<PTree<T>> update(Reference<PTree<T>> const& node,
 	}
 	if (node->updated) {
 		if (which)
-			return makeReference<PTree<T>>(node->priority, node->data, node->child(0, at), ptr, at);
+			return makeReference<PTree<T>>(node->priority, node->data, node->child(0, at), ptr, at, size);
 		else
-			return makeReference<PTree<T>>(node->priority, node->data, ptr, node->child(1, at), at);
+			return makeReference<PTree<T>>(node->priority, node->data, ptr, node->child(1, at), at, size);
 	} else {
 		node->lastUpdateVersion = at;
 		node->replacedPointer = which;
@@ -293,20 +322,20 @@ T get(PTreeFinger<T>& f) {
 
 // Modifies p to point to a PTree with x inserted
 template <class T>
-void insert(Reference<PTree<T>>& p, Version at, const T& x) {
+void insert(Reference<PTree<T>>& p, Version at, const T& x, PTreeSize* size = nullptr) {
 	if (!p) {
-		p = makeReference<PTree<T>>(x, at);
+		p = makeReference<PTree<T>>(x, at, size);
 	} else {
 		int c = ::compare(x, p->data);
 		if (c == 0) {
-			p = makeReference<PTree<T>>(p->priority, x, p->left(at), p->right(at), at);
+			p = makeReference<PTree<T>>(p->priority, x, p->left(at), p->right(at), at, size);
 		} else {
 			const bool direction = !(c < 0);
 			Reference<PTree<T>> child = p->child(direction, at);
-			insert(child, at, x);
-			p = update(p, direction, child, at);
+			insert(child, at, x, size);
+			p = update(p, direction, child, at, size);
 			if (p->child(direction, at)->priority > p->priority)
-				rotate(p, at, !direction);
+				rotate(p, at, !direction, size);
 		}
 	}
 }
@@ -349,17 +378,17 @@ void last(const Reference<PTree<T>>& p, Version at, PTreeFinger<T>& f) {
 
 // modifies p to point to a PTree with the root of p removed
 template <class T>
-void removeRoot(Reference<PTree<T>>& p, Version at) {
+void removeRoot(Reference<PTree<T>>& p, Version at, PTreeSize* size) {
 	if (!p->right(at))
 		p = p->left(at);
 	else if (!p->left(at))
 		p = p->right(at);
 	else {
 		bool direction = p->right(at)->priority < p->left(at)->priority;
-		rotate(p, at, direction);
+		rotate(p, at, direction, size);
 		Reference<PTree<T>> child = p->child(direction, at);
-		removeRoot(child, at);
-		p = update(p, direction, child, at);
+		removeRoot(child, at, size);
+		p = update(p, direction, child, at, size);
 	}
 }
 
@@ -368,13 +397,13 @@ void removeRoot(Reference<PTree<T>>& p, Version at) {
 //
 // Invalidates finger.
 template <class T>
-void removeFinger(Reference<PTree<T>>& p, Version at, PTreeFinger<T> finger) {
+void removeFinger(Reference<PTree<T>>& p, Version at, PTreeFinger<T> finger, PTreeSize* size) {
 	ASSERT_GT(finger.size(), 0);
 	// Start at the end of the finger, remove, and propagate copies up along the
 	// search path (finger) as needed.
 	auto node = Reference<PTree<T>>::addRef(const_cast<PTree<T>*>(finger.back()));
 	auto* before = node.getPtr();
-	removeRoot(node, at);
+	removeRoot(node, at, size);
 	for (;;) {
 		if (before == node.getPtr()) {
 			// Done propagating copies
@@ -394,31 +423,31 @@ void removeFinger(Reference<PTree<T>>& p, Version at, PTreeFinger<T> finger) {
 		ASSERT(isLeftChild || isRightChild); // Corrupt finger?
 		// Prepare for next iteration
 		before = parent.getPtr();
-		node = update(parent, isRightChild, node, at);
+		node = update(parent, isRightChild, node, at, size);
 	}
 }
 
 // changes p to point to a PTree with x removed
 template <class T, class X>
-void remove(Reference<PTree<T>>& p, Version at, const X& x) {
+void remove(Reference<PTree<T>>& p, Version at, const X& x, PTreeSize* size = nullptr) {
 	if (!p)
 		ASSERT(false); // attempt to remove item not present in PTree
 	int cmp = compare(x, p->data);
 	if (cmp < 0) {
 		Reference<PTree<T>> child = p->child(0, at);
-		remove(child, at, x);
-		p = update(p, 0, child, at);
+		remove(child, at, x, size);
+		p = update(p, 0, child, at, size);
 	} else if (cmp > 0) {
 		Reference<PTree<T>> child = p->child(1, at);
-		remove(child, at, x);
-		p = update(p, 1, child, at);
+		remove(child, at, x, size);
+		p = update(p, 1, child, at, size);
 	} else {
-		removeRoot(p, at);
+		removeRoot(p, at, size);
 	}
 }
 
 template <class T, class X>
-void remove(Reference<PTree<T>>& p, Version at, const X& begin, const X& end) {
+void remove(Reference<PTree<T>>& p, Version at, const X& begin, const X& end, PTreeSize* size = nullptr) {
 	if (!p)
 		return;
 	int beginDir, endDir;
@@ -436,36 +465,36 @@ void remove(Reference<PTree<T>>& p, Version at, const X& begin, const X& end) {
 
 	if (beginDir == endDir) {
 		Reference<PTree<T>> child = p->child(beginDir == +1, at);
-		remove(child, at, begin, end);
-		p = update(p, beginDir == +1, child, at);
+		remove(child, at, begin, end, size);
+		p = update(p, beginDir == +1, child, at, size);
 	} else {
 		if (beginDir == -1) {
 			Reference<PTree<T>> left = p->child(0, at);
-			removeBeyond(left, at, begin, 1);
-			p = update(p, 0, left, at);
+			removeBeyond(left, at, begin, 1, size);
+			p = update(p, 0, left, at, size);
 		}
 		if (endDir == +1) {
 			Reference<PTree<T>> right = p->child(1, at);
-			removeBeyond(right, at, end, 0);
-			p = update(p, 1, right, at);
+			removeBeyond(right, at, end, 0, size);
+			p = update(p, 1, right, at, size);
 		}
 		if (beginDir < endDir)
-			removeRoot(p, at);
+			removeRoot(p, at, size);
 	}
 }
 
 template <class T, class X>
-void removeBeyond(Reference<PTree<T>>& p, Version at, const X& pivot, bool dir) {
+void removeBeyond(Reference<PTree<T>>& p, Version at, const X& pivot, bool dir, PTreeSize* size) {
 	if (!p)
 		return;
 
 	if ((p->data < pivot) ^ dir) {
 		p = p->child(!dir, at);
-		removeBeyond(p, at, pivot, dir);
+		removeBeyond(p, at, pivot, dir, size);
 	} else {
 		Reference<PTree<T>> child = p->child(dir, at);
-		removeBeyond(child, at, pivot, dir);
-		p = update(p, dir, child, at);
+		removeBeyond(child, at, pivot, dir, size);
+		p = update(p, dir, child, at, size);
 	}
 }
 
@@ -480,7 +509,7 @@ void remove(Reference<PTree<T>>& p, Version at, const X& begin, const X& end) {
 // inputs a PTree with the root node potentially violating the heap property
 // modifies p to point to a valid PTree
 template <class T>
-void demoteRoot(Reference<PTree<T>>& p, Version at) {
+void demoteRoot(Reference<PTree<T>>& p, Version at, PTreeSize* size) {
 	if (!p)
 		ASSERT(false);
 
@@ -497,34 +526,42 @@ void demoteRoot(Reference<PTree<T>>& p, Version at) {
 		return;
 
 	// else, child(higherDirection) is a greater priority than us and the other child...
-	rotate(p, at, !higherDirection);
+	rotate(p, at, !higherDirection, size);
 	Reference<PTree<T>> child = p->child(!higherDirection, at);
-	demoteRoot(child, at);
-	p = update(p, !higherDirection, child, at);
+	demoteRoot(child, at, size);
+	p = update(p, !higherDirection, child, at, size);
 }
 
 template <class T>
-Reference<PTree<T>> append(const Reference<PTree<T>>& left, const Reference<PTree<T>>& right, Version at) {
+Reference<PTree<T>> append(const Reference<PTree<T>>& left,
+                           const Reference<PTree<T>>& right,
+                           Version at,
+                           PTreeSize* size) {
 	if (!left)
 		return right;
 	if (!right)
 		return left;
 
-	Reference<PTree<T>> r = makeReference<PTree<T>>(lastNode(left, at)->data, at);
+	Reference<PTree<T>> r = makeReference<PTree<T>>(lastNode(left, at)->data, at, size);
 	if (EXPENSIVE_VALIDATION) {
 		ASSERT(r->data < firstNode(right, at)->data);
 	}
 	Reference<PTree<T>> a = left;
-	remove(a, at, r->data);
+	remove(a, at, r->data, size);
 
 	r->pointer[0] = a;
 	r->pointer[1] = right;
-	demoteRoot(r, at);
+	demoteRoot(r, at, size);
 	return r;
 }
 
 template <class T, class X>
-void split(Reference<PTree<T>> p, const X& x, Reference<PTree<T>>& left, Reference<PTree<T>>& right, Version at) {
+void split(Reference<PTree<T>> p,
+           const X& x,
+           Reference<PTree<T>>& left,
+           Reference<PTree<T>>& right,
+           Version at,
+           PTreeSize* size) {
 	if (!p) {
 		left = Reference<PTree<T>>();
 		right = Reference<PTree<T>>();
@@ -534,20 +571,20 @@ void split(Reference<PTree<T>> p, const X& x, Reference<PTree<T>>& left, Referen
 	if (p->data < x) {
 		left = p;
 		Reference<PTree<T>> lr = left->right(at);
-		split(lr, x, lr, right, at);
-		left = update(left, 1, lr, at);
+		split(lr, x, lr, right, at, size);
+		left = update(left, 1, lr, at, size);
 	} else {
 		right = p;
 		Reference<PTree<T>> rl = right->left(at);
-		split(rl, x, left, rl, at);
-		right = update(right, 0, rl, at);
+		split(rl, x, left, rl, at, size);
+		right = update(right, 0, rl, at, size);
 	}
 }
 
 template <class T>
-void rotate(Reference<PTree<T>>& n, Version at, bool right) {
+void rotate(Reference<PTree<T>>& n, Version at, bool right, PTreeSize* size) {
 	auto l = n->child(!right, at);
-	n = update(l, right, update(n, !right, l->child(right, at), at), at);
+	n = update(l, right, update(n, !right, l->child(right, at), at, size), at, size);
 	// Diagram for right = true
 	//   n      l
 	//  /        \
@@ -680,7 +717,8 @@ public:
 	typedef PTreeImpl::PTree<MapPair<K, std::pair<T, Version>>> PTreeT;
 	typedef PTreeImpl::PTreeFinger<MapPair<K, std::pair<T, Version>>> PTreeFingerT;
 	typedef Reference<PTreeT> Tree;
-	typedef TrackedFastAllocated<PTreeT> PTreeSize;
+
+	PTreeImpl::PTreeSize ptreeSize;
 
 	Version oldestVersion, latestVersion;
 
@@ -785,16 +823,20 @@ public:
 	// insert() and erase() invalidate atLatest() and all iterators into it
 	void insert(const K& k, const T& t) { insert(k, t, latestVersion); }
 	void insert(const K& k, const T& t, Version insertAt) {
-		PTreeImpl::insert(
-		    roots.back().second, latestVersion, MapPair<K, std::pair<T, Version>>(k, std::make_pair(t, insertAt)));
+		PTreeImpl::insert(roots.back().second,
+		                  latestVersion,
+		                  MapPair<K, std::pair<T, Version>>(k, std::make_pair(t, insertAt)),
+		                  &ptreeSize);
 	}
-	void erase(const K& begin, const K& end) { PTreeImpl::remove(roots.back().second, latestVersion, begin, end); }
+	void erase(const K& begin, const K& end) {
+		PTreeImpl::remove(roots.back().second, latestVersion, begin, end, &ptreeSize);
+	}
 	void erase(const K& key) { // key must be present
-		PTreeImpl::remove(roots.back().second, latestVersion, key);
+		PTreeImpl::remove(roots.back().second, latestVersion, key, &ptreeSize);
 	}
 	void erase(iterator const& item) { // iterator must be in latest version!
 		ASSERT_EQ(item.at, latestVersion);
-		PTreeImpl::removeFinger(roots.back().second, latestVersion, item.finger);
+		PTreeImpl::removeFinger(roots.back().second, latestVersion, item.finger, &ptreeSize);
 	}
 
 	void printDetail() { PTreeImpl::printTreeDetails(roots.back().second, 0); }

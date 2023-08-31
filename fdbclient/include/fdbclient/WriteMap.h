@@ -133,7 +133,8 @@ public:
 	explicit WriteMap(Arena* arena) : arena(arena), writeMapEmpty(true), ver(-1), scratch_iterator(this) {
 		PTreeImpl::insert(
 		    writes, ver, WriteMapEntry(allKeys.begin, OperationStack(), false, false, false, false, false));
-		PTreeImpl::insert(writes, ver, WriteMapEntry(allKeys.end, OperationStack(), false, false, false, false, false));
+		PTreeImpl::insert(
+		    writes, ver, WriteMapEntry(allKeys.end, OperationStack(), false, false, false, false, false));
 		PTreeImpl::insert(
 		    writes, ver, WriteMapEntry(afterAllKeys, OperationStack(), false, false, false, false, false));
 	}

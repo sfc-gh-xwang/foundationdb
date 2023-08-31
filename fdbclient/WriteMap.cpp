@@ -192,7 +192,8 @@ void WriteMap::clear(KeyRangeRef keys, bool addConflict) {
 	                  ExtStringRef(keys.end, end_coalesce_clear ? 1 : 0));
 
 	if (insert_begin)
-		PTreeImpl::insert(writes, ver, WriteMapEntry(keys.begin, OperationStack(), true, true, true, false, false));
+		PTreeImpl::insert(
+		    writes, ver, WriteMapEntry(keys.begin, OperationStack(), true, true, true, false, false));
 
 	if (insert_end)
 		PTreeImpl::insert(
@@ -231,7 +232,8 @@ void WriteMap::addUnmodifiedAndUnreadableRange(KeyRangeRef keys) {
 	                  ExtStringRef(keys.end, end_coalesce_unmodified ? 1 : 0));
 
 	if (insert_begin)
-		PTreeImpl::insert(writes, ver, WriteMapEntry(keys.begin, OperationStack(), false, false, false, true, true));
+		PTreeImpl::insert(
+		    writes, ver, WriteMapEntry(keys.begin, OperationStack(), false, false, false, true, true));
 
 	if (insert_end)
 		PTreeImpl::insert(
