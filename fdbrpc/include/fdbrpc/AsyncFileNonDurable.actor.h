@@ -28,9 +28,10 @@
 #elif !defined(FLOW_ASYNCFILENONDURABLE_ACTOR_H)
 #define FLOW_ASYNCFILENONDURABLE_ACTOR_H
 
-#include "flow/flow.h"
-#include "flow/IAsyncFile.h"
 #include "flow/ActorCollection.h"
+#include "flow/flow.h"
+#include "flow/FaultInjection.h"
+#include "flow/IAsyncFile.h"
 #include "fdbrpc/simulator.h"
 #include "fdbrpc/TraceFileIO.h"
 #include "fdbrpc/RangeMap.h"
@@ -383,7 +384,7 @@ private:
 				                      ? FLOW_KNOBS->MAX_INJECTED_PRIOR_MODIFICATION_DELAY
 				                      : FLOW_KNOBS->MAX_PRIOR_MODIFICATION_DELAY;
 				priorModifications.push_back(delay(deterministicRandom()->random01() * maxDelay) ||
-				    self->killed.getFuture());
+				                             self->killed.getFuture());
 			} else
 				priorModifications.push_back(waitUntilDiskReady(self->diskParameters, length) ||
 				                             self->killed.getFuture());
