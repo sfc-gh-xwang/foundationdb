@@ -378,11 +378,13 @@ private:
 			    self->getModificationsAndInsert(offset, length, true, writeEnded);
 			self->minSizeAfterPendingModifications = std::max(self->minSizeAfterPendingModifications, offset + length);
 
-			if (BUGGIFY_WITH_PROB(0.001) && !g_simulator->speedUpSimulation)
-				priorModifications.push_back(
-				    delay(deterministicRandom()->random01() * FLOW_KNOBS->MAX_PRIOR_MODIFICATION_DELAY) ||
+			if (BUGGIFY_WITH_PROB(0.001) && !g_simulator->speedUpSimulation) {
+				double maxDelay = SHOULD_INJECT_FAULT("AsyncFileNonDurable::write")
+				                      ? FLOW_KNOBS->MAX_INJECTED_PRIOR_MODIFICATION_DELAY
+				                      : FLOW_KNOBS->MAX_PRIOR_MODIFICATION_DELAY;
+				priorModifications.push_back(delay(deterministicRandom()->random01() * maxDelay) ||
 				    self->killed.getFuture());
-			else
+			} else
 				priorModifications.push_back(waitUntilDiskReady(self->diskParameters, length) ||
 				                             self->killed.getFuture());
 
