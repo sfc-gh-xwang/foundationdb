@@ -497,9 +497,9 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_get_bulk_load_files_to_write_result(
 	return 0;
 }
 
-extern "C" DLLEXPORT fdb_error_t fdb_future_readbg_get_descriptions_v1(FDBFuture* f,
-                                                                       FDBBGFileDescriptionV1** out_descs,
-                                                                       int* out_count) {
+extern "C" DLLEXPORT fdb_error_t fdb_future_readbg_get_descriptions(FDBFuture* f,
+                                                                    FDBBGFileDescriptionV1** out_descs,
+                                                                    int* out_count) {
 	CATCH_AND_RETURN(ReadBGDescriptionsApiResultV1 res = TSAV(ReadBGDescriptionsApiResultV1, f)->get();
 	                 *out_descs = res.desc_arr;
 	                 *out_count = res.desc_count;);
@@ -514,10 +514,10 @@ extern "C" DLLEXPORT FDBResult* fdb_readbg_parse_snapshot_file_v2(const uint8_t*
 	        .extractPtr(););
 }
 
-extern "C" DLLEXPORT FDBResult* fdb_readbg_parse_snapshot_file_v1(const uint8_t* file_data,
-                                                                  int file_len,
-                                                                  FDBBGTenantPrefix const* tenant_prefix,
-                                                                  FDBBGEncryptionCtxV1 const* encryption_ctx) {
+extern "C" DLLEXPORT FDBResult* fdb_readbg_parse_snapshot_file(const uint8_t* file_data,
+                                                               int file_len,
+                                                               FDBBGTenantPrefix const* tenant_prefix,
+                                                               FDBBGEncryptionCtxV1 const* encryption_ctx) {
 	RETURN_RESULT_ON_ERROR(
 	    return parseBlobGranulesSnapshotFileV1(StringRef(file_data, file_len), tenant_prefix, encryption_ctx)
 	        .extractPtr(););
@@ -532,10 +532,10 @@ extern "C" DLLEXPORT FDBResult* fdb_readbg_parse_delta_file_v2(const uint8_t* fi
 	        .extractPtr(););
 }
 
-extern "C" DLLEXPORT FDBResult* fdb_readbg_parse_delta_file_v1(const uint8_t* file_data,
-                                                               int file_len,
-                                                               FDBBGTenantPrefix const* tenant_prefix,
-                                                               FDBBGEncryptionCtxV1 const* encryption_ctx) {
+extern "C" DLLEXPORT FDBResult* fdb_readbg_parse_delta_file(const uint8_t* file_data,
+                                                            int file_len,
+                                                            FDBBGTenantPrefix const* tenant_prefix,
+                                                            FDBBGEncryptionCtxV1 const* encryption_ctx) {
 	RETURN_RESULT_ON_ERROR(
 	    return parseBlobGranulesDeltaFileV1(StringRef(file_data, file_len), tenant_prefix, encryption_ctx)
 	        .extractPtr(););
@@ -1519,14 +1519,14 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v
 	                                                         std::numeric_limits<int64_t>::max());
 }
 
-extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v1(FDBTransaction* tr,
-                                                                                  uint8_t const* begin_key_name,
-                                                                                  int begin_key_name_length,
-                                                                                  uint8_t const* end_key_name,
-                                                                                  int end_key_name_length,
-                                                                                  int64_t begin_version,
-                                                                                  int64_t read_version,
-                                                                                  int64_t* read_version_out) {
+extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description(FDBTransaction* tr,
+                                                                               uint8_t const* begin_key_name,
+                                                                               int begin_key_name_length,
+                                                                               uint8_t const* end_key_name,
+                                                                               int end_key_name_length,
+                                                                               int64_t begin_version,
+                                                                               int64_t read_version,
+                                                                               int64_t* read_version_out) {
 	FDBFuture* f = fdb_transaction_read_blob_granules_description_v2(
 	    tr, begin_key_name, begin_key_name_length, end_key_name, end_key_name_length, begin_version, read_version);
 	return (FDBFuture*)mapThreadFuture<ApiResult, ReadBGDescriptionsApiResultV1>(
@@ -1595,40 +1595,6 @@ extern "C" DLLEXPORT const char* fdb_get_client_version() {
 
 extern "C" DLLEXPORT void fdb_use_future_protocol_version() {
 	API->useFutureProtocolVersion();
-}
-
-/* -------------------------------------------------------------------------------------------
- * The following function definitions enable removing _v2 suffix in the future while
- * still supporting calls over the shim library
- */
-
-#undef fdb_transaction_read_blob_granules_description
-#undef fdb_readbg_parse_snapshot_file
-#undef fdb_readbg_parse_delta_file
-
-extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description(FDBTransaction* tr,
-                                                                               uint8_t const* begin_key_name,
-                                                                               int begin_key_name_length,
-                                                                               uint8_t const* end_key_name,
-                                                                               int end_key_name_length,
-                                                                               int64_t begin_version,
-                                                                               int64_t read_version) {
-	return fdb_transaction_read_blob_granules_description_v2(
-	    tr, begin_key_name, begin_key_name_length, end_key_name, end_key_name_length, begin_version, read_version);
-}
-
-extern "C" WARN_UNUSED_RESULT FDBResult* fdb_readbg_parse_snapshot_file(const uint8_t* file_data,
-                                                                        int file_len,
-                                                                        FDBBGTenantPrefix const* tenant_prefix,
-                                                                        FDBBGEncryptionCtxV2 const* encryption_ctx) {
-	return fdb_readbg_parse_snapshot_file_v2(file_data, file_len, tenant_prefix, encryption_ctx);
-}
-
-extern "C" WARN_UNUSED_RESULT FDBResult* fdb_readbg_parse_delta_file(const uint8_t* file_data,
-                                                                     int file_len,
-                                                                     FDBBGTenantPrefix const* tenant_prefix,
-                                                                     FDBBGEncryptionCtxV2 const* encryption_ctx) {
-	return fdb_readbg_parse_delta_file_v2(file_data, file_len, tenant_prefix, encryption_ctx);
 }
 
 /* -------------------------------------------------------------------------------------------

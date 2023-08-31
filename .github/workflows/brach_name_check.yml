@@ -1,0 +1,29 @@
+name: PR lint
+
+on:
+  pull_request:
+    branches: [ "main", "release/*" ]
+    types: ['opened', 'edited', 'reopened', 'synchronize']
+
+jobs:
+  branch-name-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prints the current branch name
+        run: echo "${{ github.event.pull_request.head.ref }}"
+
+      - name: Prints the PR Actor
+        run: echo "${{ github.actor }}"
+
+      - name: Validate branch-name
+        run: |
+            ls
+            ldap_name=`echo "${{ github.actor }}" | cut -d "-" -f3`
+            ldap_name="${ldap_name}/"
+            if [[ ${{ github.event.pull_request.head.ref }} == ${ldap_name}* ]]; then
+              echo "Info: Source branch name '${{ github.event.pull_request.head.ref }}' matches criteria"
+              exit 0
+            else
+               echo "Error: Please ensure you've prefixed your branch with '${ldap_name}' ."
+               exit 1
+            fi

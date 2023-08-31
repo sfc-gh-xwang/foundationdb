@@ -195,6 +195,8 @@ public:
 		}
 	}
 
+	void removeRoles(NetworkAddress const& address) { roleAddresses.erase(address); }
+
 	std::string getRoles(NetworkAddress const& address, bool skipWorkers = true) const {
 		auto addressIt = roleAddresses.find(address);
 		std::string roleText;

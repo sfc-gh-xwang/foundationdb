@@ -47,7 +47,7 @@
 
 #include "fdbrpc/TenantName.h"
 
-#include "metacluster/ConfigureCluster.h"
+#include "metacluster/ConfigureCluster.actor.h"
 #include "metacluster/ListTenants.actor.h"
 #include "metacluster/Metacluster.h"
 #include "metacluster/MetaclusterInternal.actor.h"
@@ -538,8 +538,7 @@ struct StartTenantMovementImpl {
 				throw cluster_no_capacity();
 			}
 			updatedEntry.allocated.numTenantGroups++;
-			updateClusterMetadata(
-			    tr, dstName, clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry, IsRestoring::False);
+			updateClusterMetadata(tr, dstName, clusterMetadata.entry, updatedEntry, IsRestoring::False);
 
 			// clusterTenantCount to accommodate for capacity calculations
 			int numTenants = self->tenantsInGroup.size();
@@ -1209,7 +1208,7 @@ struct FinishTenantMovementImpl {
 		DataClusterMetadata clusterMetadata = srcCtx.dataClusterMetadata.get();
 		DataClusterEntry updatedEntry = clusterMetadata.entry;
 		updatedEntry.allocated.numTenantGroups--;
-		updateClusterMetadata(tr, srcName, clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry);
+		updateClusterMetadata(tr, srcName, clusterMetadata.entry, updatedEntry);
 
 		// clusterTenantCount() reduce tenant count of source
 		int numTenants = tenantsInGroup.size();
@@ -1458,8 +1457,7 @@ struct AbortTenantMovementImpl {
 		DataClusterMetadata clusterMetadata = wait(getClusterTransaction(tr, self->dstCtx.clusterName.get()));
 		DataClusterEntry updatedEntry = clusterMetadata.entry;
 		updatedEntry.allocated.numTenantGroups--;
-		updateClusterMetadata(
-		    tr, dstName, clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry, IsRestoring::False);
+		updateClusterMetadata(tr, dstName, clusterMetadata.entry, updatedEntry, IsRestoring::False);
 
 		int numTenants = self->tenantsInGroup.size();
 		metadata::management::clusterTenantCount().atomicOp(tr, dstName, -numTenants, MutationRef::AddValue);
@@ -1560,6 +1558,29 @@ struct AbortTenantMovementImpl {
 		return Void();
 	}
 
+	// Simultaneous aborts can start configuration changes that don't get finished
+	// and the abort will just progress further without failing, preventing any
+	// retries to continue the configuration changes
+	// Explicitly check the state and throw a retryable error if in this scenario
+	ACTOR static Future<Void> checkSourceTenantStates(AbortTenantMovementImpl* self) {
+		state std::vector<Future<MetaclusterTenantMapEntry>> tenantFutures;
+		for (auto& tenantPair : self->tenantsInGroup) {
+			tenantFutures.push_back(metacluster::getTenant(self->srcCtx.managementDb, tenantPair.first));
+		}
+		wait(waitForAll(tenantFutures));
+		for (auto& f : tenantFutures) {
+			if (f.get().tenantState != TenantState::READY) {
+				CODE_PROBE(true, "Simultaneous abort returned from config change before setting ready state");
+				TraceEvent("TenantMoveAbortReadyStateNotSetAfterUnlock")
+				    .detail("SourceCluster", self->srcCtx.clusterName)
+				    .detail("DestinationCluster", self->dstCtx.clusterName)
+				    .detail("TenantGroup", self->tenantGroup);
+				throw tenant_move_failed();
+			}
+		}
+		return Void();
+	}
+
 	ACTOR static Future<Void> abortStartLock(AbortTenantMovementImpl* self) {
 		state std::vector<TenantMapEntry> srcEntries = wait(self->srcCtx.runDataClusterTransaction(
 		    [self = self](Reference<ITransaction> tr) { return getTenantEntries(self->tenantsInGroup, tr); }));
@@ -1577,6 +1598,7 @@ struct AbortTenantMovementImpl {
 		    }));
 		fmt::print("Tenant move abort: checking valid unlock finished\n");
 		wait(unlockSourceTenants(self));
+		wait(checkSourceTenantStates(self));
 
 		fmt::print("Tenant move abort: clearing move metadata begin\n");
 		wait(runMoveManagementTransaction(

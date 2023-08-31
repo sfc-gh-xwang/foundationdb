@@ -8,11 +8,11 @@ read_sampling_enabled = true
 # system key reads interfere with the test
 read_metrics_include_system_keys = false
 # update the read sample per shard more frequently to reduce variability of test results
-shard_read_sample_update_interval = 10.0
+shard_read_sample_update_interval = 5.0
 
 [[test]]
 testTitle = 'ReadMetricsTest'
 
     [[test.workload]]
     testName = 'ReadMetrics'
-    testDuration = 600.0
+    testDuration = 300.0

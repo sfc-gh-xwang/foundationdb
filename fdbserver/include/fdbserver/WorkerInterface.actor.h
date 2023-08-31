@@ -19,6 +19,8 @@
  */
 
 #pragma once
+#include "flow/Arena.h"
+#include "flow/serialize.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBSERVER_WORKERINTERFACE_ACTOR_G_H)
 #define FDBSERVER_WORKERINTERFACE_ACTOR_G_H
 #include "fdbserver/WorkerInterface.actor.g.h"
@@ -625,14 +627,28 @@ struct InitializeBackupRequest {
 	Optional<Version> endVersion;
 	ReplyPromise<struct InitializeBackupReply> reply;
 	bool isEmergency = false;
+	Optional<Value> backupStartedValue; // active backups
+	std::map<UID, StringRef> uid2BackupUrls;
+	std::map<UID, std::vector<KeyRange>> uid2BackupRanges;
 
 	InitializeBackupRequest() = default;
 	explicit InitializeBackupRequest(UID id) : reqId(id) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(
-		    ar, reqId, recruitedEpoch, backupEpoch, routerTag, totalTags, startVersion, endVersion, reply, isEmergency);
+		serializer(ar,
+		           reqId,
+		           recruitedEpoch,
+		           backupEpoch,
+		           routerTag,
+		           totalTags,
+		           startVersion,
+		           endVersion,
+		           reply,
+		           isEmergency,
+		           backupStartedValue,
+		           uid2BackupUrls,
+		           uid2BackupRanges);
 	}
 };
 
