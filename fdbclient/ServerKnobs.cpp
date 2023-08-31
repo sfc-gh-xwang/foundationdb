@@ -572,6 +572,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE,                  1e5 ); if ( randomize && BUGGIFY ) BLOB_GRANULE_LOCATION_MAX_QUEUE_SIZE = 100;
 	init( BULK_LOADERS_MAX_QUEUE_SIZE,                           1e4 ); if ( randomize && BUGGIFY ) BULK_LOADERS_MAX_QUEUE_SIZE = 100;
 	init( COMMIT_PROXY_LIVENESS_TIMEOUT,                        20.0 );
+	init( COMMIT_PROXY_MAX_LIVENESS_TIMEOUT,                   600.0 ); if ( randomize && BUGGIFY ) COMMIT_PROXY_MAX_LIVENESS_TIMEOUT = 20.0;
 
 	init( COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE,         0.0005 ); if( randomize && BUGGIFY ) COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE = 0.005;
 	init( COMMIT_TRANSACTION_BATCH_INTERVAL_MIN,                0.001 ); if( randomize && BUGGIFY ) COMMIT_TRANSACTION_BATCH_INTERVAL_MIN = 0.1;
@@ -662,6 +663,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BACKUP_FILE_BLOCK_BYTES,                       1024 * 1024 );
 	init( BACKUP_LOCK_BYTES,                                     3e9 ); if(randomize && BUGGIFY) BACKUP_LOCK_BYTES = deterministicRandom()->randomInt(1024, 4096) * 256 * 1024;
 	init( BACKUP_UPLOAD_DELAY,                                  10.0 ); if(randomize && BUGGIFY) BACKUP_UPLOAD_DELAY = deterministicRandom()->random01() * 60;
+	init( USE_EMERGENCY_BACKUP_WORKER,                         false );
 
 	//Cluster Controller
 	init( CLUSTER_CONTROLLER_LOGGING_DELAY,                      5.0 );
@@ -801,10 +803,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 
 	init( MAX_TRANSACTIONS_PER_BYTE,                            1000 );
 
-	init( MIN_AVAILABLE_SPACE,                                   1e8 );
-	init( MIN_AVAILABLE_SPACE_RATIO,                            0.05 );
-	init( MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER,              0.01 );
-	init( TARGET_AVAILABLE_SPACE_RATIO,                         0.30 );
+	init( MIN_AVAILABLE_SPACE,                                   1e8 ); if( isSimulated ) MIN_AVAILABLE_SPACE /= 10;
+	init( MIN_AVAILABLE_SPACE_RATIO,                            0.05 ); if( isSimulated ) MIN_AVAILABLE_SPACE_RATIO /= 10;
+	init( MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER,              0.01 ); if( isSimulated ) MIN_AVAILABLE_SPACE_RATIO_SAFETY_BUFFER /= 10;
+	init( TARGET_AVAILABLE_SPACE_RATIO,                         0.30 ); if( randomize && BUGGIFY ) TARGET_AVAILABLE_SPACE_RATIO /= 10;
 
 	init( MAX_TL_SS_VERSION_DIFFERENCE,                         1e99 ); // if( randomize && BUGGIFY ) MAX_TL_SS_VERSION_DIFFERENCE = std::max(1.0, 0.25 * VERSIONS_PER_SECOND); // spring starts at half this value //FIXME: this knob causes ratekeeper to clamp on idle cluster in simulation that have a large number of logs
 	init( MAX_TL_SS_VERSION_DIFFERENCE_BATCH,                   1e99 );
@@ -1195,7 +1197,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_RESTORE_MANIFEST_RETENTION_MAX,                    10 );
 	init( BLOB_RESTORE_MLOGS_RETENTION_SECS,  isSimulated ?  180 : 3600 * 24 * 14 );
 	init( BLOB_RESTORE_LOAD_KEY_VERSION_MAP_STEP_SIZE,         10000 );
-	init( BLOB_RESTORE_SKIP_EMPTY_RANGES,                      false );
+	init( BLOB_RESTORE_SKIP_EMPTY_RANGES,                      false ); if ( randomize && BUGGIFY ) BLOB_RESTORE_SKIP_EMPTY_RANGES = true;
 
 	init( BLOB_GRANULES_FLUSH_BATCH_SIZE,      isSimulated ?  2 : 64 );
 

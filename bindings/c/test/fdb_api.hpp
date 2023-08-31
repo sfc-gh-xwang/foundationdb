@@ -575,7 +575,7 @@ struct ReadBlobGranulesDescriptionResultV1 {
 	static Error extract(native::FDBFuture* f, Type& out) noexcept {
 		native::FDBBGFileDescriptionV1* descs;
 		int desc_cnt;
-		auto err = native::fdb_future_readbg_get_descriptions_v1(f, &descs, &desc_cnt);
+		auto err = native::fdb_future_readbg_get_descriptions(f, &descs, &desc_cnt);
 		out = Type((GranuleDescriptionRefV1*)descs, desc_cnt);
 		return Error(err);
 	}
@@ -1011,20 +1011,28 @@ public:
 		                                                                 mutationByteLimit);
 	}
 
+	TypedFuture<future_var::ReadBlobGranulesDescriptionResult> readBlobGranulesDescriptionV2(KeyRef begin,
+	                                                                                         KeyRef end,
+	                                                                                         int64_t beginVersion,
+	                                                                                         int64_t readVersion) {
+		return native::fdb_transaction_read_blob_granules_description_v2(
+		    tr.get(), begin.data(), intSize(begin), end.data(), intSize(end), beginVersion, readVersion);
+	}
+
 	TypedFuture<future_var::ReadBlobGranulesDescriptionResultV1> readBlobGranulesDescriptionV1(
 	    KeyRef begin,
 	    KeyRef end,
 	    int64_t beginVersion,
 	    int64_t readVersion,
 	    int64_t* readVersionOut) {
-		return native::fdb_transaction_read_blob_granules_description_v1(tr.get(),
-		                                                                 begin.data(),
-		                                                                 intSize(begin),
-		                                                                 end.data(),
-		                                                                 intSize(end),
-		                                                                 beginVersion,
-		                                                                 readVersion,
-		                                                                 readVersionOut);
+		return native::fdb_transaction_read_blob_granules_description(tr.get(),
+		                                                              begin.data(),
+		                                                              intSize(begin),
+		                                                              end.data(),
+		                                                              intSize(end),
+		                                                              beginVersion,
+		                                                              readVersion,
+		                                                              readVersionOut);
 	}
 
 	ReadRangeResult parseSnapshotFile(BytesRef fileData,
@@ -1037,7 +1045,7 @@ public:
 	ReadRangeResult parseSnapshotFileV1(BytesRef fileData,
 	                                    native::FDBBGTenantPrefix const* tenantPrefix,
 	                                    native::FDBBGEncryptionCtxV1 const* encryptionCtx) {
-		return ReadRangeResult::create((native::FDBReadRangeResult*)native::fdb_readbg_parse_snapshot_file_v1(
+		return ReadRangeResult::create((native::FDBReadRangeResult*)native::fdb_readbg_parse_snapshot_file(
 		    fileData.data(), intSize(fileData), tenantPrefix, encryptionCtx));
 	}
 
@@ -1051,7 +1059,7 @@ public:
 	ReadBGMutationsResult parseDeltaFileV1(BytesRef fileData,
 	                                       native::FDBBGTenantPrefix const* tenantPrefix,
 	                                       native::FDBBGEncryptionCtxV1 const* encryptionCtx) {
-		return ReadBGMutationsResult::create((native::FDBReadBGMutationsResult*)native::fdb_readbg_parse_delta_file_v1(
+		return ReadBGMutationsResult::create((native::FDBReadBGMutationsResult*)native::fdb_readbg_parse_delta_file(
 		    fileData.data(), intSize(fileData), tenantPrefix, encryptionCtx));
 	}
 

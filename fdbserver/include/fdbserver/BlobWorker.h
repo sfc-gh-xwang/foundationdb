@@ -267,6 +267,10 @@ Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMetaRef(Reference<A
                                                                      BlobGranuleCipherKeysMetaRef cipherKeysMetaRef,
                                                                      Arena* arena);
 
+Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMeta(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
+                                                                  BlobGranuleCipherKeysMeta cipherKeysMeta,
+                                                                  Arena* arena);
+
 Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(Reference<BlobWorkerData> bwData, KeyRange keyRange);
 
 #endif

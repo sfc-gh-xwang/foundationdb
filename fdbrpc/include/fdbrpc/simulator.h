@@ -195,6 +195,8 @@ public:
 		}
 	}
 
+	void removeRoles(NetworkAddress const& address) { roleAddresses.erase(address); }
+
 	std::string getRoles(NetworkAddress const& address, bool skipWorkers = true) const {
 		auto addressIt = roleAddresses.find(address);
 		std::string roleText;
@@ -337,6 +339,8 @@ public:
 	std::map<NetworkAddress, bool> corruptWorkerMap;
 	ConfigDBType configDBType;
 	bool blobGranulesEnabled;
+	// Can be set explicitly in the config. Otherwisee, decide randomly (if it's compatible with other options)
+	Optional<bool> defaultBlobification;
 	std::unordered_set<int64_t> simEncryptKeyNotFoundIds;
 
 	// Used by workloads that perform reconfigurations

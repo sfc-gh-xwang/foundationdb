@@ -21,6 +21,7 @@
 #include "benchmark/benchmark.h"
 
 #include "fdbclient/BlobCipher.h"
+#include "fdbclient/EncryptBlobCipher.h"
 #include "fdbserver/BenchmarkGlobalData.h"
 #include "flow/EncryptUtils.h"
 #include "flow/StreamCipher.h"
@@ -160,26 +161,29 @@ static void blob_cipher_encrypt(benchmark::State& state) {
 	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	Reference<BlobCipherKey> headerCipherKey = cipherKeyCache->getLatestCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
-	uint8_t iv[AES_256_IV_LENGTH];
-	deterministicRandom()->randomBytes(&iv[0], AES_256_IV_LENGTH);
+	uint8_t iv[AES_256_CTR_IV_LENGTH];
+	deterministicRandom()->randomBytes(&iv[0], AES_256_CTR_IV_LENGTH);
 	uint8_t orgData[pageLen];
 	deterministicRandom()->randomBytes(&orgData[0], pageLen);
 
 	for (auto _ : state) {
 		Arena arena;
 		// create a new encryptor for each encrypt operation to simulate AESEncryptionEncoder.encode()
-		EncryptBlobCipherAes265Ctr encryptor(cipherKey,
-		                                     headerCipherKey,
-		                                     iv,
-		                                     AES_256_IV_LENGTH,
-		                                     EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
-		                                     BlobCipherMetrics::TEST);
+		Reference<EncryptBlobCipher> encryptor =
+		    EncryptBlobCipher::getEncryptor(cipherKey,
+		                                    headerCipherKey,
+		                                    iv,
+		                                    AES_256_CTR_IV_LENGTH,
+		                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
+		                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE,
+		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
+		                                    BlobCipherMetrics::TEST);
 
-		BlobCipherEncryptHeader header;
-		if (isInplace) {
-			encryptor.encryptInplace(&orgData[0], pageLen, &header);
+		BlobCipherEncryptHeaderRef header;
+		if (isInplace && encryptor->supportsInplaceEncryption()) {
+			encryptor->encryptInplace(&orgData[0], pageLen, &header);
 		} else {
-			StringRef ciphertext = encryptor.encrypt(&orgData[0], pageLen, &header, arena)->toStringRef();
+			StringRef ciphertext = encryptor->encrypt(&orgData[0], pageLen, &header, arena);
 			memcpy(orgData, ciphertext.begin(), pageLen);
 		}
 	}
@@ -195,20 +199,29 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	Reference<BlobCipherKey> headerCipherKey = cipherKeyCache->getLatestCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
-	uint8_t iv[AES_256_IV_LENGTH];
-	deterministicRandom()->randomBytes(&iv[0], AES_256_IV_LENGTH);
+	uint8_t iv[AES_256_CTR_IV_LENGTH];
+	deterministicRandom()->randomBytes(&iv[0], AES_256_CTR_IV_LENGTH);
 	uint8_t orgData[pageLen];
 	deterministicRandom()->randomBytes(&orgData[0], pageLen);
+	Arena encryptArena;
 
-	EncryptBlobCipherAes265Ctr encryptor(cipherKey,
-	                                     headerCipherKey,
-	                                     iv,
-	                                     AES_256_IV_LENGTH,
-	                                     EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
-	                                     BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor =
+	    EncryptBlobCipher::getEncryptor(cipherKey,
+	                                    headerCipherKey,
+	                                    iv,
+	                                    AES_256_CTR_IV_LENGTH,
+	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
+	                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE,
+	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
+	                                    BlobCipherMetrics::TEST);
 
 	BlobCipherEncryptHeaderRef headerRef;
-	encryptor.encryptInplace(&orgData[0], pageLen, &headerRef);
+	if (isInplace && encryptor->supportsInplaceEncryption()) {
+		encryptor->encryptInplace(&orgData[0], pageLen, &headerRef);
+	} else {
+		StringRef ciphertext = encryptor->encrypt(&orgData[0], pageLen, &headerRef, encryptArena);
+		memcpy(orgData, ciphertext.begin(), pageLen);
+	}
 
 	AesCtrNoAuth noAuth = std::get<AesCtrNoAuth>(headerRef.algoHeader);
 	Reference<BlobCipherKey> tCipherKeyKey = cipherKeyCache->getCipherKey(noAuth.v1.cipherTextDetails.encryptDomainId,
@@ -218,12 +231,16 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 	for (auto _ : state) {
 		Arena arena;
 		// create decryptor for every decrypt operation to simulate AESEncryptionEncoder.decode()
-		DecryptBlobCipherAes256Ctr decryptor(
-		    tCipherKeyKey, Reference<BlobCipherKey>(), &noAuth.v1.iv[0], BlobCipherMetrics::TEST);
-		if (isInplace) {
-			decryptor.decryptInplace(&orgData[0], pageLen, headerRef);
+		Reference<DecryptBlobCipher> decryptor =
+		    DecryptBlobCipher::getDecryptor(tCipherKeyKey,
+		                                    Reference<BlobCipherKey>(),
+		                                    &noAuth.v1.iv[0],
+		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
+		                                    BlobCipherMetrics::TEST);
+		if (isInplace && decryptor->supportsInplaceDecryption()) {
+			decryptor->decryptInplace(&orgData[0], pageLen, headerRef);
 		} else {
-			StringRef decrypted = decryptor.decrypt(&orgData[0], pageLen, headerRef, arena);
+			StringRef decrypted = decryptor->decrypt(&orgData[0], pageLen, headerRef, arena);
 			memcpy(orgData, decrypted.begin(), pageLen);
 		}
 	}

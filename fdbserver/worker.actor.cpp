@@ -1575,7 +1575,8 @@ ACTOR Future<Void> storageServerRollbackRebooter(std::set<std::pair<UID, KeyValu
                                                  int64_t memoryLimit,
                                                  IKeyValueStore* store,
                                                  bool validateDataFiles,
-                                                 Promise<Void>* rebootKVStore) {
+                                                 Promise<Void>* rebootKVStore,
+                                                 Reference<GetEncryptCipherKeysMonitor> encryptionMonitor) {
 	state TrackRunningStorage _(id, storeType, locality, filename, runningStorages, storageCleaners);
 	loop {
 		ErrorOr<Void> e = wait(errorOr(prevStorageServer));
@@ -1644,8 +1645,13 @@ ACTOR Future<Void> storageServerRollbackRebooter(std::set<std::pair<UID, KeyValu
 		DUMPTOKEN(recruited.changeFeedVersionUpdate);
 
 		Future<ErrorOr<Void>> storeError = errorOr(store->getError());
-		prevStorageServer =
-		    storageServer(store, recruited, db, folder, Promise<Void>(), Reference<IClusterConnectionRecord>(nullptr));
+		prevStorageServer = storageServer(store,
+		                                  recruited,
+		                                  db,
+		                                  folder,
+		                                  Promise<Void>(),
+		                                  Reference<IClusterConnectionRecord>(nullptr),
+		                                  encryptionMonitor);
 		prevStorageServer = handleIOErrors(prevStorageServer, storeError, id, store->onClosed());
 	}
 }
@@ -2188,6 +2194,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				LocalLineage _;
 				getCurrentLineage()->modify(&RoleLineage::role) = ProcessClass::ClusterRole::Storage;
 
+				Reference<GetEncryptCipherKeysMonitor> encryptionMonitor = makeReference<GetEncryptCipherKeysMonitor>();
 				IKeyValueStore* kv = openKVStore(
 				    s.storeType,
 				    s.filename,
@@ -2201,7 +2208,10 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				                s.storeType != KeyValueStoreType::SSD_SHARDED_ROCKSDB &&
 				                deterministicRandom()->coinflip())
 				             : true),
-				    dbInfo);
+				    dbInfo,
+				    Optional<EncryptionAtRestMode>(),
+				    0,
+				    encryptionMonitor);
 				Future<Void> kvClosed =
 				    kv->onClosed() ||
 				    rebootKVSPromise.getFuture() /* clear the onClosed() Future in actorCollection when rebooting */;
@@ -2250,7 +2260,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 
 				Future<ErrorOr<Void>> storeError = errorOr(kv->getError());
 				Promise<Void> recovery;
-				Future<Void> f = storageServer(kv, recruited, dbInfo, folder, recovery, connRecord);
+				Future<Void> f = storageServer(kv, recruited, dbInfo, folder, recovery, connRecord, encryptionMonitor);
 				recoveries.push_back(recovery.getFuture());
 
 				f = handleIOErrors(f, storeError, s.storeID, kvClosed);
@@ -2268,7 +2278,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				                                  memoryLimit,
 				                                  kv,
 				                                  validateDataFiles,
-				                                  &rebootKVSPromise);
+				                                  &rebootKVSPromise,
+				                                  encryptionMonitor);
 				errorForwarders.add(forwardError(errors, ssRole, recruited.id(), f));
 			} else if (s.storedComponent == DiskStore::TLogData) {
 				LocalLineage _;
@@ -2620,10 +2631,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					    Role::DATA_DISTRIBUTOR,
 					    recruited.id(),
 					    setWhenDoneOrError(dataDistributorProcess, ddInterf, Optional<DataDistributorInterface>())));
-					ddInterf->set(Optional<DataDistributorInterface>(recruited));
 				}
 				TraceEvent("DataDistributorReceived", req.reqId).detail("DataDistributorId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!ddInterf->get().present()) {
+					ddInterf->set(Optional<DataDistributorInterface>(recruited));
+				}
 			}
 			when(InitializeRatekeeperRequest req = waitNext(interf.ratekeeper.getFuture())) {
 				LocalLineage _;
@@ -2647,10 +2661,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                 Role::RATEKEEPER,
 					                 recruited.id(),
 					                 setWhenDoneOrError(ratekeeperProcess, rkInterf, Optional<RatekeeperInterface>())));
-					rkInterf->set(Optional<RatekeeperInterface>(recruited));
 				}
 				TraceEvent("Ratekeeper_InitRequest", req.reqId).detail("RatekeeperId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!rkInterf->get().present()) {
+					rkInterf->set(Optional<RatekeeperInterface>(recruited));
+				}
 			}
 			when(InitializeConsistencyScanRequest req = waitNext(interf.consistencyScan.getFuture())) {
 				LocalLineage _;
@@ -2672,10 +2689,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					    Role::CONSISTENCYSCAN,
 					    recruited.id(),
 					    setWhenDoneOrError(consistencyScanProcess, csInterf, Optional<ConsistencyScanInterface>())));
-					csInterf->set(Optional<ConsistencyScanInterface>(recruited));
 				}
 				TraceEvent("ConsistencyScanReceived", req.reqId).detail("ConsistencyScanId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!csInterf->get().present()) {
+					csInterf->set(Optional<ConsistencyScanInterface>(recruited));
+				}
 			}
 			when(InitializeBlobManagerRequest req = waitNext(interf.blobManager.getFuture())) {
 				LocalLineage _;
@@ -2683,6 +2703,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				BlobManagerInterface recruited(locality, req.reqId, req.epoch);
 				recruited.initEndpoints();
 
+				bool updatedBlobManager = false;
 				if (bmEpochAndInterf->get().present() && bmEpochAndInterf->get().get().first == req.epoch) {
 					ASSERT(req.reqId == lastBMRecruitRequestId);
 					recruited = bmEpochAndInterf->get().get().second;
@@ -2714,11 +2735,15 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                 Role::BLOB_MANAGER,
 					                 recruited.id(),
 					                 resetBlobManagerWhenDoneOrError(blobManagerProcess, bmEpochAndInterf, req.epoch)));
-					bmEpochAndInterf->set(
-					    Optional<std::pair<int64_t, BlobManagerInterface>>(std::pair(req.epoch, recruited)));
+					updatedBlobManager = true;
 				}
 				TraceEvent("BlobManagerReceived", req.reqId).detail("BlobManagerId", recruited.id());
 				req.reply.send(recruited);
+
+				if (updatedBlobManager) {
+					bmEpochAndInterf->set(
+					    Optional<std::pair<int64_t, BlobManagerInterface>>(std::pair(req.epoch, recruited)));
+				}
 			}
 			when(InitializeBlobMigratorRequest req = waitNext(interf.blobMigrator.getFuture())) {
 				LocalLineage _;
@@ -2758,10 +2783,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                                 setWhenDoneOrError(blobMigratorProcess,
 					                                                    blobMigratorInterf,
 					                                                    Optional<BlobMigratorInterface>())));
-					blobMigratorInterf->set(Optional<BlobMigratorInterface>(recruited));
 				}
 				TraceEvent("BlobMigrator_InitRequest", req.reqId).detail("BlobMigratorId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!blobMigratorInterf->get().present()) {
+					blobMigratorInterf->set(Optional<BlobMigratorInterface>(recruited));
+				}
 			}
 			when(InitializeBackupRequest req = waitNext(interf.backup.getFuture())) {
 				if (!backupWorkerCache.exists(req.reqId)) {
@@ -2775,10 +2803,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 
 					ReplyPromise<InitializeBackupReply> backupReady = req.reply;
 					backupWorkerCache.set(req.reqId, backupReady.getFuture());
-					Future<Void> backupProcess = backupWorker(recruited, req, dbInfo);
+					Future<Void> backupProcess = req.isEmergency ? emergencyBackupWorker(recruited, req, dbInfo)
+					                                             : backupWorker(recruited, req, dbInfo);
 					backupProcess = backupWorkerCache.removeOnReady(req.reqId, backupProcess);
 					errorForwarders.add(forwardError(errors, Role::BACKUP, recruited.id(), backupProcess));
-					TraceEvent("BackupInitRequest", req.reqId).detail("BackupId", recruited.id());
+					TraceEvent("BackupInitRequest", req.reqId)
+					    .detail("BackupId", recruited.id())
+					    .detail("IsEmergency", req.isEmergency);
 					InitializeBackupReply reply(recruited, req.backupEpoch);
 					backupReady.send(reply);
 				} else {
@@ -2809,10 +2840,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					    Role::ENCRYPT_KEY_PROXY,
 					    recruited.id(),
 					    setWhenDoneOrError(encryptKeyProxyProcess, ekpInterf, Optional<EncryptKeyProxyInterface>())));
-					ekpInterf->set(Optional<EncryptKeyProxyInterface>(recruited));
 				}
 				TraceEvent("EncryptKeyProxyReceived", req.reqId).detail("EncryptKeyProxyId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!ekpInterf->get().present()) {
+					ekpInterf->set(Optional<EncryptKeyProxyInterface>(recruited));
+				}
 			}
 			when(InitializeTLogRequest req = waitNext(interf.tLog.getFuture())) {
 				// For now, there's a one-to-one mapping of spill type to TLogVersion.
@@ -2947,6 +2981,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                   folder,
 					                   isTss ? testingStoragePrefix.toString() : fileStoragePrefix.toString(),
 					                   recruited.id());
+					Reference<GetEncryptCipherKeysMonitor> encryptionMonitor =
+					    makeReference<GetEncryptCipherKeysMonitor>();
 					IKeyValueStore* data = openKVStore(
 					    req.storeType,
 					    filename,
@@ -2961,7 +2997,9 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                deterministicRandom()->coinflip())
 					             : true),
 					    dbInfo,
-					    req.encryptMode);
+					    req.encryptMode,
+					    0,
+					    encryptionMonitor);
 
 					Future<Void> kvClosed =
 					    data->onClosed() ||
@@ -2978,7 +3016,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                               isTss ? req.tssPairIDAndVersion.get().second : 0,
 					                               storageReady,
 					                               dbInfo,
-					                               folder);
+					                               folder,
+					                               encryptionMonitor);
 					s = handleIOErrors(s, storeError, recruited.id(), kvClosed);
 					s = storageCache.removeOnReady(req.reqId, s);
 					s = storageServerRollbackRebooter(&runningStorages,
@@ -2995,7 +3034,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                                  memoryLimit,
 					                                  data,
 					                                  false,
-					                                  &rebootKVSPromise2);
+					                                  &rebootKVSPromise2,
+					                                  encryptionMonitor);
 					errorForwarders.add(forwardError(errors, ssRole, recruited.id(), s));
 				} else if (storageCache.exists(req.reqId)) {
 					forwardPromise(req.reply, storageCache.get(req.reqId));

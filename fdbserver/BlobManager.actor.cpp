@@ -337,7 +337,8 @@ struct BlobManagerStats {
 	                          int64_t epoch,
 	                          std::unordered_map<UID, BlobWorkerInterface>* workers,
 	                          std::map<Key, bool>* mergeHardBoundaries,
-	                          std::unordered_map<Key, BlobGranuleMergeBoundary>* mergeBoundaries)
+	                          std::unordered_map<Key, BlobGranuleMergeBoundary>* mergeBoundaries,
+	                          AsyncVar<int>* recruitingStream)
 	  : cc("BlobManagerStats", id.toString()),
 	    granuleSplits("GranuleSplits", cc),
 	    granuleWriteHotSplits("GranuleWriteHotSplits", cc),
@@ -384,6 +385,8 @@ struct BlobManagerStats {
 		specialCounter(
 		    cc, "ActiveGranuleSplitChecks", [this]() -> int { return this->activeGranuleSplitChecks.getValue(); });
 		specialCounter(cc, "ActivePurges", [this]() -> int { return this->activePurges.getValue(); });
+		specialCounter(
+		    cc, "ActiveBlobWorkerRecruitments", [recruitingStream]() -> int { return recruitingStream->get(); });
 		logger = cc.traceCounters("BlobManagerMetrics", id, interval, "BlobManagerMetrics");
 	}
 };
@@ -441,8 +444,6 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	PromiseStream<Future<Void>> addActor;
 	Promise<Void> doLockCheck;
 
-	BlobManagerStats stats;
-
 	Reference<BlobConnectionProvider> bstore;
 
 	std::unordered_map<UID, BlobWorkerInterface> workersById;
@@ -473,6 +474,8 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	AsyncVar<int> recruitingStream;
 	ExclusionTracker exclusionTracker;
 
+	BlobManagerStats stats;
+
 	Promise<Void> foundBlobWorkers;
 	Promise<Void> doneRecovering;
 	Promise<Void> loadedClientRanges;
@@ -497,7 +500,6 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	  : id(id),
 	    db(db),
 	    dcId(dcId),
-	    stats(id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, epoch, &workersById, &mergeHardBoundaries, &mergeBoundaries),
 	    knownBlobRanges(false, normalKeys.end),
 	    tenantData(BGTenantMap(dbInfo)),
 	    mergeCandidates(MergeCandidateInfo(MergeCandidateUnknown), normalKeys.end),
@@ -507,6 +509,13 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
 	    recruitingStream(0),
 	    exclusionTracker(db),
+	    stats(id,
+	          SERVER_KNOBS->WORKER_LOGGING_INTERVAL,
+	          epoch,
+	          &workersById,
+	          &mergeHardBoundaries,
+	          &mergeBoundaries,
+	          &recruitingStream),
 	    epoch(epoch),
 	    dbInfo(dbInfo) {}
 
@@ -6006,6 +6015,45 @@ ACTOR Future<Void> updateLastFlushVersion(Database db, Version flushVersion) {
 	return Void();
 }
 
+// Flush a blob range and retry for non-fatal errors
+ACTOR Future<Void> tryFlushRange(Reference<BlobManagerData> bmData, KeyRange range, Version logEndVersion) {
+	state int retryCount = 0;
+	loop {
+		try {
+			FlushGranuleRequest req(bmData->epoch, range, logEndVersion, false);
+			wait(success(doBlobGranuleRequests(bmData->db, range, req, &BlobWorkerInterface::flushGranuleRequest)));
+			return Void();
+		} catch (Error& e) {
+			if (e.code() != error_code_blob_granule_transaction_too_old) {
+				throw; // terminate for unretryable error
+			}
+
+			// check if the range is blobified and then decide retry or skip.
+			// it may take long time to flush the whole key range and some ranges may have been unblobified or purged.
+			// so we try to check that first when seeing non-fatal errors
+			bool knownRange = false;
+			for (auto& r : bmData->knownBlobRanges.intersectingRanges(range)) {
+				if (r.value()) {
+					knownRange = true;
+					break;
+				}
+			}
+			if (knownRange) {
+				TraceEvent(retryCount > 100 ? SevError : SevInfo, "BlobGranulesFlushRetry")
+				    .detail("Range", range)
+				    .detail("Version", logEndVersion);
+				CODE_PROBE(true, "Retry blob granule flush", probe::decoration::rare);
+				wait(delayJittered(1));
+				++retryCount;
+			} else {
+				TraceEvent("BlobGranulesFlushSkip").detail("Range", range).detail("Version", logEndVersion);
+				CODE_PROBE(true, "Skip blob granule flush", probe::decoration::rare);
+				return Void();
+			}
+		}
+	}
+}
+
 // Try to flush blob granules. Return the flushed version if it's successful.
 ACTOR Future<Version> maybeFlushGranules(Reference<BlobManagerData> bmData) {
 	state BlobGranuleBackupConfig config;
@@ -6039,9 +6087,7 @@ ACTOR Future<Version> maybeFlushGranules(Reference<BlobManagerData> bmData) {
 	TraceEvent("FlushingBlobGranules").detail("Ranges", flushRanges.size());
 	state std::vector<Future<Void>> futures;
 	for (auto& range : flushRanges) {
-		FlushGranuleRequest req(bmData->epoch, range, logEndVersion, false);
-		Future<Void> future =
-		    success(doBlobGranuleRequests(bmData->db, range, req, &BlobWorkerInterface::flushGranuleRequest));
+		Future<Void> future = tryFlushRange(bmData, range, logEndVersion);
 		futures.push_back(future);
 		if (futures.size() > SERVER_KNOBS->BLOB_GRANULES_FLUSH_BATCH_SIZE) {
 			wait(waitForAll(futures));
@@ -6778,6 +6824,8 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 			state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);
 			self->addActor.send(bulkLoadTracker.start());
 		}
+
+		CODE_PROBE(true, "blobManager started");
 
 		loop choose {
 			when(wait(self->iAmReplaced.getFuture())) {

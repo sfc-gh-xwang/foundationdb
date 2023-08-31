@@ -1853,6 +1853,7 @@ public:
 			if (!machine->isSpawnedKVProcess())
 				latestEventCache.clear();
 			machine->failed = true;
+			removeRoles(machine->address);
 		} else if (kt == KillType::InjectFaults) {
 			TraceEvent(SevWarn, "FaultMachine")
 			    .detail("Name", machine->name)

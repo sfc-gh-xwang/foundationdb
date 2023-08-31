@@ -117,60 +117,105 @@ bool destructed = false;
 // Configuration details specified in workload test files that change the simulation
 // environment details
 class TestConfig : public BasicTestConfig {
+	ConfigDBType configDBType{ ConfigDBType::DISABLED };
+
+public:
 	class ConfigBuilder {
 		using value_type = toml::basic_value<toml::discard_comments>;
-		using base_variant = std::
-		    variant<int, float, double, bool, std::string, std::vector<int>, std::vector<std::string>, ConfigDBType>;
+		using base_variant = std::variant<int,
+		                                  float,
+		                                  double,
+		                                  bool,
+		                                  std::string,
+		                                  std::vector<int>,
+		                                  std::vector<std::string>,
+		                                  ConfigDBType,
+		                                  ISimulator::ExtraDatabaseMode>;
 		using types =
 		    variant_map<variant_concat<base_variant, variant_map<base_variant, Optional>>, std::add_pointer_t>;
 		std::unordered_map<std::string_view, types> confMap;
 
-		struct visitor {
-			const value_type& value;
-			visitor(const value_type& v) : value(v) {}
-			void operator()(int* val) const { *val = value.as_integer(); }
-			void operator()(Optional<int>* val) const { *val = value.as_integer(); }
-			void operator()(float* val) const { *val = value.as_floating(); }
-			void operator()(Optional<float>* val) const { *val = value.as_floating(); }
-			void operator()(double* val) const { *val = value.as_floating(); }
-			void operator()(Optional<double>* val) const { *val = value.as_floating(); }
-			void operator()(bool* val) const { *val = value.as_boolean(); }
-			void operator()(Optional<bool>* val) const { *val = value.as_boolean(); }
-			void operator()(std::string* val) const { *val = value.as_string(); }
-			void operator()(Optional<std::string>* val) const { *val = value.as_string(); }
-			void operator()(std::vector<int>* val) const {
-				auto arr = value.as_array();
-				for (const auto& i : arr) {
-					val->emplace_back(i.as_integer());
+		static void convert_type(int* out, const value_type& v) { *out = v.as_integer(); }
+
+		static void convert_type(int* out, const std::string& v) { sscanf(v.c_str(), "%d", out); }
+
+		static void convert_type(double* out, const value_type& v) { *out = v.as_floating(); }
+
+		static void convert_type(double* out, const std::string& v) { sscanf(v.c_str(), "%lf", out); }
+
+		static void convert_type(float* out, const value_type& v) { *out = v.as_floating(); }
+
+		static void convert_type(float* out, const std::string& v) { sscanf(v.c_str(), "%f", out); }
+
+		static void convert_type(bool* out, const value_type& v) { *out = v.as_boolean(); }
+
+		static void convert_type(bool* out, const std::string& v) { *out = strcmp(v.c_str(), "true") == 0; }
+
+		static void convert_type(std::string* out, const value_type& v) { *out = v.as_string(); }
+
+		static void convert_type(std::string* out, const std::string& v) { *out = v; }
+
+		static void convert_type(std::vector<int>* out, const value_type& v) {
+			auto arr = v.as_array();
+			for (const auto& i : arr) {
+				out->emplace_back(i.as_integer());
+			}
+		}
+
+		static void convert_type(std::vector<int>* out, const std::string& v) {
+			std::stringstream ss(v);
+			for (int i; ss >> i;) {
+				out->emplace_back(i);
+				if (ss.peek() == ',') {
+					ss.ignore();
 				}
 			}
-			void operator()(Optional<std::vector<int>>* val) const {
-				std::vector<int> res;
+		}
+
+		static void convert_type(std::vector<std::string>* out, const value_type& v) {
+			auto arr = v.as_array();
+			for (const auto& i : arr) {
+				out->emplace_back(i.as_string());
+			}
+		}
+
+		static void convert_type(std::vector<std::string>* out, const std::string& v) {
+			std::stringstream ss(v);
+			std::string token;
+			while (std::getline(ss, token, ',')) {
+				out->push_back(token);
+			}
+		}
+
+		template <typename in_type>
+		static void convert_type(ISimulator::ExtraDatabaseMode* out, const in_type& v) {
+			std::string str;
+			convert_type(&str, v);
+			*out = ISimulator::stringToExtraDatabaseMode(str);
+		}
+
+		template <typename input_type>
+		struct visitor {
+			const input_type& value;
+			visitor(const input_type& v) : value(v) {}
+			template <typename inner>
+			void operator()(Optional<inner>* val) const {
+				inner res;
 				(*this)(&res);
 				*val = std::move(res);
+			}
+			template <typename inner>
+			void operator()(inner* val) const {
+				convert_type(val, value);
 			}
 			void operator()(ConfigDBType* val) const {
-				if (value.as_string() == "random") {
+				std::string vvv;
+				convert_type(&vvv, value);
+				if (vvv == "random") {
 					*val = deterministicRandom()->coinflip() ? ConfigDBType::SIMPLE : ConfigDBType::PAXOS;
 				} else {
-					*val = configDBTypeFromString(value.as_string());
+					*val = configDBTypeFromString(vvv);
 				}
-			}
-			void operator()(Optional<ConfigDBType>* val) const {
-				ConfigDBType res;
-				(*this)(&res);
-				*val = std::move(res);
-			}
-			void operator()(std::vector<std::string>* val) const {
-				auto arr = value.as_array();
-				for (const auto& i : arr) {
-					val->emplace_back(i.as_string());
-				}
-			}
-			void operator()(Optional<std::vector<std::string>>* val) const {
-				std::vector<std::string> res;
-				(*this)(&res);
-				*val = std::move(res);
 			}
 		};
 
@@ -246,14 +291,19 @@ class TestConfig : public BasicTestConfig {
 			return *this;
 		}
 
-		void set(std::string_view key, const value_type& value) {
+		template <typename next_type>
+		void set(std::string_view key, const next_type& value, bool ignore_unknown = false) const {
 			auto iter = confMap.find(key);
 			if (iter == confMap.end()) {
-				std::cerr << "Unknown configuration attribute " << key << std::endl;
-				TraceEvent("UnknownConfigurationAttribute").detail("Name", std::string(key));
-				throw unknown_error();
+				if (ignore_unknown) {
+					return;
+				} else {
+					std::cerr << "Unknown configuration attribute " << key << std::endl;
+					TraceEvent("UnknownConfigurationAttribute").detail("Name", std::string(key));
+					throw unknown_error();
+				}
 			}
-			std::visit(visitor(value), iter->second);
+			std::visit(visitor<next_type>(value), iter->second);
 		}
 	};
 
@@ -265,7 +315,7 @@ class TestConfig : public BasicTestConfig {
 		return extension == "txt"sv;
 	}
 
-	void loadIniFile(const char* testFile) {
+	void loadIniFile(const char* testFile, ConfigBuilder const& builder) {
 		std::ifstream ifs;
 		ifs.open(testFile, std::ifstream::in);
 		if (!ifs.good())
@@ -286,119 +336,24 @@ class TestConfig : public BasicTestConfig {
 			std::string attrib = removeWhitespace(line.substr(0, found));
 			std::string value = removeWhitespace(line.substr(found + 1));
 
-			if (attrib == "extraDatabaseMode") {
-				extraDatabaseMode = ISimulator::stringToExtraDatabaseMode(value);
-			}
-
-			if (attrib == "extraDatabaseCount") {
-				sscanf(value.c_str(), "%d", &extraDatabaseCount);
-			}
-
-			if (attrib == "minimumReplication") {
-				sscanf(value.c_str(), "%d", &minimumReplication);
-			}
-
-			if (attrib == "minimumRegions") {
-				sscanf(value.c_str(), "%d", &minimumRegions);
-			}
-
-			if (attrib == "configureLocked") {
+			if (attrib == "ClientInfoLogging") {
+				setNetworkOption(FDBNetworkOptions::DISABLE_CLIENT_STATISTICS_LOGGING);
+			} else if (attrib == "restartInfoLocation") {
+				isFirstTestInRestart = true;
+			} else if (attrib == "configureLocked") {
+				// configureLocked is an int in the ini file but a bool in the other
+				// config format. Appropriate translation.
 				int configureLockedInt;
 				sscanf(value.c_str(), "%d", &configureLockedInt);
 				configureLocked = (configureLockedInt != 0);
-			}
-
-			if (attrib == "startIncompatibleProcess") {
-				startIncompatibleProcess = strcmp(value.c_str(), "true") == 0;
-			}
-
-			if (attrib == "logAntiQuorum") {
-				sscanf(value.c_str(), "%d", &logAntiQuorum);
-			}
-
-			if (attrib == "storageEngineExcludeTypes") {
-				std::stringstream ss(value);
-				for (int i; ss >> i;) {
-					storageEngineExcludeTypes.push_back(i);
-					if (ss.peek() == ',') {
-						ss.ignore();
-					}
-				}
-			}
-			if (attrib == "maxTLogVersion") {
-				sscanf(value.c_str(), "%d", &maxTLogVersion);
-			}
-			if (attrib == "disableTss") {
-				disableTss = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "disableHostname") {
-				disableHostname = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "disableRemoteKVS") {
-				disableRemoteKVS = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "encryptModes") {
-				std::stringstream ss(value);
-				std::string token;
-				while (std::getline(ss, token, ',')) {
-					encryptModes.push_back(token);
-				}
-			}
-			if (attrib == "restartInfoLocation") {
-				isFirstTestInRestart = true;
-			}
-			if (attrib == "configDBType") {
-				if (value == "random") {
-					configDBType = deterministicRandom()->random01() < 0.1 ? ConfigDBType::SIMPLE : ConfigDBType::PAXOS;
-				} else {
-					configDBType = configDBTypeFromString(value);
-				}
-			}
-			if (attrib == "randomlyRenameZoneId") {
-				randomlyRenameZoneId = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "blobGranulesEnabled") {
-				blobGranulesEnabled = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "simHTTPServerEnabled") {
-				simHTTPServerEnabled = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "allowDefaultTenant") {
-				allowDefaultTenant = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "allowCreatingTenants") {
-				allowCreatingTenants = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "injectSSTargetedRestart") {
-				injectTargetedSSRestart = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "tenantModes") {
-				std::stringstream ss(value);
-				std::string token;
-				while (std::getline(ss, token, ',')) {
-					tenantModes.push_back(token);
-				}
-			}
-			if (attrib == "defaultTenant") {
-				defaultTenant = value;
-			}
-			if (attrib == "longRunningTest") {
-				longRunningTest = strcmp(value.c_str(), "true") == 0;
-			}
-			if (attrib == "simulationNormalRunTestsTimeoutSeconds") {
-				sscanf(value.c_str(), "%d", &simulationNormalRunTestsTimeoutSeconds);
-			}
-			if (attrib == "simulationBuggifyRunTestsTimeoutSeconds") {
-				sscanf(value.c_str(), "%d", &simulationBuggifyRunTestsTimeoutSeconds);
+			} else {
+				builder.set(attrib, value, true);
 			}
 		}
 
 		ifs.close();
 	}
 
-	ConfigDBType configDBType{ ConfigDBType::DISABLED };
-
-public:
 	int extraDB = 0;
 	ISimulator::ExtraDatabaseMode extraDatabaseMode = ISimulator::ExtraDatabaseMode::Disabled;
 	// The number of extra database used if the database mode is MULTIPLE
@@ -436,6 +391,8 @@ public:
 	Optional<bool> generateFearless, buggify;
 	Optional<std::string> config;
 	bool blobGranulesEnabled = false;
+	// Can be explicilty set in config. Otherwise, choose randomly if compatible with other options
+	Optional<bool> defaultBlobification;
 	bool randomlyRenameZoneId = false;
 	bool simHTTPServerEnabled = true;
 
@@ -475,15 +432,10 @@ public:
 	}
 
 	void readFromConfig(const char* testFile) {
-		if (isIniFile(testFile)) {
-			loadIniFile(testFile);
-			return;
-		}
-		std::string extraDatabaseModeStr;
 		ConfigBuilder builder;
 		builder.add("testClass", &testClass)
 		    .add("testPriority", &testPriority)
-		    .add("extraDatabaseMode", &extraDatabaseModeStr)
+		    .add("extraDatabaseMode", &extraDatabaseMode)
 		    .add("extraDatabaseCount", &extraDatabaseCount)
 		    .add("extraDatabaseBackupAgents", &extraDatabaseBackupAgents)
 		    .add("minimumReplication", &minimumReplication)
@@ -512,13 +464,20 @@ public:
 		    .add("asanMachineCount", &asanMachineCount)
 		    .add("processesPerMachine", &processesPerMachine)
 		    .add("coordinators", &coordinators)
+		    // Ini configs used to call this configDBTypes, new config calls it configDB
+		    // Accept either in either mode
 		    .add("configDB", &configDBType)
+		    .add("configDBType", &configDBType)
 		    .add("extraMachineCountDC", &extraMachineCountDC)
 		    .add("blobGranulesEnabled", &blobGranulesEnabled)
+		    .add("defaultBlobification", &defaultBlobification)
 		    .add("simHTTPServerEnabled", &simHTTPServerEnabled)
 		    .add("allowDefaultTenant", &allowDefaultTenant)
 		    .add("allowCreatingTenants", &allowCreatingTenants)
 		    .add("randomlyRenameZoneId", &randomlyRenameZoneId)
+		    // Some configs call this injectSSTargetedRestart, some call it injectTargetedSSRestart.
+		    // Accept either.
+		    .add("injectSSTargetedRestart", &injectTargetedSSRestart)
 		    .add("injectTargetedSSRestart", &injectTargetedSSRestart)
 		    .add("injectSSDelay", &injectSSDelay)
 		    .add("tenantModes", &tenantModes)
@@ -526,6 +485,11 @@ public:
 		    .add("longRunningTest", &longRunningTest)
 		    .add("simulationNormalRunTestsTimeoutSeconds", &simulationNormalRunTestsTimeoutSeconds)
 		    .add("simulationBuggifyRunTestsTimeoutSeconds", &simulationBuggifyRunTestsTimeoutSeconds);
+
+		if (isIniFile(testFile)) {
+			loadIniFile(testFile, builder);
+			return;
+		}
 		try {
 			auto file = toml::parse(testFile);
 			if (file.contains("configuration") && toml::find(file, "configuration").is_table()) {
@@ -544,11 +508,10 @@ public:
 				}
 			}
 			// look for restartInfoLocation to mark isFirstTestInRestart
+			// restartInfolocation is sometimes in the configuration block and sometimes elsewhere.
+			// Either counts here.
 			if (!isFirstTestInRestart) {
 				isFirstTestInRestart = tomlKeyPresent(file, "restartInfoLocation");
-			}
-			if (!extraDatabaseModeStr.empty()) {
-				extraDatabaseMode = ISimulator::stringToExtraDatabaseMode(extraDatabaseModeStr);
 			}
 		} catch (std::exception& e) {
 			std::cerr << e.what() << std::endl;
@@ -834,7 +797,8 @@ ACTOR Future<ISimulator::KillType> simulatedFDBDRebooter(Reference<IClusterConne
 					    .detail("RandomId", randomId)
 					    .backtrace();
 
-				if (e.code() == error_code_io_timeout && !onShutdown.isReady()) {
+				if ((e.code() == error_code_io_timeout || e.code() == error_code_inconsistent_disk_queue) &&
+				    !onShutdown.isReady()) {
 					onShutdown = ISimulator::KillType::RebootProcess;
 				}
 
@@ -845,7 +809,8 @@ ACTOR Future<ISimulator::KillType> simulatedFDBDRebooter(Reference<IClusterConne
 				ASSERT(destructed ||
 				       g_simulator->getCurrentProcess() == process); // simulatedFDBD catch called on different process
 				TraceEvent(e.code() == error_code_actor_cancelled || e.code() == error_code_file_not_found ||
-				                   e.code() == error_code_incompatible_software_version || destructed
+				                   e.code() == error_code_incompatible_software_version ||
+				                   e.code() == error_code_inconsistent_disk_queue || destructed
 				               ? SevInfo
 				               : SevError,
 				           "SimulatedFDBDTerminated")
@@ -1520,6 +1485,7 @@ private:
 	void setSpecificConfig(const TestConfig& testConfig);
 	void setDatacenters(const TestConfig& testConfig);
 	void setTenantMode(const TestConfig& testConfig);
+	void setBlobGranules(const TestConfig& testConfig);
 	void setEncryptionAtRestMode(const TestConfig& testConfig);
 	void setStorageEngine(const TestConfig& testConfig);
 	void setRegions(const TestConfig& testConfig);
@@ -1639,6 +1605,12 @@ void SimulationConfig::setTenantMode(const TestConfig& testConfig) {
 		tenantMode = TenantMode::OPTIONAL_TENANT;
 	}
 	set_config("tenant_mode=" + tenantMode.toString());
+}
+
+void SimulationConfig::setBlobGranules(const TestConfig& testConfig) {
+	if (testConfig.blobGranulesEnabled) {
+		set_config("blob_granules_enabled=1");
+	}
 }
 
 void SimulationConfig::setEncryptionAtRestMode(const TestConfig& testConfig) {
@@ -2155,6 +2127,7 @@ void SimulationConfig::generateNormalConfig(const TestConfig& testConfig) {
 	}
 	setSpecificConfig(testConfig);
 	setTenantMode(testConfig);
+	setBlobGranules(testConfig);
 	setEncryptionAtRestMode(testConfig);
 	setStorageEngine(testConfig);
 	setReplicationType(testConfig);
@@ -2857,6 +2830,15 @@ ACTOR void setupAndRun(std::string dataFolder,
 				}
 			}
 		}
+
+		if (!testConfig.defaultBlobification.has_value()) {
+			if (tenantMode == TenantMode::DISABLED) {
+				testConfig.defaultBlobification = deterministicRandom()->coinflip();
+			} else {
+				testConfig.defaultBlobification = false;
+			}
+		}
+
 		Future<Void> runTestsF = runTests(connFile,
 		                                  TEST_TYPE_FROM_FILE,
 		                                  TEST_ON_TESTERS,
@@ -2867,7 +2849,8 @@ ACTOR void setupAndRun(std::string dataFolder,
 		                                  UnitTestParameters(),
 		                                  defaultTenant,
 		                                  extraTenants,
-		                                  rebooting);
+		                                  rebooting,
+		                                  *testConfig.defaultBlobification);
 		wait(testConfig.longRunningTest ? runTestsF
 		                                : timeoutError(runTestsF,
 		                                               isBuggifyEnabled(BuggifyType::General)
@@ -2900,4 +2883,61 @@ BasicSimulationConfig generateBasicSimulationConfig(const BasicTestConfig& testC
 		config.storageEngineExcludeTypes.push_back(5);
 	}
 	return SimulationConfig(config);
+}
+
+TEST_CASE("/fdbclient/SimulatedCluster/basic_config") {
+	Optional<int> optInt;
+	int myInt = 27;
+	std::string str;
+	std::vector<std::string> manyStrs;
+	std::vector<int> manyInts;
+
+	TestConfig::ConfigBuilder builder;
+	builder.add("optInt", &optInt)
+	    .add("int", &myInt)
+	    .add("string", &str)
+	    .add("manyStrs", &manyStrs)
+	    .add("manyInts", &manyInts);
+
+	builder.set("optInt", "5"s);
+	builder.set("int", "92"s);
+	builder.set("string", "hello"s);
+	builder.set("manyStrs", "fred,blogs, dog"s);
+	builder.set("manyInts", "1,2,3"s);
+
+	ASSERT_EQ(optInt, 5);
+	ASSERT_EQ(myInt, 92);
+	ASSERT_EQ(str, "hello");
+	ASSERT_EQ(manyStrs.size(), 3);
+	ASSERT_EQ(manyStrs[0], "fred");
+	ASSERT_EQ(manyStrs[1], "blogs");
+	ASSERT_EQ(manyStrs[2], " dog");
+	ASSERT_EQ(manyInts.size(), 3);
+	ASSERT_EQ(manyInts[0], 1);
+	ASSERT_EQ(manyInts[1], 2);
+	ASSERT_EQ(manyInts[2], 3);
+
+	manyInts.clear();
+
+	builder.set("manyInts", ""s);
+	ASSERT_EQ(manyInts.size(), 0);
+	builder.set("manyInts", "5"s);
+	ASSERT_EQ(manyInts.size(), 1);
+	ASSERT_EQ(manyInts[0], 5);
+
+	// Not sure if this is actually the *right* thing to do, but at least assert behvior isn't changing.
+	builder.set("manyInts", "12,11"s);
+	ASSERT_EQ(manyInts.size(), 3);
+	ASSERT_EQ(manyInts[0], 5);
+	ASSERT_EQ(manyInts[1], 12);
+	ASSERT_EQ(manyInts[2], 11);
+
+	// Setting bad options is a no-op if ignore_unknown is true
+	builder.set("BadOption", ""s, true);
+
+	// Can't test ignore_unknown=false path, because throwing that kind of error
+	// fails the test, even if it's in a try/catch block which discards it
+	// XXXSOS: do we have any XFAIL tests?
+
+	return Void();
 }

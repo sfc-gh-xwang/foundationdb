@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 
+#include "fdbclient/GetEncryptCipherKeys.h"
 #include "fdbserver/ServerDBInfo.actor.h"
 #include "fdbclient/IKeyValueStore.actor.h"
 #include "fdbserver/IKeyValueStore.h"
@@ -33,7 +34,8 @@ IKeyValueStore* openKVStore(KeyValueStoreType storeType,
                             bool openRemotely,
                             Reference<AsyncVar<ServerDBInfo> const> db,
                             Optional<EncryptionAtRestMode> encryptionMode,
-                            int64_t pageCacheBytes) {
+                            int64_t pageCacheBytes,
+                            Reference<GetEncryptCipherKeysMonitor> encryptionMonitor) {
 	// Only Redwood support encryption currently.
 	if (encryptionMode.present() && encryptionMode.get().isEncryptionEnabled() &&
 	    storeType != KeyValueStoreType::SSD_REDWOOD_V1) {
@@ -53,7 +55,7 @@ IKeyValueStore* openKVStore(KeyValueStoreType storeType,
 	case KeyValueStoreType::MEMORY:
 		return keyValueStoreMemory(filename, logID, memoryLimit);
 	case KeyValueStoreType::SSD_REDWOOD_V1:
-		return keyValueStoreRedwoodV1(filename, logID, db, encryptionMode, pageCacheBytes);
+		return keyValueStoreRedwoodV1(filename, logID, db, encryptionMode, pageCacheBytes, encryptionMonitor);
 	case KeyValueStoreType::SSD_ROCKSDB_V1:
 		return keyValueStoreRocksDB(filename, logID, storeType);
 	case KeyValueStoreType::SSD_SHARDED_ROCKSDB:

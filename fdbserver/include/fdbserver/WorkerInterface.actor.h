@@ -19,6 +19,8 @@
  */
 
 #pragma once
+#include "flow/Arena.h"
+#include "flow/serialize.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBSERVER_WORKERINTERFACE_ACTOR_G_H)
 #define FDBSERVER_WORKERINTERFACE_ACTOR_G_H
 #include "fdbserver/WorkerInterface.actor.g.h"
@@ -617,13 +619,29 @@ struct InitializeBackupRequest {
 	Version startVersion;
 	Optional<Version> endVersion;
 	ReplyPromise<struct InitializeBackupReply> reply;
+	bool isEmergency = false;
+	Optional<Value> backupStartedValue; // active backups
+	std::map<UID, StringRef> uid2BackupUrls;
+	std::map<UID, std::vector<KeyRange>> uid2BackupRanges;
 
 	InitializeBackupRequest() = default;
 	explicit InitializeBackupRequest(UID id) : reqId(id) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, reqId, recruitedEpoch, backupEpoch, routerTag, totalTags, startVersion, endVersion, reply);
+		serializer(ar,
+		           reqId,
+		           recruitedEpoch,
+		           backupEpoch,
+		           routerTag,
+		           totalTags,
+		           startVersion,
+		           endVersion,
+		           reply,
+		           isEmergency,
+		           backupStartedValue,
+		           uid2BackupUrls,
+		           uid2BackupRanges);
 	}
 };
 
@@ -1152,15 +1170,16 @@ ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
                                  Version tssSeedVersion,
                                  ReplyPromise<InitializeStorageReply> recruitReply,
                                  Reference<AsyncVar<ServerDBInfo> const> db,
-                                 std::string folder);
+                                 std::string folder,
+                                 Reference<GetEncryptCipherKeysMonitor> encryptionMonitor);
 ACTOR Future<Void> storageServer(
     IKeyValueStore* persistentData,
     StorageServerInterface ssi,
     Reference<AsyncVar<ServerDBInfo> const> db,
     std::string folder,
     Promise<Void> recovered,
-    Reference<IClusterConnectionRecord>
-        connRecord); // changes pssi->id() to be the recovered ID); // changes pssi->id() to be the recovered ID
+    Reference<IClusterConnectionRecord> connRecord,
+    Reference<GetEncryptCipherKeysMonitor> encryptionMonitor); // changes pssi->id() to be the recovered ID
 ACTOR Future<Void> masterServer(MasterInterface mi,
                                 Reference<AsyncVar<ServerDBInfo> const> db,
                                 Reference<AsyncVar<Optional<ClusterControllerFullInterface>> const> ccInterface,
@@ -1204,6 +1223,9 @@ ACTOR Future<Void> storageCacheServer(StorageServerInterface interf,
 ACTOR Future<Void> backupWorker(BackupInterface bi,
                                 InitializeBackupRequest req,
                                 Reference<AsyncVar<ServerDBInfo> const> db);
+ACTOR Future<Void> emergencyBackupWorker(BackupInterface bi,
+                                         InitializeBackupRequest req,
+                                         Reference<AsyncVar<ServerDBInfo> const> db);
 
 void registerThreadForProfiling();
 
@@ -1267,6 +1289,37 @@ Future<T> ioTimeoutError(Future<T> what, double time, const char* context = null
 		time += std::max(0.0, FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS - now());
 	}
 	Future<Void> end = lowPriorityDelay(time);
+	choose {
+		when(T t = wait(what)) {
+			return t;
+		}
+		when(wait(end)) {
+			Error err = io_timeout();
+			if (isSimulatorProcessUnreliable()) {
+				err = err.asInjectedFault();
+			}
+			TraceEvent e(SevError, "IoTimeoutError");
+			e.error(err);
+			if (context != nullptr) {
+				e.detail("Context", context);
+			}
+			e.log();
+			throw err;
+		}
+	}
+}
+
+ACTOR template <class T>
+Future<T> ioTimeoutErrorIfCleared(Future<T> what,
+                                  double time,
+                                  Reference<AsyncVar<bool>> condition,
+                                  const char* context = nullptr) {
+	// Before simulation is sped up, IO operations can take a very long time so limit timeouts
+	// to not end until at least time after simulation is sped up.
+	if (g_network->isSimulated() && !g_simulator->speedUpSimulation) {
+		time += std::max(0.0, FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS - now());
+	}
+	Future<Void> end = lowPriorityDelayAfterCleared(condition, time);
 	choose {
 		when(T t = wait(what)) {
 			return t;
