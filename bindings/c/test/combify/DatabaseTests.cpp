@@ -6,7 +6,6 @@ namespace {
 
 using namespace combify;
 using namespace fdb::literals;
-
 AddTest testDBTransactionOptionTimeout("DBTransactionOptionTimeout", ALL, [](const TestEnv& env) {
 	auto db = env.newDatabase();
 	// Set smallest possible timeout, retry until a timeout occurs.
@@ -65,6 +64,31 @@ AddTest testDBGetServerProtocol("DBGetServerProtocol", ALL, [](const TestEnv& en
 
 	err = protocolFuture.getNothrow(out);
 	ASSERT(!err, "Unexpected failure: {}", err.what());
+});
+
+AddTest testDBCreateSnapshot("DBCreateSnapshot", asTrustedClient, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	std::string snapshot_command = "test";
+	std::string uid = "invalid_uid";
+	bool retry = false;
+	while (1) {
+		auto f = db.createSnapshot(fdb::toBytesRef(uid), fdb::toBytesRef(snapshot_command));
+		auto err = waitFuture(f);
+		if (err.code() == 2509) { // expected error code
+			ASSERT(!retry);
+			uid = randomHexString<std::string>(32, 32);
+			retry = true;
+		} else if (err.code() == 2505) {
+			ASSERT(retry);
+			break;
+		} else if (err.retryable()) {
+			// Retry on other transient errors (e.g. cluster protocol change)
+			continue;
+		} else {
+			// Otherwise, something went wrong.
+			ASSERT(false, "Unexpected behavior: {}", err.what());
+		}
+	}
 });
 
 } // namespace
