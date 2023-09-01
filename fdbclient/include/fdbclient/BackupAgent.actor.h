@@ -382,110 +382,6 @@ inline FileBackupAgent::ERestoreState TupleCodec<FileBackupAgent::ERestoreState>
 	return (FileBackupAgent::ERestoreState)Tuple::unpack(val).getInt(0);
 }
 
-using EBackupState = BackupAgentBase::EnumState;
-
-struct DatabaseBackupStatus {
-	std::string srcClusterFile;
-	std::string destClusterFile;
-	Key tenantId;
-	EBackupState backupState;
-	std::string tagNameDisplay;
-	std::string logVersionText;
-	Optional<Value> stopVersionKey;
-
-	int errorLimit = 0;
-	RangeResult errorValues;
-	Optional<Value> paused;
-	const char* errorName = nullptr;
-	double secondsBehind = -1;
-
-	DatabaseBackupStatus() = default;
-
-	std::string toString() const {
-		std::string statusText;
-		if (backupState == EBackupState::STATE_NEVERRAN) {
-			statusText += "No previous backups found.\n";
-		} else {
-			switch (backupState) {
-			case EBackupState::STATE_SUBMITTED:
-				statusText += "The DR on tag `" + tagNameDisplay +
-				              "' is NOT a complete copy of the primary database (just started).\n";
-				break;
-			case EBackupState::STATE_RUNNING:
-				statusText +=
-				    "The DR on tag `" + tagNameDisplay + "' is NOT a complete copy of the primary database.\n";
-				break;
-			case EBackupState::STATE_RUNNING_DIFFERENTIAL:
-				statusText += "The DR on tag `" + tagNameDisplay + "' is a complete copy of the primary database" +
-				              logVersionText + ".\n";
-				break;
-			case EBackupState::STATE_COMPLETED: {
-				Version stopVersion = stopVersionKey.present()
-				                          ? BinaryReader::fromStringRef<Version>(stopVersionKey.get(), Unversioned())
-				                          : -1;
-				statusText += "The previous DR on tag `" + tagNameDisplay + "' completed at version " +
-				              format("%lld", stopVersion) + ".\n";
-			} break;
-			case EBackupState::STATE_PARTIALLY_ABORTED: {
-				statusText += "The previous DR on tag `" + tagNameDisplay + "' " +
-				              BackupAgentBase::getStateText(backupState) + logVersionText + ".\n";
-				statusText += "Abort the DR with --cleanup before starting a new DR.\n";
-				break;
-			}
-			default:
-				statusText += "The previous DR on tag `" + tagNameDisplay + "' " +
-				              BackupAgentBase::getStateText(backupState) + logVersionText + ".\n";
-				break;
-			}
-		}
-		// Display the errors, if any
-		if (errorValues.size() > 0) {
-			// Inform the user that the list of errors is complete or partial
-			statusText +=
-			    (errorValues.size() < errorLimit)
-			        ? "WARNING: Some DR agents have reported issues:\n"
-			        : "WARNING: Some DR agents have reported issues (printing " + std::to_string(errorLimit) + "):\n";
-
-			for (auto& s : errorValues) {
-				statusText += "   " + printable(s.value) + "\n";
-			}
-		}
-		statusText += format("\nThe DR is %.6f seconds behind.\n", secondsBehind);
-		if (paused.present()) {
-			statusText += format("\nAll DR agents have been paused.\n");
-		}
-		if (errorName != nullptr) {
-			statusText += format("\nWARNING: Could not fetch full DR status: %s\n", errorName);
-		}
-		return statusText;
-	}
-
-	std::string toJson() const {
-		// convert statusText to json format
-		// current schema:
-		//{
-		//    'source': <source_cluster>,
-		//    'dest': <dest_cluster>,
-		//    'tenant_id': <tenant_id>,
-		//    'status': <status enum string>
-		//    'lag_seconds': <lag>
-		// }
-		json_spirit::mValue statusRootValue;
-		JSONDoc statusRoot(statusRootValue);
-		statusRoot.create("source") = srcClusterFile;
-		statusRoot.create("dest") = destClusterFile;
-		statusRoot.create("tenant_id") = tenantId.toString();
-
-		// extract status info
-		statusRoot.create("status") = BackupAgentBase::getStateText(backupState);
-
-		// extract lag info
-		statusRoot.create("lag_seconds") = secondsBehind;
-
-		return json_spirit::write_string(statusRootValue);
-	}
-};
-
 class DatabaseBackupAgent : public BackupAgentBase {
 public:
 	DatabaseBackupAgent();
@@ -523,8 +419,6 @@ public:
 	Future<Void> run(Database cx, std::shared_ptr<double const> pollDelay, int maxConcurrentTasks) {
 		return taskBucket->run(cx, futureBucket, pollDelay, maxConcurrentTasks);
 	}
-
-	Future<Void> flushBackup(Database dest, Key tagName, Version commitVersion);
 
 	Future<Void> atomicSwitchover(Database dest,
 	                              Key tagName,
@@ -582,7 +476,6 @@ public:
 	                         DstOnly = DstOnly::False,
 	                         WaitForDestUID = WaitForDestUID::False);
 
-	Future<DatabaseBackupStatus> getStatusData(Database cx, int errorLimit, Key tagName);
 	Future<std::string> getStatus(Database cx, int errorLimit, Key tagName);
 
 	Future<EnumState> getStateValue(Reference<ReadYourWritesTransaction> tr, UID logUid, Snapshot = Snapshot::False);
@@ -703,6 +596,7 @@ ACTOR Future<Void> applyMutations(Database cx,
                                   bool provisionalProxy);
 ACTOR Future<Void> cleanupBackup(Database cx, DeleteData deleteData);
 
+using EBackupState = BackupAgentBase::EnumState;
 template <>
 inline Standalone<StringRef> TupleCodec<EBackupState>::pack(EBackupState const& val) {
 	return Tuple::makeTuple(static_cast<int>(val)).pack();
