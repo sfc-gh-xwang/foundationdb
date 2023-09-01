@@ -229,7 +229,7 @@ struct TenantBalancerSingleton : Singleton<TenantBalancerInterface> {
 	Future<Void> halt(ClusterControllerData& cc, Optional<Standalone<StringRef>> pid) const {
 		if (interface.present() && cc.id_worker.count(pid)) {
 			TraceEvent("CCTB_Halt", cc.id).detail("Id", interface.get().id());
-			return brokenPromiseToNever(interface.get().haltTenantBalancer.getReply(HaltTenantBalancerRequest(cc.id)));
+			return brokenPromiseToReady(interface.get().haltTenantBalancer.getReply(HaltTenantBalancerRequest(cc.id)));
 		}
 		return Void();
 	}

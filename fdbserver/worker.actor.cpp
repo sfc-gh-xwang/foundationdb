@@ -3227,10 +3227,12 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                                 setWhenDoneOrError(tenantBalancerProcess,
 					                                                    tenantBalancerInterf,
 					                                                    Optional<TenantBalancerInterface>())));
-					tenantBalancerInterf->set(Optional<TenantBalancerInterface>(recruited));
 				}
 				TraceEvent("TenantBalancerInitRequest", req.reqId).detail("TenantBalancerId", recruited.id());
 				req.reply.send(recruited);
+				if (!tenantBalancerInterf->get().present()) {
+					tenantBalancerInterf->set(Optional<TenantBalancerInterface>(recruited));
+				}
 			}
 			when(CoordinationPingMessage m = waitNext(interf.coordinationPing.getFuture())) {
 				TraceEvent("CoordinationPing", interf.id())
