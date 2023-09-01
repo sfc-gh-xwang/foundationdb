@@ -1709,12 +1709,12 @@ AddTest testInvalidTraceParent("InvalidTraceParent", ALL, [](const TestEnv& env)
 	auto db = env.newDatabase();
 	auto tr = env.newNormalOrTenantTransaction(db);
 	std::string invalidTraceParent = "invalid";
-	while (1) { // invalid_option_value
+	while (1) {
 		tr.setOption(FDB_TR_OPTION_TRACE_PARENT, invalidTraceParent);
 		auto f = tr.commit();
 		auto err = waitFuture(f);
 
-		if (err.code() != 2006) {
+		if (err.code() != 2006) { // invalid_option_value
 			ASSERT(err.retryable(), "Unexpected transaction failure: {}", err.what());
 			auto f2 = tr.onError(err);
 			if (auto err2 = waitFuture(f2)) {
