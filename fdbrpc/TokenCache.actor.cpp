@@ -986,7 +986,7 @@ TEST_CASE("/fdbrpc/authz/TokenCache/FuzzLegalTokenFields") {
 		});
 		auto realSignature = false;
 		auto token = StringRef();
-		if (true) {
+		if (rng.random01() < 0.3) {
 			token = authz::jwt::signToken(arena, fuzzedInput, authz::Algorithm::ES256, privateKey);
 			realSignature = true;
 		} else {
