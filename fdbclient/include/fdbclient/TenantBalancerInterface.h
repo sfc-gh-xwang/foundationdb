@@ -28,9 +28,9 @@ struct TenantMovementInfo {
 
 	explicit TenantMovementInfo() = default;
 	explicit TenantMovementInfo(UID moveId,
-	                            TenantGroupName tenantGroupName,
-	                            ClusterName sourceCluster,
-	                            ClusterName destinationCluster)
+	                            TenantGroupNameRef tenantGroupName,
+	                            ClusterNameRef sourceCluster,
+	                            ClusterNameRef destinationCluster)
 	  : movementId(moveId),
 	    tenantGroupName(arena, tenantGroupName),
 	    sourceCluster(arena, sourceCluster),
@@ -83,7 +83,7 @@ struct GetMovementStatusRequest {
 	ReplyPromise<GetMovementStatusReply> reply;
 
 	GetMovementStatusRequest() = default;
-	GetMovementStatusRequest(TenantGroupName tenantGroupName) : tenantGroupName(arena, tenantGroupName) {}
+	GetMovementStatusRequest(TenantGroupNameRef tenantGroupName) : tenantGroupName(arena, tenantGroupName) {}
 
 	template <typename Ar>
 	void serialize(Ar& ar) {
@@ -114,7 +114,7 @@ struct StartMoveTenantGroupRequest {
 	ReplyPromise<StartMoveTenantGroupReply> reply;
 
 	StartMoveTenantGroupRequest() = default;
-	explicit StartMoveTenantGroupRequest(TenantGroupName tenantGroupName, ClusterName destinationCluster)
+	explicit StartMoveTenantGroupRequest(TenantGroupNameRef tenantGroupName, ClusterNameRef destinationCluster)
 	  : tenantGroupName(arena, tenantGroupName),
 	    destinationCluster(arena, destinationCluster) {}
 
@@ -174,7 +174,7 @@ struct AbortMovementRequest {
 	ReplyPromise<AbortMovementReply> reply;
 
 	AbortMovementRequest() = default;
-	AbortMovementRequest(TenantGroupName tenantGroupName) : tenantGroupName(arena, tenantGroupName) {}
+	AbortMovementRequest(TenantGroupNameRef tenantGroupName) : tenantGroupName(arena, tenantGroupName) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
