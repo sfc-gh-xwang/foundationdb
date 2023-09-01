@@ -461,7 +461,6 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	WorkerDetails newRKWorker = findNewProcessForSingleton(self, ProcessClass::Ratekeeper, id_used);
 	WorkerDetails newDDWorker = findNewProcessForSingleton(self, ProcessClass::DataDistributor, id_used);
 	WorkerDetails newCSWorker = findNewProcessForSingleton(self, ProcessClass::ConsistencyScan, id_used);
-	WorkerDetails newTBWorker = findNewProcessForSingleton(self, ProcessClass::TenantBalancer, id_used);
 
 	WorkerDetails newBMWorker;
 	WorkerDetails newMGWorker;
@@ -480,11 +479,16 @@ void checkBetterSingletons(ClusterControllerData* self) {
 		newEKPWorker = findNewProcessForSingleton(self, ProcessClass::EncryptKeyProxy, id_used);
 	}
 
+	const bool enableTenantBalancer = SERVER_KNOBS->CC_ENABLE_TENANT_BALANCER;
+	WorkerDetails newTBWorker;
+	if (enableTenantBalancer) {
+		newTBWorker = findNewProcessForSingleton(self, ProcessClass::TenantBalancer, id_used);
+	}
+
 	// Find best possible fitnesses for each singleton.
 	auto bestFitnessForRK = findBestFitnessForSingleton(self, newRKWorker, ProcessClass::Ratekeeper);
 	auto bestFitnessForDD = findBestFitnessForSingleton(self, newDDWorker, ProcessClass::DataDistributor);
 	auto bestFitnessForCS = findBestFitnessForSingleton(self, newCSWorker, ProcessClass::ConsistencyScan);
-	auto bestFitnessForTB = findBestFitnessForSingleton(self, newTBWorker, ProcessClass::TenantBalancer);
 
 	ProcessClass::Fitness bestFitnessForBM;
 	ProcessClass::Fitness bestFitnessForMG;
@@ -498,6 +502,11 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	ProcessClass::Fitness bestFitnessForEKP;
 	if (enableKmsCommunication) {
 		bestFitnessForEKP = findBestFitnessForSingleton(self, newEKPWorker, ProcessClass::EncryptKeyProxy);
+	}
+
+	ProcessClass::Fitness bestFitnessForTB;
+	if (enableTenantBalancer) {
+		bestFitnessForTB = findBestFitnessForSingleton(self, newTBWorker, ProcessClass::TenantBalancer);
 	}
 
 	auto& db = self->db.serverInfo->get();
@@ -538,7 +547,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	}
 
 	bool tbHealthy = true;
-	if (SERVER_KNOBS->CC_ENABLE_TENANT_BALANCER) {
+	if (enableTenantBalancer) {
 		tbHealthy = isHealthySingleton<TenantBalancerSingleton>(
 		    self, newTBWorker, tbSingleton, bestFitnessForTB, self->recruitingTenantBalancerID);
 	}
