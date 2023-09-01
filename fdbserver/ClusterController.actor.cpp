@@ -2354,16 +2354,15 @@ ACTOR Future<Void> startTenantBalancer(ClusterControllerData* self) {
 }
 
 ACTOR Future<Void> monitorTenantBalancer(ClusterControllerData* self) {
-	while (self->db.serverInfo->get().recoveryState < RecoveryState::ACCEPTING_COMMITS) {
-		wait(self->db.serverInfo->onChange());
-	}
-
 	if (!SERVER_KNOBS->CC_ENABLE_TENANT_BALANCER) {
 		return Void();
 	}
-
 	CODE_PROBE(true, "TenantBalancer enabled");
 	TraceEvent("CCMonitorTenantBalancer").log();
+
+	while (self->db.serverInfo->get().recoveryState < RecoveryState::ACCEPTING_COMMITS) {
+		wait(self->db.serverInfo->onChange());
+	}
 
 	loop {
 		if (self->db.serverInfo->get().tenantBalancer.present() && !self->recruitTenantBalancer.get()) {
