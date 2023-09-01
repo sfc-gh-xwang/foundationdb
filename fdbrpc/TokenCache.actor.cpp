@@ -19,6 +19,7 @@
 #include <fmt/format.h>
 #include <list>
 #include <deque>
+#include <sstream>
 
 #include "flow/actorcompiler.h" // has to be last include
 
@@ -508,6 +509,80 @@ TEST_CASE("/fdbrpc/authz/TokenCache/GoodTokens") {
 	return Void();
 }
 
+namespace {
+
+template <class Modifier>
+concept DocumentModifier = requires(Modifier&& modifier) {
+	                           { modifier(std::declval<rapidjson::Document&>()) } -> std::same_as<void>;
+                           };
+
+// Utility functions for modifying sign input
+template <DocumentModifier Modifier>
+StringRef modifyHeader(Arena& arena, StringRef signInput, Modifier&& modifier) {
+	auto headerPart = signInput.eat("."_sr);
+	auto headerStr = base64::url::decode(arena, headerPart).get();
+	auto payloadPart = signInput;
+	rapidjson::Document d;
+	d.Parse(reinterpret_cast<const char*>(headerStr.begin()), headerStr.size());
+	ASSERT(!d.HasParseError());
+	rapidjson::StringBuffer wrBuf;
+	rapidjson::Writer<rapidjson::StringBuffer> wr(wrBuf);
+	modifier(d);
+	d.Accept(wr);
+	auto newHeaderStr = StringRef(reinterpret_cast<const uint8_t*>(wrBuf.GetString()), wrBuf.GetSize());
+	fmt::print("New header after modifier: {}\n", newHeaderStr.toStringView());
+	auto newHeaderPart = base64::url::encode(arena, newHeaderStr);
+	return concatenateStrings(arena, newHeaderPart, "."_sr, payloadPart);
+}
+
+template <DocumentModifier Modifier>
+StringRef modifyPayload(Arena& arena, StringRef signInput, Modifier&& modifier) {
+	auto headerPart = signInput.eat("."_sr);
+	auto payloadPart = signInput;
+	auto payloadStr = base64::url::decode(arena, payloadPart).get();
+	rapidjson::Document d;
+	d.Parse(reinterpret_cast<const char*>(payloadStr.begin()), payloadStr.size());
+	ASSERT(!d.HasParseError());
+	rapidjson::StringBuffer wrBuf;
+	rapidjson::Writer<rapidjson::StringBuffer> wr(wrBuf);
+	modifier(d);
+	d.Accept(wr);
+	auto newPayloadStr = StringRef(reinterpret_cast<const uint8_t*>(wrBuf.GetString()), wrBuf.GetSize());
+	fmt::print("New payload after modifier: {}\n", newPayloadStr.toStringView());
+	auto newPayloadPart = base64::url::encode(arena, newPayloadStr);
+	return concatenateStrings(arena, headerPart, "."_sr, newPayloadPart);
+}
+
+template <class Inspector>
+concept SignInputInspector =
+    requires(Inspector&& inspector) {
+	    {
+		    inspector(std::declval<rapidjson::Document const&>(), std::declval<rapidjson::Document const&>())
+		    } -> std::same_as<void>;
+    };
+
+template <SignInputInspector Inspector>
+void inspectSignInput(StringRef signInput, Inspector&& inspector) {
+	auto arena = Arena();
+	auto headerPart = signInput.eat("."_sr);
+	auto payloadPart = signInput;
+	auto headerDoc = rapidjson::Document();
+	{
+		auto headerStr = base64::url::decode(arena, headerPart).get();
+		headerDoc.Parse(reinterpret_cast<const char*>(headerStr.begin()), headerStr.size());
+		ASSERT(!headerDoc.HasParseError());
+	}
+	auto payloadDoc = rapidjson::Document();
+	{
+		auto payloadStr = base64::url::decode(arena, payloadPart).get();
+		payloadDoc.Parse(reinterpret_cast<const char*>(payloadStr.begin()), payloadStr.size());
+		ASSERT(!payloadDoc.HasParseError());
+	}
+	inspector(headerDoc, payloadDoc);
+}
+
+} // anonymous namespace
+
 TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
 	auto privateKey = mkcert::makeEcP256();
 	auto publicKey = privateKey.toPublic();
@@ -515,39 +590,6 @@ TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
 	auto publicKeyClearGuard = ScopeExit([pubKeyName]() { FlowTransport::transport().removePublicKey(pubKeyName); });
 	FlowTransport::transport().addPublicKey(pubKeyName, publicKey);
 	auto fakeSignature = Standalone<StringRef>();
-	auto modifyHeader = [](Arena& arena, StringRef signInput, auto&& modifier) {
-		auto headerPart = signInput.eat("."_sr);
-		auto headerStr = base64::url::decode(arena, headerPart).get();
-		auto payloadPart = signInput;
-		rapidjson::Document d;
-		d.Parse(reinterpret_cast<const char*>(headerStr.begin()), headerStr.size());
-		ASSERT(!d.HasParseError());
-		rapidjson::StringBuffer wrBuf;
-		rapidjson::Writer<rapidjson::StringBuffer> wr(wrBuf);
-		modifier(d);
-		d.Accept(wr);
-		auto newHeaderStr = StringRef(reinterpret_cast<const uint8_t*>(wrBuf.GetString()), wrBuf.GetSize());
-		fmt::print("New header after modifier: {}\n", newHeaderStr.toStringView());
-		auto newHeaderPart = base64::url::encode(arena, newHeaderStr);
-		return newHeaderPart.withSuffix("."_sr, arena).withSuffix(payloadPart, arena);
-	};
-
-	[[maybe_unused]] auto modifyPayload = [](Arena& arena, StringRef signInput, auto&& modifier) {
-		auto headerPart = signInput.eat("."_sr);
-		auto payloadPart = signInput;
-		auto payloadStr = base64::url::decode(arena, payloadPart).get();
-		rapidjson::Document d;
-		d.Parse(reinterpret_cast<const char*>(payloadStr.begin()), payloadStr.size());
-		ASSERT(!d.HasParseError());
-		rapidjson::StringBuffer wrBuf;
-		rapidjson::Writer<rapidjson::StringBuffer> wr(wrBuf);
-		modifier(d);
-		d.Accept(wr);
-		auto newPayloadStr = StringRef(reinterpret_cast<const uint8_t*>(wrBuf.GetString()), wrBuf.GetSize());
-		fmt::print("New payload after modifier: {}\n", newPayloadStr.toStringView());
-		auto newPayloadPart = base64::url::encode(arena, newPayloadStr);
-		return headerPart.withSuffix("."_sr, arena).withSuffix(newPayloadPart, arena);
-	};
 	{
 		// alg=none
 		fmt::print("Testing alg=none case\n");
@@ -626,6 +668,420 @@ TEST_CASE("/fdbrpc/authz/TokenCache/CommonAttacks") {
 		});
 		ASSERT(!TokenCache::instance().validate(
 		    tokenSpec.tenants.get()[0], hs256SignInput.withSuffix("."_sr, arena).withSuffix(fakeSignature, arena)));
+	}
+	return Void();
+}
+
+namespace {
+
+void appendRandomJsonString(IRandom& rng, std::ostringstream& o) {
+	auto const len = rng.randomInt(1, 30);
+	if (rng.random01() < 0.1) {
+		// random byte string (illegal)
+		auto str = std::string(len, '\0');
+		for (auto& ch : str) {
+			ch = rng.randomUInt32() % 256;
+		}
+		o << '"' << str << '"';
+	} else {
+		// alphanum string (legal)
+		o << '"' << rng.randomAlphaNumeric(len) << '"';
+	}
+}
+
+FDB_BOOLEAN_PARAM(TerminalTypesOnly); // no need to nest objects/arrays
+
+void appendRandomJsonValue(IRandom& rng, std::ostringstream& o, TerminalTypesOnly terminalTypesOnly) {
+	auto valueAppenders = std::vector<std::function<void(IRandom&, std::ostringstream&)>>{
+		[](IRandom& rng, std::ostringstream& o) {
+		    // String case
+		    appendRandomJsonString(rng, o);
+		},
+		[](IRandom& rng, std::ostringstream& o) {
+		    // Numeric case
+		    switch (rng.randomInt(0, 2 + 1)) {
+		    case 0:
+			    // boolean
+			    o << (rng.coinflip() ? "true" : "false");
+			    break;
+		    case 1:
+			    // int
+			    o << rng.randomInt64(0, 0xfffffff);
+			    break;
+		    case 2:
+		    default:
+			    // float
+			    o << rng.random01() * 1e10;
+			    break;
+		    }
+		},
+		[](IRandom& rng, std::ostringstream& o) {
+		    // array
+		    o << "[";
+		    auto const arrayLen = rng.randomInt(0, 4);
+		    for (auto i = 0; i < arrayLen; i++) {
+			    if (i > 0) {
+				    o << ",";
+			    }
+			    appendRandomJsonValue(rng, o, TerminalTypesOnly::True);
+		    }
+		    o << "]";
+		},
+		[](IRandom& rng, std::ostringstream& o) {
+		    // object
+		    o << "{";
+		    auto const numAttrs = rng.randomInt(0, 8);
+		    for (auto i = 0; i < numAttrs; i++) {
+			    if (i > 0) {
+				    o << ",";
+			    }
+			    appendRandomJsonString(rng, o);
+			    o << ":";
+			    appendRandomJsonValue(rng, o, TerminalTypesOnly::True);
+		    }
+		    o << "}";
+		},
+	};
+	auto const choiceBound = terminalTypesOnly ? valueAppenders.size() - 2 : valueAppenders.size();
+	valueAppenders[rng.randomInt(0, choiceBound)](rng, o);
+}
+
+// Utility function to fill out JSON object with random fields and values.
+// Assumes that '{' has already been written to the output stream.
+void appendRandomJsonObjectAttribute(IRandom& rng, std::ostringstream& o) {
+	appendRandomJsonString(rng, o);
+	o << ":";
+	appendRandomJsonValue(rng, o, TerminalTypesOnly::False);
+}
+
+} // anonymous namespace
+
+TEST_CASE("/fdbrpc/authz/TokenCache/FuzzedStringDoesNotBreakCache") {
+	// Generate a bunch of random token byte strings without consideration for encoding or structure.
+	// The goal is to test that it does not crash the server or break the correctness of the cache.
+	auto privateKey = mkcert::makeEcP256();
+	auto publicKey = privateKey.toPublic();
+	auto pubKeyName = "somePublicKey"_sr;
+	auto publicKeyClearGuard = ScopeExit([pubKeyName]() { FlowTransport::transport().removePublicKey(pubKeyName); });
+	FlowTransport::transport().addPublicKey(pubKeyName, publicKey);
+	auto& rng = *deterministicRandom();
+	for (auto i = 0; i < 1000; i++) {
+		auto arena = Arena();
+		auto length = rng.randomInt(1, 1000);
+		auto buf = new (arena) uint8_t[length];
+		for (auto i = 0; i < length; i++) {
+			buf[i] = rng.randomUInt32() % 256;
+		}
+		ASSERT(!TokenCache::instance().validate(TenantId(rng.randomInt64(0, 0xfffffff)), StringRef(buf, length)));
+	}
+	// Now test with random strings that follow the token string structure:
+	// i.e. 3 base64url-encoded string segments joined by '.' where the first two segments are JSON,
+	// but the JSON parts do not adhere to the JWT schema.
+	for (auto i = 0; i < 1000; i++) {
+		auto arena = Arena();
+		auto generateBase64UrlEncodedJsonObject = [](IRandom& rng, Arena& arena, int numAttrs) -> StringRef {
+			auto stream =
+			    std::ostringstream(); // cannot be using rapidjson Writer, as we may use JSON-illegal char sequences.
+			stream << "{";
+			for (auto i = 0; i < numAttrs; i++) {
+				if (i > 0) {
+					stream << ", ";
+				}
+				appendRandomJsonObjectAttribute(rng, stream);
+			}
+			stream << "}";
+			auto objectStr = std::move(stream).str();
+			if (rng.random01() < 0.1) {
+				fmt::print("Sample object: {}\n", StringRef(objectStr).printable());
+			}
+			return base64::url::encode(arena, StringRef(objectStr));
+		};
+		auto headerPart = generateBase64UrlEncodedJsonObject(rng, arena, rng.randomInt(0, 8));
+		auto payloadPart = generateBase64UrlEncodedJsonObject(rng, arena, rng.randomInt(0, 15));
+		auto token = StringRef();
+		if (rng.random01() < 0.1) {
+			// do a proper JWT signing (expensive)
+			auto signInput = concatenateStrings(arena, headerPart, "."_sr, payloadPart);
+			token = authz::jwt::signToken(arena, signInput, authz::Algorithm::ES256, privateKey);
+		} else {
+			// just fit the structure with randomly generated bytes encoded in base64url
+			auto plainSig = std::string(rng.randomUInt32() % 40 + 50, '\0');
+			for (auto& byte : plainSig) {
+				byte = rng.randomUInt32() % 256;
+			}
+			auto b64urlSig = base64::url::encode(arena, plainSig);
+			token = concatenateStrings(arena, headerPart, "."_sr, payloadPart, "."_sr, b64urlSig);
+		}
+		ASSERT(!TokenCache::instance().validate(TenantId(rng.randomInt64(0, 0xfffffff)), token));
+	}
+	return Void();
+}
+
+namespace {
+
+void modifyValue(IRandom& rng, rapidjson::Document& d, rapidjson::Value::MemberIterator itr) {
+	using JsonValue = rapidjson::Value;
+	ASSERT(itr != d.MemberEnd());
+	auto setRandomTypeAndValue = [&rng, &d](JsonValue& value) {
+		auto const choice = rng.randomInt(0, 5 + 1);
+		switch (choice) {
+		case 0:
+			value.SetInt64(rng.randomInt64(0, 0xffffffffffLL));
+			break;
+		case 1:
+			value.SetString(rng.randomAlphaNumeric(rng.randomInt(0, 50)).c_str(), d.GetAllocator());
+			break;
+		case 2:
+			value.SetDouble(rng.random01() * 1e10 * (rng.coinflip() ? -1.0 : 1.0));
+			break;
+		case 3:
+			value.SetBool(rng.coinflip());
+			break;
+		case 4: {
+			auto& array = value.SetArray();
+			auto len = rng.randomInt(0, 3);
+			for (auto i = 0; i < len; i++) {
+				if (rng.coinflip()) {
+					array.PushBack(JsonValue(rng.randomInt(0, 100)), d.GetAllocator());
+				} else {
+					array.PushBack(JsonValue(rng.randomAlphaNumeric(rng.randomInt(0, 10)).c_str(), d.GetAllocator()),
+					               d.GetAllocator());
+				}
+			}
+		} break;
+		case 5:
+		default: {
+			auto& object = value.SetObject();
+			auto len = rng.randomInt(0, 4);
+			for (auto i = 0; i < len; i++) {
+				auto key = rng.randomAlphaNumeric(rng.randomInt(1, 15));
+				if (rng.coinflip()) {
+					object.AddMember(JsonValue(key.c_str(), d.GetAllocator()),
+					                 JsonValue(rng.randomInt(-1000, 1000)),
+					                 d.GetAllocator());
+				} else {
+					object.AddMember(JsonValue(key.c_str(), d.GetAllocator()),
+					                 JsonValue(rng.randomAlphaNumeric(rng.randomInt(0, 60)).c_str(), d.GetAllocator()),
+					                 d.GetAllocator());
+				}
+			}
+		} break;
+		}
+	};
+	auto& value = itr->value;
+	if (value.IsUint()) {
+		if (rng.random01() < 0.1) {
+			d.RemoveMember(itr);
+		} else if (rng.coinflip()) {
+			// maintain the type, but use different value
+			value.SetUint64(rng.randomUInt64() % static_cast<uint64_t>((g_network->timer() + 1e4) * 2));
+		} else {
+			setRandomTypeAndValue(value);
+		}
+	} else if (value.IsString()) {
+		if (rng.random01() < 0.1) {
+			d.RemoveMember(itr);
+		} else if (rng.coinflip()) {
+			value.SetString(rng.randomAlphaNumeric(rng.randomInt(0, 20)).c_str(), d.GetAllocator());
+		} else {
+			setRandomTypeAndValue(value);
+		}
+	} else {
+		if (rng.random01() < 0.3) {
+			setRandomTypeAndValue(value);
+		}
+	}
+}
+
+} // anonymous namespace
+
+TEST_CASE("/fdbrpc/authz/TokenCache/FuzzLegalTokenFields") {
+	// Generate a bunch of random token byte strings without consideration for encoding or structure.
+	// The goal is to test that it does not crash the server or break the correctness of the cache.
+	auto privateKey = mkcert::makeEcP256();
+	auto publicKey = privateKey.toPublic();
+	auto pubKeyName = "somePublicKey"_sr;
+	auto publicKeyClearGuard = ScopeExit([pubKeyName]() { FlowTransport::transport().removePublicKey(pubKeyName); });
+	FlowTransport::transport().addPublicKey(pubKeyName, publicKey);
+	auto& rng = *deterministicRandom();
+
+	auto headerModifiers = std::vector<std::function<void(rapidjson::Document&)>>{
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("alg");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("kid");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("typ");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+	};
+	auto payloadModifiers = std::vector<std::function<void(rapidjson::Document&)>>{
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("iss");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("sub");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("aud");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("jti");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("iat");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("exp");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("nbf");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+		[&rng](rapidjson::Document& d) {
+		    auto itr = d.FindMember("tenants");
+		    ASSERT(itr != d.MemberEnd());
+		    modifyValue(rng, d, itr);
+		},
+	};
+
+	for (auto i = 0; i < 1000; i++) {
+		auto arena = Arena();
+		auto spec = authz::jwt::makeRandomTokenSpec(arena, rng, authz::Algorithm::ES256);
+		spec.keyId = pubKeyName;
+		auto signInput = authz::jwt::makeSignInput(arena, spec);
+		auto headerModifiedInput = modifyHeader(arena, signInput, [&rng, &headerModifiers](rapidjson::Document& d) {
+			for (const auto& modifier : headerModifiers) {
+				if (rng.coinflip()) {
+					modifier(d);
+				}
+			}
+		});
+		auto fuzzedInput = modifyPayload(arena, headerModifiedInput, [&rng, &payloadModifiers](rapidjson::Document& d) {
+			for (const auto& modifier : payloadModifiers) {
+				if (rng.coinflip()) {
+					modifier(d);
+				}
+			}
+		});
+		auto realSignature = false;
+		auto token = StringRef();
+		if (rng.random01() < 0.3) {
+			token = authz::jwt::signToken(arena, fuzzedInput, authz::Algorithm::ES256, privateKey);
+			realSignature = true;
+		} else {
+			auto randStr = rng.randomAlphaNumeric(rng.randomInt(30, 80));
+			if (rng.coinflip()) {
+				auto encodedStr = base64::url::encode(arena, StringRef(randStr));
+				token = concatenateStrings(arena, fuzzedInput, "."_sr, encodedStr);
+			} else {
+				token = concatenateStrings(arena, fuzzedInput, "."_sr, StringRef(randStr));
+			}
+		}
+		auto expectVerifyOk = false;
+		// If we have a valid signature, this should be set to valid tenant id from token during inspectSignInput()
+		// lambda below. Otherwise, it does not matter if it's any random ID.
+		TenantId tenantIdToValidate = rng.randomInt64(1, 0xfffffff);
+		if (realSignature) {
+			// The likelihood of a sign input going through above fuzzing modifications and passing verification
+			// is extremely rare, but we need to guard against flaky tests.
+			inspectSignInput(
+			    fuzzedInput,
+			    [&expectVerifyOk, &pubKeyName, &tenantIdToValidate](rapidjson::Document const& header,
+			                                                        rapidjson::Document const& payload) -> void {
+				    using namespace std::literals::string_view_literals;
+				    auto memberIsArrayOfStrings = [](rapidjson::Document const& d, const char* memberName) -> bool {
+					    auto itr = d.FindMember(memberName);
+					    if (itr == d.MemberEnd()) {
+						    return false;
+					    }
+					    if (!itr->value.IsArray()) {
+						    return false;
+					    }
+					    for (auto i = 0; i < itr->value.Size(); i++) {
+						    if (!itr->value[i].IsString()) {
+							    return false;
+						    }
+					    }
+					    return true;
+				    };
+				    auto verifyTenantsFieldAndGetTenantId = [](rapidjson::Document const& d) -> Optional<TenantId> {
+					    auto itr = d.FindMember("tenants");
+					    if (itr == d.MemberEnd() || !itr->value.IsArray()) {
+						    return {};
+					    }
+					    auto& array = itr->value;
+					    Optional<TenantId> ret;
+					    auto arena = Arena();
+					    for (auto i = 0; i < array.Size(); i++) {
+						    if (!array[i].IsString()) {
+							    return {};
+						    }
+						    Optional<StringRef> decodedString =
+						        base64::decode(arena,
+						                       StringRef(reinterpret_cast<const uint8_t*>(array[i].GetString()),
+						                                 array[i].GetStringLength()));
+						    if (!decodedString.present() || decodedString.get().size() != sizeof(TenantId)) {
+							    return {};
+						    }
+						    TenantId tenantId = *reinterpret_cast<const TenantId*>(decodedString.get().begin());
+						    tenantId = fromBigEndian64(tenantId);
+						    ret = tenantId;
+					    }
+					    return ret;
+				    };
+
+				    auto ok = true;
+				    ok = ok && header.HasMember("alg") && header["alg"].IsString() &&
+				         header["alg"].GetString() == "ES256"sv;
+				    ok = ok && header.HasMember("typ") && header["typ"].IsString() &&
+				         header["typ"].GetString() == "JWT"sv;
+				    ok = ok && header.HasMember("kid") && header["kid"].IsString() &&
+				         header["kid"].GetString() == pubKeyName.toStringView();
+				    ok = ok && (!payload.HasMember("iss") || payload["iss"].IsString());
+				    ok = ok && (!payload.HasMember("sub") || payload["sub"].IsString());
+				    ok = ok && (!payload.HasMember("aud") || payload["aud"].IsString() ||
+				                memberIsArrayOfStrings(payload, "aud"));
+				    ok = ok && (!payload.HasMember("jti") || payload["jti"].IsString());
+				    ok =
+				        ok && (payload.HasMember("iat") && payload["iat"].IsNumber() && payload["iat"].GetDouble() > 0);
+				    auto optTenantId = verifyTenantsFieldAndGetTenantId(payload);
+				    ok = ok && optTenantId.present();
+				    if (ok) {
+					    tenantIdToValidate = optTenantId.get();
+				    }
+				    // This part has a very low likelihood for flakyness if we call timer() because each call to timer()
+				    // may increase time by up to 0.05s upon next call by TokenCache in simulation mode.
+				    // Still, defer as much as possible.
+				    auto currentTime = g_network->timer();
+				    ok = ok && payload.HasMember("exp") && payload["exp"].IsNumber() &&
+				         payload["exp"].GetDouble() > 0 && payload["exp"].GetDouble() > currentTime;
+				    ok = ok && payload.HasMember("nbf") && payload["nbf"].IsNumber() &&
+				         payload["nbf"].GetDouble() > 0 && payload["nbf"].GetDouble() <= currentTime;
+				    expectVerifyOk = ok;
+			    });
+		}
+		ASSERT_EQ(TokenCache::instance().validate(tenantIdToValidate, token), expectVerifyOk);
 	}
 	return Void();
 }

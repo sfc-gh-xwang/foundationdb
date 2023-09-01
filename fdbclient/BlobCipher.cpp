@@ -324,7 +324,7 @@ void BlobCipherEncryptHeaderRef::validateEncryptionHeaderDetails(const BlobCiphe
 	Optional<EncryptCipherKeyCheckValue> persistedHeaderKCV;
 
 	// TODO: Replace with "Overload visitor pattern" someday.
-	return std::visit(
+	std::visit(
 	    [&persistedTextCipherDetails,
 	     &persistedHeaderCipherDetails,
 	     &persistedIV,
@@ -353,6 +353,7 @@ void BlobCipherEncryptHeaderRef::validateEncryptionHeaderDetails(const BlobCiphe
 
 	// Validate encryption header 'cipherHeader' details sanity
 	if (flags.authTokenMode != ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE &&
+	    flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM &&
 	    headerCipherDetails != persistedHeaderCipherDetails) {
 		TraceEvent(SevError, "ValidateEncryptHeaderMismatch")
 		    .detail("HeaderDomainId", headerCipherDetails.encryptDomainId)
@@ -2081,12 +2082,8 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	corruptedHeaderRef.flags = corruptedFlags;
 	try {
 		encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
-		Reference<DecryptBlobCipher> decryptor =
-		    DecryptBlobCipher::getDecryptor(tCipherKey,
-		                                    Optional<Reference<BlobCipherKey>>(),
-		                                    &iv[0],
-		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		                                    BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
+		    tCipherKey, Optional<Reference<BlobCipherKey>>(), &iv[0], encryptMode, BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, corruptedHeaderRef, arena);
 		ASSERT(false); // error expected
 	} catch (Error& e) {

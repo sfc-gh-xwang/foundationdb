@@ -150,7 +150,7 @@ public:
 
 	void addActor(Future<Void> future) override;
 
-	void getSplitPoints(SplitRangeRequest const& req) override;
+	Future<Void> getSplitPoints(SplitRangeRequest const& req) override;
 
 	Future<Void> waitMetricsTenantAware(const WaitMetricsRequest& req) override;
 

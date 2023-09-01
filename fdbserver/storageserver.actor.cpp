@@ -1871,14 +1871,7 @@ public:
 		}
 	}
 
-	void getSplitPoints(SplitRangeRequest const& req) override {
-		try {
-			checkTenantEntry(version.get(), req.tenantInfo, true);
-			metrics.getSplitPoints(req, req.tenantInfo.prefix);
-		} catch (Error& e) {
-			req.reply.sendError(e);
-		}
-	}
+	Future<Void> getSplitPoints(SplitRangeRequest const& req) override;
 
 	void maybeInjectTargetedRestart(Version v) {
 		// inject an SS restart at most once per test
@@ -2417,6 +2410,25 @@ void StorageServer::checkTenantEntry(Version version, TenantInfo tenantInfo, boo
 	if (tenantInfo.hasTenant()) {
 		findTenantEntry(version, tenantInfo.tenantId, lockAware);
 	}
+}
+
+ACTOR Future<Void> getSplitPoints_internal(StorageServer* self, SplitRangeRequest req) {
+	try {
+		// The call to `waitForMinVersion()` can throw `future_version()`.
+		// It is okay for the caller to retry after a delay to give the server some time to catch up.
+		state Version minVersion = wait(waitForMinVersion(self, req.minVersion));
+		self->checkTenantEntry(minVersion, req.tenantInfo, true);
+		self->metrics.getSplitPoints(req, req.tenantInfo.prefix);
+	} catch (Error& e) {
+		if (!canReplyWith(e))
+			throw;
+		self->sendErrorWithPenalty(req.reply, e, self->getPenalty());
+	}
+	return Void();
+}
+
+Future<Void> StorageServer::getSplitPoints(SplitRangeRequest const& req) {
+	return getSplitPoints_internal(this, req);
 }
 
 Optional<TenantGroupName> StorageServer::getTenantGroup(Version version, TenantInfo tenantInfo, bool lockAware) const {

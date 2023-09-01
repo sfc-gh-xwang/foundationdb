@@ -28,10 +28,9 @@ pipeline {
                     labels = []
                     run_ci = true
 
-                    //taking pr_id from branch i.e taking 167 from PR-167
-                    pr_id = env.BRANCH_NAME.split("-")[1]
-
                     if (env.BRANCH_NAME.startsWith("PR-")) {
+                        //taking pr_id from branch i.e taking 167 from PR-167
+                        pr_id = env.BRANCH_NAME.split("-")[1]
                         //Aborting previous runs if any in progress to avoid running multiple runs for same PR
                         abortPreviousBuilds()
                         labels = getLabels()
