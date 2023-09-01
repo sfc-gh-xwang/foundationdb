@@ -29,7 +29,7 @@
 #include "flow/flow.h"
 #include "flow/genericactors.actor.h"
 
-#include "metacluster/ConfigureCluster.h"
+#include "metacluster/ConfigureCluster.actor.h"
 #include "metacluster/MetaclusterInternal.actor.h"
 #include "metacluster/MetaclusterOperationContext.actor.h"
 #include "metacluster/MetaclusterTypes.h"
@@ -339,8 +339,9 @@ struct RestoreClusterImpl {
 			DataClusterEntry updatedEntry = self->ctx.dataClusterMetadata.get().entry;
 			updatedEntry.clusterState = DataClusterState::RESTORING;
 
-			updateClusterMetadata(
-			    tr, self->clusterName, self->ctx.dataClusterMetadata.get(), self->connectionString, updatedEntry);
+			updateClusterMetadata(tr, self->clusterName, self->ctx.dataClusterMetadata.get().entry, updatedEntry);
+			metadata::management::dataClusterConnectionRecords().set(tr, self->clusterName, self->connectionString);
+
 			// Remove this cluster from the cluster capacity index, but leave its configured capacity intact in the
 			// cluster entry. This allows us to retain the configured capacity while preventing the cluster from
 			// being used to allocate new tenant groups.
@@ -362,7 +363,7 @@ struct RestoreClusterImpl {
 			DataClusterEntry updatedEntry = ctx.dataClusterMetadata.get().entry;
 			updatedEntry.clusterState = DataClusterState::READY;
 
-			updateClusterMetadata(tr, clusterName, ctx.dataClusterMetadata.get(), {}, updatedEntry);
+			updateClusterMetadata(tr, clusterName, ctx.dataClusterMetadata.get().entry, updatedEntry);
 
 			// Add this cluster back to the cluster capacity index so that it can be assigned to again.
 			DataClusterEntry noCapacityEntry = updatedEntry;
@@ -881,12 +882,8 @@ struct RestoreClusterImpl {
 					throw conflicting_restore();
 				}
 				updatedEntry.allocated.numTenantGroups += numGroupsCreated;
-				updateClusterMetadata(tr,
-				                      self->clusterName,
-				                      self->ctx.dataClusterMetadata.get(),
-				                      Optional<ClusterConnectionString>(),
-				                      updatedEntry,
-				                      IsRestoring::True);
+				updateClusterMetadata(
+				    tr, self->clusterName, self->ctx.dataClusterMetadata.get().entry, updatedEntry, IsRestoring::True);
 			}
 
 			int64_t lastTenantId =

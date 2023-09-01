@@ -18,15 +18,10 @@ auto applyKeyPrefix(const std::string& prefix, std::vector<std::pair<std::string
 	return out;
 }
 
-fdb::Error waitFuture(fdb::Future& f) {
-	if (auto err = f.blockUntilReady()) {
-		ASSERT(false, "Unexpected future unready: {}", err.what());
-	}
-	return f.error();
-}
-
+/* Transaction getter and setters */
 AddTest testWriteAndRead("BasicWriteAndReadBack", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [](auto tr) {
@@ -35,14 +30,18 @@ AddTest testWriteAndRead("BasicWriteAndReadBack", ALL, [](const TestEnv& env) {
 	    },
 	    "WriteSomeValue");
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.get("abc"_br, false); }, "ReadBackValue");
+
+	// Make sure the future is ready
+	ASSERT(f.ready(), "Unexpected future unready after completion");
 	ASSERT(f.get() == "def"_br, "unmatched read back value: expected=def actual={}", fdb::toCharsRef(f.get()));
 });
 
 AddTest testGetReadVersion("BasicGetReadVersion", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
 
@@ -51,11 +50,12 @@ AddTest testGetReadVersion("BasicGetReadVersion", ALL, [](const TestEnv& env) {
 
 AddTest testGetKey("BasicGetKey", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-key-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 
 	insertAll(tr, applyKeyPrefix(prefix, { { "a", "1" }, { "baz", "2" }, { "bar", "3" } }));
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -72,10 +72,11 @@ AddTest testGetKey("BasicGetKey", ALL, [](const TestEnv& env) {
 
 AddTest testGetValue("BasicGetValue", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-basic-get-value-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "GetValue");
 
@@ -181,7 +182,8 @@ AddTest testWriteSystemKey("WriteSystemKeyRequiresTransactionOption", asTrustedC
 AddTest testReadYourWrites("ReadYourWrites", ALL, [](const TestEnv& env) {
 	// By default, read the snapshot = false after a write before commit should read the
 	// initial write
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr,
 	    [](auto tr) {
@@ -199,7 +201,8 @@ AddTest testReadYourWritesDisable("ReadYourWritesDisable",
                                   [](const TestEnv& env) {
 	                                  // If FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE is set, read with snapshot = false
 	                                  // should return null
-	                                  auto tr = env.newNormalOrTenantTransaction();
+	                                  auto db = env.newDatabase();
+	                                  auto tr = env.newNormalOrTenantTransaction(db);
 	                                  auto f = runToCompletion(
 	                                      tr,
 	                                      [](auto tr) {
@@ -215,7 +218,8 @@ AddTest testReadYourWritesDisable("ReadYourWritesDisable",
 AddTest testReadYourWritesSnapshotRYW("ReadYourWritesSnapshotRYWEnabled", ALL, [](const TestEnv& env) {
 	// If FDB_TR_OPTION_SNAPSHOT_RYW_ENABLE is set, read with snapshot = true
 	// should succeed
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr,
 	    [](auto tr) {
@@ -232,7 +236,8 @@ AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable",
                                           OR(asTrustedClient,
                                              AND(asUntrustedClient, withAuthZ, withTls, withTenantsMoreThan(0))),
                                           [](const TestEnv& env) {
-	                                          auto tr = env.newNormalOrTenantTransaction();
+	                                          auto db = env.newDatabase();
+	                                          auto tr = env.newNormalOrTenantTransaction(db);
 
 	                                          while (1) {
 		                                          // Disable read your writes for snapshot reads.
@@ -271,11 +276,12 @@ AddTest testSnapshotReadYourWritesDisable("SnapshotReadYourWritesDisable",
 AddTest testGetRangeStreamingModeWantAllNoLimit("GetRangeStreamingModeWantAllNoLimit", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-range-streaming-mode-want-all-no-limit-");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, data);
 
 	// FDB_STREAMING_MODE_WANT_ALL + no limit.
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -316,11 +322,12 @@ AddTest testGetRangeStreamingModeWantAllNoLimitReverse(
     [](const TestEnv& env) {
 	    const std::string prefix("combify-get-range-streaming-mode-want-all-no-limit-reverse-");
 	    auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
-	    auto tr = env.newNormalOrTenantTransaction();
+	    auto db = env.newDatabase();
+	    auto tr = env.newNormalOrTenantTransaction(db);
 	    insertAll(tr, data);
 
 	    // FDB_STREAMING_MODE_WANT_ALL + no limit + reverse order
-	    tr = env.newNormalOrTenantTransaction();
+	    tr = env.newNormalOrTenantTransaction(db);
 	    auto f = runToCompletion(
 	        tr,
 	        [&prefix](auto tr) {
@@ -358,11 +365,12 @@ AddTest testGetRangeStreamingModeWantAllNoLimitReverse(
 AddTest testGetRangeStreamingModeWantAllWithLimit("GetRangeStreamingModeWantAllWithLimit", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-range-streaming-mode-want-all-with-limit-");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, data);
 
 	// FDB_STREAMING_MODE_WANT_ALL + limit = 2
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -400,11 +408,12 @@ AddTest testGetRangeStreamingModeWantAllWithLimit("GetRangeStreamingModeWantAllW
 AddTest testGetRangeStreamingModeExactWithLimit("GetRangeStreamingModeExactWithLimit", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-range-streaming-mode-exact-with-limit-");
 	auto data = applyKeyPrefix(prefix, { { "a", "1" }, { "b", "2" }, { "c", "3" }, { "d", "4" } });
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, data);
 
 	// FDB_STREAMING_MODE_EXACT + limit = 3
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -435,11 +444,13 @@ AddTest testGetRangeStreamingModeExactWithLimit("GetRangeStreamingModeExactWithL
 
 AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-clear-key-");
-	auto tr = env.newNormalOrTenantTransaction();
+
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "bar" } }));
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -448,7 +459,7 @@ AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
 	    },
 	    "ClearKey");
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr,
 	    [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), /* snapshot */ false); },
@@ -458,7 +469,8 @@ AddTest testClearKey("ClearKey", ALL, [](const TestEnv& env) {
 
 AddTest testCancel("Cancel", asTrustedClient, [](const TestEnv& env) {
 	// Cannot use transaction after cancelling
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 
 	try {
 		auto f = runToCompletion(
@@ -484,7 +496,8 @@ AddTest testCancel("Cancel", asTrustedClient, [](const TestEnv& env) {
 });
 
 AddTest testGetCommittedVersionReadOnly("GetCommittedVersionReadOnly", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr, [](auto tr) { return tr.get("foo"_br, /*snapshot*/ false); }, "ReadOnlyTransaction");
 
@@ -495,7 +508,8 @@ AddTest testGetCommittedVersionReadOnly("GetCommittedVersionReadOnly", ALL, [](c
 
 AddTest testGetCommittedVersion("GetCommittedVersion", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-committed-version-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -509,7 +523,8 @@ AddTest testGetCommittedVersion("GetCommittedVersion", ALL, [](const TestEnv& en
 });
 
 AddTest testGetTagThrottledDuration("GetTagThrottledDuration", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr, [](auto tr) { return tr.get("foo"_br, /*snapshot*/ false); }, "GetKey");
 
@@ -520,7 +535,8 @@ AddTest testGetTagThrottledDuration("GetTagThrottledDuration", ALL, [](const Tes
 });
 
 AddTest testGetTotalCost("GetTotalCost", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr, [](auto tr) { return tr.get("foo"_br, /*snapshot*/ false); }, "GetKey");
 
@@ -531,7 +547,8 @@ AddTest testGetTotalCost("GetTotalCost", ALL, [](const TestEnv& env) {
 });
 
 AddTest testSetExpectedCost("SetExpectedCost", ALL, [](const TestEnv& env) {
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	tr.setExpectedCost(4096);
 
 	runToCompletion(
@@ -540,7 +557,8 @@ AddTest testSetExpectedCost("SetExpectedCost", ALL, [](const TestEnv& env) {
 
 AddTest testGetApproxSize("GetApproxSize", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-get-approx-size-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 
 	auto f = runToCompletion(
 	    tr,
@@ -553,7 +571,183 @@ AddTest testGetApproxSize("GetApproxSize", ALL, [](const TestEnv& env) {
 	ASSERT(f.get() >= 3, "Unmatched transaction approx size: expected>=3, actual={}", f.get());
 });
 
+AddTest testSetReadVersionOldVersion("SetReadVersionOldVersion", ALL, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	while (1) {
+		tr.setReadVersion(1);
+		auto f = tr.get("foo"_br, true);
+		auto err = waitFuture(f);
+
+		ASSERT(err, "Expect the transaction to fail");
+		ASSERT(err.retryable(), "Unexpected transaction failure: ", err.what());
+		if (err.code() == 1007 /* transaction_too_old */) {
+			break;
+		}
+
+		// Retry upon other transient errors
+		auto f2 = tr.onError(err);
+		if (auto err2 = waitFuture(f2)) {
+			ASSERT(false, "Unexpected failure: {}", err2.what());
+		}
+		continue;
+	}
+});
+
+AddTest testSetReadVersionFutureVersion("SetReadVersionFutureVersion", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-set-readversion-Future-version-");
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	while (1) {
+		// Perform a read version so that we have a valid version number that is not int64::max.
+		// This is to avoid the condition situation where a get call to a fresh cluster could hit
+		// transaction_too_old error because the initial minAcceptableReadVersion is int64::max
+		runToCompletion(
+		    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
+
+		auto tr2 = env.newNormalOrTenantTransaction(db);
+		tr2.setReadVersion(1UL << 62);
+		auto f = tr2.get(fdb::toBytesRef(prefix + "foo"), false);
+
+		auto err = waitFuture(f);
+		ASSERT(err, "Expect the transaction to fail");
+		if (err.code() == 1009 /* future_version */) {
+			break;
+		}
+
+		// We only expect retriable errors if it is not future_version
+		ASSERT(err.retryable(), "Unexpected transaction failure: ", err.what());
+		// Retry upon transient errors
+		auto f2 = tr.onError(err);
+		if (auto err2 = waitFuture(f2)) {
+			ASSERT(false, "Unexpected failure: {}", err2.what());
+		}
+		continue;
+	}
+});
+
+/* Transaction Options */
+AddTest testTransactionOptionTimeout("TransactionOptionTimeout", ALL, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	// Set smallest possible timeout, retry until a timeout occurs.
+	int64_t timeout = 1;
+	tr.setOption(FDB_TR_OPTION_TIMEOUT, timeout);
+
+	fdb::Error err;
+	while (!err) {
+		auto f1 = tr.get("foo"_br, /* snapshot */ false);
+		err = waitFuture(f1);
+		if (err) {
+			auto f2 = tr.onError(err);
+			err = waitFuture(f2);
+		}
+	}
+	ASSERT(err.code() == 1031 /* transaction_timed_out */, "Unexpected failure, expect=1031, actual={}", err.code());
+});
+
+AddTest testTransactionOptionSizeLimitTooSmall("TransactionOptionSizeLimitTooSmall", ALL, [](const TestEnv& env) {
+	// Size limit must be at least 32 to be valid, so test a smaller size.
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	try {
+		auto f = runToCompletion(
+		    tr,
+		    [](auto tr) {
+			    tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, 31);
+			    tr.set("foo"_br, "bar"_br);
+			    return tr.commit();
+		    },
+		    "SetKeyTransactionOptionSizeTooSmall");
+		ASSERT(false, "unexpected transaction successful return");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2006, "unmatched error code: expected=2006 (invalid_option_value), actual={}", e.code());
+	}
+});
+
+AddTest testTransactionOptionSizeLimitTooLarge("TransactionOptionSizeLimitTooLarge", ALL, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	// Size limit must be less than or equal to 10,000,000.
+	auto tr = env.newNormalOrTenantTransaction(db);
+	try {
+		auto f = runToCompletion(
+		    tr,
+		    [](auto tr) {
+			    tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, 10000001);
+			    tr.set("foo"_br, "bar"_br);
+			    return tr.commit();
+		    },
+		    "SetKeyInvalidOption");
+		ASSERT(false, "unexpected transaction successful return");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2006, "unmatched error code: expected=2006 (invalid_option_value), actual={}", e.code());
+	}
+});
+
+AddTest testTransactionExceedsSizeLimit("TransactionExceedsSizeLimit", ALL, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	auto sizeLimit = 32;
+
+	try {
+		runToCompletion(
+		    tr,
+		    [sizeLimit](auto tr) {
+			    tr.setOption(FDB_TR_OPTION_SIZE_LIMIT, sizeLimit);
+			    tr.set("foo"_br, "foundation database is amazing"_br);
+			    return tr.commit();
+		    },
+		    "SetKeyExceedSizeLimit");
+		ASSERT(false, "unexpected transaction successful return");
+	} catch (fdb::Error e) {
+		ASSERT(e.code() == 2101, "unmatched error code: expected=2101 (transaction_too_large), actual={}", e.code());
+	}
+});
+
 /* Transaction Atomic Operations */
+AddTest testAtomicOpAdd("AtomicOpAdd", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-atomic-op-add-");
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "\x00" } }));
+
+	tr = env.newNormalOrTenantTransaction(db);
+	int8_t param = 1;
+	int potentialCommitCount = 0;
+
+	while (1) {
+		tr.atomicOp(fdb::toBytesRef(prefix + "foo"),
+		            fdb::BytesRef(reinterpret_cast<const uint8_t*>(&param), sizeof(param)),
+		            FDB_MUTATION_TYPE_ADD);
+
+		if (potentialCommitCount + 1 == 256) {
+			// Trying to commit again might overflow the one unsigned byte we're looking at
+			break;
+		}
+
+		potentialCommitCount++;
+		auto f = tr.commit();
+		if (auto err = waitFuture(f)) {
+			if (err.retryableNotCommitted()) {
+				--potentialCommitCount;
+			}
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+		break;
+	}
+
+	tr = env.newNormalOrTenantTransaction(db);
+	auto f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "ReadFoo");
+	ASSERT(f.get().has_value(), "unexpected null value from read");
+	ASSERT(uint8_t(f.get()->data()[0]) > 0);
+	ASSERT(uint8_t(f.get()->data()[0]) <= potentialCommitCount);
+});
+
 AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	// Test bitwise and on values of same length:
 	//   db key = foo
@@ -586,13 +780,14 @@ AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 	//              0b01100001 == 97 == 'a'
 	//
 	const std::string prefix("combify-atomic-op-bit-and");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "c" }, { "baz", "abc" } }));
 	auto fooKey = prefix + "foo";
 	auto barKey = prefix + "bar";
 	auto bazKey = prefix + "baz";
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&fooKey, &barKey, &bazKey](auto tr) {
@@ -615,7 +810,7 @@ AddTest testAtomicOpBitAnd("AtomicOpBitAnd", ALL, [](const TestEnv& env) {
 		fdb::BytesRef val;
 		std::tie(key, val) = keyVal;
 
-		tr = env.newNormalOrTenantTransaction();
+		tr = env.newNormalOrTenantTransaction(db);
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
 		ASSERT(f.get() == val,
@@ -658,13 +853,14 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 	//              0b01100101 == 101 == 'e'
 	//
 	const std::string prefix("combify-atomic-op-bit-or");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
 	auto fooKey = prefix + "foo";
 	auto barKey = prefix + "bar";
 	auto bazKey = prefix + "baz";
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&fooKey, &barKey, &bazKey](auto tr) {
@@ -687,7 +883,7 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 		fdb::BytesRef val;
 		std::tie(key, val) = keyVal;
 
-		tr = env.newNormalOrTenantTransaction();
+		tr = env.newNormalOrTenantTransaction(db);
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
 		ASSERT(f.get().value() == val,
@@ -698,14 +894,182 @@ AddTest testAtomicOpBitOr("AtomicOpBitOr", ALL, [](const TestEnv& env) {
 	}
 });
 
+AddTest testAtomicOpBitXor("AtomicOpBitXor", ALL, [](const TestEnv& env) {
+	// Test bitwise xor on values of same length:
+	//   db key = foo
+	//   db value = 'a' == 97
+	//   param = 'b' == 98
+	//
+	//   'a' == 97 == 0b01100001
+	// ^ 'b' == 98 == 0b01100010
+	//   -----------------------
+	//                0b00000011 == 0x3
+	//
+	// Test bitwise xor on extended database value:
+	//   db key = bar
+	//   db value = 'b' == 98
+	//   param = "ad"
+	//
+	//   'b' == 98 -> 0b0110001000000000 (zero extended on right to match length of param)
+	// ^ "ad"   ==    0b0110000101100100
+	//   -------------------------------
+	//                0b0000001101100100 == 0x3 followed by 0x64
+	//
+	// Test bitwise xor on truncated database value:
+	//   db key = baz
+	//   db value = "abc"
+	//   param = 'd' == 100
+	//
+	//   "abc"  ->  0b01100001 (truncated to "a" to match length of param)
+	// ^ 'd' == 100 0b01100100
+	//   ---------------------
+	//              0b00000101 == 0x5
+	//
+	const std::string prefix("combify-atomic-op-xor-");
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
+
+	tr = env.newNormalOrTenantTransaction(db);
+	char param[] = { 'a', 'd' };
+	int potentialCommitCount = 0;
+
+	while (1) {
+		tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "b"_br, FDB_MUTATION_TYPE_BIT_XOR);
+		tr.atomicOp(fdb::toBytesRef(prefix + "bar"),
+		            fdb::BytesRef(reinterpret_cast<const uint8_t*>(param), 2),
+		            FDB_MUTATION_TYPE_BIT_XOR);
+		tr.atomicOp(fdb::toBytesRef(prefix + "baz"), "d"_br, FDB_MUTATION_TYPE_BIT_XOR);
+
+		++potentialCommitCount;
+		auto f = tr.commit();
+		if (auto err = waitFuture(f)) {
+			if (err.retryableNotCommitted()) {
+				--potentialCommitCount;
+			}
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+		break;
+	}
+
+	if (potentialCommitCount != 1) {
+		fmt::print("Transaction may not have committed exactly once. Suppressing assertions");
+		return;
+	}
+
+	tr = env.newNormalOrTenantTransaction(db);
+	auto f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "ReadFoo");
+	ASSERT(f.get().has_value(), "unexpected null value from read");
+	ASSERT(f.get()->size() == 1, "Unmatched value size: expected=1, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 0x3, "Unmatched value size: expected=0x3, actual={}", f.get()->data()[0]);
+
+	tr = env.newNormalOrTenantTransaction(db);
+	f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "bar"), false); }, "ReadBar");
+	ASSERT(f.get().has_value(), "unexpected null value from read");
+	ASSERT(f.get()->size() == 2, "Unmatched value size: expected=2, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 0x3, "Unmatched value size: expected=0x3, actual={}", f.get()->data()[0]);
+	ASSERT(f.get()->data()[1] == 0x64, "Unmatched value size: expected=0x64, actual={}", f.get()->data()[1]);
+
+	tr = env.newNormalOrTenantTransaction(db);
+	f = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "baz"), false); }, "ReadBaz");
+	ASSERT(f.get().has_value(), "unexpected null value from read");
+	ASSERT(f.get()->size() == 1, "Unmatched value size: expected=1, actual={}", f.get()->size());
+	ASSERT(f.get()->data()[0] == 0x5, "Unmatched value size: expected=0x5, actual={}", f.get()->data()[0]);
+});
+
+AddTest testAtomicOpAppendIfFits("AtomicOpAppendIfFits", ALL, [](const TestEnv& env) {
+	// Atomically append a value to an existing key-value pair, or insert the
+	// key-value pair if an existing key-value pair doesn't exist.
+	const std::string prefix("combify-atomic-append-if-fits-");
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "f" } }));
+
+	tr = env.newNormalOrTenantTransaction(db);
+	int potentialCommitCount = 0;
+
+	while (1) {
+		tr.atomicOp(fdb::toBytesRef(prefix + "foo"), "db"_br, FDB_MUTATION_TYPE_APPEND_IF_FITS);
+		tr.atomicOp(fdb::toBytesRef(prefix + "bar"), "foundation"_br, FDB_MUTATION_TYPE_APPEND_IF_FITS);
+		++potentialCommitCount;
+
+		auto f = tr.commit();
+		if (auto err = waitFuture(f)) {
+			if (err.retryableNotCommitted()) {
+				--potentialCommitCount;
+			}
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+		break;
+	}
+
+	tr = env.newNormalOrTenantTransaction(db);
+	auto foo = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "ReadFoo");
+	tr = env.newNormalOrTenantTransaction(db);
+	auto bar = runToCompletion(
+	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "bar"), false); }, "ReadBar");
+	ASSERT(foo.get().has_value(), "unexpected null value from reading foo");
+	ASSERT(bar.get().has_value(), "unexpected null value from reading bar");
+
+	if (potentialCommitCount != 1) {
+		fmt::print("Transaction may not have committed exactly once. Suppressing assertions");
+		return;
+	}
+
+	ASSERT(
+	    foo.get().value() == "fdb"_br, "unmatched value for foo: expected=fdb, actual={}", fdb::toCharsRef(foo.get()));
+	ASSERT(bar.get().value() == "foundation"_br,
+	       "unmatched value for bar: expected=foundation, actual={}",
+	       fdb::toCharsRef(bar.get()));
+});
+
+AddTest testAtomicOpSetVersionstampedKeyInvalidIndex(
+    "AtomicOpSetVersionstampedKeyInvalidIndex",
+    ALL,
+    [](const TestEnv& env) {
+	    // Only 9 bytes available starting at index 4 (ten bytes needed), should
+	    // return an error.
+	    char keybuf[] = { 'f', 'o', 'o', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', 4, 0, 0, 0 };
+
+	    auto db = env.newDatabase();
+	    auto tr = env.newNormalOrTenantTransaction(db);
+	    try {
+		    auto f = runToCompletion(
+		        tr,
+		        [keybuf](auto tr) {
+			        tr.atomicOp(fdb::BytesRef(reinterpret_cast<const uint8_t*>(keybuf), 17),
+			                    "bar"_br,
+			                    FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_KEY);
+			        return tr.commit();
+		        },
+		        "AtomicOpSetVersionstampedKeyInvalidIndex");
+		    ASSERT(false, "Unexpected transaction successful return");
+	    } catch (fdb::Error e) {
+		    ASSERT(e.code() != 0);
+	    }
+    });
+
 AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const TestEnv& env) {
 	// Atomically remove a key-value pair from the database based on a value
 	// comparison.
 	const std::string prefix("combify-atomic-op-compare-and-clear-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "bar" }, { "fdb", "foundation" } }));
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -714,12 +1078,12 @@ AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const Tes
 	    },
 	    "CompareAndClear");
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	auto f = runToCompletion(
 	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo"), false); }, "GetFoo");
 	ASSERT(!f.get().has_value(), "Expect null value");
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	f = runToCompletion(
 	    tr, [&prefix](auto tr) { return tr.get(fdb::toBytesRef(prefix + "fdb"), false); }, "GetFdb");
 	ASSERT(f.get() == "foundation"_br,
@@ -729,10 +1093,11 @@ AddTest testAtomicOpCompareAndClear("AtomicOpCompareAndClear", ALL, [](const Tes
 
 AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-atomic-op-mutation-type-max-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -752,7 +1117,7 @@ AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const Tes
 		fdb::BytesRef val;
 		std::tie(key, val) = keyVal;
 
-		tr = env.newNormalOrTenantTransaction();
+		tr = env.newNormalOrTenantTransaction(db);
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
 		ASSERT(f.get() == val,
@@ -765,10 +1130,11 @@ AddTest testAtomicOpMutationTypeMax("AtomicOpMutationTypeMax", ALL, [](const Tes
 
 AddTest testAtomicOpMutationTypeMin("AtomicOpMutationTypeMin", ALL, [](const TestEnv& env) {
 	const std::string prefix("combify-atomic-op-mutation-type-min-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -788,7 +1154,7 @@ AddTest testAtomicOpMutationTypeMin("AtomicOpMutationTypeMin", ALL, [](const Tes
 		fdb::BytesRef val;
 		std::tie(key, val) = keyVal;
 
-		tr = env.newNormalOrTenantTransaction();
+		tr = env.newNormalOrTenantTransaction(db);
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
 		ASSERT(f.get() == val,
@@ -811,7 +1177,8 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
 	    std::string key = prefix + std::string(keybuf, 17);
 	    std::string versionstamp("");
 
-	    auto tr = env.newNormalOrTenantTransaction();
+	    auto db = env.newDatabase();
+	    auto tr = env.newNormalOrTenantTransaction(db);
 	    while (1) {
 		    tr.atomicOp(fdb::toBytesRef(key), "bar"_br, FDB_MUTATION_TYPE_SET_VERSIONSTAMPED_KEY);
 		    auto f1 = tr.getVersionstamp();
@@ -836,7 +1203,7 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedKey(
 
 	    ASSERT(versionstamp.size() > 0, "Expect versionstamp's size > 0");
 
-	    tr = env.newNormalOrTenantTransaction();
+	    tr = env.newNormalOrTenantTransaction(db);
 	    auto f = runToCompletion(
 	        tr,
 	        [&prefix, &versionstamp](auto tr) { return tr.get(fdb::toBytesRef(prefix + "foo" + versionstamp), false); },
@@ -855,7 +1222,8 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
 	    std::string versionstamp("");
 	    std::string key = prefix + "foo";
 
-	    auto tr = env.newNormalOrTenantTransaction();
+	    auto db = env.newDatabase();
+	    auto tr = env.newNormalOrTenantTransaction(db);
 
 	    while (1) {
 		    tr.atomicOp(fdb::toBytesRef(prefix + "foo"),
@@ -883,7 +1251,7 @@ AddTest testAtomicOptionMutationTypeSetVersionstampedValue(
 
 	    ASSERT(versionstamp.size() > 0, "Expect versionstamp's size > 0");
 
-	    tr = env.newNormalOrTenantTransaction();
+	    tr = env.newNormalOrTenantTransaction(db);
 	    auto f = runToCompletion(
 	        tr, [&key](auto tr) { return tr.get(fdb::toBytesRef(key), false); }, "CheckValue");
 
@@ -900,10 +1268,11 @@ AddTest testAtomicOpMutationTypeByteMax("AtomicOpMutationTypeByteMax", ALL, [](c
 	// The difference with FDB_MUTATION_TYPE_MAX is that strings will not be
 	// extended/truncated so lengths match.
 	const std::string prefix("combify-atomic-op-mutation-type-byte-max-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "cba" } }));
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -921,7 +1290,7 @@ AddTest testAtomicOpMutationTypeByteMax("AtomicOpMutationTypeByteMax", ALL, [](c
 		fdb::BytesRef val;
 		std::tie(key, val) = keyVal;
 
-		tr = env.newNormalOrTenantTransaction();
+		tr = env.newNormalOrTenantTransaction(db);
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
 		ASSERT(f.get() == val,
@@ -936,10 +1305,11 @@ AddTest testAtomicOpMutationTypeByteMin("AtomicOpMutationTypeByteMin", ALL, [](c
 	// The difference with FDB_MUTATION_TYPE_MIN is that strings will not be
 	// extended/truncated so lengths match.
 	const std::string prefix("combify-atomic-op-mutation-type-byte-min-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "a" }, { "bar", "b" }, { "baz", "abc" } }));
 
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 	runToCompletion(
 	    tr,
 	    [&prefix](auto tr) {
@@ -957,7 +1327,7 @@ AddTest testAtomicOpMutationTypeByteMin("AtomicOpMutationTypeByteMin", ALL, [](c
 		fdb::BytesRef val;
 		std::tie(key, val) = keyVal;
 
-		tr = env.newNormalOrTenantTransaction();
+		tr = env.newNormalOrTenantTransaction(db);
 		auto f = runToCompletion(
 		    tr, [&prefix, &key](auto tr) { return tr.get(fdb::toBytesRef(prefix + key), false); }, "GetVal");
 		ASSERT(f.get() == val,
@@ -972,7 +1342,8 @@ AddTest testAtomicOpMutationTypeByteMin("AtomicOpMutationTypeByteMin", ALL, [](c
 AddTest testTransactionWatchRYWDisabled("TransactionWatchRYWDisabled", asTrustedClient, [](const TestEnv& env) {
 	// Watches created on a transaction with the option READ_YOUR_WRITES_DISABLE
 	// should return a watches_disabled error.
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	try {
 		auto f = runToCompletion(
 		    tr,
@@ -990,7 +1361,8 @@ AddTest testTransactionWatchRYWDisabled("TransactionWatchRYWDisabled", asTrusted
 AddTest testTransactionWatchReset("TransactionWatchReset", asTrustedClient, [](const TestEnv& env) {
 	// Resetting (or destroying) an uncommitted transaction should cause watches
 	// created by the transaction to fail with a transaction_cancelled error.
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	try {
 		auto f = runToCompletion(
 		    tr,
@@ -1059,12 +1431,12 @@ AddTest testTransactionMaxWatches("TransactionMaxWatches", asTrustedClient, [](c
 
 AddTest testTransactionWatch("TransactionWatch", asTrustedClient, [](const TestEnv& env) {
 	const std::string prefix("combify-transaction-watch-");
-	auto tr = env.newNormalOrTenantTransaction();
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
 	insertAll(tr, applyKeyPrefix(prefix, { { "foo", "foo" } }));
 
 	std::binary_semaphore sem(0);
-	auto db = env.newDatabase();
-	tr = env.newNormalOrTenantTransaction();
+	tr = env.newNormalOrTenantTransaction(db);
 
 	while (1) {
 		auto f1 = tr.watch(fdb::toBytesRef(prefix + "foo"));
@@ -1086,6 +1458,112 @@ AddTest testTransactionWatch("TransactionWatch", asTrustedClient, [](const TestE
 		sem.acquire();
 		break;
 	}
+});
+
+/* Special key operations */
+AddTest testSpecialKeySpaceValidTxnID("SpecialKeySpaceValidTxnID", asTrustedClient, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) { return tr.get("\xff\xff/tracing/transaction_id"_br, /* snapshot */ false); },
+	    "SpecialKeySpaceValidTxnID");
+	ASSERT(f.get().has_value(), "Unexpected null value from read");
+	UID id = UID::fromString(std::string(f.get()->begin(), f.get()->end()));
+	ASSERT(id.first() > 0, "Expect id::first to be positive");
+	ASSERT(id.second() > 0, "Expect id::second to be positive");
+});
+
+AddTest testSpecialKeySpaceCustomTxID("SpecialKeySpaceCustomTxID", asTrustedClient, [](const TestEnv& env) {
+	UID id(123456789, 987654321);
+
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	auto f = runToCompletion(
+	    tr,
+	    [&id](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
+		    tr.set("\xff\xff/tracing/transaction_id"_br, fdb::toBytesRef(id.toString()));
+		    return tr.get("\xff\xff/tracing/transaction_id"_br, /* snapshot */ false);
+	    },
+	    "SpecialKeySpaceCustomTxID");
+
+	ASSERT(f.get().has_value(), "Unexpected null value from read");
+	UID id2 = UID::fromString(std::string(f.get()->begin(), f.get()->end()));
+	ASSERT(id == id2, "unmatched id value: expect={}, actual={}", id.toString(), id2.toString());
+});
+
+AddTest
+    testSpecialKeySpaceSetTxIDAfterWrite("SpecialKeySpaceSetTxIDAfterWrite", asTrustedClient, [](const TestEnv& env) {
+	    const std::string prefix("combify-special-key-set-tx-id-after-write-");
+	    auto db = env.newDatabase();
+	    auto tr = env.newNormalOrTenantTransaction(db);
+	    auto f = runToCompletion(
+	        tr,
+	        [&prefix](auto tr) {
+		        tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
+		        tr.set(fdb::toBytesRef(prefix + "foo"), fdb::toBytesRef(prefix + "bar"));
+		        tr.set("\xff\xff/tracing/transaction_id"_br, "0"_br);
+		        return tr.get("\xff\xff/tracing/transaction_id"_br, /* snapshot */ false);
+	        },
+	        "SpecialKeySpaceSetTxIDAfterWrite");
+
+	    ASSERT(f.get().has_value(), "Unexpected null value from read");
+	    UID id = UID::fromString(std::string(f.get()->begin(), f.get()->end()));
+	    ASSERT(id.first() > 0, "Expect id::first to be positive");
+	    ASSERT(id.second() > 0, "Expect id::second to be positive");
+    });
+
+AddTest testSpecialKeySpaceDisableTracing("SpecialKeySpaceDisableTracing", asTrustedClient, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	auto f = runToCompletion(
+	    tr,
+	    [](auto tr) {
+		    tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
+		    tr.set("\xff\xff/tracing/token"_br, "false"_br);
+		    return tr.get("\xff\xff/tracing/token"_br, /* snapshot */ false);
+	    },
+	    "SpecialKeySpaceDisableTracing");
+
+	ASSERT(f.get().has_value(), "Unexpected null value from read");
+	uint64_t token = std::stoul(std::string(f.get()->begin(), f.get()->end()));
+	ASSERT(token == 0, "unmatched token value: expected=0, actual={}", token);
+});
+
+AddTest testSpecialKeySpaceTracingGetRange("SpecialKeySpaceTracingGetRange", asTrustedClient, [](const TestEnv& env) {
+	auto tracingBegin = "\xff\xff/tracing/"_br;
+	auto tracingEnd = "\xff\xff/tracing0"_br;
+
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	tr.setOption(FDB_TR_OPTION_SPECIAL_KEY_SPACE_ENABLE_WRITES);
+
+	auto f = runToCompletion(
+	    tr,
+	    [&tracingBegin, &tracingEnd](auto tr) {
+		    return tr.getRange(fdb::key_select::firstGreaterOrEqual(tracingBegin),
+		                       fdb::key_select::lastLessThan(tracingEnd, 1),
+		                       /* limit */ 0,
+		                       /* target_bytes */ 0,
+		                       /* FDBStreamingMode */ FDB_STREAMING_MODE_WANT_ALL,
+		                       /* iteration */ 0,
+		                       /* snapshot */ false,
+		                       /* reverse */ false);
+	    },
+	    "SpecialKeySpaceTracingGetRange");
+
+	auto [kv, count, more] = f.get();
+	ASSERT(!more, "Unexpected more from the return");
+	ASSERT(count == 2, "unmatched count value: expected=2, actual={}", count);
+
+	auto tracingBeginTidKey = kv[1].key();
+	ASSERT(tracingBeginTidKey == "\xff\xff/tracing/transaction_id"_br);
+
+	auto tracingBeginTidVal = std::string(kv[1].value().begin(), kv[1].value().end());
+	UID id = UID::fromString(tracingBeginTidVal);
+	ASSERT(id.first() > 0, "Expect id::first to be positive");
+	ASSERT(id.second() > 0, "Expect id::second to be positive");
 });
 
 } // anonymous namespace

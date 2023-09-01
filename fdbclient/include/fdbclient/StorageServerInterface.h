@@ -937,19 +937,21 @@ struct SplitRangeRequest {
 	constexpr static FileIdentifier file_identifier = 10725174;
 	Arena arena;
 	TenantInfo tenantInfo;
+	Version minVersion = 0;
 	KeyRangeRef keys;
 	int64_t chunkSize;
 	ReplyPromise<SplitRangeReply> reply;
 
 	SplitRangeRequest() {}
-	SplitRangeRequest(TenantInfo tenantInfo, KeyRangeRef const& keys, int64_t chunkSize)
+	SplitRangeRequest(TenantInfo tenantInfo, Version minVersion, KeyRangeRef const& keys, int64_t chunkSize)
 	  : tenantInfo(tenantInfo),
+	    minVersion(minVersion),
 	    keys(arena, keys),
 	    chunkSize(chunkSize) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, keys, chunkSize, reply, tenantInfo, arena);
+		serializer(ar, keys, chunkSize, reply, tenantInfo, minVersion, arena);
 	}
 };
 

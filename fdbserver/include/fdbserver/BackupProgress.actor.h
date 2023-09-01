@@ -57,6 +57,8 @@ public:
 	// Set the value for "backupStartedKey"
 	void setBackupStartedValue(Optional<Value> const& value) { backupStartedValue = value; }
 
+	Optional<Value> getBackupStartedValue() { return backupStartedValue; }
+
 	// Returns progress for an epoch.
 	std::map<Tag, Version> getEpochStatus(LogEpoch epoch) const {
 		const auto it = progress.find(epoch);

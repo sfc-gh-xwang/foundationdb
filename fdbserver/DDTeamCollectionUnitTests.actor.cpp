@@ -71,6 +71,7 @@ public:
 			collection->server_status.set(uid, ServerStatus(false, false, false, interface.locality));
 			collection->checkAndCreateMachine(collection->server_info[uid]);
 		}
+		collection->allowGetTeamBuggify = false;
 
 		return collection;
 	}

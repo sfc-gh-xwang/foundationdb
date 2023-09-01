@@ -817,7 +817,7 @@ ACTOR Future<Void> coordinationServer(std::string dataFolder,
 		// queue state on the coordinator. In the long term, we should either
 		// modify simulation to consider injected errors as fatal or allow the
 		// coordinator to manually fix disk queue state in real clusters.
-		if (g_network->isSimulated() && g_simulator->speedUpSimulation && e.code() == error_code_file_not_found) {
+		if (g_network->isSimulated() && e.code() == error_code_file_not_found) {
 			state std::vector<Future<Reference<IAsyncFile>>> fs;
 			fs.reserve(2);
 			for (int i = 0; i < 2; ++i) {
@@ -853,6 +853,12 @@ ACTOR Future<Void> coordinationServer(std::string dataFolder,
 				wait(IAsyncFileSystem::filesystem()->deleteFile(joinPath(dataFolder, fileCoordinatorPrefix + "0.fdq"),
 				                                                true));
 			}
+
+			// Simulation does not always immediately reboot a failed process
+			// when running multiple processes on a machine. Throw a special
+			// error to trigger simulation to immediately reboot the process
+			// and to not log an error.
+			throw inconsistent_disk_queue();
 		}
 
 		throw err;

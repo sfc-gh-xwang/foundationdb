@@ -474,17 +474,36 @@ DecryptBlobCipher::DecryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
     iv(iv),
     authTokensValidationDone(false) {}
 
-void DecryptBlobCipher::validateEncryptHeaderFlagsV1(const uint32_t headerVersion,
-                                                     const BlobCipherEncryptHeaderFlagsV1& flags) {
+void DecryptBlobCipherAes256Ctr::validateEncryptHeaderFlagsV1(const uint32_t headerVersion,
+                                                              const BlobCipherEncryptHeaderFlagsV1& flags) {
 	// validate header flag sanity
-	if ((flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR &&
-	     flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) ||
+	if (flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR ||
+	    !isEncryptHeaderAuthTokenAlgoValid((EncryptAuthTokenAlgo)flags.authTokenAlgo) ||
 	    !isEncryptHeaderAuthTokenModeValid((EncryptAuthTokenMode)flags.authTokenMode)) {
 		TraceEvent(SevWarn, "BlobCipherVerifyEncryptBlobHeader")
 		    .detail("HeaderVersion", headerVersion)
 		    .detail("ExpectedVersion", CLIENT_KNOBS->ENCRYPT_HEADER_FLAGS_VERSION)
 		    .detail("EncryptCipherMode", flags.encryptMode)
 		    .detail("ExpectedCipherMode", EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR)
+		    .detail("EncryptHeaderAuthTokenMode", flags.authTokenMode);
+
+		CODE_PROBE(true, "ConfigurableEncryption: Encryption header metadata mismatch");
+
+		throw encrypt_header_metadata_mismatch();
+	}
+}
+
+void DecryptBlobCipherAes256Gcm::validateEncryptHeaderFlagsV1(const uint32_t headerVersion,
+                                                              const BlobCipherEncryptHeaderFlagsV1& flags) {
+	// validate header flag sanity
+	if (flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM ||
+	    flags.authTokenMode != EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE ||
+	    flags.authTokenAlgo != EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM) {
+		TraceEvent(SevWarn, "BlobCipherVerifyEncryptBlobHeader")
+		    .detail("HeaderVersion", headerVersion)
+		    .detail("ExpectedVersion", CLIENT_KNOBS->ENCRYPT_HEADER_FLAGS_VERSION)
+		    .detail("EncryptCipherMode", flags.encryptMode)
+		    .detail("ExpectedCipherMode", EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM)
 		    .detail("EncryptHeaderAuthTokenMode", flags.authTokenMode);
 
 		CODE_PROBE(true, "ConfigurableEncryption: Encryption header metadata mismatch");
@@ -571,6 +590,10 @@ StringRef DecryptBlobCipherAes256Gcm::decrypt(const uint8_t* ciphertext,
 		startTime = timer_monotonic();
 	}
 
+	EncryptAuthTokenMode authTokenMode;
+	EncryptAuthTokenAlgo authTokenAlgo;
+	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
+
 	if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr)) {
 		throw encrypt_ops_error();
 	}
@@ -578,9 +601,6 @@ StringRef DecryptBlobCipherAes256Gcm::decrypt(const uint8_t* ciphertext,
 		throw encrypt_ops_error();
 	}
 
-	EncryptAuthTokenMode authTokenMode;
-	EncryptAuthTokenAlgo authTokenAlgo;
-	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
 	ASSERT_EQ(authTokenMode, EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
 	ASSERT_EQ(authTokenAlgo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM);
 
@@ -669,16 +689,16 @@ StringRef DecryptBlobCipherAes256Ctr::decrypt(const uint8_t* ciphertext,
 		startTime = timer_monotonic();
 	}
 
+	EncryptAuthTokenMode authTokenMode;
+	EncryptAuthTokenAlgo authTokenAlgo;
+	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
+
 	if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_ctr(), nullptr, nullptr, nullptr)) {
 		throw encrypt_ops_error();
 	}
 	if (!EVP_DecryptInit_ex(ctx, nullptr, nullptr, textCipherKey.getPtr()->data(), iv)) {
 		throw encrypt_ops_error();
 	}
-
-	EncryptAuthTokenMode authTokenMode;
-	EncryptAuthTokenAlgo authTokenAlgo;
-	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
 
 	StringRef decrypted = makeString(ciphertextLen, arena);
 
@@ -722,16 +742,16 @@ void DecryptBlobCipherAes256Ctr::decryptInplace(uint8_t* ciphertext,
 		startTime = timer_monotonic();
 	}
 
+	EncryptAuthTokenMode authTokenMode;
+	EncryptAuthTokenAlgo authTokenAlgo;
+	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
+
 	if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_ctr(), nullptr, nullptr, nullptr)) {
 		throw encrypt_ops_error();
 	}
 	if (!EVP_DecryptInit_ex(ctx, nullptr, nullptr, textCipherKey.getPtr()->data(), iv)) {
 		throw encrypt_ops_error();
 	}
-
-	EncryptAuthTokenMode authTokenMode;
-	EncryptAuthTokenAlgo authTokenAlgo;
-	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
 
 	int bytesDecrypted{ 0 };
 	if (!EVP_DecryptUpdate(ctx, ciphertext, &bytesDecrypted, ciphertext, ciphertextLen)) {
