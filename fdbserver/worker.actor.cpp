@@ -3776,7 +3776,8 @@ ACTOR Future<UID> createAndLockProcessIdFile(std::string folder) {
 				processIDUid = deterministicRandom()->randomUniqueID();
 				BinaryWriter wr(IncludeVersion(ProtocolVersion::withProcessIDFile()));
 				wr << processIDUid;
-				wait(lockFile.get()->write(wr.getData(), wr.getLength(), 0));
+				state Standalone<StringRef> lockFileData = wr.toValue();
+				wait(lockFile.get()->write(lockFileData.begin(), lockFileData.size(), 0));
 				wait(lockFile.get()->sync());
 			} else {
 				if (lockFile.isError())
