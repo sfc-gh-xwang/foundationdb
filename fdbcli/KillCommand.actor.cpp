@@ -78,6 +78,7 @@ ACTOR Future<bool> killCommandActor(Reference<IDatabase> db,
 				        "ERROR: failed to send requests to all processes, please run the `kill’ command again to fetch "
 				        "latest addresses.\n");
 			} else {
+				wait(delay(3.0));
 				printf("Attempted to kill %zu processes\n", address_interface->size());
 			}
 		}
