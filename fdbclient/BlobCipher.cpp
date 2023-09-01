@@ -2082,12 +2082,8 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	corruptedHeaderRef.flags = corruptedFlags;
 	try {
 		encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
-		Reference<DecryptBlobCipher> decryptor =
-		    DecryptBlobCipher::getDecryptor(tCipherKey,
-		                                    Optional<Reference<BlobCipherKey>>(),
-		                                    &iv[0],
-		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		                                    BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
+		    tCipherKey, Optional<Reference<BlobCipherKey>>(), &iv[0], encryptMode, BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, corruptedHeaderRef, arena);
 		ASSERT(false); // error expected
 	} catch (Error& e) {
