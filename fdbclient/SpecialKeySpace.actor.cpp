@@ -37,6 +37,7 @@
 #include "fdbclient/GlobalConfig.actor.h"
 #include "fdbclient/SpecialKeySpace.actor.h"
 #include "flow/Arena.h"
+#include "flow/IRandom.h"
 #include "flow/UnitTest.h"
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/StatusClient.h"
@@ -3026,6 +3027,22 @@ Future<RangeReadResult> LatestEncryptCipherKeysSpecialKeyImpl::getRange(ReadYour
                                                                         KeyRangeRef kr,
                                                                         GetRangeLimits limitsHint) const {
 	return latestEncryptCipherKeysGetRangeActor(ryw, getKeyRange().begin, kr);
+}
+
+TEST_CASE("/fdbclient/SpecialKeySpace/findNextEncryptDomainId") {
+	KeyRef prefix = "test_prefix"_sr;
+	auto getKey = [&](EncryptCipherDomainId domainId) -> Key {
+		return Tuple::makeTuple(domainId).pack().withPrefix(prefix);
+	};
+	ASSERT_EQ(MIN_ENCRYPT_DOMAIN_ID, findNextEncryptDomainId(prefix, ""_sr));
+	ASSERT_EQ(Optional<EncryptCipherDomainId>(),
+	          findNextEncryptDomainId(prefix, keyAfter(getKey(std::numeric_limits<EncryptCipherDomainId>::max()))));
+	for (int i = 0; i < 100; i++) {
+		EncryptCipherDomainId domainId = deterministicRandom()->randomInt64(
+		    MIN_ENCRYPT_DOMAIN_ID, std::numeric_limits<EncryptCipherDomainId>::max());
+		ASSERT_EQ(domainId + 1, findNextEncryptDomainId(prefix, keyAfter(getKey(domainId))));
+	}
+	return Void();
 }
 
 ACTOR Future<Void> validateSpecialSubrangeRead(ReadYourWritesTransaction* ryw,

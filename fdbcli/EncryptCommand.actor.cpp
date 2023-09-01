@@ -22,9 +22,9 @@ ACTOR Future<bool> encryptCommandActor(Database db, std::vector<StringRef> token
 		return false;
 	}
 	if (tokencmp(tokens[1], "listlatestcipherkeys")) {
-		Optional<EncryptCipherDomainId> domainId;
+		Optional<EncryptCipherDomainId> targetDomainId;
 		if (tokens.size() == 3) {
-			domainId = atoll(tokens[2].toString().c_str());
+			targetDomainId = atoll(tokens[2].toString().c_str());
 		} else if (tokens.size() > 3) {
 			printUsage(tokens[0]);
 			return false;
@@ -32,8 +32,8 @@ ACTOR Future<bool> encryptCommandActor(Database db, std::vector<StringRef> token
 		state Reference<ReadYourWritesTransaction> txn = makeReference<ReadYourWritesTransaction>(db);
 		KeyRange range = SpecialKeySpace::getEncryptionApiCommandRange("latestcipherkeysbydomain");
 		state Key prefix = range.begin;
-		if (domainId.present()) {
-			range = singleKeyRange(Tuple::makeTuple(domainId.get()).pack().withPrefix(prefix));
+		if (targetDomainId.present()) {
+			range = singleKeyRange(Tuple::makeTuple(targetDomainId.get()).pack().withPrefix(prefix));
 		}
 		RangeReadResult result = wait(txn->getRange(range, GetRangeLimits()));
 		JsonBuilderObject jsonResult;
