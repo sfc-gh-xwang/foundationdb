@@ -189,9 +189,10 @@ struct CommonStorageCounters {
 	// write ops
 	// Bytes of the mutations that have been added to the memory of the storage server. When the data is durable
 	// and cleared from the memory, we do not subtract it but add it to bytesDurable.
-	Counter bytesInputOld;
-	Counter bytesInputNoPTree;
-	Counter memoryUsageInput;
+	Counter bytesInputOld; // Old tracking using estimated PTree size.
+	Counter bytesInputNoPTree; // Overhead for storing mutation, does not account for the size of the PTree.
+	Counter bytesInput; // New bytesInput tracking using actual PTree size.
+
 	// Like bytesInput but without MVCC accounting. The size is counted as how much it takes when serialized. It
 	// is basically the size of both parameters of the mutation and a 12 bytes overhead that keeps mutation type
 	// and the lengths of both parameters.

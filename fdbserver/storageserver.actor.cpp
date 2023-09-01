@@ -1099,7 +1099,7 @@ public:
 		u.arena() = lastArena;
 		counters.bytesInputOld += VERSION_OVERHEAD;
 		counters.bytesInputNoPTree += VERSION_OVERHEAD;
-		counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
+		counters.bytesInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		return u;
 	}
 
@@ -1107,7 +1107,7 @@ public:
 		byteSampleApplyMutation(m, mLV.version);
 		counters.bytesInputOld += mvccStorageBytes(m);
 		counters.bytesInputNoPTree += mvccStorageBytesNoPTree(m);
-		counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
+		counters.bytesInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		return mLV.push_back_deep(mLV.arena(), m);
 	}
 
@@ -1318,10 +1318,9 @@ public:
 		// Bytes of the mutations that have been removed from memory because they durable. The counting is same as
 		// bytesInput, instead of the actual bytes taken in the storages, so that (bytesInput - bytesDurable) can
 		// reflect the current memory footprint of MVCC.
-		Counter bytesDurableOld;
-
-		Counter bytesDurableNoPTree;
-		Counter memoryUsageDurable;
+		Counter bytesDurableOld; // Old tracking using estimated PTree size.
+		Counter bytesDurableNoPTree; // Overhead for storing mutation, does not account for the size of the PTree.
+		Counter bytesDurable; // New bytesDurable tracking using actual PTree size.
 
 		// Bytes fetched by fetchChangeFeed for data movements.
 		Counter feedBytesFetched;
@@ -1409,7 +1408,7 @@ public:
 		    kvSystemClearRanges("KVSystemClearRanges", cc),
 		    bytesDurableOld("BytesDurableOld", cc),
 		    bytesDurableNoPTree("BytesDurableNoPTree", cc),
-		    memoryUsageDurable("BytesDurable", cc),
+		    bytesDurable("BytesDurable", cc),
 		    feedBytesFetched("FeedBytesFetched", cc),
 		    sampledBytesCleared("SampledBytesCleared", cc),
 		    atomicMutations("AtomicMutations", cc),
@@ -1545,12 +1544,12 @@ public:
 				return minVersion;
 			});
 			specialCounter(cc, "PTreeAllocated", [self]() {
-				self->counters.memoryUsageInput =
+				self->counters.bytesInput =
 				    self->counters.bytesInputNoPTree.getValue() + self->data().ptreeSize.allocated;
 				return self->data().ptreeSize.allocated;
 			});
 			specialCounter(cc, "PTreeReleased", [self]() {
-				self->counters.memoryUsageDurable =
+				self->counters.bytesDurable =
 				    self->counters.bytesDurableNoPTree.getValue() + self->data().ptreeSize.released;
 				return self->data().ptreeSize.released;
 			});
@@ -1899,7 +1898,7 @@ public:
 		if (SERVER_KNOBS->STORAGE_INCLUDE_FEED_STORAGE_QUEUE) {
 			counters.bytesInputOld += bytes;
 			counters.bytesInputNoPTree += bytes;
-			counters.memoryUsageInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
+			counters.bytesInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		}
 	}
 
@@ -1941,7 +1940,7 @@ public:
 	void getStorageMetrics(const GetStorageMetricsRequest& req) override {
 		StorageBytes sb = storage.getStorageBytes();
 		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
-			metrics.getStorageMetrics(req, sb, counters.memoryUsageInput.getRate(), versionLag, lastUpdate);
+			metrics.getStorageMetrics(req, sb, counters.bytesInput.getRate(), versionLag, lastUpdate);
 		} else {
 			metrics.getStorageMetrics(req, sb, counters.bytesInputOld.getRate(), versionLag, lastUpdate);
 		}
@@ -6538,7 +6537,7 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 		}
 		data->counters.bytesDurableOld += bytesDurable;
 		data->counters.bytesDurableNoPTree += bytesDurableNoTree;
-		data->counters.memoryUsageDurable = data->counters.bytesDurableNoPTree.getValue() + data->data().ptreeSize.released;
+		data->counters.bytesDurable = data->counters.bytesDurableNoPTree.getValue() + data->data().ptreeSize.released;
 	}
 
 	int64_t feedBytesDurable = 0;
@@ -6551,7 +6550,7 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 	if (SERVER_KNOBS->STORAGE_INCLUDE_FEED_STORAGE_QUEUE) {
 		data->counters.bytesDurableOld += feedBytesDurable;
 		data->counters.bytesDurableNoPTree += feedBytesDurable;
-		data->counters.memoryUsageDurable = data->counters.bytesDurableNoPTree.getValue() + data->data().ptreeSize.released;
+		data->counters.bytesDurable = data->counters.bytesDurableNoPTree.getValue() + data->data().ptreeSize.released;
 	}
 
 	if (EXPENSIVE_VALIDATION) {

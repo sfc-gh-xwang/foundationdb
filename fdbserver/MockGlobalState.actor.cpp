@@ -389,7 +389,7 @@ Future<Void> MockStorageServer::waitMetricsTenantAware(const WaitMetricsRequest&
 void MockStorageServer::getStorageMetrics(const GetStorageMetricsRequest& req) {
 	StorageBytes storageBytes(
 	    totalDiskSpace - usedDiskSpace, totalDiskSpace, usedDiskSpace, totalDiskSpace - usedDiskSpace);
-	metrics.getStorageMetrics(req, storageBytes, counters.bytesInputOld.getRate(), 0, now());
+	metrics.getStorageMetrics(req, storageBytes, counters.bytesInput.getRate(), 0, now());
 }
 
 void MockStorageServer::getSplitMetrics(const SplitMetricsRequest& req) {
@@ -424,7 +424,7 @@ void MockStorageServer::set(KeyRef const& key, int64_t bytes, int64_t oldBytes) 
 	++counters.mutations;
 	++counters.setMutations;
 	counters.mutationBytes += bytes;
-	counters.bytesInputOld += mvccStorageBytes(bytes);
+	counters.bytesInput += mvccStorageBytes(bytes);
 
 	notifyWriteMetrics(key, bytes);
 	byteSampleApplySet(key, bytes);
@@ -437,7 +437,7 @@ void MockStorageServer::clear(KeyRef const& key, int64_t bytes) {
 	++counters.mutations;
 	++counters.clearRangeMutations;
 	counters.mutationBytes += key.size();
-	counters.bytesInputOld += mvccStorageBytes(key.size());
+	counters.bytesInput += mvccStorageBytes(key.size());
 
 	notifyWriteMetrics(key, bytes);
 	KeyRange sr = singleKeyRange(key);
@@ -450,7 +450,7 @@ int64_t MockStorageServer::clearRange(KeyRangeRef const& range, int64_t beginSha
 	++counters.mutations;
 	++counters.clearRangeMutations;
 	counters.mutationBytes += range.expectedSize();
-	counters.bytesInputOld += mvccStorageBytes(range.expectedSize());
+	counters.bytesInput += mvccStorageBytes(range.expectedSize());
 
 	notifyWriteMetrics(range.begin, range.begin.size() + range.end.size());
 	byteSampleApplyClear(range);
