@@ -37,6 +37,15 @@ Other Changes
 * Improved observability for change feeds, blob worker, blob manager, and encrypt key proxy.
 
 
+71.3.3
+======
+
+Fixes
+-----
+
+* Fix BlobManager tenant watch to avoid process getting stuck forever.
+
+
 71.3.2
 ======
 
