@@ -74,6 +74,103 @@ def run_fdbcli_command_and_get_error(*args):
 
 
 @enable_logging()
+def blobrange_list(logger):
+    run_fdbcli_command("configure blob_granules_enabled=1")
+    run_fdbcli_command("configure tenant_mode=optional_experimental")
+    r = run_fdbcli_command("blobrange list \\x00 \\xff")
+    logger.debug("Pre-blobbify blobrange list r={}".format(r))
+    assert r == """list blob range [\\x00 - \\xff)"""
+
+    r = run_fdbcli_command("tenant create tenant1")
+    logger.debug("tenant create said {}".format(r))
+    r = run_fdbcli_command("usetenant", "tenant1")
+    logger.debug("usetenant said {}".format(r))
+    r = run_fdbcli_command("usetenant tenant1 ; blobrange list \\x00 \\xff")
+    logger.debug("list tenant1 said {}".format(r))
+    assert (
+        r
+        == """>>> usetenant tenant1
+Using tenant `tenant1'
+>>> blobrange list \\x00 \\xff
+list blob range [\\x00 - \\xff)"""
+    )
+
+    run_fdbcli_command("usetenant tenant1 ; blobrange start A B")
+    run_fdbcli_command("usetenant tenant1 ; blobrange start C D")
+    run_fdbcli_command("usetenant tenant1 ; blobrange start D E")
+    r = run_fdbcli_command("usetenant tenant1 ; blobrange list \\x00 \\xff")
+    logger.debug("blobrange list AB CD DE -> {}".format(r))
+    assert (
+        r
+        == """>>> usetenant tenant1
+Using tenant `tenant1'
+>>> blobrange list \\x00 \\xff
+list blob range [\\x00 - \\xff)
+[A, B)
+[C, D)
+[D, E)"""
+    )
+
+    r = run_fdbcli_command("usetenant tenant1 ; blobrange list \\x00 Cm")
+    logger.debug("restricted blobrange list r={}".format(r))
+    assert (
+        r
+        == """>>> usetenant tenant1
+Using tenant `tenant1'
+>>> blobrange list \\x00 Cm
+list blob range [\\x00 - Cm)
+[A, B)
+[C, D)"""
+    )
+
+    r = run_fdbcli_command("usetenant tenant1 ; blobrange list Cm \\xff")
+    logger.debug("end restricted blobrange list r={}".format(r))
+    assert (
+        r
+        == """>>> usetenant tenant1
+Using tenant `tenant1'
+>>> blobrange list Cm \\xff
+list blob range [Cm - \\xff)
+[C, D)
+[D, E)"""
+    )
+
+    run_fdbcli_command("tenant create tenant2")
+    r = run_fdbcli_command("usetenant tenant2 ; blobrange list \\x00 \\xff")
+    logger.debug("tenant2 blob range {}".format(r))
+    assert (
+        r
+        == """>>> usetenant tenant2
+Using tenant `tenant2'
+>>> blobrange list \\x00 \\xff
+list blob range [\\x00 - \\xff)"""
+    )
+
+    run_fdbcli_command("usetenant tenant2 ; blobrange start A G")
+    r = run_fdbcli_command("usetenant tenant2 ; blobrange list \\x00 \\xff")
+    logger.debug("tenant2 blob range2 {}".format(r))
+    assert (
+        r
+        == """>>> usetenant tenant2
+Using tenant `tenant2'
+>>> blobrange list \\x00 \\xff
+list blob range [\\x00 - \\xff)
+[A, G)"""
+    )
+
+    r = run_fdbcli_command("blobrange list \\x00 \\xff")
+    logger.debug("default tenant blob list {}".format(r))
+    assert (
+        r
+        == """list blob range [\\x00 - \\xff)
+[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01A, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01B)
+[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01C, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01D)
+[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01D, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01E)
+[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02A, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02G)"""
+    )
+
+
+@enable_logging()
 def advanceversion(logger):
     # get current read version
     version1 = int(run_fdbcli_command("getversion"))
@@ -1523,6 +1620,10 @@ if __name__ == "__main__":
         metavar="EXTERNAL_CLIENT_LIBRARY_PATH",
         help="External client library path",
     )
+    parser.add_argument(
+        "--blobs",
+        action="store_true",
+    )
     args = parser.parse_args()
 
     # keep current environment variables
@@ -1545,7 +1646,9 @@ if __name__ == "__main__":
     # tests for fdbcli commands
     # assertions will fail if fdbcli does not work as expected
     test_available()
-    if args.process_number == 1:
+    if args.blobs:
+        blobrange_list()
+    elif args.process_number == 1:
         # TODO: disable for now, the change can cause the database unavailable
         # advanceversion()
         cache_range()
