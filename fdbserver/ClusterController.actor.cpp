@@ -563,11 +563,9 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	Optional<Standalone<StringRef>> currRKProcessId = rkSingleton.getInterface().locality.processId();
 	Optional<Standalone<StringRef>> currDDProcessId = ddSingleton.getInterface().locality.processId();
 	Optional<Standalone<StringRef>> currCSProcessId = csSingleton.getInterface().locality.processId();
-	Optional<Standalone<StringRef>> currTBProcessId = tbSingleton.getInterface().locality.processId();
 	Optional<Standalone<StringRef>> newRKProcessId = newRKWorker.interf.locality.processId();
 	Optional<Standalone<StringRef>> newDDProcessId = newDDWorker.interf.locality.processId();
 	Optional<Standalone<StringRef>> newCSProcessId = newCSWorker.interf.locality.processId();
-	Optional<Standalone<StringRef>> newTBProcessId = newTBWorker.interf.locality.processId();
 
 	Optional<Standalone<StringRef>> currBMProcessId, newBMProcessId;
 	Optional<Standalone<StringRef>> currMGProcessId, newMGProcessId;
@@ -586,12 +584,15 @@ void checkBetterSingletons(ClusterControllerData* self) {
 		newEKPProcessId = newEKPWorker.interf.locality.processId();
 	}
 
-	std::vector<Optional<Standalone<StringRef>>> currPids = {
-		currRKProcessId, currDDProcessId, currCSProcessId, currTBProcessId
-	};
-	std::vector<Optional<Standalone<StringRef>>> newPids = {
-		newRKProcessId, newDDProcessId, newCSProcessId, newTBProcessId
-	};
+	Optional<Standalone<StringRef>> currTBProcessId;
+	Optional<Standalone<StringRef>> newTBProcessId;
+	if (enableTenantBalancer) {
+		currTBProcessId = tbSingleton.getInterface().locality.processId();
+		newTBProcessId = newTBWorker.interf.locality.processId();
+	}
+
+	std::vector<Optional<Standalone<StringRef>>> currPids = { currRKProcessId, currDDProcessId, currCSProcessId };
+	std::vector<Optional<Standalone<StringRef>>> newPids = { newRKProcessId, newDDProcessId, newCSProcessId };
 	if (self->db.blobGranulesEnabled.get()) {
 		currPids.emplace_back(currBMProcessId);
 		newPids.emplace_back(newBMProcessId);
@@ -604,6 +605,11 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (enableKmsCommunication) {
 		currPids.emplace_back(currEKPProcessId);
 		newPids.emplace_back(newEKPProcessId);
+	}
+
+	if (enableTenantBalancer) {
+		currPids.emplace_back(currTBProcessId);
+		newPids.emplace_back(newTBProcessId);
 	}
 
 	auto currColocMap = getColocCounts(currPids);
@@ -623,6 +629,12 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (!enableKmsCommunication) {
 		ASSERT(currColocMap[currEKPProcessId] == 0);
 		ASSERT(newColocMap[newEKPProcessId] == 0);
+	}
+
+	// if the knob is disabled, the TB coloc counts should have no affect on the coloc counts check below
+	if (!enableTenantBalancer) {
+		ASSERT(currColocMap[currTBProcessId] == 0);
+		ASSERT(newColocMap[newTBProcessId] == 0);
 	}
 
 	// if the new coloc counts are collectively better (i.e. each singleton's coloc count has not increased)
