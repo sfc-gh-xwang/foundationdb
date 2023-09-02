@@ -988,18 +988,17 @@ int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const En
 }
 
 void generateIV(EncryptionAtRestAlgo algo, Reference<BlobCipherKey> textCipherKey, uint8_t* iv, int ivLen) {
-	EncryptCipherNonce maxValue = 0;
 	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
 	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
 		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
-		maxValue = std::numeric_limits<uint128_t>::max();
+		deterministicRandom()->randomBytes(iv, ivLen);
 	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
 		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
-		maxValue = std::numeric_limits<uint96_t>::max();
+		EncryptCipherNonce maxValue = std::numeric_limits<uint96_t>::max();
+		EncryptCipherNonce nonce = textCipherKey->getAndUpdateNonce(maxValue);
+		ASSERT(nonce <= maxValue);
+		memcpy(iv, &nonce, ivLen);
 	} else {
 		throw not_implemented();
 	}
-	EncryptCipherNonce nonce = textCipherKey->getAndUpdateNonce(maxValue);
-	ASSERT(nonce <= maxValue);
-	memcpy(iv, &nonce, ivLen);
 }

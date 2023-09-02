@@ -692,9 +692,8 @@ public:
 	EncryptCipherNonce getNonce() { return nonce; }
 	// The nonce should not be set outside of testing
 	void setNonce(EncryptCipherNonce other) {
-		if (g_network->isSimulated()) {
-			this->nonce = other;
-		}
+		ASSERT(g_network->isSimulated());
+		this->nonce = other;
 	}
 
 	bool isCipherDetailMatches(const BlobCipherDetails& details) {
