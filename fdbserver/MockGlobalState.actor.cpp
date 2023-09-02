@@ -391,7 +391,11 @@ Future<Void> MockStorageServer::waitMetricsTenantAware(const WaitMetricsRequest&
 void MockStorageServer::getStorageMetrics(const GetStorageMetricsRequest& req) {
 	StorageBytes storageBytes(
 	    totalDiskSpace - usedDiskSpace, totalDiskSpace, usedDiskSpace, totalDiskSpace - usedDiskSpace);
-	metrics.getStorageMetrics(req, storageBytes, counters.bytesInput.getRate(), 0, now());
+	metrics.getStorageMetrics(req,
+	                          storageBytes,
+	                          counters.bytesInput.getRate(),
+	                          isUndesired ? SERVER_KNOBS->DD_SS_FAILURE_VERSIONLAG + 1 : 0,
+	                          now());
 }
 
 void MockStorageServer::getSplitMetrics(const SplitMetricsRequest& req) {
@@ -648,11 +652,10 @@ void MockGlobalState::initializeAsEmptyDatabaseMGS(const DatabaseConfiguration& 
 	ASSERT(conf.storageTeamSize > 0);
 	ASSERT(!seedProcesses.empty());
 	configuration = conf;
-	std::vector<UID> serverIds;
 	fmt::print("Initial Team Size: {}, initial server Ids: ", conf.storageTeamSize);
 	for (int i = 1; i <= conf.storageTeamSize; ++i) {
 		UID id = indexToUID(i);
-		serverIds.push_back(id);
+		initTeam.push_back(id);
 
 		// select seed Storage Server
 		StorageServerInterface ssi(id);
@@ -665,7 +668,7 @@ void MockGlobalState::initializeAsEmptyDatabaseMGS(const DatabaseConfiguration& 
 		allServers[id]->serverKeys.insert(allKeys, { MockShardStatus::COMPLETED, 0 });
 	}
 	fmt::print("\n");
-	shardMapping->assignRangeToTeams(allKeys, { Team(serverIds, true) });
+	shardMapping->assignRangeToTeams(allKeys, { Team(initTeam, true) });
 }
 
 void MockGlobalState::addStorageServer(StorageServerInterface server, uint64_t diskSpace) {
@@ -727,7 +730,16 @@ bool MockGlobalState::serverIsDestForShard(const UID& serverId, KeyRangeRef shar
 }
 
 bool MockGlobalState::allShardsRemovedFromServer(const UID& serverId) {
-	return allServers.count(serverId) && shardMapping->getNumberOfShards(serverId) == 0;
+	bool allRemoved = true;
+	if (allServers.count(serverId)) {
+		for (auto it : allServers[serverId]->serverKeys.ranges()) {
+			if (it->value().status == MockShardStatus::COMPLETED) {
+				allRemoved = false;
+				break;
+			}
+		}
+	}
+	return allServers.count(serverId) && allRemoved;
 }
 
 Future<std::pair<Optional<StorageMetrics>, int>> MockGlobalState::waitStorageMetrics(
