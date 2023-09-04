@@ -62,20 +62,35 @@
 //                    that the global tag throttler aims to achieve (across all clients).
 
 class QuotaThrottlerImpl {
+	class TargetSmoother {
+		Smoother target;
+		bool isInitialized;
+
+	public:
+		TargetSmoother() : target(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME), isInitialized(false) {}
+
+		double updateAndGetTarget(double value) {
+			if (isInitialized) {
+				target.setTotal(value);
+			} else {
+				isInitialized = true;
+				target.reset(value);
+			}
+			return target.smoothTotal();
+		}
+	};
+
 	// Track various statistics per throttling ID, aggregated across all storage servers
 	class PerThrottlingIdStatistics {
 		HoltLinearSmoother transactionCounter;
-		bool targetRateInitialized;
-		Smoother targetRate;
+		TargetSmoother targetRate;
 		double transactionsLastAdded;
 		double lastLogged;
 
 	public:
-		explicit PerThrottlingIdStatistics()
+		PerThrottlingIdStatistics()
 		  : transactionCounter(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,
 		                       SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME),
-		    targetRateInitialized(false),
-		    targetRate(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
 		    transactionsLastAdded(now()),
 		    lastLogged(0) {}
 
@@ -86,15 +101,7 @@ class QuotaThrottlerImpl {
 
 		double getTransactionRate() const { return transactionCounter.smoothRate(); }
 
-		double updateAndGetTargetRateLimit(double targetTps) {
-			if (targetRateInitialized) {
-				targetRate.setTotal(targetTps);
-			} else {
-				targetRateInitialized = true;
-				targetRate.reset(targetTps);
-			}
-			return targetRate.smoothTotal();
-		}
+		double updateAndGetTargetRateLimit(double targetTps) { return targetRate.updateAndGetTarget(targetTps); }
 
 		bool recentTransactionsAdded() const {
 			return now() - transactionsLastAdded < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TAG_EXPIRE_AFTER;
@@ -106,27 +113,16 @@ class QuotaThrottlerImpl {
 	};
 
 	class ThroughputStatistics {
-		Smoother targetThroughput;
-		bool targetThroughputInitialized;
+		TargetSmoother targetThroughput;
 		double throughputLastAdded;
 		double lastLogged;
 
 	public:
-		explicit ThroughputStatistics()
-		  : targetThroughput(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
-		    targetThroughputInitialized(false),
-		    throughputLastAdded(now()),
-		    lastLogged(0) {}
+		ThroughputStatistics() : throughputLastAdded(now()), lastLogged(0) {}
 
 		double updateAndGetTargetThroughputLimit(double targetBps) {
 			throughputLastAdded = now();
-			if (targetThroughputInitialized) {
-				targetThroughput.setTotal(targetBps);
-			} else {
-				targetThroughputInitialized = true;
-				targetThroughput.reset(targetBps);
-			}
-			return targetThroughput.smoothTotal();
+			return targetThroughput.updateAndGetTarget(targetBps);
 		}
 
 		bool recentTransactionsAdded() const {
