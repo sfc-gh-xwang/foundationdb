@@ -65,6 +65,7 @@ class QuotaThrottlerImpl {
 	// Track various statistics per throttling ID, aggregated across all storage servers
 	class PerThrottlingIdStatistics {
 		HoltLinearSmoother transactionCounter;
+		bool targetRateInitialized;
 		Smoother targetRate;
 		double transactionsLastAdded;
 		double lastLogged;
@@ -73,6 +74,7 @@ class QuotaThrottlerImpl {
 		explicit PerThrottlingIdStatistics()
 		  : transactionCounter(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,
 		                       SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME),
+		    targetRateInitialized(false),
 		    targetRate(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
 		    transactionsLastAdded(now()),
 		    lastLogged(0) {}
@@ -85,7 +87,12 @@ class QuotaThrottlerImpl {
 		double getTransactionRate() const { return transactionCounter.smoothRate(); }
 
 		double updateAndGetTargetRateLimit(double targetTps) {
-			targetRate.setTotal(targetTps);
+			if (targetRateInitialized) {
+				targetRate.setTotal(targetTps);
+			} else {
+				targetRateInitialized = true;
+				targetRate.reset(targetTps);
+			}
 			return targetRate.smoothTotal();
 		}
 
@@ -100,18 +107,25 @@ class QuotaThrottlerImpl {
 
 	class ThroughputStatistics {
 		Smoother targetThroughput;
+		bool targetThroughputInitialized;
 		double throughputLastAdded;
 		double lastLogged;
 
 	public:
 		explicit ThroughputStatistics()
 		  : targetThroughput(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME),
+		    targetThroughputInitialized(false),
 		    throughputLastAdded(now()),
 		    lastLogged(0) {}
 
 		double updateAndGetTargetThroughputLimit(double targetBps) {
 			throughputLastAdded = now();
-			targetThroughput.setTotal(targetBps);
+			if (targetThroughputInitialized) {
+				targetThroughput.setTotal(targetBps);
+			} else {
+				targetThroughputInitialized = true;
+				targetThroughput.reset(targetBps);
+			}
 			return targetThroughput.smoothTotal();
 		}
 
