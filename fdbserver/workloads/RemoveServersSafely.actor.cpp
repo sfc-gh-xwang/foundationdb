@@ -511,6 +511,49 @@ struct RemoveServersSafelyWorkload : TestWorkload {
 		return killProcArray;
 	}
 
+	ACTOR static Future<Void> excludeProcessesByAddressesOrLocalities(RemoveServersSafelyWorkload* self,
+	                                                                  Database cx,
+	                                                                  UID functionId,
+	                                                                  bool markAsFailed,
+	                                                                  bool byLocality,
+	                                                                  std::vector<AddressExclusion> toKillArray) {
+		state std::unordered_set<std::string> toKillLocalities = self->getLocalitiesFromAddresses(toKillArray);
+		// If the processes we want to exclude is being rebooted, fall back to use address-based exclude. The reason to
+		// not wait the reboot to finish and exclude by localities is that processIds are updated on CC asynchronously
+		// and it's not easy at present to know whether the processIds are stale or up-to-date
+		bool rebooting = std::any_of(toKillArray.begin(), toKillArray.end(), [&](AddressExclusion addr) {
+			for (const auto& entry : g_simulator->currentlyRebootingProcesses) {
+				if (addr.excludes(entry.first))
+					return true;
+			}
+			return false;
+		});
+		// It's possible the locality list is empty even no processes are being rebooted
+		// E.g., ProcessIds are missing after rebootAndDelete. Thus it may not be able to find feasible localities to
+		// only exclude given processes. In these corner cases, we will fall back to use addresses to exclude.
+		if (byLocality && toKillLocalities.size() && !rebooting) {
+			// Do not allow reboot and delete when doing locality based exclusions because it can cause processId to
+			// change
+			g_simulator->allowRebootAndDelete = false;
+
+			TraceEvent("RemoveAndKill", functionId)
+			    .detail("Step", fmt::format("Excluding localities {} failed option", markAsFailed ? "with" : "without"))
+			    .detail(markAsFailed ? "FailedAddressesSize" : "AddressesSize", toKillArray.size())
+			    .detail(markAsFailed ? "FailedAddresses" : "Addresses", describe(toKillArray))
+			    .detail(markAsFailed ? "FailedLocalitiesSize" : "LocalitiesSize", toKillLocalities.size())
+			    .detail(markAsFailed ? "FailedLocalities" : "Localities", describe(toKillLocalities));
+			wait(excludeLocalities(cx, toKillLocalities, markAsFailed));
+			return Void();
+		}
+
+		TraceEvent("RemoveAndKill", functionId)
+		    .detail("Step", fmt::format("Excluding servers {} failed option", markAsFailed ? "with" : "without"))
+		    .detail(markAsFailed ? "FailedAddressesSize" : "AddressesSize", toKillArray.size())
+		    .detail(markAsFailed ? "FailedAddresses" : "Addresses", describe(toKillArray));
+		wait(excludeServers(cx, toKillArray, markAsFailed));
+		return Void();
+	}
+
 	// Attempts to exclude a set of processes, and once the exclusion is successful it kills them.
 	// If markExcludeAsFailed is true, then it is an error if we cannot complete the exclusion.
 	ACTOR static Future<Void> removeAndKill(RemoveServersSafelyWorkload* self,
@@ -637,57 +680,21 @@ struct RemoveServersSafelyWorkload : TestWorkload {
 
 		state bool excludeLocalitiesInsteadOfServers = deterministicRandom()->coinflip();
 		if (markExcludeAsFailed) {
-			if (excludeLocalitiesInsteadOfServers) {
-				state std::unordered_set<std::string> toKillLocalitiesFailed =
-				    self->getLocalitiesFromAddresses(toKillMarkFailedArray);
-				TraceEvent("RemoveAndKill", functionId)
-				    .detail("Step", "Excluding localities with failed option")
-				    .detail("FailedAddressesSize", toKillMarkFailedArray.size())
-				    .detail("FailedAddresses", describe(toKillMarkFailedArray))
-				    .detail("FailedLocaitiesSize", toKillLocalitiesFailed.size())
-				    .detail("FailedLocaities", describe(toKillLocalitiesFailed));
-
-				wait(excludeLocalities(cx, toKillLocalitiesFailed, true));
-			} else {
-				TraceEvent("RemoveAndKill", functionId)
-				    .detail("Step", "Excluding servers with failed option")
-				    .detail("FailedAddressesSize", toKillMarkFailedArray.size())
-				    .detail("FailedAddresses", describe(toKillMarkFailedArray));
-
-				wait(excludeServers(cx, toKillMarkFailedArray, true));
-			}
+			wait(excludeProcessesByAddressesOrLocalities(
+			    self, cx, functionId, true, excludeLocalitiesInsteadOfServers, toKillMarkFailedArray));
 		}
-
-		if (excludeLocalitiesInsteadOfServers) {
-			state std::unordered_set<std::string> toKillLocalities = self->getLocalitiesFromAddresses(toKillArray);
-			TraceEvent("RemoveAndKill", functionId)
-			    .detail("Step", "Excluding localities without failed option")
-			    .detail("AddressesSize", toKillArray.size())
-			    .detail("Addresses", describe(toKillArray))
-			    .detail("LocaitiesSize", toKillLocalities.size())
-			    .detail("Locaities", describe(toKillLocalities));
-
-			wait(excludeLocalities(cx, toKillLocalities, false));
-		} else {
-			TraceEvent("RemoveAndKill", functionId)
-			    .detail("Step", "Excluding servers without failed option")
-			    .detail("AddressesSize", toKillArray.size())
-			    .detail("Addresses", describe(toKillArray));
-
-			wait(excludeServers(cx, toKillArray));
-		}
+		wait(excludeProcessesByAddressesOrLocalities(
+		    self, cx, functionId, false, excludeLocalitiesInsteadOfServers, toKillArray));
 
 		// We need to skip at least the quorum change if there's nothing to kill, because there might not be enough
 		// servers left alive to do a coordinators auto (?)
 		if (toKill.size()) {
-			if (!excludeLocalitiesInsteadOfServers) {
-				// Wait for removal to be safe
-				TraceEvent("RemoveAndKill", functionId)
-				    .detail("Step", "Wait For Server Exclusion")
-				    .detail("Addresses", describe(toKill))
-				    .detail("ClusterAvailable", g_simulator->isAvailable());
-				wait(success(checkForExcludingServers(cx, toKillArray, true /* wait for exclusion */)));
-			}
+			// Wait for removal to be safe
+			TraceEvent("RemoveAndKill", functionId)
+			    .detail("Step", "Wait For Server Exclusion")
+			    .detail("Addresses", describe(toKill))
+			    .detail("ClusterAvailable", g_simulator->isAvailable());
+			wait(success(checkForExcludingServers(cx, toKillArray, true /* wait for exclusion */)));
 
 			TraceEvent("RemoveAndKill", functionId)
 			    .detail("Step", "coordinators auto")
@@ -781,6 +788,24 @@ struct RemoveServersSafelyWorkload : TestWorkload {
 		for (const auto& l : killableLocalitiesCount) {
 			if (l.second == allLocalitiesCount[l.first]) {
 				toKillLocalities.insert(l.first);
+			}
+		}
+
+		for (const auto& processInfo : processes) {
+			AddressExclusion pAddr(processInfo->address.ip, processInfo->address.port);
+			if (std::find(addresses.begin(), addresses.end(), pAddr) != addresses.end()) {
+				std::map<std::string, std::string> localityData = processInfo->locality.getAllData();
+				bool found = false;
+				for (const auto& l : localityData) {
+					if (toKillLocalities.count(LocalityData::ExcludeLocalityPrefix.toString() + l.first + ":" +
+					                           l.second)) {
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					return std::unordered_set<std::string>();
+				}
 			}
 		}
 

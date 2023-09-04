@@ -1284,7 +1284,11 @@ void DLApi::init() {
 	                   headerVersion >= ApiVersion::withFutureGetBool().version());
 	loadClientFunction(&api->futureGetUInt64, lib, fdbCPath, "fdb_future_get_uint64", headerVersion >= 0);
 	loadClientFunction(&api->futureGetError, lib, fdbCPath, "fdb_future_get_error", headerVersion >= 0);
-	loadClientFunction(&api->futureGetBytes, lib, fdbCPath, "fdb_future_get_bytes", headerVersion >= 800000);
+	loadClientFunction(&api->futureGetBytes,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_future_get_bytes",
+	                   headerVersion >= ApiVersion::withReadMetrics().version());
 	loadClientFunction(&api->futureGetKey, lib, fdbCPath, "fdb_future_get_key", headerVersion >= 0);
 	loadClientFunction(&api->futureGetValue, lib, fdbCPath, "fdb_future_get_value", headerVersion >= 0);
 	loadClientFunction(&api->futureGetStringArray, lib, fdbCPath, "fdb_future_get_string_array", headerVersion >= 0);
@@ -1306,8 +1310,11 @@ void DLApi::init() {
 	                   fdbCPath,
 	                   "fdb_future_get_result",
 	                   headerVersion >= ApiVersion::withEvolvableApi().version());
-	loadClientFunction(
-	    &api->futureGetReadBusyness, lib, fdbCPath, "fdb_future_get_read_busyness", headerVersion >= 800000);
+	loadClientFunction(&api->futureGetReadBusyness,
+	                   lib,
+	                   fdbCPath,
+	                   "fdb_future_get_read_busyness",
+	                   headerVersion >= ApiVersion::withReadMetrics().version());
 	loadClientFunction(&api->futureSetCallback, lib, fdbCPath, "fdb_future_set_callback", headerVersion >= 0);
 	loadClientFunction(&api->futureCancel, lib, fdbCPath, "fdb_future_cancel", headerVersion >= 0);
 	loadClientFunction(&api->futureDestroy, lib, fdbCPath, "fdb_future_destroy", headerVersion >= 0);
@@ -2350,10 +2357,10 @@ void MultiVersionDatabase::setSharedState(DatabaseSharedState* p) {
 // and the external client's busyness.
 double MultiVersionDatabase::getMainThreadBusyness() {
 	ASSERT(g_network);
-
 	double localClientBusyness = g_network->networkInfo.metrics.networkBusyness;
-	if (dbState->db) {
-		return std::max(dbState->db->getMainThreadBusyness(), localClientBusyness);
+	auto db = dbState->dbVar->get();
+	if (db.value) {
+		return std::max(db.value->getMainThreadBusyness(), localClientBusyness);
 	}
 
 	return localClientBusyness;

@@ -89,7 +89,11 @@ struct JsonOption<AuthZConfig, NAME, MUST_EXIST> : JsonOptionCommonTraits<AuthZC
 		}
 		auto memberItr = v.FindMember(NAME.value);
 		if (memberItr == v.MemberEnd()) {
-			detail::throwNoSuchField(name);
+			if constexpr (MUST_EXIST::value) {
+				detail::throwNoSuchField(name);
+			} else {
+				return;
+			}
 		}
 		auto& authzConfigJson = memberItr->value;
 		value.emplace(); // default construct AuthZConfig

@@ -56,6 +56,8 @@
 #include <utility>
 
 #include "flow/actorcompiler.h" // This must be the last #include
+#include "flow/flow.h"
+#include "flow/network.h"
 
 using namespace RESTKmsConnectorUtils;
 
@@ -226,7 +228,7 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	double lastKmsUrlsRefreshTs;
 	double lastKmsUrlDiscoverTS;
 	bool kmsStable;
-	RESTClient restClient;
+	Reference<RESTClient> restClient;
 	ValidationTokenMap validationTokenMap;
 	ActorCollection actors;
 
@@ -239,6 +241,7 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	    lastKmsUrlsRefreshTs(0),
 	    lastKmsUrlDiscoverTS(0.0),
 	    kmsStable(true),
+	    restClient(makeReference<RESTClient>()),
 	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
 	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
 		actors.add(kmsConnectorMetrics.traceCounters(
@@ -249,6 +252,7 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	    lastKmsUrlsRefreshTs(0),
 	    lastKmsUrlDiscoverTS(0.0),
 	    kmsStable(true),
+	    restClient(makeReference<RESTClient>()),
 	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
 	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
 		actors.add(kmsConnectorMetrics.traceCounters(
@@ -812,14 +816,17 @@ Future<T> kmsRequestImpl(
 	// error (time-out or connection-failed), then continue enumeration. Otherwise, bubble up the error.
 	// Step-2: Refresh KmsUlrStore cached URLs by re-discovering KMS URLs and loop Step-1
 
-	state int pass = 0;
 	state KmsUrlCtx<KmsUrlPenaltyParams>* urlCtx;
+	state int pass = 0;
+	state double retryDelay = SERVER_KNOBS->REST_KMS_CONNECTOR_INIT_REQUEST_RETRY_DELAY;
+	state bool forceRefreshKMSUrls = BUGGIFY && (deterministicRandom()->random01() < 0.01);
+
 	loop {
 		state int idx = 0;
 		state double start = now();
 
 		pass++;
-		while (idx < ctx->kmsUrlStore.kmsUrls.size()) {
+		while (idx < ctx->kmsUrlStore.kmsUrls.size() && !forceRefreshKMSUrls) {
 			urlCtx = &ctx->kmsUrlStore.kmsUrls[idx++];
 			try {
 				std::string kmsEncryptionFullUrl = getFullRequestUrl(ctx, urlCtx->url, urlSuffix);
@@ -831,21 +838,25 @@ Future<T> kmsRequestImpl(
 					    .detail("FullUrl", kmsEncryptionFullUrl)
 					    .detail("StartIdx", start)
 					    .detail("CurIdx", idx)
-					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS);
+					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS)
+					    .detail("RetryDelay", retryDelay);
 				}
 
 				HTTP::Headers headers;
 				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 				Reference<HTTP::IncomingResponse> resp =
-				    wait(ctx->restClient.doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
+				    wait(ctx->restClient->doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
 				urlCtx->nRequests++;
 
 				try {
 					T parsedResp = parseFunc(ctx, resp);
 					return parsedResp;
 				} catch (Error& e) {
-					TraceEvent(SevWarn, "KmsRequestRespParseFailure").error(e).detail("RequestID", requestID);
+					TraceEvent(SevWarn, "KmsRequestRespParseFailure")
+					    .error(e)
+					    .detail("RequestID", requestID)
+					    .detail("RetryDelay", retryDelay);
 					ctx->kmsUrlStore.penalize(*urlCtx, KmsUrlCtx<KmsUrlPenaltyParams>::PenaltyType::MALFORMED_RESPONSE);
 					// attempt to do request from next KmsUrl
 				}
@@ -858,7 +869,10 @@ Future<T> kmsRequestImpl(
 					}
 					throw e;
 				}
-				TraceEvent(SevDebug, "KmsRequestError", ctx->uid).error(e).detail("RequestID", requestID);
+				TraceEvent(SevDebug, "KmsRequestError", ctx->uid)
+				    .error(e)
+				    .detail("RequestID", requestID)
+				    .detail("RetryDelay", retryDelay);
 				// attempt to do request from next KmsUrl
 			}
 
@@ -874,8 +888,29 @@ Future<T> kmsRequestImpl(
 				idx = 0;
 			}
 		}
+
 		// Re-discover KMS urls and re-attempt request using newer KMS URLs
 		wait(discoverKmsUrls(ctx, RefreshPersistedUrls::True));
+
+		// KMS outage scenario might last for a long time, though the code designed to let RESTKMSConnector keep
+		// attempting to connect with external server(s), it is preferable to have an exponential backoff mechanism
+
+		if (pass > 1 || forceRefreshKMSUrls) {
+			// retry-delay is injected after all in-memory and on-disk URLs are tried once.
+			wait(delay(retryDelay));
+
+			retryDelay = std::min(retryDelay * 2.0, SERVER_KNOBS->REST_KMS_CONNECTOR_MAX_REQUEST_RETRY_DELAY);
+
+			if (forceRefreshKMSUrls) {
+				ASSERT(g_network->isSimulated());
+				// limit the retry-delay to 1 simulation second i.e. 5 retries
+				if (retryDelay >= 1.0) {
+					forceRefreshKMSUrls = false;
+				}
+			}
+
+			CODE_PROBE(true, "RESTKmsConnector exponential delay");
+		}
 	}
 }
 
@@ -1183,7 +1218,7 @@ ACTOR Future<Void> procureValidationTokens(Reference<RESTKmsConnectorCtx> ctx) {
 // TODO(yiwu): make RESTClient periodically report and clear the stats.
 void updateKMSStability(Reference<RESTKmsConnectorCtx> self) {
 	bool stable = true;
-	for (auto& s : self->restClient.statsMap) {
+	for (auto& s : self->restClient->statsMap) {
 		if (s.second->requests_failed > 0) {
 			stable = false;
 		}

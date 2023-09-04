@@ -652,6 +652,10 @@ public:
 	Counter feedNonRetriableErrors;
 	Counter feedPops;
 	Counter feedPopsFallback;
+	Counter feedDiskBytesRead;
+	Counter feedDiskBytesWritten;
+	ActiveCounter<int> activeFeedStreams;
+	ActiveCounter<int> activeFeedDiskStreams;
 
 	DDSketch<double> latencies, readLatencies, readRangeLatencies, commitLatencies, GRVLatencies, keyLocationLatencies,
 	    mutationsPerCommit, bytesPerCommit;

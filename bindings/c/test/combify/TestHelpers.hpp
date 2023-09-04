@@ -35,6 +35,31 @@
 	} while (0)
 #endif /*ASSERT*/
 
+// UID mirrors the one defined in flow as client test should not depend on flow.
+struct UID {
+	uint64_t part[2];
+	constexpr UID(uint64_t a, uint64_t b) : part{ a, b } {}
+	uint64_t first() const { return part[0]; }
+	uint64_t second() const { return part[1]; }
+	bool operator==(const UID& r) const { return part[0] == r.part[0] && part[1] == r.part[1]; }
+
+	static UID fromString(std::string const& s) {
+		ASSERT(s.size() == 32);
+		uint64_t a = 0, b = 0;
+		ASSERT(sscanf(s.c_str(), "%16" SCNx64 "%16" SCNx64, &a, &b) == 2);
+		return UID(a, b);
+	}
+
+	std::string toString() const { return fmt::format("{:016x}{:016x}", part[0], part[1]); }
+};
+
+inline fdb::Error waitFuture(fdb::Future& f) {
+	if (auto err = f.blockUntilReady()) {
+		ASSERT(false, "Error while waiting for future completion: {}", err.what());
+	}
+	return f.error();
+}
+
 namespace combify {
 
 namespace detail {
@@ -59,8 +84,8 @@ concept AnyFuture = TemplateInstance<T, fdb::TypedFuture> || std::same_as<T, fdb
 
 template <class Func>
 concept TransactionLambda = requires(Func&& fn) {
-	                            { fn(std::declval<fdb::Transaction>()) } -> AnyFuture;
-                            };
+	{ fn(std::declval<fdb::Transaction>()) } -> AnyFuture;
+};
 
 // Utility function to avoid having to repeatedly write transaction retry loops.
 // Function shall take a transaction object as parameter and return some future.
@@ -116,6 +141,23 @@ inline auto setupAndStartNetworkGuarded() {
 		fdb::network::stop();
 		thread.join();
 	});
+}
+
+inline void insertAll(fdb::Transaction tr, const std::vector<std::pair<std::string, std::string>>& data) {
+	runToCompletion(
+	    tr,
+	    [&data](auto tr) {
+		    // Insert data
+		    for (const auto& d : data) {
+			    tr.set(fdb::toBytesRef(d.first), fdb::toBytesRef(d.second));
+		    }
+		    return tr.commit();
+	    },
+	    "PopulateDBData");
+}
+
+inline void insertAll(fdb::Database db, const std::vector<std::pair<std::string, std::string>>& data) {
+	return insertAll(db.createTransaction(), data);
 }
 
 } // namespace combify

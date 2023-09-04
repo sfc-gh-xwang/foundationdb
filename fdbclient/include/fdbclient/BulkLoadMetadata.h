@@ -39,6 +39,10 @@ typedef KeyBackedRangeMap<Standalone<StringRef>, BulkLoadID, NullCodec, ObjectCo
     RangeMap;
 typedef RangeMap::LocalSnapshot RangeMapSnapshot;
 
+// reservations for active bulk loads
+extern const KeyRangeRef bulkLoadReservationKeys;
+typedef KeyBackedMap<Standalone<StringRef>, int64_t, NullCodec, BinaryCodec<int64_t>> ReservationMap;
+
 // interfaces for active bulk loader endpoints
 extern const KeyRangeRef bulkLoaderListKeys;
 typedef KeyBackedObjectMap<UID, BulkLoaderInterface, _IncludeVersion, BinaryCodec<UID>> LoaderListMap;
@@ -51,7 +55,7 @@ struct CreatedFilePointerRef {
 	StringRef filename;
 	BulkLoadFileType type;
 	// encryption metadata later to be stored in bgFileKeys
-	Optional<BlobGranuleCipherKeysMetaRef> cipherKeysMetaRef;
+	Optional<BlobGranuleCipherKeysMeta> cipherKeysMeta;
 
 	int expectedSize() const {
 		// FIXME: doesn't have cipherKeys
@@ -62,11 +66,11 @@ struct CreatedFilePointerRef {
 	CreatedFilePointerRef(Arena& to, CreatedFilePointerRef other)
 	  : filename(to, other.filename),
 	    type(other.type),
-	    cipherKeysMetaRef(other.cipherKeysMetaRef) {}
+	    cipherKeysMeta(other.cipherKeysMeta) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, filename, type, cipherKeysMetaRef);
+		serializer(ar, filename, type, cipherKeysMeta);
 	}
 };
 
@@ -109,6 +113,7 @@ StatusMap& statusMap();
 InfoMap& infoMap();
 VersionMap& versionMap();
 RangeMap& rangeMap();
+ReservationMap& reservationMap();
 LoaderListMap& loaderListMap();
 CreatedFilePointersMap& createdFilePointersMap();
 WrittenFilePointersMap& writtenFilePointersMap();

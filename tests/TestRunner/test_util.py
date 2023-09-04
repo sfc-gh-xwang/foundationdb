@@ -55,3 +55,27 @@ def initialize_logger_level(logging_level):
         logger.setLevel(logging.WARNING)
     elif logging_level == "ERROR":
         logger.setLevel(logging.ERROR)
+
+
+def version_tuple_from_str(ver_str):
+    ver = [int(s) for s in ver_str.split(".")]
+    assert len(ver) == 3, "Invalid version string {}".format(ver_str)
+    return ver
+
+
+def api_version_from_str(ver_str):
+    # FIXME: simplify after everything is 8.0+
+    ver_tuple = version_tuple_from_str(ver_str)
+    if ver_tuple[0] >= 8 and ver_tuple[0] != 71:
+        # handle 8.x -> 800000, as now the second version is the patch version
+        ret = ver_tuple[0] * 100000
+    elif ver_tuple[0] == 71:
+        # handle 71.3 -> 710300
+        ret = ver_tuple[0] * 10000 + ver_tuple[1] * 100
+    else:
+        ret = ver_tuple[0] * 100 + ver_tuple[1] * 10
+    return ret
+
+
+def version_before(ver_str1, ver_str2):
+    return version_tuple_from_str(ver_str1) < version_tuple_from_str(ver_str2)

@@ -863,7 +863,8 @@ ACTOR Future<Void> dataDistribution(Reference<DataDistributor> self,
 			                                       .anyZeroHealthyTeams = anyZeroHealthyTeams,
 			                                       .shards = &shards,
 			                                       .trackerCancelled = &self->context->trackerCancelled,
-			                                       .ddTenantCache = self->ddTenantCache });
+			                                       .ddTenantCache = self->ddTenantCache,
+			                                       .teamSize = self->configuration.storageTeamSize });
 			actors.push_back(reportErrorsExcept(DataDistributionTracker::run(self->context->tracker,
 			                                                                 self->initData,
 			                                                                 getShardMetrics.getFuture(),
@@ -902,16 +903,22 @@ ACTOR Future<Void> dataDistribution(Reference<DataDistributor> self,
 				                                    "DDTenantCacheMonitor",
 				                                    self->ddId,
 				                                    &normalDDQueueErrors()));
-			}
-			if (self->ddTenantCache.present() && SERVER_KNOBS->STORAGE_QUOTA_ENABLED) {
-				actors.push_back(reportErrorsExcept(self->ddTenantCache.get()->monitorStorageQuota(),
-				                                    "StorageQuotaTracker",
-				                                    self->ddId,
-				                                    &normalDDQueueErrors()));
-				actors.push_back(reportErrorsExcept(self->ddTenantCache.get()->monitorStorageUsage(),
-				                                    "StorageUsageTracker",
-				                                    self->ddId,
-				                                    &normalDDQueueErrors()));
+				if (SERVER_KNOBS->STORAGE_QUOTA_ENABLED) {
+					actors.push_back(reportErrorsExcept(self->ddTenantCache.get()->monitorStorageQuota(),
+					                                    "StorageQuotaTracker",
+					                                    self->ddId,
+					                                    &normalDDQueueErrors()));
+					actors.push_back(reportErrorsExcept(self->ddTenantCache.get()->monitorStorageUsage(),
+					                                    "StorageUsageTracker",
+					                                    self->ddId,
+					                                    &normalDDQueueErrors()));
+					if (SERVER_KNOBS->BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT) {
+						actors.push_back(reportErrorsExcept(self->ddTenantCache.get()->abortBulkLoadsOverQuota(),
+						                                    "AbortBulkLoadsOverQuotaMonitor",
+						                                    self->ddId,
+						                                    &normalDDQueueErrors()));
+					}
+				}
 			}
 
 			std::vector<DDTeamCollection*> teamCollectionsPtrs;

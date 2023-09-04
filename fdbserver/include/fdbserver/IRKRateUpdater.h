@@ -34,6 +34,7 @@ public:
 	                    class IRKRecoveryTracker const&,
 	                    Deque<double> const& actualTpsHistory,
 	                    class IRKBlobMonitor&,
+	                    bool isBwThrottlingEnabled,
 	                    int throttledTags) = 0;
 
 	// In simulation, after a certain period of time has passed,
@@ -79,6 +80,7 @@ public:
 	            class IRKRecoveryTracker const&,
 	            Deque<double> const& actualTpsHistory,
 	            class IRKBlobMonitor&,
+	            bool isBwThrottlingEnabled,
 	            int throttledTags) override;
 
 	HealthMetrics const& getHealthMetrics() const& override;

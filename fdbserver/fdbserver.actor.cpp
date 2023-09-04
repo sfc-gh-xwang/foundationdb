@@ -861,7 +861,7 @@ std::pair<NetworkAddressList, NetworkAddressList> buildNetworkAddresses(
 			publicNetworkAddresses.secondaryAddress = currentPublicAddress;
 		}
 
-		if (!currentPublicAddress.isValid()) {
+		if (!currentPublicAddress.isValid() && !currentPublicAddress.isUnix()) {
 			fprintf(stderr, "ERROR: %s is not a valid IP address\n", currentPublicAddress.toString().c_str());
 			flushAndExit(FDB_EXIT_ERROR);
 		}

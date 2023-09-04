@@ -251,10 +251,11 @@ public:
 	Tenant(Database cx, TenantName name);
 	explicit Tenant(Database cx, int64_t id);
 	Tenant(Database cx, Future<TenantLookupInfo> tenantLookupFuture, Optional<TenantName> name);
+	Tenant(Database cx, TenantMapEntry entry);
 
 	static Tenant* allocateOnForeignThread() { return (Tenant*)Tenant::operator new(sizeof(Tenant)); }
 
-	Future<Void> ready() const { return success(lookupFuture); }
+	Future<Void> ready() const { return success(lookupFuture) && success(dbFuture); }
 	int64_t id() const;
 	Database database() const;
 	Optional<TenantGroupName> tenantGroup() const;
@@ -358,6 +359,7 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 
 	void addReadCost(uint64_t bytes);
 	void addWriteCost(uint64_t bytes);
+	void addClearCost();
 	void flushWriteCost();
 	int64_t getTotalCost() const;
 

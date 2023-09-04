@@ -3024,6 +3024,7 @@ ACTOR Future<Void> modifyBackup(Database db, std::string tagName, BackupModifyOp
 			}
 
 			state BackupConfig config(uidFlag.get().first);
+			state EmergencyBackupConfig emergencyConfig(uidFlag.get().first);
 			EBackupState s = wait(config.stateEnum().getOrThrow(tr, Snapshot::False, backup_invalid_info()));
 			if (!FileBackupAgent::isRunnable(s)) {
 				fprintf(stderr, "Backup on tag '%s' is not runnable.\n", tagName.c_str());
@@ -3052,6 +3053,7 @@ ACTOR Future<Void> modifyBackup(Database db, std::string tagName, BackupModifyOp
 
 			if (options.destURL.present()) {
 				config.backupContainer().set(tr, bc);
+				emergencyConfig.backupContainer().set(tr, bc);
 			}
 
 			wait(tr->commit());

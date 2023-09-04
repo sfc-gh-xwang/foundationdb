@@ -12,6 +12,8 @@
 #include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/IKnobCollection.h"
+#include "fdbclient/RangeLockAPI.actor.h"
+#include "fdbclient/BulkLoad.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -139,8 +141,16 @@ BulkLoadID newBulkLoadID() {
 	// for now just generate UID and convert to string - we assume no 128-bit UID collisions
 	UID randomUID = deterministicRandom()->randomUniqueID();
 	// TODO this is the same as granuleIDToCFKey - make common function?
+	return bulkLoadUIDToId(randomUID);
+}
+
+UID bulkLoadIdToUID(BulkLoadID const& id) {
+	return BinaryReader::fromStringRef<UID>(id, Unversioned());
+}
+
+BulkLoadID bulkLoadUIDToId(UID const& uid) {
 	BinaryWriter wr(Unversioned());
-	wr << randomUID;
+	wr << uid;
 	return wr.toValue();
 }
 
@@ -186,14 +196,19 @@ ACTOR Future<BulkLoadID> startBulkLoadExternalActor(Reference<DatabaseContext> d
 			}
 			return id;
 		} catch (Error& e) {
-			if (e.code() != error_code_bulk_load_create_too_old) {
+			if (e.code() == error_code_range_lock_limit_exceeded) {
+				// SOMEDAY: throw this out after some retry or let the client detect timeout?
+				CODE_PROBE(true, "Bulk load pending because of too many range locks");
+				wait(delayJittered(10.0));
+			} else if (e.code() == error_code_bulk_load_create_too_old) {
+				CODE_PROBE(true, "start bulk load create too old", probe::decoration::rare);
+				wait(delayJittered(1.0));
+			} else {
 				throw e;
 			}
 			if (BULKLOAD_DEBUG) {
-				fmt::print("StartBulkLoadExternal {0}: retrying too old\n", id.printable());
+				fmt::print("StartBulkLoadExternal {0}: retrying \n", id.printable());
 			}
-			CODE_PROBE(true, "start bulk load create too old", probe::decoration::rare);
-			wait(delayJittered(1.0));
 		}
 	}
 }
@@ -349,6 +364,9 @@ ACTOR Future<Void> startBulkLoadInternalActor(Reference<DatabaseContext> db,
 				throw bulk_load_range_not_empty();
 			}
 
+			// acquire range lock after check the range is empty
+			wait(RangeLockAPI::lockRangesTransaction(tr, physicalRange.begin, physicalRange.end, bulkLoadIdToUID(id)));
+
 			BulkLoadMetadata::statusMap().set(tr, idKey, BulkLoadStatus(BulkLoadStatus::State::STARTED));
 			BulkLoadMetadata::versionMap().setVersionstamp(tr, idKey, Versionstamp(), 0);
 			BulkLoadMetadata::infoMap().set(tr, idKey, info);
@@ -482,17 +500,47 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					ASSERT(range.get().range.begin == physicalRange.begin &&
 					       range.get().range.end == physicalRange.end && range.get().value == id);
 
+					wait(RangeLockAPI::unlockRangesTransaction(
+					    tr, physicalRange.begin, physicalRange.end, bulkLoadIdToUID(id)));
+
 					// set range to inactive when complete and clear info
 					// FIXME: any way to make this coalescing?
 					wait(BulkLoadMetadata::rangeMap().updateRange(
 					    tr, physicalRange.begin, physicalRange.end, ""_sr, true));
+
+					state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
+					    BulkLoadMetadata::allFilePointersForLoadRange(id);
+
+					// Calculate the bulk load size and remove the reservation
+					if (tenant.present() && tenant.get()->tenantGroup().present()) {
+						state TenantGroupName tenantGroup = tenant.get()->tenantGroup().get();
+
+						state Optional<int64_t> reservation =
+						    wait(BulkLoadMetadata::reservationMap().get(tr, tenantGroup));
+
+						if (reservation.present()) {
+							state int64_t bulkLoadSize = 0;
+							state BulkLoadMetadata::WrittenFilePointersMap::RangeResultType writtenPointers =
+							    wait(BulkLoadMetadata::writtenFilePointersMap().getRange(
+							        tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY));
+							ASSERT(!writtenPointers.more);
+							for (auto& it : writtenPointers.results) {
+								bulkLoadSize += it.second.logicalSize;
+							}
+
+							BulkLoadMetadata::reservationMap().set(
+							    tr, tenantGroup, std::max(reservation.get() - bulkLoadSize, (int64_t)0));
+						}
+					}
+
+					// The written file pointers are kept around until now so that the reservation can be removed
+					BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
 				} else if (desiredState == BulkLoadStatus::State::STAGING_BLOB_DONE) {
 					// clean up pointers once granules actually staged
 					// FIXME: convert these 3 lines into common function?
 					std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
 					    BulkLoadMetadata::allFilePointersForLoadRange(id);
 					BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
-					BulkLoadMetadata::writtenFilePointersMap().erase(tr, idRange.first, idRange.second);
 				}
 			}
 

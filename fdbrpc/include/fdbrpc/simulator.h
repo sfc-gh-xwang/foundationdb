@@ -195,6 +195,8 @@ public:
 		}
 	}
 
+	void removeRoles(NetworkAddress const& address) { roleAddresses.erase(address); }
+
 	std::string getRoles(NetworkAddress const& address, bool skipWorkers = true) const {
 		auto addressIt = roleAddresses.find(address);
 		std::string roleText;
@@ -285,6 +287,7 @@ public:
 	virtual void clogInterface(const IPAddress& ip, double seconds, ClogMode mode = ClogDefault) = 0;
 	virtual void clogPair(const IPAddress& from, const IPAddress& to, double seconds) = 0;
 	virtual void unclogPair(const IPAddress& from, const IPAddress& to) = 0;
+	virtual double lastClogged() const = 0;
 	virtual std::vector<ProcessInfo*> getAllProcesses() const = 0;
 	virtual ProcessInfo* getProcessByAddress(NetworkAddress const& address) = 0;
 	virtual MachineInfo* getMachineByNetworkAddress(NetworkAddress const& address) = 0;
@@ -336,6 +339,8 @@ public:
 	std::map<NetworkAddress, bool> corruptWorkerMap;
 	ConfigDBType configDBType;
 	bool blobGranulesEnabled;
+	// Can be set explicitly in the config. Otherwisee, decide randomly (if it's compatible with other options)
+	Optional<bool> defaultBlobification;
 	std::unordered_set<int64_t> simEncryptKeyNotFoundIds;
 
 	// Used by workloads that perform reconfigurations
@@ -363,6 +368,8 @@ public:
 	double injectSSDelayTime = std::numeric_limits<double>::max();
 	double injectTargetedBMRestartTime = std::numeric_limits<double>::max();
 	double injectTargetedBWRestartTime = std::numeric_limits<double>::max();
+
+	bool allowRebootAndDelete = true;
 
 	enum SimConsistencyScanState {
 		DisabledStart = 0,

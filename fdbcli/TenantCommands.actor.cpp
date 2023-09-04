@@ -105,7 +105,8 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
                             int& offset,
                             std::vector<metacluster::TenantState>& filters,
                             Optional<TenantGroupName>& tenantGroup,
-                            bool& useJson) {
+                            bool& useJson,
+                            Optional<TenantAPI::LockedTenants>& locked) {
 	for (int tokenNum = startIndex; tokenNum < tokens.size(); ++tokenNum) {
 		Optional<Value> value;
 		StringRef token = tokens[tokenNum];
@@ -145,6 +146,16 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
 			}
 		} else if (tokencmp(param, "tenant_group")) {
 			tenantGroup = TenantGroupName(value.get().toString());
+		} else if (tokencmp(param, "locked")) {
+			StringRef lockedValue = value.get();
+			if (tokencmp(lockedValue, "true")) {
+				locked = TenantAPI::LockedTenants(true);
+			} else if (tokencmp(lockedValue, "false")) {
+				locked = TenantAPI::LockedTenants(false);
+			} else {
+				fmt::print(stderr, "ERROR: unrecognized lock specification `{}'.\n", lockedValue.toString());
+				return false;
+			}
 		} else if (tokencmp(param, "JSON")) {
 			useJson = true;
 		} else {
@@ -551,18 +562,20 @@ void tenantListOutputJson(std::map<TenantName, int64_t> tenants) {
 
 // tenant list command
 ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
-	if (tokens.size() > 9) {
-		fmt::print(
-		    "Usage: tenant list [BEGIN] [END] "
-		    "[limit=<LIMIT>|offset=<OFFSET>|state=<STATE1>,<STATE2>,...|tenant_group=<TENANT_GROUP>] [JSON] ...\n\n");
+	if (tokens.size() > 10) {
+		fmt::print("Usage: tenant list [BEGIN] [END] "
+		           "[limit=<LIMIT>|offset=<OFFSET>|state=<STATE1>,<STATE2>,...|tenant_group=<TENANT_GROUP>|locked=["
+		           "true|false]]"
+		           "[JSON] ...\n\n");
 		fmt::print("Lists the tenants in a cluster.\n");
 		fmt::print("Only tenants in the range BEGIN - END will be printed.\n");
 		fmt::print("An optional LIMIT can be specified to limit the number of results (default 100).\n");
 		fmt::print("Optionally skip over the first OFFSET results (default 0).\n");
 		fmt::print("Optional comma-separated tenant state(s) can be provided to filter the list.\n");
 		fmt::print("Optional tenant group can be provided to filter the list.\n");
+		fmt::print("Optional locked=true/false can be provided to specify only locked or unlocked tenants.\n");
 		fmt::print("If JSON is specified, then the output will be in JSON format.\n");
-		fmt::print("Specifying [offset] and [state] is only supported in a metacluster.\n");
+		fmt::print("Specifying [state] is only supported in a metacluster.\n");
 		return false;
 	}
 
@@ -572,6 +585,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 	state int offset = 0;
 	state std::vector<metacluster::TenantState> filters;
 	state Optional<TenantGroupName> tenantGroup;
+	state Optional<TenantAPI::LockedTenants> locked;
 	state bool useJson = false;
 
 	if (tokens.size() >= 3) {
@@ -585,7 +599,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 		}
 	}
 	if (tokens.size() >= 5) {
-		if (!parseTenantListOptions(tokens, 4, limit, offset, filters, tenantGroup, useJson)) {
+		if (!parseTenantListOptions(tokens, 4, limit, offset, filters, tenantGroup, useJson, locked)) {
 			return false;
 		}
 	}
@@ -602,21 +616,15 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 			// State filters only apply to calls from the management cluster
 			// Tenant group filters can apply to management, data, and standalone clusters
 			if (clusterType == ClusterType::METACLUSTER_MANAGEMENT) {
-				std::vector<std::pair<TenantName, metacluster::MetaclusterTenantMapEntry>> tenants = wait(
-				    metacluster::listTenantMetadata(db, beginTenant, endTenant, limit, offset, filters, tenantGroup));
+				std::vector<std::pair<TenantName, metacluster::MetaclusterTenantMapEntry>> tenants =
+				    wait(metacluster::listTenantMetadata(
+				        db, beginTenant, endTenant, limit, offset, filters, tenantGroup, locked));
 				for (const auto& [tenantName, entry] : tenants) {
 					tenantInfo[tenantName] = entry.id;
 				}
 			} else {
-				if (tenantGroup.present()) {
-					// For expediency: does not use special key space
-					// TODO: add special key support
-					std::vector<std::pair<TenantName, int64_t>> tenants =
-					    wait(TenantAPI::listTenantGroupTenants(db, tenantGroup.get(), beginTenant, endTenant, limit));
-					for (const auto& [tenantName, tenantId] : tenants) {
-						tenantInfo[tenantName] = tenantId;
-					}
-				} else {
+				// No need to filter, so go straight to special keys
+				if (!tenantGroup.present() && !locked.present() && offset == 0) {
 					// Hold the reference to the standalone's memory
 					state ThreadFuture<RangeReadResult> kvsFuture =
 					    tr->getRange(firstGreaterOrEqual(beginTenantKey), firstGreaterOrEqual(endTenantKey), limit);
@@ -630,6 +638,13 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 						int64_t tId;
 						jsonDoc.get("id", tId);
 						tenantInfo[tName] = tId;
+					}
+				} else {
+					// Use filter-based TenantAPI:: call similar to how metacluster:: has one
+					std::vector<std::pair<TenantName, TenantMapEntry>> tenants = wait(
+					    TenantAPI::listTenantMetadata(db, beginTenant, endTenant, limit, offset, tenantGroup, locked));
+					for (const auto& [tenantName, entry] : tenants) {
+						tenantInfo[tenantName] = entry.id;
 					}
 				}
 			}
@@ -1176,7 +1191,7 @@ void tenantGenerator(const char* text,
 		const char* opts[] = { "JSON", nullptr };
 		arrayGenerator(text, line, opts, lc);
 	} else if (tokens.size() >= 4 && tokencmp(tokens[1], "list")) {
-		const char* opts[] = { "limit=", "offset=", "state=", "tenant_group=", "JSON", nullptr };
+		const char* opts[] = { "limit=", "offset=", "state=", "tenant_group=", "locked=", "JSON", nullptr };
 		arrayGenerator(text, line, opts, lc);
 	} else if (tokencmp(tokens[1], "configure")) {
 		if (tokens.size() == 3) {
@@ -1218,6 +1233,7 @@ std::vector<const char*> tenantHintGenerator(std::vector<StringRef> const& token
 			                                     "[offset=OFFSET]",
 			                                     "[state=<STATE1>,<STATE2>,...]",
 			                                     "[tenant_group=TENANT_GROUP]",
+			                                     "[locked=[true|false]]"
 			                                     "[JSON]" };
 		return std::vector<const char*>(opts.begin() + tokens.size() - 2, opts.end());
 	} else if (tokencmp(tokens[1], "get") && tokens.size() < 4) {

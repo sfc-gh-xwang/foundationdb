@@ -71,7 +71,7 @@ ERROR( shutdown_in_progress, 1043, "Operation no longer supported due to shutdow
 ERROR( serialization_failed, 1044, "Failed to deserialize an object" )
 ERROR( connection_unreferenced, 1048, "No peer references for connection" )
 ERROR( connection_idle, 1049, "Connection closed after idle timeout" )
-ERROR( disk_adapter_reset, 1050, "The disk queue adpater reset" )
+ERROR( disk_adapter_reset, 1050, "The disk queue adapter reset" )
 ERROR( batch_transaction_throttled, 1051, "Batch GRV request rate limit exceeded")
 ERROR( dd_cancelled, 1052, "Data distribution components cancelled")
 ERROR( dd_not_found, 1053, "Data distributor not found")
@@ -107,6 +107,7 @@ ERROR( unknown_storage_engine, 1082, "Storage engine type is not recognized." )
 ERROR( duplicate_snapshot_request, 1083, "A duplicate snapshot request has been sent, the old request is discarded.")
 ERROR( dd_config_changed, 1084, "DataDistribution configuration changed." )
 ERROR( blob_granule_mutation_stream_too_old, 1085, "Blob Granule Mutation Stream Too Old")
+ERROR( inconsistent_disk_queue, 1090, "The disk queue is in an inconsistent state" )
 
 ERROR( broken_promise, 1100, "Broken promise" )
 ERROR( operation_cancelled, 1101, "Asynchronous operation cancelled" )
@@ -293,6 +294,7 @@ ERROR( metacluster_mismatch, 2172, "The cluster does not have the expected name 
 ERROR( conflicting_restore, 2173, "Another restore is running for the same data cluster" )
 ERROR( invalid_metacluster_configuration, 2174, "Metacluster configuration is invalid" )
 ERROR( unsupported_metacluster_version, 2175, "Client is not compatible with the metacluster" )
+ERROR( invalid_cluster_configuration, 2176, "Data cluster configuration is invalid" )
 
 // 2200 - errors from bindings and official APIs
 ERROR( api_version_unset, 2200, "API version is not set" )
@@ -357,6 +359,7 @@ ERROR( blob_restore_invalid_manifest_url, 2386, "Invalid manifest URL" )
 ERROR( blob_restore_corrupted_manifest, 2387, "Corrupted manifest" )
 ERROR( blob_restore_missing_manifest, 2388, "Missing manifest" )
 ERROR( blob_migrator_replaced, 2389, "Blob migrator is replaced")
+ERROR( blob_restore_unexpected_phase, 2390, "Unexpected blob restore phase")
 
 // 2400 - json errors
 ERROR( key_not_found, 2400, "Expected key is missing")

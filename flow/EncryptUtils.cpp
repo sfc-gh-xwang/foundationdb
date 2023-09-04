@@ -136,3 +136,7 @@ bool isReservedEncryptDomain(EncryptCipherDomainId domainId) {
 bool isEncryptHeaderDomain(EncryptCipherDomainId domainId) {
 	return domainId == ENCRYPT_HEADER_DOMAIN_ID;
 }
+
+bool isCipherModeSupported(EncryptCipherMode mode) {
+	return mode >= ENCRYPT_CIPHER_MODE_AES_256_CTR && mode < ENCRYPT_CIPHER_MODE_LAST;
+}

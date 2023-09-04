@@ -33,12 +33,6 @@ struct WorkerInfo : NonCopyable {
 	ProcessClass initialClass;
 	ClusterControllerPriorityInfo priorityInfo;
 	WorkerDetails details;
-	Future<Void> haltRatekeeper;
-	Future<Void> haltDistributor;
-	Future<Void> haltBlobManager;
-	Future<Void> haltBlobMigrator;
-	Future<Void> haltEncryptKeyProxy;
-	Future<Void> haltConsistencyScan;
 	Standalone<VectorRef<StringRef>> issues;
 
 	WorkerInfo()
@@ -72,11 +66,6 @@ struct WorkerInfo : NonCopyable {
 	    initialClass(r.initialClass),
 	    priorityInfo(r.priorityInfo),
 	    details(std::move(r.details)),
-	    haltRatekeeper(r.haltRatekeeper),
-	    haltDistributor(r.haltDistributor),
-	    haltBlobManager(r.haltBlobManager),
-	    haltEncryptKeyProxy(r.haltEncryptKeyProxy),
-	    haltConsistencyScan(r.haltConsistencyScan),
 	    issues(r.issues) {}
 	void operator=(WorkerInfo&& r) noexcept {
 		watcher = std::move(r.watcher);
@@ -86,10 +75,6 @@ struct WorkerInfo : NonCopyable {
 		initialClass = r.initialClass;
 		priorityInfo = r.priorityInfo;
 		details = std::move(r.details);
-		haltRatekeeper = r.haltRatekeeper;
-		haltDistributor = r.haltDistributor;
-		haltBlobManager = r.haltBlobManager;
-		haltEncryptKeyProxy = r.haltEncryptKeyProxy;
 		issues = r.issues;
 	}
 };

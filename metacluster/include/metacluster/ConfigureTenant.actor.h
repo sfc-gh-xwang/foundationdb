@@ -29,7 +29,6 @@
 #include "flow/flow.h"
 #include "flow/genericactors.actor.h"
 
-#include "metacluster/GetTenant.actor.h"
 #include "metacluster/MetaclusterInternal.actor.h"
 #include "metacluster/MetaclusterOperationContext.actor.h"
 #include "metacluster/MetaclusterTypes.h"

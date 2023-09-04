@@ -60,6 +60,7 @@
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/KeyRangeMap.h"
 #include "fdbclient/ManagementAPI.actor.h"
+#include "fdbclient/MetaclusterTenantEntry.actor.h"
 #include "fdbclient/NameLineage.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/MonitorLeader.h"
@@ -1515,6 +1516,10 @@ ACTOR Future<UID> getClusterId(Database db) {
 void DatabaseContext::initializeSpecialCounters() {
 	specialCounter(cc, "OutstandingWatches", [this] { return outstandingWatches; });
 	specialCounter(cc, "WatchMapSize", [this] { return watchMap.size(); });
+	specialCounter(ccFeed, "ActiveFeedStreams", [this] { return activeFeedStreams.getValue(); });
+	specialCounter(ccFeed, "ActiveFeedDiskStreams", [this] { return activeFeedDiskStreams.getValue(); });
+	specialCounter(ccFeed, "ChangeFeedCaches", [this] { return changeFeedCaches.size(); });
+	specialCounter(ccFeed, "UncommittedFeedBytes", [this] { return uncommittedCFBytes; });
 }
 
 DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
@@ -1610,6 +1615,10 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
     feedPops("FeedPops", ccFeed),
     feedPopsFallback("FeedPopsFallback", ccFeed),
+    feedDiskBytesRead("FeedDiskBytesRead", ccFeed),
+    feedDiskBytesWritten("FeedDiskBytesWritten", ccFeed),
+    activeFeedStreams(0),
+    activeFeedDiskStreams(0),
     latencies(),
     readLatencies(),
     readRangeLatencies(),
@@ -1964,6 +1973,10 @@ DatabaseContext::DatabaseContext(const Error& err)
     feedNonRetriableErrors("FeedNonRetriableErrors", ccFeed),
     feedPops("FeedPops", ccFeed),
     feedPopsFallback("FeedPopsFallback", ccFeed),
+    feedDiskBytesRead("FeedDiskBytesRead", ccFeed),
+    feedDiskBytesWritten("FeedDiskBytesWritten", ccFeed),
+    activeFeedStreams(0),
+    activeFeedDiskStreams(0),
     latencies(),
     readLatencies(),
     readRangeLatencies(),
@@ -3021,12 +3034,117 @@ AddressExclusion AddressExclusion::parse(StringRef const& key) {
 	}
 }
 
-Tenant::Tenant(Database cx, TenantName name) : name(name), lookupFuture(cx->lookupTenant(name)), dbFuture(cx) {}
-Tenant::Tenant(Database cx, int64_t id) : lookupFuture(id), dbFuture(cx) {}
-Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name)
-  : name(name),
-    lookupFuture(tenantLookupInfo),
-    dbFuture(cx) {}
+ACTOR template <class Tenant>
+Future<Optional<ClusterName>> getAssignedCluster(Database cx, Tenant tenant) {
+	ClusterType clusterType = cx->clientInfo->get().clusterType;
+	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
+		return Optional<ClusterName>();
+	}
+	Reference<DatabaseContext> mgmtCx = cx.getReference();
+	metacluster::MetaclusterTenantMapEntry entry = wait(metacluster::getTenant(mgmtCx, tenant));
+	return entry.assignedCluster;
+}
+
+ACTOR Future<Optional<ClusterName>> getAssignedCluster(Database cx, Future<TenantLookupInfo> tenantLookupInfo) {
+	ClusterType clusterType = cx->clientInfo->get().clusterType;
+	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
+		return Optional<ClusterName>();
+	}
+	TenantLookupInfo info = wait(tenantLookupInfo);
+	Optional<ClusterName> assignedCluster = wait(getAssignedCluster(cx, info.id));
+	return assignedCluster;
+}
+
+ACTOR Future<Database> openNamedDatabase(Database cx, Future<Optional<ClusterName>> assignedClusterFuture) {
+	CODE_PROBE(true, "Open named database");
+	ClusterType clusterType = cx->clientInfo->get().clusterType;
+	if (clusterType != ClusterType::METACLUSTER_MANAGEMENT) {
+		return cx;
+	}
+	state Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	ASSERT(assignedCluster.present());
+	state Reference<DatabaseContext> mgmtCx = cx.getReference();
+	state Reference<DatabaseContext::TransactionT> tr = mgmtCx->createTransaction();
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+			Optional<ClusterConnectionString> connectionString =
+			    wait(metacluster::metadata::management::dataClusterConnectionRecords().get(tr, assignedCluster.get()));
+			if (!connectionString.present()) {
+				// The assignedCluster is stale, caller should retry openning the tenant
+				throw cluster_removed();
+			}
+			Reference<IClusterConnectionRecord> connectionRecord =
+			    makeReference<ClusterConnectionMemoryRecord>(connectionString.get());
+			Database db = Database::createDatabase(connectionRecord, mgmtCx->apiVersion.version(), mgmtCx->internal);
+
+			return db;
+		} catch (Error& e) {
+			wait(safeThreadFutureToFuture(tr->onError(e)));
+		}
+	}
+}
+
+ACTOR Future<TenantLookupInfo> getTenantLookupInfo(Future<Database> dbFuture,
+                                                   TenantName name,
+                                                   Future<Optional<ClusterName>> assignedClusterFuture) {
+	Database db = wait(dbFuture);
+	ASSERT_NE(db->clientInfo->get().clusterType, ClusterType::METACLUSTER_MANAGEMENT);
+	state TenantLookupInfo info = wait(db->lookupTenant(name));
+	state Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	info.assignedCluster = assignedCluster;
+	return info;
+}
+
+ACTOR Future<TenantLookupInfo> getTenantLookupInfo(int64_t id, Future<Optional<ClusterName>> assignedClusterFuture) {
+	state TenantLookupInfo info(id);
+	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	info.assignedCluster = assignedCluster;
+	return info;
+}
+
+ACTOR Future<TenantLookupInfo> getTenantLookupInfo(Future<TenantLookupInfo> lookupInfo,
+                                                   Future<Optional<ClusterName>> assignedClusterFuture) {
+	state TenantLookupInfo info = wait(lookupInfo);
+	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	if (info.assignedCluster.present()) {
+		ASSERT(assignedCluster.present());
+		ASSERT_EQ(info.assignedCluster, assignedCluster);
+	} else {
+		info.assignedCluster = assignedCluster;
+	}
+	return info;
+}
+
+ACTOR Future<TenantLookupInfo> getTenantLookupInfo(TenantMapEntry entry,
+                                                   Future<Optional<ClusterName>> assignedClusterFuture) {
+	Optional<ClusterName> assignedCluster = wait(assignedClusterFuture);
+	return TenantLookupInfo(entry.id, entry.tenantGroup, assignedCluster);
+}
+
+Tenant::Tenant(Database cx, TenantName name) : name(name) {
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedCluster(cx, name);
+	dbFuture = openNamedDatabase(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfo(dbFuture, name, assignedClusterFuture);
+}
+
+Tenant::Tenant(Database cx, int64_t id) {
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedCluster(cx, id);
+	dbFuture = openNamedDatabase(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfo(id, assignedClusterFuture);
+}
+
+Tenant::Tenant(Database cx, Future<TenantLookupInfo> tenantLookupInfo, Optional<TenantName> name) : name(name) {
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedCluster(cx, tenantLookupInfo);
+	dbFuture = openNamedDatabase(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfo(tenantLookupInfo, assignedClusterFuture);
+}
+
+Tenant::Tenant(Database cx, TenantMapEntry entry) : name(entry.tenantName) {
+	Future<Optional<ClusterName>> assignedClusterFuture = getAssignedCluster(cx, entry.id);
+	dbFuture = openNamedDatabase(cx, assignedClusterFuture);
+	lookupFuture = getTenantLookupInfo(entry, assignedClusterFuture);
+}
 
 int64_t Tenant::id() const {
 	ASSERT(lookupFuture.isReady());
@@ -6251,6 +6369,13 @@ void Transaction::atomicOp(const KeyRef& key,
 	CODE_PROBE(true, "NativeAPI atomic operation");
 }
 
+void TransactionState::addClearCost() {
+	// NOTE: The throttling cost of each clear is assumed to be one page.
+	// This makes compuation fast, but can be inaccurate and may
+	// underestimate the cost of large clears.
+	addWriteCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+}
+
 void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRange) {
 	++trState->cx->transactionClearMutations;
 	auto& req = tr;
@@ -6278,10 +6403,11 @@ void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRa
 	// NOTE: The throttling cost of each clear is assumed to be one page.
 	// This makes compuation fast, but can be inaccurate and may
 	// underestimate the cost of large clears.
-	trState->addWriteCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+	trState->addClearCost();
 	if (addConflictRange)
 		t.write_conflict_ranges.push_back(req.arena, r);
 }
+
 void Transaction::clear(const KeyRef& key, AddConflictRange addConflictRange) {
 	++trState->cx->transactionClearMutations;
 	// There aren't any keys in the database with size larger than the max key size
@@ -6298,9 +6424,11 @@ void Transaction::clear(const KeyRef& key, AddConflictRange addConflictRange) {
 	data[key.size()] = 0;
 	t.mutations.emplace_back(
 	    req.arena, MutationRef::ClearRange, KeyRef(data, key.size()), KeyRef(data, key.size() + 1));
+	trState->addClearCost();
 	if (addConflictRange)
 		t.write_conflict_ranges.emplace_back(req.arena, KeyRef(data, key.size()), KeyRef(data, key.size() + 1));
 }
+
 void Transaction::addWriteConflictRange(const KeyRangeRef& keys) {
 	ASSERT(!keys.empty());
 	auto& req = tr;
@@ -8254,7 +8382,12 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 			for (int i = 0; i < nLocs; i++) {
 				partBegin = (i == 0) ? keys.begin : locations[i].range.begin;
 				partEnd = (i == nLocs - 1) ? keys.end : locations[i].range.end;
-				SplitRangeRequest req(trState->getTenantInfo(), KeyRangeRef(partBegin, partEnd), chunkSize);
+				SplitRangeRequest req(trState->getTenantInfo(),
+				                      trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady()
+				                          ? trState->readVersion()
+				                          : latestVersion,
+				                      KeyRangeRef(partBegin, partEnd),
+				                      chunkSize);
 				fReplies[i] = loadBalance(locations[i].locations->locations(),
 				                          &StorageServerInterface::getRangeSplitPoints,
 				                          req,
@@ -8285,9 +8418,8 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
 				trState->cx->invalidateCache(trState->tenant().mapRef(&Tenant::prefix), keys);
 				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
-			} else if (e.code() == error_code_tenant_not_found && trState->hasTenant()) {
-				TraceEvent(SevWarn, "GetRangeSplitPointsSSVersionBehind").error(e);
-				throw;
+			} else if (e.code() == error_code_future_version) {
+				wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
 			} else {
 				TraceEvent(SevError, "GetRangeSplitPoints").error(e);
 				throw;
@@ -10536,7 +10668,9 @@ void writeMutationsToCache(Reference<ChangeFeedCacheData> cacheData,
 		Value durableValue = changeFeedCacheValue(cacheOut);
 		db->storage->set(KeyValueRef(durableKey, durableValue));
 		cacheData->latest = cacheOut.back().version;
-		db->uncommittedCFBytes += durableKey.size() + durableValue.size();
+		size_t mutationBytes = durableKey.size() + durableValue.size();
+		db->uncommittedCFBytes += mutationBytes;
+		db->feedDiskBytesWritten += mutationBytes;
 		if (db->uncommittedCFBytes > CLIENT_KNOBS->CHANGE_FEED_CACHE_FLUSH_BYTES) {
 			db->commitChangeFeedStorage->set(true);
 		}
@@ -11018,6 +11152,7 @@ ACTOR Future<bool> getChangeFeedStreamFromDisk(Reference<DatabaseContext> db,
                                                KeyRange range,
                                                Key tenantPrefix) {
 	state bool foundEnd = false;
+	state ActiveCounter<int>::Releaser holdingActiveDiskStreamsCounter = db->activeFeedDiskStreams.take(1);
 	loop {
 		Key beginKey = changeFeedCacheKey(tenantPrefix, rangeID, range, *begin);
 		Key endKey = changeFeedCacheKey(tenantPrefix, rangeID, range, MAX_VERSION);
@@ -11025,6 +11160,7 @@ ACTOR Future<bool> getChangeFeedStreamFromDisk(Reference<DatabaseContext> db,
 		                                                    CLIENT_KNOBS->CHANGE_FEED_CACHE_LIMIT_BYTES,
 		                                                    CLIENT_KNOBS->CHANGE_FEED_CACHE_LIMIT_BYTES));
 		state int idx = 0;
+		db->feedDiskBytesRead += res.expectedSize();
 
 		while (!foundEnd && idx < res.size()) {
 			Standalone<VectorRef<MutationsAndVersionRef>> mutations = decodeChangeFeedCacheValue(res[idx].value);
@@ -11263,6 +11399,7 @@ ACTOR Future<Void> durableChangeFeedMonitor(Reference<DatabaseContext> db,
 	state Reference<ChangeFeedCacheData> data;
 	state Error err = success();
 	state Version originalBegin = begin;
+	state ActiveCounter<int>::Releaser holdingActiveStreamsCounter = db->activeFeedStreams.take(1);
 	results->endVersion = end;
 	db->usedAnyChangeFeeds = true;
 	try {
@@ -11624,6 +11761,17 @@ Reference<DatabaseContext::TransactionT> DatabaseContext::createTransaction() {
 
 // BlobGranule API.
 
+ACTOR Future<Void> checkRangeLock(Transaction* tr, KeyRange physicalRange) {
+	if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK) {
+		return Void();
+	}
+	bool unlocked = wait(RangeLockAPI::isRangeUnlockedTransaction(tr, physicalRange.begin, physicalRange.end));
+	if (unlocked) {
+		return Void();
+	}
+	throw illegal_locked_range_access();
+}
+
 ACTOR Future<Void> checkTenantLock(Transaction* tr, Optional<Reference<Tenant>> tenant, KeyRange keyRange) {
 	if (CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK) {
 		return Void();
@@ -11690,13 +11838,13 @@ ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 
-			state Future<Void> tenantLockCheck = checkTenantLock(&tr, tenant, range);
+			state Future<Void> lockCheck = checkTenantLock(&tr, tenant, range) && checkRangeLock(&tr, purgeRange);
 			// must be aligned to blob range(s)
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedBegin =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.begin, keyAfter(purgeRange.begin)), 1);
 			state Future<Standalone<VectorRef<KeyRangeRef>>> blobbifiedEnd =
 			    getBlobRanges(&tr, KeyRangeRef(purgeRange.end, keyAfter(purgeRange.end)), 1);
-			wait(success(blobbifiedBegin) && success(blobbifiedEnd) && tenantLockCheck);
+			wait(success(blobbifiedBegin) && success(blobbifiedEnd) && lockCheck);
 			// If there are no blob ranges on the boundary that's okay as we allow purging of multiple full ranges.
 			if ((!blobbifiedBegin.get().empty() && blobbifiedBegin.get().front().begin < purgeRange.begin) ||
 			    (!blobbifiedEnd.get().empty() && blobbifiedEnd.get().front().begin < purgeRange.end)) {
@@ -11803,7 +11951,8 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange));
+			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
+			     checkRangeLock(&tr->getTransaction(), range));
 
 			Standalone<VectorRef<KeyRangeRef>> startBlobRanges = wait(getBlobRanges(&tr->getTransaction(), range, 1));
 

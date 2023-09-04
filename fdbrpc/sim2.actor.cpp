@@ -259,6 +259,7 @@ struct SimClogging {
 		if (!g_simulator->speedUpSimulation && !stableConnection && clogRecvUntil.count(to.ip))
 			t = std::max(t, clogRecvUntil[to.ip]);
 
+		_lastClogged = std::max(_lastClogged, t);
 		return t - tnow;
 	}
 
@@ -295,11 +296,16 @@ struct SimClogging {
 		return i->second;
 	}
 
+	double lastClogged() const { return _lastClogged; }
+
 private:
 	std::map<IPAddress, double> clogSendUntil, clogRecvUntil;
 	std::map<std::pair<IPAddress, IPAddress>, double> clogPairUntil;
 	std::map<std::pair<IPAddress, IPAddress>, double> clogPairLatency;
 	std::map<std::pair<NetworkAddress, NetworkAddress>, double> clogProcessPairUntil;
+
+	double _lastClogged = -1e9;
+
 	double halfLatency() const {
 		double a = deterministicRandom()->random01();
 		const double pFast = 0.999;
@@ -445,8 +451,6 @@ struct Sim2Conn final : IConnection, ReferenceCounted<Sim2Conn> {
 	// this may not be an address we can connect to!
 	NetworkAddress getPeerAddress() const override { return peerEndpoint; }
 	UID getDebugID() const override { return dbgid; }
-
-	boost::asio::ip::tcp::socket& getSocket() override { throw operation_failed(); }
 
 	bool opened, closedByCaller, stableConnection, trustedPeer;
 
@@ -1849,6 +1853,7 @@ public:
 			if (!machine->isSpawnedKVProcess())
 				latestEventCache.clear();
 			machine->failed = true;
+			removeRoles(machine->address);
 		} else if (kt == KillType::InjectFaults) {
 			TraceEvent(SevWarn, "FaultMachine")
 			    .detail("Name", machine->name)
@@ -2129,6 +2134,10 @@ public:
 			}
 		}
 
+		if (!forceKill && !allowRebootAndDelete && kt == KillType::RebootAndDelete) {
+			kt = KillType::Reboot;
+		}
+
 		CODE_PROBE(originalKt != kt,
 		           "Kill type was changed from requested to reboot.",
 		           probe::context::sim2,
@@ -2163,7 +2172,9 @@ public:
 		    .detail("KtOrig", ktOrig)
 		    .detail("KillableMachines", processesOnMachine)
 		    .detail("ProcessPerMachine", processesPerMachine)
-		    .detail("KillChanged", kt != ktOrig);
+		    .detail("KillChanged", kt != ktOrig)
+		    .detail("ForceKill", forceKill);
+
 		if (kt < KillType::RebootAndDelete) {
 			if ((kt == KillType::InjectFaults || kt == KillType::FailDisk) &&
 			    machines[machineId].machineProcess != nullptr)
@@ -2299,14 +2310,17 @@ public:
 		KillType ktResult, ktMin = kt;
 		for (auto& datacenterMachine : datacenterMachines) {
 			if (deterministicRandom()->random01() < 0.99 || forceKill) {
-				killMachine(datacenterMachine.first, kt, true, &ktResult);
+				killMachine(datacenterMachine.first, kt, forceKill, &ktResult);
 				if (ktResult != kt) {
 					TraceEvent(SevWarn, "KillDCFail")
 					    .detail("Zone", datacenterMachine.first)
 					    .detail("KillType", kt)
 					    .detail("KillTypeResult", ktResult)
 					    .detail("KillTypeOrig", ktOrig);
-					ASSERT(ktResult == KillType::None);
+					// There's a corner case where we explicitly change KillType::RebootAndDelete to KillType::Reboot.
+					// It happens when allowRebootAndDelete=false.
+					ASSERT(ktResult == KillType::None ||
+					       (!allowRebootAndDelete && kt == KillType::RebootAndDelete && ktResult == KillType::Reboot));
 				}
 				ktMin = std::min<KillType>(ktResult, ktMin);
 			}
@@ -2356,6 +2370,7 @@ public:
 
 		return (kt == ktMin);
 	}
+
 	void clogInterface(const IPAddress& ip, double seconds, ClogMode mode = ClogDefault) override {
 		if (mode == ClogDefault) {
 			double a = deterministicRandom()->random01();
@@ -2388,6 +2403,8 @@ public:
 		TraceEvent("UncloggingPair").detail("From", from).detail("To", to);
 		g_clogging.unclogPair(from, to);
 	}
+
+	double lastClogged() const override { return g_clogging.lastClogged(); }
 
 	void processInjectBlobFault(ProcessInfo* machine, double failureRate) override {
 		CODE_PROBE(true, "Simulated process beginning blob fault", probe::context::sim2, probe::assert::simOnly);
@@ -2970,8 +2987,22 @@ void disableConnectionFailures(std::string const& context) {
 	}
 }
 
+ACTOR template <class T>
+Future<T> waitAndOnProcess(Future<T> f, ISimulator::ProcessInfo* process, TaskPriority taskId) {
+	try {
+		state T t = wait(f);
+		wait(g_simulator->onProcess(process, taskId));
+		return t;
+	} catch (Error& e) {
+		state Error err = e;
+		wait(g_simulator->onProcess(process, taskId));
+		throw err;
+	}
+}
+
 // Opens a file for asynchronous I/O
 Future<Reference<class IAsyncFile>> Sim2FileSystem::open(const std::string& filename, int64_t flags, int64_t mode) {
+	ISimulator::ProcessInfo* currentProcess = g_simulator->getCurrentProcess();
 	ASSERT((flags & IAsyncFile::OPEN_ATOMIC_WRITE_AND_CREATE) || !(flags & IAsyncFile::OPEN_CREATE) ||
 	       StringRef(filename).endsWith(
 	           ".fdb-lock"_sr)); // We don't use "ordinary" non-atomic file creation right now except for
@@ -2981,14 +3012,14 @@ Future<Reference<class IAsyncFile>> Sim2FileSystem::open(const std::string& file
 		ASSERT(flags & IAsyncFile::OPEN_CREATE);
 
 	if (flags & IAsyncFile::OPEN_UNCACHED) {
-		auto& machineCache = g_simulator->getCurrentProcess()->machine->openFiles;
+		auto& machineCache = currentProcess->machine->openFiles;
 		std::string actualFilename = filename;
 		if (flags & IAsyncFile::OPEN_ATOMIC_WRITE_AND_CREATE) {
 			actualFilename = filename + ".part";
 			auto partFile = machineCache.find(actualFilename);
 			if (partFile != machineCache.end()) {
 				Future<Reference<IAsyncFile>> f = AsyncFileDetachable::open(partFile->second.get());
-				return f;
+				return waitAndOnProcess(f, currentProcess, g_network->getCurrentTask());
 			}
 		}
 
@@ -3023,7 +3054,7 @@ Future<Reference<class IAsyncFile>> Sim2FileSystem::open(const std::string& file
 				                                               : AsyncFileEncrypted::Mode::READ_ONLY;
 				return Reference<IAsyncFile>(new AsyncFileEncrypted(r, mode));
 			});
-		return f;
+		return waitAndOnProcess(f, currentProcess, g_network->getCurrentTask());
 	} else
 		return AsyncFileCached::open(filename, flags, mode);
 }

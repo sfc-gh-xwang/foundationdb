@@ -56,6 +56,7 @@ private:
 		OP_GET_BLOB_RANGES,
 		OP_VERIFY,
 		OP_READ_DESC,
+		OP_READ_DESC_V2,
 		OP_READ_DESC_V1,
 		OP_FLUSH,
 		OP_LAST = OP_FLUSH
@@ -544,14 +545,18 @@ private:
 	}
 
 	void randomReadDescription(TTaskFct cont, std::optional<int> tenantId) {
+
+		if (ApiWorkload::apiVersion < 800000) {
+			schedule(cont);
+			return;
+		}
+
 		fdb::KeyRange keyRange = randomNonEmptyKeyRange();
 		auto results = std::make_shared<fdb::ReadBlobGranulesDescriptionResult>();
 
-		debugOp("ReadDesc", keyRange, tenantId, "starting");
+		debugOp("ReadDescV3", keyRange, tenantId, "starting");
 
-		int64_t mutationByteLimit = Random::get().randomBool(0.2) && ApiWorkload::apiVersion >= 800000
-		                                ? 0
-		                                : std::numeric_limits<int64_t>::max();
+		int64_t mutationByteLimit = Random::get().randomBool(0.2) ? 0 : std::numeric_limits<int64_t>::max();
 
 		execTransaction(
 		    [this, keyRange, tenantId, mutationByteLimit, results](auto ctx) {
@@ -574,7 +579,50 @@ private:
 			        true);
 		    },
 		    [this, keyRange, tenantId, results, cont]() {
-			    debugOp("ReadDesc",
+			    debugOp("ReadDescV3",
+			            keyRange,
+			            tenantId,
+			            fmt::format("complete @ {0} with {1} granules",
+			                        results->data()->read_version,
+			                        results->descs().size()));
+			    schedule(cont);
+		    },
+		    getTenant(tenantId));
+	}
+
+	void randomReadDescriptionV2(TTaskFct cont, std::optional<int> tenantId) {
+
+		if (ApiWorkload::apiVersion < 710300) {
+			schedule(cont);
+			return;
+		}
+
+		fdb::KeyRange keyRange = randomNonEmptyKeyRange();
+		auto results = std::make_shared<fdb::ReadBlobGranulesDescriptionResult>();
+
+		debugOp("ReadDescV2", keyRange, tenantId, "starting");
+
+		execTransaction(
+		    [this, keyRange, tenantId, results](auto ctx) {
+			    ctx->tx().setOption(FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE);
+
+			    auto f = ctx->tx().readBlobGranulesDescriptionV2(keyRange.beginKey, keyRange.endKey, 0, -2);
+			    ctx->continueAfter(
+			        f,
+			        [this, ctx, keyRange, tenantId, results, f]() {
+				        *results = f.get();
+				        this->validateBlobGranuleDescriptions(ctx,
+				                                              results->descs(),
+				                                              keyRange,
+				                                              tenantId,
+				                                              results->data()->read_version,
+				                                              std::numeric_limits<int64_t>::max());
+				        ctx->done();
+			        },
+			        true);
+		    },
+		    [this, keyRange, tenantId, results, cont]() {
+			    debugOp("ReadDescV2",
 			            keyRange,
 			            tenantId,
 			            fmt::format("complete @ {0} with {1} granules",
@@ -590,7 +638,7 @@ private:
 		auto results = std::make_shared<fdb::ReadBlobGranulesDescriptionResultV1>();
 		auto readVersionOut = std::make_shared<int64_t>();
 
-		debugOp("ReadDesc", keyRange, tenantId, "starting");
+		debugOp("ReadDescV1", keyRange, tenantId, "starting");
 
 		execTransaction(
 		    [this, keyRange, tenantId, results, readVersionOut](auto ctx) {
@@ -608,7 +656,7 @@ private:
 			        true);
 		    },
 		    [this, keyRange, tenantId, results, readVersionOut, cont]() {
-			    debugOp("ReadDesc",
+			    debugOp("ReadDescV1",
 			            keyRange,
 			            tenantId,
 			            fmt::format("complete @ {0} with {1} granules", *readVersionOut, results->size()));
@@ -679,6 +727,9 @@ private:
 			break;
 		case OP_READ_DESC:
 			randomReadDescription(cont, tenantId);
+			break;
+		case OP_READ_DESC_V2:
+			randomReadDescriptionV2(cont, tenantId);
 			break;
 		case OP_READ_DESC_V1:
 			randomReadDescriptionV1(cont, tenantId);

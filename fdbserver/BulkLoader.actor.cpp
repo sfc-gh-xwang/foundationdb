@@ -14,7 +14,7 @@
 #include "fdbclient/BulkLoadMetadata.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/BlobWorker.h"
-
+#include "fdbclient/RangeLockAPI.actor.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 #define DBG_BL_REQUEST false
@@ -36,6 +36,9 @@ bool isTransientFileValidationError(const Error& e) {
 }
 
 bool canReplyWith(const Error& e) {
+	if (RangeLockAPI::isRangeLockError(e)) {
+		return true;
+	}
 	switch (e.code()) {
 	case error_code_bulk_load_not_found:
 	case error_code_bulk_load_not_registering_files:
@@ -138,9 +141,7 @@ std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> s
 
 		fp.dbState.filename = filename;
 		fp.dbState.type = BulkLoadFileType::SNAPSHOT;
-		if (cipherKeysMeta.present()) {
-			fp.dbState.cipherKeysMetaRef = BlobGranuleCipherKeysMetaRef(arena, cipherKeysMeta.get());
-		}
+		fp.dbState.cipherKeysMeta = cipherKeysMeta;
 
 		Standalone<StringRef> fileId = uidToFileID(fileUID);
 		arena.dependsOn(fileId.arena());
@@ -381,15 +382,15 @@ ACTOR Future<Void> validateBlobPointer(Reference<BulkLoaderData> self,
 			state Arena arena;
 			state uint8_t* data = new (arena) uint8_t[fileSize];
 			state Future<BlobGranuleCipherKeysCtx> cipherKeysF =
-			    (created.cipherKeysMetaRef.present())
-			        ? getGranuleCipherKeysFromKeysMetaRef(dbInfo, created.cipherKeysMetaRef.get(), &arena)
+			    (created.cipherKeysMeta.present())
+			        ? getGranuleCipherKeysFromKeysMeta(dbInfo, created.cipherKeysMeta.get(), &arena)
 			        : Never();
 
 			int readSize = wait(reader->read(data, fileSize, 0));
 			ASSERT(fileSize == readSize);
 
 			state Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
-			if (created.cipherKeysMetaRef.present()) {
+			if (created.cipherKeysMeta.present()) {
 				BlobGranuleCipherKeysCtx cipherKeysCtx_ = wait(cipherKeysF);
 				cipherKeysCtx = cipherKeysCtx_;
 			}

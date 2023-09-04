@@ -41,10 +41,14 @@ namespace combify {
 
 // Network or database option can have a transaction implication:
 // e.g. trustedClient option affects whether AuthZ token transaction option should be set.
+// Clang-format is disabled for the concept definition below as it is currently lacking
+// concepts syntax support: https://stackoverflow.com/questions/62219221/using-clang-format-with-c20-concepts
+// clang-format off
 template <class Opt>
 concept HasTransactionImplication = requires(const Opt& o) {
-	                                    { o.apply(std::declval<fdb::Transaction>()) } -> std::same_as<void>;
-                                    };
+	{ o.apply(std::declval<fdb::Transaction>()) } -> std::same_as<void>;
+};
+// clang-format on
 
 using namespace fdb::literals;
 
@@ -96,6 +100,12 @@ auto nextIterationImpl = [](auto&... opts) -> optional<IterableOptionTier> {
 };
 
 bool TestOptions::allOptionsValid() const {
+	// Check iterable options are not violating constraints. For instance, GRV caching is only
+	// supported when multi-version client is used
+	if (withoutMultiVersion(*this) && withGrvCache(*this)) {
+		return false;
+	}
+
 	size_t count = 0;
 	std::apply(
 	    [this, &count](const auto&... opts) {
@@ -509,6 +519,16 @@ bool TestEnv::runTest(const TestCase& t) {
 	return !exc.has_value();
 }
 
+fdb::Transaction TestEnv::newNormalOrTenantTransaction(fdb::Database db) const {
+	// For trusted client or if there is no tenant, return a new DB transaction
+	if (*trustedClient || tenants.empty()) {
+		return newTransaction(db);
+	}
+
+	// Otherwise, create a transaction from the first tenant
+	return newTenantTransaction(db, tenants[0].first);
+}
+
 std::vector<const TestCase*> collectTestCases(const TestOptions& options) {
 	std::vector<const TestCase*> ret;
 	for (const auto& testCase : testCases) {
@@ -568,6 +588,12 @@ int main(int argc, char** argv) {
 	combify::optional<combify::IterableOptionTier> shiftedTier;
 	std::vector<std::pair<const combify::TestCase*, combify::TestOptions>> failedCases;
 	do {
+		// Skip if a combination is unfit
+		if (!env->allOptionsValid()) {
+			fmt::print("\n{} Combination unfit, skipping \n", env->shortSummary());
+			continue;
+		}
+
 		auto cases = combify::collectTestCases(*env);
 		fmt::print("\n{} [{} cases]\n", env->shortSummaryIterable(), cases.size());
 		if (cases.empty()) {

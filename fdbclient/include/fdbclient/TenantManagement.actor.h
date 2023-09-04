@@ -597,7 +597,7 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenants(Reference<DB> db
 	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
 		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-		return listTenantsTransaction(tr, begin, end, limit);
+		return TenantAPI::listTenantsTransaction(tr, begin, end, limit);
 	});
 }
 
@@ -629,42 +629,123 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenantGroupTenants(Refer
 	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
 		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-		return listTenantGroupTenantsTransaction(tr, tenantGroup, begin, end, limit);
+		return TenantAPI::listTenantGroupTenantsTransaction(tr, tenantGroup, begin, end, limit);
 	});
 }
 
+// Scan the tenant index to get a list of tenant IDs, and then lookup the metadata for each ID individually
 ACTOR template <class Transaction>
-Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTransaction(Transaction tr,
-                                                                                         TenantName begin,
-                                                                                         TenantName end,
-                                                                                         int limit) {
-	std::vector<std::pair<TenantName, int64_t>> matchingTenants = wait(listTenantsTransaction(tr, begin, end, limit));
+Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTransaction(
+    Transaction tr,
+    std::vector<std::pair<TenantName, int64_t>> tenantIds) {
 
-	state std::vector<Future<TenantMapEntry>> tenantEntryFutures;
-	for (auto const& [name, id] : matchingTenants) {
-		tenantEntryFutures.push_back(getTenantTransaction(tr, id));
+	CODE_PROBE(true, "TenantAPI list tenant metadata");
+	state int idIdx = 0;
+	state std::vector<Future<Optional<TenantMapEntry>>> futures;
+	for (; idIdx < tenantIds.size(); ++idIdx) {
+		futures.push_back(tryGetTenantTransaction(tr, tenantIds[idIdx].second));
 	}
-
-	wait(waitForAll(tenantEntryFutures));
+	wait(waitForAll(futures));
 
 	std::vector<std::pair<TenantName, TenantMapEntry>> results;
-	for (auto const& f : tenantEntryFutures) {
-		results.emplace_back(f.get().tenantName, f.get());
+	results.reserve(futures.size());
+	for (int i = 0; i < futures.size(); ++i) {
+		const TenantMapEntry& entry = futures[i].get().get();
+
+		// Tenants being renamed show up in tenantIds twice, once under each name. The destination name will be
+		// different from the tenant entry and is filtered from the list
+		if (entry.tenantName == tenantIds[i].first) {
+			results.emplace_back(entry.tenantName, entry);
+		}
 	}
 
 	return results;
 }
 
-template <class DB>
-Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadata(Reference<DB> db,
-                                                                              TenantName begin,
-                                                                              TenantName end,
-                                                                              int limit) {
-	return runTransaction(db, [=](Reference<typename DB::TransactionT> tr) {
-		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-		tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		return listTenantMetadataTransaction(tr, begin, end, limit);
-	});
+ACTOR template <class Transaction>
+Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadataTransaction(
+    Transaction tr,
+    TenantName begin,
+    TenantName end,
+    int limit,
+    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>()) {
+	state std::vector<std::pair<TenantName, int64_t>> matchingTenants;
+	if (!tenantGroup.present()) {
+		wait(store(matchingTenants, listTenantsTransaction(tr, begin, end, limit)));
+	} else {
+		wait(store(matchingTenants, listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
+	}
+	std::vector<std::pair<TenantName, TenantMapEntry>> results =
+	    wait(listTenantMetadataTransaction(tr, matchingTenants));
+	return results;
+}
+
+ACTOR template <class DB>
+Future<std::vector<std::pair<TenantName, TenantMapEntry>>> listTenantMetadata(
+    Reference<DB> db,
+    TenantName begin,
+    TenantName end,
+    int limit,
+    int offset = 0,
+    Optional<TenantGroupName> tenantGroup = Optional<TenantGroupName>(),
+    Optional<LockedTenants> locked = Optional<LockedTenants>()) {
+	state Reference<typename DB::TransactionT> tr = db->createTransaction();
+	state std::vector<std::pair<TenantName, TenantMapEntry>> results;
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::READ_LOCK_AWARE);
+			if (!locked.present() && offset == 0) {
+				state std::vector<std::pair<TenantName, int64_t>> ids;
+				if (!tenantGroup.present()) {
+					wait(store(ids, TenantAPI::listTenantsTransaction(tr, begin, end, limit)));
+				} else {
+					wait(store(ids,
+					           TenantAPI::listTenantGroupTenantsTransaction(tr, tenantGroup.get(), begin, end, limit)));
+				}
+				wait(store(results, TenantAPI::listTenantMetadataTransaction(tr, ids)));
+				return results;
+			}
+
+			// read in batch
+			state int count = 0;
+			loop {
+				std::vector<std::pair<TenantName, TenantMapEntry>> tenantBatch =
+				    wait(TenantAPI::listTenantMetadataTransaction(
+				        tr, begin, end, std::max(limit + offset, 1000), tenantGroup));
+
+				if (tenantBatch.empty()) {
+					return results;
+				}
+
+				// Extra filtering and offset calculations
+				for (auto const& [name, entry] : tenantBatch) {
+					// If provided "locked", skip the entry if its lock state doesn't match
+					if (locked.present()) {
+						if (locked.get() && entry.tenantLockState == TenantAPI::TenantLockState::UNLOCKED) {
+							continue;
+						}
+						if (!locked.get() && entry.tenantLockState != TenantAPI::TenantLockState::UNLOCKED) {
+							continue;
+						}
+					}
+					++count;
+					if (count > offset) {
+						results.emplace_back(name, entry);
+						if (count - offset == limit) {
+							ASSERT(count - offset == results.size());
+							return results;
+						}
+					}
+				}
+
+				CODE_PROBE(true, "TenantAPI list tenant multiple batches");
+				begin = keyAfter(tenantBatch.back().first);
+			}
+		} catch (Error& e) {
+			wait(safeThreadFutureToFuture(tr->onError(e)));
+		}
+	}
 }
 
 ACTOR template <class Transaction>
