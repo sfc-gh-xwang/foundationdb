@@ -69,6 +69,7 @@ ACTOR Future<Void> doBlobPurge(Database db,
 	    wait(db->purgeBlobGranules(KeyRange(KeyRangeRef(startKey, endKey)), purgeVersion, tenant, force));
 
 	fmt::print("Blob purge registered for [{0} - {1}) @ {2}\n", startKey.printable(), endKey.printable(), purgeVersion);
+	fmt::print("Purge Key: {0}\n", purgeKey.printable());
 
 	state Future<Void> printWarningActor = printAfterDelay(
 	    5.0, "Waiting for purge to complete. (interrupting this wait with CTRL+C will not cancel the purge)");
