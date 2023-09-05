@@ -29,6 +29,13 @@ project(foundationdb
   HOMEPAGE_URL "http://www.foundationdb.org/"
   LANGUAGES C CXX ASM)
 
+if(${CMAKE_PROJECT_VERSION_MAJOR} EQUAL 71)
+  # We used version 71 temporarily between 7.1 and 8.0. Consider skipping from 70 to 72.
+  # Also be aware there could be code that does version comparisons with the old v71 that may
+  # need to be adjusted (e.g. if (version >= 71))
+  message(FATAL_ERROR "Version 71 is disallowed due to prior use")
+endif()
+
 set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${PROJECT_SOURCE_DIR}/cmake")
 message (STATUS "${PROJECT_SOURCE_DIR} ${PROJECT_BINARY_DIR}")
 if("${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
@@ -112,7 +119,7 @@ file(WRITE ${CMAKE_BINARY_DIR}/version.txt ${FDB_VERSION})
 set(FDB_CURRENT_VERSION ${PROJECT_VERSION})
 set(FDB_FUTURE_VERSION "10.0.0")
 # TODO add 8.0.0 to our prev version once it is available
-set(FDB_PREV_RELEASE_VERSION "71.3.4")
+set(FDB_PREV_RELEASE_VERSION "71.3.5")
 set(FDB_PREV2_RELEASE_VERSION "71.2.9")
 set(FDB_PREV3_RELEASE_VERSION "7.1.4")
 

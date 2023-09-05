@@ -41,6 +41,7 @@ ACTOR Future<bool> killCommandActor(Reference<IDatabase> db,
 	ASSERT(tokens.size() >= 1);
 	state bool result = true;
 	state std::string addressesStr;
+	state int numAddresses = 0;
 	if (tokens.size() == 1) {
 		// initialize worker interfaces
 		address_interface->clear();
@@ -58,18 +59,40 @@ ACTOR Future<bool> killCommandActor(Reference<IDatabase> db,
 			printf("%s\n", printable(it.first).c_str());
 		}
 		printf("\n");
-	} else if (tokencmp(tokens[1], "all")) {
-		if (address_interface->size() == 0) {
-			result = false;
-			fprintf(stderr,
-			        "ERROR: no processes to kill. You must run the `kill’ command before "
-			        "running `kill all’.\n");
-		} else {
-			std::vector<std::string> addressesVec;
-			for (const auto& [address, _] : *address_interface) {
-				addressesVec.push_back(address.toString());
+	} else {
+		if (tokencmp(tokens[1], "all")) {
+			if (address_interface->size() == 0) {
+				result = false;
+				fprintf(stderr,
+				        "ERROR: no processes to kill. You must run the `kill’ command before "
+				        "running `kill all’.\n");
+			} else {
+				std::vector<std::string> addressesVec;
+				for (const auto& [address, _] : *address_interface) {
+					addressesVec.push_back(address.toString());
+				}
+				addressesStr = boost::algorithm::join(addressesVec, ",");
+				numAddresses = address_interface->size();
 			}
-			addressesStr = boost::algorithm::join(addressesVec, ",");
+		} else {
+			int i;
+			for (i = 1; i < tokens.size(); i++) {
+				if (!address_interface->count(tokens[i])) {
+					fprintf(stderr, "ERROR: process `%s' not recognized.\n", printable(tokens[i]).c_str());
+					result = false;
+					break;
+				}
+			}
+			if (result) {
+				std::vector<std::string> addressesVec;
+				for (i = 1; i < tokens.size(); i++) {
+					addressesVec.push_back(tokens[i].toString());
+				}
+				addressesStr = boost::algorithm::join(addressesVec, ",");
+				numAddresses = tokens.size() - 1;
+			}
+		}
+		if (result) {
 			// make sure we only call the interface once to send requests in parallel
 			int64_t killRequestsSent = wait(safeThreadFutureToFuture(db->rebootWorker(addressesStr, false, 0)));
 			if (!killRequestsSent) {
@@ -78,36 +101,8 @@ ACTOR Future<bool> killCommandActor(Reference<IDatabase> db,
 				        "ERROR: failed to send requests to all processes, please run the `kill’ command again to fetch "
 				        "latest addresses.\n");
 			} else {
-				printf("Attempted to kill %zu processes\n", address_interface->size());
-			}
-		}
-	} else {
-		state int i;
-		for (i = 1; i < tokens.size(); i++) {
-			if (!address_interface->count(tokens[i])) {
-				fprintf(stderr, "ERROR: process `%s' not recognized.\n", printable(tokens[i]).c_str());
-				result = false;
-				break;
-			}
-		}
-
-		if (result) {
-			std::vector<std::string> addressesVec;
-			for (i = 1; i < tokens.size(); i++) {
-				addressesVec.push_back(tokens[i].toString());
-			}
-			addressesStr = boost::algorithm::join(addressesVec, ",");
-			int64_t killRequestsSent = wait(safeThreadFutureToFuture(db->rebootWorker(addressesStr, false, 0)));
-			if (!killRequestsSent) {
-				result = false;
-				fprintf(stderr,
-				        "ERROR: failed to send requests to kill processes `%s', please run the `kill’ command again to "
-				        "fetch latest addresses.\n",
-				        addressesStr.c_str());
-			} else {
-				// delay in case the network queue is not flush before the client exits
 				wait(delay(3.0));
-				printf("Attempted to kill %zu processes\n", tokens.size() - 1);
+				printf("Attempted to kill %d processes\n", numAddresses);
 			}
 		}
 	}

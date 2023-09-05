@@ -3,7 +3,7 @@ buggify = false
 minimumReplication = 2
 
 [[test]]
-testTitle = 'Clogged'
+testTitle = 'LowLatencySingleClog'
 connectionFailuresDisableDuration = 100000
 
     [[test.workload]]

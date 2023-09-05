@@ -225,7 +225,7 @@ public:
 
 	virtual void addActor(Future<Void> future) = 0;
 
-	virtual void getSplitPoints(SplitRangeRequest const& req) = 0;
+	virtual Future<Void> getSplitPoints(SplitRangeRequest const& req) = 0;
 
 	virtual Future<Void> waitMetricsTenantAware(const WaitMetricsRequest& req) = 0;
 
@@ -274,7 +274,7 @@ Future<Void> serveStorageMetricsRequests(ServiceType* self, StorageServerInterfa
 					CODE_PROBE(true, "getSplitPoints immediate wrong_shard_server()");
 					self->sendErrorWithPenalty(req.reply, wrong_shard_server(), self->getPenalty());
 				} else {
-					self->getSplitPoints(req);
+					self->addActor(self->getSplitPoints(req));
 				}
 			}
 			when(wait(doPollMetrics)) {

@@ -136,7 +136,8 @@ ACTOR Future<Void> runTests(Reference<IClusterConnectionRecord> connRecord,
                             UnitTestParameters testOptions = UnitTestParameters(),
                             Optional<TenantName> defaultTenant = Optional<TenantName>(),
                             Standalone<VectorRef<TenantNameRef>> extraTenants = Standalone<VectorRef<TenantNameRef>>(),
-                            bool restartingTest = false);
+                            bool restartingTest = false,
+                            bool defaultBlobification = false);
 
 #include "flow/unactorcompiler.h"
 #endif

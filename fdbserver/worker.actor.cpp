@@ -23,6 +23,7 @@
 #include <boost/lexical_cast.hpp>
 #include <unordered_map>
 
+#include "fdbclient/BlobCipher.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbserver/BlobMigratorInterface.h"
 #include "flow/ApiVersion.h"
@@ -64,8 +65,8 @@
 #include "fdbserver/ConfigNode.h"
 #include "fdbserver/LocalConfiguration.h"
 #include "fdbserver/RemoteIKeyValueStore.actor.h"
-#include "fdbclient/MonitorLeader.h"
 #include "fdbclient/ClientWorkerInterface.h"
+#include "fdbclient/MonitorLeader.h"
 #include "flow/Profiler.h"
 #include "flow/ThreadHelper.actor.h"
 #include "flow/Trace.h"
@@ -2590,6 +2591,33 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					profilerReq.reply.sendError(e);
 				}
 			}
+			when(ListLatestEncryptCipherKeysRequest req =
+			         waitNext(interf.clientInterface.listLatestEncryptCipherKeys.getFuture())) {
+				// In case we have huge number of encryption domains, we should yield once for a while when we iterate
+				// through the cipher key cache. But the cipher key cache maintains an unordered_map which can get
+				// re-hash in the middle, which make it difficult to iterate with yield in between.
+				std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> latestCipherKeys =
+				    BlobCipherKeyCache::getInstance()->listLatestCipherKeys();
+				ListLatestEncryptCipherKeysReply reply;
+				auto iter = req.beginDomainId.present() ? latestCipherKeys.lower_bound(req.beginDomainId.get())
+				                                        : latestCipherKeys.begin();
+				auto hasMore = [&]() -> bool {
+					return iter != latestCipherKeys.end() &&
+					       (!req.endDomainId.present() || iter->first < req.endDomainId.get()) &&
+					       reply.list.size() < req.limit;
+				};
+				while (hasMore()) {
+					EncryptCipherDomainId domainId = iter->first;
+					Reference<BlobCipherKey> cipherKey = iter->second;
+					reply.list.emplace_back(
+					    reply.arena,
+					    domainId,
+					    EncryptCipherKeyEntry({ cipherKey->getBaseCipherId(), cipherKey->getAccessAtTS() }));
+					iter++;
+				}
+				reply.hasMore = hasMore();
+				req.reply.send(reply);
+			}
 			when(RecruitMasterRequest req = waitNext(interf.master.getFuture())) {
 				LocalLineage _;
 				getCurrentLineage()->modify(&RoleLineage::role) = ProcessClass::ClusterRole::Master;
@@ -2631,10 +2659,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					    Role::DATA_DISTRIBUTOR,
 					    recruited.id(),
 					    setWhenDoneOrError(dataDistributorProcess, ddInterf, Optional<DataDistributorInterface>())));
-					ddInterf->set(Optional<DataDistributorInterface>(recruited));
 				}
 				TraceEvent("DataDistributorReceived", req.reqId).detail("DataDistributorId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!ddInterf->get().present()) {
+					ddInterf->set(Optional<DataDistributorInterface>(recruited));
+				}
 			}
 			when(InitializeRatekeeperRequest req = waitNext(interf.ratekeeper.getFuture())) {
 				LocalLineage _;
@@ -2658,10 +2689,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                 Role::RATEKEEPER,
 					                 recruited.id(),
 					                 setWhenDoneOrError(ratekeeperProcess, rkInterf, Optional<RatekeeperInterface>())));
-					rkInterf->set(Optional<RatekeeperInterface>(recruited));
 				}
 				TraceEvent("Ratekeeper_InitRequest", req.reqId).detail("RatekeeperId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!rkInterf->get().present()) {
+					rkInterf->set(Optional<RatekeeperInterface>(recruited));
+				}
 			}
 			when(InitializeConsistencyScanRequest req = waitNext(interf.consistencyScan.getFuture())) {
 				LocalLineage _;
@@ -2683,10 +2717,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					    Role::CONSISTENCYSCAN,
 					    recruited.id(),
 					    setWhenDoneOrError(consistencyScanProcess, csInterf, Optional<ConsistencyScanInterface>())));
-					csInterf->set(Optional<ConsistencyScanInterface>(recruited));
 				}
 				TraceEvent("ConsistencyScanReceived", req.reqId).detail("ConsistencyScanId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!csInterf->get().present()) {
+					csInterf->set(Optional<ConsistencyScanInterface>(recruited));
+				}
 			}
 			when(InitializeBlobManagerRequest req = waitNext(interf.blobManager.getFuture())) {
 				LocalLineage _;
@@ -2694,6 +2731,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				BlobManagerInterface recruited(locality, req.reqId, req.epoch);
 				recruited.initEndpoints();
 
+				bool updatedBlobManager = false;
 				if (bmEpochAndInterf->get().present() && bmEpochAndInterf->get().get().first == req.epoch) {
 					ASSERT(req.reqId == lastBMRecruitRequestId);
 					recruited = bmEpochAndInterf->get().get().second;
@@ -2725,11 +2763,15 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                 Role::BLOB_MANAGER,
 					                 recruited.id(),
 					                 resetBlobManagerWhenDoneOrError(blobManagerProcess, bmEpochAndInterf, req.epoch)));
-					bmEpochAndInterf->set(
-					    Optional<std::pair<int64_t, BlobManagerInterface>>(std::pair(req.epoch, recruited)));
+					updatedBlobManager = true;
 				}
 				TraceEvent("BlobManagerReceived", req.reqId).detail("BlobManagerId", recruited.id());
 				req.reply.send(recruited);
+
+				if (updatedBlobManager) {
+					bmEpochAndInterf->set(
+					    Optional<std::pair<int64_t, BlobManagerInterface>>(std::pair(req.epoch, recruited)));
+				}
 			}
 			when(InitializeBlobMigratorRequest req = waitNext(interf.blobMigrator.getFuture())) {
 				LocalLineage _;
@@ -2769,10 +2811,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					                                 setWhenDoneOrError(blobMigratorProcess,
 					                                                    blobMigratorInterf,
 					                                                    Optional<BlobMigratorInterface>())));
-					blobMigratorInterf->set(Optional<BlobMigratorInterface>(recruited));
 				}
 				TraceEvent("BlobMigrator_InitRequest", req.reqId).detail("BlobMigratorId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!blobMigratorInterf->get().present()) {
+					blobMigratorInterf->set(Optional<BlobMigratorInterface>(recruited));
+				}
 			}
 			when(InitializeBackupRequest req = waitNext(interf.backup.getFuture())) {
 				if (!backupWorkerCache.exists(req.reqId)) {
@@ -2823,10 +2868,13 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 					    Role::ENCRYPT_KEY_PROXY,
 					    recruited.id(),
 					    setWhenDoneOrError(encryptKeyProxyProcess, ekpInterf, Optional<EncryptKeyProxyInterface>())));
-					ekpInterf->set(Optional<EncryptKeyProxyInterface>(recruited));
 				}
 				TraceEvent("EncryptKeyProxyReceived", req.reqId).detail("EncryptKeyProxyId", recruited.id());
 				req.reply.send(recruited);
+
+				if (!ekpInterf->get().present()) {
+					ekpInterf->set(Optional<EncryptKeyProxyInterface>(recruited));
+				}
 			}
 			when(InitializeTLogRequest req = waitNext(interf.tLog.getFuture())) {
 				// For now, there's a one-to-one mapping of spill type to TLogVersion.

@@ -21,6 +21,7 @@
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseConfiguration.h"
+#include "fdbclient/EncryptBlobCipher.h"
 #include "fdbclient/TenantEntryCache.actor.h"
 #include "fdbclient/TenantManagement.actor.h"
 #include "fdbclient/BlobRestoreCommon.h"
@@ -315,25 +316,19 @@ public:
 		this->addPrefix().set(tr, addPrefix);
 		this->removePrefix().set(tr, removePrefix);
 
-		// Skip applyMutationsKeyVersionCount, applyMutationsKeyVersionMap, applyMutationsEnd, applyMutationsBegin
-		// for only-apply-mutation-logs restore. They were initialized in preloadApplyMutationsKeyVersionMap
-		clearApplyMutationsKeys(tr, onlyApplyMutationLogs);
+		clearApplyMutationsKeys(tr);
 
 		// Initialize add/remove prefix, range version map count and set the map's start key to InvalidVersion
 		tr->set(uidPrefixKey(applyMutationsAddPrefixRange.begin, uid), addPrefix);
 		tr->set(uidPrefixKey(applyMutationsRemovePrefixRange.begin, uid), removePrefix);
 
-		// Skip init applyMutationsKeyVersionCount and applyMutationsKeyVersionMap for only-apply-mutation-logs restore.
-		// They were initialized in preloadApplyMutationsKeyVersionMap
-		if (!onlyApplyMutationLogs) {
-			int64_t startCount = 0;
-			tr->set(uidPrefixKey(applyMutationsKeyVersionCountRange.begin, uid), StringRef((uint8_t*)&startCount, 8));
-			Key mapStart = uidPrefixKey(applyMutationsKeyVersionMapRange.begin, uid);
-			tr->set(mapStart, BinaryWriter::toValue<Version>(invalidVersion, Unversioned()));
-		}
+		int64_t startCount = 0;
+		tr->set(uidPrefixKey(applyMutationsKeyVersionCountRange.begin, uid), StringRef((uint8_t*)&startCount, 8));
+		Key mapStart = uidPrefixKey(applyMutationsKeyVersionMapRange.begin, uid);
+		tr->set(mapStart, BinaryWriter::toValue<Version>(invalidVersion, Unversioned()));
 	}
 
-	void clearApplyMutationsKeys(Reference<ReadYourWritesTransaction> tr, bool skipMutationKeyVersionMap = false) {
+	void clearApplyMutationsKeys(Reference<ReadYourWritesTransaction> tr) {
 		tr->setOption(FDBTransactionOptions::COMMIT_ON_FIRST_PROXY);
 
 		// Clear add/remove prefix keys
@@ -341,21 +336,17 @@ public:
 		tr->clear(uidPrefixKey(applyMutationsRemovePrefixRange.begin, uid));
 
 		// Clear range version map and count key
-		if (!skipMutationKeyVersionMap) {
-			tr->clear(uidPrefixKey(applyMutationsKeyVersionCountRange.begin, uid));
-			Key mapStart = uidPrefixKey(applyMutationsKeyVersionMapRange.begin, uid);
-			tr->clear(KeyRangeRef(mapStart, strinc(mapStart)));
-		}
+		tr->clear(uidPrefixKey(applyMutationsKeyVersionCountRange.begin, uid));
+		Key mapStart = uidPrefixKey(applyMutationsKeyVersionMapRange.begin, uid);
+		tr->clear(KeyRangeRef(mapStart, strinc(mapStart)));
 
 		// Clear any loaded mutations that have not yet been applied
 		Key mutationPrefix = mutationLogPrefix();
 		tr->clear(KeyRangeRef(mutationPrefix, strinc(mutationPrefix)));
 
-		if (!skipMutationKeyVersionMap) {
-			// Clear end and begin versions (intentionally in this order)
-			tr->clear(uidPrefixKey(applyMutationsEndRange.begin, uid));
-			tr->clear(uidPrefixKey(applyMutationsBeginRange.begin, uid));
-		}
+		// Clear end and begin versions (intentionally in this order)
+		tr->clear(uidPrefixKey(applyMutationsEndRange.begin, uid));
+		tr->clear(uidPrefixKey(applyMutationsBeginRange.begin, uid));
 	}
 
 	void setApplyBeginVersion(Reference<ReadYourWritesTransaction> tr, Version ver) {
@@ -607,9 +598,12 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		if (cipherDetails.headerCipherDetails.present()) {
 			cipherDetails.headerCipherDetails.get().validateCipherDetailsWithCipherKey(cipherKeys.cipherHeaderKey);
 		}
-		DecryptBlobCipherAes256Ctr decryptor(
-		    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, headerRef.getIV(), BlobCipherMetrics::RESTORE);
-		return decryptor.decrypt(dataP, dataLen, headerRef, *arena);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
+		                                                                         cipherKeys.cipherHeaderKey,
+		                                                                         headerRef.getIV(),
+		                                                                         headerRef.getEncryptMode(),
+		                                                                         BlobCipherMetrics::RESTORE);
+		return decryptor->decrypt(dataP, dataLen, headerRef, *arena);
 	}
 
 	static Future<StringRef> decrypt(Database cx,
@@ -644,17 +638,21 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 			Reference<BlobCipherKey> cipherKey = wait(refreshKey(self, self->cipherKeys.textCipherKey->getDomainId()));
 			self->cipherKeys.textCipherKey = cipherKey;
 		}
-		EncryptBlobCipherAes265Ctr encryptor(
+
+		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
 		    self->cipherKeys.textCipherKey,
 		    self->cipherKeys.headerCipherKey,
 		    self->cipherKeys.ivRef.begin(),
-		    AES_256_IV_LENGTH,
+		    AES_256_CTR_IV_LENGTH,
 		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
+		    getAuthTokenAlgoFromMode(
+		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
+		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
 		    BlobCipherMetrics::BACKUP);
 		int64_t payloadSize = self->wPtr - self->dataPayloadStart;
 		StringRef encryptedData;
 		BlobCipherEncryptHeaderRef headerRef;
-		encryptedData = encryptor.encrypt(self->dataPayloadStart, payloadSize, &headerRef, *self->arena);
+		encryptedData = encryptor->encrypt(self->dataPayloadStart, payloadSize, &headerRef, *self->arena);
 		Standalone<StringRef> serialized = BlobCipherEncryptHeaderRef::toStringRef(headerRef);
 		self->arena->dependsOn(serialized.arena());
 		ASSERT(serialized.size() == self->encryptHeader.size());
@@ -680,8 +678,8 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		self->cipherKeys.headerCipherKey = textAndHeaderCipherKeys.cipherHeaderKey;
 
 		// Set ivRef
-		self->cipherKeys.ivRef = makeString(AES_256_IV_LENGTH, *self->arena);
-		deterministicRandom()->randomBytes(mutateString(self->cipherKeys.ivRef), AES_256_IV_LENGTH);
+		self->cipherKeys.ivRef = makeString(AES_256_CTR_IV_LENGTH, *self->arena);
+		deterministicRandom()->randomBytes(mutateString(self->cipherKeys.ivRef), AES_256_CTR_IV_LENGTH);
 		return Void();
 	}
 
@@ -5030,11 +5028,12 @@ struct StartFullRestoreTaskFunc : RestoreTaskFuncBase {
 		state RestoreConfig restore(task);
 
 		state Version firstVersion = Params.firstVersion().getOrDefault(task, invalidVersion);
+		state bool isBlobGranuleRestore;
+		wait(store(isBlobGranuleRestore, restore.isBlobGranuleRestore().getD(tr, Snapshot::False, false)));
+
 		if (firstVersion == invalidVersion) {
-			// For blob granule restore, we can complete the restore job if no mutation log is needed
-			state bool isBlobGranuleRestore;
-			wait(store(isBlobGranuleRestore, restore.isBlobGranuleRestore().getD(tr, Snapshot::False, false)));
 			if (isBlobGranuleRestore) {
+				// For blob granule restore, we can complete the restore job if no mutation log is needed
 				state Version beginVersion;
 				state Version restoreVersion;
 				wait(store(beginVersion, restore.beginVersion().getD(tr, Snapshot::False, ::invalidVersion)));
@@ -5067,6 +5066,19 @@ struct StartFullRestoreTaskFunc : RestoreTaskFuncBase {
 		    tr, taskBucket, task, 0, "", 0, CLIENT_KNOBS->RESTORE_DISPATCH_BATCH_SIZE)));
 
 		wait(taskBucket->finish(tr, task));
+
+		// Initialize apply mutations map for non-blob-restore case. For blob restore, it's initialized
+		// in blob migrator
+		if (!isBlobGranuleRestore) {
+			state Future<Optional<bool>> logsOnly = restore.onlyApplyMutationLogs().get(tr);
+			wait(success(logsOnly));
+			if (logsOnly.get().present() && logsOnly.get().get()) {
+				//  If this is an incremental restore, we need to set the applyMutationsMapPrefix
+				//  to the earliest log version so no mutations are missed
+				Value versionEncoded = BinaryWriter::toValue(Params.firstVersion().get(task), Unversioned());
+				wait(krmSetRange(tr, restore.applyMutationsMapPrefix(), normalKeys, versionEncoded));
+			}
+		}
 		return Void();
 	}
 

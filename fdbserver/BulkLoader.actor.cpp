@@ -141,9 +141,7 @@ std::vector<CandidateFilePointer> createFilePointers(Reference<BulkLoaderData> s
 
 		fp.dbState.filename = filename;
 		fp.dbState.type = BulkLoadFileType::SNAPSHOT;
-		if (cipherKeysMeta.present()) {
-			fp.dbState.cipherKeysMetaRef = BlobGranuleCipherKeysMetaRef(arena, cipherKeysMeta.get());
-		}
+		fp.dbState.cipherKeysMeta = cipherKeysMeta;
 
 		Standalone<StringRef> fileId = uidToFileID(fileUID);
 		arena.dependsOn(fileId.arena());
@@ -384,15 +382,15 @@ ACTOR Future<Void> validateBlobPointer(Reference<BulkLoaderData> self,
 			state Arena arena;
 			state uint8_t* data = new (arena) uint8_t[fileSize];
 			state Future<BlobGranuleCipherKeysCtx> cipherKeysF =
-			    (created.cipherKeysMetaRef.present())
-			        ? getGranuleCipherKeysFromKeysMetaRef(dbInfo, created.cipherKeysMetaRef.get(), &arena)
+			    (created.cipherKeysMeta.present())
+			        ? getGranuleCipherKeysFromKeysMeta(dbInfo, created.cipherKeysMeta.get(), &arena)
 			        : Never();
 
 			int readSize = wait(reader->read(data, fileSize, 0));
 			ASSERT(fileSize == readSize);
 
 			state Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
-			if (created.cipherKeysMetaRef.present()) {
+			if (created.cipherKeysMeta.present()) {
 				BlobGranuleCipherKeysCtx cipherKeysCtx_ = wait(cipherKeysF);
 				cipherKeysCtx = cipherKeysCtx_;
 			}

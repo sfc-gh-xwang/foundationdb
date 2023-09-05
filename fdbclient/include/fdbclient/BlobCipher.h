@@ -59,7 +59,9 @@
 #endif
 
 #define AES_256_KEY_LENGTH 32
-#define AES_256_IV_LENGTH 16
+#define AES_256_CTR_IV_LENGTH 16
+#define AES_256_GCM_IV_LENGTH 12
+#define AES_256_GCM_TAG_LENGTH 16
 
 constexpr const int INVALID_ENCRYPT_HEADERS_FLAG_VERSION = 0;
 constexpr const int INVALID_ENCRYPT_HEADER_ALGO_HEADER_VERSION = 0;
@@ -281,8 +283,8 @@ struct BlobCipherEncryptHeaderFlagsV1 {
 // backup-files.
 
 template <class Params>
-struct AesCtrWithAuthV1 {
-	using Self = AesCtrWithAuthV1<Params>;
+struct AesWithAuthV1 {
+	using Self = AesWithAuthV1<Params>;
 
 	// Serializable fields
 
@@ -295,69 +297,159 @@ struct AesCtrWithAuthV1 {
 	// Header cipher Key Check Value
 	EncryptCipherKeyCheckValue headerKCV;
 	// Initialization vector
-	uint8_t iv[AES_256_IV_LENGTH];
+	uint8_t iv[Params::ivSize];
 	// Authentication token
 	uint8_t authToken[Params::authTokenSize];
 
-	AesCtrWithAuthV1() = default;
-	AesCtrWithAuthV1(const BlobCipherDetails& textDetails,
-	                 const EncryptCipherKeyCheckValue tKCV,
-	                 const BlobCipherDetails& headerDetails,
-	                 const EncryptCipherKeyCheckValue hKCV,
-	                 const uint8_t* ivBuf,
-	                 const int ivLen)
+	AesWithAuthV1() = default;
+	AesWithAuthV1(const BlobCipherDetails& textDetails,
+	              const EncryptCipherKeyCheckValue tKCV,
+	              const BlobCipherDetails& headerDetails,
+	              const EncryptCipherKeyCheckValue hKCV,
+	              const uint8_t* ivBuf,
+	              const int ivLen)
 	  : cipherTextDetails(textDetails),
 	    textKCV(tKCV),
 	    cipherHeaderDetails(headerDetails),
 	    headerKCV(hKCV) {
-		ASSERT_EQ(ivLen, AES_256_IV_LENGTH);
+		ASSERT_EQ(ivLen, Params::ivSize);
 		memcpy(&iv[0], ivBuf, ivLen);
 		memset(&authToken[0], 0, Params::authTokenSize);
 	}
 
 	bool operator==(const Self& o) const {
 		return cipherHeaderDetails == o.cipherHeaderDetails && cipherTextDetails == o.cipherTextDetails &&
-		       textKCV == o.textKCV && headerKCV == o.headerKCV && memcmp(&iv[0], &o.iv[0], AES_256_IV_LENGTH) == 0 &&
+		       textKCV == o.textKCV && headerKCV == o.headerKCV && memcmp(&iv[0], &o.iv[0], Params::ivSize) == 0 &&
 		       memcmp(&authToken[0], &o.authToken[0], Params::authTokenSize) == 0;
 	}
 
 	static uint32_t getSize() {
-		return BlobCipherDetails::getSize() * 2 + sizeof(EncryptCipherKeyCheckValue) * 2 + AES_256_IV_LENGTH +
+		return BlobCipherDetails::getSize() * 2 + sizeof(EncryptCipherKeyCheckValue) * 2 + Params::ivSize +
 		       Params::authTokenSize;
 	}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, cipherTextDetails, textKCV, cipherHeaderDetails, headerKCV);
-		ar.serializeBytes(iv, AES_256_IV_LENGTH);
+		ar.serializeBytes(iv, Params::ivSize);
 		ar.serializeBytes(authToken, Params::authTokenSize);
 	}
 };
 
+struct AesGcmV1 {
+	static constexpr int authTokenSize = AES_256_GCM_TAG_LENGTH;
+	static constexpr int ivSize = AES_256_GCM_IV_LENGTH;
+	using Self = AesGcmV1;
+
+	// Serializable fields
+
+	// Text cipher encryption information
+	BlobCipherDetails cipherTextDetails;
+	// Text cipher Key Check Value
+	EncryptCipherKeyCheckValue textKCV;
+	// Initialization vector
+	uint8_t iv[ivSize];
+	// Authentication token
+	uint8_t authToken[authTokenSize];
+
+	AesGcmV1() = default;
+	AesGcmV1(const BlobCipherDetails& textDetails,
+	         const EncryptCipherKeyCheckValue tKCV,
+	         const uint8_t* ivBuf,
+	         const int ivLen)
+	  : cipherTextDetails(textDetails),
+	    textKCV(tKCV) {
+		ASSERT_EQ(ivLen, ivSize);
+		memcpy(&iv[0], ivBuf, ivLen);
+		memset(&authToken[0], 0, authTokenSize);
+	}
+
+	bool operator==(const Self& o) const {
+		return cipherTextDetails == o.cipherTextDetails && textKCV == o.textKCV &&
+		       memcmp(&iv[0], &o.iv[0], ivSize) == 0 && memcmp(&authToken[0], &o.authToken[0], authTokenSize) == 0;
+	}
+
+	static uint32_t getSize() {
+		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + ivSize + authTokenSize;
+	}
+
+	static std::string authAlgoName() { return "AesGcm"; }
+	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_GCM_AUTH_VERSION; }
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, cipherTextDetails, textKCV);
+		ar.serializeBytes(iv, ivSize);
+		ar.serializeBytes(authToken, authTokenSize);
+	}
+};
+
+struct AesGcm {
+	// Serializable fields
+
+	// Algorithm header version
+	uint8_t version = 1;
+	// List of supported versions.
+	std::variant<AesGcmV1> headerVersions;
+
+	AesGcm() { ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion()); }
+
+	AesGcm(AesGcmV1& v) : headerVersions(v) {
+		// Only V1 is supported
+		ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion());
+	}
+
+	static uint32_t getSize() {
+		// 1 byte of std::variant index
+		return AesGcmV1::getSize() + 1 + 1;
+	}
+
+	static Standalone<StringRef> toStringRef(const AesGcm& algoHeader) {
+		BinaryWriter wr(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
+		wr << algoHeader;
+		return wr.toValue();
+	}
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		if (ar.isSerializing) {
+			ASSERT_EQ(1, version);
+		}
+		serializer(ar, version);
+		if (ar.isDeserializing && version != 1) {
+			TraceEvent(SevWarn, "BlobCipherEncryptHeaderUnsupportedAlgoHeaderVersion")
+			    .detail("HeaderType", AesGcmV1::authAlgoName())
+			    .detail("Version", version);
+			throw not_implemented();
+		}
+		serializer(ar, headerVersions);
+	}
+};
+
 template <class Params>
-struct AesCtrWithAuth {
+struct AesWithAuth {
 	// Serializable fields
 
 	// Algorithm header version
 	uint8_t version = 1;
 	// List of supported versions.
 	union {
-		AesCtrWithAuthV1<Params> v1;
+		AesWithAuthV1<Params> v1;
 	};
 
-	AesCtrWithAuth() {
+	AesWithAuth() {
 		// Only V1 is supported
 		ASSERT_EQ(1, Params::getDefaultHeaderVersion());
 	}
 
-	AesCtrWithAuth(AesCtrWithAuthV1<Params>& v) : v1(v) {
+	AesWithAuth(AesWithAuthV1<Params>& v) : v1(v) {
 		// Only V1 is supported
 		ASSERT_EQ(1, Params::getDefaultHeaderVersion());
 	}
 
-	static uint32_t getSize() { return AesCtrWithAuthV1<Params>::getSize() + 1; }
+	static uint32_t getSize() { return AesWithAuthV1<Params>::getSize() + 1; }
 
-	static Standalone<StringRef> toStringRef(const AesCtrWithAuth<Params>& algoHeader) {
+	static Standalone<StringRef> toStringRef(const AesWithAuth<Params>& algoHeader) {
 		BinaryWriter wr(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
 		wr << algoHeader;
 		return wr.toValue();
@@ -381,19 +473,21 @@ struct AesCtrWithAuth {
 
 struct AesCtrWithHmacParams {
 	static constexpr int authTokenSize = AUTH_TOKEN_HMAC_SHA_SIZE;
+	static constexpr int ivSize = AES_256_CTR_IV_LENGTH;
 
 	static std::string authAlgoName() { return "Hmac"; }
 	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_CTR_HMAC_SHA_AUTH_VERSION; }
 };
-using AesCtrWithHmac = AesCtrWithAuth<AesCtrWithHmacParams>;
+using AesCtrWithHmac = AesWithAuth<AesCtrWithHmacParams>;
 
 struct AesCtrWithCmacParams {
 	static constexpr int authTokenSize = AUTH_TOKEN_AES_CMAC_SIZE;
+	static constexpr int ivSize = AES_256_CTR_IV_LENGTH;
 
 	static std::string authAlgoName() { return "Cmac"; }
 	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_CTR_AES_CMAC_AUTH_VERSION; }
 };
-using AesCtrWithCmac = AesCtrWithAuth<AesCtrWithCmacParams>;
+using AesCtrWithCmac = AesWithAuth<AesCtrWithCmacParams>;
 
 struct AesCtrNoAuthV1 {
 	// Serializable fields
@@ -403,7 +497,7 @@ struct AesCtrNoAuthV1 {
 	// Text cipher Key Check Value
 	EncryptCipherKeyCheckValue textKCV;
 	// Initialization vector
-	uint8_t iv[AES_256_IV_LENGTH];
+	uint8_t iv[AES_256_CTR_IV_LENGTH];
 
 	AesCtrNoAuthV1() = default;
 	AesCtrNoAuthV1(const BlobCipherDetails& textDetails,
@@ -412,23 +506,23 @@ struct AesCtrNoAuthV1 {
 	               const int ivLen)
 	  : cipherTextDetails(textDetails),
 	    textKCV(tKCV) {
-		ASSERT_EQ(ivLen, AES_256_IV_LENGTH);
+		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
 		memcpy(&iv[0], ivBuf, ivLen);
 	}
 
 	bool operator==(const AesCtrNoAuthV1& o) const {
 		return cipherTextDetails == o.cipherTextDetails && textKCV == o.textKCV &&
-		       memcmp(&iv[0], &o.iv[0], AES_256_IV_LENGTH) == 0;
+		       memcmp(&iv[0], &o.iv[0], AES_256_CTR_IV_LENGTH) == 0;
 	}
 
 	static uint32_t getSize() {
-		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + AES_256_IV_LENGTH;
+		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + AES_256_CTR_IV_LENGTH;
 	}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, cipherTextDetails, textKCV);
-		ar.serializeBytes(iv, AES_256_IV_LENGTH);
+		ar.serializeBytes(iv, AES_256_CTR_IV_LENGTH);
 	}
 };
 
@@ -488,9 +582,11 @@ struct EncryptHeaderCipherKCVs {
 };
 
 struct BlobCipherEncryptHeaderRef {
+	// Currently Redwood cannot exceed this header size for configurable encryption
+	static constexpr int maxHeaderSize = 112;
 	// Serializable fields
 	std::variant<BlobCipherEncryptHeaderFlagsV1> flags;
-	std::variant<AesCtrNoAuth, AesCtrWithHmac, AesCtrWithCmac> algoHeader;
+	std::variant<AesCtrNoAuth, AesCtrWithHmac, AesCtrWithCmac, AesGcm> algoHeader;
 
 	BlobCipherEncryptHeaderRef() = default;
 	BlobCipherEncryptHeaderRef(const BlobCipherEncryptHeaderRef& src) = default;
@@ -523,10 +619,13 @@ struct BlobCipherEncryptHeaderRef {
 	}
 
 	const uint8_t* getIV() const;
+	int getIVSize() const;
 	const EncryptHeaderCipherDetails getCipherDetails() const;
 	EncryptAuthTokenMode getAuthTokenMode() const;
+	EncryptCipherMode getEncryptMode() const;
 	EncryptCipherDomainId getDomainId() const;
 	EncryptHeaderCipherKCVs getKCVs() const;
+	const uint8_t* getAuthToken() const;
 
 	// API supports following validation:
 	// 1. Ensure input BlobCipherDetails (textDetails and/or headerDetails) matches with the input
@@ -542,92 +641,6 @@ struct BlobCipherEncryptHeaderRef {
 };
 
 #pragma pack(pop)
-
-// BlobCipher Encryption header format
-// This header is persisted along with encrypted buffer, it contains information necessary
-// to assist decrypting the buffers to serve read requests.
-//
-// The total space overhead is 104 bytes.
-
-#pragma pack(push, 1) // exact fit - no padding
-typedef struct BlobCipherEncryptHeader {
-	static constexpr int headerSize = 112;
-	union {
-		struct {
-			uint8_t size; // reading first byte is sufficient to determine header
-			              // length. ALWAYS THE FIRST HEADER ELEMENT.
-			uint8_t headerVersion{};
-			uint8_t encryptMode{};
-			uint8_t authTokenMode{};
-			uint8_t authTokenAlgo{};
-			uint8_t _reserved[3]{};
-		} flags;
-		uint64_t _padding{};
-	};
-
-	// Cipher text encryption information
-	BlobCipherDetails cipherTextDetails;
-	// Text Key Check Value
-	EncryptCipherKeyCheckValue textKCV;
-	// Cipher header encryption information
-	BlobCipherDetails cipherHeaderDetails;
-	// Header Key Check Value
-	EncryptCipherKeyCheckValue headerKCV;
-	// Initialization vector used to encrypt the payload.
-	uint8_t iv[AES_256_IV_LENGTH];
-
-	// Encryption header is stored as plaintext on a persistent storage to assist reconstruction of cipher-key(s)
-	// for reads. FIPS compliance recommendation is to leverage cryptographic digest mechanism to generate
-	// 'authentication token' (crypto-secure) to protect against malicious tampering and/or bit rot/flip scenarios.
-
-	// Encryption header support two modes of generation 'authentication tokens':
-	// 1) SingleAuthTokenMode: the scheme generates single crypto-secrure auth token to protect {cipherText +
-	// header} payload. Scheme is geared towards optimizing cost due to crypto-secure auth-token generation,
-	// however, on decryption client needs to be read 'header' + 'encrypted-buffer' to validate the 'auth-token'.
-	// The scheme is ideal for usecases where payload represented by the encryptionHeader is not large and it is
-	// desirable to minimize CPU/latency penalty due to crypto-secure ops, such as: CommitProxies encrypted inline
-	// transactions, StorageServer encrypting pages etc.
-	// SOMEDAY: Another potential scheme could be 'MultiAuthTokenMode': Scheme generates separate authTokens
-	// for 'encrypted buffer' & 'encryption-header'. The scheme is ideal where payload represented by
-	// encryptionHeader is large enough such that it is desirable to optimize cost of upfront reading full
-	// 'encrypted buffer', compared to reading only encryptionHeader and ensuring its sanity; for instance:
-	// backup-files.
-
-	struct {
-		uint8_t authToken[AUTH_TOKEN_MAX_SIZE]{};
-	} singleAuthToken;
-
-	BlobCipherEncryptHeader() {}
-
-	static BlobCipherEncryptHeader fromStringRef(StringRef headerRef) {
-		BlobCipherEncryptHeader header;
-		BinaryReader rd(headerRef, AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
-		rd >> header;
-		return header;
-	}
-
-	static StringRef toStringRef(BlobCipherEncryptHeader& header, Arena& arena) {
-		BinaryWriter wr(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
-		wr.serializeBytes(&header, header.flags.size);
-		return wr.toValue(arena);
-	}
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		ar.serializeBytes(this, headerSize);
-	}
-
-	std::string toString() const {
-		return format("domain id: %" PRId64 ", cipher id: %" PRIu64,
-		              cipherTextDetails.encryptDomainId,
-		              cipherTextDetails.baseCipherId);
-	}
-} BlobCipherEncryptHeader;
-#pragma pack(pop)
-
-// Ensure no struct-packing issues
-static_assert(sizeof(BlobCipherEncryptHeader) == BlobCipherEncryptHeader::headerSize,
-              "BlobCipherEncryptHeader size mismatch");
 
 // This interface is in-memory representation of CipherKey used for encryption/decryption information.
 // It caches base encryption key properties as well as caches the 'derived encryption' key obtained by applying
@@ -651,16 +664,33 @@ public:
 	              const int64_t refreshAt,
 	              const int64_t expireAt);
 
-	uint8_t* data() const { return cipher.get(); }
+	void updateAccessAtTS() const {
+		ASSERT(now() >= accessAtTS);
+		accessAtTS = now();
+	}
+
+	uint8_t* data() const {
+		updateAccessAtTS();
+		return cipher.get();
+	}
+	uint8_t* rawCipher() const {
+		updateAccessAtTS();
+		return cipher.get();
+	}
+	uint8_t* rawBaseCipher() const {
+		updateAccessAtTS();
+		return baseCipher.get();
+	}
+
 	uint64_t getRefreshAtTS() const { return refreshAtTS; }
 	uint64_t getExpireAtTS() const { return expireAtTS; }
+	double getAccessAtTS() const { return accessAtTS; }
 	EncryptCipherDomainId getDomainId() const { return encryptDomainId; }
 	EncryptCipherRandomSalt getSalt() const { return randomSalt; }
 	EncryptCipherBaseKeyId getBaseCipherId() const { return baseCipherId; }
 	int getBaseCipherLen() const { return baseCipherLen; }
 	EncryptCipherKeyCheckValue getBaseCipherKCV() const { return baseCipherKCV; }
-	uint8_t* rawCipher() const { return cipher.get(); }
-	uint8_t* rawBaseCipher() const { return baseCipher.get(); }
+
 	bool isEqual(const Reference<BlobCipherKey> toCompare) {
 		return encryptDomainId == toCompare->getDomainId() && baseCipherId == toCompare->getBaseCipherId() &&
 		       randomSalt == toCompare->getSalt() && baseCipherLen == toCompare->getBaseCipherLen() &&
@@ -707,6 +737,8 @@ private:
 	int64_t refreshAtTS;
 	// CipherKey is valid until
 	int64_t expireAtTS;
+	// Latest access timestamp
+	mutable double accessAtTS;
 
 	void initKey(const EncryptCipherDomainId& domainId,
 	             const EncryptCipherBaseKeyId& baseCiphId,
@@ -879,6 +911,9 @@ public:
 	// API returns point in time list of all 'cached' cipherKeys for a given encryption domainId.
 	std::vector<Reference<BlobCipherKey>> getAllCiphers(const EncryptCipherDomainId& domainId);
 
+	// API returns all current latest cipher keys.
+	std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> listLatestCipherKeys() const;
+
 	// API enables dropping all 'cached' cipherKeys for a given encryption domain Id.
 	// Useful to cleanup cache if an encryption domain gets removed/destroyed etc.
 	void resetEncryptDomainId(const EncryptCipherDomainId domainId);
@@ -914,178 +949,6 @@ private:
 	BlobCipherKeyCache() {}
 };
 
-// This interface enables data block encryption. An invocation to encrypt() will
-// do two things:
-// 1) generate encrypted ciphertext for given plaintext input.
-// 2) generate BlobCipherEncryptHeader (including the 'header authTokens') and persit for decryption on reads.
-
-class EncryptBlobCipherAes265Ctr final : NonCopyable, public ReferenceCounted<EncryptBlobCipherAes265Ctr> {
-public:
-	static constexpr uint8_t ENCRYPT_HEADER_VERSION = 1;
-
-	EncryptBlobCipherAes265Ctr(Reference<BlobCipherKey> tCipherKey,
-	                           Optional<Reference<BlobCipherKey>> hCipherKey,
-	                           const uint8_t* iv,
-	                           const int ivLen,
-	                           const EncryptAuthTokenMode mode,
-	                           BlobCipherMetrics::UsageType usageType);
-	EncryptBlobCipherAes265Ctr(Reference<BlobCipherKey> tCipherKey,
-	                           Optional<Reference<BlobCipherKey>> hCipherKey,
-	                           const uint8_t* iv,
-	                           const int ivLen,
-	                           const EncryptAuthTokenMode mode,
-	                           const EncryptAuthTokenAlgo algo,
-	                           BlobCipherMetrics::UsageType usageType);
-	EncryptBlobCipherAes265Ctr(Reference<BlobCipherKey> tCipherKey,
-	                           Optional<Reference<BlobCipherKey>> hCipherKey,
-	                           const EncryptAuthTokenMode mode,
-	                           BlobCipherMetrics::UsageType usageType);
-	EncryptBlobCipherAes265Ctr(Reference<BlobCipherKey> tCipherKey,
-	                           Optional<Reference<BlobCipherKey>> hCipherKey,
-	                           const EncryptAuthTokenMode mode,
-	                           const EncryptAuthTokenAlgo algo,
-	                           BlobCipherMetrics::UsageType usageType);
-	~EncryptBlobCipherAes265Ctr();
-
-	Reference<EncryptBuf> encrypt(const uint8_t* plaintext,
-	                              const int plaintextLen,
-	                              BlobCipherEncryptHeader* header,
-	                              Arena&,
-	                              double* encryptTime = nullptr);
-	StringRef encrypt(const uint8_t*, const int, BlobCipherEncryptHeaderRef*, Arena&, double* encryptTime = nullptr);
-
-	void encryptInplace(uint8_t* plaintext,
-	                    const int plaintextLen,
-	                    BlobCipherEncryptHeader* header,
-	                    double* encryptTime = nullptr);
-
-	void encryptInplace(uint8_t* plaintext,
-	                    const int plaintextLen,
-	                    BlobCipherEncryptHeaderRef* headerRef,
-	                    double* encryptTime = nullptr);
-
-private:
-	void init();
-
-	void updateEncryptHeader(const uint8_t*, const int, BlobCipherEncryptHeaderRef* headerRef);
-	void updateEncryptHeader(const uint8_t*, const int, BlobCipherEncryptHeader* header);
-	void updateEncryptHeaderFlagsV1(BlobCipherEncryptHeaderRef* headerRef, BlobCipherEncryptHeaderFlagsV1* flags);
-	void setCipherAlgoHeaderV1(const uint8_t*,
-	                           const int,
-	                           const BlobCipherEncryptHeaderFlagsV1&,
-	                           BlobCipherEncryptHeaderRef*);
-	void setCipherAlgoHeaderNoAuthV1(const BlobCipherEncryptHeaderFlagsV1&, BlobCipherEncryptHeaderRef*);
-	template <class Params>
-	void setCipherAlgoHeaderWithAuthV1(const uint8_t*,
-	                                   const int,
-	                                   const BlobCipherEncryptHeaderFlagsV1&,
-	                                   BlobCipherEncryptHeaderRef*);
-
-	EVP_CIPHER_CTX* ctx;
-	Reference<BlobCipherKey> textCipherKey;
-	Optional<Reference<BlobCipherKey>> headerCipherKeyOpt;
-	EncryptAuthTokenMode authTokenMode;
-	uint8_t iv[AES_256_IV_LENGTH];
-	EncryptAuthTokenAlgo authTokenAlgo;
-};
-
-// This interface enable data block decryption. An invocation to decrypt() would generate
-// 'plaintext' for a given 'ciphertext' input, the caller needs to supply BlobCipherEncryptHeader.
-
-class DecryptBlobCipherAes256Ctr final : NonCopyable, public ReferenceCounted<DecryptBlobCipherAes256Ctr> {
-public:
-	DecryptBlobCipherAes256Ctr(Reference<BlobCipherKey> tCipherKey,
-	                           Optional<Reference<BlobCipherKey>> hCipherKey,
-	                           const uint8_t* iv,
-	                           BlobCipherMetrics::UsageType usageType);
-	~DecryptBlobCipherAes256Ctr();
-
-	Reference<EncryptBuf> decrypt(const uint8_t* ciphertext,
-	                              const int ciphertextLen,
-	                              const BlobCipherEncryptHeader& header,
-	                              Arena&,
-	                              double* decryptTime = nullptr);
-	StringRef decrypt(const uint8_t* ciphertext,
-	                  const int ciphertextLen,
-	                  const BlobCipherEncryptHeaderRef& headerRef,
-	                  Arena&,
-	                  double* decryptTime = nullptr);
-
-	void decryptInplace(uint8_t* ciphertext,
-	                    const int ciphertextLen,
-	                    const BlobCipherEncryptHeader& header,
-	                    double* decryptTime = nullptr);
-
-	void decryptInplace(uint8_t* ciphertext,
-	                    const int ciphertextLen,
-	                    const BlobCipherEncryptHeaderRef& headerRef,
-	                    double* decryptTime = nullptr);
-
-private:
-	EVP_CIPHER_CTX* ctx;
-	Reference<BlobCipherKey> textCipherKey;
-	Optional<Reference<BlobCipherKey>> headerCipherKeyOpt;
-	bool authTokensValidationDone;
-
-	// API is resposible to validate persisted EncryptionHeader sanity, it does following checks
-	// 1. Parse and validate EncryptionHeaderFlags (version compliant checks)
-	// 2. Parse and validate KCVs
-	// 3. Parse and validate auth-tokens if applicable.
-	//
-	// Routine is invoked for every decryption buffer request and is done transparently to the caller
-
-	void validateEncryptHeader(const uint8_t*,
-	                           const int,
-	                           const BlobCipherEncryptHeaderRef&,
-	                           EncryptAuthTokenMode*,
-	                           EncryptAuthTokenAlgo*);
-	void validateEncryptHeaderFlagsV1(const uint32_t, const BlobCipherEncryptHeaderFlagsV1&);
-	void validateAuthTokensV1(const uint8_t*,
-	                          const int,
-	                          const BlobCipherEncryptHeaderFlagsV1&,
-	                          const BlobCipherEncryptHeaderRef&);
-	void validateHeaderSingleAuthTokenV1(const uint8_t*,
-	                                     const int,
-	                                     const BlobCipherEncryptHeaderFlagsV1&,
-	                                     const BlobCipherEncryptHeaderRef&);
-	template <class Params>
-	void validateAuthTokenV1(const uint8_t* ciphertext,
-	                         const int ciphertextLen,
-	                         const BlobCipherEncryptHeaderFlagsV1&,
-	                         const BlobCipherEncryptHeaderRef&);
-	void vaidateEncryptHeaderCipherKCVs(const BlobCipherEncryptHeaderRef&, const BlobCipherEncryptHeaderFlagsV1&);
-
-	void verifyEncryptHeaderMetadata(const BlobCipherEncryptHeader& header);
-	void verifyAuthTokens(const uint8_t* ciphertext, const int ciphertextLen, const BlobCipherEncryptHeader& header);
-	void verifyHeaderSingleAuthToken(const uint8_t* ciphertext,
-	                                 const int ciphertextLen,
-	                                 const BlobCipherEncryptHeader& header);
-};
-
-class HmacSha256DigestGen final : NonCopyable {
-public:
-	HmacSha256DigestGen(const unsigned char* key, size_t len);
-	~HmacSha256DigestGen();
-	HMAC_CTX* getCtx() const { return ctx; }
-	unsigned int digest(const std::vector<std::pair<const uint8_t*, size_t>>& payload,
-	                    unsigned char* buf,
-	                    unsigned int bufLen);
-
-private:
-	HMAC_CTX* ctx;
-};
-
-class Aes256CmacDigestGen final : NonCopyable {
-public:
-	Aes256CmacDigestGen(const unsigned char* key, size_t len);
-	~Aes256CmacDigestGen();
-	CMAC_CTX* getCtx() const { return ctx; }
-	size_t digest(const std::vector<std::pair<const uint8_t*, size_t>>& payload, uint8_t* digest, int digestlen);
-
-private:
-	CMAC_CTX* ctx;
-};
-
 class Sha256KCV final : NonCopyable {
 public:
 	Sha256KCV();
@@ -1098,15 +961,5 @@ public:
 private:
 	EVP_MD_CTX* ctx;
 };
-
-void computeAuthToken(const std::vector<std::pair<const uint8_t*, size_t>>& payload,
-                      const uint8_t* key,
-                      const int keyLen,
-                      unsigned char* digestBuf,
-                      const EncryptAuthTokenAlgo algo,
-                      unsigned int digestMaxBufSz);
-
-EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptAuthTokenMode mode);
-int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo);
 
 #endif // FDBCLIENT_BLOB_CIPHER_H

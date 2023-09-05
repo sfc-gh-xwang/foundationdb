@@ -1891,6 +1891,11 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	                        SpecialKeySpace::IMPLTYPE::READWRITE,
 	                        std::make_unique<TenantRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("tenant")));
 
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ENCRYPTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<LatestEncryptCipherKeysSpecialKeyImpl>(
+	                            SpecialKeySpace::getEncryptionApiCommandRange("latestcipherkeysbydomain")));
+
 	if (BUGGIFY) {
 		debugUseTag = true;
 	}
@@ -8382,7 +8387,12 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 			for (int i = 0; i < nLocs; i++) {
 				partBegin = (i == 0) ? keys.begin : locations[i].range.begin;
 				partEnd = (i == nLocs - 1) ? keys.end : locations[i].range.end;
-				SplitRangeRequest req(trState->getTenantInfo(), KeyRangeRef(partBegin, partEnd), chunkSize);
+				SplitRangeRequest req(trState->getTenantInfo(),
+				                      trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady()
+				                          ? trState->readVersion()
+				                          : latestVersion,
+				                      KeyRangeRef(partBegin, partEnd),
+				                      chunkSize);
 				fReplies[i] = loadBalance(locations[i].locations->locations(),
 				                          &StorageServerInterface::getRangeSplitPoints,
 				                          req,
@@ -8413,9 +8423,8 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
 				trState->cx->invalidateCache(trState->tenant().mapRef(&Tenant::prefix), keys);
 				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
-			} else if (e.code() == error_code_tenant_not_found && trState->hasTenant()) {
-				TraceEvent(SevWarn, "GetRangeSplitPointsSSVersionBehind").error(e);
-				throw;
+			} else if (e.code() == error_code_future_version) {
+				wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
 			} else {
 				TraceEvent(SevError, "GetRangeSplitPoints").error(e);
 				throw;

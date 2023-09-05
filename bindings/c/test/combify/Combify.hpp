@@ -164,7 +164,7 @@ public:
 	// is used, the first tenant is always used, allowing the caller to use this function to read
 	// its own writes. For advanced use case when testing multi-tenant case, consider using tenant
 	// ByIndex and newTenantTransaction methods.
-	fdb::Transaction newNormalOrTenantTransaction() const;
+	fdb::Transaction newNormalOrTenantTransaction(fdb::Database db) const;
 };
 
 template <class PredicateFunc>
