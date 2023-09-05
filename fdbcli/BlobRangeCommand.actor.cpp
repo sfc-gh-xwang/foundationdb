@@ -104,7 +104,7 @@ ACTOR Future<Void> doBlobDebug(Database db,
                                Key startKey,
                                Key endKey,
                                Optional<Version> readVersion) {
-	state Transaction tr(db);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 
 	state Version version = wait(tr.getReadVersion());
 	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
