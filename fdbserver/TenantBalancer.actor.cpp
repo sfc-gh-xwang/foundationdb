@@ -49,13 +49,32 @@ struct TenantBalancer {
 	Counter abortMovementRequests;
 };
 
-static Future<Void> writeTenantBalancerInterfaceToDb(Database db, TenantBalancerInterface tbi) {
-	return runRYWTransactionVoid(db, [=](Reference<ReadYourWritesTransaction> tr) -> Future<Void> {
-		tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-		tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-		TenantBalancerMetadata::getTenantBalancerInterface().set(tr, tbi);
-		return Void();
-	});
+ACTOR
+Future<Void> writeTenantBalancerInterfaceToDb(TenantBalancer* self) {
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->managementDb);
+	loop {
+		state Future<Void> dbInfoChanged = self->dbInfo->onChange();
+		choose {
+			when(PersistInterfaceRequest req = waitNext(self->tbi.persistInterface.getFuture())) {
+				try {
+					tr->reset();
+					tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+					tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+					TenantBalancerMetadata::getTenantBalancerInterface().set(tr, self->tbi);
+					choose {
+						when(wait(tr->commit())) {
+							break;
+						}
+						when(wait(dbInfoChanged)) {}
+					}
+				} catch (Error& e) {
+					wait(tr->onError(e));
+				}
+			}
+			when(wait(dbInfoChanged)) {}
+		}
+	}
+	return Void();
 }
 
 ACTOR Future<Void> getMovementStatus(TenantBalancer* self, GetMovementStatusRequest req) {
@@ -122,7 +141,7 @@ ACTOR Future<Void> abortMovement(TenantBalancer* self, AbortMovementRequest req)
 }
 
 ACTOR Future<Void> tenantBalancerCore(TenantBalancer* self) {
-	TraceEvent("TenantBalancerStarting", self->tbi.id());
+	TraceEvent("TenantBalancerStarting", self->tbi.id()).log();
 	self->actors.add(waitFailureServer(self->tbi.waitFailure.getFuture()));
 	loop choose {
 		when(HaltTenantBalancerRequest req = waitNext(self->tbi.haltTenantBalancer.getFuture())) {
@@ -130,6 +149,7 @@ ACTOR Future<Void> tenantBalancerCore(TenantBalancer* self) {
 			TraceEvent("TenantBalancerHalted", self->tbi.id()).detail("ReqID", req.requesterID);
 			break;
 		}
+		when(wait(writeTenantBalancerInterfaceToDb(self))) {}
 		when(GetMovementStatusRequest req = waitNext(self->tbi.getMovementStatus.getFuture())) {
 			self->actors.add(getMovementStatus(self, req));
 		}
@@ -152,10 +172,6 @@ ACTOR Future<Void> tenantBalancer(TenantBalancerInterface tbi,
                                   Reference<IClusterConnectionRecord> connRecord) {
 	state TenantBalancer self(tbi, db, connRecord);
 	try {
-		PersistInterfaceRequest _ = waitNext(tbi.persistInterface.getFuture());
-		TraceEvent("TenantBalancerPersistInterfReq").log();
-		wait(writeTenantBalancerInterfaceToDb(self.managementDb, tbi));
-
 		wait(tenantBalancerCore(&self));
 	} catch (Error& e) {
 		TraceEvent("TenantBalancerTerminated", tbi.id()).error(e);
