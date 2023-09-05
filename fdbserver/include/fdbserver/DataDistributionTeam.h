@@ -178,15 +178,20 @@ public:
 	TeamSelect() : value(ANY), forRelocateShard(ForRelocateShard::False) {}
 	TeamSelect(Value v) : value(v), forRelocateShard(ForRelocateShard::False) {}
 	std::string toString() const {
+		std::stringstream ss;
 		switch (value) {
 		case WANT_COMPLETE_SRCS:
-			return "Want_Complete_Srcs";
+			ss << "Want_Complete_Srcs";
+			break;
 		case WANT_TRUE_BEST:
-			return "Want_True_Best";
+			ss << "Want_True_Best";
+			break;
 		case ANY:
-			return "Any";
+			ss << "Any";
+			break;
 		}
-		return "";
+		ss << ", forRelocateShard:" << isForRelocateShard();
+		return ss.str();
 	}
 
 	bool operator==(const TeamSelect& tmpTeamSelect) { return value == tmpTeamSelect.value; }

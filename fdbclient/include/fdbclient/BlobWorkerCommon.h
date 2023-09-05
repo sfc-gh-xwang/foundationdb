@@ -79,6 +79,7 @@ struct BlobWorkerStats {
 	ActiveCounter<int> granulesBlockedCommittedVersion;
 	ActiveCounter<int> deltaFilesWriting;
 	ActiveCounter<int> snapshotFilesWriting;
+	ActiveCounter<int> granulesOnOldFeed;
 
 	Future<Void> logger;
 
@@ -151,7 +152,8 @@ struct BlobWorkerStats {
 	    granulesBlockedOldSnapshot(0),
 	    granulesBlockedCommittedVersion(0),
 	    deltaFilesWriting(0),
-	    snapshotFilesWriting(0) {
+	    snapshotFilesWriting(0),
+	    granulesOnOldFeed(0) {
 		specialCounter(cc, "NumRangesAssigned", [this]() { return this->numRangesAssigned; });
 		specialCounter(cc, "MutationBytesBuffered", [this]() { return this->mutationBytesBuffered; });
 		specialCounter(cc, "ActiveReadRequests", [this]() { return this->activeReadRequests; });
@@ -176,6 +178,7 @@ struct BlobWorkerStats {
 		});
 		specialCounter(cc, "DeltaFilesWriting", [this]() { return this->deltaFilesWriting.getValue(); });
 		specialCounter(cc, "SnapshotFilesWriting", [this]() { return this->snapshotFilesWriting.getValue(); });
+		specialCounter(cc, "GranulesOnOldFeed", [this]() { return this->granulesOnOldFeed.getValue(); });
 
 		logger = cc.traceCounters("BlobWorkerMetrics", id, interval, "BlobWorkerMetrics");
 	}

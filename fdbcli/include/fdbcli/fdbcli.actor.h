@@ -305,6 +305,9 @@ ACTOR Future<bool> idempotencyIdsCommandActor(Database cx, std::vector<StringRef
 // rangeconfig command
 ACTOR Future<bool> rangeConfigCommandActor(Database cx, std::vector<StringRef> tokens);
 
+// encrypt command
+ACTOR Future<bool> encryptCommandActor(Database cx, std::vector<StringRef> tokens);
+
 } // namespace fdb_cli
 
 #include "flow/unactorcompiler.h"

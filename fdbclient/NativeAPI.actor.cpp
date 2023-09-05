@@ -1891,6 +1891,11 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	                        SpecialKeySpace::IMPLTYPE::READWRITE,
 	                        std::make_unique<TenantRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("tenant")));
 
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ENCRYPTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<LatestEncryptCipherKeysSpecialKeyImpl>(
+	                            SpecialKeySpace::getEncryptionApiCommandRange("latestcipherkeysbydomain")));
+
 	if (BUGGIFY) {
 		debugUseTag = true;
 	}
