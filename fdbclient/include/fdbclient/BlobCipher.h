@@ -60,6 +60,7 @@
 #endif
 
 using EncryptCipherNonce = uint128_t;
+static_assert(sizeof(EncryptCipherNonce) == 16, "Invalid Nonce Size");
 
 #define AES_256_KEY_LENGTH 32
 #define AES_256_CTR_IV_LENGTH 16
