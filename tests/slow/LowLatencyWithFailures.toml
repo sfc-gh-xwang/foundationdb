@@ -2,7 +2,7 @@
 minimumReplication = 2
 
 [[test]]
-testTitle = 'Clogged'
+testTitle = 'LowLatencyWithFailures'
 connectionFailuresDisableDuration = 60
 
     [[test.workload]]
