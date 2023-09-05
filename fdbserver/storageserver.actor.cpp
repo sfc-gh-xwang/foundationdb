@@ -13078,12 +13078,13 @@ ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
 24 pointers
 8 lastUpdateVersion
 2 updated, replacedPointer
+8 PTreeSize*
 --
-42 PTree overhead
+50 PTree overhead
 
 8 Version insertVersion
 --
-50 VersionedMap overhead
+58 VersionedMap overhead
 
 12 KeyRef
 12 ValueRef
@@ -13092,14 +13093,13 @@ ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
 25 payload
 
 
-50 overhead
+58 overhead
 25 payload
-21 structure padding
-32 allocator rounds up
+13 structure padding
 ---
-128 allocated
+96 allocated
 
-To reach 64, need to save: 11 bytes + all padding
+To reach 64, need to save: 19 bytes + all padding
 
 Possibilities:
 -8 Combine lastUpdateVersion, insertVersion?

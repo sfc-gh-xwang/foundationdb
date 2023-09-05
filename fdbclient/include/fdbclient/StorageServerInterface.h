@@ -1393,10 +1393,8 @@ inline int mvccStorageBytes(int mutationBytes) {
 	       (mutationBytes + MutationRef::OVERHEAD_BYTES) * 2;
 }
 
-// Memory usage for storing the mutations, the size of the PTree is tracked separately.
+// Memory usage for storing the mutations not including the nodes added to the PTree, the size of the PTree is tracked separately.
 inline int mvccStorageBytesNoPTree(int mutationBytes) {
-	// Why * 2:
-	// - The mutation will be stored in both mutation log;
 	return mutationBytes + MutationRef::OVERHEAD_BYTES;
 }
 

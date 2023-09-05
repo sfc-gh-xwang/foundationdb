@@ -755,6 +755,8 @@ public:
 	int64_t STORAGE_DURABILITY_LAG_HARD_MAX;
 	int64_t STORAGE_DURABILITY_LAG_SOFT_MAX;
 	bool STORAGE_INCLUDE_FEED_STORAGE_QUEUE;
+	// When calculating the storage queue size, utilize the PTree's actual allocated size rather
+	// than depending on estimates.
 	bool STORAGE_QUEUE_USE_ALLOCATOR_SIZE;
 
 	int64_t LOW_PRIORITY_STORAGE_QUEUE_BYTES;
