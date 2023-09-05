@@ -28,10 +28,9 @@ pipeline {
                     labels = []
                     run_ci = true
 
-                    //taking pr_id from branch i.e taking 167 from PR-167
-                    pr_id = env.BRANCH_NAME.split("-")[1]
-
                     if (env.BRANCH_NAME.startsWith("PR-")) {
+                        //taking pr_id from branch i.e taking 167 from PR-167
+                        pr_id = env.BRANCH_NAME.split("-")[1]
                         //Aborting previous runs if any in progress to avoid running multiple runs for same PR
                         abortPreviousBuilds()
                         labels = getLabels()
@@ -226,7 +225,7 @@ pipeline {
                     } else {
                         currentBuild.result = "FAILURE"
                     }
-                    if (run_ci) {
+                    if (run_ci && env.BRANCH_NAME.startsWith("PR-")) {
                         def url = "https://github.com/snowflakedb/frostdb/pull/${pr_id}"
                         notify_slack(user_id, "CI completed", currentBuild.result, env.BRANCH_NAME, scmInfo.GIT_COMMIT, url)
                     }

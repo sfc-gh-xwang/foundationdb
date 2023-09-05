@@ -64,6 +64,11 @@ struct RenameTenantImpl {
 		if (self->tenantId != -1 && tenantEntry.id != self->tenantId) {
 			// The tenant must have been removed simultaneously
 			CODE_PROBE(true, "Metacluster rename old tenant ID mismatch");
+			TraceEvent("MetaclusterRenameTenantIDMismatch")
+			    .detail("OldName", self->oldName)
+			    .detail("NewName", self->newName)
+			    .detail("TenantId", self->tenantId)
+			    .detail("ExistingEntry", tenantEntry.id);
 			throw tenant_removed();
 		}
 
@@ -72,11 +77,19 @@ struct RenameTenantImpl {
 		// If marked for deletion, abort the rename
 		if (tenantEntry.tenantState == TenantState::REMOVING) {
 			CODE_PROBE(true, "Metacluster rename candidates marked for deletion");
+			TraceEvent("MetaclusterRenameTenantMarkedDeleting")
+			    .detail("OldName", self->oldName)
+			    .detail("NewName", self->newName)
+			    .detail("TenantId", self->tenantId);
 			throw tenant_removed();
 		}
 
 		if (newNameId.present() && (newNameId.get() != self->tenantId || self->oldName == self->newName)) {
 			CODE_PROBE(true, "Metacluster rename new name already exists");
+			TraceEvent("MetaclusterRenameTenantNewNameExists")
+			    .detail("OldName", self->oldName)
+			    .detail("NewName", self->newName)
+			    .detail("TenantId", self->tenantId);
 			throw tenant_already_exists();
 		}
 
@@ -85,10 +98,18 @@ struct RenameTenantImpl {
 		if (tenantEntry.tenantState == TenantState::RENAMING) {
 			if (tenantEntry.tenantName != self->oldName) {
 				CODE_PROBE(true, "Renaming a tenant that is currently the destination of another rename");
+				TraceEvent("MetaclusterRenameTenantConcurrentOldMismatch")
+				    .detail("OldName", self->oldName)
+				    .detail("NewName", self->newName)
+				    .detail("TenantId", self->tenantId);
 				throw tenant_not_found();
 			}
 			if (tenantEntry.renameDestination.get() != self->newName) {
 				CODE_PROBE(true, "Metacluster concurrent rename with different name");
+				TraceEvent("MetaclusterRenameTenantConcurrentDestMismatch")
+				    .detail("OldName", self->oldName)
+				    .detail("NewName", self->newName)
+				    .detail("TenantId", self->tenantId);
 				throw tenant_already_exists();
 			} else {
 				CODE_PROBE(true, "Metacluster rename retry in progress");
@@ -99,6 +120,10 @@ struct RenameTenantImpl {
 
 		if (tenantEntry.tenantState != TenantState::READY) {
 			CODE_PROBE(true, "Metacluster unable to proceed with rename operation");
+			TraceEvent("MetaclusterRenameTenantInvalidState")
+			    .detail("OldName", self->oldName)
+			    .detail("NewName", self->newName)
+			    .detail("TenantId", self->tenantId);
 			throw invalid_tenant_state();
 		}
 
@@ -110,6 +135,10 @@ struct RenameTenantImpl {
 
 		if (clusterTenantCount + 1 > CLIENT_KNOBS->MAX_TENANTS_PER_CLUSTER) {
 			CODE_PROBE(true, "Rename failed due to cluster capacity limit");
+			TraceEvent("MetaclusterRenameTenantNoCapacity")
+			    .detail("OldName", self->oldName)
+			    .detail("NewName", self->newName)
+			    .detail("TenantId", self->tenantId);
 			throw cluster_no_capacity();
 		}
 
@@ -158,6 +187,10 @@ struct RenameTenantImpl {
 		}
 		if (tenantEntry.get().tenantState == TenantState::REMOVING) {
 			CODE_PROBE(true, "Tenant removed during rename");
+			TraceEvent("MetaclusterRenameTenantRemoved")
+			    .detail("OldName", self->oldName)
+			    .detail("NewName", self->newName)
+			    .detail("TenantId", self->tenantId);
 			throw tenant_removed();
 		}
 
@@ -194,11 +227,19 @@ struct RenameTenantImpl {
 	}
 
 	ACTOR static Future<Void> run(RenameTenantImpl* self) {
+		TraceEvent("MetaclusterRenameTenantUpdateMgmtState")
+		    .detail("OldName", self->oldName)
+		    .detail("NewName", self->newName)
+		    .detail("TenantId", self->tenantId);
 		wait(self->ctx.runManagementTransaction(
 		    [self = self](Reference<typename DB::TransactionT> tr) { return markTenantsInRenamingState(self, tr); }));
 
 		// Rename tenant on the data cluster
 		try {
+			TraceEvent("MetaclusterRenameTenantUpdateDataCluster")
+			    .detail("OldName", self->oldName)
+			    .detail("NewName", self->newName)
+			    .detail("TenantId", self->tenantId);
 			wait(self->ctx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return updateDataCluster(self, tr); }));
 		} catch (Error& e) {
@@ -206,6 +247,11 @@ struct RenameTenantImpl {
 			// on a retry of the transaction, typically caused by commit_unknown_result.
 			// Operating on the assumption that the first transaction completed successfully, we keep going
 			// so we can finish the rename on the management cluster.
+			TraceEvent("MetaclusterRenameTenantError")
+			    .error(e)
+			    .detail("OldName", self->oldName)
+			    .detail("NewName", self->newName)
+			    .detail("TenantId", self->tenantId);
 			if (e.code() == error_code_tenant_not_found || e.code() == error_code_tenant_already_exists) {
 				CODE_PROBE(true, "Metacluster rename ran into commit_unknown_result");
 			} else {
@@ -213,9 +259,17 @@ struct RenameTenantImpl {
 			}
 		}
 
+		TraceEvent("MetaclusterRenameTenantFinishing")
+		    .detail("OldName", self->oldName)
+		    .detail("NewName", self->newName)
+		    .detail("TenantId", self->tenantId);
 		wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 			return finishRenameFromManagementCluster(self, tr);
 		}));
+		TraceEvent("MetaclusterRenameTenantSuccess")
+		    .detail("OldName", self->oldName)
+		    .detail("NewName", self->newName)
+		    .detail("TenantId", self->tenantId);
 		return Void();
 	}
 	Future<Void> run() { return run(this); }

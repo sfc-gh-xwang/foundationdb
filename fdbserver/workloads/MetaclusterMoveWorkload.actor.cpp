@@ -518,8 +518,8 @@ struct MetaclusterMoveWorkload : TestWorkload {
 					wait(increaseMetaclusterCapacity(self));
 					continue;
 				}
-				if (err.code() == error_code_tenant_not_found || err.code() == error_code_tenant_move_failed) {
-					// Timing issue with versions or tenant creation
+				if (err.code() == error_code_tenant_move_failed) {
+					// Timing issue with tenant creation
 					wait(delay(5.0));
 					continue;
 				}

@@ -240,7 +240,7 @@ protected:
 	                           const BlobCipherEncryptHeaderRef&,
 	                           EncryptAuthTokenMode*,
 	                           EncryptAuthTokenAlgo*);
-	void validateEncryptHeaderFlagsV1(const uint32_t, const BlobCipherEncryptHeaderFlagsV1&);
+	virtual void validateEncryptHeaderFlagsV1(const uint32_t, const BlobCipherEncryptHeaderFlagsV1&) = 0;
 	virtual void validateAuthTokensV1(const uint8_t*,
 	                                  const int,
 	                                  const BlobCipherEncryptHeaderFlagsV1&,
@@ -269,6 +269,7 @@ public:
 	bool supportsInplaceDecryption() override;
 
 private:
+	void validateEncryptHeaderFlagsV1(const uint32_t, const BlobCipherEncryptHeaderFlagsV1&) override;
 	void validateAuthTokensV1(const uint8_t*,
 	                          const int,
 	                          const BlobCipherEncryptHeaderFlagsV1&,
@@ -296,6 +297,7 @@ public:
 	bool supportsInplaceDecryption() override;
 
 private:
+	void validateEncryptHeaderFlagsV1(const uint32_t, const BlobCipherEncryptHeaderFlagsV1&) override;
 	void validateAuthTokensV1(const uint8_t*,
 	                          const int,
 	                          const BlobCipherEncryptHeaderFlagsV1&,

@@ -1122,12 +1122,15 @@ ACTOR Future<Void> rawFinishMovement(std::shared_ptr<MockGlobalState> mgs,
 		server->coalesceCompletedRange(keys);
 	}
 
-	// remove destination servers from source servers
-	ASSERT_EQ(srcTeams.size(), 1);
-	for (auto& id : srcTeams.front().servers) {
-		// the only caller moveKeys will always make sure the UID are sorted
-		if (!std::binary_search(params.destinationTeam.begin(), params.destinationTeam.end(), id)) {
-			mgs->allServers.at(id)->removeShard(keys);
+	// remove destination servers from source servers list
+	auto ranges = mgs->shardMapping->intersectingRanges(keys);
+	for (auto it : ranges) {
+		auto [destTeams, srcTeams] = mgs->shardMapping->getTeamsForFirstShard(it->range());
+		for (auto& id : srcTeams.front().servers) {
+			// the only caller moveKeys will always make sure the UID are sorted
+			if (!std::binary_search(params.destinationTeam.begin(), params.destinationTeam.end(), id)) {
+				mgs->allServers.at(id)->removeShard(it->range());
+			}
 		}
 	}
 	mgs->shardMapping->finishMove(keys);
@@ -1183,8 +1186,7 @@ Future<Void> DDMockTxnProcessor::waitForAllDataRemoved(
 	return checkUntil(
 	    SERVER_KNOBS->ALL_DATA_REMOVED_DELAY,
 	    [=]() -> bool {
-		    return cpMgs->allShardsRemovedFromServer(serverID) &&
-		           shardsAffectedByTeamFailure->getNumberOfShards(serverID) == 0;
+		    return cpMgs->allShardsRemovedFromServer(serverID) && cpMgs->shardMapping->getNumberOfShards(serverID) == 0;
 	    },
 	    TaskPriority::DataDistribution);
 }

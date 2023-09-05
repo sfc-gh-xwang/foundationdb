@@ -1172,7 +1172,7 @@ ACTOR Future<Void> registerWorker(RegisterWorkerRequest req,
 		    self, w, currSingleton, registeringSingleton, self->recruitingBlobMigratorID);
 	}
 
-	if (self->db.config.encryptionAtRestMode.isEncryptionEnabled() && req.encryptKeyProxyInterf.present()) {
+	if (req.encryptKeyProxyInterf.present()) {
 		auto currSingleton = EncryptKeyProxySingleton(self->db.serverInfo->get().client.encryptKeyProxy);
 		auto registeringSingleton = EncryptKeyProxySingleton(req.encryptKeyProxyInterf);
 		haltRegisteringOrCurrentSingleton<EncryptKeyProxySingleton>(
@@ -2200,7 +2200,7 @@ ACTOR Future<Void> startEncryptKeyProxy(ClusterControllerData* self, EncryptionA
 	// If master fails at the same time, give it a chance to clear master PID.
 	wait(delay(0.0));
 
-	TraceEvent("CCEKP_Start", self->id).log();
+	TraceEvent("CCEKPStart", self->id).log();
 	loop {
 		try {
 			// EncryptKeyServer interface is critical in recovering tlog encrypted transactions,
@@ -2240,7 +2240,7 @@ ACTOR Future<Void> startEncryptKeyProxy(ClusterControllerData* self, EncryptionA
 			state WorkerDetails worker = ekpWorker.worker;
 
 			self->recruitingEncryptKeyProxyID = req.reqId;
-			TraceEvent("CCEKP_Recruit", self->id).detail("Addr", worker.interf.address()).detail("Id", req.reqId);
+			TraceEvent("CCEKPRecruit", self->id).detail("Addr", worker.interf.address()).detail("Id", req.reqId);
 
 			ErrorOr<EncryptKeyProxyInterface> interf = wait(worker.interf.encryptKeyProxy.getReplyUnlessFailedFor(
 			    req, SERVER_KNOBS->WAIT_FOR_ENCRYPT_KEY_PROXY_JOIN_DELAY, 0));
@@ -2248,13 +2248,13 @@ ACTOR Future<Void> startEncryptKeyProxy(ClusterControllerData* self, EncryptionA
 				self->recruitEncryptKeyProxy.set(false);
 				self->recruitingEncryptKeyProxyID = interf.get().id();
 				const auto& encryptKeyProxy = self->db.serverInfo->get().client.encryptKeyProxy;
-				TraceEvent("CCEKP_Recruited", self->id)
+				TraceEvent("CCEKPRecruited", self->id)
 				    .detail("Addr", worker.interf.address())
 				    .detail("Id", interf.get().id())
 				    .detail("ProcessId", interf.get().locality.processId());
 				if (encryptKeyProxy.present() && encryptKeyProxy.get().id() != interf.get().id() &&
 				    self->id_worker.count(encryptKeyProxy.get().locality.processId())) {
-					TraceEvent("CCEKP_HaltAfterRecruit", self->id)
+					TraceEvent("CCEKPHaltAfterRecruit", self->id)
 					    .detail("Id", encryptKeyProxy.get().id())
 					    .detail("DcId", printable(self->clusterControllerDcId));
 					self->addActor.send(EncryptKeyProxySingleton(encryptKeyProxy)
@@ -2262,14 +2262,14 @@ ACTOR Future<Void> startEncryptKeyProxy(ClusterControllerData* self, EncryptionA
 				}
 				if (!encryptKeyProxy.present() || encryptKeyProxy.get().id() != interf.get().id()) {
 					self->db.setEncryptKeyProxy(interf.get());
-					TraceEvent("CCEKP_UpdateInf", self->id)
+					TraceEvent("CCEKPUpdateInf", self->id)
 					    .detail("Id", self->db.serverInfo->get().client.encryptKeyProxy.get().id());
 				}
 				checkOutstandingRequests(self);
 				return Void();
 			}
 		} catch (Error& e) {
-			TraceEvent("CCEKP_RecruitError", self->id).error(e);
+			TraceEvent("CCEKPRecruitError", self->id).error(e);
 			if (e.code() != error_code_no_more_servers) {
 				throw;
 			}
@@ -2294,7 +2294,7 @@ ACTOR Future<Void> monitorEncryptKeyProxy(ClusterControllerData* self) {
 					self->addActor.send(EncryptKeyProxySingleton(encryptKeyProxy)
 					                        .halt(*self, encryptKeyProxy.get().locality.processId()));
 					self->db.clearInterf(ProcessClass::EncryptKeyProxyClass);
-					TraceEvent("CCEKP_Died", self->id);
+					TraceEvent("CCEKPDied", self->id);
 				}
 				when(wait(self->recruitEncryptKeyProxy.onChange())) {}
 			}

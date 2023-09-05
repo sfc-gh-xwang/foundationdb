@@ -215,7 +215,7 @@ Future<std::pair<Optional<TenantMapEntry>, bool>> createTenantTransaction(
 
 	RangeReadResult contents = wait(safeThreadFutureToFuture(prefixRangeFuture));
 	if (!contents.empty()) {
-		CODE_PROBE(hasTombstone, "Tenant creation conflict with existing data", probe::decoration::rare);
+		CODE_PROBE(true, "Tenant creation conflict with existing data", probe::decoration::rare);
 		throw tenant_prefix_allocator_conflict();
 	}
 

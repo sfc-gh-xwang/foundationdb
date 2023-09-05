@@ -44,6 +44,21 @@ StringLike randomAlnumString(int lengthMin, int lengthMax) {
 	return ret;
 }
 
+template <class StringLike>
+StringLike randomHexString(int lengthMin, int lengthMax) {
+	static_assert(sizeof(typename StringLike::value_type) == 1);
+	assert(lengthMin > 0 && lengthMin <= lengthMax);
+	constexpr string_view dict = "0123456789ABCDEFabcdef";
+	auto const ldiff = lengthMax - lengthMin;
+	auto const len = lengthMin + (std::rand() % (ldiff + 1));
+	StringLike ret;
+	ret.reserve(len);
+	for (auto i = 0; i < len; i++) {
+		ret.push_back(static_cast<typename StringLike::value_type>(dict[std::rand() % static_cast<int>(dict.size())]));
+	}
+	return ret;
+}
+
 } // namespace combify
 
 #endif /*COMBIFY_STRING_UTILS_HPP*/

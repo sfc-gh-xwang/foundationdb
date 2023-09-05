@@ -126,7 +126,8 @@ public:
 	    totalDiskSpace(usedDiskSpace + availableDiskSpace),
 	    usedDiskSpace(usedDiskSpace),
 	    ssi(ssi),
-	    id(ssi.id()) {}
+	    id(ssi.id()),
+	    isUndesired(false) {}
 
 	MockStorageServer(const UID& id, uint64_t availableDiskSpace, uint64_t usedDiskSpace = 0)
 	  : MockStorageServer(StorageServerInterface(id), availableDiskSpace, usedDiskSpace) {}
@@ -150,7 +151,7 @@ public:
 
 	void addActor(Future<Void> future) override;
 
-	void getSplitPoints(SplitRangeRequest const& req) override;
+	Future<Void> getSplitPoints(SplitRangeRequest const& req) override;
 
 	Future<Void> waitMetricsTenantAware(const WaitMetricsRequest& req) override;
 
@@ -202,6 +203,8 @@ public:
 	void signalFetchKeys(const KeyRangeRef& range, int64_t rangeTotalBytes);
 
 	HealthMetrics::StorageStats getStorageStats() const;
+
+	bool isUndesired;
 
 protected:
 	PromiseStream<FetchKeysParams> fetchKeysRequests;
@@ -270,6 +273,9 @@ public:
 	// In-memory counterpart of the `serverListKeys` in system keyspace
 	std::map<UID, Reference<MockStorageServer>> allServers;
 	DatabaseConfiguration configuration;
+	// initTeam is not guaranteed to comply with policy. It is used as the set of servers which has all the data in
+	// initializeAsEmptyDatabaseMGS
+	std::vector<UID> initTeam;
 
 	// user defined parameters for mock workload purpose
 	double emptyProb = 0; // probability of doing an empty read

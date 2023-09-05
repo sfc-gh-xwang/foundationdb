@@ -626,6 +626,144 @@ AddTest testSetReadVersionFutureVersion("SetReadVersionFutureVersion", ALL, [](c
 	}
 });
 
+AddTest testTransactionAddConflictRange("TransactionAddConflictChange", ALL, [](const TestEnv& env) {
+	const std::string prefix("combify-add-conflict-change-");
+	auto db = env.newDatabase();
+	bool success = false;
+	bool retry = true;
+
+	while (retry) {
+		auto tr = env.newNormalOrTenantTransaction(db);
+		runToCompletion(
+		    tr, [](auto tr) { return tr.getReadVersion(); }, "GetReadVersion");
+
+		auto tr2 = env.newNormalOrTenantTransaction(db);
+		runToCompletion(
+		    tr2,
+		    [&prefix](auto tr2) {
+			    tr2.addConflictRange(fdb::toBytesRef(prefix + "a"),
+			                         fdb::toBytesRef(fdb::strinc(prefix + "a")),
+			                         FDB_CONFLICT_RANGE_TYPE_WRITE);
+			    return tr2.commit();
+		    },
+		    "AddConflictRange1");
+
+		while (1) {
+			tr.addConflictRange(fdb::toBytesRef(prefix + "a"),
+			                    fdb::toBytesRef(fdb::strinc(prefix + "a")),
+			                    FDB_CONFLICT_RANGE_TYPE_READ);
+			tr.addConflictRange(fdb::toBytesRef(prefix + "a"),
+			                    fdb::toBytesRef(fdb::strinc(prefix + "a")),
+			                    FDB_CONFLICT_RANGE_TYPE_WRITE);
+			auto f1 = tr.commit();
+			auto err = waitFuture(f1);
+			if (err.code() == 1020) { // not_committed
+				// Test should pass if transactions conflict.
+				success = true;
+				retry = false;
+			} else if (err) {
+				auto f2 = tr.onError(err);
+				if (auto err2 = waitFuture(f2)) {
+					ASSERT(false, "Unexpected failure: {}", err2.what());
+				}
+				retry = true;
+			} else {
+				// If the transaction succeeded, something went wrong.
+				ASSERT(false, "Unexpected successful transaction");
+			}
+			break;
+		}
+	}
+
+	// Double check that failure was achieved and the loop wasn't just broken out
+	// of.
+	ASSERT(success);
+});
+
+AddTest testTransactionCommitDoesNotReset("TransactionCommitDoesNotReset", ALL, [](const TestEnv& env) {
+	// Commit a transaction and confirm it has not been reset
+	const std::string prefix("combify-commit-does-not-reset-");
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	auto tr2 = env.newNormalOrTenantTransaction(db);
+
+	// Commit two transactions, one that will fail with conflict and the other
+	// that will succeed. Ensure both transactions are not reset at the end.
+	while (1) {
+		auto tr1GrvFuture = tr.getReadVersion();
+		auto err = waitFuture(tr1GrvFuture);
+		if (err) {
+			auto tr1OnErrorFuture = tr.onError(err);
+			if (auto e = waitFuture(tr1OnErrorFuture)) {
+				ASSERT(false, "Unexpected failure: {}", e.what());
+			}
+			continue;
+		}
+
+		int64_t tr1StartVersion = tr1GrvFuture.get();
+
+		auto tr2GrvFuture = tr2.getReadVersion();
+		err = waitFuture(tr2GrvFuture);
+		if (err) {
+			auto tr2OnErrorFuture = tr2.onError(err);
+			if (auto e = waitFuture(tr2OnErrorFuture)) {
+				ASSERT(false, "Unexpected failure: {}", e.what());
+			}
+			continue;
+		}
+
+		int64_t tr2StartVersion = tr2GrvFuture.get();
+
+		tr.set(fdb::toBytesRef(prefix + "foo"), "bar"_br);
+		auto tr1CommitFuture = tr.commit();
+		err = waitFuture(tr1CommitFuture);
+		if (err) {
+			auto tr1OnErrorFuture = tr.onError(err);
+			if (auto e = waitFuture(tr1OnErrorFuture)) {
+				ASSERT(false, "Unexpected failure: {}", e.what());
+			}
+			continue;
+		}
+
+		tr2.addConflictRange(fdb::toBytesRef(prefix + "foo"),
+		                     fdb::toBytesRef(fdb::strinc(prefix + "foo")),
+		                     FDB_CONFLICT_RANGE_TYPE_READ);
+		tr2.set(fdb::toBytesRef(prefix + "foo"), "bar"_br);
+		auto tr2CommitFuture = tr2.commit();
+		err = waitFuture(tr2CommitFuture);
+		ASSERT(err.code() == 1020); // not_committed
+
+		auto tr1GrvFuture2 = tr.getReadVersion();
+		err = waitFuture(tr1GrvFuture2);
+		if (err) {
+			auto tr1OnErrorFuture = tr.onError(err);
+			if (auto e = waitFuture(tr1OnErrorFuture)) {
+				ASSERT(false, "Unexpected failure: {}", e.what());
+			}
+			continue;
+		}
+
+		int64_t tr1EndVersion = tr1GrvFuture2.get();
+
+		auto tr2GrvFuture2 = tr2.getReadVersion();
+		err = waitFuture(tr2GrvFuture2);
+		if (err) {
+			auto tr2OnErrorFuture = tr2.onError(err);
+			if (auto e = waitFuture(tr2OnErrorFuture)) {
+				ASSERT(false, "Unexpected failure: {}", e.what());
+			}
+			continue;
+		}
+
+		int64_t tr2EndVersion = tr2GrvFuture2.get();
+
+		// If we reset the transaction, then the read version will change
+		ASSERT(tr1StartVersion == tr1EndVersion);
+		ASSERT(tr2StartVersion == tr2EndVersion);
+		break;
+	}
+});
+
 /* Transaction Options */
 AddTest testTransactionOptionTimeout("TransactionOptionTimeout", ALL, [](const TestEnv& env) {
 	auto db = env.newDatabase();
@@ -1564,6 +1702,28 @@ AddTest testSpecialKeySpaceTracingGetRange("SpecialKeySpaceTracingGetRange", asT
 	UID id = UID::fromString(tracingBeginTidVal);
 	ASSERT(id.first() > 0, "Expect id::first to be positive");
 	ASSERT(id.second() > 0, "Expect id::second to be positive");
+});
+
+/* Trace */
+AddTest testInvalidTraceParent("InvalidTraceParent", ALL, [](const TestEnv& env) {
+	auto db = env.newDatabase();
+	auto tr = env.newNormalOrTenantTransaction(db);
+	std::string invalidTraceParent = "invalid";
+	while (1) {
+		tr.setOption(FDB_TR_OPTION_TRACE_PARENT, invalidTraceParent);
+		auto f = tr.commit();
+		auto err = waitFuture(f);
+
+		if (err.code() != 2006) { // invalid_option_value
+			ASSERT(err.retryable(), "Unexpected transaction failure: {}", err.what());
+			auto f2 = tr.onError(err);
+			if (auto err2 = waitFuture(f2)) {
+				ASSERT(false, "Unexpected failure: {}", err2.what());
+			}
+			continue;
+		}
+		break;
+	}
 });
 
 } // anonymous namespace
