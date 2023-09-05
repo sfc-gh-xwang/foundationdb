@@ -90,6 +90,11 @@ struct ConfigureTenantImpl {
 		else if (!desiredGroup.present()) {
 			if (!self->ctx.dataClusterMetadata.get().entry.hasCapacity() && !self->ignoreCapacityLimit) {
 				CODE_PROBE(true, "Remove tenant group failed due to capacity limits");
+				TraceEvent("MetaclusterConfigureTenantRemoveGroupNoCapacity")
+				    .detail("TenantName", self->tenantName)
+				    .detail("TenantId", tenantEntry.id)
+				    .detail("TenantGroup", tenantEntry.tenantGroup)
+				    .detail("DesiredGroup", desiredGroup);
 				throw cluster_no_capacity();
 			}
 
@@ -111,6 +116,11 @@ struct ConfigureTenantImpl {
 		if (!tenantGroupEntry.present()) {
 			if (!self->ctx.dataClusterMetadata.get().entry.hasCapacity() && !self->ignoreCapacityLimit) {
 				CODE_PROBE(true, "Set tenant group to new group failed due to capacity limits");
+				TraceEvent("MetaclusterConfigureTenantNewGroupNoCapacity")
+				    .detail("TenantName", self->tenantName)
+				    .detail("TenantId", tenantEntry.id)
+				    .detail("TenantGroup", tenantEntry.tenantGroup)
+				    .detail("DesiredGroup", desiredGroup);
 				throw cluster_no_capacity();
 			}
 
@@ -159,12 +169,19 @@ struct ConfigureTenantImpl {
 
 		if (!tenantEntry.present()) {
 			CODE_PROBE(true, "Configure non-existent tenant");
+			TraceEvent("MetaclusterConfigureTenantNotFound")
+			    .detail("TenantName", self->tenantName)
+			    .detail("Phase", "UpdateManagementCluster");
 			throw tenant_not_found();
 		}
 
 		if (tenantEntry.get().tenantState != TenantState::READY &&
 		    tenantEntry.get().tenantState != TenantState::UPDATING_CONFIGURATION) {
 			CODE_PROBE(true, "Configure tenant in invalid state");
+			TraceEvent("MetaclusterConfigureTenantInvalidState")
+			    .detail("TenantName", self->tenantName)
+			    .detail("TenantId", tenantEntry.get().id)
+			    .detail("CurrentState", tenantStateToString(tenantEntry.get().tenantState));
 			throw invalid_tenant_state();
 		}
 
@@ -271,6 +288,9 @@ struct ConfigureTenantImpl {
 
 		if (!tenantEntry.present()) {
 			CODE_PROBE(true, "Configure tenant state for non-existent tenant", probe::decoration::rare);
+			TraceEvent("MetaclusterConfigureTenantNotFound")
+			    .detail("TenantName", self->tenantName)
+			    .detail("Phase", "ForceMarkReady");
 			throw tenant_not_found();
 		}
 
@@ -300,27 +320,37 @@ struct ConfigureTenantImpl {
 			if (configKey == "tenant_state"_sr) {
 				if (self->configurationParameters.size() > 1) {
 					CODE_PROBE(true, "SettingTenantStateWithOtherConfigs", probe::decoration::rare);
-					TraceEvent(SevError, "ConfigureTenantStateWithOtherProperties").detail("Tenant", self->tenantName);
+					TraceEvent(SevError, "MetaclusterConfigureTenantStateWithOtherProperties")
+					    .detail("Tenant", self->tenantName);
 					throw invalid_tenant_configuration();
 				} else {
+					TraceEvent("MetaclusterConfigureTenantForceMarkReady").detail("TenantName", self->tenantName);
 					wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 						return forceMarkManagementTenantAsReady(self, tr);
 					}));
+					TraceEvent("MetaclusterConfigureTenantForceMarkReadySuccess")
+					    .detail("TenantName", self->tenantName);
 					return Void();
 				}
 			}
 		}
 
+		TraceEvent("MetaclusterConfigureTenantUpdatingMgmtCluster").detail("TenantName", self->tenantName);
 		bool configUpdated = wait(self->ctx.runManagementTransaction(
 		    [self = self](Reference<typename DB::TransactionT> tr) { return updateManagementCluster(self, tr); }));
 
 		if (configUpdated) {
+			TraceEvent("MetaclusterConfigureTenantUpdatingDataCluster")
+			    .detail("TenantName", self->tenantName)
+			    .detail("DataCluster", self->ctx.clusterName);
 			wait(self->ctx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return updateDataCluster(self, tr); }));
+			TraceEvent("MetaclusterConfigureTenantMarkingMgmtReady").detail("TenantName", self->tenantName);
 			wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 				return markManagementTenantAsReady(self, tr);
 			}));
 		}
+		TraceEvent("MetaclusterConfigureTenantSuccess").detail("TenantName", self->tenantName);
 
 		return Void();
 	}
