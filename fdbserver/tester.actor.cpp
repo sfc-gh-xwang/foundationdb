@@ -1797,12 +1797,6 @@ KnobKeyValuePairs getOverriddenKnobKeyValues(const toml::value& context) {
 		// No knobs field in this scope, this is not an error
 	}
 
-	// Hack to enable CC_ENABLE_TENANT_BALANCER with 50% probability in simulation if not specified
-	if (!result.getKnobs().contains("cc_enable_tenant_balancer") && deterministicRandom()->coinflip()) {
-		result.set("cc_enable_tenant_balancer", ParsedKnobValue{ true });
-		CODE_PROBE(true, "Set CC_ENABLE_TENANT_BALANCER to true");
-	}
-
 	return result;
 }
 
