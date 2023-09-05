@@ -46,14 +46,16 @@ def enable_logging(level=logging.DEBUG):
     return func_decorator
 
 
-def run_fdbcli_command(*args):
+def run_fdbcli_command(*args, check=True):
     """run the fdbcli statement: fdbcli --exec '<arg1> <arg2> ... <argN>'.
 
     Returns:
         string: Console output from fdbcli
     """
-    commands = command_template + ["{}".format(" ".join(args))]
-    process = subprocess.run(commands, stdout=subprocess.PIPE, env=fdbcli_env)
+    commands = command_template + [" ".join(args)]
+    process = subprocess.run(
+        commands, check=check, stdout=subprocess.PIPE, env=fdbcli_env
+    )
     return process.stdout.decode("utf-8").strip()
 
 
@@ -589,11 +591,11 @@ def knobmanagement(logger):
     # must use begin/commit to avoid prompt for description
 
     # Incorrect arguments
-    output = run_fdbcli_command("setknob")
+    output = run_fdbcli_command("setknob", check=False)
     assert output == "Usage: setknob <KEY> <VALUE> [CONFIG_CLASS]"
-    output = run_fdbcli_command("setknob", "min_trace_severity")
+    output = run_fdbcli_command("setknob", "min_trace_severity", check=False)
     assert output == "Usage: setknob <KEY> <VALUE> [CONFIG_CLASS]"
-    output = run_fdbcli_command("getknob")
+    output = run_fdbcli_command("getknob", check=False)
     assert output == "Usage: getknob <KEY> [CONFIG_CLASS]"
     logger.debug("incorrect args passed")
 
@@ -1499,7 +1501,7 @@ def tenant_group_get(logger):
     output = run_fdbcli_command_and_get_error("tenantgroup get tenant_group2")
     assert output == "ERROR: tenant group not found"
 
-    output = run_fdbcli_command("tenantgroup get tenant_group2 JSON")
+    output = run_fdbcli_command("tenantgroup get tenant_group2 JSON", check=False)
     json_output = json.loads(output, strict=False)
     assert len(json_output) == 2
     assert json_output["type"] == "error"
@@ -1534,13 +1536,13 @@ def idempotency_ids(logger):
 
     # Incorrect number of tokens
     command = "idempotencyids clear"
-    output = run_fdbcli_command(command)
+    output = run_fdbcli_command(command, check=False)
     logger.debug(command + " : " + output)
     assert output == "Usage: idempotencyids [status | clear <min_age_seconds>]", output
 
     # Incorrect number of tokens
     command = "idempotencyids"
-    output = run_fdbcli_command(command)
+    output = run_fdbcli_command(command, check=False)
     logger.debug(command + " : " + output)
     assert output == "Usage: idempotencyids [status | clear <min_age_seconds>]", output
 
