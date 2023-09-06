@@ -310,7 +310,7 @@ void trigger_job(jobName, profile) {
                 def build_log = buildlogs.split("\n")
                 //Capture error's from the build log
                 for (build_line in build_log) {
-                    if (build_line.contains("ERROR:")) {
+                    if (build_line.contains("ERROR:") || build_line.contains("FAILED:")) {
                         details += build_line + "\\n"
                     }
                 }
