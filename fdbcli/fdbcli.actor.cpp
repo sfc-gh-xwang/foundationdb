@@ -2491,7 +2491,7 @@ ACTOR Future<Void> timeExit(double duration) {
 
 const char* checkTlsConfigAgainstCoordAddrs(const ClusterConnectionString& ccs) {
 	// Resolve TLS config and inspect whether any of the certificate, key, ca bytes has been set
-	extern TLSConfig tlsConfig;
+	const TLSConfig& tlsConfig = NativeAPI::getTLSConfig();
 	auto const loaded = tlsConfig.loadSync();
 	const bool tlsConfigured =
 	    !loaded.getCertificateBytes().empty() || !loaded.getKeyBytes().empty() || !loaded.getCABytes().empty();
@@ -2606,8 +2606,7 @@ int main(int argc, char** argv) {
 	}
 
 	if (opt.debugTLS) {
-		// Backdoor into NativeAPI's tlsConfig, which is where the above network option settings ended up.
-		extern TLSConfig tlsConfig;
+		const TLSConfig& tlsConfig = NativeAPI::getTLSConfig();
 		printf("TLS Configuration:\n");
 		printf("\tCertificate Path: %s\n", tlsConfig.getCertificatePathSync().c_str());
 		printf("\tKey Path: %s\n", tlsConfig.getKeyPathSync().c_str());

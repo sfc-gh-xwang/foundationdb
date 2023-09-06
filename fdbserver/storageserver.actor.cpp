@@ -71,6 +71,7 @@
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
 #include "fdbclient/VersionedMap.h"
+#include "fdbclient/TransactionState.h"
 #include "fdbrpc/sim_validation.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbrpc/Stats.h"

@@ -24,6 +24,7 @@
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/RunRYWTransaction.actor.h"
 #include "fdbclient/Tuple.h"
+#include "fdbclient/ClientLogEvents.h"
 #include "flow/actorcompiler.h" // has to be last include
 
 static const Key CLIENT_LATENCY_INFO_PREFIX = "client_latency/"_sr;

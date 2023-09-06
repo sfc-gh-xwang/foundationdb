@@ -22,7 +22,6 @@
 #define METACLUSTER_METACLUSTERMETADATA_H
 #pragma once
 
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/GenericTransactionHelper.h"
 #include "fdbclient/KeyBackedTypes.actor.h"

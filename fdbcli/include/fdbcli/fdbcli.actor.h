@@ -30,7 +30,7 @@
 
 #include "fdbcli/FlowLineNoise.h"
 
-#include "fdbclient/CoordinationInterface.h"
+#include "fdbclient/IClusterConnectionRecord.h"
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/StatusClient.h"
 #include "fdbclient/StorageServerInterface.h"

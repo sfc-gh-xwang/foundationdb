@@ -22,7 +22,7 @@
 #ifndef FDBCLIENT_CLUSTERCONNECTIONMEMORYRECORD_H
 #define FDBCLIENT_CLUSTERCONNECTIONMEMORYRECORD_H
 
-#include "fdbclient/CoordinationInterface.h"
+#include "fdbclient/IClusterConnectionRecord.h"
 
 // An implementation of IClusterConnectionRecord that is stored in memory only and not persisted.
 class ClusterConnectionMemoryRecord : public IClusterConnectionRecord,

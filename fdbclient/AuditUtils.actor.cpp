@@ -24,6 +24,8 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ClientKnobs.h"
+#include "fdbclient/SystemData.h"
+#include "fdbclient/KeyRangeMap.h"
 
 #include "flow/actorcompiler.h" // has to be last include
 
