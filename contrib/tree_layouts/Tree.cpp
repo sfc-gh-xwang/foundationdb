@@ -12,7 +12,7 @@ TreeNode *buildTree(int n, int start) {
         return new TreeNode(start);
     }
     int r = (1 << static_cast<int>(log2(n))) - 1;
-    TreeNode* root = new TreeNode(r + start);
+    TreeNode *root = new TreeNode(r + start);
     root->left = buildTree(r, start);
     root->right = buildTree(n - r - 1, start + r + 1);
     return root;

@@ -12,7 +12,7 @@ struct TreeNode {
 };
 
 // Returns a leftist perfectly balanced binary tree with n nodes
-TreeNode* buildTree(int n);
+TreeNode *buildTree(int n);
 
 int height(TreeNode *node);
 
