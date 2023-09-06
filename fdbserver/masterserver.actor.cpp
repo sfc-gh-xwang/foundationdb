@@ -378,6 +378,31 @@ ACTOR Future<Void> updateRecoveryData(Reference<MasterData> self) {
 	}
 }
 
+// Detect sequencer suspension when version correction is enabled and force a
+// recovery to catch up if the version is far enough behind. Typically this
+// should only affect single process clusters, as larger clusters will detect
+// issues with individual processes on their own and go through recovery.
+ACTOR Future<Void> detectSuspend() {
+	if (!SERVER_KNOBS->FORCE_RECOVERY_SUSPEND_ENABLED) {
+		return Void();
+	}
+
+	loop {
+		state double start = g_network->now();
+		wait(delay(5.0, TaskPriority::SuspendCheck));
+		double now = g_network->now();
+		if (now - start > SERVER_KNOBS->FORCE_RECOVERY_SUSPEND_TIME) {
+			ASSERT(!g_network->isSimulated());
+			TraceEvent("SequencerSuspended")
+			    .detail("Start", start)
+			    .detail("Now", now)
+			    .detail("Difference", now - start);
+			// Kill sequencer, forcing a recovery.
+			throw worker_removed();
+		}
+	}
+}
+
 static std::set<int> const& normalMasterErrors() {
 	static std::set<int> s;
 	if (s.empty()) {
@@ -427,6 +452,7 @@ ACTOR Future<Void> masterServer(MasterInterface mi,
 	addActor.send(provideVersions(self));
 	addActor.send(serveLiveCommittedVersion(self));
 	addActor.send(updateRecoveryData(self));
+	addActor.send(detectSuspend());
 
 	CODE_PROBE(!lifetime.isStillValid(db->get().masterLifetime,
 	                                  db->get().master.present() ? mi.id() == db->get().master.get().id() : false),
