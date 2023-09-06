@@ -418,57 +418,72 @@ ParsedKnobValue Knobs::parseKnobValue(std::string const& knob, std::string const
 }
 
 bool Knobs::setKnob(std::string const& knob, int value, Buggified buggified) {
-	if (!int_knobs.count(knob)) {
+	std::string lowerKnob = toLower(knob);
+	fmt::print("Setting int knob: {} {} {}\n", knob, value, (bool)buggified);
+	if (!int_knobs.count(lowerKnob)) {
+		fmt::print("Knob not found\n");
 		return false;
 	}
-	auto& knobValue = int_knobs[knob];
+	auto& knobValue = int_knobs[lowerKnob];
 	*knobValue.value = value;
 	knobValue.buggified = buggified;
-	explicitlySetKnobs.insert(toLower(knob));
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
 bool Knobs::setKnob(std::string const& knob, int64_t value, Buggified buggified) {
-	if (!int64_knobs.count(knob)) {
+	std::string lowerKnob = toLower(knob);
+	fmt::print("Setting int64 knob: {} {} {}\n", knob, value, (bool)buggified);
+	if (!int64_knobs.count(lowerKnob)) {
+		fmt::print("Knob not found\n");
 		return false;
 	}
-	auto& knobValue = int64_knobs[knob];
+	auto& knobValue = int64_knobs[lowerKnob];
 	*knobValue.value = value;
 	knobValue.buggified = buggified;
-	explicitlySetKnobs.insert(toLower(knob));
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
 bool Knobs::setKnob(std::string const& knob, bool value, Buggified buggified) {
-	if (!bool_knobs.count(knob)) {
+	std::string lowerKnob = toLower(knob);
+	fmt::print("Setting bool knob: {} {} {}\n", knob, value, (bool)buggified);
+	if (!bool_knobs.count(lowerKnob)) {
+		fmt::print("Knob not found\n");
 		return false;
 	}
-	auto& knobValue = bool_knobs[knob];
+	auto& knobValue = bool_knobs[lowerKnob];
 	*knobValue.value = value;
 	knobValue.buggified = buggified;
-	explicitlySetKnobs.insert(toLower(knob));
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
 bool Knobs::setKnob(std::string const& knob, double value, Buggified buggified) {
-	if (!double_knobs.count(knob)) {
+	std::string lowerKnob = toLower(knob);
+	fmt::print("Setting double knob: {} {} {}\n", knob, value, (bool)buggified);
+	if (!double_knobs.count(lowerKnob)) {
+		fmt::print("Knob not found\n");
 		return false;
 	}
-	auto& knobValue = double_knobs[knob];
+	auto& knobValue = double_knobs[lowerKnob];
 	*knobValue.value = value;
 	knobValue.buggified = buggified;
-	explicitlySetKnobs.insert(toLower(knob));
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
 bool Knobs::setKnob(std::string const& knob, std::string const& value, Buggified buggified) {
-	if (!string_knobs.count(knob)) {
+	std::string lowerKnob = toLower(knob);
+	fmt::print("Setting string knob: {} {} {}\n", knob, value, (bool)buggified);
+	if (!string_knobs.count(lowerKnob)) {
+		fmt::print("Knob not found\n");
 		return false;
 	}
-	auto& knobValue = string_knobs[knob];
+	auto& knobValue = string_knobs[lowerKnob];
 	*knobValue.value = value;
 	knobValue.buggified = buggified;
-	explicitlySetKnobs.insert(toLower(knob));
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 

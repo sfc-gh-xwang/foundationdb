@@ -574,8 +574,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( COMMIT_TRIGGER_DELAY,                                  0.01 ); BUGGIFY_KNOB(COMMIT_TRIGGER_DELAY, randomize && BUGGIFY, deterministicRandom()->random01() * 4);
 
 	// these settings disable batch bytes scaling.  Try COMMIT_TRANSACTION_BATCH_BYTES_MAX=1e6, COMMIT_TRANSACTION_BATCH_BYTES_SCALE_BASE=50000, COMMIT_TRANSACTION_BATCH_BYTES_SCALE_POWER=0.5?
-	init( COMMIT_TRANSACTION_BATCH_BYTES_MIN,                  100000 );
-	init( COMMIT_TRANSACTION_BATCH_BYTES_MAX,                  100000 ); BUGGIFY_KNOB(COMMIT_TRANSACTION_BATCH_BYTES_MIN = COMMIT_TRANSACTION_BATCH_BYTES_MAX, randomize && BUGGIFY, 1000000);
+	bool buggifyCommitTransactionBatchBytes = randomize && BUGGIFY;
+	init( COMMIT_TRANSACTION_BATCH_BYTES_MIN,                  100000 ); BUGGIFY_KNOB(COMMIT_TRANSACTION_BATCH_BYTES_MIN, buggifyCommitTransactionBatchBytes, 1000000);
+	init( COMMIT_TRANSACTION_BATCH_BYTES_MAX,                  100000 ); BUGGIFY_KNOB(COMMIT_TRANSACTION_BATCH_BYTES_MAX, buggifyCommitTransactionBatchBytes, 1000000);
 	init( COMMIT_TRANSACTION_BATCH_BYTES_SCALE_BASE,           100000 );
 	init( COMMIT_TRANSACTION_BATCH_BYTES_SCALE_POWER,             0.0 );
 
@@ -693,7 +694,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_WORKER_HEALTH_CHECKING_INTERVAL,                   60.0 );
 	init( CC_DEGRADED_LINK_EXPIRATION_INTERVAL,                300.0 );
 	init( CC_MIN_DEGRADATION_INTERVAL,                         120.0 );
-	init( ENCRYPT_KEY_PROXY_FAILURE_TIME,                        0.1 ); BUGGIFY_KNOB(ENCRYPT_KEY_PROXY_FAILURE_TIME, randomize && BUGGIFY, 1.0 + deterministicRandom()->random01());
+	init( ENCRYPT_KEY_PROXY_FAILURE_TIME,                        0.1 ); BUGGIFY_KNOB(ENCRYPT_KEY_PROXY_FAILURE_TIME, isSimulated, 1.0 + deterministicRandom()->random01());
 	init( CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE,                      3 );
 	init( CC_MAX_EXCLUSION_DUE_TO_HEALTH,                          2 );
 	init( CC_HEALTH_TRIGGER_RECOVERY,                          false );

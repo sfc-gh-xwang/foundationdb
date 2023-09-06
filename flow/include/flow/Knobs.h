@@ -39,7 +39,7 @@
 #define KNOB_FN(_1, _2, _3, FN, ...) FN
 #define INIT_KNOB(knob, value) initKnob(knob, value, #knob)
 #define INIT_ATOMIC_KNOB(knob, value, atomic) initKnob(knob, value, #knob, atomic)
-#define BUGGIFY_KNOB(knob, cond, val) buggifyKnob(#knob, cond, val)
+#define BUGGIFY_KNOB(knob, cond, val) buggifyKnob(knob, #knob, cond, val)
 
 // NOTE: Directly using KnobValueRef as the return type for Knobs::parseKnobValue would result
 // in a cyclic dependency, so we use this intermediate ParsedKnobValue type
@@ -103,6 +103,31 @@ public:
 		}
 
 		return condition;
+	}
+
+	template <class T>
+	bool buggifyKnob(int const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (int)value);
+	}
+
+	template <class T>
+	bool buggifyKnob(bool const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (bool)value);
+	}
+
+	template <class T>
+	bool buggifyKnob(int64_t const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (int64_t)value);
+	}
+
+	template <class T>
+	bool buggifyKnob(double const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (double)value);
+	}
+
+	template <class T>
+	bool buggifyKnob(std::string const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (std::string)value);
 	}
 
 	// Gets the value of knob
