@@ -71,6 +71,7 @@ enum StackOperation {
 	ENCODE_DOUBLE,
 	DECODE_FLOAT,
 	DECODE_DOUBLE,
+	GET_TAG_THROTTLED_DURATION,
 	UNIT_TESTS, /* Possibly unimplemented */
 
 	// Tenants
