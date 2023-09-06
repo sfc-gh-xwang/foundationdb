@@ -1940,7 +1940,8 @@ ACTOR Future<Void> createClusterIdFile(std::string folder, UID clusterId) {
 				clusterIdFile = _clusterIdFile;
 				BinaryWriter wr(IncludeVersion());
 				wr << clusterId;
-				wait(clusterIdFile.get()->write(wr.getData(), wr.getLength(), 0));
+				state Standalone<StringRef> clusterIdData = wr.toValue();
+				wait(clusterIdFile.get()->write(clusterIdData.begin(), clusterIdData.size(), 0));
 				wait(clusterIdFile.get()->sync());
 				return Void();
 			} else {
