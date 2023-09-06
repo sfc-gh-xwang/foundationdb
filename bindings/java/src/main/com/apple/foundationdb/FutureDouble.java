@@ -1,5 +1,7 @@
 /**
  * FutureDouble.java
+ *
+ * Copyright (c) 2023 Snowflake Computing
  */
 
 package com.apple.foundationdb;
