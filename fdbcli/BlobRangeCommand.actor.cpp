@@ -113,16 +113,29 @@ ACTOR Future<Void> doBlobDebug(Database db,
 	return Void();
 }
 
-ACTOR Future<Void> doBlobList(Database db,
-                              Optional<Reference<Tenant>> tenant,
-                              Key startKey,
-                              Key endKey,
-                              Optional<Version> readVersion) {
+ACTOR Future<Void> doBlobGranuleList(Database db,
+                                     Optional<Reference<Tenant>> tenant,
+                                     Key startKey,
+                                     Key endKey,
+                                     Optional<Version> readVersion) {
 	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 
 	state Standalone<VectorRef<KeyRangeRef>> blobGranuleRanges =
 	    wait(tr.getBlobGranuleRanges(KeyRangeRef(startKey, endKey), CLIENT_KNOBS->BG_TOO_MANY_GRANULES));
 	for (auto& elem : blobGranuleRanges) {
+		fmt::print("[{}, {})\n", elem.begin.printable(), elem.end.printable());
+	}
+	return Void();
+}
+
+ACTOR Future<Void> doBlobList(Database db,
+                              Optional<Reference<Tenant>> tenant,
+                              Key startKey,
+                              Key endKey,
+                              Optional<Version> readVersion) {
+	state Standalone<VectorRef<KeyRangeRef>> blobRanges =
+	    wait(db->listBlobbifiedRanges(KeyRangeRef(startKey, endKey), CLIENT_KNOBS->BG_TOO_MANY_GRANULES, tenant));
+	for (auto& elem : blobRanges) {
 		fmt::print("[{}, {})\n", elem.begin.printable(), elem.end.printable());
 	}
 	return Void();
@@ -152,7 +165,7 @@ ACTOR Future<Void> doBlobFlush(Database db,
 
 namespace fdb_cli {
 
-enum class SubCommand { check, compact, debug, flush, forcepurge, list, purge, start, stop };
+enum class SubCommand { check, compact, debug, flush, forcepurge, granulelist, list, purge, start, stop };
 
 ACTOR Future<bool> blobRangeCommandActor(Database localDb,
                                          Optional<TenantMapEntry> tenantEntry,
@@ -200,6 +213,8 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 		subc = SubCommand::flush;
 	} else if (tokencmp(subcommand, "forcepurge")) {
 		subc = SubCommand::forcepurge;
+	} else if (tokencmp(subcommand, "granulelist")) {
+		subc = SubCommand::granulelist;
 	} else if (tokencmp(subcommand, "list")) {
 		subc = SubCommand::list;
 	} else if (tokencmp(subcommand, "purge")) {
@@ -261,6 +276,8 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 		actor = doBlobDebug(localDb, tenant, begin, end, version);
 	} else if (subc == SubCommand::compact || subc == SubCommand::flush) {
 		actor = doBlobFlush(localDb, tenant, begin, end, version, subc == SubCommand::compact);
+	} else if (subc == SubCommand::granulelist) {
+		actor = doBlobGranuleList(localDb, tenant, begin, end, version);
 	} else if (subc == SubCommand::list) {
 		actor = doBlobList(localDb, tenant, begin, end, version);
 	} else {
@@ -273,7 +290,8 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 
 CommandFactory blobRangeFactory(
     "blobrange",
-    CommandHelp("blobrange <start|stop|check|debug|purge|forcepurge|flush|compact|list> <startkey> <endkey> [version]",
+    CommandHelp("blobrange <start|stop|check|debug|purge|forcepurge|flush|compact|list|granulelist> <startkey> "
+                "<endkey> [version]",
                 "",
                 ""));
 } // namespace fdb_cli

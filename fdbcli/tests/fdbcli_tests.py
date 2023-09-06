@@ -75,101 +75,103 @@ def run_fdbcli_command_and_get_error(*args):
     )
 
 
+def blobrange_list_cmd(logger, start="\\x00", end="\\xff", tenant=None):
+    """Build up an fdbcli command do to a blobrange list on the given range and return the results.
+    Optionally do it in a particular tenant. Result has the tenant-related noise stripped, so it's
+    just the result of the blobrange list command."""
+
+    res = {}
+    for granules in [False, True]:
+        # Right now, blobrange list and blobrange granulelist return the same things.
+        # That is probably a hint that the testing is inadequate.
+        cmd = []
+        if tenant is not None:
+            cmd.append("usetenant {}".format(tenant))
+            cmd.append(";")
+        if granules:
+            cmd.append("blobrange granulelist {} {}".format(start, end))
+        else:
+            cmd.append("blobrange list {} {}".format(start, end))
+
+        r = run_fdbcli_command(" ".join(cmd))
+        logger.debug("r is {}".format(r))
+        lines = r.split("\n")
+        if tenant is not None:
+            assert lines[0] == ">>> {}".format(cmd[0])
+            assert lines[1] == "Using tenant `{}'".format(tenant)
+            assert lines[2] == ">>> {}".format(cmd[2])
+            del lines[0:3]
+        if lines[0] != "{}list blob range [{} - {})".format(
+            "granule" if granules else "", start, end
+        ):
+            logger.debug("lines[0] {} not expected".format(lines[0]))
+            assert False
+        del lines[0]
+
+        res[granules] = lines
+
+    if res[True] != res[False]:
+        logger.debug(
+            "Expected blob list and granule list to be the same, but got {} != {}".format(
+                res[True], res[False]
+            )
+        )
+    assert res[True] == res[False]
+    logger.debug(
+        "blobrange_list_cmd(start={}, end={}, tenant={}) -> {}".format(
+            start, end, tenant, res[True]
+        )
+    )
+    return res[True]
+
+
 @enable_logging()
 def blobrange_list(logger):
     run_fdbcli_command("configure blob_granules_enabled=1")
     run_fdbcli_command("configure tenant_mode=optional_experimental")
-    r = run_fdbcli_command("blobrange list \\x00 \\xff")
-    logger.debug("Pre-blobbify blobrange list r={}".format(r))
-    assert r == """list blob range [\\x00 - \\xff)"""
+    r = blobrange_list_cmd(logger)
+    assert r == []
 
     r = run_fdbcli_command("tenant create tenant1")
     logger.debug("tenant create said {}".format(r))
     r = run_fdbcli_command("usetenant", "tenant1")
     logger.debug("usetenant said {}".format(r))
-    r = run_fdbcli_command("usetenant tenant1 ; blobrange list \\x00 \\xff")
+    r = blobrange_list_cmd(logger, tenant="tenant1")
     logger.debug("list tenant1 said {}".format(r))
-    assert (
-        r
-        == """>>> usetenant tenant1
-Using tenant `tenant1'
->>> blobrange list \\x00 \\xff
-list blob range [\\x00 - \\xff)"""
-    )
+    assert r == []
 
     run_fdbcli_command("usetenant tenant1 ; blobrange start A B")
     run_fdbcli_command("usetenant tenant1 ; blobrange start C D")
     run_fdbcli_command("usetenant tenant1 ; blobrange start D E")
-    r = run_fdbcli_command("usetenant tenant1 ; blobrange list \\x00 \\xff")
+    r = blobrange_list_cmd(logger, tenant="tenant1")
     logger.debug("blobrange list AB CD DE -> {}".format(r))
-    assert (
-        r
-        == """>>> usetenant tenant1
-Using tenant `tenant1'
->>> blobrange list \\x00 \\xff
-list blob range [\\x00 - \\xff)
-[A, B)
-[C, D)
-[D, E)"""
-    )
+    assert r == ["[A, B)", "[C, D)", "[D, E)"]
 
-    r = run_fdbcli_command("usetenant tenant1 ; blobrange list \\x00 Cm")
+    r = blobrange_list_cmd(logger, end="Cm", tenant="tenant1")
     logger.debug("restricted blobrange list r={}".format(r))
-    assert (
-        r
-        == """>>> usetenant tenant1
-Using tenant `tenant1'
->>> blobrange list \\x00 Cm
-list blob range [\\x00 - Cm)
-[A, B)
-[C, D)"""
-    )
+    assert r == ["[A, B)", "[C, D)"]
 
-    r = run_fdbcli_command("usetenant tenant1 ; blobrange list Cm \\xff")
-    logger.debug("end restricted blobrange list r={}".format(r))
-    assert (
-        r
-        == """>>> usetenant tenant1
-Using tenant `tenant1'
->>> blobrange list Cm \\xff
-list blob range [Cm - \\xff)
-[C, D)
-[D, E)"""
-    )
+    r = blobrange_list_cmd(logger, start="Cm", tenant="tenant1")
+    assert r == ["[C, D)", "[D, E)"]
 
     run_fdbcli_command("tenant create tenant2")
-    r = run_fdbcli_command("usetenant tenant2 ; blobrange list \\x00 \\xff")
-    logger.debug("tenant2 blob range {}".format(r))
-    assert (
-        r
-        == """>>> usetenant tenant2
-Using tenant `tenant2'
->>> blobrange list \\x00 \\xff
-list blob range [\\x00 - \\xff)"""
-    )
+    r = blobrange_list_cmd(logger, tenant="tenant2")
+    logger.debug("list tenant2 said {}".format(r))
+    assert r == []
 
     run_fdbcli_command("usetenant tenant2 ; blobrange start A G")
-    r = run_fdbcli_command("usetenant tenant2 ; blobrange list \\x00 \\xff")
+    r = blobrange_list_cmd(logger, tenant="tenant2")
     logger.debug("tenant2 blob range2 {}".format(r))
-    assert (
-        r
-        == """>>> usetenant tenant2
-Using tenant `tenant2'
->>> blobrange list \\x00 \\xff
-list blob range [\\x00 - \\xff)
-[A, G)"""
-    )
+    assert r == ["[A, G)"]
 
-    r = run_fdbcli_command("blobrange list \\x00 \\xff")
+    r = blobrange_list_cmd(logger)
     logger.debug("default tenant blob list {}".format(r))
-    assert (
-        r
-        == """list blob range [\\x00 - \\xff)
-[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01A, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01B)
-[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01C, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01D)
-[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01D, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01E)
-[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02A, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02G)"""
-    )
+    assert r == [
+        "[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01A, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01B)",
+        "[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01C, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01D)",
+        "[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01D, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01E)",
+        "[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02A, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02G)",
+    ]
 
 
 @enable_logging()
@@ -722,9 +724,9 @@ def transaction(logger):
     assert lines[2] == "`key' is `value'"
     assert lines[3].startswith("Committed (") and lines[3].endswith(")")
     # validate commit version is larger than the read version
-    commit_verion = int(lines[3][len("Committed (") : -1])
-    logger.debug("Commit version: {}".format(commit_verion))
-    assert commit_verion >= read_version
+    commit_version = int(lines[3][len("Committed (") : -1])
+    logger.debug("Commit version: {}".format(commit_version))
+    assert commit_version >= read_version
     # check the transaction is committed
     output2 = run_fdbcli_command("get", "key")
     assert output2 == "`key' is `value'"
