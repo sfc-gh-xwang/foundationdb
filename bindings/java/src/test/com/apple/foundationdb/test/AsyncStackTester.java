@@ -297,13 +297,14 @@ public class AsyncStackTester {
 			}
 
 			return AsyncUtil.DONE;
-		}
-		else if(op == StackOperation.GET_APPROXIMATE_SIZE) {
+		} else if (op == StackOperation.GET_TAG_THROTTLED_DURATION) {
+			return inst.tr.getTagThrottledDuration().thenAcceptAsync(
+			    duration -> { inst.push("GOT_TAG_THROTTLED_DURATION".getBytes()); }, FDB.DEFAULT_EXECUTOR);
+		} else if (op == StackOperation.GET_APPROXIMATE_SIZE) {
 			return inst.tr.getApproximateSize().thenAcceptAsync(size -> {
 				inst.push("GOT_APPROXIMATE_SIZE".getBytes());
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if(op == StackOperation.GET_VERSIONSTAMP) {
+		} else if (op == StackOperation.GET_VERSIONSTAMP) {
 			try {
 				inst.push(inst.tr.getVersionstamp());
 			}
@@ -312,14 +313,12 @@ public class AsyncStackTester {
 			}
 
 			return AsyncUtil.DONE;
-		}
-		else if(op == StackOperation.SET_READ_VERSION) {
+		} else if (op == StackOperation.SET_READ_VERSION) {
 			if(inst.context.lastVersion == null)
 				throw new IllegalArgumentException("Read version has not been read");
 			inst.tr.setReadVersion(inst.context.lastVersion);
 			return AsyncUtil.DONE;
-		}
-		else if(op == StackOperation.ON_ERROR) {
+		} else if (op == StackOperation.ON_ERROR) {
 			return inst.popParam().thenComposeAsync(param -> {
 				int errorCode = StackUtils.getInt(param);
 
@@ -350,16 +349,14 @@ public class AsyncStackTester {
 				inst.push(f);
 				return AsyncUtil.DONE;
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if(op == StackOperation.SUB) {
+		} else if (op == StackOperation.SUB) {
 			return inst.popParams(2).thenAcceptAsync(params -> {
 				BigInteger result = StackUtils.getBigInteger(params.get(0)).subtract(
 						StackUtils.getBigInteger(params.get(1))
 				);
 				inst.push(result);
 			});
-		}
-		else if(op == StackOperation.CONCAT) {
+		} else if (op == StackOperation.CONCAT) {
 			return inst.popParams(2).thenAcceptAsync(params -> {
 				if(params.get(0) instanceof String) {
 					inst.push((String)params.get(0) + (String)params.get(1));
@@ -368,8 +365,7 @@ public class AsyncStackTester {
 					inst.push(ByteArrayUtil.join((byte[])params.get(0), (byte[])params.get(1)));
 				}
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if(op == StackOperation.TUPLE_PACK) {
+		} else if (op == StackOperation.TUPLE_PACK) {
 			return inst.popParam().thenComposeAsync(param -> {
 				int tupleSize = StackUtils.getInt(param);
 				//System.out.println(inst.context.preStr + " - " + "Packing top " + tupleSize + " items from stack");
@@ -379,8 +375,7 @@ public class AsyncStackTester {
 					inst.push(coded);
 				}, FDB.DEFAULT_EXECUTOR);
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if(op == StackOperation.TUPLE_PACK_WITH_VERSIONSTAMP) {
+		} else if (op == StackOperation.TUPLE_PACK_WITH_VERSIONSTAMP) {
 			return inst.popParams(2).thenComposeAsync(params -> {
 				byte[] prefix = (byte[])params.get(0);
 				int tupleSize = StackUtils.getInt(params.get(1));
@@ -404,8 +399,7 @@ public class AsyncStackTester {
 					}
 				}, FDB.DEFAULT_EXECUTOR);
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if(op == StackOperation.TUPLE_UNPACK) {
+		} else if (op == StackOperation.TUPLE_UNPACK) {
 			return inst.popParam().thenAcceptAsync(param -> {
 				/*System.out.println(inst.context.preStr + " - " + "Unpacking tuple code: " +
 						ByteArrayUtil.printable((byte[]) param)); */
@@ -415,8 +409,7 @@ public class AsyncStackTester {
 					inst.push(itemBytes);
 				}
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if(op == StackOperation.TUPLE_RANGE) {
+		} else if (op == StackOperation.TUPLE_RANGE) {
 			return inst.popParam().thenComposeAsync(param -> {
 				int tupleSize = StackUtils.getInt(param);
 				//System.out.println(inst.context.preStr + " - " + "Tuple range with top " + tupleSize + " items from stack");
@@ -426,8 +419,7 @@ public class AsyncStackTester {
 					inst.push(range.end);
 				}, FDB.DEFAULT_EXECUTOR);
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if(op == StackOperation.TUPLE_SORT) {
+		} else if (op == StackOperation.TUPLE_SORT) {
 			return inst.popParam().thenComposeAsync(param -> {
 				final int listSize = StackUtils.getInt(param);
 				return inst.popParams(listSize).thenAcceptAsync(rawElements -> {
@@ -445,46 +437,39 @@ public class AsyncStackTester {
 					}
 				}, FDB.DEFAULT_EXECUTOR);
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.ENCODE_FLOAT) {
+		} else if (op == StackOperation.ENCODE_FLOAT) {
 			return inst.popParam().thenAcceptAsync(param -> {
 				byte[] fBytes = (byte[])param;
 				float value = ByteBuffer.wrap(fBytes).order(ByteOrder.BIG_ENDIAN).getFloat();
 				inst.push(value);
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.ENCODE_DOUBLE) {
+		} else if (op == StackOperation.ENCODE_DOUBLE) {
 			return inst.popParam().thenAcceptAsync(param -> {
 				byte[] dBytes = (byte[])param;
 				double value = ByteBuffer.wrap(dBytes).order(ByteOrder.BIG_ENDIAN).getDouble();
 				inst.push(value);
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.DECODE_FLOAT) {
+		} else if (op == StackOperation.DECODE_FLOAT) {
 			return inst.popParam().thenAcceptAsync(param -> {
 				float value = ((Number)param).floatValue();
 				inst.push(ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putFloat(value).array());
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.DECODE_DOUBLE) {
+		} else if (op == StackOperation.DECODE_DOUBLE) {
 			return inst.popParam().thenAcceptAsync(param -> {
 				double value = ((Number)param).doubleValue();
 				inst.push(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putDouble(value).array());
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.TENANT_CREATE) {
+		} else if (op == StackOperation.TENANT_CREATE) {
 			return inst.popParam().thenAcceptAsync(param -> {
 				byte[] tenantName = (byte[])param;
 				inst.push(TenantManagement.createTenant(inst.context.db, tenantName));
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.TENANT_DELETE) {
+		} else if (op == StackOperation.TENANT_DELETE) {
 			return inst.popParam().thenAcceptAsync(param -> {
 				byte[] tenantName = (byte[])param;
 				inst.push(TenantManagement.deleteTenant(inst.context.db, tenantName));
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.TENANT_LIST) {
+		} else if (op == StackOperation.TENANT_LIST) {
 			return inst.popParams(3).thenAcceptAsync(params -> {
 				byte[] begin = (byte[])params.get(0);
 				byte[] end = (byte[])params.get(1);
@@ -503,20 +488,17 @@ public class AsyncStackTester {
 				}
 				inst.push(Tuple.fromItems(result).pack());
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.TENANT_SET_ACTIVE) {
+		} else if (op == StackOperation.TENANT_SET_ACTIVE) {
 			return inst.popParam().thenComposeAsync(param -> {
 				byte[] tenantName = (byte[])param;
 				return inst.context.setTenant(Optional.of(tenantName)).thenAcceptAsync(id -> {
 					inst.push("SET_ACTIVE_TENANT".getBytes());
 				}, FDB.DEFAULT_EXECUTOR);
 			}, FDB.DEFAULT_EXECUTOR);
-		}
-		else if (op == StackOperation.TENANT_CLEAR_ACTIVE) {
+		} else if (op == StackOperation.TENANT_CLEAR_ACTIVE) {
 			inst.context.setTenant(Optional.empty());
 			return AsyncUtil.DONE;
-		}
-		else if (op == StackOperation.TENANT_GET_ID) {
+		} else if (op == StackOperation.TENANT_GET_ID) {
 			if (inst.context.tenant.isPresent()) {
 				return inst.context.tenant.get().getId().thenAcceptAsync(id -> {
 					inst.push("GOT_TENANT_ID".getBytes());
@@ -525,8 +507,7 @@ public class AsyncStackTester {
 				inst.push("NO_ACTIVE_TENANT".getBytes());
 				return AsyncUtil.DONE;
 			}
-		}
-		else if (op == StackOperation.UNIT_TESTS) {
+		} else if (op == StackOperation.UNIT_TESTS) {
 			inst.context.db.options().setLocationCacheSize(100001);
 			return inst.context.db.runAsync(tr -> {
 				FDB fdb = FDB.instance();
@@ -605,8 +586,7 @@ public class AsyncStackTester {
 			}).exceptionally(t -> {
 				throw new RuntimeException("Unit tests failed: " + t.getMessage());
 			});
-		}
-		else if (op == StackOperation.LOG_STACK) {
+		} else if (op == StackOperation.LOG_STACK) {
 			return inst.popParam().thenComposeAsync(prefix -> doLogStack(inst, (byte[])prefix), FDB.DEFAULT_EXECUTOR);
 		}
 
