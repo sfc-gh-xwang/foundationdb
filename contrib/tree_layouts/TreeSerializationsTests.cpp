@@ -8,7 +8,7 @@ void vebOrderTest() {
 	int cacheLineSize = 64;
 	int nodeSize = 16; // 4 nodes per cache line
 
-	TreeNode* root = buildTree(nodeCount);
+	TreeNode* root = buildLeftBalancedTree(nodeCount);
 	Memory mem(cacheLineSize);
 	VEBSerialization veb(mem, root, nodeSize);
 

@@ -4,7 +4,7 @@
 using std::max;
 using std::vector;
 
-TreeNode* buildTree(int n, int start) {
+TreeNode* buildLeftBalancedTree(int n, int start) {
 	if (n == 0) {
 		return nullptr;
 	}
@@ -13,13 +13,31 @@ TreeNode* buildTree(int n, int start) {
 	}
 	int r = (1 << static_cast<int>(log2(n))) - 1;
 	TreeNode* root = new TreeNode(r + start);
-	root->left = buildTree(r, start);
-	root->right = buildTree(n - r - 1, start + r + 1);
+	root->left = buildLeftBalancedTree(r, start);
+	root->right = buildLeftBalancedTree(n - r - 1, start + r + 1);
 	return root;
 }
 
-TreeNode* buildTree(int n) {
-	return buildTree(n, 0);
+TreeNode* buildBalancedTree(int n, int start) {
+	if (n == 0) {
+		return nullptr;
+	}
+	if (n == 1) {
+		return new TreeNode(start);
+	}
+	int r = n >> 1;
+	TreeNode* root = new TreeNode(r + start);
+	root->left = buildBalancedTree(r, start);
+	root->right = buildBalancedTree(n - r - 1, start + r + 1);
+	return root;
+}
+
+TreeNode* buildLeftBalancedTree(int n) {
+	return buildLeftBalancedTree(n, 0);
+}
+
+TreeNode* buildBalancedTree(int n) {
+	return buildBalancedTree(n, 0);
 }
 
 int height(TreeNode* node) {
