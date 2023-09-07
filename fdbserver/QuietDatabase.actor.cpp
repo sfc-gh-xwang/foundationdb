@@ -1334,11 +1334,11 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			    .add(evt, "DatacenterLag", dcLag.get(), maxDcLag);
 
 			if (config.blobGranulesEnabled) {
-				check.add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits, 0)
-				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges, 0)
-				    .add<int64_t>(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments, 0)
+				check.template add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits, 0)
+				    .template add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges, 0)
+				    .template add<int64_t>(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments, 0)
 				    .add(evt, "ActiveBlobWrites", activeBlobWrites.get(), false)
-				    .add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
+				    .template add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
 			}
 			if (g_network->isSimulated() && g_simulator->extraDatabases.empty()) {
 				check.add(evt, "RatekeeperCount", ratekeeperCount, 1, std::equal_to<>())

@@ -413,24 +413,26 @@ struct MetaclusterMoveConcurrencyWorkload : TestWorkload {
 		}
 		state UID runId = moveRecord.get().runId;
 		loop {
-			state Optional<MoveBlock> block = wait(
+			state Optional<MoveBlock> move_block = wait(
 			    runTransaction(self->managementDb,
 			                   [self = self, tenantGroup = tenantGroup, runId = runId](Reference<ITransaction> tr) {
 				                   return getNextMoveBlock(self, tr, tenantGroup, runId);
 			                   }));
 
-			if (!block.present()) {
+			if (!move_block.present()) {
 				return Void();
 			}
 
-			wait(copyTenantData(self, tenantGroup, block.get(), srcDb, dstDb));
+			wait(copyTenantData(self, tenantGroup, move_block.get(), srcDb, dstDb));
 
 			wait(runTransactionVoid(
 			    self->managementDb,
-			    [runId = runId, tenantGroup = tenantGroup, block = block](Reference<ITransaction> tr) {
+			    [runId = runId, tenantGroup = tenantGroup, move_block = move_block](Reference<ITransaction> tr) {
 				    tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 				    metacluster::metadata::management::emergency_movement::splitPointsMap().erase(
-				        tr, Tuple::makeTuple(tenantGroup, runId.toString(), block.get().tenant, block.get().begin));
+				        tr,
+				        Tuple::makeTuple(
+				            tenantGroup, runId.toString(), move_block.get().tenant, move_block.get().begin));
 				    return Future<Void>(Void());
 			    }));
 		}
