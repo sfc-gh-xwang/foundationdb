@@ -6004,7 +6004,7 @@ ACTOR Future<Void> tryFlushRange(Reference<BlobManagerData> bmData, KeyRange ran
 				}
 			}
 			if (knownRange) {
-				TraceEvent(retryCount > 100 ? SevError : SevInfo, "BlobGranulesFlushRetry")
+				TraceEvent(retryCount > 100 ? SevWarnAlways : SevInfo, "BlobGranulesFlushRetry")
 				    .detail("Range", range)
 				    .detail("Version", logEndVersion);
 				CODE_PROBE(true, "Retry blob granule flush", probe::decoration::rare);
