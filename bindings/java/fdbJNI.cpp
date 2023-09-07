@@ -2284,6 +2284,17 @@ JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1
 	return (jlong)f;
 }
 
+JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1getTotalCost(JNIEnv* jenv,
+                                                                                             jobject,
+                                                                                             jlong tPtr) {
+	if (!tPtr) {
+		throwParamNotNull(jenv);
+		return 0;
+	}
+	FDBFuture* f = fdb_transaction_get_total_cost((FDBTransaction*)tPtr);
+	return (jlong)f;
+}
+
 JNIEXPORT void JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1setExpectedCost(JNIEnv* jenv,
                                                                                                jobject,
                                                                                                jlong tPtr,

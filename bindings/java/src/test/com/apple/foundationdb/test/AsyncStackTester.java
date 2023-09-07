@@ -300,6 +300,9 @@ public class AsyncStackTester {
 		} else if (op == StackOperation.GET_TAG_THROTTLED_DURATION) {
 			return inst.tr.getTagThrottledDuration().thenAcceptAsync(
 			    duration -> { inst.push("GOT_TAG_THROTTLED_DURATION".getBytes()); }, FDB.DEFAULT_EXECUTOR);
+		} else if (op == StackOperation.GET_TOTAL_COST) {
+			return inst.tr.getTotalCost().thenAcceptAsync(
+			    cost -> { inst.push("GOT_TOtAL_COST".getBytes()); }, FDB.DEFAULT_EXECUTOR);
 		} else if (op == StackOperation.SET_EXPECTED_COST) {
 			try {
 				inst.tr.setExpectedCost(/*bytes=*/4096);

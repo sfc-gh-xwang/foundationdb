@@ -72,6 +72,7 @@ enum StackOperation {
 	DECODE_FLOAT,
 	DECODE_DOUBLE,
 	GET_TAG_THROTTLED_DURATION,
+	GET_TOTAL_COST,
 	SET_EXPECTED_COST,
 	UNIT_TESTS, /* Possibly unimplemented */
 

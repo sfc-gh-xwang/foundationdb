@@ -277,6 +277,9 @@ public class StackTester {
 			} else if (op == StackOperation.GET_TAG_THROTTLED_DURATION) {
 				Double duration = inst.tr.getTagThrottledDuration().join();
 				inst.push("GOT_TAG_THROTTLED_DURATION".getBytes());
+			} else if (op == StackOperation.GET_TOTAL_COST) {
+				Long cost = inst.tr.getTotalCost().join();
+				inst.push("GOT_TOTAL_COST".getBytes());
 			} else if (op == StackOperation.SET_EXPECTED_COST) {
 				inst.tr.setExpectedCost(/*bytes=*/4096);
 				inst.push("SET_EXPECTED_COST".getBytes());

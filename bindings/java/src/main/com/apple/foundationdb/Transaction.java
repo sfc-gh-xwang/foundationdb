@@ -262,6 +262,14 @@ public interface Transaction extends AutoCloseable, ReadTransaction, Transaction
 	CompletableFuture<Double> getTagThrottledDuration();
 
 	/**
+	 * Returns the total cost, in bytes, according to the tag throttler, of this transaction.
+	 * This function should be called at the end of the transaction.
+	 *
+	 * @return the cost in bytes of this transaction
+	 */
+	CompletableFuture<Long> getTotalCost();
+
+	/**
 	 * Informs the tag throttler of the expected cost of this transaction in bytes. This
 	 * is only helpful if called before fetching a read version.
 	 */
