@@ -409,9 +409,6 @@ void BlobCipherEncryptHeaderRef::validateEncryptionHeaderDetails(const BlobCiphe
 	// Validate 'Initialization Vector' sanity
 	int ivSize = getIVSize();
 	EncryptCipherMode encryptMode = getEncryptMode();
-#if BLOB_CIPHER_DEBUG
-	TraceEvent(SevDebug, "EncryptCipherMode").detail("Mode", encryptMode);
-#endif
 	if (encryptMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR && ivSize != AES_256_CTR_IV_LENGTH) {
 		TraceEvent(SevError, "EncryptionHeaderIVSizeMismatch")
 		    .detail("IVSize", ivSize)
@@ -566,7 +563,8 @@ BlobCipherKey::BlobCipherKey(const EncryptCipherDomainId& domainId,
 EncryptCipherNonce BlobCipherKey::getAndUpdateNonce(EncryptCipherNonce max_value) {
 	ASSERT(nonce <= max_value);
 	if (nonce == max_value) {
-		TraceEvent(SevWarnAlways, "NonceOverflow");
+		// TODO (Nim): Add metric for nonce overflow
+		TraceEvent("NonceOverflow");
 		nonce = 0;
 		return max_value;
 	}
@@ -1113,7 +1111,7 @@ int getIVLengthFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) {
 	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
 		return AesGcmParams::ivSize;
 	}
-	TraceEvent(SevWarnAlways, "GetIVLengthModeUnsupported").detail("Algo", algo);
+	TraceEvent(SevError, "GetIVLengthModeUnsupported").detail("Algo", algo);
 	throw not_implemented();
 }
 
@@ -1194,7 +1192,7 @@ int getAuthHeaderVersion() {
 	} else if (std::is_same_v<Params, AesCtrWithCmacParams>) {
 		return CLIENT_KNOBS->ENCRYPT_HEADER_AES_CTR_AES_CMAC_AUTH_VERSION;
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
 	}
 }
 
@@ -1205,7 +1203,7 @@ EncryptAuthTokenAlgo getAuthTokenAlgo() {
 	} else if (std::is_same_v<Params, AesCtrWithCmacParams>) {
 		return EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC;
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
 	}
 }
 
@@ -1214,7 +1212,7 @@ EncryptCipherMode getEncryptMode() {
 	if (std::is_same_v<Params, AesCtrWithHmacParams> || std::is_same_v<Params, AesCtrWithCmacParams>) {
 		return EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR;
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
 	}
 }
 
@@ -1225,7 +1223,7 @@ EncryptAuthTokenMode getAuthTokenMode() {
 	} else if (std::is_same_v<Params, AesCtrNoAuth>) {
 		return EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
 	}
 }
 
@@ -1236,7 +1234,7 @@ std::string getEncryptModeStr() {
 	} else if (std::is_same_v<Params, AesCtrWithCmacParams>) {
 		return "CMAC_SHA";
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
 	}
 }
 
@@ -1249,7 +1247,7 @@ EncryptionAtRestAlgo getEncryptionAtRestAlgo() {
 	} else if (std::is_same_v<Params, AesGcm>) {
 		return EncryptionAtRestAlgo::AES_GCM;
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
 	}
 }
 
@@ -2360,7 +2358,7 @@ void testNonceIVGenerationGcm(const int minDomainId) {
 		ASSERT(nonce + 1 == cipherKey->getNonce());
 	}
 
-	cipherKey->setNonce(maxNonceSize);
+	cipherKey->setNonceTest(maxNonceSize);
 	Reference<EncryptBlobCipher> encryptor =
 	    EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, algo, BlobCipherMetrics::TEST);
 	StringRef ivRef = encryptor->getIVRef();

@@ -187,7 +187,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 			algo = EncryptionAtRestAlgo::AES_GCM;
 			ivSize = AesGcmParams::ivSize;
 		} else {
-			throw unsupported_operation();
+			throw not_implemented();
 		}
 	}
 

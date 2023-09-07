@@ -709,7 +709,7 @@ public:
 	EncryptCipherNonce getAndUpdateNonce(EncryptCipherNonce max_value);
 	EncryptCipherNonce getNonce() { return nonce; }
 	// The nonce should not be set outside of testing
-	void setNonce(EncryptCipherNonce other) {
+	void setNonceTest(EncryptCipherNonce other) {
 		ASSERT(g_network->isSimulated());
 		this->nonce = other;
 	}

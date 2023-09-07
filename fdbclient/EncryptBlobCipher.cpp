@@ -21,8 +21,6 @@
 #include "fdbclient/EncryptBlobCipher.h"
 #include "fdbclient/BlobCipher.h"
 #include "flow/EncryptUtils.h"
-#include "flow/IRandom.h"
-#include "flow/network.h"
 
 // EncryptBlobCipher class methods
 EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,

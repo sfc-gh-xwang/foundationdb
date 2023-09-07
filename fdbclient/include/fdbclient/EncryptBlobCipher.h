@@ -19,8 +19,6 @@
  */
 #ifndef FDBCLIENT_ENCRYPT_BLOB_CIPHER_H
 #define FDBCLIENT_ENCRYPT_BLOB_CIPHER_H
-#include "fdbclient/FDBTypes.h"
-#include "flow/EncryptUtils.h"
 #pragma once
 
 #include "fdbrpc/Stats.h"
