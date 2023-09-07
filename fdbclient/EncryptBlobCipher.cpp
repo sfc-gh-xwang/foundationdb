@@ -21,6 +21,8 @@
 #include "fdbclient/EncryptBlobCipher.h"
 #include "fdbclient/BlobCipher.h"
 #include "flow/EncryptUtils.h"
+#include "flow/IRandom.h"
+#include "flow/network.h"
 
 // EncryptBlobCipher class methods
 EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
@@ -991,7 +993,11 @@ void generateIV(EncryptionAtRestAlgo algo, Reference<BlobCipherKey> textCipherKe
 	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
 	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
 		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
-		deterministicRandom()->randomBytes(iv, ivLen);
+		if (g_network->isSimulated()) {
+			deterministicRandom()->randomBytes(iv, ivLen);
+		} else {
+			nondeterministicRandom()->randomBytes(iv, ivLen);
+		}
 	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
 		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 		EncryptCipherNonce maxValue = std::numeric_limits<uint96_t>::max();

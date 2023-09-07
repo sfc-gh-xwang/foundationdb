@@ -1,7 +1,5 @@
 [configuration]
 storageEngineExcludeTypes = [4, 5]
-# FIXME: Enable authenticated encryption after redwood allows in-instance swap
-disableAuthenticatedEncryption = true
 
 [[test]]
 testTitle = 'RestoreBackup'

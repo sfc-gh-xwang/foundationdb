@@ -1,10 +1,6 @@
 [configuration]
 extraMachineCountDC = 2
 
-[[knobs]]
-encrypt_header_auth_token_algo = 0
-encrypt_header_auth_token_enabled = false
-
 [[test]]
 testTitle = 'CloggedConfigureDatabaseTest'
 clearAfterTest = false

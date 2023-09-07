@@ -400,7 +400,6 @@ public:
 
 	bool allowDefaultTenant = true;
 	bool allowCreatingTenants = true;
-	bool disableAuthenticatedEncryption = false;
 	bool injectTargetedSSRestart = false;
 	bool injectSSDelay = false;
 	// By default, tenant mode is set randomly
@@ -477,7 +476,6 @@ public:
 		    .add("simHTTPServerEnabled", &simHTTPServerEnabled)
 		    .add("allowDefaultTenant", &allowDefaultTenant)
 		    .add("allowCreatingTenants", &allowCreatingTenants)
-		    .add("disableAuthenticatedEncryption", &disableAuthenticatedEncryption)
 		    .add("randomlyRenameZoneId", &randomlyRenameZoneId)
 		    // Some configs call this injectSSTargetedRestart, some call it injectTargetedSSRestart.
 		    // Accept either.
@@ -1324,9 +1322,6 @@ ACTOR Future<Void> restartSimulatedSystem(std::vector<Future<Void>>* systemActor
 		if (testConfig->disableRemoteKVS) {
 			g_knobs.setKnob("remote_kv_store", KnobValueRef::create(bool{ false }));
 			TraceEvent(SevDebug, "DisableRemoteKVS");
-		}
-		if (testConfig->disableAuthenticatedEncryption) {
-			g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
 		}
 		TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 		*pConnString = conn;
@@ -2192,9 +2187,6 @@ void setupSimulatedSystem(std::vector<Future<Void>>* systemActors,
 	if (testConfig.disableRemoteKVS) {
 		g_knobs.setKnob("remote_kv_store", KnobValueRef::create(bool{ false }));
 		TraceEvent(SevDebug, "DisableRemoteKVS");
-	}
-	if (testConfig.disableAuthenticatedEncryption) {
-		g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
 	}
 	TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 	auto configDBType = testConfig.getConfigDBType();

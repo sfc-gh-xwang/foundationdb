@@ -2195,9 +2195,33 @@ int main(int argc, char* argv[]) {
 				}
 				g_knobs.setKnob("enable_blob_granule_compression",
 				                KnobValue::create(ini.GetBoolValue("META", "enableBlobGranuleEncryption", false)));
-				g_knobs.setKnob("encryption_at_rest_algo",
-				                KnobValue::create((std::string)ini.GetValue(
-				                    "META", "encryptionAtRestAlgo", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO.c_str())));
+				// TODO (Nim): Remove this code once redwood supports in-instance swap between encryption algorithm
+				int authTokenAlgo = (int)ini.GetLongValue("META", "encryptHeaderAuthTokenAlgo", -1);
+				TraceEvent(SevDebug, "OldAuthTokenAlgo").detail("Algo", authTokenAlgo);
+				if (authTokenAlgo == -1) {
+					// Not a restart test from an old binary so read the value of the new knob
+					g_knobs.setKnob("encryption_at_rest_algo",
+					                KnobValue::create((std::string)ini.GetValue(
+					                    "META", "encryptionAtRestAlgo", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO.c_str())));
+				} else {
+					EncryptAuthTokenAlgo algo = (EncryptAuthTokenAlgo)authTokenAlgo;
+					ASSERT(isEncryptHeaderAuthTokenAlgoValid(algo));
+					switch (algo) {
+					case EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE:
+						g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
+						break;
+					case EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC:
+						g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CMAC" }));
+						break;
+					case EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_HMAC_SHA:
+						g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-HMAC" }));
+						break;
+					default:
+						// Restarting tests canot have any other value for the algo
+						ASSERT(false);
+						break;
+					}
+				}
 
 				g_knobs.setKnob(
 				    "shard_encode_location_metadata",
@@ -2216,7 +2240,8 @@ int main(int argc, char* argv[]) {
 				}
 			}
 
-			// Call fast restore for the class FastRestoreClass. This is a short-cut to run fast restore in circus
+			// Call fast restore for the class FastRestoreClass. This is a short-cut to run fast restore in
+			// circus
 			if (opts.processClass == ProcessClass::FastRestoreClass) {
 				printf("Run as fast restore worker\n");
 				ASSERT(opts.connectionFile);
@@ -2389,7 +2414,8 @@ int main(int argc, char* argv[]) {
 
 		// IFailureMonitor::failureMonitor().address_info.clear();
 
-		// we should have shut down ALL actors associated with this machine; let's list all of the ones still live
+		// we should have shut down ALL actors associated with this machine; let's list all of the ones still
+		// live
 		/*{
 		    auto living = Actor::all;
 		    printf("%d surviving actors:\n", living.size());
