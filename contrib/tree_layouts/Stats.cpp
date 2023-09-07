@@ -34,15 +34,15 @@ void computeStats(TreeSerialization& tree, int nodeCount) {
 }
 
 void stats(int cacheLineSize, int nodeSize, int nodeCount) {
-	TreeNode* root = buildBalancedTree(nodeCount);
+	TreeNode* root = buildLeftBalancedTree(nodeCount);
 	Memory mem1(cacheLineSize);
 	Memory mem2(cacheLineSize);
 	Memory mem3(cacheLineSize);
 	Memory mem4(cacheLineSize);
 	PreorderSerialization preorder(mem1, root, nodeSize);
 	VEBSerialization veb(mem2, root, nodeSize);
-	NonObliviousSerialization nonObliviousNoStraddling(mem3, root, nodeSize, cacheLineSize, false);
-	NonObliviousSerialization nonObliviousStraddling(mem4, root, nodeSize, cacheLineSize, true);
+	CacheAwareSerialization awareNoStraddling(mem3, root, nodeSize, cacheLineSize, false);
+	CacheAwareSerialization awareStraddling(mem4, root, nodeSize, cacheLineSize, true);
 
 	cout << "Cache line:\t " << cacheLineSize << " bytes" << endl;
 	cout << "Node size:\t " << nodeSize << " bytes (" << cacheLineSize / static_cast<double>(nodeSize)
@@ -53,10 +53,10 @@ void stats(int cacheLineSize, int nodeSize, int nodeCount) {
 	computeStats(preorder, nodeCount);
 	cout << endl << "VEB:" << endl;
 	computeStats(veb, nodeCount);
-	cout << endl << "Non-oblivious with straddling nodes:" << endl;
-	computeStats(nonObliviousStraddling, nodeCount);
-	cout << endl << "Non-oblivious with no straddling nodes:" << endl;
-	computeStats(nonObliviousNoStraddling, nodeCount);
+	cout << endl << "Cache-aware with straddling nodes:" << endl;
+	computeStats(awareStraddling, nodeCount);
+	cout << endl << "Cache-aware with no straddling nodes:" << endl;
+	computeStats(awareNoStraddling, nodeCount);
 }
 
 void help(char* cmd) {

@@ -15,7 +15,7 @@ struct TreeNode {
 TreeNode* buildLeftBalancedTree(int n);
 
 // Returns a balanced binary tree with n nodes
-TreeNode* buildBalancedTree(int n);
+TreeNode* buildWeightBalancedTree(int n);
 
 int height(TreeNode* node);
 

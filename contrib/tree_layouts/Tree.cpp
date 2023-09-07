@@ -18,7 +18,7 @@ TreeNode* buildLeftBalancedTree(int n, int start) {
 	return root;
 }
 
-TreeNode* buildBalancedTree(int n, int start) {
+TreeNode* buildWeightBalancedTree(int n, int start) {
 	if (n == 0) {
 		return nullptr;
 	}
@@ -27,8 +27,8 @@ TreeNode* buildBalancedTree(int n, int start) {
 	}
 	int r = n >> 1;
 	TreeNode* root = new TreeNode(r + start);
-	root->left = buildBalancedTree(r, start);
-	root->right = buildBalancedTree(n - r - 1, start + r + 1);
+	root->left = buildWeightBalancedTree(r, start);
+	root->right = buildWeightBalancedTree(n - r - 1, start + r + 1);
 	return root;
 }
 
@@ -36,8 +36,8 @@ TreeNode* buildLeftBalancedTree(int n) {
 	return buildLeftBalancedTree(n, 0);
 }
 
-TreeNode* buildBalancedTree(int n) {
-	return buildBalancedTree(n, 0);
+TreeNode* buildWeightBalancedTree(int n) {
+	return buildWeightBalancedTree(n, 0);
 }
 
 int height(TreeNode* node) {

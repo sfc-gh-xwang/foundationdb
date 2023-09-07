@@ -109,7 +109,7 @@ private:
 		if (root == nullptr or depth < 0) {
 			return 0;
 		}
-		if (depth <= 1) {
+		if (depth <= 2) {
 			SerializedTreeNode serialized(root->key, nodeSize);
 			int leftOffset = offset + serialized.size;
 			int leftSize = serialize(root->left, leftOffset, depth - 1, bottom);
@@ -160,11 +160,11 @@ private:
 /*
  * Cache-aware serialization of the tree. Roughly speaking, if each cache line can hold
  * B nodes, the algorithm groups the first B nodes in BFS order, and then recurses on
- * the immediate children of these B nodes.
+ * the unvisited children of these B nodes.
  */
-class NonObliviousSerialization : public TreeSerialization {
+class CacheAwareSerialization : public TreeSerialization {
 public:
-	NonObliviousSerialization(Memory& mem, TreeNode* root, int nodeSize, int cacheLineSize, bool straddling)
+	CacheAwareSerialization(Memory& mem, TreeNode* root, int nodeSize, int cacheLineSize, bool straddling)
 	  : TreeSerialization(mem, root, nodeSize),
 	    cacheLineSize(cacheLineSize),
 	    straddling(straddling) {
