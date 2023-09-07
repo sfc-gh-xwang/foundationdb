@@ -56,6 +56,15 @@ if (NOT OPEN_FOR_IDE)
           5
           --external-client-library ${CMAKE_BINARY_DIR}/bindings/c/libfdb_c_external.so
           )
+  add_fdbclient_test(
+  NAME blobbified_fdbcli_tests
+  API_TEST_BLOB_GRANULES_ENABLED
+  COMMAND ${CMAKE_SOURCE_DIR}/fdbcli/tests/fdbcli_tests.py
+          ${CMAKE_BINARY_DIR}
+          @CLUSTER_FILE@
+          --blobs
+          --external-client-library ${CMAKE_BINARY_DIR}/bindings/c/libfdb_c_external.so
+          )
 
   add_multi_fdbclient_test(
     NAME metacluster_fdbcli_tests
