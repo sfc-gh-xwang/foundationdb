@@ -4,6 +4,7 @@
 
 #include "fdbserver/IRKMetricsTracker.h"
 #include "fdbserver/Knobs.h"
+#include "flow/Optional.h"
 
 ACTOR static Future<Void> splitError(Future<Void> in, Promise<Void> errOut) {
 	try {
@@ -366,15 +367,31 @@ UpdateCommitCostRequest StorageQueueInfo::refreshCommitCost(double elapsed) {
 	return updateCommitCostRequest;
 }
 
-Optional<double> StorageQueueInfo::getTagThrottlingRatio(int64_t storageTargetBytes, int64_t storageSpringBytes) const {
-	auto const storageQueue = getStorageQueueBytes();
-	// TODO: Remove duplicate calculation from RKRateUpdater::updateRate
-	double inverseResult = std::min(
-	    2.0, (storageQueue - storageTargetBytes + storageSpringBytes) / static_cast<double>(storageSpringBytes));
+Optional<double> getThrottlingRatio(int64_t value, int64_t target, int64_t spring) {
+	double inverseResult = std::min(2.0, (value - target + spring) / static_cast<double>(spring));
 	if (inverseResult > 0) {
 		return 1.0 / inverseResult;
 	} else {
 		return {};
+	}
+}
+
+Optional<double> StorageQueueInfo::getTagThrottlingRatio(int64_t storageTargetBytes,
+                                                         int64_t storageSpringBytes,
+                                                         int64_t targetDurabilityLag,
+                                                         int64_t springDurabilityLag) const {
+	// TODO: Remove duplicate calculation from RKRateUpdater::updateRate
+	const auto storageRatio = getThrottlingRatio(getStorageQueueBytes(), storageTargetBytes, storageSpringBytes);
+	const auto durabilityLagRatio = getThrottlingRatio(getDurabilityLag(), targetDurabilityLag, springDurabilityLag);
+
+	if (!storageRatio.present() && !durabilityLagRatio.present()) {
+		return {};
+	} else if (!storageRatio.present()) {
+		return durabilityLagRatio;
+	} else if (!durabilityLagRatio.present()) {
+		return storageRatio;
+	} else {
+		return (storageRatio.get() < durabilityLagRatio.get()) ? storageRatio : durabilityLagRatio;
 	}
 }
 

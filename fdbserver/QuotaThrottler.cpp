@@ -185,7 +185,9 @@ class QuotaThrottlerImpl {
 		for (auto const& [id, ssInfo] : storageQueueInfo) {
 			auto const throttlingRatio =
 			    ssInfo.getTagThrottlingRatio(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER);
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER,
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS,
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_DURABILITY_LAG);
 			if (!throttlingRatio.present()) {
 				continue;
 			}
