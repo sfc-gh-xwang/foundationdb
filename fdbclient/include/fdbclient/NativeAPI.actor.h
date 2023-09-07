@@ -489,7 +489,7 @@ int64_t getMaxKeySize(KeyRef const& key);
 int64_t getMaxReadKeySize(KeyRef const& key);
 
 // Returns the maximum legal size of a key that can be written. If using raw access, writes to normal keys will
-// be allowed to be slighly larger to accommodate the prefix.
+// be allowed to be slightly larger to accommodate the prefix.
 int64_t getMaxWriteKeySize(KeyRef const& key, bool hasRawAccess);
 
 // Returns the maximum legal size of a key that can be cleared. Keys larger than this will be assumed not to exist.

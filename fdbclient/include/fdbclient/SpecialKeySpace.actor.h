@@ -172,6 +172,7 @@ public:
 		CLUSTERID, // An immutable UID for a cluster
 		CONFIGURATION, // Configuration of the cluster
 		CONNECTIONSTRING,
+		ENCRYPTION,
 		ERRORMSG, // A single key space contains a json string which describes the last error in special-key-space
 		GLOBALCONFIG, // Global configuration options synchronized to all nodes
 		MANAGEMENT, // Management-API
@@ -232,6 +233,12 @@ public:
 	static KeyRef getActorLineageApiCommandPrefix(const std::string& command) {
 		return actorLineageApiCommandToRange.at(command).begin;
 	}
+	static KeyRangeRef getEncryptionApiCommandRange(const std::string& command) {
+		return encryptionApiCommandToRange.at(command);
+	}
+	static KeyRef getEncryptionApiCommandPrefix(const std::string& command) {
+		return encryptionApiCommandToRange.at(command).begin;
+	}
 	static Key getManagementApiCommandOptionSpecialKey(const std::string& command, const std::string& option);
 	static const std::set<std::string>& getManagementApiOptionsSet() { return options; }
 	static const std::set<std::string>& getTracingOptions() { return tracingOptions; }
@@ -264,6 +271,7 @@ private:
 	// management command to its special keys' range
 	static std::unordered_map<std::string, KeyRange> managementApiCommandToRange;
 	static std::unordered_map<std::string, KeyRange> actorLineageApiCommandToRange;
+	static std::unordered_map<std::string, KeyRange> encryptionApiCommandToRange;
 
 	// "<command>/<option>"
 	static std::set<std::string> options;
@@ -565,6 +573,15 @@ public:
 class WorkerInterfacesSpecialKeyImpl : public SpecialKeyRangeReadImpl {
 public:
 	explicit WorkerInterfacesSpecialKeyImpl(KeyRangeRef kr);
+
+	Future<RangeReadResult> getRange(ReadYourWritesTransaction* ryw,
+	                                 KeyRangeRef kr,
+	                                 GetRangeLimits limitsHint) const override;
+};
+
+class LatestEncryptCipherKeysSpecialKeyImpl : public SpecialKeyRangeReadImpl {
+public:
+	explicit LatestEncryptCipherKeysSpecialKeyImpl(KeyRangeRef kr);
 
 	Future<RangeReadResult> getRange(ReadYourWritesTransaction* ryw,
 	                                 KeyRangeRef kr,

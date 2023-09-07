@@ -21,6 +21,7 @@
 #include "boost/lexical_cast.hpp"
 #include "boost/algorithm/string.hpp"
 
+#include <limits>
 #include <string>
 #include <time.h>
 #include <msgpack.hpp>
@@ -37,6 +38,7 @@
 #include "fdbclient/SpecialKeySpace.actor.h"
 #include "fdbclient/TransactionState.h"
 #include "flow/Arena.h"
+#include "flow/IRandom.h"
 #include "flow/UnitTest.h"
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/StatusClient.h"
@@ -75,6 +77,7 @@ std::unordered_map<SpecialKeySpace::MODULE, KeyRange> SpecialKeySpace::moduleToB
 	{ SpecialKeySpace::MODULE::ACTOR_PROFILER_CONF,
 	  KeyRangeRef("\xff\xff/actor_profiler_conf/"_sr, "\xff\xff/actor_profiler_conf0"_sr) },
 	{ SpecialKeySpace::MODULE::CLUSTERID, singleKeyRange("\xff\xff/cluster_id"_sr) },
+	{ SpecialKeySpace::MODULE::ENCRYPTION, KeyRangeRef("\xff\xff/encryption/"_sr, "\xff\xff/encryption0"_sr) }
 };
 
 std::unordered_map<std::string, KeyRange> SpecialKeySpace::managementApiCommandToRange = {
@@ -108,6 +111,12 @@ std::unordered_map<std::string, KeyRange> SpecialKeySpace::managementApiCommandT
 std::unordered_map<std::string, KeyRange> SpecialKeySpace::actorLineageApiCommandToRange = {
 	{ "state", KeyRangeRef("state/"_sr, "state0"_sr).withPrefix(moduleToBoundary[MODULE::ACTORLINEAGE].begin) },
 	{ "time", KeyRangeRef("time/"_sr, "time0"_sr).withPrefix(moduleToBoundary[MODULE::ACTORLINEAGE].begin) }
+};
+
+std::unordered_map<std::string, KeyRange> SpecialKeySpace::encryptionApiCommandToRange = {
+	{ "latestcipherkeysbydomain",
+	  KeyRangeRef("latest_cipher_keys_by_domain/"_sr, "latest_cipher_keys_by_domain0"_sr)
+	      .withPrefix(moduleToBoundary[MODULE::ENCRYPTION].begin) }
 };
 
 std::set<std::string> SpecialKeySpace::options = { "excluded/force",
@@ -2899,6 +2908,142 @@ Future<RangeReadResult> WorkerInterfacesSpecialKeyImpl::getRange(ReadYourWritesT
                                                                  KeyRangeRef kr,
                                                                  GetRangeLimits limitsHint) const {
 	return workerInterfacesImplGetRangeActor(ryw, getKeyRange().begin, kr);
+}
+
+namespace {
+
+// Binary search for the smallest domain id that, when Tuple-encoded, be no less than lowerBound.
+// It is possible to calculate such a domain id without binary search, but it would be tricky and error-prone.
+Optional<EncryptCipherDomainId> findNextEncryptDomainId(KeyRef prefix, KeyRef lowerBound) {
+	auto getKey = [&](EncryptCipherDomainId domainId) -> Key {
+		return Tuple::makeTuple(domainId).pack().withPrefix(prefix);
+	};
+	EncryptCipherDomainId b = MIN_ENCRYPT_DOMAIN_ID;
+	EncryptCipherDomainId e = std::numeric_limits<EncryptCipherDomainId>::max();
+	if (lowerBound <= getKey(b)) {
+		return b;
+	}
+	if (lowerBound > getKey(e)) {
+		return Optional<EncryptCipherDomainId>();
+	}
+	while (b < e) {
+		// Approximate to (b+e)/2 but avoid overflow.
+		EncryptCipherDomainId mid = (b / 2) + (e / 2);
+		if (mid >= e) {
+			mid = e - 1;
+		}
+		if (lowerBound <= getKey(mid)) {
+			e = mid;
+		} else {
+			b = mid + 1;
+		}
+	}
+	ASSERT(b == e);
+	return b;
+}
+
+// List latest encrypt cipher keys from worker, merge the result into merged.
+ACTOR static Future<Void> listLatestEncryptCipherKeysFromWorker(
+    ClientWorkerInterface interf,
+    Reference<FlowLock> connectLock,
+    Optional<EncryptCipherDomainId> beginDomainId,
+    Optional<EncryptCipherDomainId> endDomainId,
+    std::map<EncryptCipherDomainId, std::map<EncryptCipherBaseKeyId, EncryptCipherKeyEntry>>* merged) {
+	ASSERT(merged != nullptr);
+	state Optional<EncryptCipherDomainId> nextDomainId = beginDomainId;
+	state bool hasMore = true;
+	while (hasMore && (!nextDomainId.present() || !endDomainId.present() || nextDomainId.get() < endDomainId.get())) {
+		wait(connectLock->take());
+		ListLatestEncryptCipherKeysRequest req;
+		req.beginDomainId = nextDomainId;
+		req.endDomainId = endDomainId;
+		req.limit = CLIENT_KNOBS->ENCRYPT_LIST_CIPHER_KEYS_LIMIT;
+		ListLatestEncryptCipherKeysReply reply = wait(interf.listLatestEncryptCipherKeys.getReply(req));
+		connectLock->release();
+		for (auto& domain : reply.list) {
+			EncryptCipherDomainId domainId = domain.first;
+			EncryptCipherBaseKeyId cipherId = domain.second.id;
+			if ((*merged)[domainId].count(cipherId) == 0) {
+				(*merged)[domainId][cipherId] = domain.second;
+			} else {
+				(*merged)[domainId][cipherId].merge(domain.second);
+			}
+		}
+		if (!reply.list.empty()) {
+			ASSERT(reply.list.back().first < std::numeric_limits<EncryptCipherDomainId>::max());
+			nextDomainId = reply.list.back().first + 1;
+		}
+		hasMore = reply.hasMore;
+	}
+	return Void();
+}
+
+// Serve range read into the special key space holding list of latest cipher keys by domain id.
+// KVs are in the following form:
+//   key: <prefix><domain_id>, where <domain_id> is encoded using Tuple, which preserves order after encode.
+//   value: object serialized vector of EncryptCipherKeyEntry.
+ACTOR static Future<RangeReadResult> latestEncryptCipherKeysGetRangeActor(ReadYourWritesTransaction* ryw,
+                                                                          KeyRef prefix,
+                                                                          KeyRangeRef kr) {
+	state Optional<EncryptCipherDomainId> beginDomainId = findNextEncryptDomainId(prefix, kr.begin);
+	state Optional<EncryptCipherDomainId> endDomainId = findNextEncryptDomainId(prefix, kr.end);
+	if (!beginDomainId.present() || (endDomainId.present() && beginDomainId.get() >= endDomainId.get())) {
+		return RangeReadResult();
+	}
+	if (!ryw->getDatabase().getPtr() || !ryw->getDatabase()->getConnectionRecord()) {
+		return RangeReadResult();
+	}
+	RangeReadResult interfs = wait(getWorkerInterfaces(ryw->getDatabase()->getConnectionRecord()));
+	if (interfs.empty()) {
+		return RangeReadResult();
+	}
+	state std::vector<Future<Void>> actors;
+	state std::map<EncryptCipherDomainId, std::map<EncryptCipherBaseKeyId, EncryptCipherKeyEntry>> merged;
+	Reference<FlowLock> connectLock(new FlowLock(CLIENT_KNOBS->CLI_CONNECT_PARALLELISM));
+	for (auto& interf : interfs) {
+		ClientWorkerInterface workerInterf =
+		    BinaryReader::fromStringRef<ClientWorkerInterface>(interf.value, IncludeVersion());
+		actors.push_back(
+		    listLatestEncryptCipherKeysFromWorker(workerInterf, connectLock, beginDomainId, endDomainId, &merged));
+	}
+	wait(waitForAll(actors));
+	RangeReadResult result;
+	for (auto& domain : merged) {
+		std::vector<EncryptCipherKeyEntry> cipherKeys;
+		for (auto& cipherKey : domain.second) {
+			cipherKeys.push_back(cipherKey.second);
+		}
+		result.push_back_deep(result.arena(),
+		                      KeyValueRef(Tuple::makeTuple(domain.first).pack().withPrefix(prefix),
+		                                  ObjectWriter::toValue(cipherKeys, Unversioned())));
+	}
+	return result;
+}
+} // anonymous namespace
+
+LatestEncryptCipherKeysSpecialKeyImpl::LatestEncryptCipherKeysSpecialKeyImpl(KeyRangeRef kr)
+  : SpecialKeyRangeReadImpl(kr) {}
+
+Future<RangeReadResult> LatestEncryptCipherKeysSpecialKeyImpl::getRange(ReadYourWritesTransaction* ryw,
+                                                                        KeyRangeRef kr,
+                                                                        GetRangeLimits limitsHint) const {
+	return latestEncryptCipherKeysGetRangeActor(ryw, getKeyRange().begin, kr);
+}
+
+TEST_CASE("/fdbclient/SpecialKeySpace/findNextEncryptDomainId") {
+	KeyRef prefix = "test_prefix"_sr;
+	auto getKey = [&](EncryptCipherDomainId domainId) -> Key {
+		return Tuple::makeTuple(domainId).pack().withPrefix(prefix);
+	};
+	ASSERT_EQ(MIN_ENCRYPT_DOMAIN_ID, findNextEncryptDomainId(prefix, ""_sr));
+	ASSERT_EQ(Optional<EncryptCipherDomainId>(),
+	          findNextEncryptDomainId(prefix, keyAfter(getKey(std::numeric_limits<EncryptCipherDomainId>::max()))));
+	for (int i = 0; i < 100; i++) {
+		EncryptCipherDomainId domainId = deterministicRandom()->randomInt64(
+		    MIN_ENCRYPT_DOMAIN_ID, std::numeric_limits<EncryptCipherDomainId>::max());
+		ASSERT_EQ(domainId + 1, findNextEncryptDomainId(prefix, keyAfter(getKey(domainId))));
+	}
+	return Void();
 }
 
 ACTOR Future<Void> validateSpecialSubrangeRead(ReadYourWritesTransaction* ryw,

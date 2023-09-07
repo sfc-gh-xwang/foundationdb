@@ -664,16 +664,33 @@ public:
 	              const int64_t refreshAt,
 	              const int64_t expireAt);
 
-	uint8_t* data() const { return cipher.get(); }
+	void updateAccessAtTS() const {
+		ASSERT(now() >= accessAtTS);
+		accessAtTS = now();
+	}
+
+	uint8_t* data() const {
+		updateAccessAtTS();
+		return cipher.get();
+	}
+	uint8_t* rawCipher() const {
+		updateAccessAtTS();
+		return cipher.get();
+	}
+	uint8_t* rawBaseCipher() const {
+		updateAccessAtTS();
+		return baseCipher.get();
+	}
+
 	uint64_t getRefreshAtTS() const { return refreshAtTS; }
 	uint64_t getExpireAtTS() const { return expireAtTS; }
+	double getAccessAtTS() const { return accessAtTS; }
 	EncryptCipherDomainId getDomainId() const { return encryptDomainId; }
 	EncryptCipherRandomSalt getSalt() const { return randomSalt; }
 	EncryptCipherBaseKeyId getBaseCipherId() const { return baseCipherId; }
 	int getBaseCipherLen() const { return baseCipherLen; }
 	EncryptCipherKeyCheckValue getBaseCipherKCV() const { return baseCipherKCV; }
-	uint8_t* rawCipher() const { return cipher.get(); }
-	uint8_t* rawBaseCipher() const { return baseCipher.get(); }
+
 	bool isEqual(const Reference<BlobCipherKey> toCompare) {
 		return encryptDomainId == toCompare->getDomainId() && baseCipherId == toCompare->getBaseCipherId() &&
 		       randomSalt == toCompare->getSalt() && baseCipherLen == toCompare->getBaseCipherLen() &&
@@ -720,6 +737,8 @@ private:
 	int64_t refreshAtTS;
 	// CipherKey is valid until
 	int64_t expireAtTS;
+	// Latest access timestamp
+	mutable double accessAtTS;
 
 	void initKey(const EncryptCipherDomainId& domainId,
 	             const EncryptCipherBaseKeyId& baseCiphId,
@@ -891,6 +910,9 @@ public:
 
 	// API returns point in time list of all 'cached' cipherKeys for a given encryption domainId.
 	std::vector<Reference<BlobCipherKey>> getAllCiphers(const EncryptCipherDomainId& domainId);
+
+	// API returns all current latest cipher keys.
+	std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> listLatestCipherKeys() const;
 
 	// API enables dropping all 'cached' cipherKeys for a given encryption domain Id.
 	// Useful to cleanup cache if an encryption domain gets removed/destroyed etc.

@@ -254,6 +254,14 @@ public interface Transaction extends AutoCloseable, ReadTransaction, Transaction
 	Long getCommittedVersion();
 
 	/**
+	 * Returns the duration in seconds of throttling enforced on this transaction by
+	 * the tag throttler. If no read version has yet been received, returns 0.0.
+	 *
+	 * @return the duration of throttling in seconds
+	 * */
+	CompletableFuture<Double> getTagThrottledDuration();
+
+	/**
 	 * Returns a future which will contain the versionstamp which was used by any versionstamp 
 	 * operations in this transaction. The future will be ready only after the successful 
 	 * completion of a call to {@link #commit()} on this {@code Transaction}. Read-only 

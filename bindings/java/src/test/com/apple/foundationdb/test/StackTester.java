@@ -274,20 +274,19 @@ public class StackTester {
 			else if(op == StackOperation.GET_COMMITTED_VERSION) {
 				inst.context.lastVersion = inst.tr.getCommittedVersion();
 				inst.push("GOT_COMMITTED_VERSION".getBytes());
-			}
-			else if(op == StackOperation.GET_APPROXIMATE_SIZE) {
+			} else if (op == StackOperation.GET_TAG_THROTTLED_DURATION) {
+				Double duration = inst.tr.getTagThrottledDuration().join();
+				inst.push("GOT_TAG_THROTTLED_DURATION".getBytes());
+			} else if (op == StackOperation.GET_APPROXIMATE_SIZE) {
 				Long size = inst.tr.getApproximateSize().join();
 				inst.push("GOT_APPROXIMATE_SIZE".getBytes());
-			}
-			else if(op == StackOperation.GET_VERSIONSTAMP) {
+			} else if (op == StackOperation.GET_VERSIONSTAMP) {
 				inst.push(inst.tr.getVersionstamp());
-			}
-			else if(op == StackOperation.SET_READ_VERSION) {
+			} else if (op == StackOperation.SET_READ_VERSION) {
 				if(inst.context.lastVersion == null)
 					throw new IllegalArgumentException("Read version has not been read " + inst.context.preStr);
 				inst.tr.setReadVersion(inst.context.lastVersion);
-			}
-			else if(op == StackOperation.ON_ERROR) {
+			} else if (op == StackOperation.ON_ERROR) {
 				List<Object> params = inst.popParams(1).join();
 				int errorCode = StackUtils.getInt(params, 0);
 
@@ -317,14 +316,12 @@ public class StackTester {
 				}
 
 				inst.push(CompletableFuture.completedFuture((Void)null));
-			}
-			else if(op == StackOperation.SUB) {
+			} else if (op == StackOperation.SUB) {
 				List<Object> params = inst.popParams(2).join();
 				BigInteger a = StackUtils.getBigInteger(params.get(0));
 				BigInteger b = StackUtils.getBigInteger(params.get(1));
 				inst.push(a.subtract(b));
-			}
-			else if(op == StackOperation.CONCAT) {
+			} else if (op == StackOperation.CONCAT) {
 				List<Object> params = inst.popParams(2).join();
 				if(params.get(0) instanceof String) {
 					inst.push((String)params.get(0) + (String)params.get(1));
@@ -332,8 +329,7 @@ public class StackTester {
 				else {
 					inst.push(ByteArrayUtil.join((byte[])params.get(0), (byte[])params.get(1)));
 				}
-			}
-			else if(op == StackOperation.TUPLE_PACK) {
+			} else if (op == StackOperation.TUPLE_PACK) {
 				List<Object> params = inst.popParams(1).join();
 				int tupleSize = StackUtils.getInt(params.get(0));
 				//System.out.println(inst.context.preStr + " - " + "Packing top " + tupleSize + " items from stack");
@@ -341,8 +337,7 @@ public class StackTester {
 				byte[] coded = Tuple.fromItems(elements).pack();
 				//System.out.println(inst.context.preStr + " - " + " -> result '" + ByteArrayUtil.printable(coded) + "'");
 				inst.push(coded);
-			}
-			else if(op == StackOperation.TUPLE_PACK_WITH_VERSIONSTAMP) {
+			} else if (op == StackOperation.TUPLE_PACK_WITH_VERSIONSTAMP) {
 				List<Object> params = inst.popParams(2).join();
 				byte[] prefix = (byte[])params.get(0);
 				int tupleSize = StackUtils.getInt(params.get(1));
@@ -363,8 +358,7 @@ public class StackTester {
 						}
 					}
 				}
-			}
-			else if(op == StackOperation.TUPLE_UNPACK) {
+			} else if (op == StackOperation.TUPLE_UNPACK) {
 				List<Object> params = inst.popParams(1).join();
 				/*System.out.println(inst.context.preStr + " - " + "Unpacking tuple code: " +
 						ByteArrayUtil.printable((byte[]) params.get(0)));*/
@@ -373,8 +367,7 @@ public class StackTester {
 					byte[] itemBytes = Tuple.from(o).pack();
 					inst.push(itemBytes);
 				}
-			}
-			else if(op == StackOperation.TUPLE_RANGE) {
+			} else if (op == StackOperation.TUPLE_RANGE) {
 				List<Object> params = inst.popParams(1).join();
 				int tupleSize = StackUtils.getInt(params, 0);
 				//System.out.println(inst.context.preStr + " - " + "Tuple range with top " + tupleSize + " items from stack");
@@ -382,8 +375,7 @@ public class StackTester {
 				Range range = Tuple.fromItems(elements).range();
 				inst.push(range.begin);
 				inst.push(range.end);
-			}
-			else if (op == StackOperation.TUPLE_SORT) {
+			} else if (op == StackOperation.TUPLE_SORT) {
 				int listSize = StackUtils.getInt(inst.popParam().join());
 				List<Object> rawElements = inst.popParams(listSize).join();
 				List<Tuple> tuples = new ArrayList<>(listSize);
@@ -398,38 +390,31 @@ public class StackTester {
 				for(Tuple t : tuples) {
 					inst.push(t.pack());
 				}
-			}
-			else if (op == StackOperation.ENCODE_FLOAT) {
+			} else if (op == StackOperation.ENCODE_FLOAT) {
 				Object param = inst.popParam().join();
 				byte[] fBytes = (byte[])param;
 				float value = ByteBuffer.wrap(fBytes).order(ByteOrder.BIG_ENDIAN).getFloat();
 				inst.push(value);
-			}
-			else if (op == StackOperation.ENCODE_DOUBLE) {
+			} else if (op == StackOperation.ENCODE_DOUBLE) {
 				Object param = inst.popParam().join();
 				byte[] dBytes = (byte[])param;
 				double value = ByteBuffer.wrap(dBytes).order(ByteOrder.BIG_ENDIAN).getDouble();
 				inst.push(value);
-			}
-			else if (op == StackOperation.DECODE_FLOAT) {
+			} else if (op == StackOperation.DECODE_FLOAT) {
 				Object param = inst.popParam().join();
 				float value = ((Number)param).floatValue();
 				inst.push(ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putFloat(value).array());
-			}
-			else if (op == StackOperation.DECODE_DOUBLE) {
+			} else if (op == StackOperation.DECODE_DOUBLE) {
 				Object param = inst.popParam().join();
 				double value = ((Number)param).doubleValue();
 				inst.push(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putDouble(value).array());
-			}
-			else if (op == StackOperation.TENANT_CREATE) {
+			} else if (op == StackOperation.TENANT_CREATE) {
 				byte[] tenantName = (byte[])inst.popParam().join();
 				inst.push(TenantManagement.createTenant(inst.context.db, tenantName));
-			}
-			else if (op == StackOperation.TENANT_DELETE) {
+			} else if (op == StackOperation.TENANT_DELETE) {
 				byte[] tenantName = (byte[])inst.popParam().join();
 				inst.push(TenantManagement.deleteTenant(inst.context.db, tenantName));
-			}
-			else if (op == StackOperation.TENANT_LIST) {
+			} else if (op == StackOperation.TENANT_LIST) {
 				List<Object> params = inst.popParams(3).join();
 				byte[] begin = (byte[])params.get(0);
 				byte[] end = (byte[])params.get(1);
@@ -447,24 +432,20 @@ public class StackTester {
 					tenantIter.close();
 				}
 				inst.push(Tuple.fromItems(result).pack());
-			}
-			else if (op == StackOperation.TENANT_SET_ACTIVE) {
+			} else if (op == StackOperation.TENANT_SET_ACTIVE) {
 				byte[] tenantName = (byte[])inst.popParam().join();
 				inst.context.setTenant(Optional.of(tenantName)).join();
 				inst.push("SET_ACTIVE_TENANT".getBytes());
-			}
-			else if (op == StackOperation.TENANT_CLEAR_ACTIVE) {
+			} else if (op == StackOperation.TENANT_CLEAR_ACTIVE) {
 				inst.context.setTenant(Optional.empty());
-			}
-			else if (op == StackOperation.TENANT_GET_ID) {
+			} else if (op == StackOperation.TENANT_GET_ID) {
 				if (inst.context.tenant.isPresent()) {
 					inst.context.tenant.get().getId().join();
 					inst.push("GOT_TENANT_ID".getBytes());
 				} else {
 					inst.push("NO_ACTIVE_TENANT".getBytes());
 				}
-			}
-			else if (op == StackOperation.UNIT_TESTS) {
+			} else if (op == StackOperation.UNIT_TESTS) {
 				try {
 					inst.context.db.options().setLocationCacheSize(100001);
 					inst.context.db.run(tr -> {
@@ -546,8 +527,7 @@ public class StackTester {
 				catch(Exception e) {
 					throw new RuntimeException("Unit tests failed: " + e.getMessage());
 				}
-			}
-			else if (op == StackOperation.LOG_STACK) {
+			} else if (op == StackOperation.LOG_STACK) {
 				List<Object> params = inst.popParams(1).join();
 				byte[] prefix = (byte[]) params.get(0);
 
@@ -561,8 +541,7 @@ public class StackTester {
 				}
 
 				logStack(inst.context.db, entries, prefix);
-			}
-			else {
+			} else {
 				throw new IllegalArgumentException("Unrecognized (or unimplemented) operation");
 			}
 		} catch (FDBException e) {

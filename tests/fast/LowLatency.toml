@@ -6,7 +6,7 @@ minimumReplication = 2
 rest_sim_kms_vault_inject_response_delay = false
 
 [[test]]
-testTitle = 'Clogged'
+testTitle = 'LowLatency'
 connectionFailuresDisableDuration = 100000
 
     [[test.workload]]

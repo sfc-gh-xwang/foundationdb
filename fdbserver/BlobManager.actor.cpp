@@ -75,6 +75,7 @@
 #define BM_PURGE_DEBUG false
 #define BM_BULKLOAD_DEBUG false
 
+namespace {
 void handleClientBlobRange(int64_t epoch,
                            KeyRangeMap<bool>* knownBlobRanges,
                            Arena& ar,
@@ -3706,10 +3707,10 @@ static void addAssignment(KeyRangeMap<std::tuple<UID, int64_t, int64_t, UID>>& m
 	}
 
 	if (!allExistingNewer) {
-		// if this range supercedes an old range insert it over that
+		// if this range supersedes an old range insert it over that
 		map.insert(newRange, std::tuple(anyConflicts ? UID() : newId, newEpoch, newSeqno, newId));
 
-		// then, if there were any ranges superceded by this one, insert them over this one
+		// then, if there were any ranges superseded by this one, insert them over this one
 		if (newer.size()) {
 			if (newId != UID()) {
 				outOfDate.push_back(std::pair(newId, newRange));
@@ -4600,23 +4601,6 @@ ACTOR Future<Void> haltBlobGranules(Reference<BlobManagerData> bmData) {
 	waitForAll(deregisterBlobWorkers);
 
 	return Void();
-}
-
-ACTOR Future<GranuleFiles> loadHistoryFiles(Reference<BlobManagerData> bmData, UID granuleID) {
-	state Transaction tr(bmData->db);
-	state KeyRange range = blobGranuleFileKeyRangeFor(granuleID);
-	state Key startKey = range.begin;
-	state GranuleFiles files;
-	loop {
-		try {
-			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			wait(readGranuleFiles(&tr, &startKey, range.end, &files, granuleID));
-			return files;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
 }
 
 ACTOR Future<bool> canDeleteFullGranuleSplit(Reference<BlobManagerData> self, UID granuleId) {
@@ -5914,28 +5898,6 @@ ACTOR Future<int64_t> bgccCheckGranule(Reference<BlobManagerData> bmData, KeyRan
 	return bytesRead;
 }
 
-// Check if there is any pending split. It's a precheck for manifest backup
-ACTOR Future<bool> hasPendingSplit(Reference<BlobManagerData> self) {
-	state Transaction tr(self->db);
-	loop {
-		tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-		tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-		tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-		try {
-			RangeReadResult result = wait(tr.getRange(blobGranuleSplitKeys, GetRangeLimits::BYTE_LIMIT_UNLIMITED));
-			for (auto& row : result) {
-				std::pair<BlobGranuleSplitState, Version> gss = decodeBlobGranuleSplitValue(row.value);
-				if (gss.first != BlobGranuleSplitState::Done) {
-					return true;
-				}
-			}
-			return false;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
-}
-
 // FIXME: could eventually make this more thorough by storing some state in the DB or something
 // FIXME: simpler solution could be to shuffle ranges
 ACTOR Future<Void> bgConsistencyCheck(Reference<BlobManagerData> bmData) {
@@ -6751,6 +6713,8 @@ ACTOR Future<UID> fetchClusterId(Database db) {
 	}
 }
 
+} // anonymous namespace
+
 ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
                                Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                int64_t epoch) {
@@ -6868,6 +6832,7 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 	return Void();
 }
 
+namespace {
 // Test:
 // start empty
 // DB has [A - B). That should show up in knownBlobRanges and should be in added
@@ -7192,3 +7157,5 @@ TEST_CASE("/blobmanager/objectwriter") {
 
 	return Void();
 }
+
+} // anonymous namespace

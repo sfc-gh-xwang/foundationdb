@@ -1597,7 +1597,8 @@ ACTOR Future<BlobFileIndex> reSnapshotNoCheck(Reference<BlobWorkerData> bwData,
                                               Reference<BlobConnectionProvider> bstore,
                                               Reference<GranuleMetadata> metadata,
                                               UID granuleID,
-                                              Future<BlobFileIndex> lastDeltaBeforeSnapshot) {
+                                              Future<BlobFileIndex> lastDeltaBeforeSnapshot,
+                                              Version changeFeedStartVersion) {
 	BlobFileIndex lastDeltaIdx = wait(lastDeltaBeforeSnapshot);
 	state Version reSnapshotVersion = lastDeltaIdx.version;
 	wait(delay(0, TaskPriority::BlobWorkerUpdateFDB));
@@ -1614,7 +1615,8 @@ ACTOR Future<BlobFileIndex> reSnapshotNoCheck(Reference<BlobWorkerData> bwData,
 
 	TraceEvent(SevDebug, "BlobGranuleReSnapshotOldFeed", bwData->id)
 	    .detail("Granule", metadata->keyRange)
-	    .detail("Version", reSnapshotVersion);
+	    .detail("Version", reSnapshotVersion)
+	    .detail("NewFeedStartVersion", changeFeedStartVersion);
 	++bwData->stats.oldFeedSnapshots;
 
 	// wait for file updater to make sure that last delta file is in the metadata before
@@ -2215,6 +2217,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 
 	state bool snapshotEligible; // just wrote a delta file or just took granule over from another worker
 	state bool justDidRollback = false;
+	state ActiveCounter<int>::Releaser holdingOnOldFeedCounter;
 
 	try {
 		// set resume snapshot so it's not valid until we pause to ask the blob manager for a re-snapshot
@@ -2362,6 +2365,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 			// reads the data, until it checks the granule lock again. passing false for canReadPopped means we
 			// will get an exception if we try to read any popped data, killing this actor
 			readOldChangeFeed = true;
+			holdingOnOldFeedCounter = bwData->stats.granulesOnOldFeed.take(1);
 
 			// because several feeds will be reading the same version range of this change feed at the same time, set
 			// cache result to true
@@ -2532,6 +2536,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 				ASSERT(readOldChangeFeed);
 
 				readOldChangeFeed = false;
+				holdingOnOldFeedCounter.release();
 				if (BW_DEBUG) {
 					fmt::print("Granule [{0} - {1}) switching to new change feed {2} @ {3}, {4}\n",
 					           metadata->keyRange.begin.printable(),
@@ -2692,6 +2697,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 									if (readOldChangeFeed) {
 										ASSERT(cfRollbackVersion + 1 < startState.changeFeedStartVersion);
 										ASSERT(oldCFKey.present());
+										holdingOnOldFeedCounter = bwData->stats.granulesOnOldFeed.take(1);
 										// because several feeds will be reading the same version range of this change
 										// feed at the same time, set cache result to true
 										oldChangeFeedFuture = bwData->db->getChangeFeedStream(
@@ -2970,8 +2976,12 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 					                                               previousFuture,
 					                                               versionsSinceLastSnapshot);
 				} else {
-					inFlightBlobSnapshot =
-					    reSnapshotNoCheck(bwData, bstore, metadata, startState.granuleID, previousFuture);
+					inFlightBlobSnapshot = reSnapshotNoCheck(bwData,
+					                                         bstore,
+					                                         metadata,
+					                                         startState.granuleID,
+					                                         previousFuture,
+					                                         startState.changeFeedStartVersion);
 					metadata->writeAmpTarget.decrease(metadata->bytesInNewDeltaFiles);
 				}
 				inFlightFiles.push_back(
@@ -3046,9 +3056,8 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 						waitIdx--;
 						wait(yield(TaskPriority::BlobWorkerUpdateStorage));
 					}
+					holdingBlockedOldSnapshotCounter.release();
 				}
-
-				holdingBlockedOldSnapshotCounter.release();
 
 				// restart merge candidate checker
 				checkMergeCandidate = granuleCheckMergeCandidate(

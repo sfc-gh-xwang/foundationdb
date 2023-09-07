@@ -432,30 +432,36 @@ def versionepoch(logger):
     )
     version4 = run_fdbcli_command("versionepoch enable")
     assert (
-        version4
-        == "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        version4.find(
+            "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        )
+        != -1
     )
     version5 = run_fdbcli_command("versionepoch get")
-    assert version5 == "Current version epoch is 0"
+    assert version5.find("Current version epoch is 0") != -1
     version6 = run_fdbcli_command("versionepoch set 10")
     assert (
-        version6
-        == "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        version6.find(
+            "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        )
+        != -1
     )
     version7 = run_fdbcli_command("versionepoch get")
-    assert version7 == "Current version epoch is 10"
+    assert version7.find("Current version epoch is 10") != -1
     run_fdbcli_command("versionepoch disable")
     version8 = run_fdbcli_command("versionepoch get")
-    assert version8 == "Version epoch is unset"
+    assert version8.find("Version epoch is unset") != -1
     version9 = run_fdbcli_command("versionepoch enable")
     assert (
-        version9
-        == "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        version9.find(
+            "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        )
+        != -1
     )
     version10 = run_fdbcli_command("versionepoch get")
-    assert version10 == "Current version epoch is 0"
+    assert version10.find("Current version epoch is 0") != -1
     version11 = run_fdbcli_command("versionepoch commit")
-    assert version11.startswith("Current read version is ")
+    assert version11.find("Current read version is ") != -1
     # the test can trigger recovery, thus we wait until the recovery is finished to move to the next test
     wait_for_database_available(logger)
 
