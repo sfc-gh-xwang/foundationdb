@@ -16,7 +16,7 @@ bool ConsistencyScanState::RoundStats::shouldStartNewRound(const ConsistencyScan
 	if (!complete && startVersion != 0 && startVersion < config.minStartVersion) {
 		return true;
 	}
-	// if the current round is complete and based on minRoundTimeSeconds, it should start a new round.
+	// if the current round is complete and at least minRoundTimeSeconds has elapsed, then start a new round.
 	// Note: it uses version instead of time to avoid local clock time skew on certain server
 	if (complete &&
 	    currentVersion >= startVersion + (config.minRoundTimeSeconds * CLIENT_KNOBS->CORE_VERSIONSPERSECOND)) {
