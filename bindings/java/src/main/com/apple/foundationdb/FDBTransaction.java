@@ -714,6 +714,19 @@ class FDBTransaction extends NativeObjectWrapper implements Transaction, OptionC
 	}
 
 	@Override
+	public void setExpectedCost(long bytes) {
+		if (eventKeeper != null) {
+			eventKeeper.increment(Events.JNI_CALL);
+		}
+		pointerReadLock.lock();
+		try {
+			Transaction_setExpectedCost(getPtr(), bytes);
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
+	@Override
 	public CompletableFuture<byte[]> getVersionstamp() {
 		if (eventKeeper != null) {
 			eventKeeper.increment(Events.JNI_CALL);
@@ -890,6 +903,7 @@ class FDBTransaction extends NativeObjectWrapper implements Transaction, OptionC
 	private native long Transaction_commit(long cPtr);
 	private native long Transaction_getCommittedVersion(long cPtr);
 	private native long Transaction_getTagThrottledDuration(long cPtr);
+	private native void Transaction_setExpectedCost(long Cptr, long bytes);
 	private native long Transaction_getVersionstamp(long cPtr);
 	private native long Transaction_getApproximateSize(long cPtr);
 	private native long Transaction_onError(long cPtr, int errorCode);

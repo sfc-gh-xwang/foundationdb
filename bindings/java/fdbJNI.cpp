@@ -2284,6 +2284,18 @@ JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1
 	return (jlong)f;
 }
 
+JNIEXPORT void JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1setExpectedCost(JNIEnv* jenv,
+                                                                                               jobject,
+                                                                                               jlong tPtr,
+                                                                                               jlong bytes) {
+	if (!tPtr) {
+		throwParamNotNull(jenv);
+		return;
+	}
+	FDBTransaction* tr = (FDBTransaction*)tPtr;
+	fdb_transaction_set_expected_cost(tr, bytes);
+}
+
 JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1getApproximateSize(JNIEnv* jenv,
                                                                                                    jobject,
                                                                                                    jlong tPtr) {
