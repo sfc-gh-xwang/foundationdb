@@ -120,12 +120,4 @@ testers = {
         types=ALL_TYPES,
         tenants_enabled=True,
     ),
-    "go": Tester(
-        "go",
-        _absolute_path("go/build/bin/_stacktester"),
-        2040,
-        710,
-        MAX_API_VERSION,
-        types=ALL_TYPES,
-    ),
 }

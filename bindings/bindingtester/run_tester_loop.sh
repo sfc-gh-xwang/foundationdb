@@ -23,7 +23,6 @@ function run_scripted() {
 	scripted python3
 	scripted java
 	scripted java_async
-	scripted go
 }
 
 run_scripted
@@ -36,5 +35,4 @@ while `true`; do
 	run python3
 	run java
 	run java_async
-	run go
 done

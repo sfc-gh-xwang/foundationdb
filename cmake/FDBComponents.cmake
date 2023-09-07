@@ -125,29 +125,6 @@ else()
 endif()
 
 ################################################################################
-# GO
-################################################################################
-
-option(BUILD_GO_BINDING "build go binding" ON)
-if(BUILD_GO_BINDING AND NOT WITH_C_BINDING)
-  message(WARNING "Go binding depends on C binding, but C binding is not enabled")
-endif()
-if(NOT BUILD_GO_BINDING OR NOT BUILD_C_BINDING)
-  set(WITH_GO_BINDING OFF)
-else()
-  find_program(GO_EXECUTABLE go HINTS /usr/local/go/bin/)
-  if(GO_EXECUTABLE AND WITH_C_BINDING)
-    set(WITH_GO_BINDING ON)
-  else()
-    set(WITH_GO_BINDING OFF)
-  endif()
-  if (USE_SANITIZER)
-    # Disable building go for sanitizers, since _stacktester doesn't link properly
-    set(WITH_GO_BINDING OFF)
-  endif()
-endif()
-
-################################################################################
 # RocksDB
 ################################################################################
 
@@ -228,7 +205,6 @@ function(print_components)
   message(STATUS "Build C Bindings:                     ${WITH_C_BINDING}")
   message(STATUS "Build Python Bindings:                ${WITH_PYTHON_BINDING}")
   message(STATUS "Build Java Bindings:                  ${WITH_JAVA_BINDING}")
-  message(STATUS "Build Go bindings:                    ${WITH_GO_BINDING}")
   message(STATUS "Build Documentation (make html):      ${WITH_DOCUMENTATION}")
   message(STATUS "Build Python sdist (make package):    ${WITH_PYTHON_BINDING}")
   message(STATUS "Configure CTest (depends on Python):  ${WITH_PYTHON}")
@@ -238,7 +214,7 @@ function(print_components)
 endfunction()
 
 if(FORCE_ALL_COMPONENTS)
-  if(NOT WITH_C_BINDING OR NOT WITH_JAVA_BINDING OR NOT WITH_GO_BINDING OR NOT WITH_PYTHON_BINDING OR NOT WITH_DOCUMENTATION)
+  if(NOT WITH_C_BINDING OR NOT WITH_JAVA_BINDING OR NOT WITH_PYTHON_BINDING OR NOT WITH_DOCUMENTATION)
     print_components()
     message(FATAL_ERROR "FORCE_ALL_COMPONENTS is set but not all dependencies could be found")
   endif()

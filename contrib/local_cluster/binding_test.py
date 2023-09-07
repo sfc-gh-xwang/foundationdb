@@ -274,7 +274,6 @@ API_LANGUAGES = [
     "python3",
     "java",
     "java_async",
-    "go",
     "flow",
 ]
 

@@ -11,7 +11,6 @@ The concepts in this tutorial are applicable to all the :doc:`languages <api-ref
    :titlesonly:
 
    Java <class-scheduling-java>
-   Go <class-scheduling-go>
 
 .. _tutorial-first-steps:
 
