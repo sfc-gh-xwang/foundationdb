@@ -270,12 +270,7 @@ class TestSet:
         )
 
 
-API_LANGUAGES = [
-    "python3",
-    "java",
-    "java_async",
-    "flow",
-]
+API_LANGUAGES = ["python3", "java", "java_async"]
 
 
 def _log_cluster_lines_with_severity(
