@@ -25,7 +25,6 @@ function run_scripted() {
 	scripted java
 	scripted java_async
 	scripted go
-	scripted flow
 }
 
 run_scripted
@@ -40,5 +39,4 @@ while `true`; do
 	run java
 	run java_async
 	run go
-	run flow
 done

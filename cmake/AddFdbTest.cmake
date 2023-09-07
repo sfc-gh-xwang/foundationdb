@@ -359,10 +359,6 @@ endfunction()
 
 function(prepare_binding_test_files build_directory target_name target_dependency)
   add_custom_target(${target_name} DEPENDS ${target_dependency})
-  add_custom_command(
-    TARGET ${target_name}
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:fdb_flow_tester> ${build_directory}/tests/flow/bin/fdb_flow_tester
-    COMMENT "Copy Flow tester for bindingtester")
 
   set(generated_binding_files python/fdb/fdboptions.py python/fdb/apiversion.py)
   if(WITH_JAVA_BINDING)

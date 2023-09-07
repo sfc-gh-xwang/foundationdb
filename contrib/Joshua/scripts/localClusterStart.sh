@@ -157,7 +157,7 @@ function createDirectories
             let status="${status} + 1"
           fi
         fi
-    done < <(find "${BINDIR}" -iname '*.py' -o -iname '*.rb' -o -iname 'fdb_flow_tester' -o -iname '_stacktester' -o -iname '*.js' -o -iname '*.sh' -o -iname '*.ksh')
+    done < <(find "${BINDIR}" -iname '*.py' -o -iname '*.rb' -o -iname '_stacktester' -o -iname '*.js' -o -iname '*.sh' -o -iname '*.ksh')
   fi
 
   return ${status}

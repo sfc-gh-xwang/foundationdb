@@ -131,12 +131,4 @@ testers = {
         MAX_API_VERSION,
         types=ALL_TYPES,
     ),
-    "flow": Tester(
-        "flow",
-        _absolute_path("flow/bin/fdb_flow_tester"),
-        63,
-        710,
-        MAX_API_VERSION,
-        directory_snapshot_ops_enabled=False,
-    ),
 }
