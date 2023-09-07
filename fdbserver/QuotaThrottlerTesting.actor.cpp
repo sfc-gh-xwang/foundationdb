@@ -32,7 +32,7 @@ class MockStorageServer {
 		HoltLinearSmoother smoother;
 
 	public:
-		Cost() : smoother(1.0) {}
+		Cost() : smoother(1.0, SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME) {}
 		Cost& operator+=(double delta) {
 			smoother.addDelta(delta);
 			return *this;
@@ -635,26 +635,26 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TagLimit") {
 }
 
 // 9 storage servers can handle 100 pages/second each.
-// 1 unhealthy storage server can only handle 1 page/second.
+// 1 unhealthy storage server can only handle 5 pages/second.
 // Total quota is set to 100 pages/second.
-// Client attempts 5 6-page transactions per second.
+// Client attempts 10 6-page transactions per second.
 // Target rate adjusts to 100/6 transactions per second, ignoring the worst storage server.
-// Then, a second storage server becomes unhealthy and can only handle 1 page/second.
-// Target rate adjusts down to 10/6 transactions per second, because only one bad zone can be ignored.
+// Then, a second storage server becomes unhealthy and can only handle 5 pages/second.
+// Target rate adjusts down to 50/6 transactions per second, because only one bad zone can be ignored.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/IgnoreWorstZone") {
 	state TestEnv env(/*numSS=*/10, /*throughputPerSS=*/100, /*maxFallingBehind=*/1);
 	state ThrottlingId testTag = ThrottlingIdRef::fromTag("sampleTag1"_sr);
-	env.setCapacity(/*index=*/0, /*pagesPerSecond=*/1);
+	env.setCapacity(/*index=*/0, /*pagesPerSecond=*/5);
 	env.setQuota(testTag, /*totalQuotaInPages=*/100);
-	state Future<Void> client = env.runClient(testTag, /*tps=*/5.0, /*pagesPerTransaction=*/6.0, OpType::READ);
+	state Future<Void> client = env.runClient(testTag, /*tps=*/10.0, /*pagesPerTransaction=*/6.0, OpType::READ);
 	state Future<Void> monitor = monitorActor(&env, [](auto& env) {
 		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 100.0 / 6.0, /*shouldBeBusy=*/false);
 	});
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, 600.0));
-	env.setCapacity(/*index=*/1, /*pagesPerSecond=*/1);
+	env.setCapacity(/*index=*/1, /*pagesPerSecond=*/5);
 	monitor = monitorActor(&env, [](auto& env) {
-		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 10.0 / 6.0, /*shouldBeBusy=*/true);
+		return env.targetRateIsNear(ThrottlingIdRef::fromTag("sampleTag1"_sr), 50.0 / 6.0, /*shouldBeBusy=*/true);
 	});
 	wait(timeoutError(monitor || client || updater, 600.0));
 	return Void();

@@ -565,8 +565,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( START_TRANSACTION_RATE_WINDOW,                         2.0 );
 	init( TAG_THROTTLE_RATE_WINDOW,                              2.0 );
 	init( START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,             10.0 );
-	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,                1000.0 );
-	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET,        40960000 );
+	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,                  10.0 );
+	init( TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET,           40960 );
 	init( START_TRANSACTION_MAX_QUEUE_SIZE,                      1e6 ); if ( randomize && BUGGIFY ) START_TRANSACTION_MAX_QUEUE_SIZE = 1000;
 	init( KEY_LOCATION_MAX_QUEUE_SIZE,                           1e6 );
 	init( TENANT_ID_REQUEST_MAX_QUEUE_SIZE,                      1e6 );
@@ -859,12 +859,12 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL,   5.0 );
 	init( THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS,                true );
 
-	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,        10.0 );
-	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   2.0 );
-	init( GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME,   10.0 );
-	init( GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME,               10.0 );
+	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,         1.0 );
+	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   1.0 );
+	init( GLOBAL_TAG_THROTTLING_TRANSACTION_RATE_FOLDING_TIME,    5.0 );
+	init( GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME,                5.0 );
 	init( CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,            1.0 );
-	init( CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME,           10.0 );
+	init( CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME,            5.0 );
 
 	init( THROTTLING_ID_BUSY_THRESHOLD,                           0.8 );
 	init( THROTTLING_ID_FORGET_THRESHOLD,                         0.5 );
