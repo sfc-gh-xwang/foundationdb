@@ -21,7 +21,6 @@ function scripted() {
 function run_scripted() {
 	scripted python
 	scripted python3
-	scripted ruby
 	scripted java
 	scripted java_async
 	scripted go
@@ -35,7 +34,6 @@ while `true`; do
 	i=$((i+1))
 	run python
 	run python3
-	run ruby
 	run java
 	run java_async
 	run go

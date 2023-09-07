@@ -49,12 +49,6 @@ Python 3.7+
 
 Python package is available from `PiPy <https://pypi.org/project/foundationdb/>`_
 
-
-Ruby 2.0.0+
------------
-
-Ruby Gem is available on `rubygems.org <https://rubygems.org/gems/fdb>`_
-
 Java 8+
 -------
 

@@ -10,7 +10,6 @@ The concepts in this tutorial are applicable to all the :doc:`languages <api-ref
    :maxdepth: 2
    :titlesonly:
 
-   Ruby <class-scheduling-ruby>
    Java <class-scheduling-java>
    Go <class-scheduling-go>
 

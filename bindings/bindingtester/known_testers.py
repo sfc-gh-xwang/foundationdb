@@ -102,9 +102,6 @@ testers = {
         types=ALL_TYPES,
         tenants_enabled=True,
     ),
-    "ruby": Tester(
-        "ruby", _absolute_path("ruby/tests/tester.rb"), 2040, 23, MAX_API_VERSION
-    ),
     "java": Tester(
         "java",
         _java_cmd + "StackTester",

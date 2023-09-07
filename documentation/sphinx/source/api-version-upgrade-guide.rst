@@ -143,7 +143,6 @@ Java bindings
 Ruby bindings
 -------------
 
-* ``FDB.open`` no longer accepts a ``database_name`` parameter.
 *  Removed ``FDB.init``, ``FDB.create_cluster``, and ``FDB.Cluster``. ``FDB.open`` should be used instead.
 
 Go bindings

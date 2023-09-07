@@ -4,7 +4,7 @@ Class Scheduling in Go
 
 This tutorial provides a walkthrough of designing and building a simple application in Go using FoundationDB. In this tutorial, we use a few simple data modeling techniques. For a more in-depth discussion of data modeling in FoundationDB, see :doc:`data-modeling`.
 
-The concepts in this tutorial are applicable to all the :doc:`languages <api-reference>` supported by FoundationDB. If you prefer, you can see a version of this tutorial in :doc:`Python <class-scheduling>`, :doc:`Ruby <class-scheduling-ruby>`, or :doc:`Java <class-scheduling-java>`.
+The concepts in this tutorial are applicable to all the :doc:`languages <api-reference>` supported by FoundationDB. If you prefer, you can see a version of this tutorial in :doc:`Python <class-scheduling>`, or :doc:`Java <class-scheduling-java>`.
 
 .. _class-sched-go-first-steps:
 
