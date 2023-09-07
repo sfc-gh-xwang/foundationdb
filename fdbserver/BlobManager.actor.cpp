@@ -331,6 +331,7 @@ struct BlobManagerStats {
 
 	ActiveCounter<int> activeGranuleSplitChecks;
 	ActiveCounter<int> activePurges;
+	ActiveCounter<int> activeBulkLoads;
 
 	// Current stats maintained for a given blob worker process
 	explicit BlobManagerStats(UID id,
@@ -371,7 +372,8 @@ struct BlobManagerStats {
 	    lastManifestDumpTs(0),
 	    manifestSizeInBytes(0),
 	    activeGranuleSplitChecks(0),
-	    activePurges(0) {
+	    activePurges(0),
+	    activeBulkLoads(0) {
 		specialCounter(cc, "WorkerCount", [workers]() { return workers->size(); });
 		specialCounter(cc, "Epoch", [epoch]() { return epoch; });
 		specialCounter(cc, "ActiveMerges", [this]() { return this->activeMerges; });
@@ -388,6 +390,7 @@ struct BlobManagerStats {
 		specialCounter(cc, "ActivePurges", [this]() -> int { return this->activePurges.getValue(); });
 		specialCounter(
 		    cc, "ActiveBlobWorkerRecruitments", [recruitingStream]() -> int { return recruitingStream->get(); });
+		specialCounter(cc, "ActiveBulkLoads", [this]() -> int { return this->activeBulkLoads.getValue(); });
 		logger = cc.traceCounters("BlobManagerMetrics", id, interval, "BlobManagerMetrics");
 	}
 };
@@ -6573,6 +6576,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKe
 	if (BM_BULKLOAD_DEBUG) {
 		fmt::print("DBGBM {0}: TrackBL {1}: start\n", bmData->epoch, idKey.second.printable());
 	}
+	state ActiveCounter<int>::Releaser holdingLoadCounter = bmData->stats.activeBulkLoads.take(1);
 	state Optional<Reference<Tenant>> tenant;
 	if (idKey.first != TenantInfo::INVALID_TENANT) {
 		state Optional<TenantMapEntry> entry = wait(TenantAPI::tryGetTenant(bmData->db.getReference(), idKey.first));
