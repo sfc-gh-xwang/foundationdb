@@ -133,12 +133,15 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		TagQueue* queue;
 		// Cannot be stored directly because amountReleased outlives TagQueueHandle
 		uint64_t* numReleased;
-		// Sequence number of the first queued request
-		uint64_t nextSeqNo;
-		bool operator>(TagQueueHandle const& rhs) const { return nextSeqNo > rhs.nextSeqNo; }
+		uint64_t getNextSequenceNumber() const {
+			ASSERT(!queue->requests.empty());
+			return queue->requests.front().sequenceNumber;
+		}
+		bool operator>(TagQueueHandle const& rhs) const {
+			return getNextSequenceNumber() > rhs.getNextSequenceNumber();
+		}
 		explicit TagQueueHandle(TagQueue& queue, uint64_t& numReleased) : queue(&queue), numReleased(&numReleased) {
 			ASSERT(!this->queue->requests.empty());
-			nextSeqNo = this->queue->requests.front().sequenceNumber;
 		}
 	};
 
@@ -174,14 +177,14 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		pqOfQueues.pop();
 		// Used to determine when it is time to start processing another throttlingId
 		auto const nextQueueSeqNo =
-		    pqOfQueues.empty() ? std::numeric_limits<uint64_t>::max() : pqOfQueues.top().nextSeqNo;
+		    pqOfQueues.empty() ? std::numeric_limits<uint64_t>::max() : pqOfQueues.top().getNextSequenceNumber();
 
 		while (!tagQueueHandle.queue->requests.empty()) {
 			auto& delayedReq = tagQueueHandle.queue->requests.front();
 
 			auto cost = getCost(delayedReq.req);
 
-			ASSERT_EQ(tagQueueHandle.nextSeqNo, delayedReq.sequenceNumber);
+			ASSERT_EQ(tagQueueHandle.getNextSequenceNumber(), delayedReq.sequenceNumber);
 			if (tagQueueHandle.queue->rateInfo.present() &&
 			    !tagQueueHandle.queue->rateInfo.get().canStart(*(tagQueueHandle.numReleased), cost)) {
 				// Cannot release any more transaction from this throttling ID (don't push the tag queue handle back
@@ -195,7 +198,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 				}
 				break;
 			} else {
-				if (tagQueueHandle.nextSeqNo < nextQueueSeqNo) {
+				if (tagQueueHandle.getNextSequenceNumber() < nextQueueSeqNo) {
 					// Releasing transaction
 					*(tagQueueHandle.numReleased) += cost;
 					delayedReq.updateProxyTagThrottledDuration(latencyBandsMap);
@@ -212,9 +215,6 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 						ASSERT(false);
 					}
 					tagQueueHandle.queue->requests.pop_front();
-					if (!tagQueueHandle.queue->requests.empty()) {
-						tagQueueHandle.nextSeqNo = tagQueueHandle.queue->requests.front().sequenceNumber;
-					}
 				} else {
 					CODE_PROBE(true, "GrvProxyTagThrottler switching throttlingIds to preserve FIFO");
 					pqOfQueues.push(tagQueueHandle);
