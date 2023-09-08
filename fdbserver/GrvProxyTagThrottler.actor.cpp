@@ -45,12 +45,24 @@ GrvTransactionRateInfo GrvProxyTagThrottler::createGrvTransactionRateInfo(double
 	                                         : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 }
 
-void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
-	if (rateInfo.present()) {
-		rateInfo.get().setRate(rate);
-	} else {
-		rateInfo = createGrvTransactionRateInfo(rate);
-	}
+GrvProxyTagThrottler::DelayedRequest const& GrvProxyTagThrottler::TagQueue::front() const& {
+	return requests.front();
+}
+
+GrvProxyTagThrottler::DelayedRequest& GrvProxyTagThrottler::TagQueue::front() & {
+	return requests.front();
+}
+
+void GrvProxyTagThrottler::TagQueue::popFront() {
+	requests.pop_front();
+}
+
+void GrvProxyTagThrottler::TagQueue::addRequest(GetReadVersionRequest const& req) {
+	requests.emplace_back(req);
+}
+
+bool GrvProxyTagThrottler::TagQueue::isEmpty() const {
+	return requests.empty();
 }
 
 uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(double maxThrottleDuration,
@@ -68,6 +80,14 @@ uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(double maxTh
 		}
 	}
 	return result;
+}
+
+void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
+	if (rateInfo.present()) {
+		rateInfo.get().setRate(rate);
+	} else {
+		rateInfo = createGrvTransactionRateInfo(rate);
+	}
 }
 
 void GrvProxyTagThrottler::TagQueue::endReleaseWindow(uint64_t numStarted, double elapsed) {
@@ -101,12 +121,12 @@ void GrvProxyTagThrottler::updateRates(ThrottlingIdMap<double> const& newRates) 
 			queue.rateInfo.reset();
 		}
 	}
-	boost::unordered::erase_if(
-	    queues, [](const auto& kv) { return kv.second.requests.empty() && !kv.second.rateInfo.present(); });
+	boost::unordered::erase_if(queues,
+	                           [](const auto& kv) { return kv.second.isEmpty() && !kv.second.rateInfo.present(); });
 }
 
 void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {
-	queues[req.throttlingId.get()].requests.emplace_back(req);
+	queues[req.throttlingId.get()].addRequest(req);
 }
 
 uint64_t GrvProxyTagThrottler::getCost(GetReadVersionRequest const& req) const {
@@ -158,12 +178,12 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		// Cannot be stored directly because amountReleased outlives TagQueueHandle
 		uint64_t* numReleased;
 		Priority getPriority() const {
-			ASSERT(!queue->requests.empty());
-			return Priority(true, queue->requests.front().sequenceNumber);
+			ASSERT(!queue->isEmpty());
+			return Priority(true, queue->front().sequenceNumber);
 		}
 		bool operator<(TagQueueHandle const& rhs) const { return getPriority() < rhs.getPriority(); }
 		explicit TagQueueHandle(TagQueue& queue, uint64_t& numReleased) : queue(&queue), numReleased(&numReleased) {
-			ASSERT(!this->queue->requests.empty());
+			ASSERT(!this->queue->isEmpty());
 		}
 	};
 
@@ -180,7 +200,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		if (queue.rateInfo.present()) {
 			queue.rateInfo.get().startReleaseWindow();
 		}
-		if (!queue.requests.empty()) {
+		if (!queue.isEmpty()) {
 			// First place the count in the transactionsReleased object,
 			// then pass a reference to the count to the TagQueueHandle object
 			// emplaced into pqOfQueues.
@@ -200,8 +220,8 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		// Used to determine when it is time to start processing another throttlingId
 		auto const nextQueuePriority = pqOfQueues.empty() ? Priority::lowest() : pqOfQueues.top().getPriority();
 
-		while (!tagQueueHandle.queue->requests.empty()) {
-			auto& delayedReq = tagQueueHandle.queue->requests.front();
+		while (!tagQueueHandle.queue->isEmpty()) {
+			auto& delayedReq = tagQueueHandle.queue->front();
 
 			auto cost = getCost(delayedReq.req);
 
@@ -233,7 +253,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 						// Immediate priority transactions should bypass the GrvProxyTagThrottler
 						ASSERT(false);
 					}
-					tagQueueHandle.queue->requests.pop_front();
+					tagQueueHandle.queue->popFront();
 				} else {
 					CODE_PROBE(true, "GrvProxyTagThrottler switching throttlingIds to preserve FIFO");
 					pqOfQueues.push(tagQueueHandle);
