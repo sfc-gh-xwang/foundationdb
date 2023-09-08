@@ -586,9 +586,11 @@ public:
 	Counter transactionReadVersionsCompleted;
 	Counter transactionReadVersionBatches;
 	Counter transactionBatchReadVersions;
+	Counter transactionLowReadVersions;
 	Counter transactionDefaultReadVersions;
 	Counter transactionImmediateReadVersions;
 	Counter transactionBatchReadVersionsCompleted;
+	Counter transactionLowReadVersionsCompleted;
 	Counter transactionDefaultReadVersionsCompleted;
 	Counter transactionImmediateReadVersionsCompleted;
 	Counter transactionLogicalReads;

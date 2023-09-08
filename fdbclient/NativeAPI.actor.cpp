@@ -1561,9 +1561,11 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
     transactionBatchReadVersions("BatchPriorityReadVersions", cc),
+    transactionLowReadVersions("LowPriorityReadVersions", cc),
     transactionDefaultReadVersions("DefaultPriorityReadVersions", cc),
     transactionImmediateReadVersions("ImmediatePriorityReadVersions", cc),
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
+    transactionLowReadVersionsCompleted("LowPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
     transactionLogicalReads("LogicalUncachedReads", cc),
@@ -1924,9 +1926,11 @@ DatabaseContext::DatabaseContext(const Error& err)
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
     transactionBatchReadVersions("BatchPriorityReadVersions", cc),
+    transactionLowReadVersions("LowPriorityReadVersions", cc),
     transactionDefaultReadVersions("DefaultPriorityReadVersions", cc),
     transactionImmediateReadVersions("ImmediatePriorityReadVersions", cc),
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
+    transactionLowReadVersionsCompleted("LowPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
     transactionLogicalReads("LogicalUncachedReads", cc),
@@ -7332,6 +7336,11 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 		trState->options.priority = TransactionPriority::BATCH;
 		break;
 
+	case FDBTransactionOptions::PRIORITY_LOW:
+		validateOptionValueNotPresent(value);
+		trState->options.priority = TransactionPriority::LOW;
+		break;
+
 	case FDBTransactionOptions::CAUSAL_WRITE_RISKY:
 		validateOptionValueNotPresent(value);
 		trState->options.causalWriteRisky = true;
@@ -7647,6 +7656,10 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 		flags |= GetReadVersionRequest::PRIORITY_DEFAULT;
 		++trState->cx->transactionDefaultReadVersions;
 		break;
+	case TransactionPriority::LOW:
+		flags |= GetReadVersionRequest::PRIORITY_LOW;
+		++trState->cx->transactionLowReadVersions;
+		break;
 	case TransactionPriority::BATCH:
 		flags |= GetReadVersionRequest::PRIORITY_BATCH;
 		++trState->cx->transactionBatchReadVersions;
@@ -7701,6 +7714,9 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 		break;
 	case TransactionPriority::DEFAULT:
 		++trState->cx->transactionDefaultReadVersionsCompleted;
+		break;
+	case TransactionPriority::LOW:
+		++trState->cx->transactionLowReadVersionsCompleted;
 		break;
 	case TransactionPriority::BATCH:
 		++trState->cx->transactionBatchReadVersionsCompleted;

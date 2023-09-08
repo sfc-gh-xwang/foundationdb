@@ -541,6 +541,8 @@ void proxyGRVThresholdExceeded(const GetReadVersionRequest* req, GrvProxyStats* 
 	} else if (req->priority == TransactionPriority::DEFAULT) {
 		TraceEvent(g_network->isSimulated() ? SevInfo : SevWarnAlways, "ProxyGRVThresholdExceededDefault")
 		    .suppressFor(60);
+	} else if (req->priority == TransactionPriority::LOW) {
+		TraceEvent(g_network->isSimulated() ? SevInfo : SevWarnAlways, "ProxyGRVThresholdExceededLow").suppressFor(60);
 	} else {
 		TraceEvent(g_network->isSimulated() ? SevInfo : SevWarnAlways, "ProxyGRVThresholdExceededBatch")
 		    .suppressFor(60);
@@ -582,7 +584,7 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 				// When the limit is hit, try to drop requests from the lower priority queues.
 				if (req.priority == TransactionPriority::BATCH) {
 					canBeQueued = false;
-				} else if (req.priority == TransactionPriority::DEFAULT) {
+				} else if (req.priority == TransactionPriority::DEFAULT || req.priority == TransactionPriority::LOW) {
 					if (!batchQueue->empty()) {
 						dropRequestFromQueue(batchQueue, stats);
 						--stats->batchGRVQueueSize;
@@ -623,7 +625,7 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 					stats->txnSystemPriorityStartIn += req.transactionCount;
 					++stats->systemGRVQueueSize;
 					systemQueue->push_back(req);
-				} else if (req.priority >= TransactionPriority::DEFAULT) {
+				} else if (req.priority >= TransactionPriority::LOW) {
 					if (req.throttlingId.present()) {
 						++stats->tagThrottlerGRVQueueSize;
 						stats->txnTagThrottlerIn += req.transactionCount;
@@ -794,11 +796,7 @@ ACTOR Future<Void> sendGrvReplies(Future<GetReadVersionReply> replyFuture,
 			stats->grvBatchLatencySample.addMeasurement(duration);
 		}
 
-		if (request.priority == TransactionPriority::DEFAULT) {
-			stats->grvLatencySample.addMeasurement(duration);
-		}
-
-		if (request.priority >= TransactionPriority::DEFAULT) {
+		if (request.priority >= TransactionPriority::LOW) {
 			stats->grvLatencyBands.addMeasurement(duration);
 		}
 
@@ -1009,7 +1007,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 			auto& req = transactionQueue->front();
 			int tc = req.transactionCount;
 
-			if (req.priority < TransactionPriority::DEFAULT &&
+			if (req.priority < TransactionPriority::LOW &&
 			    !batchRateInfo.canStart(transactionsStarted[0] + transactionsStarted[1], tc)) {
 				break;
 			} else if (req.priority < TransactionPriority::IMMEDIATE &&
@@ -1028,7 +1026,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 			if (req.priority >= TransactionPriority::IMMEDIATE) {
 				systemTransactionsStarted[req.flags & 1] += tc;
 				--grvProxyData->stats.systemGRVQueueSize;
-			} else if (req.priority >= TransactionPriority::DEFAULT) {
+			} else if (req.priority >= TransactionPriority::LOW) {
 				defaultPriTransactionsStarted[req.flags & 1] += tc;
 				grvProxyData->stats.defaultTxnGRVTimeInQueue.addMeasurement(currentTime - req.requestTime());
 				--grvProxyData->stats.defaultGRVQueueSize;
