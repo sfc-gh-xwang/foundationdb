@@ -50,46 +50,33 @@ struct TenantBalancer {
 };
 
 ACTOR
-Future<Void> writeTenantBalancerInterfaceToDb(TenantBalancer* self) {
-	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->managementDb);
+Future<Void> writeTenantBalancerInterfaceToDb(TenantBalancer* self, PersistInterfaceRequest req) {
 	loop {
+		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->managementDb);
+		state Future<Void> dbInfoChanged = self->dbInfo->onChange();
 		try {
-			UID rnd = deterministicRandom()->randomUniqueID();
-			TraceEvent("YanqinUID1").detail("DbgID", rnd).detail("TBI", self->tbi.id());
-			tr->debugTransaction(rnd);
-			TraceEvent("YanqinTxn").moveTo(tr);
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			UID rnd = deterministicRandom()->randomUniqueID();
+			tr->debugTransaction(rnd);
 			TenantBalancerMetadata::getTenantBalancerInterface().set(tr, self->tbi);
-			wait(tr->commit());
-			TraceEvent("YanqinTenantBalancerInterfacePersisted", self->tbi.id())
-			    .detail("ClusterType", self->managementDb->clientInfo->get().clusterType)
-			    .detail("DB", self->connRecord->getConnectionString().toString())
-			    .detail("CommitV", tr->getCommittedVersion());
-			break;
+			choose {
+				when(wait(tr->commit())) {
+					TraceEvent("YanqinTenantBalancerInterfacePersisted", self->tbi.id())
+					    .detail("ClusterType", self->managementDb->clientInfo->get().clusterType)
+					    .detail("ConnStr", self->connRecord->getConnectionString().toString())
+					    .detail("CommitVersion", tr->getCommittedVersion());
+					req.reply.send(Void());
+					break;
+				}
+				when(wait(dbInfoChanged)) {
+					dbInfoChanged = self->dbInfo->onChange();
+				}
+			}
 		} catch (Error& e) {
+			// TODO: depending on error code, send Error via req.reply.sendError(e);
 			TraceEvent(SevWarnAlways, "TenantBalancerFailedToPersistInterf").detail("TBID", self->tbi.id());
 			wait(tr->onError(e));
-		}
-	}
-
-	tr = makeReference<ReadYourWritesTransaction>(self->managementDb);
-	loop {
-		try {
-			UID rnd = deterministicRandom()->randomUniqueID();
-			tr->debugTransaction(rnd);
-			TraceEvent("YanqinUID2").detail("DbgID", rnd);
-			Version rv = wait(tr->getReadVersion());
-			TraceEvent("YanqinReadTBI").moveTo(tr);
-			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			state Optional<TenantBalancerInterface> interf;
-			store(interf, TenantBalancerMetadata::getTenantBalancerInterface().getD(tr));
-			TraceEvent("YanqinVerify").detail("TBI", interf.present() ? interf.get().id() : UID{}).detail("ReadV", rv);
-			break;
-		} catch (Error& e) {
-			TraceEvent("YanqinReadError").error(e);
-			wait(safeThreadFutureToFuture(tr->onError(e)));
 		}
 	}
 	return Void();
@@ -131,7 +118,6 @@ ACTOR Future<Void> startMoveTenantGroup(TenantBalancer* self, StartMoveTenantGro
 	wait(delay(0.1));
 
 	try {
-		ASSERT(false);
 		StartMoveTenantGroupReply reply;
 		req.reply.send(reply);
 	} catch (Error& e) {
@@ -169,7 +155,7 @@ ACTOR Future<Void> tenantBalancerCore(TenantBalancer* self) {
 			break;
 		}
 		when(PersistInterfaceRequest req = waitNext(self->tbi.persistInterface.getFuture())) {
-			req.reply.send(Void());
+			self->actors.add(writeTenantBalancerInterfaceToDb(self, req));
 		}
 		when(GetMovementStatusRequest req = waitNext(self->tbi.getMovementStatus.getFuture())) {
 			self->actors.add(getMovementStatus(self, req));
@@ -193,7 +179,6 @@ ACTOR Future<Void> tenantBalancer(TenantBalancerInterface tbi,
                                   Reference<IClusterConnectionRecord> connRecord) {
 	state TenantBalancer self(tbi, db, connRecord);
 	try {
-		wait(writeTenantBalancerInterfaceToDb(&self));
 		wait(tenantBalancerCore(&self));
 	} catch (Error& e) {
 		TraceEvent("TenantBalancerTerminated", tbi.id()).error(e);
