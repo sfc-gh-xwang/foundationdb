@@ -480,6 +480,14 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 	    lookupCipherInfoMap = getLookupDetails(ekpProxyData, dbgTrace, keyIdsReply, numHits, dedupedCipherInfos);
 	if (!lookupCipherInfoMap.empty()) {
 		try {
+			auto it = BlobCipherMetrics::usageTypeNames.find(req.usageType);
+			ASSERT(it != BlobCipherMetrics::usageTypeNames.end());
+			TraceEvent ev("EncryptKeyProxyGetCipherKeysByKeyIds");
+			ev.detail("LookupCipherIdsSize", lookupCipherInfoMap.size());
+			ev.detail("UsageType", it->second);
+			if (keysByIds.debugId.present()) {
+				ev.detail("DbgId", keysByIds.debugId.get());
+			}
 			KmsConnLookupEKsByKeyIdsReq keysByIdsReq;
 			for (const auto& item : lookupCipherInfoMap) {
 				keysByIdsReq.encryptKeyInfos.emplace_back(item.second.domainId, item.second.baseCipherId);
@@ -633,6 +641,14 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 	    getLookupDetailsLatest(ekpProxyData, dbgTrace, latestCipherReply, numHits, dedupedDomainIds);
 	if (!lookupCipherDomainIds.empty()) {
 		try {
+			auto it = BlobCipherMetrics::usageTypeNames.find(req.usageType);
+			ASSERT(it != BlobCipherMetrics::usageTypeNames.end());
+			TraceEvent ev("EncryptKeyProxyGetLatestCipherKeys");
+			ev.detail("LookupDomainIdsSize", lookupCipherDomainIds.size());
+			ev.detail("UsageType", it->second);
+			if (latestKeysReq.debugId.present()) {
+				ev.detail("DbgId", latestKeysReq.debugId.get());
+			}
 			KmsConnLookupEKsByDomainIdsReq keysByDomainIdReq;
 			for (const auto domainId : lookupCipherDomainIds) {
 				keysByDomainIdReq.encryptDomainIds.emplace_back(domainId);
@@ -729,13 +745,15 @@ ACTOR Future<bool> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyDa
                                        KmsConnectorInterface kmsConnectorInf) {
 	state UID debugId = deterministicRandom()->randomUniqueID();
 	if (DEBUG_ENCRYPT_KEY_PROXY) {
-		TraceEvent(SevDebug, "KMSHealthCheckStart", ekpProxyData->myId);
+		TraceEvent(SevDebug, "KMSHealthCheckStart", ekpProxyData->myId).detail("DbgId", debugId);
 	}
 
 	// Health check will try to fetch the encryption details for the system key
 	try {
 		KmsConnLookupEKsByDomainIdsReq req;
-		req.debugId = debugId;
+		if (DEBUG_ENCRYPT_KEY_PROXY) {
+			req.debugId = debugId;
+		}
 		req.encryptDomainIds.push_back(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID);
 		++ekpProxyData->numHealthCheckRequests;
 		KmsConnLookupEKsByDomainIdsRep rep =
@@ -828,7 +846,7 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 		for (auto itr = ekpProxyData->baseCipherDomainIdCache.begin();
 		     itr != ekpProxyData->baseCipherDomainIdCache.end();) {
 			if (isCipherKeyEligibleForRefresh(itr->second, currTS)) {
-				TraceEvent("RefreshEKs").detail("Id", itr->first);
+				TraceEvent("RefreshEKs").detail("Id", itr->first).detail("DbgId", debugId);
 				req.encryptDomainIds.push_back(itr->first);
 			}
 
@@ -842,7 +860,7 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 
 		if (req.encryptDomainIds.empty()) {
 			// Nothing to refresh
-			TraceEvent(SevDebug, "RefreshEKsEmptyRefresh");
+			TraceEvent(SevDebug, "RefreshEKsEmptyRefresh").detail("DbgId", debugId);
 			return Void();
 		}
 
@@ -854,7 +872,8 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 			const auto itr = ekpProxyData->baseCipherDomainIdCache.find(item.encryptDomainId);
 			if (itr == ekpProxyData->baseCipherDomainIdCache.end()) {
 				TraceEvent(SevInfo, "RefreshEKsDomainIdNotFound", ekpProxyData->myId)
-				    .detail("DomainId", item.encryptDomainId);
+				    .detail("DomainId", item.encryptDomainId)
+				    .detail("DbgId", debugId);
 				// Continue updating the cache with other elements
 				continue;
 			}
@@ -889,7 +908,7 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 			TraceEvent(SevWarn, "RefreshEKsError").error(e);
 			throw e;
 		}
-		TraceEvent("RefreshEKs").detail("ErrorCode", e.code());
+		TraceEvent("RefreshEKsError").detail("DbgId", debugId).detail("ErrorCode", e.code());
 		++ekpProxyData->numEncryptionKeyRefreshErrors;
 	}
 

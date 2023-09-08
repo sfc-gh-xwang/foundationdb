@@ -269,7 +269,7 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 			                                                                         ENCRYPT_HEADER_DOMAIN_ID };
 		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cks =
 		    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-		        db, metadataDomainIds, BlobCipherMetrics::TLOG));
+		        db, metadataDomainIds, BlobCipherMetrics::TLOG, nullptr, {}, req.debugID));
 		cipherKeys = cks;
 	}
 

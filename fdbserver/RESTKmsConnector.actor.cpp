@@ -804,11 +804,11 @@ StringRef getEncryptKeysByKeyIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx,
 }
 
 ACTOR template <class T>
-Future<T> kmsRequestImpl(
-    Reference<RESTKmsConnectorCtx> ctx,
-    std::string urlSuffix,
-    StringRef requestBodyRef,
-    std::function<T(Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>)> parseFunc) {
+Future<T> kmsRequestImpl(Reference<RESTKmsConnectorCtx> ctx,
+                         std::string urlSuffix,
+                         StringRef requestBodyRef,
+                         std::function<T(Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>)> parseFunc,
+                         Optional<UID> debugID) {
 	state UID requestID = deterministicRandom()->randomUniqueID();
 
 	// Follow multi-phase approach:
@@ -832,31 +832,35 @@ Future<T> kmsRequestImpl(
 				std::string kmsEncryptionFullUrl = getFullRequestUrl(ctx, urlCtx->url, urlSuffix);
 
 				if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
-					TraceEvent("RESTKmsRequestImpl", ctx->uid)
-					    .detail("Pass", pass)
+					TraceEvent ev("RESTKmsRequestImpl", ctx->uid);
+					ev.detail("Pass", pass)
 					    .detail("RequestID", requestID)
 					    .detail("FullUrl", kmsEncryptionFullUrl)
 					    .detail("StartIdx", start)
 					    .detail("CurIdx", idx)
 					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS)
 					    .detail("RetryDelay", retryDelay);
+					if (debugID.present()) {
+						ev.detail("DbgId", debugID.get());
+					}
 				}
 
 				HTTP::Headers headers;
 				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 				Reference<HTTP::IncomingResponse> resp =
-				    wait(ctx->restClient->doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
+				    wait(ctx->restClient->doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), debugID, headers));
 				urlCtx->nRequests++;
 
 				try {
 					T parsedResp = parseFunc(ctx, resp);
 					return parsedResp;
 				} catch (Error& e) {
-					TraceEvent(SevWarn, "KmsRequestRespParseFailure")
-					    .error(e)
-					    .detail("RequestID", requestID)
-					    .detail("RetryDelay", retryDelay);
+					TraceEvent ev(SevWarn, "KmsRequestRespParseFailure");
+					ev.error(e).detail("RequestID", requestID).detail("RetryDelay", retryDelay);
+					if (debugID.present()) {
+						ev.detail("DbgId", debugID.get());
+					}
 					ctx->kmsUrlStore.penalize(*urlCtx, KmsUrlCtx<KmsUrlPenaltyParams>::PenaltyType::MALFORMED_RESPONSE);
 					// attempt to do request from next KmsUrl
 				}
@@ -869,10 +873,11 @@ Future<T> kmsRequestImpl(
 					}
 					throw e;
 				}
-				TraceEvent(SevDebug, "KmsRequestError", ctx->uid)
-				    .error(e)
-				    .detail("RequestID", requestID)
-				    .detail("RetryDelay", retryDelay);
+				TraceEvent ev(SevDebug, "KmsRequestError", ctx->uid);
+				ev.error(e).detail("RequestID", requestID).detail("RetryDelay", retryDelay);
+				if (debugID.present()) {
+					ev.detail("DbgId", debugID.get());
+				}
 				// attempt to do request from next KmsUrl
 			}
 
@@ -923,10 +928,12 @@ ACTOR Future<Void> fetchEncryptionKeysByKeyIds(Reference<RESTKmsConnectorCtx> ct
 		std::function<Standalone<VectorRef<EncryptCipherKeyDetailsRef>>(Reference<RESTKmsConnectorCtx>,
 		                                                                Reference<HTTP::IncomingResponse>)>
 		    f = &parseEncryptCipherResponse;
-		wait(store(
-		    reply.cipherKeyDetails,
-		    kmsRequestImpl(
-		        ctx, SERVER_KNOBS->REST_KMS_CONNECTOR_GET_ENCRYPTION_KEYS_ENDPOINT, requestBodyRef, std::move(f))));
+		wait(store(reply.cipherKeyDetails,
+		           kmsRequestImpl(ctx,
+		                          SERVER_KNOBS->REST_KMS_CONNECTOR_GET_ENCRYPTION_KEYS_ENDPOINT,
+		                          requestBodyRef,
+		                          std::move(f),
+		                          req.debugId)));
 		req.reply.send(reply);
 	} catch (Error& e) {
 		TraceEvent("RESTLookupEKsByKeyIdsFailed", ctx->uid).error(e);
@@ -1010,7 +1017,8 @@ ACTOR Future<Void> fetchEncryptionKeysByDomainIds(Reference<RESTKmsConnectorCtx>
 		           kmsRequestImpl(ctx,
 		                          SERVER_KNOBS->REST_KMS_CONNECTOR_GET_LATEST_ENCRYPTION_KEYS_ENDPOINT,
 		                          requestBodyRef,
-		                          std::move(f))));
+		                          std::move(f),
+		                          req.debugId)));
 		req.reply.send(reply);
 	} catch (Error& e) {
 		TraceEvent("RESTLookupEKsByDomainIdsFailed", ctx->uid).error(e);
@@ -1090,10 +1098,12 @@ ACTOR Future<Void> fetchBlobMetadata(Reference<RESTKmsConnectorCtx> ctx, KmsConn
 		std::function<Standalone<VectorRef<BlobMetadataDetailsRef>>(Reference<RESTKmsConnectorCtx>,
 		                                                            Reference<HTTP::IncomingResponse>)>
 		    f = &parseBlobMetadataResponse;
-		wait(
-		    store(reply.metadataDetails,
-		          kmsRequestImpl(
-		              ctx, SERVER_KNOBS->REST_KMS_CONNECTOR_GET_BLOB_METADATA_ENDPOINT, requestBodyRef, std::move(f))));
+		wait(store(reply.metadataDetails,
+		           kmsRequestImpl(ctx,
+		                          SERVER_KNOBS->REST_KMS_CONNECTOR_GET_BLOB_METADATA_ENDPOINT,
+		                          requestBodyRef,
+		                          std::move(f),
+		                          req.debugId)));
 		req.reply.send(reply);
 	} catch (Error& e) {
 		TraceEvent("RESTLookupBlobMetadataFailed", ctx->uid).error(e);

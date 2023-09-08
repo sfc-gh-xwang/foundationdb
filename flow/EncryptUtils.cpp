@@ -46,7 +46,7 @@ std::string getEncryptDbgTraceKey(std::string_view prefix,
 		boost::format fmter("%s.%lld.%llu");
 		return boost::str(boost::format(fmter % prefix % domainId % baseCipherId.get()));
 	} else {
-		boost::format fmter("%s.%lld.%s");
+		boost::format fmter("%s.%lld");
 		return boost::str(boost::format(fmter % prefix % domainId));
 	}
 }

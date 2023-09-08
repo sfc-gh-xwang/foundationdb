@@ -98,7 +98,8 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
                                                                std::string verb,
                                                                HTTP::Headers headers,
                                                                RESTUrl url,
-                                                               std::set<unsigned int> successCodes) {
+                                                               std::set<unsigned int> successCodes,
+                                                               Optional<UID> debugId) {
 
 	state Reference<HTTP::OutgoingRequest> req = makeReference<HTTP::OutgoingRequest>();
 	state UnsentPacketQueue content;
@@ -110,7 +111,11 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 	req->resource = url.resource;
 
 	if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::VERBOSE) {
-		TraceEvent("RESTDoRequestImpl").detail("Url", url.toString());
+		TraceEvent ev("RESTDoRequestImpl");
+		ev.detail("Url", url.toString());
+		if (debugId.present()) {
+			ev.detail("DbgId", debugId.get());
+		}
 	}
 
 	if (url.body.size() > 0) {
@@ -162,7 +167,11 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 			} else {
 				// connection not returned to the connection-pool
 				if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
-					TraceEvent("RESTConnClosePeerClosed").detail("Host", url.host).detail("Service", url.service);
+					TraceEvent ev("RESTConnClosePeerClosed");
+					ev.detail("Host", url.host).detail("Service", url.service);
+					if (debugId.present()) {
+						ev.detail("DbgId", debugId.get());
+					}
 				}
 				rconn.conn->close();
 			}
@@ -170,11 +179,14 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 		} catch (Error& e) {
 			if (rconn.conn.isValid()) {
 				if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::INFO) {
-					TraceEvent("RESTConnCloseError")
-					    .detail("Host", url.host)
+					TraceEvent ev("RESTConnCloseError");
+					ev.detail("Host", url.host)
 					    .detail("Service", url.service)
 					    .detail("SeqNum", rconn.seqNum)
 					    .detail("ErrCode", e.code());
+					if (debugId.present()) {
+						ev.detail("DbgId", debugId.get());
+					}
 				}
 				rconn.conn->close();
 				rconn.conn.clear();
@@ -207,12 +219,14 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 		retryable = retryable && (thisTry < maxTries);
 
 		TraceEvent event(SevWarn, retryable ? "RESTClientFailedRetryable" : "RESTClientRequestFailed");
-
 		// Attach err to trace event if present, otherwise extract some stuff from the response
 		if (err.present()) {
 			event.errorUnsuppressed(err.get());
 		}
 		event.suppressFor(60);
+		if (debugId.present()) {
+			event.detail("DbgId", debugId.get());
+		}
 		if (!err.present()) {
 			event.detail("ResponseCode", r->code);
 		}
@@ -298,64 +312,72 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 Future<Reference<HTTP::IncomingResponse>> RESTClient::doPutOrPost(const std::string& verb,
                                                                   Optional<HTTP::Headers> optHeaders,
                                                                   RESTUrl& url,
-                                                                  std::set<unsigned int> successCodes) {
+                                                                  std::set<unsigned int> successCodes,
+                                                                  Optional<UID> debugID) {
 	HTTP::Headers headers;
 	if (optHeaders.present()) {
 		headers = optHeaders.get();
 	}
 
-	return doRequest_impl(Reference<RESTClient>::addRef(this), verb, headers, url, successCodes);
+	return doRequest_impl(Reference<RESTClient>::addRef(this), verb, headers, url, successCodes, debugID);
 }
 
 Future<Reference<HTTP::IncomingResponse>> RESTClient::doPost(const std::string& fullUrl,
                                                              const std::string& requestBody,
+                                                             Optional<UID> debugID,
                                                              Optional<HTTP::Headers> optHeaders) {
 	RESTUrl url(fullUrl, requestBody);
 	TRACE_REST_OP("DoPost", url);
-	return doPutOrPost(HTTP::HTTP_VERB_POST, optHeaders, url, { HTTP::HTTP_STATUS_CODE_OK });
+	return doPutOrPost(HTTP::HTTP_VERB_POST, optHeaders, url, { HTTP::HTTP_STATUS_CODE_OK }, debugID);
 }
 
 Future<Reference<HTTP::IncomingResponse>> RESTClient::doPut(const std::string& fullUrl,
                                                             const std::string& requestBody,
+                                                            Optional<UID> debugID,
                                                             Optional<HTTP::Headers> optHeaders) {
 	RESTUrl url(fullUrl, requestBody);
 	TRACE_REST_OP("DoPut", url);
-	return doPutOrPost(
-	    HTTP::HTTP_VERB_PUT,
-	    optHeaders,
-	    url,
-	    // 201 - on successful resource create
-	    // 200 / 204 - if target resource representation was successfully modified with the desired state
-	    { HTTP::HTTP_STATUS_CODE_OK, HTTP::HTTP_STATUS_CODE_CREATED, HTTP::HTTP_STATUS_CODE_NO_CONTENT });
+	return doPutOrPost(HTTP::HTTP_VERB_PUT,
+	                   optHeaders,
+	                   url,
+	                   // 201 - on successful resource create
+	                   // 200 / 204 - if target resource representation was successfully modified with the desired state
+	                   { HTTP::HTTP_STATUS_CODE_OK, HTTP::HTTP_STATUS_CODE_CREATED, HTTP::HTTP_STATUS_CODE_NO_CONTENT },
+	                   debugID);
 }
 
 Future<Reference<HTTP::IncomingResponse>> RESTClient::doGetHeadDeleteOrTrace(const std::string& verb,
                                                                              Optional<HTTP::Headers> optHeaders,
                                                                              RESTUrl& url,
-                                                                             std::set<unsigned int> successCodes) {
+                                                                             std::set<unsigned int> successCodes,
+                                                                             Optional<UID> debugID) {
 	HTTP::Headers headers;
 	if (optHeaders.present()) {
 		headers = optHeaders.get();
 	}
 
-	return doRequest_impl(Reference<RESTClient>::addRef(this), HTTP::HTTP_VERB_GET, headers, url, successCodes);
+	return doRequest_impl(
+	    Reference<RESTClient>::addRef(this), HTTP::HTTP_VERB_GET, headers, url, successCodes, debugID);
 }
 
 Future<Reference<HTTP::IncomingResponse>> RESTClient::doGet(const std::string& fullUrl,
+                                                            Optional<UID> debugID,
                                                             Optional<HTTP::Headers> optHeaders) {
 	RESTUrl url(fullUrl);
 	TRACE_REST_OP("DoGet", url);
-	return doGetHeadDeleteOrTrace(HTTP::HTTP_VERB_GET, optHeaders, url, { HTTP::HTTP_STATUS_CODE_OK });
+	return doGetHeadDeleteOrTrace(HTTP::HTTP_VERB_GET, optHeaders, url, { HTTP::HTTP_STATUS_CODE_OK }, debugID);
 }
 
 Future<Reference<HTTP::IncomingResponse>> RESTClient::doHead(const std::string& fullUrl,
+                                                             Optional<UID> debugID,
                                                              Optional<HTTP::Headers> optHeaders) {
 	RESTUrl url(fullUrl);
 	TRACE_REST_OP("DoHead", url);
-	return doGetHeadDeleteOrTrace(HTTP::HTTP_VERB_HEAD, optHeaders, url, { HTTP::HTTP_STATUS_CODE_OK });
+	return doGetHeadDeleteOrTrace(HTTP::HTTP_VERB_HEAD, optHeaders, url, { HTTP::HTTP_STATUS_CODE_OK }, debugID);
 }
 
 Future<Reference<HTTP::IncomingResponse>> RESTClient::doDelete(const std::string& fullUrl,
+                                                               Optional<UID> debugID,
                                                                Optional<HTTP::Headers> optHeaders) {
 	RESTUrl url(fullUrl);
 	TRACE_REST_OP("DoDelete", url);
@@ -366,14 +388,16 @@ Future<Reference<HTTP::IncomingResponse>> RESTClient::doDelete(const std::string
 	    // 200 - action has been enacted.
 	    // 202 - action will likely succeed, but, has not yet been enacted.
 	    // 204 - action has been enated, no further information is to supplied.
-	    { HTTP::HTTP_STATUS_CODE_OK, HTTP::HTTP_STATUS_CODE_NO_CONTENT, HTTP::HTTP_STATUS_CODE_ACCEPTED });
+	    { HTTP::HTTP_STATUS_CODE_OK, HTTP::HTTP_STATUS_CODE_NO_CONTENT, HTTP::HTTP_STATUS_CODE_ACCEPTED },
+	    debugID);
 }
 
 Future<Reference<HTTP::IncomingResponse>> RESTClient::doTrace(const std::string& fullUrl,
+                                                              Optional<UID> debugId,
                                                               Optional<HTTP::Headers> optHeaders) {
 	RESTUrl url(fullUrl);
 	TRACE_REST_OP("DoTrace", url);
-	return doGetHeadDeleteOrTrace(HTTP::HTTP_VERB_TRACE, optHeaders, url, { HTTP::HTTP_STATUS_CODE_OK });
+	return doGetHeadDeleteOrTrace(HTTP::HTTP_VERB_TRACE, optHeaders, url, { HTTP::HTTP_STATUS_CODE_OK }, debugId);
 }
 
 // Only used to link unit tests
