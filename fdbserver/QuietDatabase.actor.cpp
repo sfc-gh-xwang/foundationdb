@@ -1163,8 +1163,9 @@ ACTOR Future<Void> disableConsistencyScanInSim(Database db, bool waitForCompleti
 			// see if any rounds have completed
 			if (waitForCompletion) {
 				// The two reads from below need to be snapshot-reads, as they avoid creating read conflicts
-				// on a rapid changing value of currentRoundStats which are made by the ConsistencyScan actor. 
-				state ConsistencyScanState::RoundStats statsCurrentRound = wait(cs.currentRoundStats().getD(tr, Snapshot::True));
+				// on a rapid changing value of currentRoundStats which are made by the ConsistencyScan actor.
+				state ConsistencyScanState::RoundStats statsCurrentRound =
+				    wait(cs.currentRoundStats().getD(tr, Snapshot::True));
 				state ConsistencyScanState::StatsHistoryMap::RangeResultType olderStats =
 				    wait(cs.roundStatsHistory().getRange(tr, {}, {}, 1, Snapshot::True, Reverse::False));
 				if (olderStats.results.empty() && !statsCurrentRound.complete) {
