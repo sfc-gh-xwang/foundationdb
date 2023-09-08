@@ -271,7 +271,8 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 						result.batchPriorityTransactionsReleased += delayedReq.req.transactionCount;
 						++result.batchPriorityRequestsReleased;
 						outBatchPriority.push_back(delayedReq.req);
-					} else if (delayedReq.req.priority == TransactionPriority::DEFAULT || delayedReq.req.priority == TransactionPriority::LOW) {
+					} else if (delayedReq.req.priority == TransactionPriority::DEFAULT ||
+					           delayedReq.req.priority == TransactionPriority::LOW) {
 						result.defaultPriorityTransactionsReleased += delayedReq.req.transactionCount;
 						++result.defaultPriorityRequestsReleased;
 						outDefaultPriority.push_back(delayedReq.req);
