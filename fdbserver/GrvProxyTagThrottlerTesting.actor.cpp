@@ -40,6 +40,9 @@ ACTOR static Future<Void> mockFifoClient(GrvProxyTagThrottler* throttler) {
 		auto& req = reqs.emplace_back();
 		req.priority = TransactionPriority::DEFAULT;
 		req.transactionCount = 1;
+		if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS) {
+			req.expectedTotalCost = 1;
+		}
 		if (i < 1000) {
 			req.throttlingId = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 		} else {
