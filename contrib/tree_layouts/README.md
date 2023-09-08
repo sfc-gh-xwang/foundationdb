@@ -7,7 +7,7 @@ The simulation outputs for each layout the histogram of the distribution of the 
 # tl;dr
 VEB layout will probably not improve cache efficiency of DeltaTree queries (and, in fact, it may hurt us), because the cache lines we are targeting (between 64 and 128 bytes) can fit few nodes (usually about 30-40 bytes in size).
 
-# Build/run instructions:
+# Build/run instructions
 `cd contrib/tree_layouts`
 `mkdir build && cd build && cmake .. && make`
 `./stats`
