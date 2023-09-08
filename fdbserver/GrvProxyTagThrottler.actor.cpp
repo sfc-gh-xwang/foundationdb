@@ -130,19 +130,38 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
     Deque<GetReadVersionRequest>& outDefaultPriority) {
 	ReleaseTransactionsResult result;
 
+	struct Priority {
+		bool highPriorityRequestsRemaining;
+		uint64_t nextSequenceNumber;
+
+		Priority(bool highPriorityRequestsRemaining, uint64_t nextSequenceNumber)
+		  : highPriorityRequestsRemaining(highPriorityRequestsRemaining),
+		    nextSequenceNumber(nextSequenceNumber) {}
+
+		bool operator<(Priority const& rhs) const {
+			if (highPriorityRequestsRemaining != rhs.highPriorityRequestsRemaining) {
+				return !highPriorityRequestsRemaining;
+			} else {
+				return nextSequenceNumber > rhs.nextSequenceNumber;
+			}
+		}
+
+		bool operator>(Priority const& rhs) const { return rhs < *this; }
+
+		static Priority lowest() { return Priority(false, std::numeric_limits<uint64_t>::max()); }
+	};
+
 	// Pointer to a TagQueue with some extra metadata stored alongside
 	struct TagQueueHandle {
 		// Store pointers here to avoid frequent hash map lookups
 		TagQueue* queue;
 		// Cannot be stored directly because amountReleased outlives TagQueueHandle
 		uint64_t* numReleased;
-		uint64_t getNextSequenceNumber() const {
+		Priority getPriority() const {
 			ASSERT(!queue->requests.empty());
-			return queue->requests.front().sequenceNumber;
+			return Priority(true, queue->requests.front().sequenceNumber);
 		}
-		bool operator>(TagQueueHandle const& rhs) const {
-			return getNextSequenceNumber() > rhs.getNextSequenceNumber();
-		}
+		bool operator<(TagQueueHandle const& rhs) const { return getPriority() < rhs.getPriority(); }
 		explicit TagQueueHandle(TagQueue& queue, uint64_t& numReleased) : queue(&queue), numReleased(&numReleased) {
 			ASSERT(!this->queue->requests.empty());
 		}
@@ -150,7 +169,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 
 	// Priority queue of queues for each tag, ordered by the sequence number of the
 	// next request to process in each queue
-	std::priority_queue<TagQueueHandle, std::vector<TagQueueHandle>, std::greater<TagQueueHandle>> pqOfQueues;
+	std::priority_queue<TagQueueHandle> pqOfQueues;
 
 	// Track transactions released for each throttlingId
 	std::vector<std::pair<ThrottlingId, uint64_t>> transactionsReleased;
@@ -179,15 +198,14 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		auto tagQueueHandle = pqOfQueues.top();
 		pqOfQueues.pop();
 		// Used to determine when it is time to start processing another throttlingId
-		auto const nextQueueSeqNo =
-		    pqOfQueues.empty() ? std::numeric_limits<uint64_t>::max() : pqOfQueues.top().getNextSequenceNumber();
+		auto const nextQueuePriority = pqOfQueues.empty() ? Priority::lowest() : pqOfQueues.top().getPriority();
 
 		while (!tagQueueHandle.queue->requests.empty()) {
 			auto& delayedReq = tagQueueHandle.queue->requests.front();
 
 			auto cost = getCost(delayedReq.req);
 
-			ASSERT_EQ(tagQueueHandle.getNextSequenceNumber(), delayedReq.sequenceNumber);
+			ASSERT_EQ(tagQueueHandle.getPriority().nextSequenceNumber, delayedReq.sequenceNumber);
 			if (tagQueueHandle.queue->rateInfo.present() &&
 			    !tagQueueHandle.queue->rateInfo.get().canStart(*(tagQueueHandle.numReleased), cost)) {
 				// Cannot release any more transaction from this throttling ID (don't push the tag queue handle back
@@ -199,7 +217,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 				    tagQueueHandle.queue->rejectMaxThrottledRequests(maxThrottleDuration, latencyBandsMap);
 				break;
 			} else {
-				if (tagQueueHandle.getNextSequenceNumber() < nextQueueSeqNo) {
+				if (tagQueueHandle.getPriority() > nextQueuePriority) {
 					// Releasing transaction
 					*(tagQueueHandle.numReleased) += cost;
 					delayedReq.updateProxyTagThrottledDuration(latencyBandsMap);
