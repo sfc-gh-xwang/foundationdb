@@ -22,6 +22,7 @@
 #define FDBSERVER_ENCRYPTKEYPROXYINTERFACE_H
 #pragma once
 
+#include "fdbclient/BlobCipher.h"
 #include "fdbclient/BlobMetadataUtils.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbrpc/fdbrpc.h"
@@ -254,12 +255,13 @@ struct EKPGetBaseCipherKeysByIdsRequest {
 	std::vector<EKPGetBaseCipherKeysRequestInfo> baseCipherInfos;
 	Optional<UID> debugId;
 	ReplyPromise<EKPGetBaseCipherKeysByIdsReply> reply;
+	BlobCipherMetrics::UsageType usageType;
 
 	EKPGetBaseCipherKeysByIdsRequest() {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, baseCipherInfos, debugId, reply);
+		serializer(ar, baseCipherInfos, debugId, reply, usageType);
 	}
 };
 
@@ -292,13 +294,14 @@ struct EKPGetLatestBaseCipherKeysRequest {
 	std::vector<EncryptCipherDomainId> encryptDomainIds;
 	Optional<UID> debugId;
 	ReplyPromise<EKPGetLatestBaseCipherKeysReply> reply;
+	BlobCipherMetrics::UsageType usageType;
 
 	EKPGetLatestBaseCipherKeysRequest() {}
 	explicit EKPGetLatestBaseCipherKeysRequest(const std::vector<EncryptCipherDomainId>& ids) : encryptDomainIds(ids) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, encryptDomainIds, debugId, reply);
+		serializer(ar, encryptDomainIds, debugId, reply, usageType);
 	}
 };
 

@@ -464,7 +464,7 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 
 	if (dbgTrace.present()) {
 		dbgTrace.get().setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
-		dbgTrace.get().detail("DbgId", keysByIds.debugId.get());
+		dbgTrace.get().detail("DbgId", keysByIds.debugId);
 	}
 
 	// Dedup the requested pair<baseCipherId, encryptDomainId>
@@ -480,6 +480,12 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 	    lookupCipherInfoMap = getLookupDetails(ekpProxyData, dbgTrace, keyIdsReply, numHits, dedupedCipherInfos);
 	if (!lookupCipherInfoMap.empty()) {
 		try {
+			auto it = BlobCipherMetrics::usageTypeNames.find(req.usageType);
+			ASSERT(it != BlobCipherMetrics::usageTypeNames.end());
+			TraceEvent("EncryptKeyProxyGetCipherKeysByKeyIds")
+			    .detail("LookupCipherIdsSize", lookupCipherInfoMap.size())
+			    .detail("UsageType", it->second)
+			    .detail("DbgId", keysByIds.debugId);
 			KmsConnLookupEKsByKeyIdsReq keysByIdsReq;
 			for (const auto& item : lookupCipherInfoMap) {
 				keysByIdsReq.encryptKeyInfos.emplace_back(item.second.domainId, item.second.baseCipherId);
@@ -609,7 +615,7 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 
 	if (dbgTrace.present()) {
 		dbgTrace.get().setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
-		dbgTrace.get().detail("DbgId", latestKeysReq.debugId.get());
+		dbgTrace.get().detail("DbgId", latestKeysReq.debugId);
 	}
 
 	// Dedup the requested domainIds.
@@ -633,6 +639,12 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 	    getLookupDetailsLatest(ekpProxyData, dbgTrace, latestCipherReply, numHits, dedupedDomainIds);
 	if (!lookupCipherDomainIds.empty()) {
 		try {
+			auto it = BlobCipherMetrics::usageTypeNames.find(req.usageType);
+			ASSERT(it != BlobCipherMetrics::usageTypeNames.end());
+			TraceEvent("EncryptKeyProxyGetLatestCipherKeys")
+			    .detail("LookupDomainIdsSize", lookupCipherDomainIds.size())
+			    .detail("UsageType", it->second)
+			    .detail("DbgId", latestKeysReq.debugId);
 			KmsConnLookupEKsByDomainIdsReq keysByDomainIdReq;
 			for (const auto domainId : lookupCipherDomainIds) {
 				keysByDomainIdReq.encryptDomainIds.emplace_back(domainId);
@@ -729,7 +741,7 @@ ACTOR Future<bool> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyDa
                                        KmsConnectorInterface kmsConnectorInf) {
 	state UID debugId = deterministicRandom()->randomUniqueID();
 	if (DEBUG_ENCRYPT_KEY_PROXY) {
-		TraceEvent(SevDebug, "KMSHealthCheckStart", ekpProxyData->myId);
+		TraceEvent(SevDebug, "KMSHealthCheckStart", ekpProxyData->myId).detail("DbgId", debugId);
 	}
 
 	// Health check will try to fetch the encryption details for the system key
@@ -828,7 +840,7 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 		for (auto itr = ekpProxyData->baseCipherDomainIdCache.begin();
 		     itr != ekpProxyData->baseCipherDomainIdCache.end();) {
 			if (isCipherKeyEligibleForRefresh(itr->second, currTS)) {
-				TraceEvent("RefreshEKs").detail("Id", itr->first);
+				TraceEvent("RefreshEKs").detail("Id", itr->first).detail("DbgId", debugId);
 				req.encryptDomainIds.push_back(itr->first);
 			}
 
@@ -842,7 +854,7 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 
 		if (req.encryptDomainIds.empty()) {
 			// Nothing to refresh
-			TraceEvent(SevDebug, "RefreshEKsEmptyRefresh");
+			TraceEvent(SevDebug, "RefreshEKsEmptyRefresh").detail("DbgId", debugId);
 			return Void();
 		}
 
@@ -854,7 +866,8 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 			const auto itr = ekpProxyData->baseCipherDomainIdCache.find(item.encryptDomainId);
 			if (itr == ekpProxyData->baseCipherDomainIdCache.end()) {
 				TraceEvent(SevInfo, "RefreshEKsDomainIdNotFound", ekpProxyData->myId)
-				    .detail("DomainId", item.encryptDomainId);
+				    .detail("DomainId", item.encryptDomainId)
+				    .detail("DbgId", debugId);
 				// Continue updating the cache with other elements
 				continue;
 			}
@@ -889,7 +902,7 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 			TraceEvent(SevWarn, "RefreshEKsError").error(e);
 			throw e;
 		}
-		TraceEvent("RefreshEKs").detail("ErrorCode", e.code());
+		TraceEvent("RefreshEKsError").detail("DbgId", debugId).detail("ErrorCode", e.code());
 		++ekpProxyData->numEncryptionKeyRefreshErrors;
 	}
 
@@ -914,7 +927,7 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 
 	if (dbgTrace.present()) {
 		dbgTrace.get().setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
-		dbgTrace.get().detail("DbgId", req.debugId.get());
+		dbgTrace.get().detail("DbgId", req.debugId);
 	}
 
 	// Dedup the requested domainIds.
