@@ -2492,7 +2492,6 @@ thread_local bool profileThread = false;
 volatile int64_t profileThreadId = -1;
 
 #ifdef __linux__
-std::mutex chainedActionMutex;
 struct sigaction chainedAction;
 #endif
 
@@ -2529,14 +2528,9 @@ int64_t getNumProfilesCaptured() {
 
 void profileHandler(int sig) {
 #ifdef __linux__
-	{
-		// Need to protect chainedAction as this function can get invoked concurrently
-		// from multiple threads
-		std::unique_lock<std::mutex> lock(chainedActionMutex);
-		if (chainedAction.sa_handler != SIG_DFL && chainedAction.sa_handler != SIG_IGN &&
-		    chainedAction.sa_handler != nullptr) {
-			chainedAction.sa_handler(sig);
-		}
+	if (chainedAction.sa_handler != SIG_DFL && chainedAction.sa_handler != SIG_IGN &&
+	    chainedAction.sa_handler != nullptr) {
+		chainedAction.sa_handler(sig);
 	}
 
 	// This is not documented in the POSIX list of signal-safe functions, but numbered syscalls are reported to be
@@ -2730,12 +2724,7 @@ std::string getExecPath() {
 void setupRunLoopProfiler() {
 #ifdef __linux__
 	if (profileThreadId == -1 && FLOW_KNOBS->RUN_LOOP_PROFILING_INTERVAL > 0) {
-		{
-			// Need to protect chainedAction in case this function gets invoked
-			// concurrently from multiple threads
-			std::unique_lock<std::mutex> lock(chainedActionMutex);
-			chainedAction.sa_handler = SIG_DFL;
-		}
+		chainedAction.sa_handler = SIG_DFL;
 
 		TraceEvent("StartingRunLoopProfilingThread").detail("Interval", FLOW_KNOBS->RUN_LOOP_PROFILING_INTERVAL);
 
