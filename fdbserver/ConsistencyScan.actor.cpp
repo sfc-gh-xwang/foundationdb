@@ -997,8 +997,7 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 							    .detail("BytesRead", statsCurrentRound.logicalBytesScanned);
 						}
 
-						// Return to main loop after this commit, but delay first for the difference between the time
-						// the round took and minRoundTimeSeconds
+						// Return to main loop after this commit
 						restartMainLoop = true;
 					}
 
