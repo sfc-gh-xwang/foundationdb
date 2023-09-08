@@ -71,6 +71,51 @@ ACTOR static Future<Void> mockFifoClient(GrvProxyTagThrottler* throttler) {
 	return Void();
 }
 
+ACTOR static Future<Void> mockVariablePriorityClient(GrvProxyTagThrottler* throttler) {
+	state std::vector<GetReadVersionRequest> reqs;
+	state int i = 0;
+	// Used to track the order in which replies are received
+	state std::vector<int> replyIndices;
+
+	for (int i = 0; i < 2000; ++i) {
+		auto& req = reqs.emplace_back();
+		req.transactionCount = 1;
+		if (CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS) {
+			req.expectedTotalCost = 1;
+		}
+		req.throttlingId = ThrottlingIdRef::fromTag("sampleTag"_sr);
+		if (i < 1000) {
+			req.priority = TransactionPriority::LOW;
+		} else {
+			req.priority = TransactionPriority::DEFAULT;
+		}
+	}
+
+	for (const auto& req : reqs) {
+		throttler->addRequest(req);
+	}
+	state std::vector<Future<Void>> futures;
+	for (int j = 0; j < 2000; ++j) {
+		// Flow hack to capture replyIndices
+		auto* _replyIndices = &replyIndices;
+		futures.push_back(map(reqs[j].reply.getFuture(), [_replyIndices, j](auto const&) {
+			(*_replyIndices).push_back(j);
+			return Void();
+		}));
+	}
+	wait(waitForAll(futures));
+	// The set of the first 1000 requests to receive a reply should
+	// be precisely the set of the last 1000 requests issued, because
+	// these requests have default priority:
+	for (i = 0; i < 1000; ++i) {
+		ASSERT_GE(replyIndices[i], 1000);
+	}
+	for (i = 1000; i < 2000; ++i) {
+		ASSERT_LT(replyIndices[i], 1000);
+	}
+	return Void();
+}
+
 ACTOR static Future<Void> mockServer(GrvProxyTagThrottler* throttler) {
 	state Deque<GetReadVersionRequest> outBatchPriority;
 	state Deque<GetReadVersionRequest> outDefaultPriority;
@@ -227,12 +272,21 @@ TEST_CASE("/GrvProxyTagThrottler/Cleanup2") {
 	return Void();
 }
 
-// Tests that unthrottled transactions are released in FIFO order, even when they
-// have different tags
+// Tests that unthrottled transactions with the same priority are released in
+// FIFO order, even when they have different tags
 TEST_CASE("/GrvProxyTagThrottler/Fifo") {
 	state GrvProxyTagThrottler throttler(5.0);
 	state Future<Void> server = mockServer(&throttler);
 	wait(mockFifoClient(&throttler));
+	return Void();
+}
+
+// Tests that unthrottled transactions are released according
+// to their priorities
+TEST_CASE("/GrvProxyTagThrottler/VariablePriorities") {
+	state GrvProxyTagThrottler throttler(5.0);
+	state Future<Void> server = mockServer(&throttler);
+	wait(mockVariablePriorityClient(&throttler));
 	return Void();
 }
 
