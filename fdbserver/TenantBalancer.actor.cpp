@@ -58,6 +58,7 @@ Future<Void> writeTenantBalancerInterfaceToDb(TenantBalancer* self, PersistInter
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			// TODO: remove debugging
 			UID rnd = deterministicRandom()->randomUniqueID();
 			tr->debugTransaction(rnd);
 			TenantBalancerMetadata::getTenantBalancerInterface().set(tr, self->tbi);
