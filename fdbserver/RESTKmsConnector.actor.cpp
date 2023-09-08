@@ -474,7 +474,8 @@ void checkDocForNewKmsUrls(Reference<RESTKmsConnectorCtx> ctx,
 }
 
 Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Reference<RESTKmsConnectorCtx> ctx,
-                                                                             Reference<HTTP::IncomingResponse> resp) {
+                                                                             Reference<HTTP::IncomingResponse> resp,
+                                                                             Optional<UID> debugId = {}) {
 	// Acceptable response payload json format:
 	//
 	// response_json_payload {
@@ -519,7 +520,8 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 	// Extract CipherKeyDetails
 	if (!doc.HasMember(CIPHER_KEY_DETAILS_TAG) || !doc[CIPHER_KEY_DETAILS_TAG].IsArray()) {
 		TraceEvent(SevWarn, "RESTParseEncryptCipherResponseFailed", ctx->uid)
-		    .detail("Reason", "MissingCipherKeyDetails");
+		    .detail("Reason", "MissingCipherKeyDetails")
+		    .detail("DbgId", debugId);
 		CODE_PROBE(true, "REST CipherKeyDetails not array");
 		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
@@ -529,7 +531,8 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 		if (!cipherDetail.IsObject()) {
 			TraceEvent(SevWarn, "RESTParseEncryptCipherResponseFailed", ctx->uid)
 			    .detail("CipherDetailType", cipherDetail.GetType())
-			    .detail("Reason", "EncryptKeyDetailsNotObject");
+			    .detail("Reason", "EncryptKeyDetailsNotObject")
+			    .detail("DbgId", debugId);
 			CODE_PROBE(true, "REST CipherKeyDetail not object");
 			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
@@ -543,7 +546,8 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 			    .detail("Reason", "MalformedKeyDetail")
 			    .detail("BaseCipherIdPresent", isBaseCipherIdPresent)
 			    .detail("BaseCipherPresent", isBaseCipherPresent)
-			    .detail("EncryptDomainIdPresent", isEncryptDomainIdPresent);
+			    .detail("EncryptDomainIdPresent", isEncryptDomainIdPresent)
+			    .detail("DbgId", debugId);
 			CODE_PROBE(true, "REST CipherKeyDetail malformed");
 			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
@@ -578,7 +582,8 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 			// weakens the security guarantees.
 			TraceEvent(SevWarnAlways, "RESTKmsConnectorMaxBaseCipherKeyLimit")
 			    .detail("MaxAllowed", MAX_BASE_CIPHER_LEN)
-			    .detail("BaseCipherLen", cipher.size());
+			    .detail("BaseCipherLen", cipher.size())
+			    .detail("DbgId", debugId);
 			throw rest_max_base_cipher_len();
 		}
 
@@ -596,6 +601,7 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 			if (expireAfterSec.present()) {
 				event.detail("ExpireAt", expireAfterSec.get());
 			}
+			event.detail("DbgId", debugId);
 		}
 
 		result.emplace_back_deep(
@@ -608,7 +614,8 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 }
 
 Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Reference<RESTKmsConnectorCtx> ctx,
-                                                                        Reference<HTTP::IncomingResponse> resp) {
+                                                                        Reference<HTTP::IncomingResponse> resp,
+                                                                        Optional<UID> debugId = {}) {
 	// Acceptable response payload json format:
 	// (baseLocation and partitions follow the same properties as described in BlobMetadataUtils.h)
 	//
@@ -650,7 +657,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 
 	// Extract CipherKeyDetails
 	if (!doc.HasMember(BLOB_METADATA_DETAILS_TAG) || !doc[BLOB_METADATA_DETAILS_TAG].IsArray()) {
-		TraceEvent(SevWarn, "ParseBlobMetadataResponseFailureMissingDetails", ctx->uid).log();
+		TraceEvent(SevWarn, "ParseBlobMetadataResponseFailureMissingDetails", ctx->uid).detail("DbgId", debugId).log();
 		CODE_PROBE(true, "REST BlobMetadata details missing or not-array");
 		++ctx->numMalformedResponses;
 		throw rest_malformed_response();
@@ -659,7 +666,8 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 	for (const auto& detail : doc[BLOB_METADATA_DETAILS_TAG].GetArray()) {
 		if (!detail.IsObject()) {
 			TraceEvent(SevWarn, "ParseBlobMetadataResponseFailureDetailsNotObject", ctx->uid)
-			    .detail("CipherDetailType", detail.GetType());
+			    .detail("CipherDetailType", detail.GetType())
+			    .detail("DbgId", debugId);
 			CODE_PROBE(true, "REST BlobMetadata detail not-object");
 			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
@@ -671,7 +679,8 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 		if (!isDomainIdPresent || !isLocationsPresent) {
 			TraceEvent(SevWarn, "ParseBlobMetadataResponseMalformedDetail", ctx->uid)
 			    .detail("DomainIdPresent", isDomainIdPresent)
-			    .detail("LocationsPresent", isLocationsPresent);
+			    .detail("LocationsPresent", isLocationsPresent)
+			    .detail("DbgId", debugId);
 			CODE_PROBE(true, "REST BlobMetadata detail malformed", probe::decoration::rare);
 			++ctx->numMalformedResponses;
 			throw rest_malformed_response();
@@ -684,7 +693,8 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 		for (const auto& location : detail[BLOB_METADATA_LOCATIONS_TAG].GetArray()) {
 			if (!location.IsObject()) {
 				TraceEvent("ParseBlobMetadataResponseFailureLocationNotObject", ctx->uid)
-				    .detail("LocationType", location.GetType());
+				    .detail("LocationType", location.GetType())
+				    .detail("DbgId", debugId);
 				++ctx->numMalformedResponses;
 				throw rest_malformed_response();
 			}
@@ -693,7 +703,8 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 			if (!isLocationIdPresent || !isPathPresent) {
 				TraceEvent(SevWarn, "ParseBlobMetadataResponseMalformedLocation", ctx->uid)
 				    .detail("LocationIdPresent", isLocationIdPresent)
-				    .detail("PathPresent", isPathPresent);
+				    .detail("PathPresent", isPathPresent)
+				    .detail("DbgId", debugId);
 				CODE_PROBE(true, "REST BlobMetadata location malformed", probe::decoration::rare);
 				++ctx->numMalformedResponses;
 				throw rest_malformed_response();
@@ -732,6 +743,7 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 			if (expireAt != std::numeric_limits<double>::max()) {
 				event.detail("ExpireAt", expireAt);
 			}
+			event.detail("DbgId", debugId);
 		}
 	}
 
@@ -804,11 +816,13 @@ StringRef getEncryptKeysByKeyIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx,
 }
 
 ACTOR template <class T>
-Future<T> kmsRequestImpl(Reference<RESTKmsConnectorCtx> ctx,
-                         std::string urlSuffix,
-                         StringRef requestBodyRef,
-                         std::function<T(Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>)> parseFunc,
-                         Optional<UID> debugID) {
+Future<T> kmsRequestImpl(
+    Reference<RESTKmsConnectorCtx> ctx,
+    std::string urlSuffix,
+    StringRef requestBodyRef,
+    std::function<T(Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>, Optional<UID> debugId)>
+        parseFunc,
+    Optional<UID> debugID) {
 	state UID requestID = deterministicRandom()->randomUniqueID();
 
 	// Follow multi-phase approach:
@@ -832,17 +846,15 @@ Future<T> kmsRequestImpl(Reference<RESTKmsConnectorCtx> ctx,
 				std::string kmsEncryptionFullUrl = getFullRequestUrl(ctx, urlCtx->url, urlSuffix);
 
 				if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
-					TraceEvent ev("RESTKmsRequestImpl", ctx->uid);
-					ev.detail("Pass", pass)
+					TraceEvent("RESTKmsRequestImpl", ctx->uid)
+					    .detail("Pass", pass)
 					    .detail("RequestID", requestID)
 					    .detail("FullUrl", kmsEncryptionFullUrl)
 					    .detail("StartIdx", start)
 					    .detail("CurIdx", idx)
 					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS)
-					    .detail("RetryDelay", retryDelay);
-					if (debugID.present()) {
-						ev.detail("DbgId", debugID.get());
-					}
+					    .detail("RetryDelay", retryDelay)
+					    .detail("DbgId", debugID);
 				}
 
 				HTTP::Headers headers;
@@ -853,14 +865,14 @@ Future<T> kmsRequestImpl(Reference<RESTKmsConnectorCtx> ctx,
 				urlCtx->nRequests++;
 
 				try {
-					T parsedResp = parseFunc(ctx, resp);
+					T parsedResp = parseFunc(ctx, resp, debugID);
 					return parsedResp;
 				} catch (Error& e) {
-					TraceEvent ev(SevWarn, "KmsRequestRespParseFailure");
-					ev.error(e).detail("RequestID", requestID).detail("RetryDelay", retryDelay);
-					if (debugID.present()) {
-						ev.detail("DbgId", debugID.get());
-					}
+					TraceEvent(SevWarn, "KmsRequestRespParseFailure")
+					    .error(e)
+					    .detail("RequestID", requestID)
+					    .detail("RetryDelay", retryDelay)
+					    .detail("DbgId", debugID);
 					ctx->kmsUrlStore.penalize(*urlCtx, KmsUrlCtx<KmsUrlPenaltyParams>::PenaltyType::MALFORMED_RESPONSE);
 					// attempt to do request from next KmsUrl
 				}
@@ -873,11 +885,11 @@ Future<T> kmsRequestImpl(Reference<RESTKmsConnectorCtx> ctx,
 					}
 					throw e;
 				}
-				TraceEvent ev(SevDebug, "KmsRequestError", ctx->uid);
-				ev.error(e).detail("RequestID", requestID).detail("RetryDelay", retryDelay);
-				if (debugID.present()) {
-					ev.detail("DbgId", debugID.get());
-				}
+				TraceEvent(SevDebug, "KmsRequestError", ctx->uid)
+				    .error(e)
+				    .detail("RequestID", requestID)
+				    .detail("RetryDelay", retryDelay)
+				    .detail("DbgId", debugID);
 				// attempt to do request from next KmsUrl
 			}
 
@@ -925,8 +937,8 @@ ACTOR Future<Void> fetchEncryptionKeysByKeyIds(Reference<RESTKmsConnectorCtx> ct
 	try {
 		bool refreshKmsUrls = shouldRefreshKmsUrls(ctx);
 		StringRef requestBodyRef = getEncryptKeysByKeyIdsRequestBody(ctx, req, refreshKmsUrls, req.arena);
-		std::function<Standalone<VectorRef<EncryptCipherKeyDetailsRef>>(Reference<RESTKmsConnectorCtx>,
-		                                                                Reference<HTTP::IncomingResponse>)>
+		std::function<Standalone<VectorRef<EncryptCipherKeyDetailsRef>>(
+		    Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>, Optional<UID>)>
 		    f = &parseEncryptCipherResponse;
 		wait(store(reply.cipherKeyDetails,
 		           kmsRequestImpl(ctx,
@@ -1009,8 +1021,8 @@ ACTOR Future<Void> fetchEncryptionKeysByDomainIds(Reference<RESTKmsConnectorCtx>
 		bool refreshKmsUrls = shouldRefreshKmsUrls(ctx);
 		StringRef requestBodyRef = getEncryptKeysByDomainIdsRequestBody(ctx, req, refreshKmsUrls, req.arena);
 
-		std::function<Standalone<VectorRef<EncryptCipherKeyDetailsRef>>(Reference<RESTKmsConnectorCtx>,
-		                                                                Reference<HTTP::IncomingResponse>)>
+		std::function<Standalone<VectorRef<EncryptCipherKeyDetailsRef>>(
+		    Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>, Optional<UID>)>
 		    f = &parseEncryptCipherResponse;
 
 		wait(store(reply.cipherKeyDetails,
@@ -1095,8 +1107,8 @@ ACTOR Future<Void> fetchBlobMetadata(Reference<RESTKmsConnectorCtx> ctx, KmsConn
 
 		// for some reason the compiler can't handle just passing &parseBlobMetadata, so you have to explicitly
 		// declare its templated return type as part of an std::function first
-		std::function<Standalone<VectorRef<BlobMetadataDetailsRef>>(Reference<RESTKmsConnectorCtx>,
-		                                                            Reference<HTTP::IncomingResponse>)>
+		std::function<Standalone<VectorRef<BlobMetadataDetailsRef>>(
+		    Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>, Optional<UID>)>
 		    f = &parseBlobMetadataResponse;
 		wait(store(reply.metadataDetails,
 		           kmsRequestImpl(ctx,

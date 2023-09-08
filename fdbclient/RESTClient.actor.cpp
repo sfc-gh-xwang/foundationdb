@@ -111,11 +111,7 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 	req->resource = url.resource;
 
 	if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::VERBOSE) {
-		TraceEvent ev("RESTDoRequestImpl");
-		ev.detail("Url", url.toString());
-		if (debugId.present()) {
-			ev.detail("DbgId", debugId.get());
-		}
+		TraceEvent("RESTDoRequestImpl").detail("Url", url.toString()).detail("DbgId", debugId);
 	}
 
 	if (url.body.size() > 0) {
@@ -167,11 +163,10 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 			} else {
 				// connection not returned to the connection-pool
 				if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
-					TraceEvent ev("RESTConnClosePeerClosed");
-					ev.detail("Host", url.host).detail("Service", url.service);
-					if (debugId.present()) {
-						ev.detail("DbgId", debugId.get());
-					}
+					TraceEvent("RESTConnClosePeerClosed")
+					    .detail("Host", url.host)
+					    .detail("Service", url.service)
+					    .detail("DbgId", debugId);
 				}
 				rconn.conn->close();
 			}
@@ -179,14 +174,12 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 		} catch (Error& e) {
 			if (rconn.conn.isValid()) {
 				if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::INFO) {
-					TraceEvent ev("RESTConnCloseError");
-					ev.detail("Host", url.host)
+					TraceEvent("RESTConnCloseError")
+					    .detail("Host", url.host)
 					    .detail("Service", url.service)
 					    .detail("SeqNum", rconn.seqNum)
-					    .detail("ErrCode", e.code());
-					if (debugId.present()) {
-						ev.detail("DbgId", debugId.get());
-					}
+					    .detail("ErrCode", e.code())
+					    .detail("DbgId", debugId);
 				}
 				rconn.conn->close();
 				rconn.conn.clear();
@@ -224,9 +217,7 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 			event.errorUnsuppressed(err.get());
 		}
 		event.suppressFor(60);
-		if (debugId.present()) {
-			event.detail("DbgId", debugId.get());
-		}
+		event.detail("DbgId", debugId);
 		if (!err.present()) {
 			event.detail("ResponseCode", r->code);
 		}
