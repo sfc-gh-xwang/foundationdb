@@ -19,6 +19,7 @@
  */
 
 #include <cinttypes>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 #include <map>
@@ -45,16 +46,6 @@
 
 namespace {
 constexpr double epsilon = 1e-6;
-
-// Extracts the rate field from a Counter metric.
-double extractRateFromTraceEvent(const TraceEventFields& message, const std::string& metric_name) {
-	double rate, roughness;
-	int64_t count;
-
-	sscanf(message.getValue(metric_name).c_str(), "%lf %lf %" SCNd64, &rate, &roughness, &count);
-	return rate;
-}
-
 } // namespace
 
 ACTOR Future<std::vector<WorkerDetails>> getWorkers(Reference<AsyncVar<ServerDBInfo> const> dbInfo, int flags = 0) {
@@ -146,6 +137,36 @@ ACTOR Future<int64_t> getDataInFlight(Database cx, Reference<AsyncVar<ServerDBIn
 	return dataInFlight;
 }
 
+// Computes the queue size for storage servers using the bytesInput and bytesDurable attributes
+int64_t getStorageQueueSize(const TraceEventFields& md) {
+	double inputRate, durableRate;
+	double inputRoughness, durableRoughness;
+	int64_t inputBytes, durableBytes;
+
+	if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+		sscanf(md.getValue("BytesInput").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
+		sscanf(md.getValue("BytesDurable").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
+	} else {
+		sscanf(md.getValue("BytesInputOld").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
+		sscanf(
+		    md.getValue("BytesDurableOld").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
+	}
+
+	return inputBytes - durableBytes;
+}
+
+// Computes the queue size for tlogs using the bytesInput and bytesDurable attributes
+int64_t getTLogQueueSize(const TraceEventFields& md) {
+	double inputRate, durableRate;
+	double inputRoughness, durableRoughness;
+	int64_t inputBytes, durableBytes;
+
+	sscanf(md.getValue("BytesInput").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
+	sscanf(md.getValue("BytesDurable").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
+
+	return inputBytes - durableBytes;
+}
+
 // Gets the WorkerInterface representing the blob manager.
 ACTOR Future<WorkerInterface> getBlobManagerWorker(Database cx, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
 	TraceEvent("GetBlobManagerWorker").detail("Stage", "GettingWorkers");
@@ -173,52 +194,26 @@ ACTOR Future<WorkerInterface> getBlobManagerWorker(Database cx, Reference<AsyncV
 	}
 }
 
-ACTOR Future<int64_t> getActiveGranuleSplits(WorkerInterface blobManagerWorker) {
+int64_t extractBlobManagerField(const UID& blobManagerId, const TraceEventFields& md, const std::string& fieldName) {
 	try {
-		TraceEventFields md = wait(
-		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
-		return md.getInt64("ActiveGranuleSplitChecks");
+		return md.getInt64(fieldName);
 	} catch (Error& e) {
-		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
-		    .detail("Reason", "Failed to extract ActiveGranuleSplitChecks from BlobManagerMetrics");
+		TraceEvent("QuietDatabaseFailure", blobManagerId)
+		    .detail("Reason", fmt::format("Failed to extract {} from BlobManagerMetrics", fieldName));
 		throw;
 	}
 }
 
-ACTOR Future<int64_t> getActiveGranuleMerges(WorkerInterface blobManagerWorker) {
-	try {
-		TraceEventFields md = wait(
-		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
-		return md.getInt64("ActiveMerges");
-	} catch (Error& e) {
-		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
-		    .detail("Reason", "Failed to extract ActiveMerges from BlobManagerMetrics");
-		throw;
-	}
+int64_t getActiveGranuleSplits(const TraceEventFields& blobManagerMetrics, const UID& blobManagerID) {
+	return extractBlobManagerField(blobManagerID, blobManagerMetrics, "ActiveGranuleSplitChecks");
 }
 
-ACTOR Future<int> getBlobWorkerRecruitments(WorkerInterface blobManagerWorker) {
-	try {
-		TraceEventFields md = wait(
-		    timeoutError(blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr)), 1.0));
-		return md.getInt("ActiveBlobWorkerRecruitments");
-	} catch (Error& e) {
-		TraceEvent("QuietDatabaseFailure", blobManagerWorker.id())
-		    .detail("Reason", "Failed to extract ActiveBlobWorkerRecruitments");
-		throw;
-	}
+int64_t getActiveGranuleMerges(const TraceEventFields& blobManagerMetrics, const UID& blobManagerID) {
+	return extractBlobManagerField(blobManagerID, blobManagerMetrics, "ActiveMerges");
 }
 
-// Computes the queue size for storage servers and tlogs using the bytesInput and bytesDurable attributes
-int64_t getQueueSize(const TraceEventFields& md) {
-	double inputRate, durableRate;
-	double inputRoughness, durableRoughness;
-	int64_t inputBytes, durableBytes;
-
-	sscanf(md.getValue("BytesInput").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
-	sscanf(md.getValue("BytesDurable").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
-
-	return inputBytes - durableBytes;
+int64_t getBlobWorkerRecruitments(const TraceEventFields& blobManagerMetrics, const UID& blobManagerID) {
+	return extractBlobManagerField(blobManagerID, blobManagerMetrics, "ActiveBlobWorkerRecruitments");
 }
 
 int64_t getDurableVersion(const TraceEventFields& md) {
@@ -300,7 +295,7 @@ ACTOR Future<std::pair<int64_t, int64_t>> getTLogQueueInfo(Database cx,
 	state int i = 0;
 	for (; i < messages.size(); i++) {
 		try {
-			maxQueueSize = std::max(maxQueueSize, getQueueSize(messages[i].get()));
+			maxQueueSize = std::max(maxQueueSize, getTLogQueueSize(messages[i].get()));
 			maxPoppedVersionLag = std::max(maxPoppedVersionLag, getPoppedVersionLag(messages[i].get()));
 		} catch (Error& e) {
 			TraceEvent("QuietDatabaseFailure")
@@ -428,7 +423,7 @@ int64_t extractMaxQueueSize(const std::vector<Future<TraceEventFields>>& message
 
 	for (int i = 0; i < messages.size(); i++) {
 		try {
-			auto queueSize = getQueueSize(messages[i].get());
+			auto queueSize = getStorageQueueSize(messages[i].get());
 			if (queueSize > maxQueueSize) {
 				maxQueueSize = queueSize;
 				maxQueueServer = servers[i].id();
@@ -565,6 +560,35 @@ ACTOR Future<std::vector<Future<TraceEventFields>>> getBlobWorkerMetrics(
 	return messages;
 }
 
+double extractBlobWorkerRate(const std::string& blobWorkerID,
+                             const TraceEventFields& message,
+                             const std::string& metricName) {
+	double rate, roughness;
+	int64_t count;
+	try {
+		sscanf(message.getValue(metricName).c_str(), "%lf %lf %" SCNd64, &rate, &roughness, &count);
+		return rate;
+	} catch (Error& e) {
+		TraceEvent("QuietDatabaseFailure")
+		    .detail("Reason", fmt::format("Failed to extract {} from BlobWorkerMetrics", metricName))
+		    .detail("BlobWorkerID", blobWorkerID);
+		throw attribute_not_found();
+	}
+}
+
+int64_t extractBlobWorkerField(const std::string& blobWorkerID,
+                               const TraceEventFields& md,
+                               const std::string& fieldName) {
+	try {
+		return md.getInt64(fieldName);
+	} catch (Error& e) {
+		TraceEvent("QuietDatabaseFailure")
+		    .detail("Reason", fmt::format("Failed to extract {} from BlobWorkerMetrics", fieldName))
+		    .detail("BlobWorkerID", blobWorkerID);
+		throw;
+	}
+}
+
 ACTOR Future<int64_t> getChangeFeedBytes(std::vector<Future<TraceEventFields>> messages) {
 	TraceEvent("GetChangeFeedBytes").detail("Stage", "WaitingOnMetrics");
 	wait(waitForAll(messages));
@@ -573,61 +597,54 @@ ACTOR Future<int64_t> getChangeFeedBytes(std::vector<Future<TraceEventFields>> m
 	state bool anyActiveChangeFeeds = false;
 	state int j = 0;
 	for (; j < messages.size(); ++j) {
-		try {
-			double cfByteRate = extractRateFromTraceEvent(messages[j].get(), "ChangeFeedInputBytes");
-			anyActiveChangeFeeds |= cfByteRate > epsilon;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure")
-			    .detail("Reason", "Failed to extract changeFeedInputBytes from BlobWorkerMetrics");
-			throw attribute_not_found();
-		}
+		const TraceEventFields& message = messages[j].get();
+		std::string blobWorkerID = message.getValue("ID");
+		double cfByteRate = extractBlobWorkerRate(blobWorkerID, message, "ChangeFeedInputBytes");
+		anyActiveChangeFeeds |= cfByteRate > epsilon;
 	}
 	return anyActiveChangeFeeds;
 }
 
-// Returns true if there are were any ongoing writes currently or in the last-5-second.
+// Returns true if there are were any ongoing writes currently or in the last 5 seconds.
 ACTOR Future<bool> getActiveBlobWrites(std::vector<Future<TraceEventFields>> messages) {
 	TraceEvent("GetActiveBlobWrites").detail("Stage", "WaitingOnMetrics");
 	wait(waitForAll(messages));
 	TraceEvent("GetActiveBlobWrites").detail("Stage", "ComputingSum").detail("MessageCount", messages.size());
 
-	state bool anyActiveWrites = false;
 	state int j = 0;
 	for (; j < messages.size(); ++j) {
-		try {
-			double putRate = extractRateFromTraceEvent(messages[j].get(), "S3PutReqs");
-			anyActiveWrites |= putRate > epsilon;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure").detail("Reason", "Failed to extract S3PutReqs from BlobWorkerMetrics");
-			throw attribute_not_found();
+		const TraceEventFields& message = messages[j].get();
+		std::string blobWorkerID = message.getValue("ID");
+
+		double putRate = extractBlobWorkerRate(blobWorkerID, message, "S3PutReqs");
+		if (putRate > 0) {
+			TraceEvent("GetActiveBlobWrites").detail("Stage", "FoundActivePuts").detail("BlobWorkerID", blobWorkerID);
+			return true;
 		}
 
-		try {
-			double deleteRate = extractRateFromTraceEvent(messages[j].get(), "S3DeleteReqs");
-			anyActiveWrites |= deleteRate > epsilon;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure")
-			    .detail("Reason", "Failed to extract S3DeleteReqs from BlobWorkerMetrics");
-			throw attribute_not_found();
+		double deleteRate = extractBlobWorkerRate(blobWorkerID, message, "S3DeleteReqs");
+		if (deleteRate > 0) {
+			TraceEvent("GetActiveBlobWrites")
+			    .detail("Stage", "FoundActiveDeletes")
+			    .detail("BlobWorkerID", blobWorkerID);
+			return true;
 		}
 
-		try {
-			anyActiveWrites |= messages[j].get().getInt64("DeltaFilesWriting") > 0;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure")
-			    .detail("Reason", "Failed to extract DeltaFilesWriting from BlobWorkerMetrics");
-			throw attribute_not_found();
+		if (extractBlobWorkerField(blobWorkerID, message, "DeltaFilesWriting") > 0) {
+			TraceEvent("GetActiveBlobWrites")
+			    .detail("Stage", "FoundActiveDeltaFileWrites")
+			    .detail("BlobWorkerID", blobWorkerID);
+			return true;
 		}
 
-		try {
-			anyActiveWrites |= messages[j].get().getInt64("SnapshotFilesWriting") > 0;
-		} catch (Error& e) {
-			TraceEvent("QuietDatabaseFailure")
-			    .detail("Reason", "Failed to extract SnapshotFilesWriting from BlobWorkerMetrics");
-			throw attribute_not_found();
+		if (extractBlobWorkerField(blobWorkerID, message, "SnapshotFilesWriting") > 0) {
+			TraceEvent("GetActiveBlobWrites")
+			    .detail("Stage", "FoundActiveSnapshotFileWrites")
+			    .detail("BlobWorkerID", blobWorkerID);
+			return true;
 		}
 	}
-	return anyActiveWrites;
+	return false;
 }
 
 // Gets the size of the data distribution queue.  If reportInFlight is true, then data in flight is considered part of
@@ -1213,9 +1230,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	state Future<bool> storageServersRecruiting;
 	state Future<int64_t> versionOffset;
 	state Future<Version> dcLag;
-	state Future<int64_t> activeGranuleSplits = Never();
-	state Future<int64_t> activeGranuleMerges = Never();
-	state Future<int> activeBlobWorkerRecruitments = Never();
+	state int64_t activeGranuleSplits = INT64_MAX;
+	state int64_t activeGranuleMerges = INT64_MAX;
+	state int64_t activeBlobWorkerRecruitments = INT64_MAX;
 	state Future<int64_t> pendingChangeFeedBytes = Never();
 	state Future<bool> activeBlobWrites = Never();
 	state Version maxDcLag = 30e6;
@@ -1264,19 +1281,20 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 
 			if (config.blobGranulesEnabled) {
 				state WorkerInterface blobManagerWorker = wait(getBlobManagerWorker(cx, dbInfo));
-				activeGranuleSplits = getActiveGranuleSplits(blobManagerWorker);
-				activeGranuleMerges = getActiveGranuleMerges(blobManagerWorker);
-				activeBlobWorkerRecruitments = getBlobWorkerRecruitments(blobManagerWorker);
-
+				state Future<TraceEventFields> blobManagerMetrics =
+				    blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr));
 				state Future<std::vector<Future<TraceEventFields>>> blobWorkerMetrics =
 				    getBlobWorkerMetrics(cx, dbInfo);
-				wait(success(blobWorkerMetrics));
+				wait(success(blobManagerMetrics) && success(blobWorkerMetrics));
+
+				activeGranuleSplits = getActiveGranuleSplits(blobManagerMetrics.get(), blobManagerWorker.id());
+				activeGranuleMerges = getActiveGranuleMerges(blobManagerMetrics.get(), blobManagerWorker.id());
+				activeBlobWorkerRecruitments =
+				    getBlobWorkerRecruitments(blobManagerMetrics.get(), blobManagerWorker.id());
 
 				pendingChangeFeedBytes = getChangeFeedBytes(blobWorkerMetrics.get());
 				activeBlobWrites = getActiveBlobWrites(blobWorkerMetrics.get());
-				wait(success(activeGranuleSplits) && success(activeGranuleMerges) &&
-				     success(activeBlobWorkerRecruitments) && success(activeBlobWrites) &&
-				     success(pendingChangeFeedBytes));
+				wait(success(activeBlobWrites) && success(pendingChangeFeedBytes));
 			}
 
 			wait(success(configFuture) && success(dataInFlight) && success(tLogQueueInfo) &&
@@ -1319,11 +1337,11 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			    .add(evt, "DatacenterLag", dcLag.get(), maxDcLag);
 
 			if (config.blobGranulesEnabled) {
-				check.add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits.get(), 0)
-				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges.get(), 0)
-				    .add(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments.get(), 0)
+				check.template add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits, 0)
+				    .template add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges, 0)
+				    .template add<int64_t>(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments, 0)
 				    .add(evt, "ActiveBlobWrites", activeBlobWrites.get(), false)
-				    .add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
+				    .template add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
 			}
 			if (g_network->isSimulated() && g_simulator->extraDatabases.empty()) {
 				check.add(evt, "RatekeeperCount", ratekeeperCount, 1, std::equal_to<>())
@@ -1399,19 +1417,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				evt.detail(key.c_str(), "versionOffset");
 			}
 			if (config.blobGranulesEnabled) {
-				if (activeGranuleSplits.isReady() && activeGranuleSplits.isError()) {
+				if (blobManagerMetrics.isReady() && blobManagerMetrics.isError()) {
 					auto key = "NotReady" + std::to_string(notReadyCount++);
-					evt.detail(key.c_str(), "activeGranuleSplits");
-				}
-
-				if (activeGranuleMerges.isReady() && activeGranuleMerges.isError()) {
-					auto key = "NotReady" + std::to_string(notReadyCount++);
-					evt.detail(key.c_str(), "activeGranuleMerges");
-				}
-
-				if (activeBlobWorkerRecruitments.isReady() && activeBlobWorkerRecruitments.isError()) {
-					auto key = "NotReady" + std::to_string(notReadyCount++);
-					evt.detail(key.c_str(), "activeBlobWorkerRecruitments");
+					evt.detail(key.c_str(), "blobManagerMetrics");
 				}
 
 				if (blobWorkerMetrics.isReady() && blobWorkerMetrics.isError()) {

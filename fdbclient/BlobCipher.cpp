@@ -578,6 +578,7 @@ void BlobCipherKey::initKey(const EncryptCipherDomainId& domainId,
 	// update cipher 'refresh' and 'expire' TS
 	refreshAtTS = refreshAt;
 	expireAtTS = expireAt;
+	accessAtTS = now();
 
 #if BLOB_CIPHER_DEBUG
 	TraceEvent(SevDebug, "BlobCipherKeyInit")
@@ -968,6 +969,17 @@ std::vector<Reference<BlobCipherKey>> BlobCipherKeyCache::getAllCiphers(const En
 
 	Reference<BlobCipherKeyIdCache> keyIdCache = domainItr->second;
 	return keyIdCache->getAllCipherKeys();
+}
+
+std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> BlobCipherKeyCache::listLatestCipherKeys() const {
+	std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys;
+	for (auto& domain : domainCacheMap) {
+		Reference<BlobCipherKey> cipherKey = domain.second->getLatestCipherKey();
+		if (cipherKey.isValid()) {
+			cipherKeys[domain.first] = cipherKey;
+		}
+	}
+	return cipherKeys;
 }
 
 void BlobCipherDetails::validateCipherDetailsWithCipherKey(Reference<BlobCipherKey> cipherKey) {
@@ -2376,8 +2388,7 @@ TEST_CASE("/blobCipher") {
 	testConfigurableEncryptionNoAuthMode(minDomainId);
 	testConfigurableEncryptionSingleAuthMode<AesCtrWithHmacParams>(minDomainId);
 	testConfigurableEncryptionSingleAuthMode<AesCtrWithCmacParams>(minDomainId);
-	// TODO : Fix ASAN failures
-	// testConfigurableEncryptionSingleAuthModeGcm(minDomainId);
+	testConfigurableEncryptionSingleAuthModeGcm(minDomainId);
 
 	testConfigurableEncryptionInvalidEncryptionKeyNoAuth(minDomainId);
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthMode<AesCtrWithHmacParams>(minDomainId);

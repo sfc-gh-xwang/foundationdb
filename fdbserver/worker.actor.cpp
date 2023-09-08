@@ -23,6 +23,7 @@
 #include <boost/lexical_cast.hpp>
 #include <unordered_map>
 
+#include "fdbclient/BlobCipher.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbserver/BlobMigratorInterface.h"
 #include "flow/ApiVersion.h"
@@ -64,8 +65,8 @@
 #include "fdbserver/ConfigNode.h"
 #include "fdbserver/LocalConfiguration.h"
 #include "fdbserver/RemoteIKeyValueStore.actor.h"
-#include "fdbclient/MonitorLeader.h"
 #include "fdbclient/ClientWorkerInterface.h"
+#include "fdbclient/MonitorLeader.h"
 #include "flow/Profiler.h"
 #include "flow/ThreadHelper.actor.h"
 #include "flow/Trace.h"
@@ -1949,7 +1950,8 @@ ACTOR Future<Void> createClusterIdFile(std::string folder, UID clusterId) {
 				clusterIdFile = _clusterIdFile;
 				BinaryWriter wr(IncludeVersion());
 				wr << clusterId;
-				wait(clusterIdFile.get()->write(wr.getData(), wr.getLength(), 0));
+				state Standalone<StringRef> clusterIdData = wr.toValue();
+				wait(clusterIdFile.get()->write(clusterIdData.begin(), clusterIdData.size(), 0));
 				wait(clusterIdFile.get()->sync());
 				return Void();
 			} else {
@@ -2603,6 +2605,33 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				} catch (Error& e) {
 					profilerReq.reply.sendError(e);
 				}
+			}
+			when(ListLatestEncryptCipherKeysRequest req =
+			         waitNext(interf.clientInterface.listLatestEncryptCipherKeys.getFuture())) {
+				// In case we have huge number of encryption domains, we should yield once for a while when we iterate
+				// through the cipher key cache. But the cipher key cache maintains an unordered_map which can get
+				// re-hash in the middle, which make it difficult to iterate with yield in between.
+				std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> latestCipherKeys =
+				    BlobCipherKeyCache::getInstance()->listLatestCipherKeys();
+				ListLatestEncryptCipherKeysReply reply;
+				auto iter = req.beginDomainId.present() ? latestCipherKeys.lower_bound(req.beginDomainId.get())
+				                                        : latestCipherKeys.begin();
+				auto hasMore = [&]() -> bool {
+					return iter != latestCipherKeys.end() &&
+					       (!req.endDomainId.present() || iter->first < req.endDomainId.get()) &&
+					       reply.list.size() < req.limit;
+				};
+				while (hasMore()) {
+					EncryptCipherDomainId domainId = iter->first;
+					Reference<BlobCipherKey> cipherKey = iter->second;
+					reply.list.emplace_back(
+					    reply.arena,
+					    domainId,
+					    EncryptCipherKeyEntry({ cipherKey->getBaseCipherId(), cipherKey->getAccessAtTS() }));
+					iter++;
+				}
+				reply.hasMore = hasMore();
+				req.reply.send(reply);
 			}
 			when(RecruitMasterRequest req = waitNext(interf.master.getFuture())) {
 				LocalLineage _;
@@ -3822,7 +3851,8 @@ ACTOR Future<UID> createAndLockProcessIdFile(std::string folder) {
 				processIDUid = deterministicRandom()->randomUniqueID();
 				BinaryWriter wr(IncludeVersion(ProtocolVersion::withProcessIDFile()));
 				wr << processIDUid;
-				wait(lockFile.get()->write(wr.getData(), wr.getLength(), 0));
+				state Standalone<StringRef> lockFileData = wr.toValue();
+				wait(lockFile.get()->write(lockFileData.begin(), lockFileData.size(), 0));
 				wait(lockFile.get()->sync());
 			} else {
 				if (lockFile.isError())

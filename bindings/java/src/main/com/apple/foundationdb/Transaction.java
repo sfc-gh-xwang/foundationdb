@@ -254,6 +254,28 @@ public interface Transaction extends AutoCloseable, ReadTransaction, Transaction
 	Long getCommittedVersion();
 
 	/**
+	 * Returns the duration in seconds of throttling enforced on this transaction by
+	 * the tag throttler. If no read version has yet been received, returns 0.0.
+	 *
+	 * @return the duration of throttling in seconds
+	 * */
+	CompletableFuture<Double> getTagThrottledDuration();
+
+	/**
+	 * Returns the total cost, in bytes, according to the tag throttler, of this transaction.
+	 * This function should be called at the end of the transaction.
+	 *
+	 * @return the cost in bytes of this transaction
+	 */
+	CompletableFuture<Long> getTotalCost();
+
+	/**
+	 * Informs the tag throttler of the expected cost of this transaction in bytes. This
+	 * is only helpful if called before fetching a read version.
+	 */
+	void setExpectedCost(long bytes);
+
+	/**
 	 * Returns a future which will contain the versionstamp which was used by any versionstamp 
 	 * operations in this transaction. The future will be ready only after the successful 
 	 * completion of a call to {@link #commit()} on this {@code Transaction}. Read-only 

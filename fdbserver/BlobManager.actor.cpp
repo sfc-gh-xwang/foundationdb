@@ -75,6 +75,7 @@
 #define BM_PURGE_DEBUG false
 #define BM_BULKLOAD_DEBUG false
 
+namespace {
 void handleClientBlobRange(int64_t epoch,
                            KeyRangeMap<bool>* knownBlobRanges,
                            Arena& ar,
@@ -330,6 +331,7 @@ struct BlobManagerStats {
 
 	ActiveCounter<int> activeGranuleSplitChecks;
 	ActiveCounter<int> activePurges;
+	ActiveCounter<int> activeBulkLoads;
 
 	// Current stats maintained for a given blob worker process
 	explicit BlobManagerStats(UID id,
@@ -370,7 +372,8 @@ struct BlobManagerStats {
 	    lastManifestDumpTs(0),
 	    manifestSizeInBytes(0),
 	    activeGranuleSplitChecks(0),
-	    activePurges(0) {
+	    activePurges(0),
+	    activeBulkLoads(0) {
 		specialCounter(cc, "WorkerCount", [workers]() { return workers->size(); });
 		specialCounter(cc, "Epoch", [epoch]() { return epoch; });
 		specialCounter(cc, "ActiveMerges", [this]() { return this->activeMerges; });
@@ -387,6 +390,7 @@ struct BlobManagerStats {
 		specialCounter(cc, "ActivePurges", [this]() -> int { return this->activePurges.getValue(); });
 		specialCounter(
 		    cc, "ActiveBlobWorkerRecruitments", [recruitingStream]() -> int { return recruitingStream->get(); });
+		specialCounter(cc, "ActiveBulkLoads", [this]() -> int { return this->activeBulkLoads.getValue(); });
 		logger = cc.traceCounters("BlobManagerMetrics", id, interval, "BlobManagerMetrics");
 	}
 };
@@ -3706,10 +3710,10 @@ static void addAssignment(KeyRangeMap<std::tuple<UID, int64_t, int64_t, UID>>& m
 	}
 
 	if (!allExistingNewer) {
-		// if this range supercedes an old range insert it over that
+		// if this range supersedes an old range insert it over that
 		map.insert(newRange, std::tuple(anyConflicts ? UID() : newId, newEpoch, newSeqno, newId));
 
-		// then, if there were any ranges superceded by this one, insert them over this one
+		// then, if there were any ranges superseded by this one, insert them over this one
 		if (newer.size()) {
 			if (newId != UID()) {
 				outOfDate.push_back(std::pair(newId, newRange));
@@ -4602,23 +4606,6 @@ ACTOR Future<Void> haltBlobGranules(Reference<BlobManagerData> bmData) {
 	return Void();
 }
 
-ACTOR Future<GranuleFiles> loadHistoryFiles(Reference<BlobManagerData> bmData, UID granuleID) {
-	state Transaction tr(bmData->db);
-	state KeyRange range = blobGranuleFileKeyRangeFor(granuleID);
-	state Key startKey = range.begin;
-	state GranuleFiles files;
-	loop {
-		try {
-			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			wait(readGranuleFiles(&tr, &startKey, range.end, &files, granuleID));
-			return files;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
-}
-
 ACTOR Future<bool> canDeleteFullGranuleSplit(Reference<BlobManagerData> self, UID granuleId) {
 	state Transaction tr(self->db);
 	state KeyRange splitRange = blobGranuleSplitKeyRangeFor(granuleId);
@@ -5097,6 +5084,64 @@ ACTOR Future<Void> waitForcePurgeBlobbified(Reference<BlobManagerData> self, Key
 	return Void();
 }
 
+ACTOR Future<Void> deleteActiveChangeFeeds(Reference<BlobManagerData> bmData, PromiseStream<Key>* feedsToDelete) {
+	state Transaction tr(bmData->db);
+	state int batchSize = 100;
+	if (BUGGIFY_WITH_PROB(0.1)) {
+		batchSize = deterministicRandom()->randomInt(1, 10);
+	}
+
+	state bool done = false;
+
+	loop {
+		if (done) {
+			break;
+		}
+		state std::vector<Key> feedBatch;
+		feedBatch.reserve(batchSize);
+		loop {
+			try {
+				Key k = waitNext(feedsToDelete->getFuture());
+				feedBatch.push_back(k);
+				if (feedBatch.size() == batchSize) {
+					break;
+				}
+			} catch (Error& e) {
+				if (e.code() == error_code_end_of_stream) {
+					done = true;
+					break;
+				}
+				throw e;
+			}
+		}
+
+		if (done && feedBatch.empty()) {
+			break;
+		}
+
+		tr.reset();
+		loop {
+			try {
+				state std::vector<Future<Void>> deleteFutures;
+				deleteFutures.reserve(feedBatch.size());
+				for (int i = 0; i < feedBatch.size(); i++) {
+					deleteFutures.push_back(updateChangeFeed(&tr,
+					                                         feedBatch[i],
+					                                         ChangeFeedStatus::CHANGE_FEED_DESTROY,
+					                                         normalKeys)); // range doesn't matter for delete
+				}
+				wait(waitForAll(deleteFutures));
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	return Void();
+}
+
 /*
  * This method is used to purge the range [startKey, endKey) at (and including) purgeVersion.
  * To do this, we do a BFS traversal starting at the active granules. Then we classify granules
@@ -5294,6 +5339,15 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 		}
 	}
 
+	// nuke all active change feeds early on in the process to remove the largest source of impact on the rest of the
+	// system as quickly as we can
+	state Future<Void> activeFeedDeleter = Future<Void>(Void());
+	state PromiseStream<Key> forcePurgeFeedKeysToDelete;
+
+	if (force) {
+		activeFeedDeleter = deleteActiveChangeFeeds(self, &forcePurgeFeedKeysToDelete);
+	}
+
 	state int rangeIdx;
 	for (rangeIdx = 0; rangeIdx < activeRanges.size(); rangeIdx++) {
 		state KeyRange activeRange = activeRanges[rangeIdx];
@@ -5340,6 +5394,9 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 					}
 					visited.insert({ activeRange.begin.toString(), history.get().version });
 					historyEntryQueue.push({ activeRange, history.get().version, MAX_VERSION, {} });
+					if (force) {
+						forcePurgeFeedKeysToDelete.send(granuleIDToCFKey(history->value.granuleID));
+					}
 				} else if (BM_PURGE_DEBUG) {
 					fmt::print("BM {0}   No history for range, ignoring\n", self->epoch);
 				}
@@ -5352,6 +5409,11 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 
 	// no longer needed, can save memory
 	activeRanges.clear();
+
+	if (force) {
+		forcePurgeFeedKeysToDelete.sendError(end_of_stream());
+		wait(activeFeedDeleter);
+	}
 
 	TraceEvent("PurgeGranulesTraversalGotLatest", self->id)
 	    .detail("Epoch", self->epoch)
@@ -5914,28 +5976,6 @@ ACTOR Future<int64_t> bgccCheckGranule(Reference<BlobManagerData> bmData, KeyRan
 	return bytesRead;
 }
 
-// Check if there is any pending split. It's a precheck for manifest backup
-ACTOR Future<bool> hasPendingSplit(Reference<BlobManagerData> self) {
-	state Transaction tr(self->db);
-	loop {
-		tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-		tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-		tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-		try {
-			RangeReadResult result = wait(tr.getRange(blobGranuleSplitKeys, GetRangeLimits::BYTE_LIMIT_UNLIMITED));
-			for (auto& row : result) {
-				std::pair<BlobGranuleSplitState, Version> gss = decodeBlobGranuleSplitValue(row.value);
-				if (gss.first != BlobGranuleSplitState::Done) {
-					return true;
-				}
-			}
-			return false;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
-}
-
 // FIXME: could eventually make this more thorough by storing some state in the DB or something
 // FIXME: simpler solution could be to shuffle ranges
 ACTOR Future<Void> bgConsistencyCheck(Reference<BlobManagerData> bmData) {
@@ -6039,7 +6079,7 @@ ACTOR Future<Void> tryFlushRange(Reference<BlobManagerData> bmData, KeyRange ran
 				}
 			}
 			if (knownRange) {
-				TraceEvent(retryCount > 100 ? SevError : SevInfo, "BlobGranulesFlushRetry")
+				TraceEvent(retryCount > 100 ? SevWarnAlways : SevInfo, "BlobGranulesFlushRetry")
 				    .detail("Range", range)
 				    .detail("Version", logEndVersion);
 				CODE_PROBE(true, "Retry blob granule flush", probe::decoration::rare);
@@ -6611,6 +6651,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKe
 	if (BM_BULKLOAD_DEBUG) {
 		fmt::print("DBGBM {0}: TrackBL {1}: start\n", bmData->epoch, idKey.second.printable());
 	}
+	state ActiveCounter<int>::Releaser holdingLoadCounter = bmData->stats.activeBulkLoads.take(1);
 	state Optional<Reference<Tenant>> tenant;
 	if (idKey.first != TenantInfo::INVALID_TENANT) {
 		state Optional<TenantMapEntry> entry = wait(TenantAPI::tryGetTenant(bmData->db.getReference(), idKey.first));
@@ -6751,6 +6792,8 @@ ACTOR Future<UID> fetchClusterId(Database db) {
 	}
 }
 
+} // anonymous namespace
+
 ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
                                Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                int64_t epoch) {
@@ -6868,6 +6911,7 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 	return Void();
 }
 
+namespace {
 // Test:
 // start empty
 // DB has [A - B). That should show up in knownBlobRanges and should be in added
@@ -7192,3 +7236,5 @@ TEST_CASE("/blobmanager/objectwriter") {
 
 	return Void();
 }
+
+} // anonymous namespace

@@ -45,6 +45,10 @@ public:
 	double MAX_VERSION_RATE_MODIFIER;
 	int64_t MAX_VERSION_RATE_OFFSET;
 	bool ENABLE_VERSION_VECTOR_HA_OPTIMIZATION;
+	// Maximum correction recovery can make to the version if the actual
+	// version of the cluster is behind the expected version (version
+	// correction must be enabled). Denoted as a value in seconds.
+	int64_t MAX_RECOVERY_VERSION_EPOCH_CORRECTION_SECONDS;
 
 	// TLogs
 	bool PEEK_USING_STREAMING;
@@ -597,6 +601,8 @@ public:
 	double PROVISIONAL_MAX_DELAY;
 	double SECONDS_BEFORE_RECRUIT_BACKUP_WORKER;
 	double CC_INTERFACE_TIMEOUT;
+	double FORCE_RECOVERY_SUSPEND_ENABLED;
+	double FORCE_RECOVERY_SUSPEND_TIME;
 
 	// Resolver
 	int64_t KEY_BYTES_PER_SAMPLE;
@@ -758,6 +764,9 @@ public:
 	int64_t STORAGE_DURABILITY_LAG_HARD_MAX;
 	int64_t STORAGE_DURABILITY_LAG_SOFT_MAX;
 	bool STORAGE_INCLUDE_FEED_STORAGE_QUEUE;
+	// When calculating the storage queue size, utilize the PTree's actual allocated size rather
+	// than depending on estimates.
+	bool STORAGE_QUEUE_USE_ALLOCATOR_SIZE;
 
 	int64_t LOW_PRIORITY_STORAGE_QUEUE_BYTES;
 	int64_t LOW_PRIORITY_DURABILITY_LAG;

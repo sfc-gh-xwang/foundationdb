@@ -60,21 +60,15 @@ ACTOR static Future<Optional<VersionInfo>> getVersionInfo(Reference<IDatabase> d
 }
 
 ACTOR static Future<Optional<int64_t>> getVersionEpoch(Reference<ITransaction> tr) {
-	loop {
-		try {
-			state ThreadFuture<ValueReadResult> versionEpochValFuture = tr->get(versionEpochSpecialKey);
-			ValueReadResult versionEpochVal = wait(safeThreadFutureToFuture(versionEpochValFuture));
-			return versionEpochVal.present() ? boost::lexical_cast<int64_t>(versionEpochVal.get().toString())
-			                                 : Optional<int64_t>();
-		} catch (Error& e) {
-			wait(safeThreadFutureToFuture(tr->onError(e)));
-		}
-	}
+	state ThreadFuture<ValueReadResult> versionEpochValFuture = tr->get(versionEpochSpecialKey);
+	ValueReadResult versionEpochVal = wait(safeThreadFutureToFuture(versionEpochValFuture));
+	return versionEpochVal.present() ? boost::lexical_cast<int64_t>(versionEpochVal.get().toString())
+	                                 : Optional<int64_t>();
 }
 
 ACTOR Future<bool> versionEpochCommandActor(Reference<IDatabase> db, Database cx, std::vector<StringRef> tokens) {
 	if (tokens.size() <= 3) {
-		state Reference<ITransaction> tr = db->createTransaction();
+		state Reference<ITransaction> tr;
 		if (tokens.size() == 1) {
 			Optional<VersionInfo> versionInfo = wait(getVersionInfo(db));
 			if (versionInfo.present()) {
@@ -87,21 +81,29 @@ ACTOR Future<bool> versionEpochCommandActor(Reference<IDatabase> db, Database cx
 			}
 			return true;
 		} else if (tokens.size() == 2 && tokencmp(tokens[1], "get")) {
-			Optional<int64_t> versionEpoch = wait(getVersionEpoch(db->createTransaction()));
-			if (versionEpoch.present()) {
-				printf("Current version epoch is %" PRId64 "\n", versionEpoch.get());
-			} else {
-				printf("Version epoch is unset\n");
+			tr = db->createTransaction();
+			loop {
+				try {
+					Optional<int64_t> versionEpoch = wait(getVersionEpoch(tr));
+					if (versionEpoch.present()) {
+						printf("Current version epoch is %" PRId64 "\n", versionEpoch.get());
+					} else {
+						printf("Version epoch is unset\n");
+					}
+					return true;
+				} catch (Error& e) {
+					wait(safeThreadFutureToFuture(tr->onError(e)));
+				}
 			}
-			return true;
 		} else if (tokens.size() == 2 && tokencmp(tokens[1], "disable")) {
 			// Clearing the version epoch means versions will no longer attempt
 			// to advance at the same rate as the clock. The current version
 			// will remain unchanged.
+			tr = db->createTransaction();
 			loop {
 				try {
 					tr->setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
-					Optional<int64_t> versionEpoch = wait(getVersionEpoch(db->createTransaction()));
+					Optional<int64_t> versionEpoch = wait(getVersionEpoch(tr));
 					if (!versionEpoch.present()) {
 						return true;
 					} else {
@@ -125,9 +127,10 @@ ACTOR Future<bool> versionEpochCommandActor(Reference<IDatabase> db, Database cx
 				v = 0; // default version epoch
 			}
 
+			tr = db->createTransaction();
 			loop {
+				tr->setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
 				try {
-					tr->setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
 					Optional<int64_t> versionEpoch = wait(getVersionEpoch(tr));
 					if (!versionEpoch.present() || (versionEpoch.get() != v && tokens.size() == 3)) {
 						tr->set(versionEpochSpecialKey, BinaryWriter::toValue(v, Unversioned()));
