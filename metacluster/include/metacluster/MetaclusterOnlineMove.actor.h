@@ -27,7 +27,7 @@ static Future<std::pair<Optional<TenantBalancerInterface>, Future<Void>>> getTen
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-			wait(store(interf, TenantBalancerMetadata::getTenantBalancerInterface().getD(tr)));
+			wait(store(interf, TenantBalancerMetadata::getTenantBalancerInterface().get(tr)));
 			state ThreadFuture<Void> threadFuture = TenantBalancerMetadata::getTenantBalancerInterface().watch(tr);
 			onTbiChanged = safeThreadFutureToFuture(threadFuture);
 			wait(safeThreadFutureToFuture(tr->commit()));
