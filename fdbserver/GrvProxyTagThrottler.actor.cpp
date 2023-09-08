@@ -129,7 +129,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 
 	// Pointer to a TagQueue with some extra metadata stored alongside
 	struct TagQueueHandle {
-		// Store pointers here to avoid frequent std::unordered_map lookups
+		// Store pointers here to avoid frequent hash map lookups
 		TagQueue* queue;
 		// Cannot be stored directly because amountReleased outlives TagQueueHandle
 		uint64_t* numReleased;
@@ -163,7 +163,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 			// Because we've reserved enough space in transactionsReleased
 			// to avoid resizing, this reference should remain valid.
 			// This allows each TagQueueHandle to update its number of
-			// numReleased counter without incurring the cost of a std::unordered_map lookup.
+			// numReleased counter without incurring the cost of a hash map lookup.
 			auto& [_, count] = transactionsReleased.emplace_back(throttlingId, 0);
 			pqOfQueues.emplace(queue, count);
 		}
