@@ -5,7 +5,7 @@ We also implemented a cache-aware serialization. Roughly speaking, if B is the n
 The simulation outputs for each layout the histogram of the distribution of the number of cache lines probed, as well as the average.
 
 # tl;dr
-VEB layout will probably not improve cache efficiency of DeltaTree queries (and, in fact, it may hurt us), because the cache lines we are targeting (between 64 and 128 bytes) can fit few nodes (usually about 30-40 bytes in size).
+VEB layout will probably not improve CPU cache efficiency of DeltaTree queries (and, in fact, it may hurt us), because the cache line sizes we are targeting (64 and 128 bytes) are too small (they can typically fit only 2-4 tree nodes).
 
 # Build/run instructions
 `cd contrib/tree_layouts`
@@ -16,7 +16,7 @@ The simulation has three parameters: the cache line size, the tree node size, an
 
 # Results
 
-We tested the serializations on cache line sizes 64, 128 and 256 bytes, on three data sets about 8kB big, namely (i) 400 nodes with size 20 bytes, (ii) 320 nodes with size 25 bytes, and (iii) 200 nodes with size 40 bytes. We also varied the tree topology: we used a left balanced binary search tree (which places more nodes on the left child (and, thus, should benefit preorder)), and a weight balanced binary search tree (which places about the same nodes on left and right children). In each case, we compute the average number of cache lines touched on a positive query.
+We tested the serializations on cache line sizes 64, 128 and 256 bytes, on three tree structures about 8kB big, namely (i) 400 nodes with size 20 bytes, (ii) 320 nodes with size 25 bytes, and (iii) 200 nodes with size 40 bytes. We also varied the tree topology: we used a left balanced binary search tree (which places more nodes on the left child (and, thus, should benefit preorder)), and a weight balanced binary search tree (which places about the same nodes on left and right children). In each case, we compute the average number of cache lines touched on a positive query.
 
 1. **Node count:** 400
 **Node size:** 20
@@ -82,4 +82,4 @@ Cache line size | Preorder | VEB | Cache aware, with straddling | Cache aware, n
 
 Our FDB clusters currently use 64-byte CPU cache lines, so for VEB to be a viable replacement of preorder it should at least win in that case. Unfortunately, most of the time it does not. This is because when the cache line is small, instance-specific details can cause VEB to generate a partition of the nodes with a slightly worse access cost distribution. For instance, because VEB works by dividing the tree into layers, it can produce a serialization in which some nodes do not share its cache line with neither its parent nor a child; this can never happen for internal nodes in preorder.
 
-One problem that affects both preorder and VEB are straddling nodes. When a node straddles a cache line, the second read is wasteful when the query path does not reuse the second cache line. When a leaf straddles a cache line, the second read is always unnecessary. Notice that the cache aware serialization without straddling incurs 1-2 less cache misses than preorder, in most cases. To avoid straddling, the algorithm skips to a new cache when writing a new block of nodes, causing some internal fragmentation. The space amplification we observed is very instance-dependent (of course, space amp larger than 2x can always be fixed with defragmentation). It may be interesting to think how to trade space for I/Os when designing a memory layout.
+One problem that affects both preorder and VEB are straddling nodes. When a node straddles a cache line, the second read is wasteful if the query does not follow a node from the second cache line. When a leaf straddles a cache line, the second read is always unnecessary. Notice that the cache aware serialization without straddling incurs 1-2 less cache misses than preorder, in most cases. To avoid straddling, the algorithm skips to a new cache when writing a new block of nodes, causing some internal fragmentation. The space amplification we observed is very instance-dependent (of course, space amp larger than 2x can always be fixed with defragmentation). It may be interesting to think how to trade space for I/Os when designing a memory layout.
