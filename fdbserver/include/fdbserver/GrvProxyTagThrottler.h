@@ -65,8 +65,8 @@ class GrvProxyTagThrottler {
 		explicit TagQueue(double rate) : rateInfo(createGrvTransactionRateInfo(rate)) {}
 
 		void setRate(double rate);
-		bool isMaxThrottled(double maxThrottleDuration) const;
-		void rejectRequests(LatencyBandsMap&);
+		// Returns the number of requests rejected
+		uint64_t rejectMaxThrottledRequests(double maxThrottleDuration, LatencyBandsMap&);
 		void endReleaseWindow(uint64_t numStarted, double elapsed);
 	};
 

@@ -53,18 +53,21 @@ void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
 	}
 }
 
-bool GrvProxyTagThrottler::TagQueue::isMaxThrottled(double maxThrottleDuration) const {
-	return !requests.empty() && requests.front().isMaxThrottled(maxThrottleDuration);
-}
-
-void GrvProxyTagThrottler::TagQueue::rejectRequests(LatencyBandsMap& latencyBandsMap) {
-	CODE_PROBE(true, "GrvProxyTagThrottler rejecting requests");
+uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(double maxThrottleDuration,
+                                                                    LatencyBandsMap& latencyBandsMap) {
+	uint64_t result = 0;
 	while (!requests.empty()) {
 		auto& delayedReq = requests.front();
-		delayedReq.updateProxyTagThrottledDuration(latencyBandsMap);
-		delayedReq.req.reply.sendError(proxy_tag_throttled());
-		requests.pop_front();
+		if (delayedReq.isMaxThrottled(maxThrottleDuration)) {
+			CODE_PROBE(true, "GrvProxyTagThrottler rejecting requests");
+			delayedReq.updateProxyTagThrottledDuration(latencyBandsMap);
+			delayedReq.req.reply.sendError(proxy_tag_throttled());
+			requests.pop_front();
+		} else {
+			break;
+		}
 	}
+	return result;
 }
 
 void GrvProxyTagThrottler::TagQueue::endReleaseWindow(uint64_t numStarted, double elapsed) {
@@ -190,12 +193,10 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 				// Cannot release any more transaction from this throttling ID (don't push the tag queue handle back
 				// into pqOfQueues)
 				CODE_PROBE(true, "GrvProxyTagThrottler throttling transaction");
-				if (tagQueueHandle.queue->isMaxThrottled(maxThrottleDuration)) {
-					// Requests in this queue have been throttled too long and errors
-					// should be sent to clients.
-					result.rejectedRequests += tagQueueHandle.queue->requests.size();
-					tagQueueHandle.queue->rejectRequests(latencyBandsMap);
-				}
+				// Requests in this queue have been throttled too long and errors
+				// should be sent to clients.
+				result.rejectedRequests +=
+				    tagQueueHandle.queue->rejectMaxThrottledRequests(maxThrottleDuration, latencyBandsMap);
 				break;
 			} else {
 				if (tagQueueHandle.getNextSequenceNumber() < nextQueueSeqNo) {
