@@ -1045,13 +1045,6 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 							    .detail("BytesRead", statsCurrentRound.logicalBytesScanned)
 							    .detail("ProgressKey", statsCurrentRound.lastEndKey);
 						}
-
-						// Delay (essentially throttle) the scan loop to avoid frequent updating of the
-						// currentRoundStats in simulation, which could cause a commit in another actor that tries to
-						// disable consistency scan in simulation to keep failing on transaction conflict.
-						if (g_network->isSimulated()) {
-							wait(delay(0.1));
-						}
 						break;
 					} catch (Error& e) {
 						if (DEBUG_SCAN_PROGRESS) {
