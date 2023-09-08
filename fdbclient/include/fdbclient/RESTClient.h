@@ -71,18 +71,24 @@ public:
 	// HTTP::doRequest to accomplish the specified operation
 
 	Future<Reference<HTTP::IncomingResponse>> doGet(const std::string& fullUrl,
+	                                                Optional<UID> debugId,
 	                                                Optional<HTTP::Headers> optHeaders = Optional<HTTP::Headers>());
 	Future<Reference<HTTP::IncomingResponse>> doHead(const std::string& fullUrl,
+	                                                 Optional<UID> debugId,
 	                                                 Optional<HTTP::Headers> optHeaders = Optional<HTTP::Headers>());
 	Future<Reference<HTTP::IncomingResponse>> doDelete(const std::string& fullUrl,
+	                                                   Optional<UID> debugId,
 	                                                   Optional<HTTP::Headers> optHeaders = Optional<HTTP::Headers>());
 	Future<Reference<HTTP::IncomingResponse>> doTrace(const std::string& fullUrl,
+	                                                  Optional<UID> debugId,
 	                                                  Optional<HTTP::Headers> optHeaders = Optional<HTTP::Headers>());
 	Future<Reference<HTTP::IncomingResponse>> doPut(const std::string& fullUrl,
 	                                                const std::string& requestBody,
+	                                                Optional<UID> debugId,
 	                                                Optional<HTTP::Headers> optHeaders = Optional<HTTP::Headers>());
 	Future<Reference<HTTP::IncomingResponse>> doPost(const std::string& fullUrl,
 	                                                 const std::string& requestBody,
+	                                                 Optional<UID> debugId,
 	                                                 Optional<HTTP::Headers> optHeaders = Optional<HTTP::Headers>());
 
 	static std::string getStatsKey(const std::string& host, const std::string& service) { return host + ":" + service; }
@@ -91,11 +97,13 @@ private:
 	Future<Reference<HTTP::IncomingResponse>> doGetHeadDeleteOrTrace(const std::string& verb,
 	                                                                 Optional<HTTP::Headers> optHeaders,
 	                                                                 RESTUrl& url,
-	                                                                 std::set<unsigned int> successCodes);
+	                                                                 std::set<unsigned int> successCodes,
+	                                                                 Optional<UID> debugId);
 	Future<Reference<HTTP::IncomingResponse>> doPutOrPost(const std::string& verb,
 	                                                      Optional<HTTP::Headers> headers,
 	                                                      RESTUrl& url,
-	                                                      std::set<unsigned int> successCodes);
+	                                                      std::set<unsigned int> successCodes,
+	                                                      Optional<UID> debugId);
 };
 
 #endif

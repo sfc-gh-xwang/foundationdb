@@ -42,9 +42,9 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( TSS_METRICS_LOGGING_INTERVAL,          120.0 ); // 2 minutes by default
 
 	init( FAILURE_MAX_DELAY,                       5.0 );
-	init( FAILURE_MIN_DELAY,                       4.0 ); if( randomize && BUGGIFY ) FAILURE_MIN_DELAY = 1.0;
+	init( FAILURE_MIN_DELAY,                       4.0 ); BUGGIFY_KNOB(FAILURE_MIN_DELAY, randomize && BUGGIFY, 1.0);
 	init( RECOVERY_DELAY_START_GENERATION,          70 );
-	init( RECOVERY_DELAY_SECONDS_PER_GENERATION,  60.0 );
+	init( RECOVERY_DELAY_SECONDS_PER_GENERATION, 60.0 );
 	init( MAX_GENERATIONS,                         100 );
 	init( MAX_GENERATIONS_OVERRIDE,                  0 );
 	init( MAX_GENERATIONS_SIM,                      50 ); //Disable network connections after this many generations in simulation, should be less than RECOVERY_DELAY_START_GENERATION
@@ -52,78 +52,78 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( COORDINATOR_RECONNECTION_DELAY,          1.0 );
 	init( CLIENT_EXAMPLE_AMOUNT,                    20 );
 	init( MAX_CLIENT_STATUS_AGE,                   1.0 );
-	init( MAX_COMMIT_PROXY_CONNECTIONS,              5 ); if( randomize && BUGGIFY ) MAX_COMMIT_PROXY_CONNECTIONS = 1;
-	init( MAX_GRV_PROXY_CONNECTIONS,                 3 ); if( randomize && BUGGIFY ) MAX_GRV_PROXY_CONNECTIONS = 1;
+	init( MAX_COMMIT_PROXY_CONNECTIONS,              5 ); BUGGIFY_KNOB(MAX_COMMIT_PROXY_CONNECTIONS, randomize && BUGGIFY, 1);
+	init( MAX_GRV_PROXY_CONNECTIONS,                 3 ); BUGGIFY_KNOB(MAX_GRV_PROXY_CONNECTIONS, randomize && BUGGIFY, 1);
 	init( STATUS_IDLE_TIMEOUT,                   120.0 );
 	init( SEND_ENTIRE_VERSION_VECTOR,            false );
 
 	// wrong_shard_server sometimes comes from the only nonfailed server, so we need to avoid a fast spin
 
-	init( WRONG_SHARD_SERVER_DELAY,                .01 ); if( randomize && BUGGIFY ) WRONG_SHARD_SERVER_DELAY = deterministicRandom()->random01(); // FLOW_KNOBS->PREVENT_FAST_SPIN_DELAY; // SOMEDAY: This delay can limit performance of retrieving data when the cache is mostly wrong (e.g. dumping the database after a test)
-	init( FUTURE_VERSION_RETRY_DELAY,              .01 ); if( randomize && BUGGIFY ) FUTURE_VERSION_RETRY_DELAY = deterministicRandom()->random01();// FLOW_KNOBS->PREVENT_FAST_SPIN_DELAY;
-	init( GRV_ERROR_RETRY_DELAY,                   5.0 ); if( randomize && BUGGIFY ) GRV_ERROR_RETRY_DELAY = 0.01 + 5 * deterministicRandom()->random01();
-	init( UNKNOWN_TENANT_RETRY_DELAY,              .01 ); if( randomize && BUGGIFY ) UNKNOWN_TENANT_RETRY_DELAY = 0.01 + deterministicRandom()->random01();
+	init( WRONG_SHARD_SERVER_DELAY,                .01 ); BUGGIFY_KNOB(WRONG_SHARD_SERVER_DELAY, randomize && BUGGIFY, deterministicRandom()->random01()); // FLOW_KNOBS->PREVENT_FAST_SPIN_DELAY // SOMEDAY: This delay can limit performance of retrieving data when the cache is mostly wrong (e.g. dumping the database after a test
+	init( FUTURE_VERSION_RETRY_DELAY,              .01 ); BUGGIFY_KNOB(FUTURE_VERSION_RETRY_DELAY, randomize && BUGGIFY, deterministicRandom()->random01()); // FLOW_KNOBS->PREVENT_FAST_SPIN_DELAY
+	init( GRV_ERROR_RETRY_DELAY,                   5.0 ); BUGGIFY_KNOB(GRV_ERROR_RETRY_DELAY, randomize && BUGGIFY, 0.01 + 5 * deterministicRandom()->random01());
+	init( UNKNOWN_TENANT_RETRY_DELAY,              .01 ); BUGGIFY_KNOB(UNKNOWN_TENANT_RETRY_DELAY, randomize && BUGGIFY, 0.01 + deterministicRandom()->random01());
 	init( REPLY_BYTE_LIMIT,                      80000 );
-	init( DEFAULT_BACKOFF,                         .01 ); if( randomize && BUGGIFY ) DEFAULT_BACKOFF = deterministicRandom()->random01();
+	init( DEFAULT_BACKOFF,                         .01 ); BUGGIFY_KNOB(DEFAULT_BACKOFF, randomize && BUGGIFY, deterministicRandom()->random01());
 	init( DEFAULT_MAX_BACKOFF,                     1.0 );
 	init( BACKOFF_GROWTH_RATE,                     2.0 );
 	init( RESOURCE_CONSTRAINED_MAX_BACKOFF,       30.0 );
 	init( PROXY_COMMIT_OVERHEAD_BYTES,              23 ); //The size of serializing 7 tags (3 primary, 3 remote, 1 log router) + 2 for the tag length
 	init( SHARD_STAT_SMOOTH_AMOUNT,                5.0 );
-	init( INIT_MID_SHARD_BYTES,               10000000 ); if( randomize && BUGGIFY ) INIT_MID_SHARD_BYTES = 40000; else if(randomize && BUGGIFY_WITH_PROB(0.75)) INIT_MID_SHARD_BYTES = 200000; // The same value as SERVER_KNOBS->MIN_SHARD_BYTES
+	init( INIT_MID_SHARD_BYTES,               10000000 ); if (BUGGIFY_KNOB(INIT_MID_SHARD_BYTES, randomize && BUGGIFY, 40000)) {} else BUGGIFY_KNOB(INIT_MID_SHARD_BYTES, randomize && BUGGIFY_WITH_PROB(0.75), 200000); // The same value as SERVER_KNOBS->MIN_SHARD_BYTES
 
 	init( TRANSACTION_SIZE_LIMIT,                  1e7 );
 	init( KEY_SIZE_LIMIT,                          1e4 );
 	init( SYSTEM_KEY_SIZE_LIMIT,                   3e4 );
 	init( VALUE_SIZE_LIMIT,                        1e5 );
-	init( SPLIT_KEY_SIZE_LIMIT,                    KEY_SIZE_LIMIT/2 );  if( randomize && BUGGIFY ) SPLIT_KEY_SIZE_LIMIT = KEY_SIZE_LIMIT - 31;//serverKeysPrefixFor(UID()).size() - 1;
+	init( SPLIT_KEY_SIZE_LIMIT,       KEY_SIZE_LIMIT/2 ); BUGGIFY_KNOB(SPLIT_KEY_SIZE_LIMIT, randomize && BUGGIFY, KEY_SIZE_LIMIT - 31); //serverKeysPrefixFor(UID()).size() - 1
 	init( METADATA_VERSION_CACHE_SIZE,            1000 );
 	init( CHANGE_FEED_LOCATION_LIMIT,            10000 );
-	init( CHANGE_FEED_CACHE_SIZE,               100000 ); if( randomize && BUGGIFY ) CHANGE_FEED_CACHE_SIZE = 1;
+	init( CHANGE_FEED_CACHE_SIZE,               100000 ); BUGGIFY_KNOB(CHANGE_FEED_CACHE_SIZE, randomize && BUGGIFY, 1);
 	init( CHANGE_FEED_POP_TIMEOUT,                10.0 );
-	init( CHANGE_FEED_STREAM_MIN_BYTES,            1e4 ); if( randomize && BUGGIFY ) CHANGE_FEED_STREAM_MIN_BYTES = 1;
-	init( CHANGE_FEED_START_INTERVAL,             20.0 ); if( randomize && BUGGIFY ) CHANGE_FEED_START_INTERVAL = 10.0;
-	init( CHANGE_FEED_COALESCE_LOCATIONS,         true ); if( randomize && BUGGIFY ) CHANGE_FEED_COALESCE_LOCATIONS = false;
-	init( CHANGE_FEED_CACHE_FLUSH_BYTES,          10e6 ); if( randomize && BUGGIFY ) CHANGE_FEED_CACHE_FLUSH_BYTES = deterministicRandom()->randomInt64(1, 1e6);
-	init( CHANGE_FEED_CACHE_EXPIRE_TIME,          60.0 ); if( randomize && BUGGIFY ) CHANGE_FEED_CACHE_EXPIRE_TIME = 1.0;
-	init( CHANGE_FEED_CACHE_LIMIT_BYTES,        500000 ); if( randomize && BUGGIFY ) CHANGE_FEED_CACHE_LIMIT_BYTES = 50000;
-	init( CHANGE_FEED_DESIRED_VERSION_JUMP_MAX, 1000000 ); if( randomize && BUGGIFY ) { CHANGE_FEED_DESIRED_VERSION_JUMP_MAX = deterministicRandom()->randomSkewedUInt32(100000, 10000000); }
+	init( CHANGE_FEED_STREAM_MIN_BYTES,            1e4 ); BUGGIFY_KNOB(CHANGE_FEED_STREAM_MIN_BYTES, randomize && BUGGIFY, 1);
+	init( CHANGE_FEED_START_INTERVAL,             20.0 ); BUGGIFY_KNOB(CHANGE_FEED_START_INTERVAL, randomize && BUGGIFY, 10.0);
+	init( CHANGE_FEED_COALESCE_LOCATIONS,         true ); BUGGIFY_KNOB(CHANGE_FEED_COALESCE_LOCATIONS, randomize && BUGGIFY, false);
+	init( CHANGE_FEED_CACHE_FLUSH_BYTES,          10e6 ); BUGGIFY_KNOB(CHANGE_FEED_CACHE_FLUSH_BYTES, randomize && BUGGIFY, deterministicRandom()->randomInt64(1, 1e6));
+	init( CHANGE_FEED_CACHE_EXPIRE_TIME,          60.0 ); BUGGIFY_KNOB(CHANGE_FEED_CACHE_EXPIRE_TIME, randomize && BUGGIFY, 1.0);
+	init( CHANGE_FEED_CACHE_LIMIT_BYTES,        500000 ); BUGGIFY_KNOB(CHANGE_FEED_CACHE_LIMIT_BYTES, randomize && BUGGIFY, 50000);
+	init( CHANGE_FEED_DESIRED_VERSION_JUMP_MAX, 1000000 ); BUGGIFY_KNOB(CHANGE_FEED_DESIRED_VERSION_JUMP_MAX, randomize && BUGGIFY, deterministicRandom()->randomSkewedUInt32(100000, 10000000));
 	init( CHANGE_FEED_EMPTY_BATCH_TIME,          0.005 );
 
-	init( MAX_BATCH_SIZE,                         1000 ); if( randomize && BUGGIFY ) MAX_BATCH_SIZE = 1;
-	init( GRV_BATCH_TIMEOUT,                     0.005 ); if( randomize && BUGGIFY ) GRV_BATCH_TIMEOUT = 0.1;
-	init( BROADCAST_BATCH_SIZE,                     20 ); if( randomize && BUGGIFY ) BROADCAST_BATCH_SIZE = 1;
-	init( TRANSACTION_TIMEOUT_DELAY_INTERVAL,     10.0 ); if( randomize && BUGGIFY ) TRANSACTION_TIMEOUT_DELAY_INTERVAL = 1.0;
+	init( MAX_BATCH_SIZE,                         1000 ); BUGGIFY_KNOB(MAX_BATCH_SIZE, randomize && BUGGIFY, 1);
+	init( GRV_BATCH_TIMEOUT,                     0.005 ); BUGGIFY_KNOB(GRV_BATCH_TIMEOUT, randomize && BUGGIFY, 0.1);
+	init( BROADCAST_BATCH_SIZE,                     20 ); BUGGIFY_KNOB(BROADCAST_BATCH_SIZE, randomize && BUGGIFY, 1);
+	init( TRANSACTION_TIMEOUT_DELAY_INTERVAL,     10.0 ); BUGGIFY_KNOB(TRANSACTION_TIMEOUT_DELAY_INTERVAL, randomize && BUGGIFY, 1.0);
 
 	init( LOCATION_CACHE_EVICTION_SIZE,         600000 );
-	init( LOCATION_CACHE_EVICTION_SIZE_SIM,         10 ); if( randomize && BUGGIFY ) LOCATION_CACHE_EVICTION_SIZE_SIM = 3;
+	init( LOCATION_CACHE_EVICTION_SIZE_SIM,         10 ); BUGGIFY_KNOB(LOCATION_CACHE_EVICTION_SIZE_SIM, randomize && BUGGIFY, 3);
 	init( LOCATION_CACHE_ENDPOINT_FAILURE_GRACE_PERIOD,     60 );
 	init( LOCATION_CACHE_FAILED_ENDPOINT_RETRY_INTERVAL,    60 );
 
 	init( GET_RANGE_SHARD_LIMIT,                     2 );
 	init( WARM_RANGE_SHARD_LIMIT,                  100 );
-	init( STORAGE_METRICS_SHARD_LIMIT,             100 ); if( randomize && BUGGIFY ) STORAGE_METRICS_SHARD_LIMIT = 3;
-	init( SHARD_COUNT_LIMIT,                        80 ); if( randomize && BUGGIFY ) SHARD_COUNT_LIMIT = 3;
+	init( STORAGE_METRICS_SHARD_LIMIT,             100 ); BUGGIFY_KNOB(STORAGE_METRICS_SHARD_LIMIT, randomize && BUGGIFY, 3);
+	init( SHARD_COUNT_LIMIT,                        80 ); BUGGIFY_KNOB(SHARD_COUNT_LIMIT, randomize && BUGGIFY, 3);
 	init( STORAGE_METRICS_UNFAIR_SPLIT_LIMIT,  2.0/3.0 );
 	init( STORAGE_METRICS_TOO_MANY_SHARDS_DELAY,  15.0 );
 	init( AGGREGATE_HEALTH_METRICS_MAX_STALENESS,  0.5 );
 	init( DETAILED_HEALTH_METRICS_MAX_STALENESS,   5.0 );
 	init( MID_SHARD_SIZE_MAX_STALENESS,           10.0 );
-	init( TAG_ENCODE_KEY_SERVERS,                false ); if( randomize && BUGGIFY ) TAG_ENCODE_KEY_SERVERS = true;
+	init( TAG_ENCODE_KEY_SERVERS,                false ); BUGGIFY_KNOB(TAG_ENCODE_KEY_SERVERS, randomize && BUGGIFY, true);
 	init( RANGESTREAM_FRAGMENT_SIZE,               1e6 );
 	init( RANGESTREAM_BUFFERED_FRAGMENTS_LIMIT,     20 );
-	init( QUARANTINE_TSS_ON_MISMATCH,             true ); if( randomize && BUGGIFY ) QUARANTINE_TSS_ON_MISMATCH = false; // if true, a tss mismatch will put the offending tss in quarantine. If false, it will just be killed
+	init( QUARANTINE_TSS_ON_MISMATCH,             true ); BUGGIFY_KNOB(QUARANTINE_TSS_ON_MISMATCH, randomize && BUGGIFY, false); // if true, a tss mismatch will put the offending tss in quarantine. If false, it will just be killed
 
 	//KeyRangeMap
-	init( KRM_GET_RANGE_LIMIT,                     1e5 ); if( randomize && BUGGIFY ) KRM_GET_RANGE_LIMIT = 10;
-	init( KRM_GET_RANGE_LIMIT_BYTES,               1e8 ); if( randomize && BUGGIFY ) KRM_GET_RANGE_LIMIT_BYTES = 10000; //This must be sufficiently larger than KEY_SIZE_LIMIT to ensure that at least two entries will be returned from an attempt to read a key range map
+	init( KRM_GET_RANGE_LIMIT,                     1e5 ); BUGGIFY_KNOB(KRM_GET_RANGE_LIMIT, randomize && BUGGIFY, 10);
+	init( KRM_GET_RANGE_LIMIT_BYTES,               1e8 ); BUGGIFY_KNOB(KRM_GET_RANGE_LIMIT_BYTES, randomize && BUGGIFY, 10000); //This must be sufficiently larger than KEY_SIZE_LIMIT to ensure that at least two entries will be returned from an attempt to read a key range map
 
 	init( DEFAULT_MAX_OUTSTANDING_WATCHES,         1e4 );
 	init( ABSOLUTE_MAX_WATCHES,                    1e6 );
-	init( WATCH_POLLING_TIME,                      1.0 ); if( randomize && BUGGIFY ) WATCH_POLLING_TIME = 5.0;
-	init( NO_RECENT_UPDATES_DURATION,             20.0 ); if( randomize && BUGGIFY ) NO_RECENT_UPDATES_DURATION = 0.1;
-	init( FAST_WATCH_TIMEOUT,                     20.0 ); if( randomize && BUGGIFY ) FAST_WATCH_TIMEOUT = 1.0;
-	init( WATCH_TIMEOUT,                          30.0 ); if( randomize && BUGGIFY ) WATCH_TIMEOUT = 20.0;
+	init( WATCH_POLLING_TIME,                      1.0 ); BUGGIFY_KNOB(WATCH_POLLING_TIME, randomize && BUGGIFY, 5.0);
+	init( NO_RECENT_UPDATES_DURATION,             20.0 ); BUGGIFY_KNOB(NO_RECENT_UPDATES_DURATION, randomize && BUGGIFY, 0.1);
+	init( FAST_WATCH_TIMEOUT,                     20.0 ); BUGGIFY_KNOB(FAST_WATCH_TIMEOUT, randomize && BUGGIFY, 1.0);
+	init( WATCH_TIMEOUT,                          30.0 ); BUGGIFY_KNOB(WATCH_TIMEOUT, randomize && BUGGIFY, 20.0);
 
 	// Core
 	init( CORE_VERSIONSPERSECOND,		           1e6 );
@@ -139,34 +139,34 @@ void ClientKnobs::initialize(Randomize randomize) {
 	// TaskBucket
 	init( TASKBUCKET_LOGGING_DELAY,                5.0 );
 	init( TASKBUCKET_MAX_PRIORITY,                   1 );
-	init( TASKBUCKET_CHECK_TIMEOUT_CHANCE,        0.02 ); if( randomize && BUGGIFY ) TASKBUCKET_CHECK_TIMEOUT_CHANCE = 1.0;
+	init( TASKBUCKET_CHECK_TIMEOUT_CHANCE,        0.02 ); BUGGIFY_KNOB(TASKBUCKET_CHECK_TIMEOUT_CHANCE, randomize && BUGGIFY, 1.0);
 	init( TASKBUCKET_TIMEOUT_JITTER_OFFSET,        0.9 );
 	init( TASKBUCKET_TIMEOUT_JITTER_RANGE,         0.2 );
 	init( TASKBUCKET_CHECK_ACTIVE_DELAY,           0.5 );
 	init( TASKBUCKET_CHECK_ACTIVE_AMOUNT,           10 );
-	init( TASKBUCKET_TIMEOUT_VERSIONS,     60*CORE_VERSIONSPERSECOND ); if( randomize && BUGGIFY ) TASKBUCKET_TIMEOUT_VERSIONS = 30*CORE_VERSIONSPERSECOND;
-	init( TASKBUCKET_MAX_TASK_KEYS,               1000 ); if( randomize && BUGGIFY ) TASKBUCKET_MAX_TASK_KEYS = 20;
+	init( TASKBUCKET_TIMEOUT_VERSIONS,     60*CORE_VERSIONSPERSECOND ); BUGGIFY_KNOB(TASKBUCKET_TIMEOUT_VERSIONS, randomize && BUGGIFY, 30*CORE_VERSIONSPERSECOND);
+	init( TASKBUCKET_MAX_TASK_KEYS,               1000 ); BUGGIFY_KNOB(TASKBUCKET_MAX_TASK_KEYS, randomize && BUGGIFY, 20);
 
 	//Backup
 	init( BACKUP_LOCAL_FILE_WRITE_BLOCK,     1024*1024 );
 	init( BACKUP_CONCURRENT_DELETES,               100 );
-	init( BACKUP_SIMULATED_LIMIT_BYTES,		       1e6 ); if( randomize && BUGGIFY ) BACKUP_SIMULATED_LIMIT_BYTES = 1000;
+	init( BACKUP_SIMULATED_LIMIT_BYTES,		       1e6 ); BUGGIFY_KNOB(BACKUP_SIMULATED_LIMIT_BYTES, randomize && BUGGIFY, 1000);
 	init( BACKUP_GET_RANGE_LIMIT_BYTES,		       1e6 );
 	init( BACKUP_LOCK_BYTES,                       1e8 );
 	init( BACKUP_RANGE_TIMEOUT,   TASKBUCKET_TIMEOUT_VERSIONS/CORE_VERSIONSPERSECOND/2.0 );
 	init( BACKUP_RANGE_MINWAIT,   std::max(1.0, BACKUP_RANGE_TIMEOUT/2.0));
-	init( BACKUP_SNAPSHOT_DISPATCH_INTERVAL_SEC,  10 * 60 );  // 10 minutes
+	init( BACKUP_SNAPSHOT_DISPATCH_INTERVAL_SEC, 10 * 60 );  // 10 minutes
 	init( BACKUP_DEFAULT_SNAPSHOT_INTERVAL_SEC,   3600 * 24 * 10); // 10 days
-	init( BACKUP_SHARD_TASK_LIMIT,                1000 ); if( randomize && BUGGIFY ) BACKUP_SHARD_TASK_LIMIT = 4;
+	init( BACKUP_SHARD_TASK_LIMIT,                1000 ); BUGGIFY_KNOB(BACKUP_SHARD_TASK_LIMIT, randomize && BUGGIFY, 4);
 	init( BACKUP_AGGREGATE_POLL_RATE_UPDATE_INTERVAL, 60);
 	init( BACKUP_AGGREGATE_POLL_RATE,              2.0 ); // polls per second target for all agents on the cluster
 	init( BACKUP_LOG_WRITE_BATCH_MAX_SIZE,         1e6 ); //Must be much smaller than TRANSACTION_SIZE_LIMIT
-	init( BACKUP_MAX_LOG_RANGES,                    21 ); if( randomize && BUGGIFY ) BACKUP_MAX_LOG_RANGES = 4;
+	init( BACKUP_MAX_LOG_RANGES,                    21 ); BUGGIFY_KNOB(BACKUP_MAX_LOG_RANGES, randomize && BUGGIFY, 4);
 	init( BACKUP_SIM_COPY_LOG_RANGES,              100 );
 	init( BACKUP_VERSION_DELAY,           5*CORE_VERSIONSPERSECOND );
 	bool buggifyMapLimits = randomize && BUGGIFY;
-	init( BACKUP_MAP_KEY_LOWER_LIMIT,              1e4 ); if( buggifyMapLimits ) BACKUP_MAP_KEY_LOWER_LIMIT = 4;
-	init( BACKUP_MAP_KEY_UPPER_LIMIT,              1e5 ); if( buggifyMapLimits ) BACKUP_MAP_KEY_UPPER_LIMIT = 30;
+	init( BACKUP_MAP_KEY_LOWER_LIMIT,              1e4 ); BUGGIFY_KNOB(BACKUP_MAP_KEY_LOWER_LIMIT, buggifyMapLimits, 4);
+	init( BACKUP_MAP_KEY_UPPER_LIMIT,              1e5 ); BUGGIFY_KNOB(BACKUP_MAP_KEY_UPPER_LIMIT, buggifyMapLimits, 30);
 	init( BACKUP_COPY_TASKS,                        90 );
 	init( BACKUP_BLOCK_SIZE,   LOG_RANGE_BLOCK_SIZE/10 );
 	init( COPY_LOG_BLOCK_SIZE,              LOG_RANGE_BLOCK_SIZE ); // the maximum possible value due the getLogRanges limitations
@@ -182,7 +182,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( BACKUP_LOGFILE_BLOCK_SIZE,        1024 * 1024);
 	init( BACKUP_DISPATCH_ADDTASK_SIZE,             50 );
 	init( RESTORE_DISPATCH_ADDTASK_SIZE,           150 );
-	init( RESTORE_DISPATCH_BATCH_SIZE,           30000 ); if( randomize && BUGGIFY ) RESTORE_DISPATCH_BATCH_SIZE = 20;
+	init( RESTORE_DISPATCH_BATCH_SIZE,           30000 ); BUGGIFY_KNOB(RESTORE_DISPATCH_BATCH_SIZE, randomize && BUGGIFY, 20);
 	init( RESTORE_WRITE_TX_SIZE,            256 * 1024 );
 	init( APPLY_MAX_LOCK_BYTES,                    1e9 );
 	init( APPLY_MIN_LOCK_BYTES,                   11e6 ); //Must be bigger than TRANSACTION_SIZE_LIMIT
@@ -193,7 +193,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( BACKUP_STATUS_DELAY,                    40.0 );
 	init( BACKUP_STATUS_JITTER,                   0.05 );
 	init( MIN_CLEANUP_SECONDS,                  3600.0 );
-	init( FASTRESTORE_ATOMICOP_WEIGHT,               1 ); if( randomize && BUGGIFY ) { FASTRESTORE_ATOMICOP_WEIGHT = deterministicRandom()->random01() * 200 + 1; }
+	init( FASTRESTORE_ATOMICOP_WEIGHT,               1 ); BUGGIFY_KNOB(FASTRESTORE_ATOMICOP_WEIGHT, randomize && BUGGIFY, deterministicRandom()->random01() * 200 + 1);
 	init( RESTORE_RANGES_READ_BATCH,             10000 );
 	init( BLOB_GRANULE_RESTORE_CHECK_INTERVAL,      10 );
 	init( BACKUP_CONTAINER_LOCAL_ALLOW_RELATIVE_PATH, false );
@@ -255,12 +255,9 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( TIMEOUT_RETRY_UPPER_BOUND,               20.0 );
 
 	// Client Status Info
-	init(CSI_SAMPLING_PROBABILITY, -1.0);
-	init(CSI_SIZE_LIMIT, std::numeric_limits<int64_t>::max());
-	if (randomize && BUGGIFY) {
-		CSI_SAMPLING_PROBABILITY = deterministicRandom()->random01() / 10; // rand range 0 - 0.1
-		CSI_SIZE_LIMIT = deterministicRandom()->randomInt(1024 * 1024, 100 * 1024 * 1024); // 1 MB - 100 MB
-	}
+	bool buggifyCsi = randomize && BUGGIFY;
+	init(CSI_SAMPLING_PROBABILITY,                  -1.0); BUGGIFY_KNOB(CSI_SAMPLING_PROBABILITY, buggifyCsi, deterministicRandom()->random01() / 10);
+	init(CSI_SIZE_LIMIT, std::numeric_limits<int64_t>::max()); BUGGIFY_KNOB(CSI_SIZE_LIMIT, buggifyCsi, deterministicRandom()->randomInt(1024 * 1024, 100 * 1024 * 1024));
 	init(CSI_STATUS_DELAY,						  10.0  );
 
 	init( CONSISTENCY_CHECK_RATE_LIMIT_MAX,        50e6 ); // Limit in per sec
@@ -276,26 +273,26 @@ void ClientKnobs::initialize(Randomize randomize) {
 	// transaction tags
 	init( MAX_TAGS_PER_TRANSACTION,                   5 );
 	init( MAX_TRANSACTION_TAG_LENGTH,               255 );
-	init( COMMIT_SAMPLE_COST,                       100 ); if( randomize && BUGGIFY ) COMMIT_SAMPLE_COST = 10;
+	init( COMMIT_SAMPLE_COST,                       100 ); BUGGIFY_KNOB(COMMIT_SAMPLE_COST, randomize && BUGGIFY, 10);
 	init( INCOMPLETE_SHARD_PLUS,                   4096 );
-	init( READ_TAG_SAMPLE_RATE,                    0.01 ); if( randomize && BUGGIFY ) READ_TAG_SAMPLE_RATE = 1.0; // Communicated to clients from cluster
+	init( READ_TAG_SAMPLE_RATE,                    0.01 ); BUGGIFY_KNOB(READ_TAG_SAMPLE_RATE, randomize && BUGGIFY, 1.0); // Communicated to clients from cluster
 	init( TAG_THROTTLE_SMOOTHING_WINDOW,            2.0 );
-	init( TAG_THROTTLE_RECHECK_INTERVAL,            5.0 ); if( randomize && BUGGIFY ) TAG_THROTTLE_RECHECK_INTERVAL = 0.0;
-	init( TAG_THROTTLE_EXPIRATION_INTERVAL,        60.0 ); if( randomize && BUGGIFY ) TAG_THROTTLE_EXPIRATION_INTERVAL = 1.0;
-	init( TAG_THROTTLING_PAGE_SIZE,                4096 ); if( randomize && BUGGIFY ) TAG_THROTTLING_PAGE_SIZE = 4096;
+	init( TAG_THROTTLE_RECHECK_INTERVAL,            5.0 ); BUGGIFY_KNOB(TAG_THROTTLE_RECHECK_INTERVAL, randomize && BUGGIFY, 0.0);
+	init( TAG_THROTTLE_EXPIRATION_INTERVAL,        60.0 ); BUGGIFY_KNOB(TAG_THROTTLE_EXPIRATION_INTERVAL, randomize && BUGGIFY, 1.0);
+	init( TAG_THROTTLING_PAGE_SIZE,                4096 ); BUGGIFY_KNOB(TAG_THROTTLING_PAGE_SIZE, randomize && BUGGIFY, 4096);
 	init( GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO,            4.0 );
-	init( PROXY_MAX_TAG_THROTTLE_DURATION,          5.0 ); if( randomize && BUGGIFY ) PROXY_MAX_TAG_THROTTLE_DURATION = 0.5;
+	init( PROXY_MAX_TAG_THROTTLE_DURATION,          5.0 ); BUGGIFY_KNOB(PROXY_MAX_TAG_THROTTLE_DURATION, randomize && BUGGIFY, 0.5);
 	init( MAX_GRV_BATCHERS,                        1000 );
 	init( GRV_BATCHER_EXPIRATION_TIMEOUT,          60.0 );
 	init( GRV_BATCHER_CLEANING_INTERVAL,            5.0 );
-	init( TRACK_THROUGHPUT_ON_CLIENTS,             true ); if( randomize && BUGGIFY ) TRACK_THROUGHPUT_ON_CLIENTS = false;
+	init( TRACK_THROUGHPUT_ON_CLIENTS,             true ); BUGGIFY_KNOB(TRACK_THROUGHPUT_ON_CLIENTS, randomize && BUGGIFY, false);
 	init( CLIENT_THROUGHPUT_REPORT_INTERVAL,        1.0 );
-	init( TRACK_AVERAGE_COST_ON_CLIENTS,            true ); if( randomize && BUGGIFY ) TRACK_AVERAGE_COST_ON_CLIENTS = false;
+	init( TRACK_AVERAGE_COST_ON_CLIENTS,            true ); BUGGIFY_KNOB(TRACK_AVERAGE_COST_ON_CLIENTS, randomize && BUGGIFY, false);
 	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
 	init( AVERAGE_COST_START_DELAY,                10.0 );
 	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
-	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); if ( randomize && BUGGIFY ) USE_SIMPLE_THROUGHPUT_QUOTA_CACHE = false;
-	init( TRACK_BUSY_THROTTLING_IDS,               true ); if ( randomize && BUGGIFY ) TRACK_BUSY_THROTTLING_IDS = false;
+	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); BUGGIFY_KNOB(USE_SIMPLE_THROUGHPUT_QUOTA_CACHE, randomize && BUGGIFY, false);
+	init( TRACK_BUSY_THROTTLING_IDS,               true ); BUGGIFY_KNOB(TRACK_BUSY_THROTTLING_IDS, randomize && BUGGIFY, false);
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
@@ -304,8 +301,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	// Blob granules
 	init( BG_MAX_GRANULE_PARALLELISM,                10 );
 	init( BG_TOO_MANY_GRANULES,                   20000 );
-	init( BLOB_METADATA_REFRESH_INTERVAL,          3600 ); if ( randomize && BUGGIFY ) { BLOB_METADATA_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 120); }
-	init( DETERMINISTIC_BLOB_METADATA,            false ); if( randomize && BUGGIFY_WITH_PROB(0.01) ) DETERMINISTIC_BLOB_METADATA = true;
+	init( BLOB_METADATA_REFRESH_INTERVAL,          3600 ); BUGGIFY_KNOB(BLOB_METADATA_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(5, 120));
+	init( DETERMINISTIC_BLOB_METADATA,            false ); BUGGIFY_KNOB(DETERMINISTIC_BLOB_METADATA, randomize && BUGGIFY_WITH_PROB(0.01), true);
 	init( ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE,  true  );
 	init( HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,   false );
 	init( HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK,    false );
@@ -315,14 +312,14 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 	// Tenants and Metacluster
 	init( MAX_TENANTS_PER_CLUSTER,                  1e6 );
-	init( TENANT_TOMBSTONE_CLEANUP_INTERVAL,         60 ); if ( randomize && BUGGIFY ) TENANT_TOMBSTONE_CLEANUP_INTERVAL = deterministicRandom()->random01() * 30;
+	init( TENANT_TOMBSTONE_CLEANUP_INTERVAL,         60 ); BUGGIFY_KNOB(TENANT_TOMBSTONE_CLEANUP_INTERVAL, randomize && BUGGIFY, deterministicRandom()->random01() * 30);
 	init( MAX_DATA_CLUSTERS,                        1e5 );
-	init( REMOVE_CLUSTER_TENANT_BATCH_SIZE,         1e4 ); if ( randomize && BUGGIFY ) REMOVE_CLUSTER_TENANT_BATCH_SIZE = 1;
-	init( METACLUSTER_ASSIGNMENT_CLUSTERS_TO_CHECK,   5 ); if ( randomize && BUGGIFY ) METACLUSTER_ASSIGNMENT_CLUSTERS_TO_CHECK = 1;
-	init( METACLUSTER_ASSIGNMENT_FIRST_CHOICE_DELAY, 1.0 ); if ( randomize && BUGGIFY ) METACLUSTER_ASSIGNMENT_FIRST_CHOICE_DELAY = deterministicRandom()->random01() * 60;
-	init( METACLUSTER_ASSIGNMENT_AVAILABILITY_TIMEOUT, 10.0 ); if ( randomize && BUGGIFY ) METACLUSTER_ASSIGNMENT_AVAILABILITY_TIMEOUT = 1 + deterministicRandom()->random01() * 59;
-	init( METACLUSTER_RESTORE_BATCH_SIZE,          1000 ); if ( randomize && BUGGIFY ) METACLUSTER_RESTORE_BATCH_SIZE = 1 + deterministicRandom()->randomInt(0, 3);
-	init( TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL,   2 ); if( randomize && BUGGIFY ) TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL = deterministicRandom()->randomInt(1, 10);
+	init( REMOVE_CLUSTER_TENANT_BATCH_SIZE,         1e4 ); BUGGIFY_KNOB(REMOVE_CLUSTER_TENANT_BATCH_SIZE, randomize && BUGGIFY, 1);
+	init( METACLUSTER_ASSIGNMENT_CLUSTERS_TO_CHECK,   5 ); BUGGIFY_KNOB(METACLUSTER_ASSIGNMENT_CLUSTERS_TO_CHECK, randomize && BUGGIFY, 1);
+	init( METACLUSTER_ASSIGNMENT_FIRST_CHOICE_DELAY, 1.0 ); BUGGIFY_KNOB(METACLUSTER_ASSIGNMENT_FIRST_CHOICE_DELAY, randomize && BUGGIFY, deterministicRandom()->random01() * 60);
+	init( METACLUSTER_ASSIGNMENT_AVAILABILITY_TIMEOUT, 10.0 ); BUGGIFY_KNOB(METACLUSTER_ASSIGNMENT_AVAILABILITY_TIMEOUT, randomize && BUGGIFY, 1 + deterministicRandom()->random01() * 59);
+	init( METACLUSTER_RESTORE_BATCH_SIZE,          1000 ); BUGGIFY_KNOB(METACLUSTER_RESTORE_BATCH_SIZE, randomize && BUGGIFY, 1 + deterministicRandom()->randomInt(0, 3));
+	init( TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL,   2 ); BUGGIFY_KNOB(TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( CLIENT_ENABLE_USING_CLUSTER_ID_KEY,     false );
 
 	init( ENABLE_ENCRYPTION_CPU_TIME_LOGGING,        true );
@@ -335,7 +332,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( ENCRYPT_LIST_CIPHER_KEYS_LIMIT,           10000 );
 	init( ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD, 6.0);
 
-	init( REST_KMS_ALLOW_NOT_SECURE_CONNECTION,     false ); if ( randomize && BUGGIFY ) REST_KMS_ALLOW_NOT_SECURE_CONNECTION = !REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
+	init( REST_KMS_ALLOW_NOT_SECURE_CONNECTION,     false ); BUGGIFY_KNOB(REST_KMS_ALLOW_NOT_SECURE_CONNECTION, randomize && BUGGIFY, !REST_KMS_ALLOW_NOT_SECURE_CONNECTION);
 	init( SIM_KMS_VAULT_MAX_KEYS,                    4096 );
 
 	init( TENANT_BALANCER_REQUEST_TIMEOUT,             20 );
@@ -343,13 +340,13 @@ void ClientKnobs::initialize(Randomize randomize) {
 	// Bulk Loading
 	init( ALLOW_BULK_LOADS,                         false );
 	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );
-	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); if ( randomize && BUGGIFY ) BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE = deterministicRandom()->randomInt(1, 10000000);
-	init( BULK_LOAD_STORAGE_RESERVATION_ENABLED, 	false ); if ( randomize && BUGGIFY ) BULK_LOAD_STORAGE_RESERVATION_ENABLED = deterministicRandom()->coinflip();
+	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); BUGGIFY_KNOB(BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10000000));
+	init( BULK_LOAD_STORAGE_RESERVATION_ENABLED, 	false ); BUGGIFY_KNOB(BULK_LOAD_STORAGE_RESERVATION_ENABLED, randomize && BUGGIFY, deterministicRandom()->coinflip());
 
 	init( ENABLE_STORAGE_ENGINE_PARAM_INTERFACE,    false );
 
 	// Range Lock
-	init( RANGE_LOCK_LIMIT, 						10000 ); if( randomize && BUGGIFY ) RANGE_LOCK_LIMIT = 20;
+	init( RANGE_LOCK_LIMIT, 						10000 ); BUGGIFY_KNOB(RANGE_LOCK_LIMIT, randomize && BUGGIFY, 20);
 
 	// clang-format on
 }

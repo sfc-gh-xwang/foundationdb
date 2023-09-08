@@ -34,6 +34,7 @@
 #include "flow/Error.h"
 #include "flow/FastAlloc.h"
 #include "flow/FileIdentifier.h"
+#include "flow/Knobs.h"
 #include "flow/ObjectSerializer.h"
 #include "flow/ProtocolVersion.h"
 #include "flow/network.h"
