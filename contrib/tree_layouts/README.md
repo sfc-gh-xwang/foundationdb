@@ -1,8 +1,11 @@
-Memory simulator for estimating the cache efficiency of some tree serializations. We implemented a preorder serialization and van Emde Boas serialization of a binary search tree, which run on top of the memory simulator. The goal is to evaluate whether using VEB serialization in the DeltaTree can save cache misses on average, compared to the current preorder serialization.
+Memory simulator for estimating the cache efficiency of some binary tree serializations, such as preorder serialization and van Emde Boas serialization. These serializations run on top of the memory simulator. The goal of this project was to decide whether using VEB serialization in the DeltaTree can save cache misses on queries on average, compared to the current preorder serialization.
 
 We also implemented a cache-aware serialization. Roughly speaking, if B is the number of nodes that fit in a cache line, this algorithm groups together the top B nodes in BFS order, and recurses on the unvisited children of these nodes. This algorithm has a tunable option that prevents nodes from straddling cache lines (which cause unnecessary cache misses) at the cost of some space amplification.
 
 The simulation outputs for each layout the histogram of the distribution of the number of cache lines probed, as well as the average.
+
+# tl;dr
+VEB layout will probably not improve cache efficiency of DeltaTree queries (and, in fact, it may hurt us), because the cache lines we are targeting (between 64 and 128 bytes) can fit few nodes (usually about 30-40 bytes in size).
 
 # Build/run instructions:
 `cd contrib/tree_layouts`
