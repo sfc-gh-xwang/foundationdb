@@ -721,7 +721,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_SATELLITE_DEGRADATION_MIN_BAD_SERVER,                 3 );
 	init( CC_ENABLE_REMOTE_LOG_ROUTER_MONITORING,               true );
 	init( CC_THROTTLE_SINGLETON_RERECRUIT_INTERVAL,              0.5 );
-	init( CC_ENABLE_TENANT_BALANCER,                            true); //if (isSimulated) CC_ENABLE_TENANT_BALANCER = deterministicRandom()->coinflip();
+	init( CC_ENABLE_TENANT_BALANCER,                            false); if (isSimulated) { CC_ENABLE_TENANT_BALANCER = deterministicRandom()->coinflip(); }
 
 	init( INCOMPATIBLE_PEERS_LOGGING_INTERVAL,                   600 ); if( randomize && BUGGIFY ) INCOMPATIBLE_PEERS_LOGGING_INTERVAL = 60.0;
 	init( EXPECTED_MASTER_FITNESS,            ProcessClass::UnsetFit );
