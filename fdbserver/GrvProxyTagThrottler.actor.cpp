@@ -46,26 +46,43 @@ GrvTransactionRateInfo GrvProxyTagThrottler::createGrvTransactionRateInfo(double
 }
 
 GrvProxyTagThrottler::DelayedRequest const& GrvProxyTagThrottler::TagQueue::front() const& {
-	return requests.front();
+	if (!highPriorityRequests.empty()) {
+		return highPriorityRequests.front();
+	} else {
+		return lowPriorityRequests.front();
+	}
 }
 
 GrvProxyTagThrottler::DelayedRequest& GrvProxyTagThrottler::TagQueue::front() & {
-	return requests.front();
+	if (!highPriorityRequests.empty()) {
+		return highPriorityRequests.front();
+	} else {
+		return lowPriorityRequests.front();
+	}
 }
 
 void GrvProxyTagThrottler::TagQueue::popFront() {
-	requests.pop_front();
+	if (!highPriorityRequests.empty()) {
+		highPriorityRequests.pop_front();
+	} else {
+		lowPriorityRequests.pop_front();
+	}
 }
 
 void GrvProxyTagThrottler::TagQueue::addRequest(GetReadVersionRequest const& req) {
-	requests.emplace_back(req);
+	if (req.priority == TransactionPriority::DEFAULT) {
+		highPriorityRequests.emplace_back(req);
+	} else {
+		lowPriorityRequests.emplace_back(req);
+	}
 }
 
 bool GrvProxyTagThrottler::TagQueue::isEmpty() const {
-	return requests.empty();
+	return lowPriorityRequests.empty() && highPriorityRequests.empty();
 }
 
-uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(double maxThrottleDuration,
+uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(Deque<DelayedRequest>& requests,
+                                                                    double maxThrottleDuration,
                                                                     LatencyBandsMap& latencyBandsMap) {
 	uint64_t result = 0;
 	while (!requests.empty()) {
@@ -82,6 +99,13 @@ uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(double maxTh
 	return result;
 }
 
+uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(double maxThrottleDuration,
+                                                                    LatencyBandsMap& latencyBandsMap) {
+	auto result = rejectMaxThrottledRequests(highPriorityRequests, maxThrottleDuration, latencyBandsMap);
+	result += rejectMaxThrottledRequests(lowPriorityRequests, maxThrottleDuration, latencyBandsMap);
+	return result;
+}
+
 void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
 	if (rateInfo.present()) {
 		rateInfo.get().setRate(rate);
@@ -92,9 +116,9 @@ void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
 
 void GrvProxyTagThrottler::TagQueue::endReleaseWindow(uint64_t numStarted, double elapsed) {
 	if (rateInfo.present()) {
-		CODE_PROBE(requests.empty(), "Tag queue ending release window with empty request queue");
-		CODE_PROBE(!requests.empty(), "Tag queue ending release window with requests still queued");
-		rateInfo.get().endReleaseWindow(numStarted, requests.empty(), elapsed);
+		CODE_PROBE(isEmpty(), "Tag queue ending release window with empty request queue");
+		CODE_PROBE(!isEmpty(), "Tag queue ending release window with requests still queued");
+		rateInfo.get().endReleaseWindow(numStarted, isEmpty(), elapsed);
 	}
 }
 
@@ -179,7 +203,9 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		uint64_t* numReleased;
 		Priority getPriority() const {
 			ASSERT(!queue->isEmpty());
-			return Priority(true, queue->front().sequenceNumber);
+			auto& delayedReq = queue->front();
+			bool const highPriorityRequestsRemaining = (delayedReq.req.priority == TransactionPriority::DEFAULT);
+			return Priority(highPriorityRequestsRemaining, delayedReq.sequenceNumber);
 		}
 		bool operator<(TagQueueHandle const& rhs) const { return getPriority() < rhs.getPriority(); }
 		explicit TagQueueHandle(TagQueue& queue, uint64_t& numReleased) : queue(&queue), numReleased(&numReleased) {

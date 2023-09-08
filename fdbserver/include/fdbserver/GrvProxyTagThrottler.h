@@ -58,7 +58,10 @@ class GrvProxyTagThrottler {
 	static GrvTransactionRateInfo createGrvTransactionRateInfo(double rate);
 
 	struct TagQueue {
-		Deque<DelayedRequest> requests;
+		Deque<DelayedRequest> lowPriorityRequests, highPriorityRequests;
+		static uint64_t rejectMaxThrottledRequests(Deque<DelayedRequest>& requests,
+		                                           double maxThrottledDuration,
+		                                           LatencyBandsMap&);
 
 	public:
 		Optional<GrvTransactionRateInfo> rateInfo;
