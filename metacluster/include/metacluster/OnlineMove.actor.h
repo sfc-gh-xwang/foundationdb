@@ -5,7 +5,7 @@
 #pragma once
 #if defined(NO_INTELLISENSE) && !defined(METACLUSTER_ONLINE_MOVE_ACTOR_G_H)
 #define METACLUSTER_ONLINE_MOVE_ACTOR_G_H
-#include "metacluster/MetaclusterOnlineMove.actor.g.h"
+#include "metacluster/OnlineMove.actor.g.h"
 #elif !defined(METACLUSTER_ONLINE_MOVE_ACTOR_H)
 #define METACLUSTER_ONLINE_MOVE_ACTOR_H
 
