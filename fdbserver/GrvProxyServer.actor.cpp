@@ -584,7 +584,7 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 				// When the limit is hit, try to drop requests from the lower priority queues.
 				if (req.priority == TransactionPriority::BATCH) {
 					canBeQueued = false;
-				} else if (req.priority == TransactionPriority::DEFAULT || req.priority == TransactionPriority::LOW) {
+				} else if (req.priority <= TransactionPriority::DEFAULT) {
 					if (!batchQueue->empty()) {
 						dropRequestFromQueue(batchQueue, stats);
 						--stats->batchGRVQueueSize;
@@ -1007,10 +1007,10 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 			auto& req = transactionQueue->front();
 			int tc = req.transactionCount;
 
-			if (req.priority < TransactionPriority::LOW &&
+			if (req.priority == TransactionPriority::BATCH &&
 			    !batchRateInfo.canStart(transactionsStarted[0] + transactionsStarted[1], tc)) {
 				break;
-			} else if (req.priority < TransactionPriority::IMMEDIATE &&
+			} else if (req.priority <= TransactionPriority::DEFAULT &&
 			           !normalRateInfo.canStart(transactionsStarted[0] + transactionsStarted[1], tc)) {
 				break;
 			}
