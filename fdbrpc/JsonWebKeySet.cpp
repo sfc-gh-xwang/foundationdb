@@ -37,6 +37,7 @@
 #include <openssl/evp.h>
 #include <openssl/opensslv.h>
 #include <openssl/rsa.h>
+#include <openssl/sha.h>
 #include <openssl/x509.h>
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L && !defined(_WIN32)
 #define USE_V3_API 1
@@ -413,6 +414,59 @@ Optional<PublicOrPrivateKey> parseRsaKey(StringRef b64n,
 	}
 }
 
+struct EcThumbprintParams {
+	StringRef crv, kty, x, y;
+};
+
+struct RsaThumbprintParams {
+	StringRef e, kty, n;
+};
+
+Standalone<StringRef> getBase64UrlOfSha256Sum(const rapidjson::StringBuffer& buf) {
+	uint8_t hash[SHA256_DIGEST_LENGTH]{
+		0,
+	};
+	::SHA256(reinterpret_cast<const uint8_t*>(buf.GetString()), buf.GetSize(), hash);
+	Standalone<StringRef> ret;
+	auto base64Url = base64::url::encode(ret.arena(), StringRef(hash, SHA256_DIGEST_LENGTH));
+	ret.contents() = base64Url;
+	return ret;
+}
+
+Standalone<StringRef> computeBase64UrlSha256Thumbprint(EcThumbprintParams p) {
+	auto buf = rapidjson::StringBuffer();
+	auto wr = rapidjson::Writer(buf);
+	wr.StartObject();
+	// The order of Key() parameters is important: thumbprint standard requires that the keys in JSON object to be
+	// hash-summed are lexicographically ordered: i.e. crv > kty > x > y
+	wr.Key("crv");
+	wr.String(reinterpret_cast<const char*>(p.crv.begin()), p.crv.size());
+	wr.Key("kty");
+	wr.String(reinterpret_cast<const char*>(p.kty.begin()), p.kty.size());
+	wr.Key("x");
+	wr.String(reinterpret_cast<const char*>(p.x.begin()), p.x.size());
+	wr.Key("y");
+	wr.String(reinterpret_cast<const char*>(p.y.begin()), p.y.size());
+	wr.EndObject();
+	return getBase64UrlOfSha256Sum(buf);
+}
+
+Standalone<StringRef> computeBase64UrlSha256Thumbprint(RsaThumbprintParams p) {
+	auto buf = rapidjson::StringBuffer();
+	auto wr = rapidjson::Writer(buf);
+	wr.StartObject();
+	// The order of Key() parameters is important: thumbprint standard requires that the keys in JSON object to be
+	// hash-summed are lexicographically ordered: i.e. e > kty > n
+	wr.Key("e");
+	wr.String(reinterpret_cast<const char*>(p.e.begin()), p.e.size());
+	wr.Key("kty");
+	wr.String(reinterpret_cast<const char*>(p.kty.begin()), p.kty.size());
+	wr.Key("n");
+	wr.String(reinterpret_cast<const char*>(p.n.begin()), p.n.size());
+	wr.EndObject();
+	return getBase64UrlOfSha256Sum(buf);
+}
+
 template <class Value>
 Optional<PublicOrPrivateKey> parseKey(const Value& key, StringRef kty, int keyIndex) {
 	if (kty == "EC"_sr) {
@@ -429,7 +483,18 @@ Optional<PublicOrPrivateKey> parseKey(const Value& key, StringRef kty, int keyIn
 		DECLARE_JWK_REQUIRED_STRING_MEMBER(key, x);
 		DECLARE_JWK_REQUIRED_STRING_MEMBER(key, y);
 		DECLARE_JWK_OPTIONAL_STRING_MEMBER(key, d);
-		return parseEcP256Key(x, y, d, keyIndex);
+		auto ret = parseEcP256Key(x, y, d, keyIndex);
+		if (ret.present()) {
+			// parse successful; compute and attach SHA256 thumbprint
+			auto thumbprint = computeBase64UrlSha256Thumbprint(EcThumbprintParams{
+			    .crv = crv,
+			    .kty = kty,
+			    .x = x,
+			    .y = y,
+			});
+			ret.get().base64UrlSha256Thumbprint = thumbprint;
+		}
+		return ret;
 	} else if (kty == "RSA"_sr) {
 		DECLARE_JWK_REQUIRED_STRING_MEMBER(key, alg);
 		if (alg != "RS256"_sr) {
@@ -452,7 +517,17 @@ Optional<PublicOrPrivateKey> parseKey(const Value& key, StringRef kty, int keyIn
 		privKeyArgs += dq.present();
 		privKeyArgs += qi.present();
 		if (privKeyArgs == 0 || privKeyArgs == 6) {
-			return parseRsaKey(n, e, d, p, q, dp, dq, qi, keyIndex);
+			auto ret = parseRsaKey(n, e, d, p, q, dp, dq, qi, keyIndex);
+			if (ret.present()) {
+				// parse successful; compute and attach SHA256 thumbprint
+				auto thumbprint = computeBase64UrlSha256Thumbprint(RsaThumbprintParams{
+				    .e = e,
+				    .kty = kty,
+				    .n = n,
+				});
+				ret.get().base64UrlSha256Thumbprint = thumbprint;
+			}
+			return ret;
 		} else {
 			JWK_PARSE_ERROR("Private key arguments partially exist").detail("NumMissingArgs", 6 - privKeyArgs);
 			return {};
@@ -843,5 +918,36 @@ TEST_CASE("/fdbrpc/JsonWebKeySet/Empty") {
 	auto keyset = JsonWebKeySet::parse("{\"keys\":[]}"_sr, {});
 	ASSERT(keyset.present());
 	ASSERT(keyset.get().keys.empty());
+	return Void();
+}
+
+TEST_CASE("/fdbrpc/JsonWebKeySet/Thumbprint1") {
+	StringRef const rfc7638Example =
+	    // pragma: allowlist nextline secret
+	    R"RFC7638({"keys":[{"kty":"RSA","n":"0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw","e":"AQAB","alg":"RS256","kid":"2011-04-29"}]})RFC7638"_sr;
+
+	auto keyset = JsonWebKeySet::parse(rfc7638Example, {});
+	ASSERT(keyset.present());
+	auto const thumbprintFromKeySet = keyset.get().keys["2011-04-29"_sr].base64UrlSha256Thumbprint;
+	// pragma: allowlist nextline secret
+	auto const expectedThumbprint = "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"_sr;
+	fmt::print("Thumbprint from key set: {}\n", thumbprintFromKeySet.toStringView());
+	fmt::print("Expected thumbprint:     {}\n", expectedThumbprint.toStringView());
+	ASSERT_EQ(thumbprintFromKeySet, expectedThumbprint);
+	return Void();
+}
+
+TEST_CASE("/fdbrpc/JsonWebKeySet/Thumbprint2") {
+	StringRef const ecExample =
+	    // pragma: allowlist nextline secret
+	    R"EC({"keys":[{"kty":"EC","use":"sig","crv":"P-256","kid":"1036","x":"bCQdKl-NpOvK6ZuAPMRHUbAgieQ1STLL4pk4ZGbrDRU","y":"wnuJMXhYAFtv8EnzZ5qmtvmMF4ss8NxxMKtEO2ketiw","alg":"ES256"}]})EC"_sr;
+	auto keyset = JsonWebKeySet::parse(ecExample, {});
+	ASSERT(keyset.present());
+	auto const thumbprintFromKeySet = keyset.get().keys["1036"_sr].base64UrlSha256Thumbprint;
+	// pragma: allowlist nextline secret
+	auto const expectedThumbprint = "uDOw9tDozDgjuG04uYxw4e33fqKqRkcnyFpWAA2E4DQ"_sr;
+	fmt::print("Thumbprint from key set: {}\n", thumbprintFromKeySet.toStringView());
+	fmt::print("Expected thumbprint:     {}\n", expectedThumbprint.toStringView());
+	ASSERT_EQ(thumbprintFromKeySet, expectedThumbprint);
 	return Void();
 }
