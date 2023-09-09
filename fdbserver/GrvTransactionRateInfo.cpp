@@ -34,7 +34,11 @@ GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow,
 }
 
 bool GrvTransactionRateInfo::canStart(int64_t costAlreadyReleased, int64_t cost) const {
-	return costAlreadyReleased + cost <= std::min(limit + budget, maxToStart);
+	return costAlreadyReleased + cost <= costAllowedToStart();
+}
+
+int64_t GrvTransactionRateInfo::costAllowedToStart() const {
+	return std::min(limit + budget, maxToStart);
 }
 
 void GrvTransactionRateInfo::endReleaseWindow(int64_t numStarted, bool queueEmpty, double elapsed) {

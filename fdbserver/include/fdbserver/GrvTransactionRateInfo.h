@@ -56,6 +56,10 @@ public:
 	// current release window.
 	bool canStart(int64_t costAlreadyReleased, int64_t cost) const;
 
+	// Returns the total cost allowed to be released during
+	// the current release window.
+	int64_t costAllowedToStart() const;
+
 	// Updates the budget to accumulate any extra capacity available or remove any excess that was used.
 	// Call at the end of a release window.
 	void endReleaseWindow(int64_t numStarted, bool queueEmpty, double elapsed);
