@@ -51,10 +51,10 @@ public:
 	// in this release window.
 	void startReleaseWindow();
 
-	// Checks if a "count" new transactions can be released, given that
-	// "numAlreadyStarted" transactions have already been released in the
+	// Checks if the specified cost can be released, given that
+	// costAlreadyConsumed cost as already been released in the
 	// current release window.
-	bool canStart(int64_t numAlreadyStarted, int64_t count) const;
+	bool canStart(int64_t costAlreadyReleased, int64_t cost) const;
 
 	// Updates the budget to accumulate any extra capacity available or remove any excess that was used.
 	// Call at the end of a release window.

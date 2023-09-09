@@ -37,8 +37,8 @@ GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow,
 	smoothRate.setTotal(rate);
 }
 
-bool GrvTransactionRateInfo::canStart(int64_t numAlreadyStarted, int64_t count) const {
-	return numAlreadyStarted + count <= std::min(limit + budget, maxToStart);
+bool GrvTransactionRateInfo::canStart(int64_t costAlreadyReleased, int64_t cost) const {
+	return costAlreadyReleased + cost <= std::min(limit + budget, maxToStart);
 }
 
 void GrvTransactionRateInfo::endReleaseWindow(int64_t numStarted, bool queueEmpty, double elapsed) {
@@ -88,11 +88,11 @@ void GrvTransactionRateInfo::setRate(double rate) {
 }
 
 void GrvTransactionRateInfo::startReleaseWindow() {
-	// Determine the number of transactions that this proxy is allowed to release
-	// Roughly speaking, this is done by computing the number of transactions over some historical window that we
-	// could have started but didn't, and making that our limit. More precisely, we track a smoothed rate limit and
-	// release rate, the difference of which is the rate of additional transactions that we could have released
-	// based on that window. Then we multiply by the window size to get a number of transactions.
+	// Determine the number of transaction cost that this proxy is allowed to release
+	// Roughly speaking, this is done by computing the cost over some historical window that we
+	// could have released but didn't, and making that our limit. More precisely, we track a smoothed rate limit and
+	// release rate, the difference of which is the rate of additional cost that we could have released
+	// based on that window. Then we multiply by the window size to get a cost limit.
 	//
 	// Limit can be negative in the event that we are releasing more transactions than we are allowed (due to the
 	// use of our budget or because of higher priority transactions).
