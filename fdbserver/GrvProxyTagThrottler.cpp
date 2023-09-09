@@ -45,28 +45,41 @@ GrvTransactionRateInfo GrvProxyTagThrottler::createGrvTransactionRateInfo(double
 	                                         : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 }
 
-GrvProxyTagThrottler::DelayedRequest const& GrvProxyTagThrottler::TagQueue::front() const& {
-	if (!highPriorityRequests.empty()) {
-		return highPriorityRequests.front();
+bool GrvProxyTagThrottler::TagQueue::processingHighPriorityRequests(
+    GrvProxyTagThrottler::TagQueue::Strategy strategy) const {
+	if (highPriorityRequests.empty()) {
+		return false;
+	} else if (lowPriorityRequests.empty() || (strategy == Strategy::PRIORITIZED)) {
+		return true;
+	} else if (lowPriorityRequests.front().sequenceNumber < highPriorityRequests.front().sequenceNumber) {
+		return false;
 	} else {
-		return lowPriorityRequests.front();
+		return true;
 	}
 }
 
-GrvProxyTagThrottler::DelayedRequest& GrvProxyTagThrottler::TagQueue::front() & {
-	if (!highPriorityRequests.empty()) {
-		return highPriorityRequests.front();
-	} else {
-		return lowPriorityRequests.front();
-	}
+Deque<GrvProxyTagThrottler::DelayedRequest> const& GrvProxyTagThrottler::TagQueue::requestsWithFront(
+    GrvProxyTagThrottler::TagQueue::Strategy strategy) const& {
+	return processingHighPriorityRequests(strategy) ? highPriorityRequests : lowPriorityRequests;
 }
 
-void GrvProxyTagThrottler::TagQueue::popFront() {
-	if (!highPriorityRequests.empty()) {
-		highPriorityRequests.pop_front();
-	} else {
-		lowPriorityRequests.pop_front();
-	}
+Deque<GrvProxyTagThrottler::DelayedRequest>& GrvProxyTagThrottler::TagQueue::requestsWithFront(
+    GrvProxyTagThrottler::TagQueue::Strategy strategy) & {
+	return processingHighPriorityRequests(strategy) ? highPriorityRequests : lowPriorityRequests;
+}
+
+GrvProxyTagThrottler::DelayedRequest const& GrvProxyTagThrottler::TagQueue::front(
+    GrvProxyTagThrottler::TagQueue::Strategy strategy) const& {
+	return requestsWithFront(strategy).front();
+}
+
+GrvProxyTagThrottler::DelayedRequest& GrvProxyTagThrottler::TagQueue::front(
+    GrvProxyTagThrottler::TagQueue::Strategy strategy) & {
+	return requestsWithFront(strategy).front();
+}
+
+void GrvProxyTagThrottler::TagQueue::popFront(GrvProxyTagThrottler::TagQueue::Strategy strategy) {
+	return requestsWithFront(strategy).pop_front();
 }
 
 void GrvProxyTagThrottler::TagQueue::addRequest(GetReadVersionRequest const& req) {
@@ -75,6 +88,10 @@ void GrvProxyTagThrottler::TagQueue::addRequest(GetReadVersionRequest const& req
 	} else {
 		lowPriorityRequests.emplace_back(req);
 	}
+}
+
+bool GrvProxyTagThrottler::TagQueue::highPriorityRequestsRemaining() const {
+	return !highPriorityRequests.empty();
 }
 
 bool GrvProxyTagThrottler::TagQueue::isEmpty() const {
@@ -193,17 +210,17 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 	ReleaseTransactionsResult result;
 
 	class Priority {
-		bool highPriorityRequestsRemaining;
+		TagQueue::Strategy strategy;
 		uint64_t nextSequenceNumber;
 
 	public:
-		Priority(bool highPriorityRequestsRemaining, uint64_t nextSequenceNumber)
-		  : highPriorityRequestsRemaining(highPriorityRequestsRemaining),
+		Priority(TagQueue::Strategy strategy, uint64_t nextSequenceNumber)
+		  : strategy(strategy),
 		    nextSequenceNumber(nextSequenceNumber) {}
 
 		bool operator<(Priority const& rhs) const {
-			if (highPriorityRequestsRemaining != rhs.highPriorityRequestsRemaining) {
-				return !highPriorityRequestsRemaining;
+			if (strategy != rhs.strategy) {
+				return strategy == TagQueue::Strategy::FIFO;
 			} else {
 				return nextSequenceNumber > rhs.nextSequenceNumber;
 			}
@@ -211,7 +228,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 
 		bool operator>(Priority const& rhs) const { return rhs < *this; }
 
-		static Priority lowest() { return Priority(false, std::numeric_limits<uint64_t>::max()); }
+		static Priority lowest() { return Priority(TagQueue::Strategy::FIFO, std::numeric_limits<uint64_t>::max()); }
 	};
 
 	// Pointer to a TagQueue with some extra metadata stored alongside
@@ -221,16 +238,20 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		// Cannot be stored directly because amountReleased outlives TagQueueHandle
 		uint64_t* amountReleased;
 
+		TagQueue::Strategy getStrategy() const {
+			return queue->highPriorityRequestsRemaining() ? TagQueue::Strategy::PRIORITIZED : TagQueue::Strategy::FIFO;
+		}
+
 	public:
 		Priority getPriority() const {
 			ASSERT(!queue->isEmpty());
-			auto& delayedReq = queue->front();
-			bool const highPriorityRequestsRemaining = (delayedReq.req.priority == TransactionPriority::DEFAULT);
-			return Priority(highPriorityRequestsRemaining, delayedReq.sequenceNumber);
+			auto const strategy = getStrategy();
+			auto& delayedReq = queue->front(strategy);
+			return Priority(strategy, delayedReq.sequenceNumber);
 		}
-		DelayedRequest const& front() const& { return queue->front(); }
-		DelayedRequest& front() & { return queue->front(); }
-		void popFront() { queue->popFront(); }
+		DelayedRequest const& front() const& { return queue->front(getStrategy()); }
+		DelayedRequest& front() & { return queue->front(getStrategy()); }
+		void popFront() { queue->popFront(getStrategy()); }
 		bool isEmpty() const { return queue->isEmpty(); }
 		bool canStart(int64_t cost) const { return queue->canStart(*amountReleased, cost); }
 		uint64_t rejectMaxThrottledRequests(double maxThrottleDuration, LatencyBandsMap& latencyBandsMap) {

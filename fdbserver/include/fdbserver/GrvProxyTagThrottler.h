@@ -65,13 +65,25 @@ class GrvProxyTagThrottler {
 		Optional<GrvTransactionRateInfo> rateInfo;
 
 	public:
+		enum class Strategy {
+			PRIORITIZED,
+			FIFO,
+		};
+
+	private:
+		bool processingHighPriorityRequests(Strategy) const;
+		Deque<DelayedRequest> const& requestsWithFront(Strategy) const&;
+		Deque<DelayedRequest>& requestsWithFront(Strategy) &;
+
+	public:
 		TagQueue() = default;
 		explicit TagQueue(double rate) : rateInfo(createGrvTransactionRateInfo(rate)) {}
 
-		DelayedRequest const& front() const&;
-		DelayedRequest& front() &;
-		void popFront();
+		DelayedRequest const& front(Strategy) const&;
+		DelayedRequest& front(Strategy) &;
+		void popFront(Strategy);
 		void addRequest(GetReadVersionRequest const&);
+		bool highPriorityRequestsRemaining() const;
 		bool isEmpty() const;
 
 		// Returns the number of requests rejected
