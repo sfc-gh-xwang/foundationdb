@@ -24,6 +24,26 @@
 #include "fdbserver/Knobs.h"
 #include <boost/unordered/unordered_flat_map.hpp>
 
+namespace {
+
+// Get the cost of a GRV Request. If track-average-cost-on-client is enabled,
+// the cost returned is in bytes per second, otherwise it's in transactions per second.
+uint64_t getRequestCost(GetReadVersionRequest const& req) {
+	if (isClientAverageCostTrackingEnabled()) {
+		// track-average-cost-on-client is enabled use the expectedTransactionCost.
+		if (req.expectedTotalCost.present()) {
+			return static_cast<uint64_t>(req.expectedTotalCost.get());
+		} else {
+			// expectedTransactionCost not provided, use req.transactionCount * DEFAULT_EXPECTED_TRANSACTION_COST
+			return req.transactionCount * CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+		}
+	} else {
+		return req.transactionCount;
+	}
+}
+
+} // namespace
+
 uint64_t GrvProxyTagThrottler::DelayedRequest::lastSequenceNumber = 0;
 
 void GrvProxyTagThrottler::DelayedRequest::updateProxyTagThrottledDuration(LatencyBandsMap& latencyBandsMap) {
@@ -79,7 +99,14 @@ GrvProxyTagThrottler::DelayedRequest& GrvProxyTagThrottler::TagQueue::front(
 }
 
 void GrvProxyTagThrottler::TagQueue::popFront(GrvProxyTagThrottler::TagQueue::Strategy strategy) {
-	return requestsWithFront(strategy).pop_front();
+	auto& requests = requestsWithFront(strategy);
+	auto const costReleased = getRequestCost(requests.front().req);
+	if (strategy == Strategy::PRIORITIZED) {
+		prioritizedReleased += costReleased;
+	} else {
+		fifoReleased += costReleased;
+	}
+	requests.pop_front();
 }
 
 void GrvProxyTagThrottler::TagQueue::addRequest(GetReadVersionRequest const& req) {
@@ -96,6 +123,17 @@ bool GrvProxyTagThrottler::TagQueue::highPriorityRequestsRemaining() const {
 
 bool GrvProxyTagThrottler::TagQueue::isEmpty() const {
 	return lowPriorityRequests.empty() && highPriorityRequests.empty();
+}
+
+double GrvProxyTagThrottler::TagQueue::getExcessPrioritizedCost(double starvationToleranceRatio) const {
+	// Avoid overflow in cases with very high starvation tolerance
+	if (1.0 - starvationToleranceRatio < 1.0e-6) {
+		return 0.0;
+	}
+
+	// Desired ratio of prioritized to fifo releases:
+	auto const desiredRatio = starvationToleranceRatio / (1 - starvationToleranceRatio);
+	return std::max<double>(prioritizedReleased - desiredRatio * fifoReleased, 0.0);
 }
 
 uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(Deque<DelayedRequest>& requests,
@@ -123,8 +161,11 @@ uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(double maxTh
 	return result;
 }
 
-bool GrvProxyTagThrottler::TagQueue::canStart(int64_t costAlreadyReleased, int64_t cost) const {
-	return !rateInfo.present() || rateInfo.get().canStart(costAlreadyReleased, cost);
+Optional<int64_t> GrvProxyTagThrottler::TagQueue::costAllowedToStart() const {
+	if (!rateInfo.present()) {
+		return {};
+	}
+	return rateInfo.get().costAllowedToStart();
 }
 
 bool GrvProxyTagThrottler::TagQueue::isRateInfoPresent() const {
@@ -157,8 +198,9 @@ void GrvProxyTagThrottler::TagQueue::endReleaseWindow(uint64_t numStarted, doubl
 	}
 }
 
-GrvProxyTagThrottler::GrvProxyTagThrottler(double maxThrottleDuration)
+GrvProxyTagThrottler::GrvProxyTagThrottler(double maxThrottleDuration, double starvationToleranceRatio)
   : maxThrottleDuration(maxThrottleDuration),
+    starvationToleranceRatio(starvationToleranceRatio),
     latencyBandsMap("GrvProxyTagThrottler",
                     deterministicRandom()->randomUniqueID(),
                     SERVER_KNOBS->GLOBAL_TAG_THROTTLING_PROXY_LOGGING_INTERVAL,
@@ -186,21 +228,6 @@ void GrvProxyTagThrottler::updateRates(ThrottlingIdMap<double> const& newRates) 
 
 void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {
 	queues[req.throttlingId.get()].addRequest(req);
-}
-
-uint64_t GrvProxyTagThrottler::getCost(GetReadVersionRequest const& req) const {
-
-	if (isClientAverageCostTrackingEnabled()) {
-		// track-average-cost-on-client is enabled use the expectedTransactionCost.
-		if (req.expectedTotalCost.present()) {
-			return static_cast<uint64_t>(req.expectedTotalCost.get());
-		} else {
-			// expectedTransactionCost not provided, use req.transactionCount * DEFAULT_EXPECTED_TRANSACTION_COST
-			return req.transactionCount * CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
-		}
-	} else {
-		return req.transactionCount;
-	}
 }
 
 GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTransactions(
@@ -237,23 +264,38 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		TagQueue* queue;
 		// Cannot be stored directly because amountReleased outlives TagQueueHandle
 		uint64_t* amountReleased;
-
-		TagQueue::Strategy getStrategy() const {
-			return queue->highPriorityRequestsRemaining() ? TagQueue::Strategy::PRIORITIZED : TagQueue::Strategy::FIFO;
-		}
+		// Strategy currently being used to release requests
+		TagQueue::Strategy strategy;
 
 	public:
+		void toggleStrategyIfNecessary(double starvationToleranceRatio) {
+			if (strategy == TagQueue::Strategy::FIFO) {
+				return;
+			} else {
+				auto const available = queue->costAllowedToStart();
+				auto const usedForPrioritizedReleases =
+				    static_cast<int64_t>(queue->getExcessPrioritizedCost(starvationToleranceRatio) + *amountReleased);
+				if (!available.present() ||
+				    usedForPrioritizedReleases <= available.get() * (1 - starvationToleranceRatio)) {
+					strategy = TagQueue::Strategy::PRIORITIZED;
+				} else {
+					strategy = TagQueue::Strategy::FIFO;
+				}
+			}
+		}
 		Priority getPriority() const {
 			ASSERT(!queue->isEmpty());
-			auto const strategy = getStrategy();
 			auto& delayedReq = queue->front(strategy);
 			return Priority(strategy, delayedReq.sequenceNumber);
 		}
-		DelayedRequest const& front() const& { return queue->front(getStrategy()); }
-		DelayedRequest& front() & { return queue->front(getStrategy()); }
-		void popFront() { queue->popFront(getStrategy()); }
+		DelayedRequest const& front() const& { return queue->front(strategy); }
+		DelayedRequest& front() & { return queue->front(strategy); }
+		void popFront() { queue->popFront(strategy); }
 		bool isEmpty() const { return queue->isEmpty(); }
-		bool canStart(int64_t cost) const { return queue->canStart(*amountReleased, cost); }
+		bool canStart(int64_t cost) const {
+			auto const available = queue->costAllowedToStart();
+			return !available.present() || (static_cast<int64_t>(*amountReleased) + cost <= available.get());
+		}
 		uint64_t rejectMaxThrottledRequests(double maxThrottleDuration, LatencyBandsMap& latencyBandsMap) {
 			return queue->rejectMaxThrottledRequests(maxThrottleDuration, latencyBandsMap);
 		}
@@ -261,7 +303,8 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		bool operator<(TagQueueHandle const& rhs) const { return getPriority() < rhs.getPriority(); }
 		explicit TagQueueHandle(TagQueue& queue, uint64_t& amountReleased)
 		  : queue(&queue),
-		    amountReleased(&amountReleased) {
+		    amountReleased(&amountReleased),
+		    strategy(TagQueue::Strategy::PRIORITIZED) {
 			ASSERT(!this->queue->isEmpty());
 		}
 	};
@@ -298,8 +341,9 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		auto const nextQueuePriority = pqOfQueues.empty() ? Priority::lowest() : pqOfQueues.top().getPriority();
 
 		while (!tagQueueHandle.isEmpty()) {
+			tagQueueHandle.toggleStrategyIfNecessary(starvationToleranceRatio);
 			auto& delayedReq = tagQueueHandle.front();
-			auto const cost = getCost(delayedReq.req);
+			auto const cost = getRequestCost(delayedReq.req);
 
 			if (!tagQueueHandle.canStart(cost)) {
 				// Cannot release any more transaction from this throttling ID (don't push the tag queue handle back

@@ -5,7 +5,7 @@
 #include "flow/IRandom.h"
 
 static void bench_grvProxyTagThrottler(benchmark::State& state) {
-	GrvProxyTagThrottler throttler(5.0);
+	GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
 
 	std::vector<GetReadVersionRequest> reqs;
 	Arena arena;

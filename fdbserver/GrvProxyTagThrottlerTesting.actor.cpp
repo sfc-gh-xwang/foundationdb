@@ -9,12 +9,33 @@
 #include "flow/UnitTest.h"
 #include "flow/actorcompiler.h" // must be last include
 
+namespace {
+
+class TransactionCounters {
+	TransactionTagMap<uint32_t> defaultPriorityCounters, lowPriorityCounters;
+
+public:
+	uint32_t getCount(TransactionTag tag, TransactionPriority priority = TransactionPriority::DEFAULT) const {
+		auto const& counters =
+		    (priority == TransactionPriority::DEFAULT) ? defaultPriorityCounters : lowPriorityCounters;
+		auto it = counters.find(tag);
+		return (it == counters.end()) ? 0 : it->second;
+	}
+
+	void incrementCount(TransactionTag tag, int newCount, TransactionPriority priority = TransactionPriority::DEFAULT) {
+		auto& counters = (priority == TransactionPriority::DEFAULT) ? defaultPriorityCounters : lowPriorityCounters;
+		counters[tag] += newCount;
+	}
+};
+
+} // namespace
+
 ACTOR static Future<Void> mockClient(GrvProxyTagThrottler* throttler,
                                      TransactionPriority priority,
                                      TransactionTag tag,
                                      int batchSize,
                                      double desiredRate,
-                                     TransactionTagMap<uint32_t>* counters) {
+                                     TransactionCounters* counters) {
 	state Future<Void> timer;
 	loop {
 		timer = delayJittered(static_cast<double>(batchSize) / desiredRate);
@@ -27,18 +48,32 @@ ACTOR static Future<Void> mockClient(GrvProxyTagThrottler* throttler,
 		}
 		throttler->addRequest(req);
 		wait(success(req.reply.getFuture()) && timer);
-		(*counters)[tag] += batchSize;
+		counters->incrementCount(tag, batchSize, priority);
 	}
+}
+
+// Given a vector of GRV requests, returns a vector of indices
+// ordered by the order in which replies were received.
+ACTOR static Future<std::vector<int>> getReplyOrder(std::vector<GetReadVersionRequest> reqs) {
+	state std::vector<int> result;
+	state std::vector<Future<Void>> futures;
+	for (int i = 0; i < reqs.size(); ++i) {
+		// Flow hack to capture result:
+		auto* _result = &result;
+		futures.push_back(map(reqs[i].reply.getFuture(), [_result, i](auto const&) {
+			_result->push_back(i);
+			return Void();
+		}));
+	}
+	wait(waitForAll(futures));
+	return result;
 }
 
 ACTOR static Future<Void> mockFifoClient(GrvProxyTagThrottler* throttler) {
 	state std::vector<GetReadVersionRequest> reqs;
-	state int i = 0;
-	// Used to track the order in which replies are received
-	state std::vector<int> replyIndices;
 
 	// Tag half of requests with one tag, half with another, then randomly shuffle
-	for (i = 0; i < 2000; ++i) {
+	for (int i = 0; i < 2000; ++i) {
 		auto& req = reqs.emplace_back();
 		req.priority = TransactionPriority::DEFAULT;
 		req.transactionCount = 1;
@@ -57,17 +92,8 @@ ACTOR static Future<Void> mockFifoClient(GrvProxyTagThrottler* throttler) {
 	for (const auto& req : reqs) {
 		throttler->addRequest(req);
 	}
-	state std::vector<Future<Void>> futures;
-	for (int j = 0; j < 2000; ++j) {
-		// Flow hack to capture replyIndices
-		auto* _replyIndices = &replyIndices;
-		futures.push_back(map(reqs[j].reply.getFuture(), [_replyIndices, j](auto const&) {
-			(*_replyIndices).push_back(j);
-			return Void();
-		}));
-	}
-	wait(waitForAll(futures));
-	for (i = 0; i < 2000; ++i) {
+	std::vector<int> replyIndices = wait(getReplyOrder(reqs));
+	for (int i = 0; i < 2000; ++i) {
 		ASSERT_EQ(replyIndices[i], i);
 	}
 	return Void();
@@ -75,9 +101,6 @@ ACTOR static Future<Void> mockFifoClient(GrvProxyTagThrottler* throttler) {
 
 ACTOR static Future<Void> mockVariablePriorityClient(GrvProxyTagThrottler* throttler) {
 	state std::vector<GetReadVersionRequest> reqs;
-	state int i = 0;
-	// Used to track the order in which replies are received
-	state std::vector<int> replyIndices;
 
 	for (int i = 0; i < 2000; ++i) {
 		auto& req = reqs.emplace_back();
@@ -96,23 +119,16 @@ ACTOR static Future<Void> mockVariablePriorityClient(GrvProxyTagThrottler* throt
 	for (const auto& req : reqs) {
 		throttler->addRequest(req);
 	}
-	state std::vector<Future<Void>> futures;
-	for (int j = 0; j < 2000; ++j) {
-		// Flow hack to capture replyIndices
-		auto* _replyIndices = &replyIndices;
-		futures.push_back(map(reqs[j].reply.getFuture(), [_replyIndices, j](auto const&) {
-			(*_replyIndices).push_back(j);
-			return Void();
-		}));
-	}
-	wait(waitForAll(futures));
+
+	std::vector<int> replyIndices = wait(getReplyOrder(reqs));
+
 	// The set of the first 1000 requests to receive a reply should
 	// be precisely the set of the last 1000 requests issued, because
 	// these requests have default priority:
-	for (i = 0; i < 1000; ++i) {
+	for (int i = 0; i < 1000; ++i) {
 		ASSERT_GE(replyIndices[i], 1000);
 	}
-	for (i = 1000; i < 2000; ++i) {
+	for (int i = 1000; i < 2000; ++i) {
 		ASSERT_LT(replyIndices[i], 1000);
 	}
 	return Void();
@@ -153,8 +169,8 @@ static bool isNear(double desired, uint64_t actual) {
 // Rate limit set at 10, but client attempts 20 transactions per second.
 // Client should be throttled to only 10 transactions per second.
 TEST_CASE("/GrvProxyTagThrottler/Simple") {
-	state GrvProxyTagThrottler throttler(5.0);
-	state TransactionTagMap<uint32_t> counters;
+	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
 		rates[ThrottlingId::fromTag("sampleTag"_sr)] = 10.0;
@@ -165,15 +181,15 @@ TEST_CASE("/GrvProxyTagThrottler/Simple") {
 	    mockClient(&throttler, TransactionPriority::DEFAULT, "sampleTag"_sr, 1, 20.0, &counters);
 	state Future<Void> server = mockServer(&throttler);
 	wait(timeout(client && server, 60.0, Void()));
-	TraceEvent("TagQuotaTest_Simple").detail("Counter", counters["sampleTag"_sr]);
-	ASSERT(isNear(counters["sampleTag"_sr], 60.0 * 10.0));
+	TraceEvent("TagQuotaTest_Simple").detail("Counter", counters.getCount("sampleTag"_sr));
+	ASSERT(isNear(counters.getCount("sampleTag"_sr), 60.0 * 10.0));
 	return Void();
 }
 
 // Clients share the available 30 transaction/second budget
 TEST_CASE("/GrvProxyTagThrottler/MultiClient") {
-	state GrvProxyTagThrottler throttler(5.0);
-	state TransactionTagMap<uint32_t> counters;
+	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
 		rates[ThrottlingIdRef::fromTag("sampleTag"_sr)] = 30.0;
@@ -188,15 +204,15 @@ TEST_CASE("/GrvProxyTagThrottler/MultiClient") {
 
 	state Future<Void> server = mockServer(&throttler);
 	wait(timeout(waitForAll(clients) && server, 60.0, Void()));
-	TraceEvent("TagQuotaTest_MultiClient").detail("Counter", counters["sampleTag"_sr]);
-	ASSERT(isNear(counters["sampleTag"_sr], 60.0 * 30.0));
+	TraceEvent("TagQuotaTest_MultiClient").detail("Counter", counters.getCount("sampleTag"_sr));
+	ASSERT(isNear(counters.getCount("sampleTag"_sr), 60.0 * 30.0));
 	return Void();
 }
 
 // Each tag receives 10 transaction/second budget
 TEST_CASE("/GrvProxyTagThrottler/MultiTag") {
-	state GrvProxyTagThrottler throttler(5.0);
-	state TransactionTagMap<uint32_t> counters;
+	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
 		rates[ThrottlingIdRef::fromTag("sampleTag1"_sr)] = 10.0;
@@ -210,17 +226,17 @@ TEST_CASE("/GrvProxyTagThrottler/MultiTag") {
 	state Future<Void> server = mockServer(&throttler);
 	wait(timeout(client1 && client2 && server, 60.0, Void()));
 	TraceEvent("TagQuotaTest_MultiTag")
-	    .detail("Counter1", counters["sampleTag1"_sr])
-	    .detail("Counter2", counters["sampleTag2"_sr]);
-	ASSERT(isNear(counters["sampleTag1"_sr], 60 * 10.0));
-	ASSERT(isNear(counters["sampleTag2"_sr], 60 * 10.0));
+	    .detail("Counter1", counters.getCount("sampleTag1"_sr))
+	    .detail("Counter2", counters.getCount("sampleTag2"_sr));
+	ASSERT(isNear(counters.getCount("sampleTag1"_sr), 60 * 10.0));
+	ASSERT(isNear(counters.getCount("sampleTag2"_sr), 60 * 10.0));
 	return Void();
 }
 
 // Test processing GetReadVersionRequests that batch several transactions
 TEST_CASE("/GrvProxyTagThrottler/Batch") {
-	state GrvProxyTagThrottler throttler(5.0);
-	state TransactionTagMap<uint32_t> counters;
+	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
 		rates[ThrottlingIdRef::fromTag("sampleTag"_sr)] = 10.0;
@@ -232,14 +248,14 @@ TEST_CASE("/GrvProxyTagThrottler/Batch") {
 	state Future<Void> server = mockServer(&throttler);
 	wait(timeout(client && server, 60.0, Void()));
 
-	TraceEvent("TagQuotaTest_Batch").detail("Counter", counters["sampleTag"_sr]);
-	ASSERT(isNear(counters["sampleTag"_sr], 60.0 * 10.0));
+	TraceEvent("TagQuotaTest_Batch").detail("Counter", counters.getCount("sampleTag"_sr));
+	ASSERT(isNear(counters.getCount("sampleTag"_sr), 60.0 * 10.0));
 	return Void();
 }
 
 // Tests cleanup of tags that are no longer throttled.
 TEST_CASE("/GrvProxyTagThrottler/Cleanup1") {
-	GrvProxyTagThrottler throttler(5.0);
+	GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
 	for (int i = 0; i < 1000; ++i) {
 		auto const tag = getRandomTag();
 		ThrottlingIdMap<double> rates;
@@ -252,7 +268,7 @@ TEST_CASE("/GrvProxyTagThrottler/Cleanup1") {
 
 // Tests cleanup of tags once queues have been emptied
 TEST_CASE("/GrvProxyTagThrottler/Cleanup2") {
-	GrvProxyTagThrottler throttler(5.0);
+	GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
 	{
 		GetReadVersionRequest req;
 		req.transactionCount = 1;
@@ -277,7 +293,7 @@ TEST_CASE("/GrvProxyTagThrottler/Cleanup2") {
 // Tests that unthrottled transactions with the same priority are released in
 // FIFO order, even when they have different tags
 TEST_CASE("/GrvProxyTagThrottler/Fifo") {
-	state GrvProxyTagThrottler throttler(5.0);
+	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
 	state Future<Void> server = mockServer(&throttler);
 	wait(mockFifoClient(&throttler));
 	return Void();
@@ -286,7 +302,7 @@ TEST_CASE("/GrvProxyTagThrottler/Fifo") {
 // Tests that unthrottled transactions are released according
 // to their priorities
 TEST_CASE("/GrvProxyTagThrottler/VariablePriorities") {
-	state GrvProxyTagThrottler throttler(5.0);
+	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
 	state Future<Void> server = mockServer(&throttler);
 	wait(mockVariablePriorityClient(&throttler));
 	return Void();
@@ -303,8 +319,8 @@ TEST_CASE("/GrvProxyTagThrottler/VariablePriorities") {
 // If the throttler is allowed to accumulate budget indefinitely
 // during the idle 60 seconds, this test will fail.
 TEST_CASE("/GrvProxyTagThrottler/LimitedIdleBudget") {
-	state GrvProxyTagThrottler throttler(5.0);
-	state TransactionTagMap<uint32_t> counters;
+	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
 		rates[ThrottlingIdRef::fromTag("sampleTag"_sr)] = 100.0;
@@ -316,7 +332,55 @@ TEST_CASE("/GrvProxyTagThrottler/LimitedIdleBudget") {
 	state Future<Void> client =
 	    mockClient(&throttler, TransactionPriority::DEFAULT, "sampleTag"_sr, 1, 200.0, &counters);
 	wait(timeout(client && server, 60.0, Void()));
-	TraceEvent("TagQuotaTest_LimitedIdleBudget").detail("Counter", counters["sampleTag"_sr]);
-	ASSERT(isNear(counters["sampleTag"_sr], 60.0 * 100.0));
+	TraceEvent("TagQuotaTest_LimitedIdleBudget").detail("Counter", counters.getCount("sampleTag"_sr));
+	ASSERT(isNear(counters.getCount("sampleTag"_sr), 60.0 * 100.0));
+	return Void();
+}
+
+TEST_CASE("/GrvProxyTagThrottler/PrioritizedThroughput") {
+	state double starvationToleranceRatio = deterministicRandom()->random01();
+	state double duration = 60.0;
+	state double throttlingRate = 100.0;
+	state int clientsPerPriority = 10;
+	state GrvProxyTagThrottler throttler(/*maxThrottleDuration*/ duration * 2.0, starvationToleranceRatio);
+	state TransactionCounters counters;
+	{
+		ThrottlingIdMap<double> rates;
+		rates[ThrottlingIdRef::fromTag("sampleTag"_sr)] = throttlingRate;
+		throttler.updateRates(rates);
+	}
+
+	state Future<Void> server = mockServer(&throttler);
+	state std::vector<Future<Void>> defaultPriorityClients;
+	state std::vector<Future<Void>> lowPriorityClients;
+	for (int i = 0; i < clientsPerPriority; ++i) {
+		defaultPriorityClients.push_back(mockClient(&throttler,
+		                                            TransactionPriority::DEFAULT,
+		                                            "sampleTag"_sr,
+		                                            1,
+		                                            throttlingRate / clientsPerPriority,
+		                                            &counters));
+		lowPriorityClients.push_back(mockClient(
+		    &throttler, TransactionPriority::LOW, "sampleTag"_sr, 1, throttlingRate / clientsPerPriority, &counters));
+	}
+	wait(timeout(server && waitForAll(defaultPriorityClients) && waitForAll(lowPriorityClients), duration, Void()));
+	auto const defaultPriorityThroughput = counters.getCount("sampleTag"_sr, TransactionPriority::DEFAULT);
+	auto const lowPriorityThroughput = counters.getCount("sampleTag"_sr, TransactionPriority::LOW);
+	TraceEvent("TagQuotaTest_PrioritizedThroughput")
+	    .detail("DefaultPriorityCounter", defaultPriorityThroughput)
+	    .detail("LowPriorityCounter", lowPriorityThroughput)
+	    .detail("StarvationToleranceRatio", starvationToleranceRatio);
+	// The released default priority throughput should be at least the
+	// throughput released using the prioritized threshold. Also, at least half
+	// of the total throughput should be default priority.
+	double const minExpectedDefaultPriorityThroughput =
+	    std::max(0.5, starvationToleranceRatio) * duration * throttlingRate;
+	// This reflects half the quantity of FIFO releases (since default priority
+	// transactions can still be released during the FIFO release stages).
+	double const minExpectedLowPriorityThroughput = 0.5 * (1 - starvationToleranceRatio) * duration * throttlingRate;
+	double const errorTolerance = 0.2;
+	ASSERT_GE(defaultPriorityThroughput, minExpectedDefaultPriorityThroughput * (1 - errorTolerance));
+	ASSERT_GE(lowPriorityThroughput, minExpectedLowPriorityThroughput * (1 - errorTolerance));
+	ASSERT(isNear(defaultPriorityThroughput + lowPriorityThroughput, duration * throttlingRate));
 	return Void();
 }

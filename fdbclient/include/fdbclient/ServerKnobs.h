@@ -833,6 +833,11 @@ public:
 	// on storage server saturation for storage servers being affected
 	// by the throttlingId in question.
 	bool THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS;
+	// For a given throttlingId and a given release window, determines the
+	// ratio of budget that is allocated based on priority, before switching
+	// to a FIFO release strategy. A value of 1.0 allows complete starvation
+	// of low-priority transactions. A value of 0.0 ignores priorities completely.
+	double LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;

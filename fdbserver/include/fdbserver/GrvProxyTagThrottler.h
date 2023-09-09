@@ -62,6 +62,7 @@ class GrvProxyTagThrottler {
 		static uint64_t rejectMaxThrottledRequests(Deque<DelayedRequest>& requests,
 		                                           double maxThrottledDuration,
 		                                           LatencyBandsMap&);
+		uint64_t prioritizedReleased{ 0 }, fifoReleased{ 0 };
 		Optional<GrvTransactionRateInfo> rateInfo;
 
 	public:
@@ -85,11 +86,12 @@ class GrvProxyTagThrottler {
 		void addRequest(GetReadVersionRequest const&);
 		bool highPriorityRequestsRemaining() const;
 		bool isEmpty() const;
+		double getExcessPrioritizedCost(double starvationToleranceRatio) const;
 
 		// Returns the number of requests rejected
 		uint64_t rejectMaxThrottledRequests(double maxThrottleDuration, LatencyBandsMap&);
 
-		bool canStart(int64_t costAlreadyReleased, int64_t cost) const;
+		Optional<int64_t> costAllowedToStart() const;
 		bool isRateInfoPresent() const;
 		void resetRateInfo();
 		void setRate(double rate);
@@ -99,17 +101,15 @@ class GrvProxyTagThrottler {
 
 	// Track the budgets for each throttlingId
 	ThrottlingIdMap<TagQueue> queues;
+
 	double maxThrottleDuration;
+	double starvationToleranceRatio;
 
 	// Track latency bands for each throttlingId
 	LatencyBandsMap latencyBandsMap;
 
-	// Get the cost of a GRV Request. If track-average-cost-on-client is enabled,
-	// the cost returned is in bytes per second, otherwise it's in transactions per second.
-	uint64_t getCost(GetReadVersionRequest const&) const;
-
 public:
-	explicit GrvProxyTagThrottler(double maxThrottleDuration);
+	explicit GrvProxyTagThrottler(double maxThrottleDuration, double starvationToleranceRatio);
 
 	// Called with rates received from ratekeeper
 	void updateRates(ThrottlingIdMap<double> const& newRates);

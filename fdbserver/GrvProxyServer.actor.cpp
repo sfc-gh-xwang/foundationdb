@@ -268,7 +268,8 @@ struct GrvProxyData {
 	    lastCommitTime(0),
 	    version(0),
 	    minKnownCommittedVersion(invalidVersion),
-	    tagThrottler(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION) {}
+	    tagThrottler(CLIENT_KNOBS->PROXY_MAX_TAG_THROTTLE_DURATION,
+	                 SERVER_KNOBS->LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO) {}
 };
 
 ACTOR Future<Void> healthMetricsRequestServer(GrvProxyInterface grvProxy,
