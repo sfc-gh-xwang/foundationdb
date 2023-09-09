@@ -106,11 +106,29 @@ uint64_t GrvProxyTagThrottler::TagQueue::rejectMaxThrottledRequests(double maxTh
 	return result;
 }
 
+bool GrvProxyTagThrottler::TagQueue::canStart(int64_t costAlreadyReleased, int64_t cost) const {
+	return !rateInfo.present() || rateInfo.get().canStart(costAlreadyReleased, cost);
+}
+
+bool GrvProxyTagThrottler::TagQueue::isRateInfoPresent() const {
+	return rateInfo.present();
+}
+
+void GrvProxyTagThrottler::TagQueue::resetRateInfo() {
+	rateInfo.reset();
+}
+
 void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
 	if (rateInfo.present()) {
 		rateInfo.get().setRate(rate);
 	} else {
 		rateInfo = createGrvTransactionRateInfo(rate);
+	}
+}
+
+void GrvProxyTagThrottler::TagQueue::startReleaseWindow() {
+	if (rateInfo.present()) {
+		rateInfo.get().startReleaseWindow();
 	}
 }
 
@@ -142,11 +160,11 @@ void GrvProxyTagThrottler::updateRates(ThrottlingIdMap<double> const& newRates) 
 	// Clean up throttling IDs that did not appear in newRates
 	for (auto& [throttlingId, queue] : queues) {
 		if (newRates.find(throttlingId) == newRates.end()) {
-			queue.rateInfo.reset();
+			queue.resetRateInfo();
 		}
 	}
 	boost::unordered::erase_if(queues,
-	                           [](const auto& kv) { return kv.second.isEmpty() && !kv.second.rateInfo.present(); });
+	                           [](const auto& kv) { return kv.second.isEmpty() && !kv.second.isRateInfoPresent(); });
 }
 
 void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {
@@ -223,9 +241,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 	auto const transactionsReleasedInitialCapacity = transactionsReleased.capacity();
 
 	for (auto& [throttlingId, queue] : queues) {
-		if (queue.rateInfo.present()) {
-			queue.rateInfo.get().startReleaseWindow();
-		}
+		queue.startReleaseWindow();
 		if (!queue.isEmpty()) {
 			// First place the count in the transactionsReleased object,
 			// then pass a reference to the count to the TagQueueHandle object
@@ -252,8 +268,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 			auto cost = getCost(delayedReq.req);
 
 			ASSERT_EQ(tagQueueHandle.getPriority().nextSequenceNumber, delayedReq.sequenceNumber);
-			if (tagQueueHandle.queue->rateInfo.present() &&
-			    !tagQueueHandle.queue->rateInfo.get().canStart(*(tagQueueHandle.numReleased), cost)) {
+			if (!tagQueueHandle.queue->canStart(*(tagQueueHandle.numReleased), cost)) {
 				// Cannot release any more transaction from this throttling ID (don't push the tag queue handle back
 				// into pqOfQueues)
 				CODE_PROBE(true, "GrvProxyTagThrottler throttling transaction");
