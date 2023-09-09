@@ -22,22 +22,29 @@
 //   - Test using tenant groups rather than tags
 class ExpectStableThroughputWorkload : public TestWorkload {
 	// Metrics:
-	struct TagMetrics {
-		HoltLinearSmoother totalDefaultPriorityCost;
-		HoltLinearSmoother totalLowPriorityCost;
-		HoltLinearSmoother defaultPriorityThrottledDuration;
-		HoltLinearSmoother lowPriorityThrottledDuration;
-		HoltLinearSmoother defaultPriorityTagThrottledErrors;
-		HoltLinearSmoother lowPriorityTagThrottledErrors;
-		TagMetrics()
-		  : totalDefaultPriorityCost(1.0, 5.0),
-		    totalLowPriorityCost(1.0, 5.0),
-		    defaultPriorityThrottledDuration(1.0, 5.0),
-		    lowPriorityThrottledDuration(1.0, 5.0),
-		    defaultPriorityTagThrottledErrors(1.0, 5.0),
-		    lowPriorityTagThrottledErrors(1.0, 5.0) {}
+	struct ThrottlingMetrics {
+		HoltLinearSmoother totalCost;
+		HoltLinearSmoother throttledDuration;
+		HoltLinearSmoother tagThrottledErrors;
+		ThrottlingMetrics() : totalCost(1.0, 5.0), throttledDuration(1.0, 5.0), tagThrottledErrors(1.0, 5.0) {}
 	};
-	boost::unordered_flat_map<TransactionTag, TagMetrics> metricsMap;
+	class PrioritizedThrottlingMetrics {
+		ThrottlingMetrics defaultPriorityMetrics, lowPriorityMetrics;
+
+	public:
+		ThrottlingMetrics& getMetrics(TransactionPriority priority) & {
+			bool const defaultPriority = (priority == TransactionPriority::DEFAULT);
+			return defaultPriority ? defaultPriorityMetrics : lowPriorityMetrics;
+		}
+		ThrottlingMetrics const& getMetrics(TransactionPriority priority) const& {
+			bool const defaultPriority = (priority == TransactionPriority::DEFAULT);
+			return defaultPriority ? defaultPriorityMetrics : lowPriorityMetrics;
+		}
+		uint64_t getTotalCost() const {
+			return defaultPriorityMetrics.totalCost.getTotal() + lowPriorityMetrics.totalCost.getTotal();
+		}
+	};
+	boost::unordered_flat_map<TransactionTag, PrioritizedThrottlingMetrics> metricsMap;
 
 	// Parameters:
 	double testDuration;
@@ -80,19 +87,11 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	                       TransactionPriority priority,
 	                       bool isTagThrottled = false) {
 		if (now() > startTime + warmupTime) {
-			auto& metrics = metricsMap[tag];
-			if (priority == TransactionPriority::DEFAULT) {
-				metrics.totalDefaultPriorityCost.addDelta(tr.getTotalCost());
-				metrics.defaultPriorityThrottledDuration.addDelta(tr.getTagThrottledDuration());
-				if (isTagThrottled) {
-					metrics.defaultPriorityTagThrottledErrors.addDelta(1.0);
-				}
-			} else {
-				metrics.totalLowPriorityCost.addDelta(tr.getTotalCost());
-				metrics.lowPriorityThrottledDuration.addDelta(tr.getTagThrottledDuration());
-				if (isTagThrottled) {
-					metrics.lowPriorityTagThrottledErrors.addDelta(1.0);
-				}
+			auto& metrics = metricsMap[tag].getMetrics(priority);
+			metrics.totalCost.addDelta(tr.getTotalCost());
+			metrics.throttledDuration.addDelta(tr.getTagThrottledDuration());
+			if (isTagThrottled) {
+				metrics.tagThrottledErrors.addDelta(1.0);
 			}
 		}
 	}
@@ -116,17 +115,19 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	ACTOR static Future<Void> loggerActor(ExpectStableThroughputWorkload* self) {
 		loop {
 			wait(delay(5.0));
-			for (auto const& [tag, metrics] : self->metricsMap) {
+			for (auto const& [tag, prioritizedMetrics] : self->metricsMap) {
+				auto const& lowPriorityMetrics = prioritizedMetrics.getMetrics(TransactionPriority::LOW);
+				auto const& defaultPriorityMetrics = prioritizedMetrics.getMetrics(TransactionPriority::DEFAULT);
 				TraceEvent te("ExpectStableThroughputWorkloadMetrics");
 				te.detail("TransactionTag", tag)
-				    .detail("DefaultPriorityThroughputRate", metrics.totalDefaultPriorityCost.smoothRate())
-				    .detail("LowPriorityThroughputRate", metrics.totalLowPriorityCost.smoothRate())
+				    .detail("DefaultPriorityThroughputRate", defaultPriorityMetrics.totalCost.smoothRate())
+				    .detail("LowPriorityThroughputRate", lowPriorityMetrics.totalCost.smoothRate())
 				    .detail("DefaultPriorityThrottledDurationRate",
-				            metrics.defaultPriorityThrottledDuration.smoothRate())
-				    .detail("LowPriorityThrottledDurationRate", metrics.lowPriorityThrottledDuration.smoothRate())
+				            defaultPriorityMetrics.throttledDuration.smoothRate())
+				    .detail("LowPriorityThrottledDurationRate", lowPriorityMetrics.throttledDuration.smoothRate())
 				    .detail("DefaultPriorityTagThrottledErrorRate",
-				            metrics.defaultPriorityTagThrottledErrors.smoothRate())
-				    .detail("LowPriorityTagThrottledErrorRate", metrics.lowPriorityTagThrottledErrors.smoothRate());
+				            defaultPriorityMetrics.tagThrottledErrors.smoothRate())
+				    .detail("LowPriorityTagThrottledErrorRate", lowPriorityMetrics.tagThrottledErrors.smoothRate());
 			}
 		}
 	}
@@ -316,9 +317,8 @@ public:
 		    testDuration * expectedThroughputPagesRate * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
 
 		bool passed = true;
-		for (auto const& [tag, metrics] : metricsMap) {
-			auto const totalCost =
-			    metrics.totalLowPriorityCost.getTotal() + metrics.totalDefaultPriorityCost.getTotal();
+		for (auto const& [tag, prioritizedMetrics] : metricsMap) {
+			auto const totalCost = prioritizedMetrics.getTotalCost();
 
 			bool tagPassed = (totalCost <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
 
@@ -346,13 +346,15 @@ public:
 		double lowPriorityTagThrottledErrors{ 0.0 };
 		double defaultPriorityThrottledDuration{ 0.0 };
 		double lowPriorityThrottledDuration{ 0.0 };
-		for (auto const& [tag, metrics] : metricsMap) {
-			totalDefaultPriorityCost += metrics.totalDefaultPriorityCost.getTotal();
-			totalLowPriorityCost += metrics.totalLowPriorityCost.getTotal();
-			defaultPriorityTagThrottledErrors += metrics.defaultPriorityTagThrottledErrors.getTotal();
-			lowPriorityTagThrottledErrors += metrics.lowPriorityTagThrottledErrors.getTotal();
-			defaultPriorityThrottledDuration += metrics.defaultPriorityThrottledDuration.getTotal();
-			lowPriorityThrottledDuration += metrics.lowPriorityThrottledDuration.getTotal();
+		for (auto const& [tag, prioritizedMetrics] : metricsMap) {
+			auto const& lowPriorityMetrics = prioritizedMetrics.getMetrics(TransactionPriority::LOW);
+			auto const& defaultPriorityMetrics = prioritizedMetrics.getMetrics(TransactionPriority::DEFAULT);
+			totalDefaultPriorityCost += defaultPriorityMetrics.totalCost.getTotal();
+			totalLowPriorityCost += lowPriorityMetrics.totalCost.getTotal();
+			defaultPriorityTagThrottledErrors += defaultPriorityMetrics.tagThrottledErrors.getTotal();
+			lowPriorityTagThrottledErrors += lowPriorityMetrics.tagThrottledErrors.getTotal();
+			defaultPriorityThrottledDuration += defaultPriorityMetrics.throttledDuration.getTotal();
+			lowPriorityThrottledDuration += lowPriorityMetrics.throttledDuration.getTotal();
 		}
 		m.emplace_back("Total Default Priority Cost", totalDefaultPriorityCost, Averaged::False);
 		m.emplace_back("Total Low Priority Cost", totalLowPriorityCost, Averaged::False);
