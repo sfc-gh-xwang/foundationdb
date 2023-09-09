@@ -192,10 +192,11 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
     Deque<GetReadVersionRequest>& outDefaultPriority) {
 	ReleaseTransactionsResult result;
 
-	struct Priority {
+	class Priority {
 		bool highPriorityRequestsRemaining;
 		uint64_t nextSequenceNumber;
 
+	public:
 		Priority(bool highPriorityRequestsRemaining, uint64_t nextSequenceNumber)
 		  : highPriorityRequestsRemaining(highPriorityRequestsRemaining),
 		    nextSequenceNumber(nextSequenceNumber) {}
@@ -214,19 +215,32 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 	};
 
 	// Pointer to a TagQueue with some extra metadata stored alongside
-	struct TagQueueHandle {
+	class TagQueueHandle {
 		// Store pointers here to avoid frequent hash map lookups
 		TagQueue* queue;
 		// Cannot be stored directly because amountReleased outlives TagQueueHandle
-		uint64_t* numReleased;
+		uint64_t* amountReleased;
+
+	public:
 		Priority getPriority() const {
 			ASSERT(!queue->isEmpty());
 			auto& delayedReq = queue->front();
 			bool const highPriorityRequestsRemaining = (delayedReq.req.priority == TransactionPriority::DEFAULT);
 			return Priority(highPriorityRequestsRemaining, delayedReq.sequenceNumber);
 		}
+		DelayedRequest const& front() const& { return queue->front(); }
+		DelayedRequest& front() & { return queue->front(); }
+		void popFront() { queue->popFront(); }
+		bool isEmpty() const { return queue->isEmpty(); }
+		bool canStart(int64_t cost) const { return queue->canStart(*amountReleased, cost); }
+		uint64_t rejectMaxThrottledRequests(double maxThrottleDuration, LatencyBandsMap& latencyBandsMap) {
+			return queue->rejectMaxThrottledRequests(maxThrottleDuration, latencyBandsMap);
+		}
+		void incrementReleased(int cost) { (*amountReleased) += cost; }
 		bool operator<(TagQueueHandle const& rhs) const { return getPriority() < rhs.getPriority(); }
-		explicit TagQueueHandle(TagQueue& queue, uint64_t& numReleased) : queue(&queue), numReleased(&numReleased) {
+		explicit TagQueueHandle(TagQueue& queue, uint64_t& amountReleased)
+		  : queue(&queue),
+		    amountReleased(&amountReleased) {
 			ASSERT(!this->queue->isEmpty());
 		}
 	};
@@ -236,22 +250,22 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 	std::priority_queue<TagQueueHandle> pqOfQueues;
 
 	// Track transactions released for each throttlingId
-	std::vector<std::pair<ThrottlingId, uint64_t>> transactionsReleased;
-	transactionsReleased.reserve(queues.size());
-	auto const transactionsReleasedInitialCapacity = transactionsReleased.capacity();
+	std::vector<std::pair<ThrottlingId, uint64_t>> costReleased;
+	costReleased.reserve(queues.size());
+	auto const costReleasedInitialCapacity = costReleased.capacity();
 
 	for (auto& [throttlingId, queue] : queues) {
 		queue.startReleaseWindow();
 		if (!queue.isEmpty()) {
-			// First place the count in the transactionsReleased object,
+			// First place the count in the costReleased object,
 			// then pass a reference to the count to the TagQueueHandle object
 			// emplaced into pqOfQueues.
 			//
 			// Because we've reserved enough space in transactionsReleased
 			// to avoid resizing, this reference should remain valid.
-			// This allows each TagQueueHandle to update its number of
-			// numReleased counter without incurring the cost of a hash map lookup.
-			auto& [_, count] = transactionsReleased.emplace_back(throttlingId, 0);
+			// This allows each TagQueueHandle to update its amountReleased
+			// counter without incurring the cost of a hash map lookup.
+			auto& [_, count] = costReleased.emplace_back(throttlingId, 0);
 			pqOfQueues.emplace(queue, count);
 		}
 	}
@@ -262,25 +276,23 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 		// Used to determine when it is time to start processing another throttlingId
 		auto const nextQueuePriority = pqOfQueues.empty() ? Priority::lowest() : pqOfQueues.top().getPriority();
 
-		while (!tagQueueHandle.queue->isEmpty()) {
-			auto& delayedReq = tagQueueHandle.queue->front();
+		while (!tagQueueHandle.isEmpty()) {
+			auto& delayedReq = tagQueueHandle.front();
+			auto const cost = getCost(delayedReq.req);
 
-			auto cost = getCost(delayedReq.req);
-
-			ASSERT_EQ(tagQueueHandle.getPriority().nextSequenceNumber, delayedReq.sequenceNumber);
-			if (!tagQueueHandle.queue->canStart(*(tagQueueHandle.numReleased), cost)) {
+			if (!tagQueueHandle.canStart(cost)) {
 				// Cannot release any more transaction from this throttling ID (don't push the tag queue handle back
 				// into pqOfQueues)
 				CODE_PROBE(true, "GrvProxyTagThrottler throttling transaction");
 				// Requests in this queue have been throttled too long and errors
 				// should be sent to clients.
 				result.rejectedRequests +=
-				    tagQueueHandle.queue->rejectMaxThrottledRequests(maxThrottleDuration, latencyBandsMap);
+				    tagQueueHandle.rejectMaxThrottledRequests(maxThrottleDuration, latencyBandsMap);
 				break;
 			} else {
 				if (tagQueueHandle.getPriority() > nextQueuePriority) {
-					// Releasing transaction
-					*(tagQueueHandle.numReleased) += cost;
+					// Releasing transactions
+					tagQueueHandle.incrementReleased(cost);
 					delayedReq.updateProxyTagThrottledDuration(latencyBandsMap);
 					if (delayedReq.req.priority == TransactionPriority::BATCH) {
 						result.batchPriorityTransactionsReleased += delayedReq.req.transactionCount;
@@ -295,7 +307,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 						// Immediate priority transactions should bypass the GrvProxyTagThrottler
 						ASSERT(false);
 					}
-					tagQueueHandle.queue->popFront();
+					tagQueueHandle.popFront();
 				} else {
 					CODE_PROBE(true, "GrvProxyTagThrottler switching throttlingIds to preserve FIFO");
 					pqOfQueues.push(tagQueueHandle);
@@ -307,17 +319,17 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 
 	// End release windows for all tag queues
 	{
-		ThrottlingIdMap<uint64_t> transactionsReleasedMap;
-		for (const auto& [throttlingId, count] : transactionsReleased) {
-			transactionsReleasedMap[throttlingId] = count;
+		ThrottlingIdMap<uint64_t> costReleasedMap;
+		for (const auto& [throttlingId, count] : costReleased) {
+			costReleasedMap[throttlingId] = count;
 		}
 		for (auto& [throttlingId, queue] : queues) {
-			queue.endReleaseWindow(transactionsReleasedMap[throttlingId], elapsed);
+			queue.endReleaseWindow(costReleasedMap[throttlingId], elapsed);
 		}
 	}
 	// If the capacity is increased, that means the vector has been illegally resized, potentially
 	// corrupting memory
-	ASSERT_EQ(transactionsReleased.capacity(), transactionsReleasedInitialCapacity);
+	ASSERT_EQ(costReleased.capacity(), costReleasedInitialCapacity);
 
 	return result;
 }
