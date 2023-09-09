@@ -25,14 +25,14 @@
 #include "fdbserver/GrvTransactionRateInfo.h"
 #include "fdbserver/LatencyBandsMap.h"
 
-// GrvProxyTagThrottler is used to throttle GetReadVersionRequests based on tag quotas
+// GrvProxyTagThrottler is used to throttle GetReadVersionRequests based on throttlingId quotas
 // before they're pushed into priority-partitioned queues.
 //
-// A GrvTransactionRateInfo object and a request queue are maintained for each tag.
+// A GrvTransactionRateInfo object and a request queue are maintained for each throttlingId.
 // The GrvTransactionRateInfo object is used to determine when a request can be released.
 //
 // Between each set of waits, releaseTransactions is run, releasing queued transactions
-// that have passed the tag throttling stage. Transactions that are not yet ready
+// that have passed the throttlingId throttling stage. Transactions that are not yet ready
 // are requeued during releaseTransactions.
 class GrvProxyTagThrottler {
 	class DelayedRequest {
@@ -82,11 +82,11 @@ class GrvProxyTagThrottler {
 		void endReleaseWindow(uint64_t numStarted, double elapsed);
 	};
 
-	// Track the budgets for each tag
+	// Track the budgets for each throttlingId
 	ThrottlingIdMap<TagQueue> queues;
 	double maxThrottleDuration;
 
-	// Track latency bands for each tag
+	// Track latency bands for each throttlingId
 	LatencyBandsMap latencyBandsMap;
 
 	// Get the cost of a GRV Request. If track-average-cost-on-client is enabled,
@@ -119,6 +119,6 @@ public:
 	void addLatencyBandThreshold(double value);
 
 public: // testing
-	// Returns number of tags tracked
+	// Returns number of throttlingIds tracked
 	uint32_t size() const;
 };
