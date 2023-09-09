@@ -640,6 +640,7 @@ public:
 	double WAIT_FOR_CONSISTENCYSCAN_JOIN_DELAY;
 	double WAIT_FOR_BLOB_MANAGER_JOIN_DELAY;
 	double WAIT_FOR_ENCRYPT_KEY_PROXY_JOIN_DELAY;
+	double WAIT_FOR_TENANT_BALANCER_JOIN_DELAY;
 	double WORKER_FAILURE_TIME;
 	double CHECK_OUTSTANDING_INTERVAL;
 	double INCOMPATIBLE_PEERS_LOGGING_INTERVAL;
@@ -665,6 +666,7 @@ public:
 	double CC_MIN_DEGRADATION_INTERVAL; // The minimum interval that a server is reported as degraded to be considered
 	                                    // as degraded by Cluster Controller.
 	double ENCRYPT_KEY_PROXY_FAILURE_TIME;
+	double TENANT_BALANCER_FAILURE_TIME;
 	int CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE; // The maximum number of degraded peers when excluding a server. When the
 	                                        // number of degraded peers is more than this value, we will not exclude
 	                                        // this server since it may because of server overload.
@@ -694,6 +696,7 @@ public:
 	                                             // router is degraded and may use trigger recovery to recover from it.
 	double CC_THROTTLE_SINGLETON_RERECRUIT_INTERVAL; // The interval to prevent re-recruiting the same singleton if a
 	                                                 // recruiting fight between two cluster controllers occurs.
+	bool CC_ENABLE_TENANT_BALANCER; // When enabled, ClusterController will recruit a process as TenantBalancer.
 
 	// Knobs used to select the best policy (via monte carlo)
 	int POLICY_RATING_TESTS; // number of tests per policy (in order to compare)

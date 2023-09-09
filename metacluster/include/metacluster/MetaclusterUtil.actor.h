@@ -69,6 +69,8 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
     WaitForMetaclusterCreation waitForMetaclusterCreation = WaitForMetaclusterCreation::False,
     WaitForDataClusterRegistration waitForDataClusterRegistration = WaitForDataClusterRegistration::False);
 
+ACTOR Future<Void> decommissionSimulatedMetacluster(SimulatedMetacluster metacluster);
+
 } // namespace metacluster::util
 
 #include "flow/unactorcompiler.h"

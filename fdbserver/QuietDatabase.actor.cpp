@@ -1319,6 +1319,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			                                                                                                     : 0;
 			int ekpCount = getSimulatedRoleCount("EncryptKeyProxy", expectedEkpCount);
 
+			int expectedTbCount = SERVER_KNOBS->CC_ENABLE_TENANT_BALANCER ? 1 : 0;
+			int tbCount = getSimulatedRoleCount("TenantBalancer", expectedTbCount);
+
 			maxVersionOffset += dbInfo->get().recoveryCount * SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT;
 
 			auto check = checker.startIteration(phase);
@@ -1350,7 +1353,8 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				    .add(evt, "ConsistencyScanCount", consistencyScanCount, 1, std::greater_equal<>())
 				    .add(evt, "BlobManagementCount", blobManagerCount, expectedBlobManagerCount, std::equal_to<>())
 				    .add(evt, "BlobMigratorCount", blobMigratorCount, -1, std::equal_to<>())
-				    .add(evt, "EncryptKeyProxyCount", ekpCount, expectedEkpCount, std::equal_to<>());
+				    .add(evt, "EncryptKeyProxyCount", ekpCount, expectedEkpCount, std::equal_to<>())
+				    .add(evt, "TenantBalancerCount", tbCount, expectedTbCount, std::equal_to<>());
 			}
 
 			evt.detail("RecoveryCount", dbInfo->get().recoveryCount).detail("NumSuccesses", numSuccesses);

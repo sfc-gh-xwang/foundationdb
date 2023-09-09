@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 
-import sys
-import shutil
-import os
-import subprocess
-import logging
 import functools
 import json
+import logging
+import os
+import random
+import shutil
+import subprocess
 import tempfile
 import time
-import random
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
 
@@ -329,6 +328,7 @@ def setclass(logger):
         "ratekeeper",
         "storage_cache",
         "backup",
+        "tenant_balancer",
     ]
     random_class_type = random.choice(class_types)
     logger.debug("Change to type: {}".format(random_class_type))

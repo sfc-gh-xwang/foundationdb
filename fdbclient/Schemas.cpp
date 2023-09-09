@@ -93,7 +93,8 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                   "master",
                   "test",
                   "storage_cache",
-                  "blob_worker"
+                  "blob_worker",
+                  "tenant_balancer"
                ]
             },
             "degraded":true,
@@ -140,7 +141,8 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                         "consistency_scan",
                         "storage_cache",
                         "router",
-                        "coordinator"
+                        "coordinator",
+                        "tenant_balancer"
                      ]
                   },
                   "tss":false,

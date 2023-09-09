@@ -335,6 +335,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( REST_KMS_ALLOW_NOT_SECURE_CONNECTION,     false ); BUGGIFY_KNOB(REST_KMS_ALLOW_NOT_SECURE_CONNECTION, randomize && BUGGIFY, !REST_KMS_ALLOW_NOT_SECURE_CONNECTION);
 	init( SIM_KMS_VAULT_MAX_KEYS,                    4096 );
 
+	init( TENANT_BALANCER_REQUEST_TIMEOUT,             20 );
+
 	// Bulk Loading
 	init( ALLOW_BULK_LOADS,                         false );
 	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );

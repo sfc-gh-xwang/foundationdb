@@ -675,6 +675,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( WAIT_FOR_CONSISTENCYSCAN_JOIN_DELAY,                   1.0 );
 	init( WAIT_FOR_BLOB_MANAGER_JOIN_DELAY,                      1.0 );
 	init( WAIT_FOR_ENCRYPT_KEY_PROXY_JOIN_DELAY,                 1.0 );
+	init( WAIT_FOR_TENANT_BALANCER_JOIN_DELAY,                   1.0 );
 	init( WORKER_FAILURE_TIME,                                   1.0 ); BUGGIFY_KNOB(WORKER_FAILURE_TIME, randomize && BUGGIFY, 10.0);
 	init( CHECK_OUTSTANDING_INTERVAL,                            0.5 ); BUGGIFY_KNOB(CHECK_OUTSTANDING_INTERVAL, randomize && BUGGIFY, 0.001);
 	init( VERSION_LAG_METRIC_INTERVAL,                           0.5 ); BUGGIFY_KNOB(VERSION_LAG_METRIC_INTERVAL, randomize && BUGGIFY, 10.0);
@@ -694,6 +695,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_WORKER_HEALTH_CHECKING_INTERVAL,                   60.0 );
 	init( CC_DEGRADED_LINK_EXPIRATION_INTERVAL,                300.0 );
 	init( CC_MIN_DEGRADATION_INTERVAL,                         120.0 );
+	init( TENANT_BALANCER_FAILURE_TIME,                          1.0 );
 	init( ENCRYPT_KEY_PROXY_FAILURE_TIME,                        0.1 ); BUGGIFY_KNOB(ENCRYPT_KEY_PROXY_FAILURE_TIME, isSimulated, 1.0 + deterministicRandom()->random01());
 	init( CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE,                      3 );
 	init( CC_MAX_EXCLUSION_DUE_TO_HEALTH,                          2 );
@@ -708,6 +710,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_SATELLITE_DEGRADATION_MIN_BAD_SERVER,                 3 );
 	init( CC_ENABLE_REMOTE_LOG_ROUTER_MONITORING,               true );
 	init( CC_THROTTLE_SINGLETON_RERECRUIT_INTERVAL,              0.5 );
+	init( CC_ENABLE_TENANT_BALANCER,                            false); BUGGIFY_KNOB(CC_ENABLE_TENANT_BALANCER, isSimulated, deterministicRandom()->coinflip());
 
 	init( INCOMPATIBLE_PEERS_LOGGING_INTERVAL,                   600 ); BUGGIFY_KNOB(INCOMPATIBLE_PEERS_LOGGING_INTERVAL, randomize && BUGGIFY, 60.0);
 	init( EXPECTED_MASTER_FITNESS,            ProcessClass::UnsetFit );
