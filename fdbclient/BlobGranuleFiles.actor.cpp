@@ -265,16 +265,13 @@ struct IndexBlockRef {
 		}
 
 		Value serializedBuff = ObjectWriter::toValue(block, IncludeVersion(ProtocolVersion::withBlobGranuleFile()));
-		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-		    eKeys.textCipherKey,
-		    eKeys.headerCipherKey,
-		    cipherKeysCtx.ivRef.begin(),
-		    AES_256_CTR_IV_LENGTH,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		    BlobCipherMetrics::BLOB_GRANULE);
+		Reference<EncryptBlobCipher> encryptor =
+		    EncryptBlobCipher::getEncryptor(eKeys.textCipherKey,
+		                                    eKeys.headerCipherKey,
+		                                    cipherKeysCtx.ivRef.begin(),
+		                                    cipherKeysCtx.ivRef.size(),
+		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    BlobCipherMetrics::BLOB_GRANULE);
 
 		BlobCipherEncryptHeaderRef headerRef;
 		if (encryptor->supportsInplaceEncryption()) {
@@ -311,7 +308,7 @@ struct IndexBlockRef {
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(eKeys.textCipherKey,
 		                                                                         eKeys.headerCipherKey,
 		                                                                         cipherKeysCtx.ivRef.begin(),
-		                                                                         headerRef.getEncryptMode(),
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
 		                                                                         BlobCipherMetrics::BLOB_GRANULE);
 		if (decryptor->supportsInplaceDecryption()) {
 			decrypted = StringRef(idxRef.buffer.begin(), idxRef.buffer.size());
@@ -404,16 +401,13 @@ struct IndexBlobGranuleFileChunkRef {
 			TraceEvent(SevDebug, "BlobChunkEncrypt_Before").detail("Chksum", chksum);
 		}
 
-		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-		    eKeys.textCipherKey,
-		    eKeys.headerCipherKey,
-		    cipherKeysCtx.ivRef.begin(),
-		    AES_256_CTR_IV_LENGTH,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		    BlobCipherMetrics::BLOB_GRANULE);
+		Reference<EncryptBlobCipher> encryptor =
+		    EncryptBlobCipher::getEncryptor(eKeys.textCipherKey,
+		                                    eKeys.headerCipherKey,
+		                                    cipherKeysCtx.ivRef.begin(),
+		                                    cipherKeysCtx.ivRef.size(),
+		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    BlobCipherMetrics::BLOB_GRANULE);
 		BlobCipherEncryptHeaderRef headerRef;
 		if (encryptor->supportsInplaceEncryption()) {
 			encryptor->encryptInplace(mutateString(chunkRef.buffer), chunkRef.buffer.size(), &headerRef);
@@ -450,7 +444,7 @@ struct IndexBlobGranuleFileChunkRef {
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(eKeys.textCipherKey,
 		                                                                         eKeys.headerCipherKey,
 		                                                                         cipherKeysCtx.ivRef.begin(),
-		                                                                         headerRef.getEncryptMode(),
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
 		                                                                         BlobCipherMetrics::BLOB_GRANULE);
 		if (decryptor->supportsInplaceDecryption()) {
 			decrypted = StringRef(chunkRef.buffer.begin(), chunkRef.buffer.size());
@@ -1771,8 +1765,9 @@ BlobGranuleCipherKeysCtx getCipherKeysCtx(Arena& arena) {
 	cipherKeysCtx.headerCipherKey.salt = encryptSalt;
 	cipherKeysCtx.headerCipherKey.baseCipher = StringRef(arena, encryptBaseCipher);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO));
+	cipherKeysCtx.ivRef = makeString(ivLength, arena);
+	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), ivLength);
 
 	return cipherKeysCtx;
 }

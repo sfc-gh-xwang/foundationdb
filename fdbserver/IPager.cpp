@@ -51,10 +51,10 @@ TEST_CASE("/fdbserver/IPager/ArenaPage/PageContentChecksum") {
 			page->encryptionKey.aesKey.cipherTextKey = cipherKey;
 			page->encryptionKey.aesKey.cipherHeaderKey = cipherKey;
 			if (encodingType == AESEncryption) {
-				g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ false }));
+				g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
 			} else {
-				g_knobs.setKnob("encrypt_header_auth_token_enabled", KnobValueRef::create(bool{ true }));
-				g_knobs.setKnob("encrypt_header_auth_token_algo", KnobValueRef::create(int{ 1 }));
+				g_knobs.setKnob("encryption_at_rest_algo",
+				                KnobValueRef::create(getRandomAuthenticatedEncryptionAtRestAlgo()));
 			}
 		} else if (encodingType == XOREncryption_TestOnly) {
 			page->encryptionKey.xorKey = deterministicRandom()->randomInt(0, std::numeric_limits<uint8_t>::max());
@@ -72,7 +72,8 @@ TEST_CASE("/fdbserver/IPager/ArenaPage/PageContentChecksum") {
 			UNREACHABLE();
 		} catch (Error& e) {
 			if (encodingType == AESEncryptionWithAuth) {
-				ASSERT_EQ(e.code(), error_code_encrypt_header_authtoken_mismatch);
+				ASSERT(e.code() == error_code_encrypt_header_authtoken_mismatch ||
+				       e.code() == error_code_encrypt_ops_error);
 			} else {
 				ASSERT_EQ(e.code(), error_code_page_decoding_failed);
 			}

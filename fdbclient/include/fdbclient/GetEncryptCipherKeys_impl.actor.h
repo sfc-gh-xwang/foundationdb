@@ -412,15 +412,15 @@ Future<TextAndHeaderCipherKeys> _getEncryptCipherKeys(Reference<AsyncVar<T> cons
                                                       BlobCipherMetrics::UsageType usageType,
                                                       Reference<GetEncryptCipherKeysMonitor> monitor,
                                                       Optional<UID> debugId) {
-	state bool authenticatedEncryption = header.getAuthTokenMode() != ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
+	state bool requiresHeaderCipherKey = needsHeaderCipherKey(header.getEncryptionAtRestAlgo());
 	state EncryptHeaderCipherDetails details = header.getCipherDetails();
 
 	ASSERT(details.textCipherDetails.isValid());
-	ASSERT(!authenticatedEncryption ||
+	ASSERT(!requiresHeaderCipherKey ||
 	       (details.headerCipherDetails.present() && details.headerCipherDetails.get().isValid()));
 
 	std::unordered_set<BlobCipherDetails> cipherDetails{ details.textCipherDetails };
-	if (authenticatedEncryption) {
+	if (requiresHeaderCipherKey) {
 		cipherDetails.insert(details.headerCipherDetails.get());
 	}
 
@@ -436,10 +436,10 @@ Future<TextAndHeaderCipherKeys> _getEncryptCipherKeys(Reference<AsyncVar<T> cons
 		                                               : result.cipherTextKey = iter->second;
 	};
 	setCipherKey(details.textCipherDetails, result);
-	if (authenticatedEncryption) {
+	if (requiresHeaderCipherKey) {
 		setCipherKey(details.headerCipherDetails.get(), result);
 	}
-	ASSERT(result.cipherTextKey.isValid() && (!authenticatedEncryption || result.cipherHeaderKey.isValid()));
+	ASSERT(result.cipherTextKey.isValid() && (!requiresHeaderCipherKey || result.cipherHeaderKey.isValid()));
 
 	return result;
 }

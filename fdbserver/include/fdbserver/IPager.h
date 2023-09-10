@@ -423,14 +423,11 @@ public:
 		                   int len,
 		                   PhysicalPageID seed) {
 			Header* h = reinterpret_cast<Header*>(header);
-			Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
-			    cipherKeys.cipherTextKey,
-			    cipherKeys.cipherHeaderKey,
-			    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-			    getAuthTokenAlgoFromMode(
-			        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-			    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-			    BlobCipherMetrics::KV_REDWOOD);
+			Reference<EncryptBlobCipher> cipher =
+			    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
+			                                    cipherKeys.cipherHeaderKey,
+			                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+			                                    BlobCipherMetrics::KV_REDWOOD);
 			Arena arena;
 
 			BlobCipherEncryptHeaderRef headerRef;
@@ -479,7 +476,7 @@ public:
 			Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
 			                                                                      cipherKeys.cipherHeaderKey,
 			                                                                      headerRef.getIV(),
-			                                                                      headerRef.getEncryptMode(),
+			                                                                      headerRef.getEncryptionAtRestAlgo(),
 			                                                                      BlobCipherMetrics::KV_REDWOOD);
 			if (cipher->supportsInplaceDecryption()) {
 				cipher->decryptInplace(payload, len, headerRef, decryptTime);

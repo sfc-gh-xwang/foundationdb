@@ -31,6 +31,8 @@ EncryptCipherMode encryptModeFromString(const std::string& modeStr) {
 		return ENCRYPT_CIPHER_MODE_NONE;
 	} else if (modeStr == "AES-256-CTR") {
 		return ENCRYPT_CIPHER_MODE_AES_256_CTR;
+	} else if (modeStr == "AES-256-GCM") {
+		return ENCRYPT_CIPHER_MODE_AES_256_GCM;
 	} else {
 		TraceEvent("EncryptModeFromString").detail("Mode", modeStr);
 		throw not_implemented();
@@ -94,27 +96,6 @@ bool isEncryptHeaderAuthTokenDetailsValid(const EncryptAuthTokenMode mode, const
 	return true;
 }
 
-// Routine enables mapping EncryptHeader authTokenAlgo for a given authTokenMode; rules followed are:
-// 1. AUTH_TOKEN_NONE overrides authTokenAlgo configuration (as expected)
-// 2. AuthToken mode governed by the FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ALGO
-EncryptAuthTokenAlgo getAuthTokenAlgoFromMode(const EncryptAuthTokenMode mode) {
-	EncryptAuthTokenAlgo algo;
-
-	if (mode == EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE) {
-		// TOKEN_MODE_NONE overrides authTokenAlgo
-		algo = EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE;
-	} else {
-		algo = (EncryptAuthTokenAlgo)FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ALGO;
-		// Ensure cluster authTokenAlgo sanity
-		if (algo == EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE) {
-			TraceEvent(SevWarn, "AuthTokenAlgoMisconfiguration").detail("Algo", algo).detail("Mode", mode);
-			throw not_implemented();
-		}
-	}
-	ASSERT(isEncryptHeaderAuthTokenDetailsValid(mode, algo));
-	return algo;
-}
-
 EncryptAuthTokenMode getRandomAuthTokenMode() {
 	return deterministicRandom()->coinflip() ? EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE
 	                                         : EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE;
@@ -139,4 +120,74 @@ bool isEncryptHeaderDomain(EncryptCipherDomainId domainId) {
 
 bool isCipherModeSupported(EncryptCipherMode mode) {
 	return mode >= ENCRYPT_CIPHER_MODE_AES_256_CTR && mode < ENCRYPT_CIPHER_MODE_LAST;
+}
+
+EncryptionAtRestAlgo encryptionAlgoFromString(const std::string& algoStr) {
+	if (algoStr == "AES-256-CTR") {
+		return EncryptionAtRestAlgo::AES_CTR;
+	} else if (algoStr == "AES-256-CMAC") {
+		return EncryptionAtRestAlgo::AES_CTR_CMAC;
+	} else if (algoStr == "AES-256-HMAC") {
+		return EncryptionAtRestAlgo::AES_CTR_HMAC;
+	} else if (algoStr == "AES-256-GCM") {
+		return EncryptionAtRestAlgo::AES_GCM;
+	}
+	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("AlgoStr", algoStr);
+	throw not_implemented();
+}
+
+EncryptAuthTokenAlgo authTokenAlgoFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) {
+	if (algo == EncryptionAtRestAlgo::AES_CTR) {
+		return EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE;
+	} else if (algo == EncryptionAtRestAlgo::AES_CTR_CMAC) {
+		return EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC;
+	} else if (algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
+		return EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_HMAC_SHA;
+	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
+		return EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM;
+	}
+	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("Algo", algo);
+	throw not_implemented();
+}
+
+EncryptCipherMode cipherModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) {
+	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
+		return EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR;
+	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
+		return EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM;
+	}
+	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("Algo", algo);
+	throw not_implemented();
+}
+
+EncryptAuthTokenMode authTokenModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) {
+	if (algo == EncryptionAtRestAlgo::AES_GCM || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
+		return EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE;
+	} else if (algo == EncryptionAtRestAlgo::AES_CTR) {
+		return EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
+	}
+	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("Algo", algo);
+	throw not_implemented();
+}
+
+bool isAuthenticatedEncryption(EncryptionAtRestAlgo algo) {
+	if (algo == EncryptionAtRestAlgo::AES_GCM || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
+		return true;
+	} else if (algo == EncryptionAtRestAlgo::AES_CTR) {
+		return false;
+	}
+	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("Algo", algo);
+	throw not_implemented();
+}
+
+bool needsHeaderCipherKey(EncryptionAtRestAlgo algo) {
+	return isAuthenticatedEncryption(algo) && algo != EncryptionAtRestAlgo::AES_GCM;
+}
+
+std::string getRandomAuthenticatedEncryptionAtRestAlgo() {
+	std::vector<std::string> encryptionAlgos = { "AES-256-CMAC", "AES-256-HMAC", "AES-256-GCM" };
+	return deterministicRandom()->randomChoice(encryptionAlgos);
 }

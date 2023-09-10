@@ -321,9 +321,7 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( ENCRYPT_KEY_CACHE_LOGGING_INTERVAL,                  5.0 );
 	init( ENCRYPT_KEY_CACHE_LATENCY_LOGGING_INTERVAL,         60.0 );
 	init( ENCRYPT_KEY_CACHE_LOGGING_SKETCH_ACCURACY,          0.01 );
-	// Refer to EncryptUtil::EncryptAuthTokenAlgo for more details
-	init( ENCRYPT_HEADER_AUTH_TOKEN_ENABLED,                 false ); BUGGIFY_KNOB(ENCRYPT_HEADER_AUTH_TOKEN_ENABLED, randomize && BUGGIFY, !ENCRYPT_HEADER_AUTH_TOKEN_ENABLED);
-	init( ENCRYPT_HEADER_AUTH_TOKEN_ALGO,                        0 ); BUGGIFY_KNOB(ENCRYPT_HEADER_AUTH_TOKEN_ALGO, randomize && ENCRYPT_HEADER_AUTH_TOKEN_ENABLED, getRandomAuthTokenAlgo());
+	init( ENCRYPTION_AT_REST_ALGO,                   "AES-256-CTR" ); if (randomize && BUGGIFY) ENCRYPTION_AT_REST_ALGO = getRandomAuthenticatedEncryptionAtRestAlgo();
 
 	// REST Client
 	init( RESTCLIENT_MAX_CONNECTIONPOOL_SIZE,                   10 );
