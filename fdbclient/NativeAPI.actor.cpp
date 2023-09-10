@@ -6383,11 +6383,15 @@ void Transaction::atomicOp(const KeyRef& key,
 	CODE_PROBE(true, "NativeAPI atomic operation");
 }
 
-void TransactionState::addClearCost() {
+static uint64_t getClearCost() {
 	// NOTE: The throttling cost of each clear is assumed to be one page.
 	// This makes compuation fast, but can be inaccurate and may
 	// underestimate the cost of large clears.
-	addWriteCost(getWriteOperationCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE));
+	return getWriteOperationCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+}
+
+void TransactionState::addClearCost() {
+	addWriteCost(getClearCost());
 }
 
 void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRange) {
@@ -6825,30 +6829,8 @@ ACTOR Future<Optional<ClientTrCommitCostEstimation>> estimateCommitCosts(Referen
 				++trCommitCosts.expensiveCostEstCount;
 				++trState->cx->transactionsExpensiveClearCostEstCount;
 			} else {
-				if (trState->hasTenant()) {
-					wait(trState->tenant().get()->ready());
-				}
-				std::vector<KeyRangeLocationInfo> locations =
-				    wait(getKeyRangeLocations(trState,
-				                              keyRange,
-				                              CLIENT_KNOBS->TOO_MANY,
-				                              Reverse::False,
-				                              &StorageServerInterface::getShardState,
-				                              UseTenant::True));
-				if (locations.empty()) {
-					continue;
-				}
-
-				uint64_t bytes = 0;
-				if (locations.size() == 1) {
-					bytes = CLIENT_KNOBS->INCOMPLETE_SHARD_PLUS;
-				} else { // small clear on the boundary will hit two shards but be much smaller than the shard size
-					bytes = CLIENT_KNOBS->INCOMPLETE_SHARD_PLUS * 2 +
-					        (locations.size() - 2) * (int64_t)trState->cx->smoothMidShardSize.smoothTotal();
-				}
-
-				trCommitCosts.clearIdxCosts.emplace_back(i, getWriteOperationCost(bytes));
-				trCommitCosts.writeCosts += getWriteOperationCost(bytes);
+				trCommitCosts.clearIdxCosts.emplace_back(i, getClearCost());
+				trCommitCosts.writeCosts += getClearCost();
 			}
 		}
 	}
