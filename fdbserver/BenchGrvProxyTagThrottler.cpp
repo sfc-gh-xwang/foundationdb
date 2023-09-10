@@ -6,14 +6,15 @@
 
 static void bench_grvProxyTagThrottler(benchmark::State& state) {
 	GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	int numReqs = state.range(0);
 
 	std::vector<GetReadVersionRequest> reqs;
 	Arena arena;
 
-	for (int i = 0; i < state.range(0); ++i) {
+	for (int i = 0; i < numReqs; ++i) {
 		auto& req = reqs.emplace_back();
 
-		req.priority = TransactionPriority::DEFAULT;
+		req.priority = deterministicRandom()->coinflip() ? TransactionPriority::DEFAULT : TransactionPriority::LOW;
 		req.transactionCount = 1;
 		req.throttlingId = ThrottlingIdRef::fromTag(deterministicRandom()->randomAlphaNumeric(10));
 	}
@@ -32,7 +33,7 @@ static void bench_grvProxyTagThrottler(benchmark::State& state) {
 		throttler.releaseTransactions(/*elapsed=*/0.01, outBatchPriority, outDefaultPriority);
 	}
 
-	state.SetItemsProcessed(state.range(0) * static_cast<long>(state.iterations()));
+	state.SetItemsProcessed(numReqs * static_cast<long>(state.iterations()));
 }
 
 BENCHMARK(bench_grvProxyTagThrottler)->RangeMultiplier(10)->Range(1, 100000);
