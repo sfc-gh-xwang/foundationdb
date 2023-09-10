@@ -325,7 +325,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 			// then pass a reference to the count to the TagQueueHandle object
 			// emplaced into pqOfQueues.
 			//
-			// Because we've reserved enough space in transactionsReleased
+			// Because we've reserved enough space in costReleased
 			// to avoid resizing, this reference should remain valid.
 			// This allows each TagQueueHandle to update its amountReleased
 			// counter without incurring the cost of a hash map lookup.

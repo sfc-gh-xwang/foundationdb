@@ -28,6 +28,20 @@ public:
 	}
 };
 
+TransactionTag getRandomTag() {
+	TransactionTag result;
+	auto arr = new (result.arena()) uint8_t[32];
+	for (int i = 0; i < 32; ++i) {
+		arr[i] = (uint8_t)deterministicRandom()->randomInt(0, 256);
+	}
+	result.contents() = TransactionTagRef(arr, 32);
+	return result;
+}
+
+bool isNear(double desired, uint64_t actual) {
+	return std::abs(desired - actual) * 10 < desired;
+}
+
 } // namespace
 
 ACTOR static Future<Void> mockClient(GrvProxyTagThrottler* throttler,
@@ -152,104 +166,116 @@ ACTOR static Future<Void> mockServer(GrvProxyTagThrottler* throttler) {
 	}
 }
 
-static TransactionTag getRandomTag() {
-	TransactionTag result;
-	auto arr = new (result.arena()) uint8_t[32];
-	for (int i = 0; i < 32; ++i) {
-		arr[i] = (uint8_t)deterministicRandom()->randomInt(0, 256);
-	}
-	result.contents() = TransactionTagRef(arr, 32);
-	return result;
-}
-
-static bool isNear(double desired, uint64_t actual) {
-	return std::abs(desired - actual) * 10 < desired;
-}
-
 // Rate limit set at 10, but client attempts 20 transactions per second.
 // Client should be throttled to only 10 transactions per second.
 TEST_CASE("/GrvProxyTagThrottler/Simple") {
 	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state double throttledThroughput = 10.0;
+	state double attemptedThroughput = 20.0;
+	state double duration = 60.0;
 	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
-		rates[ThrottlingId::fromTag("sampleTag"_sr)] = 10.0;
+		rates[ThrottlingId::fromTag("sampleTag"_sr)] = throttledThroughput;
 		throttler.updateRates(rates);
 	}
 
-	state Future<Void> client =
-	    mockClient(&throttler, TransactionPriority::DEFAULT, "sampleTag"_sr, 1, 20.0, &counters);
+	state Future<Void> client = mockClient(
+	    &throttler, TransactionPriority::DEFAULT, "sampleTag"_sr, /*batchSize=*/1, attemptedThroughput, &counters);
 	state Future<Void> server = mockServer(&throttler);
-	wait(timeout(client && server, 60.0, Void()));
+	wait(timeout(client && server, duration, Void()));
 	TraceEvent("TagQuotaTest_Simple").detail("Counter", counters.getCount("sampleTag"_sr));
-	ASSERT(isNear(counters.getCount("sampleTag"_sr), 60.0 * 10.0));
+	ASSERT(isNear(counters.getCount("sampleTag"_sr), duration * throttledThroughput));
 	return Void();
 }
 
 // Clients share the available 30 transaction/second budget
 TEST_CASE("/GrvProxyTagThrottler/MultiClient") {
 	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state double duration = 60.0;
+	state double attemptedThroughputPerClient = 10.0;
+	state double throttledThroughput = 30.0;
 	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
-		rates[ThrottlingIdRef::fromTag("sampleTag"_sr)] = 30.0;
+		rates[ThrottlingIdRef::fromTag("sampleTag"_sr)] = throttledThroughput;
 		throttler.updateRates(rates);
 	}
 
 	state std::vector<Future<Void>> clients;
 	clients.reserve(10);
 	for (int i = 0; i < 10; ++i) {
-		clients.push_back(mockClient(&throttler, TransactionPriority::DEFAULT, "sampleTag"_sr, 1, 10.0, &counters));
+		clients.push_back(mockClient(&throttler,
+		                             TransactionPriority::DEFAULT,
+		                             "sampleTag"_sr,
+		                             /*batchSize=*/1,
+		                             attemptedThroughputPerClient,
+		                             &counters));
 	}
 
 	state Future<Void> server = mockServer(&throttler);
-	wait(timeout(waitForAll(clients) && server, 60.0, Void()));
+	wait(timeout(waitForAll(clients) && server, duration, Void()));
 	TraceEvent("TagQuotaTest_MultiClient").detail("Counter", counters.getCount("sampleTag"_sr));
-	ASSERT(isNear(counters.getCount("sampleTag"_sr), 60.0 * 30.0));
+	ASSERT(isNear(counters.getCount("sampleTag"_sr), duration * throttledThroughput));
 	return Void();
 }
 
 // Each tag receives 10 transaction/second budget
 TEST_CASE("/GrvProxyTagThrottler/MultiTag") {
 	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state double duration = 60.0;
+	state double attemptedThroughputPerTag = 20.0;
+	state double throttledThroughputPerTag = 10.0;
 	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
-		rates[ThrottlingIdRef::fromTag("sampleTag1"_sr)] = 10.0;
-		rates[ThrottlingIdRef::fromTag("sampleTag2"_sr)] = 10.0;
+		rates[ThrottlingIdRef::fromTag("sampleTag1"_sr)] = throttledThroughputPerTag;
+		rates[ThrottlingIdRef::fromTag("sampleTag2"_sr)] = throttledThroughputPerTag;
 		throttler.updateRates(rates);
 	}
-	state Future<Void> client1 =
-	    mockClient(&throttler, TransactionPriority::DEFAULT, "sampleTag1"_sr, 1, 20.0, &counters);
-	state Future<Void> client2 =
-	    mockClient(&throttler, TransactionPriority::DEFAULT, "sampleTag2"_sr, 1, 20.0, &counters);
+	state Future<Void> client1 = mockClient(&throttler,
+	                                        TransactionPriority::DEFAULT,
+	                                        "sampleTag1"_sr,
+	                                        /*batchSize=*/1,
+	                                        attemptedThroughputPerTag,
+	                                        &counters);
+	state Future<Void> client2 = mockClient(&throttler,
+	                                        TransactionPriority::DEFAULT,
+	                                        "sampleTag2"_sr,
+	                                        /*batchSize=*/1,
+	                                        attemptedThroughputPerTag,
+	                                        &counters);
 	state Future<Void> server = mockServer(&throttler);
-	wait(timeout(client1 && client2 && server, 60.0, Void()));
+	wait(timeout(client1 && client2 && server, duration, Void()));
 	TraceEvent("TagQuotaTest_MultiTag")
 	    .detail("Counter1", counters.getCount("sampleTag1"_sr))
 	    .detail("Counter2", counters.getCount("sampleTag2"_sr));
-	ASSERT(isNear(counters.getCount("sampleTag1"_sr), 60 * 10.0));
-	ASSERT(isNear(counters.getCount("sampleTag2"_sr), 60 * 10.0));
+	ASSERT(isNear(counters.getCount("sampleTag1"_sr), duration * throttledThroughputPerTag));
+	ASSERT(isNear(counters.getCount("sampleTag2"_sr), duration * throttledThroughputPerTag));
 	return Void();
 }
 
 // Test processing GetReadVersionRequests that batch several transactions
 TEST_CASE("/GrvProxyTagThrottler/Batch") {
 	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state double duration = 60.0;
+	state double attemptedThroughput = 20.0;
+	state double throttledThroughput = 10.0;
+	state int batchSize = 5;
 	state TransactionCounters counters;
 	{
 		ThrottlingIdMap<double> rates;
-		rates[ThrottlingIdRef::fromTag("sampleTag"_sr)] = 10.0;
+		rates[ThrottlingIdRef::fromTag("sampleTag"_sr)] = throttledThroughput;
 		throttler.updateRates(rates);
 	}
 
 	state Future<Void> client =
-	    mockClient(&throttler, TransactionPriority::DEFAULT, "sampleTag"_sr, 5, 20.0, &counters);
+	    mockClient(&throttler, TransactionPriority::DEFAULT, "sampleTag"_sr, batchSize, attemptedThroughput, &counters);
 	state Future<Void> server = mockServer(&throttler);
-	wait(timeout(client && server, 60.0, Void()));
+	wait(timeout(client && server, duration, Void()));
 
 	TraceEvent("TagQuotaTest_Batch").detail("Counter", counters.getCount("sampleTag"_sr));
-	ASSERT(isNear(counters.getCount("sampleTag"_sr), 60.0 * 10.0));
+	ASSERT(isNear(counters.getCount("sampleTag"_sr), duration * throttledThroughput));
 	return Void();
 }
 
@@ -311,7 +337,7 @@ TEST_CASE("/GrvProxyTagThrottler/VariablePriorities") {
 // Tests that while throughput is low, the tag throttler
 // does not accumulate too much budget.
 //
-// A server is setup to server 100 transactions per second,
+// A server is setup to serve 100 transactions per second,
 // then runs idly for 60 seconds. Then a client starts
 // and attempts 200 transactions per second for 60 seconds.
 // The server throttles the client to only achieve
@@ -337,6 +363,15 @@ TEST_CASE("/GrvProxyTagThrottler/LimitedIdleBudget") {
 	return Void();
 }
 
+// Tests that throughput is properly distributed when using
+// different transaction priorities.
+//
+// The server throttles clients to only achieve 100 transactions
+// per second. 20 clients attempt 10 transactions per second each.
+// Half of these clients run with low priority and the other half
+// run with default priority. Based on the randomly chosen
+// starvation tolerance ratio, aggregate throughput from each set
+// of clients is expected to fall within certain bounds.
 TEST_CASE("/GrvProxyTagThrottler/PrioritizedThroughput") {
 	state double starvationToleranceRatio = deterministicRandom()->random01();
 	state double duration = 60.0;
