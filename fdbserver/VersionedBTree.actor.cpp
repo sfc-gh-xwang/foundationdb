@@ -2599,22 +2599,35 @@ public:
 			page = page->clone();
 		}
 
-		page->preWrite(pageIDs.front());
-
-		int blockSize = header ? smallestPhysicalBlock : physicalPageSize;
 		Future<Void> f;
-		if (pageIDs.size() == 1) {
-			f = writePhysicalBlock(this, page, 0, blockSize, pageIDs.front(), reason, level, header);
-		} else {
-			CODE_PROBE(true, "DWALPager write physical page with multiple blocks");
-			std::vector<Future<Void>> writers;
-			for (int i = 0; i < pageIDs.size(); ++i) {
-				Future<Void> p = writePhysicalBlock(this, page, i, blockSize, pageIDs[i], reason, level, header);
-				writers.push_back(p);
-			}
-			f = waitForAll(writers);
+		if (page->isEncrypted()) {
+			f = map(keyProvider->enableEncryptionDomain()
+			            ? keyProvider->getLatestEncryptionKey(page->getEncryptionDomainId())
+			            : keyProvider->getLatestDefaultEncryptionKey(),
+			        [=](ArenaPage::EncryptionKey k) {
+				        page->encryptionKey = k;
+				        return Void();
+			        });
 		}
 
+		auto w = [=](Void) {
+			page->preWrite(pageIDs.front());
+
+			int blockSize = header ? smallestPhysicalBlock : physicalPageSize;
+			if (pageIDs.size() == 1) {
+				return writePhysicalBlock(this, page, 0, blockSize, pageIDs.front(), reason, level, header);
+			} else {
+				CODE_PROBE(true, "DWALPager write physical page with multiple blocks");
+				std::vector<Future<Void>> writers;
+				for (int i = 0; i < pageIDs.size(); ++i) {
+					Future<Void> p = writePhysicalBlock(this, page, i, blockSize, pageIDs[i], reason, level, header);
+					writers.push_back(p);
+				}
+				return waitForAll(writers);
+			}
+		};
+
+		f = f.isValid() ? mapAsync(f, w) : w(Void());
 		operations.push_back(f);
 		return f;
 	}
@@ -2860,6 +2873,9 @@ public:
 					throw unexpected_encoding_type();
 				}
 				ArenaPage::EncryptionKey k = wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader()));
+				if (page->isAESEncrypted()) {
+					page->encryptionDomainId = k.aesKey.cipherTextKey->getDomainId();
+				}
 				page->encryptionKey = k;
 			}
 			double decryptTime = 0;
@@ -2947,6 +2963,9 @@ public:
 					throw unexpected_encoding_type();
 				}
 				ArenaPage::EncryptionKey k = wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader()));
+				if (page->isAESEncrypted()) {
+					page->encryptionDomainId = k.aesKey.cipherTextKey->getDomainId();
+				}
 				page->encryptionKey = k;
 			}
 			double decryptTime = 0;
@@ -5354,6 +5373,9 @@ public:
 			debug_printf("new root %s\n", toString(self->m_header.root).c_str());
 
 			Reference<ArenaPage> page = wait(makeEmptyRoot(self));
+			if (self->m_keyProvider->enableEncryptionDomain()) {
+				page->encryptionDomainId = self->m_keyProvider->getDefaultEncryptionDomainId();
+			}
 
 			// Newly allocated page so logical id = physical id and it's a new empty root so no parent
 			page->setLogicalPageInfo(self->m_header.root.front(), invalidLogicalPageID);
@@ -6201,11 +6223,9 @@ private:
 			state Reference<ArenaPage> page = self->m_pager->newPageBuffer(p->blockCount);
 			page->init(
 			    self->m_encodingType, (p->blockCount == 1) ? PageType::BTreeNode : PageType::BTreeSuperNode, height);
-			if (page->isEncrypted()) {
-				ArenaPage::EncryptionKey k =
-				    wait(enableEncryptionDomain ? self->m_keyProvider->getLatestEncryptionKey(p->domainId.get())
-				                                : self->m_keyProvider->getLatestDefaultEncryptionKey());
-				page->encryptionKey = k;
+			if (enableEncryptionDomain) {
+				page->encryptionDomainId =
+				    enableEncryptionDomain ? p->domainId : self->m_keyProvider->getDefaultEncryptionDomainId();
 			}
 
 			BTreePage* btPage = (BTreePage*)page->mutateData();
@@ -7788,6 +7808,9 @@ private:
 				self->m_header.height = 1;
 
 				Reference<ArenaPage> page = wait(makeEmptyRoot(self));
+				if (self->m_keyProvider->enableEncryptionDomain()) {
+					page->encryptionDomainId = self->m_keyProvider->getDefaultEncryptionDomainId();
+				}
 				// Newly allocated page so logical id = physical id and there is no parent as this is a new root
 				page->setLogicalPageInfo(rootNodeLink.front(), invalidLogicalPageID);
 				self->m_pager->updatePage(PagerEventReasons::Commit, self->m_header.height, rootNodeLink, page);

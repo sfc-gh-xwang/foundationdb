@@ -551,6 +551,7 @@ public:
 
 		// Non-verifying header parse just to initialize members
 		p->postReadHeader(invalidPhysicalPageID, false);
+		p->encryptionDomainId = encryptionDomainId;
 		p->encryptionKey = encryptionKey;
 
 		return Reference<ArenaPage>(p);
@@ -674,15 +675,19 @@ public:
 	// Returns true if the page's encoding type employs encryption
 	bool isEncrypted() const { return isEncodingTypeEncrypted(getEncodingType()); }
 
+	// Returns true if the page's encoding type employs AES encrytpion
+	bool isAESEncrypted() const { return isEncodingTypeAESEncrypted(getEncodingType()); }
+
 	// Return encryption domain id used. This method only use information from the encryptionKey.
 	// Caller should make sure encryption domain is in use.
 	int64_t getEncryptionDomainId() const {
 		// encryption domain is only supported by AESEncryption and AESEncryptionWithAuth.
-		ASSERT(getEncodingType() == EncodingType::AESEncryption ||
-		       getEncodingType() == EncodingType::AESEncryptionWithAuth);
-		const Reference<BlobCipherKey>& cipherKey = encryptionKey.aesKey.cipherTextKey;
-		ASSERT(cipherKey.isValid());
-		return cipherKey->getDomainId();
+		ASSERT(isAESEncrypted());
+		ASSERT(encryptionDomainId.present());
+		if (g_network->isSimulated() && encryptionKey.aesKey.cipherTextKey.isValid()) {
+			ASSERT(encryptionDomainId.get() == encryptionKey.aesKey.cipherTextKey->getDomainId());
+		}
+		return encryptionDomainId.get();
 	}
 
 	// Return pointer to encoding header.
@@ -724,6 +729,7 @@ public:
 	}
 
 	// Used by encodings that do encryption
+	Optional<int64_t> encryptionDomainId;
 	EncryptionKey encryptionKey;
 
 	// Whether encoding header is set
