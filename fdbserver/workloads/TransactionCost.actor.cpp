@@ -62,34 +62,34 @@ class TransactionCostWorkload : public TestWorkload {
 		int64_t expectedFinalCost() const override { return CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 	};
 
-	class ReadLargeValueTest : public ITest {
-		ACTOR static Future<Void> setup(TransactionCostWorkload const* workload,
-		                                ReadLargeValueTest* self,
-		                                Database cx) {
-			state Transaction tr(cx);
-			loop {
-				try {
-					tr.set(workload->getKey(self->testNumber), getValue(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE));
-					wait(tr.commit());
-					return Void();
-				} catch (Error& e) {
-					wait(tr.onError(e));
-				}
+	ACTOR static Future<Void> setupLargeValue(TransactionCostWorkload const* self, int64_t testNumber, Database cx) {
+		state Transaction tr(cx);
+		loop {
+			try {
+				tr.set(self->getKey(testNumber), getValue(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE));
+				wait(tr.commit());
+				return Void();
+			} catch (Error& e) {
+				wait(tr.onError(e));
 			}
 		}
+	}
 
+	static int64_t largeValueReadCost() const { return 2 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
+
+	class ReadLargeValueTest : public ITest {
 	public:
 		explicit ReadLargeValueTest(int64_t testNumber) : ITest(testNumber) {}
 
 		Future<Void> setup(TransactionCostWorkload const& workload, Database const& cx) override {
-			return setup(&workload, this, cx);
+			return setupLargeValue(&workload, testNumber, cx);
 		}
 
 		Future<Void> exec(TransactionCostWorkload const& workload, Reference<ReadYourWritesTransaction> tr) override {
 			return success(tr->get(workload.getKey(testNumber)));
 		}
 
-		int64_t expectedFinalCost() const override { return 2 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
+		int64_t expectedFinalCost() const override { return largeValueReadCost(); }
 	};
 
 	class WriteTest : public ITest {
@@ -251,8 +251,27 @@ class TransactionCostWorkload : public TestWorkload {
 		int64_t expectedFinalCost() const override { return 11 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 	};
 
+	class ReadKeyTest : public ITest {
+	public:
+		explicit ReadKeyTest(uint64_t testNumber) : ITest(testNumber) {}
+
+		Future<Void> setup(TransactionCostWorkload const& workload, Database const& cx) override {
+			return setupLargeValue(&workload, testNumber, cx);
+		}
+
+		Future<Void> exec(TransactionCostWorkload const& workload, Reference<ReadYourWritesTransaction> tr) override {
+			return success(tr->getKey(firstGreaterOrEqual(workload.getKey(testNumber))));
+		}
+
+		int64_t expectedFinalCost() const override {
+			// Even though we only need the key, the large value is still
+			// read, so we need to pay the cost.
+			return largeValueReadCost();
+		}
+	};
+
 	static std::unique_ptr<ITest> createRandomTest(int64_t testNumber) {
-		auto const rand = deterministicRandom()->randomInt(0, 9);
+		auto const rand = deterministicRandom()->randomInt(0, 10);
 		if (rand == 0) {
 			return std::make_unique<ReadEmptyTest>(testNumber);
 		} else if (rand == 1) {
@@ -269,8 +288,10 @@ class TransactionCostWorkload : public TestWorkload {
 			return std::make_unique<ClearTest>(testNumber);
 		} else if (rand == 7) {
 			return std::make_unique<ReadRangeTest>(testNumber);
-		} else {
+		} else if (rand == 8) {
 			return std::make_unique<LargeReadRangeTest>(testNumber);
+		} else {
+			return std::make_unique<ReadKeyTest>(testNumber);
 		}
 	}
 
