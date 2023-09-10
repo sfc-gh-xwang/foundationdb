@@ -137,6 +137,36 @@ ACTOR Future<int64_t> getDataInFlight(Database cx, Reference<AsyncVar<ServerDBIn
 	return dataInFlight;
 }
 
+// Computes the queue size for storage servers using the bytesInput and bytesDurable attributes
+int64_t getStorageQueueSize(const TraceEventFields& md) {
+	double inputRate, durableRate;
+	double inputRoughness, durableRoughness;
+	int64_t inputBytes, durableBytes;
+
+	if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+		sscanf(md.getValue("BytesInput").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
+		sscanf(md.getValue("BytesDurable").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
+	} else {
+		sscanf(md.getValue("BytesInputOld").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
+		sscanf(
+		    md.getValue("BytesDurableOld").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
+	}
+
+	return inputBytes - durableBytes;
+}
+
+// Computes the queue size for tlogs using the bytesInput and bytesDurable attributes
+int64_t getTLogQueueSize(const TraceEventFields& md) {
+	double inputRate, durableRate;
+	double inputRoughness, durableRoughness;
+	int64_t inputBytes, durableBytes;
+
+	sscanf(md.getValue("BytesInput").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
+	sscanf(md.getValue("BytesDurable").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
+
+	return inputBytes - durableBytes;
+}
+
 // Gets the WorkerInterface representing the blob manager.
 ACTOR Future<WorkerInterface> getBlobManagerWorker(Database cx, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
 	TraceEvent("GetBlobManagerWorker").detail("Stage", "GettingWorkers");
@@ -184,18 +214,6 @@ int64_t getActiveGranuleMerges(const TraceEventFields& blobManagerMetrics, const
 
 int64_t getBlobWorkerRecruitments(const TraceEventFields& blobManagerMetrics, const UID& blobManagerID) {
 	return extractBlobManagerField(blobManagerID, blobManagerMetrics, "ActiveBlobWorkerRecruitments");
-}
-
-// Computes the queue size for storage servers and tlogs using the bytesInput and bytesDurable attributes
-int64_t getQueueSize(const TraceEventFields& md) {
-	double inputRate, durableRate;
-	double inputRoughness, durableRoughness;
-	int64_t inputBytes, durableBytes;
-
-	sscanf(md.getValue("BytesInput").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
-	sscanf(md.getValue("BytesDurable").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
-
-	return inputBytes - durableBytes;
 }
 
 int64_t getDurableVersion(const TraceEventFields& md) {
@@ -277,7 +295,7 @@ ACTOR Future<std::pair<int64_t, int64_t>> getTLogQueueInfo(Database cx,
 	state int i = 0;
 	for (; i < messages.size(); i++) {
 		try {
-			maxQueueSize = std::max(maxQueueSize, getQueueSize(messages[i].get()));
+			maxQueueSize = std::max(maxQueueSize, getTLogQueueSize(messages[i].get()));
 			maxPoppedVersionLag = std::max(maxPoppedVersionLag, getPoppedVersionLag(messages[i].get()));
 		} catch (Error& e) {
 			TraceEvent("QuietDatabaseFailure")
@@ -405,7 +423,7 @@ int64_t extractMaxQueueSize(const std::vector<Future<TraceEventFields>>& message
 
 	for (int i = 0; i < messages.size(); i++) {
 		try {
-			auto queueSize = getQueueSize(messages[i].get());
+			auto queueSize = getStorageQueueSize(messages[i].get());
 			if (queueSize > maxQueueSize) {
 				maxQueueSize = queueSize;
 				maxQueueServer = servers[i].id();
@@ -1144,9 +1162,12 @@ ACTOR Future<Void> disableConsistencyScanInSim(Database db, bool waitForCompleti
 			state bool skipDisable = false;
 			// see if any rounds have completed
 			if (waitForCompletion) {
-				state ConsistencyScanState::RoundStats statsCurrentRound = wait(cs.currentRoundStats().getD(tr));
+				// The two reads from below need to be snapshot-reads, as they avoid creating read conflicts
+				// on a rapid changing value of currentRoundStats which are made by the ConsistencyScan actor.
+				state ConsistencyScanState::RoundStats statsCurrentRound =
+				    wait(cs.currentRoundStats().getD(tr, Snapshot::True));
 				state ConsistencyScanState::StatsHistoryMap::RangeResultType olderStats =
-				    wait(cs.roundStatsHistory().getRange(tr, {}, {}, 1, Snapshot::False, Reverse::False));
+				    wait(cs.roundStatsHistory().getRange(tr, {}, {}, 1, Snapshot::True, Reverse::False));
 				if (olderStats.results.empty() && !statsCurrentRound.complete) {
 					TraceEvent("ConsistencyScan_SimDisable_NoRoundsCompleted").log();
 					skipDisable = true;
@@ -1298,6 +1319,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			                                                                                                     : 0;
 			int ekpCount = getSimulatedRoleCount("EncryptKeyProxy", expectedEkpCount);
 
+			int expectedTbCount = SERVER_KNOBS->CC_ENABLE_TENANT_BALANCER ? 1 : 0;
+			int tbCount = getSimulatedRoleCount("TenantBalancer", expectedTbCount);
+
 			maxVersionOffset += dbInfo->get().recoveryCount * SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT;
 
 			auto check = checker.startIteration(phase);
@@ -1316,11 +1340,11 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			    .add(evt, "DatacenterLag", dcLag.get(), maxDcLag);
 
 			if (config.blobGranulesEnabled) {
-				check.add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits, 0)
-				    .add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges, 0)
-				    .add<int64_t>(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments, 0)
+				check.template add<int64_t>(evt, "ActiveGranuleSplits", activeGranuleSplits, 0)
+				    .template add<int64_t>(evt, "ActiveGranuleMerges", activeGranuleMerges, 0)
+				    .template add<int64_t>(evt, "BlobWorkerRecruitments", activeBlobWorkerRecruitments, 0)
 				    .add(evt, "ActiveBlobWrites", activeBlobWrites.get(), false)
-				    .add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
+				    .template add<int64_t>(evt, "ActiveChangeFeeds", pendingChangeFeedBytes.get(), 0);
 			}
 			if (g_network->isSimulated() && g_simulator->extraDatabases.empty()) {
 				check.add(evt, "RatekeeperCount", ratekeeperCount, 1, std::equal_to<>())
@@ -1329,7 +1353,8 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				    .add(evt, "ConsistencyScanCount", consistencyScanCount, 1, std::greater_equal<>())
 				    .add(evt, "BlobManagementCount", blobManagerCount, expectedBlobManagerCount, std::equal_to<>())
 				    .add(evt, "BlobMigratorCount", blobMigratorCount, -1, std::equal_to<>())
-				    .add(evt, "EncryptKeyProxyCount", ekpCount, expectedEkpCount, std::equal_to<>());
+				    .add(evt, "EncryptKeyProxyCount", ekpCount, expectedEkpCount, std::equal_to<>())
+				    .add(evt, "TenantBalancerCount", tbCount, expectedTbCount, std::equal_to<>());
 			}
 
 			evt.detail("RecoveryCount", dbInfo->get().recoveryCount).detail("NumSuccesses", numSuccesses);

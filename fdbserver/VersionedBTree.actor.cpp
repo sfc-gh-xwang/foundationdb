@@ -10206,7 +10206,7 @@ struct SimpleCounter {
 	int64_t get() { return x; }
 	double rate() {
 		double t2 = timer();
-		int r = (x - xt) / (t2 - t);
+		double r = double(x - xt) / (t2 - t);
 		xt = x;
 		t = t2;
 		return r;

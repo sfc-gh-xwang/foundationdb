@@ -303,7 +303,7 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	double proxyTagThrottledDuration = 0.0;
 
 	// Special flag to skip prepending tenant prefix to mutations and conflict ranges
-	// when a dummy, internal transaction gets commited. The sole purpose of commitDummyTransaction() is to
+	// when a dummy, internal transaction gets committed. The sole purpose of commitDummyTransaction() is to
 	// resolve the state of earlier transaction that returned commit_unknown_result or request_maybe_delivered.
 	// Therefore, the dummy transaction can simply reuse one conflict range of the earlier commit, if it already has
 	// been prefixed.
@@ -625,7 +625,8 @@ ACTOR Future<Standalone<VectorRef<DDMetricsRef>>> waitDataDistributionMetricsLis
                                                                                   KeyRange keys,
                                                                                   int shardLimit);
 
-std::string unprintable(const std::string&);
+Optional<std::string> tryUnprintable(std::string const&);
+std::string unprintable(std::string const&);
 
 int64_t extractIntOption(Optional<StringRef> value,
                          int64_t minValue = std::numeric_limits<int64_t>::min(),
@@ -700,7 +701,7 @@ int64_t getMaxKeySize(KeyRef const& key);
 int64_t getMaxReadKeySize(KeyRef const& key);
 
 // Returns the maximum legal size of a key that can be written. If using raw access, writes to normal keys will
-// be allowed to be slighly larger to accommodate the prefix.
+// be allowed to be slightly larger to accommodate the prefix.
 int64_t getMaxWriteKeySize(KeyRef const& key, bool hasRawAccess);
 
 // Returns the maximum legal size of a key that can be cleared. Keys larger than this will be assumed not to exist.

@@ -57,7 +57,7 @@
 
 #include "flow/actorcompiler.h" // has to be last include
 
-#define ENABLE_DEBUG_MG true
+#define ENABLE_DEBUG_MG false
 
 template <typename... T>
 static inline void dprint(fmt::format_string<T...> fmt, T&&... args) {
@@ -249,13 +249,13 @@ private:
 	ACTOR static Future<bool> checkPendingDataMovements(Reference<BlobMigrator> self) {
 		state Reference<BlobRestoreController> controller = makeReference<BlobRestoreController>(self->db_, normalKeys);
 		state Transaction tr(self->db_);
+		state Key begin = normalKeys.begin;
+
 		loop {
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 			try {
-				state KeyRange currentKeys = normalKeys;
-				state Key begin = normalKeys.begin;
 				state RangeReadResult UIDtoTagMap = wait(tr.getRange(serverTagKeys, CLIENT_KNOBS->TOO_MANY));
 				state std::vector<UID> src;
 				state std::vector<UID> dest;

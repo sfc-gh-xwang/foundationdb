@@ -365,6 +365,10 @@ public:
 	bool REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 	int SIM_KMS_VAULT_MAX_KEYS;
 
+	// tenant balancer
+	// rpc request timeout for tenant balancer clients
+	double TENANT_BALANCER_REQUEST_TIMEOUT;
+
 	// Bulk Loading
 	// knob guard to disallow starting bulk loads until implementation is completed
 	bool ALLOW_BULK_LOADS;

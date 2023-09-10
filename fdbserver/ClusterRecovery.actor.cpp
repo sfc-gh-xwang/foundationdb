@@ -839,14 +839,29 @@ ACTOR Future<Void> readTransactionSystemState(Reference<ClusterRecoveryData> sel
 	if (requiredCommitVersion.present()) {
 		minRequiredCommitVersion = BinaryReader::fromStringRef<Version>(requiredCommitVersion.get(), Unversioned());
 	}
-	if (g_network->isSimulated() && self->versionEpoch.present()) {
-		minRequiredCommitVersion = std::max(
-		    minRequiredCommitVersion,
-		    static_cast<Version>(g_network->timer() * SERVER_KNOBS->VERSIONS_PER_SECOND - self->versionEpoch.get()));
-	}
 
 	// Recover version info
 	self->lastEpochEnd = oldLogSystem->getEnd() - 1;
+
+	// If version correction is enabled, calculate and set the expected version
+	// for the cluster. But don't increase the version if the expected value is
+	// too far in the future, so an incorrect clock can't cause a catastrophic
+	// version jump.
+	if (self->versionEpoch.present()) {
+		int64_t expectedVersion = g_network->timer() * SERVER_KNOBS->VERSIONS_PER_SECOND - self->versionEpoch.get();
+		int64_t maxVersion = self->lastEpochEnd + SERVER_KNOBS->MAX_RECOVERY_VERSION_EPOCH_CORRECTION_SECONDS *
+		                                              SERVER_KNOBS->VERSIONS_PER_SECOND;
+		if (expectedVersion < maxVersion) {
+			minRequiredCommitVersion = std::max(minRequiredCommitVersion, static_cast<Version>(expectedVersion));
+		} else {
+			TraceEvent("VersionEpochExpectedVersionTooLarge")
+			    .detail("CurrentVersion", self->versionEpoch.get())
+			    .detail("ExpectedVersion", expectedVersion)
+			    .detail("MaxVersion", maxVersion)
+			    .detail("Delta", expectedVersion - maxVersion);
+		}
+	}
+
 	if (self->lastEpochEnd == 0) {
 		self->recoveryTransactionVersion = 1;
 	} else {

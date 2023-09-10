@@ -1110,7 +1110,8 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 		                                                                   encryptDomainIds,
 		                                                                   BlobCipherMetrics::TLOG,
 		                                                                   &nonExistentTenants,
-		                                                                   pProxyCommitData->encryptionMonitor);
+		                                                                   pProxyCommitData->encryptionMonitor,
+		                                                                   self->debugID);
 	}
 
 	self->releaseFuture = releaseResolvingAfter(pProxyCommitData, self->releaseDelay, self->localBatchNumber);
@@ -1631,7 +1632,8 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
 		                                                                   lookupDomains,
 		                                                                   BlobCipherMetrics::TLOG_POST_RESOLUTION,
 		                                                                   nullptr,
-		                                                                   self->pProxyCommitData->encryptionMonitor));
+		                                                                   self->pProxyCommitData->encryptionMonitor,
+		                                                                   self->debugID));
 		self->cipherKeys.insert(extraCipherKeys.begin(), extraCipherKeys.end());
 	} catch (Error& e) {
 		if (e.code() == error_code_encrypt_key_not_found) {
@@ -1936,7 +1938,7 @@ ACTOR Future<WriteMutationRefVar> writeMutationEncryptedMutation(CommitBatchCont
 	Reference<AsyncVar<ServerDBInfo> const> dbInfo = self->pProxyCommitData->db;
 	headerRef = encryptedMutation.configurableEncryptionHeader();
 	TextAndHeaderCipherKeys cipherKeys = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-	    dbInfo, headerRef, BlobCipherMetrics::TLOG, self->pProxyCommitData->encryptionMonitor));
+	    dbInfo, headerRef, BlobCipherMetrics::TLOG, self->pProxyCommitData->encryptionMonitor, self->debugID));
 	decryptedMutation = encryptedMutation.decrypt(cipherKeys, *arena, BlobCipherMetrics::TLOG);
 
 	ASSERT(decryptedMutation.type == mutation->type);

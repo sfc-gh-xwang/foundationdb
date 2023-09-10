@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 
-import sys
-import shutil
-import os
-import subprocess
-import logging
 import functools
 import json
+import logging
+import os
+import random
+import shutil
+import subprocess
 import tempfile
 import time
-import random
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
 
@@ -46,14 +45,16 @@ def enable_logging(level=logging.DEBUG):
     return func_decorator
 
 
-def run_fdbcli_command(*args):
+def run_fdbcli_command(*args, check=True):
     """run the fdbcli statement: fdbcli --exec '<arg1> <arg2> ... <argN>'.
 
     Returns:
         string: Console output from fdbcli
     """
-    commands = command_template + ["{}".format(" ".join(args))]
-    process = subprocess.run(commands, stdout=subprocess.PIPE, env=fdbcli_env)
+    commands = command_template + [" ".join(args)]
+    process = subprocess.run(
+        commands, check=check, stdout=subprocess.PIPE, env=fdbcli_env
+    )
     return process.stdout.decode("utf-8").strip()
 
 
@@ -71,6 +72,105 @@ def run_fdbcli_command_and_get_error(*args):
         .stderr.decode("utf-8")
         .strip()
     )
+
+
+def blobrange_list_cmd(logger, start="\\x00", end="\\xff", tenant=None):
+    """Build up an fdbcli command do to a blobrange list on the given range and return the results.
+    Optionally do it in a particular tenant. Result has the tenant-related noise stripped, so it's
+    just the result of the blobrange list command."""
+
+    res = {}
+    for granules in [False, True]:
+        # Right now, blobrange list and blobrange granulelist return the same things.
+        # That is probably a hint that the testing is inadequate.
+        cmd = []
+        if tenant is not None:
+            cmd.append("usetenant {}".format(tenant))
+            cmd.append(";")
+        if granules:
+            cmd.append("blobrange granulelist {} {}".format(start, end))
+        else:
+            cmd.append("blobrange list {} {}".format(start, end))
+
+        r = run_fdbcli_command(" ".join(cmd))
+        logger.debug("r is {}".format(r))
+        lines = r.split("\n")
+        if tenant is not None:
+            assert lines[0] == ">>> {}".format(cmd[0])
+            assert lines[1] == "Using tenant `{}'".format(tenant)
+            assert lines[2] == ">>> {}".format(cmd[2])
+            del lines[0:3]
+        if lines[0] != "{}list blob range [{} - {})".format(
+            "granule" if granules else "", start, end
+        ):
+            logger.debug("lines[0] {} not expected".format(lines[0]))
+            assert False
+        del lines[0]
+
+        res[granules] = lines
+
+    if res[True] != res[False]:
+        logger.debug(
+            "Expected blob list and granule list to be the same, but got {} != {}".format(
+                res[True], res[False]
+            )
+        )
+    assert res[True] == res[False]
+    logger.debug(
+        "blobrange_list_cmd(start={}, end={}, tenant={}) -> {}".format(
+            start, end, tenant, res[True]
+        )
+    )
+    return res[True]
+
+
+@enable_logging()
+def blobrange_list(logger):
+    run_fdbcli_command("configure blob_granules_enabled=1")
+    run_fdbcli_command("configure tenant_mode=optional_experimental")
+    r = blobrange_list_cmd(logger)
+    assert r == []
+
+    r = run_fdbcli_command("tenant create tenant1")
+    logger.debug("tenant create said {}".format(r))
+    r = run_fdbcli_command("usetenant", "tenant1")
+    logger.debug("usetenant said {}".format(r))
+    r = blobrange_list_cmd(logger, tenant="tenant1")
+    logger.debug("list tenant1 said {}".format(r))
+    assert r == []
+
+    run_fdbcli_command("usetenant tenant1 ; blobrange start A B")
+    run_fdbcli_command("usetenant tenant1 ; blobrange start C D")
+    run_fdbcli_command("usetenant tenant1 ; blobrange start D E")
+    r = blobrange_list_cmd(logger, tenant="tenant1")
+    logger.debug("blobrange list AB CD DE -> {}".format(r))
+    assert r == ["[A, B)", "[C, D)", "[D, E)"]
+
+    r = blobrange_list_cmd(logger, end="Cm", tenant="tenant1")
+    logger.debug("restricted blobrange list r={}".format(r))
+    assert r == ["[A, B)", "[C, D)"]
+
+    r = blobrange_list_cmd(logger, start="Cm", tenant="tenant1")
+    assert r == ["[C, D)", "[D, E)"]
+
+    run_fdbcli_command("tenant create tenant2")
+    r = blobrange_list_cmd(logger, tenant="tenant2")
+    logger.debug("list tenant2 said {}".format(r))
+    assert r == []
+
+    run_fdbcli_command("usetenant tenant2 ; blobrange start A G")
+    r = blobrange_list_cmd(logger, tenant="tenant2")
+    logger.debug("tenant2 blob range2 {}".format(r))
+    assert r == ["[A, G)"]
+
+    r = blobrange_list_cmd(logger)
+    logger.debug("default tenant blob list {}".format(r))
+    assert r == [
+        "[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01A, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01B)",
+        "[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01C, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01D)",
+        "[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01D, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x01E)",
+        "[\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02A, \\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02G)",
+    ]
 
 
 @enable_logging()
@@ -228,6 +328,7 @@ def setclass(logger):
         "ratekeeper",
         "storage_cache",
         "backup",
+        "tenant_balancer",
     ]
     random_class_type = random.choice(class_types)
     logger.debug("Change to type: {}".format(random_class_type))
@@ -432,30 +533,36 @@ def versionepoch(logger):
     )
     version4 = run_fdbcli_command("versionepoch enable")
     assert (
-        version4
-        == "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        version4.find(
+            "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        )
+        != -1
     )
     version5 = run_fdbcli_command("versionepoch get")
-    assert version5 == "Current version epoch is 0"
+    assert version5.find("Current version epoch is 0") != -1
     version6 = run_fdbcli_command("versionepoch set 10")
     assert (
-        version6
-        == "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        version6.find(
+            "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        )
+        != -1
     )
     version7 = run_fdbcli_command("versionepoch get")
-    assert version7 == "Current version epoch is 10"
+    assert version7.find("Current version epoch is 10") != -1
     run_fdbcli_command("versionepoch disable")
     version8 = run_fdbcli_command("versionepoch get")
-    assert version8 == "Version epoch is unset"
+    assert version8.find("Version epoch is unset") != -1
     version9 = run_fdbcli_command("versionepoch enable")
     assert (
-        version9
-        == "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        version9.find(
+            "Version epoch enabled. Run `versionepoch commit` to irreversibly jump to the target version"
+        )
+        != -1
     )
     version10 = run_fdbcli_command("versionepoch get")
-    assert version10 == "Current version epoch is 0"
+    assert version10.find("Current version epoch is 0") != -1
     version11 = run_fdbcli_command("versionepoch commit")
-    assert version11.startswith("Current read version is ")
+    assert version11.find("Current read version is ") != -1
     # the test can trigger recovery, thus we wait until the recovery is finished to move to the next test
     wait_for_database_available(logger)
 
@@ -492,11 +599,11 @@ def knobmanagement(logger):
     # must use begin/commit to avoid prompt for description
 
     # Incorrect arguments
-    output = run_fdbcli_command("setknob")
+    output = run_fdbcli_command("setknob", check=False)
     assert output == "Usage: setknob <KEY> <VALUE> [CONFIG_CLASS]"
-    output = run_fdbcli_command("setknob", "min_trace_severity")
+    output = run_fdbcli_command("setknob", "min_trace_severity", check=False)
     assert output == "Usage: setknob <KEY> <VALUE> [CONFIG_CLASS]"
-    output = run_fdbcli_command("getknob")
+    output = run_fdbcli_command("getknob", check=False)
     assert output == "Usage: getknob <KEY> [CONFIG_CLASS]"
     logger.debug("incorrect args passed")
 
@@ -623,9 +730,9 @@ def transaction(logger):
     assert lines[2] == "`key' is `value'"
     assert lines[3].startswith("Committed (") and lines[3].endswith(")")
     # validate commit version is larger than the read version
-    commit_verion = int(lines[3][len("Committed (") : -1])
-    logger.debug("Commit version: {}".format(commit_verion))
-    assert commit_verion >= read_version
+    commit_version = int(lines[3][len("Committed (") : -1])
+    logger.debug("Commit version: {}".format(commit_version))
+    assert commit_version >= read_version
     # check the transaction is committed
     output2 = run_fdbcli_command("get", "key")
     assert output2 == "`key' is `value'"
@@ -1402,7 +1509,7 @@ def tenant_group_get(logger):
     output = run_fdbcli_command_and_get_error("tenantgroup get tenant_group2")
     assert output == "ERROR: tenant group not found"
 
-    output = run_fdbcli_command("tenantgroup get tenant_group2 JSON")
+    output = run_fdbcli_command("tenantgroup get tenant_group2 JSON", check=False)
     json_output = json.loads(output, strict=False)
     assert len(json_output) == 2
     assert json_output["type"] == "error"
@@ -1437,13 +1544,13 @@ def idempotency_ids(logger):
 
     # Incorrect number of tokens
     command = "idempotencyids clear"
-    output = run_fdbcli_command(command)
+    output = run_fdbcli_command(command, check=False)
     logger.debug(command + " : " + output)
     assert output == "Usage: idempotencyids [status | clear <min_age_seconds>]", output
 
     # Incorrect number of tokens
     command = "idempotencyids"
-    output = run_fdbcli_command(command)
+    output = run_fdbcli_command(command, check=False)
     logger.debug(command + " : " + output)
     assert output == "Usage: idempotencyids [status | clear <min_age_seconds>]", output
 
@@ -1523,6 +1630,10 @@ if __name__ == "__main__":
         metavar="EXTERNAL_CLIENT_LIBRARY_PATH",
         help="External client library path",
     )
+    parser.add_argument(
+        "--blobs",
+        action="store_true",
+    )
     args = parser.parse_args()
 
     # keep current environment variables
@@ -1545,7 +1656,9 @@ if __name__ == "__main__":
     # tests for fdbcli commands
     # assertions will fail if fdbcli does not work as expected
     test_available()
-    if args.process_number == 1:
+    if args.blobs:
+        blobrange_list()
+    elif args.process_number == 1:
         # TODO: disable for now, the change can cause the database unavailable
         # advanceversion()
         cache_range()

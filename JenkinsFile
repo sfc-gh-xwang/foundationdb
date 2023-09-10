@@ -226,8 +226,12 @@ pipeline {
                         currentBuild.result = "FAILURE"
                     }
                     if (run_ci && env.BRANCH_NAME.startsWith("PR-")) {
-                        def url = "https://github.com/snowflakedb/frostdb/pull/${pr_id}"
-                        notify_slack(user_id, "CI completed", currentBuild.result, env.BRANCH_NAME, scmInfo.GIT_COMMIT, url)
+                        try {
+                            def url = "https://github.com/snowflakedb/frostdb/pull/${pr_id}"
+                            notify_slack(user_id, "CI completed", currentBuild.result, env.BRANCH_NAME, scmInfo.GIT_COMMIT, url)
+                        } catch(Exception e) {
+                            println("Exception sending slack notification: ${e}")
+                        }
                     }
                 }
             }
@@ -310,7 +314,7 @@ void trigger_job(jobName, profile) {
                 def build_log = buildlogs.split("\n")
                 //Capture error's from the build log
                 for (build_line in build_log) {
-                    if (build_line.contains("ERROR:")) {
+                    if (build_line.contains("ERROR:") || build_line.contains("FAILED:")) {
                         details += build_line + "\\n"
                     }
                 }

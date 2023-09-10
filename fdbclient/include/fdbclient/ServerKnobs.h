@@ -45,6 +45,10 @@ public:
 	double MAX_VERSION_RATE_MODIFIER;
 	int64_t MAX_VERSION_RATE_OFFSET;
 	bool ENABLE_VERSION_VECTOR_HA_OPTIMIZATION;
+	// Maximum correction recovery can make to the version if the actual
+	// version of the cluster is behind the expected version (version
+	// correction must be enabled). Denoted as a value in seconds.
+	int64_t MAX_RECOVERY_VERSION_EPOCH_CORRECTION_SECONDS;
 
 	// TLogs
 	bool PEEK_USING_STREAMING;
@@ -597,6 +601,8 @@ public:
 	double PROVISIONAL_MAX_DELAY;
 	double SECONDS_BEFORE_RECRUIT_BACKUP_WORKER;
 	double CC_INTERFACE_TIMEOUT;
+	double FORCE_RECOVERY_SUSPEND_ENABLED;
+	double FORCE_RECOVERY_SUSPEND_TIME;
 
 	// Resolver
 	int64_t KEY_BYTES_PER_SAMPLE;
@@ -634,6 +640,7 @@ public:
 	double WAIT_FOR_CONSISTENCYSCAN_JOIN_DELAY;
 	double WAIT_FOR_BLOB_MANAGER_JOIN_DELAY;
 	double WAIT_FOR_ENCRYPT_KEY_PROXY_JOIN_DELAY;
+	double WAIT_FOR_TENANT_BALANCER_JOIN_DELAY;
 	double WORKER_FAILURE_TIME;
 	double CHECK_OUTSTANDING_INTERVAL;
 	double INCOMPATIBLE_PEERS_LOGGING_INTERVAL;
@@ -659,6 +666,7 @@ public:
 	double CC_MIN_DEGRADATION_INTERVAL; // The minimum interval that a server is reported as degraded to be considered
 	                                    // as degraded by Cluster Controller.
 	double ENCRYPT_KEY_PROXY_FAILURE_TIME;
+	double TENANT_BALANCER_FAILURE_TIME;
 	int CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE; // The maximum number of degraded peers when excluding a server. When the
 	                                        // number of degraded peers is more than this value, we will not exclude
 	                                        // this server since it may because of server overload.
@@ -688,6 +696,7 @@ public:
 	                                             // router is degraded and may use trigger recovery to recover from it.
 	double CC_THROTTLE_SINGLETON_RERECRUIT_INTERVAL; // The interval to prevent re-recruiting the same singleton if a
 	                                                 // recruiting fight between two cluster controllers occurs.
+	bool CC_ENABLE_TENANT_BALANCER; // When enabled, ClusterController will recruit a process as TenantBalancer.
 
 	// Knobs used to select the best policy (via monte carlo)
 	int POLICY_RATING_TESTS; // number of tests per policy (in order to compare)
@@ -755,6 +764,9 @@ public:
 	int64_t STORAGE_DURABILITY_LAG_HARD_MAX;
 	int64_t STORAGE_DURABILITY_LAG_SOFT_MAX;
 	bool STORAGE_INCLUDE_FEED_STORAGE_QUEUE;
+	// When calculating the storage queue size, utilize the PTree's actual allocated size rather
+	// than depending on estimates.
+	bool STORAGE_QUEUE_USE_ALLOCATOR_SIZE;
 
 	int64_t LOW_PRIORITY_STORAGE_QUEUE_BYTES;
 	int64_t LOW_PRIORITY_DURABILITY_LAG;
