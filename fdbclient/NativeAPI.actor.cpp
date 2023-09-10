@@ -6387,7 +6387,7 @@ void TransactionState::addClearCost() {
 	// NOTE: The throttling cost of each clear is assumed to be one page.
 	// This makes compuation fast, but can be inaccurate and may
 	// underestimate the cost of large clears.
-	addWriteCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+	addWriteCost(getWriteOperationCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE));
 }
 
 void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRange) {
