@@ -26,6 +26,7 @@
 #include "fdbclient/SpecialKeySpace.actor.h"
 #include "fdbclient/StatusClient.h"
 #include "fdbclient/MonitorLeader.h"
+#include "flow/Trace.h"
 #include "flow/Util.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -644,6 +645,8 @@ public:
 			if (resolvedEnd == ryw->getMaxReadKey())
 				readThroughEnd = true;
 
+			result.getReadMetrics().combine(resolvedEnd.getReadMetrics());
+
 			if (begin.getKey() >= resolvedEnd && !begin.isBackward()) {
 				return result;
 			} else if (resolvedEnd == allKeys.begin) {
@@ -955,6 +958,8 @@ public:
 				readToBegin = true;
 			if (resolvedBegin == ryw->getMaxReadKey())
 				readThroughEnd = true;
+
+			result.getReadMetrics().combine(resolvedBegin.getReadMetrics());
 
 			if (resolvedBegin >= end.getKey() && end.offset <= 1) {
 				return result;
@@ -1375,8 +1380,14 @@ public:
 		return Void();
 	}
 
-	ACTOR static void simulateTimeoutInFlightCommit(ReadYourWritesTransaction* ryw_) {
-		state Reference<ReadYourWritesTransaction> ryw = Reference<ReadYourWritesTransaction>::addRef(ryw_);
+	ACTOR static void scheduleDelayedInFlightCommit(Reference<ReadYourWritesTransaction> ryw) {
+		wait(delay(deterministicRandom()->random01() * 5));
+		TraceEvent("ClientBuggifyInFlightCommit").log();
+		wait(ryw->tr.commit());
+		TraceEvent("ClientBuggifyInFlightCommitSucceeded").log();
+	}
+
+	ACTOR static Future<Void> simulateTimeoutInFlightCommit(ReadYourWritesTransaction* ryw) {
 		ASSERT(ryw->options.timeoutInSeconds > 0);
 		// An actual in-flight commit (i.e. one that's past the point where cancelling the transaction would stop it)
 		// would already have a read version. We need to get a read version too, otherwise committing a conflicting
@@ -1385,9 +1396,9 @@ public:
 		wait(success(ryw->getReadVersion()));
 		if (!ryw->resetPromise.isSet())
 			ryw->resetPromise.sendError(transaction_timed_out());
-		wait(delay(deterministicRandom()->random01() * 5));
-		TraceEvent("ClientBuggifyInFlightCommit").log();
-		wait(ryw->tr.commit());
+		// We are not waiting for the inflight commit. It will be performed asynchronously after a delay
+		scheduleDelayedInFlightCommit(Reference<ReadYourWritesTransaction>::addRef(ryw));
+		return Void();
 	}
 
 	ACTOR static Future<Void> commit(ReadYourWritesTransaction* ryw) {
@@ -1415,7 +1426,7 @@ public:
 			if (ryw->resetPromise.isSet())
 				throw ryw->resetPromise.getFuture().getError();
 			if (CLIENT_BUGGIFY && ryw->options.timeoutInSeconds > 0) {
-				simulateTimeoutInFlightCommit(ryw);
+				wait(simulateTimeoutInFlightCommit(ryw));
 				throw transaction_timed_out();
 			}
 			wait(ryw->resetPromise.getFuture() || ryw->tr.commit());
@@ -1435,7 +1446,7 @@ public:
 		}
 
 		if (CLIENT_BUGGIFY && ryw->options.timeoutInSeconds > 0) {
-			simulateTimeoutInFlightCommit(ryw);
+			wait(simulateTimeoutInFlightCommit(ryw));
 			throw transaction_timed_out();
 		}
 		wait(ryw->resetPromise.getFuture() || ryw->tr.commit());
@@ -1565,29 +1576,53 @@ public:
 	}
 };
 
-ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx, Optional<Reference<Tenant>> const& tenant)
-  : ISingleThreadTransaction(cx->deferredError),
-    tr(cx, tenant),
+ReadYourWritesTransaction::ReadYourWritesTransaction(Database const& cx)
+  : ReadYourWritesTransaction(Transaction(cx),
+                              cx->deferredError,
+                              cx.getTransactionDefaults(),
+                              UniqueOrderedSensitiveOptionList<FDBTransactionOptions>{}) {}
+
+ReadYourWritesTransaction::ReadYourWritesTransaction(Reference<Tenant> const& tenant)
+  : ReadYourWritesTransaction(Transaction(tenant),
+                              tenant->database()->deferredError,
+                              tenant->database().getTransactionDefaults(),
+                              tenant->getSensitiveTransactionDefaults()) {}
+
+ReadYourWritesTransaction::ReadYourWritesTransaction(
+    Transaction&& transaction,
+    Error const& deferredError,
+    UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList,
+    UniqueOrderedSensitiveOptionList<FDBTransactionOptions> const& trSensitiveOptionList)
+  : ISingleThreadTransaction(deferredError),
+    tr(std::move(transaction)),
+
     cache(&arena),
     writes(&arena),
-    retries(0),
-    approximateSize(0),
     creationTime(now()),
-    commitStarted(false),
     versionStampFuture(tr.getVersionstamp()),
     specialKeySpaceWriteMap(std::make_pair(false, Optional<Value>()), specialKeys.end),
     options(tr) {
+	std::copy(trOptionList.begin(), trOptionList.end(), std::back_inserter(persistentOptions));
 	std::copy(
-	    cx.getTransactionDefaults().begin(), cx.getTransactionDefaults().end(), std::back_inserter(persistentOptions));
+	    trSensitiveOptionList.begin(), trSensitiveOptionList.end(), std::back_inserter(sensitivePersistentOptions));
 	applyPersistentOptions();
+}
+
+ReadYourWritesTransaction ReadYourWritesTransaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant,
+                                                                         Database const& cx) {
+	if (tenant.present()) {
+		return ReadYourWritesTransaction(tenant.get());
+	} else {
+		return ReadYourWritesTransaction(cx);
+	}
 }
 
 void ReadYourWritesTransaction::construct(Database const& cx) {
 	*this = ReadYourWritesTransaction(cx);
 }
 
-void ReadYourWritesTransaction::construct(Database const& cx, Reference<Tenant> const& tenant) {
-	*this = ReadYourWritesTransaction(cx, tenant);
+void ReadYourWritesTransaction::construct(Reference<Tenant> const& tenant) {
+	*this = ReadYourWritesTransaction(tenant);
 }
 
 ACTOR Future<Void> timebomb(double endTime, Promise<Void> resetPromise) {
@@ -2429,11 +2464,21 @@ void ReadYourWritesTransaction::setOption(FDBTransactionOptions::Option option, 
 	setOptionImpl(option, value);
 	auto const& opt = FDBTransactionOptions::optionInfo.getMustExist(option);
 	if (opt.persistent) {
-		if (opt.sensitive)
+		if (opt.sensitive) {
+			sensitivePersistentOptions.erase(
+			    std::remove_if(sensitivePersistentOptions.begin(),
+			                   sensitivePersistentOptions.end(),
+			                   [option](const auto& pair) { return pair.first == option; }),
+			    sensitivePersistentOptions.end());
 			sensitivePersistentOptions.emplace_back(option, value.castTo<WipedString>());
-		else
+		} else {
 			persistentOptions.emplace_back(option, value.castTo<Standalone<StringRef>>());
+		}
 	}
+}
+
+bool ReadYourWritesTransaction::rywEnabled() const {
+	return !readYourWritesDisabled();
 }
 
 void ReadYourWritesTransaction::setOptionImpl(FDBTransactionOptions::Option option, Optional<StringRef> value) {
@@ -2662,6 +2707,10 @@ void ReadYourWritesTransaction::reset() {
 	std::copy(tr.getDatabase().getTransactionDefaults().begin(),
 	          tr.getDatabase().getTransactionDefaults().end(),
 	          std::back_inserter(persistentOptions));
+	if (tr.trState->hasTenant(ResolveDefaultTenant::False)) {
+		const auto& sensitiveDefaults = tr.getTenant().get()->getSensitiveTransactionDefaults();
+		std::copy(sensitiveDefaults.begin(), sensitiveDefaults.end(), std::back_inserter(sensitivePersistentOptions));
+	}
 	resetRyow();
 }
 

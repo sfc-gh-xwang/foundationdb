@@ -16,7 +16,13 @@ import time
 from binary_download import FdbBinaryDownloader
 from fdb_version import CURRENT_VERSION, FUTURE_VERSION
 from local_cluster import LocalCluster
-from test_util import random_alphanum_string, get_logger, initialize_logger_level
+from test_util import (
+    random_alphanum_string,
+    get_logger,
+    initialize_logger_level,
+    api_version_from_str,
+    version_before,
+)
 
 logger = get_logger()
 
@@ -31,30 +37,6 @@ TESTER_STATS_INTERVAL_SEC = 5
 TRANSACTION_RETRY_LIMIT = 100
 RUN_WITH_GDB = False
 CLEANUP_ON_EXIT = True
-
-
-def version_from_str(ver_str):
-    ver = [int(s) for s in ver_str.split(".")]
-    assert len(ver) == 3, "Invalid version string {}".format(ver_str)
-    return ver
-
-
-def api_version_from_str(ver_str):
-    # FIXME: simplify after everything is 8.0+
-    ver_tuple = version_from_str(ver_str)
-    if ver_tuple[0] >= 8 and ver_tuple[0] < 71:
-        # handle 8.x -> 800000, as now the second version is the patch version
-        ret = ver_tuple[0] * 100000
-    elif ver_tuple[0] >= 71:
-        # handle 71.3 -> 710300
-        ret = ver_tuple[0] * 10000 + ver_tuple[1] * 100
-    else:
-        ret = ver_tuple[0] * 100 + ver_tuple[1] * 10
-    return ret
-
-
-def version_before(ver_str1, ver_str2):
-    return version_from_str(ver_str1) < version_from_str(ver_str2)
 
 
 def random_sleep(min_sec, max_sec):
@@ -75,7 +57,7 @@ class UpgradeTest:
         self.tmp_dir = self.build_dir.joinpath("tmp", random_alphanum_string(16))
         self.tmp_dir.mkdir(parents=True)
         self.downloader = FdbBinaryDownloader(args.build_dir)
-        self.download_old_binaries()
+        self.assert_old_binaries_exist()
         self.create_external_lib_dir()
         self.testing_future_version = FUTURE_VERSION in self.upgrade_path
         self.future_version_client_lib_path = (
@@ -118,10 +100,11 @@ class UpgradeTest:
         self.determine_api_version()
         self.disable_log_dump = args.disable_log_dump
 
-    # Download all old binaries required for testing the specified upgrade path
-    def download_old_binaries(self):
+    # Check that all old binaries required for testing the specified upgrade path exists
+    # and are accessible by the system user running this script
+    def assert_old_binaries_exist(self):
         for version in self.used_versions:
-            self.downloader.download_old_binaries(version)
+            self.downloader.assert_old_binaries_exist_for_version(version)
 
     # Create a directory for external client libraries for MVC and fill it
     # with the libraries necessary for the specified upgrade path

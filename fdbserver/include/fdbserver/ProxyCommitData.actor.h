@@ -26,6 +26,7 @@
 #define FDBSERVER_PROXYCOMMITDATA_ACTOR_H
 
 #include "fdbclient/FDBTypes.h"
+#include "fdbclient/GetEncryptCipherKeys.h"
 #include "fdbclient/Tenant.h"
 #include "fdbrpc/Stats.h"
 #include "fdbserver/Knobs.h"
@@ -33,6 +34,8 @@
 #include "fdbserver/LogSystemDiskQueueAdapter.h"
 #include "fdbserver/MasterInterface.h"
 #include "fdbserver/ResolverInterface.h"
+#include "fdbclient/RangeLock.h"
+#include "fdbserver/SSCommitCostCounter.h"
 #include "flow/IRandom.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -68,6 +71,7 @@ struct ProxyStats {
 	Counter blobGranuleLocationIn, blobGranuleLocationOut, blobGranuleLocationErrors;
 	Counter bulkLoadersIn, bulkLoadersOut, bulkLoadersErrors;
 	Counter txnExpensiveClearCostEstCount;
+	Counter encryptKeyNotFoundErrors;
 	Version lastCommitVersionAssigned;
 
 	LatencySample commitLatencySample;
@@ -123,7 +127,9 @@ struct ProxyStats {
 	                    NotifiedVersion* pVersion,
 	                    NotifiedVersion* pCommittedVersion,
 	                    int64_t* commitBatchesMemBytesCountPtr,
-	                    std::map<int64_t, TenantName>* pTenantMap)
+	                    std::map<int64_t, TenantName>* pTenantMap,
+	                    std::set<int64_t>* pLockedTenants,
+	                    KeyRangeMap<RangeLockInfo>* pRangeLocks)
 	  : cc("ProxyStats", id.toString()),
 	    txnCommitIn("TxnCommitIn", cc),
 	    txnCommitVersionAssigned("TxnCommitVersionAssigned", cc),
@@ -152,6 +158,7 @@ struct ProxyStats {
 	    bulkLoadersOut("BulkLoadersOut", cc),
 	    bulkLoadersErrors("BulkLoadersErrors", cc),
 	    txnExpensiveClearCostEstCount("ExpensiveClearCostEstCount", cc),
+	    encryptKeyNotFoundErrors("EncryptKeyNotFoundErrors", cc),
 	    lastCommitVersionAssigned(0),
 	    commitLatencySample("CommitLatencyMetrics",
 	                        id,
@@ -194,8 +201,11 @@ struct ProxyStats {
 			return *commitBatchesMemBytesCountPtr;
 		});
 		specialCounter(cc, "NumTenants", [pTenantMap]() { return pTenantMap ? pTenantMap->size() : 0; });
+		specialCounter(
+		    cc, "NumLockedTenants", [pLockedTenants]() { return pLockedTenants ? pLockedTenants->size() : 0; });
 		specialCounter(cc, "MaxCompute", [this]() { return this->getAndResetMaxCompute(); });
 		specialCounter(cc, "MinCompute", [this]() { return this->getAndResetMinCompute(); });
+		specialCounter(cc, "RangeLockBoundaries", [pRangeLocks]() { return pRangeLocks ? pRangeLocks->size() : 0; });
 		logger = cc.traceCounters("ProxyMetrics", id, SERVER_KNOBS->WORKER_LOGGING_INTERVAL, "ProxyMetrics");
 	}
 };
@@ -275,17 +285,22 @@ struct ProxyCommitData {
 	NotifiedDouble lastCommitTime;
 
 	std::vector<double> commitComputePerOperation;
-	UIDTransactionTagMap<TransactionCommitCostEstimation> ssTrTagCommitCost;
+	SSCommitCostCounter ssTrTagCommitCost;
 	double lastMasterReset;
 	double lastResolverReset;
 	int localTLogCount = -1;
 
 	EncryptionAtRestMode encryptMode;
+	Reference<GetEncryptCipherKeysMonitor> encryptionMonitor;
 
 	PromiseStream<ExpectedIdempotencyIdCountForKey> expectedIdempotencyIdCountForKey;
 	Standalone<VectorRef<MutationRef>> idempotencyClears;
 
 	AsyncVar<bool> triggerCommit;
+
+	KeyRangeMap<RangeLockInfo> rangeLocks;
+	// Finish applied all txnStateStore mutations after recovery;
+	bool txnStateStoreApplied = false;
 
 	// The tag related to a storage server rarely change, so we keep a vector of tags for each key range to be slightly
 	// more CPU efficient. When a tag related to a storage server does change, we empty out all of these vectors to
@@ -333,12 +348,8 @@ struct ProxyCommitData {
 	}
 
 	void updateSSTagCost(const UID& id, const TransactionTag& throttlingTag, MutationRef m, uint64_t cost) {
-		auto [it, _] = ssTrTagCommitCost.try_emplace(id, TransactionTagMap<TransactionCommitCostEstimation>());
-
-		auto& costItem = it->second[throttlingTag];
 		if (m.isAtomicOp() || m.type == MutationRef::Type::SetValue || m.type == MutationRef::Type::ClearRange) {
-			costItem.opsSum++;
-			costItem.costSum += cost;
+			ssTrTagCommitCost.addSSTagCost(id, throttlingTag, cost);
 		}
 	}
 
@@ -353,7 +364,7 @@ struct ProxyCommitData {
 	                bool provisional)
 	  : dbgid(dbgid),
 	    commitBatchesMemBytesCount(0),
-	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap),
+	    stats(dbgid, &version, &committedVersion, &commitBatchesMemBytesCount, &tenantMap, &lockedTenants, &rangeLocks),
 	    master(master),
 	    logAdapter(nullptr),
 	    committedVersion(recoveryTransactionVersion),
@@ -378,9 +389,12 @@ struct ProxyCommitData {
 	    lastStartCommit(0),
 	    lastCommitLatency(SERVER_KNOBS->REQUIRED_MIN_RECOVERY_DURATION),
 	    lastCommitTime(0),
+	    ssTrTagCommitCost(SERVER_KNOBS->CP_THROTTLE_TAGS_TRACKED,
+	                      SERVER_KNOBS->CP_MIN_TAG_WRITE_PAGES_RATE * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
 	    lastMasterReset(now()),
 	    lastResolverReset(now()),
-	    encryptMode(encryptMode) {
+	    encryptMode(encryptMode),
+	    encryptionMonitor(makeReference<GetEncryptCipherKeysMonitor>()) {
 		commitComputePerOperation.resize(SERVER_KNOBS->PROXY_COMPUTE_BUCKETS, 0.0);
 	}
 };

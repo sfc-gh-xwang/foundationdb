@@ -317,9 +317,12 @@ public:
 
 	const StringRef systemKeysPrefix = systemKeys.begin;
 
-	AESEncryptionKeyProvider(Reference<AsyncVar<ServerDBInfo> const> db, EncryptionAtRestMode encryptionMode)
+	AESEncryptionKeyProvider(Reference<AsyncVar<ServerDBInfo> const> db,
+	                         EncryptionAtRestMode encryptionMode,
+	                         Reference<GetEncryptCipherKeysMonitor> monitor)
 	  : db(db),
-	    encryptionMode(encryptionMode) {
+	    encryptionMode(encryptionMode),
+	    monitor(monitor) {
 		ASSERT(encryptionMode != EncryptionAtRestMode::DISABLED);
 		ASSERT(db.isValid());
 	}
@@ -338,7 +341,7 @@ public:
 		state TextAndHeaderCipherKeys cipherKeys;
 		BlobCipherEncryptHeaderRef headerRef = Encoder::getEncryptionHeaderRef(encodingHeader);
 		TextAndHeaderCipherKeys cks = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-		    self->db, headerRef, BlobCipherMetrics::KV_REDWOOD));
+		    self->db, headerRef, BlobCipherMetrics::KV_REDWOOD, self->monitor));
 		cipherKeys = cks;
 		EncryptionKey encryptionKey;
 		encryptionKey.aesKey = cipherKeys;
@@ -362,7 +365,7 @@ public:
 		ASSERT(self->encryptionMode == EncryptionAtRestMode::DOMAIN_AWARE || domainId < 0);
 		TextAndHeaderCipherKeys cipherKeys =
 		    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeysForDomain(
-		        self->db, domainId, BlobCipherMetrics::KV_REDWOOD));
+		        self->db, domainId, BlobCipherMetrics::KV_REDWOOD, self->monitor));
 		EncryptionKey encryptionKey;
 		encryptionKey.aesKey = cipherKeys;
 		return encryptionKey;
@@ -401,6 +404,7 @@ public:
 private:
 	Reference<AsyncVar<ServerDBInfo> const> db;
 	EncryptionAtRestMode encryptionMode;
+	Reference<GetEncryptCipherKeysMonitor> monitor;
 };
 
 #include "flow/unactorcompiler.h"

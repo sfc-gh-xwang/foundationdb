@@ -592,7 +592,7 @@ private:
 		Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
 		                                                                      cipherKeys.cipherHeaderKey,
 		                                                                      cipherHeaderRef.getIV(),
-		                                                                      cipherHeaderRef.getEncryptMode(),
+		                                                                      cipherHeaderRef.getEncryptionAtRestAlgo(),
 		                                                                      BlobCipherMetrics::KV_MEMORY);
 		plaintext = cipher->decrypt(data.begin() + encryptHeaderSize, h.len1 + h.len2, cipherHeaderRef, arena);
 		return Standalone<StringRef>(plaintext, arena);

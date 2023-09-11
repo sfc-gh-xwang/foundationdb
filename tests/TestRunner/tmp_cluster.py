@@ -12,6 +12,8 @@ from pathlib import Path
 from cluster_args import CreateTmpFdbClusterArgParser
 from local_cluster import LocalCluster, TLSConfig
 from test_util import random_alphanum_string, get_logger
+from binary_download import FdbBinaryDownloader
+from fdb_version import CURRENT_VERSION
 
 logger = get_logger()
 
@@ -30,6 +32,7 @@ class TempCluster(LocalCluster):
         custom_config: dict = {},
         tenant_mode: typing.Union[str, None] = "optional_experimental",
         enable_encryption_at_rest: bool = False,
+        cluster_version=CURRENT_VERSION,
     ):
         self.build_dir = Path(build_dir).resolve()
         assert self.build_dir.exists(), "{} does not exist".format(build_dir)
@@ -40,11 +43,13 @@ class TempCluster(LocalCluster):
         self.remove_at_exit = remove_at_exit
         self.tenant_mode = tenant_mode
         self.enable_encryption_at_rest = enable_encryption_at_rest
+        self.cluster_version = cluster_version
+        self.downloader = FdbBinaryDownloader(self.build_dir)
         super().__init__(
             tmp_dir,
-            self.build_dir.joinpath("bin", "fdbserver"),
-            self.build_dir.joinpath("bin", "fdbmonitor"),
-            self.build_dir.joinpath("bin", "fdbcli"),
+            self.downloader.binary_path(self.cluster_version, "fdbserver"),
+            self.downloader.binary_path(self.cluster_version, "fdbmonitor"),
+            self.downloader.binary_path(self.cluster_version, "fdbcli"),
             process_number,
             port=port,
             blob_granules_enabled=blob_granules_enabled,
@@ -54,6 +59,11 @@ class TempCluster(LocalCluster):
             authorization_kty=authorization_kty,
             authorization_keypair_id=authorization_keypair_id,
             custom_config=custom_config,
+        )
+        self.set_env_var(
+            "LD_LIBRARY_PATH",
+            "%s:%s"
+            % (self.downloader.lib_dir(cluster_version), os.getenv("LD_LIBRARY_PATH")),
         )
 
     def __enter__(self):
@@ -100,6 +110,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    custom_config = {}
 
     if args.disable_tenants:
         enable_tenants = False
@@ -112,6 +123,11 @@ if __name__ == "__main__":
             server_chain_len=args.server_cert_chain_len,
             client_chain_len=args.client_cert_chain_len,
         )
+
+    if args.accelerate_read_metrics_generation:
+        custom_config["knob_shard_read_sample_update_interval"] = "1"
+        custom_config["knob_ops_read_units_per_sample"] = "1"
+
     errcode = 1
     with TempCluster(
         args.build_dir,
@@ -122,6 +138,7 @@ if __name__ == "__main__":
         authorization_kty=args.authorization_kty,
         authorization_keypair_id=args.authorization_keypair_id,
         remove_at_exit=not args.no_remove_at_exit,
+        custom_config=custom_config,
     ) as cluster:
         logger.info("log-dir: {}".format(cluster.log))
         logger.info("etc-dir: {}".format(cluster.etc))

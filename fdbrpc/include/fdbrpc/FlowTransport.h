@@ -295,6 +295,7 @@ public:
 
 	bool currentDeliveryPeerIsTrusted() const;
 	NetworkAddress currentDeliveryPeerAddress() const;
+	UID currentDeliveryPeerDebugID() const;
 
 	Optional<PublicKey> getPublicKeyByName(StringRef name) const;
 	// Adds or replaces a public key
@@ -307,6 +308,9 @@ public:
 
 	// Periodically read JWKS (RFC 7517) public key file to refresh public key set.
 	void watchPublicKeyFile(const std::string& publicKeyFilePath);
+
+	// Trace "kid" fields of public keys joined by ","
+	void monitorActivePublicKeyIds();
 
 private:
 	class TransportData* self;

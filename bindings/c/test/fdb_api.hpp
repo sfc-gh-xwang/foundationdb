@@ -60,6 +60,21 @@ using ValueRef = BytesRef;
 using BulkLoadID = ByteString;
 using BulkLoadIDRef = BytesRef;
 
+class Future;
+
+struct ReadMetrics {
+public:
+	ReadMetrics() {}
+	ReadMetrics(float serverBusyness, float rangeBusyness)
+	  : serverBusyness(serverBusyness),
+	    rangeBusyness(rangeBusyness) {}
+
+	inline static ReadMetrics fromFuture(fdb::Future const& f);
+
+	float serverBusyness = 0;
+	float rangeBusyness = 0;
+};
+
 struct KeyRangeRef : native::FDBKeyRange {
 	KeyRef beginKey() const noexcept { return KeyRef(native::FDBKeyRange::begin_key, begin_key_length); }
 	KeyRef endKey() const noexcept { return KeyRef(native::FDBKeyRange::end_key, end_key_length); }
@@ -203,6 +218,17 @@ struct GranuleDescriptionRefV1 : native::FDBBGFileDescriptionV1 {
 	}
 };
 
+struct BulkLoadFileToWriteRef : native::FDBBulkLoadFileToWrite {
+	BulkLoadFileToWriteRef(const BulkLoadFileToWriteRef&) = delete;
+	// FIXME: add helper functions
+};
+
+struct BulkLoadWrittenFileRef : native::FDBBulkLoadWrittenFile {
+	BulkLoadWrittenFileRef() {}
+	BulkLoadWrittenFileRef(const BulkLoadWrittenFileRef&) = delete;
+	// FIXME: add constructor with logical data?
+};
+
 inline uint8_t const* toBytePtr(char const* ptr) noexcept {
 	return reinterpret_cast<uint8_t const*>(ptr);
 }
@@ -222,11 +248,10 @@ CharsRef toCharsRef(const StringLike<Char>& s) noexcept {
 }
 
 // get charstring view from optional bytestring: e.g. std::optional<std::basic_string{_view}<uint8_t>>
-template <template <class...> class StringLike, class Char>
-CharsRef toCharsRef(const std::optional<StringLike<Char>>& s) noexcept {
-	static_assert(sizeof(Char) == 1);
+template <class T>
+CharsRef toCharsRef(const std::optional<T>& s) noexcept {
 	if (s) {
-		return CharsRef(reinterpret_cast<char const*>(s.value().data()), s.value().size());
+		return toCharsRef(s.value());
 	} else {
 		return CharsRef("[not set]");
 	}
@@ -353,6 +378,15 @@ public:
 };
 
 using ReadBlobGranulesDescriptionResultV1 = VectorRef<GranuleDescriptionRefV1>;
+
+class BulkLoadFilesToWriteResult : public Result<native::FDBBulkLoadFilesToWriteResult, BulkLoadFilesToWriteResult> {
+public:
+	VectorRef<BulkLoadFileToWriteRef*> files() const noexcept {
+		return VectorRef<BulkLoadFileToWriteRef*>((BulkLoadFileToWriteRef**)data()->files_arr, data()->files_count);
+	}
+};
+
+using BulkLoadFilesWrittenArray = VectorRef<BulkLoadWrittenFileRef>;
 
 class ReadRangeResult : public Result<native::FDBReadRangeResult, ReadRangeResult> {
 public:
@@ -519,6 +553,13 @@ struct GranuleSummaryRef : native::FDBGranuleSummary {
 	}
 };
 
+struct ReadMetrics {
+	using Type = fdb::ReadMetrics;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept {
+		return Error(native::fdb_future_get_read_busyness(f, &out.serverBusyness, &out.rangeBusyness));
+	}
+};
+
 struct GranuleSummaryRefArray {
 	using Type = std::tuple<GranuleSummaryRef const*, int>;
 	static Error extract(native::FDBFuture* f, Type& out) noexcept {
@@ -554,6 +595,7 @@ struct Result {
 };
 
 using ReadBlobGranulesDescriptionResult = Result<fdb::ReadBlobGranulesDescriptionResult>;
+using BulkLoadFilesToWriteResult = Result<fdb::BulkLoadFilesToWriteResult>;
 
 } // namespace future_var
 
@@ -631,6 +673,7 @@ class Future {
 protected:
 	friend class Transaction;
 	friend class Database;
+	friend class IDatabaseOps;
 	friend std::hash<Future>;
 	std::shared_ptr<native::FDBFuture> f;
 
@@ -968,6 +1011,14 @@ public:
 		                                                                 mutationByteLimit);
 	}
 
+	TypedFuture<future_var::ReadBlobGranulesDescriptionResult> readBlobGranulesDescriptionV2(KeyRef begin,
+	                                                                                         KeyRef end,
+	                                                                                         int64_t beginVersion,
+	                                                                                         int64_t readVersion) {
+		return native::fdb_transaction_read_blob_granules_description_v2(
+		    tr.get(), begin.data(), intSize(begin), end.data(), intSize(end), beginVersion, readVersion);
+	}
+
 	TypedFuture<future_var::ReadBlobGranulesDescriptionResultV1> readBlobGranulesDescriptionV1(
 	    KeyRef begin,
 	    KeyRef end,
@@ -1088,6 +1139,17 @@ public:
 	virtual TypedFuture<future_var::None> abortBulkLoad(BulkLoadID id) = 0;
 	virtual TypedFuture<future_var::None> cleanupBulkLoad(BulkLoadID id) = 0;
 	virtual TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) = 0;
+	virtual TypedFuture<future_var::BulkLoadFilesToWriteResult> bulkLoadGetFilesToWrite(BulkLoadID id, int count) = 0;
+	virtual TypedFuture<future_var::None> bulkLoadMarkFilesWritten(BulkLoadID id, BulkLoadFilesWrittenArray files) = 0;
+
+	// no difference between tenant and db here. This function is only here for convenience/as a proxy for testing
+	TypedFuture<future_var::KeyRef> writeSnapshotFile(VectorRef<KeyValueRef> data,
+	                                                  uint8_t compression,
+	                                                  native::FDBBGTenantPrefix const* tenantPrefix,
+	                                                  native::FDBBGEncryptionCtxV2 const* encryptionCtx) {
+		return native::fdb_writebg_snapshot_file(
+		    (native::FDBKeyValue*)data.begin(), data.size(), compression, tenantPrefix, encryptionCtx);
+	}
 };
 
 class Tenant final : public IDatabaseOps {
@@ -1146,6 +1208,24 @@ public:
 		tr.setOption(FDBTransactionOption::FDB_TR_OPTION_RAW_ACCESS, BytesRef());
 		return tr.get(toBytesRef(fmt::format("{}{}", tenantManagementMapPrefix, toCharsRef(name))), false);
 	}
+
+	[[nodiscard]] Error setOptionNothrow(FDBTenantOption option, BytesRef str) noexcept {
+		return Error(native::fdb_tenant_set_option(tenant.get(), option, str.data(), intSize(str)));
+	}
+
+	[[nodiscard]] Error setOptionNothrow(FDBTenantOption option, CharsRef str) {
+		return setOptionNothrow(option, toBytesRef(str));
+	}
+
+	void setOption(FDBTenantOption option, BytesRef str) {
+		if (auto err = setOptionNothrow(option, str)) {
+			throwError(fmt::format("tenant_set_option({}) returned error: ",
+			                       static_cast<std::underlying_type_t<FDBTenantOption>>(option)),
+			           err);
+		}
+	}
+
+	void setOption(FDBTenantOption option, CharsRef str) { setOption(option, toBytesRef(str)); }
 
 	Transaction createTransaction() override {
 		auto tx_native = static_cast<native::FDBTransaction*>(nullptr);
@@ -1215,6 +1295,15 @@ public:
 
 	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
 		return native::fdb_tenant_wait_bulk_load_complete(getTenant(), id.data(), intSize(id));
+	}
+
+	TypedFuture<future_var::BulkLoadFilesToWriteResult> bulkLoadGetFilesToWrite(BulkLoadID id, int count) override {
+		return native::fdb_tenant_bulk_load_get_files_to_write(getTenant(), id.data(), intSize(id), count);
+	}
+
+	TypedFuture<future_var::None> bulkLoadMarkFilesWritten(BulkLoadID id, BulkLoadFilesWrittenArray files) override {
+		return native::fdb_tenant_bulk_load_mark_files_written(
+		    getTenant(), id.data(), intSize(id), files.begin(), files.size());
 	}
 };
 
@@ -1371,6 +1460,15 @@ public:
 	TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) override {
 		return native::fdb_database_wait_bulk_load_complete(getDB(), id.data(), intSize(id));
 	}
+
+	TypedFuture<future_var::BulkLoadFilesToWriteResult> bulkLoadGetFilesToWrite(BulkLoadID id, int count) override {
+		return native::fdb_database_bulk_load_get_files_to_write(getDB(), id.data(), intSize(id), count);
+	}
+
+	TypedFuture<future_var::None> bulkLoadMarkFilesWritten(BulkLoadID id, BulkLoadFilesWrittenArray files) override {
+		return native::fdb_database_bulk_load_mark_files_written(
+		    getDB(), id.data(), intSize(id), files.begin(), files.size());
+	}
 };
 
 [[nodiscard]] inline Error selectApiVersionNothrow(int version) {
@@ -1398,6 +1496,10 @@ inline void selectApiVersionCapped(int version) {
 	if (auto err = selectApiVersionCappedNothrow(version)) {
 		throwError(fmt::format("ERROR: fdb_select_api_version_capped({}): ", version), err);
 	}
+}
+
+ReadMetrics ReadMetrics::fromFuture(fdb::Future const& f) {
+	return f.get<future_var::ReadMetrics>();
 }
 
 } // namespace fdb

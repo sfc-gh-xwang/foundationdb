@@ -610,7 +610,7 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
 		                                                                         cipherKeys.cipherHeaderKey,
 		                                                                         headerRef.getIV(),
-		                                                                         headerRef.getEncryptMode(),
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
 		                                                                         BlobCipherMetrics::RESTORE);
 		return decryptor->decrypt(dataP, dataLen, headerRef, *arena);
 	}
@@ -1408,6 +1408,7 @@ ACTOR static Future<Void> abortFiveZeroBackup(FileBackupAgent* backupAgent,
 	state Subspace statusSpace = backupAgent->subspace.get(BackupAgentBase::keyStates).get(uid.toString());
 	state Subspace globalConfig = backupAgent->subspace.get(BackupAgentBase::keyConfig).get(uid.toString());
 	state Subspace newConfigSpace = uidPrefixKey("uid->config/"_sr.withPrefix(fileBackupPrefixRange.begin), uid);
+	state Subspace emergencyConfigSpace = uidPrefixKey("uid->config/"_sr.withPrefix(emergencyBackupPrefix), uid);
 
 	ValueReadResult statusStr = wait(tr->get(statusSpace.pack(FileBackupAgent::keyStateStatus)));
 	state EBackupState status =
@@ -1428,6 +1429,7 @@ ACTOR static Future<Void> abortFiveZeroBackup(FileBackupAgent* backupAgent,
 
 	// Clear the new-style config space
 	tr->clear(newConfigSpace.range());
+	tr->clear(emergencyConfigSpace.range());
 
 	Key statusKey = StringRef(statusSpace.pack(FileBackupAgent::keyStateStatus));
 
@@ -1605,7 +1607,7 @@ ACTOR static Future<Key> addBackupTask(StringRef name,
 // Clears the backup ID from "backupStartedKey" to pause backup workers.
 ACTOR static Future<Void> clearBackupStartID(Reference<ReadYourWritesTransaction> tr, UID backupUid) {
 	// If backup worker is not enabled, exit early.
-	ValueReadResult started = wait(tr->get(backupStartedKey));
+	ValueReadResult started = wait(tr->get(deprecatedBackupStartedKey));
 	std::vector<std::pair<UID, Version>> ids;
 	if (started.present()) {
 		ids = decodeBackupStartedValue(started.get());
@@ -1619,8 +1621,10 @@ ACTOR static Future<Void> clearBackupStartID(Reference<ReadYourWritesTransaction
 	if (ids.empty()) {
 		TraceEvent("ClearBackup").detail("BackupID", backupUid);
 		tr->clear(backupStartedKey);
+		tr->clear(deprecatedBackupStartedKey);
 	} else {
 		tr->set(backupStartedKey, encodeBackupStartedValue(ids));
+		tr->set(deprecatedBackupStartedKey, encodeBackupStartedValue(ids));
 	}
 	return Void();
 }
@@ -3418,7 +3422,7 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				state Future<Void> keepRunning = taskBucket->keepRunning(tr, task);
 
-				state Future<ValueReadResult> started = tr->get(backupStartedKey);
+				state Future<ValueReadResult> started = tr->get(deprecatedBackupStartedKey);
 				state Future<ValueReadResult> taskStarted = tr->get(config.allWorkerStarted().key);
 				partitionedLog = config.partitionedLogEnabled().get(tr);
 				wait(success(started) && success(taskStarted) && success(partitionedLog));
@@ -3441,6 +3445,7 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 				}
 
 				tr->set(backupStartedKey, encodeBackupStartedValue(ids));
+				tr->set(deprecatedBackupStartedKey, encodeBackupStartedValue(ids));
 				if (backupWorkerEnabled) {
 					config.backupWorkerEnabled().set(tr, true);
 				}
@@ -5357,8 +5362,9 @@ public:
 			prevConfig.clear(tr);
 		}
 
-		state BackupConfig config(deterministicRandom()->randomUniqueID());
-		state UID uid = config.getUid();
+		state UID uid = deterministicRandom()->randomUniqueID();
+		state BackupConfig config(uid);
+		state EmergencyBackupConfig emergencyConfig(uid);
 
 		// This check will ensure that current backupUid is later than the last backup Uid
 		state Standalone<StringRef> nowStr = BackupAgentBase::getCurrentTime();
@@ -5422,6 +5428,7 @@ public:
 		}
 
 		config.clear(tr);
+		emergencyConfig.clear(tr);
 
 		state Key destUidValue(BinaryWriter::toValue(uid, Unversioned()));
 		if (normalizedRanges.size() == 1 || isDefaultBackup(normalizedRanges)) {
@@ -5462,8 +5469,10 @@ public:
 		config.tag().set(tr, tagName);
 		config.stateEnum().set(tr, EBackupState::STATE_SUBMITTED);
 		config.backupContainer().set(tr, bc);
+		emergencyConfig.backupContainer().set(tr, bc);
 		config.stopWhenDone().set(tr, stopWhenDone);
 		config.backupRanges().set(tr, normalizedRanges);
+		emergencyConfig.backupRanges().set(tr, normalizedRanges);
 		config.initialSnapshotIntervalSeconds().set(tr, initialSnapshotIntervalSeconds);
 		config.snapshotIntervalSeconds().set(tr, snapshotIntervalSeconds);
 		config.partitionedLogEnabled().set(tr, partitionedLog);

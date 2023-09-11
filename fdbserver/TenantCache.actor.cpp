@@ -51,7 +51,7 @@ public:
 	ACTOR static Future<Void> build(TenantCache* tenantCache) {
 		state Transaction tr(tenantCache->dbcx());
 
-		TraceEvent(SevInfo, "BuildingTenantCache", tenantCache->id()).log();
+		TraceEvent(SevInfo, "TenantCacheBuildStarting", tenantCache->id());
 
 		try {
 			state std::vector<std::pair<int64_t, TenantMapEntry>> tenantList = wait(getTenantList(tenantCache, &tr));
@@ -59,7 +59,7 @@ public:
 			for (int i = 0; i < tenantList.size(); i++) {
 				tenantCache->insert(tenantList[i].second);
 
-				TraceEvent(SevInfo, "TenantFound", tenantCache->id())
+				TraceEvent(SevDebug, "TenantCacheTenantFound", tenantCache->id())
 				    .detail("TenantName", tenantList[i].second.tenantName)
 				    .detail("TenantID", tenantList[i].first)
 				    .detail("TenantPrefix", tenantList[i].second.prefix);
@@ -68,13 +68,13 @@ public:
 			wait(tr.onError(e));
 		}
 
-		TraceEvent(SevInfo, "BuiltTenantCache", tenantCache->id()).log();
+		TraceEvent(SevInfo, "TenantCacheBuildDone", tenantCache->id());
 
 		return Void();
 	}
 
 	ACTOR static Future<Void> monitorTenantMap(TenantCache* tenantCache) {
-		TraceEvent(SevInfo, "StartingTenantCacheMonitor", tenantCache->id()).log();
+		TraceEvent(SevInfo, "TenantCacheMonitorStarting", tenantCache->id());
 
 		state Transaction tr(tenantCache->dbcx());
 
@@ -83,7 +83,8 @@ public:
 		loop {
 			try {
 				if (now() - lastTenantListFetchTime > (2 * SERVER_KNOBS->TENANT_CACHE_LIST_REFRESH_INTERVAL)) {
-					TraceEvent(SevWarn, "TenantListRefreshDelay", tenantCache->id()).log();
+					TraceEvent(SevWarn, "TenantCacheListRefreshSlow", tenantCache->id())
+					    .detail("RefreshTime", now() - lastTenantListFetchTime);
 				}
 
 				state std::vector<std::pair<int64_t, TenantMapEntry>> tenantList =
@@ -105,7 +106,8 @@ public:
 				}
 
 				if (tenantListUpdated) {
-					TraceEvent(SevInfo, "TenantCache", tenantCache->id()).detail("List", tenantCache->desc());
+					TraceEvent(SevDebug, "TenantCacheListUpdated", tenantCache->id())
+					    .detail("List", tenantCache->desc());
 				}
 
 				lastTenantListFetchTime = now();
@@ -113,9 +115,7 @@ public:
 				wait(delay(SERVER_KNOBS->TENANT_CACHE_LIST_REFRESH_INTERVAL));
 			} catch (Error& e) {
 				if (e.code() != error_code_actor_cancelled) {
-					TraceEvent("TenantCacheGetTenantListError", tenantCache->id())
-					    .errorUnsuppressed(e)
-					    .suppressFor(1.0);
+					TraceEvent("TenantCacheGetListError", tenantCache->id()).errorUnsuppressed(e).suppressFor(1.0);
 				}
 				wait(tr.onError(e));
 			}
@@ -123,27 +123,38 @@ public:
 	}
 
 	ACTOR static Future<Void> monitorStorageUsage(TenantCache* tenantCache) {
-		TraceEvent(SevInfo, "StartingTenantCacheStorageUsageMonitor", tenantCache->id()).log();
+		TraceEvent(SevInfo, "StorageQuotaMonitorUsageStarting", tenantCache->id());
 
 		state int refreshInterval = SERVER_KNOBS->TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL;
-		state double lastTenantListFetchTime = now();
 		state double lastTraceTime = 0;
 
 		loop {
-			state double fetchStartTime = now();
+			state double currentFetchStartTime = now();
 
 			state bool toTrace = false;
-			if (fetchStartTime - lastTraceTime > SERVER_KNOBS->TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL) {
+			if (currentFetchStartTime - lastTraceTime > SERVER_KNOBS->TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL) {
 				toTrace = true;
-				lastTraceTime = fetchStartTime;
+				lastTraceTime = currentFetchStartTime;
 			}
 
 			state std::vector<TenantGroupName> groups;
 			for (const auto& [group, storage] : tenantCache->tenantStorageMap) {
 				groups.push_back(group);
 			}
+
+			if (groups.empty()) {
+				wait(delay(refreshInterval));
+			}
+
 			state int i;
 			for (i = 0; i < groups.size(); i++) {
+				// Insert a delay between fetching the size for each tenant group to avoid overwhelming DD (or the
+				// cluster) every "refreshInterval" seconds. The total time taken for a group (for fetching sizes +
+				// inserted delay) should add up to approximately "refreshInterval" seconds by the end of iterating
+				// through all the groups.
+				state double delayTime = (currentFetchStartTime + refreshInterval - now()) / (groups.size() - i);
+				state Future<Void> delayTimer = delay(std::max(delayTime, 0.0));
+
 				state TenantGroupName group = groups[i];
 				state int64_t usage = 0;
 				// `tenants` needs to be a copy so that the erase (below) or inserts/erases from other
@@ -152,7 +163,7 @@ public:
 				state std::unordered_set<int64_t>::iterator iter = tenants.begin();
 				for (; iter != tenants.end(); iter++) {
 					state int64_t tenantId = *iter;
-					state ReadYourWritesTransaction tr(tenantCache->dbcx(), makeReference<Tenant>(tenantId));
+					state ReadYourWritesTransaction tr(makeReference<Tenant>(tenantCache->dbcx(), tenantId));
 					loop {
 						try {
 							state int64_t size = wait(tr.getEstimatedRangeSizeBytes(normalKeys));
@@ -163,7 +174,7 @@ public:
 								tenantCache->tenantStorageMap[group].tenants.erase(tenantId);
 								break;
 							} else {
-								TraceEvent("TenantCacheGetStorageUsageError", tenantCache->id()).error(e);
+								TraceEvent("StorageQuotaGetUsageError", tenantCache->id()).error(e);
 								wait(tr.onError(e));
 							}
 						}
@@ -173,23 +184,23 @@ public:
 
 				if (toTrace) {
 					// Trace the storage used by all tenant groups for visibility.
-					TraceEvent(SevInfo, "StorageUsageUpdated", tenantCache->id())
+					TraceEvent(SevInfo, "StorageQuotaUsageUpdated", tenantCache->id())
 					    .detail("TenantGroup", group)
 					    .detail("Quota", tenantCache->tenantStorageMap[group].quota)
 					    .detail("Usage", tenantCache->tenantStorageMap[group].usage);
 				}
+				wait(delayTimer);
 			}
 
-			lastTenantListFetchTime = now();
-			if (lastTenantListFetchTime - fetchStartTime > (2 * refreshInterval)) {
-				TraceEvent(SevWarn, "TenantCacheGetStorageUsageRefreshSlow", tenantCache->id()).log();
+			if (now() - currentFetchStartTime > (2 * refreshInterval)) {
+				TraceEvent(SevWarn, "StorageQuotaUsageRefreshSlow", tenantCache->id())
+				    .detail("RefreshTime", now() - currentFetchStartTime);
 			}
-			wait(delay(refreshInterval));
 		}
 	}
 
 	ACTOR static Future<Void> monitorStorageQuota(TenantCache* tenantCache) {
-		TraceEvent(SevInfo, "StartingTenantCacheStorageQuotaMonitor", tenantCache->id()).log();
+		TraceEvent(SevInfo, "StorageQuotaMonitorQuotaStarting", tenantCache->id());
 
 		state Reference<ReadYourWritesTransaction> tr = tenantCache->dbcx()->createTransaction();
 
@@ -209,9 +220,40 @@ public:
 				tr->reset();
 				wait(delay(SERVER_KNOBS->TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL));
 			} catch (Error& e) {
-				TraceEvent("TenantCacheGetStorageQuotaError", tenantCache->id()).error(e);
+				TraceEvent("StorageQuotaGetQuotaError", tenantCache->id()).error(e);
 				wait(tr->onError(e));
 			}
+		}
+	}
+
+	ACTOR static Future<Void> abortBulkLoadsOverQuota(TenantCache* tenantCache) {
+		TraceEvent(SevInfo, "StorageQuotaAbortBulkLoadsStarting", tenantCache->id());
+		loop {
+			state std::unordered_set<int64_t> tenantIds = tenantCache->getTenantsOverQuota();
+			for (const auto tenantId : tenantIds) {
+				// TODO: Add a function in DatabaseContext that can take a tenantId and abort all bulk loads
+				// for that tenant.
+				state Reference<Tenant> tenant = makeReference<Tenant>(tenantCache->dbcx(), tenantId);
+				state Standalone<VectorRef<BulkLoadIDRef>> loads =
+				    wait(tenantCache->dbcx()->listBulkLoads(/*onlyActive=*/true, tenant));
+				state int idx = 0;
+				for (; idx < loads.size(); idx++) {
+					state BulkLoadIDRef id = loads[idx];
+					try {
+						wait(tenantCache->dbcx()->abortBulkLoad(id, tenant));
+						wait(tenantCache->dbcx()->cleanupBulkLoad(id, tenant));
+					} catch (Error& e) {
+						if (e.code() == error_code_bulk_load_abort_failed ||
+						    e.code() == error_code_bulk_load_not_found) {
+							continue;
+						}
+						// Any other errors would be unexpected; treat it as fatal
+						TraceEvent(SevInfo, "StorageQuotaAbortBulkLoadsError", tenantCache->id()).errorUnsuppressed(e);
+						throw e;
+					}
+				}
+			}
+			wait(delay(SERVER_KNOBS->BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL));
 		}
 	}
 };
@@ -322,6 +364,9 @@ Optional<Reference<TCTenantInfo>> TenantCache::tenantOwning(KeyRef key) const {
 }
 
 std::unordered_set<int64_t> TenantCache::getTenantsOverQuota() const {
+	// TODO: Potentially optimize this by caching the list and updating it when storage quota
+	// and/or usage is fetched. With that approach, we could also abort bulk loads when the
+	// list is updated with a new tenantGroup instead of a periodic actor.
 	std::unordered_set<int64_t> tenantsOverQuota;
 	for (const auto& [tenantGroup, storage] : tenantStorageMap) {
 		if (storage.usage > storage.quota) {
@@ -341,6 +386,10 @@ Future<Void> TenantCache::monitorStorageUsage() {
 
 Future<Void> TenantCache::monitorStorageQuota() {
 	return TenantCacheImpl::monitorStorageQuota(this);
+}
+
+Future<Void> TenantCache::abortBulkLoadsOverQuota() {
+	return TenantCacheImpl::abortBulkLoadsOverQuota(this);
 }
 
 class TenantCacheUnitTest {

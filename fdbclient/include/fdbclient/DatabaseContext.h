@@ -445,22 +445,34 @@ public:
 
 	// bulk load functions
 
-	// state management
+	// external state management apis - exposed to clients, go through interface/authz
 	Future<BulkLoadID> startBulkLoad(KeyRange range, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> bulkLoadAllFilesRegistered(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> abortBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> cleanupBulkLoad(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 	Future<Void> waitBulkLoadComplete(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
-	// internal state management - not exposed to public clients
-	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id, BulkLoadStatus::State desiredState);
-	Future<Void> updateBulkLoadState(BulkLoadID id, BulkLoadStatus::State desiredState);
-	Future<Void> cleanupAbortedBulkLoad(BulkLoadID id);
-	Future<Version> getBulkLoadVersion(BulkLoadID id);
+	// internal state management helper functions - not exposed to public clients at all
+	Future<Void> startBulkLoadInternal(BulkLoadID id,
+	                                   KeyRange range,
+	                                   Version maxReadVersion,
+	                                   Optional<Reference<Tenant>> tenant = {});
+	Future<Void> cleanupBulkLoadInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Void> waitBulkLoadStateAtLeast(BulkLoadID id,
+	                                      BulkLoadStatus::State desiredState,
+	                                      Optional<Reference<Tenant>> tenant = {});
+	Future<Void> updateBulkLoadState(BulkLoadID id,
+	                                 BulkLoadStatus::State desiredState,
+	                                 Optional<Reference<Tenant>> tenant = {});
+	Future<Version> getBulkLoadVersion(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternal(bool onlyActive, Optional<int64_t> tenantId);
+	Future<BulkLoadStatus> getBulkLoadStatusInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant);
 
 	// operational management
 	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoads(bool onlyActive,
 	                                                           Optional<Reference<Tenant>> tenant = {});
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoads(bool onlyActive,
+	                                                              Optional<Reference<Tenant>> tenant = {});
 	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 
 	// bulk data writing apis
@@ -640,6 +652,10 @@ public:
 	Counter feedNonRetriableErrors;
 	Counter feedPops;
 	Counter feedPopsFallback;
+	Counter feedDiskBytesRead;
+	Counter feedDiskBytesWritten;
+	ActiveCounter<int> activeFeedStreams;
+	ActiveCounter<int> activeFeedDiskStreams;
 
 	DDSketch<double> latencies, readLatencies, readRangeLatencies, commitLatencies, GRVLatencies, keyLocationLatencies,
 	    mutationsPerCommit, bytesPerCommit;
@@ -770,6 +786,8 @@ public:
 
 		return clientInfo->get().tenantMode;
 	}
+
+	Future<TenantMode> getOrWaitForTenantMode();
 
 	void addCost(ThrottlingId const&, uint64_t bytes);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);

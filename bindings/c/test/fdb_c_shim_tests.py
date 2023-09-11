@@ -8,31 +8,11 @@ import os
 
 from binary_download import FdbBinaryDownloader
 from local_cluster import LocalCluster
-from test_util import random_alphanum_string
+from test_util import random_alphanum_string, api_version_from_str
 from fdb_version import CURRENT_VERSION, PREV_RELEASE_VERSION
 
 TESTER_STATS_INTERVAL_SEC = 5
-DEFAULT_TEST_FILE = "CApiCorrectnessMultiThr.toml"
 IMPLIBSO_ERROR_CODE = -6  # SIGABORT
-
-
-def version_from_str(ver_str):
-    ver = [int(s) for s in ver_str.split(".")]
-    assert len(ver) == 3, "Invalid version string {}".format(ver_str)
-    return ver
-
-
-def api_version_from_str(ver_str):
-    ver_tuple = version_from_str(ver_str)
-    if ver_tuple[0] > 70:
-        return ver_tuple[0] * 10000 + ver_tuple[1] * 100
-    if ver_tuple[0] >= 8:
-        return ver_tuple[0] * 100000 + ver_tuple[1] * 100
-    return ver_tuple[0] * 100 + ver_tuple[1] * 10
-
-
-def version_before(ver_str1, ver_str2):
-    return version_from_str(ver_str1) < version_from_str(ver_str2)
 
 
 class TestEnv(LocalCluster):
@@ -60,10 +40,7 @@ class TestEnv(LocalCluster):
             "LD_LIBRARY_PATH",
             "%s:%s" % (self.downloader.lib_dir(version), os.getenv("LD_LIBRARY_PATH")),
         )
-        client_lib = self.downloader.lib_path(version)
-        assert client_lib.exists(), "{} does not exist".format(client_lib)
-        self.client_lib_external = self.tmp_dir.joinpath("libfdb_c_external.so")
-        shutil.copyfile(client_lib, self.client_lib_external)
+        self.client_lib_external = self.downloader.lib_path(version, external=True)
 
     def __enter__(self):
         super().__enter__()
@@ -96,55 +73,15 @@ class FdbCShimTests:
         assert self.unit_tests_bin.exists(), "{} does not exist".format(
             self.unit_tests_bin
         )
-        self.api_tester_bin = Path(args.api_tester_bin).resolve()
-        assert self.api_tester_bin.exists(), "{} does not exist".format(
-            self.api_tests_bin
-        )
         self.shim_lib_tester_bin = Path(args.shim_lib_tester_bin).resolve()
         assert self.shim_lib_tester_bin.exists(), "{} does not exist".format(
             self.shim_lib_tester_bin
         )
-        self.api_test_dir = Path(args.api_test_dir).resolve()
-        assert self.api_test_dir.exists(), "{} does not exist".format(self.api_test_dir)
         self.downloader = FdbBinaryDownloader(args.build_dir)
         self.test_prev_versions = not args.disable_prev_version_tests
         if self.test_prev_versions:
             self.downloader.download_old_binaries(PREV_RELEASE_VERSION)
             self.downloader.download_old_binaries("71.2.9")
-
-    def build_c_api_tester_args(self, test_env, test_file):
-        test_file_path = self.api_test_dir.joinpath(test_file)
-        return [
-            self.api_tester_bin,
-            "--cluster-file",
-            test_env.cluster_file,
-            "--test-file",
-            test_file_path,
-            "--external-client-library",
-            test_env.client_lib_external,
-            "--disable-local-client",
-            "--api-version",
-            str(api_version_from_str(test_env.version)),
-            "--log",
-            "--log-dir",
-            test_env.log,
-            "--tmp-dir",
-            test_env.tmp_dir,
-            "--stats-interval",
-            str(TESTER_STATS_INTERVAL_SEC * 1000),
-        ]
-
-    def run_c_api_test(self, version, test_file):
-        print("-" * 80)
-        print("C API Test - version: {}, workload: {}".format(version, test_file))
-        print("-" * 80)
-        with TestEnv(self.build_dir, self.downloader, version) as test_env:
-            cmd_args = self.build_c_api_tester_args(test_env, test_file)
-            env_vars = os.environ.copy()
-            env_vars["FDB_LOCAL_CLIENT_LIBRARY_PATH"] = self.downloader.lib_path(
-                version
-            )
-            test_env.exec_client_command(cmd_args, env_vars)
 
     def run_c_unit_tests(self, version):
         print("-" * 80)
@@ -159,7 +96,7 @@ class FdbCShimTests:
             ]
             env_vars = os.environ.copy()
             env_vars["FDB_LOCAL_CLIENT_LIBRARY_PATH"] = self.downloader.lib_path(
-                version
+                version, external=False
             )
             test_env.exec_client_command(cmd_args, env_vars)
 
@@ -205,7 +142,11 @@ class FdbCShimTests:
         if call_set_path:
             cmd_args = cmd_args + [
                 "--local-client-library",
-                ("dummy" if invalid_lib_path else self.downloader.lib_path(version)),
+                (
+                    "dummy"
+                    if invalid_lib_path
+                    else self.downloader.lib_path(version, external=False)
+                ),
             ]
         if use_external_lib:
             cmd_args = cmd_args + [
@@ -221,14 +162,13 @@ class FdbCShimTests:
             )
         if set_env_path:
             env_vars["FDB_LOCAL_CLIENT_LIBRARY_PATH"] = (
-                "dummy" if invalid_lib_path else self.downloader.lib_path(version)
+                "dummy"
+                if invalid_lib_path
+                else self.downloader.lib_path(version, external=False)
             )
         test_env.exec_client_command(cmd_args, env_vars, expected_ret_code)
 
     def run_tests(self):
-        # Test the API workload with the dev version
-        self.run_c_api_test(CURRENT_VERSION, DEFAULT_TEST_FILE)
-
         # Run unit tests with the dev version
         self.run_c_unit_tests(CURRENT_VERSION)
 
@@ -271,8 +211,6 @@ class FdbCShimTests:
             )
 
         if self.test_prev_versions:
-            # Test the API workload with the release version
-            self.run_c_api_test(PREV_RELEASE_VERSION, DEFAULT_TEST_FILE)
 
             with TestEnv(
                 self.build_dir, self.downloader, PREV_RELEASE_VERSION
@@ -308,10 +246,7 @@ if __name__ == "__main__":
     parser = ArgumentParser(
         formatter_class=RawDescriptionHelpFormatter,
         description="""
-        A script for testing FDB multi-version client in upgrade scenarios. Creates a local cluster,
-        generates a workload using fdb_c_api_tester with a specified test file, and performs
-        cluster upgrade according to the specified upgrade path. Checks if the workload successfully
-        progresses after each upgrade step.
+        Executes a set of unit tests of for shim layer
         """,
     )
     parser.add_argument(
@@ -328,21 +263,9 @@ if __name__ == "__main__":
         required=True,
     )
     parser.add_argument(
-        "--api-tester-bin",
-        type=str,
-        help="Path to the fdb_c_shim_api_tester executable.",
-        required=True,
-    )
-    parser.add_argument(
         "--shim-lib-tester-bin",
         type=str,
         help="Path to the fdb_c_shim_lib_tester executable.",
-        required=True,
-    )
-    parser.add_argument(
-        "--api-test-dir",
-        type=str,
-        help="Path to a directory with api test definitions.",
         required=True,
     )
     parser.add_argument(

@@ -19,6 +19,7 @@
  */
 #ifndef FDBCLIENT_ENCRYPT_BLOB_CIPHER_H
 #define FDBCLIENT_ENCRYPT_BLOB_CIPHER_H
+#include "fdbclient/FDBTypes.h"
 #include "flow/EncryptUtils.h"
 #pragma once
 
@@ -168,11 +169,6 @@ private:
 	                                   const BlobCipherEncryptHeaderFlagsV1&,
 	                                   BlobCipherEncryptHeaderRef*,
 	                                   const EncryptAuthTokenAlgo) override;
-	template <class Params>
-	void setCipherAlgoHeaderWithAuthV1(const uint8_t*,
-	                                   const int,
-	                                   const BlobCipherEncryptHeaderFlagsV1&,
-	                                   BlobCipherEncryptHeaderRef*);
 	void init() override;
 };
 
@@ -184,7 +180,7 @@ public:
 	static Reference<DecryptBlobCipher> getDecryptor(Reference<BlobCipherKey> tCipherKey,
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
 	                                                 const uint8_t* iv,
-	                                                 const EncryptCipherMode encryptCipherMode,
+	                                                 const EncryptionAtRestAlgo encryptAlgo,
 	                                                 BlobCipherMetrics::UsageType usageType);
 
 	DecryptBlobCipher(Reference<BlobCipherKey> tCipherKey,

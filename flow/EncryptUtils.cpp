@@ -183,6 +183,10 @@ bool isAuthenticatedEncryption(EncryptionAtRestAlgo algo) {
 	throw unsupported_operation();
 }
 
+bool needsHeaderCipherKey(EncryptionAtRestAlgo algo) {
+	return isAuthenticatedEncryption(algo) && algo != EncryptionAtRestAlgo::AES_GCM;
+}
+
 std::string getRandomAuthenticatedEncryptionAtRestAlgo() {
 	std::vector<std::string> encryptionAlgos = { "AES-256-CMAC", "AES-256-HMAC", "AES-256-GCM" };
 	return deterministicRandom()->randomChoice(encryptionAlgos);

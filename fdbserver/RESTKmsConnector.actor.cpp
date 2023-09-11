@@ -56,6 +56,8 @@
 #include <utility>
 
 #include "flow/actorcompiler.h" // This must be the last #include
+#include "flow/flow.h"
+#include "flow/network.h"
 
 using namespace RESTKmsConnectorUtils;
 
@@ -226,11 +228,9 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	double lastKmsUrlsRefreshTs;
 	double lastKmsUrlDiscoverTS;
 	bool kmsStable;
-	RESTClient restClient;
+	Reference<RESTClient> restClient;
 	ValidationTokenMap validationTokenMap;
-	PromiseStream<Future<Void>> addActor;
-	Future<Void> kmsStabilityChecker;
-	Future<Void> logger;
+	ActorCollection actors;
 
 	CounterCollection kmsConnectorMetrics;
 
@@ -241,20 +241,22 @@ struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
 	    lastKmsUrlsRefreshTs(0),
 	    lastKmsUrlDiscoverTS(0.0),
 	    kmsStable(true),
+	    restClient(makeReference<RESTClient>()),
 	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
 	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
-		logger = kmsConnectorMetrics.traceCounters(
-		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics");
+		actors.add(kmsConnectorMetrics.traceCounters(
+		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics"));
 	}
 	explicit RESTKmsConnectorCtx(const UID& id)
 	  : uid(id),
 	    lastKmsUrlsRefreshTs(0),
 	    lastKmsUrlDiscoverTS(0.0),
 	    kmsStable(true),
+	    restClient(makeReference<RESTClient>()),
 	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
 	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
-		logger = kmsConnectorMetrics.traceCounters(
-		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics");
+		actors.add(kmsConnectorMetrics.traceCounters(
+		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics"));
 	}
 };
 
@@ -712,6 +714,25 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 		double expireAt = detail.HasMember(EXPIRE_AFTER_SEC) ? now() + detail[EXPIRE_AFTER_SEC].GetInt64()
 		                                                     : std::numeric_limits<double>::max();
 		result.emplace_back_deep(result.arena(), domainId, locations, refreshAt, expireAt);
+
+		if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
+			TraceEvent event("RESTParseBlobMetadataResponse", ctx->uid);
+			event.detail("DomainId", domainId);
+			event.detail("LocationCount", locations.size());
+			for (int i = 0; i < locations.size(); i++) {
+				event.detail("LocId" + std::to_string(i), locations[i].locationId);
+				if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::VERBOSE) {
+					// only log this at verbose level because it is expensive and likely contains credentials
+					event.detail("LocPath" + std::to_string(i), locations[i].path);
+				}
+			}
+			if (refreshAt != std::numeric_limits<double>::max()) {
+				event.detail("RefreshAt", refreshAt);
+			}
+			if (expireAt != std::numeric_limits<double>::max()) {
+				event.detail("ExpireAt", expireAt);
+			}
+		}
 	}
 
 	checkDocForNewKmsUrls(ctx, resp, doc);
@@ -795,14 +816,17 @@ Future<T> kmsRequestImpl(
 	// error (time-out or connection-failed), then continue enumeration. Otherwise, bubble up the error.
 	// Step-2: Refresh KmsUlrStore cached URLs by re-discovering KMS URLs and loop Step-1
 
-	state int pass = 0;
 	state KmsUrlCtx<KmsUrlPenaltyParams>* urlCtx;
+	state int pass = 0;
+	state double retryDelay = SERVER_KNOBS->REST_KMS_CONNECTOR_INIT_REQUEST_RETRY_DELAY;
+	state bool forceRefreshKMSUrls = BUGGIFY && (deterministicRandom()->random01() < 0.01);
+
 	loop {
 		state int idx = 0;
 		state double start = now();
 
 		pass++;
-		while (idx < ctx->kmsUrlStore.kmsUrls.size()) {
+		while (idx < ctx->kmsUrlStore.kmsUrls.size() && !forceRefreshKMSUrls) {
 			urlCtx = &ctx->kmsUrlStore.kmsUrls[idx++];
 			try {
 				std::string kmsEncryptionFullUrl = getFullRequestUrl(ctx, urlCtx->url, urlSuffix);
@@ -814,21 +838,25 @@ Future<T> kmsRequestImpl(
 					    .detail("FullUrl", kmsEncryptionFullUrl)
 					    .detail("StartIdx", start)
 					    .detail("CurIdx", idx)
-					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS);
+					    .detail("LastKmsUrlDiscoverTS", ctx->lastKmsUrlDiscoverTS)
+					    .detail("RetryDelay", retryDelay);
 				}
 
 				HTTP::Headers headers;
 				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 				Reference<HTTP::IncomingResponse> resp =
-				    wait(ctx->restClient.doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
+				    wait(ctx->restClient->doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), headers));
 				urlCtx->nRequests++;
 
 				try {
 					T parsedResp = parseFunc(ctx, resp);
 					return parsedResp;
 				} catch (Error& e) {
-					TraceEvent(SevWarn, "KmsRequestRespParseFailure").error(e).detail("RequestID", requestID);
+					TraceEvent(SevWarn, "KmsRequestRespParseFailure")
+					    .error(e)
+					    .detail("RequestID", requestID)
+					    .detail("RetryDelay", retryDelay);
 					ctx->kmsUrlStore.penalize(*urlCtx, KmsUrlCtx<KmsUrlPenaltyParams>::PenaltyType::MALFORMED_RESPONSE);
 					// attempt to do request from next KmsUrl
 				}
@@ -841,7 +869,10 @@ Future<T> kmsRequestImpl(
 					}
 					throw e;
 				}
-				TraceEvent(SevDebug, "KmsRequestError", ctx->uid).error(e).detail("RequestID", requestID);
+				TraceEvent(SevDebug, "KmsRequestError", ctx->uid)
+				    .error(e)
+				    .detail("RequestID", requestID)
+				    .detail("RetryDelay", retryDelay);
 				// attempt to do request from next KmsUrl
 			}
 
@@ -857,8 +888,29 @@ Future<T> kmsRequestImpl(
 				idx = 0;
 			}
 		}
+
 		// Re-discover KMS urls and re-attempt request using newer KMS URLs
 		wait(discoverKmsUrls(ctx, RefreshPersistedUrls::True));
+
+		// KMS outage scenario might last for a long time, though the code designed to let RESTKMSConnector keep
+		// attempting to connect with external server(s), it is preferable to have an exponential backoff mechanism
+
+		if (pass > 1 || forceRefreshKMSUrls) {
+			// retry-delay is injected after all in-memory and on-disk URLs are tried once.
+			wait(delay(retryDelay));
+
+			retryDelay = std::min(retryDelay * 2.0, SERVER_KNOBS->REST_KMS_CONNECTOR_MAX_REQUEST_RETRY_DELAY);
+
+			if (forceRefreshKMSUrls) {
+				ASSERT(g_network->isSimulated());
+				// limit the retry-delay to 1 simulation second i.e. 5 retries
+				if (retryDelay >= 1.0) {
+					forceRefreshKMSUrls = false;
+				}
+			}
+
+			CODE_PROBE(true, "RESTKmsConnector exponential delay");
+		}
 	}
 }
 
@@ -1166,7 +1218,7 @@ ACTOR Future<Void> procureValidationTokens(Reference<RESTKmsConnectorCtx> ctx) {
 // TODO(yiwu): make RESTClient periodically report and clear the stats.
 void updateKMSStability(Reference<RESTKmsConnectorCtx> self) {
 	bool stable = true;
-	for (auto& s : self->restClient.statsMap) {
+	for (auto& s : self->restClient->statsMap) {
 		if (s.second->requests_failed > 0) {
 			stable = false;
 		}
@@ -1192,57 +1244,38 @@ Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSState
 	return Void();
 }
 
-ACTOR Future<Void> resetRESTKmsConnectorCtx(Reference<RESTKmsConnectorCtx> ctx) {
-	if (ctx.isValid()) {
-		ctx->kmsStabilityChecker.cancel();
-
-		wait(delay(0.0));
-
-		while (!ctx->addActor.isEmpty()) {
-			ctx->addActor.getFuture().pop();
-		}
-	}
-	return Void();
-}
-
 ACTOR Future<Void> restConnectorCoreImpl(KmsConnectorInterface interf) {
 	state Reference<RESTKmsConnectorCtx> self = makeReference<RESTKmsConnectorCtx>(interf.id());
-	state Future<Void> collection = actorCollection(self->addActor.getFuture());
 
 	try {
 		TraceEvent("RESTKmsConnectorInit", self->uid).log();
 
-		self->kmsStabilityChecker =
-		    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL);
+		self->actors.add(
+		    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL));
 		wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
 		wait(procureValidationTokens(self));
 
 		loop {
 			choose {
 				when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
-					self->addActor.send(fetchEncryptionKeysByKeyIds(self, req));
+					self->actors.add(fetchEncryptionKeysByKeyIds(self, req));
 				}
 				when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
-					self->addActor.send(fetchEncryptionKeysByDomainIds(self, req));
+					self->actors.add(fetchEncryptionKeysByDomainIds(self, req));
 				}
 				when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
-					self->addActor.send(fetchBlobMetadata(self, req));
+					self->actors.add(fetchBlobMetadata(self, req));
 				}
 				when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
-					self->addActor.send(getKMSState(self, req));
+					self->actors.add(getKMSState(self, req));
 				}
-				when(wait(collection)) {
-					ASSERT(false);
-					throw internal_error();
-				}
+				when(wait(self->actors.getResult())) {}
 			}
 		}
 	} catch (Error& e) {
-		state Error _e = e;
-		TraceEvent("RESTKmsConnectorError", self->uid).errorUnsuppressed(_e);
-		// reset RESTKmsConnectorCtx to ensure destruction of cached connectionPool
-		wait(resetRESTKmsConnectorCtx(self));
-		throw _e;
+		TraceEvent("RESTKmsConnectorError", self->uid).errorUnsuppressed(e);
+		self->actors = ActorCollection(false);
+		throw e;
 	}
 }
 

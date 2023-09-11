@@ -19,15 +19,19 @@
  */
 
 #include "fdbclient/FDBTypes.h"
+#include "fdbclient/KeyRangeMap.h"
 #include "fdbclient/MetaclusterRegistration.h"
+#include "fdbclient/SystemData.h"
 #include "fdbrpc/sim_validation.h"
 #include "fdbserver/ApplyMetadataMutation.h"
 #include "fdbserver/BackupProgress.actor.h"
 #include "fdbserver/ClusterRecovery.actor.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/MasterInterface.h"
+#include "fdbserver/RecoveryState.h"
 #include "fdbserver/Recruiter.h"
 #include "fdbserver/WaitFailure.h"
+#include "flow/Error.h"
 #include "flow/ProtocolVersion.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -312,33 +316,42 @@ ACTOR Future<Void> configurationMonitor(Reference<ClusterRecoveryData> self, Dat
 	}
 }
 
+Optional<Version> findMinBackupVersion(ValueReadResult value, UID dbgid) {
+	Optional<Version> minVersion;
+	if (value.present()) {
+		auto uidVersions = decodeBackupStartedValue(value.get());
+		TraceEvent e("GotBackupStartKey", dbgid);
+		int i = 1;
+		for (auto [uid, version] : uidVersions) {
+			e.detail(format("BackupID%d", i), uid).detail(format("Version%d", i), version);
+			i++;
+			minVersion = minVersion.present() ? std::min(version, minVersion.get()) : version;
+		}
+	} else {
+		TraceEvent("EmptyBackupStartKey", dbgid).log();
+	}
+	return minVersion;
+}
+
 ACTOR static Future<Optional<Version>> getMinBackupVersion(Reference<ClusterRecoveryData> self, Database cx) {
 	loop {
 		state ReadYourWritesTransaction tr(cx);
-
 		try {
 			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-			ValueReadResult value = wait(tr.get(backupStartedKey));
-			Optional<Version> minVersion;
-			if (value.present()) {
-				auto uidVersions = decodeBackupStartedValue(value.get());
-				TraceEvent e("GotBackupStartKey", self->dbgid);
-				int i = 1;
-				for (auto [uid, version] : uidVersions) {
-					e.detail(format("BackupID%d", i), uid).detail(format("Version%d", i), version);
-					i++;
-					minVersion = minVersion.present() ? std::min(version, minVersion.get()) : version;
-				}
-			} else {
-				TraceEvent("EmptyBackupStartKey", self->dbgid).log();
-			}
-			return minVersion;
-
+			ValueReadResult value = wait(tr.get(deprecatedBackupStartedKey));
+			return findMinBackupVersion(value, self->dbgid);
 		} catch (Error& e) {
 			wait(tr.onError(e));
 		}
 	}
+}
+
+static Optional<Version> getMinBackupVersion(Reference<ClusterRecoveryData> self,
+                                             Database cx,
+                                             Reference<IKeyValueStore> txnStateStore) {
+	ValueReadResult value = txnStateStore->readValue(backupStartedKey).get();
+	return findMinBackupVersion(value, self->dbgid);
 }
 
 ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> self, Database cx) {
@@ -350,7 +363,7 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 	state LogEpoch epoch = self->cstate.myDBState.recoveryCount;
 	state Reference<BackupProgress> backupProgress(
 	    new BackupProgress(self->dbgid, self->logSystem->getOldEpochTagsVersionsInfo()));
-	state Future<Void> gotProgress = getBackupProgress(cx, self->dbgid, backupProgress, /*logging=*/true);
+	state Future<Void> gotProgress = getBackupProgressFromStorage(cx, self->dbgid, backupProgress, /*logging=*/true);
 	state std::vector<Future<InitializeBackupReply>> initializationReplies;
 
 	state std::vector<std::pair<UID, Tag>> idsTags; // worker IDs and tags for current epoch
@@ -370,12 +383,14 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 		req.routerTag = idsTags[i].second;
 		req.totalTags = logRouterTags;
 		req.startVersion = startVersion;
+		req.isEmergency = false;
 		TraceEvent("BackupRecruitment", self->dbgid)
 		    .detail("RequestID", req.reqId)
 		    .detail("Tag", req.routerTag.toString())
 		    .detail("Epoch", epoch)
 		    .detail("BackupEpoch", epoch)
-		    .detail("StartVersion", req.startVersion);
+		    .detail("StartVersion", req.startVersion)
+		    .detail("IsEmergency", req.isEmergency);
 		initializationReplies.push_back(
 		    transformErrors(throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 		                        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
@@ -408,7 +423,101 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 			req.totalTags = std::get<2>(epochVersionTags);
 			req.startVersion = version; // savedVersion + 1
 			req.endVersion = std::get<1>(epochVersionTags) - 1;
+			req.isEmergency = false;
 			TraceEvent("BackupRecruitment", self->dbgid)
+			    .detail("RequestID", req.reqId)
+			    .detail("Tag", req.routerTag.toString())
+			    .detail("Epoch", epoch)
+			    .detail("BackupEpoch", req.backupEpoch)
+			    .detail("StartVersion", req.startVersion)
+			    .detail("EndVersion", req.endVersion.get())
+			    .detail("IsEmergency", req.isEmergency);
+			initializationReplies.push_back(transformErrors(
+			    throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
+			        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
+			    backup_worker_failed()));
+		}
+	}
+
+	std::vector<InitializeBackupReply> newRecruits = wait(getAll(initializationReplies));
+	self->logSystem->setBackupWorkers(newRecruits);
+	TraceEvent("BackupRecruitmentDone", self->dbgid).log();
+	self->registrationTrigger.trigger();
+	return Void();
+}
+
+ACTOR static Future<Void> recruitEmergencyBackupWorkers(Reference<ClusterRecoveryData> self, Database cx) {
+
+	ASSERT(self->backupWorkers.size() > 0);
+
+	// Avoid race between a backup worker's save progress and the reads below.
+	wait(delay(SERVER_KNOBS->SECONDS_BEFORE_RECRUIT_BACKUP_WORKER));
+
+	state LogEpoch epoch = self->cstate.myDBState.recoveryCount;
+	state Reference<BackupProgress> backupProgress(
+	    new BackupProgress(self->dbgid, self->logSystem->getOldEpochTagsVersionsInfo()));
+	getBackupProgressFromTxnStateStore(cx, self->dbgid, backupProgress, self->txnStateStore, /*logging=*/true);
+	state std::vector<Future<InitializeBackupReply>> initializationReplies;
+
+	state std::vector<std::pair<UID, Tag>> idsTags; // worker IDs and tags for current epoch
+	state int logRouterTags = self->logSystem->getLogRouterTags();
+	idsTags.reserve(logRouterTags);
+	for (int i = 0; i < logRouterTags; i++) {
+		idsTags.emplace_back(deterministicRandom()->randomUniqueID(), Tag(tagLocalityLogRouter, i));
+	}
+
+	const Version startVersion = self->logSystem->getBackupStartVersion();
+	state int i = 0;
+	for (; i < logRouterTags; i++) {
+		const auto& worker = self->backupWorkers[i % self->backupWorkers.size()];
+		InitializeBackupRequest req(idsTags[i].first);
+		req.recruitedEpoch = epoch;
+		req.backupEpoch = epoch;
+		req.routerTag = idsTags[i].second;
+		req.totalTags = logRouterTags;
+		req.startVersion = startVersion;
+		req.isEmergency = true;
+		TraceEvent("BackupRecruitment", self->dbgid)
+		    .detail("IsEmergency", req.isEmergency)
+		    .detail("RequestID", req.reqId)
+		    .detail("Tag", req.routerTag.toString())
+		    .detail("Epoch", epoch)
+		    .detail("BackupEpoch", epoch)
+		    .detail("StartVersion", req.startVersion);
+		initializationReplies.push_back(
+		    transformErrors(throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
+		                        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
+		                    backup_worker_failed()));
+	}
+
+	Optional<Version> fMinVersion = getMinBackupVersion(self, cx, self->txnStateStore);
+	TraceEvent("MinBackupVersion", self->dbgid).detail("Version", fMinVersion.present() ? fMinVersion.get() : -1);
+
+	std::map<std::tuple<LogEpoch, Version, int>, std::map<Tag, Version>> toRecruit =
+	    backupProgress->getUnfinishedBackup();
+	for (const auto& [epochVersionTags, tagVersions] : toRecruit) {
+		const Version oldEpochEnd = std::get<1>(epochVersionTags);
+		if (!fMinVersion.present() || fMinVersion.get() + 1 >= oldEpochEnd) {
+			TraceEvent("SkipBackupRecruitment", self->dbgid)
+			    .detail("MinVersion", fMinVersion.present() ? fMinVersion.get() : -1)
+			    .detail("Epoch", epoch)
+			    .detail("OldEpoch", std::get<0>(epochVersionTags))
+			    .detail("OldEpochEnd", oldEpochEnd);
+			continue;
+		}
+		for (const auto& [tag, version] : tagVersions) {
+			const auto& worker = self->backupWorkers[i % self->backupWorkers.size()];
+			i++;
+			InitializeBackupRequest req(deterministicRandom()->randomUniqueID());
+			req.recruitedEpoch = epoch;
+			req.backupEpoch = std::get<0>(epochVersionTags);
+			req.routerTag = tag;
+			req.totalTags = std::get<2>(epochVersionTags);
+			req.startVersion = version; // savedVersion + 1
+			req.endVersion = std::get<1>(epochVersionTags) - 1;
+			req.isEmergency = true;
+			TraceEvent("BackupRecruitment", self->dbgid)
+			    .detail("IsEmergency", req.isEmergency)
 			    .detail("RequestID", req.reqId)
 			    .detail("Tag", req.routerTag.toString())
 			    .detail("Epoch", epoch)
@@ -424,7 +533,7 @@ ACTOR static Future<Void> recruitBackupWorkers(Reference<ClusterRecoveryData> se
 
 	std::vector<InitializeBackupReply> newRecruits = wait(getAll(initializationReplies));
 	self->logSystem->setBackupWorkers(newRecruits);
-	TraceEvent("BackupRecruitmentDone", self->dbgid).log();
+	TraceEvent("EmergencyBackupRecruitmentDone", self->dbgid).log();
 	self->registrationTrigger.trigger();
 	return Void();
 }
@@ -1245,7 +1354,7 @@ ACTOR Future<Void> clusterRecoveryCore(Reference<ClusterRecoveryData> self) {
 			            "larger than OldGenerations to resume recovery once the underlying problem has been fixed.");
 			wait(Future<Void>(Never()));
 		} else if (self->cstate.myDBState.oldTLogData.size() > CLIENT_KNOBS->RECOVERY_DELAY_START_GENERATION) {
-			TraceEvent(SevError, "RecoveryDelayedTooManyOldGenerations")
+			TraceEvent(g_network->isSimulated() ? SevWarnAlways : SevError, "RecoveryDelayedTooManyOldGenerations")
 			    .detail("OldGenerations", self->cstate.myDBState.oldTLogData.size())
 			    .detail("Reason",
 			            "Recovery is delayed because too many recoveries have happened since the last time the cluster "
@@ -1520,9 +1629,12 @@ ACTOR Future<Void> clusterRecoveryCore(Reference<ClusterRecoveryData> self) {
 	    .trackLatest(self->clusterRecoveryAvailableEventHolder->trackingKey);
 
 	self->addActor.send(changeCoordinators(self));
-	Database cx = openDBOnServer(self->dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
+	state Database cx = openDBOnServer(self->dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	self->addActor.send(configurationMonitor(self, cx));
-	if (self->configuration.backupWorkerEnabled) {
+
+	if (self->configuration.backupWorkerEnabled && SERVER_KNOBS->USE_EMERGENCY_BACKUP_WORKER) {
+		self->addActor.send(recruitEmergencyBackupWorkers(self, cx));
+	} else if (self->configuration.backupWorkerEnabled) {
 		self->addActor.send(recruitBackupWorkers(self, cx));
 	} else {
 		self->logSystem->setOldestBackupEpoch(self->cstate.myDBState.recoveryCount);

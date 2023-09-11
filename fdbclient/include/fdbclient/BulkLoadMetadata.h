@@ -20,24 +20,28 @@ namespace BulkLoadMetadata {
 
 // bulk load status keys - updated every time the state of a bulk load changes
 extern const KeyRangeRef bulkLoadStatusKeys;
-typedef KeyBackedObjectMap<BulkLoadID, BulkLoadStatus, _IncludeVersion, NullCodec> StatusMap;
+typedef KeyBackedObjectMap<BulkLoadIDKey, BulkLoadStatus, _IncludeVersion, TupleCodec<BulkLoadIDKey>> StatusMap;
 
 // metadata for active (not completed or aborted) bulk loads
 extern const KeyRangeRef bulkLoadInfoKeys;
-typedef KeyBackedObjectMap<BulkLoadID, BulkLoadInfo, _IncludeVersion, NullCodec> InfoMap;
+typedef KeyBackedObjectMap<BulkLoadIDKey, BulkLoadInfo, _IncludeVersion, TupleCodec<BulkLoadIDKey>> InfoMap;
 
 // set whenever a new bulk load is added, or an old one is cleaned up (changed by writes to bulkLoadInfoKeys)
 extern const StringRef bulkLoadChangeKey;
 
 // versionstamp of start for active bulk loads
 extern const KeyRangeRef bulkLoadVersionKeys;
-typedef KeyBackedMap<BulkLoadID, Versionstamp, NullCodec, BinaryCodec<Versionstamp>> VersionMap;
+typedef KeyBackedMap<BulkLoadIDKey, Versionstamp, TupleCodec<BulkLoadIDKey>, BinaryCodec<Versionstamp>> VersionMap;
 
 // ranges for active (not completed or aborted) bulk loads
 extern const KeyRangeRef bulkLoadRangeKeys;
 typedef KeyBackedRangeMap<Standalone<StringRef>, BulkLoadID, NullCodec, ObjectCodec<BulkLoadID, _IncludeVersion>>
     RangeMap;
 typedef RangeMap::LocalSnapshot RangeMapSnapshot;
+
+// reservations for active bulk loads
+extern const KeyRangeRef bulkLoadReservationKeys;
+typedef KeyBackedMap<Standalone<StringRef>, int64_t, NullCodec, BinaryCodec<int64_t>> ReservationMap;
 
 // interfaces for active bulk loader endpoints
 extern const KeyRangeRef bulkLoaderListKeys;
@@ -51,7 +55,7 @@ struct CreatedFilePointerRef {
 	StringRef filename;
 	BulkLoadFileType type;
 	// encryption metadata later to be stored in bgFileKeys
-	Optional<BlobGranuleCipherKeysMeta> cipherKeysMetaRef;
+	Optional<BlobGranuleCipherKeysMetaRef> cipherKeysMetaRef;
 
 	int expectedSize() const {
 		// FIXME: doesn't have cipherKeys
@@ -109,6 +113,7 @@ StatusMap& statusMap();
 InfoMap& infoMap();
 VersionMap& versionMap();
 RangeMap& rangeMap();
+ReservationMap& reservationMap();
 LoaderListMap& loaderListMap();
 CreatedFilePointersMap& createdFilePointersMap();
 WrittenFilePointersMap& writtenFilePointersMap();

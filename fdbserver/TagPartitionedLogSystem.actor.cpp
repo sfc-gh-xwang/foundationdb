@@ -3214,3 +3214,23 @@ ACTOR Future<TLogLockResult> TagPartitionedLogSystem::lockTLog(
 		}
 	}
 }
+
+Future<Void> TagPartitionedLogSystem::pushEmptyVersionWaitWindow(double waitWindow, Tag tag) {
+	return pushEmptyVersionWaitWindow_internal(this, waitWindow, tag);
+}
+
+ACTOR Future<Void> TagPartitionedLogSystem::pushEmptyVersionWaitWindow_internal(TagPartitionedLogSystem const* self,
+                                                                                double waitWindow,
+                                                                                Tag tag) {
+	std::vector<Future<Void>> sent;
+	for (auto& logSet : self->tLogs) {
+		// Only push wait window to primary tlogs for each tag
+		if (logSet->locality >= 0) {
+			sent.push_back(brokenPromiseToNever(
+			    logSet->logServers[logSet->bestLocationFor(tag)]->get().interf().emptyVersionWaitRequest.getReply(
+			        TlogEmptyVersionWaitRequest(waitWindow, tag))));
+		}
+	}
+	wait(waitForAll(sent));
+	return Void();
+}

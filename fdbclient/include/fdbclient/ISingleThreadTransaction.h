@@ -50,7 +50,7 @@ public:
 	static Reference<ISingleThreadTransaction> create(Type, Database const&, Reference<Tenant> const&);
 
 	virtual void construct(Database const&) = 0;
-	virtual void construct(Database const&, Reference<Tenant> const&) {
+	virtual void construct(Reference<Tenant> const&) {
 		// By default, a transaction implementation does not support tenants.
 		ASSERT(false);
 	}
@@ -118,6 +118,8 @@ public:
 
 	virtual void debugTrace(BaseTraceEvent&& event) = 0;
 	virtual void debugPrint(std::string const& message) = 0;
+
+	virtual bool rywEnabled() const = 0;
 
 	template <class... Args>
 	void debugFmtPrint(std::string const& message, Args&&... args) {

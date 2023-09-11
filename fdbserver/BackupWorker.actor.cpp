@@ -34,10 +34,11 @@
 #include "fdbserver/ServerDBInfo.h"
 #include "fdbserver/WaitFailure.h"
 #include "fdbserver/WorkerInterface.actor.h"
-#include "flow/Error.h"
 
+#include "flow/Error.h"
 #include "flow/IRandom.h"
 #include "fdbclient/Tracing.h"
+
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 #define SevDebugMemory SevVerbose
@@ -513,7 +514,7 @@ struct BackupData {
 	Future<Version> getMinKnownCommittedVersion() { return _getMinKnownCommittedVersion(this); }
 };
 
-// Monitors "backupStartedKey". If "present" is true, wait until the key is set;
+// Monitors "deprecatedBackupStarted". If "present" is true, wait until the key is set;
 // otherwise, wait until the key is cleared. If "watch" is false, do not perform
 // the wait for key set/clear events. Returns if key present.
 ACTOR Future<bool> monitorBackupStartedKeyChanges(BackupData* self, bool present, bool watch) {
@@ -524,7 +525,7 @@ ACTOR Future<bool> monitorBackupStartedKeyChanges(BackupData* self, bool present
 			try {
 				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-				ValueReadResult value = wait(tr.get(backupStartedKey));
+				ValueReadResult value = wait(tr.get(deprecatedBackupStartedKey));
 				std::vector<std::pair<UID, Version>> uidVersions;
 				bool shouldExit = self->endVersion.present();
 				if (value.present()) {
@@ -552,7 +553,7 @@ ACTOR Future<bool> monitorBackupStartedKeyChanges(BackupData* self, bool present
 					}
 				}
 
-				state Future<Void> watchFuture = tr.watch(backupStartedKey);
+				state Future<Void> watchFuture = tr.watch(deprecatedBackupStartedKey);
 				wait(tr.commit());
 				wait(watchFuture);
 				break;
@@ -629,7 +630,7 @@ ACTOR Future<Void> monitorBackupProgress(BackupData* self) {
 		// check all workers have started by checking their progress is larger
 		// than the backup's start version.
 		state Reference<BackupProgress> progress(new BackupProgress(self->myId, {}));
-		wait(getBackupProgress(self->cx, self->myId, progress, /*logging=*/false));
+		wait(getBackupProgressFromStorage(self->cx, self->myId, progress, /*logging=*/false));
 		state std::map<Tag, Version> tagVersions = progress->getEpochStatus(self->recruitedEpoch);
 		state std::map<UID, Version> savedLogVersions;
 		if (tagVersions.size() != self->totalTags) {
@@ -1130,7 +1131,10 @@ ACTOR Future<Void> backupWorker(BackupInterface interf,
 	state Future<Void> pull;
 	state Future<Void> done;
 
+	ASSERT(!req.isEmergency);
+
 	TraceEvent("BackupWorkerStart", self.myId)
+	    .detail("IsEmergency", req.isEmergency)
 	    .detail("Tag", req.routerTag.toString())
 	    .detail("TotalTags", req.totalTags)
 	    .detail("StartVersion", req.startVersion)
@@ -1194,5 +1198,28 @@ ACTOR Future<Void> backupWorker(BackupInterface interf,
 			throw err;
 		}
 	}
+	return Void();
+}
+
+ACTOR Future<Void> emergencyBackupWorker(BackupInterface interf,
+                                         InitializeBackupRequest req,
+                                         Reference<AsyncVar<ServerDBInfo> const> db) {
+	state BackupData self(interf.id(), db, req);
+	state PromiseStream<Future<Void>> addActor;
+	state Future<Void> error = actorCollection(addActor.getFuture());
+	state Future<Void> dbInfoChange = Void();
+	state Future<Void> pull;
+	state Future<Void> done;
+
+	ASSERT(req.isEmergency);
+	TraceEvent("BackupWorkerStart", self.myId)
+	    .detail("IsEmergency", req.isEmergency)
+	    .detail("Tag", req.routerTag.toString())
+	    .detail("TotalTags", req.totalTags)
+	    .detail("StartVersion", req.startVersion)
+	    .detail("EndVersion", req.endVersion.present() ? req.endVersion.get() : -1)
+	    .detail("LogEpoch", req.recruitedEpoch)
+	    .detail("BackupEpoch", req.backupEpoch);
+
 	return Void();
 }

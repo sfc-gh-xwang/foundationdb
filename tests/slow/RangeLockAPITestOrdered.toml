@@ -1,0 +1,13 @@
+[configuration]
+# disable tenant because this workload doing raw key write without compability with tenant setting
+tenantModes = ['disabled']
+
+[[test]]
+testTitle = 'RangeLockApiOrderedCorrectness'
+runSetup = true
+
+    [[test.workload]]
+    testName = 'RangeLockAPICorrectness'
+    testDuration = 120
+
+

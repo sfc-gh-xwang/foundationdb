@@ -61,7 +61,8 @@ void removeCachedDNS(const std::string& host, const std::string& service) {
 namespace {
 
 NetworkAddressList g_currentDeliveryPeerAddress = NetworkAddressList();
-bool g_currentDeliverPeerAddressTrusted = false;
+UID g_currentDeliveryPeerDebugID = UID();
+bool g_currentDeliveryPeerAddressTrusted = false;
 Future<Void> g_currentDeliveryPeerDisconnect;
 
 } // namespace
@@ -352,6 +353,7 @@ public:
 	Future<Void> multiVersionCleanup;
 	Future<Void> pingLogger;
 	Future<Void> publicKeyFileWatch;
+	Future<Void> publicKeyIdsMonitor;
 
 	std::unordered_map<Standalone<StringRef>, PublicKey> publicKeys;
 };
@@ -1046,6 +1048,7 @@ ACTOR static void deliver(TransportData* self,
                           TaskPriority priority,
                           ArenaReader reader,
                           NetworkAddress peerAddress,
+                          UID connDebugID,
                           bool isTrustedPeer,
                           InReadSocket inReadSocket,
                           Future<Void> disconnect) {
@@ -1067,20 +1070,22 @@ ACTOR static void deliver(TransportData* self,
 		}
 		try {
 			ASSERT(g_currentDeliveryPeerAddress == NetworkAddressList());
-			ASSERT(!g_currentDeliverPeerAddressTrusted);
+			ASSERT(!g_currentDeliveryPeerAddressTrusted);
 			g_currentDeliveryPeerAddress = destination.addresses;
-			g_currentDeliverPeerAddressTrusted = isTrustedPeer;
+			g_currentDeliveryPeerAddressTrusted = isTrustedPeer;
 			g_currentDeliveryPeerDisconnect = disconnect;
+			g_currentDeliveryPeerDebugID = connDebugID;
 			StringRef data = reader.arenaReadAll();
 			ASSERT(data.size() > 8);
 			ArenaObjectReader objReader(reader.arena(), reader.arenaReadAll(), AssumeVersion(reader.protocolVersion()));
 			receiver->receive(objReader);
 			g_currentDeliveryPeerAddress = NetworkAddressList();
-			g_currentDeliverPeerAddressTrusted = false;
+			g_currentDeliveryPeerDebugID = UID();
+			g_currentDeliveryPeerAddressTrusted = false;
 			g_currentDeliveryPeerDisconnect = Future<Void>();
 		} catch (Error& e) {
 			g_currentDeliveryPeerAddress = NetworkAddressList();
-			g_currentDeliverPeerAddressTrusted = false;
+			g_currentDeliveryPeerAddressTrusted = false;
 			g_currentDeliveryPeerDisconnect = Future<Void>();
 			TraceEvent(SevError, "ReceiverError")
 			    .error(e)
@@ -1129,6 +1134,7 @@ static void scanPackets(TransportData* transport,
                         const uint8_t* e,
                         Arena& arena,
                         NetworkAddress const& peerAddress,
+                        UID const& connDebugID,
                         bool isTrustedPeer,
                         ProtocolVersion peerProtocolVersion,
                         Future<Void> disconnect,
@@ -1260,6 +1266,7 @@ static void scanPackets(TransportData* transport,
 			        priority,
 			        std::move(reader),
 			        peerAddress,
+			        connDebugID,
 			        isTrustedPeer,
 			        InReadSocket::True,
 			        disconnect);
@@ -1459,6 +1466,7 @@ ACTOR static Future<Void> connectionReader(TransportData* transport,
 						            unprocessed_end,
 						            arena,
 						            peerAddress,
+						            conn->getDebugID(),
 						            trusted,
 						            peerProtocolVersion,
 						            peer->disconnect.getFuture(),
@@ -1789,6 +1797,7 @@ static void sendLocal(TransportData* self, ISerializeSource const& what, const E
 		        priority,
 		        ArenaReader(copy.arena(), copy, AssumeVersion(currentProtocolVersion())),
 		        NetworkAddress(),
+		        UID(),
 		        true,
 		        InReadSocket::False,
 		        Never());
@@ -2023,8 +2032,12 @@ NetworkAddress FlowTransport::currentDeliveryPeerAddress() const {
 	return g_currentDeliveryPeerAddress.address;
 }
 
+UID FlowTransport::currentDeliveryPeerDebugID() const {
+	return g_currentDeliveryPeerDebugID;
+}
+
 bool FlowTransport::currentDeliveryPeerIsTrusted() const {
-	return g_currentDeliverPeerAddressTrusted;
+	return g_currentDeliveryPeerAddressTrusted;
 }
 
 void FlowTransport::addPublicKey(StringRef name, PublicKey key) {
@@ -2052,6 +2065,24 @@ void FlowTransport::loadPublicKeyFile(const std::string& filePath) {
 		auto json = readFileBytes(filePath, len);
 		self->applyPublicKeySet(StringRef(json));
 	}
+}
+
+FDB_BOOLEAN_PARAM(FromKeySetUpdate);
+
+static void traceActivePublicKeyIds(TransportData* self, FromKeySetUpdate fromUpdate = FromKeySetUpdate::False) {
+	std::ostringstream oss;
+	int count = 0;
+	for (const auto& [name, _] : self->publicKeys) {
+		if (count > 0) {
+			oss << ",";
+		}
+		oss << name.toString();
+		++count;
+	}
+	TraceEvent("AuthzActivePublicKeyIds"_audit)
+	    .detail("KeyIds", std::move(oss).str())
+	    .detail("FromKeySetUpdate", fromUpdate)
+	    .log();
 }
 
 ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, TransportData* self) {
@@ -2082,6 +2113,7 @@ ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, Transport
 			}
 			wait(success(file->read(&json[0], filesize, 0)));
 			self->applyPublicKeySet(StringRef(json));
+			traceActivePublicKeyIds(self, FromKeySetUpdate::True);
 			errorCount = 0;
 		} catch (Error& e) {
 			if (e.code() == error_code_actor_cancelled) {
@@ -2096,4 +2128,15 @@ ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, Transport
 
 void FlowTransport::watchPublicKeyFile(const std::string& publicKeyFilePath) {
 	self->publicKeyFileWatch = watchPublicKeyJwksFile(publicKeyFilePath, self);
+}
+
+ACTOR static Future<Void> tracePublicKeyIdsAtIntervals(TransportData* self) {
+	loop {
+		traceActivePublicKeyIds(self);
+		wait(delay(FLOW_KNOBS->ACTIVE_PUBLIC_KEY_IDS_LOG_INTERVAL_SECONDS));
+	}
+}
+
+void FlowTransport::monitorActivePublicKeyIds() {
+	self->publicKeyIdsMonitor = tracePublicKeyIdsAtIntervals(self);
 }

@@ -280,7 +280,7 @@ struct ConsistencyCheckWorkload : TestWorkload {
 					// the allowed maximum number of teams
 					bool teamCollectionValid = wait(getTeamCollectionValid(cx, self->dbInfo));
 					if (!teamCollectionValid) {
-						TraceEvent(SevError, "ConsistencyCheck_TooManyTeams").log();
+						TraceEvent("ConsistencyCheck_TooManyTeams").log();
 						self->testFailure("The number of process or machine teams is larger than the allowed maximum "
 						                  "number of teams");
 					}
@@ -1032,7 +1032,7 @@ struct ConsistencyCheckWorkload : TestWorkload {
 
 		for (int i = 0; i < workers.size(); i++) {
 			NetworkAddress addr = workers[i].interf.stableAddress();
-			if (!configuration.isExcludedServer(workers[i].interf.addresses()) &&
+			if (!configuration.isExcludedServer(workers[i].interf.addresses(), workers[i].interf.locality) &&
 			    (workers[i].processClass == ProcessClass::StorageClass ||
 			     workers[i].processClass == ProcessClass::UnsetClass)) {
 				bool found = false;
@@ -1248,7 +1248,7 @@ struct ConsistencyCheckWorkload : TestWorkload {
 		for (const auto& worker : workers) {
 			NetworkAddress addr = worker.interf.stableAddress();
 			bool inCCDc = worker.interf.locality.dcId() == ccDcId;
-			if (!configuration.isExcludedServer(worker.interf.addresses())) {
+			if (!configuration.isExcludedServer(worker.interf.addresses(), worker.interf.locality)) {
 				if (worker.processClass == ProcessClass::BlobWorkerClass) {
 					numBlobWorkerProcesses++;
 

@@ -224,12 +224,6 @@ function(stage_correctness_package)
   endforeach()
 
   list(APPEND package_files ${STAGE_OUT_DIR}/bin/fdbserver
-                            ${STAGE_OUT_DIR}/bin/coverage.fdbserver.xml
-                            ${STAGE_OUT_DIR}/bin/coverage.fdbclient.xml
-                            ${STAGE_OUT_DIR}/bin/coverage.fdbrpc.xml
-                            ${STAGE_OUT_DIR}/bin/coverage.flow.xml
-                            ${STAGE_OUT_DIR}/bin/TestHarness.exe
-                            ${STAGE_OUT_DIR}/bin/TraceLogHelper.dll
                             ${STAGE_OUT_DIR}/CMakeCache.txt
     )
 
@@ -237,20 +231,8 @@ function(stage_correctness_package)
     OUTPUT ${package_files}
     DEPENDS ${CMAKE_BINARY_DIR}/CMakeCache.txt
             ${CMAKE_BINARY_DIR}/packages/bin/fdbserver
-            ${CMAKE_BINARY_DIR}/bin/coverage.fdbserver.xml
-            ${CMAKE_BINARY_DIR}/lib/coverage.fdbclient.xml
-            ${CMAKE_BINARY_DIR}/lib/coverage.fdbrpc.xml
-            ${CMAKE_BINARY_DIR}/lib/coverage.flow.xml
-            ${CMAKE_BINARY_DIR}/packages/bin/TestHarness.exe
-            ${CMAKE_BINARY_DIR}/packages/bin/TraceLogHelper.dll
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/CMakeCache.txt ${STAGE_OUT_DIR}
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/packages/bin/fdbserver
-                                     ${CMAKE_BINARY_DIR}/bin/coverage.fdbserver.xml
-                                     ${CMAKE_BINARY_DIR}/lib/coverage.fdbclient.xml
-                                     ${CMAKE_BINARY_DIR}/lib/coverage.fdbrpc.xml
-                                     ${CMAKE_BINARY_DIR}/lib/coverage.flow.xml
-                                     ${CMAKE_BINARY_DIR}/packages/bin/TestHarness.exe
-                                     ${CMAKE_BINARY_DIR}/packages/bin/TraceLogHelper.dll
                                      ${STAGE_OUT_DIR}/bin
     COMMENT "Copying files for ${STAGE_CONTEXT} package"
     )
@@ -300,7 +282,7 @@ function(create_correctness_package)
     COMMENT "Package correctness archive"
     )
   add_custom_target(package_tests ALL DEPENDS ${tar_file})
-  add_dependencies(package_tests strip_only_fdbserver TestHarness)
+  add_dependencies(package_tests strip_only_fdbserver)
   set(unversioned_tar_file "${CMAKE_BINARY_DIR}/packages/correctness.tar.gz")
   add_custom_command(
     OUTPUT "${unversioned_tar_file}"
@@ -331,7 +313,7 @@ function(create_long_running_correctness_package)
     COMMENT "Package long running correctness archive"
     )
   add_custom_target(package_long_running_tests ALL DEPENDS ${tar_file})
-  add_dependencies(package_long_running_tests strip_only_fdbserver TestHarness)
+  add_dependencies(package_long_running_tests strip_only_fdbserver)
   set(unversioned_tar_file "${CMAKE_BINARY_DIR}/packages/long_running_correctness.tar.gz")
   add_custom_command(
     OUTPUT "${unversioned_tar_file}"
@@ -363,7 +345,7 @@ function(create_valgrind_correctness_package)
       COMMENT "Package valgrind correctness archive"
       )
     add_custom_target(package_valgrind_tests ALL DEPENDS ${tar_file})
-    add_dependencies(package_valgrind_tests strip_only_fdbserver TestHarness)
+    add_dependencies(package_valgrind_tests strip_only_fdbserver)
     set(unversioned_tar_file "${CMAKE_BINARY_DIR}/packages/valgrind.tar.gz")
     add_custom_command(
       OUTPUT "${unversioned_tar_file}"
@@ -543,12 +525,12 @@ endfunction()
 # Test for setting up Python venv for client tests.
 # Adding this test as a fixture to another test allows the use of non-native Python packages within client test scripts
 # by installing dependencies from requirements.txt
-set(test_venv_dir ${CMAKE_BINARY_DIR}/tests/test_venv)
+set(TEST_VENV_DIR ${CMAKE_BINARY_DIR}/tests/test_venv CACHE INTERNAL "TEST_VENV_DIR")
 set(shell_cmd "bash" CACHE INTERNAL "")
 set(shell_opt "-c" CACHE INTERNAL "")
-set(test_venv_activate ". ${test_venv_dir}/bin/activate" CACHE INTERNAL "")
+set(test_venv_activate ". ${TEST_VENV_DIR}/bin/activate" CACHE INTERNAL "")
 set(test_venv_cmd "")
-string(APPEND test_venv_cmd "${Python3_EXECUTABLE} -m venv ${test_venv_dir} ")
+string(APPEND test_venv_cmd "${Python3_EXECUTABLE} -m venv ${TEST_VENV_DIR} ")
 string(APPEND test_venv_cmd "&& ${test_venv_activate} ")
 string(APPEND test_venv_cmd "&& pip install --upgrade pip ")
 string(APPEND test_venv_cmd "&& pip install -r ${CMAKE_SOURCE_DIR}/tests/TestRunner/requirements.txt")
@@ -575,7 +557,7 @@ function(add_python_venv_test)
     message(FATAL_ERROR "COMMAND is a required argument for add_fdbclient_test")
   endif()
   if(NOT T_WORKING_DIRECTORY)
-    set(T_WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set(T_WORKING_DIRECTORY ${TEST_VENV_DIR})
   endif()
   if(NOT T_TEST_TIMEOUT)
     if(USE_SANITIZER)
@@ -606,7 +588,7 @@ endfunction()
 
 # Creates a single cluster before running the specified command (usually a ctest test)
 function(add_fdbclient_test)
-  set(options DISABLED ENABLED DISABLE_TENANTS DISABLE_LOG_DUMP API_TEST_BLOB_GRANULES_ENABLED TLS_ENABLED)
+  set(options DISABLED ENABLED DISABLE_TENANTS DISABLE_LOG_DUMP API_TEST_BLOB_GRANULES_ENABLED TLS_ENABLED ACCELERATE_READ_METRICS)
   set(oneValueArgs NAME PROCESS_NUMBER TEST_TIMEOUT WORKING_DIRECTORY)
   set(multiValueArgs COMMAND)
   cmake_parse_arguments(T "${options}" "${oneValueArgs}" "${multiValueArgs}" "${ARGN}")
@@ -640,6 +622,9 @@ function(add_fdbclient_test)
   endif()
   if(T_TLS_ENABLED)
     list(APPEND TMP_CLUSTER_CMD --tls-enabled)
+  endif()
+  if(T_ACCELERATE_READ_METRICS)
+    list(APPEND TMP_CLUSTER_CMD --accelerate-read-metrics-generation)
   endif()
   list(APPEND TMP_CLUSTER_CMD -- ${T_COMMAND})
   message(STATUS "Adding Client test ${T_NAME}")

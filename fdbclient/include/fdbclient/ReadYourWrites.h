@@ -70,12 +70,13 @@ class ReadYourWritesTransaction final : NonCopyable,
                                         public ISingleThreadTransaction,
                                         public FastAllocated<ReadYourWritesTransaction> {
 public:
-	explicit ReadYourWritesTransaction(Database const& cx,
-	                                   Optional<Reference<Tenant>> const& tenant = Optional<Reference<Tenant>>());
+	explicit ReadYourWritesTransaction(Database const& cx);
+	explicit ReadYourWritesTransaction(Reference<Tenant> const& tenant);
 	~ReadYourWritesTransaction();
 
+	static ReadYourWritesTransaction fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx);
 	void construct(Database const&) override;
-	void construct(Database const&, Reference<Tenant> const& tenant) override;
+	void construct(Reference<Tenant> const& tenant) override;
 	void setVersion(Version v) override { tr.setVersion(v); }
 	Future<Version> getReadVersion() override;
 	Optional<Version> getCachedReadVersion() const override { return tr.getCachedReadVersion(); }
@@ -227,6 +228,8 @@ public:
 	virtual void debugTrace(BaseTraceEvent&& event) override;
 	void debugPrint(std::string const& message) override;
 
+	bool rywEnabled() const override;
+
 	std::vector<BaseTraceEvent> debugTraces;
 	std::vector<std::string> debugMessages;
 
@@ -241,11 +244,11 @@ private:
 	Map<Key, std::vector<Reference<Watch>>> watchMap; // Keys that are being watched in this transaction
 	Promise<Void> resetPromise;
 	AndFuture reading;
-	int retries;
-	int64_t approximateSize;
+	int retries = 0;
+	int64_t approximateSize = 0;
 	Future<Void> timeoutActor;
 	double creationTime;
-	bool commitStarted;
+	bool commitStarted = false;
 
 	// For reading conflict ranges from the special key space
 	VectorRef<KeyRef> versionStampKeys;
@@ -260,6 +263,11 @@ private:
 	KeyRangeMap<std::pair<bool, Optional<Value>>> specialKeySpaceWriteMap;
 	Optional<std::string> specialKeySpaceErrorMsg;
 
+	// Only used to reduce the duplicated code in public constructors
+	ReadYourWritesTransaction(Transaction&& transaction,
+	                          Error const& deferredError,
+	                          UniqueOrderedOptionList<FDBTransactionOptions> const& trOptionList,
+	                          UniqueOrderedSensitiveOptionList<FDBTransactionOptions> const& trSensitiveOptionList);
 	void resetTimeout();
 	void updateConflictMap(KeyRef const& key, WriteMap::iterator& it); // pre: it.segmentContains(key)
 	void updateConflictMap(

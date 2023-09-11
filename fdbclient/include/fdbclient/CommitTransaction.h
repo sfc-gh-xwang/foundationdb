@@ -203,7 +203,7 @@ struct MutationRef {
 		};
 		Reference<BlobCipherKey> textCipherKey = getCipherKey(domainId);
 		Reference<BlobCipherKey> headerCipherKey;
-		if (isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
+		if (needsHeaderCipherKey(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
 			headerCipherKey = getCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
 		}
 		BinaryWriter bw(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
@@ -234,8 +234,11 @@ struct MutationRef {
 	                    double* decryptTime = nullptr) const {
 		StringRef plaintext;
 		const BlobCipherEncryptHeaderRef header = configurableEncryptionHeader();
-		Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(
-		    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, header.getIV(), header.getEncryptMode(), usageType);
+		Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
+		                                                                      cipherKeys.cipherHeaderKey,
+		                                                                      header.getIV(),
+		                                                                      header.getEncryptionAtRestAlgo(),
+		                                                                      usageType);
 		plaintext = cipher->decrypt(param2.begin(), param2.size(), header, arena, decryptTime);
 		if (buf != nullptr) {
 			*buf = plaintext;
@@ -273,8 +276,6 @@ struct MutationRef {
 		if (cipherDetails.headerCipherDetails.present()) {
 			ASSERT(cipherDetails.headerCipherDetails.get().isValid());
 			textAndHeaderKeys.cipherHeaderKey = getCipherKey(cipherDetails.headerCipherDetails.get());
-		} else {
-			ASSERT_EQ(header.getAuthTokenMode(), EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE);
 		}
 		return textAndHeaderKeys;
 	}
@@ -374,6 +375,9 @@ struct CommitTransactionRef {
 	// The tenants associated with this transaction. This field only existing
 	// when tenant mode is required and this transaction has metadata mutations
 	Optional<VectorRef<int64_t>> tenantIds;
+	// Set by commit proxy if it found a transaction has both normalKey mutations and metadata mutations.
+	// The purpose is to send to resolver 0 and broadcast to other proxies.
+	VectorRef<MutationRef> normalKeyMutations;
 
 	template <class Ar>
 	force_inline void serialize(Ar& ar) {
@@ -386,7 +390,8 @@ struct CommitTransactionRef {
 			           report_conflicting_keys,
 			           lock_aware,
 			           spanContext,
-			           tenantIds);
+			           tenantIds,
+			           normalKeyMutations);
 		} else {
 			serializer(ar, read_conflict_ranges, write_conflict_ranges, mutations, read_snapshot);
 			if (ar.protocolVersion().hasReportConflictingKeys()) {

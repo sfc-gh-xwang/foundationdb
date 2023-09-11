@@ -861,7 +861,7 @@ std::pair<NetworkAddressList, NetworkAddressList> buildNetworkAddresses(
 			publicNetworkAddresses.secondaryAddress = currentPublicAddress;
 		}
 
-		if (!currentPublicAddress.isValid()) {
+		if (!currentPublicAddress.isValid() && !currentPublicAddress.isUnix()) {
 			fprintf(stderr, "ERROR: %s is not a valid IP address\n", currentPublicAddress.toString().c_str());
 			flushAndExit(FDB_EXIT_ERROR);
 		}
@@ -1614,8 +1614,8 @@ private:
 			case TLSConfig::OPT_TLS_VERIFY_PEERS:
 				tlsConfig.addVerifyPeers(args.OptionArg());
 				break;
-			case TLSConfig::OPT_TLS_DISABLE_PLAINTEXT_CONNECTION:
-				tlsConfig.setDisablePlainTextConnection(true);
+			case TLSConfig::OPT_TLS_REQUIRED:
+				tlsConfig.setTlsRequired(args.OptionArg());
 				break;
 			case OPT_KMS_CONN_DISCOVERY_URL_FILE: {
 				knobs.emplace_back("rest_kms_connector_discover_kms_url_file", args.OptionArg());
@@ -1982,6 +1982,7 @@ int main(int argc, char* argv[]) {
 					TraceEvent("AuthzPublicKeySetLoadError").error(e);
 				}
 				FlowTransport::transport().watchPublicKeyFile(opts.authzPublicKeyFile);
+				FlowTransport::transport().monitorActivePublicKeyIds();
 			} else {
 				TraceEvent(SevInfo, "AuthzPublicKeyFileNotSet");
 			}

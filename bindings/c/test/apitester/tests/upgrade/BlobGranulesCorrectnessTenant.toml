@@ -1,0 +1,25 @@
+[[test]]
+title = 'Blob Granule API Workload for Upgrade Tests'
+multiThreaded = true
+buggify = true
+databasePerTransaction = false
+minFdbThreads = 2
+maxFdbThreads = 4
+minDatabases = 2
+maxDatabases = 4
+minClientThreads = 2
+maxClientThreads = 4
+minClients = 2
+maxClients = 2
+minTenants = 1
+maxTenants = 5
+
+    [[test.workload]]
+    name = 'ApiBlobGranuleCorrectness'
+    minKeyLength = 1
+	maxKeyLength = 64
+	minValueLength = 1
+	maxValueLength = 1000
+	maxKeysPerTransaction = 50
+	initialSize = 100
+	runUntilStop = true

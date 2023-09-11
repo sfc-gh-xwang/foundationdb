@@ -25,6 +25,7 @@
 #include "fdbserver/BenchmarkGlobalData.h"
 #include "flow/EncryptUtils.h"
 #include "flow/StreamCipher.h"
+#include "fmt/printf.h"
 
 static StreamCipher::IV getRandomIV() {
 	StreamCipher::IV iv;
@@ -243,9 +244,7 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 	                                 cipherDetails.textCipherDetails.baseCipherId,
 	                                 cipherDetails.textCipherDetails.salt);
 	Optional<Reference<BlobCipherKey>> hCipherKey;
-	EncryptAuthTokenMode authTokenMode = authTokenModeFromEncryptionAtRestAlgo(algo);
-	ASSERT(cipherDetails.headerCipherDetails.present() ||
-	       authTokenMode == EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE);
+	ASSERT(cipherDetails.headerCipherDetails.present() || !needsHeaderCipherKey(algo));
 	if (cipherDetails.headerCipherDetails.present()) {
 		hCipherKey = cipherKeyCache->getCipherKey(cipherDetails.headerCipherDetails.get().encryptDomainId,
 		                                          cipherDetails.headerCipherDetails.get().baseCipherId,
@@ -258,7 +257,7 @@ static void blob_cipher_decrypt(benchmark::State& state) {
 		memcpy(decryptData, orgData, pageLen);
 		// create decryptor for every decrypt operation to simulate AESEncryptionEncoder.decode()
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    tCipherKeyKey, hCipherKey, headerRef.getIV(), headerRef.getEncryptMode(), BlobCipherMetrics::TEST);
+		    tCipherKeyKey, hCipherKey, headerRef.getIV(), headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 		if (isInplace && decryptor->supportsInplaceDecryption()) {
 			decryptor->decryptInplace(&decryptData[0], pageLen, headerRef);
 		} else {

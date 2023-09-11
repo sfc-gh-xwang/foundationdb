@@ -117,7 +117,6 @@ namespace N2 { // No indent, it's the whole file
 
 class Net2;
 class Peer;
-class Connection;
 
 // Outlives main
 Net2* g_net2 = nullptr;
@@ -339,6 +338,10 @@ static udp::endpoint udpEndpoint(NetworkAddress const& n) {
 	return udp::endpoint(tcpAddress(n.ip), n.port);
 }
 
+static boost::asio::local::stream_protocol::endpoint unixEndpoint(const std::string& pathname) {
+	return boost::asio::local::stream_protocol::endpoint(pathname);
+}
+
 class BindPromise {
 	Promise<Void> p;
 	std::variant<const char*, AuditedEvent> errContext;
@@ -396,20 +399,20 @@ public:
 	}
 };
 
-class Connection final : public IConnection, ReferenceCounted<Connection> {
+class TCPConnection final : public IConnection, ReferenceCounted<TCPConnection> {
 public:
-	void addref() override { ReferenceCounted<Connection>::addref(); }
-	void delref() override { ReferenceCounted<Connection>::delref(); }
+	void addref() override { ReferenceCounted<TCPConnection>::addref(); }
+	void delref() override { ReferenceCounted<TCPConnection>::delref(); }
 
 	void close() override { closeSocket(); }
 
-	explicit Connection(boost::asio::io_service& io_service)
+	explicit TCPConnection(boost::asio::io_service& io_service)
 	  : id(nondeterministicRandom()->randomUniqueID()),
 	    socket(io_service) {}
 
 	// This is not part of the IConnection interface, because it is wrapped by INetwork::connect()
 	ACTOR static Future<Reference<IConnection>> connect(boost::asio::io_service* ios, NetworkAddress addr) {
-		state Reference<Connection> self(new Connection(*ios));
+		state Reference<TCPConnection> self(new TCPConnection(*ios));
 
 		self->peer_address = addr;
 		try {
@@ -419,7 +422,7 @@ public:
 			self->socket.async_connect(to, std::move(p));
 
 			wait(onConnected);
-			self->init();
+			self->initSocket();
 			return self;
 		} catch (Error&) {
 			// Either the connection failed, or was cancelled by the caller
@@ -431,7 +434,7 @@ public:
 	// This is not part of the IConnection interface, because it is wrapped by IListener::accept()
 	void accept(NetworkAddress peerAddr) {
 		this->peer_address = peerAddr;
-		init();
+		initSocket();
 	}
 
 	Future<Void> acceptHandshake() override { return Void(); }
@@ -464,7 +467,6 @@ public:
 		size_t toRead = end - begin;
 		size_t size = socket.read_some(boost::asio::mutable_buffers_1(begin, toRead), err);
 		g_net2->bytesReceived += size;
-		//TraceEvent("ConnRead", this->id).detail("Bytes", size);
 		if (err) {
 			if (err == boost::asio::error::would_block) {
 				++g_net2->countWouldBlock;
@@ -518,14 +520,18 @@ public:
 
 	UID getDebugID() const override { return id; }
 
-	tcp::socket& getSocket() override { return socket; }
+	tcp::socket& getTCPSocket() override { return socket; }
 
 private:
 	UID id;
 	tcp::socket socket;
 	NetworkAddress peer_address;
 
-	void init() {
+	// TCPListener and TCPConnection share the underlying boost socket, but no one else should.
+	friend class TCPListener;
+	tcp::socket& getSocket() { return socket; }
+
+	void initSocket() {
 		// Socket settings that have to be set after connect or accept succeeds
 		socket.non_blocking(true);
 		if (FLOW_KNOBS->FLOW_TCP_NODELAY & 1) {
@@ -544,12 +550,13 @@ private:
 	void closeSocket() {
 		boost::system::error_code error;
 		socket.close(error);
-		if (error)
+		if (error) {
 			TraceEvent(SevWarn, "N2_CloseError", id)
 			    .suppressFor(1.0)
 			    .detail("PeerAddr", peer_address)
 			    .detail("ErrorCode", error.value())
 			    .detail("Message", error.message());
+		}
 	}
 
 	void onReadError(const boost::system::error_code& error) {
@@ -721,11 +728,12 @@ private:
 	void closeSocket() {
 		boost::system::error_code error;
 		socket.close(error);
-		if (error)
+		if (error) {
 			TraceEvent(SevWarn, "N2_CloseError", id)
 			    .suppressFor(1.0)
 			    .detail("ErrorCode", error.value())
 			    .detail("Message", error.message());
+		}
 	}
 
 	void onReadError(const boost::system::error_code& error) {
@@ -749,13 +757,13 @@ private:
 	}
 };
 
-class Listener final : public IListener, ReferenceCounted<Listener> {
+class TCPListener final : public IListener, ReferenceCounted<TCPListener> {
 	boost::asio::io_context& io_service;
 	NetworkAddress listenAddress;
 	tcp::acceptor acceptor;
 
 public:
-	Listener(boost::asio::io_context& io_service, NetworkAddress listenAddress)
+	TCPListener(boost::asio::io_context& io_service, NetworkAddress listenAddress)
 	  : io_service(io_service),
 	    listenAddress(listenAddress),
 	    acceptor(io_service, tcpEndpoint(listenAddress)) {
@@ -769,8 +777,8 @@ public:
 		platform::setCloseOnExec(acceptor.native_handle());
 	}
 
-	void addref() override { ReferenceCounted<Listener>::addref(); }
-	void delref() override { ReferenceCounted<Listener>::delref(); }
+	void addref() override { ReferenceCounted<TCPListener>::addref(); }
+	void delref() override { ReferenceCounted<TCPListener>::delref(); }
 
 	// Returns one incoming connection when it is available
 	Future<Reference<IConnection>> accept() override { return doAccept(this); }
@@ -778,8 +786,8 @@ public:
 	NetworkAddress getListenAddress() const override { return listenAddress; }
 
 private:
-	ACTOR static Future<Reference<IConnection>> doAccept(Listener* self) {
-		state Reference<Connection> conn(new Connection(self->io_service));
+	ACTOR static Future<Reference<IConnection>> doAccept(TCPListener* self) {
+		state Reference<TCPConnection> conn(new TCPConnection(self->io_service));
 		state tcp::acceptor::endpoint_type peer_endpoint;
 		try {
 			BindPromise p("N2_AcceptError", UID());
@@ -789,7 +797,6 @@ private:
 			auto peer_address = peer_endpoint.address().is_v6() ? IPAddress(peer_endpoint.address().to_v6().to_bytes())
 			                                                    : IPAddress(peer_endpoint.address().to_v4().to_ulong());
 			conn->accept(NetworkAddress(peer_address, peer_endpoint.port()));
-
 			return conn;
 		} catch (...) {
 			conn->close();
@@ -869,9 +876,10 @@ public:
 	    sslContext(context),
 	    has_trusted_peer(false) {}
 
-	explicit SSLConnection(Reference<ReferencedObject<boost::asio::ssl::context>> context, tcp::socket* existingSocket)
+	explicit SSLConnection(Reference<ReferencedObject<boost::asio::ssl::context>> context,
+	                       boost::asio::ip::tcp::socket&& existingSocket)
 	  : id(nondeterministicRandom()->randomUniqueID()),
-	    socket(std::move(*existingSocket)),
+	    socket(std::move(existingSocket)),
 	    ssl_sock(socket, context->mutate()),
 	    sslContext(context) {}
 
@@ -895,9 +903,9 @@ public:
 		}
 
 		if (existingSocket != nullptr) {
-			Reference<SSLConnection> self(new SSLConnection(context, existingSocket));
+			Reference<SSLConnection> self(new SSLConnection(context, std::move(*existingSocket)));
 			self->peer_address = addr;
-			self->init();
+			self->initSocket();
 			return self;
 		}
 
@@ -910,7 +918,7 @@ public:
 			self->socket.async_connect(to, std::move(p));
 
 			wait(onConnected);
-			self->init();
+			self->initSocket();
 			return self;
 		} catch (Error&) {
 			// Either the connection failed, or was cancelled by the caller
@@ -922,7 +930,7 @@ public:
 	// This is not part of the IConnection interface, because it is wrapped by IListener::accept()
 	void accept(NetworkAddress peerAddr) {
 		this->peer_address = peerAddr;
-		init();
+		initSocket();
 	}
 
 	ACTOR static void doAcceptHandshake(Reference<SSLConnection> self, Promise<Void> connected) {
@@ -1100,7 +1108,6 @@ public:
 		size_t toRead = end - begin;
 		size_t size = ssl_sock.read_some(boost::asio::mutable_buffers_1(begin, toRead), err);
 		g_net2->bytesReceived += size;
-		//TraceEvent("ConnRead", this->id).detail("Bytes", size);
 		if (err) {
 			if (err == boost::asio::error::would_block) {
 				++g_net2->countWouldBlock;
@@ -1159,9 +1166,7 @@ public:
 
 	UID getDebugID() const override { return id; }
 
-	tcp::socket& getSocket() override { return socket; }
-
-	ssl_socket& getSSLSocket() { return ssl_sock; }
+	tcp::socket& getTCPSocket() override { return socket; }
 
 private:
 	UID id;
@@ -1171,7 +1176,11 @@ private:
 	Reference<ReferencedObject<boost::asio::ssl::context>> sslContext;
 	bool has_trusted_peer;
 
-	void init() {
+	// SSLListener and SSLConnection share the underlying boost socket, but no one else should.
+	friend class SSLListener;
+	tcp::socket& getSocket() { return socket; }
+
+	void initSocket() {
 		// Socket settings that have to be set after connect or accept succeeds
 		socket.non_blocking(true);
 		socket.set_option(boost::asio::ip::tcp::no_delay(true));
@@ -1253,7 +1262,221 @@ private:
 			                                                    : IPAddress(peer_endpoint.address().to_v4().to_ulong());
 
 			conn->accept(NetworkAddress(peer_address, peer_endpoint.port(), false, true));
+			return conn;
+		} catch (...) {
+			conn->close();
+			throw;
+		}
+	}
+};
 
+// Implementation of IConnection for stream-oriented Unix domain sockets.
+class UnixConnection final : public IConnection, ReferenceCounted<UnixConnection> {
+public:
+	void addref() override { ReferenceCounted<UnixConnection>::addref(); }
+	void delref() override { ReferenceCounted<UnixConnection>::delref(); }
+
+	void close() override { closeSocket(); }
+
+	explicit UnixConnection(boost::asio::io_service& io_service)
+	  : id(nondeterministicRandom()->randomUniqueID()),
+	    socket(io_service) {}
+
+	// This is not part of the IConnection interface, because it is wrapped by INetwork::connect()
+	// Establishes a connection to a local process bound to a filesystem pathname.
+	ACTOR static Future<Reference<IConnection>> connect(boost::asio::io_service* ios, NetworkAddress addr) {
+		state Reference<UnixConnection> self(new UnixConnection(*ios));
+
+		self->peer_address = addr;
+		try {
+			boost::asio::local::stream_protocol::endpoint to = unixEndpoint(addr.unixPathname());
+			BindPromise p("N2_ConnectError", self->id);
+			Future<Void> onConnected = p.getFuture();
+			self->socket.async_connect(to, std::move(p));
+
+			wait(onConnected);
+			self->initSocket();
+			return self;
+		} catch (Error&) {
+			// Either the connection failed, or was cancelled by the caller
+			self->closeSocket();
+			throw;
+		}
+	}
+
+	// This is not part of the IConnection interface, because it is wrapped by IListener::accept()
+	void accept(NetworkAddress peerAddr) {
+		this->peer_address = peerAddr;
+		initSocket();
+	}
+
+	Future<Void> acceptHandshake() override { return Void(); }
+
+	Future<Void> connectHandshake() override { return Void(); }
+
+	// returns when write() can write at least one byte
+	Future<Void> onWritable() override {
+		++g_net2->countWriteProbes;
+		BindPromise p("N2_WriteProbeError", id);
+		auto f = p.getFuture();
+		socket.async_write_some(boost::asio::null_buffers(), std::move(p));
+		return f;
+	}
+
+	// returns when read() can read at least one byte
+	Future<Void> onReadable() override {
+		++g_net2->countReadProbes;
+		BindPromise p("N2_ReadProbeError", id);
+		auto f = p.getFuture();
+		socket.async_read_some(boost::asio::null_buffers(), std::move(p));
+		return f;
+	}
+
+	// Reads as many bytes as possible from the read buffer into [begin,end) and returns the number of bytes read (might
+	// be 0)
+	int read(uint8_t* begin, uint8_t* end) override {
+		boost::system::error_code err;
+		++g_net2->countReads;
+		size_t toRead = end - begin;
+		size_t size = socket.read_some(boost::asio::mutable_buffers_1(begin, toRead), err);
+		g_net2->bytesReceived += size;
+		if (err) {
+			if (err == boost::asio::error::would_block) {
+				++g_net2->countWouldBlock;
+				return 0;
+			}
+			onReadError(err);
+			throw connection_failed();
+		}
+		ASSERT(size); // If the socket is closed, we expect an 'eof' error, not a zero return value
+
+		return size;
+	}
+
+	// Writes as many bytes as possible from the given SendBuffer chain into the write buffer and returns the number of
+	// bytes written (might be 0)
+	int write(SendBuffer const* data, int limit) override {
+		boost::system::error_code err;
+		++g_net2->countWrites;
+
+		size_t sent = socket.write_some(
+		    boost::iterator_range<SendBufferIterator>(SendBufferIterator(data, limit), SendBufferIterator()), err);
+
+		if (err) {
+			// Since there was an error, sent's value can't be used to infer that the buffer has data and the limit is
+			// positive so check explicitly.
+			ASSERT(limit > 0);
+			bool notEmpty = false;
+			for (auto p = data; p; p = p->next)
+				if (p->bytes_written - p->bytes_sent > 0) {
+					notEmpty = true;
+					break;
+				}
+			ASSERT(notEmpty);
+
+			if (err == boost::asio::error::would_block) {
+				++g_net2->countWouldBlock;
+				return 0;
+			}
+			onWriteError(err);
+			throw connection_failed();
+		}
+
+		ASSERT(sent); // Make sure data was sent, and also this check will fail if the buffer chain was empty or the
+		              // limit was not > 0.
+		return sent;
+	}
+
+	NetworkAddress getPeerAddress() const override { return peer_address; }
+
+	bool hasTrustedPeer() const override { return true; }
+
+	UID getDebugID() const override { return id; }
+
+private:
+	UID id;
+	boost::asio::local::stream_protocol::socket socket;
+	NetworkAddress peer_address;
+
+	// UnixListener and UnixConnection share the underlying boost socket, but no one else should.
+	friend class UnixListener;
+	boost::asio::local::stream_protocol::socket& getSocket() { return socket; }
+
+	void initSocket() {
+		// Socket settings that have to be set after connect or accept succeeds
+		socket.non_blocking(true);
+		platform::setCloseOnExec(socket.native_handle());
+	}
+
+	void closeSocket() {
+		boost::system::error_code error;
+		socket.close(error);
+		if (error) {
+			TraceEvent(SevWarn, "N2_CloseError", id)
+			    .suppressFor(1.0)
+			    .detail("PeerAddr", peer_address)
+			    .detail("ErrorCode", error.value())
+			    .detail("Message", error.message());
+		}
+	}
+
+	void onReadError(const boost::system::error_code& error) {
+		TraceEvent(SevWarn, "N2_ReadError", id)
+		    .suppressFor(1.0)
+		    .detail("PeerAddr", peer_address)
+		    .detail("ErrorCode", error.value())
+		    .detail("Message", error.message());
+		closeSocket();
+	}
+	void onWriteError(const boost::system::error_code& error) {
+		TraceEvent(SevWarn, "N2_WriteError", id)
+		    .suppressFor(1.0)
+		    .detail("PeerAddr", peer_address)
+		    .detail("ErrorCode", error.value())
+		    .detail("Message", error.message());
+		closeSocket();
+	}
+};
+
+// Implementation of IListener for stream-oriented Unix domain sockets.
+class UnixListener final : public IListener, ReferenceCounted<UnixListener> {
+	boost::asio::io_context& io_service;
+	NetworkAddress listenAddress;
+	boost::asio::local::stream_protocol::acceptor acceptor;
+
+public:
+	UnixListener(boost::asio::io_context& io_service, NetworkAddress listenAddress)
+	  : io_service(io_service),
+	    listenAddress(listenAddress),
+	    acceptor(io_service) {
+		std::string pathname = listenAddress.unixPathname();
+		// Remove the existing file before attempting to bind it.
+		::unlink(pathname.c_str());
+		acceptor.open();
+		acceptor.bind(unixEndpoint(pathname.c_str()));
+		acceptor.listen();
+		platform::setCloseOnExec(acceptor.native_handle());
+		TraceEvent("UnixListener").detail("Action", "Listen").detail("LocalAddr", listenAddress);
+	}
+
+	void addref() override { ReferenceCounted<UnixListener>::addref(); }
+	void delref() override { ReferenceCounted<UnixListener>::delref(); }
+
+	// Returns one incoming connection when it is available
+	Future<Reference<IConnection>> accept() override { return doAccept(this); }
+
+	NetworkAddress getListenAddress() const override { return listenAddress; }
+
+private:
+	ACTOR static Future<Reference<IConnection>> doAccept(UnixListener* self) {
+		state Reference<UnixConnection> conn(new UnixConnection(self->io_service));
+		state boost::asio::local::stream_protocol::acceptor::endpoint_type peer_endpoint;
+		try {
+			BindPromise p("N2_AcceptError", UID());
+			auto f = p.getFuture();
+			self->acceptor.async_accept(conn->getSocket(), peer_endpoint, std::move(p));
+			wait(f);
+			conn->accept(NetworkAddress::Unix(peer_endpoint.path(), /* public = */ false));
 			return conn;
 		} catch (...) {
 			conn->close();
@@ -1365,12 +1588,14 @@ void Net2::initTLS(ETLSInitState targetState) {
 			boost::asio::ssl::context newContext(boost::asio::ssl::context::tls);
 			const LoadedTLSConfig& loaded = tlsConfig.loadSync();
 			TraceEvent("Net2TLSConfig")
+			    .detail("TLSV12Enabled", FLOW_KNOBS->TLS_V1_2_ALLOWED)
+			    .detail("TLSV13Enabled", FLOW_KNOBS->TLS_V1_3_ALLOWED)
 			    .detail("CAPath", tlsConfig.getCAPathSync())
 			    .detail("CertificatePath", tlsConfig.getCertificatePathSync())
 			    .detail("KeyPath", tlsConfig.getKeyPathSync())
 			    .detail("HasPassword", !loaded.getPassword().empty())
 			    .detail("VerifyPeers", boost::algorithm::join(loaded.getVerifyPeers(), "|"))
-			    .detail("DisablePlainTextConnection", tlsConfig.getDisablePlainTextConnection());
+			    .detail("TlsRequired", tlsConfig.getTlsRequired());
 			auto loadedTlsConfig = tlsConfig.loadSync();
 			ConfigureSSLContext(loadedTlsConfig, newContext);
 			activeTlsPolicy = makeReference<TLSPolicy>(loadedTlsConfig, onPolicyFailure);
@@ -1842,12 +2067,16 @@ Future<Reference<IConnection>> Net2::connect(NetworkAddress toAddr, tcp::socket*
 		return SSLConnection::connect(&this->reactor.ios, this->sslContextVar.get(), toAddr, existingSocket);
 	}
 
-	if (tlsConfig.getDisablePlainTextConnection()) {
-		TraceEvent(SevError, "PlainTextConnectionDisabled").detail("toAddr", toAddr);
-		throw connection_failed();
+	if (toAddr.isUnix()) {
+		return UnixConnection::connect(&this->reactor.ios, toAddr);
 	}
 
-	return Connection::connect(&this->reactor.ios, toAddr);
+	if (tlsConfig.getTlsRequired()) {
+		TraceEvent(SevError, "TLSRequired").detail("ToAddr", toAddr);
+		throw tls_required_error();
+	}
+
+	return TCPConnection::connect(&this->reactor.ios, toAddr);
 }
 
 Future<Reference<IConnection>> Net2::connectExternal(NetworkAddress toAddr) {
@@ -2001,7 +2230,15 @@ Reference<IListener> Net2::listen(NetworkAddress localAddr) {
 			initTLS(ETLSInitState::LISTEN);
 			return Reference<IListener>(new SSLListener(reactor.ios, &this->sslContextVar, localAddr));
 		}
-		return Reference<IListener>(new Listener(reactor.ios, localAddr));
+		if (localAddr.isUnix()) {
+			return Reference<IListener>(new UnixListener(reactor.ios, localAddr));
+		}
+
+		if (tlsConfig.getTlsRequired()) {
+			TraceEvent(SevError, "TLSRequired").detail("LocalAddr", localAddr);
+			throw tls_required_error();
+		}
+		return Reference<IListener>(new TCPListener(reactor.ios, localAddr));
 	} catch (boost::system::system_error const& e) {
 		Error x;
 		if (e.code().value() == EADDRINUSE)

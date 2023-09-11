@@ -40,8 +40,6 @@ public:
 	bool trackerCancelled = false;
 	DatabaseConfiguration configuration;
 
-	Reference<ShardsAffectedByTeamFailure> shardsAffectedByTeamFailure;
-
 	Reference<DataDistributionTracker> tracker;
 	Reference<DDQueue> ddQueue;
 	Reference<DDTeamCollection> primaryTeamCollection, remoteTeamCollection;
@@ -50,10 +48,7 @@ public:
 
 	explicit DDSharedContext(const DataDistributorInterface& iface) : DDSharedContext(iface.id()) { interface = iface; }
 
-	explicit DDSharedContext(UID id)
-	  : ddEnabledState(new DDEnabledState),
-	    ddId(id),
-	    shardsAffectedByTeamFailure(new ShardsAffectedByTeamFailure) {}
+	explicit DDSharedContext(UID id) : ddEnabledState(new DDEnabledState), ddId(id) {}
 
 	UID id() const { return ddId; }
 

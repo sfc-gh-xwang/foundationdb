@@ -95,6 +95,8 @@ public:
 
 	Future<Void> monitorStorageQuota();
 
+	Future<Void> abortBulkLoadsOverQuota();
+
 	std::string desc() const;
 
 	bool isTenantKey(KeyRef key) const;

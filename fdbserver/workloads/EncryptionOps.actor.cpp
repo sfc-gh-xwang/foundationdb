@@ -343,8 +343,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 		       validateDetails.textCipherDetails == BlobCipherDetails(textCipherKey->getDomainId(),
 		                                                              textCipherKey->getBaseCipherId(),
 		                                                              textCipherKey->getSalt()));
-		EncryptAuthTokenMode authMode = authTokenModeFromEncryptionAtRestAlgo(algo);
-		if (authMode == ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE) {
+		if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_GCM) {
 			ASSERT(!validateDetails.headerCipherDetails.present());
 		} else {
 			ASSERT(validateDetails.headerCipherDetails.present() &&
@@ -390,7 +389,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 			AesGcm gcm = std::get<AesGcm>(headerRef.algoHeader);
 			memcpy(&iv[0], &gcm.v1.iv[0], ivSize);
 			textCipherDetails = gcm.v1.cipherTextDetails;
-			headerCipherDetails = gcm.v1.cipherHeaderDetails;
+			headerCipherDetails = BlobCipherDetails();
 		} else {
 			ASSERT(std::holds_alternative<AesCtrWithCmac>(headerRef.algoHeader));
 			AesCtrWithCmac aesCmac = std::get<AesCtrWithCmac>(headerRef.algoHeader);
@@ -409,7 +408,7 @@ struct EncryptionOpsWorkload : TestWorkload {
 		ASSERT(cipherKey->isEqual(orgCipherKey));
 
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    cipherKey, headerCipherKey, &iv[0], headerRef.getEncryptMode(), BlobCipherMetrics::TEST);
+		    cipherKey, headerCipherKey, &iv[0], headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 
 		auto start = std::chrono::high_resolution_clock::now();
 		StringRef decrypted = decryptor->decrypt(encrypted.begin(), len, headerRef, arena);

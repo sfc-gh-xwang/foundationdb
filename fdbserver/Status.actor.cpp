@@ -393,7 +393,7 @@ JsonBuilderObject machineStatusFetcher(WorkerEvents mMetrics,
 			tempList.address = it->first;
 			bool excludedServer = true;
 			bool excludedLocality = true;
-			if (configuration.present() && !configuration.get().isExcludedServer(tempList))
+			if (configuration.present() && !configuration.get().isExcludedServer(tempList, LocalityData()))
 				excludedServer = false;
 			if (locality.count(it->first) && configuration.present() &&
 			    !configuration.get().isMachineExcluded(locality[it->first]))
@@ -1085,8 +1085,8 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
 			statusObj["roles"] = roles.getStatusForAddress(address);
 
 			if (configuration.present()) {
-				statusObj["excluded"] = configuration.get().isExcludedServer(workerItr->interf.addresses()) ||
-				                        configuration.get().isExcludedLocality(workerItr->interf.locality);
+				statusObj["excluded"] =
+				    configuration.get().isExcludedServer(workerItr->interf.addresses(), workerItr->interf.locality);
 			}
 
 			statusObj["class_type"] = workerItr->processClass.toString();
@@ -2083,7 +2083,7 @@ static int getExtraTLogEligibleZones(const std::vector<WorkerDetails>& workers,
 	std::map<Key, std::set<StringRef>> dcId_zone;
 	for (auto const& worker : workers) {
 		if (worker.processClass.machineClassFitness(ProcessClass::TLog) < ProcessClass::NeverAssign &&
-		    !configuration.isExcludedServer(worker.interf.addresses())) {
+		    !configuration.isExcludedServer(worker.interf.addresses(), worker.interf.locality)) {
 			allZones.insert(worker.interf.locality.zoneId().get());
 			if (worker.interf.locality.dcId().present()) {
 				dcId_zone[worker.interf.locality.dcId().get()].insert(worker.interf.locality.zoneId().get());
@@ -2241,6 +2241,7 @@ ACTOR static Future<JsonBuilderObject> workloadStatusFetcher(
 
 		if (commitProxyStats.size() > 0) {
 			(*tenants)["num_tenants"] = commitProxyStats[0].getUint64("NumTenants");
+			(*tenants)["num_locked_tenants"] = commitProxyStats[0].getUint64("NumLockedTenants");
 		}
 	} catch (Error& e) {
 		if (e.code() == error_code_actor_cancelled)
@@ -3392,9 +3393,14 @@ ACTOR Future<StatusReply> clusterGetStatus(
 			state std::vector<JsonBuilderObject> workerStatuses = wait(getAll(futures2));
 			wait(success(primaryDCFO));
 
-			std::vector<NetworkAddress> addresses =
-			    wait(timeoutError(coordinators.ccr->getConnectionString().tryResolveHostnames(), 5.0));
-			coordinatorAddresses = std::move(addresses);
+			ErrorOr<std::vector<NetworkAddress>> addresses =
+			    wait(errorOr(timeoutError(coordinators.ccr->getConnectionString().tryResolveHostnames(), 5.0)));
+			if (addresses.present()) {
+				coordinatorAddresses = std::move(addresses.get());
+			} else {
+				messages.push_back(
+				    JsonString::makeMessage("fetch_coordinator_addresses", "Fetching coordinator addresses timed out"));
+			}
 
 			int logFaultTolerance = 100;
 			if (db->get().recoveryState >= RecoveryState::ACCEPTING_COMMITS) {
@@ -3450,6 +3456,7 @@ ACTOR Future<StatusReply> clusterGetStatus(
 				} else if (!metaclusterMetrics.error.present()) { // clusterType == ClusterType::METACLUSTER_MANAGEMENT
 					metacluster["num_data_clusters"] = metaclusterMetrics.numDataClusters;
 					tenants["num_tenants"] = metaclusterMetrics.numTenants;
+					tenants["num_locked_tenants"] = metaclusterMetrics.numLockedTenants;
 					tenants["tenant_group_capacity"] = metaclusterMetrics.tenantGroupCapacity;
 					tenants["tenant_groups_allocated"] = metaclusterMetrics.tenantGroupsAllocated;
 				} else {
@@ -3572,14 +3579,25 @@ ACTOR Future<StatusReply> clusterGetStatus(
 		statusObj["clients"] = clientStatusFetcher(clientStatus);
 
 		if (configuration.present() && configuration.get().blobGranulesEnabled) {
-			JsonBuilderObject blobGranuelsStatus = wait(
+			ErrorOr<JsonBuilderObject> blobGranulesStatus = wait(errorOr(
 			    timeoutError(blobGranulesStatusFetcher(
 			                     cx, db->get().blobManager, blobWorkers, address_workers, &status_incomplete_reasons),
-			                 2.0));
-			statusObj["blob_granules"] = blobGranuelsStatus;
-			JsonBuilderObject blobRestoreStatus =
-			    wait(timeoutError(blobRestoreStatusFetcher(cx, &status_incomplete_reasons), 2.0));
-			statusObj["blob_restore"] = blobRestoreStatus;
+			                 2.0)));
+			if (blobGranulesStatus.present()) {
+				statusObj["blob_granules"] = blobGranulesStatus.get();
+			} else {
+				messages.push_back(JsonString::makeMessage("fetch_blob_granule_status_timed_out",
+				                                           "Fetch BlobGranule status timed out."));
+			}
+
+			ErrorOr<JsonBuilderObject> blobRestoreStatus =
+			    wait(errorOr(timeoutError(blobRestoreStatusFetcher(cx, &status_incomplete_reasons), 2.0)));
+			if (blobRestoreStatus.present()) {
+				statusObj["blob_restore"] = blobRestoreStatus.get();
+			} else {
+				messages.push_back(JsonString::makeMessage("fetch_blob_restore_status_timed_out",
+				                                           "Fetch BlobRestore status timed out."));
+			}
 		}
 
 		JsonBuilderArray incompatibleConnectionsArray;

@@ -20,6 +20,7 @@
 #pragma once
 
 #include "fdbclient/Knobs.h"
+#include "flow/Trace.h"
 #ifndef FDBSERVER_IPAGER_H
 #define FDBSERVER_IPAGER_H
 
@@ -425,6 +426,9 @@ public:
 		                   EncryptionAtRestAlgo algo) {
 			ASSERT_NE(algo, EncryptionAtRestAlgo::LAST);
 			Header* h = reinterpret_cast<Header*>(header);
+			if (needsHeaderCipherKey(algo)) {
+				ASSERT(cipherKeys.cipherHeaderKey.isValid());
+			}
 			Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
 			    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, algo, BlobCipherMetrics::KV_REDWOOD);
 			Arena arena;
@@ -475,7 +479,7 @@ public:
 			Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
 			                                                                      cipherKeys.cipherHeaderKey,
 			                                                                      headerRef.getIV(),
-			                                                                      headerRef.getEncryptMode(),
+			                                                                      headerRef.getEncryptionAtRestAlgo(),
 			                                                                      BlobCipherMetrics::KV_REDWOOD);
 			if (cipher->supportsInplaceDecryption()) {
 				cipher->decryptInplace(payload, len, headerRef, decryptTime);

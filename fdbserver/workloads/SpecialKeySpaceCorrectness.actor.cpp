@@ -323,7 +323,7 @@ struct SpecialKeySpaceCorrectnessWorkload : TestWorkload {
 		}
 		state Reference<ReadYourWritesTransaction> tx = makeReference<ReadYourWritesTransaction>(cx);
 		state Reference<ReadYourWritesTransaction> tenantTx =
-		    makeReference<ReadYourWritesTransaction>(cx, makeReference<Tenant>(tenantId));
+		    makeReference<ReadYourWritesTransaction>(makeReference<Tenant>(cx, tenantId));
 		// Use new transactions that may use default tenant rather than re-use tx
 		// This is because tx will reject raw access for later tests if default tenant is set
 		state Reference<ReadYourWritesTransaction> defaultTx1 = makeReference<ReadYourWritesTransaction>(cx);

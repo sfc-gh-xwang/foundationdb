@@ -33,6 +33,7 @@
 #include "flow/ThreadHelper.actor.h"
 
 #include "metacluster/Metacluster.h"
+#include "metacluster/MetaclusterMetadata.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -104,7 +105,8 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
                             int& offset,
                             std::vector<metacluster::TenantState>& filters,
                             Optional<TenantGroupName>& tenantGroup,
-                            bool& useJson) {
+                            bool& useJson,
+                            Optional<TenantAPI::LockedTenants>& locked) {
 	for (int tokenNum = startIndex; tokenNum < tokens.size(); ++tokenNum) {
 		Optional<Value> value;
 		StringRef token = tokens[tokenNum];
@@ -144,6 +146,16 @@ bool parseTenantListOptions(std::vector<StringRef> const& tokens,
 			}
 		} else if (tokencmp(param, "tenant_group")) {
 			tenantGroup = TenantGroupName(value.get().toString());
+		} else if (tokencmp(param, "locked")) {
+			StringRef lockedValue = value.get();
+			if (tokencmp(lockedValue, "true")) {
+				locked = TenantAPI::LockedTenants(true);
+			} else if (tokencmp(lockedValue, "false")) {
+				locked = TenantAPI::LockedTenants(false);
+			} else {
+				fmt::print(stderr, "ERROR: unrecognized lock specification `{}'.\n", lockedValue.toString());
+				return false;
+			}
 		} else if (tokencmp(param, "JSON")) {
 			useJson = true;
 		} else {
@@ -350,6 +362,187 @@ ACTOR Future<bool> tenantDeleteIdCommand(Reference<IDatabase> db, std::vector<St
 	fmt::print("The tenant with ID `{}' has been deleted\n", printable(tokens[2]).c_str());
 	return true;
 }
+constexpr char moveTenantUsageMessage[] =
+    "Usage: tenant emergency_move <start|switch|finish|abort|status> <TENANT_GROUP> <SOURCE_CLUSTER> "
+    "<DESTINATION_CLUSTER> \n\n"
+    "Helps orchestrate the move of a tenant group across 2 data clusters in a metacluster.\n"
+    "TENANT_GROUP must be assigned to SOURCE_CLUSTER at the beginning of the movement\n"
+    "SOURCE_CLUSTER and DESTINATION_CLUSTER must be distinct from each other.\n"
+    "The abort command will fail if there are any unlocked destination tenants in the group.\n"
+    "The status command will print out the contents of the specified move record and only takes the tenant group as an "
+    "argument.\n";
+
+ACTOR Future<bool> tenantMoveStartCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
+	if (tokens.size() > 6) {
+		fmt::print(moveTenantUsageMessage);
+		return false;
+	}
+	TenantGroupName tenantGroup = tokens[3];
+	ClusterName srcCluster = tokens[4];
+	ClusterName dstCluster = tokens[5];
+	state std::vector<std::string> messages;
+	try {
+		wait(metacluster::startTenantMovement(db, tenantGroup, srcCluster, dstCluster, &messages));
+	} catch (Error& e) {
+		fmt::print(stderr, "ERROR: {}\n", e.what());
+		if (!messages.empty()) {
+			fmt::print(stderr, "\nThe move reported the following messages:\n\n");
+			for (int i = 0; i < messages.size(); ++i) {
+				fmt::print(stderr, "  {}. {}\n", i + 1, messages[i]);
+			}
+		}
+		return false;
+	}
+
+	return true;
+}
+
+ACTOR Future<bool> tenantMoveSwitchCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
+	if (tokens.size() > 6) {
+		fmt::print(moveTenantUsageMessage);
+		return false;
+	}
+	TenantGroupName tenantGroup = tokens[3];
+	ClusterName srcCluster = tokens[4];
+	ClusterName dstCluster = tokens[5];
+	state std::vector<std::string> messages;
+	try {
+		wait(metacluster::switchTenantMovement(db, tenantGroup, srcCluster, dstCluster, &messages));
+	} catch (Error& e) {
+		fmt::print(stderr, "ERROR: {}\n", e.what());
+		if (!messages.empty()) {
+			fmt::print(stderr, "\nThe move reported the following messages:\n\n");
+			for (int i = 0; i < messages.size(); ++i) {
+				fmt::print(stderr, "  {}. {}\n", i + 1, messages[i]);
+			}
+		}
+		return false;
+	}
+
+	return true;
+}
+
+ACTOR Future<bool> tenantMoveFinishCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
+	if (tokens.size() > 6) {
+		fmt::print(moveTenantUsageMessage);
+		return false;
+	}
+	TenantGroupName tenantGroup = tokens[3];
+	ClusterName srcCluster = tokens[4];
+	ClusterName dstCluster = tokens[5];
+	state std::vector<std::string> messages;
+	try {
+		wait(metacluster::finishTenantMovement(db, tenantGroup, srcCluster, dstCluster, &messages));
+	} catch (Error& e) {
+		fmt::print(stderr, "ERROR: {}\n", e.what());
+		if (!messages.empty()) {
+			fmt::print(stderr, "\nThe move reported the following messages:\n\n");
+			for (int i = 0; i < messages.size(); ++i) {
+				fmt::print(stderr, "  {}. {}\n", i + 1, messages[i]);
+			}
+		}
+		return false;
+	}
+
+	return true;
+}
+
+ACTOR Future<bool> tenantMoveAbortCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
+	if (tokens.size() > 6) {
+		fmt::print(moveTenantUsageMessage);
+		return false;
+	}
+	TenantGroupName tenantGroup = tokens[3];
+	ClusterName srcCluster = tokens[4];
+	ClusterName dstCluster = tokens[5];
+	state std::vector<std::string> messages;
+	try {
+		wait(metacluster::abortTenantMovement(db, tenantGroup, srcCluster, dstCluster, &messages));
+	} catch (Error& e) {
+		fmt::print(stderr, "ERROR: {}\n", e.what());
+		if (!messages.empty()) {
+			fmt::print(stderr, "\nThe move reported the following messages:\n\n");
+			for (int i = 0; i < messages.size(); ++i) {
+				fmt::print(stderr, "  {}. {}\n", i + 1, messages[i]);
+			}
+		}
+		return false;
+	}
+
+	return true;
+}
+
+ACTOR Future<bool> tenantMoveStatusCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
+	if (tokens.size() > 4) {
+		fmt::print(moveTenantUsageMessage);
+		return false;
+	}
+	state TenantGroupName tenantGroup = tokens[3];
+	state metacluster::metadata::management::MovementRecord moveRecord;
+	try {
+		wait(store(moveRecord, metacluster::moveStatus(db, tenantGroup)));
+	} catch (Error& e) {
+		fmt::print(stderr, "ERROR: {}\n", e.what());
+		if (e.code() == error_code_tenant_move_record_missing) {
+			fmt::print(stderr, "No move in progress was found for tenant group {}\n", tenantGroup);
+		}
+		return false;
+	}
+	fmt::print("Move in progress for tenant group {}:\n"
+	           "  Source Cluster: {}\n"
+	           "  Destination Cluster: {}\n"
+	           "  Movement State: {}\n"
+	           "  Version: {}\n"
+	           "  Aborting: {}\n",
+	           tenantGroup,
+	           moveRecord.srcCluster,
+	           moveRecord.dstCluster,
+	           metacluster::metadata::management::moveStateToString(moveRecord.mState),
+	           moveRecord.version,
+	           moveRecord.aborting);
+	return true;
+}
+
+ACTOR Future<bool> tenantMoveCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
+	// Status only needs 4 tokens
+	if (tokens.size() < 4) {
+		fmt::print(moveTenantUsageMessage);
+		return false;
+	}
+	state StringRef step = tokens[2];
+	state bool result = false;
+	if (step == "status"_sr) {
+		wait(store(result, tenantMoveStatusCommand(db, tokens)));
+		return result;
+	}
+
+	// Rest of the commands expect 6 tokens
+	if (tokens.size() < 6) {
+		fmt::print(moveTenantUsageMessage);
+		return false;
+	}
+	ClusterName srcCluster = tokens[4];
+	ClusterName dstCluster = tokens[5];
+	if (srcCluster == dstCluster) {
+		fmt::print("ERROR: source cluster must be different from destination cluster\n");
+		fmt::print(moveTenantUsageMessage);
+		return false;
+	}
+
+	if (step == "start"_sr) {
+		wait(store(result, tenantMoveStartCommand(db, tokens)));
+	} else if (step == "switch"_sr) {
+		wait(store(result, tenantMoveSwitchCommand(db, tokens)));
+	} else if (step == "finish"_sr) {
+		wait(store(result, tenantMoveFinishCommand(db, tokens)));
+	} else if (step == "abort"_sr) {
+		wait(store(result, tenantMoveAbortCommand(db, tokens)));
+	} else {
+		fmt::print(stderr, moveTenantUsageMessage);
+		return false;
+	}
+	return result;
+}
 
 void tenantListOutputJson(std::map<TenantName, int64_t> tenants) {
 	json_spirit::mArray tenantsArr;
@@ -369,18 +562,20 @@ void tenantListOutputJson(std::map<TenantName, int64_t> tenants) {
 
 // tenant list command
 ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
-	if (tokens.size() > 9) {
-		fmt::print(
-		    "Usage: tenant list [BEGIN] [END] "
-		    "[limit=<LIMIT>|offset=<OFFSET>|state=<STATE1>,<STATE2>,...|tenant_group=<TENANT_GROUP>] [JSON] ...\n\n");
+	if (tokens.size() > 10) {
+		fmt::print("Usage: tenant list [BEGIN] [END] "
+		           "[limit=<LIMIT>|offset=<OFFSET>|state=<STATE1>,<STATE2>,...|tenant_group=<TENANT_GROUP>|locked=["
+		           "true|false]]"
+		           "[JSON] ...\n\n");
 		fmt::print("Lists the tenants in a cluster.\n");
 		fmt::print("Only tenants in the range BEGIN - END will be printed.\n");
 		fmt::print("An optional LIMIT can be specified to limit the number of results (default 100).\n");
 		fmt::print("Optionally skip over the first OFFSET results (default 0).\n");
 		fmt::print("Optional comma-separated tenant state(s) can be provided to filter the list.\n");
 		fmt::print("Optional tenant group can be provided to filter the list.\n");
+		fmt::print("Optional locked=true/false can be provided to specify only locked or unlocked tenants.\n");
 		fmt::print("If JSON is specified, then the output will be in JSON format.\n");
-		fmt::print("Specifying [offset] and [state] is only supported in a metacluster.\n");
+		fmt::print("Specifying [state] is only supported in a metacluster.\n");
 		return false;
 	}
 
@@ -390,6 +585,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 	state int offset = 0;
 	state std::vector<metacluster::TenantState> filters;
 	state Optional<TenantGroupName> tenantGroup;
+	state Optional<TenantAPI::LockedTenants> locked;
 	state bool useJson = false;
 
 	if (tokens.size() >= 3) {
@@ -403,7 +599,7 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 		}
 	}
 	if (tokens.size() >= 5) {
-		if (!parseTenantListOptions(tokens, 4, limit, offset, filters, tenantGroup, useJson)) {
+		if (!parseTenantListOptions(tokens, 4, limit, offset, filters, tenantGroup, useJson, locked)) {
 			return false;
 		}
 	}
@@ -420,21 +616,15 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 			// State filters only apply to calls from the management cluster
 			// Tenant group filters can apply to management, data, and standalone clusters
 			if (clusterType == ClusterType::METACLUSTER_MANAGEMENT) {
-				std::vector<std::pair<TenantName, metacluster::MetaclusterTenantMapEntry>> tenants = wait(
-				    metacluster::listTenantMetadata(db, beginTenant, endTenant, limit, offset, filters, tenantGroup));
+				std::vector<std::pair<TenantName, metacluster::MetaclusterTenantMapEntry>> tenants =
+				    wait(metacluster::listTenantMetadata(
+				        db, beginTenant, endTenant, limit, offset, filters, tenantGroup, locked));
 				for (const auto& [tenantName, entry] : tenants) {
 					tenantInfo[tenantName] = entry.id;
 				}
 			} else {
-				if (tenantGroup.present()) {
-					// For expediency: does not use special key space
-					// TODO: add special key support
-					std::vector<std::pair<TenantName, int64_t>> tenants =
-					    wait(TenantAPI::listTenantGroupTenants(db, tenantGroup.get(), beginTenant, endTenant, limit));
-					for (const auto& [tenantName, tenantId] : tenants) {
-						tenantInfo[tenantName] = tenantId;
-					}
-				} else {
+				// No need to filter, so go straight to special keys
+				if (!tenantGroup.present() && !locked.present() && offset == 0) {
 					// Hold the reference to the standalone's memory
 					state ThreadFuture<RangeReadResult> kvsFuture =
 					    tr->getRange(firstGreaterOrEqual(beginTenantKey), firstGreaterOrEqual(endTenantKey), limit);
@@ -448,6 +638,13 @@ ACTOR Future<bool> tenantListCommand(Reference<IDatabase> db, std::vector<String
 						int64_t tId;
 						jsonDoc.get("id", tId);
 						tenantInfo[tName] = tId;
+					}
+				} else {
+					// Use filter-based TenantAPI:: call similar to how metacluster:: has one
+					std::vector<std::pair<TenantName, TenantMapEntry>> tenants = wait(
+					    TenantAPI::listTenantMetadata(db, beginTenant, endTenant, limit, offset, tenantGroup, locked));
+					for (const auto& [tenantName, entry] : tenants) {
+						tenantInfo[tenantName] = entry.id;
 					}
 				}
 			}
@@ -956,6 +1153,8 @@ Future<bool> tenantCommand(Reference<IDatabase> db, std::vector<StringRef> token
 		return tenantLockCommand(db, tokens);
 	} else if (tokencmp(tokens[1], "unlock")) {
 		return tenantLockCommand(db, tokens);
+	} else if (tokencmp(tokens[1], "emergency_move")) {
+		return tenantMoveCommand(db, tokens);
 	} else {
 		printUsage(tokens[0]);
 		return true;
@@ -979,8 +1178,8 @@ void tenantGenerator(const char* text,
                      std::vector<std::string>& lc,
                      std::vector<StringRef> const& tokens) {
 	if (tokens.size() == 1) {
-		const char* opts[] = { "create",    "delete", "deleteId", "list",   "get",
-			                   "configure", "rename", "lock",     "unlock", nullptr };
+		const char* opts[] = { "create", "delete", "deleteId", "list",           "get",  "configure",
+			                   "rename", "lock",   "unlock",   "emergency_move", nullptr };
 		arrayGenerator(text, line, opts, lc);
 	} else if (tokens.size() >= 3 && tokencmp(tokens[1], "create")) {
 		const char* opts[] = { "tenant_group=", "assigned_cluster=", "ignore_capacity_limit", nullptr };
@@ -992,7 +1191,7 @@ void tenantGenerator(const char* text,
 		const char* opts[] = { "JSON", nullptr };
 		arrayGenerator(text, line, opts, lc);
 	} else if (tokens.size() >= 4 && tokencmp(tokens[1], "list")) {
-		const char* opts[] = { "limit=", "offset=", "state=", "tenant_group=", "JSON", nullptr };
+		const char* opts[] = { "limit=", "offset=", "state=", "tenant_group=", "locked=", "JSON", nullptr };
 		arrayGenerator(text, line, opts, lc);
 	} else if (tokencmp(tokens[1], "configure")) {
 		if (tokens.size() == 3) {
@@ -1015,7 +1214,7 @@ void tenantGenerator(const char* text,
 
 std::vector<const char*> tenantHintGenerator(std::vector<StringRef> const& tokens, bool inArgument) {
 	if (tokens.size() == 1) {
-		return { "<create|delete|deleteId|list|get|getId|configure|rename>", "[ARGS]" };
+		return { "<create|delete|deleteId|list|get|getId|configure|rename|emergency_move>", "[ARGS]" };
 	} else if (tokencmp(tokens[1], "create") && tokens.size() < 5) {
 		static std::vector<const char*> opts = {
 			"<NAME>", "[tenant_group=<TENANT_GROUP>]", "[assigned_cluster=<CLUSTER_NAME>]", "[ignore_capacity_limit]"
@@ -1034,6 +1233,7 @@ std::vector<const char*> tenantHintGenerator(std::vector<StringRef> const& token
 			                                     "[offset=OFFSET]",
 			                                     "[state=<STATE1>,<STATE2>,...]",
 			                                     "[tenant_group=TENANT_GROUP]",
+			                                     "[locked=[true|false]]"
 			                                     "[JSON]" };
 		return std::vector<const char*>(opts.begin() + tokens.size() - 2, opts.end());
 	} else if (tokencmp(tokens[1], "get") && tokens.size() < 4) {
@@ -1067,6 +1267,22 @@ std::vector<const char*> tenantHintGenerator(std::vector<StringRef> const& token
 	} else if (tokencmp(tokens[1], "unlock") && tokens.size() < 4) {
 		static std::vector<const char*> opts = { "<NAME>", "<UID>" };
 		return std::vector<const char*>(opts.begin() + tokens.size() - 2, opts.end());
+	} else if (tokencmp(tokens[1], "emergency_move") && tokens.size() < 6) {
+		if (tokens.size() < 3) {
+			static std::vector<const char*> opts = {
+				"<start|switch|finish|abort|status>", "<TENANT_GROUP>", "<SOURCE_CLUSTER>", "<DESTINATION_CLUSTER>"
+			};
+			return std::vector<const char*>(opts.begin() + tokens.size() - 2, opts.end());
+		} else if (tokens[2] == "status"_sr) {
+			if (tokens.size() < 4) {
+				static std::vector<const char*> opts = { "<TENANT_GROUP>" };
+				return std::vector<const char*>(opts.begin() + tokens.size() - 3, opts.end());
+			}
+		} else { // start, switch, finish, abort
+			static std::vector<const char*> opts = { "<TENANT_GROUP>", "<SOURCE_CLUSTER>", "<DESTINATION_CLUSTER>" };
+			return std::vector<const char*>(opts.begin() + tokens.size() - 3, opts.end());
+		}
+		return {};
 	} else {
 		return {};
 	}

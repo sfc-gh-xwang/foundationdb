@@ -99,8 +99,9 @@ void logWorkerUnavailable(Severity severity,
 	// Logging every possible options is a lot for every recruitment; logging all of the options with GoodFit or
 	// BestFit may work because there should only be like 30 tlog class processes. Plus, the recruitment happens
 	// only during initial database creation and recovery. So these trace events should be sparse.
-	if (fitness == ProcessClass::GoodFit || fitness == ProcessClass::BestFit || fitness == ProcessClass::NeverAssign) {
+	if (fitness == ProcessClass::GoodFit || fitness == ProcessClass::BestFit) {
 		TraceEvent(severity, "GetTLogTeamWorkerUnavailable", id)
+		    .suppressFor(5.0)
 		    .detail("TLogRecruitMethod", method)
 		    .detail("Reason", reason)
 		    .detail("WorkerID", details.interf.id())
@@ -379,7 +380,7 @@ public:
 		std::set<Optional<Standalone<StringRef>>> result;
 		for (auto& it : clusterControllerData->id_worker)
 			if (workerAvailable(self, it.second, checkStable) &&
-			    !conf.isExcludedServer(it.second.details.interf.addresses()) &&
+			    !conf.isExcludedServer(it.second.details.interf.addresses(), it.second.details.interf.locality) &&
 			    !isExcludedDegradedServer(clusterControllerData, it.second.details.interf.addresses()))
 				result.insert(it.second.details.interf.locality.dcId());
 		return result;
@@ -409,7 +410,7 @@ public:
 		for (auto& it : clusterControllerData->id_worker) {
 			auto fitness = it.second.details.processClass.machineClassFitness(role);
 			if (RecruiterImpl::workerAvailable(self, it.second, checkStable) &&
-			    !conf.isExcludedServer(it.second.details.interf.addresses()) &&
+			    !conf.isExcludedServer(it.second.details.interf.addresses(), it.second.details.interf.locality) &&
 			    !isExcludedDegradedServer(clusterControllerData, it.second.details.interf.addresses()) &&
 			    it.second.details.interf.locality.dcId() == dcId &&
 			    (!minWorker.present() ||
@@ -473,7 +474,7 @@ public:
 		for (auto& it : clusterControllerData->id_worker) {
 			auto fitness = it.second.details.processClass.machineClassFitness(ProcessClass::Storage);
 			if (workerAvailable(self, it.second, false) && it.second.details.recoveredDiskFiles &&
-			    !conf.isExcludedServer(it.second.details.interf.addresses()) &&
+			    !conf.isExcludedServer(it.second.details.interf.addresses(), it.second.details.interf.locality) &&
 			    !isExcludedDegradedServer(clusterControllerData, it.second.details.interf.addresses()) &&
 			    fitness != ProcessClass::NeverAssign &&
 			    (!dcId.present() || it.second.details.interf.locality.dcId() == dcId.get())) {
@@ -552,7 +553,7 @@ public:
 				                     dcIds);
 				continue;
 			}
-			if (conf.isExcludedServer(worker_details.interf.addresses())) {
+			if (conf.isExcludedServer(worker_details.interf.addresses(), worker_details.interf.locality)) {
 				logWorkerUnavailable(SevInfo,
 				                     clusterControllerData->id,
 				                     "simple",
@@ -732,7 +733,7 @@ public:
 				                     dcIds);
 				continue;
 			}
-			if (conf.isExcludedServer(worker_details.interf.addresses())) {
+			if (conf.isExcludedServer(worker_details.interf.addresses(), worker_details.interf.locality)) {
 				logWorkerUnavailable(SevInfo,
 				                     clusterControllerData->id,
 				                     "deprecated",
@@ -999,7 +1000,7 @@ public:
 				                     dcIds);
 				continue;
 			}
-			if (conf.isExcludedServer(worker_details.interf.addresses())) {
+			if (conf.isExcludedServer(worker_details.interf.addresses(), worker_details.interf.locality)) {
 				logWorkerUnavailable(SevInfo,
 				                     clusterControllerData->id,
 				                     "complex",
@@ -2388,31 +2389,32 @@ WorkerFitnessInfo Recruiter::getWorkerForRoleInDatacenter(
     std::map<Standalone<StringRef>, int> const& machineCount) {
 	std::map<SingleWorkerComparator, std::vector<WorkerDetails>> fitness_workers;
 
-	for (auto& it : clusterControllerData->id_worker) {
-		auto fitness = it.second.details.processClass.machineClassFitness(role);
-		if (conf.isExcludedServer(it.second.details.interf.addresses()) ||
-		    isExcludedDegradedServer(clusterControllerData, it.second.details.interf.addresses())) {
+	for (auto const& [optionalWorkerId, workerInfo] : clusterControllerData->id_worker) {
+		auto fitness = workerInfo.details.processClass.machineClassFitness(role);
+		if (conf.isExcludedServer(workerInfo.details.interf.addresses(), workerInfo.details.interf.locality) ||
+		    isExcludedDegradedServer(clusterControllerData, workerInfo.details.interf.addresses())) {
 			fitness = std::max(fitness, ProcessClass::ExcludeFit);
 		}
-		if (RecruiterImpl::workerAvailable(this, it.second, checkStable) && fitness < unacceptableFitness &&
-		    it.second.details.interf.locality.dcId() == dcId) {
-			auto sharing = preferredSharing.find(it.first);
+		if (RecruiterImpl::workerAvailable(this, workerInfo, checkStable) && fitness < unacceptableFitness &&
+		    workerInfo.details.interf.locality.dcId() == dcId) {
+			auto sharing = preferredSharing.find(optionalWorkerId);
 			// Count the number of stateless processes running on the machine
-			// `it` is running on.
+			// where the worker is running.
 			int numProcessesOnMachine = 0;
-			if (it.second.details.interf.locality.machineId().present()) {
-				auto mit = machineCount.find(it.second.details.interf.locality.machineId().get());
+			if (workerInfo.details.interf.locality.machineId().present()) {
+				auto mit = machineCount.find(workerInfo.details.interf.locality.machineId().get());
 				if (mit != machineCount.end()) {
 					numProcessesOnMachine = mit->second;
 				}
 			}
-			fitness_workers[SingleWorkerComparator(fitness,
-			                                       id_used[it.first],
-			                                       isLongLivedStateless(clusterControllerData, it.first, role),
-			                                       sharing != preferredSharing.end() ? sharing->second
-			                                                                         : static_cast<int>(1e6),
-			                                       numProcessesOnMachine)]
-			    .push_back(it.second.details);
+			auto comparator =
+			    SingleWorkerComparator(fitness,
+			                           id_used[optionalWorkerId],
+			                           isLongLivedStateless(clusterControllerData, optionalWorkerId, role),
+			                           sharing != preferredSharing.end() ? sharing->second : static_cast<int>(1e6),
+			                           numProcessesOnMachine);
+			auto [iter, inserted] = fitness_workers.insert({ std::move(comparator), std::vector<WorkerDetails>{} });
+			(iter->second).push_back(workerInfo.details);
 		}
 	}
 
