@@ -147,7 +147,9 @@ class TransactionCostWorkload : public TestWorkload {
 			return Void();
 		}
 
-		int64_t expectedFinalCost() const override { return CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
+		int64_t expectedFinalCost() const override {
+			return CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
+		}
 	};
 
 	class ReadRangeTest : public ITest {
