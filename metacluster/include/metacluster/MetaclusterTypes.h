@@ -22,7 +22,6 @@
 #define METACLUSTER_METACLUSTERTYPES_H
 #pragma once
 
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/json_spirit/json_spirit_value.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
@@ -65,6 +64,8 @@ enum class DataClusterState { REGISTERING, READY, REMOVING, RESTORING };
 enum class AutoTenantAssignment { ENABLED, DISABLED };
 
 struct DataClusterEntry {
+	using ConfigValue = std::variant<int, AutoTenantAssignment>;
+
 	constexpr static FileIdentifier file_identifier = 929511;
 
 	static std::string clusterStateToString(DataClusterState clusterState);
@@ -85,6 +86,9 @@ struct DataClusterEntry {
 	  : id(id),
 	    capacity(capacity),
 	    allocated(allocated) {}
+
+	void configure(std::string const& parameter, ConfigValue const& value);
+	void configure(std::map<std::string, ConfigValue> const& parameters);
 
 	// Returns true if all configurable properties match
 	bool matchesConfiguration(DataClusterEntry const& other) const { return capacity == other.capacity; }

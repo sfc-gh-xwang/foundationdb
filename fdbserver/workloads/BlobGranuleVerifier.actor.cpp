@@ -172,6 +172,9 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 	// Sets the whole user keyspace to be blobified
 	ACTOR Future<Void> setUpBlobRange(Database cx) {
 		bool success = wait(cx->blobbifyRange(normalKeys));
+		if (!success) {
+			TraceEvent(SevError, "CannotBlobifyRange").detail("Range", normalKeys);
+		}
 		ASSERT(success);
 		return Void();
 	}
@@ -267,7 +270,6 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 		state std::map<double, OldRead> timeTravelChecks;
 		state int64_t timeTravelChecksMemory = 0;
 		state Version prevPurgeVersion = -1;
-		state UID dbgId = debugRandom()->randomUniqueID();
 		state Version newPurgeVersion = 0;
 		// usually we want randomness to verify maximum data, but sometimes hotspotting a subset is good too
 		state bool pickGranuleUniform = deterministicRandom()->random01() < 0.1;

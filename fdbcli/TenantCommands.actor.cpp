@@ -1290,7 +1290,7 @@ std::vector<const char*> tenantHintGenerator(std::vector<StringRef> const& token
 
 CommandFactory tenantRegisterFactory(
     "tenant",
-    CommandHelp("tenant <create|delete|list|get|getId|configure|rename|lock|unlock> [ARGS]",
+    CommandHelp("tenant <create|delete|deleteId|list|get|getId|configure|rename|lock|unlock> [ARGS]",
                 "view and manage tenants in a cluster or metacluster",
                 "`create' and `delete' add and remove tenants from the cluster.\n"
                 "`list' prints a list of tenants in the cluster.\n"

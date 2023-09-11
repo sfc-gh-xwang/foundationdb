@@ -189,7 +189,10 @@ struct CommonStorageCounters {
 	// write ops
 	// Bytes of the mutations that have been added to the memory of the storage server. When the data is durable
 	// and cleared from the memory, we do not subtract it but add it to bytesDurable.
-	Counter bytesInput;
+	Counter bytesInputOld; // Old tracking using estimated PTree size.
+	Counter bytesInputNoPTree; // Overhead for storing mutation, does not account for the size of the PTree.
+	Counter bytesInput; // New bytesInput tracking using actual PTree size.
+
 	// Like bytesInput but without MVCC accounting. The size is counted as how much it takes when serialized. It
 	// is basically the size of both parameters of the mutation and a 12 bytes overhead that keeps mutation type
 	// and the lengths of both parameters.
@@ -222,7 +225,7 @@ public:
 
 	virtual void addActor(Future<Void> future) = 0;
 
-	virtual void getSplitPoints(SplitRangeRequest const& req) = 0;
+	virtual Future<Void> getSplitPoints(SplitRangeRequest const& req) = 0;
 
 	virtual Future<Void> waitMetricsTenantAware(const WaitMetricsRequest& req) = 0;
 
@@ -271,7 +274,7 @@ Future<Void> serveStorageMetricsRequests(ServiceType* self, StorageServerInterfa
 					CODE_PROBE(true, "getSplitPoints immediate wrong_shard_server()");
 					self->sendErrorWithPenalty(req.reply, wrong_shard_server(), self->getPenalty());
 				} else {
-					self->getSplitPoints(req);
+					self->addActor(self->getSplitPoints(req));
 				}
 			}
 			when(wait(doPollMetrics)) {

@@ -48,7 +48,7 @@ std::string getEncryptDbgTraceKey(std::string_view prefix,
 		boost::format fmter("%s.%lld.%llu");
 		return boost::str(boost::format(fmter % prefix % domainId % baseCipherId.get()));
 	} else {
-		boost::format fmter("%s.%lld.%s");
+		boost::format fmter("%s.%lld");
 		return boost::str(boost::format(fmter % prefix % domainId));
 	}
 }
@@ -133,7 +133,7 @@ EncryptionAtRestAlgo encryptionAlgoFromString(const std::string& algoStr) {
 		return EncryptionAtRestAlgo::AES_GCM;
 	}
 	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("AlgoStr", algoStr);
-	throw unsupported_operation();
+	throw not_implemented();
 }
 
 EncryptAuthTokenAlgo authTokenAlgoFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) {
@@ -147,7 +147,7 @@ EncryptAuthTokenAlgo authTokenAlgoFromEncryptionAtRestAlgo(EncryptionAtRestAlgo 
 		return EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM;
 	}
 	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("Algo", algo);
-	throw unsupported_operation();
+	throw not_implemented();
 }
 
 EncryptCipherMode cipherModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) {
@@ -158,7 +158,7 @@ EncryptCipherMode cipherModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) 
 		return EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM;
 	}
 	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("Algo", algo);
-	throw unsupported_operation();
+	throw not_implemented();
 }
 
 EncryptAuthTokenMode authTokenModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) {
@@ -169,7 +169,7 @@ EncryptAuthTokenMode authTokenModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo 
 		return EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
 	}
 	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("Algo", algo);
-	throw unsupported_operation();
+	throw not_implemented();
 }
 
 bool isAuthenticatedEncryption(EncryptionAtRestAlgo algo) {
@@ -180,7 +180,7 @@ bool isAuthenticatedEncryption(EncryptionAtRestAlgo algo) {
 		return false;
 	}
 	TraceEvent(SevWarnAlways, "UnrecognizedEncryptionAtRestAlgo").detail("Algo", algo);
-	throw unsupported_operation();
+	throw not_implemented();
 }
 
 bool needsHeaderCipherKey(EncryptionAtRestAlgo algo) {

@@ -356,13 +356,18 @@ public:
 	int ENCRYPT_HEADER_FLAGS_VERSION;
 	int ENCRYPT_HEADER_AES_CTR_NO_AUTH_VERSION;
 	int ENCRYPT_HEADER_AES_CTR_AES_CMAC_AUTH_VERSION;
-	int ENCRYPT_HEADER_AES_GCM_AUTH_VERSION;
 	int ENCRYPT_HEADER_AES_CTR_HMAC_SHA_AUTH_VERSION;
+	int ENCRYPT_HEADER_AES_GCM_AUTH_VERSION;
+	int ENCRYPT_LIST_CIPHER_KEYS_LIMIT;
 	double ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD;
 
 	// REST KMS configurations
 	bool REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
 	int SIM_KMS_VAULT_MAX_KEYS;
+
+	// tenant balancer
+	// rpc request timeout for tenant balancer clients
+	double TENANT_BALANCER_REQUEST_TIMEOUT;
 
 	// Bulk Loading
 	// knob guard to disallow starting bulk loads until implementation is completed

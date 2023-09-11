@@ -18,6 +18,8 @@
  * limitations under the License.
  */
 
+#include "fdbclient/BackupAgent.actor.h"
+#include "fdbclient/BackupContainer.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyRangeMap.h"
 #include "fdbclient/MetaclusterRegistration.h"
@@ -31,8 +33,13 @@
 #include "fdbserver/RecoveryState.h"
 #include "fdbserver/Recruiter.h"
 #include "fdbserver/WaitFailure.h"
+#include "fdbserver/WorkerInterface.actor.h"
+#include "flow/Arena.h"
 #include "flow/Error.h"
+#include "flow/FastRef.h"
+#include "flow/Optional.h"
 #include "flow/ProtocolVersion.h"
+#include <vector>
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -465,6 +472,27 @@ ACTOR static Future<Void> recruitEmergencyBackupWorkers(Reference<ClusterRecover
 	for (int i = 0; i < logRouterTags; i++) {
 		idsTags.emplace_back(deterministicRandom()->randomUniqueID(), Tag(tagLocalityLogRouter, i));
 	}
+	state std::map<UID, StringRef> uid2BackupUrls;
+	state std::map<UID, std::vector<KeyRange>> uid2BackupRanges;
+	state ValueReadResult value = self->txnStateStore->readValue(backupStartedKey).get();
+	if (value.present()) {
+		state std::vector<std::pair<UID, Version>> uidVersions = decodeBackupStartedValue(value.get());
+		for (const auto& [uid, version] : uidVersions) {
+			state EmergencyBackupConfig config(uid);
+			state Optional<Standalone<StringRef>> encodedContainerFromTxnStateStore =
+			    self->txnStateStore->readValue(config.backupContainer().key).get();
+			state Optional<Standalone<StringRef>> encodedRangesFromTxnStateStore =
+			    self->txnStateStore->readValue(config.backupRanges().key).get();
+			if (encodedContainerFromTxnStateStore.present() && encodedRangesFromTxnStateStore.present()) {
+				Reference<IBackupContainer> decodedContainer =
+				    config.backupContainer().unpackValue(encodedContainerFromTxnStateStore.get());
+				std::vector<Standalone<KeyRangeRef>> decodedRanges =
+				    config.backupRanges().unpackValue(encodedRangesFromTxnStateStore.get());
+				uid2BackupUrls.insert({ uid, decodedContainer->getURL() });
+				uid2BackupRanges.insert({ uid, decodedRanges });
+			}
+		}
+	}
 
 	const Version startVersion = self->logSystem->getBackupStartVersion();
 	state int i = 0;
@@ -477,13 +505,16 @@ ACTOR static Future<Void> recruitEmergencyBackupWorkers(Reference<ClusterRecover
 		req.totalTags = logRouterTags;
 		req.startVersion = startVersion;
 		req.isEmergency = true;
+		req.backupStartedValue = backupProgress->getBackupStartedValue();
+		req.uid2BackupUrls = uid2BackupUrls;
 		TraceEvent("BackupRecruitment", self->dbgid)
 		    .detail("IsEmergency", req.isEmergency)
 		    .detail("RequestID", req.reqId)
 		    .detail("Tag", req.routerTag.toString())
 		    .detail("Epoch", epoch)
 		    .detail("BackupEpoch", epoch)
-		    .detail("StartVersion", req.startVersion);
+		    .detail("StartVersion", req.startVersion)
+		    .detail("BackupStartedValue", req.backupStartedValue);
 		initializationReplies.push_back(
 		    transformErrors(throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 		                        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
@@ -516,6 +547,8 @@ ACTOR static Future<Void> recruitEmergencyBackupWorkers(Reference<ClusterRecover
 			req.startVersion = version; // savedVersion + 1
 			req.endVersion = std::get<1>(epochVersionTags) - 1;
 			req.isEmergency = true;
+			req.backupStartedValue = backupProgress->getBackupStartedValue();
+			req.uid2BackupUrls = uid2BackupUrls;
 			TraceEvent("BackupRecruitment", self->dbgid)
 			    .detail("IsEmergency", req.isEmergency)
 			    .detail("RequestID", req.reqId)
@@ -523,7 +556,8 @@ ACTOR static Future<Void> recruitEmergencyBackupWorkers(Reference<ClusterRecover
 			    .detail("Epoch", epoch)
 			    .detail("BackupEpoch", req.backupEpoch)
 			    .detail("StartVersion", req.startVersion)
-			    .detail("EndVersion", req.endVersion.get());
+			    .detail("EndVersion", req.endVersion.get())
+			    .detail("BackupStartedValue", req.backupStartedValue);
 			initializationReplies.push_back(transformErrors(
 			    throwErrorOr(worker.interf.backup.getReplyUnlessFailedFor(
 			        req, SERVER_KNOBS->BACKUP_TIMEOUT, SERVER_KNOBS->MASTER_FAILURE_SLOPE_DURING_RECOVERY)),
@@ -805,14 +839,29 @@ ACTOR Future<Void> readTransactionSystemState(Reference<ClusterRecoveryData> sel
 	if (requiredCommitVersion.present()) {
 		minRequiredCommitVersion = BinaryReader::fromStringRef<Version>(requiredCommitVersion.get(), Unversioned());
 	}
-	if (g_network->isSimulated() && self->versionEpoch.present()) {
-		minRequiredCommitVersion = std::max(
-		    minRequiredCommitVersion,
-		    static_cast<Version>(g_network->timer() * SERVER_KNOBS->VERSIONS_PER_SECOND - self->versionEpoch.get()));
-	}
 
 	// Recover version info
 	self->lastEpochEnd = oldLogSystem->getEnd() - 1;
+
+	// If version correction is enabled, calculate and set the expected version
+	// for the cluster. But don't increase the version if the expected value is
+	// too far in the future, so an incorrect clock can't cause a catastrophic
+	// version jump.
+	if (self->versionEpoch.present()) {
+		int64_t expectedVersion = g_network->timer() * SERVER_KNOBS->VERSIONS_PER_SECOND - self->versionEpoch.get();
+		int64_t maxVersion = self->lastEpochEnd + SERVER_KNOBS->MAX_RECOVERY_VERSION_EPOCH_CORRECTION_SECONDS *
+		                                              SERVER_KNOBS->VERSIONS_PER_SECOND;
+		if (expectedVersion < maxVersion) {
+			minRequiredCommitVersion = std::max(minRequiredCommitVersion, static_cast<Version>(expectedVersion));
+		} else {
+			TraceEvent("VersionEpochExpectedVersionTooLarge")
+			    .detail("CurrentVersion", self->versionEpoch.get())
+			    .detail("ExpectedVersion", expectedVersion)
+			    .detail("MaxVersion", maxVersion)
+			    .detail("Delta", expectedVersion - maxVersion);
+		}
+	}
+
 	if (self->lastEpochEnd == 0) {
 		self->recoveryTransactionVersion = 1;
 	} else {

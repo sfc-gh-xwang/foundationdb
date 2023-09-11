@@ -69,6 +69,7 @@ ACTOR Future<Void> doBlobPurge(Database db,
 	    wait(db->purgeBlobGranules(KeyRange(KeyRangeRef(startKey, endKey)), purgeVersion, tenant, force));
 
 	fmt::print("Blob purge registered for [{0} - {1}) @ {2}\n", startKey.printable(), endKey.printable(), purgeVersion);
+	fmt::print("Purge Key: {0}\n", purgeKey.printable());
 
 	state Future<Void> printWarningActor = printAfterDelay(
 	    5.0, "Waiting for purge to complete. (interrupting this wait with CTRL+C will not cancel the purge)");
@@ -103,12 +104,40 @@ ACTOR Future<Void> doBlobDebug(Database db,
                                Key startKey,
                                Key endKey,
                                Optional<Version> readVersion) {
-	state Transaction tr(db);
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 
 	state Version version = wait(tr.getReadVersion());
 	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
 	    wait(tr.readBlobGranules(KeyRangeRef(startKey, endKey), version, readVersion));
 	printGranuleChunks(chunks);
+	return Void();
+}
+
+ACTOR Future<Void> doBlobGranuleList(Database db,
+                                     Optional<Reference<Tenant>> tenant,
+                                     Key startKey,
+                                     Key endKey,
+                                     Optional<Version> readVersion) {
+	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
+
+	state Standalone<VectorRef<KeyRangeRef>> blobGranuleRanges =
+	    wait(tr.getBlobGranuleRanges(KeyRangeRef(startKey, endKey), CLIENT_KNOBS->BG_TOO_MANY_GRANULES));
+	for (auto& elem : blobGranuleRanges) {
+		fmt::print("[{}, {})\n", elem.begin.printable(), elem.end.printable());
+	}
+	return Void();
+}
+
+ACTOR Future<Void> doBlobList(Database db,
+                              Optional<Reference<Tenant>> tenant,
+                              Key startKey,
+                              Key endKey,
+                              Optional<Version> readVersion) {
+	state Standalone<VectorRef<KeyRangeRef>> blobRanges =
+	    wait(db->listBlobbifiedRanges(KeyRangeRef(startKey, endKey), CLIENT_KNOBS->BG_TOO_MANY_GRANULES, tenant));
+	for (auto& elem : blobRanges) {
+		fmt::print("[{}, {})\n", elem.begin.printable(), elem.end.printable());
+	}
 	return Void();
 }
 
@@ -135,6 +164,8 @@ ACTOR Future<Void> doBlobFlush(Database db,
 } // namespace
 
 namespace fdb_cli {
+
+enum class SubCommand { check, compact, debug, flush, forcepurge, granulelist, list, purge, start, stop };
 
 ACTOR Future<bool> blobRangeCommandActor(Database localDb,
                                          Optional<TenantMapEntry> tenantEntry,
@@ -171,78 +202,96 @@ ACTOR Future<bool> blobRangeCommandActor(Database localDb,
 		return false;
 	}
 
-	if (tokencmp(subcommand, "start") || tokencmp(subcommand, "stop")) {
-		// Commands with no version parameter
-		state bool starting = tokencmp(subcommand, "start");
-		if (tokens.size() > 4) {
+	state SubCommand subc;
+	if (tokencmp(subcommand, "check")) {
+		subc = SubCommand::check;
+	} else if (tokencmp(subcommand, "compact")) {
+		subc = SubCommand::compact;
+	} else if (tokencmp(subcommand, "debug")) {
+		subc = SubCommand::debug;
+	} else if (tokencmp(subcommand, "flush")) {
+		subc = SubCommand::flush;
+	} else if (tokencmp(subcommand, "forcepurge")) {
+		subc = SubCommand::forcepurge;
+	} else if (tokencmp(subcommand, "granulelist")) {
+		subc = SubCommand::granulelist;
+	} else if (tokencmp(subcommand, "list")) {
+		subc = SubCommand::list;
+	} else if (tokencmp(subcommand, "purge")) {
+		subc = SubCommand::purge;
+	} else if (tokencmp(subcommand, "start")) {
+		subc = SubCommand::start;
+	} else if (tokencmp(subcommand, "stop")) {
+		subc = SubCommand::stop;
+	} else {
+		printUsage(tokens[0]);
+		return false;
+	}
+	state Optional<Version> version;
+	if (tokens.size() > 4) {
+		Version v;
+		int n = 0;
+		if (sscanf(tokens[4].toString().c_str(), "%" PRId64 "%n", &v, &n) != 1 || n != tokens[4].size()) {
 			printUsage(tokens[0]);
 			return false;
 		}
-		state bool success = false;
-		if (starting) {
-			wait(store(success, localDb->blobbifyRange(KeyRangeRef(begin, end), tenant)));
-		} else {
-			wait(store(success, localDb->unblobbifyRange(KeyRangeRef(begin, end), tenant)));
+		version = v;
+	}
+
+	fmt::print("{0} blob range [{1} - {2})", subcommand.printable(), begin.printable(), end.printable());
+	if (version.present()) {
+		fmt::print(" @ {0}", version.get());
+	}
+	fmt::print("\n");
+
+	if (subc == SubCommand::start || subc == SubCommand::stop) {
+		// Cannot take a version parameter
+		if (version.present()) {
+			printUsage(tokens[0]);
+			return false;
 		}
+		// start and stop commands can fail, whereas others always succeed, so need slightly more complicated machinery
+		Future<bool> startstop;
+		if (subc == SubCommand::start) {
+			startstop = localDb->blobbifyRange(KeyRangeRef(begin, end), tenant);
+		} else {
+			startstop = localDb->unblobbifyRange(KeyRangeRef(begin, end), tenant);
+		}
+		bool success = wait(std::move(startstop));
 		fmt::print("{0} blobbify range for [{1} - {2}) {3}\n",
-		           starting ? "Starting" : "Stopping",
+		           subc == SubCommand::start ? "Starting" : "Stopping",
 		           begin.printable(),
 		           end.printable(),
 		           success ? "succeeded" : "failed");
 		return success;
 	}
 
-	if (tokencmp(subcommand, "purge") || tokencmp(subcommand, "forcepurge") || tokencmp(subcommand, "check") ||
-	    tokencmp(subcommand, "flush") || tokencmp(subcommand, "compact") || tokencmp(subcommand, "debug")) {
-		// Commands which can optionally take the version to work on
-		bool purge = tokencmp(subcommand, "purge") || tokencmp(subcommand, "forcepurge");
-		bool forcePurge = tokencmp(subcommand, "forcepurge");
+	Future<Void> actor;
 
-		Optional<Version> version;
-		if (tokens.size() > 4) {
-			Version v;
-			int n = 0;
-			if (sscanf(tokens[4].toString().c_str(), "%" PRId64 "%n", &v, &n) != 1 || n != tokens[4].size()) {
-				printUsage(tokens[0]);
-				return false;
-			}
-			version = v;
-		}
-
-		fmt::print("{0} blob range [{1} - {2}){3}",
-		           subcommand.printable(),
-		           begin.printable(),
-		           end.printable(),
-		           forcePurge ? " (force)" : "");
-		if (version.present()) {
-			fmt::print(" @ {0}", version.get());
-		}
-		fmt::print("\n");
-
-		if (purge) {
-			wait(doBlobPurge(localDb, tenant, begin, end, version, forcePurge));
-		} else {
-			if (tokencmp(subcommand, "check")) {
-				wait(doBlobCheck(localDb, tenant, begin, end, version));
-			} else if (tokencmp(subcommand, "flush")) {
-				wait(doBlobFlush(localDb, tenant, begin, end, version, false));
-			} else if (tokencmp(subcommand, "compact")) {
-				wait(doBlobFlush(localDb, tenant, begin, end, version, true));
-			} else if (tokencmp(subcommand, "debug")) {
-				wait(doBlobDebug(localDb, tenant, begin, end, version));
-			} else {
-				ASSERT(false);
-			}
-		}
-		return true;
+	if (subc == SubCommand::purge || subc == SubCommand::forcepurge) {
+		actor = doBlobPurge(localDb, tenant, begin, end, version, subc == SubCommand::forcepurge);
+	} else if (subc == SubCommand::check) {
+		actor = doBlobCheck(localDb, tenant, begin, end, version);
+	} else if (subc == SubCommand::debug) {
+		actor = doBlobDebug(localDb, tenant, begin, end, version);
+	} else if (subc == SubCommand::compact || subc == SubCommand::flush) {
+		actor = doBlobFlush(localDb, tenant, begin, end, version, subc == SubCommand::compact);
+	} else if (subc == SubCommand::granulelist) {
+		actor = doBlobGranuleList(localDb, tenant, begin, end, version);
+	} else if (subc == SubCommand::list) {
+		actor = doBlobList(localDb, tenant, begin, end, version);
+	} else {
+		ASSERT(false);
 	}
-	printUsage(tokens[0]);
-	return false;
+
+	wait(std::move(actor));
+	return true;
 }
 
 CommandFactory blobRangeFactory(
     "blobrange",
-    CommandHelp("blobrange <start|stop|check|debug|purge|forcepurge|flush|compact> <startkey> <endkey> [version]",
+    CommandHelp("blobrange <start|stop|check|debug|purge|forcepurge|flush|compact|list|granulelist> <startkey> "
+                "<endkey> [version]",
                 "",
                 ""));
 } // namespace fdb_cli

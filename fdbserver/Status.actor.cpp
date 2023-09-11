@@ -50,6 +50,7 @@
 #include "fdbserver/Knobs.h"
 #include "fdbclient/JsonBuilder.h"
 #include "fdbclient/StorageWiggleMetrics.actor.h"
+#include "fdbclient/TransactionState.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 const char* RecoveryStatus::names[] = { "reading_coordinated_state",
@@ -283,6 +284,7 @@ static JsonBuilderObject getError(const TraceEventFields& errorFields) {
 
 namespace {
 
+#ifdef __linux__
 void reportCgroupCpuStat(JsonBuilderObject& object, const TraceEventFields& eventFields) {
 	JsonBuilderObject cgroupCpuStatObj;
 	std::string val;
@@ -299,6 +301,7 @@ void reportCgroupCpuStat(JsonBuilderObject& object, const TraceEventFields& even
 		object["cgroup_cpu_stat"] = cgroupCpuStatObj;
 	}
 }
+#endif // __linux__
 
 JsonBuilderObject machineStatusFetcher(WorkerEvents mMetrics,
                                        std::vector<WorkerDetails> workers,
@@ -530,8 +533,13 @@ struct RolesInfo {
 			obj.setKeyRawNumber("kvstore_total_size", storageMetrics.getValue("KvstoreSizeTotal"));
 			obj.setKeyRawNumber("kvstore_total_nodes", storageMetrics.getValue("KvstoreNodeTotal"));
 			obj.setKeyRawNumber("kvstore_inline_keys", storageMetrics.getValue("KvstoreInlineKey"));
-			obj["input_bytes"] = StatusCounter(storageMetrics.getValue("BytesInput")).getStatus();
-			obj["durable_bytes"] = StatusCounter(storageMetrics.getValue("BytesDurable")).getStatus();
+			if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+				obj["input_bytes"] = StatusCounter(storageMetrics.getValue("BytesInput")).getStatus();
+				obj["durable_bytes"] = StatusCounter(storageMetrics.getValue("BytesDurable")).getStatus();
+			} else {
+				obj["input_bytes"] = StatusCounter(storageMetrics.getValue("BytesInputOld")).getStatus();
+				obj["durable_bytes"] = StatusCounter(storageMetrics.getValue("BytesDurableOld")).getStatus();
+			}
 			obj.setKeyRawNumber("query_queue_max", storageMetrics.getValue("QueryQueueMax"));
 			obj["total_queries"] = StatusCounter(storageMetrics.getValue("QueryQueue")).getStatus();
 			obj["finished_queries"] = StatusCounter(storageMetrics.getValue("FinishedQueries")).getStatus();
@@ -851,6 +859,10 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
 
 	if (db->get().client.encryptKeyProxy.present()) {
 		roles.addRole("encrypt_key_proxy", db->get().client.encryptKeyProxy.get());
+	}
+
+	if (db->get().tenantBalancer.present()) {
+		roles.addRole("tenant_balancer", db->get().tenantBalancer.get());
 	}
 
 	for (auto& tLogSet : db->get().logSystemConfig.tLogs) {
@@ -2869,14 +2881,11 @@ ACTOR Future<JsonBuilderObject> layerStatusFetcher(Database cx,
 	return statusObj;
 }
 
-ACTOR Future<JsonBuilderObject> lockedStatusFetcher(Reference<AsyncVar<ServerDBInfo>> db,
+ACTOR Future<JsonBuilderObject> lockedStatusFetcher(Database cx,
                                                     JsonBuilderArray* messages,
                                                     std::set<std::string>* incomplete_reasons) {
 	state JsonBuilderObject statusObj;
 
-	state Database cx =
-	    openDBOnServer(db,
-	                   TaskPriority::DefaultEndpoint); // Open a new database connection that isn't lock-aware
 	state Transaction tr(cx);
 	state int timeoutSeconds = 5;
 	state Future<Void> getTimeout = delay(timeoutSeconds);
@@ -3358,7 +3367,7 @@ ACTOR Future<StatusReply> clusterGetStatus(
 			                                         &status_incomplete_reasons,
 			                                         storageServerFuture));
 			futures2.push_back(layerStatusFetcher(cx, &messages, &status_incomplete_reasons));
-			futures2.push_back(lockedStatusFetcher(db, &messages, &status_incomplete_reasons));
+			futures2.push_back(lockedStatusFetcher(cx, &messages, &status_incomplete_reasons));
 			futures2.push_back(
 			    clusterSummaryStatisticsFetcher(pMetrics, storageServerFuture, tLogFuture, &status_incomplete_reasons));
 

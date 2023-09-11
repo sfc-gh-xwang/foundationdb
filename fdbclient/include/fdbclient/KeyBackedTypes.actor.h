@@ -479,7 +479,9 @@ public:
 	}
 
 	template <class Transaction>
-	Future<Void> watch(Transaction tr) {
+	typename std::enable_if<!is_transaction_creator<Transaction>,
+	                        typename transaction_future_type<Transaction, Void>::type>::type
+	watch(Transaction tr) {
 		enforceRawAccessIfNeeded<Transaction, RawAccess>(tr);
 		return tr->watch(key);
 	}

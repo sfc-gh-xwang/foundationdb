@@ -28,9 +28,10 @@
 #elif !defined(FLOW_ASYNCFILENONDURABLE_ACTOR_H)
 #define FLOW_ASYNCFILENONDURABLE_ACTOR_H
 
-#include "flow/flow.h"
-#include "flow/IAsyncFile.h"
 #include "flow/ActorCollection.h"
+#include "flow/flow.h"
+#include "flow/FaultInjection.h"
+#include "flow/IAsyncFile.h"
 #include "fdbrpc/simulator.h"
 #include "fdbrpc/TraceFileIO.h"
 #include "fdbrpc/RangeMap.h"
@@ -378,11 +379,13 @@ private:
 			    self->getModificationsAndInsert(offset, length, true, writeEnded);
 			self->minSizeAfterPendingModifications = std::max(self->minSizeAfterPendingModifications, offset + length);
 
-			if (BUGGIFY_WITH_PROB(0.001) && !g_simulator->speedUpSimulation)
-				priorModifications.push_back(
-				    delay(deterministicRandom()->random01() * FLOW_KNOBS->MAX_PRIOR_MODIFICATION_DELAY) ||
-				    self->killed.getFuture());
-			else
+			if (BUGGIFY_WITH_PROB(0.001) && !g_simulator->speedUpSimulation) {
+				double maxDelay = SHOULD_INJECT_FAULT("AsyncFileNonDurable::write")
+				                      ? FLOW_KNOBS->MAX_INJECTED_PRIOR_MODIFICATION_DELAY
+				                      : FLOW_KNOBS->MAX_PRIOR_MODIFICATION_DELAY;
+				priorModifications.push_back(delay(deterministicRandom()->random01() * maxDelay) ||
+				                             self->killed.getFuture());
+			} else
 				priorModifications.push_back(waitUntilDiskReady(self->diskParameters, length) ||
 				                             self->killed.getFuture());
 

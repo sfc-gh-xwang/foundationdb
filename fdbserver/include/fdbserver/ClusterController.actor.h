@@ -146,6 +146,14 @@ public:
 			serverInfo->set(newInfo);
 		}
 
+		void setTenantBalancer(const TenantBalancerInterface& interf) {
+			auto newInfo = serverInfo->get();
+			newInfo.id = deterministicRandom()->randomUniqueID();
+			newInfo.infoGeneration = ++dbInfoCount;
+			newInfo.tenantBalancer = interf;
+			serverInfo->set(newInfo);
+		}
+
 		void clearInterf(ProcessClass::ClassType t) {
 			auto newInfo = serverInfo->get();
 			auto newClientInfo = clientInfo->get();
@@ -165,6 +173,8 @@ public:
 				newClientInfo.encryptKeyProxy = Optional<EncryptKeyProxyInterface>();
 			} else if (t == ProcessClass::ConsistencyScanClass) {
 				newInfo.consistencyScan = Optional<ConsistencyScanInterface>();
+			} else if (t == ProcessClass::TenantBalancerClass) {
+				newInfo.tenantBalancer = Optional<TenantBalancerInterface>();
 			}
 			serverInfo->set(newInfo);
 			clientInfo->set(newClientInfo);
@@ -884,7 +894,7 @@ public:
 		const auto& pid = worker.interf.locality.processId();
 		if ((role != ProcessClass::DataDistributor && role != ProcessClass::Ratekeeper &&
 		     role != ProcessClass::BlobManager && role != ProcessClass::EncryptKeyProxy &&
-		     role != ProcessClass::ConsistencyScan) ||
+		     role != ProcessClass::ConsistencyScan && role != ProcessClass::TenantBalancer) ||
 		    pid == masterProcessId.get()) {
 			return false;
 		}
@@ -1384,6 +1394,8 @@ public:
 	Optional<UID> recruitingEncryptKeyProxyID;
 	AsyncVar<bool> recruitConsistencyScan;
 	Optional<UID> recruitingConsistencyScanID;
+	AsyncVar<bool> recruitTenantBalancer;
+	Optional<UID> recruitingTenantBalancerID;
 
 	// Stores the health information from a particular worker's perspective.
 	struct WorkerHealth {
@@ -1445,6 +1457,7 @@ public:
 	    recruitBlobMigrator(false),
 	    recruitEncryptKeyProxy(false),
 	    recruitConsistencyScan(false),
+	    recruitTenantBalancer(false),
 	    clusterControllerMetrics("ClusterController", id.toString()),
 	    openDatabaseRequests("OpenDatabaseRequests", clusterControllerMetrics),
 	    registerWorkerRequests("RegisterWorkerRequests", clusterControllerMetrics),

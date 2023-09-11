@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include "flow/BooleanParam.h"
+#include "flow/Error.h"
 #include "flow/Platform.h"
 
 #include <map>
@@ -37,6 +39,7 @@
 #define KNOB_FN(_1, _2, _3, FN, ...) FN
 #define INIT_KNOB(knob, value) initKnob(knob, value, #knob)
 #define INIT_ATOMIC_KNOB(knob, value, atomic) initKnob(knob, value, #knob, atomic)
+#define BUGGIFY_KNOB(knob, cond, val) buggifyKnob(knob, #knob, cond, val)
 
 // NOTE: Directly using KnobValueRef as the return type for Knobs::parseKnobValue would result
 // in a cyclic dependency, so we use this intermediate ParsedKnobValue type
@@ -50,6 +53,7 @@ enum class ConfigDBType {
 };
 
 enum class Atomic { YES, NO };
+FDB_BOOLEAN_PARAM(Buggified);
 
 class Knobs {
 protected:
@@ -57,6 +61,7 @@ protected:
 	struct KnobValue {
 		T* value;
 		Atomic atomic;
+		Buggified buggified = Buggified::False;
 	};
 
 	Knobs() = default;
@@ -77,19 +82,53 @@ protected:
 
 public:
 	// Sets an integer value to an integer knob, returns false if the knob does not exist or type mismatch
-	bool setKnob(std::string const& name, int value);
+	bool setKnob(std::string const& name, int value, Buggified buggified = Buggified::False);
 
 	// Sets a boolean value to a bool knob, returns false if the knob does not exist or type mismatch
-	bool setKnob(std::string const& name, bool value);
+	bool setKnob(std::string const& name, bool value, Buggified buggified = Buggified::False);
 
 	// Sets an int64_t value to an int64_t knob, returns false if the knob does not exist or type mismatch
-	bool setKnob(std::string const& name, int64_t value);
+	bool setKnob(std::string const& name, int64_t value, Buggified buggified = Buggified::False);
 
 	// Sets a double value to a double knob, returns false if the knob does not exist or type mismatch
-	bool setKnob(std::string const& name, double value);
+	bool setKnob(std::string const& name, double value, Buggified buggified = Buggified::False);
 
 	// Sets a string value to a string knob, returns false if the knob does not exist or type mismatch
-	bool setKnob(std::string const& name, std::string const& value);
+	bool setKnob(std::string const& name, std::string const& value, Buggified buggified = Buggified::False);
+
+	template <class T>
+	bool buggifyKnob(std::string const& name, bool condition, T const& value) {
+		if (condition) {
+			ASSERT(setKnob(name, value, Buggified::True));
+		}
+
+		return condition;
+	}
+
+	template <class T>
+	bool buggifyKnob(int const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (int)value);
+	}
+
+	template <class T>
+	bool buggifyKnob(bool const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (bool)value);
+	}
+
+	template <class T>
+	bool buggifyKnob(int64_t const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (int64_t)value);
+	}
+
+	template <class T>
+	bool buggifyKnob(double const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (double)value);
+	}
+
+	template <class T>
+	bool buggifyKnob(std::string const& knob, std::string const& name, bool condition, T const& value) {
+		return buggifyKnob(name, condition, (std::string)value);
+	}
 
 	// Gets the value of knob
 	ParsedKnobValue getKnob(const std::string& name) const;
@@ -253,6 +292,7 @@ public:
 	// AsyncFileNonDurable
 	double NON_DURABLE_MAX_WRITE_DELAY;
 	double MAX_PRIOR_MODIFICATION_DELAY;
+	double MAX_INJECTED_PRIOR_MODIFICATION_DELAY;
 
 	// GenericActors
 	double BUGGIFY_FLOW_LOCK_RELEASE_DELAY;

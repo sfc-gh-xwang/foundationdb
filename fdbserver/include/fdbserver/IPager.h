@@ -19,8 +19,6 @@
  */
 #pragma once
 
-#include "fdbclient/Knobs.h"
-#include "flow/Trace.h"
 #ifndef FDBSERVER_IPAGER_H
 #define FDBSERVER_IPAGER_H
 

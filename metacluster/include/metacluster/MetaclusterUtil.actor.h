@@ -25,7 +25,6 @@
 #elif !defined(METACLUSTER_METACLUSTERUTIL_ACTOR_H)
 #define METACLUSTER_METACLUSTERUTIL_ACTOR_H
 
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/NativeAPI.actor.h"
@@ -68,6 +67,8 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
     SkipMetaclusterCreation skipMetaclusterCreation = SkipMetaclusterCreation::False,
     WaitForMetaclusterCreation waitForMetaclusterCreation = WaitForMetaclusterCreation::False,
     WaitForDataClusterRegistration waitForDataClusterRegistration = WaitForDataClusterRegistration::False);
+
+ACTOR Future<Void> decommissionSimulatedMetacluster(SimulatedMetacluster metacluster);
 
 } // namespace metacluster::util
 

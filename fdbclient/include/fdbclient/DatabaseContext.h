@@ -43,6 +43,9 @@
 #include "fdbclient/ThroughputTracker.h"
 #include "fdbclient/VersionVector.h"
 #include "fdbclient/IKeyValueStore.actor.h"
+#include "fdbclient/CoordinationInterface.h"
+#include "fdbclient/ClusterInterface.h"
+#include "fdbclient/CommitProxyInterface.h"
 #include "fdbrpc/QueueModel.h"
 #include "fdbrpc/MultiInterface.h"
 #include "flow/TDMetric.actor.h"
@@ -482,6 +485,8 @@ public:
 	Future<Void> markBulkLoadFilesWritten(BulkLoadID id,
 	                                      Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
 	                                      Optional<Reference<Tenant>> tenant = {});
+
+	Future<Void> blobbifyRangeForBulkLoad(KeyRange keyRange, BulkLoadID id, Optional<Reference<Tenant>> tenant);
 
 	// private:
 	explicit DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,

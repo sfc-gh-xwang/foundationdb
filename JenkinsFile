@@ -1,6 +1,8 @@
 import hudson.model.Result
 import hudson.model.Run
 import jenkins.model.CauseOfInterruption.UserInterruption
+import hudson.model.User
+import hudson.tasks.MailAddressResolver
 
 pipeline {
     agent { label 'regular-memory-node-c7' }
@@ -25,7 +27,10 @@ pipeline {
                     user_id = sh(script: "git show -s --pretty=%ae | cut -d '@' -f 1 | cut -d '-' -f 3", returnStdout: true).trim()
                     labels = []
                     run_ci = true
+
                     if (env.BRANCH_NAME.startsWith("PR-")) {
+                        //taking pr_id from branch i.e taking 167 from PR-167
+                        pr_id = env.BRANCH_NAME.split("-")[1]
                         //Aborting previous runs if any in progress to avoid running multiple runs for same PR
                         abortPreviousBuilds()
                         labels = getLabels()
@@ -84,9 +89,9 @@ pipeline {
                             user_id = "${currentBuild.getBuildCauses()[0].commentAuthor}".split("-")[2]
                             createCheck("github_comment", "Criteria Satisfied", "", "completed", "success");
 
-                            //Check CI is initiated by @fdb-build-cop member when labels are used
+                            //Check CI is initiated by @fdb-build-cop member when labels are `bypass_all_checks` or `bypass_test_failures` used
                             println("labels " + labels.size())
-                            if (labels.size() > 0 && labels[0] != "")  {
+                            if (labels.contains("bypass_all_checks") || labels.contains("bypass_test_failures"))  {
                                 if (buildcop_members.contains(user_id)) {
                                     msg = user_id + " approved labels " + labels.join(", ") + " and started CI"
                                     createCheck("labels_check", msg, msg, "completed", "success");
@@ -220,10 +225,43 @@ pipeline {
                     } else {
                         currentBuild.result = "FAILURE"
                     }
+                    if (run_ci && env.BRANCH_NAME.startsWith("PR-")) {
+                        try {
+                            def url = "https://github.com/snowflakedb/frostdb/pull/${pr_id}"
+                            notify_slack(user_id, "CI completed", currentBuild.result, env.BRANCH_NAME, scmInfo.GIT_COMMIT, url)
+                        } catch(Exception e) {
+                            println("Exception sending slack notification: ${e}")
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+//Send slack notification to User about CI completion
+void notify_slack(user_id, msg, result, branch, commit, url) {
+    def user = User.getById(user_id, false)
+    def userEmail = MailAddressResolver.resolve(user)
+    def slack_user = userEmail.split('@')[0].toLowerCase()
+    def status_emoji = ":failed:"
+
+    if ("${result}" == "SUCCESS") {
+        status_emoji = ":passed:"
+    }
+
+    def j = build job: "NotifySlack",
+        parameters: [
+            string(name: 'channel', value: "@${slack_user}"),
+            string(name: 'icon_emoji', value: "${status_emoji}"),
+            string(name: 'result', value: "${msg}"),
+            string(name: 'branch', value: "${branch}"),
+            string(name: 'svn_revision', value: "${commit}"),
+            string(name: 'deployment', value: "N/A"),
+            string(name: 'url', value: "${url}")
+        ],
+        propagate: false,
+        wait: true
 }
 
 void trigger_job(jobName, profile) {
@@ -276,7 +314,7 @@ void trigger_job(jobName, profile) {
                 def build_log = buildlogs.split("\n")
                 //Capture error's from the build log
                 for (build_line in build_log) {
-                    if (build_line.contains("ERROR:")) {
+                    if (build_line.contains("ERROR:") || build_line.contains("FAILED:")) {
                         details += build_line + "\\n"
                     }
                 }
@@ -371,8 +409,6 @@ def checkNewBranchCreation() {
 }
 
 def getLabels() {
-    //taking pr_id from branch i.e taking 167 from PR-167
-    pr_id = env.BRANCH_NAME.split("-")[1]
     withCredentials([usernamePassword(credentialsId: 'Jenkins-FDB-GithubApp',
     usernameVariable: 'GITHUB_USER',
     passwordVariable: 'GITHUB_TOKEN')]) {

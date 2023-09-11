@@ -23,7 +23,9 @@
 #include "fdbclient/BlobCipher.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/CommitProxyInterface.h"
+#include "fdbclient/FDBTypes.h"
 #include "fdbclient/SystemData.h"
+#include "fdbclient/Tracing.h"
 #include "fdbserver/BackupInterface.h"
 #include "fdbserver/BackupProgress.actor.h"
 #include "fdbclient/GetEncryptCipherKeys.h"
@@ -38,7 +40,9 @@
 #include "flow/Error.h"
 #include "flow/IRandom.h"
 #include "fdbclient/Tracing.h"
+#include <vector>
 
+#include "flow/Trace.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 #define SevDebugMemory SevVerbose
@@ -151,6 +155,26 @@ struct BackupData {
 				updateWorker = _updateStartedWorkers(this, data, uid);
 			}
 			TraceEvent("BackupWorkerAddJob", data->myId).detail("BackupID", uid).detail("Version", v);
+		}
+		PerBackupInfo(BackupData* data, UID uid, StringRef containerURL, std::vector<Standalone<KeyRangeRef>> ranges)
+		  : self(data) {
+			// set the container and key ranges
+			Reference<IBackupContainer> bc = IBackupContainer::openContainer(containerURL.toString(), {}, {});
+			Optional<Reference<IBackupContainer>> optionalBC = bc;
+			Promise<Optional<Reference<IBackupContainer>>> promisedBC;
+			promisedBC.send(optionalBC);
+			this->container = promisedBC.getFuture();
+			Optional<std::vector<Standalone<KeyRangeRef>>> optionalRanges = ranges;
+			Promise<Optional<std::vector<Standalone<KeyRangeRef>>>> promisedRanges;
+			promisedRanges.send(optionalRanges);
+			this->ranges = promisedRanges.getFuture();
+			if (self->backupEpoch == self->recruitedEpoch) {
+				// Only current epoch's worker update the number of backup workers.
+				updateWorker = _updateStartedWorkers(this, data, uid);
+			}
+			TraceEvent("BackupWorkerAddJob", data->myId)
+			    .detail("BackupContainerURL", containerURL)
+			    .detail("Ranges", ranges);
 		}
 
 		void stop() {
@@ -410,6 +434,49 @@ struct BackupData {
 				return;
 			}
 		}
+	}
+
+	// Give a list of current active backups, compare with current list and decide
+	// to start new backups and stop ones not in the active state.
+	void onBackupChanges(const std::vector<std::pair<UID, Version>>& uidVersions,
+	                     std::map<UID, StringRef> uid2BackupUrls,
+	                     std::map<UID, std::vector<KeyRange>> uid2BackupRanges) {
+		std::set<UID> stopList;
+		for (auto it : backups) {
+			stopList.insert(it.first);
+		}
+
+		bool modified = false;
+		bool minVersionChanged = false;
+		Version minVersion = std::numeric_limits<Version>::max();
+		for (const auto& [uid, version] : uidVersions) {
+			auto it = backups.find(uid);
+			if (it == backups.end()) {
+				modified = true;
+				backups.emplace(uid, BackupData::PerBackupInfo(this, uid, uid2BackupUrls[uid], uid2BackupRanges[uid]));
+				minVersion = std::min(minVersion, version);
+				minVersionChanged = true;
+			} else {
+				stopList.erase(uid);
+			}
+		}
+
+		for (UID uid : stopList) {
+			auto it = backups.find(uid);
+			ASSERT(it != backups.end());
+			it->second.stop();
+			modified = true;
+		}
+		if (minVersionChanged && backupEpoch < recruitedEpoch && savedVersion + 1 == startVersion) {
+			// Advance savedVersion to minimize version ranges in case backupEpoch's
+			// progress is not saved. Master may set a very low startVersion that
+			// is already popped. Advance the version is safe because these
+			// versions are not popped -- if they are popped, their progress should
+			// be already recorded and Master would use a higher version than minVersion.
+			savedVersion = std::max(minVersion, savedVersion);
+		}
+		if (modified)
+			changedTrigger.trigger();
 	}
 
 	// Give a list of current active backups, compare with current list and decide
@@ -761,7 +828,6 @@ ACTOR Future<Void> saveMutationsToFile(BackupData* self,
 	while (!self->isAllInfoReady()) {
 		wait(self->waitAllInfoReady());
 	}
-
 	for (auto it = self->backups.begin(); it != self->backups.end();) {
 		if (it->second.stopped || !it->second.container.get().present()) {
 			TraceEvent("BackupWorkerNoContainer", self->myId).detail("BackupId", it->first);
@@ -861,7 +927,6 @@ ACTOR Future<Void> saveMutationsToFile(BackupData* self,
 	std::transform(logFiles.begin(), logFiles.end(), std::back_inserter(finished), [](const Reference<IBackupFile>& f) {
 		return f->finish();
 	});
-
 	wait(waitForAll(finished));
 
 	for (const auto& file : logFiles) {
@@ -1121,6 +1186,101 @@ ACTOR static Future<Void> monitorWorkerPause(BackupData* self) {
 	}
 }
 
+// Tries to complete unfinished backups before disaster.
+// Fetches remainants of mutation log from TLog, then write them to the existing backup containers.
+// Assumes that initialization request passes information about unfinished backups,
+// e.g. uid, version, container, ranges of those unfinished backups
+ACTOR Future<Void> emergencyBackupWorker(BackupInterface interf,
+                                         InitializeBackupRequest req,
+                                         Reference<AsyncVar<ServerDBInfo> const> db) {
+	state BackupData self(interf.id(), db, req);
+	state PromiseStream<Future<Void>> addActor;
+	state Future<Void> error = actorCollection(addActor.getFuture());
+	state Future<Void> dbInfoChange = Void();
+	state Future<Void> pull;
+	state Future<Void> done;
+
+	ASSERT(req.isEmergency);
+	TraceEvent("BackupWorkerStart", self.myId)
+	    .detail("IsEmergency", req.isEmergency)
+	    .detail("Tag", req.routerTag.toString())
+	    .detail("TotalTags", req.totalTags)
+	    .detail("StartVersion", req.startVersion)
+	    .detail("EndVersion", req.endVersion.present() ? req.endVersion.get() : -1)
+	    .detail("LogEpoch", req.recruitedEpoch)
+	    .detail("BackupEpoch", req.backupEpoch)
+	    .detail("BackupStartedValue", req.backupStartedValue);
+
+	try {
+		addActor.send(checkRemoved(db, req.recruitedEpoch, &self));
+		addActor.send(waitFailureServer(interf.waitFailure.getFuture()));
+
+		std::vector<std::pair<UID, Version>> uidVersions;
+		ValueReadResult value = req.backupStartedValue;
+		if (value.present()) {
+			uidVersions = decodeBackupStartedValue(value.get());
+			TraceEvent e("EmergencyBackupWorkerGotStartKey", self.myId);
+			int i = 1;
+			for (auto [uid, version] : uidVersions) {
+				e.detail(format("BackupID%d", i), uid).detail(format("Version%d", i), version);
+				i++;
+			}
+			self.onBackupChanges(uidVersions, req.uid2BackupUrls, req.uid2BackupRanges);
+		} else {
+			TraceEvent("EmergencyBackupWorkerEmptyStartKey", self.myId).log();
+			self.onBackupChanges(uidVersions, req.uid2BackupUrls, req.uid2BackupRanges);
+		}
+
+		pull = pullAsyncData(&self);
+		self.pulling = true;
+		if (pull.isReady()) {
+			self.pulling = false;
+			pull = Void(); // backup is done for some old epoch.
+		}
+		done = uploadData(&self);
+		loop choose {
+			when(wait(dbInfoChange)) {
+				dbInfoChange = db->onChange();
+				Reference<ILogSystem> ls = ILogSystem::fromServerDBInfo(self.myId, db->get(), true);
+				bool hasPseudoLocality = ls.isValid() && ls->hasPseudoLocality(tagLocalityBackup);
+				if (hasPseudoLocality) {
+					self.logSystem.set(ls);
+					self.oldestBackupEpoch = std::max(self.oldestBackupEpoch, ls->getOldestBackupEpoch());
+				}
+				TraceEvent("BackupWorkerLogSystem", self.myId)
+				    .detail("HasBackupLocality", hasPseudoLocality)
+				    .detail("OldestBackupEpoch", self.oldestBackupEpoch)
+				    .detail("Tag", self.tag.toString());
+			}
+			when(wait(done)) {
+				TraceEvent("BackupWorkerDone", self.myId).detail("BackupEpoch", self.backupEpoch);
+				// Notify master so that this worker can be removed from log system, then this
+				// worker (for an old epoch's unfinished work) can safely exit.
+				wait(brokenPromiseToNever(db->get().clusterInterface.notifyBackupWorkerDone.getReply(
+				    BackupWorkerDoneRequest(self.myId, self.backupEpoch))));
+				break;
+			}
+			when(wait(error)) {}
+		}
+	} catch (Error& e) {
+		state Error err = e;
+		if (e.code() == error_code_worker_removed) {
+			pull = Void(); // cancels pulling
+			self.stop();
+			try {
+				wait(done);
+			} catch (Error& e) {
+				TraceEvent(SevWarnAlways, "EmergencyBackupWorkerShutdownError", self.myId).errorUnsuppressed(e);
+			}
+		}
+		TraceEvent(SevWarnAlways, "EmergencyBackupWorkerTerminated", self.myId).errorUnsuppressed(err);
+		if (err.code() != error_code_actor_cancelled && err.code() != error_code_worker_removed) {
+			throw err;
+		}
+	}
+	return Void();
+}
+
 ACTOR Future<Void> backupWorker(BackupInterface interf,
                                 InitializeBackupRequest req,
                                 Reference<AsyncVar<ServerDBInfo> const> db) {
@@ -1190,36 +1350,13 @@ ACTOR Future<Void> backupWorker(BackupInterface interf,
 			try {
 				wait(done);
 			} catch (Error& e) {
-				TraceEvent("BackupWorkerShutdownError", self.myId).errorUnsuppressed(e);
+				TraceEvent(SevWarnAlways, "BackupWorkerShutdownError", self.myId).errorUnsuppressed(e);
 			}
 		}
-		TraceEvent("BackupWorkerTerminated", self.myId).errorUnsuppressed(err);
+		TraceEvent(SevWarnAlways, "BackupWorkerTerminated", self.myId).errorUnsuppressed(err);
 		if (err.code() != error_code_actor_cancelled && err.code() != error_code_worker_removed) {
 			throw err;
 		}
 	}
-	return Void();
-}
-
-ACTOR Future<Void> emergencyBackupWorker(BackupInterface interf,
-                                         InitializeBackupRequest req,
-                                         Reference<AsyncVar<ServerDBInfo> const> db) {
-	state BackupData self(interf.id(), db, req);
-	state PromiseStream<Future<Void>> addActor;
-	state Future<Void> error = actorCollection(addActor.getFuture());
-	state Future<Void> dbInfoChange = Void();
-	state Future<Void> pull;
-	state Future<Void> done;
-
-	ASSERT(req.isEmergency);
-	TraceEvent("BackupWorkerStart", self.myId)
-	    .detail("IsEmergency", req.isEmergency)
-	    .detail("Tag", req.routerTag.toString())
-	    .detail("TotalTags", req.totalTags)
-	    .detail("StartVersion", req.startVersion)
-	    .detail("EndVersion", req.endVersion.present() ? req.endVersion.get() : -1)
-	    .detail("LogEpoch", req.recruitedEpoch)
-	    .detail("BackupEpoch", req.backupEpoch);
-
 	return Void();
 }

@@ -40,7 +40,7 @@ EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
 	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
 		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
 	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
-		ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 	} else {
 		throw not_implemented();
 	}
@@ -163,7 +163,7 @@ EncryptBlobCipherAes256Gcm::EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> 
 	ASSERT_EQ(encryptCipherMode, EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM);
 	ASSERT_EQ(mode, EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
 	ASSERT_EQ(algo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM);
-	ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
+	ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 	init();
 }
 
@@ -264,7 +264,7 @@ void EncryptBlobCipherAes256Gcm::setCipherAlgoHeaderWithAuthV1(const uint8_t* ci
 	    ivRef.begin(),
 	    ivRef.size());
 	// compute tag
-	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AES_256_GCM_TAG_LENGTH, &algoHeader.authToken[0]) != 1) {
+	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AesGcmParams::authTokenSize, &algoHeader.authToken[0]) != 1) {
 		throw encrypt_ops_error();
 	}
 	headerRef->algoHeader = AesGcm(algoHeader);
@@ -287,6 +287,10 @@ EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> 
 
 void EncryptBlobCipherAes256Ctr::init() {
 	ASSERT(textCipherKey.isValid());
+	if (authTokenAlgo == EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_HMAC_SHA ||
+	    authTokenAlgo == EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC) {
+		ASSERT(headerCipherKeyOpt.present() && headerCipherKeyOpt.get().isValid());
+	}
 
 	if (!isEncryptHeaderAuthTokenDetailsValid(authTokenMode, authTokenAlgo)) {
 		TraceEvent(SevWarn, "InvalidAuthTokenDetails")
@@ -471,17 +475,36 @@ DecryptBlobCipher::DecryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
     iv(iv),
     authTokensValidationDone(false) {}
 
-void DecryptBlobCipher::validateEncryptHeaderFlagsV1(const uint32_t headerVersion,
-                                                     const BlobCipherEncryptHeaderFlagsV1& flags) {
+void DecryptBlobCipherAes256Ctr::validateEncryptHeaderFlagsV1(const uint32_t headerVersion,
+                                                              const BlobCipherEncryptHeaderFlagsV1& flags) {
 	// validate header flag sanity
-	if ((flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR &&
-	     flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) ||
+	if (flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR ||
+	    !isEncryptHeaderAuthTokenAlgoValid((EncryptAuthTokenAlgo)flags.authTokenAlgo) ||
 	    !isEncryptHeaderAuthTokenModeValid((EncryptAuthTokenMode)flags.authTokenMode)) {
 		TraceEvent(SevWarn, "BlobCipherVerifyEncryptBlobHeader")
 		    .detail("HeaderVersion", headerVersion)
 		    .detail("ExpectedVersion", CLIENT_KNOBS->ENCRYPT_HEADER_FLAGS_VERSION)
 		    .detail("EncryptCipherMode", flags.encryptMode)
 		    .detail("ExpectedCipherMode", EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR)
+		    .detail("EncryptHeaderAuthTokenMode", flags.authTokenMode);
+
+		CODE_PROBE(true, "ConfigurableEncryption: Encryption header metadata mismatch");
+
+		throw encrypt_header_metadata_mismatch();
+	}
+}
+
+void DecryptBlobCipherAes256Gcm::validateEncryptHeaderFlagsV1(const uint32_t headerVersion,
+                                                              const BlobCipherEncryptHeaderFlagsV1& flags) {
+	// validate header flag sanity
+	if (flags.encryptMode != EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM ||
+	    flags.authTokenMode != EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE ||
+	    flags.authTokenAlgo != EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM) {
+		TraceEvent(SevWarn, "BlobCipherVerifyEncryptBlobHeader")
+		    .detail("HeaderVersion", headerVersion)
+		    .detail("ExpectedVersion", CLIENT_KNOBS->ENCRYPT_HEADER_FLAGS_VERSION)
+		    .detail("EncryptCipherMode", flags.encryptMode)
+		    .detail("ExpectedCipherMode", EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM)
 		    .detail("EncryptHeaderAuthTokenMode", flags.authTokenMode);
 
 		CODE_PROBE(true, "ConfigurableEncryption: Encryption header metadata mismatch");
@@ -568,6 +591,10 @@ StringRef DecryptBlobCipherAes256Gcm::decrypt(const uint8_t* ciphertext,
 		startTime = timer_monotonic();
 	}
 
+	EncryptAuthTokenMode authTokenMode;
+	EncryptAuthTokenAlgo authTokenAlgo;
+	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
+
 	if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr)) {
 		throw encrypt_ops_error();
 	}
@@ -575,9 +602,6 @@ StringRef DecryptBlobCipherAes256Gcm::decrypt(const uint8_t* ciphertext,
 		throw encrypt_ops_error();
 	}
 
-	EncryptAuthTokenMode authTokenMode;
-	EncryptAuthTokenAlgo authTokenAlgo;
-	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
 	ASSERT_EQ(authTokenMode, EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
 	ASSERT_EQ(authTokenAlgo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM);
 
@@ -594,7 +618,7 @@ StringRef DecryptBlobCipherAes256Gcm::decrypt(const uint8_t* ciphertext,
 
 	uint8_t* tag = const_cast<uint8_t*>(headerRef.getAuthToken());
 	ASSERT(tag != nullptr);
-	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AES_256_GCM_TAG_LENGTH, tag)) {
+	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AesGcmParams::authTokenSize, tag)) {
 		TraceEvent(SevWarn, "BlobCipherDecryptTagSetFailed")
 		    .detail("BaseCipherId", textCipherKey->getBaseCipherId())
 		    .detail("EncryptDomainId", textCipherKey->getDomainId());
@@ -666,16 +690,16 @@ StringRef DecryptBlobCipherAes256Ctr::decrypt(const uint8_t* ciphertext,
 		startTime = timer_monotonic();
 	}
 
+	EncryptAuthTokenMode authTokenMode;
+	EncryptAuthTokenAlgo authTokenAlgo;
+	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
+
 	if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_ctr(), nullptr, nullptr, nullptr)) {
 		throw encrypt_ops_error();
 	}
 	if (!EVP_DecryptInit_ex(ctx, nullptr, nullptr, textCipherKey.getPtr()->data(), iv)) {
 		throw encrypt_ops_error();
 	}
-
-	EncryptAuthTokenMode authTokenMode;
-	EncryptAuthTokenAlgo authTokenAlgo;
-	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
 
 	StringRef decrypted = makeString(ciphertextLen, arena);
 
@@ -719,16 +743,16 @@ void DecryptBlobCipherAes256Ctr::decryptInplace(uint8_t* ciphertext,
 		startTime = timer_monotonic();
 	}
 
+	EncryptAuthTokenMode authTokenMode;
+	EncryptAuthTokenAlgo authTokenAlgo;
+	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
+
 	if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_ctr(), nullptr, nullptr, nullptr)) {
 		throw encrypt_ops_error();
 	}
 	if (!EVP_DecryptInit_ex(ctx, nullptr, nullptr, textCipherKey.getPtr()->data(), iv)) {
 		throw encrypt_ops_error();
 	}
-
-	EncryptAuthTokenMode authTokenMode;
-	EncryptAuthTokenAlgo authTokenAlgo;
-	validateEncryptHeader(ciphertext, ciphertextLen, headerRef, &authTokenMode, &authTokenAlgo);
 
 	int bytesDecrypted{ 0 };
 	if (!EVP_DecryptUpdate(ctx, ciphertext, &bytesDecrypted, ciphertext, ciphertextLen)) {
@@ -965,18 +989,21 @@ int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const En
 }
 
 void generateIV(EncryptionAtRestAlgo algo, Reference<BlobCipherKey> textCipherKey, uint8_t* iv, int ivLen) {
-	EncryptCipherNonce maxValue = 0;
 	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
 	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
 		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
-		maxValue = std::numeric_limits<uint128_t>::max();
+		if (g_network->isSimulated()) {
+			deterministicRandom()->randomBytes(iv, ivLen);
+		} else {
+			nondeterministicRandom()->randomBytes(iv, ivLen);
+		}
 	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
-		ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
-		maxValue = std::numeric_limits<uint96_t>::max();
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
+		EncryptCipherNonce maxValue = std::numeric_limits<uint96_t>::max();
+		EncryptCipherNonce nonce = textCipherKey->getAndUpdateNonce(maxValue);
+		ASSERT(nonce <= maxValue);
+		memcpy(iv, &nonce, ivLen);
 	} else {
 		throw not_implemented();
 	}
-	EncryptCipherNonce nonce = textCipherKey->getAndUpdateNonce(maxValue);
-	ASSERT(nonce <= maxValue);
-	memcpy(iv, &nonce, ivLen);
 }

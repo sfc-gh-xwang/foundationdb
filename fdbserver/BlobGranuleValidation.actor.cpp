@@ -74,7 +74,8 @@ ACTOR Future<std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>>>
     Version readVersion,
     Optional<Reference<Tenant>> tenant,
     LockAware lockAware,
-    bool untrustedReadVersion) {
+    bool untrustedReadVersion,
+    bool whileBulkLoading) {
 	state RangeResult out;
 	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks;
 	state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
@@ -86,6 +87,9 @@ ACTOR Future<std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>>>
 			}
 			if (untrustedReadVersion) {
 				tr.setOption(FDBTransactionOptions::HYBRID_UNTRUSTED_READ_VERSION);
+			}
+			if (whileBulkLoading) {
+				tr.setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
 			}
 			Standalone<VectorRef<BlobGranuleChunkRef>> chunks_ =
 			    wait(tr.readBlobGranules(range, beginVersion, readVersion));

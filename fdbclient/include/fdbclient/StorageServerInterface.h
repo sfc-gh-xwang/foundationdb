@@ -937,19 +937,21 @@ struct SplitRangeRequest {
 	constexpr static FileIdentifier file_identifier = 10725174;
 	Arena arena;
 	TenantInfo tenantInfo;
+	Version minVersion = 0;
 	KeyRangeRef keys;
 	int64_t chunkSize;
 	ReplyPromise<SplitRangeReply> reply;
 
 	SplitRangeRequest() {}
-	SplitRangeRequest(TenantInfo tenantInfo, KeyRangeRef const& keys, int64_t chunkSize)
+	SplitRangeRequest(TenantInfo tenantInfo, Version minVersion, KeyRangeRef const& keys, int64_t chunkSize)
 	  : tenantInfo(tenantInfo),
+	    minVersion(minVersion),
 	    keys(arena, keys),
 	    chunkSize(chunkSize) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, keys, chunkSize, reply, tenantInfo, arena);
+		serializer(ar, keys, chunkSize, reply, tenantInfo, minVersion, arena);
 	}
 };
 
@@ -1391,6 +1393,12 @@ inline int mvccStorageBytes(int mutationBytes) {
 	// - The mutation will be stored in both mutation log and versioned map;
 	return VersionedMap<KeyRef, ValueOrClearToRef>::overheadPerItem * 2 +
 	       (mutationBytes + MutationRef::OVERHEAD_BYTES) * 2;
+}
+
+// Memory usage for storing the mutations not including the nodes added to the PTree, the size of the PTree is tracked
+// separately.
+inline int mvccStorageBytesNoPTree(int mutationBytes) {
+	return mutationBytes + MutationRef::OVERHEAD_BYTES;
 }
 
 #endif

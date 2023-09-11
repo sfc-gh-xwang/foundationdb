@@ -36,6 +36,7 @@
 #include "fdbserver/TLogInterface.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "fdbclient/BulkLoad.h"
+#include "fdbclient/TransactionState.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 FDB_BOOLEAN_PARAM(PositiveTestcase);

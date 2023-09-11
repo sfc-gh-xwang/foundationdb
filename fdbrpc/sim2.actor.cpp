@@ -1853,6 +1853,7 @@ public:
 			if (!machine->isSpawnedKVProcess())
 				latestEventCache.clear();
 			machine->failed = true;
+			removeRoles(machine->address);
 		} else if (kt == KillType::InjectFaults) {
 			TraceEvent(SevWarn, "FaultMachine")
 			    .detail("Name", machine->name)
@@ -2171,7 +2172,9 @@ public:
 		    .detail("KtOrig", ktOrig)
 		    .detail("KillableMachines", processesOnMachine)
 		    .detail("ProcessPerMachine", processesPerMachine)
-		    .detail("KillChanged", kt != ktOrig);
+		    .detail("KillChanged", kt != ktOrig)
+		    .detail("ForceKill", forceKill);
+
 		if (kt < KillType::RebootAndDelete) {
 			if ((kt == KillType::InjectFaults || kt == KillType::FailDisk) &&
 			    machines[machineId].machineProcess != nullptr)
@@ -2307,14 +2310,17 @@ public:
 		KillType ktResult, ktMin = kt;
 		for (auto& datacenterMachine : datacenterMachines) {
 			if (deterministicRandom()->random01() < 0.99 || forceKill) {
-				killMachine(datacenterMachine.first, kt, true, &ktResult);
+				killMachine(datacenterMachine.first, kt, forceKill, &ktResult);
 				if (ktResult != kt) {
 					TraceEvent(SevWarn, "KillDCFail")
 					    .detail("Zone", datacenterMachine.first)
 					    .detail("KillType", kt)
 					    .detail("KillTypeResult", ktResult)
 					    .detail("KillTypeOrig", ktOrig);
-					ASSERT(ktResult == KillType::None);
+					// There's a corner case where we explicitly change KillType::RebootAndDelete to KillType::Reboot.
+					// It happens when allowRebootAndDelete=false.
+					ASSERT(ktResult == KillType::None ||
+					       (!allowRebootAndDelete && kt == KillType::RebootAndDelete && ktResult == KillType::Reboot));
 				}
 				ktMin = std::min<KillType>(ktResult, ktMin);
 			}
@@ -2364,6 +2370,7 @@ public:
 
 		return (kt == ktMin);
 	}
+
 	void clogInterface(const IPAddress& ip, double seconds, ClogMode mode = ClogDefault) override {
 		if (mode == ClogDefault) {
 			double a = deterministicRandom()->random01();

@@ -8,7 +8,7 @@ FoundationDB Alpha 5
 Language support
 ----------------
 
-* FoundationDB now supports :doc:`Ruby </api-ruby>`
+* FoundationDB now supports Ruby
 
 * FoundationDB now supports Node.js
 

@@ -66,6 +66,7 @@ struct GranuleStartState {
 	std::vector<GranuleFiles> blobFilesToSnapshot;
 	Optional<GranuleFiles> existingFiles;
 	Optional<GranuleHistory> history;
+	bool isBulkLoading;
 };
 
 // TODO: add more (blob file request cost, in-memory mutations vs blob delta file, etc...)
@@ -119,6 +120,8 @@ struct GranuleMetadata : NonCopyable, ReferenceCounted<GranuleMetadata> {
 	bool rdcCandidate;
 	Promise<Void> runRDC;
 	WriteAmpTarget writeAmpTarget;
+
+	bool isBulkLoadDirty = false;
 
 	void resume();
 	void resetReadStats();
@@ -266,6 +269,10 @@ Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeys(Reference<BlobWorker
 Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMetaRef(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                                                      BlobGranuleCipherKeysMetaRef cipherKeysMetaRef,
                                                                      Arena* arena);
+
+Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMeta(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
+                                                                  BlobGranuleCipherKeysMeta cipherKeysMeta,
+                                                                  Arena* arena);
 
 Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(Reference<BlobWorkerData> bwData, KeyRange keyRange);
 

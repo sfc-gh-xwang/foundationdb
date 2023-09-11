@@ -72,6 +72,7 @@
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/Tuple.h"
 #include "fdbclient/VersionedMap.h"
+#include "fdbclient/TransactionState.h"
 #include "fdbrpc/sim_validation.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbrpc/Stats.h"
@@ -584,6 +585,10 @@ static int mvccStorageBytes(MutationRef const& m) {
 	return mvccStorageBytes(m.param1.size() + m.param2.size());
 }
 
+static int mvccStorageBytesNoPTree(MutationRef const& m) {
+	return mvccStorageBytesNoPTree(m.param1.size() + m.param2.size());
+}
+
 struct FetchInjectionInfo {
 	Arena arena;
 	std::vector<VerUpdateRef> changes;
@@ -1094,13 +1099,17 @@ public:
 		if (lastArena.getSize() >= 65536)
 			lastArena = Arena(4096);
 		u.arena() = lastArena;
-		counters.bytesInput += VERSION_OVERHEAD;
+		counters.bytesInputOld += VERSION_OVERHEAD;
+		counters.bytesInputNoPTree += VERSION_OVERHEAD;
+		counters.bytesInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		return u;
 	}
 
 	MutationRef addMutationToMutationLog(Standalone<VerUpdateRef>& mLV, MutationRef const& m) {
 		byteSampleApplyMutation(m, mLV.version);
-		counters.bytesInput += mvccStorageBytes(m);
+		counters.bytesInputOld += mvccStorageBytes(m);
+		counters.bytesInputNoPTree += mvccStorageBytesNoPTree(m);
+		counters.bytesInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		return mLV.push_back_deep(mLV.arena(), m);
 	}
 
@@ -1311,7 +1320,9 @@ public:
 		// Bytes of the mutations that have been removed from memory because they durable. The counting is same as
 		// bytesInput, instead of the actual bytes taken in the storages, so that (bytesInput - bytesDurable) can
 		// reflect the current memory footprint of MVCC.
-		Counter bytesDurable;
+		Counter bytesDurableOld; // Old tracking using estimated PTree size.
+		Counter bytesDurableNoPTree; // Overhead for storing mutation, does not account for the size of the PTree.
+		Counter bytesDurable; // New bytesDurable tracking using actual PTree size.
 
 		// Bytes fetched by fetchChangeFeed for data movements.
 		Counter feedBytesFetched;
@@ -1397,6 +1408,8 @@ public:
 		    kvClearRanges("KVClearRanges", cc),
 		    kvClearSingleKey("KVClearSingleKey", cc),
 		    kvSystemClearRanges("KVSystemClearRanges", cc),
+		    bytesDurableOld("BytesDurableOld", cc),
+		    bytesDurableNoPTree("BytesDurableNoPTree", cc),
 		    bytesDurable("BytesDurable", cc),
 		    feedBytesFetched("FeedBytesFetched", cc),
 		    sampledBytesCleared("SampledBytesCleared", cc),
@@ -1531,6 +1544,16 @@ public:
 					}
 				}
 				return minVersion;
+			});
+			specialCounter(cc, "PTreeAllocated", [self]() {
+				self->counters.bytesInput =
+				    self->counters.bytesInputNoPTree.getValue() + self->data().ptreeSize.allocated;
+				return self->data().ptreeSize.allocated;
+			});
+			specialCounter(cc, "PTreeReleased", [self]() {
+				self->counters.bytesDurable =
+				    self->counters.bytesDurableNoPTree.getValue() + self->data().ptreeSize.released;
+				return self->data().ptreeSize.released;
 			});
 		}
 	} counters;
@@ -1775,7 +1798,14 @@ public:
 		}
 	}
 
-	Counter::Value queueSize() const { return counters.bytesInput.getValue() - counters.bytesDurable.getValue(); }
+	Counter::Value queueSize() const {
+		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+			return (counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated) -
+			       (counters.bytesDurableNoPTree.getValue() + data().ptreeSize.released);
+		} else {
+			return counters.bytesInputOld.getValue() - counters.bytesDurableOld.getValue();
+		}
+	}
 
 	// penalty used by loadBalance() to balance requests among SSes. We prefer SS with less write queue size.
 	double getPenalty() const override {
@@ -1868,18 +1898,13 @@ public:
 		feedMemoryBytesByVersion.back().second += bytes;
 		changeFeedMemoryBytes += bytes;
 		if (SERVER_KNOBS->STORAGE_INCLUDE_FEED_STORAGE_QUEUE) {
-			counters.bytesInput += bytes;
+			counters.bytesInputOld += bytes;
+			counters.bytesInputNoPTree += bytes;
+			counters.bytesInput = counters.bytesInputNoPTree.getValue() + data().ptreeSize.allocated;
 		}
 	}
 
-	void getSplitPoints(SplitRangeRequest const& req) override {
-		try {
-			checkTenantEntry(version.get(), req.tenantInfo, true);
-			metrics.getSplitPoints(req, req.tenantInfo.prefix);
-		} catch (Error& e) {
-			req.reply.sendError(e);
-		}
-	}
+	Future<Void> getSplitPoints(SplitRangeRequest const& req) override;
 
 	void maybeInjectTargetedRestart(Version v) {
 		// inject an SS restart at most once per test
@@ -1909,7 +1934,11 @@ public:
 
 	void getStorageMetrics(const GetStorageMetricsRequest& req) override {
 		StorageBytes sb = storage.getStorageBytes();
-		metrics.getStorageMetrics(req, sb, counters.bytesInput.getRate(), versionLag, lastUpdate);
+		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+			metrics.getStorageMetrics(req, sb, counters.bytesInput.getRate(), versionLag, lastUpdate);
+		} else {
+			metrics.getStorageMetrics(req, sb, counters.bytesInputOld.getRate(), versionLag, lastUpdate);
+		}
 	}
 
 	void getSplitMetrics(const SplitMetricsRequest& req) override { this->metrics.splitMetrics(req); }
@@ -2418,6 +2447,25 @@ void StorageServer::checkTenantEntry(Version version, TenantInfo tenantInfo, boo
 	if (tenantInfo.hasTenant()) {
 		findTenantEntry(version, tenantInfo.tenantId, lockAware);
 	}
+}
+
+ACTOR Future<Void> getSplitPoints_internal(StorageServer* self, SplitRangeRequest req) {
+	try {
+		// The call to `waitForMinVersion()` can throw `future_version()`.
+		// It is okay for the caller to retry after a delay to give the server some time to catch up.
+		state Version minVersion = wait(waitForMinVersion(self, req.minVersion));
+		self->checkTenantEntry(minVersion, req.tenantInfo, true);
+		self->metrics.getSplitPoints(req, req.tenantInfo.prefix);
+	} catch (Error& e) {
+		if (!canReplyWith(e))
+			throw;
+		self->sendErrorWithPenalty(req.reply, e, self->getPenalty());
+	}
+	return Void();
+}
+
+Future<Void> StorageServer::getSplitPoints(SplitRangeRequest const& req) {
+	return getSplitPoints_internal(this, req);
 }
 
 Optional<TenantGroupName> StorageServer::getTenantGroup(Version version, TenantInfo tenantInfo, bool lockAware) const {
@@ -3409,9 +3457,10 @@ ACTOR Future<std::pair<ChangeFeedStreamReply, bool>> getChangeFeedMutations(Stor
 
 		state std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> cipherMap;
 		if (cipherDetails.size()) {
+			Optional<UID> debugId = req.options.present() ? req.options.get().debugID : Optional<UID>();
 			std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> getCipherKeysResult =
 			    wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-			        data->db, cipherDetails, BlobCipherMetrics::TLOG));
+			        data->db, cipherDetails, BlobCipherMetrics::TLOG, {}, debugId));
 			cipherMap = getCipherKeysResult;
 		}
 
@@ -6390,8 +6439,13 @@ void getQueuingMetrics(StorageServer* self, StorageQueuingMetricsRequest const& 
 	StorageQueuingMetricsReply reply;
 	reply.localTime = now();
 	reply.instanceID = self->instanceID;
-	reply.bytesInput = self->counters.bytesInput.getValue();
-	reply.bytesDurable = self->counters.bytesDurable.getValue();
+	if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+		reply.bytesInput = self->counters.bytesInputNoPTree.getValue() + self->data().ptreeSize.allocated;
+		reply.bytesDurable = self->counters.bytesDurableNoPTree.getValue() + self->data().ptreeSize.released;
+	} else {
+		reply.bytesInput = self->counters.bytesInputOld.getValue();
+		reply.bytesDurable = self->counters.bytesDurableOld.getValue();
+	}
 
 	reply.storageBytes = self->storage.getStorageBytes();
 	reply.localRateLimit = self->currentRate();
@@ -6474,8 +6528,10 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 			verData.createNewVersion(data->version.get() + 1);
 
 		int64_t bytesDurable = VERSION_OVERHEAD;
+		int64_t bytesDurableNoTree = VERSION_OVERHEAD;
 		for (const auto& m : v.mutations) {
 			bytesDurable += mvccStorageBytes(m);
+			bytesDurableNoTree += mvccStorageBytesNoPTree(m);
 			auto i = verData.atLatest().find(m.param1);
 			if (i) {
 				ASSERT(i.key() == m.param1);
@@ -6494,7 +6550,9 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 				}
 			}
 		}
-		data->counters.bytesDurable += bytesDurable;
+		data->counters.bytesDurableOld += bytesDurable;
+		data->counters.bytesDurableNoPTree += bytesDurableNoTree;
+		data->counters.bytesDurable = data->counters.bytesDurableNoPTree.getValue() + data->data().ptreeSize.released;
 	}
 
 	int64_t feedBytesDurable = 0;
@@ -6505,7 +6563,9 @@ bool changeDurableVersion(StorageServer* data, Version desiredDurableVersion) {
 	}
 	data->changeFeedMemoryBytes -= feedBytesDurable;
 	if (SERVER_KNOBS->STORAGE_INCLUDE_FEED_STORAGE_QUEUE) {
-		data->counters.bytesDurable += feedBytesDurable;
+		data->counters.bytesDurableOld += feedBytesDurable;
+		data->counters.bytesDurableNoPTree += feedBytesDurable;
+		data->counters.bytesDurable = data->counters.bytesDurableNoPTree.getValue() + data->data().ptreeSize.released;
 	}
 
 	if (EXPENSIVE_VALIDATION) {
@@ -7132,8 +7192,13 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 				    .detail("Chunk", chunks[i].keyRange)
 				    .detail("Version", chunks[i].includedVersion);
 				RangeResult rows;
+				if (i == chunks.size() - 1) {
+					rows.more = false;
+				} else {
+					rows.more = true;
+					rows.readThrough = KeyRef(rows.arena(), std::min(chunkRange.end, keys.end));
+				}
 				results.send(rows);
-				rows.readThrough = KeyRef(rows.arena(), std::min(chunkRange.end, keys.end));
 				continue;
 			}
 			try {
@@ -9736,10 +9801,16 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 			hardLimitOverage = SERVER_KNOBS->STORAGE_HARD_LIMIT_BYTES_OVERAGE_SPEED_UP_SIM;
 		}
 		state double waitStartT = 0;
+		state int64_t bytesInput = 0;
+		if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+			bytesInput = data->counters.bytesInputNoPTree.getValue() + data->data().ptreeSize.allocated;
+		} else {
+			bytesInput = data->counters.bytesInputOld.getValue();
+		}
 		if (data->queueSize() >= hardLimit && data->durableVersion.get() < data->desiredOldestVersion.get() &&
 		    ((data->desiredOldestVersion.get() - SERVER_KNOBS->STORAGE_HARD_LIMIT_VERSION_OVERAGE >
 		      data->lastDurableVersionEBrake) ||
-		     (data->counters.bytesInput.getValue() - hardLimitOverage > data->lastBytesInputEBrake))) {
+		     (bytesInput - hardLimitOverage > data->lastBytesInputEBrake))) {
 
 			while (data->queueSize() >= hardLimit && data->durableVersion.get() < data->desiredOldestVersion.get()) {
 				if (now() - waitStartT >= 1) {
@@ -9756,7 +9827,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				data->behind = true;
 				wait(delayJittered(.005, TaskPriority::TLogPeekReply));
 			}
-			data->lastBytesInputEBrake = data->counters.bytesInput.getValue();
+			data->lastBytesInputEBrake = bytesInput;
 			data->lastDurableVersionEBrake = data->durableVersion.get();
 		}
 
@@ -13040,12 +13111,13 @@ ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
 24 pointers
 8 lastUpdateVersion
 2 updated, replacedPointer
+8 PTreeSize*
 --
-42 PTree overhead
+50 PTree overhead
 
 8 Version insertVersion
 --
-50 VersionedMap overhead
+58 VersionedMap overhead
 
 12 KeyRef
 12 ValueRef
@@ -13054,14 +13126,13 @@ ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
 25 payload
 
 
-50 overhead
+58 overhead
 25 payload
-21 structure padding
-32 allocator rounds up
+13 structure padding
 ---
-128 allocated
+96 allocated
 
-To reach 64, need to save: 11 bytes + all padding
+To reach 64, need to save: 19 bytes + all padding
 
 Possibilities:
 -8 Combine lastUpdateVersion, insertVersion?
@@ -13105,37 +13176,3 @@ void versionedMapTest() {
 	printf("%d distinct after %d insertions\n", count, 1000 * 1000);
 	printf("Memory used: %f MB\n", (after - before) / 1e6);
 }
-
-static void versionedMapBound(benchmark::State& benchState) {
-	bool isLowerBound = benchState.range(0);
-	int64_t dataSize = benchState.range(1);
-	StorageServer::VersionedData data;
-	Arena arena;
-	ValueOrClearToRef value = ValueOrClearToRef::value("fixed_value"_sr);
-	// only insert half of the keys, so when we bench search (lower_bound/upper_bound), it could test the cases that
-	// the key exist and non-exist
-	RandomKeySetGenerator keyGen(dataSize * 2, "10..20/a..z");
-	int64_t i = 0;
-	for (auto& key : keyGen.keys) {
-		if (i++ % 2) {
-			data.insert(key, value);
-		}
-	}
-
-	for (auto _ : benchState) {
-		auto it = isLowerBound ? data.at(data.getLatestVersion()).lower_bound(keyGen.next())
-		                       : data.at(data.getLatestVersion()).upper_bound(keyGen.next());
-		benchmark::DoNotOptimize(it);
-	}
-}
-
-static void versionedMapBoundArguments(benchmark::internal::Benchmark* b) {
-	for (bool isLowerBound : { false, true }) {
-		for (int64_t dataSize : { 1e3, 1e5 }) {
-			b->Args({ isLowerBound, dataSize });
-		}
-	}
-	b->ArgNames({ "isLowerBound", "dataSize" });
-}
-
-BENCHMARK(versionedMapBound)->Iterations(1e6)->Apply(versionedMapBoundArguments);

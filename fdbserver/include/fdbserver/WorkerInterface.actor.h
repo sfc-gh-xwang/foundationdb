@@ -19,6 +19,8 @@
  */
 
 #pragma once
+#include "flow/Arena.h"
+#include "flow/serialize.h"
 #if defined(NO_INTELLISENSE) && !defined(FDBSERVER_WORKERINTERFACE_ACTOR_G_H)
 #define FDBSERVER_WORKERINTERFACE_ACTOR_G_H
 #include "fdbserver/WorkerInterface.actor.g.h"
@@ -38,6 +40,7 @@
 #include "fdbclient/BlobWorkerInterface.h"
 #include "fdbclient/ClientBooleanParams.h"
 #include "fdbclient/StorageServerInterface.h"
+#include "fdbclient/TenantBalancerInterface.h"
 #include "fdbserver/TesterInterface.actor.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbserver/LogSystemConfig.h"
@@ -66,6 +69,7 @@ struct WorkerInterface {
 	RequestStream<struct InitializeLogRouterRequest> logRouter;
 	RequestStream<struct InitializeBackupRequest> backup;
 	RequestStream<struct InitializeEncryptKeyProxyRequest> encryptKeyProxy;
+	RequestStream<struct InitializeTenantBalancerRequest> tenantBalancer;
 
 	RequestStream<struct LoadedPingRequest> debugPing;
 	RequestStream<struct CoordinationPingMessage> coordinationPing;
@@ -133,7 +137,8 @@ struct WorkerInterface {
 		           workerSnapReq,
 		           backup,
 		           encryptKeyProxy,
-		           updateServerDBInfo);
+		           updateServerDBInfo,
+		           tenantBalancer);
 	}
 };
 
@@ -349,6 +354,7 @@ struct RegisterWorkerRequest {
 	Optional<BlobMigratorInterface> blobMigratorInterf;
 	Optional<EncryptKeyProxyInterface> encryptKeyProxyInterf;
 	Optional<ConsistencyScanInterface> consistencyScanInterf;
+	Optional<TenantBalancerInterface> tenantBalancerInterf;
 	Standalone<VectorRef<StringRef>> issues;
 	std::vector<NetworkAddress> incompatiblePeers;
 	ReplyPromise<RegisterWorkerReply> reply;
@@ -374,6 +380,7 @@ struct RegisterWorkerRequest {
 	                      Optional<BlobMigratorInterface> mgInterf,
 	                      Optional<EncryptKeyProxyInterface> ekpInterf,
 	                      Optional<ConsistencyScanInterface> csInterf,
+	                      Optional<TenantBalancerInterface> tenantBalancerInterf,
 	                      bool degraded,
 	                      Optional<Version> lastSeenKnobVersion,
 	                      Optional<ConfigClassSet> knobConfigClassSet,
@@ -391,6 +398,7 @@ struct RegisterWorkerRequest {
 	    blobMigratorInterf(mgInterf),
 	    encryptKeyProxyInterf(ekpInterf),
 	    consistencyScanInterf(csInterf),
+	    tenantBalancerInterf(tenantBalancerInterf),
 	    degraded(degraded),
 	    lastSeenKnobVersion(lastSeenKnobVersion),
 	    knobConfigClassSet(knobConfigClassSet),
@@ -413,6 +421,7 @@ struct RegisterWorkerRequest {
 		           blobMigratorInterf,
 		           encryptKeyProxyInterf,
 		           consistencyScanInterf,
+		           tenantBalancerInterf,
 		           issues,
 		           incompatiblePeers,
 		           reply,
@@ -618,14 +627,28 @@ struct InitializeBackupRequest {
 	Optional<Version> endVersion;
 	ReplyPromise<struct InitializeBackupReply> reply;
 	bool isEmergency = false;
+	Optional<Value> backupStartedValue; // active backups
+	std::map<UID, StringRef> uid2BackupUrls;
+	std::map<UID, std::vector<KeyRange>> uid2BackupRanges;
 
 	InitializeBackupRequest() = default;
 	explicit InitializeBackupRequest(UID id) : reqId(id) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(
-		    ar, reqId, recruitedEpoch, backupEpoch, routerTag, totalTags, startVersion, endVersion, reply, isEmergency);
+		serializer(ar,
+		           reqId,
+		           recruitedEpoch,
+		           backupEpoch,
+		           routerTag,
+		           totalTags,
+		           startVersion,
+		           endVersion,
+		           reply,
+		           isEmergency,
+		           backupStartedValue,
+		           uid2BackupUrls,
+		           uid2BackupRanges);
 	}
 };
 
@@ -852,6 +875,20 @@ struct InitializeEncryptKeyProxyRequest {
 	}
 };
 
+struct InitializeTenantBalancerRequest {
+	constexpr static FileIdentifier file_identifier = 5875895;
+	UID reqId;
+	ReplyPromise<TenantBalancerInterface> reply;
+
+	InitializeTenantBalancerRequest() = default;
+	explicit InitializeTenantBalancerRequest(UID uid) : reqId(uid) {}
+
+	template <typename Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, reqId, reply);
+	}
+};
+
 struct TraceBatchDumpRequest {
 	constexpr static FileIdentifier file_identifier = 8184121;
 	ReplyPromise<Void> reply;
@@ -1029,6 +1066,7 @@ struct Role {
 	static const Role BACKUP;
 	static const Role ENCRYPT_KEY_PROXY;
 	static const Role CONSISTENCYSCAN;
+	static const Role TENANT_BALANCER;
 
 	std::string roleName;
 	std::string abbreviation;
@@ -1070,6 +1108,8 @@ struct Role {
 			return ENCRYPT_KEY_PROXY;
 		case ProcessClass::ConsistencyScan:
 			return CONSISTENCYSCAN;
+		case ProcessClass::TenantBalancer:
+			return TENANT_BALANCER;
 		case ProcessClass::Worker:
 			return WORKER;
 		case ProcessClass::NoRole:
@@ -1210,6 +1250,9 @@ ACTOR Future<Void> backupWorker(BackupInterface bi,
 ACTOR Future<Void> emergencyBackupWorker(BackupInterface bi,
                                          InitializeBackupRequest req,
                                          Reference<AsyncVar<ServerDBInfo> const> db);
+ACTOR Future<Void> tenantBalancer(TenantBalancerInterface tbi,
+                                  Reference<AsyncVar<ServerDBInfo> const> db,
+                                  Reference<IClusterConnectionRecord> connRecord);
 
 void registerThreadForProfiling();
 

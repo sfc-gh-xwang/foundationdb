@@ -100,6 +100,12 @@ auto nextIterationImpl = [](auto&... opts) -> optional<IterableOptionTier> {
 };
 
 bool TestOptions::allOptionsValid() const {
+	// Check iterable options are not violating constraints. For instance, GRV caching is only
+	// supported when multi-version client is used
+	if (withoutMultiVersion(*this) && withGrvCache(*this)) {
+		return false;
+	}
+
 	size_t count = 0;
 	std::apply(
 	    [this, &count](const auto&... opts) {
@@ -513,8 +519,7 @@ bool TestEnv::runTest(const TestCase& t) {
 	return !exc.has_value();
 }
 
-fdb::Transaction TestEnv::newNormalOrTenantTransaction() const {
-	auto db = newDatabase();
+fdb::Transaction TestEnv::newNormalOrTenantTransaction(fdb::Database db) const {
 	// For trusted client or if there is no tenant, return a new DB transaction
 	if (*trustedClient || tenants.empty()) {
 		return newTransaction(db);

@@ -2216,7 +2216,8 @@ int main(int argc, char* argv[]) {
 				}
 			}
 
-			// Call fast restore for the class FastRestoreClass. This is a short-cut to run fast restore in circus
+			// Call fast restore for the class FastRestoreClass. This is a short-cut to run fast restore in
+			// circus
 			if (opts.processClass == ProcessClass::FastRestoreClass) {
 				printf("Run as fast restore worker\n");
 				ASSERT(opts.connectionFile);
@@ -2389,7 +2390,8 @@ int main(int argc, char* argv[]) {
 
 		// IFailureMonitor::failureMonitor().address_info.clear();
 
-		// we should have shut down ALL actors associated with this machine; let's list all of the ones still live
+		// we should have shut down ALL actors associated with this machine; let's list all of the ones still
+		// live
 		/*{
 		    auto living = Actor::all;
 		    printf("%d surviving actors:\n", living.size());

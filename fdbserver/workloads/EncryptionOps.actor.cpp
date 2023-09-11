@@ -185,9 +185,9 @@ struct EncryptionOpsWorkload : TestWorkload {
 			ivSize = AES_256_CTR_IV_LENGTH;
 		} else if (runType == "AesGcm"_sr) {
 			algo = EncryptionAtRestAlgo::AES_GCM;
-			ivSize = AES_256_GCM_IV_LENGTH;
+			ivSize = AesGcmParams::ivSize;
 		} else {
-			throw unsupported_operation();
+			throw not_implemented();
 		}
 	}
 
@@ -387,8 +387,8 @@ struct EncryptionOpsWorkload : TestWorkload {
 			headerCipherDetails = hmacSha.v1.cipherHeaderDetails;
 		} else if (std::holds_alternative<AesGcm>(headerRef.algoHeader)) {
 			AesGcm gcm = std::get<AesGcm>(headerRef.algoHeader);
-			memcpy(&iv[0], &gcm.v1.iv[0], ivSize);
-			textCipherDetails = gcm.v1.cipherTextDetails;
+			memcpy(&iv[0], &get<AesGcmV1>(gcm.headerVersions).iv[0], ivSize);
+			textCipherDetails = get<AesGcmV1>(gcm.headerVersions).cipherTextDetails;
 			headerCipherDetails = BlobCipherDetails();
 		} else {
 			ASSERT(std::holds_alternative<AesCtrWithCmac>(headerRef.algoHeader));

@@ -84,7 +84,8 @@ public:
 	    std::unordered_set<EncryptCipherDomainId> domainIds,
 	    BlobCipherMetrics::UsageType usageType,
 	    std::unordered_set<EncryptCipherDomainId>* nonExistentTenants = nullptr,
-	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {},
+	    Optional<UID> debugId = {});
 
 	// Get latest cipher key for given a encryption domain. It tries to get the cipher key from the local cache.
 	// In case of cache miss, it fetches the cipher key from EncryptKeyProxy and put the result in the local cache
@@ -93,7 +94,8 @@ public:
 	    Reference<AsyncVar<T> const> db,
 	    EncryptCipherDomainId domainId,
 	    BlobCipherMetrics::UsageType usageType,
-	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {},
+	    Optional<UID> debugId = {});
 
 	// Get cipher keys specified by the list of cipher details. It tries to get the cipher keys from local cache.
 	// In case of cache miss, it fetches the cipher keys from EncryptKeyProxy and put the result in the local cache
@@ -102,23 +104,27 @@ public:
 	    Reference<AsyncVar<T> const> db,
 	    std::unordered_set<BlobCipherDetails> cipherDetails,
 	    BlobCipherMetrics::UsageType usageType,
-	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {},
+	    Optional<UID> debugId = {});
 
 	static Future<TextAndHeaderCipherKeys> getLatestEncryptCipherKeysForDomain(
 	    Reference<AsyncVar<T> const> db,
 	    EncryptCipherDomainId domainId,
 	    BlobCipherMetrics::UsageType usageType,
-	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {},
+	    Optional<UID> debugId = {});
 
 	static Future<TextAndHeaderCipherKeys> getLatestSystemEncryptCipherKeys(
 	    const Reference<AsyncVar<T> const>& db,
 	    BlobCipherMetrics::UsageType usageType,
-	    Reference<GetEncryptCipherKeysMonitor> monitor = {});
+	    Reference<GetEncryptCipherKeysMonitor> monitor = {},
+	    Optional<UID> debugId = {});
 
 	static Future<TextAndHeaderCipherKeys> getEncryptCipherKeys(Reference<AsyncVar<T> const> db,
 	                                                            BlobCipherEncryptHeaderRef header,
 	                                                            BlobCipherMetrics::UsageType usageType,
-	                                                            Reference<GetEncryptCipherKeysMonitor> monitor = {});
+	                                                            Reference<GetEncryptCipherKeysMonitor> monitor = {},
+	                                                            Optional<UID> debugId = {});
 };
 
 #endif

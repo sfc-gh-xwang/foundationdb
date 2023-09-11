@@ -28,6 +28,7 @@
 #include "com_apple_foundationdb_FDBTransaction.h"
 #include "com_apple_foundationdb_FutureBool.h"
 #include "com_apple_foundationdb_FutureInt64.h"
+#include "com_apple_foundationdb_FutureDouble.h"
 #include "com_apple_foundationdb_FutureKey.h"
 #include "com_apple_foundationdb_FutureKeyArray.h"
 #include "com_apple_foundationdb_FutureKeyRangeArray.h"
@@ -319,6 +320,25 @@ JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FutureInt64_FutureInt64_1get
 	}
 
 	return (jlong)value;
+}
+
+JNIEXPORT jdouble JNICALL Java_com_apple_foundationdb_FutureDouble_FutureDouble_1get(JNIEnv* jenv,
+                                                                                     jobject,
+                                                                                     jlong future) {
+	if (!future) {
+		throwParamNotNull(jenv);
+		return 0;
+	}
+	FDBFuture* f = (FDBFuture*)future;
+
+	double value = 0;
+	fdb_error_t err = fdb_future_get_double(f, &value);
+	if (err) {
+		safeThrow(jenv, getThrowable(jenv, err));
+		return 0;
+	}
+
+	return (jdouble)value;
 }
 
 JNIEXPORT jobjectArray JNICALL Java_com_apple_foundationdb_FutureStrings_FutureStrings_1get(JNIEnv* jenv,
@@ -2251,6 +2271,40 @@ JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1
 		return 0;
 	}
 	return (jlong)version;
+}
+
+JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1getTagThrottledDuration(JNIEnv* jenv,
+                                                                                                        jobject,
+                                                                                                        jlong tPtr) {
+	if (!tPtr) {
+		throwParamNotNull(jenv);
+		return 0;
+	}
+	FDBFuture* f = fdb_transaction_get_tag_throttled_duration((FDBTransaction*)tPtr);
+	return (jlong)f;
+}
+
+JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1getTotalCost(JNIEnv* jenv,
+                                                                                             jobject,
+                                                                                             jlong tPtr) {
+	if (!tPtr) {
+		throwParamNotNull(jenv);
+		return 0;
+	}
+	FDBFuture* f = fdb_transaction_get_total_cost((FDBTransaction*)tPtr);
+	return (jlong)f;
+}
+
+JNIEXPORT void JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1setExpectedCost(JNIEnv* jenv,
+                                                                                               jobject,
+                                                                                               jlong tPtr,
+                                                                                               jlong bytes) {
+	if (!tPtr) {
+		throwParamNotNull(jenv);
+		return;
+	}
+	FDBTransaction* tr = (FDBTransaction*)tPtr;
+	fdb_transaction_set_expected_cost(tr, bytes);
 }
 
 JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTransaction_Transaction_1getApproximateSize(JNIEnv* jenv,

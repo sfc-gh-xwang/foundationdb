@@ -74,6 +74,9 @@ struct DeleteTenantImpl {
 			ASSERT(tenantEntry.tenantState == TenantState::RENAMING ||
 			       tenantEntry.tenantState == TenantState::REMOVING);
 			CODE_PROBE(true, "Delete tenant by new name during rename");
+			TraceEvent("MetaclusterDeleteTenantRenaming")
+			    .detail("TenantName", self->tenantName)
+			    .detail("TenantId", self->tenantId);
 			throw tenant_not_found();
 		}
 
@@ -98,6 +101,9 @@ struct DeleteTenantImpl {
 		RangeReadResult result = wait(safeThreadFutureToFuture(rangeFuture));
 		if (!result.empty()) {
 			CODE_PROBE(true, "Attempt to delete non-empty tenant");
+			TraceEvent("MetaclusterDeleteTenantNonEmpty")
+			    .detail("TenantName", self->tenantName)
+			    .detail("TenantId", self->tenantId);
 			throw tenant_not_empty();
 		}
 
@@ -178,6 +184,9 @@ struct DeleteTenantImpl {
 			wait(self->ctx.runDataClusterTransaction(
 			    [self = self](Reference<ITransaction> tr) { return checkTenantEmpty(self, tr); }));
 
+			TraceEvent("MetaclusterDeleteTenantMarkRemoving")
+			    .detail("TenantName", self->tenantName)
+			    .detail("TenantId", self->tenantId);
 			wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 				return markTenantInRemovingState(self, tr);
 			}));
@@ -186,12 +195,23 @@ struct DeleteTenantImpl {
 		}
 
 		// Delete tenant on the data cluster
+		TraceEvent("MetaclusterDeleteTenantFromDataCluster")
+		    .detail("TenantName", self->tenantName)
+		    .detail("TenantId", self->tenantId)
+		    .detail("DataCluster", self->ctx.clusterName);
 		wait(self->ctx.runDataClusterTransaction([self = self](Reference<ITransaction> tr) {
 			return TenantAPI::deleteTenantTransaction(tr, self->tenantId, ClusterType::METACLUSTER_DATA);
 		}));
+		TraceEvent("MetaclusterDeleteTenantFromMgmtCluster")
+		    .detail("TenantName", self->tenantName)
+		    .detail("TenantId", self->tenantId);
 		wait(self->ctx.runManagementTransaction([self = self](Reference<typename DB::TransactionT> tr) {
 			return deleteTenantFromManagementCluster(self, tr);
 		}));
+
+		TraceEvent("MetaclusterDeleteTenantSuccess")
+		    .detail("TenantName", self->tenantName)
+		    .detail("TenantId", self->tenantId);
 
 		return Void();
 	}

@@ -26,6 +26,7 @@
 #include "fdbclient/SpecialKeySpace.actor.h"
 #include "fdbclient/StatusClient.h"
 #include "fdbclient/MonitorLeader.h"
+#include "fdbclient/TransactionState.h"
 #include "flow/Trace.h"
 #include "flow/Util.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -2086,6 +2087,10 @@ void ReadYourWritesTransaction::getWriteConflicts(KeyRangeMap<bool>* result) {
 	if (inConflictRange) {
 		result->insert(KeyRangeRef(conflictBegin.toArenaOrRef(arena), getMaxWriteKey()), true);
 	}
+}
+
+Reference<const TransactionState> ReadYourWritesTransaction::getTransactionState() const {
+	return tr.trState;
 }
 
 void ReadYourWritesTransaction::setTransactionID(UID id) {

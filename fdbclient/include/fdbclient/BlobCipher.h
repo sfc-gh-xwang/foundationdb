@@ -60,6 +60,7 @@
 #endif
 
 using EncryptCipherNonce = uint128_t;
+static_assert(sizeof(EncryptCipherNonce) == 16, "Invalid Nonce Size");
 
 #define AES_256_KEY_LENGTH 32
 #define AES_256_CTR_IV_LENGTH 16
@@ -339,9 +340,15 @@ struct AesWithAuthV1 {
 	}
 };
 
-struct AesGcmV1 {
+struct AesGcmParams {
 	static constexpr int authTokenSize = AES_256_GCM_TAG_LENGTH;
 	static constexpr int ivSize = AES_256_GCM_IV_LENGTH;
+
+	static std::string authAlgoName() { return "Gcm"; }
+	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_GCM_AUTH_VERSION; }
+};
+
+struct AesGcmV1 {
 	using Self = AesGcmV1;
 
 	// Serializable fields
@@ -351,9 +358,9 @@ struct AesGcmV1 {
 	// Text cipher Key Check Value
 	EncryptCipherKeyCheckValue textKCV;
 	// Initialization vector
-	uint8_t iv[ivSize];
+	uint8_t iv[AesGcmParams::ivSize];
 	// Authentication token
-	uint8_t authToken[authTokenSize];
+	uint8_t authToken[AesGcmParams::authTokenSize];
 
 	AesGcmV1() = default;
 	AesGcmV1(const BlobCipherDetails& textDetails,
@@ -362,28 +369,27 @@ struct AesGcmV1 {
 	         const int ivLen)
 	  : cipherTextDetails(textDetails),
 	    textKCV(tKCV) {
-		ASSERT_EQ(ivLen, ivSize);
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 		memcpy(&iv[0], ivBuf, ivLen);
-		memset(&authToken[0], 0, authTokenSize);
+		memset(&authToken[0], 0, AesGcmParams::authTokenSize);
 	}
 
 	bool operator==(const Self& o) const {
 		return cipherTextDetails == o.cipherTextDetails && textKCV == o.textKCV &&
-		       memcmp(&iv[0], &o.iv[0], ivSize) == 0 && memcmp(&authToken[0], &o.authToken[0], authTokenSize) == 0;
+		       memcmp(&iv[0], &o.iv[0], AesGcmParams::ivSize) == 0 &&
+		       memcmp(&authToken[0], &o.authToken[0], AesGcmParams::authTokenSize) == 0;
 	}
 
 	static uint32_t getSize() {
-		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + ivSize + authTokenSize;
+		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + AesGcmParams::ivSize +
+		       AesGcmParams::authTokenSize;
 	}
-
-	static std::string authAlgoName() { return "AesGcm"; }
-	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_GCM_AUTH_VERSION; }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, cipherTextDetails, textKCV);
-		ar.serializeBytes(iv, ivSize);
-		ar.serializeBytes(authToken, authTokenSize);
+		ar.serializeBytes(iv, AesGcmParams::ivSize);
+		ar.serializeBytes(authToken, AesGcmParams::authTokenSize);
 	}
 };
 
@@ -393,18 +399,19 @@ struct AesGcm {
 	// Algorithm header version
 	uint8_t version = 1;
 	// List of supported versions.
-	union {
-		AesGcmV1 v1;
-	};
+	std::variant<AesGcmV1> headerVersions;
 
-	AesGcm() { ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion()); }
+	AesGcm() { ASSERT_EQ(1, AesGcmParams::getDefaultHeaderVersion()); }
 
-	AesGcm(AesGcmV1& v) : v1(v) {
+	AesGcm(AesGcmV1& v) : headerVersions(v) {
 		// Only V1 is supported
-		ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion());
+		ASSERT_EQ(1, AesGcmParams::getDefaultHeaderVersion());
 	}
 
-	static uint32_t getSize() { return AesGcmV1::getSize() + 1; }
+	static uint32_t getSize() {
+		// 1 byte of std::variant index
+		return AesGcmV1::getSize() + 1 + 1;
+	}
 
 	static Standalone<StringRef> toStringRef(const AesGcm& algoHeader) {
 		BinaryWriter wr(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
@@ -420,11 +427,11 @@ struct AesGcm {
 		serializer(ar, version);
 		if (ar.isDeserializing && version != 1) {
 			TraceEvent(SevWarn, "BlobCipherEncryptHeaderUnsupportedAlgoHeaderVersion")
-			    .detail("HeaderType", AesGcmV1::authAlgoName())
+			    .detail("HeaderType", AesGcmParams::authAlgoName())
 			    .detail("Version", version);
 			throw not_implemented();
 		}
-		serializer(ar, v1);
+		serializer(ar, headerVersions);
 	}
 };
 
@@ -666,16 +673,33 @@ public:
 	              const int64_t refreshAt,
 	              const int64_t expireAt);
 
-	uint8_t* data() const { return cipher.get(); }
+	void updateAccessAtTS() const {
+		ASSERT(now() >= accessAtTS);
+		accessAtTS = now();
+	}
+
+	uint8_t* data() const {
+		updateAccessAtTS();
+		return cipher.get();
+	}
+	uint8_t* rawCipher() const {
+		updateAccessAtTS();
+		return cipher.get();
+	}
+	uint8_t* rawBaseCipher() const {
+		updateAccessAtTS();
+		return baseCipher.get();
+	}
+
 	uint64_t getRefreshAtTS() const { return refreshAtTS; }
 	uint64_t getExpireAtTS() const { return expireAtTS; }
+	double getAccessAtTS() const { return accessAtTS; }
 	EncryptCipherDomainId getDomainId() const { return encryptDomainId; }
 	EncryptCipherRandomSalt getSalt() const { return randomSalt; }
 	EncryptCipherBaseKeyId getBaseCipherId() const { return baseCipherId; }
 	int getBaseCipherLen() const { return baseCipherLen; }
 	EncryptCipherKeyCheckValue getBaseCipherKCV() const { return baseCipherKCV; }
-	uint8_t* rawCipher() const { return cipher.get(); }
-	uint8_t* rawBaseCipher() const { return baseCipher.get(); }
+
 	bool isEqual(const Reference<BlobCipherKey> toCompare) {
 		return encryptDomainId == toCompare->getDomainId() && baseCipherId == toCompare->getBaseCipherId() &&
 		       randomSalt == toCompare->getSalt() && baseCipherLen == toCompare->getBaseCipherLen() &&
@@ -685,10 +709,9 @@ public:
 	EncryptCipherNonce getAndUpdateNonce(EncryptCipherNonce max_value);
 	EncryptCipherNonce getNonce() { return nonce; }
 	// The nonce should not be set outside of testing
-	void setNonce(EncryptCipherNonce other) {
-		if (g_network->isSimulated()) {
-			this->nonce = other;
-		}
+	void setNonceTest(EncryptCipherNonce other) {
+		ASSERT(g_network->isSimulated());
+		this->nonce = other;
 	}
 
 	bool isCipherDetailMatches(const BlobCipherDetails& details) {
@@ -731,6 +754,8 @@ private:
 	// CipherKey is valid until
 	int64_t expireAtTS;
 	EncryptCipherNonce nonce;
+	// Latest access timestamp
+	mutable double accessAtTS;
 
 	void initKey(const EncryptCipherDomainId& domainId,
 	             const EncryptCipherBaseKeyId& baseCiphId,
@@ -904,6 +929,9 @@ public:
 
 	// API returns point in time list of all 'cached' cipherKeys for a given encryption domainId.
 	std::vector<Reference<BlobCipherKey>> getAllCiphers(const EncryptCipherDomainId& domainId);
+
+	// API returns all current latest cipher keys.
+	std::map<EncryptCipherDomainId, Reference<BlobCipherKey>> listLatestCipherKeys() const;
 
 	// API enables dropping all 'cached' cipherKeys for a given encryption domain Id.
 	// Useful to cleanup cache if an encryption domain gets removed/destroyed etc.

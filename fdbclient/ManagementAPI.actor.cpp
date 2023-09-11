@@ -2146,6 +2146,7 @@ ACTOR Future<std::set<NetworkAddress>> checkForExcludingServers(Database cx,
                                                                 bool waitForAllExcluded) {
 	state std::set<AddressExclusion> exclusions(excl.begin(), excl.end());
 	state std::set<NetworkAddress> inProgressExclusion;
+	state int retries = 0;
 
 	loop {
 		state ReadYourWritesTransaction tr(cx);
@@ -2157,6 +2158,9 @@ ACTOR Future<std::set<NetworkAddress>> checkForExcludingServers(Database cx,
 			if (!waitForAllExcluded)
 				break;
 
+			TraceEvent(SevDebug, "CheckForExcludingServersRetry")
+			    .detail("Retries", retries++)
+			    .detail("InProgressExclusions", describe(inProgressExclusion));
 			wait(delayJittered(1.0)); // SOMEDAY: watches!
 		} catch (Error& e) {
 			TraceEvent("CheckForExcludingServersError").error(e);

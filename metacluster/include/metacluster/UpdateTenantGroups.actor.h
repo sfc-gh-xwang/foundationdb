@@ -25,7 +25,6 @@
 #elif !defined(METACLUSTER_UPDATETENANTGROUPS_ACTOR_H)
 #define METACLUSTER_UPDATETENANTGROUPS_ACTOR_H
 
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/Tenant.h"
@@ -35,7 +34,7 @@
 #include "flow/IRandom.h"
 #include "flow/Platform.h"
 
-#include "metacluster/ConfigureCluster.h"
+#include "metacluster/ConfigureCluster.actor.h"
 #include "metacluster/MetaclusterMetadata.h"
 #include "metacluster/MetaclusterTypes.h"
 
@@ -75,8 +74,7 @@ void managementClusterAddTenantToGroup(Transaction tr,
 		DataClusterEntry updatedEntry = clusterMetadata->entry;
 		++updatedEntry.allocated.numTenantGroups;
 
-		updateClusterMetadata(
-		    tr, tenantEntry.assignedCluster, *clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry);
+		updateClusterMetadata(tr, tenantEntry.assignedCluster, clusterMetadata->entry, updatedEntry);
 
 		clusterMetadata->entry = updatedEntry;
 	}
@@ -113,8 +111,7 @@ Future<Void> managementClusterRemoveTenantFromGroup(Transaction tr,
 		CODE_PROBE(true, "Remove tenant from group deleted group");
 		DataClusterEntry updatedEntry = clusterMetadata->entry;
 		--updatedEntry.allocated.numTenantGroups;
-		updateClusterMetadata(
-		    tr, tenantEntry.assignedCluster, *clusterMetadata, Optional<ClusterConnectionString>(), updatedEntry);
+		updateClusterMetadata(tr, tenantEntry.assignedCluster, clusterMetadata->entry, updatedEntry);
 
 		clusterMetadata->entry = updatedEntry;
 	}

@@ -31,6 +31,7 @@
 #include "fdbserver/workloads/BulkSetup.actor.h"
 #include "fdbserver/workloads/ReadWriteWorkload.actor.h"
 #include "fdbclient/ReadYourWrites.h"
+#include "fdbclient/TransactionState.h"
 #include "flow/TDMetric.actor.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 

@@ -442,13 +442,18 @@ class Summary:
             self.error = True
         if self.was_killed:
             child = SummaryTree("ExternalTimeout")
-            child.attributes["Severity"] = "40"
+            if not self.valgrind_out_file:
+                child.attributes["Severity"] = "40"
+                self.error = True
+            else:
+                child.attributes["Severity"] = "30"
             if self.long_running:
                 # debugging info for long-running tests
                 child.attributes["LongRunning"] = "1"
                 child.attributes["Runtime"] = str(self.runtime)
+            child.attributes["LastTraceTime"] = str(self.max_trace_time)
+            child.attributes["LastTraceType"] = self.max_trace_time_type
             self.out.append(child)
-            self.error = True
         if self.max_rss is not None:
             self.out.attributes["PeakMemory"] = str(self.max_rss)
         if self.valgrind_out_file is not None:
@@ -469,7 +474,7 @@ class Summary:
                     child.attributes["BacktraceAux{}".format(aux_count)] = aux.backtrace
                     aux_count += 1
                 self.out.append(child)
-        if not self.test_end_found:
+        if not self.test_end_found and not self.was_killed:
             child = SummaryTree("TestUnexpectedlyNotFinished")
             child.attributes["Severity"] = "40"
             child.attributes["LastTraceTime"] = str(self.max_trace_time)

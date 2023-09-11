@@ -48,6 +48,8 @@
 #include "fdbclient/Atomic.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BlobGranuleRequest.actor.h"
+#include "fdbclient/BulkLoadMetadata.h"
+#include "fdbclient/ClientVersion.h"
 #include "fdbclient/ClusterInterface.h"
 #include "fdbclient/ClusterConnectionFile.h"
 #include "fdbclient/ClusterConnectionMemoryRecord.h"
@@ -74,6 +76,7 @@
 #include "fdbclient/TenantSpecialKeys.actor.h"
 #include "fdbclient/TransactionLineage.h"
 #include "fdbclient/versions.h"
+#include "fdbclient/TransactionState.h"
 #include "fdbrpc/WellKnownEndpoints.h"
 #include "fdbrpc/LoadBalance.h"
 #include "fdbrpc/Net2FileSystem.h"
@@ -148,8 +151,28 @@ FDB_BOOLEAN_PARAM(UseTenant);
 // Whether a blob granule request is a request for the mapping to read, or a request to get granule boundaries
 FDB_BOOLEAN_PARAM(JustGranules);
 
-NetworkOptions networkOptions;
-TLSConfig tlsConfig(TLSEndpointType::CLIENT);
+namespace {
+
+struct NetworkOptions {
+	std::string localAddress;
+	std::string clusterFile;
+	Optional<std::string> traceDirectory;
+	uint64_t traceRollSize;
+	uint64_t traceMaxLogsSize;
+	std::string traceLogGroup;
+	std::string traceFormat;
+	std::string traceClockSource;
+	std::string traceFileIdentifier;
+	std::string tracePartialFileSuffix;
+	bool traceInitializeOnSetup;
+	Optional<bool> logClientInfo;
+	Reference<ReferencedObject<Standalone<VectorRef<ClientVersionRef>>>> supportedVersions;
+	bool runLoopProfilingEnabled;
+	bool primaryClient;
+	std::map<std::string, KnobValue> knobs;
+
+	NetworkOptions();
+};
 
 // The default values, TRACE_DEFAULT_ROLL_SIZE and TRACE_DEFAULT_MAX_LOGS_SIZE are located in Trace.h.
 NetworkOptions::NetworkOptions()
@@ -162,6 +185,19 @@ NetworkOptions::NetworkOptions()
     supportedVersions(new ReferencedObject<Standalone<VectorRef<ClientVersionRef>>>()),
     runLoopProfilingEnabled(false),
     primaryClient(true) {}
+
+NetworkOptions networkOptions;
+TLSConfig tlsConfig(TLSEndpointType::CLIENT);
+
+} // namespace
+
+namespace NativeAPI {
+
+const TLSConfig& getTLSConfig() {
+	return tlsConfig;
+}
+
+} // namespace NativeAPI
 
 static const Key CLIENT_LATENCY_INFO_PREFIX = "client_latency/"_sr;
 static const Key CLIENT_LATENCY_INFO_CTR_PREFIX = "client_latency_counter/"_sr;
@@ -485,26 +521,35 @@ int unhex(char c) {
 	UNREACHABLE();
 }
 
-std::string unprintable(std::string const& val) {
+Optional<std::string> tryUnprintable(std::string const& val) {
 	std::string s;
 	for (int i = 0; i < val.size(); i++) {
 		char c = val[i];
 		if (c == '\\') {
-			if (++i == val.size())
-				ASSERT(false);
+			if (++i == val.size()) {
+				return Optional<std::string>();
+			}
 			if (val[i] == '\\') {
 				s += '\\';
 			} else if (val[i] == 'x') {
-				if (i + 2 >= val.size())
-					ASSERT(false);
+				if (i + 2 >= val.size()) {
+					return Optional<std::string>();
+				}
 				s += char((unhex(val[i + 1]) << 4) + unhex(val[i + 2]));
 				i += 2;
-			} else
-				ASSERT(false);
+			} else {
+				return Optional<std::string>();
+			}
 		} else
 			s += c;
 	}
 	return s;
+}
+
+std::string unprintable(std::string const& val) {
+	auto result = tryUnprintable(val);
+	ASSERT(result.present());
+	return result.get();
 }
 
 void DatabaseContext::validateVersion(Version version) const {
@@ -1890,6 +1935,11 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	registerSpecialKeysImpl(SpecialKeySpace::MODULE::MANAGEMENT,
 	                        SpecialKeySpace::IMPLTYPE::READWRITE,
 	                        std::make_unique<TenantRangeImpl>(SpecialKeySpace::getManagementApiCommandRange("tenant")));
+
+	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ENCRYPTION,
+	                        SpecialKeySpace::IMPLTYPE::READONLY,
+	                        std::make_unique<LatestEncryptCipherKeysSpecialKeyImpl>(
+	                            SpecialKeySpace::getEncryptionApiCommandRange("latestcipherkeysbydomain")));
 
 	if (BUGGIFY) {
 		debugUseTag = true;
@@ -3750,6 +3800,24 @@ Future<TenantMode> DatabaseContext::getOrWaitForTenantMode() {
 	return getOrWaitForTenantModeImpl(this);
 }
 
+namespace {
+
+Reference<TransactionLogInfo> createTrLogInfoProbabilistically(const Database& cx) {
+	if (!cx->isError()) {
+		double clientSamplingProbability =
+		    cx->globalConfig->get<double>(fdbClientInfoTxnSampleRate, CLIENT_KNOBS->CSI_SAMPLING_PROBABILITY);
+		if (((networkOptions.logClientInfo.present() && networkOptions.logClientInfo.get()) || BUGGIFY) &&
+		    deterministicRandom()->random01() < clientSamplingProbability &&
+		    (!g_network->isSimulated() || !g_simulator->speedUpSimulation)) {
+			return makeReference<TransactionLogInfo>(TransactionLogInfo::DATABASE);
+		}
+	}
+
+	return Reference<TransactionLogInfo>();
+}
+
+} // namespace
+
 TransactionState::TransactionState(Database cx,
                                    Optional<Reference<Tenant>> tenant,
                                    TaskPriority taskID,
@@ -3761,6 +3829,8 @@ TransactionState::TransactionState(Database cx,
     taskID(taskID),
     spanContext(spanContext),
     readVersionObtainedFromGrvProxy(true),
+    backoff(CLIENT_KNOBS->DEFAULT_BACKOFF),
+    tr(spanContext),
     tenant_(tenant),
     tenantSet(tenant.present()) {}
 
@@ -3771,12 +3841,11 @@ TransactionState::~TransactionState() {
 	startFuture.cancel();
 }
 
-Reference<TransactionState> TransactionState::cloneAndReset(Reference<TransactionLogInfo> newTrLogInfo,
-                                                            bool generateNewSpan) const {
-
-	SpanContext newSpanContext = generateNewSpan ? generateSpanID(cx->transactionTracingSample) : spanContext;
+Reference<TransactionState> TransactionState::cloneAndReset(bool fullReset) {
+	cancel();
+	SpanContext newSpanContext = fullReset ? generateSpanID(cx->transactionTracingSample) : spanContext;
 	Reference<TransactionState> newState =
-	    makeReference<TransactionState>(cx, tenant_, cx->taskID, newSpanContext, newTrLogInfo);
+	    makeReference<TransactionState>(cx, tenant_, cx->taskID, newSpanContext, createTrLogInfoProbabilistically(cx));
 
 	newState->readVersionFuture = Future<Version>();
 	newState->metadataVersion = Promise<Optional<Key>>();
@@ -3785,8 +3854,31 @@ Reference<TransactionState> TransactionState::cloneAndReset(Reference<Transactio
 	newState->committedVersion = committedVersion;
 	newState->conflictingKeys = conflictingKeys;
 	newState->tenantSet = tenantSet;
-
+	newState->backoff = fullReset ? CLIENT_KNOBS->DEFAULT_BACKOFF : backoff;
 	return newState;
+}
+
+void TransactionState::cancel() {
+	flushTrLogsIfEnabled();
+	commitResult = Promise<Void>();
+	committing = Future<Void>();
+	cancelWatches();
+}
+
+void TransactionState::cancelWatches(Error const& e) {
+	for (int i = 0; i < watches.size(); ++i)
+		if (!watches[i]->onChangeTrigger.isSet())
+			watches[i]->onChangeTrigger.sendError(e);
+
+	watches.clear();
+}
+
+void TransactionState::flushTrLogsIfEnabled() {
+	if (trLogInfo && trLogInfo->logsAdded && trLogInfo->trLogWriter.getData()) {
+		ASSERT(trLogInfo->flushed == false);
+		cx->clientStatusUpdater.inStatusQ.push_back({ trLogInfo->identifier, std::move(trLogInfo->trLogWriter) });
+		trLogInfo->flushed = true;
+	}
 }
 
 TenantInfo TransactionState::getTenantInfo(AllowInvalidTenantID allowInvalidTenantId /* = false */) {
@@ -5800,6 +5892,15 @@ void debugAddTag(Reference<TransactionState> trState) {
 	trState->options.throttlingTag = deterministicRandom()->randomChoice(DatabaseContext::debugTransactionTagChoices);
 }
 
+template <>
+void addref(TransactionState* ptr) {
+	ptr->addref();
+}
+template <>
+void delref(TransactionState* ptr) {
+	ptr->delref();
+}
+
 Transaction::Transaction()
   : trState(makeReference<TransactionState>(TaskPriority::DefaultEndpoint, generateSpanID(false))) {}
 
@@ -5809,9 +5910,7 @@ Transaction::Transaction(Database const& cx)
                                             cx->taskID,
                                             generateSpanID(cx->transactionTracingSample),
                                             createTrLogInfoProbabilistically(cx))),
-    span(trState->spanContext, "Transaction"_loc),
-    backoff(CLIENT_KNOBS->DEFAULT_BACKOFF),
-    tr(trState->spanContext) {
+    span(trState->spanContext, "Transaction"_loc) {
 	if (cx->debugUseTag) {
 		debugAddTag(trState);
 	}
@@ -5823,9 +5922,7 @@ Transaction::Transaction(Reference<Tenant> const& tenant)
                                             tenant->database()->taskID,
                                             generateSpanID(tenant->database()->transactionTracingSample),
                                             createTrLogInfoProbabilistically(tenant->database()))),
-    span(trState->spanContext, "Transaction"_loc),
-    backoff(CLIENT_KNOBS->DEFAULT_BACKOFF),
-    tr(trState->spanContext) {
+    span(trState->spanContext, "Transaction"_loc) {
 	if (tenant->database()->debugUseTag) {
 		debugAddTag(trState);
 	}
@@ -5836,8 +5933,9 @@ Transaction::Transaction(Transaction&& tr) {
 }
 
 Transaction::~Transaction() {
-	flushTrLogsIfEnabled();
-	cancelWatches();
+	if (trState) {
+		trState->cancel();
+	}
 }
 
 Transaction Transaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& tenant, Database const& cx) {
@@ -5849,27 +5947,47 @@ Transaction Transaction::fromTenantOrDefault(Optional<Reference<Tenant>> const& 
 }
 
 void Transaction::operator=(Transaction&& r) noexcept {
-	flushTrLogsIfEnabled();
-	tr = std::move(r.tr);
+	if (trState) {
+		trState->cancel();
+	}
 	trState = std::move(r.trState);
-	extraConflictRanges = std::move(r.extraConflictRanges);
-	commitResult = std::move(r.commitResult);
-	committing = std::move(r.committing);
-	backoff = r.backoff;
-	watches = r.watches;
 }
 
-void Transaction::flushTrLogsIfEnabled() {
-	if (trState && trState->trLogInfo && trState->trLogInfo->logsAdded && trState->trLogInfo->trLogWriter.getData()) {
-		ASSERT(trState->trLogInfo->flushed == false);
-		trState->cx->clientStatusUpdater.inStatusQ.push_back(
-		    { trState->trLogInfo->identifier, std::move(trState->trLogInfo->trLogWriter) });
-		trState->trLogInfo->flushed = true;
+void Transaction::debugTransaction(UID dID) {
+	if (trState->readOptions.present()) {
+		trState->readOptions.get().debugID = dID;
+	} else {
+		trState->readOptions = ReadOptions(dID);
 	}
+	trState->hybridReadOptions.withDefault(HybridReadOptions()).debugID = dID;
 }
 
 VersionVector Transaction::getVersionVector() const {
 	return trState->cx->ssVersionVectorCache;
+}
+
+SpanContext Transaction::getSpanContext() const {
+	return trState->spanContext;
+}
+
+Database Transaction::getDatabase() const {
+	return trState->cx;
+}
+
+Optional<Reference<Tenant>> Transaction::getTenant() {
+	return trState->tenant();
+}
+
+Version Transaction::getCommittedVersion() const {
+	return trState->committedVersion;
+}
+
+int64_t Transaction::getTotalCost() const {
+	return trState->getTotalCost();
+}
+
+void Transaction::setExpectedCost(uint64_t bytes) {
+	trState->setExpectedCost(bytes);
 }
 
 void Transaction::setVersion(Version v) {
@@ -5899,7 +6017,8 @@ Future<ValueReadResult> Transaction::get(const Key& key, Snapshot snapshot) {
 	        return Optional<Value>(Value()); */
 
 	if (!snapshot)
-		tr.transaction.read_conflict_ranges.push_back(tr.arena, singleKeyRange(key, tr.arena));
+		trState->tr.transaction.read_conflict_ranges.push_back(trState->tr.arena,
+		                                                       singleKeyRange(key, trState->tr.arena));
 
 	UseTenant useTenant = UseTenant::True;
 	if (key == metadataVersionKey) {
@@ -6053,7 +6172,7 @@ Future<Void> Transaction::watch(Reference<Watch> watch) {
 
 	trState->cx->increaseWatchCounter();
 	watch->readOptions = trState->readOptions;
-	watches.push_back(watch);
+	trState->watches.push_back(watch);
 	return ::watch(watch,
 	               trState->cx,
 	               populateAndGetTenant(trState, watch->key),
@@ -6143,7 +6262,7 @@ Future<KeyReadResult> Transaction::getKey(const KeySelector& key, Snapshot snaps
 		return ::getKey(trState, key);
 
 	Promise<std::pair<Key, Key>> conflictRange;
-	extraConflictRanges.push_back(conflictRange.getFuture());
+	trState->extraConflictRanges.push_back(conflictRange.getFuture());
 	return getKeyAndConflictRange(trState, key, conflictRange);
 }
 
@@ -6202,7 +6321,7 @@ Future<RangeReadResultFamily> Transaction::getRangeInternal(const KeySelector& b
 	}
 	Promise<std::pair<Key, Key>> conflictRange;
 	if (!snapshot) {
-		extraConflictRanges.push_back(conflictRange.getFuture());
+		trState->extraConflictRanges.push_back(conflictRange.getFuture());
 	}
 
 	return ::getRange<GetKeyValuesFamilyRequest, GetKeyValuesFamilyReply, RangeReadResultFamily>(
@@ -6271,7 +6390,7 @@ Future<Void> Transaction::getRangeStream(PromiseStream<RangeReadResult>& results
 
 	Promise<std::pair<Key, Key>> conflictRange;
 	if (!snapshot) {
-		extraConflictRanges.push_back(conflictRange.getFuture());
+		trState->extraConflictRanges.push_back(conflictRange.getFuture());
 	}
 
 	return forwardErrors(::getRangeStream(trState, results, b, e, limits, conflictRange, snapshot, reverse), results);
@@ -6309,16 +6428,16 @@ void Transaction::addReadConflictRange(KeyRangeRef const& keys) {
 		return;
 	}
 
-	tr.transaction.read_conflict_ranges.push_back_deep(tr.arena, r);
+	trState->tr.transaction.read_conflict_ranges.push_back_deep(trState->tr.arena, r);
 }
 
 void Transaction::makeSelfConflicting() {
 	BinaryWriter wr(Unversioned());
 	wr.serializeBytes("\xFF/SC/"_sr);
 	wr << deterministicRandom()->randomUniqueID();
-	auto r = singleKeyRange(wr.toValue(), tr.arena);
-	tr.transaction.read_conflict_ranges.push_back(tr.arena, r);
-	tr.transaction.write_conflict_ranges.push_back(tr.arena, r);
+	auto r = singleKeyRange(wr.toValue(), trState->tr.arena);
+	trState->tr.transaction.read_conflict_ranges.push_back(trState->tr.arena, r);
+	trState->tr.transaction.write_conflict_ranges.push_back(trState->tr.arena, r);
 }
 
 void Transaction::set(const KeyRef& key, const ValueRef& value, AddConflictRange addConflictRange) {
@@ -6328,7 +6447,7 @@ void Transaction::set(const KeyRef& key, const ValueRef& value, AddConflictRange
 	if (value.size() > CLIENT_KNOBS->VALUE_SIZE_LIMIT)
 		throw value_too_large();
 
-	auto& req = tr;
+	auto& req = trState->tr;
 	auto& t = req.transaction;
 	auto r = singleKeyRange(key, req.arena);
 	auto v = ValueRef(req.arena, value);
@@ -6355,7 +6474,7 @@ void Transaction::atomicOp(const KeyRef& key,
 	else if (operationType == MutationRef::And)
 		operationType = MutationRef::AndV2;
 
-	auto& req = tr;
+	auto& req = trState->tr;
 	auto& t = req.transaction;
 	auto r = singleKeyRange(key, req.arena);
 	auto v = ValueRef(req.arena, operand);
@@ -6378,7 +6497,7 @@ void TransactionState::addClearCost() {
 
 void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRange) {
 	++trState->cx->transactionClearMutations;
-	auto& req = tr;
+	auto& req = trState->tr;
 	auto& t = req.transaction;
 
 	KeyRef begin = range.begin;
@@ -6415,7 +6534,7 @@ void Transaction::clear(const KeyRef& key, AddConflictRange addConflictRange) {
 		return;
 	}
 
-	auto& req = tr;
+	auto& req = trState->tr;
 	auto& t = req.transaction;
 
 	// efficient single key range clear range mutation, see singleKeyRange
@@ -6431,7 +6550,7 @@ void Transaction::clear(const KeyRef& key, AddConflictRange addConflictRange) {
 
 void Transaction::addWriteConflictRange(const KeyRangeRef& keys) {
 	ASSERT(!keys.empty());
-	auto& req = tr;
+	auto& req = trState->tr;
 	auto& t = req.transaction;
 
 	// There aren't any keys in the database with size larger than the max key size, so if range contains large keys
@@ -6457,7 +6576,7 @@ void Transaction::addWriteConflictRange(const KeyRangeRef& keys) {
 }
 
 double Transaction::getBackoff(int errCode) {
-	double returnedBackoff = backoff;
+	double returnedBackoff = trState->backoff;
 
 	returnedBackoff *= deterministicRandom()->random01();
 
@@ -6465,9 +6584,10 @@ double Transaction::getBackoff(int errCode) {
 	if (errCode == error_code_commit_proxy_memory_limit_exceeded ||
 	    errCode == error_code_grv_proxy_memory_limit_exceeded) {
 
-		backoff = std::min(backoff * CLIENT_KNOBS->BACKOFF_GROWTH_RATE, CLIENT_KNOBS->RESOURCE_CONSTRAINED_MAX_BACKOFF);
+		trState->backoff = std::min(trState->backoff * CLIENT_KNOBS->BACKOFF_GROWTH_RATE,
+		                            CLIENT_KNOBS->RESOURCE_CONSTRAINED_MAX_BACKOFF);
 	} else {
-		backoff = std::min(backoff * CLIENT_KNOBS->BACKOFF_GROWTH_RATE, trState->options.maxBackoff);
+		trState->backoff = std::min(trState->backoff * CLIENT_KNOBS->BACKOFF_GROWTH_RATE, trState->options.maxBackoff);
 	}
 
 	return returnedBackoff;
@@ -6513,32 +6633,31 @@ void TransactionOptions::reset(Database const& cx) {
 	includePort = true;
 }
 
-void Transaction::resetImpl(bool generateNewSpan) {
-	flushTrLogsIfEnabled();
-	trState = trState->cloneAndReset(createTrLogInfoProbabilistically(trState->cx), generateNewSpan);
-	tr = CommitTransactionRequest(trState->spanContext);
-	extraConflictRanges.clear();
-	commitResult = Promise<Void>();
-	committing = Future<Void>();
-	cancelWatches();
-}
-
 Optional<TransactionTag> const& Transaction::getTag() const& {
 	return trState->options.throttlingTag;
 }
 
 void Transaction::reset() {
-	resetImpl(false);
+	trState = trState->cloneAndReset(false);
 }
 
 void Transaction::fullReset() {
-	resetImpl(true);
+	trState = trState->cloneAndReset(true);
 	span = Span(trState->spanContext, "Transaction"_loc);
-	backoff = CLIENT_KNOBS->DEFAULT_BACKOFF;
 }
 
 int Transaction::apiVersionAtLeast(int minVersion) const {
 	return trState->cx->apiVersionAtLeast(minVersion);
+}
+
+const std::vector<Future<std::pair<Key, Key>>>& Transaction::getExtraReadConflictRanges() const {
+	return trState->extraConflictRanges;
+}
+Standalone<VectorRef<KeyRangeRef>> Transaction::readConflictRanges() const {
+	return Standalone<VectorRef<KeyRangeRef>>(trState->tr.transaction.read_conflict_ranges, trState->tr.arena);
+}
+Standalone<VectorRef<KeyRangeRef>> Transaction::writeConflictRanges() const {
+	return Standalone<VectorRef<KeyRangeRef>>(trState->tr.transaction.write_conflict_ranges, trState->tr.arena);
 }
 
 class MutationBlock {
@@ -6757,24 +6876,16 @@ ACTOR static Future<Optional<CommitResult>> determineCommitStatus(Reference<Tran
 	}
 }
 
-void Transaction::cancelWatches(Error const& e) {
-	for (int i = 0; i < watches.size(); ++i)
-		if (!watches[i]->onChangeTrigger.isSet())
-			watches[i]->onChangeTrigger.sendError(e);
-
-	watches.clear();
-}
-
 void Transaction::setupWatches() {
 	try {
 		Future<Version> watchVersion = getCommittedVersion() > 0 ? getCommittedVersion() : getReadVersion();
 
-		for (int i = 0; i < watches.size(); ++i)
-			watches[i]->setWatch(
+		for (int i = 0; i < trState->watches.size(); ++i)
+			trState->watches[i]->setWatch(
 			    watchValueMap(watchVersion,
 			                  trState->getTenantInfo(),
-			                  watches[i]->key,
-			                  watches[i]->value,
+			                  trState->watches[i]->key,
+			                  trState->watches[i]->value,
 			                  trState->cx,
 			                  trState->options.throttlingTag,
 			                  trState->spanContext,
@@ -6782,7 +6893,7 @@ void Transaction::setupWatches() {
 			                  trState->readOptions.present() ? trState->readOptions.get().debugID : Optional<UID>(),
 			                  trState->useProvisionalProxies));
 
-		watches.clear();
+		trState->watches.clear();
 	} catch (Error&) {
 		ASSERT(false); // The above code must NOT throw because commit has already occured.
 		throw internal_error();
@@ -7158,7 +7269,7 @@ ACTOR static Future<Void> tryCommit(Reference<TransactionState> trState, CommitT
 Future<Void> Transaction::commitMutations() {
 	try {
 		// if this is a read-only transaction return immediately
-		if (!tr.transaction.write_conflict_ranges.size() && !tr.transaction.mutations.size()) {
+		if (!trState->tr.transaction.write_conflict_ranges.size() && !trState->tr.transaction.mutations.size()) {
 			trState->numErrors = 0;
 
 			trState->committedVersion = invalidVersion;
@@ -7173,18 +7284,18 @@ Future<Void> Transaction::commitMutations() {
 		if (trState->options.readOnly)
 			return transaction_read_only();
 
-		trState->cx->mutationsPerCommit.addSample(tr.transaction.mutations.size());
-		trState->cx->bytesPerCommit.addSample(tr.transaction.mutations.expectedSize());
-		tr.throttlingTag = trState->options.throttlingTag;
+		trState->cx->mutationsPerCommit.addSample(trState->tr.transaction.mutations.size());
+		trState->cx->bytesPerCommit.addSample(trState->tr.transaction.mutations.expectedSize());
+		trState->tr.throttlingTag = trState->options.throttlingTag;
 
 		size_t transactionSize = getSize();
 		if (transactionSize > (uint64_t)FLOW_KNOBS->PACKET_WARNING) {
 			TraceEvent(SevWarn, "LargeTransaction")
 			    .suppressFor(1.0)
 			    .detail("Size", transactionSize)
-			    .detail("NumMutations", tr.transaction.mutations.size())
-			    .detail("ReadConflictSize", tr.transaction.read_conflict_ranges.expectedSize())
-			    .detail("WriteConflictSize", tr.transaction.write_conflict_ranges.expectedSize())
+			    .detail("NumMutations", trState->tr.transaction.mutations.size())
+			    .detail("ReadConflictSize", trState->tr.transaction.read_conflict_ranges.expectedSize())
+			    .detail("WriteConflictSize", trState->tr.transaction.write_conflict_ranges.expectedSize())
 			    .detail("DebugIdentifier", trState->trLogInfo ? trState->trLogInfo->identifier : "");
 		}
 
@@ -7193,38 +7304,41 @@ Future<Void> Transaction::commitMutations() {
 		}
 
 		bool isCheckingWrites = trState->options.checkWritesEnabled && deterministicRandom()->random01() < 0.01;
-		for (int i = 0; i < extraConflictRanges.size(); i++)
-			if (extraConflictRanges[i].isReady() &&
-			    extraConflictRanges[i].get().first < extraConflictRanges[i].get().second)
-				tr.transaction.read_conflict_ranges.emplace_back(
-				    tr.arena, extraConflictRanges[i].get().first, extraConflictRanges[i].get().second);
+		for (int i = 0; i < trState->extraConflictRanges.size(); i++)
+			if (trState->extraConflictRanges[i].isReady() &&
+			    trState->extraConflictRanges[i].get().first < trState->extraConflictRanges[i].get().second)
+				trState->tr.transaction.read_conflict_ranges.emplace_back(trState->tr.arena,
+				                                                          trState->extraConflictRanges[i].get().first,
+				                                                          trState->extraConflictRanges[i].get().second);
 
-		if (tr.idempotencyId.valid()) {
+		if (trState->tr.idempotencyId.valid()) {
 			// We need to be able confirm that this transaction is no longer in
 			// flight, and if the idempotency id is in the read and write
 			// conflict range we can use that.
 			BinaryWriter wr(Unversioned());
 			wr.serializeBytes("\xFF/SC/"_sr);
-			wr.serializeBytes(tr.idempotencyId.asStringRefUnsafe());
-			auto r = singleKeyRange(wr.toValue(), tr.arena);
-			tr.transaction.read_conflict_ranges.push_back(tr.arena, r);
-			tr.transaction.write_conflict_ranges.push_back(tr.arena, r);
+			wr.serializeBytes(trState->tr.idempotencyId.asStringRefUnsafe());
+			auto r = singleKeyRange(wr.toValue(), trState->tr.arena);
+			trState->tr.transaction.read_conflict_ranges.push_back(trState->tr.arena, r);
+			trState->tr.transaction.write_conflict_ranges.push_back(trState->tr.arena, r);
 		}
 
 		if (!trState->options.causalWriteRisky &&
-		    !intersects(tr.transaction.write_conflict_ranges, tr.transaction.read_conflict_ranges).present())
+		    !intersects(trState->tr.transaction.write_conflict_ranges, trState->tr.transaction.read_conflict_ranges)
+		         .present())
 			makeSelfConflicting();
 
 		if (isCheckingWrites) {
 			// add all writes into the read conflict range...
-			tr.transaction.read_conflict_ranges.append(
-			    tr.arena, tr.transaction.write_conflict_ranges.begin(), tr.transaction.write_conflict_ranges.size());
+			trState->tr.transaction.read_conflict_ranges.append(trState->tr.arena,
+			                                                    trState->tr.transaction.write_conflict_ranges.begin(),
+			                                                    trState->tr.transaction.write_conflict_ranges.size());
 		}
 
 		if (trState->options.debugDump) {
 			UID u = nondeterministicRandom()->randomUniqueID();
 			TraceEvent("TransactionDump", u).log();
-			for (auto i = tr.transaction.mutations.begin(); i != tr.transaction.mutations.end(); ++i)
+			for (auto i = trState->tr.transaction.mutations.begin(); i != trState->tr.transaction.mutations.end(); ++i)
 				TraceEvent("TransactionMutation", u)
 				    .detail("T", i->type)
 				    .detail("P1", i->param1)
@@ -7232,23 +7346,23 @@ Future<Void> Transaction::commitMutations() {
 		}
 
 		if (trState->options.lockAware) {
-			tr.flags = tr.flags | CommitTransactionRequest::FLAG_IS_LOCK_AWARE;
+			trState->tr.flags = trState->tr.flags | CommitTransactionRequest::FLAG_IS_LOCK_AWARE;
 		}
 		if (trState->options.firstInBatch) {
-			tr.flags = tr.flags | CommitTransactionRequest::FLAG_FIRST_IN_BATCH;
+			trState->tr.flags = trState->tr.flags | CommitTransactionRequest::FLAG_FIRST_IN_BATCH;
 		}
 		if (trState->options.bypassStorageQuota) {
-			tr.flags = tr.flags | CommitTransactionRequest::FLAG_BYPASS_STORAGE_QUOTA;
+			trState->tr.flags = trState->tr.flags | CommitTransactionRequest::FLAG_BYPASS_STORAGE_QUOTA;
 		}
 		if (trState->options.reportConflictingKeys) {
-			tr.transaction.report_conflicting_keys = true;
+			trState->tr.transaction.report_conflicting_keys = true;
 		}
 
-		Future<Void> commitResult = tryCommit(trState, tr);
+		Future<Void> commitResult = tryCommit(trState, trState->tr);
 
 		if (isCheckingWrites) {
 			Promise<Void> committed;
-			checkWrites(trState, commitResult, committed, tr);
+			checkWrites(trState, commitResult, committed, trState->tr);
 			return committed.getFuture();
 		}
 		return commitResult;
@@ -7269,15 +7383,15 @@ ACTOR Future<Void> commitAndWatch(Transaction* self) {
 		self->getDatabase()->transactionTracingSample =
 		    (self->getCommittedVersion() % 60000000) < (60000000 * FLOW_KNOBS->TRACING_SAMPLE_RATE);
 
-		if (!self->watches.empty()) {
+		if (!self->trState->watches.empty()) {
 			self->setupWatches();
 		}
 
 		return Void();
 	} catch (Error& e) {
 		if (e.code() != error_code_actor_cancelled) {
-			if (!self->watches.empty()) {
-				self->cancelWatches(e);
+			if (!self->trState->watches.empty()) {
+				self->trState->cancelWatches(e);
 			}
 
 			self->trState->versionstampPromise.sendError(transaction_invalid_version());
@@ -7288,9 +7402,9 @@ ACTOR Future<Void> commitAndWatch(Transaction* self) {
 }
 
 Future<Void> Transaction::commit() {
-	ASSERT(!committing.isValid());
-	committing = commitAndWatch(this);
-	return committing;
+	ASSERT(!trState->committing.isValid());
+	trState->committing = commitAndWatch(this);
+	return trState->committing;
 }
 
 void Transaction::setOption(FDBTransactionOptions::Option option, Optional<StringRef> value) {
@@ -7479,7 +7593,7 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 		CODE_PROBE(true, "Adding link in FDBTransactionOptions::TRACE_PARENT");
 		span.setParent(parent.get());
 		trState->spanContext = span.context;
-		tr.spanContext = span.context;
+		trState->tr.spanContext = span.context;
 		break;
 	}
 
@@ -7541,14 +7655,14 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 			    .detail("Recommendation", "Use an idempotency id that's at least 16 bytes and less than 256 bytes");
 			throw e;
 		}
-		tr.idempotencyId = IdempotencyIdRef(tr.arena, IdempotencyIdRef(value.get()));
+		trState->tr.idempotencyId = IdempotencyIdRef(trState->tr.arena, IdempotencyIdRef(value.get()));
 		trState->automaticIdempotency = false;
 		break;
 	case FDBTransactionOptions::AUTOMATIC_IDEMPOTENCY:
 		validateOptionValueNotPresent(value);
-		if (!tr.idempotencyId.valid()) {
-			tr.idempotencyId = IdempotencyIdRef(
-			    tr.arena,
+		if (!trState->tr.idempotencyId.valid()) {
+			trState->tr.idempotencyId = IdempotencyIdRef(
+			    trState->tr.arena,
 			    IdempotencyIdRef(BinaryWriter::toValue(deterministicRandom()->randomUniqueID(), Unversioned())));
 		}
 		trState->automaticIdempotency = true;
@@ -7801,7 +7915,7 @@ double Transaction::getTagThrottledDuration() const {
 }
 
 Future<Standalone<StringRef>> Transaction::getVersionstamp() {
-	if (committing.isValid()) {
+	if (trState->committing.isValid()) {
 		return transaction_invalid_version();
 	}
 	return trState->versionstampPromise.getFuture();
@@ -7912,8 +8026,9 @@ Future<ProtocolVersion> DatabaseContext::getClusterProtocol(Optional<ProtocolVer
 }
 
 uint32_t Transaction::getSize() {
-	auto s = tr.transaction.mutations.expectedSize() + tr.transaction.read_conflict_ranges.expectedSize() +
-	         tr.transaction.write_conflict_ranges.expectedSize();
+	auto s = trState->tr.transaction.mutations.expectedSize() +
+	         trState->tr.transaction.read_conflict_ranges.expectedSize() +
+	         trState->tr.transaction.write_conflict_ranges.expectedSize();
 	return s;
 }
 
@@ -8382,7 +8497,12 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 			for (int i = 0; i < nLocs; i++) {
 				partBegin = (i == 0) ? keys.begin : locations[i].range.begin;
 				partEnd = (i == nLocs - 1) ? keys.end : locations[i].range.end;
-				SplitRangeRequest req(trState->getTenantInfo(), KeyRangeRef(partBegin, partEnd), chunkSize);
+				SplitRangeRequest req(trState->getTenantInfo(),
+				                      trState->readVersionFuture.isValid() && trState->readVersionFuture.isReady()
+				                          ? trState->readVersion()
+				                          : latestVersion,
+				                      KeyRangeRef(partBegin, partEnd),
+				                      chunkSize);
 				fReplies[i] = loadBalance(locations[i].locations->locations(),
 				                          &StorageServerInterface::getRangeSplitPoints,
 				                          req,
@@ -8413,9 +8533,8 @@ ACTOR Future<Standalone<VectorRef<KeyRef>>> getRangeSplitPoints(Reference<Transa
 			if (e.code() == error_code_wrong_shard_server || e.code() == error_code_all_alternatives_failed) {
 				trState->cx->invalidateCache(trState->tenant().mapRef(&Tenant::prefix), keys);
 				wait(delay(CLIENT_KNOBS->WRONG_SHARD_SERVER_DELAY, TaskPriority::DataDistribution));
-			} else if (e.code() == error_code_tenant_not_found && trState->hasTenant()) {
-				TraceEvent(SevWarn, "GetRangeSplitPointsSSVersionBehind").error(e);
-				throw;
+			} else if (e.code() == error_code_future_version) {
+				wait(delay(CLIENT_KNOBS->FUTURE_VERSION_RETRY_DELAY, TaskPriority::DataDistribution));
 			} else {
 				TraceEvent(SevError, "GetRangeSplitPoints").error(e);
 				throw;
@@ -9422,24 +9541,10 @@ void Transaction::checkDeferredError() const {
 	trState->cx->checkDeferredError();
 }
 
-Reference<TransactionLogInfo> Transaction::createTrLogInfoProbabilistically(const Database& cx) {
-	if (!cx->isError()) {
-		double clientSamplingProbability =
-		    cx->globalConfig->get<double>(fdbClientInfoTxnSampleRate, CLIENT_KNOBS->CSI_SAMPLING_PROBABILITY);
-		if (((networkOptions.logClientInfo.present() && networkOptions.logClientInfo.get()) || BUGGIFY) &&
-		    deterministicRandom()->random01() < clientSamplingProbability &&
-		    (!g_network->isSimulated() || !g_simulator->speedUpSimulation)) {
-			return makeReference<TransactionLogInfo>(TransactionLogInfo::DATABASE);
-		}
-	}
-
-	return Reference<TransactionLogInfo>();
-}
-
 void Transaction::setTransactionID(UID id) {
 	ASSERT(getSize() == 0);
 	trState->spanContext = SpanContext(id, trState->spanContext.spanID, trState->spanContext.m_Flags);
-	tr.spanContext = trState->spanContext;
+	trState->tr.spanContext = trState->spanContext;
 	span.context = trState->spanContext;
 }
 
@@ -11923,14 +12028,17 @@ Future<Void> DatabaseContext::waitPurgeGranulesComplete(Key purgeKey) {
 ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
                                      KeyRange originalRange,
                                      bool active,
-                                     Optional<Reference<Tenant>> tenant) {
+                                     Optional<Reference<Tenant>> tenant,
+                                     Optional<BulkLoadID> bulkLoadIDToCheck = Optional<BulkLoadID>()) {
 	state Database db(cx);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 
 	state KeyRange range = originalRange;
+	state int64_t tenantId = TenantInfo::INVALID_TENANT;
 	if (tenant.present()) {
 		wait(tenant.get()->ready());
 		range = range.withPrefix(tenant.get()->prefix());
+		tenantId = tenant.get()->id();
 	}
 
 	state Value value = active ? blobRangeActive : blobRangeInactive;
@@ -11947,8 +12055,19 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
-			     checkRangeLock(&tr->getTransaction(), range));
+			if (bulkLoadIDToCheck.present()) {
+				// bulk load happens while range lock set so bypass lock check, but check load status
+				BulkLoadIDKey bulkLoadKey = { tenantId, bulkLoadIDToCheck.get() };
+				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadKey));
+				if (!status.present()) {
+					throw bulk_load_not_found();
+				} else if (status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					throw bulk_load_invalid_state_transition();
+				}
+			} else {
+				wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
+				     checkRangeLock(&tr->getTransaction(), range));
+			}
 
 			Standalone<VectorRef<KeyRangeRef>> startBlobRanges = wait(getBlobRanges(&tr->getTransaction(), range, 1));
 
@@ -12109,6 +12228,21 @@ Future<Standalone<VectorRef<KeyRangeRef>>> DatabaseContext::listBlobbifiedRanges
                                                                                  int rangeLimit,
                                                                                  Optional<Reference<Tenant>> tenant) {
 	return listBlobbifiedRangesActor(Reference<DatabaseContext>::addRef(this), range, rangeLimit, tenant);
+}
+
+ACTOR Future<Void> blobbifyRangeForBulkLoadActor(Reference<DatabaseContext> cx,
+                                                 KeyRange keyRange,
+                                                 BulkLoadID id,
+                                                 Optional<Reference<Tenant>> tenant) {
+	state bool result = wait(setBlobRangeActor(cx, keyRange, true, tenant, id));
+	ASSERT(result);
+	return Void();
+}
+
+Future<Void> DatabaseContext::blobbifyRangeForBulkLoad(KeyRange keyRange,
+                                                       BulkLoadID id,
+                                                       Optional<Reference<Tenant>> tenant) {
+	return blobbifyRangeForBulkLoadActor(Reference<DatabaseContext>::addRef(this), keyRange, id, tenant);
 }
 
 ACTOR static Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>>

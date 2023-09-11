@@ -43,8 +43,8 @@ namespace TenantAPI {
 
 FDB_BOOLEAN_PARAM(CheckTenantTombstone);
 
-static const int TENANT_ID_PREFIX_MIN_VALUE = 0;
-static const int TENANT_ID_PREFIX_MAX_VALUE = 32767;
+static constexpr int TENANT_ID_PREFIX_MIN_VALUE = 0;
+static constexpr int TENANT_ID_PREFIX_MAX_VALUE = 32767;
 
 template <class Transaction>
 Future<Optional<TenantMapEntry>> tryGetTenantTransaction(Transaction tr, int64_t tenantId) {
@@ -215,7 +215,7 @@ Future<std::pair<Optional<TenantMapEntry>, bool>> createTenantTransaction(
 
 	RangeReadResult contents = wait(safeThreadFutureToFuture(prefixRangeFuture));
 	if (!contents.empty()) {
-		CODE_PROBE(hasTombstone, "Tenant creation conflict with existing data", probe::decoration::rare);
+		CODE_PROBE(true, "Tenant creation conflict with existing data", probe::decoration::rare);
 		throw tenant_prefix_allocator_conflict();
 	}
 

@@ -30,7 +30,7 @@
 
 #include "fdbcli/FlowLineNoise.h"
 
-#include "fdbclient/CoordinationInterface.h"
+#include "fdbclient/IClusterConnectionRecord.h"
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/StatusClient.h"
 #include "fdbclient/StorageServerInterface.h"
@@ -304,6 +304,9 @@ ACTOR Future<bool> idempotencyIdsCommandActor(Database cx, std::vector<StringRef
 
 // rangeconfig command
 ACTOR Future<bool> rangeConfigCommandActor(Database cx, std::vector<StringRef> tokens);
+
+// encrypt command
+ACTOR Future<bool> encryptCommandActor(Database cx, std::vector<StringRef> tokens);
 
 } // namespace fdb_cli
 

@@ -427,6 +427,9 @@ public:
 					return Void();
 				}
 			}
+			if (self->allowGetTeamBuggify && BUGGIFY_WITH_PROB(0.05)) {
+				bestOption.reset();
+			}
 			if (g_network->isSimulated() && !bestOption.present()) {
 				TraceEvent(SevDebug, "GetTeamReturnEmpty")
 				    .detail("Request", req.getDesc())
@@ -3045,17 +3048,22 @@ public:
 						}
 					}
 
-					TraceEvent("TotalDataInFlight", self->distributorId)
-					    .detail("Primary", self->primary)
+					TraceEvent e("TotalDataInFlight", self->distributorId);
+					e.detail("Primary", self->primary)
 					    .detail("TotalBytes", self->getDebugTotalDataInFlight())
 					    .detail("UnhealthyServers", self->unhealthyServers)
 					    .detail("ServerCount", self->server_info.size())
 					    .detail("StorageTeamSize", self->configuration.storageTeamSize)
 					    .detail("ZeroHealthy", self->zeroOptimalTeams.get())
-					    .detail("HighestPriority", highestPriority)
-					    .trackLatest(self->primary ? "TotalDataInFlight"
-					                               : "TotalDataInFlightRemote"); // This trace event's trackLatest
-					                                                             // lifetime is controlled by
+					    .detail("HighestPriority", highestPriority);
+
+					for (auto& it : self->largeTeamSizeShards) {
+						e.detail(fmt::format("ShardCountLargeTeam{}", it.first), it.second);
+					}
+
+					e.trackLatest(self->primary ? "TotalDataInFlight"
+					                            : "TotalDataInFlightRemote"); // This trace event's trackLatest
+					                                                          // lifetime is controlled by
 					// DataDistributor::totalDataInFlightEventHolder or
 					// DataDistributor::totalDataInFlightRemoteEventHolder.
 					// The track latest key we use here must match the key used in
@@ -3397,9 +3405,11 @@ void DDTeamCollection::updateTeamEligibility(const double inflightPenalty) {
 			bool lowCPU = team->hasLowerCpu(teamPivots.pivotCPU);
 			healthyCount++;
 
-			DisabledTraceEvent(SevDebug, "EligiblityTeamDebug")
-			    .detail("TeamId", team->getTeamID())
+			DisabledTraceEvent(SevDebug, "EligibilityTeamDebug")
+			    .detail("Team", team->getDesc())
 			    .detail("CPU", team->getAverageCPU())
+			    .detail("HasLowerLoadBytes", team->hasLowerLoadBytes(teamPivots.pivotLoadBytes, inflightPenalty))
+			    .detail("HasHealthyAvailableSpace", team->hasHealthyAvailableSpace(teamPivots.pivotAvailableSpaceRatio))
 			    .detail("AvailableSpace", team->getMinAvailableSpace())
 			    .detail("AvailableSpaceRatio", team->getMinAvailableSpaceRatio());
 
@@ -3459,10 +3469,11 @@ void DDTeamCollection::updateTeamPivots(const double inflightPenalty) {
 		updateCpuPivot(teamAverageCPU);
 		updateMedianAvailableSpacePivot(teamAvailableSpace);
 		updateLoadBytesPivot(teamLoadBytes);
-		updateTeamEligibility(inflightPenalty);
 		if (SERVER_KNOBS->DD_REEVALUATION_ENABLED) {
 			updateWriteLoadPivot(teamWriteLoad);
 		}
+
+		updateTeamEligibility(inflightPenalty);
 		teamPivots.lastPivotsUpdate = now();
 	}
 }
@@ -4322,11 +4333,14 @@ Reference<TCTeamInfo> DDTeamCollection::buildLargeTeam(int teamSize) {
 	}
 
 	int totalShardCount = 0;
+	largeTeamSizeShards.clear();
 	for (auto& team : largeTeams) {
 		const auto servers = team->getServerIDs();
 		const int shardCount =
 		    shardsAffectedByTeamFailure->getNumberOfShards(ShardsAffectedByTeamFailure::Team(servers, primary));
 		totalShardCount += shardCount;
+		largeTeamSizeShards[servers.size()] += shardCount;
+
 		if (team->isHealthy()) {
 			for (auto& it : servers) {
 				auto f = server_priority.find(it);
