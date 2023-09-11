@@ -40,6 +40,7 @@
 #include "fdbserver/WorkerInterface.actor.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/NativeAPI.actor.h"
+#include "fdbclient/TransactionState.h"
 #include "flow/Trace.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 

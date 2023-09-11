@@ -25,7 +25,6 @@
 #elif !defined(METACLUSTER_UPDATETENANTGROUPS_ACTOR_H)
 #define METACLUSTER_UPDATETENANTGROUPS_ACTOR_H
 
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/Tenant.h"

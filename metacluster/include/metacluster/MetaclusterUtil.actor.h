@@ -25,7 +25,6 @@
 #elif !defined(METACLUSTER_METACLUSTERUTIL_ACTOR_H)
 #define METACLUSTER_METACLUSTERUTIL_ACTOR_H
 
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/NativeAPI.actor.h"

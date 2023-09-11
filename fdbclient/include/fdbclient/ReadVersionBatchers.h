@@ -6,6 +6,7 @@
 
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/PImpl.h"
+#include "fdbclient/CommitProxyInterface.h"
 
 // This class is used to batch read version requests from multiple transactions
 // and send them to GRV proxies as GetReadVersionRequests.

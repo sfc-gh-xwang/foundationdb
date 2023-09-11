@@ -34,6 +34,7 @@
 #include <numeric>
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
+#include "fdbclient/TransactionState.h"
 #include <inttypes.h>
 #include <map>
 

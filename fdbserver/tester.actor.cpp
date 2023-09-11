@@ -54,6 +54,7 @@
 #include "fdbserver/QuietDatabase.h"
 #include "fdbclient/MonitorLeader.h"
 #include "fdbclient/ManagementAPI.actor.h"
+#include "fdbclient/TransactionState.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/MoveKeys.actor.h"
 #include "flow/Platform.h"
