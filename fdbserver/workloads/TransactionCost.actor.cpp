@@ -75,7 +75,7 @@ class TransactionCostWorkload : public TestWorkload {
 		}
 	}
 
-	static int64_t largeValueReadCost() const { return 2 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
+	static int64_t largeValueReadCost() { return 2 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE; }
 
 	class ReadLargeValueTest : public ITest {
 	public:
