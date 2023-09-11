@@ -112,28 +112,6 @@ ACTOR Future<RangeResult> readBlobGranule(BlobGranuleChunkRef chunk,
 	}
 }
 
-// TODO probably should add things like limit/bytelimit at some point?
-ACTOR Future<Void> readBlobGranules(BlobGranuleFileRequest request,
-                                    BlobGranuleFileReply reply,
-                                    Reference<BlobConnectionProvider> bstore,
-                                    PromiseStream<RangeResult> results) {
-	// TODO for large amount of chunks, this should probably have some sort of buffer limit like ReplyPromiseStream.
-	// Maybe just use ReplyPromiseStream instead of PromiseStream?
-	try {
-		state int i;
-		for (i = 0; i < reply.chunks.size(); i++) {
-			RangeResult chunkResult = wait(
-			    readBlobGranule(reply.chunks[i], request.keyRange, request.beginVersion, request.readVersion, bstore));
-			results.send(std::move(chunkResult));
-		}
-		results.sendError(end_of_stream());
-	} catch (Error& e) {
-		results.sendError(e);
-	}
-
-	return Void();
-}
-
 // Return true if a given range is fully covered by blob chunks
 bool isRangeFullyCovered(KeyRange range, Standalone<VectorRef<BlobGranuleChunkRef>> blobChunks) {
 	std::vector<KeyRangeRef> blobRanges;
