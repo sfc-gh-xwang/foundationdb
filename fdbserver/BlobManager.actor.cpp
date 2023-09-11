@@ -233,6 +233,7 @@ struct RangeAssignment {
 struct BlobWorkerInfo {
 	int numGranulesAssigned;
 	int recentGranulesAssigned;
+	Promise<Void> signalDead;
 
 	BlobWorkerInfo(int numGranulesAssigned = 0, int recentGranulesAssigned = 0)
 	  : numGranulesAssigned(numGranulesAssigned),
@@ -1036,7 +1037,9 @@ ACTOR Future<UID> pickWorkerForAssign(Reference<BlobManagerData> bmData,
 }
 
 // circular dependency between handleRangeAssign and doRangeAssignment
-static bool handleRangeAssign(Reference<BlobManagerData> bmData, RangeAssignment assignment);
+static Future<Void> handleRangeAssign(Reference<BlobManagerData> bmData,
+                                      RangeAssignment assignment,
+                                      bool* didAssign = nullptr);
 
 ACTOR Future<Void> doRangeAssignment(Reference<BlobManagerData> bmData,
                                      RangeAssignment assignment,
@@ -1165,7 +1168,16 @@ ACTOR Future<Void> doRangeAssignment(Reference<BlobManagerData> bmData,
 
 			// if that worker isn't alive anymore, this is a noop
 			if (bmData->workersById.count(workerID.get())) {
-				wait(bmData->workersById[workerID.get()].revokeBlobRangeRequest.getReply(req));
+				Future<Void> workerIsDead = Never();
+				if (req.dispose) {
+					auto it = bmData->workerStats.find(workerID.get());
+					ASSERT(it != bmData->workerStats.end());
+					workerIsDead = it->second.signalDead.getFuture();
+				}
+				choose {
+					when(wait(bmData->workersById[workerID.get()].revokeBlobRangeRequest.getReply(req))) {}
+					when(wait(workerIsDead)) {}
+				}
 			} else {
 				return Void();
 			}
@@ -1318,11 +1330,19 @@ ACTOR Future<Void> doRangeAssignment(Reference<BlobManagerData> bmData,
 	return Void();
 }
 
-static bool handleRangeIsAssign(Reference<BlobManagerData> bmData, RangeAssignment assignment, int64_t seqNo) {
+static Future<Void> handleRangeIsAssign(Reference<BlobManagerData> bmData,
+                                        RangeAssignment assignment,
+                                        int64_t seqNo,
+                                        bool* didAssign) {
 	// Ensure range isn't currently assigned anywhere, and there is only 1 intersecting range
 	auto currentAssignments = bmData->workerAssignments.intersectingRanges(assignment.keyRange);
 	int count = 0;
 	UID workerId;
+	Future<Void> result = Future<Void>(Void());
+	if (didAssign) {
+		*didAssign = false;
+	}
+
 	for (auto i = currentAssignments.begin(); i != currentAssignments.end(); ++i) {
 		if (assignment.assign.get().type == AssignRequestType::Continue) {
 			ASSERT(assignment.worker.present());
@@ -1347,7 +1367,7 @@ static bool handleRangeIsAssign(Reference<BlobManagerData> bmData, RangeAssignme
 				    .detail("ReassignWorker", assignment.worker.get())
 				    .detail("ExistingRange", KeyRangeRef(i.begin(), i.end()))
 				    .detail("ExistingWorker", i.cvalue());
-				return false;
+				return result;
 			}
 		}
 		count++;
@@ -1374,12 +1394,13 @@ static bool handleRangeIsAssign(Reference<BlobManagerData> bmData, RangeAssignme
 		if (assignment.assign.get().type == AssignRequestType::Continue) {
 			// if it is a continue, don't cancel an in-flight re-assignment. Send to actor collection instead of
 			// assignsInProgress
-			bmData->addActor.send(doRangeAssignment(bmData, assignment, workerId, bmData->epoch, seqNo));
+			result = doRangeAssignment(bmData, assignment, workerId, bmData->epoch, seqNo);
+			bmData->addActor.send(result);
 		} else {
 			if (!forcePurging) {
+				result = doRangeAssignment(bmData, assignment, workerId, bmData->epoch, seqNo);
 				// FIXME: not handling error propagation correctly here
-				bmData->assignsInProgress.insert(assignment.keyRange,
-				                                 doRangeAssignment(bmData, assignment, workerId, bmData->epoch, seqNo));
+				bmData->assignsInProgress.insert(assignment.keyRange, result);
 			}
 			if (bmData->workerStats.count(workerId)) {
 				bmData->workerStats[workerId].numGranulesAssigned += 1;
@@ -1390,15 +1411,26 @@ static bool handleRangeIsAssign(Reference<BlobManagerData> bmData, RangeAssignme
 		bmData->workerAssignments.insert(assignment.keyRange, UID());
 		ASSERT(assignment.assign.get().type != AssignRequestType::Continue);
 		if (!forcePurging) {
+			result = doRangeAssignment(bmData, assignment, Optional<UID>(), bmData->epoch, seqNo);
 			// FIXME: not handling error propagation correctly here
-			bmData->assignsInProgress.insert(
-			    assignment.keyRange, doRangeAssignment(bmData, assignment, Optional<UID>(), bmData->epoch, seqNo));
+			bmData->assignsInProgress.insert(assignment.keyRange, result);
 		}
 	}
-	return true;
+	if (didAssign) {
+		*didAssign = true;
+	}
+	return result;
 }
 
-static bool handleRangeIsRevoke(Reference<BlobManagerData> bmData, RangeAssignment assignment, int64_t seqNo) {
+static Future<Void> handleRangeIsRevoke(Reference<BlobManagerData> bmData,
+                                        RangeAssignment assignment,
+                                        int64_t seqNo,
+                                        bool* didAssign) {
+	Future<Void> result = Future<Void>(Void());
+	if (didAssign) {
+		*didAssign = false;
+	}
+
 	if (assignment.worker.present()) {
 		// revoke this specific range from this specific worker. Either part of recovery or failing a worker
 		if (bmData->workerStats.count(assignment.worker.get())) {
@@ -1409,7 +1441,8 @@ static bool handleRangeIsRevoke(Reference<BlobManagerData> bmData, RangeAssignme
 		if (existingRange.range() == assignment.keyRange && existingRange.cvalue() == assignment.worker.get()) {
 			bmData->workerAssignments.insert(assignment.keyRange, UID());
 		}
-		bmData->addActor.send(doRangeAssignment(bmData, assignment, assignment.worker.get(), bmData->epoch, seqNo));
+		result = doRangeAssignment(bmData, assignment, assignment.worker.get(), bmData->epoch, seqNo);
+		bmData->addActor.send(result);
 	} else {
 		auto currentAssignments = bmData->workerAssignments.intersectingRanges(assignment.keyRange);
 		for (auto& it : currentAssignments) {
@@ -1447,25 +1480,30 @@ static bool handleRangeIsRevoke(Reference<BlobManagerData> bmData, RangeAssignme
 				bmData->workerStats[it.value()].numGranulesAssigned -= 1;
 			}
 
+			if (didAssign) {
+				*didAssign = true;
+			}
 			// revoke the range for the worker that owns it, not the worker specified in the revoke
-			bmData->addActor.send(doRangeAssignment(bmData, assignment, it.value(), bmData->epoch, seqNo));
+			Future<Void> partRevoke = doRangeAssignment(bmData, assignment, it.value(), bmData->epoch, seqNo);
+			result = result && partRevoke;
+			bmData->addActor.send(partRevoke);
 		}
 		bmData->workerAssignments.insert(assignment.keyRange, UID());
 	}
 
 	bmData->assignsInProgress.cancel(assignment.keyRange);
-	return true;
+	return result;
 }
 
-static bool handleRangeAssign(Reference<BlobManagerData> bmData, RangeAssignment assignment) {
+static Future<Void> handleRangeAssign(Reference<BlobManagerData> bmData, RangeAssignment assignment, bool* didAssign) {
 	int64_t seqNo = bmData->seqNo;
 	bmData->seqNo++;
 
 	// modify the in-memory assignment data structures, and send request off to worker
 	if (assignment.isAssign) {
-		return handleRangeIsAssign(bmData, assignment, seqNo);
+		return handleRangeIsAssign(bmData, assignment, seqNo, didAssign);
 	} else {
-		return handleRangeIsRevoke(bmData, assignment, seqNo);
+		return handleRangeIsRevoke(bmData, assignment, seqNo, didAssign);
 	}
 }
 
@@ -2165,7 +2203,8 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 		raContinue.worker = currentWorkerId;
 		raContinue.keyRange = granuleRange;
 		raContinue.assign = RangeAssignmentData(AssignRequestType::Continue); // continue assignment and re-snapshot
-		bool reassignSuccess = handleRangeAssign(bmData, raContinue);
+		bool reassignSuccess;
+		handleRangeAssign(bmData, raContinue, &reassignSuccess);
 
 		// set updated boundary evaluation to avoid racing calls getting unblocked after here
 		// We need to only revoke based on non-continue seqno, but ignore duplicate calls based on continue seqno
@@ -3117,7 +3156,12 @@ ACTOR Future<Void> killBlobWorker(Reference<BlobManagerData> bmData, BlobWorkerI
 	    .detail("WorkerId", bwId)
 	    .detail("Registered", registered);
 
+	state Promise<Void> signalDead;
+
 	if (registered) {
+		auto it = bmData->workerStats.find(bwId);
+		ASSERT(it != bmData->workerStats.end());
+		signalDead = it->second.signalDead;
 		bmData->deadWorkers.insert(bwId);
 		bmData->workerStats.erase(bwId);
 		bmData->workersById.erase(bwId);
@@ -3184,6 +3228,8 @@ ACTOR Future<Void> killBlobWorker(Reference<BlobManagerData> bmData, BlobWorkerI
 	if (registered) {
 		bmData->deadWorkers.erase(bwInterf.id());
 	}
+
+	signalDead.send(Void());
 
 	TraceEvent("KillBlobWorkerComplete", bmData->id)
 	    .detail("Epoch", bmData->epoch)
@@ -5138,7 +5184,44 @@ ACTOR Future<Void> deleteActiveChangeFeeds(Reference<BlobManagerData> bmData, Pr
 			}
 		}
 	}
+	return Void();
+}
 
+ACTOR Future<Void> revokeRangeFromAll(Reference<BlobManagerData> self,
+                                      KeyRangeRef range,
+                                      std::set<Key>* knownBoundariesPurged,
+                                      UID purgeID,
+                                      Version purgeVersion) {
+	state std::vector<Future<Void>> allPurges;
+	// revoke range from all active blob workers, both targeted at the current owner each BM knows for the granule,
+	// and just blanket revoke the whole range from all known workers
+	// if purge covers multiple blobbified ranges, revoke each separately
+	auto knownRanges = self->knownBlobRanges.intersectingRanges(range);
+	for (auto& it : knownRanges) {
+		if (it.cvalue()) {
+			RangeAssignment ra;
+			ra.isAssign = false;
+			ra.keyRange = range & it.range();
+			ra.revoke = RangeRevokeData(true); // dispose=true
+			if (ra.keyRange.begin > range.begin) {
+				knownBoundariesPurged->insert(ra.keyRange.begin);
+			}
+			if (ra.keyRange.end < range.end) {
+				knownBoundariesPurged->insert(ra.keyRange.end);
+			}
+			allPurges.push_back(handleRangeAssign(self, ra));
+		}
+	}
+	for (auto& it : self->workersById) {
+		RangeAssignment ra;
+		ra.isAssign = false;
+		ra.keyRange = range;
+		ra.worker = it.first;
+		ra.revoke = RangeRevokeData(true); // dispose=true
+		allPurges.push_back(handleRangeAssign(self, ra));
+	}
+
+	wait(waitForAll(allPurges));
 	return Void();
 }
 
@@ -5313,31 +5396,15 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 
 	state std::set<Key> knownBoundariesPurged;
 
+	if (force) {
+		//  Do AFTER we copy set of active ranges to purge
+		wait(revokeRangeFromAll(self, range, &knownBoundariesPurged, purgeID, purgeVersion));
+	}
+
 	TraceEvent(SevDebug, "PurgeGranulesTraverseBegin", self->id)
 	    .detail("Epoch", self->epoch)
 	    .detail("PurgeVersion", purgeVersion)
 	    .detail("PurgeID", purgeID);
-
-	if (force) {
-		// revoke range from all active blob workers - AFTER we copy set of active ranges to purge
-		// if purge covers multiple blobbified ranges, revoke each separately
-		auto knownRanges = self->knownBlobRanges.intersectingRanges(range);
-		for (auto& it : knownRanges) {
-			if (it.cvalue()) {
-				RangeAssignment ra;
-				ra.isAssign = false;
-				ra.keyRange = range & it.range();
-				ra.revoke = RangeRevokeData(true); // dispose=true
-				if (ra.keyRange.begin > range.begin) {
-					knownBoundariesPurged.insert(ra.keyRange.begin);
-				}
-				if (ra.keyRange.end < range.end) {
-					knownBoundariesPurged.insert(ra.keyRange.end);
-				}
-				handleRangeAssign(self, ra);
-			}
-		}
-	}
 
 	// nuke all active change feeds early on in the process to remove the largest source of impact on the rest of the
 	// system as quickly as we can
