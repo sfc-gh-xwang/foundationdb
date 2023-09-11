@@ -566,6 +566,7 @@ public:
 
 		// Non-verifying header parse just to initialize component pointers
 		p->postReadHeader(invalidPhysicalPageID, false);
+		p->encryptionDomainId = encryptionDomainId;
 		p->encryptionKey = encryptionKey;
 
 		return Reference<ArenaPage>(p);

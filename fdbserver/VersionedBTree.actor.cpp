@@ -5131,6 +5131,9 @@ public:
 		page->init(self->m_encodingType, PageType::BTreeNode, 1);
 		if (page->isEncrypted()) {
 			ArenaPage::EncryptionKey k = wait(self->m_keyProvider->getLatestDefaultEncryptionKey());
+			if (self->m_keyProvider->enableEncryptionDomain()) {
+				page->encryptionDomainId = self->m_keyProvider->getDefaultEncryptionDomainId();
+			}
 			page->encryptionKey = k;
 		}
 
@@ -5373,9 +5376,6 @@ public:
 			debug_printf("new root %s\n", toString(self->m_header.root).c_str());
 
 			Reference<ArenaPage> page = wait(makeEmptyRoot(self));
-			if (self->m_keyProvider->enableEncryptionDomain()) {
-				page->encryptionDomainId = self->m_keyProvider->getDefaultEncryptionDomainId();
-			}
 
 			// Newly allocated page so logical id = physical id and it's a new empty root so no parent
 			page->setLogicalPageInfo(self->m_header.root.front(), invalidLogicalPageID);
@@ -7807,9 +7807,6 @@ private:
 				self->m_header.height = 1;
 
 				Reference<ArenaPage> page = wait(makeEmptyRoot(self));
-				if (self->m_keyProvider->enableEncryptionDomain()) {
-					page->encryptionDomainId = self->m_keyProvider->getDefaultEncryptionDomainId();
-				}
 				// Newly allocated page so logical id = physical id and there is no parent as this is a new root
 				page->setLogicalPageInfo(rootNodeLink.front(), invalidLogicalPageID);
 				self->m_pager->updatePage(PagerEventReasons::Commit, self->m_header.height, rootNodeLink, page);
