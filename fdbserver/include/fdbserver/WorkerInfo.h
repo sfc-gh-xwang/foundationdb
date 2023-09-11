@@ -67,6 +67,7 @@ struct WorkerInfo : NonCopyable {
 	    priorityInfo(r.priorityInfo),
 	    details(std::move(r.details)),
 	    issues(r.issues) {}
+
 	void operator=(WorkerInfo&& r) noexcept {
 		watcher = std::move(r.watcher);
 		reply = std::move(r.reply);

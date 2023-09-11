@@ -23,7 +23,6 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/ConfigKnobs.h"
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbrpc/fdbrpc.h"
 #include "flow/flow.h"
 

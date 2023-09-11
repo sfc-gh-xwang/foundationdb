@@ -378,7 +378,8 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 
 	auto domainKeyItr = domainKeyMap.find(domainId);
 	ASSERT(domainKeyItr != domainKeyMap.end());
-	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(domainKeyItr->second, *arena);
+	state Reference<BlobCipherKey> textCipherKey = domainKeyItr->second;
+	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(textCipherKey, *arena);
 
 	TextAndHeaderCipherKeys systemCipherKeys =
 	    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestSystemEncryptCipherKeys(bwData->dbInfo,
@@ -386,8 +387,10 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 	ASSERT(systemCipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(systemCipherKeys.cipherHeaderKey, *arena);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, *arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(algo);
+	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
+	generateIV(algo, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
 		TraceEvent(SevDebug, "GetLatestGranuleCipherKey")
@@ -450,7 +453,13 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
-	ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
+		ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
+	} else {
+		ASSERT_EQ(ivRef.size(), AesGcmParams::ivSize);
+	}
 	cipherKeysCtx.ivRef = StringRef(*arena, ivRef);
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
@@ -2355,6 +2364,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 		metadata->bufferedDeltaVersion = startVersion;
 		metadata->knownCommittedVersion = startVersion;
 		metadata->resetReadStats();
+		metadata->isBulkLoadDirty = startState.isBulkLoading; // FIXME: races with this?
 
 		Reference<ChangeFeedData> cfData = makeReference<ChangeFeedData>(bwData->db.getPtr());
 
@@ -3914,6 +3924,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			if (!metadata->cancelled.canBeSet()) {
 				throw wrong_shard_server();
 			}
+			bool canReadDirty = req.readOptions.present() && req.readOptions->canReadDirty;
+			if (metadata->isBulkLoadDirty && !canReadDirty) {
+				CODE_PROBE(true, "BW rejected dirty read while bulk loading");
+				throw wrong_shard_server();
+			}
 
 			state std::vector<std::pair<KeyRange, GranuleFiles>> rangeGranulePair;
 
@@ -4484,6 +4499,17 @@ ACTOR Future<GranuleFiles> loadParentGranuleForMergeSnapshot(Transaction* tr, Ke
 	return prevFiles;
 }
 
+ACTOR Future<bool> isRangeBulkLoading(Transaction* tr, KeyRange range) {
+	Optional<BulkLoadMetadata::RangeMap::RangeValue> bulkLoadRange =
+	    wait(BulkLoadMetadata::rangeMap().getRangeForKey(tr, range.begin));
+	if (!bulkLoadRange.present()) {
+		return false;
+	}
+	ASSERT(bulkLoadRange->range.begin <= range.begin);
+	ASSERT(bulkLoadRange->range.end >= range.end);
+	return !bulkLoadRange->value.empty();
+}
+
 // FIXME: move this up by other granule state stuff like BGUF
 ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, AssignBlobRangeRequest req) {
 	ASSERT(req.type != AssignRequestType::Continue);
@@ -4514,6 +4540,7 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 			state GranuleStartState info;
 			info.changeFeedStartVersion = invalidVersion;
 
+			state Future<bool> fIsBulkLoading = isRangeBulkLoading(&tr, req.keyRange);
 			state Future<ValueReadResult> fLockValue = tr.get(lockKey);
 			state Future<ForcedPurgeState> fForcedPurgeState = getForcePurgedState(&tr, req.keyRange);
 			Reference<BlobRestoreController> restoreController =
@@ -4739,6 +4766,7 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 					}
 				}
 			}
+			wait(store(info.isBulkLoading, fIsBulkLoading));
 			wait(tr.commit());
 			bwData->addGRVHistory(tr.getReadVersion().get());
 

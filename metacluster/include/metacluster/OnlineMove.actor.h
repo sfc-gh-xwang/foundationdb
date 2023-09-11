@@ -1,0 +1,191 @@
+/*
+ * OnlineMove.actor.h
+ * Copyright (c) 2023 Snowflake Computing
+ */
+#pragma once
+#if defined(NO_INTELLISENSE) && !defined(METACLUSTER_ONLINE_MOVE_ACTOR_G_H)
+#define METACLUSTER_ONLINE_MOVE_ACTOR_G_H
+#include "metacluster/OnlineMove.actor.g.h"
+#elif !defined(METACLUSTER_ONLINE_MOVE_ACTOR_H)
+#define METACLUSTER_ONLINE_MOVE_ACTOR_H
+
+#include "fdbclient/IClientApi.h"
+#include "fdbclient/TenantBalancer.h"
+#include "fdbclient/TenantBalancerInterface.h"
+#include "flow/actorcompiler.h" // has to be last include
+
+namespace metacluster {
+
+namespace internal {
+ACTOR
+template <typename IDatabase>
+static Future<std::pair<Optional<TenantBalancerInterface>, Future<Void>>> getTenantBalancerInterface(
+    Reference<IDatabase> db) {
+	state Reference<ITransaction> tr = db->createTransaction();
+	state Optional<TenantBalancerInterface> interf;
+	state Future<Void> onTbiChanged = Never();
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			wait(store(interf, TenantBalancerMetadata::getTenantBalancerInterface().get(tr)));
+			state ThreadFuture<Void> threadFuture = TenantBalancerMetadata::getTenantBalancerInterface().watch(tr);
+			onTbiChanged = safeThreadFutureToFuture(threadFuture);
+			wait(safeThreadFutureToFuture(tr->commit()));
+			break;
+		} catch (Error& e) {
+			wait(safeThreadFutureToFuture(tr->onError(e)));
+		}
+	}
+	return std::make_pair(interf, onTbiChanged);
+}
+} // namespace internal
+
+namespace online_movement {
+
+ACTOR
+template <typename IDatabase>
+static Future<Void> startMoveTenantGroup(IDatabase managementDb,
+                                         TenantGroupName tenantGroup,
+                                         ClusterName dstClusterName) {
+	state StartMoveTenantGroupRequest req(tenantGroup, dstClusterName);
+	state Future<Void> init = Void();
+	state Future<ErrorOr<StartMoveTenantGroupReply>> replyFuture = Never();
+	try {
+		state Optional<TenantBalancerInterface> tbi;
+		state Future<Void> onTbiChanged = Never();
+		loop choose {
+			when(ErrorOr<StartMoveTenantGroupReply> reply =
+			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+				if (reply.isError()) {
+					throw reply.getError();
+				}
+				break;
+			}
+			when(wait(onTbiChanged || init)) {
+				init = Never();
+				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
+				    wait(internal::getTenantBalancerInterface(managementDb));
+				tbi = res.first;
+				onTbiChanged = res.second;
+				replyFuture = tbi.present() ? tbi.get().startMoveTenantGroup.tryGetReply(req) : Never();
+			}
+		}
+	} catch (Error& e) {
+		if (e.code() == error_code_actor_cancelled) {
+			throw;
+		}
+	}
+	return Void();
+}
+
+ACTOR
+template <typename IDatabase>
+static Future<TenantMovementStatus> getTenantMovementStatus(IDatabase managementDb, TenantGroupName tenantGroup) {
+	state GetMovementStatusRequest req(tenantGroup);
+	state Future<Void> init = Void();
+	state Future<ErrorOr<GetMovementStatusReply>> replyFuture = Never();
+	state TenantMovementStatus status;
+	try {
+		state Optional<TenantBalancerInterface> tbi;
+		state Future<Void> onTbiChanged = Never();
+		loop choose {
+			when(ErrorOr<GetMovementStatusReply> reply =
+			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+				if (reply.isError()) {
+					throw reply.getError();
+				}
+				status = reply.get().movementStatus;
+				break;
+			}
+			when(wait(onTbiChanged || init)) {
+				init = Never();
+				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
+				    wait(internal::getTenantBalancerInterface(managementDb));
+				tbi = res.first;
+				onTbiChanged = res.second;
+				replyFuture = tbi.present() ? tbi.get().getMovementStatus.tryGetReply(req) : Never();
+			}
+		}
+	} catch (Error& e) {
+		if (e.code() == error_code_actor_cancelled) {
+			throw;
+		}
+	}
+	return status;
+}
+
+ACTOR
+template <typename IDatabase>
+static Future<std::vector<TenantMovementInfo>> listMovements(IDatabase managementDb) {
+	state ListMovementsRequest req;
+	state Future<Void> init = Void();
+	state Future<ErrorOr<ListMovementsReply>> replyFuture = Never();
+	state std::vector<TenantMovementInfo> tenantMovementInfo;
+	try {
+		state Optional<TenantBalancerInterface> tbi;
+		state Future<Void> onTbiChanged = Never();
+		loop choose {
+			when(ErrorOr<ListMovementsReply> reply =
+			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+				if (reply.isError()) {
+					throw reply.getError();
+				}
+				tenantMovementInfo = reply.get().movements;
+				break;
+			}
+			when(wait(onTbiChanged || init)) {
+				init = Never();
+				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
+				    wait(internal::getTenantBalancerInterface(managementDb));
+				tbi = res.first;
+				onTbiChanged = res.second;
+				replyFuture = tbi.present() ? tbi.get().listMovements.tryGetReply(req) : Never();
+			}
+		}
+	} catch (Error& e) {
+		if (e.code() == error_code_actor_cancelled) {
+			throw;
+		}
+	}
+	return tenantMovementInfo;
+}
+
+ACTOR
+template <typename IDatabase>
+static Future<Void> abortTenantMovement(IDatabase managementDb, TenantGroupName tenantGroup) {
+	state AbortMovementRequest req(tenantGroup);
+	state Future<Void> init = Void();
+	state Future<ErrorOr<AbortMovementReply>> replyFuture = Never();
+	try {
+		state Optional<TenantBalancerInterface> tbi;
+		state Future<Void> onTbiChanged = Never();
+		loop choose {
+			when(ErrorOr<AbortMovementReply> reply =
+			         wait(timeoutError(replyFuture, CLIENT_KNOBS->TENANT_BALANCER_REQUEST_TIMEOUT))) {
+				if (reply.isError()) {
+					throw reply.getError();
+				}
+				break;
+			}
+			when(wait(onTbiChanged || init)) {
+				init = Never();
+				std::pair<Optional<TenantBalancerInterface>, Future<Void>> res =
+				    wait(internal::getTenantBalancerInterface(managementDb));
+				tbi = res.first;
+				onTbiChanged = res.second;
+				replyFuture = tbi.present() ? tbi.get().abortMovement.tryGetReply(req) : Never();
+			}
+		}
+	} catch (Error& e) {
+		if (e.code() == error_code_actor_cancelled) {
+			throw;
+		}
+	}
+	return Void();
+}
+
+} // namespace online_movement
+} // namespace metacluster
+
+#include "flow/unactorcompiler.h"
+#endif

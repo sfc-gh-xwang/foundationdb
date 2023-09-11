@@ -23,6 +23,7 @@
 
 #include "fdbrpc/Stats.h"
 
+#include "fdbclient/FDBTypes.h"
 #include "fdbclient/Knobs.h"
 #include "flow/Arena.h"
 #include "flow/EncryptUtils.h"
@@ -57,6 +58,9 @@
 #if defined(HAVE_WOLFSSL)
 #include <wolfssl/options.h>
 #endif
+
+using EncryptCipherNonce = uint128_t;
+static_assert(sizeof(EncryptCipherNonce) == 16, "Invalid Nonce Size");
 
 #define AES_256_KEY_LENGTH 32
 #define AES_256_CTR_IV_LENGTH 16
@@ -336,9 +340,15 @@ struct AesWithAuthV1 {
 	}
 };
 
-struct AesGcmV1 {
+struct AesGcmParams {
 	static constexpr int authTokenSize = AES_256_GCM_TAG_LENGTH;
 	static constexpr int ivSize = AES_256_GCM_IV_LENGTH;
+
+	static std::string authAlgoName() { return "Gcm"; }
+	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_GCM_AUTH_VERSION; }
+};
+
+struct AesGcmV1 {
 	using Self = AesGcmV1;
 
 	// Serializable fields
@@ -348,9 +358,9 @@ struct AesGcmV1 {
 	// Text cipher Key Check Value
 	EncryptCipherKeyCheckValue textKCV;
 	// Initialization vector
-	uint8_t iv[ivSize];
+	uint8_t iv[AesGcmParams::ivSize];
 	// Authentication token
-	uint8_t authToken[authTokenSize];
+	uint8_t authToken[AesGcmParams::authTokenSize];
 
 	AesGcmV1() = default;
 	AesGcmV1(const BlobCipherDetails& textDetails,
@@ -359,28 +369,27 @@ struct AesGcmV1 {
 	         const int ivLen)
 	  : cipherTextDetails(textDetails),
 	    textKCV(tKCV) {
-		ASSERT_EQ(ivLen, ivSize);
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 		memcpy(&iv[0], ivBuf, ivLen);
-		memset(&authToken[0], 0, authTokenSize);
+		memset(&authToken[0], 0, AesGcmParams::authTokenSize);
 	}
 
 	bool operator==(const Self& o) const {
 		return cipherTextDetails == o.cipherTextDetails && textKCV == o.textKCV &&
-		       memcmp(&iv[0], &o.iv[0], ivSize) == 0 && memcmp(&authToken[0], &o.authToken[0], authTokenSize) == 0;
+		       memcmp(&iv[0], &o.iv[0], AesGcmParams::ivSize) == 0 &&
+		       memcmp(&authToken[0], &o.authToken[0], AesGcmParams::authTokenSize) == 0;
 	}
 
 	static uint32_t getSize() {
-		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + ivSize + authTokenSize;
+		return BlobCipherDetails::getSize() + sizeof(EncryptCipherKeyCheckValue) + AesGcmParams::ivSize +
+		       AesGcmParams::authTokenSize;
 	}
-
-	static std::string authAlgoName() { return "AesGcm"; }
-	static uint8_t getDefaultHeaderVersion() { return CLIENT_KNOBS->ENCRYPT_HEADER_AES_GCM_AUTH_VERSION; }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, cipherTextDetails, textKCV);
-		ar.serializeBytes(iv, ivSize);
-		ar.serializeBytes(authToken, authTokenSize);
+		ar.serializeBytes(iv, AesGcmParams::ivSize);
+		ar.serializeBytes(authToken, AesGcmParams::authTokenSize);
 	}
 };
 
@@ -392,11 +401,11 @@ struct AesGcm {
 	// List of supported versions.
 	std::variant<AesGcmV1> headerVersions;
 
-	AesGcm() { ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion()); }
+	AesGcm() { ASSERT_EQ(1, AesGcmParams::getDefaultHeaderVersion()); }
 
 	AesGcm(AesGcmV1& v) : headerVersions(v) {
 		// Only V1 is supported
-		ASSERT_EQ(1, AesGcmV1::getDefaultHeaderVersion());
+		ASSERT_EQ(1, AesGcmParams::getDefaultHeaderVersion());
 	}
 
 	static uint32_t getSize() {
@@ -418,7 +427,7 @@ struct AesGcm {
 		serializer(ar, version);
 		if (ar.isDeserializing && version != 1) {
 			TraceEvent(SevWarn, "BlobCipherEncryptHeaderUnsupportedAlgoHeaderVersion")
-			    .detail("HeaderType", AesGcmV1::authAlgoName())
+			    .detail("HeaderType", AesGcmParams::authAlgoName())
 			    .detail("Version", version);
 			throw not_implemented();
 		}
@@ -626,11 +635,11 @@ struct BlobCipherEncryptHeaderRef {
 	EncryptCipherDomainId getDomainId() const;
 	EncryptHeaderCipherKCVs getKCVs() const;
 	const uint8_t* getAuthToken() const;
+	EncryptionAtRestAlgo getEncryptionAtRestAlgo() const;
 
 	// API supports following validation:
 	// 1. Ensure input BlobCipherDetails (textDetails and/or headerDetails) matches with the input
 	// 2. Ensure persited KCV matches with the input values
-	// 3. Ensure input IV buffer matches with the persisted ones.
 	//
 	// Currently API is used by BlobGranule encryption where encryption key lookup based on persisted
 	// BlobGranuleCipherKeyCtx
@@ -697,6 +706,13 @@ public:
 		       memcmp(cipher.get(), toCompare->rawCipher(), AES_256_KEY_LENGTH) == 0 &&
 		       memcmp(baseCipher.get(), toCompare->rawBaseCipher(), baseCipherLen) == 0;
 	}
+	EncryptCipherNonce getAndUpdateNonce(EncryptCipherNonce max_value);
+	EncryptCipherNonce getNonce() { return nonce; }
+	// The nonce should not be set outside of testing
+	void setNonceTest(EncryptCipherNonce other) {
+		ASSERT(g_network->isSimulated());
+		this->nonce = other;
+	}
 
 	bool isCipherDetailMatches(const BlobCipherDetails& details) {
 		return encryptDomainId == details.encryptDomainId && baseCipherId == details.baseCipherId &&
@@ -737,6 +753,7 @@ private:
 	int64_t refreshAtTS;
 	// CipherKey is valid until
 	int64_t expireAtTS;
+	EncryptCipherNonce nonce;
 	// Latest access timestamp
 	mutable double accessAtTS;
 
@@ -858,6 +875,8 @@ public:
 
 	explicit BlobCipherKeyCache(bool ignored) { ASSERT(g_network->isSimulated()); }
 
+	int getAndUpdateNonce(Reference<BlobCipherKey> key);
+
 	// Enable clients to insert base encryption cipher details to the BlobCipherKeyCache.
 	// The cipherKeys are indexed using 'baseCipherId', given cipherKeys are immutable,
 	// attempting to re-insert same 'identical' cipherKey is treated as a NOP (success),
@@ -961,5 +980,9 @@ public:
 private:
 	EVP_MD_CTX* ctx;
 };
+
+int getIVLengthFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo);
+
+void generateCryptoSecureRandomBytes(unsigned char* buffer, int size);
 
 #endif // FDBCLIENT_BLOB_CIPHER_H

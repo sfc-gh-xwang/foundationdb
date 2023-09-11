@@ -24,7 +24,6 @@
 
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/ConfigTransactionInterface.h"
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/IConfigTransaction.h"
 #include "fdbclient/PImpl.h"

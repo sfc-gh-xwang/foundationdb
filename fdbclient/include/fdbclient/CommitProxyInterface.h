@@ -36,6 +36,7 @@
 #include "fdbclient/IdempotencyId.actor.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "fdbclient/VersionVector.h"
+#include "fdbclient/TenantLookupInfo.h"
 
 #include "fdbrpc/Stats.h"
 #include "fdbrpc/TimedRequest.h"
@@ -405,27 +406,6 @@ struct GetReadVersionRequest : TimedRequest {
 				priority = TransactionPriority::DEFAULT;
 			}
 		}
-	}
-};
-
-struct TenantLookupInfo {
-	constexpr static FileIdentifier file_identifier = 8018317;
-
-	int64_t id = TenantInfo::INVALID_TENANT;
-	Optional<TenantGroupName> group;
-	Optional<ClusterName> assignedCluster;
-
-	explicit TenantLookupInfo() = default;
-	explicit TenantLookupInfo(int64_t id,
-	                          Optional<TenantGroupName> const& group = {},
-	                          Optional<ClusterName> const& cluster = {})
-	  : id(id),
-	    group(group),
-	    assignedCluster(cluster) {}
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar, id, group, assignedCluster);
 	}
 };
 

@@ -45,7 +45,9 @@
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/BackupAgent.actor.h"
 #include "fdbclient/versions.h"
+#include "flow/EncryptUtils.h"
 #include "flow/IRandom.h"
+#include "flow/Knobs.h"
 #include "flow/MkCert.h"
 #include "flow/ProcessEvents.h"
 #include "fdbrpc/WellKnownEndpoints.h"
@@ -391,7 +393,7 @@ public:
 	Optional<bool> generateFearless, buggify;
 	Optional<std::string> config;
 	bool blobGranulesEnabled = false;
-	// Can be explicilty set in config. Otherwise, choose randomly if compatible with other options
+	// Can be explicitly set in config. Otherwise, choose randomly if compatible with other options
 	Optional<bool> defaultBlobification;
 	bool randomlyRenameZoneId = false;
 	bool simHTTPServerEnabled = true;
@@ -1321,6 +1323,7 @@ ACTOR Future<Void> restartSimulatedSystem(std::vector<Future<Void>>* systemActor
 			g_knobs.setKnob("remote_kv_store", KnobValueRef::create(bool{ false }));
 			TraceEvent(SevDebug, "DisableRemoteKVS");
 		}
+		TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 		*pConnString = conn;
 		*pTesterCount = testerCount;
 		bool usingSSL = conn.toString().find(":tls") != std::string::npos || listenersPerProcess > 1;
@@ -2185,6 +2188,7 @@ void setupSimulatedSystem(std::vector<Future<Void>>* systemActors,
 		g_knobs.setKnob("remote_kv_store", KnobValueRef::create(bool{ false }));
 		TraceEvent(SevDebug, "DisableRemoteKVS");
 	}
+	TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 	auto configDBType = testConfig.getConfigDBType();
 	startingConfigString += DatabaseConfiguration::configureStringFromJSON(startingConfigJSON);
 
@@ -2832,7 +2836,7 @@ ACTOR void setupAndRun(std::string dataFolder,
 		}
 
 		if (!testConfig.defaultBlobification.has_value()) {
-			if (tenantMode == TenantMode::DISABLED) {
+			if (tenantMode == TenantMode::DISABLED || defaultTenant.has_value()) {
 				testConfig.defaultBlobification = deterministicRandom()->coinflip();
 			} else {
 				testConfig.defaultBlobification = false;

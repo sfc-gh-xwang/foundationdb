@@ -11,12 +11,12 @@
 #elif !defined(FDBCLIENT_METACLUSTERTENANTENTRY_ACTOR_H)
 #define FDBCLIENT_METACLUSTERTENANTENTRY_ACTOR_H
 
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/json_spirit/json_spirit_value.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/MetaclusterRegistration.h"
 #include "fdbclient/Tenant.h"
+#include "fdbclient/IClusterConnectionRecord.h"
 #include "flow/flat_buffers.h"
 
 #include "flow/flow.h"

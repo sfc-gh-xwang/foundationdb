@@ -35,6 +35,7 @@
 #include "flow/Arena.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/BlobWorkerInterface.h"
+#include "fdbclient/TransactionState.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 

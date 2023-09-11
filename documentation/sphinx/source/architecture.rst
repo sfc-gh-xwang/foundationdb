@@ -158,7 +158,7 @@ A client links with specific language bindings (i.e., client libraries)
 in order to communicate with a FoundationDB cluster. The language
 bindings support loading multiple versions of C libraries, allowing the
 client communicates with older version of the FoundationDB clusters.
-Currently, C, Go, Python, Java, Ruby bindings are officially supported.
+Currently, C, Python, Java bindings are officially supported.
 
 Transaction Processing
 ----------------------

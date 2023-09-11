@@ -603,6 +603,7 @@ ACTOR Future<Void> registrationClient(
     Reference<AsyncVar<Optional<BlobMigratorInterface>> const> blobMigratorInterf,
     Reference<AsyncVar<Optional<EncryptKeyProxyInterface>> const> ekpInterf,
     Reference<AsyncVar<Optional<ConsistencyScanInterface>> const> csInterf,
+    Reference<AsyncVar<Optional<TenantBalancerInterface>> const> tenantBalancerInterf,
     Reference<AsyncVar<bool> const> degraded,
     Reference<IClusterConnectionRecord> connRecord,
     Reference<AsyncVar<std::set<std::string>> const> issues,
@@ -646,6 +647,7 @@ ACTOR Future<Void> registrationClient(
 		    blobMigratorInterf->get(),
 		    ekpInterf->get(),
 		    csInterf->get(),
+		    tenantBalancerInterf->get(),
 		    degraded->get(),
 		    localConfig.isValid() ? localConfig->lastSeenVersion() : Optional<Version>(),
 		    localConfig.isValid() ? localConfig->configClassSet() : Optional<ConfigClassSet>(),
@@ -734,6 +736,9 @@ ACTOR Future<Void> registrationClient(
 			when(wait(ekpInterf->onChange())) {
 				break;
 			}
+			when(wait(tenantBalancerInterf->onChange())) {
+				break;
+			}
 			when(wait(degraded->onChange())) {
 				break;
 			}
@@ -783,6 +788,10 @@ bool addressInDbAndPrimaryDc(const NetworkAddress& address, Reference<AsyncVar<S
 	}
 
 	if (dbi.client.encryptKeyProxy.present() && dbi.client.encryptKeyProxy.get().address() == address) {
+		return true;
+	}
+
+	if (dbi.tenantBalancer.present() && dbi.tenantBalancer.get().address() == address) {
 		return true;
 	}
 
@@ -1941,7 +1950,8 @@ ACTOR Future<Void> createClusterIdFile(std::string folder, UID clusterId) {
 				clusterIdFile = _clusterIdFile;
 				BinaryWriter wr(IncludeVersion());
 				wr << clusterId;
-				wait(clusterIdFile.get()->write(wr.getData(), wr.getLength(), 0));
+				state Standalone<StringRef> clusterIdData = wr.toValue();
+				wait(clusterIdFile.get()->write(clusterIdData.begin(), clusterIdData.size(), 0));
 				wait(clusterIdFile.get()->sync());
 				return Void();
 			} else {
@@ -2070,6 +2080,8 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 	    new AsyncVar<Optional<EncryptKeyProxyInterface>>());
 	state Reference<AsyncVar<Optional<ConsistencyScanInterface>>> csInterf(
 	    new AsyncVar<Optional<ConsistencyScanInterface>>());
+	state Reference<AsyncVar<Optional<TenantBalancerInterface>>> tenantBalancerInterf(
+	    new AsyncVar<Optional<TenantBalancerInterface>>());
 	state Future<Void> handleErrors = workerHandleErrors(errors.getFuture()); // Needs to be stopped last
 	state ActorCollection errorForwarders(false);
 	state Future<Void> loggingTrigger = Void();
@@ -2461,6 +2473,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 		                                       blobMigratorInterf,
 		                                       ekpInterf,
 		                                       csInterf,
+		                                       tenantBalancerInterf,
 		                                       degraded,
 		                                       connRecord,
 		                                       issues,
@@ -2511,7 +2524,9 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 						    .detail("EncryptKeyProxyID",
 						            localInfo.client.encryptKeyProxy.present()
 						                ? localInfo.client.encryptKeyProxy.get().id()
-						                : UID());
+						                : UID())
+						    .detail("TenantBalancerID",
+						            localInfo.tenantBalancer.present() ? localInfo.tenantBalancer.get().id() : UID());
 						dbInfo->set(localInfo);
 					}
 					errorForwarders.add(
@@ -3216,6 +3231,38 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 				           forwardError(errors, Role::LOG_ROUTER, recruited.id(), logRouter(recruited, req, dbInfo))));
 				req.reply.send(recruited);
 			}
+			when(InitializeTenantBalancerRequest req = waitNext(interf.tenantBalancer.getFuture())) {
+				LocalLineage _;
+				getCurrentLineage()->modify(&RoleLineage::role) = ProcessClass::ClusterRole::TenantBalancer;
+				TenantBalancerInterface recruited(locality, req.reqId);
+				recruited.initEndpoints();
+
+				if (tenantBalancerInterf->get().present()) {
+					recruited = tenantBalancerInterf->get().get();
+					CODE_PROBE(true, "Recruited while already a tenant balancer");
+				} else {
+					startRole(Role::TENANT_BALANCER, recruited.id(), interf.id());
+					DUMPTOKEN(recruited.haltTenantBalancer);
+					DUMPTOKEN(recruited.getMovementStatus);
+					DUMPTOKEN(recruited.listMovements);
+					DUMPTOKEN(recruited.startMoveTenantGroup);
+					DUMPTOKEN(recruited.abortMovement);
+					DUMPTOKEN(recruited.persistInterface);
+					DUMPTOKEN(recruited.waitFailure);
+					Future<Void> tenantBalancerProcess = tenantBalancer(recruited, dbInfo, connRecord);
+					errorForwarders.add(forwardError(errors,
+					                                 Role::TENANT_BALANCER,
+					                                 recruited.id(),
+					                                 setWhenDoneOrError(tenantBalancerProcess,
+					                                                    tenantBalancerInterf,
+					                                                    Optional<TenantBalancerInterface>())));
+				}
+				TraceEvent("TenantBalancerInitRequest", req.reqId).detail("TenantBalancerId", recruited.id());
+				req.reply.send(recruited);
+				if (!tenantBalancerInterf->get().present()) {
+					tenantBalancerInterf->set(Optional<TenantBalancerInterface>(recruited));
+				}
+			}
 			when(CoordinationPingMessage m = waitNext(interf.coordinationPing.getFuture())) {
 				TraceEvent("CoordinationPing", interf.id())
 				    .detail("CCID", m.clusterControllerId)
@@ -3804,7 +3851,8 @@ ACTOR Future<UID> createAndLockProcessIdFile(std::string folder) {
 				processIDUid = deterministicRandom()->randomUniqueID();
 				BinaryWriter wr(IncludeVersion(ProtocolVersion::withProcessIDFile()));
 				wr << processIDUid;
-				wait(lockFile.get()->write(wr.getData(), wr.getLength(), 0));
+				state Standalone<StringRef> lockFileData = wr.toValue();
+				wait(lockFile.get()->write(lockFileData.begin(), lockFileData.size(), 0));
 				wait(lockFile.get()->sync());
 			} else {
 				if (lockFile.isError())
@@ -4185,3 +4233,4 @@ const Role Role::COORDINATOR("Coordinator", "CD");
 const Role Role::BACKUP("Backup", "BK");
 const Role Role::ENCRYPT_KEY_PROXY("EncryptKeyProxy", "EP");
 const Role Role::CONSISTENCYSCAN("ConsistencyScan", "CS");
+const Role Role::TENANT_BALANCER("TenantBalancer", "TB");

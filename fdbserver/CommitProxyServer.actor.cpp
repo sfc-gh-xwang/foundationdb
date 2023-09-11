@@ -1092,7 +1092,7 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 	if (pProxyCommitData->encryptMode.isEncryptionEnabled()) {
 		std::unordered_set<EncryptCipherDomainId> encryptDomainIds = { SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID,
 			                                                           FDB_DEFAULT_ENCRYPT_DOMAIN_ID };
-		if (FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED) {
+		if (needsHeaderCipherKey(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
 			encryptDomainIds.insert(ENCRYPT_HEADER_DOMAIN_ID);
 		}
 		// For cluster aware encryption only the default domain id is needed
@@ -1110,7 +1110,8 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 		                                                                   encryptDomainIds,
 		                                                                   BlobCipherMetrics::TLOG,
 		                                                                   &nonExistentTenants,
-		                                                                   pProxyCommitData->encryptionMonitor);
+		                                                                   pProxyCommitData->encryptionMonitor,
+		                                                                   self->debugID);
 	}
 
 	self->releaseFuture = releaseResolvingAfter(pProxyCommitData, self->releaseDelay, self->localBatchNumber);
@@ -1631,7 +1632,8 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
 		                                                                   lookupDomains,
 		                                                                   BlobCipherMetrics::TLOG_POST_RESOLUTION,
 		                                                                   nullptr,
-		                                                                   self->pProxyCommitData->encryptionMonitor));
+		                                                                   self->pProxyCommitData->encryptionMonitor,
+		                                                                   self->debugID));
 		self->cipherKeys.insert(extraCipherKeys.begin(), extraCipherKeys.end());
 	} catch (Error& e) {
 		if (e.code() == error_code_encrypt_key_not_found) {
@@ -1936,7 +1938,7 @@ ACTOR Future<WriteMutationRefVar> writeMutationEncryptedMutation(CommitBatchCont
 	Reference<AsyncVar<ServerDBInfo> const> dbInfo = self->pProxyCommitData->db;
 	headerRef = encryptedMutation.configurableEncryptionHeader();
 	TextAndHeaderCipherKeys cipherKeys = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-	    dbInfo, headerRef, BlobCipherMetrics::TLOG, self->pProxyCommitData->encryptionMonitor));
+	    dbInfo, headerRef, BlobCipherMetrics::TLOG, self->pProxyCommitData->encryptionMonitor, self->debugID));
 	decryptedMutation = encryptedMutation.decrypt(cipherKeys, *arena, BlobCipherMetrics::TLOG);
 
 	ASSERT(decryptedMutation.type == mutation->type);

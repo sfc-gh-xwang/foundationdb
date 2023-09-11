@@ -164,6 +164,8 @@ struct ProcessInfo : NonCopyable {
 			return false;
 		case ProcessClass::EncryptKeyProxyClass:
 			return false;
+		case ProcessClass::TenantBalancerClass:
+			return false;
 		default:
 			return false;
 		}

@@ -36,6 +36,7 @@
 #include "fdbclient/ProcessInterface.h"
 #include "fdbclient/GlobalConfig.actor.h"
 #include "fdbclient/SpecialKeySpace.actor.h"
+#include "fdbclient/TransactionState.h"
 #include "flow/Arena.h"
 #include "flow/IRandom.h"
 #include "flow/UnitTest.h"

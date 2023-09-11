@@ -50,6 +50,7 @@ bool isRole(ProcessClass::ClusterRole role, Optional<ProcessClass::ClusterRole> 
 //   * Blob migrator
 //   * Encrypt key proxy
 //   * Consistency scanner
+//   * Tenant balancer
 //
 // and if the process is not currently running that singleton (we want to be
 // able to re-recruit a singleton on its currently running process).
@@ -77,7 +78,10 @@ bool isLongLivedStateless(ClusterControllerData const* clusterControllerData,
 	        !isRole(ProcessClass::ClusterRole::EncryptKeyProxy, role)) ||
 	       (clusterControllerData->db.serverInfo->get().consistencyScan.present() &&
 	        clusterControllerData->db.serverInfo->get().consistencyScan.get().locality.processId() == processId &&
-	        !isRole(ProcessClass::ClusterRole::ConsistencyScan, role));
+	        !isRole(ProcessClass::ClusterRole::ConsistencyScan, role)) ||
+	       (clusterControllerData->db.serverInfo->get().tenantBalancer.present() &&
+	        clusterControllerData->db.serverInfo->get().tenantBalancer.get().locality.processId() == processId &&
+	        !isRole(ProcessClass::ClusterRole::TenantBalancer, role));
 }
 
 // Log the reason why the worker is considered as unavailable.

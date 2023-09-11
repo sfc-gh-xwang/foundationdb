@@ -1162,9 +1162,12 @@ ACTOR Future<Void> disableConsistencyScanInSim(Database db, bool waitForCompleti
 			state bool skipDisable = false;
 			// see if any rounds have completed
 			if (waitForCompletion) {
-				state ConsistencyScanState::RoundStats statsCurrentRound = wait(cs.currentRoundStats().getD(tr));
+				// The two reads from below need to be snapshot-reads, as they avoid creating read conflicts
+				// on a rapid changing value of currentRoundStats which are made by the ConsistencyScan actor.
+				state ConsistencyScanState::RoundStats statsCurrentRound =
+				    wait(cs.currentRoundStats().getD(tr, Snapshot::True));
 				state ConsistencyScanState::StatsHistoryMap::RangeResultType olderStats =
-				    wait(cs.roundStatsHistory().getRange(tr, {}, {}, 1, Snapshot::False, Reverse::False));
+				    wait(cs.roundStatsHistory().getRange(tr, {}, {}, 1, Snapshot::True, Reverse::False));
 				if (olderStats.results.empty() && !statsCurrentRound.complete) {
 					TraceEvent("ConsistencyScan_SimDisable_NoRoundsCompleted").log();
 					skipDisable = true;
@@ -1316,6 +1319,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 			                                                                                                     : 0;
 			int ekpCount = getSimulatedRoleCount("EncryptKeyProxy", expectedEkpCount);
 
+			int expectedTbCount = SERVER_KNOBS->CC_ENABLE_TENANT_BALANCER ? 1 : 0;
+			int tbCount = getSimulatedRoleCount("TenantBalancer", expectedTbCount);
+
 			maxVersionOffset += dbInfo->get().recoveryCount * SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT;
 
 			auto check = checker.startIteration(phase);
@@ -1347,7 +1353,8 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 				    .add(evt, "ConsistencyScanCount", consistencyScanCount, 1, std::greater_equal<>())
 				    .add(evt, "BlobManagementCount", blobManagerCount, expectedBlobManagerCount, std::equal_to<>())
 				    .add(evt, "BlobMigratorCount", blobMigratorCount, -1, std::equal_to<>())
-				    .add(evt, "EncryptKeyProxyCount", ekpCount, expectedEkpCount, std::equal_to<>());
+				    .add(evt, "EncryptKeyProxyCount", ekpCount, expectedEkpCount, std::equal_to<>())
+				    .add(evt, "TenantBalancerCount", tbCount, expectedTbCount, std::equal_to<>());
 			}
 
 			evt.detail("RecoveryCount", dbInfo->get().recoveryCount).detail("NumSuccesses", numSuccesses);

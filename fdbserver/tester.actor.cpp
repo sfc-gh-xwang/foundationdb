@@ -54,6 +54,7 @@
 #include "fdbserver/QuietDatabase.h"
 #include "fdbclient/MonitorLeader.h"
 #include "fdbclient/ManagementAPI.actor.h"
+#include "fdbclient/TransactionState.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/MoveKeys.actor.h"
 #include "flow/Platform.h"
@@ -920,13 +921,16 @@ ACTOR Future<Void> testerServerCore(TesterInterface interf,
 
 ACTOR Future<Void> clearTenantData(Reference<Tenant> tenant) {
 	state Transaction tr(tenant);
+	state Version v;
 	loop {
 		try {
 			tr.debugTransaction(debugRandom()->randomUniqueID());
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 			tr.clear(normalKeys);
 			wait(tr.commit());
-			return Void();
+			v = tr.getReadVersion().get();
+			ASSERT(v >= 1);
+			break;
 		} catch (Error& e) {
 			TraceEvent(SevWarn, "TesterClearingTenantDataError", tr.trState->readOptions.get().debugID.get())
 			    .error(e)
@@ -934,6 +938,26 @@ ACTOR Future<Void> clearTenantData(Reference<Tenant> tenant) {
 			wait(tr.onError(e));
 		}
 	}
+
+	// drop tenant blob ranges (if present)
+	state Standalone<VectorRef<KeyRangeRef>> blobRanges =
+	    wait(tenant->database()->listBlobbifiedRanges(normalKeys, 1, tenant));
+	if (blobRanges.empty()) {
+		return Void();
+	}
+
+	CODE_PROBE(true, "cleaning up blobbified ranges in clearAfterTest");
+	TraceEvent("TesterClearingTenantHybrid").detail("Tenant", tenant);
+
+	Key purgeKey = wait(tenant->database()->purgeBlobGranules(normalKeys, v, tenant, true));
+
+	TraceEvent("TesterClearingTenantHybridPurgeRegistered").detail("Tenant", tenant).detail("PurgeKey", purgeKey);
+
+	wait(tenant->database()->waitPurgeGranulesComplete(purgeKey));
+
+	TraceEvent("TesterClearingTenantHybridComplete").detail("Tenant", tenant);
+
+	return Void();
 }
 
 ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
@@ -2219,7 +2243,22 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 			    .detail("Tenant", defaultTenant)
 			    .detail("TenantGroup", entry.tenantGroup);
 
-			wait(success(TenantAPI::createTenant(cx.getReference(), defaultTenant.get(), entry)));
+			Optional<TenantMapEntry> builtTenant =
+			    wait(TenantAPI::createTenant(cx.getReference(), defaultTenant.get(), entry));
+
+			// createTenant returns nothing if we conflicted on the id, which should never happen here,
+			// because (a) it's a fresh cluster, and (b) we told it to allocate a fresh id.
+			ASSERT(builtTenant.has_value());
+
+			if (defaultBlobification) {
+				TraceEvent("BlobbifyDefaultTenant");
+				state Reference<Tenant> tenantRef(new Tenant(cx, builtTenant.get()));
+				bool success = wait(cx->blobbifyRange(normalKeys, tenantRef));
+				TraceEvent("BlobbifiedDefaultTenant").detail("Success", success);
+				ASSERT(success);
+				CODE_PROBE(true, "Blobbified default tenant");
+				tenantRef.clear();
+			}
 		}
 
 		// If the initial test marked a zone as healthy and didn't clear it, do so now before running the second test
@@ -2304,7 +2343,7 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 		}
 	}
 
-	if (useDB && defaultBlobification) {
+	if (useDB && defaultBlobification && !defaultTenant.present()) {
 		bool success = wait(cx->blobbifyRange(normalKeys));
 		TraceEvent("DoneDefaultBlobification").detail("Success", success);
 		ASSERT(success);

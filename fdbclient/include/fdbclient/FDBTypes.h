@@ -28,11 +28,14 @@
 #include <vector>
 #include <unordered_set>
 #include <boost/functional/hash.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
 
 #include "flow/FastRef.h"
 #include "flow/ProtocolVersion.h"
 #include "flow/flow.h"
 #include "fdbclient/Status.h"
+
+namespace mp = boost::multiprecision;
 
 typedef int64_t Version;
 typedef uint64_t LogEpoch;
@@ -42,6 +45,8 @@ typedef StringRef ValueRef;
 typedef int64_t Generation;
 typedef UID SpanID;
 typedef uint64_t CoordinatorsHash;
+typedef mp::uint128_t uint128_t;
+typedef mp::number<mp::cpp_int_backend<96, 96, mp::unsigned_magnitude, mp::unchecked, void>> uint96_t;
 
 // invalidKey is intentionally far beyond the system space.  It is meant to be used as a safe initial value for a key
 // before it is set to something meaningful to avoid mistakes where a default constructed key is written to instead of

@@ -50,6 +50,7 @@
 #include "fdbserver/Knobs.h"
 #include "fdbclient/JsonBuilder.h"
 #include "fdbclient/StorageWiggleMetrics.actor.h"
+#include "fdbclient/TransactionState.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 const char* RecoveryStatus::names[] = { "reading_coordinated_state",
@@ -858,6 +859,10 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
 
 	if (db->get().client.encryptKeyProxy.present()) {
 		roles.addRole("encrypt_key_proxy", db->get().client.encryptKeyProxy.get());
+	}
+
+	if (db->get().tenantBalancer.present()) {
+		roles.addRole("tenant_balancer", db->get().tenantBalancer.get());
 	}
 
 	for (auto& tLogSet : db->get().logSystemConfig.tLogs) {

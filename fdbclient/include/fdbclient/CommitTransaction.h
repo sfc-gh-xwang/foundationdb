@@ -170,21 +170,14 @@ struct MutationRef {
 	                    Arena& arena,
 	                    BlobCipherMetrics::UsageType usageType,
 	                    double* encryptTime = nullptr) const {
-		uint8_t iv[AES_256_CTR_IV_LENGTH] = { 0 };
-		deterministicRandom()->randomBytes(iv, AES_256_CTR_IV_LENGTH);
 		BinaryWriter bw(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
 		bw << *this;
 
-		Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
-		    cipherKeys.cipherTextKey,
-		    cipherKeys.cipherHeaderKey,
-		    iv,
-		    AES_256_CTR_IV_LENGTH,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		    usageType);
+		Reference<EncryptBlobCipher> cipher =
+		    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
+		                                    cipherKeys.cipherHeaderKey,
+		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    usageType);
 
 		StringRef serializedHeader;
 		StringRef payload;
@@ -210,24 +203,14 @@ struct MutationRef {
 		};
 		Reference<BlobCipherKey> textCipherKey = getCipherKey(domainId);
 		Reference<BlobCipherKey> headerCipherKey;
-		if (FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED) {
+		if (needsHeaderCipherKey(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
 			headerCipherKey = getCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
 		}
-		uint8_t iv[AES_256_CTR_IV_LENGTH] = { 0 };
-		deterministicRandom()->randomBytes(iv, AES_256_CTR_IV_LENGTH);
 		BinaryWriter bw(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
 		bw << *this;
 
 		Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
-		    textCipherKey,
-		    headerCipherKey,
-		    iv,
-		    AES_256_CTR_IV_LENGTH,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		    usageType);
+		    textCipherKey, headerCipherKey, encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO), usageType);
 
 		BlobCipherEncryptHeaderRef header;
 		auto payload =
@@ -251,8 +234,11 @@ struct MutationRef {
 	                    double* decryptTime = nullptr) const {
 		StringRef plaintext;
 		const BlobCipherEncryptHeaderRef header = configurableEncryptionHeader();
-		Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(
-		    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, header.getIV(), header.getEncryptMode(), usageType);
+		Reference<DecryptBlobCipher> cipher = DecryptBlobCipher::getDecryptor(cipherKeys.cipherTextKey,
+		                                                                      cipherKeys.cipherHeaderKey,
+		                                                                      header.getIV(),
+		                                                                      header.getEncryptionAtRestAlgo(),
+		                                                                      usageType);
 		plaintext = cipher->decrypt(param2.begin(), param2.size(), header, arena, decryptTime);
 		if (buf != nullptr) {
 			*buf = plaintext;
@@ -291,7 +277,7 @@ struct MutationRef {
 			ASSERT(cipherDetails.headerCipherDetails.get().isValid());
 			textAndHeaderKeys.cipherHeaderKey = getCipherKey(cipherDetails.headerCipherDetails.get());
 		} else {
-			ASSERT(!FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED);
+			ASSERT(!needsHeaderCipherKey(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO)));
 		}
 		return textAndHeaderKeys;
 	}

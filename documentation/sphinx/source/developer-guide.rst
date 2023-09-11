@@ -285,7 +285,7 @@ Because tenants enforce that transactions operate within the tenant boundaries, 
 Working with the APIs
 =====================
 
-FoundationDB supports client APIs for Python, Ruby, Node.js, Java, Go, and C. At a high level, each of these APIs support transactions allowing a client to:
+FoundationDB supports client APIs for Python, Java, and C. At a high level, each of these APIs support transactions allowing a client to:
 
 * Set a key-value pair
 * Get the value associated with a key

@@ -173,7 +173,7 @@ struct BlobGranuleVerifierWorkload : TestWorkload {
 	ACTOR Future<Void> setUpBlobRange(Database cx) {
 		bool success = wait(cx->blobbifyRange(normalKeys));
 		if (!success) {
-			TraceEvent(SevError, "CannotBlobifyRage").detail("Range", normalKeys);
+			TraceEvent(SevError, "CannotBlobifyRange").detail("Range", normalKeys);
 		}
 		ASSERT(success);
 		return Void();

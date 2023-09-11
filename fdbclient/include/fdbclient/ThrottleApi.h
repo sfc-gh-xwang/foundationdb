@@ -11,6 +11,7 @@
 #include "fdbclient/ThroughputQuotaValue.h"
 #include "fdbclient/Tuple.h"
 #include "fdbclient/UpdateStream.h"
+#include "fdbclient/SystemData.h"
 
 namespace ThrottleApi {
 
