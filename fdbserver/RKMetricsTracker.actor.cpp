@@ -367,7 +367,7 @@ UpdateCommitCostRequest StorageQueueInfo::refreshCommitCost(double elapsed) {
 	return updateCommitCostRequest;
 }
 
-Optional<double> getThrottlingRatio(int64_t value, int64_t target, int64_t spring) {
+static Optional<double> getThrottlingRatio(int64_t value, int64_t target, int64_t spring) {
 	double inverseResult = std::min(2.0, (value - target + spring) / static_cast<double>(spring));
 	if (inverseResult > 0) {
 		return 1.0 / inverseResult;
