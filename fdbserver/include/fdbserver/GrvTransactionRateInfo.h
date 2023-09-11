@@ -52,7 +52,7 @@ public:
 	void startReleaseWindow();
 
 	// Checks if the specified cost can be released, given that
-	// costAlreadyConsumed cost as already been released in the
+	// costAlreadyConsumed cost has already been released in the
 	// current release window.
 	bool canStart(int64_t costAlreadyReleased, int64_t cost) const;
 

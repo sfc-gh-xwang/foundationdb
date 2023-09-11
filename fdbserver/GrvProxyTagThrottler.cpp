@@ -276,7 +276,7 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 			} else {
 				auto const available = queue->costAllowedToStart();
 				auto const usedForPrioritizedReleases =
-				    static_cast<int64_t>(queue->getExcessPrioritizedCost(starvationToleranceRatio) + *amountReleased);
+				    static_cast<int64_t>(queue->getExcessPrioritizedCost(starvationToleranceRatio));
 				if (!available.present() ||
 				    usedForPrioritizedReleases <= available.get() * (1 - starvationToleranceRatio)) {
 					strategy = TagQueue::Strategy::PRIORITIZED;
