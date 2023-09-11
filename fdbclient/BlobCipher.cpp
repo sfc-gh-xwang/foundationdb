@@ -172,7 +172,7 @@ int BlobCipherEncryptHeaderRef::getIVSize() const {
 	if (encryptMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
 		return AES_256_CTR_IV_LENGTH;
 	} else if (encryptMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
-		return AES_256_GCM_IV_LENGTH;
+		return AesGcmParams::ivSize;
 	}
 	throw not_implemented();
 }
@@ -221,6 +221,37 @@ EncryptAuthTokenMode BlobCipherEncryptHeaderRef::getAuthTokenMode() const {
 		    }
 	    },
 	    flags);
+}
+
+EncryptionAtRestAlgo BlobCipherEncryptHeaderRef::getEncryptionAtRestAlgo() const {
+	validateEncryptHeaderFlagVersion(flagsVersion());
+	ASSERT_EQ(flagsVersion(), 1);
+
+	BlobCipherEncryptHeaderFlagsV1 flags = std::get<BlobCipherEncryptHeaderFlagsV1>(this->flags);
+
+	validateEncryptHeaderAlgoHeaderVersion((EncryptCipherMode)flags.encryptMode,
+	                                       (EncryptAuthTokenMode)flags.authTokenMode,
+	                                       (EncryptAuthTokenAlgo)flags.authTokenAlgo,
+	                                       algoHeaderVersion());
+	ASSERT_EQ(algoHeaderVersion(), 1);
+
+	// TODO: Replace with "Overload visitor pattern" someday.
+	return std::visit(
+	    [](auto&& h) {
+		    using T = std::decay_t<decltype(h)>;
+		    if constexpr (std::is_same_v<T, AesCtrNoAuth>) {
+			    return EncryptionAtRestAlgo::AES_CTR;
+		    } else if constexpr (std::is_same_v<T, AesCtrWithHmac>) {
+			    return EncryptionAtRestAlgo::AES_CTR_HMAC;
+		    } else if constexpr (std::is_same_v<T, AesCtrWithCmac>) {
+			    return EncryptionAtRestAlgo::AES_CTR_CMAC;
+		    } else if constexpr (std::is_same_v<T, AesGcm>) {
+			    return EncryptionAtRestAlgo::AES_GCM;
+		    } else {
+			    static_assert(always_false_v<T>, "Unknown encryption authentication");
+		    }
+	    },
+	    algoHeader);
 }
 
 EncryptCipherMode BlobCipherEncryptHeaderRef::getEncryptMode() const {
@@ -383,10 +414,10 @@ void BlobCipherEncryptHeaderRef::validateEncryptionHeaderDetails(const BlobCiphe
 		    .detail("IVSize", ivSize)
 		    .detail("ExpectedIVSize", AES_256_CTR_IV_LENGTH);
 		throw encrypt_header_metadata_mismatch();
-	} else if (encryptMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM && ivSize != AES_256_GCM_IV_LENGTH) {
+	} else if (encryptMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM && ivSize != AesGcmParams::ivSize) {
 		TraceEvent(SevError, "EncryptionHeaderIVSizeMismatch")
 		    .detail("IVSize", ivSize)
-		    .detail("ExpectedIVSize", AES_256_GCM_IV_LENGTH);
+		    .detail("ExpectedIVSize", AesGcmParams::ivSize);
 		throw encrypt_header_metadata_mismatch();
 	}
 
@@ -506,14 +537,9 @@ BlobCipherKey::BlobCipherKey(const EncryptCipherDomainId& domainId,
                              const EncryptCipherKeyCheckValue baseCiphKCV,
                              const int64_t refreshAt,
                              const int64_t expireAt) {
-	// Salt generated is used while applying HMAC Key derivation, hence, not using crypto-secure hash algorithm is
-	// ok. Further, 'deterministic' salt generation is used to preserve simulation determinism properties.
+	// Generate crypto secure salt
 	EncryptCipherRandomSalt salt;
-	if (g_network->isSimulated()) {
-		salt = deterministicRandom()->randomUInt64();
-	} else {
-		salt = nondeterministicRandom()->randomUInt64();
-	}
+	generateCryptoSecureRandomBytes(reinterpret_cast<unsigned char*>(&salt), sizeof(salt));
 
 	// Support two type of CipherKeys: 'revocable' & 'non-revocable' ciphers.
 	// In all cases, either cipherKey never expires i.e. refreshAt == infinite, or, refreshAt needs <= expireAt
@@ -532,6 +558,17 @@ BlobCipherKey::BlobCipherKey(const EncryptCipherDomainId& domainId,
                              const int64_t refreshAt,
                              const int64_t expireAt) {
 	initKey(domainId, baseCiphId, baseCiph, baseCiphLen, baseCiphKCV, salt, refreshAt, expireAt);
+}
+
+EncryptCipherNonce BlobCipherKey::getAndUpdateNonce(EncryptCipherNonce max_value) {
+	ASSERT(nonce <= max_value);
+	if (nonce == max_value) {
+		// TODO (Nim): Add metric for nonce overflow
+		TraceEvent("NonceOverflow");
+		nonce = 0;
+		return max_value;
+	}
+	return nonce++;
 }
 
 void BlobCipherKey::initKey(const EncryptCipherDomainId& domainId,
@@ -568,6 +605,10 @@ void BlobCipherKey::initKey(const EncryptCipherDomainId& domainId,
 	baseCipherLen = baseCiphLen;
 	baseCipherKCV = baseCiphKCV;
 	baseCipherId = baseCiphId;
+	// generate a crypto secure nonce
+	memset(reinterpret_cast<unsigned char*>(&nonce), 0, sizeof(nonce));
+	// generate only 12 bytes of data since gcm nonce is 12 bytes
+	generateCryptoSecureRandomBytes(reinterpret_cast<unsigned char*>(&nonce), AesGcmParams::ivSize);
 	// Set the encryption domain for the base encryption key
 	encryptDomainId = domainId;
 	randomSalt = salt;
@@ -1063,6 +1104,25 @@ void Sha256KCV::checkEqual(const Reference<BlobCipherKey>& cipher, const Encrypt
 	CODE_PROBE(true, "Sha256 KCV validation done");
 }
 
+int getIVLengthFromEncryptionAtRestAlgo(EncryptionAtRestAlgo algo) {
+	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
+		return AES_256_CTR_IV_LENGTH;
+	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
+		return AesGcmParams::ivSize;
+	}
+	TraceEvent(SevError, "GetIVLengthModeUnsupported").detail("Algo", algo);
+	throw not_implemented();
+}
+
+void generateCryptoSecureRandomBytes(unsigned char* buffer, int size) {
+	// In simulation we call bindDeterministicRandomToOpenssl which allows us to use RAND_bytes deterministically
+	if (RAND_bytes(buffer, size) != 1) {
+		TraceEvent(SevWarn, "RandBytesGenerationError");
+		throw encrypt_ops_error();
+	}
+}
+
 // Only used to link unit tests
 void forceLinkBlobCipherTests() {}
 
@@ -1132,7 +1192,7 @@ int getAuthHeaderVersion() {
 	} else if (std::is_same_v<Params, AesCtrWithCmacParams>) {
 		return CLIENT_KNOBS->ENCRYPT_HEADER_AES_CTR_AES_CMAC_AUTH_VERSION;
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
 	}
 }
 
@@ -1143,7 +1203,7 @@ EncryptAuthTokenAlgo getAuthTokenAlgo() {
 	} else if (std::is_same_v<Params, AesCtrWithCmacParams>) {
 		return EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC;
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
 	}
 }
 
@@ -1152,7 +1212,18 @@ EncryptCipherMode getEncryptMode() {
 	if (std::is_same_v<Params, AesCtrWithHmacParams> || std::is_same_v<Params, AesCtrWithCmacParams>) {
 		return EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR;
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
+	}
+}
+
+template <class Params>
+EncryptAuthTokenMode getAuthTokenMode() {
+	if (std::is_same_v<Params, AesCtrWithHmacParams> || std::is_same_v<Params, AesCtrWithCmacParams>) {
+		return EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE;
+	} else if (std::is_same_v<Params, AesCtrNoAuth>) {
+		return EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
+	} else {
+		throw not_implemented();
 	}
 }
 
@@ -1163,7 +1234,20 @@ std::string getEncryptModeStr() {
 	} else if (std::is_same_v<Params, AesCtrWithCmacParams>) {
 		return "CMAC_SHA";
 	} else {
-		throw unsupported_operation();
+		throw not_implemented();
+	}
+}
+
+template <class Params>
+EncryptionAtRestAlgo getEncryptionAtRestAlgo() {
+	if (std::is_same_v<Params, AesCtrWithHmacParams>) {
+		return EncryptionAtRestAlgo::AES_CTR_HMAC;
+	} else if (std::is_same_v<Params, AesCtrWithCmacParams>) {
+		return EncryptionAtRestAlgo::AES_CTR_CMAC;
+	} else if (std::is_same_v<Params, AesGcm>) {
+		return EncryptionAtRestAlgo::AES_GCM;
+	} else {
+		throw not_implemented();
 	}
 }
 
@@ -1536,8 +1620,9 @@ void testConfigurableEncryptionAesCtrWithAuthSerGcm(const int minDomainId) {
 
 	AesGcm withAuth;
 	get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails = BlobCipherDetails(1, 2, 23);
-	deterministicRandom()->randomBytes(&get<AesGcmV1>(withAuth.headerVersions).iv[0], AES_256_GCM_IV_LENGTH);
-	deterministicRandom()->randomBytes(&get<AesGcmV1>(withAuth.headerVersions).authToken[0], AES_256_GCM_TAG_LENGTH);
+	deterministicRandom()->randomBytes(&get<AesGcmV1>(withAuth.headerVersions).iv[0], AesGcmParams::ivSize);
+	deterministicRandom()->randomBytes(&get<AesGcmV1>(withAuth.headerVersions).authToken[0],
+	                                   AesGcmParams::authTokenSize);
 	Standalone<StringRef> serAlgo = AesGcm::toStringRef(withAuth);
 	ASSERT_EQ(serAlgo.size(), AesGcm::getSize());
 
@@ -1570,15 +1655,8 @@ void testConfigurableEncryptionHeaderNoAuthMode(const int minDomainId) {
 	uint8_t iv[AES_256_CTR_IV_LENGTH];
 	deterministicRandom()->randomBytes(&iv[0], AES_256_CTR_IV_LENGTH);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    headerCipherKey,
-	                                    iv,
-	                                    AES_256_CTR_IV_LENGTH,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
-	                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE,
-	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
+	    cipherKey, headerCipherKey, iv, AES_256_CTR_IV_LENGTH, EncryptionAtRestAlgo::AES_CTR, BlobCipherMetrics::TEST);
 
 	BlobCipherEncryptHeaderRef headerRef;
 	encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
@@ -1630,15 +1708,8 @@ void testConfigurableEncryptionNoAuthMode(const int minDomainId) {
 	uint8_t iv[AES_256_CTR_IV_LENGTH];
 	deterministicRandom()->randomBytes(&iv[0], AES_256_CTR_IV_LENGTH);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    headerCipherKey,
-	                                    iv,
-	                                    AES_256_CTR_IV_LENGTH,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
-	                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE,
-	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
+	    cipherKey, headerCipherKey, iv, AES_256_CTR_IV_LENGTH, EncryptionAtRestAlgo::AES_CTR, BlobCipherMetrics::TEST);
 
 	BlobCipherEncryptHeaderRef headerRef;
 
@@ -1650,12 +1721,11 @@ void testConfigurableEncryptionNoAuthMode(const int minDomainId) {
 	                                                                   noAuth.v1.cipherTextDetails.baseCipherId,
 	                                                                   noAuth.v1.cipherTextDetails.salt);
 	ASSERT(tCipherKey->isEqual(cipherKey));
-	Reference<DecryptBlobCipher> decryptor =
-	    DecryptBlobCipher::getDecryptor(tCipherKey,
-	                                    Reference<BlobCipherKey>(),
-	                                    &noAuth.v1.iv[0],
-	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-	                                    BlobCipherMetrics::TEST);
+	Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(tCipherKey,
+	                                                                         Reference<BlobCipherKey>(),
+	                                                                         &noAuth.v1.iv[0],
+	                                                                         EncryptionAtRestAlgo::AES_CTR,
+	                                                                         BlobCipherMetrics::TEST);
 
 	StringRef decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), encryptedBuf.size(), headerRef, arena);
 	ASSERT_EQ(decryptedBuf.size(), bufLen);
@@ -1678,12 +1748,8 @@ void testConfigurableEncryptionNoAuthMode(const int minDomainId) {
 	corruptedHeaderRef.flags = corruptedFlags;
 	try {
 		encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
-		Reference<DecryptBlobCipher> decryptor =
-		    DecryptBlobCipher::getDecryptor(tCipherKey,
-		                                    Reference<BlobCipherKey>(),
-		                                    &iv[0],
-		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		                                    BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
+		    tCipherKey, Reference<BlobCipherKey>(), &iv[0], EncryptionAtRestAlgo::AES_CTR, BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, corruptedHeaderRef, arena);
 		ASSERT(false); // error expected
 	} catch (Error& e) {
@@ -1701,12 +1767,8 @@ void testConfigurableEncryptionNoAuthMode(const int minDomainId) {
 		memcpy((void*)encryptedBuf.begin(), &temp[0], bufLen);
 		int tIdx = deterministicRandom()->randomInt(0, bufLen - 1);
 		temp[tIdx] += 1;
-		Reference<DecryptBlobCipher> decryptor =
-		    DecryptBlobCipher::getDecryptor(tCipherKey,
-		                                    Reference<BlobCipherKey>(),
-		                                    &iv[0],
-		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		                                    BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
+		    tCipherKey, Reference<BlobCipherKey>(), &iv[0], EncryptionAtRestAlgo::AES_CTR, BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, &temp[0], bufLen, headerRef, arena);
 		ASSERT_NE(memcmp(decryptedBuf.begin(), &orgData[0], bufLen), 0);
 		TraceEvent("TestConfigurableEncryptionNoAuthPayloadCorruptionDone");
@@ -1719,12 +1781,11 @@ void testConfigurableEncryptionNoAuthMode(const int minDomainId) {
 	try {
 		Reference<BlobCipherKey> corruptedTextCipher = corruptCipherKey(tCipherKey);
 		encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
-		Reference<DecryptBlobCipher> decryptor =
-		    DecryptBlobCipher::getDecryptor(corruptedTextCipher,
-		                                    Reference<BlobCipherKey>(),
-		                                    &iv[0],
-		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		                                    BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(corruptedTextCipher,
+		                                                                         Reference<BlobCipherKey>(),
+		                                                                         &iv[0],
+		                                                                         EncryptionAtRestAlgo::AES_CTR,
+		                                                                         BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, headerRef, arena);
 		ASSERT(false); // error expected
 	} catch (Error& e) {
@@ -1753,15 +1814,8 @@ void testConfigurableEncryptionHeaderSingleAuthMode(int minDomainId) {
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    headerCipherKey,
-	                                    iv,
-	                                    Params::ivSize,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
-	                                    getAuthTokenAlgo<Params>(),
-	                                    getEncryptMode<Params>(),
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
+	    cipherKey, headerCipherKey, iv, Params::ivSize, getEncryptionAtRestAlgo<Params>(), BlobCipherMetrics::TEST);
 
 	BlobCipherEncryptHeaderRef headerRef;
 	encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
@@ -1811,20 +1865,17 @@ void testConfigurableEncryptionHeaderSingleAuthModeGcm(int minDomainId) {
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	const int bufLen = deterministicRandom()->randomInt(786, 2127) + 512;
 	Arena arena;
-	uint8_t iv[AES_256_GCM_IV_LENGTH];
-	deterministicRandom()->randomBytes(&iv[0], AES_256_GCM_IV_LENGTH);
+	uint8_t iv[AesGcmParams::ivSize];
+	deterministicRandom()->randomBytes(&iv[0], AesGcmParams::ivSize);
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    Optional<Reference<BlobCipherKey>>(),
-	                                    iv,
-	                                    AES_256_GCM_IV_LENGTH,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
-	                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM,
-	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM,
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(cipherKey,
+	                                                                         Optional<Reference<BlobCipherKey>>(),
+	                                                                         iv,
+	                                                                         AesGcmParams::ivSize,
+	                                                                         EncryptionAtRestAlgo::AES_GCM,
+	                                                                         BlobCipherMetrics::TEST);
 
 	BlobCipherEncryptHeaderRef headerRef;
 	encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
@@ -1835,7 +1886,7 @@ void testConfigurableEncryptionHeaderSingleAuthModeGcm(int minDomainId) {
 	AesGcm algoHeader = std::get<AesGcm>(headerRef.algoHeader);
 
 	const uint8_t* headerIV = headerRef.getIV();
-	ASSERT_EQ(memcmp(&headerIV[0], &iv[0], AES_256_GCM_IV_LENGTH), 0);
+	ASSERT_EQ(memcmp(&headerIV[0], &iv[0], AesGcmParams::ivSize), 0);
 
 	EncryptHeaderCipherDetails validateDetails = headerRef.getCipherDetails();
 	ASSERT(validateDetails.textCipherDetails.isValid() &&
@@ -1851,10 +1902,10 @@ void testConfigurableEncryptionHeaderSingleAuthModeGcm(int minDomainId) {
 	AesGcm validateAlgo = std::get<AesGcm>(validateHeader.algoHeader);
 	ASSERT(get<AesGcmV1>(validateAlgo.headerVersions).cipherTextDetails ==
 	       get<AesGcmV1>(algoHeader.headerVersions).cipherTextDetails);
-	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(validateAlgo.headerVersions).iv[0], AES_256_GCM_IV_LENGTH), 0);
+	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(validateAlgo.headerVersions).iv[0], AesGcmParams::ivSize), 0);
 	ASSERT_EQ(memcmp(&get<AesGcmV1>(algoHeader.headerVersions).authToken[0],
 	                 &get<AesGcmV1>(validateAlgo.headerVersions).authToken[0],
-	                 AES_256_GCM_TAG_LENGTH),
+	                 AesGcmParams::authTokenSize),
 	          0);
 
 	TraceEvent("HeaderSize")
@@ -1887,15 +1938,8 @@ void testConfigurableEncryptionSingleAuthMode(const int minDomainId) {
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    headerCipherKey,
-	                                    iv,
-	                                    Params::ivSize,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
-	                                    authAlgo,
-	                                    encryptMode,
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
+	    cipherKey, headerCipherKey, iv, Params::ivSize, getEncryptionAtRestAlgo<Params>(), BlobCipherMetrics::TEST);
 	BlobCipherEncryptHeaderRef headerRef;
 	StringRef encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
 
@@ -1931,7 +1975,7 @@ void testConfigurableEncryptionSingleAuthMode(const int minDomainId) {
 	ASSERT(tCipherKey->isEqual(cipherKey));
 	ASSERT(hCipherKey->isEqual(headerCipherKey));
 	Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-	    tCipherKey, hCipherKey, &withAuth.v1.iv[0], encryptMode, BlobCipherMetrics::TEST);
+	    tCipherKey, hCipherKey, &withAuth.v1.iv[0], headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 	StringRef decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, headerRef, arena);
 
 	ASSERT_EQ(decryptedBuf.size(), bufLen);
@@ -1957,12 +2001,8 @@ void testConfigurableEncryptionSingleAuthMode(const int minDomainId) {
 	corruptedHeaderRef.flags = corruptedFlags;
 	try {
 		encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
-		Reference<DecryptBlobCipher> decryptor =
-		    DecryptBlobCipher::getDecryptor(tCipherKey,
-		                                    hCipherKey,
-		                                    &iv[0],
-		                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		                                    BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
+		    tCipherKey, hCipherKey, &iv[0], headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, corruptedHeaderRef, arena);
 		ASSERT(false); // error expected
 	} catch (Error& e) {
@@ -1977,8 +2017,8 @@ void testConfigurableEncryptionSingleAuthMode(const int minDomainId) {
 		encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
 		uint8_t temp[bufLen];
 		deterministicRandom()->randomBytes(temp, bufLen);
-		Reference<DecryptBlobCipher> decryptor =
-		    DecryptBlobCipher::getDecryptor(tCipherKey, hCipherKey, &iv[0], encryptMode, BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
+		    tCipherKey, hCipherKey, &iv[0], headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, temp, bufLen, headerRef, arena);
 		ASSERT(false);
 	} catch (Error& e) {
@@ -1993,12 +2033,12 @@ void testConfigurableEncryptionSingleAuthMode(const int minDomainId) {
 		if (corruptTextCipher) {
 			Reference<BlobCipherKey> corruptedCipher = corruptCipherKey(tCipherKey);
 			Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-			    corruptedCipher, hCipherKey, &iv[0], encryptMode, BlobCipherMetrics::TEST);
+			    corruptedCipher, hCipherKey, &iv[0], headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 			decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, headerRef, arena);
 		} else {
 			Reference<BlobCipherKey> corruptedCipher = corruptCipherKey(hCipherKey);
 			Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-			    tCipherKey, corruptedCipher, &iv[0], encryptMode, BlobCipherMetrics::TEST);
+			    tCipherKey, corruptedCipher, &iv[0], headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 			decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, headerRef, arena);
 		}
 		ASSERT(false); // error expected
@@ -2024,20 +2064,17 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	const int bufLen = deterministicRandom()->randomInt(786, 2127) + 512;
 	Arena arena;
-	uint8_t iv[AES_256_GCM_IV_LENGTH];
-	deterministicRandom()->randomBytes(&iv[0], AES_256_GCM_IV_LENGTH);
+	uint8_t iv[AesGcmParams::ivSize];
+	deterministicRandom()->randomBytes(&iv[0], AesGcmParams::ivSize);
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    Optional<Reference<BlobCipherKey>>(),
-	                                    iv,
-	                                    AES_256_GCM_IV_LENGTH,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
-	                                    authAlgo,
-	                                    encryptMode,
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(cipherKey,
+	                                                                         Optional<Reference<BlobCipherKey>>(),
+	                                                                         iv,
+	                                                                         AesGcmParams::ivSize,
+	                                                                         EncryptionAtRestAlgo::AES_GCM,
+	                                                                         BlobCipherMetrics::TEST);
 	BlobCipherEncryptHeaderRef headerRef;
 	StringRef encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
 
@@ -2054,7 +2091,7 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 
 	// validate IV
 	AesGcm withAuth = std::get<AesGcm>(headerRef.algoHeader);
-	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(withAuth.headerVersions).iv[0], AES_256_GCM_IV_LENGTH), 0);
+	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(withAuth.headerVersions).iv[0], AesGcmParams::ivSize), 0);
 	ASSERT_NE(memcmp(&orgData[0], encryptedBuf.begin(), bufLen), 0);
 	// validate cipherKey details
 	ASSERT_EQ(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.encryptDomainId, cipherKey->getDomainId());
@@ -2070,7 +2107,7 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	    DecryptBlobCipher::getDecryptor(tCipherKey,
 	                                    Optional<Reference<BlobCipherKey>>(),
 	                                    &get<AesGcmV1>(withAuth.headerVersions).iv[0],
-	                                    encryptMode,
+	                                    headerRef.getEncryptionAtRestAlgo(),
 	                                    BlobCipherMetrics::TEST);
 	StringRef decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, headerRef, arena);
 
@@ -2094,8 +2131,11 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	corruptedHeaderRef.flags = corruptedFlags;
 	try {
 		encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
-		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    tCipherKey, Optional<Reference<BlobCipherKey>>(), &iv[0], encryptMode, BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(tCipherKey,
+		                                                                         Optional<Reference<BlobCipherKey>>(),
+		                                                                         &iv[0],
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
+		                                                                         BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, corruptedHeaderRef, arena);
 		ASSERT(false); // error expected
 	} catch (Error& e) {
@@ -2110,8 +2150,11 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 		encryptedBuf = encryptTest(encryptor, &orgData[0], bufLen, &headerRef, arena);
 		uint8_t temp[bufLen];
 		deterministicRandom()->randomBytes(temp, bufLen);
-		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    tCipherKey, Optional<Reference<BlobCipherKey>>(), &iv[0], encryptMode, BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(tCipherKey,
+		                                                                         Optional<Reference<BlobCipherKey>>(),
+		                                                                         &iv[0],
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
+		                                                                         BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, temp, bufLen, headerRef, arena);
 		ASSERT(false);
 	} catch (Error& e) {
@@ -2122,8 +2165,11 @@ void testConfigurableEncryptionSingleAuthModeGcm(const int minDomainId) {
 	// induce baseCipher payload corruption
 	try {
 		Reference<BlobCipherKey> corruptedCipher = corruptCipherKey(tCipherKey);
-		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    corruptedCipher, Optional<Reference<BlobCipherKey>>(), &iv[0], encryptMode, BlobCipherMetrics::TEST);
+		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(corruptedCipher,
+		                                                                         Optional<Reference<BlobCipherKey>>(),
+		                                                                         &iv[0],
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
+		                                                                         BlobCipherMetrics::TEST);
 		decryptedBuf = decryptTest(decryptor, encryptedBuf.begin(), bufLen, headerRef, arena);
 		ASSERT(false); // error expected
 	} catch (Error& e) {
@@ -2170,15 +2216,8 @@ void testConfigurableEncryptionInvalidEncryptionKeyNoAuth(const int minDomainId)
 	uint8_t iv[AES_256_CTR_IV_LENGTH];
 	deterministicRandom()->randomBytes(&iv[0], AES_256_CTR_IV_LENGTH);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    headerCipherKey,
-	                                    iv,
-	                                    AES_256_CTR_IV_LENGTH,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE,
-	                                    EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE,
-	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
+	    cipherKey, headerCipherKey, iv, AES_256_CTR_IV_LENGTH, EncryptionAtRestAlgo::AES_CTR, BlobCipherMetrics::TEST);
 
 	BlobCipherEncryptHeaderRef headerRef;
 	StringRef encryptedBuf = encryptor->encrypt(&orgData[0], bufLen, &headerRef, arena);
@@ -2195,12 +2234,11 @@ void testConfigurableEncryptionInvalidEncryptionKeyNoAuth(const int minDomainId)
 	                                                                   cipherKey->getExpireAtTS());
 	// BlobCipherKey uses unique random salt to ensure generated encryption-keys are different
 	ASSERT(!tCipherKey->isEqual(cipherKey));
-	Reference<DecryptBlobCipher> decryptor =
-	    DecryptBlobCipher::getDecryptor(tCipherKey,
-	                                    Reference<BlobCipherKey>(),
-	                                    &noAuth.v1.iv[0],
-	                                    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-	                                    BlobCipherMetrics::TEST);
+	Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(tCipherKey,
+	                                                                         Reference<BlobCipherKey>(),
+	                                                                         &noAuth.v1.iv[0],
+	                                                                         EncryptionAtRestAlgo::AES_CTR,
+	                                                                         BlobCipherMetrics::TEST);
 
 	try {
 		StringRef decryptedBuf = decryptor->decrypt(encryptedBuf.begin(), encryptedBuf.size(), headerRef, arena);
@@ -2235,15 +2273,8 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthMode(const int minDoma
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    headerCipherKey,
-	                                    iv,
-	                                    Params::ivSize,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
-	                                    authAlgo,
-	                                    encryptMode,
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
+	    cipherKey, headerCipherKey, iv, Params::ivSize, getEncryptionAtRestAlgo<Params>(), BlobCipherMetrics::TEST);
 	BlobCipherEncryptHeaderRef headerRef;
 	StringRef encryptedBuf = encryptor->encrypt(&orgData[0], bufLen, &headerRef, arena);
 
@@ -2282,7 +2313,7 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthMode(const int minDoma
 
 		// Switch text & header cipher keys to simulate decryption using invalid encryption keys
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(
-		    hCipherKey, tCipherKey, &withAuth.v1.iv[0], encryptMode, BlobCipherMetrics::TEST);
+		    hCipherKey, tCipherKey, &withAuth.v1.iv[0], headerRef.getEncryptionAtRestAlgo(), BlobCipherMetrics::TEST);
 		decryptor->decrypt(encryptedBuf.begin(), bufLen, headerRef, arena);
 		ASSERT(false);
 	} catch (Error& e) {
@@ -2291,6 +2322,56 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthMode(const int minDoma
 	}
 
 	TraceEvent("TestConfigurableEncryptionInvalidEncryptKeySingleAuthTokenEnd").detail("Mode", authAlgoStr);
+}
+
+void testNonceGeneration(const int minDomainId) {
+	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
+	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
+	EncryptCipherNonce nonce = cipherKey->getNonce();
+	EncryptCipherNonce maxNonceValue = nonce + 2;
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce + 1);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce + 2);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 0);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 1);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 2);
+	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 3);
+}
+
+void testNonceIVGenerationGcm(const int minDomainId) {
+	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
+	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
+	Reference<BlobCipherKey> headerCipherKey = cipherKeyCache->getLatestCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
+	const EncryptCipherNonce maxNonceSize = std::numeric_limits<uint96_t>::max();
+	EncryptionAtRestAlgo algo = EncryptionAtRestAlgo::AES_GCM;
+	int ivSize = getIVLengthFromEncryptionAtRestAlgo(algo);
+
+	for (int i = 0; i < 10; i++) {
+		EncryptCipherNonce nonce = cipherKey->getNonce();
+		Reference<EncryptBlobCipher> encryptor =
+		    EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, algo, BlobCipherMetrics::TEST);
+		StringRef ivRef = encryptor->getIVRef();
+		ASSERT_EQ(ivRef.size(), ivSize);
+		EncryptCipherNonce encryptorNonce;
+		memcpy(reinterpret_cast<unsigned char*>(&encryptorNonce), ivRef.begin(), ivRef.size());
+		ASSERT(encryptorNonce == nonce);
+		ASSERT(nonce + 1 == cipherKey->getNonce());
+	}
+
+	cipherKey->setNonceTest(maxNonceSize);
+	Reference<EncryptBlobCipher> encryptor =
+	    EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, algo, BlobCipherMetrics::TEST);
+	StringRef ivRef = encryptor->getIVRef();
+	ASSERT_EQ(ivRef.size(), ivSize);
+	EncryptCipherNonce encryptorNonce;
+	memcpy(reinterpret_cast<unsigned char*>(&encryptorNonce), ivRef.begin(), ivRef.size());
+	ASSERT(encryptorNonce == maxNonceSize);
+
+	encryptor = EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, algo, BlobCipherMetrics::TEST);
+	ivRef = encryptor->getIVRef();
+	ASSERT_EQ(ivRef.size(), ivSize);
+	memcpy(reinterpret_cast<unsigned char*>(&encryptorNonce), ivRef.begin(), ivRef.size());
+	ASSERT(encryptorNonce == 0);
 }
 
 void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minDomainId) {
@@ -2307,20 +2388,17 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	const int bufLen = deterministicRandom()->randomInt(786, 2127) + 512;
 	Arena arena;
-	uint8_t iv[AES_256_GCM_IV_LENGTH];
-	deterministicRandom()->randomBytes(&iv[0], AES_256_GCM_IV_LENGTH);
+	uint8_t iv[AesGcmParams::ivSize];
+	deterministicRandom()->randomBytes(&iv[0], AesGcmParams::ivSize);
 	uint8_t orgData[bufLen];
 	deterministicRandom()->randomBytes(&orgData[0], bufLen);
 
-	Reference<EncryptBlobCipher> encryptor =
-	    EncryptBlobCipher::getEncryptor(cipherKey,
-	                                    Optional<Reference<BlobCipherKey>>(),
-	                                    iv,
-	                                    AES_256_GCM_IV_LENGTH,
-	                                    EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE,
-	                                    authAlgo,
-	                                    encryptMode,
-	                                    BlobCipherMetrics::TEST);
+	Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(cipherKey,
+	                                                                         Optional<Reference<BlobCipherKey>>(),
+	                                                                         iv,
+	                                                                         AesGcmParams::ivSize,
+	                                                                         EncryptionAtRestAlgo::AES_GCM,
+	                                                                         BlobCipherMetrics::TEST);
 	BlobCipherEncryptHeaderRef headerRef;
 	StringRef encryptedBuf = encryptor->encrypt(&orgData[0], bufLen, &headerRef, arena);
 
@@ -2337,7 +2415,7 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 
 	// validate IV
 	AesGcm withAuth = std::get<AesGcm>(headerRef.algoHeader);
-	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(withAuth.headerVersions).iv[0], AES_256_GCM_IV_LENGTH), 0);
+	ASSERT_EQ(memcmp(&iv[0], &get<AesGcmV1>(withAuth.headerVersions).iv[0], AesGcmParams::ivSize), 0);
 	ASSERT_NE(memcmp(&orgData[0], encryptedBuf.begin(), bufLen), 0);
 	// validate cipherKey details
 	ASSERT_EQ(get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.encryptDomainId, cipherKey->getDomainId());
@@ -2355,7 +2433,7 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 TEST_CASE("/blobCipher") {
 	DomainKeyMap domainKeyMap;
 	const EncryptCipherDomainId minDomainId = 1;
-	const EncryptCipherDomainId maxDomainId = deterministicRandom()->randomInt(minDomainId, minDomainId + 10) + 5;
+	const EncryptCipherDomainId maxDomainId = deterministicRandom()->randomInt(minDomainId + 1, minDomainId + 10) + 5;
 	const EncryptCipherBaseKeyId minBaseCipherKeyId = 100;
 	const EncryptCipherBaseKeyId maxBaseCipherKeyId =
 	    deterministicRandom()->randomInt(minBaseCipherKeyId, minBaseCipherKeyId + 50) + 15;
@@ -2394,6 +2472,9 @@ TEST_CASE("/blobCipher") {
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthMode<AesCtrWithHmacParams>(minDomainId);
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthMode<AesCtrWithCmacParams>(minDomainId);
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(minDomainId);
+
+	testNonceGeneration(minDomainId);
+	testNonceIVGenerationGcm(minDomainId + 1);
 
 	testKeyCacheCleanup(minDomainId, maxDomainId);
 

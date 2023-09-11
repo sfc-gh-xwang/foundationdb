@@ -24,9 +24,11 @@
 
 #include "fdbclient/BackupAgent.actor.h"
 #include "fdbclient/BackupContainer.h"
+#include "fdbclient/BlobCipher.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BlobGranuleFiles.actor.h"
 #include "flow/Arena.h"
+#include "flow/EncryptUtils.h"
 #include "flow/FastRef.h"
 #include "flow/Trace.h"
 #include "flow/flow.h"
@@ -396,15 +398,18 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestManifestCipherKeys(Reference<Asy
 
 	auto domainKeyItr = domainKeyMap.find(FDB_DEFAULT_ENCRYPT_DOMAIN_ID);
 	ASSERT(domainKeyItr != domainKeyMap.end());
-	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(domainKeyItr->second, *arena);
+	state Reference<BlobCipherKey> textCipherKey = domainKeyItr->second;
+	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(textCipherKey, *arena);
 
 	TextAndHeaderCipherKeys cipherKeys = wait(
 	    GetEncryptCipherKeys<ServerDBInfo>::getLatestSystemEncryptCipherKeys(dbInfo, BlobCipherMetrics::BLOB_GRANULE));
 	ASSERT(cipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(cipherKeys.cipherHeaderKey, *arena);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, *arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(algo);
+	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
+	generateIV(algo, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
 
 	return cipherKeysCtx;
 }

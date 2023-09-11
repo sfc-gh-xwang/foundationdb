@@ -378,7 +378,8 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 
 	auto domainKeyItr = domainKeyMap.find(domainId);
 	ASSERT(domainKeyItr != domainKeyMap.end());
-	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(domainKeyItr->second, *arena);
+	state Reference<BlobCipherKey> textCipherKey = domainKeyItr->second;
+	cipherKeysCtx.textCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(textCipherKey, *arena);
 
 	TextAndHeaderCipherKeys systemCipherKeys =
 	    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestSystemEncryptCipherKeys(bwData->dbInfo,
@@ -386,8 +387,10 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 	ASSERT(systemCipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(systemCipherKeys.cipherHeaderKey, *arena);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, *arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(algo);
+	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
+	generateIV(algo, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
 		TraceEvent(SevDebug, "GetLatestGranuleCipherKey")
@@ -450,7 +453,13 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
-	ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
+		ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
+	} else {
+		ASSERT_EQ(ivRef.size(), AesGcmParams::ivSize);
+	}
 	cipherKeysCtx.ivRef = StringRef(*arena, ivRef);
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {

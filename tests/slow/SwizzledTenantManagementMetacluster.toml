@@ -4,6 +4,9 @@ tenantModes = ['optional', 'required']
 allowCreatingTenants = false
 extraDatabaseMode = 'Single'
 
+[[knobs]]
+cc_enable_tenant_balancer = true
+
 [[test]]
 testTitle = 'TenantManagementTest'
 clearAfterTest = true

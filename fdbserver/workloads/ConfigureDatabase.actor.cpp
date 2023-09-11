@@ -341,7 +341,7 @@ struct ConfigureDatabaseWorkload : TestWorkload {
 				}
 				if (pass)
 					break;
-				wait(delay(g_network->isSimulated() ? 2.0 : 30.0));
+				wait(delay(SERVER_KNOBS->PERPETUAL_WIGGLE_DELAY));
 			}
 		}
 		return true;

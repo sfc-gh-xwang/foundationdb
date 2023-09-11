@@ -265,16 +265,13 @@ struct IndexBlockRef {
 		}
 
 		Value serializedBuff = ObjectWriter::toValue(block, IncludeVersion(ProtocolVersion::withBlobGranuleFile()));
-		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-		    eKeys.textCipherKey,
-		    eKeys.headerCipherKey,
-		    cipherKeysCtx.ivRef.begin(),
-		    AES_256_CTR_IV_LENGTH,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		    BlobCipherMetrics::BLOB_GRANULE);
+		Reference<EncryptBlobCipher> encryptor =
+		    EncryptBlobCipher::getEncryptor(eKeys.textCipherKey,
+		                                    eKeys.headerCipherKey,
+		                                    cipherKeysCtx.ivRef.begin(),
+		                                    cipherKeysCtx.ivRef.size(),
+		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    BlobCipherMetrics::BLOB_GRANULE);
 
 		BlobCipherEncryptHeaderRef headerRef;
 		if (encryptor->supportsInplaceEncryption()) {
@@ -311,7 +308,7 @@ struct IndexBlockRef {
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(eKeys.textCipherKey,
 		                                                                         eKeys.headerCipherKey,
 		                                                                         cipherKeysCtx.ivRef.begin(),
-		                                                                         headerRef.getEncryptMode(),
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
 		                                                                         BlobCipherMetrics::BLOB_GRANULE);
 		if (decryptor->supportsInplaceDecryption()) {
 			decrypted = StringRef(idxRef.buffer.begin(), idxRef.buffer.size());
@@ -404,16 +401,13 @@ struct IndexBlobGranuleFileChunkRef {
 			TraceEvent(SevDebug, "BlobChunkEncrypt_Before").detail("Chksum", chksum);
 		}
 
-		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(
-		    eKeys.textCipherKey,
-		    eKeys.headerCipherKey,
-		    cipherKeysCtx.ivRef.begin(),
-		    AES_256_CTR_IV_LENGTH,
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE),
-		    getAuthTokenAlgoFromMode(
-		        getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE)),
-		    EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR,
-		    BlobCipherMetrics::BLOB_GRANULE);
+		Reference<EncryptBlobCipher> encryptor =
+		    EncryptBlobCipher::getEncryptor(eKeys.textCipherKey,
+		                                    eKeys.headerCipherKey,
+		                                    cipherKeysCtx.ivRef.begin(),
+		                                    cipherKeysCtx.ivRef.size(),
+		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    BlobCipherMetrics::BLOB_GRANULE);
 		BlobCipherEncryptHeaderRef headerRef;
 		if (encryptor->supportsInplaceEncryption()) {
 			encryptor->encryptInplace(mutateString(chunkRef.buffer), chunkRef.buffer.size(), &headerRef);
@@ -450,7 +444,7 @@ struct IndexBlobGranuleFileChunkRef {
 		Reference<DecryptBlobCipher> decryptor = DecryptBlobCipher::getDecryptor(eKeys.textCipherKey,
 		                                                                         eKeys.headerCipherKey,
 		                                                                         cipherKeysCtx.ivRef.begin(),
-		                                                                         headerRef.getEncryptMode(),
+		                                                                         headerRef.getEncryptionAtRestAlgo(),
 		                                                                         BlobCipherMetrics::BLOB_GRANULE);
 		if (decryptor->supportsInplaceDecryption()) {
 			decrypted = StringRef(chunkRef.buffer.begin(), chunkRef.buffer.size());
@@ -613,6 +607,9 @@ struct IndexedBlobGranuleFile {
 		}
 		ASSERT(file.fileType == SNAPSHOT_FILE_TYPE || file.fileType == DELTA_FILE_TYPE);
 
+		// FIXME: could add some sanity checks here that index block is sorted and that file pointers are all within the
+		// file
+
 		return Standalone<IndexedBlobGranuleFile>(file, arena);
 	}
 
@@ -643,6 +640,10 @@ struct IndexedBlobGranuleFile {
 		ASSERT(nextPointer != indexBlockRef.block.children.end());
 
 		size_t blockSize = nextPointer->offset - childPointer->offset;
+
+		ASSERT(childPointer->offset >= 0);
+		ASSERT(blockSize >= 0);
+		ASSERT(childPointer->offset + startOffset + blockSize <= fileBytes.size());
 		// Account for IndexBlockRef size for chunk offset computation
 		StringRef childData(fileBytes.begin() + childPointer->offset + startOffset, blockSize);
 
@@ -1764,8 +1765,9 @@ BlobGranuleCipherKeysCtx getCipherKeysCtx(Arena& arena) {
 	cipherKeysCtx.headerCipherKey.salt = encryptSalt;
 	cipherKeysCtx.headerCipherKey.baseCipher = StringRef(arena, encryptBaseCipher);
 
-	cipherKeysCtx.ivRef = makeString(AES_256_CTR_IV_LENGTH, arena);
-	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), AES_256_CTR_IV_LENGTH);
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO));
+	cipherKeysCtx.ivRef = makeString(ivLength, arena);
+	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), ivLength);
 
 	return cipherKeysCtx;
 }
@@ -2736,6 +2738,77 @@ TEST_CASE("/blobgranule/files/granuleReadUnitTest") {
 		                 serializedSnapshot,
 		                 serializedDeltaFiles,
 		                 inMemoryDeltas);
+	}
+
+	return Void();
+}
+
+// FIXME: move elsewhere
+TEST_CASE("-/blobgranule/files/testNegative") {
+	ASSERT(false);
+	return Void();
+}
+
+// FIXME: also move somewhere else!
+namespace {
+struct TestStruct1 {
+	constexpr static FileIdentifier file_identifier = 10001;
+	int val;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, val);
+	}
+};
+
+struct TestStruct2 {
+	constexpr static FileIdentifier file_identifier = 10002;
+	int val;
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, val);
+	}
+};
+} // namespace
+
+TEST_CASE("-/blobgranule/files/flatbufferMismatch") {
+	// try to parse flatbuffer type as wrong type
+	TestStruct1 struct1;
+	Value serialized = ObjectWriter::toValue(struct1, Unversioned());
+	ObjectReader::fromStringRef<TestStruct2>(serialized, Unversioned());
+	return Void();
+}
+
+TEST_CASE("-/blobgranule/files/fileTypeMismatch") {
+	state uint8_t writeFileType, readFileType;
+	if (deterministicRandom()->coinflip()) {
+		writeFileType = SNAPSHOT_FILE_TYPE;
+		readFileType = DELTA_FILE_TYPE;
+	} else {
+		writeFileType = DELTA_FILE_TYPE;
+		readFileType = SNAPSHOT_FILE_TYPE;
+	}
+
+	state KeyValueGen kvGen;
+	state Standalone<StringRef> fileNameRef = StringRef(std::string("testMismatch"));
+
+	state Value serialized;
+	if (writeFileType == SNAPSHOT_FILE_TYPE) {
+		Standalone<GranuleSnapshot> rows = genSnapshot(kvGen, 1);
+		wait(store(serialized,
+		           serializeChunkedSnapshot(fileNameRef, &rows, 1, kvGen.compressFilter, kvGen.cipherKeys, true)));
+	} else {
+		Standalone<GranuleDeltas> deltas = genDeltas(kvGen, 1);
+		wait(store(serialized,
+		           serializeChunkedDeltaFile(
+		               fileNameRef, &deltas, kvGen.allRange, 1, kvGen.compressFilter, kvGen.cipherKeys)));
+	}
+
+	if (readFileType == SNAPSHOT_FILE_TYPE) {
+		bgReadSnapshotFile(serialized, {}, kvGen.cipherKeys, kvGen.allRange);
+	} else {
+		bgReadDeltaFile(serialized, {}, kvGen.cipherKeys);
 	}
 
 	return Void();

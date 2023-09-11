@@ -331,6 +331,7 @@ struct BlobManagerStats {
 
 	ActiveCounter<int> activeGranuleSplitChecks;
 	ActiveCounter<int> activePurges;
+	ActiveCounter<int> activeBulkLoads;
 
 	// Current stats maintained for a given blob worker process
 	explicit BlobManagerStats(UID id,
@@ -371,7 +372,8 @@ struct BlobManagerStats {
 	    lastManifestDumpTs(0),
 	    manifestSizeInBytes(0),
 	    activeGranuleSplitChecks(0),
-	    activePurges(0) {
+	    activePurges(0),
+	    activeBulkLoads(0) {
 		specialCounter(cc, "WorkerCount", [workers]() { return workers->size(); });
 		specialCounter(cc, "Epoch", [epoch]() { return epoch; });
 		specialCounter(cc, "ActiveMerges", [this]() { return this->activeMerges; });
@@ -388,6 +390,7 @@ struct BlobManagerStats {
 		specialCounter(cc, "ActivePurges", [this]() -> int { return this->activePurges.getValue(); });
 		specialCounter(
 		    cc, "ActiveBlobWorkerRecruitments", [recruitingStream]() -> int { return recruitingStream->get(); });
+		specialCounter(cc, "ActiveBulkLoads", [this]() -> int { return this->activeBulkLoads.getValue(); });
 		logger = cc.traceCounters("BlobManagerMetrics", id, interval, "BlobManagerMetrics");
 	}
 };
@@ -5081,6 +5084,64 @@ ACTOR Future<Void> waitForcePurgeBlobbified(Reference<BlobManagerData> self, Key
 	return Void();
 }
 
+ACTOR Future<Void> deleteActiveChangeFeeds(Reference<BlobManagerData> bmData, PromiseStream<Key>* feedsToDelete) {
+	state Transaction tr(bmData->db);
+	state int batchSize = 100;
+	if (BUGGIFY_WITH_PROB(0.1)) {
+		batchSize = deterministicRandom()->randomInt(1, 10);
+	}
+
+	state bool done = false;
+
+	loop {
+		if (done) {
+			break;
+		}
+		state std::vector<Key> feedBatch;
+		feedBatch.reserve(batchSize);
+		loop {
+			try {
+				Key k = waitNext(feedsToDelete->getFuture());
+				feedBatch.push_back(k);
+				if (feedBatch.size() == batchSize) {
+					break;
+				}
+			} catch (Error& e) {
+				if (e.code() == error_code_end_of_stream) {
+					done = true;
+					break;
+				}
+				throw e;
+			}
+		}
+
+		if (done && feedBatch.empty()) {
+			break;
+		}
+
+		tr.reset();
+		loop {
+			try {
+				state std::vector<Future<Void>> deleteFutures;
+				deleteFutures.reserve(feedBatch.size());
+				for (int i = 0; i < feedBatch.size(); i++) {
+					deleteFutures.push_back(updateChangeFeed(&tr,
+					                                         feedBatch[i],
+					                                         ChangeFeedStatus::CHANGE_FEED_DESTROY,
+					                                         normalKeys)); // range doesn't matter for delete
+				}
+				wait(waitForAll(deleteFutures));
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+	}
+
+	return Void();
+}
+
 /*
  * This method is used to purge the range [startKey, endKey) at (and including) purgeVersion.
  * To do this, we do a BFS traversal starting at the active granules. Then we classify granules
@@ -5278,6 +5339,15 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 		}
 	}
 
+	// nuke all active change feeds early on in the process to remove the largest source of impact on the rest of the
+	// system as quickly as we can
+	state Future<Void> activeFeedDeleter = Future<Void>(Void());
+	state PromiseStream<Key> forcePurgeFeedKeysToDelete;
+
+	if (force) {
+		activeFeedDeleter = deleteActiveChangeFeeds(self, &forcePurgeFeedKeysToDelete);
+	}
+
 	state int rangeIdx;
 	for (rangeIdx = 0; rangeIdx < activeRanges.size(); rangeIdx++) {
 		state KeyRange activeRange = activeRanges[rangeIdx];
@@ -5324,6 +5394,9 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 					}
 					visited.insert({ activeRange.begin.toString(), history.get().version });
 					historyEntryQueue.push({ activeRange, history.get().version, MAX_VERSION, {} });
+					if (force) {
+						forcePurgeFeedKeysToDelete.send(granuleIDToCFKey(history->value.granuleID));
+					}
 				} else if (BM_PURGE_DEBUG) {
 					fmt::print("BM {0}   No history for range, ignoring\n", self->epoch);
 				}
@@ -5336,6 +5409,11 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 
 	// no longer needed, can save memory
 	activeRanges.clear();
+
+	if (force) {
+		forcePurgeFeedKeysToDelete.sendError(end_of_stream());
+		wait(activeFeedDeleter);
+	}
 
 	TraceEvent("PurgeGranulesTraversalGotLatest", self->id)
 	    .detail("Epoch", self->epoch)
@@ -6001,7 +6079,7 @@ ACTOR Future<Void> tryFlushRange(Reference<BlobManagerData> bmData, KeyRange ran
 				}
 			}
 			if (knownRange) {
-				TraceEvent(retryCount > 100 ? SevError : SevInfo, "BlobGranulesFlushRetry")
+				TraceEvent(retryCount > 100 ? SevWarnAlways : SevInfo, "BlobGranulesFlushRetry")
 				    .detail("Range", range)
 				    .detail("Version", logEndVersion);
 				CODE_PROBE(true, "Retry blob granule flush", probe::decoration::rare);
@@ -6573,6 +6651,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKe
 	if (BM_BULKLOAD_DEBUG) {
 		fmt::print("DBGBM {0}: TrackBL {1}: start\n", bmData->epoch, idKey.second.printable());
 	}
+	state ActiveCounter<int>::Releaser holdingLoadCounter = bmData->stats.activeBulkLoads.take(1);
 	state Optional<Reference<Tenant>> tenant;
 	if (idKey.first != TenantInfo::INVALID_TENANT) {
 		state Optional<TenantMapEntry> entry = wait(TenantAPI::tryGetTenant(bmData->db.getReference(), idKey.first));

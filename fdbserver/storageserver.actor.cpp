@@ -3456,9 +3456,10 @@ ACTOR Future<std::pair<ChangeFeedStreamReply, bool>> getChangeFeedMutations(Stor
 
 		state std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> cipherMap;
 		if (cipherDetails.size()) {
+			Optional<UID> debugId = req.options.present() ? req.options.get().debugID : Optional<UID>();
 			std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> getCipherKeysResult =
 			    wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-			        data->db, cipherDetails, BlobCipherMetrics::TLOG));
+			        data->db, cipherDetails, BlobCipherMetrics::TLOG, {}, debugId));
 			cipherMap = getCipherKeysResult;
 		}
 

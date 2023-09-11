@@ -26,8 +26,11 @@
 #include "fdbclient/ThreadSafeTransaction.h"
 
 #include "metacluster/CreateMetacluster.actor.h"
+#include "metacluster/DecommissionMetacluster.actor.h"
+#include "metacluster/ListClusters.actor.h"
 #include "metacluster/MetaclusterUtil.actor.h"
 #include "metacluster/RegisterCluster.actor.h"
+#include "metacluster/RemoveCluster.actor.h"
 
 #include "flow/actorcompiler.h" // has to be last include
 
@@ -86,9 +89,6 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
 		}
 	}
 
-	metacluster::DataClusterEntry entry;
-	entry.capacity.numTenantGroups = 1e9;
-
 	state int clusterIndex;
 	for (clusterIndex = 0; clusterIndex < g_simulator->extraDatabases.size(); ++clusterIndex) {
 		state ClusterName clusterName = ClusterNameRef(fmt::format("data_cluster_{}", clusterIndex));
@@ -121,6 +121,28 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
 	}
 
 	return simMetacluster;
+}
+
+// REQUIRES all tenants are deleted from the metacluster
+ACTOR Future<Void> decommissionSimulatedMetacluster(SimulatedMetacluster metacluster) {
+	ASSERT(g_network->isSimulated());
+
+	std::map<ClusterName, metacluster::DataClusterMetadata> dataClusters = wait(
+	    metacluster::listClusters(metacluster.managementDb, ""_sr, "\xff\xff"_sr, CLIENT_KNOBS->MAX_DATA_CLUSTERS));
+	std::vector<Future<Void>> removeClusterFutures;
+	for (const auto& [clusterName, clusterMetadata] : dataClusters) {
+		removeClusterFutures.emplace_back(success(metacluster::removeCluster(metacluster.managementDb,
+		                                                                     clusterName,
+		                                                                     ClusterType::METACLUSTER_MANAGEMENT,
+		                                                                     metacluster::ForceRemove(false))));
+	}
+	wait(waitForAll(removeClusterFutures));
+	wait(metacluster::decommissionMetacluster(metacluster.managementDb));
+
+	Optional<MetaclusterRegistrationEntry> entry =
+	    wait(metacluster::metadata::metaclusterRegistration().get(metacluster.managementDb));
+	ASSERT(!entry.present());
+	return Void();
 }
 
 }; // namespace metacluster::util

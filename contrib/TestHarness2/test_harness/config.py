@@ -147,7 +147,14 @@ class Config:
         self.unseed_check_ratio_args = {
             "help": "Probability for doing determinism check"
         }
-        self.test_dirs: List[str] = ["slow", "fast", "restarting", "rare", "noSim"]
+        self.test_dirs: List[str] = [
+            "slow",
+            "fast",
+            "restarting",
+            "rare",
+            "noSim",
+            "negative",
+        ]
         self.test_dirs_args: dict = {
             "nargs": "*",
             "help": "test_directories to look for files in",

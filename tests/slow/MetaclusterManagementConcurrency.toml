@@ -5,6 +5,9 @@ allowCreatingTenants = false
 extraDatabaseMode = 'Multiple'
 extraDatabaseCount = 5
 
+[[knobs]]
+cc_enable_tenant_balancer = true
+
 [[test]]
 testTitle = 'MetaclusterManagementConcurrencyTest'
 clearAfterTest = true

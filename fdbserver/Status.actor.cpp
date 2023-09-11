@@ -284,6 +284,7 @@ static JsonBuilderObject getError(const TraceEventFields& errorFields) {
 
 namespace {
 
+#ifdef __linux__
 void reportCgroupCpuStat(JsonBuilderObject& object, const TraceEventFields& eventFields) {
 	JsonBuilderObject cgroupCpuStatObj;
 	std::string val;
@@ -300,6 +301,7 @@ void reportCgroupCpuStat(JsonBuilderObject& object, const TraceEventFields& even
 		object["cgroup_cpu_stat"] = cgroupCpuStatObj;
 	}
 }
+#endif // __linux__
 
 JsonBuilderObject machineStatusFetcher(WorkerEvents mMetrics,
                                        std::vector<WorkerDetails> workers,
@@ -857,6 +859,10 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
 
 	if (db->get().client.encryptKeyProxy.present()) {
 		roles.addRole("encrypt_key_proxy", db->get().client.encryptKeyProxy.get());
+	}
+
+	if (db->get().tenantBalancer.present()) {
+		roles.addRole("tenant_balancer", db->get().tenantBalancer.get());
 	}
 
 	for (auto& tLogSet : db->get().logSystemConfig.tLogs) {

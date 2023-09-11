@@ -226,8 +226,12 @@ pipeline {
                         currentBuild.result = "FAILURE"
                     }
                     if (run_ci && env.BRANCH_NAME.startsWith("PR-")) {
-                        def url = "https://github.com/snowflakedb/frostdb/pull/${pr_id}"
-                        notify_slack(user_id, "CI completed", currentBuild.result, env.BRANCH_NAME, scmInfo.GIT_COMMIT, url)
+                        try {
+                            def url = "https://github.com/snowflakedb/frostdb/pull/${pr_id}"
+                            notify_slack(user_id, "CI completed", currentBuild.result, env.BRANCH_NAME, scmInfo.GIT_COMMIT, url)
+                        } catch(Exception e) {
+                            println("Exception sending slack notification: ${e}")
+                        }
                     }
                 }
             }

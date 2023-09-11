@@ -40,35 +40,10 @@ EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
 	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
 		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
 	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
-		ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 	} else {
 		throw not_implemented();
 	}
-	this->ivRef = Standalone<StringRef>(StringRef(iv, ivLen));
-}
-
-EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
-                                     Optional<Reference<BlobCipherKey>> hCipherKey,
-                                     const EncryptAuthTokenMode mode,
-                                     const EncryptAuthTokenAlgo algo,
-                                     const EncryptCipherMode encryptCipherMode,
-                                     BlobCipherMetrics::UsageType usageType)
-  : ctx(EVP_CIPHER_CTX_new()),
-    textCipherKey(tCipherKey),
-    headerCipherKeyOpt(hCipherKey),
-    authTokenMode(mode),
-    authTokenAlgo(algo),
-    encryptMode(encryptCipherMode) {
-	int ivLen = 0;
-	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
-		ivLen = AES_256_CTR_IV_LENGTH;
-	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
-		ivLen = AES_256_GCM_IV_LENGTH;
-	} else {
-		throw not_implemented();
-	}
-	uint8_t iv[ivLen];
-	deterministicRandom()->randomBytes(iv, ivLen);
 	this->ivRef = Standalone<StringRef>(StringRef(iv, ivLen));
 }
 
@@ -80,16 +55,20 @@ EncryptBlobCipher::~EncryptBlobCipher() {
 
 Reference<EncryptBlobCipher> EncryptBlobCipher::getEncryptor(Reference<BlobCipherKey> tCipherKey,
                                                              Optional<Reference<BlobCipherKey>> hCipherKey,
-                                                             const EncryptAuthTokenMode mode,
-                                                             const EncryptAuthTokenAlgo algo,
-                                                             const EncryptCipherMode encryptCipherMode,
+                                                             EncryptionAtRestAlgo algo,
                                                              BlobCipherMetrics::UsageType usageType) {
+	EncryptCipherMode encryptCipherMode = cipherModeFromEncryptionAtRestAlgo(algo);
+	EncryptAuthTokenMode mode = authTokenModeFromEncryptionAtRestAlgo(algo);
+	EncryptAuthTokenAlgo authAlgo = authTokenAlgoFromEncryptionAtRestAlgo(algo);
+	int ivSize = getIVLengthFromEncryptionAtRestAlgo(algo);
+	Standalone<StringRef> iv = makeString(ivSize);
+	generateIV(algo, tCipherKey, mutateString(iv), iv.size());
 	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
 		return makeReference<EncryptBlobCipherAes256Ctr>(
-		    tCipherKey, hCipherKey, mode, algo, encryptCipherMode, usageType);
+		    tCipherKey, hCipherKey, iv.begin(), iv.size(), mode, authAlgo, encryptCipherMode, usageType);
 	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
 		return makeReference<EncryptBlobCipherAes256Gcm>(
-		    tCipherKey, hCipherKey, mode, algo, encryptCipherMode, usageType);
+		    tCipherKey, hCipherKey, iv.begin(), iv.size(), mode, authAlgo, encryptCipherMode, usageType);
 	}
 	// Currently only AES-CTR is supported
 	throw not_implemented();
@@ -99,16 +78,17 @@ Reference<EncryptBlobCipher> EncryptBlobCipher::getEncryptor(Reference<BlobCiphe
                                                              Optional<Reference<BlobCipherKey>> hCipherKey,
                                                              const uint8_t* iv,
                                                              const int ivLen,
-                                                             const EncryptAuthTokenMode mode,
-                                                             const EncryptAuthTokenAlgo algo,
-                                                             const EncryptCipherMode encryptCipherMode,
+                                                             EncryptionAtRestAlgo algo,
                                                              BlobCipherMetrics::UsageType usageType) {
+	EncryptCipherMode encryptCipherMode = cipherModeFromEncryptionAtRestAlgo(algo);
+	EncryptAuthTokenMode mode = authTokenModeFromEncryptionAtRestAlgo(algo);
+	EncryptAuthTokenAlgo authAlgo = authTokenAlgoFromEncryptionAtRestAlgo(algo);
 	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
 		return makeReference<EncryptBlobCipherAes256Ctr>(
-		    tCipherKey, hCipherKey, iv, ivLen, mode, algo, encryptCipherMode, usageType);
+		    tCipherKey, hCipherKey, iv, ivLen, mode, authAlgo, encryptCipherMode, usageType);
 	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
 		return makeReference<EncryptBlobCipherAes256Gcm>(
-		    tCipherKey, hCipherKey, iv, ivLen, mode, algo, encryptCipherMode, usageType);
+		    tCipherKey, hCipherKey, iv, ivLen, mode, authAlgo, encryptCipherMode, usageType);
 	}
 	// Currently only AES-CTR is supported
 	throw not_implemented();
@@ -183,20 +163,7 @@ EncryptBlobCipherAes256Gcm::EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> 
 	ASSERT_EQ(encryptCipherMode, EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM);
 	ASSERT_EQ(mode, EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
 	ASSERT_EQ(algo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM);
-	ASSERT_EQ(ivLen, AES_256_GCM_IV_LENGTH);
-	init();
-}
-
-EncryptBlobCipherAes256Gcm::EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> tCipherKey,
-                                                       Optional<Reference<BlobCipherKey>> hCipherKeyOpt,
-                                                       const EncryptAuthTokenMode mode,
-                                                       const EncryptAuthTokenAlgo algo,
-                                                       const EncryptCipherMode encryptCipherMode,
-                                                       BlobCipherMetrics::UsageType usageType)
-  : EncryptBlobCipher(tCipherKey, hCipherKeyOpt, mode, algo, encryptCipherMode, usageType) {
-	ASSERT_EQ(encryptCipherMode, EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM);
-	ASSERT_EQ(mode, EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
-	ASSERT_EQ(algo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM);
+	ASSERT_EQ(ivLen, AesGcmParams::ivSize);
 	init();
 }
 
@@ -297,7 +264,7 @@ void EncryptBlobCipherAes256Gcm::setCipherAlgoHeaderWithAuthV1(const uint8_t* ci
 	    ivRef.begin(),
 	    ivRef.size());
 	// compute tag
-	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AES_256_GCM_TAG_LENGTH, &algoHeader.authToken[0]) != 1) {
+	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, AesGcmParams::authTokenSize, &algoHeader.authToken[0]) != 1) {
 		throw encrypt_ops_error();
 	}
 	headerRef->algoHeader = AesGcm(algoHeader);
@@ -318,20 +285,9 @@ EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> 
 	init();
 }
 
-EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> tCipherKey,
-                                                       Optional<Reference<BlobCipherKey>> hCipherKeyOpt,
-                                                       const EncryptAuthTokenMode mode,
-                                                       const EncryptAuthTokenAlgo algo,
-                                                       const EncryptCipherMode encryptCipherMode,
-                                                       BlobCipherMetrics::UsageType usageType)
-  : EncryptBlobCipher(tCipherKey, hCipherKeyOpt, mode, algo, encryptCipherMode, usageType) {
-	ASSERT(encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR);
-	init();
-}
-
 void EncryptBlobCipherAes256Ctr::init() {
 	ASSERT(textCipherKey.isValid());
-	if (FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED) {
+	if (needsHeaderCipherKey(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
 		ASSERT(headerCipherKeyOpt.present() && headerCipherKeyOpt.get().isValid());
 	}
 
@@ -590,11 +546,12 @@ void DecryptBlobCipher::validateEncryptHeader(const uint8_t* ciphertext,
 Reference<DecryptBlobCipher> DecryptBlobCipher::getDecryptor(Reference<BlobCipherKey> tCipherKey,
                                                              Optional<Reference<BlobCipherKey>> hCipherKey,
                                                              const uint8_t* iv,
-                                                             const EncryptCipherMode encryptCipherMode,
+                                                             const EncryptionAtRestAlgo encryptAlgo,
                                                              BlobCipherMetrics::UsageType usageType) {
-	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
+	if (encryptAlgo == EncryptionAtRestAlgo::AES_CTR || encryptAlgo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    encryptAlgo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
 		return makeReference<DecryptBlobCipherAes256Ctr>(tCipherKey, hCipherKey, iv, usageType);
-	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
+	} else if (encryptAlgo == EncryptionAtRestAlgo::AES_GCM) {
 		return makeReference<DecryptBlobCipherAes256Gcm>(tCipherKey, hCipherKey, iv, usageType);
 	} else {
 		throw not_implemented();
@@ -660,7 +617,7 @@ StringRef DecryptBlobCipherAes256Gcm::decrypt(const uint8_t* ciphertext,
 
 	uint8_t* tag = const_cast<uint8_t*>(headerRef.getAuthToken());
 	ASSERT(tag != nullptr);
-	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AES_256_GCM_TAG_LENGTH, tag)) {
+	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, AesGcmParams::authTokenSize, tag)) {
 		TraceEvent(SevWarn, "BlobCipherDecryptTagSetFailed")
 		    .detail("BaseCipherId", textCipherKey->getBaseCipherId())
 		    .detail("EncryptDomainId", textCipherKey->getDomainId());
@@ -1009,8 +966,9 @@ void computeAuthToken(const std::vector<std::pair<const uint8_t*, size_t>>& payl
 
 EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptAuthTokenMode mode) {
 	// Override mode if authToken isn't enabled
-	return FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED ? mode
-	                                                     : EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
+	return isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))
+	           ? mode
+	           : EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
 }
 
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo) {
@@ -1026,5 +984,25 @@ int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const En
 			ASSERT_EQ(algo, ENCRYPT_HEADER_AUTH_TOKEN_ALGO_HMAC_SHA);
 			return CLIENT_KNOBS->ENCRYPT_HEADER_AES_CTR_HMAC_SHA_AUTH_VERSION;
 		}
+	}
+}
+
+void generateIV(EncryptionAtRestAlgo algo, Reference<BlobCipherKey> textCipherKey, uint8_t* iv, int ivLen) {
+	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
+		ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
+		if (g_network->isSimulated()) {
+			deterministicRandom()->randomBytes(iv, ivLen);
+		} else {
+			nondeterministicRandom()->randomBytes(iv, ivLen);
+		}
+	} else if (algo == EncryptionAtRestAlgo::AES_GCM) {
+		ASSERT_EQ(ivLen, AesGcmParams::ivSize);
+		EncryptCipherNonce maxValue = std::numeric_limits<uint96_t>::max();
+		EncryptCipherNonce nonce = textCipherKey->getAndUpdateNonce(maxValue);
+		ASSERT(nonce <= maxValue);
+		memcpy(iv, &nonce, ivLen);
+	} else {
+		throw not_implemented();
 	}
 }

@@ -50,6 +50,7 @@
 #include "metacluster/ListTenants.actor.h"
 #include "metacluster/MetaclusterMove.actor.h"
 #include "metacluster/MetaclusterTypes.h"
+#include "metacluster/OnlineMove.actor.h"
 #include "metacluster/RegisterCluster.actor.h"
 #include "metacluster/RemoveCluster.actor.h"
 #include "metacluster/RenameTenant.actor.h"

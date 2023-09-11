@@ -49,14 +49,14 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( HOSTNAME_RESOLVE_MAX_INTERVAL,                       1.0 );
 	init( HOSTNAME_RECONNECT_INIT_INTERVAL,                    .05 );
 	init( HOSTNAME_RECONNECT_MAX_INTERVAL,                     1.0 );
-	init( ENABLE_COORDINATOR_DNS_CACHE,                      false ); if( randomize && BUGGIFY ) ENABLE_COORDINATOR_DNS_CACHE = true;
+	init( ENABLE_COORDINATOR_DNS_CACHE,                      false ); BUGGIFY_KNOB(ENABLE_COORDINATOR_DNS_CACHE, randomize && BUGGIFY, true);
 	init( CACHE_REFRESH_INTERVAL_WHEN_ALL_ALTERNATIVES_FAILED, 1.0 );
 
 	init( DELAY_JITTER_OFFSET,                                 0.9 );
 	init( DELAY_JITTER_RANGE,                                  0.2 );
 	init( BUSY_WAIT_THRESHOLD,                                   0 ); // 1e100 == never sleep
-	init( CLIENT_REQUEST_INTERVAL,                             1.0 ); if( randomize && BUGGIFY ) CLIENT_REQUEST_INTERVAL = 2.0;
-	init( SERVER_REQUEST_INTERVAL,                             1.0 ); if( randomize && BUGGIFY ) SERVER_REQUEST_INTERVAL = 2.0;
+	init( CLIENT_REQUEST_INTERVAL,                             1.0 ); BUGGIFY_KNOB(CLIENT_REQUEST_INTERVAL, randomize && BUGGIFY, 2.0);
+	init( SERVER_REQUEST_INTERVAL,                             1.0 ); BUGGIFY_KNOB(SERVER_REQUEST_INTERVAL, randomize && BUGGIFY, 2.0);
 
 	init( REACTOR_FLAGS,                                         0 );
 
@@ -84,13 +84,13 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( CHAOS_LOGGING_INTERVAL,                              5.0 );
 
 
-	init( WRITE_TRACING_ENABLED,                              true ); if( randomize && BUGGIFY ) WRITE_TRACING_ENABLED = false;
-	init( TRACING_SAMPLE_RATE,                                 0.0 ); if (randomize && BUGGIFY) TRACING_SAMPLE_RATE = 0.01; // Fraction of distributed traces (not spans) to sample (0 means ignore all traces)
+	init( WRITE_TRACING_ENABLED,                              true ); BUGGIFY_KNOB(WRITE_TRACING_ENABLED, randomize && BUGGIFY, false);
+	init( TRACING_SAMPLE_RATE,                                 0.0 ); BUGGIFY_KNOB(TRACING_SAMPLE_RATE, randomize && BUGGIFY, 0.01); // Fraction of distributed traces (not spans) to sample (0 means ignore all traces)
 	init( TRACING_UDP_LISTENER_ADDR,                   "127.0.0.1" ); // Only applicable if TracerType is set to a network option
 	init( TRACING_UDP_LISTENER_PORT,                          8889 ); // Only applicable if TracerType is set to a network option
 
 	// Native metrics
-	init( METRICS_DATA_MODEL,                                "none"); if (randomize && BUGGIFY) METRICS_DATA_MODEL="otel";
+	init( METRICS_DATA_MODEL,                                "none"); BUGGIFY_KNOB(METRICS_DATA_MODEL, randomize && BUGGIFY, "otel");
 	init( METRICS_EMISSION_INTERVAL,                          30.0 ); // The time (in seconds) between metric flushes
 	init( STATSD_UDP_EMISSION_ADDR,                     "127.0.0.1");
 	init( STATSD_UDP_EMISSION_PORT,                           8125 );
@@ -99,15 +99,15 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( METRICS_EMIT_DDSKETCH,                             false ); // Determines if DDSketch buckets will get emitted
 
 	//connectionMonitor
-	init( CONNECTION_MONITOR_LOOP_TIME,   isSimulated ? 0.75 : 1.0 ); if( randomize && BUGGIFY ) CONNECTION_MONITOR_LOOP_TIME = 6.0;
-	init( CONNECTION_MONITOR_TIMEOUT,     isSimulated ? 1.50 : 2.0 ); if( randomize && BUGGIFY ) CONNECTION_MONITOR_TIMEOUT = 6.0;
-	init( CONNECTION_MONITOR_IDLE_TIMEOUT,                   180.0 ); if( randomize && BUGGIFY ) CONNECTION_MONITOR_IDLE_TIMEOUT = 5.0;
+	init( CONNECTION_MONITOR_LOOP_TIME,   isSimulated ? 0.75 : 1.0 ); BUGGIFY_KNOB(CONNECTION_MONITOR_LOOP_TIME, randomize && BUGGIFY, 6.0);
+	init( CONNECTION_MONITOR_TIMEOUT,     isSimulated ? 1.50 : 2.0 ); BUGGIFY_KNOB(CONNECTION_MONITOR_TIMEOUT, randomize && BUGGIFY, 6.0);
+	init( CONNECTION_MONITOR_IDLE_TIMEOUT,                   180.0 ); BUGGIFY_KNOB(CONNECTION_MONITOR_IDLE_TIMEOUT, randomize && BUGGIFY, 5.0);
 	init( CONNECTION_MONITOR_INCOMING_IDLE_MULTIPLIER,         1.2 );
 	init( CONNECTION_MONITOR_UNREFERENCED_CLOSE_DELAY,         2.0 );
 
 	//FlowTransport
 	init( CONNECTION_REJECTED_MESSAGE_DELAY,                   1.0 );
-	init( CONNECTION_ID_TIMEOUT,                             600.0 ); if( randomize && BUGGIFY ) CONNECTION_ID_TIMEOUT = 60.0;
+	init( CONNECTION_ID_TIMEOUT,                             600.0 ); BUGGIFY_KNOB(CONNECTION_ID_TIMEOUT, randomize && BUGGIFY, 60.0);
 	init( CONNECTION_CLEANUP_DELAY,                          100.0 );
 	init( INITIAL_RECONNECTION_TIME,                          0.05 );
 	init( MAX_RECONNECTION_TIME,                               0.5 );
@@ -161,14 +161,10 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( BUGGIFY_SIM_PAGE_CACHE_4K,                           1e6 );
 	init( BUGGIFY_SIM_PAGE_CACHE_64K,                          1e6 );
 	init( BLOB_WORKER_PAGE_CACHE,                            500e6 );
-	init( MAX_EVICT_ATTEMPTS,                                  100 ); if( randomize && BUGGIFY ) MAX_EVICT_ATTEMPTS = 2;
+	init( MAX_EVICT_ATTEMPTS,                                  100 ); BUGGIFY_KNOB(MAX_EVICT_ATTEMPTS, randomize && BUGGIFY, 2);
 	init( CACHE_EVICTION_POLICY,                          "random" );
-	init( PAGE_CACHE_TRUNCATE_LOOKUP_FRACTION,                 0.1 ); if( randomize && BUGGIFY ) PAGE_CACHE_TRUNCATE_LOOKUP_FRACTION = 0.0; else if( randomize && BUGGIFY ) PAGE_CACHE_TRUNCATE_LOOKUP_FRACTION = 1.0;
-	init( FLOW_CACHEDFILE_WRITE_IO_SIZE,                         0 );
-	if ( randomize && BUGGIFY) {
-		// Choose 16KB to 64KB as I/O size
-		FLOW_CACHEDFILE_WRITE_IO_SIZE = deterministicRandom()->randomInt(16384, 65537);
-	}
+	init( PAGE_CACHE_TRUNCATE_LOOKUP_FRACTION,                 0.1 ); BUGGIFY_KNOB(PAGE_CACHE_TRUNCATE_LOOKUP_FRACTION, randomize && BUGGIFY, (double)deterministicRandom()->randomInt(0, 2));
+	init( FLOW_CACHEDFILE_WRITE_IO_SIZE,                         0 ); BUGGIFY_KNOB(FLOW_CACHEDFILE_WRITE_IO_SIZE, randomize && BUGGIFY, deterministicRandom()->randomInt(16384, 65537)); // Choose 16KB to 64KB as I/O size
 
 	//AsyncFileEIO
 	init( EIO_MAX_PARALLELISM,                                  4  );
@@ -185,12 +181,12 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( KAIO_LATENCY_LOGGING_INTERVAL,                      30.0 );
 	init( KAIO_LATENCY_SKETCH_ACCURACY,                       0.01 );
 
-	init( PAGE_WRITE_CHECKSUM_HISTORY,                           0 ); if( randomize && BUGGIFY ) PAGE_WRITE_CHECKSUM_HISTORY = 10000000;
+	init( PAGE_WRITE_CHECKSUM_HISTORY,                           0 ); BUGGIFY_KNOB(PAGE_WRITE_CHECKSUM_HISTORY, randomize && BUGGIFY, 10000000);
 	init( DISABLE_POSIX_KERNEL_AIO,                              0 );
 
 	//AsyncFileNonDurable
-	init( NON_DURABLE_MAX_WRITE_DELAY,                         2.0 ); if( randomize && BUGGIFY ) NON_DURABLE_MAX_WRITE_DELAY = 5.0;
-	init( MAX_PRIOR_MODIFICATION_DELAY,                        1.0 ); if( randomize && BUGGIFY ) MAX_PRIOR_MODIFICATION_DELAY = 5.0;
+	init( NON_DURABLE_MAX_WRITE_DELAY,                         2.0 ); BUGGIFY_KNOB(NON_DURABLE_MAX_WRITE_DELAY, randomize && BUGGIFY, 5.0);
+	init( MAX_PRIOR_MODIFICATION_DELAY,                        1.0 ); BUGGIFY_KNOB(MAX_PRIOR_MODIFICATION_DELAY, randomize && BUGGIFY, 5.0);
 	init( MAX_INJECTED_PRIOR_MODIFICATION_DELAY,              10.0 );
 
 	//GenericActors
@@ -199,8 +195,8 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( LOW_PRIORITY_MAX_DELAY,                              5.0 );
 
 	// HTTP
-	init( HTTP_READ_SIZE,                                 128*1024 ); if (randomize && BUGGIFY) HTTP_READ_SIZE = deterministicRandom()->randomSkewedUInt32(1024, 2 * HTTP_READ_SIZE);
-	init( HTTP_SEND_SIZE,                                  32*1024 ); if (randomize && BUGGIFY) HTTP_SEND_SIZE = deterministicRandom()->randomSkewedUInt32(1024, 2 * HTTP_SEND_SIZE);
+	init( HTTP_READ_SIZE,                                 128*1024 ); BUGGIFY_KNOB(HTTP_READ_SIZE, randomize && BUGGIFY, (int)deterministicRandom()->randomSkewedUInt32(1024, 2 * HTTP_READ_SIZE));
+	init( HTTP_SEND_SIZE,                                  32*1024 ); BUGGIFY_KNOB(HTTP_SEND_SIZE, randomize && BUGGIFY, (int)deterministicRandom()->randomSkewedUInt32(1024, 2 * HTTP_SEND_SIZE));
 	init( HTTP_VERBOSE_LEVEL,                                    0 );
 	init( HTTP_REQUEST_ID_HEADER,                               "" );
 	init( HTTP_RESPONSE_SKIP_VERIFY_CHECKSUM_FOR_PARTIAL_CONTENT, false );
@@ -210,8 +206,8 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( INCREMENTAL_DELETE_INTERVAL,                         1.0 ); //every 1 second
 		
 	//Net2 and FlowTransport
-	init( MIN_COALESCE_DELAY,                                10e-6 ); if( randomize && BUGGIFY ) MIN_COALESCE_DELAY = 0;
-	init( MAX_COALESCE_DELAY,                                20e-6 ); if( randomize && BUGGIFY ) MAX_COALESCE_DELAY = 0;
+	init( MIN_COALESCE_DELAY,                                10e-6 ); BUGGIFY_KNOB(MIN_COALESCE_DELAY, randomize && BUGGIFY, 0);
+	init( MAX_COALESCE_DELAY,                                20e-6 ); BUGGIFY_KNOB(MAX_COALESCE_DELAY, randomize && BUGGIFY, 0);
 	init( SLOW_LOOP_CUTOFF,                          15.0 / 1000.0 );
 	init( SLOW_LOOP_SAMPLING_RATE,                             0.1 );
 	init( TSC_YIELD_TIME,                                  1000000 );
@@ -238,8 +234,8 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( MIN_NETWORK_LATENCY,                              100e-6 );
 	init( FAST_NETWORK_LATENCY,                             800e-6 );
 	init( SLOW_NETWORK_LATENCY,                             100e-3 );
-	init( MAX_CLOGGING_LATENCY,                                  0 ); if( randomize && BUGGIFY ) MAX_CLOGGING_LATENCY =  0.1 * deterministicRandom()->random01();
-	init( MAX_BUGGIFIED_DELAY,                                   0 ); if( randomize && BUGGIFY ) MAX_BUGGIFIED_DELAY =  0.2 * deterministicRandom()->random01();
+	init( MAX_CLOGGING_LATENCY,                                  0 ); BUGGIFY_KNOB(MAX_CLOGGING_LATENCY, randomize && BUGGIFY, 0.1 * deterministicRandom()->random01());
+	init( MAX_BUGGIFIED_DELAY,                                   0 ); BUGGIFY_KNOB(MAX_BUGGIFIED_DELAY, randomize && BUGGIFY, 0.2 * deterministicRandom()->random01());
 	init( MAX_RUNLOOP_SLEEP_DELAY,                               0 );
 	init( SIM_CONNECT_ERROR_MODE, deterministicRandom()->randomInt(0,3) );
 
@@ -302,32 +298,30 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( BASIC_LOAD_BALANCE_BUCKETS,                           40 ); //proxies bin recent GRV requests into 40 time bins
 	init( BASIC_LOAD_BALANCE_COMPUTE_PRECISION,              10000 ); //determines how much of the LB usage is holding the CPU usage of the proxy
 	init( LOAD_BALANCE_TSS_TIMEOUT,                            5.0 );
-	init( LOAD_BALANCE_TSS_MISMATCH_VERIFY_SS,                true ); if( randomize && BUGGIFY ) LOAD_BALANCE_TSS_MISMATCH_VERIFY_SS = false; // Whether the client should validate the SS teams all agree on TSS mismatch
-	init( LOAD_BALANCE_TSS_MISMATCH_TRACE_FULL,              false ); if( randomize && BUGGIFY ) LOAD_BALANCE_TSS_MISMATCH_TRACE_FULL = true; // If true, saves the full details of the mismatch in a trace event. If false, saves them in the DB and the trace event references the DB row.
+	init( LOAD_BALANCE_TSS_MISMATCH_VERIFY_SS,                true ); BUGGIFY_KNOB(LOAD_BALANCE_TSS_MISMATCH_VERIFY_SS, randomize && BUGGIFY, false); // Whether the client should validate the SS teams all agree on TSS mismatch
+	init( LOAD_BALANCE_TSS_MISMATCH_TRACE_FULL,              false ); BUGGIFY_KNOB(LOAD_BALANCE_TSS_MISMATCH_TRACE_FULL, randomize && BUGGIFY, true); // If true, saves the full details of the mismatch in a trace event. If false, saves them in the DB and the trace event references the DB row.
 	init( TSS_LARGE_TRACE_SIZE,                              50000 );
 
 	// Health Monitor
-	init( FAILURE_DETECTION_DELAY,                             4.0 ); if( randomize && BUGGIFY ) FAILURE_DETECTION_DELAY = 1.0;
+	init( FAILURE_DETECTION_DELAY,                             4.0 ); BUGGIFY_KNOB(FAILURE_DETECTION_DELAY, randomize && BUGGIFY, 1.0);
 	init( HEALTH_MONITOR_MARK_FAILED_UNSTABLE_CONNECTIONS,    true );
 	init( HEALTH_MONITOR_CLIENT_REQUEST_INTERVAL_SECS,          30 );
 	init( HEALTH_MONITOR_CONNECTION_MAX_CLOSED,                  5 );
 
 	// Encryption
 	init( ENCRYPT_CIPHER_KEY_CACHE_TTL, isSimulated ? 5 * 60 : 10 * 60 );
-	if ( randomize && BUGGIFY) { ENCRYPT_CIPHER_KEY_CACHE_TTL = deterministicRandom()->randomInt(2, 10) * 60; }
+	BUGGIFY_KNOB(ENCRYPT_CIPHER_KEY_CACHE_TTL, randomize && BUGGIFY, deterministicRandom()->randomInt(2, 10) * 60);
 	init( ENCRYPT_KEY_REFRESH_INTERVAL,   isSimulated ? 60 : 8 * 60 );
-	if ( randomize && BUGGIFY) { ENCRYPT_KEY_REFRESH_INTERVAL = deterministicRandom()->randomInt(2, 10); }
+	BUGGIFY_KNOB(ENCRYPT_KEY_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(2, 10));
 	init( ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,                     3 );
-	if ( randomize && BUGGIFY) { ENCRYPT_KEY_HEALTH_CHECK_INTERVAL = deterministicRandom()->randomInt(3, 60); }
+	BUGGIFY_KNOB(ENCRYPT_KEY_HEALTH_CHECK_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(3, 60));
 	init( EKP_HEALTH_CHECK_REQUEST_TIMEOUT,                    2.0 );
-	if ( randomize && BUGGIFY) { ENCRYPT_KEY_HEALTH_CHECK_INTERVAL = deterministicRandom()->randomInt(2, 30); }
-	init( ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING,           false ); if( randomize && BUGGIFY ) ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING = true;
+	BUGGIFY_KNOB(ENCRYPT_KEY_HEALTH_CHECK_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(2, 30));
+	init( ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING,           false ); BUGGIFY_KNOB(ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING, randomize && BUGGIFY, true);
 	init( ENCRYPT_KEY_CACHE_LOGGING_INTERVAL,                  5.0 );
 	init( ENCRYPT_KEY_CACHE_LATENCY_LOGGING_INTERVAL,         60.0 );
 	init( ENCRYPT_KEY_CACHE_LOGGING_SKETCH_ACCURACY,          0.01 );
-	// Refer to EncryptUtil::EncryptAuthTokenAlgo for more details
-	init( ENCRYPT_HEADER_AUTH_TOKEN_ENABLED,                 false ); if ( randomize && BUGGIFY ) { ENCRYPT_HEADER_AUTH_TOKEN_ENABLED = !ENCRYPT_HEADER_AUTH_TOKEN_ENABLED; }
-	init( ENCRYPT_HEADER_AUTH_TOKEN_ALGO,                        0 ); if ( randomize && ENCRYPT_HEADER_AUTH_TOKEN_ENABLED ) { ENCRYPT_HEADER_AUTH_TOKEN_ALGO = getRandomAuthTokenAlgo(); }
+	init( ENCRYPTION_AT_REST_ALGO,                   "AES-256-CTR" ); if (randomize && BUGGIFY) ENCRYPTION_AT_REST_ALGO = getRandomAuthenticatedEncryptionAtRestAlgo();
 
 	// REST Client
 	init( RESTCLIENT_MAX_CONNECTIONPOOL_SIZE,                   10 );
@@ -335,7 +329,7 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( RESTCLIENT_CONNECT_TIMEOUT,                            1 );
 	init( RESTCLIENT_MAX_CONNECTION_LIFE,                      120 );
 	init( RESTCLIENT_REQUEST_TRIES,                             10 );
-	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                        6 ); if ( randomize && BUGGIFY ) { RESTCLIENT_REQUEST_TIMEOUT_SEC = deterministicRandom()->randomInt(1, 6); }
+	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                        6 ); BUGGIFY_KNOB(RESTCLIENT_REQUEST_TIMEOUT_SEC, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 6));
 	init( REST_LOG_LEVEL,                                        3 );
 }
 // clang-format on
@@ -421,48 +415,63 @@ ParsedKnobValue Knobs::parseKnobValue(std::string const& knob, std::string const
 	}
 }
 
-bool Knobs::setKnob(std::string const& knob, int value) {
-	if (!int_knobs.count(knob)) {
+bool Knobs::setKnob(std::string const& knob, int value, Buggified buggified) {
+	std::string lowerKnob = toLower(knob);
+	if (!int_knobs.count(lowerKnob)) {
 		return false;
 	}
-	*int_knobs[knob].value = value;
-	explicitlySetKnobs.insert(toLower(knob));
+	auto& knobValue = int_knobs[lowerKnob];
+	*knobValue.value = value;
+	knobValue.buggified = buggified;
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
-bool Knobs::setKnob(std::string const& knob, int64_t value) {
-	if (!int64_knobs.count(knob)) {
+bool Knobs::setKnob(std::string const& knob, int64_t value, Buggified buggified) {
+	std::string lowerKnob = toLower(knob);
+	if (!int64_knobs.count(lowerKnob)) {
 		return false;
 	}
-	*int64_knobs[knob].value = value;
-	explicitlySetKnobs.insert(toLower(knob));
+	auto& knobValue = int64_knobs[lowerKnob];
+	*knobValue.value = value;
+	knobValue.buggified = buggified;
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
-bool Knobs::setKnob(std::string const& knob, bool value) {
-	if (!bool_knobs.count(knob)) {
+bool Knobs::setKnob(std::string const& knob, bool value, Buggified buggified) {
+	std::string lowerKnob = toLower(knob);
+	if (!bool_knobs.count(lowerKnob)) {
 		return false;
 	}
-	*bool_knobs[knob].value = value;
-	explicitlySetKnobs.insert(toLower(knob));
+	auto& knobValue = bool_knobs[lowerKnob];
+	*knobValue.value = value;
+	knobValue.buggified = buggified;
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
-bool Knobs::setKnob(std::string const& knob, double value) {
-	if (!double_knobs.count(knob)) {
+bool Knobs::setKnob(std::string const& knob, double value, Buggified buggified) {
+	std::string lowerKnob = toLower(knob);
+	if (!double_knobs.count(lowerKnob)) {
 		return false;
 	}
-	*double_knobs[knob].value = value;
-	explicitlySetKnobs.insert(toLower(knob));
+	auto& knobValue = double_knobs[lowerKnob];
+	*knobValue.value = value;
+	knobValue.buggified = buggified;
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
-bool Knobs::setKnob(std::string const& knob, std::string const& value) {
-	if (!string_knobs.count(knob)) {
+bool Knobs::setKnob(std::string const& knob, std::string const& value, Buggified buggified) {
+	std::string lowerKnob = toLower(knob);
+	if (!string_knobs.count(lowerKnob)) {
 		return false;
 	}
-	*string_knobs[knob].value = value;
-	explicitlySetKnobs.insert(toLower(knob));
+	auto& knobValue = string_knobs[lowerKnob];
+	*knobValue.value = value;
+	knobValue.buggified = buggified;
+	explicitlySetKnobs.insert(lowerKnob);
 	return true;
 }
 
@@ -541,27 +550,32 @@ void Knobs::trace() const {
 		TraceEvent("Knob")
 		    .detail("Name", k.first.c_str())
 		    .detail("Value", *k.second.value)
-		    .detail("Atomic", k.second.atomic);
+		    .detail("Atomic", k.second.atomic)
+		    .detail("Buggified", k.second.buggified);
 	for (auto& k : int_knobs)
 		TraceEvent("Knob")
 		    .detail("Name", k.first.c_str())
 		    .detail("Value", *k.second.value)
-		    .detail("Atomic", k.second.atomic);
+		    .detail("Atomic", k.second.atomic)
+		    .detail("Buggified", k.second.buggified);
 	for (auto& k : int64_knobs)
 		TraceEvent("Knob")
 		    .detail("Name", k.first.c_str())
 		    .detail("Value", *k.second.value)
-		    .detail("Atomic", k.second.atomic);
+		    .detail("Atomic", k.second.atomic)
+		    .detail("Buggified", k.second.buggified);
 	for (auto& k : string_knobs)
 		TraceEvent("Knob")
 		    .detail("Name", k.first.c_str())
 		    .detail("Value", *k.second.value)
-		    .detail("Atomic", k.second.atomic);
+		    .detail("Atomic", k.second.atomic)
+		    .detail("Buggified", k.second.buggified);
 	for (auto& k : bool_knobs)
 		TraceEvent("Knob")
 		    .detail("Name", k.first.c_str())
 		    .detail("Value", *k.second.value)
-		    .detail("Atomic", k.second.atomic);
+		    .detail("Atomic", k.second.atomic)
+		    .detail("Buggified", k.second.buggified);
 }
 
 TEST_CASE("/flow/Knobs/ParseKnobValue") {
