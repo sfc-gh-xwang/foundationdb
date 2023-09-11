@@ -393,7 +393,7 @@ public:
 	Optional<bool> generateFearless, buggify;
 	Optional<std::string> config;
 	bool blobGranulesEnabled = false;
-	// Can be explicilty set in config. Otherwise, choose randomly if compatible with other options
+	// Can be explicitly set in config. Otherwise, choose randomly if compatible with other options
 	Optional<bool> defaultBlobification;
 	bool randomlyRenameZoneId = false;
 	bool simHTTPServerEnabled = true;
@@ -2836,7 +2836,7 @@ ACTOR void setupAndRun(std::string dataFolder,
 		}
 
 		if (!testConfig.defaultBlobification.has_value()) {
-			if (tenantMode == TenantMode::DISABLED) {
+			if (tenantMode == TenantMode::DISABLED || defaultTenant.has_value()) {
 				testConfig.defaultBlobification = deterministicRandom()->coinflip();
 			} else {
 				testConfig.defaultBlobification = false;
