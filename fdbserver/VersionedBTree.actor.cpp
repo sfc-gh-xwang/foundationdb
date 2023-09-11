@@ -6224,8 +6224,7 @@ private:
 			page->init(
 			    self->m_encodingType, (p->blockCount == 1) ? PageType::BTreeNode : PageType::BTreeSuperNode, height);
 			if (enableEncryptionDomain) {
-				page->encryptionDomainId =
-				    enableEncryptionDomain ? p->domainId : self->m_keyProvider->getDefaultEncryptionDomainId();
+				page->encryptionDomainId = p->domainId;
 			}
 
 			BTreePage* btPage = (BTreePage*)page->mutateData();
