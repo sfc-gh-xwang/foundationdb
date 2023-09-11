@@ -913,7 +913,7 @@ def count_trace_batch_with_thumbprints(
             assert entry.attrib["FromKeySetUpdate"] in ["0", "1"]
             if must_be_from_update and entry.attrib["FromKeySetUpdate"] == "0":
                 continue
-            if batch_id != None and batch_id != entry.attrib["ID"]:
+            if batch_id is not None and batch_id != entry.attrib["ID"]:
                 batch_id = None
                 # store and end current batch. start a new one.
                 batches.append(current_batch)

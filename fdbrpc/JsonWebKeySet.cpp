@@ -415,10 +415,12 @@ Optional<PublicOrPrivateKey> parseRsaKey(StringRef b64n,
 }
 
 struct EcThumbprintParams {
+	// kty = "EC". See section 6.2 of RFC-7518 for crv, x, y: https://datatracker.ietf.org/doc/html/rfc7518#section-6.2
 	StringRef crv, kty, x, y;
 };
 
 struct RsaThumbprintParams {
+	// kty = "RSA". See section 6.3 of RFC-7518 for e, n: https://datatracker.ietf.org/doc/html/rfc7518#section-6.3
 	StringRef e, kty, n;
 };
 
@@ -922,6 +924,8 @@ TEST_CASE("/fdbrpc/JsonWebKeySet/Empty") {
 }
 
 TEST_CASE("/fdbrpc/JsonWebKeySet/Thumbprint1") {
+	// This example key set was taken from Section 3.1 of RFC7638:
+	// https://www.rfc-editor.org/rfc/rfc7638.html#section-3.1
 	StringRef const rfc7638Example =
 	    // pragma: allowlist nextline secret
 	    R"RFC7638({"keys":[{"kty":"RSA","n":"0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw","e":"AQAB","alg":"RS256","kid":"2011-04-29"}]})RFC7638"_sr;
