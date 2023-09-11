@@ -361,6 +361,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( STORAGE_QUOTA_ENABLED,                                true ); BUGGIFY_KNOB(STORAGE_QUOTA_ENABLED, isSimulated, deterministicRandom()->coinflip());
 	init( TENANT_CACHE_LIST_REFRESH_INTERVAL,                     30 ); if(isSimulated) TENANT_CACHE_LIST_REFRESH_INTERVAL = 5; BUGGIFY_KNOB(TENANT_CACHE_LIST_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL,           180 ); if(isSimulated) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = 10; BUGGIFY_KNOB(TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(5, 15));
+	init( TENANT_CACHE_STORAGE_USAGE_VARIABLE_POLLING,         false ); if(isSimulated) TENANT_CACHE_STORAGE_USAGE_VARIABLE_POLLING = deterministicRandom()->coinflip();
 	init( TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL,            30 ); if(isSimulated) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = 5; BUGGIFY_KNOB(TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL,             300 );
 	init( CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL,            5 ); BUGGIFY_KNOB(CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));

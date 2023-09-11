@@ -354,6 +354,9 @@ public:
 	int TENANT_CACHE_LIST_REFRESH_INTERVAL; // How often the TenantCache is refreshed
 	int TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL; // How often the storage bytes used by each tenant is refreshed
 	                                                 // in the TenantCache
+	bool TENANT_CACHE_STORAGE_USAGE_VARIABLE_POLLING; // Whether variable polling frequency is used for updating the
+	                                                  // storage bytes used by each tenant depending on its current
+	                                                  // quota - usage
 	int TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL; // How often the storage quota allocated to each tenant is
 	                                                 // refreshed in the TenantCache
 	int TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL; // The minimum interval between consecutive trace events logging the
