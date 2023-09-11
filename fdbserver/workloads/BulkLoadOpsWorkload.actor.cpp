@@ -16,6 +16,7 @@
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/TenantManagement.actor.h"
 #include "fdbserver/BlobGranuleServerCommon.actor.h"
+#include "fdbserver/BlobGranuleValidation.actor.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "fdbserver/workloads/BGCorrectnessUtils.h"
 
@@ -117,6 +118,18 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		return entry.get();
+	}
+
+	ACTOR Future<Version> doGRV(Database cx) {
+		state Transaction tr(cx);
+		loop {
+			try {
+				Version readVersion = wait(tr.getReadVersion());
+				return readVersion;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
 	}
 
 	// randomly reopen tenant and do not wait for it to be ready, to test races
@@ -265,7 +278,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	                                  Standalone<StringRef> filePrefix,
 	                                  int rowCount,
 	                                  int valueSize,
-	                                  int64_t* logicalSize) {
+	                                  int64_t* logicalSize,
+	                                  Standalone<VectorRef<KeyValueRef>>* outData = nullptr) {
 		state Standalone<GranuleSnapshot> snapshot;
 		snapshot.reserve(snapshot.arena(), rowCount);
 		for (int i = 0; i < rowCount; i++) {
@@ -274,6 +288,10 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			snapshot.push_back_deep(snapshot.arena(), KeyValueRef(k, val));
 			*logicalSize += k.size() + val.size();
 		}
+		if (outData) {
+			outData->arena().dependsOn(snapshot.arena());
+			outData->append(outData->arena(), snapshot.begin(), snapshot.size());
+		}
 
 		Value serialized = wait(serializeChunkedSnapshot(
 		    toWrite.fileName, &snapshot, 16 * 1024, toWrite.compression, toWrite.cipherKeysCtx, true));
@@ -281,13 +299,15 @@ struct BulkLoadOpsWorkload : TestWorkload {
 	}
 
 	// pair of logical, physical size
-	ACTOR Future<std::pair<int64_t, int64_t>> writeOneFileToBlob(BulkLoadOpsWorkload* self,
-	                                                             Reference<BlobConnectionProvider> bstore,
-	                                                             Optional<Reference<Tenant>> tenant,
-	                                                             BulkLoadFileToWriteRef toWrite,
-	                                                             Standalone<StringRef> filePrefix,
-	                                                             int rowCount,
-	                                                             int valueSize) {
+	ACTOR Future<std::pair<int64_t, int64_t>> writeOneFileToBlob(
+	    BulkLoadOpsWorkload* self,
+	    Reference<BlobConnectionProvider> bstore,
+	    Optional<Reference<Tenant>> tenant,
+	    BulkLoadFileToWriteRef toWrite,
+	    Standalone<StringRef> filePrefix,
+	    int rowCount,
+	    int valueSize,
+	    Standalone<VectorRef<KeyValueRef>>* outData = nullptr) {
 		ASSERT(toWrite.type == BulkLoadFileType::SNAPSHOT);
 		ASSERT(toWrite.format == BulkLoadFileFormat::ROW_V1);
 
@@ -296,7 +316,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		}
 
 		state int64_t logicalSize = 0;
-		Value serialized = wait(self->createOneFile(toWrite, filePrefix, rowCount, valueSize, &logicalSize));
+		Value serialized = wait(self->createOneFile(toWrite, filePrefix, rowCount, valueSize, &logicalSize, outData));
 		state int64_t physicalSize = serialized.size();
 
 		std::string fname = toWrite.fileName.toString();
@@ -398,11 +418,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
-	ACTOR Future<Void> waitOrInjectAbort(Database cx,
+	ACTOR Future<bool> waitOrInjectAbort(Database cx,
 	                                     BulkLoadOpsWorkload* self,
 	                                     BulkLoadID id,
 	                                     KeyRange range,
-	                                     bool injectAbort) {
+	                                     bool injectAbort,
+	                                     Standalone<VectorRef<KeyValueRef>>* checkData = nullptr) {
 		state bool injectedAbort = false;
 		state bool abortCompleted = false;
 		state bool loadCompleted = false;
@@ -447,18 +468,20 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			       current == BulkLoadStatus::State::ABORTED_COMPLETE);
 		}
 
-		return Void();
+		return current == BulkLoadStatus::State::DONE;
 	}
 
-	ACTOR Future<Void> stageFilesForBulkLoad(Database cx,
-	                                         BulkLoadOpsWorkload* self,
-	                                         Reference<BlobConnectionProvider> bstore,
-	                                         BulkLoadID id,
-	                                         KeyRange range) {
+	ACTOR Future<Standalone<VectorRef<KeyValueRef>>> stageFilesForBulkLoad(Database cx,
+	                                                                       BulkLoadOpsWorkload* self,
+	                                                                       Reference<BlobConnectionProvider> bstore,
+	                                                                       BulkLoadID id,
+	                                                                       KeyRange range) {
 		state int targetFiles = deterministicRandom()->randomInt(1, 11);
 
 		state Standalone<VectorRef<BulkLoadFileToWriteRef>> filesToWrite;
 		state int targetFilesToStage = targetFiles;
+
+		state Standalone<VectorRef<KeyValueRef>> dataWritten;
 
 		while (targetFilesToStage > 0) {
 			int batchSize = deterministicRandom()->randomSkewedUInt32(1, targetFiles + 1);
@@ -477,14 +500,15 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		state int targetFilesToWrite = targetFiles;
 		state int prefix = 0;
+		state int i;
 		while (targetFilesToWrite > 0) {
-			int batchSize = deterministicRandom()->randomSkewedUInt32(1, targetFiles + 1);
+			state int batchSize = deterministicRandom()->randomSkewedUInt32(1, targetFiles + 1);
 			batchSize = std::min(targetFilesToWrite, batchSize);
 			targetFilesToWrite -= batchSize;
 
 			state Standalone<VectorRef<BulkLoadWrittenFileRef>> filesWritten;
 			state std::vector<Future<std::pair<int64_t, int64_t>>> blobWrites;
-			for (int i = 0; i < batchSize; i++, prefix++) {
+			for (i = 0; i < batchSize; i++, prefix++) {
 				// sometimes skip file to make non-contiguous
 				if (filesWritten.empty() || deterministicRandom()->random01() < 0.8) {
 					ASSERT_EQ(filesToWrite[prefix].tenantPrefix.present(), self->tenant.present());
@@ -506,7 +530,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 					filesWritten.push_back(filesWritten.arena(), writtenFile);
 					// FIXME: actually use target value size sometimes
 					blobWrites.push_back(self->writeOneFileToBlob(
-					    self, bstore, self->tenant, filesToWrite[prefix], filePrefix, 10, 100));
+					    self, bstore, self->tenant, filesToWrite[prefix], filePrefix, 10, 100, &dataWritten));
+					wait(success(blobWrites.back()));
 				}
 			}
 
@@ -520,7 +545,50 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			wait(cx->markBulkLoadFilesWritten(id, filesWritten, self->tenant));
 		}
 
-		return Void();
+		return dataWritten;
+	}
+
+	ACTOR Future<Void> verifyLoadData(Database cx,
+	                                  BulkLoadOpsWorkload* self,
+	                                  Reference<BlobConnectionProvider> bstore,
+	                                  Optional<Reference<Tenant>> tenant,
+	                                  KeyRange range,
+	                                  Standalone<VectorRef<KeyValueRef>>* outData) {
+		ASSERT(!outData->empty());
+
+		state Version grv = wait(self->doGRV(cx));
+
+		// FIXME: change duringBulkLoad to false!!
+		try {
+			state Optional<Key> tenantPrefix;
+			if (tenant.present()) {
+				wait(tenant.get()->ready());
+				tenantPrefix = tenant.get()->prefix();
+				fmt::print("DBG: Found tenant: {0} for [{1} - {2})\n",
+				           tenantPrefix.get(),
+				           range.begin.printable(),
+				           range.end.printable());
+			}
+
+			std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> result =
+			    wait(readFromBlob(cx, bstore, range, 0, grv, tenant, LockAware::False, false, true));
+
+			ASSERT_EQ(outData->size(), result.first.size());
+			for (int i = 0; i < result.first.size(); i++) {
+				Key expectedKey = (*outData)[i].key;
+				if (tenantPrefix.present()) {
+					expectedKey = expectedKey.removePrefix(tenantPrefix.get());
+				}
+				ASSERT_EQ(expectedKey, result.first[i].key);
+				ASSERT_EQ((*outData)[i].value, result.first[i].value);
+			}
+			return Void();
+		} catch (Error& e) {
+			if (e.code() == error_code_blob_granule_transaction_too_old) {
+				TraceEvent(SevError, "BulkLoadVerifyDataMissing").detail("Range", range);
+			}
+			throw e;
+		}
 	}
 
 	ACTOR Future<Void> doOneBulkLoad(Database cx, BulkLoadOpsWorkload* self, KeyRange range, bool injectAbort) {
@@ -535,7 +603,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			fmt::print("BLW {0} {1}: started\n", range.begin.printable(), id.printable());
 		}
 
-		wait(self->stageFilesForBulkLoad(cx, self, self->bstore, id, range));
+		state Standalone<VectorRef<KeyValueRef>> dataWritten =
+		    wait(self->stageFilesForBulkLoad(cx, self, self->bstore, id, range));
 
 		// FIXME: also do aborting during staging/all files registered. already handled by unit tests some
 
@@ -543,12 +612,23 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 
 		if (BLW_DEBUG) {
-			fmt::print("BLW: {0} {1}: registered\n", range.begin.printable(), id.printable());
+			fmt::print(
+			    "BLW: {0} {1}: registered {2} rows\n", range.begin.printable(), id.printable(), dataWritten.size());
 		}
 
-		wait(self->waitOrInjectAbort(cx, self, id, range, injectAbort));
+		bool success = wait(self->waitOrInjectAbort(cx, self, id, range, injectAbort, &dataWritten));
+		CODE_PROBE(success, "WaitOrInjectAbort succeeded");
+		CODE_PROBE(!success, "WaitOrInjectAbort aborted");
 
-		// FIXME: if DONE, check data matches loaded data for range!
+		if (success && SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES) {
+			if (BLW_DEBUG) {
+				fmt::print("BLW: {0} {1}: verifying data\n", range.begin.printable(), id.printable());
+			}
+			wait(self->verifyLoadData(cx, self, self->bstore, self->tenant, range, &dataWritten));
+			if (BLW_DEBUG) {
+				fmt::print("BLW: {0} {1}: verified data\n", range.begin.printable(), id.printable());
+			}
+		}
 
 		if (BLW_DEBUG) {
 			fmt::print("BLW {0} {1}: cleaning up\n", range.begin.printable(), id.printable());
@@ -645,7 +725,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		RESERVATION_FAILED,
 		RESERVATION_SUCCEEDED,
 		ABORT_THEN_RELOAD_UNIT,
-		OP_COUNT = 28 /* keep this last */
+		BLOB_CLEANUP_ON_ABORT_UNIT,
+		OP_COUNT = 29 /* keep this last */
 	};
 
 	// FIXME: once file contents validation isn't asserting and throws an error instead, add unit tests for invalid file
@@ -670,18 +751,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->abortBulkLoad(id, tenant));
 		wait(cx->cleanupBulkLoad(id, tenant));
 		return Void();
-	}
-
-	ACTOR Future<Version> doGRV(Database cx) {
-		state Transaction tr(cx);
-		loop {
-			try {
-				Version readVersion = wait(tr.getReadVersion());
-				return readVersion;
-			} catch (Error& e) {
-				wait(tr.onError(e));
-			}
-		}
 	}
 
 	ACTOR Future<Void> delayCleanupWindow(Database cx, BulkLoadOpsWorkload* self) {
@@ -1161,15 +1230,17 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> expectFileDeleted(BulkLoadOpsWorkload* self,
 	                                     Reference<BlobConnectionProvider> bstore,
-	                                     std::string filename) {
+	                                     std::string filename,
+	                                     bool shouldBeDeleted) {
 		try {
 			state Reference<BackupContainerFileSystem> blobConn = bstore->getForAccess(filename);
 			state Reference<IAsyncFile> reader = wait(blobConn->readFile(filename));
 			// read 1 byte from file to make sure it exists
 			state uint8_t data;
 			int readSize = wait(reader->read(&data, 1, 0));
-			ASSERT(false);
+			ASSERT(!shouldBeDeleted);
 		} catch (Error& e) {
+			ASSERT(shouldBeDeleted);
 			ASSERT(e.code() == error_code_file_not_found);
 		}
 		return Void();
@@ -1225,9 +1296,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
 		wait(self->waitLoadComplete(cx, self->tenant, id));
 
-		wait(self->expectFileDeleted(self, self->bstore, filesToWrite[0].fileName.toString()));
+		wait(self->expectFileDeleted(self, self->bstore, filesToWrite[0].fileName.toString(), true));
 		// FIXME: once load actually keeps granules this needs to be inverted, we should check that the file is kept
-		wait(self->expectFileDeleted(self, self->bstore, stagedFile));
+		wait(self->expectFileDeleted(self, self->bstore, stagedFile, !SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES));
 
 		// cleanup
 		wait(cx->cleanupBulkLoad(id, self->tenant));
@@ -1254,8 +1325,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(cx->abortBulkLoad(id, self->tenant));
 		wait(self->expectAbortedBySystem(cx, self, id, self->tenant));
 
-		wait(self->expectFileDeleted(self, self->bstore, stagedFile));
-		wait(self->expectFileDeleted(self, self->bstore, filesToWrite[0].fileName.toString()));
+		wait(self->expectFileDeleted(self, self->bstore, stagedFile, true));
+		wait(self->expectFileDeleted(self, self->bstore, filesToWrite[0].fileName.toString(), true));
 
 		return Void();
 	}
@@ -1399,6 +1470,86 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR Future<Void> blobCleanupOnAbortUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+		state int numFiles = deterministicRandom()->randomInt(1, 6);
+		state int i;
+		for (i = 0; i < numFiles; i++) {
+			std::string suffixStart = std::to_string(i);
+			std::string suffixEnd = std::to_string(i + 1);
+			wait(success(self->stageSingleFile(
+			    cx,
+			    self,
+			    self->bstore,
+			    id,
+			    KeyRangeRef(range.begin.withSuffix(suffixStart), range.begin.withSuffix(suffixEnd)),
+			    self->tenant)));
+		}
+
+		wait(cx->bulkLoadAllFilesRegistered(id, self->tenant));
+
+		// wait a bit, and/or wait for a certain bulk load state
+		if (deterministicRandom()->coinflip()) {
+			BulkLoadStatus::State stateToWait = deterministicRandom()->coinflip()
+			                                        ? BulkLoadStatus::State::STAGING_BLOB_VALIDATED
+			                                        : BulkLoadStatus::State::STAGING_BLOB_DONE;
+			wait(cx->waitBulkLoadStateAtLeast(id, stateToWait, self->tenant));
+		}
+
+		if (deterministicRandom()->coinflip()) {
+			wait(delayJittered(deterministicRandom()->randomSkewedUInt32(1, 5000) / 1000.0));
+		}
+
+		// abort load
+		try {
+			wait(cx->abortBulkLoad(id, self->tenant));
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_abort_failed);
+			wait(cx->cleanupBulkLoad(id, self->tenant));
+			return Void();
+		}
+
+		wait(cx->cleanupBulkLoad(id, self->tenant));
+
+		CODE_PROBE(true, "blob cleanup unit test successfully aborted load");
+
+		// verify no granules, blobbified ranges, or change feeds that intersect this range
+		state KeyRange physicalRange = range;
+		if (self->tenant.present()) {
+			wait(self->tenant.get()->ready());
+			physicalRange = physicalRange.withPrefix(self->tenant.get()->prefix());
+		}
+		Standalone<VectorRef<KeyRangeRef>> blobbifiedRanges = wait(cx->listBlobbifiedRanges(physicalRange, 1));
+		if (!blobbifiedRanges.empty()) {
+			fmt::print("ERROR: Ranges for [{0} - {1}) not empty! ({2})\n",
+			           physicalRange.begin.printable(),
+			           physicalRange.end.printable(),
+			           blobbifiedRanges.size());
+			for (auto& it : blobbifiedRanges) {
+				fmt::print("    {0} - {1}\n", it.begin.printable(), it.end.printable());
+			}
+		}
+		ASSERT(blobbifiedRanges.empty());
+
+		state Transaction tr(cx);
+		loop {
+			try {
+				Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(physicalRange, 1));
+				ASSERT(granules.empty());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		std::vector<std::pair<Key, KeyRange>> activeFeeds = wait(getActiveFeeds(&tr));
+		for (auto& it : activeFeeds) {
+			ASSERT(!physicalRange.intersects(it.second));
+		}
+
+		return Void();
+	}
+
 	ACTOR Future<Void> bulkLoadUnitTests(Database cx, BulkLoadOpsWorkload* self) {
 		if (deterministicRandom()->coinflip()) {
 			cx->internal = IsInternal::False;
@@ -1428,6 +1579,16 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 			// FIXME: no lock implemented yet so these succeed - unexclude when implemented!
 			excludedTypes.insert(READ_DURING_LOAD_UNIT);
+
+			if (!SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES) {
+				excludedTypes.insert(BLOB_CLEANUP_ON_ABORT_UNIT);
+			}
+
+			// TODO REMOVE! FIXME soon!
+			if (SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES) {
+				excludedTypes.insert(BLOB_CLEANUP_ON_ABORT_UNIT);
+				excludedTypes.insert(ABORT_THEN_RELOAD_UNIT);
+			}
 
 			// prevent infinite loop
 			int loopTries = 1000;
@@ -1503,6 +1664,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->reservationSucceeded(cx, self, range, rangeSecond));
 			} else if (op == ABORT_THEN_RELOAD_UNIT) {
 				wait(self->abortThenReloadUnit(cx, self, range));
+			} else if (op == BLOB_CLEANUP_ON_ABORT_UNIT) {
+				wait(self->blobCleanupOnAbortUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}

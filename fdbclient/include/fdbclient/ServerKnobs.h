@@ -1302,6 +1302,7 @@ public:
 	bool BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT;
 	int BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL;
 	int BULK_LOAD_FILE_VALIDATION_LEVEL;
+	bool BULK_LOAD_STAGE_GRANULES;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

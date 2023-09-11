@@ -486,6 +486,8 @@ public:
 	                                      Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
 	                                      Optional<Reference<Tenant>> tenant = {});
 
+	Future<Void> blobbifyRangeForBulkLoad(KeyRange keyRange, BulkLoadID id, Optional<Reference<Tenant>> tenant);
+
 	// private:
 	explicit DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
 	                         Reference<AsyncVar<ClientDBInfo>> clientDBInfo,

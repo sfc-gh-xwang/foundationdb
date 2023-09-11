@@ -43,7 +43,8 @@ ACTOR Future<std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>>>
     Version readVersion,
     Optional<Reference<Tenant>> tenant = Optional<Reference<Tenant>>(),
     LockAware lockAware = LockAware::False,
-    bool untrustedReadVersion = false);
+    bool untrustedReadVersion = false,
+    bool whileBulkLoad = false);
 
 ACTOR Future<std::pair<RangeResult, Version>> readFromFDB(Database cx, KeyRange range);
 
@@ -64,6 +65,8 @@ ACTOR Future<Void> validateForceFlushing(Database cx,
                                          KeyRange range, // raw key range (includes tenant)
                                          double testDuration,
                                          Promise<Void> testComplete);
+
+ACTOR Future<std::vector<std::pair<Key, KeyRange>>> getActiveFeeds(Transaction* tr);
 
 ACTOR Future<Void> checkFeedCleanup(Database cx, bool debug);
 

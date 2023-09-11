@@ -1531,6 +1531,391 @@ ACTOR Future<Void> checkManagerLock(Reference<ReadYourWritesTransaction> tr, Ref
 	return Void();
 }
 
+ACTOR Future<BlobGranuleSplitPoints> getSplitPointsFromWrittenPointers(
+    BulkLoadMetadata::WrittenFilePointersMap::RangeResultType const* writtenPointers,
+    std::vector<int>* sortedToOriginalIdx,
+    int64_t tenantId,
+    KeyRangeRef range) {
+
+	state BlobGranuleSplitPoints splitPoints;
+	state KeyRangeMap<int> writtenPointerIdxByRange;
+	writtenPointerIdxByRange.insert(range, -1);
+	state int i;
+	for (i = 0; i < writtenPointers->results.size(); i++) {
+		KeyRange r = writtenPointers->results[i].second.keyRange;
+		if (tenantId != TenantInfo::INVALID_TENANT) {
+			r = r.withPrefix(TenantAPI::idToPrefix(tenantId));
+		}
+		writtenPointerIdxByRange.insert(r, i);
+		if (i % 1000 == 999 || BUGGIFY_WITH_PROB(0.01)) {
+			wait(yield());
+		}
+	}
+
+	// fill gaps in key ranges for granule boundaries
+	sortedToOriginalIdx->reserve(writtenPointers->results.size());
+	auto ranges = writtenPointerIdxByRange.intersectingRanges(range);
+	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), range.begin);
+	bool skippedFirst = false;
+	for (auto& it : ranges) {
+		if (it.value() == -1) {
+			continue;
+		}
+		if (!skippedFirst) {
+			skippedFirst = true;
+		} else {
+			splitPoints.keys.push_back_deep(splitPoints.keys.arena(), it.begin());
+		}
+		sortedToOriginalIdx->push_back(it.value());
+		// FIXME: it'd be great to yield here if possible
+	}
+	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), range.end);
+	ASSERT_EQ(sortedToOriginalIdx->size(), writtenPointers->results.size());
+	ASSERT_EQ(splitPoints.keys.size(), writtenPointers->results.size() + 1);
+
+	return splitPoints;
+}
+
+// set up metadata for one granule using fileID as granuleID and feed create version as the snapshot version
+ACTOR Future<Void> bulkLoadCreateGranuleMetadata(Reference<BlobManagerData> bmData,
+                                                 Reference<ReadYourWritesTransaction> tr,
+                                                 BulkLoadMetadata::FilePointerKey fileKey,
+                                                 BulkLoadMetadata::WrittenFilePointerRef writtenPtr,
+                                                 Version snapshotVersion,
+                                                 Key bulkLoadID,
+                                                 KeyRange expandedKeyRange) {
+	state Key lockKey = blobGranuleLockKeyFor(expandedKeyRange);
+	ValueReadResult alreadyExists = wait(tr->get(lockKey));
+	if (alreadyExists.present()) {
+		return Void();
+	}
+
+	// lock key
+	state UID granuleID = bulkLoadIdToUID(fileKey.second);
+	tr->set(lockKey, blobGranuleLockValueFor(bmData->epoch, bmData->seqNo, granuleID));
+
+	// history DAG entry
+	Standalone<BlobGranuleHistoryValue> historyValue;
+	historyValue.granuleID = granuleID;
+	tr->set(blobGranuleHistoryKeyFor(expandedKeyRange, snapshotVersion), blobGranuleHistoryValueFor(historyValue));
+
+	// file pointer
+	Key snapshotFileKey = blobGranuleFileKeyFor(granuleID, snapshotVersion, 'S');
+	Key snapshotFileValue = blobGranuleFileValueFor(writtenPtr.createdPointer.filename.toString(),
+	                                                0,
+	                                                writtenPtr.physicalSize,
+	                                                writtenPtr.physicalSize,
+	                                                writtenPtr.logicalSize,
+	                                                writtenPtr.createdPointer.cipherKeysMeta);
+	tr->set(snapshotFileKey, snapshotFileValue);
+
+	return Void();
+}
+
+ACTOR Future<Void> bulkLoadDestroyGranuleMetadata(Reference<BlobManagerData> bmData,
+                                                  Transaction* tr,
+                                                  BulkLoadMetadata::FilePointerKey fileKey,
+                                                  BulkLoadMetadata::WrittenFilePointerRef writtenPtr,
+                                                  KeyRange expandedKeyRange) {
+	Optional<GranuleHistory> history = wait(getLatestGranuleHistory(tr, expandedKeyRange));
+	if (!history.present()) {
+		// assume already cleaned up
+		return Void();
+	}
+
+	state UID granuleID = bulkLoadIdToUID(fileKey.second);
+
+	tr->clear(blobGranuleHistoryKeyFor(expandedKeyRange, history->version));
+	tr->clear(blobGranuleLockKeyFor(expandedKeyRange));
+	// FIXME: disable verification eventually?
+	state KeyRange fileRange = blobGranuleFileKeyRangeFor(granuleID);
+	RangeReadResult r = wait(tr->getRange(fileRange, 2));
+	ASSERT(r.size() == 1);
+	tr->clear(fileRange);
+
+	wait(updateChangeFeed(tr, granuleIDToCFKey(granuleID), ChangeFeedStatus::CHANGE_FEED_DESTROY, expandedKeyRange));
+
+	return Void();
+}
+
+// FIXME: unit test some of this stuff?
+ACTOR Future<BlobGranuleSplitPoints> bulkLoadInitialSplitRange(Reference<BlobManagerData> bmData,
+                                                               KeyRange rangeRemaining,
+                                                               BulkLoadID bulkLoadID,
+                                                               KeyRange originalRange) {
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bmData->db);
+
+	state BlobGranuleSplitPoints splitPoints;
+	state Optional<BulkLoadIDKey> idKey;
+
+	DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+	    .detail("BulkLoadID", bulkLoadID)
+	    .detail("Stage", "Init")
+	    .detail("RangeRemaining", rangeRemaining)
+	    .detail("OriginalRange", originalRange);
+
+	state BulkLoadMetadata::WrittenFilePointersMap::RangeResultType writtenPointers;
+	state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
+	    BulkLoadMetadata::allFilePointersForLoadRange(bulkLoadID);
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+			// try to find tenant id + bulk load id and check that it still exists.
+			// would have been easier if bulk load range map also had tenant id
+			if (!idKey.present()) {
+				// either no tenant, or with tenant prefix
+				state BulkLoadIDKey candidateIDKey = { TenantInfo::INVALID_TENANT, bulkLoadID };
+				state Optional<BulkLoadStatus::State> currentState;
+
+				Optional<BulkLoadStatus> noTenantStatus = wait(BulkLoadMetadata::statusMap().get(tr, candidateIDKey));
+
+				if (noTenantStatus.present()) {
+					idKey = candidateIDKey;
+					currentState = noTenantStatus->state;
+				} else {
+					if (TenantAPI::withinSingleTenant(originalRange)) {
+						int64_t tenantId = TenantAPI::extractTenantIdFromKeyRef(originalRange.begin);
+						candidateIDKey = { tenantId, bulkLoadID };
+						Optional<BulkLoadStatus> withTenantStatus =
+						    wait(BulkLoadMetadata::statusMap().get(tr, candidateIDKey));
+						if (withTenantStatus.present()) {
+							idKey = candidateIDKey;
+							currentState = withTenantStatus->state;
+						}
+					}
+				}
+				if (!idKey.present()) {
+					CODE_PROBE(true, "cannot find bulk load id registered for blob manager blobbify");
+					// must have been aborted then cleaned up, but, weird
+					TraceEvent(SevWarn, "BulkLoadBlobbifyingGone", bmData->id)
+					    .detail("Epoch", bmData->epoch)
+					    .detail("BulkLoadID", bulkLoadID.printable());
+					throw bulk_load_invalid_state_transition();
+				}
+				ASSERT(currentState.present());
+				if (currentState.get() != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					CODE_PROBE(true, "cannot find bulk load id registered for blob manager blobbify");
+					// must have been aborted then cleaned up, but, weird
+					DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+					    .detail("BulkLoadID", bulkLoadID)
+					    .detail("Stage", "LoadPointersError")
+					    .detail("State", static_cast<int>(currentState.get()))
+					    .detail("TenantId", idKey->first);
+					throw bulk_load_invalid_state_transition();
+				}
+				DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+				    .detail("BulkLoadID", bulkLoadID)
+				    .detail("Stage", "FoundIDKey")
+				    .detail("TenantId", idKey->first);
+			}
+			ASSERT(idKey.present());
+
+			wait(store(writtenPointers,
+			           BulkLoadMetadata::writtenFilePointersMap().getRange(
+			               tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY)));
+			ASSERT(!writtenPointers.more);
+			ASSERT(writtenPointers.results.size() > 0);
+
+			break;
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+
+	DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+	    .detail("BulkLoadID", bulkLoadID)
+	    .detail("Stage", "Start")
+	    .detail("RangeRemaining", rangeRemaining)
+	    .detail("OriginalRange", originalRange)
+	    .detail("Files", writtenPointers.results.size())
+	    .detail("TenantId", idKey->first);
+
+	CODE_PROBE(rangeRemaining != originalRange, "bulk load initial split picking up partial job from previous BM");
+
+	// need to create granule metadata for each granule. a previous BM may already have done some but this is
+	// idempotent
+	state int startIdx = 0;
+	state int batchSize = 100;
+	if (BUGGIFY_WITH_PROB(0.1)) {
+		batchSize = deterministicRandom()->randomInt(1, 10);
+	}
+
+	state std::vector<int> sortedToOriginalIdx;
+	wait(store(splitPoints,
+	           getSplitPointsFromWrittenPointers(&writtenPointers, &sortedToOriginalIdx, idKey->first, originalRange)));
+	// skip part previous BM already did, if present
+	while (startIdx < splitPoints.keys.size() && splitPoints.keys[startIdx] < rangeRemaining.begin) {
+		startIdx++;
+		if (startIdx % 1000 == 999 || BUGGIFY_WITH_PROB(0.001)) {
+			wait(yield());
+		}
+	}
+	ASSERT_LT(startIdx, splitPoints.keys.size());
+	ASSERT_EQ(rangeRemaining.begin, splitPoints.keys[startIdx]);
+	ASSERT_EQ(startIdx > 0, rangeRemaining != originalRange);
+
+	if (BM_BULKLOAD_DEBUG) {
+		fmt::print("InitialSplit for load ({0}):\n", writtenPointers.results.size());
+		for (auto& it : splitPoints.keys) {
+			fmt::print("  {0}\n", it.printable());
+		}
+	}
+
+	state int i;
+
+	loop {
+		// for each batch
+		state Version feedCreateVersion;
+		tr->reset();
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+				// for each txn, check manager lock and that load is still staging
+				wait(checkManagerLock(tr, bmData));
+				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey.get()));
+				// since we cached info, on a re-read it could be non-present if bulk load finished by us or someone
+				// else
+				if (!status.present() || status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					int stateInt = status.present() ? static_cast<int>(status->state) : -1;
+					DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+					    .detail("BulkLoadID", bulkLoadID)
+					    .detail("Stage", "CreateFeedError")
+					    .detail("State", stateInt)
+					    .detail("TenantId", idKey.get().first);
+					throw bulk_load_invalid_state_transition();
+				}
+				// need to create change feeds as of version <= snapshot version, which means load file version has to
+				// be after that for feed
+				std::vector<Future<Void>> feedCreates;
+				feedCreates.reserve(batchSize);
+
+				for (i = 0; i < batchSize && startIdx + i < writtenPointers.results.size(); i++) {
+					int sortedIdx = startIdx + i;
+					int originalIdx = sortedToOriginalIdx[sortedIdx];
+					auto& fileKey = writtenPointers.results[originalIdx].first;
+					KeyRange expandedKeyRange =
+					    KeyRangeRef(splitPoints.keys[sortedIdx], splitPoints.keys[sortedIdx + 1]);
+					feedCreates.push_back(updateChangeFeed(tr,
+					                                       granuleIDToCFKey(bulkLoadIdToUID(fileKey.second)),
+					                                       ChangeFeedStatus::CHANGE_FEED_CREATE,
+					                                       expandedKeyRange));
+				}
+				wait(waitForAll(feedCreates));
+
+				feedCreateVersion = tr->getReadVersion().get();
+				wait(tr->commit());
+				Version committedVersion = tr->getCommittedVersion();
+				// committed version will be -1 if we did only reads, which can happen if we got commit unknown result
+				// but the previous round actually completed (because all of the feed creates are no-op). In that case,
+				// the read version already had the feeds visible and created as of that point, so we can use that as
+				// the start version instead
+				feedCreateVersion = std::max(feedCreateVersion, committedVersion);
+				break;
+			} catch (Error& e) {
+				DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+				    .errorUnsuppressed(e)
+				    .detail("BulkLoadID", bulkLoadID)
+				    .detail("Stage", "ErrorCreatingChangeFeeds")
+				    .detail("UpThrough", startIdx + batchSize);
+				wait(tr->onError(e));
+			}
+		}
+
+		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+		    .detail("BulkLoadID", bulkLoadID)
+		    .detail("Stage", "CreatedChangeFeeds")
+		    .detail("CommitVersion", feedCreateVersion)
+		    .detail("StartIdx", startIdx)
+		    .detail("NewStartIdx", startIdx + batchSize)
+		    .detail("Total", writtenPointers.results.size());
+		ASSERT(feedCreateVersion >= 0);
+
+		tr->reset();
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+				// for each txn, check manager lock and that load is still staging
+				wait(checkManagerLock(tr, bmData));
+				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey.get()));
+				// since we cached info, on a re-read it could be non-present if bulk load finished by us or someone
+				// else
+				if (!status.present() || status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					int stateInt = status.present() ? static_cast<int>(status->state) : -1;
+					DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+					    .detail("BulkLoadID", bulkLoadID)
+					    .detail("Stage", "CreateGranulesError")
+					    .detail("State", stateInt)
+					    .detail("TenantId", idKey.get().first);
+					throw bulk_load_invalid_state_transition();
+				}
+
+				KeyRange batchRange =
+				    KeyRangeRef(splitPoints.keys[startIdx],
+				                splitPoints.keys[std::min<int>(startIdx + batchSize, writtenPointers.results.size())]);
+				wait(krmSetRange(tr, blobGranuleMappingKeys.begin, batchRange, blobGranuleMappingValueFor(UID())));
+
+				std::vector<Future<Void>> granuleMetadataCreates;
+				granuleMetadataCreates.reserve(batchSize);
+				for (i = 0; i < batchSize && startIdx + i < writtenPointers.results.size(); i++) {
+					int sortedIdx = startIdx + i;
+					int originalIdx = sortedToOriginalIdx[sortedIdx];
+					KeyRange expandedKeyRange =
+					    KeyRangeRef(splitPoints.keys[sortedIdx], splitPoints.keys[sortedIdx + 1]);
+					granuleMetadataCreates.push_back(
+					    bulkLoadCreateGranuleMetadata(bmData,
+					                                  tr,
+					                                  writtenPointers.results[originalIdx].first,
+					                                  writtenPointers.results[originalIdx].second,
+					                                  feedCreateVersion,
+					                                  bulkLoadID,
+					                                  expandedKeyRange));
+					if (i != 0) {
+						tr->set(splitPoints.keys[sortedIdx].withPrefix(blobGranuleMappingKeys.begin),
+						        blobGranuleMappingValueFor(UID()));
+					}
+				}
+
+				wait(waitForAll(granuleMetadataCreates));
+				wait(tr->commit());
+				break;
+			} catch (Error& e) {
+				DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+				    .errorUnsuppressed(e)
+				    .detail("BulkLoadID", bulkLoadID)
+				    .detail("Stage", "ErrorCreatingGranules")
+				    .detail("UpThrough", startIdx + batchSize);
+				wait(tr->onError(e));
+			}
+		}
+
+		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+		    .detail("BulkLoadID", bulkLoadID)
+		    .detail("Stage", "CreatedGranules")
+		    .detail("UpThrough", startIdx + batchSize);
+
+		startIdx += batchSize;
+
+		if (startIdx >= writtenPointers.results.size()) {
+			break;
+		}
+	}
+
+	DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+	    .detail("BulkLoadID", bulkLoadID)
+	    .detail("Stage", "Done");
+
+	return splitPoints;
+}
+
 ACTOR Future<Void> writeInitialGranuleMapping(Reference<BlobManagerData> bmData, BlobGranuleSplitPoints splitPoints) {
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bmData->db);
 	// don't do too many in one transaction
@@ -1584,6 +1969,46 @@ ACTOR Future<Void> writeInitialGranuleMapping(Reference<BlobManagerData> bmData,
 		ASSERT(false);
 	}
 	return Void();
+}
+
+ACTOR Future<BlobGranuleSplitPoints> initialSplitRange(Reference<BlobManagerData> bmData, KeyRange range) {
+	state Transaction tr(bmData->db);
+	state Optional<BulkLoadID> bulkLoadID;
+	state Optional<KeyRange> originalRange;
+	loop {
+		try {
+			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+			Optional<BulkLoadMetadata::RangeMap::RangeValue> bulkLoadRange =
+			    wait(BulkLoadMetadata::rangeMap().getRangeForKey(&tr, range.begin));
+			if (!bulkLoadRange.present() || bulkLoadRange->value.empty()) {
+				break;
+			}
+			// we go from start to end of the range, so the previous BM may have done some of it
+			ASSERT_GE(range.begin, bulkLoadRange->range.begin);
+			ASSERT_LT(range.begin, bulkLoadRange->range.end);
+			ASSERT_EQ(range.end, bulkLoadRange->range.end);
+
+			bulkLoadID = bulkLoadRange->value;
+			originalRange = KeyRangeRef(bulkLoadRange->range.begin, bulkLoadRange->range.end);
+			break;
+		} catch (Error& e) {
+			wait(tr.onError(e));
+		}
+	}
+	state BlobGranuleSplitPoints splitPoints;
+	if (bulkLoadID.present()) {
+		wait(store(splitPoints, bulkLoadInitialSplitRange(bmData, range, bulkLoadID.get(), originalRange.get())));
+	} else {
+		DebugBulkLoadTraceEvent(SevDebug, "InitialSplitNoBulkLoad").detail("Range", range);
+		// handle normal non-bulk load case
+		wait(store(splitPoints, splitRange(bmData, range, false, true)));
+		// Write to DB BEFORE sending assign requests, so that if manager dies before/during, new manager
+		// picks up the same ranges
+		wait(writeInitialGranuleMapping(bmData, splitPoints));
+	}
+	return splitPoints;
 }
 
 ACTOR Future<Void> loadTenantMap(Reference<ReadYourWritesTransaction> tr, Reference<BlobManagerData> bmData) {
@@ -1772,7 +2197,7 @@ ACTOR Future<Void> monitorClientRanges(Reference<BlobManagerData> bmData) {
 			bmData->workerAssignments.insert(range, UID());
 
 			// start initial split for range
-			splitFutures.push_back(splitRange(bmData, range, false, true));
+			splitFutures.push_back(initialSplitRange(bmData, range));
 		}
 
 		for (KeyRangeRef range : rangesToRemove) {
@@ -1794,7 +2219,17 @@ ACTOR Future<Void> monitorClientRanges(Reference<BlobManagerData> bmData) {
 		}
 
 		for (auto f : splitFutures) {
-			state BlobGranuleSplitPoints splitPoints = wait(f);
+			state BlobGranuleSplitPoints splitPoints;
+			try {
+				wait(store(splitPoints, f));
+			} catch (Error& e) {
+				if (e.code() == error_code_bulk_load_invalid_state_transition) {
+					// load aborted while blobbifiyng, ignore
+					CODE_PROBE(true, "bulk load aborted while blobbifying");
+					continue;
+				}
+				throw e;
+			}
 			if (BM_DEBUG) {
 				fmt::print("BM {0} Splitting client range [{1} - {2}) into {3} ranges.\n",
 				           bmData->epoch,
@@ -1802,10 +2237,6 @@ ACTOR Future<Void> monitorClientRanges(Reference<BlobManagerData> bmData) {
 				           splitPoints.keys[splitPoints.keys.size() - 1].printable(),
 				           splitPoints.keys.size() - 1);
 			}
-
-			// Write to DB BEFORE sending assign requests, so that if manager dies before/during, new manager
-			// picks up the same ranges
-			wait(writeInitialGranuleMapping(bmData, splitPoints));
 
 			if (BM_DEBUG) {
 				fmt::print("BM {0} Split client range [{1} - {2}) into {3} ranges:\n",
@@ -6465,6 +6896,7 @@ ACTOR Future<bool> makeReservationForBulkLoad(Reference<ReadYourWritesTransactio
 	return true;
 }
 
+// FIXME: problem is that BM truncates blob range on restart if it bounces in the middle
 ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
                                      BulkLoadIDKey idKey,
                                      Optional<Reference<Tenant>> tenant) {
@@ -6485,6 +6917,8 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 	state bool deletedFiles = false;
 	state std::vector<Future<Void>> fileDeleteFutures;
 	state Reference<BlobConnectionProvider> bstore;
+	state KeyRange physicalRange;
+
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
@@ -6498,13 +6932,13 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 				if (!info.present()) {
 					throw bulk_load_not_found();
 				}
-			}
-
-			if (!bstore.isValid()) {
-				KeyRange physicalRange = info->keyRange;
+				physicalRange = info->keyRange;
 				if (tenant.present()) {
 					physicalRange = physicalRange.withPrefix(tenant.get()->prefix());
 				}
+			}
+
+			if (!bstore.isValid()) {
 				wait(store(bstore, getBStoreForGranule(bmData, physicalRange)));
 				ASSERT(bstore.isValid());
 			}
@@ -6518,7 +6952,10 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 			}
 			if (status.get().state != BulkLoadStatus::State::STAGING) {
 				ASSERT(status.get().state > BulkLoadStatus::State::STAGING);
-				return true;
+				if (status.get().state >= BulkLoadStatus::State::STAGING_BLOB_DONE) {
+					return true;
+				}
+				break;
 			}
 
 			state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
@@ -6591,8 +7028,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 				}
 			}
 
-			// FIXME: actually stage granules instead of just deleting their files!!
-			if (!deletedFiles) {
+			if (!deletedFiles && !SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES) {
 				for (auto& it : writtenPointers.results) {
 					fileDeleteFutures.push_back(deleteFile(bstore, it.second.createdPointer.filename.toString()));
 				}
@@ -6600,6 +7036,8 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 
 			if (!deletedFiles) {
 				wait(waitForAll(fileDeleteFutures));
+				bmData->stats.bulkLoadUnusedFilesCleanedUp += fileDeleteFutures.size();
+				fileDeleteFutures.clear();
 				deletedFiles = true;
 			}
 
@@ -6613,11 +7051,167 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 		}
 	}
 
-	wait(waitForAll(fileDeleteFutures));
+	if (SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES) {
+		if (BUGGIFY && bmData->maybeInjectTargetedRestart()) {
+			wait(delay(0)); // should be cancelled
+			ASSERT(false);
+		}
 
-	bmData->stats.bulkLoadUnusedFilesCleanedUp += fileDeleteFutures.size();
+		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadBlobbifying").detail("BulkLoadID", idKey.second);
+		wait(bmData->db->blobbifyRangeForBulkLoad(info->keyRange, idKey.second, tenant));
+		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadBlobbified").detail("BulkLoadID", idKey.second);
+
+		if (BUGGIFY && bmData->maybeInjectTargetedRestart()) {
+			wait(delay(0)); // should be cancelled
+			ASSERT(false);
+		}
+
+		tr->reset();
+		loop {
+			try {
+				// this option lets us read from granules while they don't match storage servers
+				// if client aborts load, we need to pick that up in parallel
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+				wait(checkManagerLock(tr, bmData));
+				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
+				int stateInt = status.present() ? static_cast<int>(status->state) : -1;
+				if (!status.present() || status->state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					if (status.present() && status->state == BulkLoadStatus::State::ABORTED) {
+						CODE_PROBE(true, "bulk load aborted while creating granules");
+						throw bulk_load_aborted();
+					}
+
+					DebugBulkLoadTraceEvent(SevDebug, "BulkLoadWaitBlobbifiedStateError", bmData->id)
+					    .detail("BulkLoadID", idKey.second)
+					    .detail("State", stateInt)
+					    .detail("TenantId", idKey.first);
+
+					throw bulk_load_invalid_state_transition();
+				}
+
+				tr->setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
+
+				wait(success(tr->summarizeBlobGranules(physicalRange, tr->getReadVersion().get(), 1000000)));
+				break;
+			} catch (Error& e) {
+				if (e.code() != error_code_blob_granule_transaction_too_old) {
+					wait(tr->onError(e));
+				}
+			}
+			wait(delayJittered(0.1));
+			tr->reset();
+		}
+
+		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadBlobVerified").detail("BulkLoadID", idKey.second);
+
+		if (BUGGIFY && bmData->maybeInjectTargetedRestart()) {
+			wait(delay(0)); // should be cancelled
+			ASSERT(false);
+		}
+	}
 
 	return true;
+}
+
+ACTOR Future<Void> checkLoadAbortedAndManagerLock(Reference<BlobManagerData> bmData,
+                                                  Reference<ReadYourWritesTransaction> tr,
+                                                  BulkLoadIDKey idKey) {
+	state Future<Void> checkManagerF = checkManagerLock(tr, bmData);
+	Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
+	if (!status.present() || status->state != BulkLoadStatus::State::ABORTED) {
+		if (BM_BULKLOAD_DEBUG) {
+			fmt::print("CleanupAbortedBulkLoad {0}: already cleaned up\n", idKey.second.printable());
+		}
+		CODE_PROBE(true, "cleanup aborted bulk load already done");
+		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadCheckLoadAborted", bmData->id)
+		    .detail("BulkLoadID", idKey.second)
+		    .detail("TenantId", idKey.first)
+		    .detail("State", status.present() ? static_cast<int>(status->state) : -1);
+		throw bulk_load_invalid_state_transition();
+	}
+	wait(checkManagerF);
+	return Void();
+}
+
+ACTOR Future<Void> bulkLoadAbortCleanupGranules(
+    Reference<BlobManagerData> bmData,
+    BulkLoadMetadata::WrittenFilePointersMap::RangeResultType* writtenPointers,
+    BulkLoadIDKey idKey,
+    KeyRange physicalRange) {
+	state Database cx(bmData->db);
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
+
+	// TODO add back! causes lots of races until we can guarantee all BWs stopped processing granules
+	if (g_network->isSimulated()) {
+		return Void();
+	}
+
+	// FIXME: make synchronous like other PR
+	std::set<Key> knownBoundariesPurged;
+	wait(revokeRangeFromAll(bmData, physicalRange, &knownBoundariesPurged, bulkLoadIdToUID(idKey.second), 0));
+
+	state std::vector<int> sortedToOriginalIdx;
+	state BlobGranuleSplitPoints splitPoints =
+	    wait(getSplitPointsFromWrittenPointers(writtenPointers, &sortedToOriginalIdx, idKey.first, physicalRange));
+
+	state int startIdx = writtenPointers->results.size() - 1;
+	state int batchSize = 100;
+	if (BUGGIFY_WITH_PROB(0.1)) {
+		batchSize = deterministicRandom()->randomInt(1, 10);
+	}
+	while (startIdx >= 0) {
+		tr->reset();
+		try {
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+			wait(checkLoadAbortedAndManagerLock(bmData, tr, idKey));
+
+			std::vector<Future<Void>> deletions;
+			int limit = std::min<int>(batchSize, startIdx + 1);
+
+			for (int granuleIdx = 0; granuleIdx < limit; granuleIdx++) {
+				// go backwards so if we kill this in the middle, we still only have a prefix of the range loaded
+				int sortedIdx = startIdx - granuleIdx;
+				ASSERT(sortedIdx >= 0);
+				int originalIdx = sortedToOriginalIdx[sortedIdx];
+				KeyRange expandedKeyRange = KeyRangeRef(splitPoints.keys[sortedIdx], splitPoints.keys[sortedIdx + 1]);
+				auto& writtenPtr = writtenPointers->results[originalIdx];
+				deletions.push_back(bulkLoadDestroyGranuleMetadata(
+				    bmData, &tr->getTransaction(), writtenPtr.first, writtenPtr.second, expandedKeyRange));
+			}
+			wait(waitForAll(deletions));
+			wait(tr->commit());
+			break;
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+		startIdx -= batchSize;
+	}
+
+	// set the entire granule mapping to empty, unset force purge state, and unblobbify
+	tr->reset();
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+			wait(checkLoadAbortedAndManagerLock(bmData, tr, idKey));
+			wait(krmSetRangeCoalescing(tr, blobGranuleForcePurgedKeys.begin, physicalRange, normalKeys, ""_sr));
+			wait(krmSetRange(tr, blobGranuleMappingKeys.begin, physicalRange, ""_sr));
+			bmData->forcePurgingRanges.insert(physicalRange, false);
+			wait(tr->commit());
+			break;
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+
+	return Void();
 }
 
 ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData,
@@ -6630,58 +7224,100 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData,
 	state std::set<BulkLoadFileID> fileIdsDeleted;
 	state std::vector<Future<Void>> fileDeleteFutures;
 	state Reference<BlobConnectionProvider> bstore;
-	// TODO: implement actual cleanup! Must be idempotent to handle retries/multiple concurrent cleanup callers
-	// remaining: purge hybrid data, clear range, unblobbify/clean up purged range
+	state KeyRange physicalRange;
+
+	state BulkLoadMetadata::WrittenFilePointersMap::RangeResultType writtenPointers;
+	state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
+	    BulkLoadMetadata::allFilePointersForLoadRange(idKey.second);
+	state bool cleanupGranules = SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES;
+	// FIXME: also clean up DD and storage. DD cleanup might just be clear custom replication state, and eventually
+	// shards merge?
+
+	// setup + initial load of stuff to clean up
+	if (tenant.present()) {
+		wait(tenant.get()->ready());
+	}
+
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 
-			Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
-			if (!status.present() || status->state != BulkLoadStatus::State::ABORTED) {
-				if (BM_BULKLOAD_DEBUG) {
-					fmt::print("CleanupAbortedBulkLoad {0}: already cleaned up\n", idKey.second.printable());
-				}
-				CODE_PROBE(true, "cleanup aborted bulk load already done");
-				return Void();
-			}
+			wait(checkLoadAbortedAndManagerLock(bmData, tr, idKey));
 
 			if (!info.present()) {
 				wait(store(info, BulkLoadMetadata::infoMap().get(tr, idKey)));
 				ASSERT(info.present());
 			}
 
-			if (!bstore.isValid()) {
-				KeyRange physicalRange = info->keyRange;
-				if (tenant.present()) {
-					physicalRange = physicalRange.withPrefix(tenant.get()->prefix());
-				}
-				wait(store(bstore, getBStoreForGranule(bmData, physicalRange)));
-				ASSERT(bstore.isValid());
+			physicalRange = info->keyRange;
+			if (tenant.present()) {
+				wait(tenant.get()->ready());
+				physicalRange = physicalRange.withPrefix(tenant.get()->prefix());
 			}
+
+			if (cleanupGranules) {
+				Standalone<VectorRef<KeyRangeRef>> blobRanges =
+				    wait(getBlobRanges(&tr->getTransaction(), physicalRange, 1));
+				cleanupGranules = !blobRanges.empty();
+				if (cleanupGranules) {
+					ASSERT_EQ(1, blobRanges.size());
+					ASSERT_EQ(physicalRange.begin, blobRanges[0].begin);
+					ASSERT_EQ(physicalRange.end, blobRanges[0].end);
+
+					// set force purge state
+					wait(
+					    krmSetRangeCoalescing(tr, blobGranuleForcePurgedKeys.begin, physicalRange, normalKeys, "1"_sr));
+				}
+			}
+
+			wait(store(writtenPointers,
+			           BulkLoadMetadata::writtenFilePointersMap().getRange(
+			               tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY)));
+			ASSERT(!writtenPointers.more);
+
+			if (cleanupGranules) {
+				wait(tr->commit());
+				bmData->forcePurgingRanges.insert(physicalRange, true);
+			}
+
+			break;
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+
+	wait(store(bstore, getBStoreForGranule(bmData, physicalRange)));
+	ASSERT(bstore.isValid());
+
+	if (cleanupGranules) {
+		wait(bulkLoadAbortCleanupGranules(bmData, &writtenPointers, idKey, physicalRange));
+	}
+
+	// now delete actual blob files and clear the file pointers
+	tr->reset();
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+			wait(checkLoadAbortedAndManagerLock(bmData, tr, idKey));
 
 			// clean up file pointers if deleted in staging phase
 
 			if (!deletedFiles) {
-				state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
-				    BulkLoadMetadata::allFilePointersForLoadRange(idKey.second);
 				state BulkLoadMetadata::CreatedFilePointersMap::RangeResultType createdPointers =
 				    wait(BulkLoadMetadata::createdFilePointersMap().getRange(
 				        tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY));
 				ASSERT(!createdPointers.more);
-
-				state BulkLoadMetadata::WrittenFilePointersMap::RangeResultType writtenPointers =
-				    wait(BulkLoadMetadata::writtenFilePointersMap().getRange(
-				        tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY));
-				ASSERT(!writtenPointers.more);
 
 				for (auto& it : createdPointers.results) {
 					ASSERT(idKey.second == it.first.first);
 					fileDeleteFutures.push_back(deleteFile(bstore, it.second.filename.toString()));
 				}
 
-				// FIXME: actually stage granules instead of just deleting their files!!
 				for (auto& it : writtenPointers.results) {
 					ASSERT(idKey.second == it.first.first);
 					fileDeleteFutures.push_back(deleteFile(bstore, it.second.createdPointer.filename.toString()));
@@ -6692,6 +7328,7 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData,
 				deletedFiles = true;
 			}
 
+			// probably move this to separate transaction
 			BulkLoadMetadata::createdFilePointersMap().erase(tr, idRange.first, idRange.second);
 
 			wait(tr->commit());
@@ -6771,8 +7408,8 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKe
 		}
 		if (success) {
 			++bmData->stats.bulkLoadsStaged;
-			// TODO: do we also need to check manager lock as part of these transactions? should be idempotent by any
-			// manager
+			// TODO: do we also need to check manager lock as part of these transactions? should be idempotent by
+			// any manager
 			// FIXME: only change to STAGING_BLOB_DONE. Still monitor for aborts until we hit DONE though
 			wait(bmData->db->updateBulkLoadState(id, BulkLoadStatus::State::DONE, tenant));
 		} else {
@@ -6913,7 +7550,9 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 		self->addActor.send(monitorClientRanges(self));
 		self->addActor.send(monitorTenants(self));
 		self->addActor.send(monitorPurgeKeys(self));
-		if (SERVER_KNOBS->BG_CONSISTENCY_CHECK_ENABLED && !self->isFullRestoreMode) {
+		if (SERVER_KNOBS->BG_CONSISTENCY_CHECK_ENABLED && !self->isFullRestoreMode &&
+		    (!CLIENT_KNOBS->ALLOW_BULK_LOADS || !SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES)) {
+			// FIXME: reenable once bulk load data in storage servers!!
 			self->addActor.send(bgConsistencyCheck(self));
 		}
 		if (SERVER_KNOBS->BG_ENABLE_MERGING) {

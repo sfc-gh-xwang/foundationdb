@@ -48,6 +48,7 @@
 #include "fdbclient/Atomic.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BlobGranuleRequest.actor.h"
+#include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/ClientVersion.h"
 #include "fdbclient/ClusterInterface.h"
 #include "fdbclient/ClusterConnectionFile.h"
@@ -12027,14 +12028,17 @@ Future<Void> DatabaseContext::waitPurgeGranulesComplete(Key purgeKey) {
 ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
                                      KeyRange originalRange,
                                      bool active,
-                                     Optional<Reference<Tenant>> tenant) {
+                                     Optional<Reference<Tenant>> tenant,
+                                     Optional<BulkLoadID> bulkLoadIDToCheck = Optional<BulkLoadID>()) {
 	state Database db(cx);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(db);
 
 	state KeyRange range = originalRange;
+	state int64_t tenantId = TenantInfo::INVALID_TENANT;
 	if (tenant.present()) {
 		wait(tenant.get()->ready());
 		range = range.withPrefix(tenant.get()->prefix());
+		tenantId = tenant.get()->id();
 	}
 
 	state Value value = active ? blobRangeActive : blobRangeInactive;
@@ -12051,8 +12055,19 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 
-			wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
-			     checkRangeLock(&tr->getTransaction(), range));
+			if (bulkLoadIDToCheck.present()) {
+				// bulk load happens while range lock set so bypass lock check, but check load status
+				BulkLoadIDKey bulkLoadKey = { tenantId, bulkLoadIDToCheck.get() };
+				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadKey));
+				if (!status.present()) {
+					throw bulk_load_not_found();
+				} else if (status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					throw bulk_load_invalid_state_transition();
+				}
+			} else {
+				wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
+				     checkRangeLock(&tr->getTransaction(), range));
+			}
 
 			Standalone<VectorRef<KeyRangeRef>> startBlobRanges = wait(getBlobRanges(&tr->getTransaction(), range, 1));
 
@@ -12213,6 +12228,21 @@ Future<Standalone<VectorRef<KeyRangeRef>>> DatabaseContext::listBlobbifiedRanges
                                                                                  int rangeLimit,
                                                                                  Optional<Reference<Tenant>> tenant) {
 	return listBlobbifiedRangesActor(Reference<DatabaseContext>::addRef(this), range, rangeLimit, tenant);
+}
+
+ACTOR Future<Void> blobbifyRangeForBulkLoadActor(Reference<DatabaseContext> cx,
+                                                 KeyRange keyRange,
+                                                 BulkLoadID id,
+                                                 Optional<Reference<Tenant>> tenant) {
+	state bool result = wait(setBlobRangeActor(cx, keyRange, true, tenant, id));
+	ASSERT(result);
+	return Void();
+}
+
+Future<Void> DatabaseContext::blobbifyRangeForBulkLoad(KeyRange keyRange,
+                                                       BulkLoadID id,
+                                                       Optional<Reference<Tenant>> tenant) {
+	return blobbifyRangeForBulkLoadActor(Reference<DatabaseContext>::addRef(this), keyRange, id, tenant);
 }
 
 ACTOR static Future<Standalone<VectorRef<ReadHotRangeWithMetrics>>>
