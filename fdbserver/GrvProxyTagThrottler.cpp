@@ -101,10 +101,12 @@ GrvProxyTagThrottler::DelayedRequest& GrvProxyTagThrottler::TagQueue::front(
 void GrvProxyTagThrottler::TagQueue::popFront(GrvProxyTagThrottler::TagQueue::Strategy strategy) {
 	auto& requests = requestsWithFront(strategy);
 	auto const costReleased = getRequestCost(requests.front().req);
-	if (strategy == Strategy::PRIORITIZED) {
-		prioritizedReleased += costReleased;
-	} else {
-		fifoReleased += costReleased;
+	if (rateInfo.present()) {
+		if (strategy == Strategy::PRIORITIZED) {
+			prioritizedReleased += costReleased;
+		} else {
+			fifoReleased += costReleased;
+		}
 	}
 	requests.pop_front();
 }
