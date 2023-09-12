@@ -157,13 +157,15 @@ public:
 
 				state TenantGroupName group = groups[i];
 
-				// If variable polling is enabled, check the usage for this tenant group only if it's last checked
-				// usage is more than the storage quota - 1 GB (including being above the storage quota),
-				// or if the last time its usage was checked was more than 30 minutes ago (for observability).
-				if (!SERVER_KNOBS->TENANT_CACHE_STORAGE_USAGE_VARIABLE_POLLING ||
-				    tenantCache->tenantStorageMap[group].usage >
-				        tenantCache->tenantStorageMap[group].quota - /*1GB=*/1000000000 ||
-				    tenantCache->tenantStorageMap[group].usageUpdatedTime < now() - /*30 minutes=*/30 * 60) {
+				// To allow a variable polling frequency, check the usage for this tenant group only if it's last
+				// checked usage is more than the storage quota - configurable bytes lag (including being above the
+				// storage quota), or if the last time its usage was checked was more than configurable interval seconds
+				// ago (for observability).
+				if (tenantCache->tenantStorageMap[group].usage >
+				        tenantCache->tenantStorageMap[group].quota -
+				            SERVER_KNOBS->TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES ||
+				    tenantCache->tenantStorageMap[group].usageUpdatedTime <
+				        now() - SERVER_KNOBS->TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS) {
 
 					state int64_t usage = 0;
 					// `tenants` needs to be a copy so that the erase (below) or inserts/erases from other
