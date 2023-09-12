@@ -45,8 +45,8 @@ if __name__ == "__main__":
         "--tenant_mode",
         required=False,
         type=str,
-        choices=["disabled", "optional_experimental", "required_experimental"],
-        help="Specify a tenant mode: disabled, optional_experimental, required_experimental",
+        choices=["disabled", "optional", "required"],
+        help="Specify a tenant mode: disabled, optional, required",
     )
     parser.add_argument(
         "--tenant_count", required=False, type=int, help="Tenant counts"
@@ -62,7 +62,7 @@ if __name__ == "__main__":
 
     # tlsEnabled = [True, False]
     # authzEnabled = [True, False]
-    # tenantModes = ["disabled", "optional_experimental", "required_experimental"]
+    # tenantModes = ["disabled", "optional", "required"]
     # tenantCounts = [0, 5]
     build_dir = options.build_dir
     tls_options = [False, True] if options.tls_option is None else [options.tls_option]
@@ -70,9 +70,7 @@ if __name__ == "__main__":
         [False, True] if options.authz_option is None else [options.authz_option]
     )
     tenant_modes = (
-        ["optional_experimental"]
-        if options.tenant_mode is None
-        else [options.tenant_mode]
+        ["optional"] if options.tenant_mode is None else [options.tenant_mode]
     )
     tenant_counts = [0, 3] if options.tenant_count is None else [options.tenant_count]
     test_ok = True

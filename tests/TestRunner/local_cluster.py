@@ -471,13 +471,17 @@ tracer = log_file
     def create_database(
         self,
         storage="ssd",
+        # Use optional_experimental for compatibility with old versions. Can be changed to optional
+        # when we are not using versions before 9.0.
         tenant_mode: typing.Union[str, None] = "optional_experimental",
     ):
         # None is for database version that does not support tenants
         assert tenant_mode in [
             None,
             "disabled",
+            "optional",
             "optional_experimental",
+            "required",
             "required_experimental",
         ]
         if self.enable_encryption_at_rest:

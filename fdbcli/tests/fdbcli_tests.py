@@ -127,7 +127,7 @@ def blobrange_list_cmd(logger, start="\\x00", end="\\xff", tenant=None):
 @enable_logging()
 def blobrange_list(logger):
     run_fdbcli_command("configure blob_granules_enabled=1")
-    run_fdbcli_command("configure tenant_mode=optional_experimental")
+    run_fdbcli_command("configure tenant_mode=optional")
     r = blobrange_list_cmd(logger)
     assert r == []
 

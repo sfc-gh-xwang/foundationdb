@@ -1586,9 +1586,9 @@ struct TenantMode {
 		case DISABLED:
 			return "disabled";
 		case OPTIONAL_TENANT:
-			return "optional_experimental";
+			return "optional";
 		case REQUIRED:
-			return "required_experimental";
+			return "required";
 		default:
 			ASSERT(false);
 		}

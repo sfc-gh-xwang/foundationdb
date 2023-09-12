@@ -28,7 +28,7 @@ if __name__ == "__main__":
         # now start the cluster up
         cluster = TempCluster(
             build_dir=args.build_dir,
-            tenant_mode="optional_experimental",
+            tenant_mode="optional",
             tls_config=TLSConfig(server_chain_len=3, client_chain_len=2),
             authorization_kty="EC",
             authorization_keypair_id="test_keyid",

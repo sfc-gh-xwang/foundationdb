@@ -123,8 +123,7 @@ struct StaticOptions {
 	JsonOption<string, "clusterFilePath", MustExist> clusterFilePath;
 	JsonOption<TLSConfig, "tls", Optional> tlsConfig;
 	JsonOption<AuthZConfig, "authz", Optional> authzConfig;
-	JsonOption<StringChoice<"disabled", "required_experimental", "optional_experimental">, "tenantMode", MustExist>
-	    tenantMode;
+	JsonOption<StringChoice<"disabled", "required", "optional">, "tenantMode", MustExist> tenantMode;
 	JsonOption<unsigned, "tenantCount", Optional> tenantCount;
 	JsonOption<unsigned, "randomSeed", Optional> randomSeed;
 	JsonOption<bool, "disableClientTrace", Optional> disableClientTrace;

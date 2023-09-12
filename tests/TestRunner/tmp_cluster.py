@@ -30,7 +30,7 @@ class TempCluster(LocalCluster):
         authorization_keypair_id: str = "",
         remove_at_exit: bool = True,
         custom_config: dict = {},
-        tenant_mode: typing.Union[str, None] = "optional_experimental",
+        tenant_mode: typing.Union[str, None] = "optional",
         enable_encryption_at_rest: bool = False,
         cluster_version=CURRENT_VERSION,
     ):
@@ -134,7 +134,7 @@ if __name__ == "__main__":
         args.process_number,
         blob_granules_enabled=args.blob_granules_enabled,
         tls_config=tls_config,
-        tenant_mode="optional_experimental" if enable_tenants else None,
+        tenant_mode="optional" if enable_tenants else None,
         authorization_kty=args.authorization_kty,
         authorization_keypair_id=args.authorization_keypair_id,
         remove_at_exit=not args.no_remove_at_exit,
