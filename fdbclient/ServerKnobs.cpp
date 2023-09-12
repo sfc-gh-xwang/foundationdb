@@ -811,8 +811,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 
 	init( MAX_TPS_HISTORY_SAMPLES,                               600 );
 	init( NEEDED_TPS_HISTORY_SAMPLES,                            200 );
+	init( AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS,           100e6 );
+	init( AUTO_TAG_THROTTLE_SPRING_DURABILITY_LAG,              50e6 );
 	init( TARGET_DURABILITY_LAG_VERSIONS,                      350e6 ); // Should be larger than STORAGE_DURABILITY_LAG_SOFT_MAX
-	init( AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS,           250e6 );
 	init( TARGET_DURABILITY_LAG_VERSIONS_BATCH,                150e6 ); // Should be larger than STORAGE_DURABILITY_LAG_SOFT_MAX
 	init( DURABILITY_LAG_UNLIMITED_THRESHOLD,                   50e6 );
 	init( INITIAL_DURABILITY_LAG_MULTIPLIER,                    1.02 );
