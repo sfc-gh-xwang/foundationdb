@@ -358,13 +358,17 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_STORAGE_WIGGLE_STUCK_THRESHOLD,                      20 );
 	init( DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC,   isSimulated ? 2 : 21 * 60 * 60 * 24 ); BUGGIFY_KNOB(DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC, randomize && BUGGIFY, isSimulated ? 0: 120);
 	init( DD_TENANT_AWARENESS_ENABLED,                         false );
+	init( DD_BUILD_EXTRA_TEAMS_OVERRIDE,                          10 ); BUGGIFY_KNOB(DD_BUILD_EXTRA_TEAMS_OVERRIDE, randomize && BUGGIFY, 2);
+
+	// Knobs for Storage Quota feature
 	init( STORAGE_QUOTA_ENABLED,                                true ); BUGGIFY_KNOB(STORAGE_QUOTA_ENABLED, isSimulated, deterministicRandom()->coinflip());
 	init( TENANT_CACHE_LIST_REFRESH_INTERVAL,                     30 ); if(isSimulated) TENANT_CACHE_LIST_REFRESH_INTERVAL = 5; BUGGIFY_KNOB(TENANT_CACHE_LIST_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL,           180 ); if(isSimulated) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = 10; BUGGIFY_KNOB(TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(5, 15));
 	init( TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL,            30 ); if(isSimulated) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = 5; BUGGIFY_KNOB(TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL,             300 );
+	init( TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES, 1000000000 ); if(isSimulated) TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES = deterministicRandom()->randomInt(0, 10) * 1000;
+	init( TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS,       0 ); if(isSimulated) TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS = deterministicRandom()->randomInt(0, 5);
 	init( CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL,            5 ); BUGGIFY_KNOB(CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
-	init( DD_BUILD_EXTRA_TEAMS_OVERRIDE,                          10 ); BUGGIFY_KNOB(DD_BUILD_EXTRA_TEAMS_OVERRIDE, randomize && BUGGIFY, 2);
 
 	// Large teams are disabled when SHARD_ENCODE_LOCATION_METADATA is enabled
 	init( DD_MAX_SHARDS_ON_LARGE_TEAMS,                          100 ); BUGGIFY_KNOB(DD_MAX_SHARDS_ON_LARGE_TEAMS, randomize && BUGGIFY, deterministicRandom()->randomInt(0, 3));

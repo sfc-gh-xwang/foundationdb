@@ -349,6 +349,8 @@ public:
 	int64_t
 	    DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC; // Minimal age of a correct-configured server before it's chosen to be wiggled
 	bool DD_TENANT_AWARENESS_ENABLED;
+
+	// Knobs for Storage Quota feature
 	bool STORAGE_QUOTA_ENABLED; // Whether storage quota enforcement for tenant groups and all the relevant storage
 	                            // usage / quota monitors are enabled.
 	int TENANT_CACHE_LIST_REFRESH_INTERVAL; // How often the TenantCache is refreshed
@@ -358,6 +360,14 @@ public:
 	                                                 // refreshed in the TenantCache
 	int TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL; // The minimum interval between consecutive trace events logging the
 	                                               // storage bytes used by a tenant group
+	int64_t TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES; // Knob to control variable polling frequency for storage
+	                                                         // usage. If the last checked storage usage for a tenant
+	                                                         // group is less than quota - this knob, it is okay to skip
+	                                                         // polling its current usage until the next refresh.
+	double TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS; // Knob to control variable polling frequency for storage
+	                                                          // usage. If the storage usage for a tenant group was last
+	                                                          // checked less than this time ago, it is okay to skip
+	                                                          // polling its current usage until the next refresh.
 	int CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL; // How often the commit proxies send requests to the data
 	                                                  // distributor to fetch the list of tenants over storage quota
 

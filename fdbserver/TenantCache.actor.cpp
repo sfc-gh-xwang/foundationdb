@@ -156,38 +156,51 @@ public:
 				state Future<Void> delayTimer = delay(std::max(delayTime, 0.0));
 
 				state TenantGroupName group = groups[i];
-				state int64_t usage = 0;
-				// `tenants` needs to be a copy so that the erase (below) or inserts/erases from other
-				// functions (when this actor yields) do not interfere with the iteration
-				state std::unordered_set<int64_t> tenants = tenantCache->tenantStorageMap[group].tenants;
-				state std::unordered_set<int64_t>::iterator iter = tenants.begin();
-				for (; iter != tenants.end(); iter++) {
-					state int64_t tenantId = *iter;
-					state ReadYourWritesTransaction tr(makeReference<Tenant>(tenantCache->dbcx(), tenantId));
-					loop {
-						try {
-							state int64_t size = wait(tr.getEstimatedRangeSizeBytes(normalKeys));
-							usage += size;
-							break;
-						} catch (Error& e) {
-							if (e.code() == error_code_tenant_not_found) {
-								tenantCache->tenantStorageMap[group].tenants.erase(tenantId);
+
+				// To allow a variable polling frequency, check the usage for this tenant group only if it's last
+				// checked usage is more than the storage quota - configurable bytes lag (including being above the
+				// storage quota), or if the last time its usage was checked was more than configurable interval seconds
+				// ago (for observability).
+				if (tenantCache->tenantStorageMap[group].usage >
+				        tenantCache->tenantStorageMap[group].quota -
+				            SERVER_KNOBS->TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES ||
+				    tenantCache->tenantStorageMap[group].usageUpdatedTime <
+				        now() - SERVER_KNOBS->TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS) {
+
+					state int64_t usage = 0;
+					// `tenants` needs to be a copy so that the erase (below) or inserts/erases from other
+					// functions (when this actor yields) do not interfere with the iteration
+					state std::unordered_set<int64_t> tenants = tenantCache->tenantStorageMap[group].tenants;
+					state std::unordered_set<int64_t>::iterator iter = tenants.begin();
+					for (; iter != tenants.end(); iter++) {
+						state int64_t tenantId = *iter;
+						state ReadYourWritesTransaction tr(makeReference<Tenant>(tenantCache->dbcx(), tenantId));
+						loop {
+							try {
+								state int64_t size = wait(tr.getEstimatedRangeSizeBytes(normalKeys));
+								usage += size;
 								break;
-							} else {
-								TraceEvent("StorageQuotaGetUsageError", tenantCache->id()).error(e);
-								wait(tr.onError(e));
+							} catch (Error& e) {
+								if (e.code() == error_code_tenant_not_found) {
+									tenantCache->tenantStorageMap[group].tenants.erase(tenantId);
+									break;
+								} else {
+									TraceEvent("StorageQuotaGetUsageError", tenantCache->id()).error(e);
+									wait(tr.onError(e));
+								}
 							}
 						}
 					}
-				}
-				tenantCache->tenantStorageMap[group].usage = usage;
+					tenantCache->tenantStorageMap[group].usage = usage;
+					tenantCache->tenantStorageMap[group].usageUpdatedTime = now();
 
-				if (toTrace) {
-					// Trace the storage used by all tenant groups for visibility.
-					TraceEvent(SevInfo, "StorageQuotaUsageUpdated", tenantCache->id())
-					    .detail("TenantGroup", group)
-					    .detail("Quota", tenantCache->tenantStorageMap[group].quota)
-					    .detail("Usage", tenantCache->tenantStorageMap[group].usage);
+					if (toTrace) {
+						// Trace the storage used by all tenant groups for visibility.
+						TraceEvent(SevInfo, "StorageQuotaUsageUpdated", tenantCache->id())
+						    .detail("TenantGroup", group)
+						    .detail("Quota", tenantCache->tenantStorageMap[group].quota)
+						    .detail("Usage", tenantCache->tenantStorageMap[group].usage);
+					}
 				}
 				wait(delayTimer);
 			}
