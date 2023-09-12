@@ -2,6 +2,44 @@
 Release Notes
 #############
 
+71.3.6
+======
+
+Fixes
+-----
+
+* Fix memory leak in Status.actor.cpp by avoiding creating database context as part of lockedStatusFetcher operation.
+
+
+71.3.5
+======
+
+Reliability
+-----------
+
+* Ensure exponential backoff while refreshing KMS URLs.
+* Update EncryptKeyProxy KMS health check timeouts.
+* Avoid commit proxy and storage server commit timeout due to KMS failure.
+
+
+Fixes
+-----
+
+* Fix quota throttler clear cost estimation.
+* Fix the DataLossRecovery workload stuck issue.
+* Wait file deleted in blob manifest cleanup.
+* Fixed slowtask and OOM in large blob granule purges, and improved observability.
+* Improve Blob Manager’s granule balancing algorithm in pathological cases.
+* Allow granule purge to continue when the cluster is unhealthy.
+* Restore original function names for old blob granule API.
+* Fix memory leak in Status.actor.cpp by avoiding creating database context as part of lockedStatusFetcher operation.
+
+
+Other Changes
+-------------
+
+* Report how many logical ranges and shards have been over-replicated by custom replication.
+
 71.3.4
 ======
 
