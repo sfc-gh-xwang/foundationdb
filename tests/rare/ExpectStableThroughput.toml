@@ -25,4 +25,5 @@ testTitle='ExpectStableThroughput'
   # the full error tolerance to be 0.5, but it is set this
   # high to avoid spurious failures.
   errorTolerance=0.5
-  numActors=100
+  defaultPriorityActors=80
+  lowPriorityActors=20
