@@ -731,6 +731,9 @@ ACTOR Future<Void> databaseLogger(DatabaseContext* cx) {
 			    .detail("MeanKeyLocationLatency", cx->keyLocationLatencies.mean())
 			    .detail("MedianKeyLocationLatency", cx->keyLocationLatencies.median())
 			    .detail("MaxKeyLocationLatency", cx->keyLocationLatencies.max())
+			    .detail("MeanGranuleLocationLatency", cx->granuleLocationLatencies.mean())
+			    .detail("MedianGranuleLocationLatency", cx->granuleLocationLatencies.median())
+			    .detail("MaxGranuleLocationLatency", cx->granuleLocationLatencies.max())
 			    .detail("MeanCommitLatency", cx->commitLatencies.mean())
 			    .detail("MedianCommitLatency", cx->commitLatencies.median())
 			    .detail("MaxCommitLatency", cx->commitLatencies.max())
@@ -783,6 +786,7 @@ ACTOR Future<Void> databaseLogger(DatabaseContext* cx) {
 		cx->readRangeLatencies.clear();
 		cx->GRVLatencies.clear();
 		cx->keyLocationLatencies.clear();
+		cx->granuleLocationLatencies.clear();
 		cx->commitLatencies.clear();
 		cx->mutationsPerCommit.clear();
 		cx->bytesPerCommit.clear();
@@ -1670,6 +1674,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     commitLatencies(),
     GRVLatencies(),
     keyLocationLatencies(),
+    granuleLocationLatencies(),
     mutationsPerCommit(),
     bytesPerCommit(),
     outstandingWatches(0),
@@ -2033,6 +2038,7 @@ DatabaseContext::DatabaseContext(const Error& err)
     commitLatencies(),
     GRVLatencies(),
     keyLocationLatencies(),
+    granuleLocationLatencies(),
     mutationsPerCommit(),
     bytesPerCommit(),
     outstandingWatches(0),
@@ -3591,6 +3597,8 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
 
 	CODE_PROBE(tenant.hasTenant(), "NativeAPI getBlobGranuleLocations has tenant");
 
+	state double startTime = now();
+
 	loop {
 		++cx->transactionBlobGranuleLocationRequests;
 		choose {
@@ -3633,6 +3641,8 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
 					results.emplace_back(range, rep.results[granule].second);
 					wait(yield());
 				}
+
+				cx->granuleLocationLatencies.addSample(now() - startTime);
 
 				return results;
 			}
@@ -3682,6 +3692,7 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<
 	// essentially take the max of any provided read version, either explicitly or from txn
 	// if none provided, use latestVersion
 	// this only works for with max because latestVersion is hardcoded to -2
+	// TODO: why did we max with read version?
 	Version version = latestVersion;
 	if (granuleReadVersion.present()) {
 		version = std::max(version, granuleReadVersion.get());

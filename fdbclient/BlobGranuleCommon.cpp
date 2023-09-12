@@ -52,7 +52,8 @@ void readGranuleDeltas(GranuleDeltas& srcDeltas,
                        Version beginVersion,
                        Version readVersion,
                        Version& includedVersion,
-                       int64_t byteLimit) {
+                       int64_t byteLimit,
+                       int64_t* byteCount) {
 	if (srcDeltas.empty()) {
 		includedVersion = readVersion;
 		return;
@@ -71,7 +72,7 @@ void readGranuleDeltas(GranuleDeltas& srcDeltas,
 	}
 
 	// add mutations to response
-	int64_t byteCount = 0;
+	*byteCount = 0;
 	int versionsIncluded = 0;
 	while (mutationIt != srcDeltas.end()) {
 		if (mutationIt->version > readVersion) {
@@ -84,8 +85,8 @@ void readGranuleDeltas(GranuleDeltas& srcDeltas,
 		// if we did not reach the end, and adding the next mutation would put us over the byte
 		// limit, don't add it and reply with lower includedVersion
 		// except if byteLimit > 0 but the first mutation's size > byteLimit, then we still need to make progress
-		byteCount += mutationIt->expectedSize();
-		if (byteCount > byteLimit && (byteLimit == 0 || versionsIncluded != 0)) {
+		*byteCount += mutationIt->expectedSize();
+		if (*byteCount > byteLimit && (byteLimit == 0 || versionsIncluded != 0)) {
 			break;
 		}
 		destDeltas.push_back_deep(destArena, *mutationIt);

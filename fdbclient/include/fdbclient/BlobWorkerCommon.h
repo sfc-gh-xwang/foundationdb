@@ -31,7 +31,8 @@ struct BlobWorkerStats {
 	Counter deltaBytesWritten, snapshotBytesWritten;
 	Counter bytesReadFromFDBForInitialSnapshot;
 	Counter bytesReadFromS3ForCompaction;
-	Counter rangeAssignmentRequests, readRequests, summaryReads, mutationStreamRequests;
+	Counter rangeAssignmentRequests, readRequests, summaryReads;
+	Counter mutationStreamRequests, mutationStreamBytes;
 	Counter wrongShardServer;
 	Counter changeFeedInputBytes;
 	Counter readReqTotalFilesReturned;
@@ -68,6 +69,7 @@ struct BlobWorkerStats {
 	LatencySample deltaBlobWriteLatencySample;
 	LatencySample reSnapshotLatencySample;
 	LatencySample readLatencySample;
+	LatencySample streamLatencySample;
 	LatencySample deltaUpdateSample;
 
 	Reference<FlowLock> initialSnapshotLock;
@@ -107,6 +109,7 @@ struct BlobWorkerStats {
 	    readRequests("ReadRequests", cc),
 	    summaryReads("SummaryReads", cc),
 	    mutationStreamRequests("MutationStreamRequests", cc),
+	    mutationStreamBytes("MutationStreamBytes", cc),
 	    wrongShardServer("WrongShardServer", cc),
 	    changeFeedInputBytes("ChangeFeedInputBytes", cc),
 	    readReqTotalFilesReturned("ReadReqTotalFilesReturned", cc),
@@ -144,6 +147,7 @@ struct BlobWorkerStats {
 	    deltaBlobWriteLatencySample("DeltaBlobWriteMetrics", id, sampleLoggingInterval, fileOpLatencySketchAccuracy),
 	    reSnapshotLatencySample("GranuleResnapshotMetrics", id, sampleLoggingInterval, fileOpLatencySketchAccuracy),
 	    readLatencySample("GranuleReadLatencyMetrics", id, sampleLoggingInterval, requestLatencySketchAccuracy),
+	    streamLatencySample("GranuleStreamLatencyMetrics", id, sampleLoggingInterval, requestLatencySketchAccuracy),
 	    deltaUpdateSample("DeltaUpdateMetrics", id, sampleLoggingInterval, fileOpLatencySketchAccuracy),
 	    initialSnapshotLock(initialSnapshotLock),
 	    resnapshotBudget(resnapshotBudget),

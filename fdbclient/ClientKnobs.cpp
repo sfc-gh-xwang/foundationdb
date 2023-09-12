@@ -305,6 +305,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE,  true  );
 	init( HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,   false );
 	init( HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK,    false );
+	init( HYBRID_READ_BYPASS_TENANT_LOCK,         false ); BUGGIFY_KNOB(HYBRID_READ_BYPASS_TENANT_LOCK, randomize && BUGGIFY, true);
 
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_TIMES,        3 );
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_DELAY,      2.0 );

@@ -663,7 +663,7 @@ public:
 	ActiveCounter<int> activeFeedDiskStreams;
 
 	DDSketch<double> latencies, readLatencies, readRangeLatencies, commitLatencies, GRVLatencies, keyLocationLatencies,
-	    mutationsPerCommit, bytesPerCommit;
+	    granuleLocationLatencies, mutationsPerCommit, bytesPerCommit;
 
 	int outstandingWatches;
 	int maxOutstandingWatches;

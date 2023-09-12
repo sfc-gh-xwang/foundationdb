@@ -4188,13 +4188,15 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 						}
 
 						ASSERT(metadata->durableDeltaVersion.get() == metadata->pendingDeltaVersion.get());
+						int64_t byteCount = 0;
 						readGranuleDeltas(metadata->currentDeltas,
 						                  chunk.newDeltas,
 						                  rep.arena,
 						                  granuleBeginVersion,
 						                  req.readVersion,
 						                  chunk.includedVersion,
-						                  req.granuleMutationBytesLimit);
+						                  req.granuleMutationBytesLimit,
+						                  &byteCount);
 					}
 
 					// Update EncryptionKeysCtx information for the chunk->snapshotFile
@@ -4364,13 +4366,17 @@ ACTOR Future<Void> streamBlobGranuleMutations(Reference<BlobWorkerData> bwData,
 		Version includedVersion = beginVersion - 1;
 
 		// if iterator was stable with appends we could keep iterator and not binary search each loop
+		int64_t byteCount = 0;
 		readGranuleDeltas(metadata->currentDeltas,
 		                  rep.newDeltas,
 		                  rep.arena,
 		                  beginVersion,
 		                  req.readVersion,
 		                  includedVersion,
-		                  req.replyBatchSize);
+		                  req.replyBatchSize,
+		                  &byteCount);
+
+		bwData->stats.mutationStreamBytes += byteCount;
 
 		if (rep.newDeltas.empty()) {
 			// this shouldn't happen!!
@@ -4464,6 +4470,9 @@ ACTOR Future<Void> handleBlobGranuleMutationStreamRequest(Reference<BlobWorkerDa
 				throw wrong_shard_server();
 			}
 		}
+
+		double duration = g_network->timer() - req.requestTime();
+		bwData->stats.streamLatencySample.addMeasurement(duration);
 
 		--bwData->stats.activeMutationStreamRequests;
 	} catch (Error& e) {

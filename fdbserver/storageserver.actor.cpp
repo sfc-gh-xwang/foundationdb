@@ -7131,6 +7131,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> tryReadBlobGranuleChunk
 	state Version readVersion = fetchVersion;
 	loop {
 		try {
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 			Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr->readBlobGranules(keys, 0, readVersion));
 			TraceEvent(SevDebug, "ReadBlobGranules")
 			    .detail("Keys", keys)

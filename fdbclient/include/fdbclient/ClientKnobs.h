@@ -326,6 +326,7 @@ public:
 	bool ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE;
 	bool HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK;
 	bool HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK;
+	bool HYBRID_READ_BYPASS_TENANT_LOCK;
 
 	// The coordinator key/value in storage server might be inconsistent to the value stored in the cluster file.
 	// This might happen when a recovery is happening together with a cluster controller coordinator key change.

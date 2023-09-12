@@ -1029,7 +1029,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		LockTestFunc readFunc1 = [this](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
 			return checkHybridReadable(cx, tenant, keyRange, false);
 		};
-		testFunctions.push_back({ readFunc1, false, true });
+		testFunctions.push_back({ readFunc1, CLIENT_KNOBS->HYBRID_READ_BYPASS_TENANT_LOCK, true });
 
 		LockTestFunc readFunc2 = [this](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
 			return checkHybridReadable(cx, tenant, keyRange, true);
