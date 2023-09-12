@@ -361,15 +361,19 @@ GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTra
 					// Releasing transactions
 					tagQueueHandle.incrementReleased(cost);
 					delayedReq.updateProxyTagThrottledDuration(latencyBandsMap);
-					if (delayedReq.req.priority == TransactionPriority::BATCH) {
-						result.batchPriorityTransactionsReleased += delayedReq.req.transactionCount;
+					auto const& req = delayedReq.req;
+					if (req.priority == TransactionPriority::BATCH) {
+						result.batchPriorityTransactionsReleased += req.transactionCount;
 						++result.batchPriorityRequestsReleased;
-						outBatchPriority.push_back(delayedReq.req);
-					} else if (delayedReq.req.priority == TransactionPriority::DEFAULT ||
-					           delayedReq.req.priority == TransactionPriority::LOW) {
-						result.defaultPriorityTransactionsReleased += delayedReq.req.transactionCount;
+						outBatchPriority.push_back(req);
+					} else if (req.priority == TransactionPriority::LOW) {
+						result.lowPriorityTransactionsReleased += req.transactionCount;
+						++result.lowPriorityRequestsReleased;
+						outDefaultPriority.push_back(req);
+					} else if (req.priority == TransactionPriority::DEFAULT) {
+						result.defaultPriorityTransactionsReleased += req.transactionCount;
 						++result.defaultPriorityRequestsReleased;
-						outDefaultPriority.push_back(delayedReq.req);
+						outDefaultPriority.push_back(req);
 					} else {
 						// Immediate priority transactions should bypass the GrvProxyTagThrottler
 						ASSERT(false);

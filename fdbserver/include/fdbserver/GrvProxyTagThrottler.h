@@ -117,6 +117,8 @@ public:
 	struct ReleaseTransactionsResult {
 		uint64_t batchPriorityTransactionsReleased{ 0 };
 		uint64_t batchPriorityRequestsReleased{ 0 };
+		uint64_t lowPriorityTransactionsReleased{ 0 };
+		uint64_t lowPriorityRequestsReleased{ 0 };
 		uint64_t defaultPriorityTransactionsReleased{ 0 };
 		uint64_t defaultPriorityRequestsReleased{ 0 };
 		uint64_t rejectedRequests{ 0 };

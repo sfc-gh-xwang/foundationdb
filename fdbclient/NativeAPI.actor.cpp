@@ -7613,18 +7613,20 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority priority) {
 	if (priority == TransactionPriority::IMMEDIATE) {
 		return true;
+	} else if (priority >= TransactionPriority::LOW) {
+		if (cx->lastRkDefaultThrottleTime == 0.0) {
+			return true;
+		}
+		return (now() - cx->lastRkDefaultThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
 	} else if (priority == TransactionPriority::BATCH) {
 		if (cx->lastRkBatchThrottleTime == 0.0) {
 			return true;
 		}
 		return (now() - cx->lastRkBatchThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
-	} else if (priority == TransactionPriority::DEFAULT) {
-		if (cx->lastRkDefaultThrottleTime == 0.0) {
-			return true;
-		}
-		return (now() - cx->lastRkDefaultThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
+	} else {
+		ASSERT(false);
+		return false;
 	}
-	return false;
 }
 
 ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
