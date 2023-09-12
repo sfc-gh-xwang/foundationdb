@@ -300,6 +300,17 @@ private:
 	Standalone<StringRef> cachedStr;
 };
 
+struct PublicKeyAndThumbprint {
+	PublicKey publicKey;
+	// Thumbprint is a Base64URL-encoded SHA256 sum of a condensed (i.e. no unnecessary whitespace) JSON object
+	// containing required public key parts, where the JSON object keys are in lexicographical order.
+	// The set of required public key parts vary by key type (kty="EC" or "RSA").
+	// See RFC-7638 for more information.
+	// Thumbprint is expected to exist for each key in authorization-enabled server runs,
+	// as they are computed when parsing the key set file.
+	Optional<Standalone<StringRef>> thumbprint;
+};
+
 class TransportData {
 public:
 	TransportData(uint64_t transportId, int maxWellKnownEndpoints, IPAllowList const* allowList);
@@ -355,7 +366,7 @@ public:
 	Future<Void> publicKeyFileWatch;
 	Future<Void> publicKeyIdsMonitor;
 
-	std::unordered_map<Standalone<StringRef>, PublicKey> publicKeys;
+	std::unordered_map<Standalone<StringRef>, PublicKeyAndThumbprint> publicKeys;
 };
 
 ACTOR Future<Void> pingLatencyLogger(TransportData* self) {
@@ -1599,7 +1610,10 @@ void TransportData::applyPublicKeySet(StringRef jwkSetString) {
 	for (auto [keyName, key] : keySet) {
 		// ignore private keys
 		if (key.isPublic()) {
-			publicKeys[keyName] = key.getPublic();
+			publicKeys[keyName] = PublicKeyAndThumbprint{
+				.publicKey = key.getPublic(),
+				.thumbprint = key.base64UrlSha256Thumbprint,
+			};
 		} else {
 			numPrivateKeys++;
 		}
@@ -1644,7 +1658,11 @@ FlowTransport::FlowTransport(uint64_t transportId, int maxWellKnownEndpoints, IP
 	self->multiVersionCleanup = multiVersionCleanupWorker(self);
 	if (g_network->isSimulated()) {
 		for (auto const& p : g_simulator->authKeys) {
-			self->publicKeys.emplace(p.first, p.second.toPublic());
+			self->publicKeys.emplace(p.first,
+			                         PublicKeyAndThumbprint{
+			                             .publicKey = p.second.toPublic(),
+			                             .thumbprint = Optional<Standalone<StringRef>>(),
+			                         });
 		}
 	}
 }
@@ -2023,7 +2041,7 @@ HealthMonitor* FlowTransport::healthMonitor() {
 Optional<PublicKey> FlowTransport::getPublicKeyByName(StringRef name) const {
 	auto iter = self->publicKeys.find(name);
 	if (iter != self->publicKeys.end()) {
-		return iter->second;
+		return iter->second.publicKey;
 	}
 	return {};
 }
@@ -2041,7 +2059,10 @@ bool FlowTransport::currentDeliveryPeerIsTrusted() const {
 }
 
 void FlowTransport::addPublicKey(StringRef name, PublicKey key) {
-	self->publicKeys[name] = key;
+	self->publicKeys[name] = PublicKeyAndThumbprint{
+		.publicKey = key,
+		.thumbprint = Optional<Standalone<StringRef>>{},
+	};
 }
 
 void FlowTransport::removePublicKey(StringRef name) {
@@ -2058,7 +2079,7 @@ void FlowTransport::loadPublicKeyFile(const std::string& filePath) {
 	}
 	int64_t const len = fileSize(filePath);
 	if (len <= 0) {
-		TraceEvent(SevWarn, "AuthzPublicKeySetEmpty").detail("Path", filePath);
+		TraceEvent(SevWarnAlways, "AuthzPublicKeySetEmpty").detail("Path", filePath);
 	} else if (len > FLOW_KNOBS->PUBLIC_KEY_FILE_MAX_SIZE) {
 		throw file_too_large();
 	} else {
@@ -2070,22 +2091,22 @@ void FlowTransport::loadPublicKeyFile(const std::string& filePath) {
 FDB_BOOLEAN_PARAM(FromKeySetUpdate);
 
 static void traceActivePublicKeyIds(TransportData* self, FromKeySetUpdate fromUpdate = FromKeySetUpdate::False) {
-	std::ostringstream oss;
-	int count = 0;
-	for (const auto& [name, _] : self->publicKeys) {
-		if (count > 0) {
-			oss << ",";
-		}
-		oss << name.toString();
-		++count;
+	auto const traceBatchId = nondeterministicRandom()->randomUniqueID();
+	auto index = 0;
+	for (const auto& [keyId, keyAndThumbprint] : self->publicKeys) {
+		const auto& [key, thumbprint] = keyAndThumbprint;
+		TraceEvent("AuthzActivePublicKeyIds"_audit, traceBatchId)
+		    .detail("Index", index)
+		    .detail("KeyId", keyId)
+		    .detail("Thumbprint", thumbprint)
+		    .detail("FromKeySetUpdate", fromUpdate)
+		    .log();
+		++index;
 	}
-	TraceEvent("AuthzActivePublicKeyIds"_audit)
-	    .detail("KeyIds", std::move(oss).str())
-	    .detail("FromKeySetUpdate", fromUpdate)
-	    .log();
 }
 
 ACTOR static Future<Void> watchPublicKeyJwksFile(std::string filePath, TransportData* self) {
+	ASSERT(!g_network->isSimulated());
 	state AsyncTrigger fileChanged;
 	state Future<Void> fileWatch;
 	state unsigned errorCount = 0; // error since watch start or last successful refresh

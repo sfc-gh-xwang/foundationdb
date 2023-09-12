@@ -491,18 +491,11 @@ def test_public_key_set_rollover(
     interim_set = public_keyset_from_keys([new_key, cluster.private_key])
     max_repeat = 10
 
-    def check_keyset_update_trace(trace_entries, expected_key_ids):
-        found = False
-        for _, ev_type, entry in trace_entries:
-            if ev_type == "AuthzActivePublicKeyIds":
-                print("active public key IDs trace:", entry.items())
-                if (
-                    sorted(entry.attrib["KeyIds"].split(","))
-                    == sorted(expected_key_ids)
-                    and entry.attrib["FromKeySetUpdate"] == "1"
-                ):
-                    found = True
-        assert found, "active public key IDs trace not found"
+    def check_keyset_update_trace(trace_entries, expected_thumbprints):
+        trace_count = count_trace_batch_with_thumbprints(
+            expected_thumbprints, trace_entries, must_be_from_update=True
+        )
+        assert trace_count > 0, "active public key IDs trace not found"
 
     print(f"interim keyset: {interim_set}")
     old_key_json = None
@@ -516,7 +509,10 @@ def test_public_key_set_rollover(
             cluster,
             functools.partial(
                 check_keyset_update_trace,
-                expected_key_ids=[new_key.kid, cluster.private_key.kid],
+                expected_thumbprints=[
+                    (new_key.kid, new_key.thumbprint()),
+                    (cluster.private_key.kid, cluster.private_key.thumbprint()),
+                ],
             ),
         ):
             with open(cluster.public_key_json_file, "w") as keyfile:
@@ -533,7 +529,7 @@ def test_public_key_set_rollover(
             cluster,
             functools.partial(
                 check_keyset_update_trace,
-                expected_key_ids=[new_key.kid],
+                expected_thumbprints=[(new_key.kid, new_key.thumbprint())],
             ),
         ):
             with open(cluster.public_key_json_file, "w") as keyfile:
@@ -903,18 +899,72 @@ def test_malformed_tokens_trace(cluster, default_tenant, tenant_tr_gen, token_cl
             ), f"expected permission_denied for 'splittable_bad_token' case, got {e} instead"
 
 
-def test_active_public_key_ids_trace_as_expected(
-    cluster, active_public_key_ids_log_interval
+def count_trace_batch_with_thumbprints(
+    expected_thumbprints, trace_entries, must_be_from_update=False
 ):
-    def check_public_key_ids_log(
-        trace_entries, expected_key_ids_string, min_expected_trace_count
+    # Active public key set is traced in continuous list of traces, with each trace line containing the key ID, cryptographic thumbprint, and index of a public key.
+    # Each trace in a series has the same unique UUID as the "ID" field.
+    batch_id = None
+    batches = []
+    current_batch = []
+    # first, identify and collect batches of public key id traces within trace_entries
+    for _, ev_type, entry in trace_entries:
+        if ev_type == "AuthzActivePublicKeyIds":
+            assert entry.attrib["FromKeySetUpdate"] in ["0", "1"]
+            if must_be_from_update and entry.attrib["FromKeySetUpdate"] == "0":
+                continue
+            if batch_id is not None and batch_id != entry.attrib["ID"]:
+                batch_id = None
+                # store and end current batch. start a new one.
+                batches.append(current_batch)
+                current_batch = []
+            if batch_id == None:
+                batch_id = entry.attrib["ID"]
+                current_batch = [entry]
+            else:
+                current_batch.append(entry)
+        else:
+            batch_id = None
+            if len(current_batch) > 0:
+                batches.append(current_batch)
+    if batch_id != None and len(current_batch) > 0:
+        # last batch
+        batches.append(current_batch)
+
+    expected_thumbprints.sort()
+    print(
+        "Scanning traces for active public key trace. Expected thumbprints: {}".format(
+            expected_thumbprints
+        )
+    )
+    # start checking
+    match_count = 0
+    for batch in batches:
+        thumbprints = []
+        for i in range(len(batch)):
+            assert batch[i].attrib["Index"] == str(i)
+            thumbprints.append(
+                (batch[i].attrib["KeyId"], batch[i].attrib["Thumbprint"])
+            )
+        thumbprints.sort()
+        if thumbprints == expected_thumbprints:
+            print("Match found:     {}".format(thumbprints))
+            match_count += 1
+        else:
+            print("Match not found: {}".format(thumbprints))
+    print(
+        "Finished checking active public key ID traces matching expected thumbprint: found {} trace batches with matching thumbprints".format(
+            match_count
+        )
+    )
+    return match_count
+
+
+def test_active_public_key_ids_trace(cluster, active_public_key_ids_log_interval):
+    def check_public_key_trace(
+        trace_entries, expected_thumbprints, min_expected_trace_count
     ):
-        count = 0
-        for _, ev_type, entry in trace_entries:
-            if ev_type == "AuthzActivePublicKeyIds":
-                actual_key_ids_string = entry.attrib["KeyIds"]
-                assert actual_key_ids_string == expected_key_ids_string
-                count += 1
+        count = count_trace_batch_with_thumbprints(expected_thumbprints, trace_entries)
         assert count >= min_expected_trace_count
 
     assert active_public_key_ids_log_interval > 0
@@ -923,10 +973,12 @@ def test_active_public_key_ids_trace_as_expected(
     with ScopedTraceChecker(
         cluster,
         functools.partial(
-            check_public_key_ids_log,
-            expected_key_ids_string=cluster.private_key.kid,
+            check_public_key_trace,
+            expected_thumbprints=[
+                (cluster.private_key.kid, cluster.private_key.thumbprint())
+            ],
             min_expected_trace_count=max_trace_count - 2,
-        ),  # conservative estimate to account for any time fluctuations in server-side trace event creation
+        ),  # conservative estimate to account for any time fluctuations in server-side trace event creation and log flush
     ):
         time.sleep(sleep_duration_seconds)
 
