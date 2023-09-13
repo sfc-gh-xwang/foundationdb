@@ -27,17 +27,20 @@ public:
 					                               std::move(req),
 					                               TaskPriority::DefaultPromiseEndpoint,
 					                               AtMostOnce::True))) {
+						++self->throughputReportsSent;
 						if (isBusyThrottlingIdsTrackingEnabled()) {
 							self->busyThrottlingIds = std::move(reply.busyThrottlingIds);
 						}
 					}
 
 					when(wait(timer)) {
+						++self->throughputReportTimeouts;
 						CODE_PROBE(true, "ReportThroughputRequest timed out");
 						TraceEvent(SevWarn, "ReportThroughputRequestTimedOut");
 					}
 				}
 			} catch (Error& e) {
+				++self->throughputReportErrors;
 				if (e.code() == error_code_request_maybe_delivered) {
 					CODE_PROBE(true, "ReportThroughputRequest maybe delivered");
 					TraceEvent(SevWarn, "ReportThroughputRequestMaybeDelivered");
@@ -102,4 +105,16 @@ bool isBusyThrottlingIdsTrackingEnabled() {
 
 bool ThroughputTracker::isThrottlingIdBusy(ThrottlingId const& throttlingId) const {
 	return busyThrottlingIds.contains(throttlingId);
+}
+
+uint64_t ThroughputTracker::getThroughputReportsSent() const {
+	return throughputReportsSent;
+}
+
+uint64_t ThroughputTracker::getThroughputReportErrors() const {
+	return throughputReportErrors;
+}
+
+uint64_t ThroughputTracker::getThroughputReportTimeouts() const {
+	return throughputReportTimeouts;
 }
