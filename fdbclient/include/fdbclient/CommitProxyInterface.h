@@ -36,6 +36,7 @@
 #include "fdbclient/IdempotencyId.actor.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "fdbclient/VersionVector.h"
+#include "fdbclient/TenantLookupInfo.h"
 
 #include "fdbrpc/Stats.h"
 #include "fdbrpc/TimedRequest.h"
@@ -324,6 +325,7 @@ struct GetReadVersionRequest : TimedRequest {
 		PRIORITY_SYSTEM_IMMEDIATE =
 		    15 << 24, // Highest possible priority, always executed even if writes are otherwise blocked
 		PRIORITY_DEFAULT = 8 << 24,
+		PRIORITY_LOW = 4 << 24,
 		PRIORITY_BATCH = 1 << 24
 	};
 	enum {
@@ -374,6 +376,9 @@ struct GetReadVersionRequest : TimedRequest {
 		case TransactionPriority::BATCH:
 			flags |= PRIORITY_BATCH;
 			break;
+		case TransactionPriority::LOW:
+			flags |= PRIORITY_LOW;
+			break;
 		case TransactionPriority::DEFAULT:
 			flags |= PRIORITY_DEFAULT;
 			break;
@@ -399,33 +404,14 @@ struct GetReadVersionRequest : TimedRequest {
 				priority = TransactionPriority::IMMEDIATE;
 			} else if ((flags & PRIORITY_DEFAULT) == PRIORITY_DEFAULT) {
 				priority = TransactionPriority::DEFAULT;
+			} else if ((flags & PRIORITY_LOW) == PRIORITY_LOW) {
+				priority = TransactionPriority::LOW;
 			} else if ((flags & PRIORITY_BATCH) == PRIORITY_BATCH) {
 				priority = TransactionPriority::BATCH;
 			} else {
 				priority = TransactionPriority::DEFAULT;
 			}
 		}
-	}
-};
-
-struct TenantLookupInfo {
-	constexpr static FileIdentifier file_identifier = 8018317;
-
-	int64_t id = TenantInfo::INVALID_TENANT;
-	Optional<TenantGroupName> group;
-	Optional<ClusterName> assignedCluster;
-
-	explicit TenantLookupInfo() = default;
-	explicit TenantLookupInfo(int64_t id,
-	                          Optional<TenantGroupName> const& group = {},
-	                          Optional<ClusterName> const& cluster = {})
-	  : id(id),
-	    group(group),
-	    assignedCluster(cluster) {}
-
-	template <class Ar>
-	void serialize(Ar& ar) {
-		serializer(ar, id, group, assignedCluster);
 	}
 };
 

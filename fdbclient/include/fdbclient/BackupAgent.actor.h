@@ -35,6 +35,7 @@
 #include <ctime>
 #include <climits>
 #include "fdbclient/BackupContainer.h"
+#include "fdbclient/CommitProxyInterface.h"
 #include "flow/actorcompiler.h" // has to be last include
 
 FDB_BOOLEAN_PARAM(LockDB);

@@ -37,6 +37,7 @@ enum class EventType {
 	UNSET
 };
 
+// TODO: Include PRIORITY_LOW transactions here as well
 enum class TransactionPriorityType : int { PRIORITY_DEFAULT = 0, PRIORITY_BATCH = 1, PRIORITY_IMMEDIATE = 2, UNSET };
 static_assert(sizeof(TransactionPriorityType) == 4, "transaction_profiling_analyzer.py assumes this field has size 4");
 
@@ -130,6 +131,7 @@ struct EventGetVersion_V3 : public Event {
 			priorityType = TransactionPriorityType::PRIORITY_IMMEDIATE;
 			break;
 		case TransactionPriority::DEFAULT:
+		case TransactionPriority::LOW:
 			priorityType = TransactionPriorityType::PRIORITY_DEFAULT;
 			break;
 		case TransactionPriority::BATCH:

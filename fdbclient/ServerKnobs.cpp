@@ -358,13 +358,17 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_STORAGE_WIGGLE_STUCK_THRESHOLD,                      20 );
 	init( DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC,   isSimulated ? 2 : 21 * 60 * 60 * 24 ); BUGGIFY_KNOB(DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC, randomize && BUGGIFY, isSimulated ? 0: 120);
 	init( DD_TENANT_AWARENESS_ENABLED,                         false );
+	init( DD_BUILD_EXTRA_TEAMS_OVERRIDE,                          10 ); BUGGIFY_KNOB(DD_BUILD_EXTRA_TEAMS_OVERRIDE, randomize && BUGGIFY, 2);
+
+	// Knobs for Storage Quota feature
 	init( STORAGE_QUOTA_ENABLED,                                true ); BUGGIFY_KNOB(STORAGE_QUOTA_ENABLED, isSimulated, deterministicRandom()->coinflip());
 	init( TENANT_CACHE_LIST_REFRESH_INTERVAL,                     30 ); if(isSimulated) TENANT_CACHE_LIST_REFRESH_INTERVAL = 5; BUGGIFY_KNOB(TENANT_CACHE_LIST_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL,           180 ); if(isSimulated) TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL = 10; BUGGIFY_KNOB(TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(5, 15));
 	init( TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL,            30 ); if(isSimulated) TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL = 5; BUGGIFY_KNOB(TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL,             300 );
+	init( TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES, 1000000000 ); if(isSimulated) TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES = deterministicRandom()->randomInt(0, 10) * 1000;
+	init( TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS,       0 ); if(isSimulated) TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS = deterministicRandom()->randomInt(0, 5);
 	init( CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL,            5 ); BUGGIFY_KNOB(CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
-	init( DD_BUILD_EXTRA_TEAMS_OVERRIDE,                          10 ); BUGGIFY_KNOB(DD_BUILD_EXTRA_TEAMS_OVERRIDE, randomize && BUGGIFY, 2);
 
 	// Large teams are disabled when SHARD_ENCODE_LOCATION_METADATA is enabled
 	init( DD_MAX_SHARDS_ON_LARGE_TEAMS,                          100 ); BUGGIFY_KNOB(DD_MAX_SHARDS_ON_LARGE_TEAMS, randomize && BUGGIFY, deterministicRandom()->randomInt(0, 3));
@@ -643,7 +647,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( SAMPLE_OFFSET_PER_KEY,                                 100 );
 	init( SAMPLE_EXPIRATION_TIME,                                1.0 );
 	init( SAMPLE_POLL_TIME,                                      0.1 );
-	init( RESOLVER_STATE_MEMORY_LIMIT,                           1e6 );
+	init( RESOLVER_STATE_MEMORY_LIMIT,                      40 * 1e6 ); if( randomize && BUGGIFY ) RESOLVER_STATE_MEMORY_LIMIT = 1e6;
 	init( LAST_LIMITED_RATIO,                                    2.0 );
 
 	// Backup Worker
@@ -807,8 +811,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 
 	init( MAX_TPS_HISTORY_SAMPLES,                               600 );
 	init( NEEDED_TPS_HISTORY_SAMPLES,                            200 );
+	init( AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS,           100e6 );
+	init( AUTO_TAG_THROTTLE_SPRING_DURABILITY_LAG,              50e6 );
 	init( TARGET_DURABILITY_LAG_VERSIONS,                      350e6 ); // Should be larger than STORAGE_DURABILITY_LAG_SOFT_MAX
-	init( AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS,           250e6 );
 	init( TARGET_DURABILITY_LAG_VERSIONS_BATCH,                150e6 ); // Should be larger than STORAGE_DURABILITY_LAG_SOFT_MAX
 	init( DURABILITY_LAG_UNLIMITED_THRESHOLD,                   50e6 );
 	init( INITIAL_DURABILITY_LAG_MULTIPLIER,                    1.02 );
@@ -847,6 +852,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,         409600.0 );
 	init( CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL,   5.0 );
 	init( THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS,                true );
+	init( LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO,           0.5 ); BUGGIFY_KNOB(LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO, randomize && BUGGIFY, deterministicRandom()->random01());
 
 	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,         1.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   1.0 );
@@ -1250,6 +1256,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT,            false); BUGGIFY_KNOB(BULK_LOAD_AWARE_STORAGE_QUOTA_ENFORCEMENT, isSimulated, deterministicRandom()->coinflip());
 	init( BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL,                     10); if ( isSimulated ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = 5; BUGGIFY_KNOB(BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 5));
 	init( BULK_LOAD_FILE_VALIDATION_LEVEL,                         1 ); BUGGIFY_KNOB(BULK_LOAD_FILE_VALIDATION_LEVEL, randomize && BUGGIFY, deterministicRandom()->randomInt(0, 3));
+	init( BULK_LOAD_STAGE_GRANULES,                            false ); if ( isSimulated ) BULK_LOAD_STAGE_GRANULES = deterministicRandom()->coinflip();
 
 	// clang-format on
 

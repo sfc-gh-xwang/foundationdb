@@ -61,7 +61,8 @@ void readGranuleDeltas(GranuleDeltas& srcDeltas,
                        Version beginVersion,
                        Version readVersion,
                        Version& includedVersion,
-                       int64_t byteLimit);
+                       int64_t byteLimit,
+                       int64_t* byteCount);
 
 #pragma pack(push, 4)
 struct GranuleMutationRef {

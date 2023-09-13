@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "fdbclient/CoordinationInterface.h"
 #include "fdbserver/ConfigBroadcaster.h"
 #include "fdbserver/CoordinationInterface.h"
 #include "fdbserver/ConfigFollowerInterface.h"

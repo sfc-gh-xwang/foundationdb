@@ -22,7 +22,7 @@
 #ifndef FDBCLIENT_CLUSTERCONNECTIONFILE_H
 #define FDBCLIENT_CLUSTERCONNECTIONFILE_H
 
-#include "fdbclient/CoordinationInterface.h"
+#include "fdbclient/IClusterConnectionRecord.h"
 
 // An implementation of IClusterConnectionRecord backed by a file.
 class ClusterConnectionFile : public IClusterConnectionRecord, ReferenceCounted<ClusterConnectionFile>, NonCopyable {

@@ -772,12 +772,17 @@ private:
 		// Load tailer
 		state BlobManifest manifest = BlobManifest::latest(files);
 		state Standalone<BlobManifestTailer> tailer = wait(loadTailer(self, container, manifest.tailer()));
+		TraceEvent("BlobManifestLoadTailer")
+		    .detail("Rows", tailer.totalRows)
+		    .detail("Encrypted", tailer.cipherKeysMeta.present());
+
 		state Arena arena;
 		state Optional<BlobGranuleCipherKeysCtx> cipherKeysCtx;
 		if (tailer.cipherKeysMeta.present()) {
 			BlobGranuleCipherKeysCtx ctx =
 			    wait(getGranuleCipherKeysFromKeysMeta(self->dbInfo_, tailer.cipherKeysMeta.get(), &arena));
 			cipherKeysCtx = ctx;
+			TraceEvent("BlobManifestGotCipherKeys").log();
 		}
 
 		// Load segments

@@ -2364,6 +2364,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 		metadata->bufferedDeltaVersion = startVersion;
 		metadata->knownCommittedVersion = startVersion;
 		metadata->resetReadStats();
+		metadata->isBulkLoadDirty = startState.isBulkLoading; // FIXME: races with this?
 
 		Reference<ChangeFeedData> cfData = makeReference<ChangeFeedData>(bwData->db.getPtr());
 
@@ -3923,6 +3924,11 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			if (!metadata->cancelled.canBeSet()) {
 				throw wrong_shard_server();
 			}
+			bool canReadDirty = req.readOptions.present() && req.readOptions->canReadDirty;
+			if (metadata->isBulkLoadDirty && !canReadDirty) {
+				CODE_PROBE(true, "BW rejected dirty read while bulk loading");
+				throw wrong_shard_server();
+			}
 
 			state std::vector<std::pair<KeyRange, GranuleFiles>> rangeGranulePair;
 
@@ -4182,13 +4188,15 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 						}
 
 						ASSERT(metadata->durableDeltaVersion.get() == metadata->pendingDeltaVersion.get());
+						int64_t byteCount = 0;
 						readGranuleDeltas(metadata->currentDeltas,
 						                  chunk.newDeltas,
 						                  rep.arena,
 						                  granuleBeginVersion,
 						                  req.readVersion,
 						                  chunk.includedVersion,
-						                  req.granuleMutationBytesLimit);
+						                  req.granuleMutationBytesLimit,
+						                  &byteCount);
 					}
 
 					// Update EncryptionKeysCtx information for the chunk->snapshotFile
@@ -4358,13 +4366,17 @@ ACTOR Future<Void> streamBlobGranuleMutations(Reference<BlobWorkerData> bwData,
 		Version includedVersion = beginVersion - 1;
 
 		// if iterator was stable with appends we could keep iterator and not binary search each loop
+		int64_t byteCount = 0;
 		readGranuleDeltas(metadata->currentDeltas,
 		                  rep.newDeltas,
 		                  rep.arena,
 		                  beginVersion,
 		                  req.readVersion,
 		                  includedVersion,
-		                  req.replyBatchSize);
+		                  req.replyBatchSize,
+		                  &byteCount);
+
+		bwData->stats.mutationStreamBytes += byteCount;
 
 		if (rep.newDeltas.empty()) {
 			// this shouldn't happen!!
@@ -4459,6 +4471,9 @@ ACTOR Future<Void> handleBlobGranuleMutationStreamRequest(Reference<BlobWorkerDa
 			}
 		}
 
+		double duration = g_network->timer() - req.requestTime();
+		bwData->stats.streamLatencySample.addMeasurement(duration);
+
 		--bwData->stats.activeMutationStreamRequests;
 	} catch (Error& e) {
 		--bwData->stats.activeMutationStreamRequests;
@@ -4493,6 +4508,17 @@ ACTOR Future<GranuleFiles> loadParentGranuleForMergeSnapshot(Transaction* tr, Ke
 	return prevFiles;
 }
 
+ACTOR Future<bool> isRangeBulkLoading(Transaction* tr, KeyRange range) {
+	Optional<BulkLoadMetadata::RangeMap::RangeValue> bulkLoadRange =
+	    wait(BulkLoadMetadata::rangeMap().getRangeForKey(tr, range.begin));
+	if (!bulkLoadRange.present()) {
+		return false;
+	}
+	ASSERT(bulkLoadRange->range.begin <= range.begin);
+	ASSERT(bulkLoadRange->range.end >= range.end);
+	return !bulkLoadRange->value.empty();
+}
+
 // FIXME: move this up by other granule state stuff like BGUF
 ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, AssignBlobRangeRequest req) {
 	ASSERT(req.type != AssignRequestType::Continue);
@@ -4523,6 +4549,7 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 			state GranuleStartState info;
 			info.changeFeedStartVersion = invalidVersion;
 
+			state Future<bool> fIsBulkLoading = isRangeBulkLoading(&tr, req.keyRange);
 			state Future<ValueReadResult> fLockValue = tr.get(lockKey);
 			state Future<ForcedPurgeState> fForcedPurgeState = getForcePurgedState(&tr, req.keyRange);
 			Reference<BlobRestoreController> restoreController =
@@ -4748,6 +4775,7 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 					}
 				}
 			}
+			wait(store(info.isBulkLoading, fIsBulkLoading));
 			wait(tr.commit());
 			bwData->addGRVHistory(tr.getReadVersion().get());
 

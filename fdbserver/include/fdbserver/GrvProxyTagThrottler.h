@@ -25,14 +25,14 @@
 #include "fdbserver/GrvTransactionRateInfo.h"
 #include "fdbserver/LatencyBandsMap.h"
 
-// GrvProxyTagThrottler is used to throttle GetReadVersionRequests based on tag quotas
+// GrvProxyTagThrottler is used to throttle GetReadVersionRequests based on throttlingId quotas
 // before they're pushed into priority-partitioned queues.
 //
-// A GrvTransactionRateInfo object and a request queue are maintained for each tag.
+// A GrvTransactionRateInfo object and a request queue are maintained for each throttlingId.
 // The GrvTransactionRateInfo object is used to determine when a request can be released.
 //
 // Between each set of waits, releaseTransactions is run, releasing queued transactions
-// that have passed the tag throttling stage. Transactions that are not yet ready
+// that have passed the throttlingId throttling stage. Transactions that are not yet ready
 // are requeued during releaseTransactions.
 class GrvProxyTagThrottler {
 	class DelayedRequest {
@@ -57,32 +57,59 @@ class GrvProxyTagThrottler {
 	// will be in bytes per second, otherwise it will be in transactions per second.
 	static GrvTransactionRateInfo createGrvTransactionRateInfo(double rate);
 
-	struct TagQueue {
+	class TagQueue {
+		Deque<DelayedRequest> lowPriorityRequests, highPriorityRequests;
+		static uint64_t rejectMaxThrottledRequests(Deque<DelayedRequest>& requests,
+		                                           double maxThrottledDuration,
+		                                           LatencyBandsMap&);
+		uint64_t prioritizedReleased{ 0 }, fifoReleased{ 0 };
 		Optional<GrvTransactionRateInfo> rateInfo;
-		Deque<DelayedRequest> requests;
 
+	public:
+		enum class Strategy {
+			PRIORITIZED,
+			FIFO,
+		};
+
+	private:
+		bool processingHighPriorityRequests(Strategy) const;
+		Deque<DelayedRequest> const& requestsWithFront(Strategy) const&;
+		Deque<DelayedRequest>& requestsWithFront(Strategy) &;
+
+	public:
 		TagQueue() = default;
 		explicit TagQueue(double rate) : rateInfo(createGrvTransactionRateInfo(rate)) {}
 
+		DelayedRequest const& front(Strategy) const&;
+		DelayedRequest& front(Strategy) &;
+		void popFront(Strategy);
+		void addRequest(GetReadVersionRequest const&);
+		bool highPriorityRequestsRemaining() const;
+		bool isEmpty() const;
+		double getExcessPrioritizedCost(double starvationToleranceRatio) const;
+
+		// Returns the number of requests rejected
+		uint64_t rejectMaxThrottledRequests(double maxThrottleDuration, LatencyBandsMap&);
+
+		Optional<int64_t> costAllowedToStart() const;
+		bool isRateInfoPresent() const;
+		void resetRateInfo();
 		void setRate(double rate);
-		bool isMaxThrottled(double maxThrottleDuration) const;
-		void rejectRequests(LatencyBandsMap&);
+		void startReleaseWindow();
 		void endReleaseWindow(uint64_t numStarted, double elapsed);
 	};
 
-	// Track the budgets for each tag
+	// Track the budgets for each throttlingId
 	ThrottlingIdMap<TagQueue> queues;
-	double maxThrottleDuration;
 
-	// Track latency bands for each tag
+	double maxThrottleDuration;
+	double starvationToleranceRatio;
+
+	// Track latency bands for each throttlingId
 	LatencyBandsMap latencyBandsMap;
 
-	// Get the cost of a GRV Request. If track-average-cost-on-client is enabled,
-	// the cost returned is in bytes per second, otherwise it's in transactions per second.
-	uint64_t getCost(GetReadVersionRequest const&) const;
-
 public:
-	explicit GrvProxyTagThrottler(double maxThrottleDuration);
+	explicit GrvProxyTagThrottler(double maxThrottleDuration, double starvationToleranceRatio);
 
 	// Called with rates received from ratekeeper
 	void updateRates(ThrottlingIdMap<double> const& newRates);
@@ -90,6 +117,8 @@ public:
 	struct ReleaseTransactionsResult {
 		uint64_t batchPriorityTransactionsReleased{ 0 };
 		uint64_t batchPriorityRequestsReleased{ 0 };
+		uint64_t lowPriorityTransactionsReleased{ 0 };
+		uint64_t lowPriorityRequestsReleased{ 0 };
 		uint64_t defaultPriorityTransactionsReleased{ 0 };
 		uint64_t defaultPriorityRequestsReleased{ 0 };
 		uint64_t rejectedRequests{ 0 };
@@ -107,6 +136,6 @@ public:
 	void addLatencyBandThreshold(double value);
 
 public: // testing
-	// Returns number of tags tracked
+	// Returns number of throttlingIds tracked
 	uint32_t size() const;
 };

@@ -322,7 +322,9 @@ The following options are available for use with the ``option`` command:
 
 ``NEXT_WRITE_NO_WRITE_CONFLICT_RANGE`` - The next write performed on this transaction will not generate a write conflict range. As a result, other transactions which read the key(s) being modified by the next write will not conflict with this transaction. Care needs to be taken when using this option on a transaction that is shared between multiple threads. When setting this option, write conflict ranges will be disabled on the next write operation, regardless of what thread it is on.
 
-``PRIORITY_BATCH`` - Specifies that this transaction should be treated as low priority and that default priority transactions should be processed first. Useful for doing batch work simultaneously with latency-sensitive work.
+``PRIORITY_BATCH`` - Specifies that this transaction should be treated as very low priority and that default priority transactions should be processed first. Useful for doing batch work simultaneously with latency-sensitive work.
+
+``PRIORITY_LOW`` - Specifies that this transaction should be treated as low priority. Low priority is in between batch priority and default priority. Like batch priority transactions, low priority transactions are deprioritized by the tag throttler. However, the global ratekeeper treats low priority transactions the same as default priority transactions.
 
 ``PRIORITY_SYSTEM_IMMEDIATE`` - Specifies that this transaction should be treated as highest priority and that lower priority transactions should block behind this one. Use is discouraged outside of low-level tools.
 

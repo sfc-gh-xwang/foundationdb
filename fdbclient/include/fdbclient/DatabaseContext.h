@@ -43,6 +43,9 @@
 #include "fdbclient/ThroughputTracker.h"
 #include "fdbclient/VersionVector.h"
 #include "fdbclient/IKeyValueStore.actor.h"
+#include "fdbclient/CoordinationInterface.h"
+#include "fdbclient/ClusterInterface.h"
+#include "fdbclient/CommitProxyInterface.h"
 #include "fdbrpc/QueueModel.h"
 #include "fdbrpc/MultiInterface.h"
 #include "flow/TDMetric.actor.h"
@@ -483,6 +486,8 @@ public:
 	                                      Standalone<VectorRef<BulkLoadWrittenFileRef>> files,
 	                                      Optional<Reference<Tenant>> tenant = {});
 
+	Future<Void> blobbifyRangeForBulkLoad(KeyRange keyRange, BulkLoadID id, Optional<Reference<Tenant>> tenant);
+
 	// private:
 	explicit DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
 	                         Reference<AsyncVar<ClientDBInfo>> clientDBInfo,
@@ -586,9 +591,11 @@ public:
 	Counter transactionReadVersionsCompleted;
 	Counter transactionReadVersionBatches;
 	Counter transactionBatchReadVersions;
+	Counter transactionLowReadVersions;
 	Counter transactionDefaultReadVersions;
 	Counter transactionImmediateReadVersions;
 	Counter transactionBatchReadVersionsCompleted;
+	Counter transactionLowReadVersionsCompleted;
 	Counter transactionDefaultReadVersionsCompleted;
 	Counter transactionImmediateReadVersionsCompleted;
 	Counter transactionLogicalReads;
@@ -658,7 +665,7 @@ public:
 	ActiveCounter<int> activeFeedDiskStreams;
 
 	DDSketch<double> latencies, readLatencies, readRangeLatencies, commitLatencies, GRVLatencies, keyLocationLatencies,
-	    mutationsPerCommit, bytesPerCommit;
+	    granuleLocationLatencies, mutationsPerCommit, bytesPerCommit;
 
 	int outstandingWatches;
 	int maxOutstandingWatches;
