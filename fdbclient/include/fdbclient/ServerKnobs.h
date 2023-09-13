@@ -360,14 +360,14 @@ public:
 	                                                 // refreshed in the TenantCache
 	int TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL; // The minimum interval between consecutive trace events logging the
 	                                               // storage bytes used by a tenant group
-	int64_t TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES; // Knob to control variable polling frequency for storage
-	                                                         // usage. If the last checked storage usage for a tenant
-	                                                         // group is less than quota - this knob, it is okay to skip
-	                                                         // polling its current usage until the next refresh.
-	double TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS; // Knob to control variable polling frequency for storage
-	                                                          // usage. If the storage usage for a tenant group was last
-	                                                          // checked less than this time ago, it is okay to skip
-	                                                          // polling its current usage until the next refresh.
+	int64_t TC_STORAGE_USAGE_VARIABLE_POLLING_LAG_BYTES; // Knob to control variable polling frequency for storage
+	                                                     // usage. If the last checked storage usage for a tenant
+	                                                     // group is less than quota - this knob, it is okay to skip
+	                                                     // polling its current usage until the next refresh.
+	double TC_STORAGE_USAGE_VARIABLE_POLLING_LAG_SECONDS; // Knob to control variable polling frequency for storage
+	                                                      // usage. If the storage usage for a tenant group was last
+	                                                      // checked less than this time ago, it is okay to skip
+	                                                      // polling its current usage until the next refresh.
 	int CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL; // How often the commit proxies send requests to the data
 	                                                  // distributor to fetch the list of tenants over storage quota
 
