@@ -32,6 +32,8 @@ These documents explain the engineering design of FoundationDB, with detailed in
 
 * :doc:`ha-write-path` describes how FDB write path works in HA setting.
 
+* :doc:`storage-quota` describes the storage quota feature for workload isolation.
+
 .. toctree::
    :maxdepth: 1
    :titlesonly:
@@ -51,3 +53,4 @@ These documents explain the engineering design of FoundationDB, with detailed in
    kv-architecture
    read-write-path
    ha-write-path
+   storage-quota
