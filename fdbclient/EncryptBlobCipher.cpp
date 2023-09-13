@@ -287,7 +287,8 @@ EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> 
 
 void EncryptBlobCipherAes256Ctr::init() {
 	ASSERT(textCipherKey.isValid());
-	if (needsHeaderCipherKey(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
+	if (authTokenAlgo == EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_HMAC_SHA ||
+	    authTokenAlgo == EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC) {
 		ASSERT(headerCipherKeyOpt.present() && headerCipherKeyOpt.get().isValid());
 	}
 

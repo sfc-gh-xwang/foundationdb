@@ -2427,6 +2427,23 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 	                                 get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.baseCipherId,
 	                                 get<AesGcmV1>(withAuth.headerVersions).cipherTextDetails.salt);
 	ASSERT(tCipherKey->isEqual(cipherKey));
+
+	try {
+		Reference<BlobCipherKey> hCipherKey = cipherKeyCache->getLatestCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
+		ASSERT(hCipherKey.isValid());
+		Reference<DecryptBlobCipher> decryptor =
+		    DecryptBlobCipher::getDecryptor(hCipherKey,
+		                                    tCipherKey,
+		                                    &get<AesGcmV1>(withAuth.headerVersions).iv[0],
+		                                    headerRef.getEncryptionAtRestAlgo(),
+		                                    BlobCipherMetrics::TEST);
+		decryptor->decrypt(encryptedBuf.begin(), bufLen, headerRef, arena);
+		ASSERT(false);
+	} catch (Error& e) {
+		ASSERT_EQ(e.code(), error_code_encrypt_key_check_value_mismatch);
+		TraceEvent("InvalidEncryptKeyError").error(e);
+	}
+
 	TraceEvent("TestConfigurableEncryptionInvalidEncryptKeySingleAuthTokenEnd").detail("Mode", authAlgoStr);
 }
 

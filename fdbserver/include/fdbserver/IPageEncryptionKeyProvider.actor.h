@@ -77,6 +77,8 @@ public:
 	// Get an encryption key from given encoding header.
 	virtual Future<EncryptionKey> getEncryptionKey(const void* encodingHeader) { throw not_implemented(); }
 
+	virtual EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) { throw not_implemented(); }
+
 	// Get latest encryption key. If encryption domain is enabled, get encryption key for the default domain.
 	virtual Future<EncryptionKey> getLatestDefaultEncryptionKey() {
 		return getLatestEncryptionKey(getDefaultEncryptionDomainId());
@@ -147,6 +149,10 @@ public:
 		s.xorKey = h->xorKey;
 		s.xorWith = xorWith;
 		return s;
+	}
+
+	EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) override {
+		return EncryptionAtRestAlgo::LAST;
 	}
 
 	Future<EncryptionKey> getLatestDefaultEncryptionKey() override {
@@ -222,6 +228,12 @@ public:
 		s.aesKey.cipherHeaderKey =
 		    getCipherKey(ENCRYPT_HEADER_DOMAIN_ID, deterministicRandom()->randomInt(1, NUM_CIPHER + 1));
 		return s;
+	}
+
+	EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) override {
+		using Encoder = typename ArenaPage::AESEncryptionEncoder<encodingType>;
+		const BlobCipherEncryptHeaderRef headerRef = Encoder::getEncryptionHeaderRef(encodingHeader);
+		return headerRef.getEncryptionAtRestAlgo();
 	}
 
 	int64_t getDefaultEncryptionDomainId() const override { return FDB_DEFAULT_ENCRYPT_DOMAIN_ID; }
@@ -338,6 +350,11 @@ public:
 
 	Future<EncryptionKey> getEncryptionKey(const void* encodingHeader) override {
 		return getEncryptionKey(this, encodingHeader);
+	}
+
+	EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) override {
+		const BlobCipherEncryptHeaderRef headerRef = Encoder::getEncryptionHeaderRef(encodingHeader);
+		return headerRef.getEncryptionAtRestAlgo();
 	}
 
 	Future<EncryptionKey> getLatestDefaultEncryptionKey() override {

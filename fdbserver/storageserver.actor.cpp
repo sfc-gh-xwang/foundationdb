@@ -33,6 +33,7 @@
 #include "fdbrpc/ContinuousSample.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/ApiVersion.h"
+#include "flow/EncryptUtils.h"
 #include "flow/network.h"
 #include "fmt/format.h"
 #include "fdbclient/Audit.h"
@@ -9945,6 +9946,8 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 		state FetchInjectionInfo fii;
 		state Reference<ILogSystem::IPeekCursor> cloneCursor2 = cursor->cloneNoMore();
 		state Optional<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> cipherKeys;
+		state Optional<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> latestCipherKeys;
+		state std::unordered_set<EncryptCipherDomainId> domainIds = { ENCRYPT_HEADER_DOMAIN_ID };
 		state bool collectingCipherKeys = false;
 
 		// Collect eager read keys.
@@ -9988,6 +9991,9 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 					if (msg.isEncrypted()) {
 						if (!cipherKeys.present()) {
 							msg.updateEncryptCipherDetails(cipherDetails);
+							domainIds.emplace(msg.configurableEncryptionHeader()
+							                      .getCipherDetails()
+							                      .textCipherDetails.encryptDomainId);
 							collectingCipherKeys = true;
 						} else {
 							double decryptionTimeV = 0;
@@ -10019,6 +10025,10 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				    wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
 				        data->db, cipherDetails, BlobCipherMetrics::TLOG));
 				cipherKeys = getCipherKeysResult;
+				std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> getLatestCipherKeysResult =
+				    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
+				        data->db, domainIds, BlobCipherMetrics::TLOG));
+				latestCipherKeys = getLatestCipherKeysResult;
 				collectingCipherKeys = false;
 				eager = UpdateEagerReadInfo(enableClearRangeEagerReads);
 			} else {
@@ -10146,12 +10156,16 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				ASSERT(!data->encryptionMode.get().isEncryptionEnabled() || msg.isEncrypted() ||
 				       isBackupLogMutation(msg));
 				if (msg.isEncrypted()) {
-					ASSERT(cipherKeys.present());
+					ASSERT(cipherKeys.present() && latestCipherKeys.present());
 					encryptedMutation.mutation = msg;
-					encryptedMutation.cipherKeys = msg.getCipherKeys(cipherKeys.get());
+					// Set to latest cipher keys since this mutation will get re-encrypted later
+					encryptedMutation.cipherKeys = msg.getLatestCipherKeys(latestCipherKeys.get());
 					double decryptionTimeV = 0;
-					msg = msg.decrypt(
-					    encryptedMutation.cipherKeys, rd.arena(), BlobCipherMetrics::TLOG, nullptr, &decryptionTimeV);
+					msg = msg.decrypt(msg.getCipherKeys(cipherKeys.get()),
+					                  rd.arena(),
+					                  BlobCipherMetrics::TLOG,
+					                  nullptr,
+					                  &decryptionTimeV);
 					decryptionTime += decryptionTimeV;
 				}
 
