@@ -163,9 +163,9 @@ public:
 				// ago (for observability).
 				if (tenantCache->tenantStorageMap[group].usage >
 				        tenantCache->tenantStorageMap[group].quota -
-				            SERVER_KNOBS->TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_BYTES ||
+				            SERVER_KNOBS->TC_STORAGE_USAGE_VARIABLE_POLLING_LAG_BYTES ||
 				    tenantCache->tenantStorageMap[group].usageUpdatedTime <
-				        now() - SERVER_KNOBS->TC_STORAGE_USAGE_VARIABLE_POLLING_MAX_LAG_SECONDS) {
+				        now() - SERVER_KNOBS->TC_STORAGE_USAGE_VARIABLE_POLLING_LAG_SECONDS) {
 
 					state int64_t usage = 0;
 					// `tenants` needs to be a copy so that the erase (below) or inserts/erases from other
