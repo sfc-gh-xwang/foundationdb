@@ -1052,11 +1052,16 @@ struct QuietDatabaseChecker {
 				    .detail("Timeout", maxDDRunTime);
 				if (timedOut) {
 					// this bool is just created to make the assertion more readable
-					bool ddGotStuck = true;
+					// possible stuck point (not all possible reasons are listed):
+					// 1. Recovery - check `MasterRecoveryState`
+					// 2. Stuck inFlight movement - check `MovingData`
+					// 3. Stuck Version Lag, Storage Queue - check `StorageMetrics`
+					// 4. Stuck recruitment - check `DDRecruiting`
+					bool stuckDatabase = true;
 					// This assertion is here to make the test fail more quickly. If quietDatabase takes this
 					// long without completing, we can assume that the test will eventually time out. However,
 					// time outs are more annoying to debug. This will hopefully be easier to track down.
-					ASSERT(!ddGotStuck || !g_network->isSimulated());
+					ASSERT(!stuckDatabase || !g_network->isSimulated());
 				}
 				return false;
 			}
