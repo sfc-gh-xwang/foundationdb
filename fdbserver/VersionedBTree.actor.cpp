@@ -2606,6 +2606,7 @@ public:
 			            : keyProvider->getLatestDefaultEncryptionKey(),
 			        [=](ArenaPage::EncryptionKey k) {
 				        page->encryptionKey = k;
+				        page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 				        return Void();
 			        });
 		}
@@ -6242,7 +6243,6 @@ private:
 			    self->m_encodingType, (p->blockCount == 1) ? PageType::BTreeNode : PageType::BTreeSuperNode, height);
 			if (enableEncryptionDomain) {
 				page->encryptionDomainId = p->domainId;
-				page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 			}
 
 			BTreePage* btPage = (BTreePage*)page->mutateData();
