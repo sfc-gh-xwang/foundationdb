@@ -731,6 +731,9 @@ ACTOR Future<Void> databaseLogger(DatabaseContext* cx) {
 			    .detail("MeanKeyLocationLatency", cx->keyLocationLatencies.mean())
 			    .detail("MedianKeyLocationLatency", cx->keyLocationLatencies.median())
 			    .detail("MaxKeyLocationLatency", cx->keyLocationLatencies.max())
+			    .detail("MeanGranuleLocationLatency", cx->granuleLocationLatencies.mean())
+			    .detail("MedianGranuleLocationLatency", cx->granuleLocationLatencies.median())
+			    .detail("MaxGranuleLocationLatency", cx->granuleLocationLatencies.max())
 			    .detail("MeanCommitLatency", cx->commitLatencies.mean())
 			    .detail("MedianCommitLatency", cx->commitLatencies.median())
 			    .detail("MaxCommitLatency", cx->commitLatencies.max())
@@ -783,6 +786,7 @@ ACTOR Future<Void> databaseLogger(DatabaseContext* cx) {
 		cx->readRangeLatencies.clear();
 		cx->GRVLatencies.clear();
 		cx->keyLocationLatencies.clear();
+		cx->granuleLocationLatencies.clear();
 		cx->commitLatencies.clear();
 		cx->mutationsPerCommit.clear();
 		cx->bytesPerCommit.clear();
@@ -1597,9 +1601,11 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
     transactionBatchReadVersions("BatchPriorityReadVersions", cc),
+    transactionLowReadVersions("LowPriorityReadVersions", cc),
     transactionDefaultReadVersions("DefaultPriorityReadVersions", cc),
     transactionImmediateReadVersions("ImmediatePriorityReadVersions", cc),
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
+    transactionLowReadVersionsCompleted("LowPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
     transactionLogicalReads("LogicalUncachedReads", cc),
@@ -1670,6 +1676,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     commitLatencies(),
     GRVLatencies(),
     keyLocationLatencies(),
+    granuleLocationLatencies(),
     mutationsPerCommit(),
     bytesPerCommit(),
     outstandingWatches(0),
@@ -1960,9 +1967,11 @@ DatabaseContext::DatabaseContext(const Error& err)
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
     transactionBatchReadVersions("BatchPriorityReadVersions", cc),
+    transactionLowReadVersions("LowPriorityReadVersions", cc),
     transactionDefaultReadVersions("DefaultPriorityReadVersions", cc),
     transactionImmediateReadVersions("ImmediatePriorityReadVersions", cc),
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
+    transactionLowReadVersionsCompleted("LowPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
     transactionLogicalReads("LogicalUncachedReads", cc),
@@ -2033,6 +2042,7 @@ DatabaseContext::DatabaseContext(const Error& err)
     commitLatencies(),
     GRVLatencies(),
     keyLocationLatencies(),
+    granuleLocationLatencies(),
     mutationsPerCommit(),
     bytesPerCommit(),
     outstandingWatches(0),
@@ -3591,6 +3601,8 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
 
 	CODE_PROBE(tenant.hasTenant(), "NativeAPI getBlobGranuleLocations has tenant");
 
+	state double startTime = now();
+
 	loop {
 		++cx->transactionBlobGranuleLocationRequests;
 		choose {
@@ -3633,6 +3645,8 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
 					results.emplace_back(range, rep.results[granule].second);
 					wait(yield());
 				}
+
+				cx->granuleLocationLatencies.addSample(now() - startTime);
 
 				return results;
 			}
@@ -3682,6 +3696,7 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<
 	// essentially take the max of any provided read version, either explicitly or from txn
 	// if none provided, use latestVersion
 	// this only works for with max because latestVersion is hardcoded to -2
+	// TODO: why did we max with read version?
 	Version version = latestVersion;
 	if (granuleReadVersion.present()) {
 		version = std::max(version, granuleReadVersion.get());
@@ -6488,11 +6503,15 @@ void Transaction::atomicOp(const KeyRef& key,
 	CODE_PROBE(true, "NativeAPI atomic operation");
 }
 
-void TransactionState::addClearCost() {
+static uint64_t getClearCost() {
 	// NOTE: The throttling cost of each clear is assumed to be one page.
 	// This makes compuation fast, but can be inaccurate and may
 	// underestimate the cost of large clears.
-	addWriteCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+	return getWriteOperationCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+}
+
+void TransactionState::addClearCost() {
+	addWriteCost(getClearCost());
 }
 
 void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRange) {
@@ -6922,30 +6941,8 @@ ACTOR Future<Optional<ClientTrCommitCostEstimation>> estimateCommitCosts(Referen
 				++trCommitCosts.expensiveCostEstCount;
 				++trState->cx->transactionsExpensiveClearCostEstCount;
 			} else {
-				if (trState->hasTenant()) {
-					wait(trState->tenant().get()->ready());
-				}
-				std::vector<KeyRangeLocationInfo> locations =
-				    wait(getKeyRangeLocations(trState,
-				                              keyRange,
-				                              CLIENT_KNOBS->TOO_MANY,
-				                              Reverse::False,
-				                              &StorageServerInterface::getShardState,
-				                              UseTenant::True));
-				if (locations.empty()) {
-					continue;
-				}
-
-				uint64_t bytes = 0;
-				if (locations.size() == 1) {
-					bytes = CLIENT_KNOBS->INCOMPLETE_SHARD_PLUS;
-				} else { // small clear on the boundary will hit two shards but be much smaller than the shard size
-					bytes = CLIENT_KNOBS->INCOMPLETE_SHARD_PLUS * 2 +
-					        (locations.size() - 2) * (int64_t)trState->cx->smoothMidShardSize.smoothTotal();
-				}
-
-				trCommitCosts.clearIdxCosts.emplace_back(i, getWriteOperationCost(bytes));
-				trCommitCosts.writeCosts += getWriteOperationCost(bytes);
+				trCommitCosts.clearIdxCosts.emplace_back(i, getClearCost());
+				trCommitCosts.writeCosts += getClearCost();
 			}
 		}
 	}
@@ -7432,6 +7429,11 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 		trState->options.priority = TransactionPriority::BATCH;
 		break;
 
+	case FDBTransactionOptions::PRIORITY_LOW:
+		validateOptionValueNotPresent(value);
+		trState->options.priority = TransactionPriority::LOW;
+		break;
+
 	case FDBTransactionOptions::CAUSAL_WRITE_RISKY:
 		validateOptionValueNotPresent(value);
 		trState->options.causalWriteRisky = true;
@@ -7704,18 +7706,20 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority priority) {
 	if (priority == TransactionPriority::IMMEDIATE) {
 		return true;
+	} else if (priority >= TransactionPriority::LOW) {
+		if (cx->lastRkDefaultThrottleTime == 0.0) {
+			return true;
+		}
+		return (now() - cx->lastRkDefaultThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
 	} else if (priority == TransactionPriority::BATCH) {
 		if (cx->lastRkBatchThrottleTime == 0.0) {
 			return true;
 		}
 		return (now() - cx->lastRkBatchThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
-	} else if (priority == TransactionPriority::DEFAULT) {
-		if (cx->lastRkDefaultThrottleTime == 0.0) {
-			return true;
-		}
-		return (now() - cx->lastRkDefaultThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
+	} else {
+		ASSERT(false);
+		return false;
 	}
-	return false;
 }
 
 ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
@@ -7746,6 +7750,10 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 	case TransactionPriority::DEFAULT:
 		flags |= GetReadVersionRequest::PRIORITY_DEFAULT;
 		++trState->cx->transactionDefaultReadVersions;
+		break;
+	case TransactionPriority::LOW:
+		flags |= GetReadVersionRequest::PRIORITY_LOW;
+		++trState->cx->transactionLowReadVersions;
 		break;
 	case TransactionPriority::BATCH:
 		flags |= GetReadVersionRequest::PRIORITY_BATCH;
@@ -7801,6 +7809,9 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 		break;
 	case TransactionPriority::DEFAULT:
 		++trState->cx->transactionDefaultReadVersionsCompleted;
+		break;
+	case TransactionPriority::LOW:
+		++trState->cx->transactionLowReadVersionsCompleted;
 		break;
 	case TransactionPriority::BATCH:
 		++trState->cx->transactionBatchReadVersionsCompleted;

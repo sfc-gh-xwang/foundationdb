@@ -252,7 +252,9 @@ struct ResolutionRequestBuilder {
 			}
 
 			// send all mutations to resolver 0
-			tr.normalKeyMutations = normalKeyMutations;
+			if (!trRequest.bypassRangeLock()) {
+				tr.normalKeyMutations = normalKeyMutations;
+			}
 		}
 	}
 	// return value indicate whether the trRequest is added into batch
@@ -1465,6 +1467,7 @@ Error validateAndProcessTenantAccess(Arena& arena,
                                      ProxyCommitData* const pProxyCommitData,
                                      std::vector<int64_t>& trTenantIds,
                                      bool rawTenantProcess,
+                                     bool trByPassRangeLock,
                                      Optional<UID> debugId = Optional<UID>(),
                                      const char* context = "") {
 	bool changeTenant = false;
@@ -1483,25 +1486,27 @@ Error validateAndProcessTenantAccess(Arena& arena,
 		bool normalKeyMutation = !isSystemKey(mutation.param1);
 
 		// Step 1: check range lock
-		if (normalKeyMutation) {
-			containNormalKeyMutation = true;
-			if (accessLockedRange(pProxyCommitData, mutation)) {
-				TraceEvent(SevWarn, "IllegalLockedRangeAccess", pProxyCommitData->dbgid)
-				    .suppressFor(10.0)
-				    .detail("M", mutation)
-				    .detail("Reason", "Illegal write to locked range");
-				CODE_PROBE(true, "Commit proxy transaction tenant failure");
-				return illegal_locked_range_access();
+		if (!trByPassRangeLock) {
+			if (normalKeyMutation) {
+				containNormalKeyMutation = true;
+				if (accessLockedRange(pProxyCommitData, mutation)) {
+					TraceEvent(SevWarn, "IllegalLockedRangeAccess", pProxyCommitData->dbgid)
+					    .suppressFor(10.0)
+					    .detail("M", mutation)
+					    .detail("Reason", "Illegal write to locked range");
+					CODE_PROBE(true, "Commit proxy transaction tenant failure");
+					return illegal_locked_range_access();
+				}
+			} else {
+				changeRangeLock = changeRangeLock || RangeLockAPI::rangeLockChanging(mutation);
 			}
-		} else {
-			changeRangeLock = changeRangeLock || RangeLockAPI::rangeLockChanging(mutation);
-		}
-		if (containNormalKeyMutation && changeRangeLock) {
-			TraceEvent(SevWarn, "IllegalRangeLockOperation", pProxyCommitData->dbgid)
-			    .suppressFor(10.0)
-			    .detail("Reason", "Range lock change and normal key change in same transaction");
-			CODE_PROBE(true, "Update normal keys while changing the range lock");
-			return illegal_range_lock_operation();
+			if (containNormalKeyMutation && changeRangeLock) {
+				TraceEvent(SevWarn, "IllegalRangeLockOperation", pProxyCommitData->dbgid)
+				    .suppressFor(10.0)
+				    .detail("Reason", "Range lock change and normal key change in same transaction");
+				CODE_PROBE(true, "Update normal keys while changing the range lock");
+				return illegal_range_lock_operation();
+			}
 		}
 
 		if (!rawTenantProcess)
@@ -1594,7 +1599,9 @@ Error validateAndProcessTenantAccess(CommitTransactionRequest& tr,
 		trTenantIds.push_back(tr.tenantInfo.tenantId);
 	}
 
-	bool doRangeLockCheck = !RangeLockAPI::noLockedRange(&pProxyCommitData->rangeLocks);
+	// only do the check when there's range lock and the transaction can bypass the range lock (like restore
+	// transaction)
+	bool doRangeLockCheck = !(RangeLockAPI::noLockedRange(&pProxyCommitData->rangeLocks) || tr.bypassRangeLock());
 
 	if (!doRangeLockCheck && !rawTenantProcess)
 		return success();
@@ -1604,6 +1611,7 @@ Error validateAndProcessTenantAccess(CommitTransactionRequest& tr,
 	                                      pProxyCommitData,
 	                                      trTenantIds,
 	                                      rawTenantProcess,
+	                                      tr.bypassRangeLock(),
 	                                      tr.debugID,
 	                                      "validateAndProcessTenantAccess");
 }
@@ -3006,14 +3014,17 @@ ACTOR static Future<Void> readRequestServer(CommitProxyInterface proxy,
 	}
 }
 
+// returns true if checked and passed, returns false if unable to check
 ACTOR static Future<Void> checkTenantLock(ProxyCommitData* commitData,
                                           int64_t tenantId,
                                           Version minVersion,
-                                          KeyRange keyRange) {
+                                          KeyRangeRef keyRange,
+                                          Future<Version> txnGRV) {
 	if (tenantId == TenantInfo::INVALID_TENANT) {
 		// otherwise assume raw access mode and infer it
 		TenantMode tenantMode = wait(commitData->cx->getOrWaitForTenantMode());
 		if (tenantMode == TenantMode::DISABLED || !TenantAPI::withinSingleTenant(keyRange)) {
+			CODE_PROBE(true, "BG tenant lock check bypassed, no tenants or not within tenant");
 			return Void();
 		} else {
 			// in optional tenant mode this could return something that is a bogus tenant id, but that's fine because a
@@ -3021,10 +3032,48 @@ ACTOR static Future<Void> checkTenantLock(ProxyCommitData* commitData,
 			tenantId = TenantAPI::extractTenantIdFromKeyRef(keyRange.begin);
 		}
 	}
+
+	// If request version already behind CP data, just check data directly.
+	// Otherwise, if the GRV of the latest transaction is already past the version (common with slow empty commit cycle
+	// on idle cluster), do a request to the SS to check the tenant lock. Otherwise if the request version is ahead of
+	// both the CP data and the latest GRV, either reject it with future version if it's too far in the future, or wait
+	// and then check the CP data directly.
 	if (minVersion > commitData->version.get()) {
-		CODE_PROBE(true, "tenant lock check waiting for CP version");
-		wait(commitData->version.whenAtLeast(minVersion));
+		Version grv = wait(txnGRV);
+		if (grv >= minVersion) {
+			++commitData->stats.bgTenantLockCheckSS;
+			CODE_PROBE(true, "BG checking tenant lock with SS read");
+			Reference<Tenant> tenant = makeReference<Tenant>(commitData->cx, tenantId);
+			state Transaction trTenant(tenant);
+			trTenant.setVersion(grv);
+			// if this read succeeds, tenant is unlocked at txnGrv version
+			try {
+				wait(success(trTenant.get(""_sr)));
+				return Void();
+			} catch (Error& e) {
+				if (e.code() == error_code_tenant_not_found) {
+					// tenant can't be locked if it doesn't exist
+					return Void();
+				}
+				throw e;
+			}
+		} else {
+			// in this case a user did a hybrid read that is time traveling to the future. this should be very rare.
+			// if version way in the future, just reject immediately with future_version.
+			// FIXME: maybe different knob for this check?
+			if (grv + SERVER_KNOBS->FUTURE_VERSION_DELAY * SERVER_KNOBS->VERSIONS_PER_SECOND < minVersion) {
+				CODE_PROBE(true, "BG locations checking SS reject future version");
+				throw future_version();
+			}
+			CODE_PROBE(true, "BG locations checking SS maybe future version");
+			// if only a little bit in the future, just wait and do CP data check
+			++commitData->stats.bgTenantLockWaitVersion;
+			wait(commitData->version.whenAtLeast(minVersion));
+		}
 	}
+
+	CODE_PROBE(true, "BG checking tenant lock with CP data");
+
 	if (commitData->lockedTenants.count(tenantId)) {
 		CODE_PROBE(true, "tenant lock active in hybrid locations request");
 		throw tenant_locked();
@@ -3068,8 +3117,11 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 	}
 
 	// FIXME: add retry loop? likely less expensive to handle retryable errors here than to propagate back to client?
-	state Transaction tr(commitData->cx);
+
+	// make tenant transaction and do set read version
 	try {
+		state Transaction tr(commitData->cx);
+
 		state GetBlobGranuleLocationsReply rep;
 		state KeyRange keyRange;
 		if (req.end.present()) {
@@ -3078,9 +3130,13 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 			keyRange = KeyRangeRef(req.begin, keyAfter(req.begin, req.arena));
 		}
 
+		state Future<Void> checkTenantLockFuture = Future<Void>(Void());
 		// check on the logical range + tenant id
-		if (!req.lockAware) {
-			wait(checkTenantLock(commitData, req.tenant.tenantId, minVersion, keyRange));
+		if (!req.lockAware && !CLIENT_KNOBS->HYBRID_READ_BYPASS_TENANT_LOCK) {
+			checkTenantLockFuture =
+			    checkTenantLock(commitData, req.tenant.tenantId, minVersion, keyRange, tr.getReadVersion());
+		} else {
+			++commitData->stats.bgTenantLockBypass;
 		}
 
 		if (req.tenant.hasTenant()) {
@@ -3176,6 +3232,7 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 		}
 
 		rep.more = blobGranuleMapping.more;
+		wait(checkTenantLockFuture);
 	} catch (Error& e) {
 		++commitData->stats.blobGranuleLocationOut;
 		if (e.code() == error_code_operation_cancelled) {

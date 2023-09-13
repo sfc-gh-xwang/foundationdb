@@ -13,6 +13,7 @@ tenantModes = ['optional', 'required']
 [[knobs]]
 hybrid_management_bypass_tenant_lock = true
 hybrid_management_bypass_range_lock = true
+hybrid_read_bypass_tenant_lock = true
 
 [[test]]
 testTitle = 'BlobGranuleRanges'

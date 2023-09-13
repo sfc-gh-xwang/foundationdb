@@ -266,7 +266,6 @@ public:
 	int MAX_TRANSACTION_TAG_LENGTH;
 	int MAX_TAGS_PER_TRANSACTION;
 	int COMMIT_SAMPLE_COST; // The expectation of sampling is every COMMIT_SAMPLE_COST sample once
-	int INCOMPLETE_SHARD_PLUS; // The size of (possible) incomplete shard when estimate clear range
 	double READ_TAG_SAMPLE_RATE; // Communicated to clients from cluster
 	double TAG_THROTTLE_SMOOTHING_WINDOW;
 	double TAG_THROTTLE_RECHECK_INTERVAL;
@@ -327,6 +326,7 @@ public:
 	bool ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE;
 	bool HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK;
 	bool HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK;
+	bool HYBRID_READ_BYPASS_TENANT_LOCK;
 
 	// The coordinator key/value in storage server might be inconsistent to the value stored in the cluster file.
 	// This might happen when a recovery is happening together with a cluster controller coordinator key change.

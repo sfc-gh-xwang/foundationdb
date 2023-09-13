@@ -7129,11 +7129,15 @@ ACTOR Future<Void> tryGetRange(PromiseStream<RangeReadResult> results, Transacti
 ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> tryReadBlobGranuleChunks(Transaction* tr,
                                                                                   KeyRange keys,
                                                                                   Version fetchVersion) {
-	state Version readVersion = fetchVersion;
 	loop {
 		try {
-			Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr->readBlobGranules(keys, 0, readVersion));
-			TraceEvent(SevDebug, "ReadBlobGranules")
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+			tr->trState->taskID = TaskPriority::FetchKeys;
+
+			TraceEvent(SevDebug, "ReadBlobGranules").detail("Keys", keys).detail("FetchVersion", fetchVersion);
+			Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr->readBlobGranules(keys, 0, fetchVersion));
+			TraceEvent(SevDebug, "ReadBlobGranulesComplete")
 			    .detail("Keys", keys)
 			    .detail("Chunks", chunks.size())
 			    .detail("FetchVersion", fetchVersion);
@@ -7193,6 +7197,7 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 				    .detail("Version", chunks[i].includedVersion);
 				RangeResult rows;
 				if (i == chunks.size() - 1) {
+					// set more to false when it's the last chunk
 					rows.more = false;
 				} else {
 					rows.more = true;
@@ -7203,6 +7208,9 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 			}
 			try {
 				state Reference<BlobConnectionProvider> blobConn = wait(loadBStoreForTenant(tenantData, chunkRange));
+				TraceEvent(SevDebug, "LoadedBlobConnection")
+				    .detail("ChunkRange", chunkRange)
+				    .detail("FetchVersion", fetchVersion);
 				state RangeResult rows = wait(readBlobGranule(chunks[i], keys, 0, fetchVersion, blobConn));
 
 				TraceEvent("ReadBlobData")

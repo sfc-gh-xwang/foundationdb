@@ -27,6 +27,7 @@
 
 struct PublicOrPrivateKey {
 	std::variant<PublicKey, PrivateKey> key;
+	Standalone<StringRef> base64UrlSha256Thumbprint; // See RFC-7638
 
 	PublicOrPrivateKey() noexcept = default;
 

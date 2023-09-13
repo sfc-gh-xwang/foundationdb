@@ -22,13 +22,29 @@
 //   - Test using tenant groups rather than tags
 class ExpectStableThroughputWorkload : public TestWorkload {
 	// Metrics:
-	struct TagMetrics {
+	struct ThrottlingMetrics {
 		HoltLinearSmoother totalCost;
 		HoltLinearSmoother throttledDuration;
 		HoltLinearSmoother tagThrottledErrors;
-		TagMetrics() : totalCost(1.0, 5.0), throttledDuration(1.0, 5.0), tagThrottledErrors(1.0, 5.0) {}
+		ThrottlingMetrics() : totalCost(1.0, 5.0), throttledDuration(1.0, 5.0), tagThrottledErrors(1.0, 5.0) {}
 	};
-	boost::unordered_flat_map<TransactionTag, TagMetrics> metricsMap;
+	class PrioritizedThrottlingMetrics {
+		ThrottlingMetrics defaultPriorityMetrics, lowPriorityMetrics;
+
+	public:
+		ThrottlingMetrics& getMetrics(TransactionPriority priority) & {
+			bool const defaultPriority = (priority == TransactionPriority::DEFAULT);
+			return defaultPriority ? defaultPriorityMetrics : lowPriorityMetrics;
+		}
+		ThrottlingMetrics const& getMetrics(TransactionPriority priority) const& {
+			bool const defaultPriority = (priority == TransactionPriority::DEFAULT);
+			return defaultPriority ? defaultPriorityMetrics : lowPriorityMetrics;
+		}
+		uint64_t getTotalCost() const {
+			return defaultPriorityMetrics.totalCost.getTotal() + lowPriorityMetrics.totalCost.getTotal();
+		}
+	};
+	boost::unordered_flat_map<TransactionTag, PrioritizedThrottlingMetrics> metricsMap;
 
 	// Parameters:
 	double testDuration;
@@ -38,7 +54,8 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	int numTags;
 	double errorTolerance;
 	Key keyPrefix;
-	int numActors;
+	int defaultPriorityActors;
+	int lowPriorityActors;
 	double warmupTime;
 	int opsPerTransaction;
 	bool provideExpectedCost;
@@ -65,9 +82,12 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		}
 	}
 
-	void finishTransaction(Transaction const& tr, TransactionTag const& tag, bool isTagThrottled = false) {
+	void finishTransaction(Transaction const& tr,
+	                       TransactionTag const& tag,
+	                       TransactionPriority priority,
+	                       bool isTagThrottled = false) {
 		if (now() > startTime + warmupTime) {
-			auto& metrics = metricsMap[tag];
+			auto& metrics = metricsMap[tag].getMetrics(priority);
 			metrics.totalCost.addDelta(tr.getTotalCost());
 			metrics.throttledDuration.addDelta(tr.getTagThrottledDuration());
 			if (isTagThrottled) {
@@ -84,7 +104,8 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		    .detail("AttemptedThroughputPagesRate", attemptedThroughputPagesRate)
 		    .detail("ErrorTolerance", errorTolerance)
 		    .detail("KeyPrefix", keyPrefix)
-		    .detail("NumActors", numActors)
+		    .detail("DefaultPriorityActors", defaultPriorityActors)
+		    .detail("LowPriorityActors", lowPriorityActors)
 		    .detail("WarmupTime", warmupTime)
 		    .detail("OpsPerTranaction", opsPerTransaction)
 		    .detail("ProvideExpectedCost", provideExpectedCost)
@@ -94,26 +115,38 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	ACTOR static Future<Void> loggerActor(ExpectStableThroughputWorkload* self) {
 		loop {
 			wait(delay(5.0));
-			for (auto const& [tag, metrics] : self->metricsMap) {
+			for (auto const& [tag, prioritizedMetrics] : self->metricsMap) {
+				auto const& lowPriorityMetrics = prioritizedMetrics.getMetrics(TransactionPriority::LOW);
+				auto const& defaultPriorityMetrics = prioritizedMetrics.getMetrics(TransactionPriority::DEFAULT);
 				TraceEvent te("ExpectStableThroughputWorkloadMetrics");
 				te.detail("TransactionTag", tag)
-				    .detail("ThroughputRate", metrics.totalCost.smoothRate())
-				    .detail("ThrottledDurationRate", metrics.throttledDuration.smoothRate())
-				    .detail("TagThrottledErrorRate", metrics.tagThrottledErrors.smoothRate());
+				    .detail("DefaultPriorityThroughputRate", defaultPriorityMetrics.totalCost.smoothRate())
+				    .detail("LowPriorityThroughputRate", lowPriorityMetrics.totalCost.smoothRate())
+				    .detail("DefaultPriorityThrottledDurationRate",
+				            defaultPriorityMetrics.throttledDuration.smoothRate())
+				    .detail("LowPriorityThrottledDurationRate", lowPriorityMetrics.throttledDuration.smoothRate())
+				    .detail("DefaultPriorityTagThrottledErrorRate",
+				            defaultPriorityMetrics.tagThrottledErrors.smoothRate())
+				    .detail("LowPriorityTagThrottledErrorRate", lowPriorityMetrics.tagThrottledErrors.smoothRate());
 			}
 		}
 	}
 
 	Key getKey(int index) const { return Key(format("%06d", index)).withPrefix(keyPrefix); }
 
-	ACTOR static Future<Void> runReadTransaction(ExpectStableThroughputWorkload* self, Database cx, int tagIndex) {
+	ACTOR static Future<Void> runReadTransaction(ExpectStableThroughputWorkload* self,
+	                                             Database cx,
+	                                             int tagIndex,
+	                                             TransactionPriority priority) {
 		state Transaction tr(cx);
 		state TransactionTag throttlingTag = ThroughputQuotaUtil::getTransactionTag(self->tagPrefix, tagIndex);
 		state std::vector<Future<Void>> futures;
 		loop {
 			try {
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, throttlingTag);
-
+				if (priority == TransactionPriority::LOW) {
+					tr.setOption(FDBTransactionOptions::PRIORITY_LOW);
+				}
 				if (self->useGrvCache && isBusyThrottlingIdsTrackingEnabled()) {
 					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
 				}
@@ -128,10 +161,10 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 					futures.push_back(success(tr.get(self->getKey(i))));
 				}
 				wait(waitForAll(futures));
-				self->finishTransaction(tr, throttlingTag);
+				self->finishTransaction(tr, throttlingTag, priority);
 				return Void();
 			} catch (Error& e) {
-				self->finishTransaction(tr, throttlingTag, e.code() == error_code_proxy_tag_throttled);
+				self->finishTransaction(tr, throttlingTag, priority, e.code() == error_code_proxy_tag_throttled);
 				wait(tr.onError(e));
 			}
 		}
@@ -140,13 +173,17 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 	ACTOR static Future<Void> runWriteTransaction(ExpectStableThroughputWorkload* self,
 	                                              Database cx,
 	                                              int tagIndex,
+	                                              TransactionPriority priority,
 	                                              bool isClear) {
 		state Transaction tr(cx);
 		state TransactionTag throttlingTag = ThroughputQuotaUtil::getTransactionTag(self->tagPrefix, tagIndex);
 		loop {
 			try {
-
 				tr.setOption(FDBTransactionOptions::AUTO_THROTTLE_TAG, throttlingTag);
+				if (priority == TransactionPriority::LOW) {
+					tr.setOption(FDBTransactionOptions::PRIORITY_LOW);
+				}
+
 				if (self->useGrvCache && isBusyThrottlingIdsTrackingEnabled()) {
 					tr.setOption(FDBTransactionOptions::USE_GRV_CACHE);
 				}
@@ -164,32 +201,36 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 					}
 				}
 				wait(tr.commit());
-				self->finishTransaction(tr, throttlingTag);
+				self->finishTransaction(tr, throttlingTag, priority);
 				return Void();
 			} catch (Error& e) {
-				self->finishTransaction(tr, throttlingTag, e.code() == error_code_proxy_tag_throttled);
+				self->finishTransaction(tr, throttlingTag, priority, e.code() == error_code_proxy_tag_throttled);
 				wait(tr.onError(e));
 			}
 		}
 	}
 
-	Future<Void> runTransaction(Database const& cx, int tagIndex) {
+	Future<Void> runTransaction(Database const& cx, int tagIndex, TransactionPriority priority) {
 		switch (opType) {
 		case OpType::READ:
-			return runReadTransaction(this, cx, tagIndex);
+			return runReadTransaction(this, cx, tagIndex, priority);
 		case OpType::SET:
-			return runWriteTransaction(this, cx, tagIndex, /*isClear=*/false);
+			return runWriteTransaction(this, cx, tagIndex, priority, /*isClear=*/false);
 		case OpType::CLEAR:
-			return runWriteTransaction(this, cx, tagIndex, /*isClear=*/true);
+			return runWriteTransaction(this, cx, tagIndex, priority, /*isClear=*/true);
 		default:
 			ASSERT(false);
 			return Void();
 		}
 	}
 
-	ACTOR static Future<Void> runClient(ExpectStableThroughputWorkload* self, Database cx, int tagIndex) {
+	ACTOR static Future<Void> runClient(ExpectStableThroughputWorkload* self,
+	                                    Database cx,
+	                                    int tagIndex,
+	                                    TransactionPriority priority) {
 		loop {
-			wait(delay(1 / self->getAttemptedTransactionRatePerActor()) && self->runTransaction(cx, tagIndex));
+			wait(delay(1 / self->getAttemptedTransactionRatePerActor()) &&
+			     self->runTransaction(cx, tagIndex, priority));
 		}
 	}
 
@@ -198,6 +239,7 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		if (opType != OpType::READ) {
 			transactionCostInPages *= CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO;
 		}
+		auto const numActors = defaultPriorityActors + lowPriorityActors;
 		return attemptedThroughputPagesRate / (transactionCostInPages * numActors);
 	}
 
@@ -211,7 +253,8 @@ public:
 		attemptedThroughputPagesRate = getOption(options, "attemptedThroughputPagesRate"_sr, 2);
 		errorTolerance = getOption(options, "errorTolerance"_sr, 0.2);
 		keyPrefix = getOption(options, "keyPrefix"_sr, "testKey"_sr);
-		numActors = getOption(options, "numActors"_sr, 100);
+		defaultPriorityActors = getOption(options, "defaultPriorityActors"_sr, 100);
+		lowPriorityActors = getOption(options, "lowPriorityActors"_sr, 0);
 		// When simulation is not sped up, there are known, unrelated, rare availability issues that cause
 		// throughput to be significantly lower than the total quota. To avoid these failure cases, we
 		// don't measure throughput until after simulation has been sped up.
@@ -248,9 +291,12 @@ public:
 		te.log();
 		startTime = now();
 		std::vector<Future<Void>> clients;
-		for (int actorIndex = 0; actorIndex < numActors; ++actorIndex) {
-			for (int tagIndex = 0; tagIndex < numTags; ++tagIndex) {
-				clients.push_back(runClient(this, cx, tagIndex));
+		for (int tagIndex = 0; tagIndex < numTags; ++tagIndex) {
+			for (int actorIndex = 0; actorIndex < defaultPriorityActors; ++actorIndex) {
+				clients.push_back(runClient(this, cx, tagIndex, TransactionPriority::DEFAULT));
+			}
+			for (int actorIndex = 0; actorIndex < lowPriorityActors; ++actorIndex) {
+				clients.push_back(runClient(this, cx, tagIndex, TransactionPriority::LOW));
 			}
 		}
 		return loggerActor(this) || success(timeout(waitForAll(clients), warmupTime + testDuration));
@@ -271,23 +317,21 @@ public:
 		    testDuration * expectedThroughputPagesRate * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
 
 		bool passed = true;
-		for (auto const& [tag, metrics] : metricsMap) {
-			bool tagPassed =
-			    (metrics.totalCost.getTotal() <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
+		for (auto const& [tag, prioritizedMetrics] : metricsMap) {
+			auto const totalCost = prioritizedMetrics.getTotalCost();
+
+			bool tagPassed = (totalCost <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
 
 			// Global ratekeeper throttling is known to restrict throughput independent of quota-based throttling
 			// if certain knobs are buggified and the workload performs writes. We work around this by only enforcing a
 			// throughput lower bound if the workload is only performing reads.
 			if (opType == OpType::READ) {
-				tagPassed = tagPassed && (metrics.totalCost.getTotal() >=
-				                          static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance));
+				tagPassed = tagPassed && (totalCost >= static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance));
 			}
 
 			auto const severity = tagPassed ? SevInfo : SevError;
 			TraceEvent te(severity, "CheckingStableThroughput");
-			te.detail("Tag", tag)
-			    .detail("ExpectedTotalCost", expectedTotalCost)
-			    .detail("TotalCost", metrics.totalCost.getTotal());
+			te.detail("Tag", tag).detail("ExpectedTotalCost", expectedTotalCost).detail("TotalCost", totalCost);
 			traceParameters(te);
 			passed = passed && tagPassed;
 		}
@@ -296,17 +340,28 @@ public:
 	}
 
 	void getMetrics(std::vector<PerfMetric>& m) override {
-		double totalCost{ 0.0 };
-		double tagThrottledErrors{ 0.0 };
-		double throttledDuration{ 0.0 };
-		for (auto const& [tag, metrics] : metricsMap) {
-			totalCost += metrics.totalCost.getTotal();
-			tagThrottledErrors += metrics.tagThrottledErrors.getTotal();
-			throttledDuration += metrics.throttledDuration.getTotal();
+		double totalDefaultPriorityCost{ 0.0 };
+		double totalLowPriorityCost{ 0.0 };
+		double defaultPriorityTagThrottledErrors{ 0.0 };
+		double lowPriorityTagThrottledErrors{ 0.0 };
+		double defaultPriorityThrottledDuration{ 0.0 };
+		double lowPriorityThrottledDuration{ 0.0 };
+		for (auto const& [tag, prioritizedMetrics] : metricsMap) {
+			auto const& lowPriorityMetrics = prioritizedMetrics.getMetrics(TransactionPriority::LOW);
+			auto const& defaultPriorityMetrics = prioritizedMetrics.getMetrics(TransactionPriority::DEFAULT);
+			totalDefaultPriorityCost += defaultPriorityMetrics.totalCost.getTotal();
+			totalLowPriorityCost += lowPriorityMetrics.totalCost.getTotal();
+			defaultPriorityTagThrottledErrors += defaultPriorityMetrics.tagThrottledErrors.getTotal();
+			lowPriorityTagThrottledErrors += lowPriorityMetrics.tagThrottledErrors.getTotal();
+			defaultPriorityThrottledDuration += defaultPriorityMetrics.throttledDuration.getTotal();
+			lowPriorityThrottledDuration += lowPriorityMetrics.throttledDuration.getTotal();
 		}
-		m.emplace_back("Total Cost", totalCost, Averaged::False);
-		m.emplace_back("TagThrottled Errors", tagThrottledErrors, Averaged::False);
-		m.emplace_back("Total Throttling Duration", throttledDuration, Averaged::False);
+		m.emplace_back("Total Default Priority Cost", totalDefaultPriorityCost, Averaged::False);
+		m.emplace_back("Total Low Priority Cost", totalLowPriorityCost, Averaged::False);
+		m.emplace_back("Default Priority TagThrottled Errors", defaultPriorityTagThrottledErrors, Averaged::False);
+		m.emplace_back("Low Priority TagThrottled Errors", lowPriorityTagThrottledErrors, Averaged::False);
+		m.emplace_back("Default Priority Throttling Duration", defaultPriorityThrottledDuration, Averaged::False);
+		m.emplace_back("Low Priority Throttling Duration", lowPriorityThrottledDuration, Averaged::False);
 	}
 };
 

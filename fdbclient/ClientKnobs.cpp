@@ -274,7 +274,6 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( MAX_TAGS_PER_TRANSACTION,                   5 );
 	init( MAX_TRANSACTION_TAG_LENGTH,               255 );
 	init( COMMIT_SAMPLE_COST,                       100 ); BUGGIFY_KNOB(COMMIT_SAMPLE_COST, randomize && BUGGIFY, 10);
-	init( INCOMPLETE_SHARD_PLUS,                   4096 );
 	init( READ_TAG_SAMPLE_RATE,                    0.01 ); BUGGIFY_KNOB(READ_TAG_SAMPLE_RATE, randomize && BUGGIFY, 1.0); // Communicated to clients from cluster
 	init( TAG_THROTTLE_SMOOTHING_WINDOW,            2.0 );
 	init( TAG_THROTTLE_RECHECK_INTERVAL,            5.0 ); BUGGIFY_KNOB(TAG_THROTTLE_RECHECK_INTERVAL, randomize && BUGGIFY, 0.0);
@@ -306,6 +305,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE,  true  );
 	init( HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,   false );
 	init( HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK,    false );
+	init( HYBRID_READ_BYPASS_TENANT_LOCK,         false ); BUGGIFY_KNOB(HYBRID_READ_BYPASS_TENANT_LOCK, randomize && BUGGIFY, true);
 
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_TIMES,        3 );
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_DELAY,      2.0 );

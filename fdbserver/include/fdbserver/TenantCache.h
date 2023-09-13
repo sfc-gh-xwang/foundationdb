@@ -35,6 +35,7 @@ typedef Map<KeyRef, Reference<TCTenantInfo>> TenantMapByPrefix;
 struct Storage {
 	int64_t quota = std::numeric_limits<int64_t>::max();
 	int64_t usage = 0;
+	double usageUpdatedTime = 0;
 	std::unordered_set<int64_t> tenants;
 };
 typedef std::unordered_map<TenantGroupName, Storage> TenantStorageMap;

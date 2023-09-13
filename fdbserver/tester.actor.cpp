@@ -921,13 +921,16 @@ ACTOR Future<Void> testerServerCore(TesterInterface interf,
 
 ACTOR Future<Void> clearTenantData(Reference<Tenant> tenant) {
 	state Transaction tr(tenant);
+	state Version v;
 	loop {
 		try {
 			tr.debugTransaction(debugRandom()->randomUniqueID());
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 			tr.clear(normalKeys);
 			wait(tr.commit());
-			return Void();
+			v = tr.getReadVersion().get();
+			ASSERT(v >= 1);
+			break;
 		} catch (Error& e) {
 			TraceEvent(SevWarn, "TesterClearingTenantDataError", tr.trState->readOptions.get().debugID.get())
 			    .error(e)
@@ -935,6 +938,26 @@ ACTOR Future<Void> clearTenantData(Reference<Tenant> tenant) {
 			wait(tr.onError(e));
 		}
 	}
+
+	// drop tenant blob ranges (if present)
+	state Standalone<VectorRef<KeyRangeRef>> blobRanges =
+	    wait(tenant->database()->listBlobbifiedRanges(normalKeys, 1, tenant));
+	if (blobRanges.empty()) {
+		return Void();
+	}
+
+	CODE_PROBE(true, "cleaning up blobbified ranges in clearAfterTest");
+	TraceEvent("TesterClearingTenantHybrid").detail("Tenant", tenant);
+
+	Key purgeKey = wait(tenant->database()->purgeBlobGranules(normalKeys, v, tenant, true));
+
+	TraceEvent("TesterClearingTenantHybridPurgeRegistered").detail("Tenant", tenant).detail("PurgeKey", purgeKey);
+
+	wait(tenant->database()->waitPurgeGranulesComplete(purgeKey));
+
+	TraceEvent("TesterClearingTenantHybridComplete").detail("Tenant", tenant);
+
+	return Void();
 }
 
 ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
