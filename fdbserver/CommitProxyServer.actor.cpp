@@ -252,7 +252,9 @@ struct ResolutionRequestBuilder {
 			}
 
 			// send all mutations to resolver 0
-			tr.normalKeyMutations = normalKeyMutations;
+			if (!trRequest.bypassRangeLock()) {
+				tr.normalKeyMutations = normalKeyMutations;
+			}
 		}
 	}
 	// return value indicate whether the trRequest is added into batch
@@ -1465,6 +1467,7 @@ Error validateAndProcessTenantAccess(Arena& arena,
                                      ProxyCommitData* const pProxyCommitData,
                                      std::vector<int64_t>& trTenantIds,
                                      bool rawTenantProcess,
+                                     bool trByPassRangeLock,
                                      Optional<UID> debugId = Optional<UID>(),
                                      const char* context = "") {
 	bool changeTenant = false;
@@ -1483,25 +1486,27 @@ Error validateAndProcessTenantAccess(Arena& arena,
 		bool normalKeyMutation = !isSystemKey(mutation.param1);
 
 		// Step 1: check range lock
-		if (normalKeyMutation) {
-			containNormalKeyMutation = true;
-			if (accessLockedRange(pProxyCommitData, mutation)) {
-				TraceEvent(SevWarn, "IllegalLockedRangeAccess", pProxyCommitData->dbgid)
-				    .suppressFor(10.0)
-				    .detail("M", mutation)
-				    .detail("Reason", "Illegal write to locked range");
-				CODE_PROBE(true, "Commit proxy transaction tenant failure");
-				return illegal_locked_range_access();
+		if (!trByPassRangeLock) {
+			if (normalKeyMutation) {
+				containNormalKeyMutation = true;
+				if (accessLockedRange(pProxyCommitData, mutation)) {
+					TraceEvent(SevWarn, "IllegalLockedRangeAccess", pProxyCommitData->dbgid)
+					    .suppressFor(10.0)
+					    .detail("M", mutation)
+					    .detail("Reason", "Illegal write to locked range");
+					CODE_PROBE(true, "Commit proxy transaction tenant failure");
+					return illegal_locked_range_access();
+				}
+			} else {
+				changeRangeLock = changeRangeLock || RangeLockAPI::rangeLockChanging(mutation);
 			}
-		} else {
-			changeRangeLock = changeRangeLock || RangeLockAPI::rangeLockChanging(mutation);
-		}
-		if (containNormalKeyMutation && changeRangeLock) {
-			TraceEvent(SevWarn, "IllegalRangeLockOperation", pProxyCommitData->dbgid)
-			    .suppressFor(10.0)
-			    .detail("Reason", "Range lock change and normal key change in same transaction");
-			CODE_PROBE(true, "Update normal keys while changing the range lock");
-			return illegal_range_lock_operation();
+			if (containNormalKeyMutation && changeRangeLock) {
+				TraceEvent(SevWarn, "IllegalRangeLockOperation", pProxyCommitData->dbgid)
+				    .suppressFor(10.0)
+				    .detail("Reason", "Range lock change and normal key change in same transaction");
+				CODE_PROBE(true, "Update normal keys while changing the range lock");
+				return illegal_range_lock_operation();
+			}
 		}
 
 		if (!rawTenantProcess)
@@ -1594,7 +1599,9 @@ Error validateAndProcessTenantAccess(CommitTransactionRequest& tr,
 		trTenantIds.push_back(tr.tenantInfo.tenantId);
 	}
 
-	bool doRangeLockCheck = !RangeLockAPI::noLockedRange(&pProxyCommitData->rangeLocks);
+	// only do the check when there's range lock and the transaction can bypass the range lock (like restore
+	// transaction)
+	bool doRangeLockCheck = !(RangeLockAPI::noLockedRange(&pProxyCommitData->rangeLocks) || tr.bypassRangeLock());
 
 	if (!doRangeLockCheck && !rawTenantProcess)
 		return success();
@@ -1604,6 +1611,7 @@ Error validateAndProcessTenantAccess(CommitTransactionRequest& tr,
 	                                      pProxyCommitData,
 	                                      trTenantIds,
 	                                      rawTenantProcess,
+	                                      tr.bypassRangeLock(),
 	                                      tr.debugID,
 	                                      "validateAndProcessTenantAccess");
 }

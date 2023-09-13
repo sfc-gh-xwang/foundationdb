@@ -129,6 +129,7 @@ struct Resolver : ReferenceCounted<Resolver> {
 	AsyncVar<Version> neededVersion;
 
 	RecentStateTransactionsInfo recentStateTransactionsInfo;
+	// total mutation bytes including normal mutation bytes cached in resolver
 	AsyncVar<int64_t> totalStateBytes;
 	AsyncTrigger checkNeededVersion;
 	std::map<NetworkAddress, ProxyRequestsInfo> proxyInfoMap;
@@ -168,6 +169,9 @@ struct Resolver : ReferenceCounted<Resolver> {
 	Counter resolvedStateTransactions;
 	Counter resolvedStateMutations;
 	Counter resolvedStateBytes;
+	// when a state transaction also contains normal key mutations
+	Counter resolvedStateNormalMutations;
+	Counter resolvedStateNormalMutationBytes;
 	Counter resolveBatchOut;
 	Counter metricsRequests;
 	Counter splitRequests;
@@ -209,6 +213,8 @@ struct Resolver : ReferenceCounted<Resolver> {
 	    resolvedStateTransactions("ResolvedStateTransactions", cc),
 	    resolvedStateMutations("ResolvedStateMutations", cc),
 	    resolvedStateBytes("ResolvedStateBytes", cc),
+	    resolvedStateNormalMutations("ResolvedStateNormalMutations", cc),
+	    resolvedStateNormalMutationBytes("ResolvedStateNormalMutationBytes", cc),
 	    resolveBatchOut("ResolveBatchOut", cc),
 	    metricsRequests("MetricsRequests", cc),
 	    splitRequests("SplitRequests", cc),
@@ -287,15 +293,13 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 	   proxyInfo.lastVersion).detail("FirstVersion", self->recentStateTransactionsInfo.empty() ? -1 :
 	   self->recentStateTransactionsInfo.firstVersion()) .detail("ResolverVersion", self->version.get()); */
 
-	while (self->totalStateBytes.get() > SERVER_KNOBS->RESOLVER_STATE_MEMORY_LIMIT &&
-	       self->recentStateTransactionsInfo.size() &&
+	while (self->recentStateTransactionsInfo.size() &&
 	       proxyInfo.lastVersion > self->recentStateTransactionsInfo.firstVersion() &&
 	       req.version > self->neededVersion.get()) {
 		/* TraceEvent("ResolveBatchDelay").detail("From", proxyAddress).detail("StateBytes",
 	 self->totalStateBytes.get()).detail("RecentStateTransactionSize", self->recentStateTransactionsInfo.size())
 	 .detail("LastVersion", proxyInfo.lastVersion).detail("RequestVersion", req.version).detail("NeededVersion",
 		     self->neededVersion.get()) .detail("RecentStateVer", self->recentStateTransactionsInfo.firstVersion());*/
-
 		wait(self->totalStateBytes.onChange() || self->neededVersion.onChange());
 	}
 
@@ -337,6 +341,8 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 
 		ResolveTransactionBatchReply& reply = proxyInfo.outstandingBatches[req.version];
 		reply.writtenTags = req.writtenTags;
+		reply.debugID = req.debugID;
+		reply.committed.resize(reply.arena, req.transactions.size());
 
 		std::vector<int> commitList;
 		std::vector<int> tooOldList;
@@ -361,8 +367,6 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 		}
 		conflictBatch.detectConflicts(req.version, newOldestVersion, commitList, &tooOldList);
 
-		reply.debugID = req.debugID;
-		reply.committed.resize(reply.arena, req.transactions.size());
 		for (int c = 0; c < commitList.size(); c++)
 			reply.committed[commitList[c]] = ConflictBatch::TransactionCommitted;
 
@@ -371,20 +375,22 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 			reply.committed[tooOldList[c]] = ConflictBatch::TransactionTooOld;
 		}
 
-		self->transactionsAccepted += commitList.size();
-		self->transactionsTooOld += tooOldList.size();
-		self->transactionsConflicted += req.transactions.size() - commitList.size() - tooOldList.size();
-
 		ASSERT(req.prevVersion >= 0 ||
 		       req.txnStateTransactions.size() == 0); // The master's request should not have any state transactions
 
+		// batch and apply state transactions
+		auto committedCount = commitList.size();
 		auto& stateTransactionsPair = self->recentStateTransactionsInfo.getStateTransactionsRef(req.version);
 		auto& stateTransactions = stateTransactionsPair.second;
 		int64_t stateMutations = 0;
 		int64_t stateBytes = 0;
+		int64_t stateNormalMutationBytes = 0;
+		int64_t stateNormalMutations = 0;
 		std::unique_ptr<LogPushData> toCommit(nullptr); // For accumulating private mutations
 		std::unique_ptr<ResolverData> resolverData(nullptr);
 		bool isLocked = false;
+		// We don't want to cache more state transactions, so we will reject state transactions in this batch
+		bool rejectStateTransaction = self->totalStateBytes.get() > SERVER_KNOBS->RESOLVER_STATE_MEMORY_LIMIT;
 		if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS) {
 			auto lockedKey = self->txnStateStore->readValue(databaseLockedKey).get();
 			isLocked = lockedKey.present() && lockedKey.get().size();
@@ -399,40 +405,73 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 			                                    &self->storageCache,
 			                                    &self->tssMapping));
 		}
+
 		for (int t : req.txnStateTransactions) {
+			bool committed = reply.committed[t] == ConflictBatch::TransactionCommitted;
+
+			// reject only make a difference when normalKeyMutations isn't empty
+			if (rejectStateTransaction && committed && !req.transactions[t].normalKeyMutations.empty()) {
+				CODE_PROBE(true, "Reject State Mutation Transaction");
+				reply.committed[t] = ConflictBatch::TransactionConflict;
+				committed = false;
+				committedCount--;
+			}
+
 			stateMutations += req.transactions[t].mutations.size();
 			stateBytes += req.transactions[t].mutations.expectedSize();
+			// TODO: can we pass empty mutations & tenantIds back when the committed==false?
 			stateTransactions.push_back_deep(
 			    stateTransactions.arena(),
-			    StateTransactionRef(reply.committed[t] == ConflictBatch::TransactionCommitted,
+			    StateTransactionRef(committed,
 			                        req.transactions[t].mutations,
 			                        req.transactions[t].tenantIds,
-			                        req.transactions[t].normalKeyMutations));
+			                        committed ? req.transactions[t].normalKeyMutations : VectorRef<MutationRef>()));
 
+			if (committed) {
+				stateNormalMutations += req.transactions[t].normalKeyMutations.size();
+				stateNormalMutationBytes += req.transactions[t].normalKeyMutations.expectedSize();
+
+				// Generate private mutations for metadata mutations
+				// The condition here must match CommitBatch::applyMetadataToCommittedTransactions()
+				if (!self->forceRecovery && SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS &&
+				    (!isLocked || req.transactions[t].lock_aware)) {
+					SpanContext spanContext = req.transactions[t].spanContext.present()
+					                              ? req.transactions[t].spanContext.get()
+					                              : SpanContext();
+
+					applyMetadataMutations(spanContext,
+					                       *resolverData,
+					                       req.transactions[t].mutations,
+					                       self->encryptMode.isEncryptionEnabled() ? &cipherKeys : nullptr,
+					                       self->encryptMode);
+				}
+			}
 			// for (const auto& m : req.transactions[t].mutations)
 			//	DEBUG_MUTATION("Resolver", req.version, m, self->dbgid);
-
-			// Generate private mutations for metadata mutations
-			// The condition here must match CommitBatch::applyMetadataToCommittedTransactions()
-			if (reply.committed[t] == ConflictBatch::TransactionCommitted && !self->forceRecovery &&
-			    SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS && (!isLocked || req.transactions[t].lock_aware)) {
-				SpanContext spanContext =
-				    req.transactions[t].spanContext.present() ? req.transactions[t].spanContext.get() : SpanContext();
-
-				applyMetadataMutations(spanContext,
-				                       *resolverData,
-				                       req.transactions[t].mutations,
-				                       self->encryptMode.isEncryptionEnabled() ? &cipherKeys : nullptr,
-				                       self->encryptMode);
-			}
 			CODE_PROBE(self->forceRecovery, "Resolver detects forced recovery");
 		}
 
+		// update resolver counters
+		self->transactionsAccepted += committedCount;
+		self->transactionsTooOld += tooOldList.size();
+		self->transactionsConflicted += req.transactions.size() - committedCount - tooOldList.size();
 		self->resolvedStateTransactions += req.txnStateTransactions.size();
 		self->resolvedStateMutations += stateMutations;
 		self->resolvedStateBytes += stateBytes;
+		self->resolvedStateNormalMutationBytes += stateNormalMutationBytes;
+		self->resolvedStateNormalMutations += stateNormalMutations;
 
-		self->recentStateTransactionsInfo.addVersionBytes(req.version, stateBytes);
+		self->recentStateTransactionsInfo.addVersionBytes(req.version, stateBytes + stateNormalMutationBytes);
+
+		if (stateNormalMutationBytes > FLOW_KNOBS->PACKET_WARNING) {
+			TraceEvent(SevWarn, "LargeNormalMutationBytes")
+			    .suppressFor(10.0)
+			    .detail("StateRefVecBytes", stateTransactions.expectedSize())
+			    .detail("Count", stateTransactions.size())
+			    .detail("NormalKeyBytes", stateNormalMutationBytes)
+			    .detail("NormalKeyCount", stateNormalMutations)
+			    .detail("Version", req.version);
+		}
 
 		ASSERT(req.version >= firstUnseenVersion);
 		ASSERT(firstUnseenVersion >= self->debugMinRecentStateVersion);
@@ -480,6 +519,7 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 		CODE_PROBE(oldestProxyVersion != req.version,
 		           "The proxy that sent this request does not have the oldest current version");
 
+		// clear cache of old state transactions
 		bool anyPopped = false;
 		if (firstUnseenVersion <= oldestProxyVersion && self->proxyInfoMap.size() == self->commitProxyCount + 1) {
 			CODE_PROBE(true, "Deleting old state transactions");
@@ -512,8 +552,9 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 		}
 		self->version.set(req.version);
 		bool breachedLimit = self->totalStateBytes.get() <= SERVER_KNOBS->RESOLVER_STATE_MEMORY_LIMIT &&
-		                     self->totalStateBytes.get() + stateBytes > SERVER_KNOBS->RESOLVER_STATE_MEMORY_LIMIT;
-		self->totalStateBytes.setUnconditional(self->totalStateBytes.get() + stateBytes);
+		                     self->totalStateBytes.get() + stateBytes + stateNormalMutationBytes >
+		                         SERVER_KNOBS->RESOLVER_STATE_MEMORY_LIMIT;
+		self->totalStateBytes.setUnconditional(self->totalStateBytes.get() + stateBytes + stateNormalMutationBytes);
 		if (anyPopped || breachedLimit) {
 			self->checkNeededVersion.trigger();
 		}
