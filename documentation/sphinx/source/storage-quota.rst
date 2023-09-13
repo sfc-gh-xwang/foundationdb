@@ -57,6 +57,11 @@ The following knobs control the interval at which various monitors on the data d
 * ``TENANT_CACHE_STORAGE_QUOTA_REFRESH_INTERVAL``: How often the storage quota allocated to each tenant is refreshed on the data distributor, and
 * ``CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL``: How often the commit proxies send requests to the data distributor to fetch the list of tenants over storage quota
 
+In addition to ``TENANT_CACHE_STORAGE_USAGE_REFRESH_INTERVAL``, which defines a set interval for polling storage usage, the following two knobs can be used to control variable polling frequency for storage usage. This can be used to reduce the overheads by less frequently polling the tenant groups that are significantly under their quota:
+
+* ``TC_STORAGE_USAGE_VARIABLE_POLLING_LAG_BYTES``: If the last checked storage usage for a tenant group is less than quota - this knob, it is okay to skip polling its current usage until the next refresh.
+* ``TC_STORAGE_USAGE_VARIABLE_POLLING_LAG_SECONDS``: If the storage usage for a tenant group was last checked less than this time ago, it is okay to skip polling its current usage until the next refresh.
+
 Testing
 =======
 The ``StorageQuotaTest.toml`` test provides a simple end-to-end test for this feature. Quotas are set using the internal storage quota API in the ``StorageQuota`` workload. This is run after the ``CreateTenant`` workload, which creates the tenants.
