@@ -781,7 +781,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( STORAGE_DURABILITY_LAG_HARD_MAX,                    2000e6 ); BUGGIFY_KNOB(STORAGE_DURABILITY_LAG_HARD_MAX, smallStorageTarget, 100e6);
 	init( STORAGE_DURABILITY_LAG_SOFT_MAX,                     250e6 ); BUGGIFY_KNOB(STORAGE_DURABILITY_LAG_SOFT_MAX, smallStorageTarget, 10e6);
 	init( STORAGE_INCLUDE_FEED_STORAGE_QUEUE,                   true ); BUGGIFY_KNOB(STORAGE_INCLUDE_FEED_STORAGE_QUEUE, randomize && BUGGIFY, false);
-	init( STORAGE_QUEUE_USE_ALLOCATOR_SIZE,                     true ); BUGGIFY_KNOB(STORAGE_QUEUE_USE_ALLOCATOR_SIZE, randomize && BUGGIFY, false);
+	init( STORAGE_QUEUE_USE_ALLOCATOR_SIZE,                    false ); BUGGIFY_KNOB(STORAGE_QUEUE_USE_ALLOCATOR_SIZE, randomize && BUGGIFY, true);
 	init( STORAGE_SHARD_CONSISTENCY_CHECK_INTERVAL,              0.0 ); if ( isSimulated ) STORAGE_SHARD_CONSISTENCY_CHECK_INTERVAL = 5.0;
 
 	//FIXME: Low priority reads are disabled by assigning very high knob values, reduce knobs for 7.0
