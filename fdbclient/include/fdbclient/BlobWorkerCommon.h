@@ -23,6 +23,7 @@
 
 #include "flow/genericactors.actor.h"
 #include "fdbrpc/Stats.h"
+#include "flow/RecentActiveTracker.h"
 
 struct BlobWorkerStats {
 	CounterCollection cc;
@@ -83,6 +84,7 @@ struct BlobWorkerStats {
 	ActiveCounter<int> snapshotFilesWriting;
 	ActiveCounter<int> granulesOnOldFeed;
 
+	RecentActive::Tracker recentActiveGranuleFeedsTracker;
 	Future<Void> logger;
 
 	// Current stats maintained for a given blob worker process
@@ -183,6 +185,9 @@ struct BlobWorkerStats {
 		specialCounter(cc, "DeltaFilesWriting", [this]() { return this->deltaFilesWriting.getValue(); });
 		specialCounter(cc, "SnapshotFilesWriting", [this]() { return this->snapshotFilesWriting.getValue(); });
 		specialCounter(cc, "GranulesOnOldFeed", [this]() { return this->granulesOnOldFeed.getValue(); });
+		specialCounter(cc, "RecentActiveGranuleFeeds", [this]() {
+			return this->recentActiveGranuleFeedsTracker.getCountAndReset();
+		});
 
 		logger = cc.traceCounters("BlobWorkerMetrics", id, interval, "BlobWorkerMetrics");
 	}

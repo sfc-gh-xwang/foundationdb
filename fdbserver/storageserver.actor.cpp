@@ -106,6 +106,7 @@
 #include "flow/Histogram.h"
 #include "flow/IRandom.h"
 #include "flow/IndexedSet.h"
+#include "flow/RecentActiveTracker.h"
 #include "flow/SystemMonitor.h"
 #include "flow/TDMetric.actor.h"
 #include "flow/Trace.h"
@@ -1295,8 +1296,10 @@ public:
 	struct Counters : CommonStorageCounters {
 
 		Counter allQueries, systemKeyQueries, getKeyQueries, getValueQueries, getRangeQueries, getRangeSystemKeyQueries,
-		    getRangeStreamQueries, lowPriorityQueries, rowsQueried, watchQueries, emptyQueries, feedRowsQueried,
-		    feedBytesQueried, feedStreamQueries, rejectedFeedStreamQueries, feedVersionQueries;
+		    getRangeStreamQueries, lowPriorityQueries, rowsQueried, watchQueries, emptyQueries;
+
+		Counter feedMessagesSent, feedRowsQueried, feedBytesQueried, feedFetchBytesQueried, feedStreamQueries,
+		    rejectedFeedStreamQueries, feedVersionQueries;
 
 		// counters related to getMappedRange queries
 		Counter getMappedRangeBytesQueried, finishedGetMappedRangeSecondaryQueries, getMappedRangeQueries,
@@ -1380,6 +1383,8 @@ public:
 		LatencySample mappedRangeRemoteSample; // Samples getMappedRange remote subquery latency
 		LatencySample mappedRangeLocalSample; // Samples getMappedRange local subquery latency
 
+		RecentActive::Tracker recentActiveFeedQueries;
+
 		explicit Counters(StorageServer* self)
 		  : CommonStorageCounters("StorageServer", self->thisServerID.toString(), &self->metrics),
 		    allQueries("QueryQueue", cc),
@@ -1393,8 +1398,10 @@ public:
 		    rowsQueried("RowsQueried", cc),
 		    watchQueries("WatchQueries", cc),
 		    emptyQueries("EmptyQueries", cc),
+		    feedMessagesSent("FeedMessagesSent", cc),
 		    feedRowsQueried("FeedRowsQueried", cc),
 		    feedBytesQueried("FeedBytesQueried", cc),
+		    feedFetchBytesQueried("FeedFetchBytesQueried", cc),
 		    feedStreamQueries("FeedStreamQueries", cc),
 		    rejectedFeedStreamQueries("RejectedFeedStreamQueries", cc),
 		    feedVersionQueries("FeedVersionQueries", cc),
@@ -1554,6 +1561,9 @@ public:
 				self->counters.bytesDurable =
 				    self->counters.bytesDurableNoPTree.getValue() + self->data().ptreeSize.released;
 				return self->data().ptreeSize.released;
+			});
+			specialCounter(cc, "RecentActiveFeedQueries", [self]() {
+				return self->counters.recentActiveFeedQueries.getCountAndReset();
 			});
 		}
 	} counters;
@@ -3824,6 +3834,7 @@ ACTOR Future<Void> changeFeedStreamQ(StorageServer* data, ChangeFeedStreamReques
 	state Future<Void> streamEndReached;
 	state bool doFilterMutations;
 	state int commonFeedPrefixLength;
+	state RecentActive::Handle recentActiveHandle;
 
 	try {
 		++data->counters.feedStreamQueries;
@@ -3892,6 +3903,8 @@ ACTOR Future<Void> changeFeedStreamQ(StorageServer* data, ChangeFeedStreamReques
 		ASSERT(emptyInitialReply.atLatestVersion == false);
 		ASSERT(emptyInitialReply.minStreamVersion == invalidVersion);
 		req.reply.send(emptyInitialReply);
+		recentActiveHandle.count(&data->counters.recentActiveFeedQueries);
+		++data->counters.feedMessagesSent;
 
 		if (DEBUG_CF_TRACE) {
 			TraceEvent(SevDebug, "TraceChangeFeedStreamSentInitialEmpty", data->thisServerID)
@@ -3978,9 +3991,17 @@ ACTOR Future<Void> changeFeedStreamQ(StorageServer* data, ChangeFeedStreamReques
 			feedReply.minStreamVersion = minVersion;
 
 			data->counters.feedRowsQueried += feedReply.mutations.size();
-			data->counters.feedBytesQueried += feedReply.mutations.expectedSize();
+			int bytesQueried = feedReply.mutations.expectedSize();
+			data->counters.feedBytesQueried += bytesQueried;
+			if (req.canReadPopped) {
+				data->counters.feedFetchBytesQueried += bytesQueried;
+			}
+
+			recentActiveHandle.count(&data->counters.recentActiveFeedQueries);
+			++data->counters.feedMessagesSent;
 
 			req.reply.send(feedReply);
+
 			if (req.begin == req.end) {
 				data->activeFeedQueries--;
 				req.reply.sendError(end_of_stream());

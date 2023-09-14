@@ -2220,6 +2220,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 	state bool snapshotEligible; // just wrote a delta file or just took granule over from another worker
 	state bool justDidRollback = false;
 	state ActiveCounter<int>::Releaser holdingOnOldFeedCounter;
+	state RecentActive::Handle feedRecentlyActive;
 
 	try {
 		// set resume snapshot so it's not valid until we pause to ask the blob manager for a re-snapshot
@@ -2475,6 +2476,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 						} else {
 							ASSERT(mutations.front().version >= startState.changeFeedStartVersion);
 						}
+						feedRecentlyActive.count(&bwData->stats.recentActiveGranuleFeedsTracker);
 
 						if (mutations.front().version <= metadata->bufferedDeltaVersion) {
 							fmt::print("ERROR: Mutations went backwards for granule [{0} - {1}). "
