@@ -53,6 +53,7 @@ struct GrvProxyStats {
 	Counter txnTagThrottlerIn, txnTagThrottlerOut;
 	Counter txnThrottled;
 	Counter updatesFromRatekeeper, leaseTimeouts;
+	Counter throughputReportsReceived;
 	int systemGRVQueueSize, defaultGRVQueueSize, batchGRVQueueSize;
 	int tagThrottlerGRVQueueSize;
 	double transactionRateAllowed, batchTransactionRateAllowed;
@@ -147,6 +148,7 @@ struct GrvProxyStats {
 	    txnThrottled("TxnThrottled", cc),
 	    updatesFromRatekeeper("UpdatesFromRatekeeper", cc),
 	    leaseTimeouts("LeaseTimeouts", cc),
+	    throughputReportsReceived("ThroughputReportsReceived", cc),
 	    systemGRVQueueSize(0),
 	    defaultGRVQueueSize(0),
 	    batchGRVQueueSize(0),
@@ -417,12 +419,13 @@ ACTOR Future<Void> globalConfigRequestServer(GrvProxyData* grvProxyData, GrvProx
 	}
 }
 
-ACTOR Future<Void> handleClientThroughputReports(
-    FutureStream<ReportThroughputRequest> stream,
-    ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
-    boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds) {
+ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRequest> stream,
+                                                 ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
+                                                 boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds,
+                                                 Counter* throughputReportsReceived) {
 	loop {
 		ReportThroughputRequest req = waitNext(stream);
+		++(*throughputReportsReceived);
 		for (auto const& [throttlingId, clientThroughput] : req.throughput) {
 			(*throttlingIdToThroughput)[throttlingId] += clientThroughput;
 		}
@@ -933,8 +936,10 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	addActor.send(monitorDDMetricsChanges(&midShardSize, db));
 
 	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
-		addActor.send(handleClientThroughputReports(
-		    proxy.reportThroughput.getFuture(), &throttlingIdThroughput, &busyThrottlingIds));
+		addActor.send(handleClientThroughputReports(proxy.reportThroughput.getFuture(),
+		                                            &throttlingIdThroughput,
+		                                            &busyThrottlingIds,
+		                                            &grvProxyData->stats.throughputReportsReceived));
 	}
 	addActor.send(getRate(proxy.id(),
 	                      db,

@@ -1569,6 +1569,9 @@ void DatabaseContext::initializeSpecialCounters() {
 	specialCounter(ccFeed, "ActiveFeedDiskStreams", [this] { return activeFeedDiskStreams.getValue(); });
 	specialCounter(ccFeed, "ChangeFeedCaches", [this] { return changeFeedCaches.size(); });
 	specialCounter(ccFeed, "UncommittedFeedBytes", [this] { return uncommittedCFBytes; });
+	specialCounter(cc, "ThroughputReportsSent", [this] { return throughputTracker.getThroughputReportsSent(); });
+	specialCounter(cc, "ThroughputReportErrors", [this] { return throughputTracker.getThroughputReportErrors(); });
+	specialCounter(cc, "ThroughputReportTimeouts", [this] { return throughputTracker.getThroughputReportTimeouts(); });
 }
 
 DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
