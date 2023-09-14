@@ -48,6 +48,8 @@ struct ReportThroughputRequest {
 	ReportThroughputRequest() = default;
 	explicit ReportThroughputRequest(ThrottlingIdMap<uint64_t>&& throughput) : throughput(std::move(throughput)) {}
 
+	bool verify() const { return true; }
+
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, throughput, reply);
@@ -73,7 +75,7 @@ struct GrvProxyInterface {
 	RequestStream<ReplyPromise<Void>> waitFailure; // reports heartbeat to master.
 	RequestStream<struct GetHealthMetricsRequest> getHealthMetrics;
 	PublicRequestStream<struct GlobalConfigRefreshRequest> refreshGlobalConfig;
-	RequestStream<struct ReportThroughputRequest> reportThroughput;
+	PublicRequestStream<struct ReportThroughputRequest> reportThroughput;
 
 	UID id() const { return getConsistentReadVersion.getEndpoint().token; }
 	std::string toString() const { return id().shortString(); }
@@ -92,7 +94,7 @@ struct GrvProxyInterface {
 			    getConsistentReadVersion.getEndpoint().getAdjustedEndpoint(2));
 			refreshGlobalConfig = PublicRequestStream<struct GlobalConfigRefreshRequest>(
 			    getConsistentReadVersion.getEndpoint().getAdjustedEndpoint(3));
-			reportThroughput = RequestStream<struct ReportThroughputRequest>(
+			reportThroughput = PublicRequestStream<struct ReportThroughputRequest>(
 			    getConsistentReadVersion.getEndpoint().getAdjustedEndpoint(4));
 		}
 	}
