@@ -144,12 +144,12 @@ int64_t getStorageQueueSize(const TraceEventFields& md) {
 	int64_t inputBytes, durableBytes;
 
 	if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+		sscanf(md.getValue("BytesInputNew").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
+		sscanf(
+		    md.getValue("BytesDurableNew").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
+	} else {
 		sscanf(md.getValue("BytesInput").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
 		sscanf(md.getValue("BytesDurable").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
-	} else {
-		sscanf(md.getValue("BytesInputOld").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
-		sscanf(
-		    md.getValue("BytesDurableOld").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
 	}
 
 	return inputBytes - durableBytes;
