@@ -68,12 +68,12 @@ public:
 	void addRequest(Optional<TransactionTag> const& tag, Optional<TenantGroupName> const& tenantGroup, int64_t bytes) {
 		auto const cost = getReadOperationCost(bytes);
 		intervalTotalCost += cost;
-		if (tenantGroup.present()) {
-			CODE_PROBE(true, "Tracking tenant group in ThrottlingCounter");
-			intervalCosts[ThrottlingIdRef::fromTenantGroup(tenantGroup.get())] += cost;
-		} else if (tag.present()) {
+		if (tag.present()) {
 			CODE_PROBE(true, "Tracking transaction tag in ThrottlingCounter");
 			intervalCosts[ThrottlingIdRef::fromTag(tag.get())] += cost / CLIENT_KNOBS->READ_TAG_SAMPLE_RATE;
+		} else if (SERVER_KNOBS->TRACK_TENANT_GROUP_THROUGHPUT && tenantGroup.present()) {
+			CODE_PROBE(true, "Tracking tenant group in ThrottlingCounter");
+			intervalCosts[ThrottlingIdRef::fromTenantGroup(tenantGroup.get())] += cost;
 		}
 	}
 

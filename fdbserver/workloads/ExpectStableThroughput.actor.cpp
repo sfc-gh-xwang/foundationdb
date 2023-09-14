@@ -109,7 +109,8 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		    .detail("WarmupTime", warmupTime)
 		    .detail("OpsPerTranaction", opsPerTransaction)
 		    .detail("ProvideExpectedCost", provideExpectedCost)
-		    .detail("OpType", getOpTypeStr());
+		    .detail("OpType", getOpTypeStr())
+		    .detail("UseGrvCache", useGrvCache);
 	}
 
 	ACTOR static Future<Void> loggerActor(ExpectStableThroughputWorkload* self) {
