@@ -153,7 +153,7 @@ struct RenameTenantImpl {
 
 		// Updated indexes to include the new tenant
 		metadata::management::clusterTenantIndex().insert(
-		    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->newName, TenantInfo::INVALID_TENANT));
+		    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->newName, self->tenantId));
 
 		return Void();
 	}
@@ -217,8 +217,11 @@ struct RenameTenantImpl {
 			// Update the tenant in the cluster -> tenant index
 			metadata::management::clusterTenantIndex().erase(
 			    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->oldName, self->tenantId));
+
+			// This erase is used to cleanup metadata from any renames started at older versions
 			metadata::management::clusterTenantIndex().erase(
 			    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->newName, TenantInfo::INVALID_TENANT));
+
 			metadata::management::clusterTenantIndex().insert(
 			    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->newName, self->tenantId));
 		}
