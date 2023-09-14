@@ -3,6 +3,7 @@
  */
 
 #include "fdbclient/Knobs.h"
+#include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/ThroughputTracker.h"
 #include "fdbserver/workloads/ThroughputQuotaUtil.h"
 #include "fdbserver/workloads/workloads.actor.h"
@@ -244,6 +245,47 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 		return attemptedThroughputPagesRate / (transactionCostInPages * numActors);
 	}
 
+	ACTOR static Future<bool> areTenantsEnabled(Database cx) {
+		state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
+		return config.tenantMode != TenantMode::DISABLED;
+	}
+
+	ACTOR static Future<bool> check(ExpectStableThroughputWorkload* self, Database cx) {
+		bool tenantsEnabled = wait(areTenantsEnabled(cx));
+		if (self->clientId != 0) {
+			return true;
+		}
+
+		auto const expectedTotalCost =
+		    self->testDuration * self->expectedThroughputPagesRate * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
+
+		bool passed = true;
+		for (auto const& [tag, prioritizedMetrics] : self->metricsMap) {
+			auto const totalCost = prioritizedMetrics.getTotalCost();
+
+			bool tagPassed = (totalCost <= static_cast<double>(expectedTotalCost) * (1.0 + self->errorTolerance));
+
+			// Global ratekeeper throttling is known to restrict throughput independent of quota-based throttling
+			// if certain knobs are buggified and the workload performs writes. We work around this by only enforcing a
+			// throughput lower bound if the workload is only performing reads.
+			//
+			// Furthermore, with tenants enabled, extra GRV latency is known to sometimes slow down the workload
+			// to the point where throughput is insufficient. A throughput lower bound is also not enforced in this
+			// case.
+			if (self->opType == OpType::READ && !tenantsEnabled) {
+				tagPassed =
+				    tagPassed && (totalCost >= static_cast<double>(expectedTotalCost) * (1.0 - self->errorTolerance));
+			}
+
+			auto const severity = tagPassed ? SevInfo : SevError;
+			TraceEvent te(severity, "CheckingStableThroughput");
+			te.detail("Tag", tag).detail("ExpectedTotalCost", expectedTotalCost).detail("TotalCost", totalCost);
+			self->traceParameters(te);
+			passed = passed && tagPassed;
+		}
+		return passed;
+	}
+
 public:
 	static constexpr auto NAME = "ExpectStableThroughput";
 	explicit ExpectStableThroughputWorkload(WorkloadContext const& wcx) : TestWorkload(wcx) {
@@ -303,41 +345,15 @@ public:
 		return loggerActor(this) || success(timeout(waitForAll(clients), warmupTime + testDuration));
 	}
 
-	Future<bool> check(Database const&) override {
+	Future<bool> check(Database const& cx) override {
 		// When running with sanitizers, we purposefully shorten the duration to avoid timeouts.
 		// Therefore, we cannot make strong assumptions about the achieved throughput, so
 		// we skip the check phase
 #if defined(USE_SANITIZER) || defined(VALGRIND)
 		return true;
 #else
-		if (clientId != 0) {
-			return true;
-		}
-
-		auto const expectedTotalCost =
-		    testDuration * expectedThroughputPagesRate * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
-
-		bool passed = true;
-		for (auto const& [tag, prioritizedMetrics] : metricsMap) {
-			auto const totalCost = prioritizedMetrics.getTotalCost();
-
-			bool tagPassed = (totalCost <= static_cast<double>(expectedTotalCost) * (1.0 + errorTolerance));
-
-			// Global ratekeeper throttling is known to restrict throughput independent of quota-based throttling
-			// if certain knobs are buggified and the workload performs writes. We work around this by only enforcing a
-			// throughput lower bound if the workload is only performing reads.
-			if (opType == OpType::READ) {
-				tagPassed = tagPassed && (totalCost >= static_cast<double>(expectedTotalCost) * (1.0 - errorTolerance));
-			}
-
-			auto const severity = tagPassed ? SevInfo : SevError;
-			TraceEvent te(severity, "CheckingStableThroughput");
-			te.detail("Tag", tag).detail("ExpectedTotalCost", expectedTotalCost).detail("TotalCost", totalCost);
-			traceParameters(te);
-			passed = passed && tagPassed;
-		}
-		return passed;
-#endif // #if defined(USE_SANITIZER) || defined(VALGRIND)
+		return check(this, cx);
+#endif
 	}
 
 	void getMetrics(std::vector<PerfMetric>& m) override {
