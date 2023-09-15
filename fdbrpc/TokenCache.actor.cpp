@@ -293,8 +293,7 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	NetworkAddress peer = FlowTransport::transport().currentDeliveryPeerAddress();
 	UID connDebugId = FlowTransport::transport().currentDeliveryPeerDebugID();
 	auto cachedEntry = cache.get(token);
-	double const currentTime = g_network->timer();
-	auto arena = Arena();
+	double currentTime = g_network->timer();
 
 	if (!cachedEntry.present()) {
 		if (validateAndAdd(currentTime, token, peer, connDebugId)) {
