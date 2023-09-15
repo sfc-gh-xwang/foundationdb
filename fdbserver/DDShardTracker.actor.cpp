@@ -32,6 +32,8 @@
 #include "flow/FastRef.h"
 #include "flow/Trace.h"
 #include "fdbserver/DDShardTracker.h"
+#include "flow/genericactors.actor.h"
+#include "flow/network.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 // The used bandwidth of a shard. The higher the value is, the busier the shard is.
@@ -1267,15 +1269,17 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 			state int64_t maxReadLoad = -1;
 			state int i;
 			for (i = 0; i < SERVER_KNOBS->DD_SHARD_COMPARE_LIMIT && i < req.keys.size(); ++i) {
-				auto range = req.keys[i];
-				StorageMetrics metrics;
+				state KeyRange range = req.keys[i];
+				// state StorageMetrics metrics;
+				state std::vector<Future<StorageMetrics>> actors;
 				for (auto t : self->shards->intersectingRanges(range)) {
 					auto& stats = t.value().stats;
 					if (!stats->get().present()) {
 						onChange = stats->onChange();
 						break;
 					}
-					metrics += t.value().stats->get().get().metrics;
+					// metrics += t.value().stats->get().get().metrics;
+					actors.push_back(self->db->getStorageMetrics(t.range(), CLIENT_KNOBS->STORAGE_METRICS_SHARD_LIMIT));
 				}
 
 				// skip if current stats is invalid
@@ -1283,12 +1287,20 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 					break;
 				}
 
-				auto readLoad = metrics.readLoadKSecond();
+				wait(waitForAll(actors));
+				StorageMetrics latestMetrics;
+				for (int i = 0; i < actors.size(); i++) {
+					latestMetrics += actors[i].get();
+				}
+
+				// auto readLoad = metrics.readLoadKSecond();
+				auto readLoad = latestMetrics.readLoadKSecond();
 				if (readLoad > 0) {
 					minReadLoad = std::min(readLoad, minReadLoad);
 					maxReadLoad = std::max(readLoad, maxReadLoad);
 					if (req.minReadLoadPerKSecond <= readLoad && readLoad <= req.maxReadLoadPerKSecond) {
-						returnMetrics.emplace_back(range, metrics);
+						// returnMetrics.emplace_back(range, metrics);
+						returnMetrics.emplace_back(range, latestMetrics);
 					}
 				}
 
@@ -1325,7 +1337,9 @@ ACTOR Future<Void> fetchTopKShardMetrics(DataDistributionTracker* self, GetTopKM
 		// simulate time_out
 		when(wait(g_network->isSimulated() && BUGGIFY_WITH_PROB(0.01) ? Never()
 		                                                              : fetchTopKShardMetrics_impl(self, req))) {}
-		when(wait(delay(SERVER_KNOBS->DD_SHARD_METRICS_TIMEOUT))) {
+		when(wait(
+		    delay(g_network->isSimulated() && BUGGIFY_WITH_PROB(0.1) ? 0.1 : SERVER_KNOBS->DD_SHARD_METRICS_TIMEOUT,
+		          TaskPriority::DataDistribution))) {
 			CODE_PROBE(true, "TopK DD_SHARD_METRICS_TIMEOUT");
 			req.reply.send(GetTopKMetricsReply());
 		}
@@ -1336,19 +1350,28 @@ ACTOR Future<Void> fetchTopKShardMetrics(DataDistributionTracker* self, GetTopKM
 ACTOR Future<Void> fetchShardMetrics_impl(DataDistributionTracker* self, GetMetricsRequest req) {
 	try {
 		loop {
-			Future<Void> onChange;
-			StorageMetrics returnMetrics;
+			state Future<Void> onChange;
+			// state StorageMetrics returnMetrics;
+			state std::vector<Future<StorageMetrics>> actors;
 			for (auto t : self->shards->intersectingRanges(req.keys)) {
 				auto& stats = t.value().stats;
 				if (!stats->get().present()) {
 					onChange = stats->onChange();
 					break;
 				}
-				returnMetrics += t.value().stats->get().get().metrics;
+				// returnMetrics += t.value().stats->get().get().metrics;
+				actors.push_back(self->db->getStorageMetrics(t.range(), CLIENT_KNOBS->STORAGE_METRICS_SHARD_LIMIT));
 			}
 
 			if (!onChange.isValid()) {
-				req.reply.send(returnMetrics);
+
+				wait(waitForAll(actors));
+				StorageMetrics latestMetrics;
+				for (int i = 0; i < actors.size(); i++) {
+					latestMetrics += actors[i].get();
+				}
+				// req.reply.send(returnMetrics);
+				req.reply.send(latestMetrics);
 				return Void();
 			}
 
@@ -1364,7 +1387,9 @@ ACTOR Future<Void> fetchShardMetrics_impl(DataDistributionTracker* self, GetMetr
 ACTOR Future<Void> fetchShardMetrics(DataDistributionTracker* self, GetMetricsRequest req) {
 	choose {
 		when(wait(fetchShardMetrics_impl(self, req))) {}
-		when(wait(delay(SERVER_KNOBS->DD_SHARD_METRICS_TIMEOUT, TaskPriority::DataDistribution))) {
+		when(wait(
+		    delay(g_network->isSimulated() && BUGGIFY_WITH_PROB(0.1) ? 0.1 : SERVER_KNOBS->DD_SHARD_METRICS_TIMEOUT,
+		          TaskPriority::DataDistribution))) {
 			CODE_PROBE(true, "DD_SHARD_METRICS_TIMEOUT");
 			StorageMetrics largeMetrics;
 			largeMetrics.bytes = getMaxShardSize(self->dbSizeEstimate->get());

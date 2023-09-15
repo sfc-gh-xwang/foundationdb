@@ -81,6 +81,7 @@ public:
 		self->getShardMetrics.send(req);
 		StorageMetrics metrics = wait(req.reply.getFuture());
 		DisabledTraceEvent("MockDDTracker_ShardMetrics")
+		    .detail("AddToTotal", addToTotal)
 		    .detail("DelayAfter", delaySec)
 		    .detail("Keys", keys)
 		    .detail("StorageMetrics", metrics.toString());
@@ -171,6 +172,7 @@ public:
 			    .detail("Reason", "Wrong Storage Metrics")
 			    .detail("Threshold", thresholdMetrics.toString())
 			    .detail("Actual", totalMetrics.toString());
+			ASSERT(false);
 		}
 
 		actors.clear(true);

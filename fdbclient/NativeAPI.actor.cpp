@@ -8114,6 +8114,7 @@ ACTOR Future<StorageMetrics> waitStorageMetricsMultipleLocations(TenantInfo tena
 
 ACTOR Future<StorageMetrics> extractMetrics(Future<std::pair<Optional<StorageMetrics>, int>> fMetrics) {
 	std::pair<Optional<StorageMetrics>, int> x = wait(fMetrics);
+	// x.first.present() is always true right now
 	return x.first.get();
 }
 
