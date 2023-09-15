@@ -350,6 +350,12 @@ class ClientConfigTest:
                 str(self.cluster.get_tls_config().client_require_tls),
             ]
 
+        if self.cluster.get_tls_config():
+            cmd_args += [
+                "--network-option-tls_verify_peers",
+                f"{str(self.cluster.get_tls_config().verify_peers)}",
+            ]
+
         if self.external_lib_path is not None:
             cmd_args += ["--external-client-library", self.external_lib_path]
 
@@ -754,6 +760,91 @@ class ClientConfigSeparateCluster(unittest.TestCase):
             test.transaction_timeout = 100
             test.expected_error = 1031  # timeout
             test.exec()
+        finally:
+            self.cluster.tear_down()
+
+    def test_tls_cluster_tls_client_verifypeers(self):
+        # Test connecting successfully to a TLS-enabled cluster with TLS-enabled
+        # client and verifying the subject common name
+        tls_config = TLSConfig(
+            verify_peers="Subject.CN>=FDB Testing Services,Issuer.CN>=FDB Testing Services,Root.CN>=FDB Testing Services"
+        )
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
+        self.cluster.setup()
+        try:
+            test = ClientConfigTest(self)
+            test.print_status = True
+            test.exec()
+            test.check_healthy_status(True)
+        finally:
+            self.cluster.tear_down()
+
+    def test_tls_cluster_tls_client_verifypeers_invalid_commonname(self):
+        # Test connecting unsuccessfully to a TLS-enabled cluster with TLS-enabled
+        # client and failing subject common name verification
+        tls_config = TLSConfig(
+            verify_peers="Subject.CN>=INVALID_SUBJECT,Issuer.CN>=INVALID_ISSUER,Root.CN>=INVALID_ROOT"
+        )
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
+        self.cluster.setup()
+        try:
+            test = ClientConfigTest(self)
+            test.transaction_timeout = 100
+            test.expected_error = 1031  # timeout
+            test.exec()
+        finally:
+            self.cluster.tear_down()
+
+    def test_tls_cluster_tls_client_verifypeers_disallow_expired_cert(self):
+        # Test connecting unsuccessfully to a TLS-enabled cluster with TLS-enabled
+        # client, disallowing an expired certificate
+        EXPIRED_CERTIFICATE = -1
+        tls_config = TLSConfig(
+            server_chain_len=EXPIRED_CERTIFICATE,
+            verify_peers="Check.Valid=1,Check.Unexpired=1",
+        )
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
+        self.cluster.setup()
+        try:
+            test = ClientConfigTest(self)
+            test.transaction_timeout = 100
+            test.expected_error = 1031  # timeout
+            test.exec()
+        finally:
+            self.cluster.tear_down()
+
+    def test_tls_cluster_tls_client_verifypeers_allow_expired_cert(self):
+        # Test connecting successfully to a TLS-enabled cluster with TLS-enabled
+        # client, allowing an expired certificate
+        EXPIRED_CERTIFICATE = -1
+        tls_config = TLSConfig(
+            server_chain_len=EXPIRED_CERTIFICATE,
+            verify_peers="Check.Valid=0,Check.Unexpired=0",
+        )
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
+        self.cluster.setup()
+        try:
+            test = ClientConfigTest(self)
+            test.print_status = True
+            test.exec()
+            test.check_healthy_status(True)
+        finally:
+            self.cluster.tear_down()
+
+    def test_tls_cluster_tls_client_verifypeers_allow_invalid_cert(self):
+        # Test connecting successfully to a TLS-enabled cluster with TLS-enabled
+        # client, allowing an expired certificate
+        EXPIRED_CERTIFICATE = -1
+        tls_config = TLSConfig(
+            server_chain_len=EXPIRED_CERTIFICATE, verify_peers="Check.Valid=0"
+        )
+        self.cluster = TestCluster(CURRENT_VERSION, tls_config=tls_config)
+        self.cluster.setup()
+        try:
+            test = ClientConfigTest(self)
+            test.print_status = True
+            test.exec()
+            test.check_healthy_status(True)
         finally:
             self.cluster.tear_down()
 
