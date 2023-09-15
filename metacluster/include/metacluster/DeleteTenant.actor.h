@@ -156,10 +156,11 @@ struct DeleteTenantImpl {
 			// If renaming, remove the metadata associated with the tenant destination
 			metadata::management::tenantMetadata().tenantNameIndex.erase(tr, tenantEntry.get().renameDestination.get());
 
-			metadata::management::clusterTenantIndex().erase(tr,
-			                                                 Tuple::makeTuple(tenantEntry.get().assignedCluster,
-			                                                                  tenantEntry.get().renameDestination.get(),
-			                                                                  TenantInfo::INVALID_TENANT));
+			metadata::management::clusterTenantIndex().erase(
+			    tr,
+			    Tuple::makeTuple(tenantEntry.get().assignedCluster, tenantEntry.get().renameDestination.get()),
+			    Tuple::makeTuple(tenantEntry.get().assignedCluster,
+			                     keyAfter(tenantEntry.get().renameDestination.get())));
 		}
 
 		// Remove the tenant from its tenant group
