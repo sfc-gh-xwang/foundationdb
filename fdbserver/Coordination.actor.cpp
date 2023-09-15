@@ -839,7 +839,6 @@ ACTOR Future<Void> coordinationServer(std::string dataFolder,
 			TraceEvent(SevWarnAlways, "CoordinatorDiskQueueInconsistentState")
 			    .detail("File0Missing", fs[0].isError())
 			    .detail("File1Missing", fs[1].isError());
-			;
 
 			// Remove the remaining disk queue file to allow the coordinator to
 			// create new files on next boot.
