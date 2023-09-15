@@ -1723,7 +1723,9 @@ struct MetaclusterManagementWorkload : TestWorkload {
 			} else if (operation == 11) {
 				wait(lockTenant(self));
 			} else if (operation == 12) {
-				wait(renameTenant(self));
+				if (CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+					wait(renameTenant(self));
+				}
 			} else if (operation == 13) {
 				wait(changeClusterVersion(self));
 			}
