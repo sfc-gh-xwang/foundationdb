@@ -1270,7 +1270,6 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 			state int i;
 			for (i = 0; i < SERVER_KNOBS->DD_SHARD_COMPARE_LIMIT && i < req.keys.size(); ++i) {
 				state KeyRange range = req.keys[i];
-				// state StorageMetrics metrics;
 				state std::vector<Future<StorageMetrics>> actors;
 				for (auto t : self->shards->intersectingRanges(range)) {
 					auto& stats = t.value().stats;
@@ -1278,7 +1277,6 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 						onChange = stats->onChange();
 						break;
 					}
-					// metrics += t.value().stats->get().get().metrics;
 					actors.push_back(self->db->getStorageMetrics(t.range(), CLIENT_KNOBS->STORAGE_METRICS_SHARD_LIMIT));
 				}
 
@@ -1293,13 +1291,11 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 					latestMetrics += actors[i].get();
 				}
 
-				// auto readLoad = metrics.readLoadKSecond();
 				auto readLoad = latestMetrics.readLoadKSecond();
 				if (readLoad > 0) {
 					minReadLoad = std::min(readLoad, minReadLoad);
 					maxReadLoad = std::max(readLoad, maxReadLoad);
 					if (req.minReadLoadPerKSecond <= readLoad && readLoad <= req.maxReadLoadPerKSecond) {
-						// returnMetrics.emplace_back(range, metrics);
 						returnMetrics.emplace_back(range, latestMetrics);
 					}
 				}
@@ -1351,7 +1347,6 @@ ACTOR Future<Void> fetchShardMetrics_impl(DataDistributionTracker* self, GetMetr
 	try {
 		loop {
 			state Future<Void> onChange;
-			// state StorageMetrics returnMetrics;
 			state std::vector<Future<StorageMetrics>> actors;
 			for (auto t : self->shards->intersectingRanges(req.keys)) {
 				auto& stats = t.value().stats;
@@ -1359,7 +1354,6 @@ ACTOR Future<Void> fetchShardMetrics_impl(DataDistributionTracker* self, GetMetr
 					onChange = stats->onChange();
 					break;
 				}
-				// returnMetrics += t.value().stats->get().get().metrics;
 				actors.push_back(self->db->getStorageMetrics(t.range(), CLIENT_KNOBS->STORAGE_METRICS_SHARD_LIMIT));
 			}
 
@@ -1370,7 +1364,6 @@ ACTOR Future<Void> fetchShardMetrics_impl(DataDistributionTracker* self, GetMetr
 				for (int i = 0; i < actors.size(); i++) {
 					latestMetrics += actors[i].get();
 				}
-				// req.reply.send(returnMetrics);
 				req.reply.send(latestMetrics);
 				return Void();
 			}
