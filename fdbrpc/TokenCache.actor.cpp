@@ -207,7 +207,7 @@ bool TokenCache::validate(TenantId tenantId, StringRef token) {
 	    .detail("CurrentTime", fmt::format("{:.6f}", currentTime))                                                     \
 	    .detail("TokenId", entry->tokenId)                                                                             \
 	    .detail("ExpirationTime", fmt::format("{:.6f}", entry->expirationTime))                                        \
-        .detail("AuthorizedTenants", fmt::format("{:#x}", fmt::join(entry->tenants, " ")))
+	    .detail("AuthorizedTenants", fmt::format("{:#x}", fmt::join(entry->tenants, " ")))
 
 bool TokenCacheImpl::validateAndAdd(double currentTime,
                                     StringRef token,
