@@ -294,10 +294,10 @@ public:
 	                                           Optional<UID> debugID,
 	                                           Optional<uint64_t> const& expectedCost) {
 		Optional<ThrottlingId> throttlingId;
-		if (tenantGroup.present()) {
-			throttlingId = ThrottlingIdRef::fromTenantGroup(tenantGroup.get());
-		} else if (tag.present()) {
+		if (tag.present()) {
 			throttlingId = ThrottlingIdRef::fromTag(tag.get());
+		} else if (tenantGroup.present()) {
+			throttlingId = ThrottlingIdRef::fromTenantGroup(tenantGroup.get());
 		}
 		Index index(flags, throttlingId);
 		auto it = batchers.find(index);

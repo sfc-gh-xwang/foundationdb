@@ -68,12 +68,12 @@ public:
 	void addRequest(Optional<TransactionTag> const& tag, Optional<TenantGroupName> const& tenantGroup, int64_t bytes) {
 		auto const cost = getReadOperationCost(bytes);
 		intervalTotalCost += cost;
-		if (tenantGroup.present()) {
-			CODE_PROBE(true, "Tracking tenant group in ThrottlingCounter");
-			intervalCosts[ThrottlingIdRef::fromTenantGroup(tenantGroup.get())] += cost;
-		} else if (tag.present()) {
+		if (tag.present()) {
 			CODE_PROBE(true, "Tracking transaction tag in ThrottlingCounter");
 			intervalCosts[ThrottlingIdRef::fromTag(tag.get())] += cost / CLIENT_KNOBS->READ_TAG_SAMPLE_RATE;
+		} else if (SERVER_KNOBS->TRACK_TENANT_GROUP_THROUGHPUT && tenantGroup.present()) {
+			CODE_PROBE(true, "Tracking tenant group in ThrottlingCounter");
+			intervalCosts[ThrottlingIdRef::fromTenantGroup(tenantGroup.get())] += cost;
 		}
 	}
 
@@ -135,9 +135,9 @@ std::vector<BusyThrottlingIdInfo> const& ThrottlingCounter::getBusiestReaders() 
 
 namespace {
 
-bool containsTenantGroup(std::vector<BusyThrottlingIdInfo> const& busyReaders, TenantGroupNameRef tenantGroup) {
+bool containsTag(std::vector<BusyThrottlingIdInfo> const& busyReaders, TransactionTagRef tag) {
 	for (auto const& reader : busyReaders) {
-		if (!reader.throttlingId.isTag() && reader.throttlingId.getTenantGroup() == tenantGroup) {
+		if (reader.throttlingId.isTag() && reader.throttlingId.getTag() == tag) {
 			return true;
 		}
 	}
@@ -153,28 +153,30 @@ TEST_CASE("/fdbserver/ThrottlingCounter/IgnoreBeyondMaxReaders") {
 	ASSERT_EQ(counter.getBusiestReaders().size(), 0);
 	{
 		wait(delay(1.0));
-		counter.addRequest({}, "tenantGroupA"_sr, 10 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
-		counter.addRequest({}, "tenantGroupA"_sr, 10 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
-		counter.addRequest({}, "tenantGroupB"_sr, 15 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
-		counter.addRequest({}, "tenantGroupC"_sr, 20 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+		counter.addRequest("tagA"_sr, {}, 10 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+		counter.addRequest("tagA"_sr, {}, 10 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+		counter.addRequest("tagB"_sr, {}, 15 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+		counter.addRequest("tagC"_sr, {}, 20 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 		counter.startNewInterval();
 		auto const busiestReaders = counter.getBusiestReaders();
 		ASSERT_EQ(busiestReaders.size(), 2);
-		ASSERT(containsTenantGroup(busiestReaders, "tenantGroupA"_sr));
-		ASSERT(!containsTenantGroup(busiestReaders, "tenantGroupB"_sr));
-		ASSERT(containsTenantGroup(busiestReaders, "tenantGroupC"_sr));
+		ASSERT(containsTag(busiestReaders, "tagA"_sr));
+		ASSERT(!containsTag(busiestReaders, "tagB"_sr));
+		ASSERT(containsTag(busiestReaders, "tagC"_sr));
 	}
 	return Void();
 }
 
 TEST_CASE("/fdbserver/ThrottlingCounter/IgnoreBelowMinRate") {
-	state ThrottlingCounter counter(
-	    UID(), /*maxReadersTracked=*/2, /*minRateTracked=*/10.0 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+	state ThrottlingCounter counter(UID(),
+	                                /*maxReadersTracked=*/2,
+	                                /*minRateTracked=*/10.0 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE /
+	                                    CLIENT_KNOBS->READ_TAG_SAMPLE_RATE);
 	counter.startNewInterval();
 	ASSERT_EQ(counter.getBusiestReaders().size(), 0);
 	{
 		wait(delay(1.0));
-		counter.addRequest({}, "tenantGroupA"_sr, 5 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+		counter.addRequest("tagA"_sr, {}, 5 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 		counter.startNewInterval();
 		auto const busiestReaders = counter.getBusiestReaders();
 		ASSERT_EQ(busiestReaders.size(), 0);

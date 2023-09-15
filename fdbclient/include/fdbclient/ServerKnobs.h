@@ -848,6 +848,9 @@ public:
 	// to a FIFO release strategy. A value of 1.0 allows complete starvation
 	// of low-priority transactions. A value of 0.0 ignores priorities completely.
 	double LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO;
+	// If enabled, track the throughput of tenant groups
+	// for the quota throttler.
+	bool TRACK_TENANT_GROUP_THROUGHPUT;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;

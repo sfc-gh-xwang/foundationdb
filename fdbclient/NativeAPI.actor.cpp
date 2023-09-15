@@ -7867,10 +7867,14 @@ bool TransactionState::canUseGrvCache() {
 }
 
 Optional<ThrottlingId> TransactionState::getThrottlingId() {
-	if (tenant().present() && tenant().get()->tenantGroup().present()) {
-		return ThrottlingIdRef::fromTenantGroup(tenant().get()->tenantGroup().get());
-	} else if (options.throttlingTag.present()) {
+	Optional<TenantGroupName> tenantGroup;
+	if (tenant().present()) {
+		tenantGroup = tenant().get()->tenantGroup();
+	}
+	if (options.throttlingTag.present()) {
 		return ThrottlingIdRef::fromTag(options.throttlingTag.get());
+	} else if (tenantGroup.present()) {
+		return ThrottlingIdRef::fromTenantGroup(tenantGroup.get());
 	} else {
 		return {};
 	}
