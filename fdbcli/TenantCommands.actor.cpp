@@ -961,6 +961,12 @@ ACTOR Future<bool> tenantRenameCommand(Reference<IDatabase> db, std::vector<Stri
 		fmt::print("name must not exist in the cluster.\n");
 		return false;
 	}
+
+	if (!CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+		fmt::print(stderr, "ERROR: tenant renames are disabled\n");
+		return false;
+	}
+
 	state Reference<ITransaction> tr = db->createTransaction();
 	state Key tenantRenameKey = tenantRenameSpecialKeyRange.begin.withSuffix(tokens[2]);
 	state Key tenantOldNameKey = tenantMapSpecialKeyRange.begin.withSuffix(tokens[2]);

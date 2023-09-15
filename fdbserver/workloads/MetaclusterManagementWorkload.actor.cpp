@@ -216,6 +216,8 @@ struct MetaclusterManagementWorkload : TestWorkload {
 		}
 
 		for (auto const& [id, entry] : metaclusterData.managementMetadata.tenantData.tenantMap) {
+			ASSERT_EQ(entry.tenantState, metacluster::TenantState::READY);
+
 			Reference<TenantTestData> tenantData =
 			    makeReference<TenantTestData>(entry.assignedCluster, entry.tenantGroup);
 			self->createdTenants[entry.tenantName] = tenantData;

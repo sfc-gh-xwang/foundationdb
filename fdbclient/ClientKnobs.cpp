@@ -321,6 +321,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( METACLUSTER_RESTORE_BATCH_SIZE,          1000 ); BUGGIFY_KNOB(METACLUSTER_RESTORE_BATCH_SIZE, randomize && BUGGIFY, 1 + deterministicRandom()->randomInt(0, 3));
 	init( TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL,   2 ); BUGGIFY_KNOB(TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( CLIENT_ENABLE_USING_CLUSTER_ID_KEY,     false );
+	init( TENANT_RENAME_ENABLED,                  false ); BUGGIFY_KNOB(TENANT_RENAME_ENABLED, randomize && deterministicRandom()->coinflip(), true);
 
 	init( ENABLE_ENCRYPTION_CPU_TIME_LOGGING,        true );
 	init( SIMULATION_EKP_TENANT_IDS_TO_DROP,         "-1" );

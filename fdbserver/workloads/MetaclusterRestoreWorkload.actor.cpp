@@ -440,6 +440,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 				}
 				return Void();
 			} catch (Error& e) {
+				ASSERT_NE(e.code(), error_code_tenant_not_found);
 				wait(tr.onError(e));
 			}
 		}
@@ -1084,7 +1085,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 
 	ACTOR static Future<Void> runOperations(MetaclusterRestoreWorkload* self) {
 		while (now() < self->endTime) {
-			state int operation = deterministicRandom()->randomInt(0, 4);
+			state int operation = deterministicRandom()->randomInt(0, 3);
 			state RestoreTenantData::AccessTime accessTime = self->backupComplete
 			                                                     ? RestoreTenantData::AccessTime::AFTER_BACKUP
 			                                                     : RestoreTenantData::AccessTime::DURING_BACKUP;
@@ -1095,6 +1096,9 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 			} else if (operation == 2) {
 				wait(configureTenant(self, accessTime));
 			} else if (operation == 3) {
+				// Currently renaming tenants does not work with restores because it can break the tenant name index on
+				// commit proxies
+				ASSERT(false);
 				wait(renameTenant(self, accessTime));
 			}
 		}
@@ -1324,7 +1328,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					}
 
 					dataCheckFutures.push_back(
-					    checkTenantData(makeReference<Tenant>(self->dataDbs[tenantData.cluster].db, tenantId),
+					    checkTenantData(makeReference<Tenant>(self->dataDbs[tenantData.cluster].db, tenantData.name),
 					                    tenantData.hasData,
 					                    tenantData.createTime));
 				} else {
