@@ -197,8 +197,17 @@ bool TokenCache::validate(TenantId tenantId, StringRef token) {
 	TraceEvent(SevWarn, "InvalidToken"_audit, connDebugId)                                                             \
 	    .detail("From", peer)                                                                                          \
 	    .detail("Reason", reason)                                                                                      \
-	    .detail("CurrentTime", currentTime)                                                                            \
+	    .detail("CurrentTime", fmt::format("{:.6f}", currentTime))                                                     \
 	    .detail("Token", toStringRef(arena, token).toStringView())
+
+#define TRACE_INVALID_CACHED_TOKEN(reason, entry)                                                                      \
+	TraceEvent(SevWarn, "InvalidToken"_audit, connDebugId)                                                             \
+	    .detail("From", peer)                                                                                          \
+	    .detail("Reason", reason)                                                                                      \
+	    .detail("CurrentTime", fmt::format("{:.6f}", currentTime))                                                     \
+	    .detail("TokenId", entry->tokenId)                                                                             \
+	    .detail("ExpirationTime", fmt::format("{:.6f}", entry->expirationTime))                                        \
+        .detail("AuthorizedTenants", fmt::format("{:#x}", fmt::join(entry->tenants, " ")))
 
 bool TokenCacheImpl::validateAndAdd(double currentTime,
                                     StringRef token,
@@ -284,7 +293,8 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	NetworkAddress peer = FlowTransport::transport().currentDeliveryPeerAddress();
 	UID connDebugId = FlowTransport::transport().currentDeliveryPeerDebugID();
 	auto cachedEntry = cache.get(token);
-	double currentTime = g_network->timer();
+	double const currentTime = g_network->timer();
+	auto arena = Arena();
 
 	if (!cachedEntry.present()) {
 		if (validateAndAdd(currentTime, token, peer, connDebugId)) {
@@ -299,7 +309,7 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	auto& entry = cachedEntry.get();
 	if (entry->expirationTime < currentTime) {
 		CODE_PROBE(true, "Found expired token in cache");
-		TraceEvent(SevWarn, "InvalidToken"_audit, connDebugId).detail("From", peer).detail("Reason", "ExpiredInCache");
+		TRACE_INVALID_CACHED_TOKEN("ExpiredInCache", entry);
 		return false;
 	}
 	bool tenantFound = false;
@@ -311,11 +321,8 @@ bool TokenCacheImpl::validate(TenantId tenantId, StringRef token) {
 	}
 	if (!tenantFound) {
 		CODE_PROBE(true, "Valid token doesn't reference tenant");
-		TraceEvent(SevWarn, "InvalidToken"_audit, connDebugId)
-		    .detail("From", peer)
-		    .detail("Reason", "TenantTokenMismatch")
-		    .detail("RequestedTenant", fmt::format("{:#x}", tenantId))
-		    .detail("TenantsInToken", fmt::format("{:#x}", fmt::join(entry->tenants, " ")));
+		TRACE_INVALID_CACHED_TOKEN("TenantTokenMismatch", entry)
+		    .detail("RequestedTenant", fmt::format("{:#x}", tenantId));
 		return false;
 	}
 	// audit logging
