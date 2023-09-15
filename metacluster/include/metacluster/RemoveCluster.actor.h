@@ -168,14 +168,13 @@ struct RemoveClusterImpl {
 		ASSERT(self->ctx.dataClusterMetadata.get().entry.clusterState == DataClusterState::REMOVING);
 
 		// Get the list of tenants
-		state Future<KeyBackedRangeResult<Tuple>> clusterTenantsFuture =
-		    metadata::management::clusterTenantIndex().getRange(
-		        tr, clusterTupleRange.first, clusterTupleRange.second, CLIENT_KNOBS->REMOVE_CLUSTER_TENANT_BATCH_SIZE);
-
-		state KeyBackedRangeResult<Tuple> clusterTenants = wait(clusterTenantsFuture);
+		state KeyBackedRangeResult<Tuple> clusterTenants = wait(metadata::management::clusterTenantIndex().getRange(
+		    tr, clusterTupleRange.first, clusterTupleRange.second, CLIENT_KNOBS->REMOVE_CLUSTER_TENANT_BATCH_SIZE));
 
 		std::vector<std::pair<TenantName, int64_t>> matchingIds;
+		state bool erasedTenantIndex = false;
 		for (Tuple const& t : clusterTenants.results) {
+			ASSERT(t.getString(0) == self->ctx.clusterName.get());
 			TenantName tenantName = t.getString(1);
 			int64_t tenantId = t.getInt(2);
 
@@ -184,17 +183,16 @@ struct RemoveClusterImpl {
 			if (tenantId != TenantInfo::INVALID_TENANT) {
 				matchingIds.emplace_back(std::make_pair(tenantName, tenantId));
 			} else {
+				erasedTenantIndex = true;
 				metadata::management::clusterTenantIndex().erase(tr, t);
 			}
 		}
 
-		Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> tenantEntriesFuture =
-		    listTenantMetadataTransaction(tr, matchingIds, FilterRenamedTenants::False);
-
-		std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantEntries = wait(tenantEntriesFuture);
-		std::unordered_set<int64_t> erasedTenants;
+		std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>> tenantEntries =
+		    wait(listTenantMetadataTransaction(tr, matchingIds, FilterRenamedTenants::False));
 
 		// Erase each tenant from the tenant map on the management cluster
+		std::unordered_set<int64_t> erasedTenants;
 		for (const auto& [name, entry] : tenantEntries) {
 			if (erasedTenants.insert(entry.id).second) {
 				metadata::management::tenantMetadata().tenantMap.erase(tr, entry.id);
@@ -208,13 +206,16 @@ struct RemoveClusterImpl {
 					    Tuple::makeTuple(self->ctx.clusterName.get(), entry.renameDestination.get()),
 					    Tuple::makeTuple(self->ctx.clusterName.get(), keyAfter(entry.renameDestination.get())));
 				}
-				metadata::management::tenantMetadata().lastTenantModification.setVersionstamp(tr, Versionstamp(), 0);
 			}
 		}
 
-		metadata::management::tenantMetadata().tenantCount.atomicOp(tr, -erasedTenants.size(), MutationRef::AddValue);
-		metadata::management::clusterTenantCount().atomicOp(
-		    tr, self->ctx.clusterName.get(), -erasedTenants.size(), MutationRef::AddValue);
+		if (!erasedTenants.empty() || erasedTenantIndex) {
+			metadata::management::tenantMetadata().lastTenantModification.setVersionstamp(tr, Versionstamp(), 0);
+			metadata::management::tenantMetadata().tenantCount.atomicOp(
+			    tr, -erasedTenants.size(), MutationRef::AddValue);
+			metadata::management::clusterTenantCount().atomicOp(
+			    tr, self->ctx.clusterName.get(), -erasedTenants.size(), MutationRef::AddValue);
+		}
 
 		CODE_PROBE(clusterTenants.more, "More tenants to purge");
 		CODE_PROBE(clusterTenants.results.empty(), "No tenants purged");
