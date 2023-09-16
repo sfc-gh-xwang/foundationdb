@@ -463,6 +463,12 @@ const std::unordered_map<int, std::string> BlobCipherMetrics::usageTypeNames = {
 	{ BlobCipherMetrics::UsageType::TEST, "Test" },
 };
 
+BlobCipherMetrics::CounterSet::CounterSet(CounterCollection& cc, std::string name)
+  : aesGcmEncryptOps(name + "AesGcmEncryptOps", cc, true),
+    aesGcmDecryptOps(name + "AesGcmDecryptOps", cc, true),
+    aesCtrEncryptOps(name + "AesCtrEncryptOps", cc, true),
+    aesCtrDecryptOps(name + "AesCtrDecryptOps", cc, true) {}
+
 BlobCipherMetrics::BlobCipherMetrics()
   : cc("BlobCipher"),
     cipherKeyCacheHit("CipherKeyCacheHit", cc),
@@ -560,13 +566,15 @@ BlobCipherKey::BlobCipherKey(const EncryptCipherDomainId& domainId,
 	initKey(domainId, baseCiphId, baseCiph, baseCiphLen, baseCiphKCV, salt, refreshAt, expireAt);
 }
 
-EncryptCipherNonce BlobCipherKey::getAndUpdateNonce(EncryptCipherNonce max_value) {
-	ASSERT(nonce <= max_value);
-	if (nonce == max_value) {
-		// TODO (Nim): Add metric for nonce overflow
-		TraceEvent("NonceOverflow");
-		nonce = 0;
-		return max_value;
+EncryptCipherNonce BlobCipherKey::getAndUpdateNonce() {
+	EncryptCipherNonce maxValue = std::numeric_limits<uint96_t>::max();
+	if (nonce >= maxValue) {
+		// All nonce values have been exhausted which shouldn't be possible given encryption keys are rotated frequently
+		TraceEvent(SevError, "BlobCipherNonceOverflow")
+		    .detail("DomainId", encryptDomainId)
+		    .detail("BaseCipherId", baseCipherId)
+		    .detail("Salt", randomSalt);
+		ASSERT(false);
 	}
 	return nonce++;
 }
@@ -605,10 +613,7 @@ void BlobCipherKey::initKey(const EncryptCipherDomainId& domainId,
 	baseCipherLen = baseCiphLen;
 	baseCipherKCV = baseCiphKCV;
 	baseCipherId = baseCiphId;
-	// generate a crypto secure nonce
-	memset(reinterpret_cast<unsigned char*>(&nonce), 0, sizeof(nonce));
-	// generate only 12 bytes of data since gcm nonce is 12 bytes
-	generateCryptoSecureRandomBytes(reinterpret_cast<unsigned char*>(&nonce), AesGcmParams::ivSize);
+	nonce = 0;
 	// Set the encryption domain for the base encryption key
 	encryptDomainId = domainId;
 	randomSalt = salt;
@@ -2328,14 +2333,11 @@ void testNonceGeneration(const int minDomainId) {
 	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
 	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
 	EncryptCipherNonce nonce = cipherKey->getNonce();
-	EncryptCipherNonce maxNonceValue = nonce + 2;
-	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce);
-	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce + 1);
-	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == nonce + 2);
-	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 0);
-	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 1);
-	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 2);
-	ASSERT(cipherKey->getAndUpdateNonce(maxNonceValue) == 3);
+	ASSERT(nonce == 0);
+	ASSERT(cipherKey->getAndUpdateNonce() == 0);
+	ASSERT(cipherKey->getAndUpdateNonce() == 1);
+	ASSERT(cipherKey->getAndUpdateNonce() == 2);
+	ASSERT(cipherKey->getAndUpdateNonce() == 3);
 }
 
 void testNonceIVGenerationGcm(const int minDomainId) {
@@ -2345,6 +2347,7 @@ void testNonceIVGenerationGcm(const int minDomainId) {
 	const EncryptCipherNonce maxNonceSize = std::numeric_limits<uint96_t>::max();
 	EncryptionAtRestAlgo algo = EncryptionAtRestAlgo::AES_GCM;
 	int ivSize = getIVLengthFromEncryptionAtRestAlgo(algo);
+	ASSERT(cipherKey->getNonce() == 0);
 
 	for (int i = 0; i < 10; i++) {
 		EncryptCipherNonce nonce = cipherKey->getNonce();
@@ -2358,20 +2361,14 @@ void testNonceIVGenerationGcm(const int minDomainId) {
 		ASSERT(nonce + 1 == cipherKey->getNonce());
 	}
 
-	cipherKey->setNonceTest(maxNonceSize);
+	cipherKey->setNonceTest(maxNonceSize - 1);
 	Reference<EncryptBlobCipher> encryptor =
 	    EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, algo, BlobCipherMetrics::TEST);
 	StringRef ivRef = encryptor->getIVRef();
 	ASSERT_EQ(ivRef.size(), ivSize);
 	EncryptCipherNonce encryptorNonce;
 	memcpy(reinterpret_cast<unsigned char*>(&encryptorNonce), ivRef.begin(), ivRef.size());
-	ASSERT(encryptorNonce == maxNonceSize);
-
-	encryptor = EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, algo, BlobCipherMetrics::TEST);
-	ivRef = encryptor->getIVRef();
-	ASSERT_EQ(ivRef.size(), ivSize);
-	memcpy(reinterpret_cast<unsigned char*>(&encryptorNonce), ivRef.begin(), ivRef.size());
-	ASSERT(encryptorNonce == 0);
+	ASSERT(encryptorNonce == maxNonceSize - 1);
 }
 
 void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minDomainId) {
