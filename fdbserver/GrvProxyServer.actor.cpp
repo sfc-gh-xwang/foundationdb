@@ -582,7 +582,12 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 	getCurrentLineage()->modify(&TransactionLineage::operation) =
 	    TransactionLineage::Operation::GetConsistentReadVersion;
 	loop choose {
-		when(GetReadVersionRequest req = waitNext(readVersionRequests)) {
+		when(GetReadVersionRequest _req = waitNext(readVersionRequests)) {
+			GetReadVersionRequest req = _req;
+			if (SERVER_KNOBS->TAG_THROTTLE_CONVERT_TENANT_GROUP_TO_TAG && req.throttlingId.present() &&
+			    !req.throttlingId->isTag()) {
+				req.throttlingId = ThrottlingIdRef::fromTag(req.throttlingId->getTenantGroup());
+			}
 			// auto lineage = make_scoped_lineage(&TransactionLineage::txID, req.spanContext.first());
 			// getCurrentLineage()->modify(&TransactionLineage::txID) =
 			// WARNING: this code is run at a high priority, so it needs to do as little work as possible
