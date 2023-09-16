@@ -230,6 +230,11 @@ struct RenameTenantImpl {
 	}
 
 	ACTOR static Future<Void> run(RenameTenantImpl* self) {
+		if (!CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+			// User access to this function should be prevented elsewhere, but just in case we reject it here too
+			throw unsupported_operation();
+		}
+
 		TraceEvent("MetaclusterRenameTenantUpdateMgmtState")
 		    .detail("OldName", self->oldName)
 		    .detail("NewName", self->newName)

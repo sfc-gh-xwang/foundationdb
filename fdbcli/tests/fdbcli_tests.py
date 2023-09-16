@@ -1338,6 +1338,11 @@ ERROR: Tenant configuration is invalid (2140)
 def tenant_rename(logger):
     setup_tenants(["tenant", "tenant2"])
 
+    # Tenant renames are currently disallowed
+    output = run_fdbcli_command_and_get_error("tenant rename tenant tenant3")
+    assert output == "ERROR: tenant renames are disabled"
+
+    """
     output = run_fdbcli_command("tenant rename tenant tenant3")
     assert output == "The tenant `tenant' has been renamed to `tenant3'"
 
@@ -1346,6 +1351,7 @@ def tenant_rename(logger):
 
     output = run_fdbcli_command_and_get_error("tenant rename tenant2 tenant3")
     assert output == "ERROR: A tenant with the given name already exists (2132)"
+    """
 
 
 @enable_logging()
@@ -1438,16 +1444,16 @@ def tenant_old_commands(logger):
     configure_output = run_fdbcli_command(
         "tenant configure tenant tenant_group=tenant_group1"
     )
-    rename_output = run_fdbcli_command("tenant rename tenant tenant2")
-    delete_output = run_fdbcli_command("tenant delete tenant2")
+    rename_output = run_fdbcli_command_and_get_error("tenant rename tenant tenant2")
+    delete_output = run_fdbcli_command("tenant delete tenant")
 
     create_output_old = run_fdbcli_command("createtenant tenant")
     list_output_old = run_fdbcli_command("listtenants")
     configure_output_old = run_fdbcli_command(
         "configuretenant tenant tenant_group=tenant_group1"
     )
-    rename_output_old = run_fdbcli_command("renametenant tenant tenant2")
-    delete_output_old = run_fdbcli_command("deletetenant tenant2")
+    rename_output_old = run_fdbcli_command_and_get_error("renametenant tenant tenant2")
+    delete_output_old = run_fdbcli_command("deletetenant tenant")
 
     assert create_output == create_output_old
     assert list_output == list_output_old

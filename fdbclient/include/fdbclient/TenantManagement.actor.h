@@ -755,6 +755,11 @@ Future<Void> renameTenantTransaction(Transaction tr,
                                      Optional<int64_t> tenantId = Optional<int64_t>(),
                                      ClusterType clusterType = ClusterType::STANDALONE,
                                      Optional<int64_t> configureSequenceNum = Optional<int64_t>()) {
+	if (!CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+		// User access to this function should be prevented elsewhere, but just in case we reject it here too
+		throw unsupported_operation();
+	}
+
 	ASSERT(clusterType == ClusterType::STANDALONE || (tenantId.present() && configureSequenceNum.present()));
 	ASSERT(clusterType != ClusterType::METACLUSTER_MANAGEMENT);
 

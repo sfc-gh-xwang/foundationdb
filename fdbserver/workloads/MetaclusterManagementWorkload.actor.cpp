@@ -216,6 +216,8 @@ struct MetaclusterManagementWorkload : TestWorkload {
 		}
 
 		for (auto const& [id, entry] : metaclusterData.managementMetadata.tenantData.tenantMap) {
+			ASSERT_EQ(entry.tenantState, metacluster::TenantState::READY);
+
 			Reference<TenantTestData> tenantData =
 			    makeReference<TenantTestData>(entry.assignedCluster, entry.tenantGroup);
 			self->createdTenants[entry.tenantName] = tenantData;
@@ -1721,7 +1723,9 @@ struct MetaclusterManagementWorkload : TestWorkload {
 			} else if (operation == 11) {
 				wait(lockTenant(self));
 			} else if (operation == 12) {
-				wait(renameTenant(self));
+				if (CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+					wait(renameTenant(self));
+				}
 			} else if (operation == 13) {
 				wait(changeClusterVersion(self));
 			}
