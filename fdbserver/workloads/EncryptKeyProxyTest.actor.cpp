@@ -19,8 +19,10 @@
  */
 
 #include "fdbclient/BlobCipher.h"
+#include "fdbclient/DatabaseConfiguration.h"
 #include "fdbclient/EncryptKeyProxyInterface.h"
 #include "fdbclient/GetEncryptCipherKeys.h"
+#include "fdbclient/ManagementAPI.actor.h"
 
 #include "fdbrpc/Locality.h"
 
@@ -220,13 +222,17 @@ struct EncryptKeyProxyTestWorkload : TestWorkload {
 	// 3. Simulate a lookup on all domainIdCache keys and validate lookup by baseCipherKeyIds.
 	// 4. Simulate lookup for an invalid baseCipherKeyId.
 
-	ACTOR Future<Void> testWorkload(Reference<AsyncVar<ServerDBInfo> const> dbInfo, EncryptKeyProxyTestWorkload* self) {
+	ACTOR Future<Void> testWorkload(Database cx,
+	                                Reference<AsyncVar<ServerDBInfo> const> dbInfo,
+	                                EncryptKeyProxyTestWorkload* self) {
 		// Ensure EncryptKeyProxy role is recruited (a singleton role)
 		self->numDomains = self->maxDomainId - self->minDomainId;
 
 		while (!self->dbInfo->get().client.encryptKeyProxy.present()) {
 			wait(self->dbInfo->onChange());
 		}
+
+		wait(self->testEaRModeImmutability(cx));
 
 		// Simulate empty cache access
 		wait(self->simEmptyDomainIdCache(self));
@@ -248,11 +254,49 @@ struct EncryptKeyProxyTestWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR Future<Void> testEaRModeImmutability(Database cx) {
+		state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
+
+		TraceEvent("TestEaRModeImmutabilityStart").detail("Mode", config.encryptionAtRestMode.toString());
+
+		if (config.encryptionAtRestMode.isEncryptionEnabled()) {
+			state ReadYourWritesTransaction tr(cx);
+			state EncryptionAtRestMode newMode = EncryptionAtRestMode::Mode::DISABLED;
+			loop {
+				try {
+					tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+					tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+					tr.setOption(FDBTransactionOptions::RAW_ACCESS);
+
+					tr.set(encryptionAtRestModeConfKey, ValueRef(newMode.toString()));
+
+					DatabaseConfiguration newConfig = wait(getDatabaseConfiguration(cx));
+					TraceEvent("EaREnabled").detail("NewMode", newConfig.encryptionAtRestMode.toString());
+
+					if (!config.encryptionAtRestMode.isEquals(newConfig.encryptionAtRestMode)) {
+						TraceEvent(SevError, "EaRModeImmutabilityViolation")
+						    .detail("ExistingConf", config.encryptionAtRestMode.toString())
+						    .detail("NewConf", newConfig.encryptionAtRestMode.toString());
+						ASSERT(false);
+					}
+
+					return Void();
+				} catch (Error& e) {
+					TraceEvent("FailedExpected").error(e);
+					wait(tr.onError(e));
+				}
+			}
+		}
+
+		TraceEvent("TestEaRModeImmutabilityEnd");
+		return Void();
+	}
+
 	Future<Void> start(Database const& cx) override {
 		if (!enableTest) {
 			return Void();
 		}
-		return testWorkload(dbInfo, this);
+		return testWorkload(cx, dbInfo, this);
 	}
 
 	Future<bool> check(Database const& cx) override { return true; }
