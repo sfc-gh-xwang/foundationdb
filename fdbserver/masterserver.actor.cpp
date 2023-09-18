@@ -28,6 +28,7 @@
 #include "fdbserver/MasterInterface.h"
 #include "fdbserver/ResolutionBalancer.actor.h"
 #include "fdbserver/ServerDBInfo.h"
+#include "fdbserver/WaitFailure.h"
 #include "flow/ActorCollection.h"
 #include "flow/Trace.h"
 #include "fdbclient/VersionVector.h"
@@ -448,6 +449,7 @@ ACTOR Future<Void> masterServer(MasterInterface mi,
 	    new MasterData(db, mi, coordinators, db->get().clusterInterface, ""_sr, addActor, forceRecovery));
 	state Future<Void> collection = actorCollection(addActor.getFuture());
 
+	addActor.send(waitFailureServer(mi.waitFailure.getFuture()));
 	addActor.send(traceRole(Role::MASTER, mi.id()));
 	addActor.send(provideVersions(self));
 	addActor.send(serveLiveCommittedVersion(self));

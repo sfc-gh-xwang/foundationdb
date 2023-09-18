@@ -1250,7 +1250,6 @@ ACTOR Future<std::vector<Standalone<CommitTransactionRef>>> recruitTransactionSu
 	// Monitor sequencer for failures.
 	ASSERT(self->masterInterface.present());
 	self->addActor.send(waitSequencerFailure(self, self->masterInterface.get()));
-	self->addActor.send(waitFailureServer(self->masterInterface.get().waitFailure.getFuture()));
 
 	// Update recovery related information to the newly elected sequencer (master) process.
 	wait(brokenPromiseToNever(self->masterInterface.get().updateRecoveryData.getReply(
