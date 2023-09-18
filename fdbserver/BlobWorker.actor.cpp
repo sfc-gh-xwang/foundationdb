@@ -1240,6 +1240,10 @@ ACTOR Future<BlobFileIndex> dumpInitialSnapshotFromFDB(Reference<BlobWorkerData>
 		tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 		tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+		// use no-cache as this is a read-once bulk operation
+		tr->setOption(FDBTransactionOptions::READ_SERVER_SIDE_CACHE_DISABLE);
+		// don't set the read priority to low though since once we start it, we want the entire thing to complete in one
+		// transaction
 		try {
 			Version rv = wait(tr->getReadVersion());
 			bwData->addGRVHistory(rv);

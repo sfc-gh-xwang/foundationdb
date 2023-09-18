@@ -1154,7 +1154,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BG_MERGE_CANDIDATE_THRESHOLD_SECONDS, isSimulated ? 20.0 : 30 * 60 ); BUGGIFY_KNOB(BG_MERGE_CANDIDATE_THRESHOLD_SECONDS, randomize && BUGGIFY, 5.0);
 	init( BG_MERGE_CANDIDATE_DELAY_SECONDS, BG_MERGE_CANDIDATE_THRESHOLD_SECONDS / 10.0 );
 
-	init( BLOB_WORKER_INITIAL_SNAPSHOT_PARALLELISM,                8 ); BUGGIFY_KNOB(BLOB_WORKER_INITIAL_SNAPSHOT_PARALLELISM, randomize && BUGGIFY, 1);
+	init( BLOB_WORKER_INITIAL_SNAPSHOT_PARALLELISM,                2 ); BUGGIFY_KNOB(BLOB_WORKER_INITIAL_SNAPSHOT_PARALLELISM, randomize && BUGGIFY, 1);
 	// The resnapshot/delta parallelism knobs are deprecated and replaced by the budget_bytes knobs! FIXME: remove after next release
 	init( BLOB_WORKER_RESNAPSHOT_PARALLELISM,                     40 ); BUGGIFY_KNOB(BLOB_WORKER_RESNAPSHOT_PARALLELISM, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM,             2000 ); BUGGIFY_KNOB(BLOB_WORKER_DELTA_FILE_WRITE_PARALLELISM, randomize && BUGGIFY, deterministicRandom()->randomInt(10, 100));

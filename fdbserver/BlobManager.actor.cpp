@@ -314,6 +314,7 @@ struct BlobManagerStats {
 	Counter granuleStreamReplies;
 	Counter granuleStreamRepliesIgnored;
 	Counter granulesHitMedianLimit;
+	Counter cantSplitAlignment;
 
 	Counter bulkLoadsStaged;
 	Counter bulkLoadStagingErrors;
@@ -361,6 +362,7 @@ struct BlobManagerStats {
 	    granuleStreamReplies("GranuleStreamReplies", cc),
 	    granuleStreamRepliesIgnored("GranuleStreamRepliesIgnored", cc),
 	    granulesHitMedianLimit("GranulesHitMedianLimit", cc),
+	    cantSplitAlignment("CantSplitAlignment", cc),
 	    bulkLoadsStaged("BulkLoadsStaged", cc),
 	    bulkLoadStagingErrors("BulkLoadStagingErrors", cc),
 	    bulkLoadAbortsCleanedUp("BulkLoadAbortsCleanedUp", cc),
@@ -875,6 +877,15 @@ ACTOR Future<BlobGranuleSplitPoints> splitRange(Reference<BlobManagerData> bmDat
 				}
 			} else {
 				splitPoints.keys = keys;
+			}
+
+			if (keys.size() > 2 && splitPoints.keys.size() == 2) {
+				++bmData->stats.cantSplitAlignment;
+				CODE_PROBE(true, "BM can't split granule because of key alignment");
+				TraceEvent(keys.size() > 4 ? SevWarn : SevDebug, "BlobManagerCantSplitLargeAfterAlignment")
+				    .detail("OriginalGranules", keys.size() - 1)
+				    .detail("Bytes", estimated.bytes)
+				    .detail("Range", range);
 			}
 
 			ASSERT(splitPoints.keys.size() >= 2);
