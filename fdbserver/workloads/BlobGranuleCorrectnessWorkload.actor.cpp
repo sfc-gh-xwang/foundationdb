@@ -21,6 +21,7 @@
 #include <cmath>
 #include <map>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,7 @@
 #include "fdbserver/TesterInterface.actor.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "fdbserver/workloads/BGCorrectnessUtils.h"
+#include "fdbserver/workloads/BulkLoadStager.actor.h"
 #include "flow/Arena.h"
 #include "flow/IRandom.h"
 #include "flow/flow.h"
@@ -207,6 +209,45 @@ struct ThreadData : ReferenceCounted<ThreadData>, NonCopyable {
 				ASSERT(t.size() <= BGW_TUPLE_KEY_SIZE - SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET);
 			}
 		}
+	}
+
+	uint32_t getRandomKey(bool forceNewKey = false, bool forceSequential = false) {
+		uint32_t key;
+		bool newKey = forceNewKey || keyData.empty() || deterministicRandom()->random01() > reuseKeyProb;
+		if (newKey) {
+			// new key
+			if (forceSequential || nextKeySequential) {
+				key = nextSeqKey;
+				++nextSeqKey;
+			} else {
+				key = std::numeric_limits<uint32_t>::max();
+				while (key == std::numeric_limits<uint32_t>::max() || keyData.find(key) != keyData.end()) {
+					// leave half of the end of the keyspace in case restarting test switches to sequential
+					key = deterministicRandom()->randomUInt32() / 2;
+				}
+			}
+
+			// add new key to data structures
+			usedKeys.push_back(key);
+			keyData.insert({ key, KeyData() });
+		} else {
+			int keyIdx = deterministicRandom()->randomInt(0, usedKeys.size());
+			key = usedKeys[keyIdx];
+		}
+		return key;
+	}
+
+	// Returns a tuple of {writeID, value, valueLength}
+	std::tuple<uint32_t, uint32_t, uint32_t> getRandomValue(KeyData& keyData) {
+		uint32_t value = deterministicRandom()->randomUInt32();
+		int16_t valLen = (0.5 + deterministicRandom()->random01()) * targetValLength;
+		if (valLen < 10) {
+			valLen = 10;
+		}
+
+		uint32_t nextId = keyData.writes.size();
+		keyData.writes.push_back(WriteData(value, valLen));
+		return std::tuple(nextId, value, valLen);
 	}
 };
 
@@ -1097,7 +1138,6 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		state int keysPerQuery = 100;
 		// state int targetBytesPerQuery = threadData->targetValLength * keysPerQuery;
 		// state double targetTps = (1.0 * threadData->targetByteRate) / targetBytesPerQuery;
-		state uint32_t nextVal = 0;
 
 		TraceEvent("BlobGranuleCorrectnessWriterStart").log();
 
@@ -1115,28 +1155,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			state int queryKeys =
 			    keysPerQuery * (0.1 + deterministicRandom()->random01() * 1.8); // 10% to 190% of target keys per query
 			for (int i = 0; i < queryKeys; i++) {
-				uint32_t key;
-				if (threadData->keyData.empty() || deterministicRandom()->random01() > threadData->reuseKeyProb) {
-					// new key
-					if (threadData->nextKeySequential) {
-						key = threadData->nextSeqKey;
-						++threadData->nextSeqKey;
-					} else {
-						key = std::numeric_limits<uint32_t>::max();
-						while (key == std::numeric_limits<uint32_t>::max() ||
-						       threadData->keyData.find(key) != threadData->keyData.end()) {
-							// leave half of the end of the keyspace in case restarting test switches to sequential
-							key = deterministicRandom()->randomUInt32() / 2;
-						}
-					}
-
-					// add new key to data structures
-					threadData->usedKeys.push_back(key);
-					threadData->keyData.insert({ key, KeyData() });
-				} else {
-					int keyIdx = deterministicRandom()->randomInt(0, threadData->usedKeys.size());
-					key = threadData->usedKeys[keyIdx];
-				}
+				uint32_t key = threadData->getRandomKey();
 
 				auto keyIt = threadData->keyData.find(key);
 				ASSERT(keyIt != threadData->keyData.end());
@@ -1147,16 +1166,8 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 				double probAddId = (threadData->targetIDsPerKey * 2.0 - unclearedIds) / threadData->targetIDsPerKey;
 				if (deterministicRandom()->random01() < probAddId ||
 				    keyIt->second.nextClearIdx == keyIt->second.writes.size()) {
-					int32_t val = nextVal++;
-					int16_t valLen = (0.5 + deterministicRandom()->random01()) * threadData->targetValLength;
-					if (valLen < 10) {
-						valLen = 10;
-					}
-
-					uint32_t nextId = keyIt->second.writes.size();
-					keyIt->second.writes.push_back(WriteData(val, valLen));
-
-					keyAndIdToWrite.push_back(std::tuple(key, nextId, val, valLen));
+					auto [writeId, val, valLen] = threadData->getRandomValue(keyIt->second);
+					keyAndIdToWrite.push_back(std::tuple(key, writeId, val, valLen));
 				} else {
 					uint32_t idToClear = keyIt->second.nextClearIdx++;
 					keyAndIdToClear.push_back(std::pair(key, idToClear));
@@ -1167,17 +1178,18 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			loop {
 				try {
 					// write rows in txn
-					for (auto& it : keyAndIdToWrite) {
-						if (DEBUG_KEY_OP(threadData->directoryID, std::get<0>(it))) {
+					for (auto& [key, id, val, valLen] : keyAndIdToWrite) {
+
+						if (DEBUG_KEY_OP(threadData->directoryID, key)) {
 							fmt::print("DBG: {0} PREWRITE ({1}, {2}) = {3}:{4}\n",
 							           threadData->directoryID,
-							           std::get<0>(it),
-							           std::get<1>(it),
-							           std::get<2>(it),
-							           std::get<3>(it));
+							           key,
+							           id,
+							           val,
+							           valLen);
 						}
-						Value v = genVal(std::get<2>(it), std::get<3>(it));
-						tr.set(threadData->getKey(std::get<0>(it), std::get<1>(it)), v);
+						Value v = genVal(val, valLen);
+						tr.set(threadData->getKey(key, id), v);
 					}
 					for (auto& it : keyAndIdToClear) {
 						tr.clear(singleKeyRange(threadData->getKey(it.first, it.second)));
@@ -1197,9 +1209,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 
 			// once txn is committed, update write map
 
-			for (auto& it : keyAndIdToWrite) {
-				uint32_t key = std::get<0>(it);
-				uint32_t id = std::get<1>(it);
+			for (auto& [key, id, val, valLen] : keyAndIdToWrite) {
 				auto keyIt = threadData->keyData.find(key);
 				ASSERT(keyIt != threadData->keyData.end());
 
@@ -1208,8 +1218,8 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 					fmt::print("DBG: {0} WRITE {1} = {2}:{3}\n",
 					           commitVersion,
 					           format("%08x/%08x/%08x", threadData->directoryID, key, id),
-					           std::get<2>(it),
-					           std::get<3>(it));
+					           val,
+					           valLen);
 				}
 			}
 
