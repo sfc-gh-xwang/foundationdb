@@ -1737,6 +1737,45 @@ private:
 	}
 };
 
+template <class T>
+class FlowLockMap {
+public:
+	class Releaser : public ReferenceCounted<Releaser>, NonCopyable {
+	public:
+		Releaser(FlowLockMap* flowLockMap, T t, int64_t amount) : flowLockMap(flowLockMap), t(t), amount(amount) {}
+		~Releaser() {
+			auto itr = flowLockMap->locks.find(t);
+			try {
+				ASSERT(itr != flowLockMap->locks.end());
+				itr->second.release(amount);
+				if (itr->second.activePermits() == 0) {
+					flowLockMap->locks.erase(itr);
+				}
+			} catch (Error& e) {
+			}
+		}
+
+	private:
+		FlowLockMap* flowLockMap;
+		T t;
+		int64_t amount;
+	};
+
+	Future<Reference<Releaser>> take(T t, TaskPriority taskId = TaskPriority::DefaultYield, int64_t amount = 1) {
+		return takeImpl(this, t, taskId, amount);
+	}
+
+	size_t size() const { return locks.size(); }
+
+private:
+	std::unordered_map<T, FlowLock> locks;
+
+	ACTOR static Future<Reference<Releaser>> takeImpl(FlowLockMap* self, T t, TaskPriority taskId, int64_t amount) {
+		wait(self->locks[t].take(taskId, amount));
+		return makeReference<Releaser>(self, t, amount);
+	}
+};
+
 struct NotifiedInt {
 	NotifiedInt(int64_t val = 0) : val(val) {}
 

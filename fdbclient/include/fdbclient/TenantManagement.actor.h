@@ -330,14 +330,31 @@ Future<Optional<TenantMapEntry>> createTenant(Reference<DB> db,
 	}
 }
 
+namespace {
+template <class Transaction>
+FlowLockMap<Transaction>& tombstoneFlowLockMap() {
+	static FlowLockMap<Transaction> locks;
+	return locks;
+}
+} // namespace
+
 ACTOR template <class Transaction>
 Future<Void> markTenantTombstones(Transaction tr, int64_t tenantId) {
-	// In data clusters, we store a tombstone
+	state FlowLockMap<Transaction>& tombstoneLocks = tombstoneFlowLockMap<Transaction>();
+	state Version transactionReadVersion = wait(safeThreadFutureToFuture(tr->getReadVersion()));
+
+	// Concurrent tenant deletions on the same transaction can cause issues with tenant tombstones. In particular, one
+	// deletion may advance the tenant tombstone deletion line to X while another deletion may insert a tenant tombstone
+	// smaller than X. To prevent this, we eliminate concurrency in the tombstone code.
+	state Reference<typename FlowLockMap<Transaction>::Releaser> tombstoneLockReleaser = wait(tombstoneLocks.take(tr));
+
+	// Although we are causing tenant deletions to perform these operations in serial, these reads will be the same for
+	// each operation on a transaction. As a result, subsequent reads wil be from the RYW cache.
+	state Future<int64_t> tenantIdPrefixFuture = TenantMetadata::tenantIdPrefix().getD(tr, Snapshot::False, 0);
+	state Future<Optional<TenantTombstoneCleanupData>> cleanupDataFuture =
+	    TenantMetadata::tombstoneCleanupData().get(tr);
 	state Future<KeyBackedRangeResult<int64_t>> latestTombstoneFuture =
 	    TenantMetadata::tenantTombstones().getRange(tr, {}, {}, 1, Snapshot::False, Reverse::True);
-	state Future<int64_t> tenantIdPrefixFuture = TenantMetadata::tenantIdPrefix().getD(tr, Snapshot::False, 0);
-	state Optional<TenantTombstoneCleanupData> cleanupData = wait(TenantMetadata::tombstoneCleanupData().get(tr));
-	state Version transactionReadVersion = wait(safeThreadFutureToFuture(tr->getReadVersion()));
 
 	// If the tenant being deleted has a different tenant ID prefix than the current cluster, then it won't conflict
 	// with any tenant creations. In that case, we do not need to create a tombstone.
@@ -347,6 +364,7 @@ Future<Void> markTenantTombstones(Transaction tr, int64_t tenantId) {
 		return Void();
 	}
 
+	state Optional<TenantTombstoneCleanupData> cleanupData = wait(cleanupDataFuture);
 	// If it has been long enough since we last cleaned up the tenant tombstones, we do that first
 	if (!cleanupData.present() || cleanupData.get().nextTombstoneEraseVersion <= transactionReadVersion) {
 		state int64_t deleteThroughId = cleanupData.present() ? cleanupData.get().nextTombstoneEraseId : -1;
