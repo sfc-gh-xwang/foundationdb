@@ -2,8 +2,12 @@
 blobGranulesEnabled = true 
 allowDefaultTenant = false
 tenantModes = ['optional', 'required']
+# Exclude memory storage engines - this test does a significant amount
+# of bulk loads, which causes OOMs with in-memory engines.
+storageEngineExcludeTypes = [1, 2]
 
 [[knobs]]
+allow_bulk_loads = true
 bg_metadata_source = "tenant"
 bg_key_tuple_truncate_offset = 1
 enable_rest_kms_communication = true

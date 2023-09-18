@@ -25,6 +25,9 @@
 #include <utility>
 #include <vector>
 
+#include "fdbclient/FDBTypes.h"
+#include "fdbclient/Knobs.h"
+#include "flow/FastRef.h"
 #include "fmt/format.h"
 #include "fdbclient/BlobGranuleReader.actor.h"
 #include "fdbclient/ManagementAPI.actor.h"
@@ -51,6 +54,7 @@
 
 #define BGW_DEBUG true
 #define BGW_TUPLE_KEY_SIZE 2
+constexpr int64_t maxBulkLoadSize = 50 * 1024 * 1024; // 50 MiB.
 
 struct WriteData {
 	Version writeVersion;
@@ -110,6 +114,8 @@ struct ThreadData : ReferenceCounted<ThreadData>, NonCopyable {
 	double reuseKeyProb;
 	int targetIDsPerKey;
 	uint32_t nextSeqKey = 0;
+	bool bulkLoaded = false;
+	Future<Void> bulkLoadF = Void();
 
 	// communication between workers
 	Promise<Void> firstWriteSuccessful;
@@ -352,6 +358,13 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 					fmt::print("Client {0}/{1} creating directory {2}\n", clientId, clientCount, dirId);
 				}
 				directories.push_back(makeReference<ThreadData>(dirId, targetByteRate));
+
+				// 50% of the time, bulk load dir 0.
+				// TODO: Update this check once the additional knobs are default true.
+				if (deterministicRandom()->coinflip() && dirId == 0 && SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES &&
+				    CLIENT_KNOBS->ALLOW_BULK_LOADS) { // TODO: Buggify/Randomize
+					directories.back()->bulkLoaded = true;
+				}
 				targetByteRate /= skewMultiplier;
 			}
 		}
@@ -616,8 +629,10 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			self->directories[directoryIdx]->directoryRange =
 			    KeyRangeRef(tenantEntry.prefix, tenantEntry.prefix.withSuffix(normalKeys.end));
 			tenants.push_back({ self->directories[directoryIdx]->tenant->id(), tenantEntry });
-			bool _success = wait(cx->blobbifyRange(self->directories[directoryIdx]->directoryRange));
-			ASSERT(_success);
+			if (!self->directories[directoryIdx]->bulkLoaded) {
+				bool _success = wait(cx->blobbifyRange(self->directories[directoryIdx]->directoryRange));
+				ASSERT(_success);
+			}
 		}
 		tenantData->addTenants(tenants);
 
@@ -706,11 +721,23 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		// read entire keyspace at the start until granules for the entire thing are available
 		loop {
 			state Transaction tr(threadData->tenant);
+			if (!SERVER_KNOBS->BULK_LOAD_SS_MOVE) {
+				// TODO: Remove once knob is default true.
+				tr.setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
+			}
 			try {
 				Version rv = wait(self->doGrv(&tr));
 				state Version readVersion = rv;
-				std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob = wait(readFromBlob(
-				    cx, threadData->bstore, normalKeys /* tenant handles range */, 0, readVersion, threadData->tenant));
+				std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob =
+				    wait(readFromBlob(cx,
+				                      threadData->bstore,
+				                      normalKeys /* tenant handles range */,
+				                      0,
+				                      readVersion,
+				                      threadData->tenant,
+				                      LockAware::False,
+				                      false,
+				                      !SERVER_KNOBS->BULK_LOAD_SS_MOVE)); // TODO: Remove once knob is default true.
 				fmt::print("Directory {0} got {1} RV {2}\n",
 				           threadData->directoryID,
 				           doSetup ? "initial" : "final",
@@ -727,6 +754,101 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 					wait(delay(1.0));
 				}
 			}
+		}
+	}
+
+	ACTOR Future<Void> waitForBulkLoad(BlobGranuleCorrectnessWorkload* self,
+	                                   Database cx,
+	                                   Reference<ThreadData> threadData) {
+		try {
+			state BulkLoadID id = wait(cx->startBulkLoad(normalKeys, threadData->tenant));
+			state Reference<BulkLoadHelpers::BulkLoadStager> bulkLoader =
+			    makeReference<BulkLoadHelpers::BulkLoadStager>(
+			        cx, threadData->bstore, id, normalKeys, threadData->tenant);
+			if (BGW_DEBUG) {
+				fmt::print("Directory {0} starting bulk load with id: {1}\n", threadData->directoryID, id.printable());
+			}
+
+			state int64_t targetGranuleSize = wait(bulkLoader->getCurrentTargetSizeBytes());
+			// Set the target to be between 2 to 10 granules, but cap it at 50 MiB.
+			state int64_t targetBulkLoadSize = targetGranuleSize * (2 + deterministicRandom()->random01() * 8);
+			targetBulkLoadSize = std::min(targetBulkLoadSize, maxBulkLoadSize);
+			state int64_t addedSize = 0;
+			state int64_t numRowsAdded = 0;
+
+			while (addedSize < targetBulkLoadSize) {
+				uint32_t key = threadData->getRandomKey(true, true);
+				auto keyIt = threadData->keyData.find(key);
+				ASSERT(keyIt != threadData->keyData.end());
+				auto [id, val, valLen] = threadData->getRandomValue(keyIt->second);
+
+				// We shouldn't be repeating values for any key.
+				ASSERT_EQ(id, 0);
+				state Value v = genVal(val, valLen);
+
+				state Key k = threadData->getKey(key, id);
+				wait(bulkLoader->addRow(KeyValueRef(k, v)));
+				addedSize += k.size() + v.size();
+				numRowsAdded++;
+			}
+			wait(bulkLoader->finishBulkLoad());
+
+			// Get a read version and mark the first write version & min read version to
+			// that value. This ensures the readWorker can't time-travel to before this point.
+			state Transaction tr(threadData->tenant);
+			state Version bulkLoadVersion = wait(self->doGrv(&tr));
+			threadData->minSuccessfulReadVersion = bulkLoadVersion;
+			threadData->writeVersions.push_back(bulkLoadVersion);
+			if (BGW_DEBUG) {
+				fmt::print("Directory {0} finished bulk loading. Stats:\n", threadData->directoryID);
+				fmt::print("  Bytes loaded: {0}\n", addedSize);
+				fmt::print("  Rows loaded: {0}\n", numRowsAdded);
+				fmt::print("  Target granule size: {0}\n", targetGranuleSize);
+				fmt::print("  Write version/minimum read version: {0}\n", bulkLoadVersion);
+				fmt::print("  Time {0}\n", now());
+			}
+
+			// For every Key that we bulk loaded, record the actual write version by reading
+			// it from the actual granule snapshot. This allows the readWorker to do incremental
+			// reads on each Key starting from this first snapshot version.
+			std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob =
+			    wait(readFromBlob(cx,
+			                      threadData->bstore,
+			                      normalKeys,
+			                      0,
+			                      bulkLoadVersion,
+			                      threadData->tenant,
+			                      LockAware::False,
+			                      false,
+			                      !SERVER_KNOBS->BULK_LOAD_SS_MOVE)); // TODO: Remove once knob is default true.
+			KeyRangeMap<Version> bulkLoadVersonsByChunk;
+
+			for (auto& chunk : blob.second) {
+				KeyRange range;
+				ASSERT(chunk.tenantPrefix.present());
+				range = KeyRangeRef(chunk.keyRange.begin.removePrefix(chunk.tenantPrefix.get()),
+				                    chunk.keyRange.end.removePrefix(chunk.tenantPrefix.get()));
+
+				ASSERT(chunk.snapshotFile.present());
+				bulkLoadVersonsByChunk.insert(range, chunk.snapshotVersion);
+			}
+
+			// Now set the write versions for each bulk loaded key.
+			for (auto& [key, keyData] : threadData->keyData) {
+				Key k = threadData->getKey(key, 0);
+				Version v = bulkLoadVersonsByChunk.rangeContaining(k).cvalue();
+				ASSERT_EQ(keyData.writes.size(), 1);
+				ASSERT_EQ(keyData.writes[0].writeVersion, MAX_VERSION);
+				keyData.writes[0].writeVersion = v;
+			}
+
+			return Void();
+
+		} catch (Error& e) {
+			if (BGW_DEBUG) {
+				fmt::print("Directory {0} bulk load error: {1}\n", threadData->directoryID, e.what());
+			}
+			throw e;
 		}
 	}
 
@@ -829,7 +951,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			           blob.first.size());
 		}
 
-		// because each chunk could be separately collapsed or not if we set beginVersion, we have to track it by chunk
+		// because each chunk could be separately collapsed or not if we set beginVersion, we have to track by chunk
 		KeyRangeMap<Version> beginVersionByChunk;
 		beginVersionByChunk.insert(normalKeys, 0);
 		int beginCollapsed = 0;
@@ -890,7 +1012,7 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 					if (DEBUG_READ_OP(threadData->directoryID, readVersion)) {
 						fmt::print("DBG READ:     Skip ID {0} written @ {1} < beginVersion {2}\n",
 						           idIdx,
-						           checkIt->second.writes[idIdx].clearVersion,
+						           checkIt->second.writes[idIdx].writeVersion,
 						           keyBeginVersion);
 					}
 					continue;
@@ -1089,7 +1211,6 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 				}
 
 				threadData->maybeReopenTenant(self->standaloneDb);
-
 				std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob =
 				    wait(readFromBlob(cx,
 				                      threadData->bstore,
@@ -1098,7 +1219,8 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 				                      readVersion,
 				                      threadData->tenant,
 				                      LockAware::False,
-				                      untrustedReadVersion));
+				                      untrustedReadVersion,
+				                      !SERVER_KNOBS->BULK_LOAD_SS_MOVE)); // TODO: Remove once knob is default true.
 				self->validateResult(threadData, blob, startKey, endKey, beginVersion, readVersion);
 
 				int resultBytes = blob.first.expectedSize();
@@ -1204,8 +1326,9 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			}
 
 			Version commitVersion = tr.getCommittedVersion();
-			// TODO REMOVE
-			fmt::print("Writer committed @ {0}\n", commitVersion);
+			if (BGW_DEBUG) {
+				fmt::print("Writer {0} committed @ {1} at {2}\n", threadData->directoryID, commitVersion, now());
+			}
 
 			// once txn is committed, update write map
 
@@ -1300,17 +1423,32 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 	}
 
 	Future<Void> start(Database const& cx) override {
+
 		clients.reserve(3 * directories.size());
 		for (auto& it : directories) {
-			// Wait for blob worker to initialize snapshot before starting test for that range
-			Future<Void> start = waitFirstSnapshot(this, standaloneDb, it, true);
-			it->summaryClient =
-			    validateGranuleSummaries(standaloneDb, normalKeys, it->tenant, it->triggerSummaryComplete);
-			if (doForceFlushing && deterministicRandom()->random01() < 0.25) {
-				it->forceFlushingClient =
-				    validateForceFlushing(standaloneDb, it->directoryRange, testDuration, it->triggerSummaryComplete);
+			Future<Void> start = Never();
+			if (it->bulkLoaded) {
+				// Do a bulkLoad before starting the read/write test.
+				start = waitForBulkLoad(this, standaloneDb, it);
+				it->bulkLoadF = start;
 			} else {
-				it->forceFlushingClient = Future<Void>(Void());
+				// Wait for blob worker to initialize snapshot before starting test for that range
+				start = waitFirstSnapshot(this, standaloneDb, it, true);
+			}
+			// TODO: The summary client & force flushing are disabling until DD after bulk load works.
+			// Remove this comment once BULK_LOAD_SS_MOVE is default true.
+			if (it->bulkLoaded && SERVER_KNOBS->BULK_LOAD_SS_MOVE) {
+				it->summaryClient =
+				    validateGranuleSummaries(standaloneDb, normalKeys, it->tenant, it->triggerSummaryComplete);
+				if (doForceFlushing && deterministicRandom()->random01() < 0.25) {
+					it->forceFlushingClient = validateForceFlushing(
+					    standaloneDb, it->directoryRange, testDuration, it->triggerSummaryComplete);
+				} else {
+					it->forceFlushingClient = Future<Void>(Void());
+				}
+			} else {
+				it->summaryClient = Void();
+				it->forceFlushingClient = Void();
 			}
 			if (it->directoryID == 0 && deterministicRandom()->random01() < 0.1) {
 				it->reqWayInFuture = requestWayInTheFuture(standaloneDb, normalKeys, it->tenant);
@@ -1356,6 +1494,13 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 		}
 		state bool result = true;
 		state int finalRowsValidated;
+
+		if (threadData->bulkLoaded) {
+			// In case the test finished before the bulk load completed, wait for the bulk load
+			// so the rest of the checks work correctly.
+			wait(threadData->bulkLoadF);
+		}
+
 		if (threadData->writeVersions.empty()) {
 			// never had a successful write during the test, likely due to many chaos events. Just wait for granules to
 			// become available and call that a pass, since writer is stopped and will never guarantee anything is
@@ -1365,17 +1510,24 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 			}
 			wait(self->waitFirstSnapshot(self, cx, threadData, false));
 		} else {
-			// otherwise, read at last write version and ensure everything becomes available and matches
-			// it's possible that waitFirstSnapshot finished but then writer never wrote anything before test timed out
+			// otherwise, read at last write version and ensure everything becomes available and matches  it's possible
+			// that waitFirstSnapshot finished but then writer never wrote anything before test timed out
 			state Version readVersion = threadData->writeVersions.back();
 			if (BGW_DEBUG) {
 				fmt::print("Directory {0} doing final data check @ {1}\n", threadData->directoryID, readVersion);
 			}
-			std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob = wait(readFromBlob(
-			    cx, threadData->bstore, normalKeys /*tenant handles range*/, 0, readVersion, threadData->tenant));
+			std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> blob =
+			    wait(readFromBlob(cx,
+			                      threadData->bstore,
+			                      normalKeys /*tenant handles range*/,
+			                      0,
+			                      readVersion,
+			                      threadData->tenant,
+			                      LockAware::False,
+			                      false,
+			                      !SERVER_KNOBS->BULK_LOAD_SS_MOVE)); // TODO: Remove once knob is default true
 			result = self->validateResult(threadData, blob, 0, std::numeric_limits<uint32_t>::max(), 0, readVersion);
 			finalRowsValidated = blob.first.size();
-
 			// then if we are still good, do another check at a higher version (not checking data) to ensure availabiity
 			// of empty versions
 			if (result) {
@@ -1414,15 +1566,14 @@ struct BlobGranuleCorrectnessWorkload : TestWorkload {
 
 		// For some reason simulation is still passing when this fails?.. so assert for now
 		ASSERT(result);
-
-		if (self->clientId == 0 && SERVER_KNOBS->BG_ENABLE_MERGING && self->doMergeCheckAtEnd) {
+		// TODO: Update this check once BULK_LOAD_SS_MOVE is default true.
+		if (self->clientId == 0 && SERVER_KNOBS->BG_ENABLE_MERGING && self->doMergeCheckAtEnd &&
+		    (!threadData->bulkLoaded || SERVER_KNOBS->BULK_LOAD_SS_MOVE)) {
 			CODE_PROBE(true, "BGCorrectness clearing database and awaiting merge");
 			wait(clearAndAwaitMerge(cx, threadData->directoryRange));
 		}
-
 		// validate that summary completes without error
 		wait(threadData->summaryClient && threadData->forceFlushingClient);
-
 		return result;
 	}
 
