@@ -349,7 +349,7 @@ Future<Void> markTenantTombstones(Transaction tr, int64_t tenantId) {
 	state Reference<typename FlowLockMap<Transaction>::Releaser> tombstoneLockReleaser = wait(tombstoneLocks.take(tr));
 
 	// Although we are causing tenant deletions to perform these operations in serial, these reads will be the same for
-	// each operation on a transaction. As a result, subsequent reads wil be from the RYW cache.
+	// each operation on a transaction. As a result, subsequent reads will be from the RYW cache.
 	state Future<int64_t> tenantIdPrefixFuture = TenantMetadata::tenantIdPrefix().getD(tr, Snapshot::False, 0);
 	state Future<Optional<TenantTombstoneCleanupData>> cleanupDataFuture =
 	    TenantMetadata::tombstoneCleanupData().get(tr);
