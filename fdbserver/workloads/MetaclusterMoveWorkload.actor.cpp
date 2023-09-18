@@ -234,7 +234,8 @@ struct MetaclusterMoveWorkload : TestWorkload {
 				    wait(metacluster::getTenant(self->managementDb, tenantName));
 				TraceEvent(SevDebug, "MetaclusterMoveWorkloadCreatedTenant")
 				    .detail("Tenant", tenantName)
-				    .detail("TenantId", createdEntry.id);
+				    .detail("TenantId", createdEntry.id)
+				    .detail("TenantGroup", createdEntry.tenantGroup);
 				self->createdTenants[createdEntry.id] =
 				    TestTenantData(tenantName, createdEntry.assignedCluster, createdEntry.tenantGroup);
 				self->tenantNameIndex[tenantName] = createdEntry.id;

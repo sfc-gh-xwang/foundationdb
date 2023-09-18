@@ -229,6 +229,11 @@ struct ConfigureTenantImpl {
 		if (self->updatedEntry.matchesConfiguration(tenantEntry.get()) &&
 		    tenantEntry.get().tenantState == TenantState::READY) {
 			CODE_PROBE(true, "Noop configure tenant");
+			// Add a write conflict range so that this can prevent concurrent configuration changes. This can happen,
+			// for example, when we give up on a configuration change and attempt to roll it back. If the first change
+			// was in-flight but not applied, our rollback attempt to set the original configuration should prevent the
+			// in-flight operation from applying even if the rollback operation doesn't change anything.
+			metadata::management::tenantMetadata().tenantMap.addWriteConflictKey(tr, self->updatedEntry.id);
 			return false;
 		}
 
