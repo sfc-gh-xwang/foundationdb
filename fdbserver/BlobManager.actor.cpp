@@ -2696,9 +2696,19 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 			ASSERT(splitPoints.keys.size() > 2);
 
+			state Key lockKey = blobGranuleLockKeyFor(granuleRange);
+
 			// make sure we're still manager when this transaction gets committed
-			wait(checkManagerLock(tr, bmData));
-			ForcedPurgeState purgeState = wait(getForcePurgedState(&tr->getTransaction(), granuleRange));
+			state Future<Void> managerLockCheckF = checkManagerLock(tr, bmData);
+			state Future<ForcedPurgeState> forcePurgeStateF = getForcePurgedState(&tr->getTransaction(), granuleRange);
+			state Future<RangeReadResult> existingStateF =
+			    tr->getRange(blobGranuleSplitKeyRangeFor(granuleID), SERVER_KNOBS->BG_MAX_SPLIT_FANOUT + 2);
+			state Future<ValueReadResult> granuleLockCheckF = tr->get(lockKey);
+
+			wait(managerLockCheckF && success(forcePurgeStateF) && success(existingStateF) &&
+			     success(granuleLockCheckF));
+
+			ForcedPurgeState purgeState = wait(forcePurgeStateF);
 			if (purgeState != ForcedPurgeState::NonePurged) {
 				CODE_PROBE(true, "Split stopped because of force purge", probe::decoration::rare);
 				TraceEvent("GranuleSplitCancelledForcePurge", bmData->id)
@@ -2710,8 +2720,7 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 			// TODO can do this + lock in parallel
 			// Read splitState to see if anything was committed instead of reading granule mapping because we don't want
 			// to conflict with mapping changes/reassignments
-			state RangeReadResult existingState =
-			    wait(tr->getRange(blobGranuleSplitKeyRangeFor(granuleID), SERVER_KNOBS->BG_MAX_SPLIT_FANOUT + 2));
+			state RangeReadResult existingState = wait(existingStateF);
 			ASSERT_WE_THINK(!existingState.more && existingState.size() <= SERVER_KNOBS->BG_MAX_SPLIT_FANOUT + 1);
 			// maybe someone decreased the knob, we should gracefully handle it not in simulation
 			if (existingState.more || existingState.size() > SERVER_KNOBS->BG_MAX_SPLIT_FANOUT) {
@@ -2753,8 +2762,8 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 			}
 
 			// acquire lock for old granule to make sure nobody else modifies it
-			state Key lockKey = blobGranuleLockKeyFor(granuleRange);
-			ValueReadResult lockValue = wait(tr->get(lockKey));
+
+			ValueReadResult lockValue = wait(granuleLockCheckF);
 			ASSERT(lockValue.present());
 			std::tuple<int64_t, int64_t, UID> prevGranuleLock = decodeBlobGranuleLockValue(lockValue.get());
 			int64_t ownerEpoch = std::get<0>(prevGranuleLock);
@@ -2801,6 +2810,10 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 
 			// set up splits in granule mapping, but point each part to the old owner (until they get reassigned)
 			state int i;
+			wait(krmSetRange(tr,
+			                 blobGranuleMappingKeys.begin,
+			                 KeyRangeRef(splitPoints.keys.front(), splitPoints.keys.back()),
+			                 blobGranuleMappingValueFor(currentWorkerId)));
 			for (i = 0; i < splitPoints.keys.size() - 1; i++) {
 				KeyRangeRef splitRange(splitPoints.keys[i], splitPoints.keys[i + 1]);
 
@@ -2831,10 +2844,10 @@ ACTOR Future<Void> maybeSplitRange(Reference<BlobManagerData> bmData,
 				// split the assignment but still pointing to the same worker
 				// FIXME: could pick new random workers here, they'll get overridden shortly unless the BM immediately
 				// restarts
-				wait(krmSetRange(tr,
-				                 blobGranuleMappingKeys.begin,
-				                 KeyRangeRef(splitPoints.keys[i], splitPoints.keys[i + 1]),
-				                 blobGranuleMappingValueFor(currentWorkerId)));
+				if (i != 0) {
+					tr->set(splitPoints.keys[i].withPrefix(blobGranuleMappingKeys.begin),
+					        blobGranuleMappingValueFor(currentWorkerId));
+				}
 			}
 
 			wait(tr->commit());
