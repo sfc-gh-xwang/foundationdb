@@ -190,7 +190,7 @@ private:
 	std::unordered_map<UID, StorageServerInterface>* tssMapping = nullptr;
 
 	std::map<int64_t, TenantName>* tenantMap = nullptr;
-	std::unordered_map<TenantName, TenantLookupInfo>* tenantNameIndex = nullptr;
+	std::unordered_map<TenantName, EventualSingleton<int64_t, TenantLookupInfo>>* tenantNameIndex = nullptr;
 	std::set<int64_t>* lockedTenants = nullptr;
 	EncryptionAtRestMode encryptMode;
 
@@ -794,10 +794,16 @@ private:
 				(*tenantMap)[tenantEntry.id] = tenantEntry.tenantName;
 				if (tenantNameIndex) {
 					if (oldTenantName.present()) {
-						tenantNameIndex->erase(oldTenantName.get());
+						EventualSingleton<int64_t, TenantLookupInfo>& oldLookupInfo =
+						    (*tenantNameIndex)[oldTenantName.get()];
+						ASSERT(oldLookupInfo.erase(tenantEntry.id));
+						if (oldLookupInfo.empty()) {
+							tenantNameIndex->erase(oldTenantName.get());
+						}
 					}
-					(*tenantNameIndex)[tenantEntry.tenantName] =
-					    TenantLookupInfo(tenantEntry.id, tenantEntry.tenantGroup);
+					EventualSingleton<int64_t, TenantLookupInfo>& lookupInfo =
+					    (*tenantNameIndex)[tenantEntry.tenantName];
+					lookupInfo.insert(tenantEntry.id, TenantLookupInfo(tenantEntry.id, tenantEntry.tenantGroup));
 				}
 			}
 			if (lockedTenants) {
@@ -1280,7 +1286,12 @@ private:
 
 				auto itr = startItr;
 				while (itr != endItr) {
-					tenantNameIndex->erase(itr->second);
+					auto nameIndexItr = tenantNameIndex->find(itr->second);
+					ASSERT(nameIndexItr != tenantNameIndex->end());
+					ASSERT(nameIndexItr->second.erase(itr->first));
+					if (nameIndexItr->second.empty()) {
+						tenantNameIndex->erase(nameIndexItr);
+					}
 					itr++;
 				}
 

@@ -1942,4 +1942,22 @@ using TransactionTagMap = boost::unordered_flat_map<TransactionTag, Value, std::
 template <class Value>
 using UIDTransactionTagMap = boost::unordered_flat_map<UID, TransactionTagMap<Value>>;
 
+template <class K, class T>
+class EventualSingleton {
+public:
+	T item() const {
+		ASSERT(items.size() == 1);
+		return items.begin()->second;
+	}
+
+	void insert(K k, T t) { items[k] = t; }
+
+	bool erase(K k) { return items.erase(k) == 1; }
+
+	bool empty() const { return items.empty(); }
+
+private:
+	std::unordered_map<K, T> items;
+};
+
 #endif
