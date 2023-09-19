@@ -856,6 +856,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS,                true );
 	init( LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO,           0.5 ); BUGGIFY_KNOB(LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO, randomize && BUGGIFY, deterministicRandom()->random01());
 	init( TRACK_TENANT_GROUP_THROUGHPUT,                       false );
+	init( USE_CLIENT_THROUGHPUT_TRACKER,                       false );
 
 	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,         1.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   1.0 );
