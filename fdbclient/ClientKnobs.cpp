@@ -284,9 +284,9 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( MAX_GRV_BATCHERS,                        1000 );
 	init( GRV_BATCHER_EXPIRATION_TIMEOUT,          60.0 );
 	init( GRV_BATCHER_CLEANING_INTERVAL,            5.0 );
-	init( TRACK_THROUGHPUT_ON_CLIENTS,            false ); BUGGIFY_KNOB(TRACK_THROUGHPUT_ON_CLIENTS, randomize && BUGGIFY, true);
+	init( TRACK_THROUGHPUT_ON_CLIENTS,             true ); BUGGIFY_KNOB(TRACK_THROUGHPUT_ON_CLIENTS, randomize && BUGGIFY, false);
 	init( CLIENT_THROUGHPUT_REPORT_INTERVAL,        1.0 );
-	init( TRACK_AVERAGE_COST_ON_CLIENTS,            true ); BUGGIFY_KNOB(TRACK_AVERAGE_COST_ON_CLIENTS, randomize && BUGGIFY, false);
+	init( TRACK_AVERAGE_COST_ON_CLIENTS,           true ); BUGGIFY_KNOB(TRACK_AVERAGE_COST_ON_CLIENTS, randomize && BUGGIFY, false);
 	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
 	init( AVERAGE_COST_START_DELAY,                10.0 );
 	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
