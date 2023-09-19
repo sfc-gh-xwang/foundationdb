@@ -853,8 +853,10 @@ ACTOR Future<Void> coordinationServer(std::string dataFolder,
 			// Simulation does not always immediately reboot a failed process
 			// when running multiple processes on a machine. Throw a special
 			// error to trigger simulation to immediately reboot the process
-			// and to not log an error.
-			throw inconsistent_disk_queue();
+			// and to not log an error. Set the injected fault flag to avoid
+			// failures when simulation injects IO failures and starts
+			// converting all errors into io_timeouts.
+			throw inconsistent_disk_queue().asInjectedFault();
 		}
 
 		throw err;
