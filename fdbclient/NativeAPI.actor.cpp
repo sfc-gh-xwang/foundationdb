@@ -12159,9 +12159,13 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			}
 
 			tr->set(blobRangeChangeKey, deterministicRandom()->randomUniqueID().toString());
-			// This is not coalescing because we want to keep each range logically separate.
-			// FIXME: if not active, do coalescing - had issues
-			wait(krmSetRange(tr, blobRangeKeys.begin, range, value));
+			// This is not coalescing because we want to keep each range logically separate for active, but we want to
+			// coalesce inactive ranges
+			if (active) {
+				wait(krmSetRange(tr, blobRangeKeys.begin, range, value));
+			} else {
+				wait(krmSetRangeCoalescing(tr, blobRangeKeys.begin, range, normalKeys, value));
+			}
 			// RYWTransaction has issues with atomic op sizing when using addVersionstampAtEnd on old api versions
 			tr->getTransaction().atomicOp(
 			    addVersionStampAtEnd(blobRangeChangeLogKeys.begin), changeValue, MutationRef::SetVersionstampedKey);

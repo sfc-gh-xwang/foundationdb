@@ -152,15 +152,14 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 			fmt::print("Unregistering new range [{0} - {1})\n", range.begin.printable(), range.end.printable());
 		}
 
-		if (deterministicRandom()->coinflip()) {
-			if (BGRW_DEBUG) {
-				fmt::print("Force purging range before un-registering: [{0} - {1})\n",
-				           range.begin.printable(),
-				           range.end.printable());
-			}
-			Key purgeKey = wait(self->versionedForcePurge(cx, range, self->tenant));
-			wait(cx->waitPurgeGranulesComplete(purgeKey));
+		if (BGRW_DEBUG) {
+			fmt::print("Force purging range before un-registering: [{0} - {1})\n",
+			           range.begin.printable(),
+			           range.end.printable());
 		}
+		Key purgeKey = wait(self->versionedForcePurge(cx, range, self->tenant));
+		wait(cx->waitPurgeGranulesComplete(purgeKey));
+
 		bool success = wait(cx->unblobbifyRange(range, self->tenant));
 		ASSERT(success);
 
@@ -350,6 +349,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 
 		// FIXME: re-enable! if we don't force purge there are weird races that cause granules to technically still
 		// exist
+		// also check that no blob worker thinks it owns any ranges that are for sure inactive
 		/*for (int i = 0; i < self->inactiveRanges.size(); i++) {
 		    checks.push_back(self->checkRange(cx, self, self->inactiveRanges[i], false, false));
 		}*/
@@ -381,7 +381,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 
 	ACTOR Future<Void> tearDownRangeAfterUnit(Database cx, BlobGranuleRangesWorkload* self, KeyRange range) {
 		if (BGRW_DEBUG) {
-			fmt::print("Tearing down [{0} - {1}) after unit!\n", range.begin.printable(), range.end.printable());
+			fmt::print("Tearing down [{0} - {1})!\n", range.begin.printable(), range.end.printable());
 		}
 
 		// tear down range at end
@@ -734,6 +734,8 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		bool verifySuccess = wait(self->isRangeActive(cx, range, self->tenant));
 		ASSERT(verifySuccess);
 
+		wait(self->tearDownRangeAfterUnit(cx, self, range));
+
 		return Void();
 	}
 
@@ -813,6 +815,123 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		return Void();
 	}
 
+	//  Unblobbify some subrange of consescutive blob ranges individually and make sure it's coalesced into one range in
+	//  system keyspace
+	ACTOR Future<Void> coalesceUnblobbifyUnit(Database cx, BlobGranuleRangesWorkload* self, KeyRange range) {
+		// Create 2 adjacent blobbified regions.
+		state int ranges = deterministicRandom()->randomInt(3, 10);
+		state int windowToUnblobbify = deterministicRandom()->randomInt(2, ranges + 1);
+		state KeyRange subRange;
+		state Key purgeKey;
+
+		state int startUnblobbifyIdx = 0;
+		if (windowToUnblobbify < ranges) {
+			startUnblobbifyIdx = deterministicRandom()->randomInt(0, ranges - windowToUnblobbify + 1);
+		}
+		state int endUnblobbifyIdx = startUnblobbifyIdx + windowToUnblobbify;
+
+		fmt::print("DBG: Ranges={0}, Start={1}, Window={2}, End={3}\n",
+		           ranges,
+		           startUnblobbifyIdx,
+		           windowToUnblobbify,
+		           endUnblobbifyIdx);
+
+		state int i;
+		for (i = 0; i < ranges; i++) {
+			subRange = KeyRangeRef(range.begin.withSuffix("_" + std::to_string(i)),
+			                       range.begin.withSuffix("_" + std::to_string(i + 1)));
+			fmt::print("DBG: Blobbify [{0} - {1}\n", subRange.begin.printable(), subRange.end.printable());
+			bool success = wait(cx->blobbifyRange(subRange, self->tenant));
+			ASSERT(success);
+			wait(self->checkRange(cx, self, subRange, true, true));
+		}
+
+		for (i = 0; i < windowToUnblobbify; i++) {
+			int idx = i + startUnblobbifyIdx;
+			subRange = KeyRangeRef(range.begin.withSuffix("_" + std::to_string(idx)),
+			                       range.begin.withSuffix("_" + std::to_string(idx + 1)));
+			fmt::print("DBG: Unblobbify [{0} - {1}\n", subRange.begin.printable(), subRange.end.printable());
+			wait(store(purgeKey, self->versionedForcePurge(cx, subRange, self->tenant)));
+			wait(cx->waitPurgeGranulesComplete(purgeKey));
+
+			bool unsetSuccess = wait(cx->unblobbifyRange(subRange, self->tenant));
+			ASSERT(unsetSuccess);
+		}
+
+		// check that all ranges after the unblobbified boundary are still valid
+		state Standalone<VectorRef<KeyRangeRef>> blobRanges =
+		    wait(cx->listBlobbifiedRanges(range, 1000000, self->tenant));
+		if (blobRanges.size() != ranges - windowToUnblobbify) {
+			fmt::print("ERROR: incorret number of blob ranges! ({0}) - expecting {1}\n",
+			           blobRanges.size(),
+			           ranges - windowToUnblobbify);
+			for (i = 0; i < blobRanges.size(); i++) {
+				fmt::print("  [{0} - {1})\n", blobRanges[i].begin.printable(), blobRanges[i].end.printable());
+			}
+		}
+		ASSERT(blobRanges.size() == ranges - windowToUnblobbify);
+		state int blobRangeI = 0;
+
+		for (i = 0; i < startUnblobbifyIdx; i++) {
+			KeyRange checkRange(KeyRangeRef(range.begin.withSuffix("_" + std::to_string(i)),
+			                                range.begin.withSuffix("_" + std::to_string(i + 1))));
+			ASSERT(blobRanges[blobRangeI] == checkRange);
+			wait(self->checkRange(cx, self, checkRange, true, true));
+			blobRangeI++;
+		}
+
+		for (i = endUnblobbifyIdx; i < ranges; i++) {
+			KeyRange checkRange(KeyRangeRef(range.begin.withSuffix("_" + std::to_string(i)),
+			                                range.begin.withSuffix("_" + std::to_string(i + 1))));
+			ASSERT(blobRanges[blobRangeI] == checkRange);
+			wait(self->checkRange(cx, self, checkRange, true, true));
+			blobRangeI++;
+		}
+
+		// check that system keyspace only has expected number of coalesced boundaries
+		state KeyRange systemRange = range;
+		if (self->tenant.present()) {
+			systemRange = systemRange.withPrefix(self->tenant.get()->prefix());
+		}
+		systemRange = systemRange.withPrefix(blobRangeKeys.begin);
+
+		state RangeReadResult systemBoundaries;
+		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				wait(store(systemBoundaries, tr->getRange(systemRange, 1000)));
+				break;
+			} catch (Error& e) {
+				wait(tr->onError(e));
+			}
+		}
+		int expectedBoundaries = 0;
+		if (startUnblobbifyIdx != 0) {
+			expectedBoundaries += startUnblobbifyIdx + 1;
+		}
+		if (endUnblobbifyIdx != ranges) {
+			expectedBoundaries += (ranges - endUnblobbifyIdx) + 1;
+		}
+		if (systemBoundaries.size() != expectedBoundaries) {
+			fmt::print("ERROR: incorret number of system boundaries! ({0}) - expecting {1} for {2} - {3}\n",
+			           systemBoundaries.size(),
+			           expectedBoundaries,
+			           systemRange.begin.printable(),
+			           systemRange.end.printable());
+			for (i = 0; i < systemBoundaries.size(); i++) {
+				fmt::print(
+				    "ERROR:    {0}={1}\n", systemBoundaries[i].key.printable(), systemBoundaries[i].value.printable());
+			}
+		}
+		ASSERT(expectedBoundaries == systemBoundaries.size());
+
+		// tear down the part of the test that we didn't already do
+		wait(self->tearDownRangeAfterUnit(cx, self, range));
+
+		return Void();
+	}
+
 	enum UnitTestTypes {
 		VERIFY_RANGE_UNIT,
 		VERIFY_RANGE_GAP_UNIT,
@@ -823,7 +942,8 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		BLOBBIFY_BLOCKING_UNIT,
 		DELETE_TENANT_UNIT,
 		UNBLOBBIFY_MANY_UNIT,
-		OP_COUNT = 9 /* keep this last */
+		COALESCE_UNBLOBBIFY_UNIT,
+		OP_COUNT = 10 /* keep this last */
 	};
 
 	ACTOR Future<Void> blobGranuleRangesUnitTests(Database cx, BlobGranuleRangesWorkload* self) {
@@ -876,6 +996,8 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 				wait(self->deleteTenantUnit(cx, self, range));
 			} else if (op == UNBLOBBIFY_MANY_UNIT) {
 				wait(self->unblobbifyManyUnit(cx, self, range));
+			} else if (op == COALESCE_UNBLOBBIFY_UNIT) {
+				wait(self->coalesceUnblobbifyUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}
