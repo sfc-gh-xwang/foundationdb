@@ -2884,7 +2884,7 @@ ACTOR static Future<Void> doTenantLookupRequest(TenantLookupRequest req, ProxyCo
 
 	auto itr = commitData->tenantNameIndex.find(req.tenantName);
 	if (itr != commitData->tenantNameIndex.end()) {
-		req.reply.send(itr->second);
+		req.reply.send(itr->second.item());
 	} else {
 		TraceEvent(SevWarn, "CommitProxyTenantNotFound", commitData->dbgid).detail("TenantName", req.tenantName);
 		++commitData->stats.tenantLookupRequestErrors;
