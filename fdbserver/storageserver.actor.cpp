@@ -8144,6 +8144,7 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 
 	// Set read options to use non-caching reads and set Fetch type unless low priority data fetching is disabled by
 	// a knob
+	// Note that FETCH_KEYS_LOWER_PRIORITY is 0 by default. So, we use NORMAL for fetchKeys.
 	state ReadOptions readOptions = ReadOptions(
 	    {}, SERVER_KNOBS->FETCH_KEYS_LOWER_PRIORITY ? ReadType::FETCH : ReadType::NORMAL, CacheResult::False);
 

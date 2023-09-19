@@ -113,6 +113,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( RANGESTREAM_FRAGMENT_SIZE,               1e6 );
 	init( RANGESTREAM_BUFFERED_FRAGMENTS_LIMIT,     20 );
 	init( QUARANTINE_TSS_ON_MISMATCH,             true ); BUGGIFY_KNOB(QUARANTINE_TSS_ON_MISMATCH, randomize && BUGGIFY, false); // if true, a tss mismatch will put the offending tss in quarantine. If false, it will just be killed
+	init( FETCH_RANGE_WITH_DC_ID_LOCALITY,       false ); BUGGIFY_KNOB(FETCH_RANGE_WITH_DC_ID_LOCALITY, randomize && BUGGIFY, true); // if true, when fetchKeys uses streaming reads, try to read from local DcId if possible.
 
 	//KeyRangeMap
 	init( KRM_GET_RANGE_LIMIT,                     1e5 ); BUGGIFY_KNOB(KRM_GET_RANGE_LIMIT, randomize && BUGGIFY, 10);
