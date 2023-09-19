@@ -467,6 +467,11 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 		dbgTrace.get().detail("DbgId", keysByIds.debugId);
 	}
 
+	if (keysByIds.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetBaseCipherKeysByIds.Before");
+	}
+
 	// Dedup the requested pair<baseCipherId, encryptDomainId>
 	// TODO: endpoint serialization of std::unordered_set isn't working at the moment
 	std::unordered_set<EKPGetBaseCipherKeysRequestInfo, EKPGetBaseCipherKeysRequestInfo_Hash> dedupedCipherInfos;
@@ -540,6 +545,10 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
+			if (keysByIds.debugId.present()) {
+				g_traceBatch.addEvent(
+				    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetBaseCipherKeysByIds.Error");
+			}
 			if (isKmsConnectionError(e)) {
 				ekpProxyData->setKMSHealthiness(false);
 			}
@@ -552,6 +561,11 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 			ekpProxyData->sendErrorResponse(keysByIds.reply, e);
 			return Void();
 		}
+	}
+
+	if (keysByIds.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetBaseCipherKeysByIds.Send");
 	}
 
 	keyIdsReply.numHits = numHits;
@@ -616,6 +630,11 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 	if (dbgTrace.present()) {
 		dbgTrace.get().setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
 		dbgTrace.get().detail("DbgId", latestKeysReq.debugId);
+	}
+
+	if (latestKeysReq.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestCipherKeys.Before");
 	}
 
 	// Dedup the requested domainIds.
@@ -697,6 +716,10 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
+			if (latestKeysReq.debugId.present()) {
+				g_traceBatch.addEvent(
+				    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestCipherKeys.Error");
+			}
 			if (isKmsConnectionError(e)) {
 				ekpProxyData->setKMSHealthiness(false);
 			}
@@ -708,6 +731,11 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 			ekpProxyData->sendErrorResponse(latestKeysReq.reply, e);
 			return Void();
 		}
+	}
+
+	if (latestKeysReq.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestCipherKeys.Send");
 	}
 
 	latestCipherReply.numHits = numHits;
@@ -930,6 +958,11 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 		dbgTrace.get().detail("DbgId", req.debugId);
 	}
 
+	if (req.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestBlobMetadata.Before");
+	}
+
 	// Dedup the requested domainIds.
 	std::unordered_set<BlobMetadataDomainId> dedupedDomainIds;
 	for (auto domainId : req.domainIds) {
@@ -992,6 +1025,10 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
+			if (req.debugId.present()) {
+				g_traceBatch.addEvent(
+				    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestBlobMetadata.Error");
+			}
 			if (isKmsConnectionError(e)) {
 				ekpProxyData->setKMSHealthiness(false);
 			}
@@ -1004,6 +1041,11 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 			req.reply.sendError(e);
 			return Void();
 		}
+	}
+
+	if (req.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestBlobMetadata.Send");
 	}
 
 	req.reply.send(EKPGetLatestBlobMetadataReply(metadataDetails));
