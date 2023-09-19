@@ -8787,22 +8787,12 @@ void cleanUpChangeFeeds(StorageServer* data, const KeyRangeRef& keys, Version ve
 			    .detail("Version", version)
 			    .detail("DurableVersion", durableVersion);
 
-			data->changeFeedCleanupDurable[f.first] = durableVersion;
-
-			Key beginClearKey = f.first.withPrefix(persistChangeFeedKeys.begin);
-			auto& mLV = data->addVersionToMutationLog(durableVersion);
-			data->addMutationToMutationLog(
-			    mLV, MutationRef(MutationRef::ClearRange, beginClearKey, keyAfter(beginClearKey)));
-			++data->counters.kvSystemClearRanges;
-			data->addMutationToMutationLog(mLV,
-			                               MutationRef(MutationRef::ClearRange,
-			                                           changeFeedDurableKey(f.first, 0),
-			                                           changeFeedDurableKey(f.first, version)));
-
 			// We can't actually remove this change feed fully until the mutations clearing its data become durable.
 			// If the SS restarted at version R before the clearing mutations became durable at version D (R < D),
 			// then the restarted SS would restore the change feed clients would be able to read data and would miss
 			// mutations from versions [R, D), up until we got the private mutation triggering the cleanup again.
+
+			data->changeFeedCleanupDurable[f.first] = durableVersion;
 
 			auto feed = data->uidChangeFeed.find(f.first);
 			if (feed != data->uidChangeFeed.end()) {
@@ -10741,6 +10731,9 @@ ACTOR Future<Void> updateStorage(StorageServer* data) {
 			                           data->changeFeedVersions.front().first.end());
 			data->changeFeedVersions.pop_front();
 		}
+		for (auto& it : data->changeFeedCleanupDurable) {
+			modifiedChangeFeeds.insert(it.first);
+		}
 
 		state std::vector<std::pair<Key, Version>> feedFetchVersions;
 
@@ -10751,13 +10744,18 @@ ACTOR Future<Void> updateStorage(StorageServer* data) {
 			auto info = data->uidChangeFeed.find(updatedChangeFeeds[curFeed]);
 			if (info != data->uidChangeFeed.end()) {
 				// Cannot yield in mutation updating loop because of race with fetchVersion
+				auto& feedId = updatedChangeFeeds[curFeed];
 				Version alreadyFetched = std::max(info->second->fetchVersion, info->second->durableFetchVersion.get());
 				if (info->second->removing) {
-					auto cleanupPending = data->changeFeedCleanupDurable.find(info->second->id);
+					auto cleanupPending = data->changeFeedCleanupDurable.find(feedId);
 					if (cleanupPending != data->changeFeedCleanupDurable.end() &&
 					    cleanupPending->second <= newOldestVersion) {
-						// due to a race, we just applied a cleanup mutation, but feed updates happen just after.
-						// Don't write any mutations for this feed.
+						// this feed is being cleaned up this storage commit, delete its data and don't write anything
+
+						Key beginClearKey = feedId.withPrefix(persistChangeFeedKeys.begin);
+						data->storage.clearRange(KeyRangeRef(beginClearKey, keyAfter(beginClearKey)));
+						data->storage.clearRange(KeyRangeRef(changeFeedDurableKey(feedId, 0),
+						                                     changeFeedDurableKey(feedId, cleanupPending->second)));
 						curFeed++;
 						continue;
 					}
@@ -10780,7 +10778,7 @@ ACTOR Future<Void> updateStorage(StorageServer* data) {
 				}
 
 				if (info->second->fetchVersion != invalidVersion && !info->second->removing) {
-					feedFetchVersions.push_back(std::pair(info->second->id, info->second->fetchVersion));
+					feedFetchVersions.push_back(std::pair(feedId, info->second->fetchVersion));
 				}
 				// handle case where fetch had version ahead of last in-memory mutation
 				if (alreadyFetched > info->second->storageVersion) {
