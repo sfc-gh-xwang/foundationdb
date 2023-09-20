@@ -5,6 +5,7 @@
 #include "fdbclient/Knobs.h"
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/ThroughputTracker.h"
+#include "fdbserver/Knobs.h"
 #include "fdbserver/workloads/ThroughputQuotaUtil.h"
 #include "fdbserver/workloads/workloads.actor.h"
 
@@ -275,6 +276,12 @@ class ExpectStableThroughputWorkload : public TestWorkload {
 			if (self->opType == OpType::READ && !tenantsEnabled) {
 				tagPassed =
 				    tagPassed && (totalCost >= static_cast<double>(expectedTotalCost) * (1.0 - self->errorTolerance));
+			}
+
+			// This is an invalid configuration that can sometimes randomly be chosen in simulation.
+			// Proper throttling cannot be expected in this case, so avoid failing the test.
+			if (!CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && SERVER_KNOBS->USE_CLIENT_THROUGHPUT_TRACKER) {
+				tagPassed = true;
 			}
 
 			auto const severity = tagPassed ? SevInfo : SevError;
