@@ -18,14 +18,20 @@
  * limitations under the License.
  */
 
-#include "fdbserver/DDTeamCollection.h"
+#include <climits>
+
+#include "fdbclient/SystemData.h"
 #include "fdbclient/FDBTypes.h"
+#include "fdbserver/BlobMigratorInterface.h"
+#include "fdbserver/DDTeamCollection.h"
 #include "fdbserver/ExclusionTracker.actor.h"
 #include "fdbserver/DataDistributionTeam.h"
 #include "fdbserver/Knobs.h"
 #include "flow/CodeProbe.h"
-#include "fdbserver/BlobMigratorInterface.h"
+#include "flow/IRandom.h"
 #include "flow/Trace.h"
+#include "flow/network.h"
+
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 namespace {
@@ -2965,6 +2971,7 @@ public:
 					data.createdTime = metadata.get().createdTime;
 				}
 				metadataMap.set(tr, server->getId(), data);
+				tr->set(serverMetadataChangeKey, deterministicRandom()->randomUniqueID().toString());
 				wait(tr->commit());
 				break;
 			} catch (Error& e) {

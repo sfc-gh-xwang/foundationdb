@@ -862,10 +862,6 @@ ACTOR Future<Void> waitForShardReady(StorageServerInterface server,
 		try {
 			GetShardStateReply rep =
 			    wait(server.getShardState.getReply(GetShardStateRequest(keys, mode), TaskPriority::MoveKeys));
-			TraceEvent("GetShardStateReadyDD", server.id())
-			    .detail("RepVersion", rep.first)
-			    .detail("MinVersion", rep.second)
-			    .log();
 			if (rep.first >= minVersion) {
 				return Void();
 			}
@@ -2098,6 +2094,7 @@ ACTOR Future<std::pair<Version, Tag>> addStorageServer(Database cx, StorageServe
 
 			StorageMetadataType metadata(StorageMetadataType::currentTime());
 			metadataMap.set(tr, server.id(), metadata);
+			tr->set(serverMetadataChangeKey, deterministicRandom()->randomUniqueID().toString());
 
 			tr->set(serverListKeyFor(server.id()), serverListValue(server));
 			wait(tr->commit());
@@ -2256,6 +2253,7 @@ ACTOR Future<Void> removeStorageServer(Database cx,
 				}
 
 				metadataMap.erase(tr, serverID);
+				tr->set(serverMetadataChangeKey, deterministicRandom()->randomUniqueID().toString());
 
 				retry = true;
 				wait(tr->commit());
@@ -2742,6 +2740,7 @@ void seedShardServers(Arena& arena, CommitTransactionRef& tr, std::vector<Storag
 			tr.set(arena, uidRef.withPrefix(tssMappingKeys.begin), uidRef);
 		}
 	}
+	tr.set(arena, serverMetadataChangeKey, deterministicRandom()->randomUniqueID().toString());
 
 	std::vector<Tag> serverTags;
 	std::vector<UID> serverSrcUID;
