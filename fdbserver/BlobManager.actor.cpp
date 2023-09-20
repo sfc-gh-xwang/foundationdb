@@ -1676,11 +1676,10 @@ ACTOR Future<BlobGranuleSplitPoints> bulkLoadInitialSplitRange(Reference<BlobMan
 
 			// try to find tenant id + bulk load id and check that it still exists.
 			// would have been easier if bulk load range map also had tenant id
+			state Optional<BulkLoadStatus::State> currentState;
 			if (!idKey.present()) {
 				// either no tenant, or with tenant prefix
 				state BulkLoadIDKey candidateIDKey = { TenantInfo::INVALID_TENANT, bulkLoadID };
-				state Optional<BulkLoadStatus::State> currentState;
-
 				Optional<BulkLoadStatus> noTenantStatus = wait(BulkLoadMetadata::statusMap().get(tr, candidateIDKey));
 
 				if (noTenantStatus.present()) {
@@ -1706,29 +1705,42 @@ ACTOR Future<BlobGranuleSplitPoints> bulkLoadInitialSplitRange(Reference<BlobMan
 					    .detail("BulkLoadID", bulkLoadID.printable());
 					throw bulk_load_invalid_state_transition();
 				}
-				ASSERT(currentState.present());
-				if (currentState.get() != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
-					CODE_PROBE(true, "cannot find bulk load id registered for blob manager blobbify");
-					// must have been aborted then cleaned up, but, weird
-					DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
-					    .detail("BulkLoadID", bulkLoadID)
-					    .detail("Stage", "LoadPointersError")
-					    .detail("State", static_cast<int>(currentState.get()))
-					    .detail("TenantId", idKey->first);
-					throw bulk_load_invalid_state_transition();
-				}
+
 				DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
 				    .detail("BulkLoadID", bulkLoadID)
 				    .detail("Stage", "FoundIDKey")
 				    .detail("TenantId", idKey->first);
+			} else {
+				// still check bulk load status on retry to ensure load is active once we know idkey
+				Optional<BulkLoadStatus> updatedStatus = wait(BulkLoadMetadata::statusMap().get(tr, idKey.get()));
+				if (!updatedStatus.present()) {
+					CODE_PROBE(true, "bulk load no longer present after retry", probe::decoration::rare);
+					// must have been aborted then cleaned up, but, weird
+					TraceEvent(SevWarn, "BulkLoadBlobbifyingGoneOnRetry", bmData->id)
+					    .detail("Epoch", bmData->epoch)
+					    .detail("BulkLoadID", bulkLoadID.printable());
+					throw bulk_load_invalid_state_transition();
+				}
+				currentState = updatedStatus->state;
 			}
+			// if idkey present still need to check that we're in staging blob validated
 			ASSERT(idKey.present());
+			ASSERT(currentState.present());
+			if (currentState.get() != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+				CODE_PROBE(true, "cannot find bulk load id registered for blob manager blobbify");
+				// must have been aborted then cleaned up, but, weird
+				DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
+				    .detail("BulkLoadID", bulkLoadID)
+				    .detail("Stage", "LoadPointersError")
+				    .detail("State", static_cast<int>(currentState.get()))
+				    .detail("TenantId", idKey->first);
+				throw bulk_load_invalid_state_transition();
+			}
 
 			wait(store(writtenPointers,
 			           BulkLoadMetadata::writtenFilePointersMap().getRange(
 			               tr, idRange.first, idRange.second, CLIENT_KNOBS->TOO_MANY)));
 			ASSERT(!writtenPointers.more);
-			ASSERT(writtenPointers.results.size() > 0);
 
 			break;
 		} catch (Error& e) {
@@ -4297,14 +4309,16 @@ ACTOR Future<Void> resumeActiveMerges(Reference<BlobManagerData> bmData, Future<
 	state int rowLimit = BUGGIFY ? deterministicRandom()->randomInt(1, 10) : 10000;
 	state KeyRange currentRange = blobGranuleMergeKeys;
 	state int found = 0;
+	state Key startedThrough = blobGranuleMergeKeys.begin;
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 
-			RangeReadResult result = wait(tr->getRange(currentRange, rowLimit));
-			state bool anyMore = result.more;
+			wait(checkManagerLock(tr, bmData));
+
+			state RangeReadResult result = wait(tr->getRange(currentRange, rowLimit));
 			found += result.size();
 			state std::vector<Future<Void>> cleanupForcePurged;
 			for (auto& it : result) {
@@ -4343,6 +4357,9 @@ ACTOR Future<Void> resumeActiveMerges(Reference<BlobManagerData> bmData, Future<
 					continue;
 				}
 
+				if (it.key <= startedThrough) {
+					continue;
+				}
 				// want to mark in progress granule ranges as merging, BEFORE recovery is complete and workers can
 				// report updated status. Start with early (epoch, seqno) to guarantee lower than later status
 				BoundaryEvaluation eval(1, 0, BoundaryEvalType::MERGE, 1, 0);
@@ -4359,9 +4376,12 @@ ACTOR Future<Void> resumeActiveMerges(Reference<BlobManagerData> bmData, Future<
 				bmData->activeGranuleMerges.insert(mergeRange, mergeVersion);
 				bmData->setMergeCandidate(mergeRange, MergeCandidateMerging);
 			}
-
-			if (anyMore) {
-				currentRange = KeyRangeRef(keyAfter(result.back().key), currentRange.end);
+			// if we already processed these merges, but the transaction fails on deleting any change feeds from ranges
+			// that are force purging, just retry the feed deletes
+			if (result.empty()) {
+				startedThrough = blobGranuleMergeKeys.end;
+			} else {
+				startedThrough = result.back().key;
 			}
 
 			if (!cleanupForcePurged.empty()) {
@@ -4370,7 +4390,9 @@ ACTOR Future<Void> resumeActiveMerges(Reference<BlobManagerData> bmData, Future<
 				tr->reset();
 			}
 
-			if (!anyMore) {
+			if (result.more) {
+				currentRange = KeyRangeRef(keyAfter(result.back().key), currentRange.end);
+			} else {
 				break;
 			}
 		} catch (Error& e) {

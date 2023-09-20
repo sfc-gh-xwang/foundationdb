@@ -1719,7 +1719,7 @@ ACTOR Future<Void> granuleCheckMergeCandidate(Reference<BlobWorkerData> bwData,
 		StorageMetrics currentMetrics = wait(bwData->db->getStorageMetrics(metadata->keyRange, CLIENT_KNOBS->TOO_MANY));
 
 		// FIXME: maybe separate knob and/or value for write rate?
-		if (currentMetrics.bytes >= SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES / 2 ||
+		if (metadata->isBulkLoadDirty || currentMetrics.bytes >= SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES / 2 ||
 		    currentMetrics.bytesWrittenPerKSecond >= SERVER_KNOBS->SHARD_MIN_BYTES_PER_KSEC) {
 			wait(delayJittered(SERVER_KNOBS->BG_MERGE_CANDIDATE_THRESHOLD_SECONDS / 2.0));
 			CODE_PROBE(true, "wait and check later to see if granule got smaller or colder");
@@ -5479,6 +5479,12 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 				req.reply.sendError(wrong_shard_server());
 				return Void();
 			}
+		}
+
+		if (metadata->isBulkLoadDirty) {
+			// FIXME: more specific error with longer retry timeout?
+			req.reply.sendError(wrong_shard_server());
+			return Void();
 		}
 
 		// if delta file is already written after flush version, but that delta file did not compact,
