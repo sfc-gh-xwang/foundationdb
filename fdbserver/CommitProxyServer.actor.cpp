@@ -1847,7 +1847,16 @@ Future<Void> validateTransaction(CommitBatchContext* self, const int trIdx) {
 			                             ? ConflictBatch::TransactionTenantFailure
 			                             : ConflictBatch::TransactionRangeLockFailure;
 			CODE_PROBE(true, "Commit proxy transaction tenant failure");
-		} else if (self->pProxyCommitData->encryptMode != EncryptionAtRestMode::DISABLED) {
+		}
+		// Valdiate encryption key presence and fail transaction if 'encryption key is not found'.
+		// 1. Encryption at-Rest is disabled - no validation needed
+		// 2. "Cluster_Aware" encryption mode - resolution phase shall attempt to fetch the per-cluster scope encryption
+		// key and if not found, should have already failed the commit with appropriate transaction error. Hence,
+		// no additional validation needed
+		// 3. "Domain_aware" encryption mode - resolution phase check as mentioned in above point applies to per-tenant
+		// encryption mode, however, it is possible tenants are added during resolution phase, check ensures for all
+		// such tenants, encryption keys exists
+		else if (self->pProxyCommitData->encryptMode == EncryptionAtRestMode::DOMAIN_AWARE) {
 			return validateEncryptionKeyExistence(self, trIdx, trTenantIds);
 		}
 	}
