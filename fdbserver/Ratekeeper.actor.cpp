@@ -211,7 +211,7 @@ Ratekeeper::Ratekeeper(UID id,
 void Ratekeeper::updateTagThrottling() {
 	serverThroughputTracker.update(metricsTracker.getStorageQueueInfo());
 	IRKClusterThroughputTracker const* clusterThroughputTracker = &serverThroughputTracker;
-	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+	if (SERVER_KNOBS->USE_CLIENT_THROUGHPUT_TRACKER) {
 		clusterThroughputTracker = &clientThroughputTracker;
 	}
 	quotaCache->updateThroughput(*clusterThroughputTracker);

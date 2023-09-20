@@ -852,6 +852,10 @@ public:
 	// If enabled, track the throughput of tenant groups
 	// for the quota throttler.
 	bool TRACK_TENANT_GROUP_THROUGHPUT;
+	// If enabled, the quota throttler will use the client throughput reports
+	// to track per-throttlingId throughput. If disabled, metrics from storage
+	// servers and commit proxies will be aggregated
+	bool USE_CLIENT_THROUGHPUT_TRACKER;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;
