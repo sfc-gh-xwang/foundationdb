@@ -114,11 +114,6 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 		TraceEvent("RESTDoRequestImpl").detail("Url", url.toString()).detail("DbgId", debugId);
 	}
 
-	if (url.body.size() > 0) {
-		PacketWriter pw(req->data.content->getWriteBuffer(url.body.size()), nullptr, Unversioned());
-		pw.serializeBytes(url.body);
-	}
-
 	std::string statsKey = RESTClient::getStatsKey(url.host, url.service);
 	auto sItr = client->statsMap.find(statsKey);
 	if (sItr == client->statsMap.end()) {
@@ -140,6 +135,14 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 
 		state Reference<HTTP::IncomingResponse> r;
 		state RESTConnectionPool::ReusableConnection rconn;
+
+		// Rewrite the contents to the packet queue each try because sending the request consumes the queue
+		// SOMEDAY: allow the packet queue to be reset so that we can avoid copying the request again
+		if (url.body.size() > 0) {
+			req->data.content->discardAll();
+			PacketWriter pw(req->data.content->getWriteBuffer(url.body.size()), nullptr, Unversioned());
+			pw.serializeBytes(url.body);
+		}
 
 		try {
 			// Start connecting
