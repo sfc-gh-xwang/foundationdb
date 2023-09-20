@@ -36,6 +36,7 @@
 #include "flow/Platform.h"
 #include "flow/Trace.h"
 #include "fdbclient/BlobGranuleCommon.h"
+#include "fdbclient/BulkLoadTracker.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "fdbclient/BlobConnectionProvider.h"
 #include "fdbclient/FDBTypes.h"
@@ -88,6 +89,16 @@ private:
 	// Initialize blob migrator to COPYING_DATA state.
 	ACTOR static Future<Void> initialize(Reference<BlobMigrator> self) {
 		state Reference<BlobRestoreController> controller = makeReference<BlobRestoreController>(self->db_, normalKeys);
+		bool isRestoring = wait(BlobRestoreController::isRestoring(controller));
+		if (!isRestoring) {
+			BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
+			                                                         const BulkLoadStatus::State& state) {
+				return trackBulkLoad(self, id, state);
+			};
+			self->bulkLoadTracker_ = BulkLoadTracker(self->db_, bulkLoadHandler);
+			self->addActor(self->bulkLoadTracker_.start());
+			return Void();
+		}
 		wait(BlobRestoreController::setLockOwner(controller, self->interf_.id()));
 
 		loop {
@@ -717,6 +728,13 @@ private:
 		return Void();
 	}
 
+	ACTOR static Future<Void> trackBulkLoad(Reference<BlobMigrator> self,
+	                                        BulkLoadIDKey idKey,
+	                                        BulkLoadStatus::State state) {
+		// TODO: handle
+		return Void();
+	}
+
 	// Return total storage size in bytes for migration
 	static int64_t sizeInBytes(Reference<BlobMigrator> self) { return sizeInBytes(self, normalKeys); }
 
@@ -812,6 +830,7 @@ private:
 	BlobMigratorInterface interf_;
 	ActorCollection actors_;
 	FileBackupAgent backupAgent_;
+	BulkLoadTracker bulkLoadTracker_;
 
 	Key mlogsUrl_;
 	Version targetVersion_;

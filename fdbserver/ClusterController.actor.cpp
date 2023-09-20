@@ -466,7 +466,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	WorkerDetails newMGWorker;
 	if (self->db.blobGranulesEnabled.get()) {
 		newBMWorker = findNewProcessForSingleton(self, ProcessClass::BlobManager, id_used);
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			newMGWorker = findNewProcessForSingleton(self, ProcessClass::BlobMigrator, id_used);
 		}
 	}
@@ -494,8 +494,8 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	ProcessClass::Fitness bestFitnessForMG;
 	if (self->db.blobGranulesEnabled.get()) {
 		bestFitnessForBM = findBestFitnessForSingleton(self, newBMWorker, ProcessClass::BlobManager);
-		if (self->db.blobRestoreEnabled.get()) {
-			bestFitnessForMG = findBestFitnessForSingleton(self, newMGWorker, ProcessClass::BlobManager);
+		if (self->canRecruitBlobMigrator()) {
+			bestFitnessForMG = findBestFitnessForSingleton(self, newMGWorker, ProcessClass::BlobMigrator);
 		}
 	}
 
@@ -534,7 +534,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (self->db.blobGranulesEnabled.get()) {
 		bmHealthy = isHealthySingleton<BlobManagerSingleton>(
 		    self, newBMWorker, bmSingleton, bestFitnessForBM, self->recruitingBlobManagerID);
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			mgHealthy = isHealthySingleton<BlobMigratorSingleton>(
 			    self, newMGWorker, mgSingleton, bestFitnessForMG, self->recruitingBlobMigratorID);
 		}
@@ -572,7 +572,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (self->db.blobGranulesEnabled.get()) {
 		currBMProcessId = bmSingleton.getInterface().locality.processId();
 		newBMProcessId = newBMWorker.interf.locality.processId();
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			currMGProcessId = mgSingleton.getInterface().locality.processId();
 			newMGProcessId = newMGWorker.interf.locality.processId();
 		}
@@ -596,7 +596,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (self->db.blobGranulesEnabled.get()) {
 		currPids.emplace_back(currBMProcessId);
 		newPids.emplace_back(newBMProcessId);
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			currPids.emplace_back(currMGProcessId);
 			newPids.emplace_back(newMGProcessId);
 		}
@@ -619,7 +619,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (!self->db.blobGranulesEnabled.get()) {
 		ASSERT(currColocMap[currBMProcessId] == 0);
 		ASSERT(newColocMap[newBMProcessId] == 0);
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			ASSERT(currColocMap[currMGProcessId] == 0);
 			ASSERT(newColocMap[newMGProcessId] == 0);
 		}
@@ -652,7 +652,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 			ddSingleton.recruit(*self);
 		} else if (self->db.blobGranulesEnabled.get() && newColocMap[newBMProcessId] < currColocMap[currBMProcessId]) {
 			bmSingleton.recruit(*self);
-		} else if (self->db.blobGranulesEnabled.get() && self->db.blobRestoreEnabled.get() &&
+		} else if (self->db.blobGranulesEnabled.get() && self->canRecruitBlobMigrator() &&
 		           newColocMap[newMGProcessId] < currColocMap[currMGProcessId]) {
 			mgSingleton.recruit(*self);
 		} else if (enableKmsCommunication && newColocMap[newEKPProcessId] < currColocMap[currEKPProcessId]) {
@@ -1165,7 +1165,7 @@ ACTOR Future<Void> registerWorker(RegisterWorkerRequest req,
 		haltRegisteringOrCurrentSingleton<BlobManagerSingleton>(
 		    self, w, currSingleton, registeringSingleton, self->recruitingBlobManagerID);
 	}
-	if (req.blobMigratorInterf.present() && self->db.blobRestoreEnabled.get()) {
+	if (req.blobMigratorInterf.present() && self->canRecruitBlobMigrator()) {
 		auto currSingleton = BlobMigratorSingleton(self->db.serverInfo->get().blobMigrator);
 		auto registeringSingleton = BlobMigratorSingleton(req.blobMigratorInterf);
 		haltRegisteringOrCurrentSingleton<BlobMigratorSingleton>(
@@ -2565,19 +2565,16 @@ ACTOR Future<Void> monitorBlobMigrator(ClusterControllerData* self) {
 		if (self->db.serverInfo->get().blobMigrator.present() && !self->recruitBlobMigrator.get()) {
 			state Future<Void> wfClient = waitFailureClient(self->db.serverInfo->get().blobMigrator.get().waitFailure,
 			                                                SERVER_KNOBS->BLOB_MIGRATOR_FAILURE_TIME);
-			loop {
-				choose {
-					when(wait(wfClient)) {
-						UID mgID = self->db.serverInfo->get().blobMigrator.get().id();
-						TraceEvent("CCBlobMigratorDied", self->id).detail("MGID", mgID);
-						self->db.clearInterf(ProcessClass::BlobMigratorClass);
-						break;
-					}
-					when(wait(self->recruitBlobMigrator.onChange())) {}
+			choose {
+				when(wait(wfClient)) {
+					UID mgID = self->db.serverInfo->get().blobMigrator.get().id();
+					TraceEvent("CCBlobMigratorDied", self->id).detail("MGID", mgID);
+					self->db.clearInterf(ProcessClass::BlobMigratorClass);
 				}
+				when(wait(self->recruitBlobMigrator.onChange())) {}
 			}
-		} else if (self->db.blobGranulesEnabled.get() && self->db.blobRestoreEnabled.get()) {
-			// if there is no blob migrator present but blob granules are now enabled, recruit a BM
+		} else if (self->db.blobGranulesEnabled.get() && self->canRecruitBlobMigrator()) {
+			// if there is no blob migrator present but blob granules are now enabled, recruit a Blob Migrator
 			wait(startBlobMigrator(self, recruitThrottler.newRecruitment()));
 		} else {
 			wait(self->db.blobGranulesEnabled.onChange() || self->db.blobRestoreEnabled.onChange());
@@ -2716,7 +2713,7 @@ ACTOR Future<Void> monitorBlobManager(ClusterControllerData* self) {
 							const auto& blobManager = self->db.serverInfo->get().blobManager;
 							self->addActor.send(BlobManagerSingleton(blobManager)
 							                        .haltBlobGranules(*self, blobManager.get().locality.processId()));
-							if (self->db.blobRestoreEnabled.get()) {
+							if (self->canRecruitBlobMigrator()) {
 								const auto& blobMigrator = self->db.serverInfo->get().blobMigrator;
 								self->addActor.send(BlobMigratorSingleton(blobMigrator)
 								                        .halt(*self, blobMigrator.get().locality.processId()));

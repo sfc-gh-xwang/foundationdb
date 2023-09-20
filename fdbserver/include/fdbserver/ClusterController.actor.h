@@ -893,8 +893,9 @@ public:
 		ASSERT(masterProcessId.present());
 		const auto& pid = worker.interf.locality.processId();
 		if ((role != ProcessClass::DataDistributor && role != ProcessClass::Ratekeeper &&
-		     role != ProcessClass::BlobManager && role != ProcessClass::EncryptKeyProxy &&
-		     role != ProcessClass::ConsistencyScan && role != ProcessClass::TenantBalancer) ||
+		     role != ProcessClass::BlobManager && role != ProcessClass::BlobMigrator &&
+		     role != ProcessClass::EncryptKeyProxy && role != ProcessClass::ConsistencyScan &&
+		     role != ProcessClass::TenantBalancer) ||
 		    pid == masterProcessId.get()) {
 			return false;
 		}
@@ -1340,6 +1341,8 @@ public:
 		}
 		return recentHealthTriggeredRecoveryTime.size();
 	}
+
+	bool canRecruitBlobMigrator() { return db.blobRestoreEnabled.get() || CLIENT_KNOBS->ALLOW_BULK_LOADS; }
 
 	std::map<Optional<Standalone<StringRef>>, WorkerInfo> id_worker;
 	std::map<Optional<Standalone<StringRef>>, ProcessClass>

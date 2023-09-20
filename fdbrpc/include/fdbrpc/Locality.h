@@ -153,6 +153,7 @@ public:
 		else if (s=="ratekeeper") _class = RatekeeperClass;
 		else if (s=="consistency_scan") _class = ConsistencyScanClass;
 		else if (s=="blob_manager") _class = BlobManagerClass;
+		else if (s=="blob_migrator") _class = BlobMigratorClass;
 		else if (s=="blob_worker") _class = BlobWorkerClass;
 		else if (s=="storage_cache") _class = StorageCacheClass;
 		else if (s=="backup") _class = BackupClass;
@@ -186,6 +187,7 @@ public:
 		else if (classStr=="ratekeeper") _class = RatekeeperClass;
 		else if (classStr=="consistency_scan") _class = ConsistencyScanClass;
 		else if (classStr=="blob_manager") _class = BlobManagerClass;
+		else if (classStr=="blob_migrator") _class = BlobMigratorClass;
 		else if (classStr=="blob_worker") _class = BlobWorkerClass;
 		else if (classStr=="storage_cache") _class = StorageCacheClass;
 		else if (classStr=="backup") _class = BackupClass;
@@ -229,6 +231,7 @@ public:
 			case RatekeeperClass: return "ratekeeper";
 			case ConsistencyScanClass: return "consistency_scan";
 			case BlobManagerClass: return "blob_manager";
+			case BlobMigratorClass: return "blob_migrator";
 			case BlobWorkerClass: return "blob_worker";
 			case StorageCacheClass: return "storage_cache";
 			case BackupClass: return "backup";
