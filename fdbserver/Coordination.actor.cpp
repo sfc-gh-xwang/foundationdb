@@ -834,21 +834,18 @@ ACTOR Future<Void> coordinationServer(std::string dataFolder,
 			// the only cause of the file_not_found error.
 			ASSERT(((fs[0].isError() && fs[0].getError().code() == error_code_file_not_found) ||
 			        (fs[1].isError() && fs[1].getError().code() == error_code_file_not_found)) &&
-			       fs[0].isError() != fs[1].isError());
+			       (fs[0].isError() != fs[1].isError() || fs[0].getError().code() != fs[1].getError().code()));
 
 			TraceEvent(SevWarnAlways, "CoordinatorDiskQueueInconsistentState")
-			    .detail("File0Missing", fs[0].isError())
-			    .detail("File1Missing", fs[1].isError());
+			    .detail("File0Missing", fs[0].isError() && fs[0].getError().code() == error_code_file_not_found)
+			    .detail("File1Missing", fs[1].isError() && fs[1].getError().code() == error_code_file_not_found);
 
 			// Remove the remaining disk queue file to allow the coordinator to
 			// create new files on next boot.
-			if (fs[0].isError()) {
-				ASSERT(fs[0].getError().code() == error_code_file_not_found);
+			if (fs[0].isError() && fs[0].getError().code() == error_code_file_not_found) {
 				wait(IAsyncFileSystem::filesystem()->deleteFile(joinPath(dataFolder, fileCoordinatorPrefix + "1.fdq"),
 				                                                true));
-			}
-			if (fs[1].isError()) {
-				ASSERT(fs[1].getError().code() == error_code_file_not_found);
+			} else if (fs[1].isError() && fs[1].getError().code() == error_code_file_not_found) {
 				wait(IAsyncFileSystem::filesystem()->deleteFile(joinPath(dataFolder, fileCoordinatorPrefix + "0.fdq"),
 				                                                true));
 			}
@@ -856,8 +853,10 @@ ACTOR Future<Void> coordinationServer(std::string dataFolder,
 			// Simulation does not always immediately reboot a failed process
 			// when running multiple processes on a machine. Throw a special
 			// error to trigger simulation to immediately reboot the process
-			// and to not log an error.
-			throw inconsistent_disk_queue();
+			// and to not log an error. Set the injected fault flag to avoid
+			// failures when simulation injects IO failures and starts
+			// converting all errors into io_timeouts.
+			throw inconsistent_disk_queue().asInjectedFault();
 		}
 
 		throw err;
