@@ -136,6 +136,8 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 		state Reference<HTTP::IncomingResponse> r;
 		state RESTConnectionPool::ReusableConnection rconn;
 
+		// Rewrite the contents to the packet queue each try because sending the request consumes the queue
+		// SOMEDAY: allow the packet queue to be reset so that we can avoid copying the request again
 		if (url.body.size() > 0) {
 			req->data.content->discardAll();
 			PacketWriter pw(req->data.content->getWriteBuffer(url.body.size()), nullptr, Unversioned());
