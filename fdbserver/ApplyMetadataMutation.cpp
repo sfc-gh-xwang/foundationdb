@@ -790,6 +790,9 @@ private:
 
 				auto itr = tenantMap->find(tenantEntry.id);
 				Optional<TenantName> oldTenantName = (itr != tenantMap->end()) ? itr->second : Optional<TenantName>{};
+				if (g_network->isSimulated()) {
+					g_simulator->validationData.addTenant(tenantEntry.id);
+				}
 
 				(*tenantMap)[tenantEntry.id] = tenantEntry.tenantName;
 				if (tenantNameIndex) {

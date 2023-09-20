@@ -14,3 +14,4 @@ runSetup = true
     testName = 'TenantManagement'
     maxTenants = 100
     testDuration = 120
+    useMetacluster = false

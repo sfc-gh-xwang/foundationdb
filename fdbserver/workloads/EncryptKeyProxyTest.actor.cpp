@@ -26,6 +26,7 @@
 
 #include "fdbrpc/Locality.h"
 
+#include "fdbrpc/simulator.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/ServerDBInfo.actor.h"
 #include "fdbserver/Status.actor.h"
@@ -67,6 +68,9 @@ struct EncryptKeyProxyTestWorkload : TestWorkload {
 			enableTest = true;
 			minDomainId = 1000 + (++seed * 30) + 1;
 			maxDomainId = deterministicRandom()->randomInt(minDomainId, minDomainId + 50) + 5;
+			for (int i = minDomainId; i <= maxDomainId; i++) {
+				g_simulator->validationData.addTenant(i);
+			}
 			TraceEvent("EKPTestInit").detail("MinDomainId", minDomainId).detail("MaxDomainId", maxDomainId);
 		}
 	}
@@ -177,8 +181,10 @@ struct EncryptKeyProxyTestWorkload : TestWorkload {
 	ACTOR Future<Void> simLookupInvalidKeyId(EncryptKeyProxyTestWorkload* self) {
 		TraceEvent("SimLookupInvalidKeyIdStart").log();
 
-		Arena arena;
+		g_simulator->validationData.ignoreTenantIdValidation = true;
 		try {
+			Arena arena;
+
 			Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
 			// Prepare a lookup with valid and invalid keyIds - SimEncryptKmsProxy should throw
 			// encrypt_key_not_found()
@@ -197,6 +203,7 @@ struct EncryptKeyProxyTestWorkload : TestWorkload {
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_encrypt_key_not_found);
 		}
+		g_simulator->validationData.ignoreTenantIdValidation = false;
 
 		TraceEvent("SimLookupInvalidKeyIdDone");
 		return Void();

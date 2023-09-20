@@ -2600,6 +2600,9 @@ Database Database::createDatabase(std::string connFileName,
 }
 
 Database Database::createSimulatedExtraDatabase(std::string connectionString, Optional<TenantName> defaultTenant) {
+	// TOOD: Configure 'domain_aware' encryption for extra databases (as they correspond to data clusters) and currently
+	// EaR mode is same as the management cluster
+
 	auto extraFile = makeReference<ClusterConnectionMemoryRecord>(ClusterConnectionString(connectionString));
 	Database db = Database::createDatabase(extraFile, ApiVersion::LATEST_VERSION, IsInternal::False);
 	db->defaultTenant = defaultTenant;

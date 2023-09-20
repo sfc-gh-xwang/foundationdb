@@ -1522,6 +1522,8 @@ std::map<std::string, std::function<void(const std::string&)>> testSpecGlobalKey
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedExtraDatabaseMode", ""); } },
 	{ "extraDatabaseCount",
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedExtraDatabaseCount", ""); } },
+	{ "isMetacluster",
+	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedIsMetacluster", ""); } },
 	{ "configureLocked",
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedConfigureLocked", ""); } },
 	{ "minimumReplication",
@@ -1555,7 +1557,7 @@ std::map<std::string, std::function<void(const std::string&)>> testSpecGlobalKey
 	{ "allowDefaultTenant",
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedDefaultTenant", ""); } },
 	{ "simHTTPServerEnabled",
-	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedSimHTTPServerEnabled", ""); } }
+	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedSimHTTPServerEnabled", ""); } },
 
 };
 

@@ -3,6 +3,7 @@ allowDefaultTenant = false
 tenantModes = ['optional', 'required']
 allowCreatingTenants = false
 extraDatabaseMode = 'Single'
+isMetacluster = true
 
 [[knobs]]
 cc_enable_tenant_balancer = true

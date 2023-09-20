@@ -93,12 +93,8 @@ public:
 	}
 
 	Optional<EncryptCipherBaseKeyId> getBaseCipherIdFromDomainId(const EncryptCipherDomainId domainId) const {
-		if (domainId < 0) {
-			// ensure input domainId is acceptable
-			if (domainId != SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID && domainId != ENCRYPT_HEADER_DOMAIN_ID &&
-			    domainId != FDB_DEFAULT_ENCRYPT_DOMAIN_ID) {
-				return Optional<EncryptCipherBaseKeyId>();
-			}
+		if (domainId < 0 && !isReservedEncryptDomain(domainId)) {
+			return Optional<EncryptCipherBaseKeyId>();
 		}
 		return 1 + abs(domainId) % maxEncryptionKeys;
 	}
@@ -169,6 +165,8 @@ uint32_t maxSimKeys() {
 }
 
 Standalone<BlobMetadataDetailsRef> getBlobMetadata(const BlobMetadataDomainId domainId, const std::string& bgUrl) {
+	g_simulator->validationData.checkValidTenantId(domainId);
+
 	auto it = simBlobMetadataStore.find(domainId);
 	if (it == simBlobMetadataStore.end()) {
 		// construct new blob metadata

@@ -366,6 +366,7 @@ public:
 	bool configureLocked = false;
 	bool startIncompatibleProcess = false;
 	bool isFirstTestInRestart = false;
+	bool isMetacluster = false;
 	// 7.0 cannot be downgraded to 6.3 after enabling TSS, so disable TSS for 6.3 downgrade tests
 	bool disableTss = false;
 	// 7.1 cannot be downgraded to 7.0 and below after enabling hostname, so disable hostname for 7.0 downgrade tests
@@ -451,6 +452,7 @@ public:
 		    .add("disableHostname", &disableHostname)
 		    .add("disableRemoteKVS", &disableRemoteKVS)
 		    .add("encryptModes", &encryptModes)
+		    .add("isMetacluster", &isMetacluster)
 		    .add("simpleConfig", &simpleConfig)
 		    .add("generateFearless", &generateFearless)
 		    .add("datacenters", &datacenters)
@@ -1617,54 +1619,69 @@ void SimulationConfig::setBlobGranules(const TestConfig& testConfig) {
 }
 
 void SimulationConfig::setEncryptionAtRestMode(const TestConfig& testConfig) {
-	std::vector<bool> available;
-	std::vector<double> probability;
-	if (!testConfig.encryptModes.empty()) {
-		// If encryptModes are specified explicitly, give them equal probability to be chosen.
-		available = std::vector<bool>(EncryptionAtRestMode::END, false);
-		probability = std::vector<double>(EncryptionAtRestMode::END, 0);
-		for (auto& mode : testConfig.encryptModes) {
-			available[EncryptionAtRestMode::fromString(mode).mode] = true;
-			probability[EncryptionAtRestMode::fromString(mode).mode] = 1.0 / testConfig.encryptModes.size();
-		}
-	} else {
-		// If encryptModes are not specified, give encryption higher chance to be enabled.
-		// The good thing is testing with encryption on doesn't loss test coverage for most of the other features.
-		available = std::vector<bool>(EncryptionAtRestMode::END, true);
-		probability = { 0.25, 0.5, 0.25 };
-		// Only Redwood support encryption. Disable encryption if Redwood is not available.
-		if ((testConfig.storageEngineType.present() && testConfig.storageEngineType != 3) ||
-		    testConfig.excludedStorageEngineType(3)) {
-			available[(int)EncryptionAtRestMode::DOMAIN_AWARE] = false;
-			available[(int)EncryptionAtRestMode::CLUSTER_AWARE] = false;
-		}
-	}
-	// domain_aware mode is supported only with required tenant mode.
-	if (db.tenantMode != TenantMode::REQUIRED) {
-		available[(int)EncryptionAtRestMode::DOMAIN_AWARE] = false;
-	}
-	int lastAvailableMode = EncryptionAtRestMode::END;
-	double totalProbability = 0;
-	for (int mode = 0; mode < (int)EncryptionAtRestMode::END; mode++) {
-		if (available[mode]) {
-			lastAvailableMode = mode;
-			totalProbability += probability[mode];
-		}
-	}
-	ASSERT(lastAvailableMode != EncryptionAtRestMode::END); // At least one mode available
-	double r = deterministicRandom()->random01() * totalProbability;
 	EncryptionAtRestMode encryptionMode;
-	for (int mode = 0;; mode++) {
-		if (available[mode] && (r < probability[mode] || mode == lastAvailableMode)) {
-			encryptionMode = (EncryptionAtRestMode::Mode)mode;
-			break;
+
+	if (testConfig.isMetacluster) {
+		// Simulation framework creating MetaCluster needs to ensure the management cluster EaR mode to be compliant
+		// with per-tenant encryption semantics. Given management cluster only supports 'cluster_aware' encryption
+		// scheme, set the EaR mode to 'cluster_aware' and avoid using non-encrypted cluster config for now.
+		encryptionMode = EncryptionAtRestMode::CLUSTER_AWARE;
+	} else {
+
+		std::vector<bool> available;
+		std::vector<double> probability;
+
+		if (!testConfig.encryptModes.empty()) {
+			// If encryptModes are specified explicitly, give them equal probability to be chosen.
+			available = std::vector<bool>(EncryptionAtRestMode::END, false);
+			probability = std::vector<double>(EncryptionAtRestMode::END, 0);
+			for (auto& mode : testConfig.encryptModes) {
+				available[EncryptionAtRestMode::fromString(mode).mode] = true;
+				probability[EncryptionAtRestMode::fromString(mode).mode] = 1.0 / testConfig.encryptModes.size();
+			}
+		} else {
+			// If encryptModes are not specified, give encryption higher chance to be enabled.
+			// The good thing is testing with encryption on doesn't loss test coverage for most of the other features.
+			available = std::vector<bool>(EncryptionAtRestMode::END, true);
+			probability = { 0.25, 0.5, 0.25 };
+			// Only Redwood support encryption. Disable encryption if Redwood is not available.
+			if ((testConfig.storageEngineType.present() && testConfig.storageEngineType != 3) ||
+			    testConfig.excludedStorageEngineType(3)) {
+				available[(int)EncryptionAtRestMode::DOMAIN_AWARE] = false;
+				available[(int)EncryptionAtRestMode::CLUSTER_AWARE] = false;
+			}
 		}
-		r -= probability[mode];
+		// domain_aware mode is supported only with required tenant mode.
+		if (db.tenantMode != TenantMode::REQUIRED) {
+			available[(int)EncryptionAtRestMode::DOMAIN_AWARE] = false;
+		}
+		int lastAvailableMode = EncryptionAtRestMode::END;
+		double totalProbability = 0;
+		for (int mode = 0; mode < (int)EncryptionAtRestMode::END; mode++) {
+			if (available[mode]) {
+				lastAvailableMode = mode;
+				totalProbability += probability[mode];
+			}
+		}
+		ASSERT(lastAvailableMode != EncryptionAtRestMode::END); // At least one mode available
+		double r = deterministicRandom()->random01() * totalProbability;
+		for (int mode = 0;; mode++) {
+			if (available[mode] && (r < probability[mode] || mode == lastAvailableMode)) {
+				encryptionMode = (EncryptionAtRestMode::Mode)mode;
+				break;
+			}
+			r -= probability[mode];
+		}
 	}
-	TraceEvent("SimulatedClusterEncryptionMode").detail("Mode", encryptionMode.toString());
+
+	TraceEvent("SimulatedClusterEncryptionMode")
+	    .detail("Mode", encryptionMode.toString())
+	    .detail("IsMetacluster", testConfig.isMetacluster);
+
 	CODE_PROBE(encryptionMode == EncryptionAtRestMode::DISABLED, "Disabled encryption in simulation");
 	CODE_PROBE(encryptionMode == EncryptionAtRestMode::CLUSTER_AWARE, "Enabled cluster-aware encryption in simulation");
 	CODE_PROBE(encryptionMode == EncryptionAtRestMode::DOMAIN_AWARE, "Enabled domain-aware encryption in simulation");
+
 	set_config("encryption_at_rest_mode=" + encryptionMode.toString());
 }
 

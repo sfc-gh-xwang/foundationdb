@@ -21,34 +21,60 @@
 #ifndef FLOW_SIMULATOR_H
 #define FLOW_SIMULATOR_H
 #pragma once
+
+#include "fdbrpc/FailureMonitor.h"
+#include "fdbrpc/HTTP.h"
+#include "fdbrpc/Locality.h"
+#include "fdbrpc/ReplicationPolicy.h"
+#include "fdbrpc/SimulatorKillType.h"
+#include "fdbrpc/TokenSign.h"
+
+#include "flow/ChaosMetrics.h"
+#include "flow/EncryptUtils.h"
+#include "flow/flow.h"
+#include "flow/Histogram.h"
+#include "flow/IAsyncFile.h"
+#include "flow/ProtocolVersion.h"
+#include "flow/TDMetric.actor.h"
+#include "flow/WipedString.h"
+
 #include <algorithm>
 #include <string>
 #include <random>
 #include <limits>
-
 #include <boost/unordered_set.hpp>
-
-#include "flow/flow.h"
-#include "flow/Histogram.h"
-#include "flow/ChaosMetrics.h"
-#include "flow/ProtocolVersion.h"
-#include "flow/WipedString.h"
-#include "fdbrpc/FailureMonitor.h"
-#include "fdbrpc/Locality.h"
-#include "flow/IAsyncFile.h"
-#include "flow/TDMetric.actor.h"
-#include "fdbrpc/HTTP.h"
-#include "fdbrpc/FailureMonitor.h"
-#include "fdbrpc/Locality.h"
-#include "fdbrpc/ReplicationPolicy.h"
-#include "fdbrpc/TokenSign.h"
-#include "fdbrpc/SimulatorKillType.h"
 
 enum ClogMode { ClogDefault, ClogAll, ClogSend, ClogReceive };
 
 struct ValidationData {
 	// global validation that missing refreshed feeds were previously destroyed
 	std::unordered_set<std::string> allDestroyedChangeFeedIDs;
+	std::unordered_set<int64_t> knownValidTenantIds;
+	bool ignoreTenantIdValidation = false;
+
+	void addTenant(const int64_t tenantId) {
+		TraceEvent("ValidationDataAddTenant").detail("TenantId", tenantId);
+		knownValidTenantIds.insert(tenantId);
+	}
+
+	void checkValidTenantIds(const std::vector<int64_t>& tenantIds) {
+		for (const auto& tenantId : tenantIds) {
+			checkValidTenantId(tenantId);
+		}
+	}
+
+	void checkValidTenantId(const int64_t tenantId) const {
+		if (knownValidTenantIds.empty()) {
+			return;
+		}
+
+		bool tenantIdExists = knownValidTenantIds.contains(tenantId);
+		if (!ignoreTenantIdValidation && !tenantIdExists && !isReservedEncryptDomain(tenantId)) {
+			TraceEvent(SevError, "InvalidTenantIdRequested")
+			    .detail("TenantId", tenantId)
+			    .detail("ValidationData", knownValidTenantIds.size());
+		}
+	}
 };
 
 namespace simulator {

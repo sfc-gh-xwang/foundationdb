@@ -3,6 +3,7 @@ allowDefaultTenant = false
 tenantModes = ['optional', 'required']
 allowCreatingTenants = false
 extraDatabaseMode = 'Multiple'
+isMetacluster = true
 extraDatabaseCount = 5
 
 [[knobs]]

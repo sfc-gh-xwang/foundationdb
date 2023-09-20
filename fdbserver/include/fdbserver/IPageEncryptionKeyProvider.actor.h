@@ -362,7 +362,7 @@ public:
 	}
 
 	ACTOR static Future<EncryptionKey> getLatestEncryptionKey(AESEncryptionKeyProvider* self, int64_t domainId) {
-		ASSERT(self->encryptionMode == EncryptionAtRestMode::DOMAIN_AWARE || domainId < 0);
+		ASSERT(self->encryptionMode == EncryptionAtRestMode::DOMAIN_AWARE || isReservedEncryptDomain(domainId));
 		TextAndHeaderCipherKeys cipherKeys =
 		    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeysForDomain(
 		        self->db, domainId, BlobCipherMetrics::KV_REDWOOD, self->monitor));
@@ -394,6 +394,7 @@ public:
 		if (tenantId == TenantInfo::INVALID_TENANT) {
 			return { FDB_DEFAULT_ENCRYPT_DOMAIN_ID, 0 };
 		}
+
 		return { tenantId, TenantAPI::PREFIX_SIZE };
 	}
 
