@@ -433,8 +433,10 @@ tracer = log_file
 
     def __fdbcli_exec(self, cmd, stdout, stderr, timeout):
         args = [self.fdbcli_binary, "-C", self.cluster_file, "--exec", cmd]
-        # Note that we never set tls-required for the client during database configure step
-        # because database setup is part of the test fixture, not under test here.
+        # Note that we never set tls-required for the client during database
+        # configure step because database setup is part of the test fixture, not
+        # under test here. We also allow invalid and expired certificates for
+        # the same reasons.
         if self.tls_config:
             args += [
                 "--tls-certificate-file",
@@ -443,6 +445,8 @@ tracer = log_file
                 self.client_key_file,
                 "--tls-ca-file",
                 self.server_ca_file,
+                "--tls-verify-peers",
+                "Check.Valid=0,Check.Unexpired=0",
             ]
         if self.use_future_protocol_version:
             args += ["--use-future-protocol-version"]
@@ -535,7 +539,7 @@ tracer = log_file
                 "tls-certificate-file": self.server_cert_file,
                 "tls-key-file": self.server_key_file,
                 "tls-ca-file": self.client_ca_file,
-                "tls-verify-peers": self.tls_config.verify_peers,
+                "tls-verify-peers": "Check.Valid=0,Check.Unexpired=0",
                 "tls-required": "true"
                 if self.tls_config.server_require_tls
                 else "false",
