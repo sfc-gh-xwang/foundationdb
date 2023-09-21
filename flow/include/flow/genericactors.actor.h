@@ -327,7 +327,7 @@ Future<Void> holdWhileVoid(X object, Future<T> what) {
 
 // Assign the future value of what to out
 template <class T, class X>
-Future<Void> store(X& out, Future<T> what) {
+[[nodiscard]] Future<Void> store(X& out, Future<T> what) {
 	return map(what, [&out](T const& v) {
 		out = v;
 		return Void();
@@ -348,7 +348,7 @@ Future<Void> storeTuple(Future<std::tuple<A, Bs...>> what, A& a, Bs&... b) {
 #endif
 
 template <class T>
-Future<Void> storeOrThrow(T& out, Future<Optional<T>> what, Error e = key_not_found()) {
+[[nodiscard]] Future<Void> storeOrThrow(T& out, Future<Optional<T>> what, Error e = key_not_found()) {
 	return map(what, [&out, e](Optional<T> const& o) {
 		if (!o.present())
 			throw e;
@@ -421,7 +421,7 @@ Future<std::invoke_result_t<F, T>> map(Future<T> what, F func) {
 
 // maps a vector of futures
 template <class T, class F>
-auto map(std::vector<Future<T>> const& what, F const& func) {
+[[nodiscard]] auto map(std::vector<Future<T>> const& what, F const& func) {
 	std::vector<Future<std::invoke_result_t<F, T>>> ret;
 	ret.reserve(what.size());
 	for (const auto& f : what)
@@ -459,7 +459,7 @@ Future<B> operatorPlus(Future<A> a, Future<B> b) {
 }
 
 template <class A, class B>
-Future<B> operator+(Future<A> a, Future<B> b) {
+[[nodiscard]] Future<B> operator+(Future<A> a, Future<B> b) {
 	return operatorPlus(a, b);
 }
 
@@ -468,7 +468,7 @@ ACTOR Future<Void> returnIfTrue(Future<bool> f);
 
 // Returns if the future, when waited on and then evaluated with the predicate, returns true, otherwise waits forever
 template <class T, class F>
-Future<Void> returnIfTrue(Future<T> what, F pred) {
+[[nodiscard]] Future<Void> returnIfTrue(Future<T> what, F pred) {
 	return returnIfTrue(map(what, pred));
 }
 
@@ -931,7 +931,7 @@ Future<Void> setWhenDoneOrError(Future<Void> condition, Reference<AsyncVar<T>> v
 	return Void();
 }
 
-Future<Void> lowPriorityDelay(double const& waitTime);
+[[nodiscard]] Future<Void> lowPriorityDelay(double const& waitTime);
 
 // Delay after condition is cleared (i.e. equal to false).
 // If during delay, condition changes to true, wait till condition become false again, and repeat.
@@ -960,13 +960,14 @@ Future<T> timeoutErrorIfCleared(Future<T> what,
 	}
 }
 
-Future<bool> allTrue(const std::vector<Future<bool>>& all);
-Future<Void> anyTrue(std::vector<Reference<AsyncVar<bool>>> const& input, Reference<AsyncVar<bool>> const& output);
-Future<Void> cancelOnly(std::vector<Future<Void>> const& futures);
-Future<Void> timeoutWarningCollector(FutureStream<Void> const& input,
-                                     double const& logDelay,
-                                     const char* const& context,
-                                     UID const& id);
+[[nodiscard]] Future<bool> allTrue(const std::vector<Future<bool>>& all);
+[[nodiscard]] Future<Void> anyTrue(std::vector<Reference<AsyncVar<bool>>> const& input,
+                                   Reference<AsyncVar<bool>> const& output);
+[[nodiscard]] Future<Void> cancelOnly(std::vector<Future<Void>> const& futures);
+[[nodiscard]] Future<Void> timeoutWarningCollector(FutureStream<Void> const& input,
+                                                   double const& logDelay,
+                                                   const char* const& context,
+                                                   UID const& id);
 ACTOR Future<bool> quorumEqualsTrue(std::vector<Future<bool>> futures, int required);
 
 ACTOR template <class T>
@@ -983,7 +984,9 @@ Future<Void> streamHelper(PromiseStream<T> output, PromiseStream<Error> errors, 
 }
 
 template <class T>
-Future<Void> makeStream(const std::vector<Future<T>>& futures, PromiseStream<T>& stream, PromiseStream<Error>& errors) {
+[[nodiscard]] Future<Void> makeStream(const std::vector<Future<T>>& futures,
+                                      PromiseStream<T>& stream,
+                                      PromiseStream<Error>& errors) {
 	std::vector<Future<Void>> forwarders;
 	forwarders.reserve(futures.size());
 	for (int f = 0; f < futures.size(); f++)
@@ -1062,7 +1065,7 @@ private:
 };
 
 template <class T>
-Future<Void> quorum(const Future<T>* pItems, int itemCount, int n) {
+[[nodiscard]] Future<Void> quorum(const Future<T>* pItems, int itemCount, int n) {
 	ASSERT(n >= 0 && n <= itemCount);
 
 	int size = Quorum<T>::sizeFor(itemCount);
@@ -1086,7 +1089,7 @@ Future<Void> quorum(const Future<T>* pItems, int itemCount, int n) {
 }
 
 template <class T>
-Future<Void> quorum(std::vector<Future<T>> const& results, int n) {
+[[nodiscard]] Future<Void> quorum(std::vector<Future<T>> const& results, int n) {
 	return quorum(&results.front(), results.size(), n);
 }
 
@@ -1109,7 +1112,7 @@ Future<Void> smartQuorum(std::vector<Future<T>> results,
 }
 
 template <class T>
-Future<Void> waitForAll(std::vector<Future<T>> const& results) {
+[[nodiscard]] Future<Void> waitForAll(std::vector<Future<T>> const& results) {
 	if (results.empty())
 		return Void();
 	return quorum(results, (int)results.size());
@@ -1118,14 +1121,14 @@ Future<Void> waitForAll(std::vector<Future<T>> const& results) {
 // Wait for all futures in results to be ready and then throw the first (in execution order) error
 // if any of them resulted in an error.
 template <class T>
-Future<Void> waitForAllReadyThenThrow(std::vector<Future<T>> const& results) {
+[[nodiscard]] Future<Void> waitForAllReadyThenThrow(std::vector<Future<T>> const& results) {
 	Future<Void> f = waitForAll(results);
 	Future<Void> fReady = waitForAllReady(results);
 	return fReady + f;
 }
 
 template <class T>
-Future<Void> waitForAny(std::vector<Future<T>> const& results) {
+[[nodiscard]] Future<Void> waitForAny(std::vector<Future<T>> const& results) {
 	if (results.empty())
 		return Void();
 	return quorum(results, 1);
@@ -1214,7 +1217,7 @@ Future<T> reportErrorsExcept(Future<T> in, const char* context, UID id, std::set
 }
 
 template <class T>
-Future<T> reportErrors(Future<T> const& in, const char* context, UID id = UID()) {
+[[nodiscard]] Future<T> reportErrors(Future<T> const& in, const char* context, UID id = UID()) {
 	return reportErrorsExcept(in, context, id, nullptr);
 }
 
@@ -1277,7 +1280,7 @@ Future<T> detach(Future<T> f) {
 
 // If the future is ready, yields and returns. Otherwise, returns when future is set.
 template <class T>
-Future<T> orYield(Future<T> f) {
+[[nodiscard]] Future<T> orYield(Future<T> f) {
 	if (f.isReady()) {
 		if (f.isError())
 			return tagError<T>(yield(), f.getError());
@@ -1287,7 +1290,7 @@ Future<T> orYield(Future<T> f) {
 		return f;
 }
 
-Future<Void> orYield(Future<Void> f);
+[[nodiscard]] Future<Void> orYield(Future<Void> f);
 
 ACTOR template <class T>
 Future<T> chooseActor(Future<T> lhs, Future<T> rhs) {
@@ -1304,7 +1307,7 @@ Future<T> chooseActor(Future<T> lhs, Future<T> rhs) {
 // set && set -> set
 // error && x -> error
 // all others -> unset
-inline Future<Void> operator&&(Future<Void> const& lhs, Future<Void> const& rhs) {
+[[nodiscard]] inline Future<Void> operator&&(Future<Void> const& lhs, Future<Void> const& rhs) {
 	if (lhs.isReady()) {
 		if (lhs.isError())
 			return lhs;
@@ -1325,7 +1328,7 @@ inline Future<Void> operator&&(Future<Void> const& lhs, Future<Void> const& rhs)
 // error || unset -> error
 // unset || unset -> unset
 // all others -> set
-inline Future<Void> operator||(Future<Void> const& lhs, Future<Void> const& rhs) {
+[[nodiscard]] inline Future<Void> operator||(Future<Void> const& lhs, Future<Void> const& rhs) {
 	if (lhs.isReady()) {
 		if (lhs.isError())
 			return lhs;
@@ -1981,7 +1984,7 @@ struct YieldedFutureActor final : SAV<Void>,
 	}
 };
 
-inline Future<Void> yieldedFuture(Future<Void> f) {
+[[nodiscard]] inline Future<Void> yieldedFuture(Future<Void> f) {
 	if (f.isReady())
 		return yield();
 	else
@@ -2299,7 +2302,7 @@ Future<decltype(std::declval<Fun>()(std::declval<T>()).getValue())> runAfter(Fut
 }
 
 template <class T, class Fun>
-auto operator>>=(Future<T> lhs, Fun&& rhs) -> Future<decltype(rhs(std::declval<T>()))> {
+[[nodiscard]] auto operator>>=(Future<T> lhs, Fun&& rhs) -> Future<decltype(rhs(std::declval<T>()))> {
 	return runAfter(lhs, std::forward<Fun>(rhs));
 }
 

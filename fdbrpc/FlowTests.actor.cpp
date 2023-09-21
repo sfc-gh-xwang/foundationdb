@@ -797,8 +797,10 @@ TEST_CASE("/flow/perf/yieldedFuture") {
 	f = p.getFuture();
 
 	start = timer();
-	for (int i = 0; i < N; i++)
-		yieldedFuture(f);
+	for (int i = 0; i < N; i++) {
+		// We're only measuring how long it takes to cancel things, so no need to run any of them
+		(void)yieldedFuture(f);
+	}
 	printf("yieldedFuture(f) cancel: %0.1f M/sec\n", N / 1e6 / (timer() - start));
 
 	return Void();

@@ -5232,7 +5232,7 @@ ACTOR Future<Void> haltBlobGranules(Reference<BlobManagerData> bmData) {
 		bmData->addActor.send(haltBlobWorker(bmData, worker));
 		deregisterBlobWorkers.emplace_back(deregisterBlobWorker(bmData, worker));
 	}
-	waitForAll(deregisterBlobWorkers);
+	wait(waitForAll(deregisterBlobWorkers));
 
 	return Void();
 }
