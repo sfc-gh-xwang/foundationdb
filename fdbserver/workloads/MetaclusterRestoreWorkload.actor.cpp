@@ -427,12 +427,17 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 	}
 
 	ACTOR static Future<Void> checkTenantData(Reference<Tenant> tenant,
+	                                          int64_t tenantId,
 	                                          bool hasData,
 	                                          RestoreTenantData::AccessTime createTime) {
 		state ReadYourWritesTransaction tr(tenant);
+		state bool idLookup = false;
 		loop {
 			try {
 				RangeReadResult result = wait(tr.getRange(normalKeys, 1));
+				if (tenant->id() != tenantId) {
+					throw tenant_not_found();
+				}
 				if (hasData) {
 					ASSERT(createTime == RestoreTenantData::AccessTime::DURING_BACKUP || !result.empty());
 				} else {
@@ -440,7 +445,18 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 				}
 				return Void();
 			} catch (Error& e) {
-				wait(tr.onError(e));
+				if (e.code() != error_code_tenant_not_found) {
+					wait(tr.onError(e));
+				} else {
+					Optional<TenantMapEntry> entry =
+					    wait(TenantAPI::tryGetTenant(tenant->database().getReference(), tenantId));
+					ASSERT(!idLookup);
+					ASSERT(entry.present());
+					ASSERT_NE(entry.get().tenantName, tenant->name);
+					tenant = makeReference<Tenant>(tenant->database(), tenantId);
+					tr = ReadYourWritesTransaction(tenant);
+					idLookup = true;
+				}
 			}
 		}
 	}
@@ -1095,7 +1111,9 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 			} else if (operation == 2) {
 				wait(configureTenant(self, accessTime));
 			} else if (operation == 3) {
-				wait(renameTenant(self, accessTime));
+				if (CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+					wait(renameTenant(self, accessTime));
+				}
 			}
 		}
 
@@ -1324,7 +1342,8 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					}
 
 					dataCheckFutures.push_back(
-					    checkTenantData(makeReference<Tenant>(self->dataDbs[tenantData.cluster].db, tenantId),
+					    checkTenantData(makeReference<Tenant>(self->dataDbs[tenantData.cluster].db, tenantData.name),
+					                    tenantId,
 					                    tenantData.hasData,
 					                    tenantData.createTime));
 				} else {

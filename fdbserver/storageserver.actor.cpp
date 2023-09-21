@@ -33,6 +33,7 @@
 #include "fdbrpc/ContinuousSample.h"
 #include "fdbrpc/TenantInfo.h"
 #include "flow/ApiVersion.h"
+#include "flow/EncryptUtils.h"
 #include "flow/network.h"
 #include "fmt/format.h"
 #include "fdbclient/Audit.h"
@@ -105,6 +106,7 @@
 #include "flow/Histogram.h"
 #include "flow/IRandom.h"
 #include "flow/IndexedSet.h"
+#include "flow/RecentActiveTracker.h"
 #include "flow/SystemMonitor.h"
 #include "flow/TDMetric.actor.h"
 #include "flow/Trace.h"
@@ -1294,8 +1296,10 @@ public:
 	struct Counters : CommonStorageCounters {
 
 		Counter allQueries, systemKeyQueries, getKeyQueries, getValueQueries, getRangeQueries, getRangeSystemKeyQueries,
-		    getRangeStreamQueries, lowPriorityQueries, rowsQueried, watchQueries, emptyQueries, feedRowsQueried,
-		    feedBytesQueried, feedStreamQueries, rejectedFeedStreamQueries, feedVersionQueries;
+		    getRangeStreamQueries, lowPriorityQueries, rowsQueried, watchQueries, emptyQueries;
+
+		Counter feedMessagesSent, feedRowsQueried, feedBytesQueried, feedFetchBytesQueried, feedStreamQueries,
+		    rejectedFeedStreamQueries, feedVersionQueries;
 
 		// counters related to getMappedRange queries
 		Counter getMappedRangeBytesQueried, finishedGetMappedRangeSecondaryQueries, getMappedRangeQueries,
@@ -1379,6 +1383,8 @@ public:
 		LatencySample mappedRangeRemoteSample; // Samples getMappedRange remote subquery latency
 		LatencySample mappedRangeLocalSample; // Samples getMappedRange local subquery latency
 
+		RecentActive::Tracker recentActiveFeedQueries;
+
 		explicit Counters(StorageServer* self)
 		  : CommonStorageCounters("StorageServer", self->thisServerID.toString(), &self->metrics),
 		    allQueries("QueryQueue", cc),
@@ -1392,8 +1398,10 @@ public:
 		    rowsQueried("RowsQueried", cc),
 		    watchQueries("WatchQueries", cc),
 		    emptyQueries("EmptyQueries", cc),
+		    feedMessagesSent("FeedMessagesSent", cc),
 		    feedRowsQueried("FeedRowsQueried", cc),
 		    feedBytesQueried("FeedBytesQueried", cc),
+		    feedFetchBytesQueried("FeedFetchBytesQueried", cc),
 		    feedStreamQueries("FeedStreamQueries", cc),
 		    rejectedFeedStreamQueries("RejectedFeedStreamQueries", cc),
 		    feedVersionQueries("FeedVersionQueries", cc),
@@ -1407,9 +1415,9 @@ public:
 		    kvClearRanges("KVClearRanges", cc),
 		    kvClearSingleKey("KVClearSingleKey", cc),
 		    kvSystemClearRanges("KVSystemClearRanges", cc),
-		    bytesDurableOld("BytesDurableOld", cc),
+		    bytesDurableOld("BytesDurable", cc),
 		    bytesDurableNoPTree("BytesDurableNoPTree", cc),
-		    bytesDurable("BytesDurable", cc),
+		    bytesDurable("BytesDurableNew", cc),
 		    feedBytesFetched("FeedBytesFetched", cc),
 		    sampledBytesCleared("SampledBytesCleared", cc),
 		    atomicMutations("AtomicMutations", cc),
@@ -1553,6 +1561,9 @@ public:
 				self->counters.bytesDurable =
 				    self->counters.bytesDurableNoPTree.getValue() + self->data().ptreeSize.released;
 				return self->data().ptreeSize.released;
+			});
+			specialCounter(cc, "RecentActiveFeedQueries", [self]() {
+				return self->counters.recentActiveFeedQueries.getCountAndReset();
 			});
 		}
 	} counters;
@@ -3823,6 +3834,7 @@ ACTOR Future<Void> changeFeedStreamQ(StorageServer* data, ChangeFeedStreamReques
 	state Future<Void> streamEndReached;
 	state bool doFilterMutations;
 	state int commonFeedPrefixLength;
+	state RecentActive::Handle recentActiveHandle;
 
 	try {
 		++data->counters.feedStreamQueries;
@@ -3891,6 +3903,8 @@ ACTOR Future<Void> changeFeedStreamQ(StorageServer* data, ChangeFeedStreamReques
 		ASSERT(emptyInitialReply.atLatestVersion == false);
 		ASSERT(emptyInitialReply.minStreamVersion == invalidVersion);
 		req.reply.send(emptyInitialReply);
+		recentActiveHandle.count(&data->counters.recentActiveFeedQueries);
+		++data->counters.feedMessagesSent;
 
 		if (DEBUG_CF_TRACE) {
 			TraceEvent(SevDebug, "TraceChangeFeedStreamSentInitialEmpty", data->thisServerID)
@@ -3977,9 +3991,17 @@ ACTOR Future<Void> changeFeedStreamQ(StorageServer* data, ChangeFeedStreamReques
 			feedReply.minStreamVersion = minVersion;
 
 			data->counters.feedRowsQueried += feedReply.mutations.size();
-			data->counters.feedBytesQueried += feedReply.mutations.expectedSize();
+			int bytesQueried = feedReply.mutations.expectedSize();
+			data->counters.feedBytesQueried += bytesQueried;
+			if (req.canReadPopped) {
+				data->counters.feedFetchBytesQueried += bytesQueried;
+			}
+
+			recentActiveHandle.count(&data->counters.recentActiveFeedQueries);
+			++data->counters.feedMessagesSent;
 
 			req.reply.send(feedReply);
+
 			if (req.begin == req.end) {
 				data->activeFeedQueries--;
 				req.reply.sendError(end_of_stream());
@@ -7128,11 +7150,15 @@ ACTOR Future<Void> tryGetRange(PromiseStream<RangeReadResult> results, Transacti
 ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> tryReadBlobGranuleChunks(Transaction* tr,
                                                                                   KeyRange keys,
                                                                                   Version fetchVersion) {
-	state Version readVersion = fetchVersion;
 	loop {
 		try {
-			Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr->readBlobGranules(keys, 0, readVersion));
-			TraceEvent(SevDebug, "ReadBlobGranules")
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+			tr->trState->taskID = TaskPriority::FetchKeys;
+
+			TraceEvent(SevDebug, "ReadBlobGranules").detail("Keys", keys).detail("FetchVersion", fetchVersion);
+			Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr->readBlobGranules(keys, 0, fetchVersion));
+			TraceEvent(SevDebug, "ReadBlobGranulesComplete")
 			    .detail("Keys", keys)
 			    .detail("Chunks", chunks.size())
 			    .detail("FetchVersion", fetchVersion);
@@ -7192,6 +7218,7 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 				    .detail("Version", chunks[i].includedVersion);
 				RangeResult rows;
 				if (i == chunks.size() - 1) {
+					// set more to false when it's the last chunk
 					rows.more = false;
 				} else {
 					rows.more = true;
@@ -7202,6 +7229,9 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 			}
 			try {
 				state Reference<BlobConnectionProvider> blobConn = wait(loadBStoreForTenant(tenantData, chunkRange));
+				TraceEvent(SevDebug, "LoadedBlobConnection")
+				    .detail("ChunkRange", chunkRange)
+				    .detail("FetchVersion", fetchVersion);
 				state RangeResult rows = wait(readBlobGranule(chunks[i], keys, 0, fetchVersion, blobConn));
 
 				TraceEvent("ReadBlobData")
@@ -8757,22 +8787,12 @@ void cleanUpChangeFeeds(StorageServer* data, const KeyRangeRef& keys, Version ve
 			    .detail("Version", version)
 			    .detail("DurableVersion", durableVersion);
 
-			data->changeFeedCleanupDurable[f.first] = durableVersion;
-
-			Key beginClearKey = f.first.withPrefix(persistChangeFeedKeys.begin);
-			auto& mLV = data->addVersionToMutationLog(durableVersion);
-			data->addMutationToMutationLog(
-			    mLV, MutationRef(MutationRef::ClearRange, beginClearKey, keyAfter(beginClearKey)));
-			++data->counters.kvSystemClearRanges;
-			data->addMutationToMutationLog(mLV,
-			                               MutationRef(MutationRef::ClearRange,
-			                                           changeFeedDurableKey(f.first, 0),
-			                                           changeFeedDurableKey(f.first, version)));
-
 			// We can't actually remove this change feed fully until the mutations clearing its data become durable.
 			// If the SS restarted at version R before the clearing mutations became durable at version D (R < D),
 			// then the restarted SS would restore the change feed clients would be able to read data and would miss
 			// mutations from versions [R, D), up until we got the private mutation triggering the cleanup again.
+
+			data->changeFeedCleanupDurable[f.first] = durableVersion;
 
 			auto feed = data->uidChangeFeed.find(f.first);
 			if (feed != data->uidChangeFeed.end()) {
@@ -9937,6 +9957,8 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 		state FetchInjectionInfo fii;
 		state Reference<ILogSystem::IPeekCursor> cloneCursor2 = cursor->cloneNoMore();
 		state Optional<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> cipherKeys;
+		state Optional<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> latestCipherKeys;
+		state std::unordered_set<EncryptCipherDomainId> domainIds = { ENCRYPT_HEADER_DOMAIN_ID };
 		state bool collectingCipherKeys = false;
 
 		// Collect eager read keys.
@@ -9980,6 +10002,9 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 					if (msg.isEncrypted()) {
 						if (!cipherKeys.present()) {
 							msg.updateEncryptCipherDetails(cipherDetails);
+							domainIds.emplace(msg.configurableEncryptionHeader()
+							                      .getCipherDetails()
+							                      .textCipherDetails.encryptDomainId);
 							collectingCipherKeys = true;
 						} else {
 							double decryptionTimeV = 0;
@@ -10011,6 +10036,10 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				    wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
 				        data->db, cipherDetails, BlobCipherMetrics::TLOG));
 				cipherKeys = getCipherKeysResult;
+				std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> getLatestCipherKeysResult =
+				    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
+				        data->db, domainIds, BlobCipherMetrics::TLOG));
+				latestCipherKeys = getLatestCipherKeysResult;
 				collectingCipherKeys = false;
 				eager = UpdateEagerReadInfo(enableClearRangeEagerReads);
 			} else {
@@ -10138,12 +10167,16 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				ASSERT(!data->encryptionMode.get().isEncryptionEnabled() || msg.isEncrypted() ||
 				       isBackupLogMutation(msg));
 				if (msg.isEncrypted()) {
-					ASSERT(cipherKeys.present());
+					ASSERT(cipherKeys.present() && latestCipherKeys.present());
 					encryptedMutation.mutation = msg;
-					encryptedMutation.cipherKeys = msg.getCipherKeys(cipherKeys.get());
+					// Set to latest cipher keys since this mutation will get re-encrypted later
+					encryptedMutation.cipherKeys = msg.getLatestCipherKeys(latestCipherKeys.get());
 					double decryptionTimeV = 0;
-					msg = msg.decrypt(
-					    encryptedMutation.cipherKeys, rd.arena(), BlobCipherMetrics::TLOG, nullptr, &decryptionTimeV);
+					msg = msg.decrypt(msg.getCipherKeys(cipherKeys.get()),
+					                  rd.arena(),
+					                  BlobCipherMetrics::TLOG,
+					                  nullptr,
+					                  &decryptionTimeV);
 					decryptionTime += decryptionTimeV;
 				}
 
@@ -10698,6 +10731,9 @@ ACTOR Future<Void> updateStorage(StorageServer* data) {
 			                           data->changeFeedVersions.front().first.end());
 			data->changeFeedVersions.pop_front();
 		}
+		for (auto& it : data->changeFeedCleanupDurable) {
+			modifiedChangeFeeds.insert(it.first);
+		}
 
 		state std::vector<std::pair<Key, Version>> feedFetchVersions;
 
@@ -10708,13 +10744,18 @@ ACTOR Future<Void> updateStorage(StorageServer* data) {
 			auto info = data->uidChangeFeed.find(updatedChangeFeeds[curFeed]);
 			if (info != data->uidChangeFeed.end()) {
 				// Cannot yield in mutation updating loop because of race with fetchVersion
+				auto& feedId = updatedChangeFeeds[curFeed];
 				Version alreadyFetched = std::max(info->second->fetchVersion, info->second->durableFetchVersion.get());
 				if (info->second->removing) {
-					auto cleanupPending = data->changeFeedCleanupDurable.find(info->second->id);
+					auto cleanupPending = data->changeFeedCleanupDurable.find(feedId);
 					if (cleanupPending != data->changeFeedCleanupDurable.end() &&
 					    cleanupPending->second <= newOldestVersion) {
-						// due to a race, we just applied a cleanup mutation, but feed updates happen just after.
-						// Don't write any mutations for this feed.
+						// this feed is being cleaned up this storage commit, delete its data and don't write anything
+
+						Key beginClearKey = feedId.withPrefix(persistChangeFeedKeys.begin);
+						data->storage.clearRange(KeyRangeRef(beginClearKey, keyAfter(beginClearKey)));
+						data->storage.clearRange(KeyRangeRef(changeFeedDurableKey(feedId, 0),
+						                                     changeFeedDurableKey(feedId, cleanupPending->second)));
 						curFeed++;
 						continue;
 					}
@@ -10737,7 +10778,7 @@ ACTOR Future<Void> updateStorage(StorageServer* data) {
 				}
 
 				if (info->second->fetchVersion != invalidVersion && !info->second->removing) {
-					feedFetchVersions.push_back(std::pair(info->second->id, info->second->fetchVersion));
+					feedFetchVersions.push_back(std::pair(feedId, info->second->fetchVersion));
 				}
 				// handle case where fetch had version ahead of last in-memory mutation
 				if (alreadyFetched > info->second->storageVersion) {

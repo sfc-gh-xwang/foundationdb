@@ -731,6 +731,9 @@ ACTOR Future<Void> databaseLogger(DatabaseContext* cx) {
 			    .detail("MeanKeyLocationLatency", cx->keyLocationLatencies.mean())
 			    .detail("MedianKeyLocationLatency", cx->keyLocationLatencies.median())
 			    .detail("MaxKeyLocationLatency", cx->keyLocationLatencies.max())
+			    .detail("MeanGranuleLocationLatency", cx->granuleLocationLatencies.mean())
+			    .detail("MedianGranuleLocationLatency", cx->granuleLocationLatencies.median())
+			    .detail("MaxGranuleLocationLatency", cx->granuleLocationLatencies.max())
 			    .detail("MeanCommitLatency", cx->commitLatencies.mean())
 			    .detail("MedianCommitLatency", cx->commitLatencies.median())
 			    .detail("MaxCommitLatency", cx->commitLatencies.max())
@@ -783,6 +786,7 @@ ACTOR Future<Void> databaseLogger(DatabaseContext* cx) {
 		cx->readRangeLatencies.clear();
 		cx->GRVLatencies.clear();
 		cx->keyLocationLatencies.clear();
+		cx->granuleLocationLatencies.clear();
 		cx->commitLatencies.clear();
 		cx->mutationsPerCommit.clear();
 		cx->bytesPerCommit.clear();
@@ -1563,8 +1567,13 @@ void DatabaseContext::initializeSpecialCounters() {
 	specialCounter(cc, "WatchMapSize", [this] { return watchMap.size(); });
 	specialCounter(ccFeed, "ActiveFeedStreams", [this] { return activeFeedStreams.getValue(); });
 	specialCounter(ccFeed, "ActiveFeedDiskStreams", [this] { return activeFeedDiskStreams.getValue(); });
+	specialCounter(ccFeed, "ActiveFeedSingleStreams", [this] { return activeFeedSingleStreams.getValue(); });
+	specialCounter(ccFeed, "ActiveFeedMergeStreams", [this] { return activeFeedMergeStreams.getValue(); });
 	specialCounter(ccFeed, "ChangeFeedCaches", [this] { return changeFeedCaches.size(); });
 	specialCounter(ccFeed, "UncommittedFeedBytes", [this] { return uncommittedCFBytes; });
+	specialCounter(cc, "ThroughputReportsSent", [this] { return throughputTracker.getThroughputReportsSent(); });
+	specialCounter(cc, "ThroughputReportErrors", [this] { return throughputTracker.getThroughputReportErrors(); });
+	specialCounter(cc, "ThroughputReportTimeouts", [this] { return throughputTracker.getThroughputReportTimeouts(); });
 }
 
 DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnectionRecord>>> connectionRecord,
@@ -1597,9 +1606,11 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
     transactionBatchReadVersions("BatchPriorityReadVersions", cc),
+    transactionLowReadVersions("LowPriorityReadVersions", cc),
     transactionDefaultReadVersions("DefaultPriorityReadVersions", cc),
     transactionImmediateReadVersions("ImmediatePriorityReadVersions", cc),
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
+    transactionLowReadVersionsCompleted("LowPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
     transactionLogicalReads("LogicalUncachedReads", cc),
@@ -1662,14 +1673,19 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     feedPopsFallback("FeedPopsFallback", ccFeed),
     feedDiskBytesRead("FeedDiskBytesRead", ccFeed),
     feedDiskBytesWritten("FeedDiskBytesWritten", ccFeed),
+    feedMessagesRecieved("FeedMessagesRecieved", ccFeed),
+    feedEmptyVersionRequests("FeedEmptyVersionRequests", ccFeed),
     activeFeedStreams(0),
     activeFeedDiskStreams(0),
+    activeFeedSingleStreams(0),
+    activeFeedMergeStreams(0),
     latencies(),
     readLatencies(),
     readRangeLatencies(),
     commitLatencies(),
     GRVLatencies(),
     keyLocationLatencies(),
+    granuleLocationLatencies(),
     mutationsPerCommit(),
     bytesPerCommit(),
     outstandingWatches(0),
@@ -1960,9 +1976,11 @@ DatabaseContext::DatabaseContext(const Error& err)
     transactionReadVersionsCompleted("ReadVersionsCompleted", cc),
     transactionReadVersionBatches("ReadVersionBatches", cc),
     transactionBatchReadVersions("BatchPriorityReadVersions", cc),
+    transactionLowReadVersions("LowPriorityReadVersions", cc),
     transactionDefaultReadVersions("DefaultPriorityReadVersions", cc),
     transactionImmediateReadVersions("ImmediatePriorityReadVersions", cc),
     transactionBatchReadVersionsCompleted("BatchPriorityReadVersionsCompleted", cc),
+    transactionLowReadVersionsCompleted("LowPriorityReadVersionsCompleted", cc),
     transactionDefaultReadVersionsCompleted("DefaultPriorityReadVersionsCompleted", cc),
     transactionImmediateReadVersionsCompleted("ImmediatePriorityReadVersionsCompleted", cc),
     transactionLogicalReads("LogicalUncachedReads", cc),
@@ -2025,14 +2043,19 @@ DatabaseContext::DatabaseContext(const Error& err)
     feedPopsFallback("FeedPopsFallback", ccFeed),
     feedDiskBytesRead("FeedDiskBytesRead", ccFeed),
     feedDiskBytesWritten("FeedDiskBytesWritten", ccFeed),
+    feedMessagesRecieved("FeedMessagesRecieved", ccFeed),
+    feedEmptyVersionRequests("FeedEmptyVersionRequests", ccFeed),
     activeFeedStreams(0),
     activeFeedDiskStreams(0),
+    activeFeedSingleStreams(0),
+    activeFeedMergeStreams(0),
     latencies(),
     readLatencies(),
     readRangeLatencies(),
     commitLatencies(),
     GRVLatencies(),
     keyLocationLatencies(),
+    granuleLocationLatencies(),
     mutationsPerCommit(),
     bytesPerCommit(),
     outstandingWatches(0),
@@ -2577,6 +2600,9 @@ Database Database::createDatabase(std::string connFileName,
 }
 
 Database Database::createSimulatedExtraDatabase(std::string connectionString, Optional<TenantName> defaultTenant) {
+	// TOOD: Configure 'domain_aware' encryption for extra databases (as they correspond to data clusters) and currently
+	// EaR mode is same as the management cluster
+
 	auto extraFile = makeReference<ClusterConnectionMemoryRecord>(ClusterConnectionString(connectionString));
 	Database db = Database::createDatabase(extraFile, ApiVersion::LATEST_VERSION, IsInternal::False);
 	db->defaultTenant = defaultTenant;
@@ -3591,6 +3617,8 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
 
 	CODE_PROBE(tenant.hasTenant(), "NativeAPI getBlobGranuleLocations has tenant");
 
+	state double startTime = now();
+
 	loop {
 		++cx->transactionBlobGranuleLocationRequests;
 		choose {
@@ -3633,6 +3661,8 @@ ACTOR Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations_inte
 					results.emplace_back(range, rep.results[granule].second);
 					wait(yield());
 				}
+
+				cx->granuleLocationLatencies.addSample(now() - startTime);
 
 				return results;
 			}
@@ -3682,6 +3712,7 @@ Future<std::vector<std::pair<KeyRange, UID>>> getBlobGranuleLocations(Reference<
 	// essentially take the max of any provided read version, either explicitly or from txn
 	// if none provided, use latestVersion
 	// this only works for with max because latestVersion is hardcoded to -2
+	// TODO: why did we max with read version?
 	Version version = latestVersion;
 	if (granuleReadVersion.present()) {
 		version = std::max(version, granuleReadVersion.get());
@@ -7414,6 +7445,11 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 		trState->options.priority = TransactionPriority::BATCH;
 		break;
 
+	case FDBTransactionOptions::PRIORITY_LOW:
+		validateOptionValueNotPresent(value);
+		trState->options.priority = TransactionPriority::LOW;
+		break;
+
 	case FDBTransactionOptions::CAUSAL_WRITE_RISKY:
 		validateOptionValueNotPresent(value);
 		trState->options.causalWriteRisky = true;
@@ -7686,18 +7722,20 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 bool rkThrottlingCooledDown(DatabaseContext const* cx, TransactionPriority priority) {
 	if (priority == TransactionPriority::IMMEDIATE) {
 		return true;
+	} else if (priority >= TransactionPriority::LOW) {
+		if (cx->lastRkDefaultThrottleTime == 0.0) {
+			return true;
+		}
+		return (now() - cx->lastRkDefaultThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
 	} else if (priority == TransactionPriority::BATCH) {
 		if (cx->lastRkBatchThrottleTime == 0.0) {
 			return true;
 		}
 		return (now() - cx->lastRkBatchThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
-	} else if (priority == TransactionPriority::DEFAULT) {
-		if (cx->lastRkDefaultThrottleTime == 0.0) {
-			return true;
-		}
-		return (now() - cx->lastRkDefaultThrottleTime > CLIENT_KNOBS->GRV_CACHE_RK_COOLDOWN);
+	} else {
+		ASSERT(false);
+		return false;
 	}
-	return false;
 }
 
 ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_t flags) {
@@ -7728,6 +7766,10 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 	case TransactionPriority::DEFAULT:
 		flags |= GetReadVersionRequest::PRIORITY_DEFAULT;
 		++trState->cx->transactionDefaultReadVersions;
+		break;
+	case TransactionPriority::LOW:
+		flags |= GetReadVersionRequest::PRIORITY_LOW;
+		++trState->cx->transactionLowReadVersions;
 		break;
 	case TransactionPriority::BATCH:
 		flags |= GetReadVersionRequest::PRIORITY_BATCH;
@@ -7784,6 +7826,9 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 	case TransactionPriority::DEFAULT:
 		++trState->cx->transactionDefaultReadVersionsCompleted;
 		break;
+	case TransactionPriority::LOW:
+		++trState->cx->transactionLowReadVersionsCompleted;
+		break;
 	case TransactionPriority::BATCH:
 		++trState->cx->transactionBatchReadVersionsCompleted;
 		break;
@@ -7825,10 +7870,14 @@ bool TransactionState::canUseGrvCache() {
 }
 
 Optional<ThrottlingId> TransactionState::getThrottlingId() {
-	if (tenant().present() && tenant().get()->tenantGroup().present()) {
-		return ThrottlingIdRef::fromTenantGroup(tenant().get()->tenantGroup().get());
-	} else if (options.throttlingTag.present()) {
+	Optional<TenantGroupName> tenantGroup;
+	if (tenant().present()) {
+		tenantGroup = tenant().get()->tenantGroup();
+	}
+	if (options.throttlingTag.present()) {
 		return ThrottlingIdRef::fromTag(options.throttlingTag.get());
+	} else if (tenantGroup.present()) {
+		return ThrottlingIdRef::fromTenantGroup(tenantGroup.get());
 	} else {
 		return {};
 	}
@@ -10007,7 +10056,9 @@ void DatabaseContext::setSharedState(DatabaseSharedState* p) {
 // This will send a request with minVersion=1000. Then say someone wants to wait for feed version >= 200. Because we've
 // already blocked this updater on version 1000, even if the feed would already be at version 200+, we won't get an
 // empty version response until version 1000.
-ACTOR Future<Void> storageFeedVersionUpdater(StorageServerInterface interf, ChangeFeedStorageData* self) {
+ACTOR Future<Void> storageFeedVersionUpdater(DatabaseContext* db,
+                                             StorageServerInterface interf,
+                                             ChangeFeedStorageData* self) {
 	loop {
 		if (self->version.get() < self->desired.get()) {
 			wait(delay(CLIENT_KNOBS->CHANGE_FEED_EMPTY_BATCH_TIME) || self->version.whenAtLeast(self->desired.get()));
@@ -10019,6 +10070,7 @@ ACTOR Future<Void> storageFeedVersionUpdater(StorageServerInterface interf, Chan
 				Version targetVersion = std::min(
 				    self->desired.get(), self->version.get() + CLIENT_KNOBS->CHANGE_FEED_DESIRED_VERSION_JUMP_MAX);
 				try {
+					++db->feedEmptyVersionRequests;
 					ChangeFeedVersionUpdateReply rep = wait(brokenPromiseToNever(
 					    interf.changeFeedVersionUpdate.getReply(ChangeFeedVersionUpdateRequest(targetVersion))));
 					if (rep.version > self->version.get()) {
@@ -10145,7 +10197,7 @@ Reference<ChangeFeedStorageData> DatabaseContext::getStorageData(StorageServerIn
 		Reference<ChangeFeedStorageData> newStorageUpdater = makeReference<ChangeFeedStorageData>();
 		newStorageUpdater->id = interf.id();
 		newStorageUpdater->interfToken = token;
-		newStorageUpdater->updater = storageFeedVersionUpdater(interf, newStorageUpdater.getPtr());
+		newStorageUpdater->updater = storageFeedVersionUpdater(this, interf, newStorageUpdater.getPtr());
 		newStorageUpdater->context = this;
 		newStorageUpdater->created = now();
 		changeFeedUpdaters[token] = newStorageUpdater.getPtr();
@@ -10589,7 +10641,8 @@ Future<Void> ChangeFeedData::whenAtLeast(Version version) {
 
 #define DEBUG_CF_CLIENT_TRACE false
 
-ACTOR Future<Void> partialChangeFeedStream(StorageServerInterface interf,
+ACTOR Future<Void> partialChangeFeedStream(Reference<DatabaseContext> db,
+                                           StorageServerInterface interf,
                                            PromiseStream<Standalone<MutationsAndVersionRef>> results,
                                            ReplyPromiseStream<ChangeFeedStreamReply> replyStream,
                                            Version begin,
@@ -10618,6 +10671,7 @@ ACTOR Future<Void> partialChangeFeedStream(StorageServerInterface interf,
 			choose {
 				when(state ChangeFeedStreamReply rep = waitNext(replyStream.getFuture())) {
 					// handle first empty mutation on stream establishment explicitly
+					++db->feedMessagesRecieved;
 					if (nextVersion == begin && rep.mutations.size() == 1 && rep.mutations[0].mutations.size() == 0 &&
 					    rep.mutations[0].version == begin - 1) {
 						continue;
@@ -10772,6 +10826,7 @@ ACTOR Future<Void> mergeChangeFeedStreamInternal(Reference<ChangeFeedData> resul
                                                  Reference<ChangeFeedCacheData> cacheData,
                                                  Key tenantPrefix) {
 	state Promise<Void> refresh = results->refresh;
+	state ActiveCounter<int>::Releaser holdingActiveMergeStreams = db->activeFeedMergeStreams.take(1);
 	// with empty version handling in the partial cursor, all streams will always have a next element with version >=
 	// the minimum version of any stream's next element
 	state std::priority_queue<MutationAndVersionStream, std::vector<MutationAndVersionStream>> mutations;
@@ -10960,7 +11015,8 @@ ACTOR Future<Void> mergeChangeFeedStream(Reference<DatabaseContext> db,
 			    .detail("CanReadPopped", canReadPopped);
 		}
 		onErrors[i] = results->streams[i].onError();
-		fetchers[i] = partialChangeFeedStream(interfs[i].first,
+		fetchers[i] = partialChangeFeedStream(db,
+		                                      interfs[i].first,
 		                                      streams[i].results,
 		                                      results->streams[i],
 		                                      *begin,
@@ -11034,6 +11090,7 @@ ACTOR Future<Void> singleChangeFeedStreamInternal(KeyRange range,
 	ASSERT(results->streams.size() == 1);
 	ASSERT(results->storageData.size() == 1);
 	state bool atLatest = false;
+	state ActiveCounter<int>::Releaser holdingActiveSingleStreams = db->activeFeedSingleStreams.take(1);
 
 	// wait for any previous mutations in stream to be consumed
 	wait(results->mutations.onEmpty());
@@ -11059,6 +11116,7 @@ ACTOR Future<Void> singleChangeFeedStreamInternal(KeyRange range,
 		ASSERT(refresh.canBeSet());
 		state ChangeFeedStreamReply feedReply = waitNext(results->streams[0].getFuture());
 		*begin = feedReply.mutations.back().version + 1;
+		++db->feedMessagesRecieved;
 
 		if (feedReply.popVersion > results->popVersion) {
 			results->popVersion = feedReply.popVersion;
@@ -11909,6 +11967,11 @@ ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
 		throw unsupported_operation();
 	}
 
+	if (range.empty()) {
+		TraceEvent(SevWarn, "PurgeBlobGranulesRangeEmpty").detail("Range", range);
+		throw unsupported_operation();
+	}
+
 	if (tenant.present()) {
 		CODE_PROBE(true, "NativeAPI purgeBlobGranules has tenant");
 		wait(tenant.get()->ready());
@@ -12104,9 +12167,13 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 			}
 
 			tr->set(blobRangeChangeKey, deterministicRandom()->randomUniqueID().toString());
-			// This is not coalescing because we want to keep each range logically separate.
-			// FIXME: if not active, do coalescing - had issues
-			wait(krmSetRange(tr, blobRangeKeys.begin, range, value));
+			// This is not coalescing because we want to keep each range logically separate for active, but we want to
+			// coalesce inactive ranges
+			if (active) {
+				wait(krmSetRange(tr, blobRangeKeys.begin, range, value));
+			} else {
+				wait(krmSetRangeCoalescing(tr, blobRangeKeys.begin, range, normalKeys, value));
+			}
 			// RYWTransaction has issues with atomic op sizing when using addVersionstampAtEnd on old api versions
 			tr->getTransaction().atomicOp(
 			    addVersionStampAtEnd(blobRangeChangeLogKeys.begin), changeValue, MutationRef::SetVersionstampedKey);

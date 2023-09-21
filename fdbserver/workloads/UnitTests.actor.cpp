@@ -54,6 +54,7 @@ void forceLinkRandomKeyValueUtilsTests();
 void forceLinkSimKmsVaultTests();
 void forceLinkActorFuzzUnitTests();
 void forceLinkRESTSimKmsVaultTest();
+void forceLinkLoadableCacheTests();
 
 struct UnitTestWorkload : TestWorkload {
 	static constexpr auto NAME = "UnitTests";
@@ -126,6 +127,7 @@ struct UnitTestWorkload : TestWorkload {
 		forceLinkSimKmsVaultTests();
 		forceLinkActorFuzzUnitTests();
 		forceLinkRESTSimKmsVaultTest();
+		forceLinkLoadableCacheTests();
 	}
 
 	Future<Void> setup(Database const& cx) override {

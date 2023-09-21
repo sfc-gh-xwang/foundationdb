@@ -69,6 +69,7 @@ struct ProxyStats {
 	Counter tenantLookupRequestOut;
 	Counter tenantLookupRequestErrors;
 	Counter blobGranuleLocationIn, blobGranuleLocationOut, blobGranuleLocationErrors;
+	Counter bgTenantLockCheckSS, bgTenantLockWaitVersion, bgTenantLockBypass;
 	Counter bulkLoadersIn, bulkLoadersOut, bulkLoadersErrors;
 	Counter txnExpensiveClearCostEstCount;
 	Counter encryptKeyNotFoundErrors;
@@ -154,6 +155,9 @@ struct ProxyStats {
 	    blobGranuleLocationIn("BlobGranuleLocationIn", cc),
 	    blobGranuleLocationOut("BlobGranuleLocationOut", cc),
 	    blobGranuleLocationErrors("BlobGranuleLocationErrors", cc),
+	    bgTenantLockCheckSS("BGTenantLockCheckSS", cc),
+	    bgTenantLockWaitVersion("BGTenantLockWaitVersion", cc),
+	    bgTenantLockBypass("BGTenantLockBypass", cc),
 	    bulkLoadersIn("BulkLoadersIn", cc),
 	    bulkLoadersOut("BulkLoadersOut", cc),
 	    bulkLoadersErrors("BulkLoadersErrors", cc),
@@ -225,7 +229,7 @@ struct ExpectedIdempotencyIdCountForKey {
 struct ProxyCommitData {
 	UID dbgid;
 	int64_t commitBatchesMemBytesCount;
-	std::unordered_map<TenantName, TenantLookupInfo> tenantNameIndex;
+	std::unordered_map<TenantName, EventualSingleton<int64_t, TenantLookupInfo>> tenantNameIndex;
 	std::map<int64_t, TenantName> tenantMap;
 	std::set<int64_t> lockedTenants;
 	std::unordered_set<int64_t> tenantsOverStorageQuota;

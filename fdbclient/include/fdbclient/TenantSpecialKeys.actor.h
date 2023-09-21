@@ -328,6 +328,12 @@ public:
 					throw special_keys_api_failure();
 				}
 			} else if (renameSubRange.intersects(adjustedRange)) {
+				if (!CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+					ryw->setSpecialKeySpaceErrorMsg(
+					    ManagementAPIError::toJsonString(false, "rename tenant", "tenant renames are disabled"));
+					throw special_keys_api_failure();
+				}
+
 				StringRef oldName = adjustedRange.begin.removePrefix(renameSubRange.begin);
 				StringRef newName = range.value().second.get();
 				// Do not allow overlapping renames in the same commit

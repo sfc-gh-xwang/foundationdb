@@ -1,6 +1,7 @@
 [configuration]
 allowDefaultTenant = false
 allowCreatingTenants = false
+isMetacluster = true
 extraDatabaseMode = 'Multiple'
 extraDatabaseCount = 3
 extraDatabaseBackupAgents = true

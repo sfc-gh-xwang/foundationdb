@@ -3,6 +3,7 @@ blobGranulesEnabled = true
 allowDefaultTenant = false
 allowCreatingTenants = false
 extraDatabaseMode = 'Multiple'
+isMetacluster = true
 extraDatabaseCount = 3
 
 [[knobs]]

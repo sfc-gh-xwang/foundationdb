@@ -2599,22 +2599,36 @@ public:
 			page = page->clone();
 		}
 
-		page->preWrite(pageIDs.front());
-
-		int blockSize = header ? smallestPhysicalBlock : physicalPageSize;
 		Future<Void> f;
-		if (pageIDs.size() == 1) {
-			f = writePhysicalBlock(this, page, 0, blockSize, pageIDs.front(), reason, level, header);
-		} else {
-			CODE_PROBE(true, "DWALPager write physical page with multiple blocks");
-			std::vector<Future<Void>> writers;
-			for (int i = 0; i < pageIDs.size(); ++i) {
-				Future<Void> p = writePhysicalBlock(this, page, i, blockSize, pageIDs[i], reason, level, header);
-				writers.push_back(p);
-			}
-			f = waitForAll(writers);
+		if (page->isEncrypted()) {
+			f = map(keyProvider->enableEncryptionDomain()
+			            ? keyProvider->getLatestEncryptionKey(page->getEncryptionDomainId())
+			            : keyProvider->getLatestDefaultEncryptionKey(),
+			        [=](ArenaPage::EncryptionKey k) {
+				        page->encryptionKey = k;
+				        page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+				        return Void();
+			        });
 		}
 
+		auto w = [=](Void) {
+			page->preWrite(pageIDs.front());
+
+			int blockSize = header ? smallestPhysicalBlock : physicalPageSize;
+			if (pageIDs.size() == 1) {
+				return writePhysicalBlock(this, page, 0, blockSize, pageIDs.front(), reason, level, header);
+			} else {
+				CODE_PROBE(true, "DWALPager write physical page with multiple blocks");
+				std::vector<Future<Void>> writers;
+				for (int i = 0; i < pageIDs.size(); ++i) {
+					Future<Void> p = writePhysicalBlock(this, page, i, blockSize, pageIDs[i], reason, level, header);
+					writers.push_back(p);
+				}
+				return waitForAll(writers);
+			}
+		};
+
+		f = f.isValid() ? mapAsync(f, w) : w(Void());
 		operations.push_back(f);
 		return f;
 	}
@@ -2871,7 +2885,11 @@ public:
 				}
 				ArenaPage::EncryptionKey k =
 				    wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader(), debugID));
+				if (page->isAESEncrypted()) {
+					page->encryptionDomainId = k.aesKey.cipherTextKey->getDomainId();
+				}
 				page->encryptionKey = k;
+				page->encryptionAlgo = self->keyProvider->getEncryptionAtRestAlgo(page->getEncodingHeader());
 			}
 			double decryptTime = 0;
 			page->postReadPayload(pageID, &decryptTime);
@@ -2969,7 +2987,11 @@ public:
 				}
 				ArenaPage::EncryptionKey k =
 				    wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader(), debugID));
+				if (page->isAESEncrypted()) {
+					page->encryptionDomainId = k.aesKey.cipherTextKey->getDomainId();
+				}
 				page->encryptionKey = k;
+				page->encryptionAlgo = self->keyProvider->getEncryptionAtRestAlgo(page->getEncodingHeader());
 			}
 			double decryptTime = 0;
 			page->postReadPayload(pageIDs.front(), &decryptTime);
@@ -5142,7 +5164,11 @@ public:
 		page->init(self->m_encodingType, PageType::BTreeNode, 1);
 		if (page->isEncrypted()) {
 			ArenaPage::EncryptionKey k = wait(self->m_keyProvider->getLatestDefaultEncryptionKey());
+			if (self->m_keyProvider->enableEncryptionDomain()) {
+				page->encryptionDomainId = self->m_keyProvider->getDefaultEncryptionDomainId();
+			}
 			page->encryptionKey = k;
+			page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
 		}
 
 		BTreePage* btpage = (BTreePage*)page->mutateData();
@@ -5261,6 +5287,13 @@ public:
 		return freedPages;
 	}
 
+	bool switchingEncryptionSchemes(EncodingType& encodingType, EncodingType& expectedEncodingType) {
+		return (encodingType == EncodingType::AESEncryption &&
+		        expectedEncodingType == EncodingType::AESEncryptionWithAuth) ||
+		       (encodingType == EncodingType::AESEncryptionWithAuth &&
+		        expectedEncodingType == EncodingType::AESEncryption);
+	}
+
 	void checkOrUpdateEncodingType(const std::string& event,
 	                               const EncryptionAtRestMode& encryptionMode,
 	                               EncodingType& encodingType) {
@@ -5280,6 +5313,13 @@ public:
 			if (encodingType == EncodingType::XXHash64 && g_network->isSimulated() && m_logID.hash() % 2 == 0) {
 				encodingType = EncodingType::XOREncryption_TestOnly;
 			}
+		} else if (switchingEncryptionSchemes(encodingType, expectedEncodingType)) {
+			// Switching from no auth -> auth (or vise-versa) is allowed but the current page will be written with the
+			// scheme it was created with
+			ASSERT(encryptionMode.isEncryptionEnabled());
+			TraceEvent("RedwoodBTreeSwitchingEncryptionSchemes")
+			    .detail("CurrentEncodingType", encodingType)
+			    .detail("ExpectedEncodingType", expectedEncodingType);
 		} else if (encodingType != expectedEncodingType) {
 			// In simulation we could enable xor encryption for testing. Ignore encoding type mismatch in such a case.
 			if (!(g_network->isSimulated() && encodingType == EncodingType::XOREncryption_TestOnly &&
@@ -6232,11 +6272,8 @@ private:
 			state Reference<ArenaPage> page = self->m_pager->newPageBuffer(p->blockCount);
 			page->init(
 			    self->m_encodingType, (p->blockCount == 1) ? PageType::BTreeNode : PageType::BTreeSuperNode, height);
-			if (page->isEncrypted()) {
-				ArenaPage::EncryptionKey k =
-				    wait(enableEncryptionDomain ? self->m_keyProvider->getLatestEncryptionKey(p->domainId.get())
-				                                : self->m_keyProvider->getLatestDefaultEncryptionKey());
-				page->encryptionKey = k;
+			if (enableEncryptionDomain) {
+				page->encryptionDomainId = p->domainId;
 			}
 
 			BTreePage* btPage = (BTreePage*)page->mutateData();

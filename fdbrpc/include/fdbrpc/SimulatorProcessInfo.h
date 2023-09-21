@@ -158,6 +158,8 @@ struct ProcessInfo : NonCopyable {
 			return false;
 		case ProcessClass::BlobManagerClass:
 			return false;
+		case ProcessClass::BlobMigratorClass:
+			return false;
 		case ProcessClass::StorageCacheClass:
 			return false;
 		case ProcessClass::BackupClass:

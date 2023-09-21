@@ -349,6 +349,8 @@ public:
 	int64_t
 	    DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC; // Minimal age of a correct-configured server before it's chosen to be wiggled
 	bool DD_TENANT_AWARENESS_ENABLED;
+
+	// Knobs for Storage Quota feature
 	bool STORAGE_QUOTA_ENABLED; // Whether storage quota enforcement for tenant groups and all the relevant storage
 	                            // usage / quota monitors are enabled.
 	int TENANT_CACHE_LIST_REFRESH_INTERVAL; // How often the TenantCache is refreshed
@@ -358,6 +360,14 @@ public:
 	                                                 // refreshed in the TenantCache
 	int TENANT_CACHE_STORAGE_USAGE_TRACE_INTERVAL; // The minimum interval between consecutive trace events logging the
 	                                               // storage bytes used by a tenant group
+	int64_t TC_STORAGE_USAGE_VARIABLE_POLLING_LAG_BYTES; // Knob to control variable polling frequency for storage
+	                                                     // usage. If the last checked storage usage for a tenant
+	                                                     // group is less than quota - this knob, it is okay to skip
+	                                                     // polling its current usage until the next refresh.
+	double TC_STORAGE_USAGE_VARIABLE_POLLING_LAG_SECONDS; // Knob to control variable polling frequency for storage
+	                                                      // usage. If the storage usage for a tenant group was last
+	                                                      // checked less than this time ago, it is okay to skip
+	                                                      // polling its current usage until the next refresh.
 	int CP_FETCH_TENANTS_OVER_STORAGE_QUOTA_INTERVAL; // How often the commit proxies send requests to the data
 	                                                  // distributor to fetch the list of tenants over storage quota
 
@@ -532,6 +542,7 @@ public:
 	int BULK_LOADERS_MAX_QUEUE_SIZE;
 	double COMMIT_PROXY_LIVENESS_TIMEOUT;
 	double COMMIT_PROXY_MAX_LIVENESS_TIMEOUT;
+	bool TAG_THROTTLE_CONVERT_TENANT_GROUP_TO_TAG;
 
 	double COMMIT_TRANSACTION_BATCH_INTERVAL_FROM_IDLE;
 	double COMMIT_TRANSACTION_BATCH_INTERVAL_MIN;
@@ -833,6 +844,18 @@ public:
 	// on storage server saturation for storage servers being affected
 	// by the throttlingId in question.
 	bool THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS;
+	// For a given throttlingId and a given release window, determines the
+	// ratio of budget that is allocated based on priority, before switching
+	// to a FIFO release strategy. A value of 1.0 allows complete starvation
+	// of low-priority transactions. A value of 0.0 ignores priorities completely.
+	double LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO;
+	// If enabled, track the throughput of tenant groups
+	// for the quota throttler.
+	bool TRACK_TENANT_GROUP_THROUGHPUT;
+	// If enabled, the quota throttler will use the client throughput reports
+	// to track per-throttlingId throughput. If disabled, metrics from storage
+	// servers and commit proxies will be aggregated
+	bool USE_CLIENT_THROUGHPUT_TRACKER;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;
@@ -864,8 +887,9 @@ public:
 
 	int MAX_TPS_HISTORY_SAMPLES;
 	int NEEDED_TPS_HISTORY_SAMPLES;
-	int64_t TARGET_DURABILITY_LAG_VERSIONS;
 	int64_t AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS;
+	int64_t AUTO_TAG_THROTTLE_SPRING_DURABILITY_LAG;
+	int64_t TARGET_DURABILITY_LAG_VERSIONS;
 	int64_t TARGET_DURABILITY_LAG_VERSIONS_BATCH;
 	int64_t DURABILITY_LAG_UNLIMITED_THRESHOLD;
 	double INITIAL_DURABILITY_LAG_MULTIPLIER;

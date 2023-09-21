@@ -153,7 +153,7 @@ struct RenameTenantImpl {
 
 		// Updated indexes to include the new tenant
 		metadata::management::clusterTenantIndex().insert(
-		    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->newName, TenantInfo::INVALID_TENANT));
+		    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->newName, self->tenantId));
 
 		return Void();
 	}
@@ -217,8 +217,11 @@ struct RenameTenantImpl {
 			// Update the tenant in the cluster -> tenant index
 			metadata::management::clusterTenantIndex().erase(
 			    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->oldName, self->tenantId));
+
+			// This erase is used to cleanup metadata from any renames started at older versions
 			metadata::management::clusterTenantIndex().erase(
 			    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->newName, TenantInfo::INVALID_TENANT));
+
 			metadata::management::clusterTenantIndex().insert(
 			    tr, Tuple::makeTuple(updatedEntry.assignedCluster, self->newName, self->tenantId));
 		}
@@ -227,6 +230,11 @@ struct RenameTenantImpl {
 	}
 
 	ACTOR static Future<Void> run(RenameTenantImpl* self) {
+		if (!CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+			// User access to this function should be prevented elsewhere, but just in case we reject it here too
+			throw unsupported_operation();
+		}
+
 		TraceEvent("MetaclusterRenameTenantUpdateMgmtState")
 		    .detail("OldName", self->oldName)
 		    .detail("NewName", self->newName)

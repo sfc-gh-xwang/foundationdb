@@ -286,7 +286,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( GRV_BATCHER_CLEANING_INTERVAL,            5.0 );
 	init( TRACK_THROUGHPUT_ON_CLIENTS,             true ); BUGGIFY_KNOB(TRACK_THROUGHPUT_ON_CLIENTS, randomize && BUGGIFY, false);
 	init( CLIENT_THROUGHPUT_REPORT_INTERVAL,        1.0 );
-	init( TRACK_AVERAGE_COST_ON_CLIENTS,            true ); BUGGIFY_KNOB(TRACK_AVERAGE_COST_ON_CLIENTS, randomize && BUGGIFY, false);
+	init( TRACK_AVERAGE_COST_ON_CLIENTS,           true ); BUGGIFY_KNOB(TRACK_AVERAGE_COST_ON_CLIENTS, randomize && BUGGIFY, false);
 	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
 	init( AVERAGE_COST_START_DELAY,                10.0 );
 	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
@@ -305,6 +305,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE,  true  );
 	init( HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,   false );
 	init( HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK,    false );
+	init( HYBRID_READ_BYPASS_TENANT_LOCK,         false ); BUGGIFY_KNOB(HYBRID_READ_BYPASS_TENANT_LOCK, randomize && BUGGIFY, true);
 
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_TIMES,        3 );
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_DELAY,      2.0 );
@@ -320,6 +321,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( METACLUSTER_RESTORE_BATCH_SIZE,          1000 ); BUGGIFY_KNOB(METACLUSTER_RESTORE_BATCH_SIZE, randomize && BUGGIFY, 1 + deterministicRandom()->randomInt(0, 3));
 	init( TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL,   2 ); BUGGIFY_KNOB(TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( CLIENT_ENABLE_USING_CLUSTER_ID_KEY,     false );
+	init( TENANT_RENAME_ENABLED,                  false ); BUGGIFY_KNOB(TENANT_RENAME_ENABLED, randomize && deterministicRandom()->coinflip(), true);
 
 	init( ENABLE_ENCRYPTION_CPU_TIME_LOGGING,        true );
 	init( SIMULATION_EKP_TENANT_IDS_TO_DROP,         "-1" );

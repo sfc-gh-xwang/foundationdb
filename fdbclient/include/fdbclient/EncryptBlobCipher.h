@@ -35,13 +35,15 @@ public:
 	static Reference<EncryptBlobCipher> getEncryptor(Reference<BlobCipherKey> tCipherKey,
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
 	                                                 EncryptionAtRestAlgo algo,
-	                                                 BlobCipherMetrics::UsageType usageType);
+	                                                 BlobCipherMetrics::UsageType usageType,
+	                                                 bool incrementCounters = true);
 	static Reference<EncryptBlobCipher> getEncryptor(Reference<BlobCipherKey> tCipherKey,
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
 	                                                 const uint8_t* iv,
 	                                                 const int ivLen,
 	                                                 EncryptionAtRestAlgo algo,
-	                                                 BlobCipherMetrics::UsageType usageType);
+	                                                 BlobCipherMetrics::UsageType usageType,
+	                                                 bool incrementCounters = true);
 	EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
 	                  Optional<Reference<BlobCipherKey>> hCipherKey,
 	                  const uint8_t* iv,
@@ -49,7 +51,8 @@ public:
 	                  const EncryptAuthTokenMode mode,
 	                  const EncryptAuthTokenAlgo algo,
 	                  const EncryptCipherMode encryptCipherMode,
-	                  BlobCipherMetrics::UsageType usageType);
+	                  BlobCipherMetrics::UsageType usageType,
+	                  bool incrementCounters);
 	virtual ~EncryptBlobCipher();
 
 	virtual bool supportsInplaceEncryption() = 0;
@@ -90,6 +93,8 @@ protected:
 	EncryptAuthTokenAlgo authTokenAlgo;
 	EncryptCipherMode encryptMode;
 	Standalone<StringRef> ivRef;
+	BlobCipherMetrics::UsageType usageType;
+	bool incrementCounters;
 };
 
 class EncryptBlobCipherAes256Ctr final : public EncryptBlobCipher {
@@ -101,7 +106,8 @@ public:
 	                           const EncryptAuthTokenMode mode,
 	                           const EncryptAuthTokenAlgo algo,
 	                           const EncryptCipherMode encryptCipherMode,
-	                           BlobCipherMetrics::UsageType usageType);
+	                           BlobCipherMetrics::UsageType usageType,
+	                           bool incrementCounters);
 
 	// TODO: Think about how header version evolution will work
 	static constexpr uint8_t ENCRYPT_HEADER_VERSION = 1;
@@ -143,7 +149,8 @@ public:
 	                           const EncryptAuthTokenMode mode,
 	                           const EncryptAuthTokenAlgo algo,
 	                           const EncryptCipherMode encryptCipherMode,
-	                           BlobCipherMetrics::UsageType usageType);
+	                           BlobCipherMetrics::UsageType usageType,
+	                           bool incrementCounters);
 
 	// TODO: Think about how header version evolution will work
 	static constexpr uint8_t ENCRYPT_HEADER_VERSION = 1;
@@ -179,12 +186,14 @@ public:
 	                                                 Optional<Reference<BlobCipherKey>> hCipherKey,
 	                                                 const uint8_t* iv,
 	                                                 const EncryptionAtRestAlgo encryptAlgo,
-	                                                 BlobCipherMetrics::UsageType usageType);
+	                                                 BlobCipherMetrics::UsageType usageType,
+	                                                 bool incrementCounters = true);
 
 	DecryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
 	                  Optional<Reference<BlobCipherKey>> hCipherKey,
 	                  const uint8_t* iv,
-	                  BlobCipherMetrics::UsageType usageType);
+	                  BlobCipherMetrics::UsageType usageType,
+	                  bool incrementCounters);
 	virtual ~DecryptBlobCipher();
 
 	virtual StringRef decrypt(const uint8_t* ciphertext,
@@ -206,6 +215,8 @@ protected:
 	Optional<Reference<BlobCipherKey>> headerCipherKeyOpt;
 	const uint8_t* iv;
 	bool authTokensValidationDone;
+	BlobCipherMetrics::UsageType usageType;
+	bool incrementCounters;
 
 	// API is resposible to validate persisted EncryptionHeader sanity, it does following checks
 	// 1. Parse and validate EncryptionHeaderFlags (version compliant checks)
@@ -232,7 +243,8 @@ public:
 	DecryptBlobCipherAes256Gcm(Reference<BlobCipherKey> tCipherKey,
 	                           Optional<Reference<BlobCipherKey>> hCipherKey,
 	                           const uint8_t* iv,
-	                           BlobCipherMetrics::UsageType usageType);
+	                           BlobCipherMetrics::UsageType usageType,
+	                           bool incrementCounters);
 
 	StringRef decrypt(const uint8_t* ciphertext,
 	                  const int ciphertextLen,
@@ -260,7 +272,8 @@ public:
 	DecryptBlobCipherAes256Ctr(Reference<BlobCipherKey> tCipherKey,
 	                           Optional<Reference<BlobCipherKey>> hCipherKey,
 	                           const uint8_t* iv,
-	                           BlobCipherMetrics::UsageType usageType);
+	                           BlobCipherMetrics::UsageType usageType,
+	                           bool incrementCounters);
 
 	StringRef decrypt(const uint8_t* ciphertext,
 	                  const int ciphertextLen,
@@ -326,5 +339,6 @@ void computeAuthToken(const std::vector<std::pair<const uint8_t*, size_t>>& payl
 EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptAuthTokenMode mode);
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo);
 void generateIV(EncryptionAtRestAlgo algo, Reference<BlobCipherKey> textCipherKey, uint8_t* iv, int ivLen);
+inline void incrementEncryptOrDecryptOps(Counter& counter);
 
 #endif // FDBCLIENT_ENCRYPT_BLOB_CIPHER_H

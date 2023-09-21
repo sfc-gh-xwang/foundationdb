@@ -94,6 +94,25 @@ public:
 		MAX,
 	};
 
+	struct CounterSet : public ReferenceCounted<CounterSet> {
+		Counter aesGcmEncryptOps;
+		Counter aesGcmDecryptOps;
+		Counter aesCtrEncryptOps;
+		Counter aesCtrDecryptOps;
+
+		CounterSet(CounterCollection& cc, std::string name);
+	};
+
+	static CounterSet& counters(UsageType t) {
+		ASSERT(t < UsageType::MAX);
+		auto& counterSets = getInstance()->counterSets;
+		int index = FLOW_KNOBS->ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING ? (int)t : (int)UsageType::ALL;
+		if (!counterSets[index].isValid()) {
+			counterSets[index] = makeReference<CounterSet>(getInstance()->cc, usageTypeNames.at(index));
+		}
+		return *counterSets[index];
+	}
+
 	static const std::unordered_map<int, std::string> usageTypeNames;
 
 private:
@@ -112,6 +131,7 @@ public:
 	Counter blobMetadataCacheHit;
 	Counter blobMetadataCacheMiss;
 	Counter blobMetadataNeedsRefresh;
+	std::array<Reference<CounterSet>, int(UsageType::MAX)> counterSets;
 	LatencySample getBlobMetadataLatency;
 	LatencySample getCipherKeysLatency;
 	LatencySample getLatestCipherKeysLatency;
@@ -706,7 +726,7 @@ public:
 		       memcmp(cipher.get(), toCompare->rawCipher(), AES_256_KEY_LENGTH) == 0 &&
 		       memcmp(baseCipher.get(), toCompare->rawBaseCipher(), baseCipherLen) == 0;
 	}
-	EncryptCipherNonce getAndUpdateNonce(EncryptCipherNonce max_value);
+	EncryptCipherNonce getAndUpdateNonce();
 	EncryptCipherNonce getNonce() { return nonce; }
 	// The nonce should not be set outside of testing
 	void setNonceTest(EncryptCipherNonce other) {

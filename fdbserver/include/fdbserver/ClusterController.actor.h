@@ -18,24 +18,23 @@
  * limitations under the License.
  */
 
-#pragma once
-
 // When actually compiled (NO_INTELLISENSE), include the generated version of this file.  In intellisense use the source
 // version.
-#include "fdbclient/StorageServerInterface.h"
-#include "fdbserver/BlobMigratorInterface.h"
-#include <utility>
-
 #if defined(NO_INTELLISENSE) && !defined(FDBSERVER_CLUSTERCONTROLLER_ACTOR_G_H)
 #define FDBSERVER_CLUSTERCONTROLLER_ACTOR_G_H
 #include "fdbserver/ClusterController.actor.g.h"
 #elif !defined(FDBSERVER_CLUSTERCONTROLLER_ACTOR_H)
 #define FDBSERVER_CLUSTERCONTROLLER_ACTOR_H
+#pragma once
+
+#include <utility>
 
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/MetaclusterRegistration.h"
+#include "fdbclient/StorageServerInterface.h"
 #include "fdbrpc/Replication.h"
 #include "fdbrpc/ReplicationUtils.h"
+#include "fdbserver/BlobMigratorInterface.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/Recruiter.h"
 #include "fdbserver/RoleFitness.h"
@@ -893,8 +892,9 @@ public:
 		ASSERT(masterProcessId.present());
 		const auto& pid = worker.interf.locality.processId();
 		if ((role != ProcessClass::DataDistributor && role != ProcessClass::Ratekeeper &&
-		     role != ProcessClass::BlobManager && role != ProcessClass::EncryptKeyProxy &&
-		     role != ProcessClass::ConsistencyScan && role != ProcessClass::TenantBalancer) ||
+		     role != ProcessClass::BlobManager && role != ProcessClass::BlobMigrator &&
+		     role != ProcessClass::EncryptKeyProxy && role != ProcessClass::ConsistencyScan &&
+		     role != ProcessClass::TenantBalancer) ||
 		    pid == masterProcessId.get()) {
 			return false;
 		}
@@ -1341,6 +1341,8 @@ public:
 		return recentHealthTriggeredRecoveryTime.size();
 	}
 
+	bool canRecruitBlobMigrator() { return db.blobRestoreEnabled.get() || CLIENT_KNOBS->ALLOW_BULK_LOADS; }
+
 	std::map<Optional<Standalone<StringRef>>, WorkerInfo> id_worker;
 	std::map<Optional<Standalone<StringRef>>, ProcessClass>
 	    id_class; // contains the mapping from process id to process class from the database
@@ -1364,6 +1366,7 @@ public:
 	AsyncTrigger updateDBInfo;
 	std::set<Endpoint> updateDBInfoEndpoints;
 	std::set<Endpoint> removedDBInfoEndpoints;
+	std::vector<StorageServerMetaInfo> storageStatusInfos;
 
 	DBInfo db;
 	Database cx;

@@ -125,7 +125,7 @@ class ThroughputQuotaCacheWorkload : public TestWorkload {
 		                                        db,
 		                                        throughputThreshold,
 		                                        /*expirationCheckInterval=*/5.0,
-		                                        /*expirationThreshold=*/60.0);
+		                                        /*expirationThreshold=*/100.0);
 		TraceEvent("ThroughputQuotaCacheWorkloadStart").detail("NumTags", self->numTags);
 		state Future<Void> quotaCacheFuture = quotaCache.run();
 		wait(testSetQuotaFirst(self, db, &quotaCache));

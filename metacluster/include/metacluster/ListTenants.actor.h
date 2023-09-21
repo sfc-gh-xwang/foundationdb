@@ -35,6 +35,8 @@
 
 namespace metacluster {
 
+FDB_BOOLEAN_PARAM(FilterRenamedTenants);
+
 template <class Transaction>
 Future<std::vector<std::pair<TenantName, int64_t>>> listTenantsTransaction(Transaction tr,
                                                                            TenantName begin,
@@ -91,7 +93,8 @@ Future<std::vector<std::pair<TenantName, int64_t>>> listTenants(Reference<DB> db
 ACTOR template <class Transaction>
 Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenantMetadataTransaction(
     Transaction tr,
-    std::vector<std::pair<TenantName, int64_t>> tenantIds) {
+    std::vector<std::pair<TenantName, int64_t>> tenantIds,
+    FilterRenamedTenants filterRenamedTenants = FilterRenamedTenants::True) {
 
 	CODE_PROBE(true, "Metacluster list tenant metadata");
 	state int idIdx = 0;
@@ -110,6 +113,9 @@ Future<std::vector<std::pair<TenantName, MetaclusterTenantMapEntry>>> listTenant
 		// different from the tenant entry and is filtered from the list
 		if (entry.tenantName == tenantIds[i].first) {
 			results.emplace_back(entry.tenantName, entry);
+		} else if (!filterRenamedTenants) {
+			ASSERT(entry.renameDestination.present() && entry.renameDestination.get() == tenantIds[i].first);
+			results.emplace_back(tenantIds[i].first, entry);
 		}
 	}
 

@@ -182,18 +182,13 @@ private:
 			ASSERT_EQ(t.size(), 3);
 			TenantName tenantName = t.getString(1);
 			int64_t tenantId = t.getInt(2);
-			bool renaming = tenantId == TenantInfo::INVALID_TENANT;
-			if (renaming) {
-				tenantId = self->managementMetadata.tenantData.tenantNameIndex[tenantName];
-			}
 			MetaclusterTenantMapEntry const& entry = self->managementMetadata.tenantData.tenantMap[tenantId];
-			if (renaming) {
+			if (entry.tenantName == tenantName) {
+				ASSERT(self->managementMetadata.clusterTenantMap[t.getString(0)].insert(tenantId).second);
+			} else {
 				CODE_PROBE(true, "Loading metacluster data with renaming tenant");
 				ASSERT(entry.tenantState == TenantState::RENAMING || entry.tenantState == TenantState::REMOVING);
 				ASSERT(entry.renameDestination == tenantName);
-			} else {
-				ASSERT(entry.tenantName == tenantName);
-				ASSERT(self->managementMetadata.clusterTenantMap[t.getString(0)].insert(tenantId).second);
 			}
 		}
 

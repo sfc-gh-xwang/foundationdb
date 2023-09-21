@@ -16,6 +16,9 @@ class ThroughputTracker {
 	friend class ThroughputTrackerImpl;
 	ThrottlingIdMap<uint64_t> throughput;
 
+	uint64_t throughputReportsSent{ 0 };
+	uint64_t throughputReportErrors{ 0 };
+	uint64_t throughputReportTimeouts{ 0 };
 	double startTime;
 
 	struct ThroughputSmoother {
@@ -35,6 +38,9 @@ public:
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
 	bool isThrottlingIdBusy(ThrottlingId const&) const;
+	uint64_t getThroughputReportsSent() const;
+	uint64_t getThroughputReportErrors() const;
+	uint64_t getThroughputReportTimeouts() const;
 };
 
 bool isClientAverageCostTrackingEnabled();

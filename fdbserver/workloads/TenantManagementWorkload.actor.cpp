@@ -1528,6 +1528,7 @@ struct TenantManagementWorkload : TestWorkload {
 				wait(renameTenantImpl(self, tr, operationType, tenantRenames, tenantNotFound, tenantExists));
 				wait(verifyTenantRenames(self, tenantRenames));
 				Versionstamp currentVersionstamp = wait(getLastTenantModification(self, operationType));
+				ASSERT(CLIENT_KNOBS->TENANT_RENAME_ENABLED);
 				ASSERT_GT(currentVersionstamp.version, originalReadVersion);
 				// Check that using the wrong rename API fails depending on whether we are using a metacluster
 				ASSERT(self->useMetacluster == (operationType == OperationType::METACLUSTER));
@@ -1549,7 +1550,7 @@ struct TenantManagementWorkload : TestWorkload {
 					}
 					return Void();
 				} else if (e.code() == error_code_special_keys_api_failure) {
-					ASSERT(tenantOverlap);
+					ASSERT(tenantOverlap || !CLIENT_KNOBS->TENANT_RENAME_ENABLED);
 					return Void();
 				} else if (e.code() == error_code_invalid_metacluster_operation) {
 					ASSERT(operationType == OperationType::METACLUSTER != self->useMetacluster);
@@ -1561,6 +1562,9 @@ struct TenantManagementWorkload : TestWorkload {
 					return Void();
 				} else if (e.code() == error_code_tenants_disabled) {
 					ASSERT(!self->supportsTenantOperations);
+					return Void();
+				} else if (e.code() == error_code_unsupported_operation) {
+					ASSERT(!CLIENT_KNOBS->TENANT_RENAME_ENABLED);
 					return Void();
 				} else {
 					try {

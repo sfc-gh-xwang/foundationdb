@@ -113,6 +113,18 @@ Future<EKPGetLatestBaseCipherKeysReply> _getUncachedLatestEncryptCipherKeys(Refe
 		return Never();
 	}
 	request.reply.reset();
+
+	// Simulation framework supports 'tenantId' validation for both 'getLatestCipher' & 'getCipher' codepath
+	//
+	// CommitProxy transactions fetching encryption keys needs to an exception, it is possible 'non valid tenant'
+	// transaction gets submitted to a CP, CP is equipped to fail specific transaction throwing appropriate
+	// 'tenant_not_found' error. Failure to exclude such cases would lead to unexpected simulation failures.
+
+	if (g_network->isSimulated() && !(usageType == BlobCipherMetrics::UsageType::TLOG ||
+	                                  usageType == BlobCipherMetrics::UsageType::TLOG_POST_RESOLUTION)) {
+		g_simulator->validationData.checkValidTenantIds(request.encryptDomainIds);
+	}
+
 	try {
 		EKPGetLatestBaseCipherKeysReply reply = wait(proxy.get().getLatestBaseCipherKeys.getReply(request));
 		if (reply.error.present()) {

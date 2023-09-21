@@ -591,9 +591,11 @@ public:
 	Counter transactionReadVersionsCompleted;
 	Counter transactionReadVersionBatches;
 	Counter transactionBatchReadVersions;
+	Counter transactionLowReadVersions;
 	Counter transactionDefaultReadVersions;
 	Counter transactionImmediateReadVersions;
 	Counter transactionBatchReadVersionsCompleted;
+	Counter transactionLowReadVersionsCompleted;
 	Counter transactionDefaultReadVersionsCompleted;
 	Counter transactionImmediateReadVersionsCompleted;
 	Counter transactionLogicalReads;
@@ -659,11 +661,15 @@ public:
 	Counter feedPopsFallback;
 	Counter feedDiskBytesRead;
 	Counter feedDiskBytesWritten;
+	Counter feedMessagesRecieved;
+	Counter feedEmptyVersionRequests;
 	ActiveCounter<int> activeFeedStreams;
 	ActiveCounter<int> activeFeedDiskStreams;
+	ActiveCounter<int> activeFeedSingleStreams;
+	ActiveCounter<int> activeFeedMergeStreams;
 
 	DDSketch<double> latencies, readLatencies, readRangeLatencies, commitLatencies, GRVLatencies, keyLocationLatencies,
-	    mutationsPerCommit, bytesPerCommit;
+	    granuleLocationLatencies, mutationsPerCommit, bytesPerCommit;
 
 	int outstandingWatches;
 	int maxOutstandingWatches;

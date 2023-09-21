@@ -2195,33 +2195,6 @@ int main(int argc, char* argv[]) {
 				}
 				g_knobs.setKnob("enable_blob_granule_compression",
 				                KnobValue::create(ini.GetBoolValue("META", "enableBlobGranuleEncryption", false)));
-				// TODO (Nim): Remove this code once redwood supports in-instance swap between encryption algorithm
-				int authTokenAlgo = (int)ini.GetLongValue("META", "encryptHeaderAuthTokenAlgo", -1);
-				TraceEvent(SevDebug, "OldAuthTokenAlgo").detail("Algo", authTokenAlgo);
-				if (authTokenAlgo == -1) {
-					// Not a restart test from an old binary so read the value of the new knob
-					g_knobs.setKnob("encryption_at_rest_algo",
-					                KnobValue::create((std::string)ini.GetValue(
-					                    "META", "encryptionAtRestAlgo", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO.c_str())));
-				} else {
-					EncryptAuthTokenAlgo algo = (EncryptAuthTokenAlgo)authTokenAlgo;
-					ASSERT(isEncryptHeaderAuthTokenAlgoValid(algo));
-					switch (algo) {
-					case EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_NONE:
-						g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CTR" }));
-						break;
-					case EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_CMAC:
-						g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-CMAC" }));
-						break;
-					case EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_HMAC_SHA:
-						g_knobs.setKnob("encryption_at_rest_algo", KnobValueRef::create(std::string{ "AES-256-HMAC" }));
-						break;
-					default:
-						// Restarting tests canot have any other value for the algo
-						ASSERT(false);
-						break;
-					}
-				}
 
 				g_knobs.setKnob(
 				    "shard_encode_location_metadata",

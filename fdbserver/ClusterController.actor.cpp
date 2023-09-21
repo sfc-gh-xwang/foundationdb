@@ -466,7 +466,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	WorkerDetails newMGWorker;
 	if (self->db.blobGranulesEnabled.get()) {
 		newBMWorker = findNewProcessForSingleton(self, ProcessClass::BlobManager, id_used);
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			newMGWorker = findNewProcessForSingleton(self, ProcessClass::BlobMigrator, id_used);
 		}
 	}
@@ -494,8 +494,8 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	ProcessClass::Fitness bestFitnessForMG;
 	if (self->db.blobGranulesEnabled.get()) {
 		bestFitnessForBM = findBestFitnessForSingleton(self, newBMWorker, ProcessClass::BlobManager);
-		if (self->db.blobRestoreEnabled.get()) {
-			bestFitnessForMG = findBestFitnessForSingleton(self, newMGWorker, ProcessClass::BlobManager);
+		if (self->canRecruitBlobMigrator()) {
+			bestFitnessForMG = findBestFitnessForSingleton(self, newMGWorker, ProcessClass::BlobMigrator);
 		}
 	}
 
@@ -534,7 +534,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (self->db.blobGranulesEnabled.get()) {
 		bmHealthy = isHealthySingleton<BlobManagerSingleton>(
 		    self, newBMWorker, bmSingleton, bestFitnessForBM, self->recruitingBlobManagerID);
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			mgHealthy = isHealthySingleton<BlobMigratorSingleton>(
 			    self, newMGWorker, mgSingleton, bestFitnessForMG, self->recruitingBlobMigratorID);
 		}
@@ -572,7 +572,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (self->db.blobGranulesEnabled.get()) {
 		currBMProcessId = bmSingleton.getInterface().locality.processId();
 		newBMProcessId = newBMWorker.interf.locality.processId();
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			currMGProcessId = mgSingleton.getInterface().locality.processId();
 			newMGProcessId = newMGWorker.interf.locality.processId();
 		}
@@ -596,7 +596,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (self->db.blobGranulesEnabled.get()) {
 		currPids.emplace_back(currBMProcessId);
 		newPids.emplace_back(newBMProcessId);
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			currPids.emplace_back(currMGProcessId);
 			newPids.emplace_back(newMGProcessId);
 		}
@@ -619,7 +619,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 	if (!self->db.blobGranulesEnabled.get()) {
 		ASSERT(currColocMap[currBMProcessId] == 0);
 		ASSERT(newColocMap[newBMProcessId] == 0);
-		if (self->db.blobRestoreEnabled.get()) {
+		if (self->canRecruitBlobMigrator()) {
 			ASSERT(currColocMap[currMGProcessId] == 0);
 			ASSERT(newColocMap[newMGProcessId] == 0);
 		}
@@ -652,7 +652,7 @@ void checkBetterSingletons(ClusterControllerData* self) {
 			ddSingleton.recruit(*self);
 		} else if (self->db.blobGranulesEnabled.get() && newColocMap[newBMProcessId] < currColocMap[currBMProcessId]) {
 			bmSingleton.recruit(*self);
-		} else if (self->db.blobGranulesEnabled.get() && self->db.blobRestoreEnabled.get() &&
+		} else if (self->db.blobGranulesEnabled.get() && self->canRecruitBlobMigrator() &&
 		           newColocMap[newMGProcessId] < currColocMap[currMGProcessId]) {
 			mgSingleton.recruit(*self);
 		} else if (enableKmsCommunication && newColocMap[newEKPProcessId] < currColocMap[currEKPProcessId]) {
@@ -1165,7 +1165,7 @@ ACTOR Future<Void> registerWorker(RegisterWorkerRequest req,
 		haltRegisteringOrCurrentSingleton<BlobManagerSingleton>(
 		    self, w, currSingleton, registeringSingleton, self->recruitingBlobManagerID);
 	}
-	if (req.blobMigratorInterf.present() && self->db.blobRestoreEnabled.get()) {
+	if (req.blobMigratorInterf.present() && self->canRecruitBlobMigrator()) {
 		auto currSingleton = BlobMigratorSingleton(self->db.serverInfo->get().blobMigrator);
 		auto registeringSingleton = BlobMigratorSingleton(req.blobMigratorInterf);
 		haltRegisteringOrCurrentSingleton<BlobMigratorSingleton>(
@@ -1344,6 +1344,7 @@ ACTOR Future<Void> statusServer(FutureStream<StatusRequest> requests,
 			                                                                  self->cx,
 			                                                                  workers,
 			                                                                  workerIssues,
+			                                                                  self->storageStatusInfos,
 			                                                                  &self->db.clientStatus,
 			                                                                  coordinators,
 			                                                                  incompatibleConnections,
@@ -1496,6 +1497,53 @@ ACTOR Future<Void> monitorServerInfoConfig(ClusterControllerData::DBInfo* db) {
 			} catch (Error& e) {
 				wait(tr.onError(e));
 			}
+		}
+	}
+}
+
+// Monitors storage metadata changes and updates to storage servers.
+ACTOR Future<Void> monitorStorageMetadata(ClusterControllerData* self) {
+	state KeyBackedObjectMap<UID, StorageMetadataType, decltype(IncludeVersion())> metadataMap(serverMetadataKeys.begin,
+	                                                                                           IncludeVersion());
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->cx);
+	state std::vector<StorageServerMetaInfo> servers;
+	loop {
+		try {
+			servers.clear();
+			tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			state RangeReadResult serverList = wait(tr->getRange(serverListKeys, CLIENT_KNOBS->TOO_MANY));
+			ASSERT(!serverList.more && serverList.size() < CLIENT_KNOBS->TOO_MANY);
+
+			servers.reserve(serverList.size());
+			for (const auto ss : serverList) {
+				servers.push_back(StorageServerMetaInfo(decodeServerListValue(ss.value)));
+			}
+
+			state RangeReadResult serverMetadata = wait(tr->getRange(serverMetadataKeys, CLIENT_KNOBS->TOO_MANY));
+			ASSERT(!serverMetadata.more && serverMetadata.size() < CLIENT_KNOBS->TOO_MANY);
+			std::map<UID, StorageMetadataType> idMetadata;
+			for (const auto& sm : serverMetadata) {
+				const UID id = decodeServerMetadataKey(sm.key);
+				idMetadata[id] = decodeServerMetadataValue(sm.value);
+			}
+			for (auto& s : servers) {
+				if (idMetadata.count(s.id())) {
+					s.metadata = idMetadata[s.id()];
+				} else {
+					TraceEvent(SevWarn, "StorageServerMetadataMissing", self->id).detail("ServerID", s.id());
+				}
+			}
+
+			state Future<Void> watchFuture = tr->watch(serverMetadataChangeKey);
+			wait(tr->commit());
+
+			self->storageStatusInfos = std::move(servers);
+			wait(watchFuture);
+			tr->reset();
+		} catch (Error& e) {
+			wait(tr->onError(e));
 		}
 	}
 }
@@ -2565,19 +2613,16 @@ ACTOR Future<Void> monitorBlobMigrator(ClusterControllerData* self) {
 		if (self->db.serverInfo->get().blobMigrator.present() && !self->recruitBlobMigrator.get()) {
 			state Future<Void> wfClient = waitFailureClient(self->db.serverInfo->get().blobMigrator.get().waitFailure,
 			                                                SERVER_KNOBS->BLOB_MIGRATOR_FAILURE_TIME);
-			loop {
-				choose {
-					when(wait(wfClient)) {
-						UID mgID = self->db.serverInfo->get().blobMigrator.get().id();
-						TraceEvent("CCBlobMigratorDied", self->id).detail("MGID", mgID);
-						self->db.clearInterf(ProcessClass::BlobMigratorClass);
-						break;
-					}
-					when(wait(self->recruitBlobMigrator.onChange())) {}
+			choose {
+				when(wait(wfClient)) {
+					UID mgID = self->db.serverInfo->get().blobMigrator.get().id();
+					TraceEvent("CCBlobMigratorDied", self->id).detail("MGID", mgID);
+					self->db.clearInterf(ProcessClass::BlobMigratorClass);
 				}
+				when(wait(self->recruitBlobMigrator.onChange())) {}
 			}
-		} else if (self->db.blobGranulesEnabled.get() && self->db.blobRestoreEnabled.get()) {
-			// if there is no blob migrator present but blob granules are now enabled, recruit a BM
+		} else if (self->db.blobGranulesEnabled.get() && self->canRecruitBlobMigrator()) {
+			// if there is no blob migrator present but blob granules are now enabled, recruit a Blob Migrator
 			wait(startBlobMigrator(self, recruitThrottler.newRecruitment()));
 		} else {
 			wait(self->db.blobGranulesEnabled.onChange() || self->db.blobRestoreEnabled.onChange());
@@ -2716,7 +2761,7 @@ ACTOR Future<Void> monitorBlobManager(ClusterControllerData* self) {
 							const auto& blobManager = self->db.serverInfo->get().blobManager;
 							self->addActor.send(BlobManagerSingleton(blobManager)
 							                        .haltBlobGranules(*self, blobManager.get().locality.processId()));
-							if (self->db.blobRestoreEnabled.get()) {
+							if (self->canRecruitBlobMigrator()) {
 								const auto& blobMigrator = self->db.serverInfo->get().blobMigrator;
 								self->addActor.send(BlobMigratorSingleton(blobMigrator)
 								                        .halt(*self, blobMigrator.get().locality.processId()));
@@ -2989,6 +3034,7 @@ ACTOR Future<Void> clusterControllerCore(ClusterControllerFullInterface interf,
 	self.addActor.send(timeKeeper(&self));
 	self.addActor.send(monitorProcessClasses(&self));
 	self.addActor.send(monitorServerInfoConfig(&self.db));
+	self.addActor.send(monitorStorageMetadata(&self));
 	self.addActor.send(monitorGlobalConfig(&self.db));
 	self.addActor.send(updatedChangingDatacenters(&self));
 	self.addActor.send(updatedChangedDatacenters(&self));

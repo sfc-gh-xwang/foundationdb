@@ -20,7 +20,7 @@ pipeline {
                                          'mdvorsky',
                                          'jshim',
                                          'jslocum',
-                                         'ajbeamon',
+                                         'abeamon',
                                          'dadkins',
                                          'yajin']
 

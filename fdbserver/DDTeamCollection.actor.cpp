@@ -18,14 +18,20 @@
  * limitations under the License.
  */
 
-#include "fdbserver/DDTeamCollection.h"
+#include <climits>
+
+#include "fdbclient/SystemData.h"
 #include "fdbclient/FDBTypes.h"
+#include "fdbserver/BlobMigratorInterface.h"
+#include "fdbserver/DDTeamCollection.h"
 #include "fdbserver/ExclusionTracker.actor.h"
 #include "fdbserver/DataDistributionTeam.h"
 #include "fdbserver/Knobs.h"
 #include "flow/CodeProbe.h"
-#include "fdbserver/BlobMigratorInterface.h"
+#include "flow/IRandom.h"
 #include "flow/Trace.h"
+#include "flow/network.h"
+
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 namespace {
@@ -36,6 +42,19 @@ auto get(MapContainer& m, K const& k) -> decltype(m.at(k)) {
 	auto it = m.find(k);
 	ASSERT(it != m.end());
 	return it->second;
+}
+
+void ParsePerpetualStorageWiggleLocality(const std::string& localityKeyValue,
+                                         Optional<Value>* localityKey,
+                                         Optional<Value>* localityValue) {
+	// parsing format is like "datahall:0"
+	ASSERT(isValidPerpetualStorageWiggleLocality(localityKeyValue));
+
+	// get key and value from perpetual_storage_wiggle_locality.
+	int split = localityKeyValue.find(':');
+	*localityKey = Optional<Value>(ValueRef((uint8_t*)localityKeyValue.c_str(), split));
+	*localityValue =
+	    Optional<Value>(ValueRef((uint8_t*)localityKeyValue.c_str() + split + 1, localityKeyValue.size() - split - 1));
 }
 
 } // namespace
@@ -2893,7 +2912,27 @@ public:
 		if (res.size() > 0) {
 			// SOMEDAY: support wiggle multiple SS at once
 			ASSERT(!self->wigglingId.present()); // only single process wiggle is allowed
-			self->wigglingId = res.begin()->first;
+
+			Optional<Value> localityKey;
+			Optional<Value> localityValue;
+			if (self->configuration.perpetualStorageWiggleLocality != "0") {
+				ParsePerpetualStorageWiggleLocality(
+				    self->configuration.perpetualStorageWiggleLocality, &localityKey, &localityValue);
+			}
+
+			// if perpetual_storage_wiggle_locality has value and not 0(disabled).
+			if (localityKey.present()) {
+				if (self->server_info.count(res.begin()->first)) {
+					auto server = self->server_info.at(res.begin()->first);
+
+					// Update the wigglingId only if it matches the locality.
+					if (server->getLastKnownInterface().locality.get(localityKey.get()) == localityValue) {
+						self->wigglingId = res.begin()->first;
+					}
+				}
+			} else {
+				self->wigglingId = res.begin()->first;
+			}
 		}
 		return Void();
 	}
@@ -2932,6 +2971,7 @@ public:
 					data.createdTime = metadata.get().createdTime;
 				}
 				metadataMap.set(tr, server->getId(), data);
+				tr->set(serverMetadataChangeKey, deterministicRandom()->randomUniqueID().toString());
 				wait(tr->commit());
 				break;
 			} catch (Error& e) {

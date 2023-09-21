@@ -298,14 +298,22 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		}
 	case ProcessClass::BlobMigrator:
 		switch (_class) {
+		case ProcessClass::BlobMigratorClass:
+			return ProcessClass::BestFit;
 		case ProcessClass::StatelessClass:
 			return ProcessClass::GoodFit;
+		case ProcessClass::UnsetClass:
+			return ProcessClass::UnsetFit;
 		case ProcessClass::MasterClass:
 			return ProcessClass::OkayFit;
+		case ProcessClass::CoordinatorClass:
+		case ProcessClass::TesterClass:
+		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
-			return ProcessClass::OkayFit;
-		default:
+		case ProcessClass::SimHTTPServerClass:
 			return ProcessClass::NeverAssign;
+		default:
+			return ProcessClass::WorstFit;
 		}
 	case ProcessClass::StorageCache:
 		switch (_class) {

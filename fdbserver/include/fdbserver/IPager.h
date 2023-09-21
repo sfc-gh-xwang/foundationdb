@@ -19,7 +19,6 @@
  */
 #pragma once
 
-#include "fdbclient/Knobs.h"
 #ifndef FDBSERVER_IPAGER_H
 #define FDBSERVER_IPAGER_H
 
@@ -421,13 +420,15 @@ public:
 		                   const TextAndHeaderCipherKeys& cipherKeys,
 		                   uint8_t* payload,
 		                   int len,
-		                   PhysicalPageID seed) {
+		                   PhysicalPageID seed,
+		                   EncryptionAtRestAlgo algo) {
+			ASSERT_NE(algo, EncryptionAtRestAlgo::LAST);
 			Header* h = reinterpret_cast<Header*>(header);
-			Reference<EncryptBlobCipher> cipher =
-			    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
-			                                    cipherKeys.cipherHeaderKey,
-			                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
-			                                    BlobCipherMetrics::KV_REDWOOD);
+			if (needsHeaderCipherKey(algo)) {
+				ASSERT(cipherKeys.cipherHeaderKey.isValid());
+			}
+			Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
+			    cipherKeys.cipherTextKey, cipherKeys.cipherHeaderKey, algo, BlobCipherMetrics::KV_REDWOOD);
 			Arena arena;
 
 			BlobCipherEncryptHeaderRef headerRef;
@@ -551,7 +552,9 @@ public:
 
 		// Non-verifying header parse just to initialize members
 		p->postReadHeader(invalidPhysicalPageID, false);
+		p->encryptionDomainId = encryptionDomainId;
 		p->encryptionKey = encryptionKey;
+		p->encryptionAlgo = encryptionAlgo;
 
 		return Reference<ArenaPage>(p);
 	}
@@ -565,7 +568,9 @@ public:
 
 		// Non-verifying header parse just to initialize component pointers
 		p->postReadHeader(invalidPhysicalPageID, false);
+		p->encryptionDomainId = encryptionDomainId;
 		p->encryptionKey = encryptionKey;
+		p->encryptionAlgo = encryptionAlgo;
 
 		return Reference<ArenaPage>(p);
 	}
@@ -610,10 +615,10 @@ public:
 			XOREncryptionEncoder::encode(page->getEncodingHeader(), encryptionKey, pPayload, payloadSize, pageID);
 		} else if (page->encodingType == EncodingType::AESEncryption) {
 			AESEncryptionEncoder<AESEncryption>::encode(
-			    page->getEncodingHeader(), encryptionKey.aesKey, pPayload, payloadSize, pageID);
+			    page->getEncodingHeader(), encryptionKey.aesKey, pPayload, payloadSize, pageID, encryptionAlgo);
 		} else if (page->encodingType == EncodingType::AESEncryptionWithAuth) {
 			AESEncryptionEncoder<AESEncryptionWithAuth>::encode(
-			    page->getEncodingHeader(), encryptionKey.aesKey, pPayload, payloadSize, pageID);
+			    page->getEncodingHeader(), encryptionKey.aesKey, pPayload, payloadSize, pageID, encryptionAlgo);
 		} else {
 			throw page_encoding_not_supported();
 		}
@@ -674,15 +679,19 @@ public:
 	// Returns true if the page's encoding type employs encryption
 	bool isEncrypted() const { return isEncodingTypeEncrypted(getEncodingType()); }
 
+	// Returns true if the page's encoding type employs AES encrytpion
+	bool isAESEncrypted() const { return isEncodingTypeAESEncrypted(getEncodingType()); }
+
 	// Return encryption domain id used. This method only use information from the encryptionKey.
 	// Caller should make sure encryption domain is in use.
 	int64_t getEncryptionDomainId() const {
 		// encryption domain is only supported by AESEncryption and AESEncryptionWithAuth.
-		ASSERT(getEncodingType() == EncodingType::AESEncryption ||
-		       getEncodingType() == EncodingType::AESEncryptionWithAuth);
-		const Reference<BlobCipherKey>& cipherKey = encryptionKey.aesKey.cipherTextKey;
-		ASSERT(cipherKey.isValid());
-		return cipherKey->getDomainId();
+		ASSERT(isAESEncrypted());
+		ASSERT(encryptionDomainId.present());
+		if (g_network->isSimulated() && encryptionKey.aesKey.cipherTextKey.isValid()) {
+			ASSERT(encryptionDomainId.get() == encryptionKey.aesKey.cipherTextKey->getDomainId());
+		}
+		return encryptionDomainId.get();
 	}
 
 	// Return pointer to encoding header.
@@ -724,7 +733,11 @@ public:
 	}
 
 	// Used by encodings that do encryption
+	Optional<int64_t> encryptionDomainId;
 	EncryptionKey encryptionKey;
+
+	// Algorithm used for encryption
+	EncryptionAtRestAlgo encryptionAlgo = EncryptionAtRestAlgo::LAST;
 
 	// Whether encoding header is set
 	bool encodingHeaderAvailable = false;

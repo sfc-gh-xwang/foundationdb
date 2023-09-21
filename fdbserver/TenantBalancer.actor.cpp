@@ -16,6 +16,7 @@
 #include "flow/ApiVersion.h"
 #include "flow/CodeProbe.h"
 #include "flow/TaskPriority.h"
+#include "flow/Trace.h"
 #include "metacluster/Metacluster.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
@@ -58,6 +59,7 @@ Future<Void> writeTenantBalancerInterfaceToDb(TenantBalancer* self, PersistInter
 		try {
 			tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 			// TODO: remove debugging
 			UID rnd = deterministicRandom()->randomUniqueID();
 			tr->debugTransaction(rnd);
@@ -78,7 +80,7 @@ Future<Void> writeTenantBalancerInterfaceToDb(TenantBalancer* self, PersistInter
 			}
 		} catch (Error& e) {
 			// TODO: depending on error code, send Error via req.reply.sendError(e);
-			TraceEvent(SevWarnAlways, "TenantBalancerFailedToPersistInterf").detail("TBID", self->tbi.id());
+			TraceEvent(SevWarnAlways, "TenantBalancerFailedToPersistInterf").error(e).detail("TBID", self->tbi.id());
 			CODE_PROBE(true, "TB interface persist error", probe::decoration::rare);
 			wait(tr->onError(e));
 		}
@@ -95,7 +97,7 @@ ACTOR Future<Void> getMovementStatus(TenantBalancer* self, GetMovementStatusRequ
 		req.reply.send(reply);
 		CODE_PROBE(true, "Get tenant movement status");
 	} catch (Error& e) {
-		TraceEvent(SevDebug, "TenantBalancerGetMovementStatusError", self->tbi.id())
+		TraceEvent(SevWarnAlways, "TenantBalancerGetMovementStatusError", self->tbi.id())
 		    .error(e)
 		    .detail("TenantGroup", req.tenantGroupName);
 		CODE_PROBE(true, "Get tenant movement status error", probe::decoration::rare);
@@ -113,7 +115,7 @@ ACTOR Future<Void> listMovements(TenantBalancer* self, ListMovementsRequest req)
 		req.reply.send(reply);
 		CODE_PROBE(true, "List tenant movements");
 	} catch (Error& e) {
-		TraceEvent("TenantBalancerListMovementsError", self->tbi.id()).error(e);
+		TraceEvent(SevWarnAlways, "TenantBalancerListMovementsError", self->tbi.id()).error(e);
 		CODE_PROBE(true, "List tenant movements error", probe::decoration::rare);
 		req.reply.sendError(e);
 	}
@@ -130,7 +132,7 @@ ACTOR Future<Void> startMoveTenantGroup(TenantBalancer* self, StartMoveTenantGro
 		req.reply.send(reply);
 		CODE_PROBE(true, "Start tenant movement");
 	} catch (Error& e) {
-		TraceEvent("TenantBalancerStartMoveTenantGroupError", self->tbi.id())
+		TraceEvent(SevWarnAlways, "TenantBalancerStartMoveTenantGroupError", self->tbi.id())
 		    .error(e)
 		    .detail("TenantGroup", req.tenantGroupName);
 		CODE_PROBE(true, "Start tenant movement error", probe::decoration::rare);
@@ -148,7 +150,7 @@ ACTOR Future<Void> abortMovement(TenantBalancer* self, AbortMovementRequest req)
 		req.reply.send(reply);
 		CODE_PROBE(true, "Abort tenant movement");
 	} catch (Error& e) {
-		TraceEvent("TenantBalancerAbortMovementError", self->tbi.id())
+		TraceEvent(SevWarnAlways, "TenantBalancerAbortMovementError", self->tbi.id())
 		    .error(e)
 		    .detail("TenantGroup", req.tenantGroupName);
 		CODE_PROBE(true, "Abort tenant movement error", probe::decoration::rare);

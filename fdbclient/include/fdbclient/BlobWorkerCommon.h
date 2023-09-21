@@ -23,6 +23,7 @@
 
 #include "flow/genericactors.actor.h"
 #include "fdbrpc/Stats.h"
+#include "flow/RecentActiveTracker.h"
 
 struct BlobWorkerStats {
 	CounterCollection cc;
@@ -31,7 +32,8 @@ struct BlobWorkerStats {
 	Counter deltaBytesWritten, snapshotBytesWritten;
 	Counter bytesReadFromFDBForInitialSnapshot;
 	Counter bytesReadFromS3ForCompaction;
-	Counter rangeAssignmentRequests, readRequests, summaryReads, mutationStreamRequests;
+	Counter rangeAssignmentRequests, readRequests, summaryReads;
+	Counter mutationStreamRequests, mutationStreamBytes;
 	Counter wrongShardServer;
 	Counter changeFeedInputBytes;
 	Counter readReqTotalFilesReturned;
@@ -68,6 +70,7 @@ struct BlobWorkerStats {
 	LatencySample deltaBlobWriteLatencySample;
 	LatencySample reSnapshotLatencySample;
 	LatencySample readLatencySample;
+	LatencySample streamLatencySample;
 	LatencySample deltaUpdateSample;
 
 	Reference<FlowLock> initialSnapshotLock;
@@ -80,7 +83,10 @@ struct BlobWorkerStats {
 	ActiveCounter<int> deltaFilesWriting;
 	ActiveCounter<int> snapshotFilesWriting;
 	ActiveCounter<int> granulesOnOldFeed;
+	ActiveCounter<int> initialBlobbifyStarting;
+	ActiveCounter<int> initialBlobbifyEmptyActive;
 
+	RecentActive::Tracker recentActiveGranuleFeedsTracker;
 	Future<Void> logger;
 
 	// Current stats maintained for a given blob worker process
@@ -107,6 +113,7 @@ struct BlobWorkerStats {
 	    readRequests("ReadRequests", cc),
 	    summaryReads("SummaryReads", cc),
 	    mutationStreamRequests("MutationStreamRequests", cc),
+	    mutationStreamBytes("MutationStreamBytes", cc),
 	    wrongShardServer("WrongShardServer", cc),
 	    changeFeedInputBytes("ChangeFeedInputBytes", cc),
 	    readReqTotalFilesReturned("ReadReqTotalFilesReturned", cc),
@@ -144,6 +151,7 @@ struct BlobWorkerStats {
 	    deltaBlobWriteLatencySample("DeltaBlobWriteMetrics", id, sampleLoggingInterval, fileOpLatencySketchAccuracy),
 	    reSnapshotLatencySample("GranuleResnapshotMetrics", id, sampleLoggingInterval, fileOpLatencySketchAccuracy),
 	    readLatencySample("GranuleReadLatencyMetrics", id, sampleLoggingInterval, requestLatencySketchAccuracy),
+	    streamLatencySample("GranuleStreamLatencyMetrics", id, sampleLoggingInterval, requestLatencySketchAccuracy),
 	    deltaUpdateSample("DeltaUpdateMetrics", id, sampleLoggingInterval, fileOpLatencySketchAccuracy),
 	    initialSnapshotLock(initialSnapshotLock),
 	    resnapshotBudget(resnapshotBudget),
@@ -153,7 +161,9 @@ struct BlobWorkerStats {
 	    granulesBlockedCommittedVersion(0),
 	    deltaFilesWriting(0),
 	    snapshotFilesWriting(0),
-	    granulesOnOldFeed(0) {
+	    granulesOnOldFeed(0),
+	    initialBlobbifyStarting(0),
+	    initialBlobbifyEmptyActive(0) {
 		specialCounter(cc, "NumRangesAssigned", [this]() { return this->numRangesAssigned; });
 		specialCounter(cc, "MutationBytesBuffered", [this]() { return this->mutationBytesBuffered; });
 		specialCounter(cc, "ActiveReadRequests", [this]() { return this->activeReadRequests; });
@@ -179,6 +189,12 @@ struct BlobWorkerStats {
 		specialCounter(cc, "DeltaFilesWriting", [this]() { return this->deltaFilesWriting.getValue(); });
 		specialCounter(cc, "SnapshotFilesWriting", [this]() { return this->snapshotFilesWriting.getValue(); });
 		specialCounter(cc, "GranulesOnOldFeed", [this]() { return this->granulesOnOldFeed.getValue(); });
+		specialCounter(cc, "RecentActiveGranuleFeeds", [this]() {
+			return this->recentActiveGranuleFeedsTracker.getCountAndReset();
+		});
+		specialCounter(cc, "InitialBlobbifyStarting", [this]() { return this->initialBlobbifyStarting.getValue(); });
+		specialCounter(
+		    cc, "InitialBlobbifyEmptyActive", [this]() { return this->initialBlobbifyEmptyActive.getValue(); });
 
 		logger = cc.traceCounters("BlobWorkerMetrics", id, interval, "BlobWorkerMetrics");
 	}

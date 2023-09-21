@@ -141,8 +141,8 @@ private:
 			}
 
 			if (!tenantData.tenantTombstones.empty()) {
-				ASSERT(*tenantData.tenantTombstones.begin() >
-				       tenantData.tombstoneCleanupData.get().tombstonesErasedThrough);
+				ASSERT_GT(*tenantData.tenantTombstones.begin(),
+				          tenantData.tombstoneCleanupData.get().tombstonesErasedThrough);
 			}
 		} else {
 			ASSERT(tenantData.tenantTombstones.empty() && !tenantData.tombstoneCleanupData.present());

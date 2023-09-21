@@ -1084,6 +1084,7 @@ struct KeyValueStoreType {
 		MEMORY_RADIXTREE = 4,
 		SSD_ROCKSDB_V1 = 5,
 		SSD_SHARDED_ROCKSDB = 6,
+		NONE = 7,
 		END
 	};
 
@@ -1108,6 +1109,9 @@ struct KeyValueStoreType {
 	// This is a many-to-one mapping as there are aliases for some storage engines
 	static KeyValueStoreType fromString(const std::string& str);
 	std::string toString() const { return getStoreTypeStr((StoreType)type); }
+
+	// Whether the storage type is a valid storage type.
+	bool isValid() const { return type != NONE && type != END; }
 
 private:
 	uint32_t type;
@@ -1477,18 +1481,21 @@ struct WorkerBackupStatus {
 	}
 };
 
-enum class TransactionPriority : uint8_t { BATCH, DEFAULT, IMMEDIATE, MIN = BATCH, MAX = IMMEDIATE };
+enum class TransactionPriority : uint8_t { BATCH, LOW, DEFAULT, IMMEDIATE, MIN = BATCH, MAX = IMMEDIATE };
 
 const std::array<TransactionPriority, (int)TransactionPriority::MAX + 1> allTransactionPriorities = {
 	TransactionPriority::BATCH,
+	TransactionPriority::LOW,
 	TransactionPriority::DEFAULT,
-	TransactionPriority::IMMEDIATE
+	TransactionPriority::IMMEDIATE,
 };
 
 inline const char* transactionPriorityToString(TransactionPriority priority, bool capitalize = true) {
 	switch (priority) {
 	case TransactionPriority::BATCH:
 		return capitalize ? "Batch" : "batch";
+	case TransactionPriority::LOW:
+		return capitalize ? "Low" : "low";
 	case TransactionPriority::DEFAULT:
 		return capitalize ? "Default" : "default";
 	case TransactionPriority::IMMEDIATE:
@@ -1938,5 +1945,23 @@ using TransactionTagMap = boost::unordered_flat_map<TransactionTag, Value, std::
 
 template <class Value>
 using UIDTransactionTagMap = boost::unordered_flat_map<UID, TransactionTagMap<Value>>;
+
+template <class K, class T>
+class EventualSingleton {
+public:
+	T item() const {
+		ASSERT(items.size() == 1);
+		return items.begin()->second;
+	}
+
+	void insert(K k, T t) { items[k] = t; }
+
+	bool erase(K k) { return items.erase(k) == 1; }
+
+	bool empty() const { return items.empty(); }
+
+private:
+	std::unordered_map<K, T> items;
+};
 
 #endif

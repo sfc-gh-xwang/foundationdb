@@ -453,13 +453,6 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysImpl(Reference<AsyncV
 	cipherKeysCtx.headerCipherKey = headerCipherKey;
 
 	// Populate 'Intialization Vector'
-	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
-	if (algo == EncryptionAtRestAlgo::AES_CTR || algo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
-	    algo == EncryptionAtRestAlgo::AES_CTR_HMAC) {
-		ASSERT_EQ(ivRef.size(), AES_256_CTR_IV_LENGTH);
-	} else {
-		ASSERT_EQ(ivRef.size(), AesGcmParams::ivSize);
-	}
 	cipherKeysCtx.ivRef = StringRef(*arena, ivRef);
 
 	if (BG_ENCRYPT_COMPRESS_DEBUG) {
@@ -1234,8 +1227,11 @@ ACTOR Future<BlobFileIndex> dumpInitialSnapshotFromFDB(Reference<BlobWorkerData>
 		           metadata->keyRange.begin.printable(),
 		           metadata->keyRange.end.printable());
 	}
-	wait(bwData->initialSnapshotLock->take());
-	state FlowLock::Releaser holdingLock(*bwData->initialSnapshotLock);
+
+	state bool checkedLoadLock = false;
+	state ActiveCounter<int>::Releaser holdingBlobbifyStarting = bwData->stats.initialBlobbifyStarting.take(1);
+	state ActiveCounter<int>::Releaser holdingBlobbifyEmptyActive;
+	state FlowLock::Releaser holdingLock;
 
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bwData->db);
 	state int retries = 0;
@@ -1247,11 +1243,32 @@ ACTOR Future<BlobFileIndex> dumpInitialSnapshotFromFDB(Reference<BlobWorkerData>
 		tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 		tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 		tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+		// use no-cache as this is a read-once bulk operation
+		tr->setOption(FDBTransactionOptions::READ_SERVER_SIDE_CACHE_DISABLE);
+		// don't set the read priority to low though since once we start it, we want the entire thing to complete in one
+		// transaction
 		try {
 			Version rv = wait(tr->getReadVersion());
 			bwData->addGRVHistory(rv);
-
 			readVersion = rv;
+
+			if (!checkedLoadLock) {
+				// check if range is empty, if so don't take parallelism lock
+				RangeReadResult r = wait(tr->getRange(metadata->keyRange, 1));
+				CODE_PROBE(r.empty(), "empty initial blob snapshot");
+				CODE_PROBE(!r.empty(), "non-empty initial blob snapshot");
+				holdingBlobbifyStarting.release();
+				checkedLoadLock = true;
+				if (!r.empty()) {
+					wait(bwData->initialSnapshotLock->take());
+					holdingLock = FlowLock::Releaser(*bwData->initialSnapshotLock);
+					tr->reset();
+					continue;
+				} else {
+					holdingBlobbifyEmptyActive = bwData->stats.initialBlobbifyEmptyActive.take(1);
+				}
+			}
+
 			ASSERT(lastReadVersion <= readVersion);
 			state PromiseStream<RangeReadResult> rowsStream;
 			state Future<BlobFileIndex> snapshotWriter = writeSnapshot(bwData,
@@ -1722,7 +1739,7 @@ ACTOR Future<Void> granuleCheckMergeCandidate(Reference<BlobWorkerData> bwData,
 		StorageMetrics currentMetrics = wait(bwData->db->getStorageMetrics(metadata->keyRange, CLIENT_KNOBS->TOO_MANY));
 
 		// FIXME: maybe separate knob and/or value for write rate?
-		if (currentMetrics.bytes >= SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES / 2 ||
+		if (metadata->isBulkLoadDirty || currentMetrics.bytes >= SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES / 2 ||
 		    currentMetrics.bytesWrittenPerKSecond >= SERVER_KNOBS->SHARD_MIN_BYTES_PER_KSEC) {
 			wait(delayJittered(SERVER_KNOBS->BG_MERGE_CANDIDATE_THRESHOLD_SECONDS / 2.0));
 			CODE_PROBE(true, "wait and check later to see if granule got smaller or colder");
@@ -2227,6 +2244,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 	state bool snapshotEligible; // just wrote a delta file or just took granule over from another worker
 	state bool justDidRollback = false;
 	state ActiveCounter<int>::Releaser holdingOnOldFeedCounter;
+	state RecentActive::Handle feedRecentlyActive;
 
 	try {
 		// set resume snapshot so it's not valid until we pause to ask the blob manager for a re-snapshot
@@ -2482,6 +2500,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 						} else {
 							ASSERT(mutations.front().version >= startState.changeFeedStartVersion);
 						}
+						feedRecentlyActive.count(&bwData->stats.recentActiveGranuleFeedsTracker);
 
 						if (mutations.front().version <= metadata->bufferedDeltaVersion) {
 							fmt::print("ERROR: Mutations went backwards for granule [{0} - {1}). "
@@ -2584,205 +2603,200 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 			// process mutations
 			Version lastDeltaVersion = invalidVersion;
 			bool processedAnyMutations = false;
-			if (!mutations.empty()) {
-				for (MutationsAndVersionRef deltas : mutations) {
+			for (MutationsAndVersionRef deltas : mutations) {
 
-					// Buffer mutations at this version. There should not be multiple MutationsAndVersionRef
-					// with the same version
-					ASSERT(deltas.version > metadata->bufferedDeltaVersion);
-					ASSERT(deltas.version > lastDeltaVersion);
-					// FIXME: this assert isn't true - why
-					// ASSERT(!deltas.mutations.empty());
-					if (!deltas.mutations.empty()) {
-						if (deltas.mutations.size() == 1 && deltas.mutations.back().param1 == lastEpochEndPrivateKey) {
-							// Note rollbackVerision is durable, [rollbackVersion+1 - deltas.version] needs to
-							// be tossed For correctness right now, there can be no waits and yields either in
-							// rollback handling or in handleBlobGranuleFileRequest once waitForVersion has
-							// succeeded, otherwise this will race and clobber results
-							Version rollbackVersion;
-							BinaryReader br(deltas.mutations[0].param2, Unversioned());
-							br >> rollbackVersion;
+				// Buffer mutations at this version. There should not be multiple MutationsAndVersionRef
+				// with the same version
+				ASSERT(deltas.version > metadata->bufferedDeltaVersion);
+				ASSERT(deltas.version > lastDeltaVersion);
+				// FIXME: this assert isn't true - why
+				// ASSERT(!deltas.mutations.empty());
+				if (!deltas.mutations.empty()) {
+					if (deltas.mutations.size() == 1 && deltas.mutations.back().param1 == lastEpochEndPrivateKey) {
+						// Note rollbackVerision is durable, [rollbackVersion+1 - deltas.version] needs to
+						// be tossed For correctness right now, there can be no waits and yields either in
+						// rollback handling or in handleBlobGranuleFileRequest once waitForVersion has
+						// succeeded, otherwise this will race and clobber results
+						Version rollbackVersion;
+						BinaryReader br(deltas.mutations[0].param2, Unversioned());
+						br >> rollbackVersion;
 
-							if (BW_DEBUG && rollbackVersion < metadata->durableDeltaVersion.get()) {
-								fmt::print("Granule [{0} - {1}) on BW {2} invalid rollback!! {3} -> {4} (DDV={5})\n",
-								           metadata->keyRange.begin.printable().c_str(),
-								           metadata->keyRange.end.printable().c_str(),
-								           bwData->id.toString().substr(0, 5).c_str(),
-								           deltas.version,
-								           rollbackVersion,
-								           metadata->durableDeltaVersion.get());
-							}
-							ASSERT(rollbackVersion >= metadata->durableDeltaVersion.get());
-
-							if (!rollbacksInProgress.empty()) {
-								ASSERT(rollbacksInProgress.front().first == rollbackVersion);
-								ASSERT(rollbacksInProgress.front().second == deltas.version);
-								if (BW_DEBUG) {
-									fmt::print("Passed rollback {0} -> {1}\n", deltas.version, rollbackVersion);
-								}
-								rollbacksCompleted.push_back(rollbacksInProgress.front());
-								rollbacksInProgress.pop_front();
-							} else {
-								// FIXME: add counter for granule rollbacks and rollbacks skipped?
-								// explicitly check last delta in currentDeltas because lastVersion and
-								// bufferedDeltaVersion include empties
-								if (metadata->pendingDeltaVersion.get() <= rollbackVersion &&
-								    (metadata->currentDeltas.empty() ||
-								     metadata->currentDeltas.back().version <= rollbackVersion)) {
-									CODE_PROBE(true, "Granule ignoring rollback");
-
-									if (BW_DEBUG) {
-										fmt::print("Granule [{0} - {1}) on BW {2} skipping rollback {3} -> {4} "
-										           "completely\n",
-										           metadata->keyRange.begin.printable().c_str(),
-										           metadata->keyRange.end.printable().c_str(),
-										           bwData->id.toString().substr(0, 5).c_str(),
-										           deltas.version,
-										           rollbackVersion);
-									}
-									// Still have to add to rollbacksCompleted. If we later roll the granule
-									// back past this because of cancelling a delta file, we need to count this
-									// as in progress so we can match the rollback mutation to a
-									// rollbackInProgress when we restart the stream.
-									rollbacksCompleted.push_back(std::pair(rollbackVersion, deltas.version));
-								} else {
-									CODE_PROBE(true, "Granule processing rollback");
-									if (BW_DEBUG) {
-										fmt::print("[{0} - {1}) on BW {2} ROLLBACK @ {3} -> {4}\n",
-										           metadata->keyRange.begin.printable(),
-										           metadata->keyRange.end.printable(),
-										           bwData->id.toString().substr(0, 5).c_str(),
-										           deltas.version,
-										           rollbackVersion);
-										TraceEvent(SevDebug, "GranuleRollback", bwData->id)
-										    .detail("Granule", metadata->keyRange)
-										    .detail("Version", deltas.version)
-										    .detail("RollbackVersion", rollbackVersion);
-									}
-
-									Version oldPendingSnapshot = metadata->pendingSnapshotVersion;
-									Version cfRollbackVersion = doGranuleRollback(metadata,
-									                                              deltas.version,
-									                                              rollbackVersion,
-									                                              inFlightFiles,
-									                                              rollbacksInProgress,
-									                                              rollbacksCompleted);
-
-									if (oldPendingSnapshot > metadata->pendingSnapshotVersion) {
-										// If rollback cancelled in-flight snapshot, merge candidate checker also got
-										// cancelled. Restart it
-										CODE_PROBE(true,
-										           "Restarting merge candidate checker after rolling back snapshot");
-										checkMergeCandidate = granuleCheckMergeCandidate(
-										    bwData,
-										    metadata,
-										    startState.granuleID,
-										    inFlightFiles.empty() ? Future<Void>(Void())
-										                          : success(inFlightFiles.back().future));
-										metadata->resetReadStats();
-									}
-									// reset force flush state, requests should retry and add it back once feed is ready
-									forceFlushVersions.clear();
-									lastForceFlushVersion = 0;
-									metadata->forceFlushVersion = NotifiedVersion();
-									nextForceFlush = metadata->forceFlushVersion.whenAtLeast(1);
-
-									Reference<ChangeFeedData> cfData =
-									    makeReference<ChangeFeedData>(bwData->db.getPtr());
-
-									if (!readOldChangeFeed &&
-									    cfRollbackVersion + 1 < startState.changeFeedStartVersion) {
-										// It isn't possible to roll back across the parent/child feed boundary,
-										// but as part of rolling back we may need to cancel in-flight delta
-										// files, and those delta files may include stuff from before the
-										// parent/child boundary. So we have to go back to reading the old
-										// change feed
-										ASSERT(cfRollbackVersion >= startState.previousDurableVersion);
-										ASSERT(cfRollbackVersion >= metadata->durableDeltaVersion.get());
-										CODE_PROBE(true, "rollback crossed change feed boundaries");
-										readOldChangeFeed = true;
-										forceFlushCleanupFuture = Never();
-									}
-
-									if (readOldChangeFeed) {
-										ASSERT(cfRollbackVersion + 1 < startState.changeFeedStartVersion);
-										ASSERT(oldCFKey.present());
-										holdingOnOldFeedCounter = bwData->stats.granulesOnOldFeed.take(1);
-										// because several feeds will be reading the same version range of this change
-										// feed at the same time, set cache result to true
-										oldChangeFeedFuture = bwData->db->getChangeFeedStream(
-										    cfData,
-										    oldCFKey.get(),
-										    cfRollbackVersion + 1,
-										    startState.changeFeedStartVersion,
-										    metadata->keyRange,
-										    bwData->changeFeedStreamReplyBufferSize,
-										    false,
-										    { ReadType::NORMAL, CacheResult::True },
-										    false,
-										    getTenantPrefix(bwData, metadata->keyRange));
-
-									} else {
-										if (cfRollbackVersion + 1 < startState.changeFeedStartVersion) {
-											fmt::print("Rollback past CF start??. rollback={0}, start={1}\n",
-											           cfRollbackVersion,
-											           startState.changeFeedStartVersion);
-										}
-										ASSERT(cfRollbackVersion + 1 >= startState.changeFeedStartVersion);
-
-										changeFeedFuture = bwData->db->getChangeFeedStream(
-										    cfData,
-										    cfKey,
-										    cfRollbackVersion + 1,
-										    MAX_VERSION,
-										    metadata->keyRange,
-										    bwData->changeFeedStreamReplyBufferSize,
-										    false,
-										    { ReadType::NORMAL, CacheResult::False },
-										    false,
-										    getTenantPrefix(bwData, metadata->keyRange));
-									}
-
-									// Start actors BEFORE setting new change feed data to ensure the change
-									// feed data is properly initialized by the client
-									metadata->activeCFData.set(cfData);
-
-									justDidRollback = true;
-									lastDeltaVersion = cfRollbackVersion;
-									break;
-								}
-							}
-						} else if (!rollbacksInProgress.empty() && rollbacksInProgress.front().first < deltas.version &&
-						           rollbacksInProgress.front().second > deltas.version) {
-							CODE_PROBE(true, "Granule skipping mutations b/c prior rollback");
-							if (BW_DEBUG) {
-								fmt::print("Skipping mutations @ {} b/c prior rollback\n", deltas.version);
-							}
-						} else {
-							for (auto& delta : deltas.mutations) {
-								metadata->bufferedDeltaBytes += delta.totalSize();
-								bwData->stats.changeFeedInputBytes += delta.totalSize();
-								bwData->stats.mutationBytesBuffered += delta.totalSize();
-
-								DEBUG_MUTATION("BlobWorkerBuffer", deltas.version, delta, bwData->id)
-								    .detail("Granule", metadata->keyRange)
-								    .detail("ChangeFeedID",
-								            cfKeyToGranuleID(readOldChangeFeed ? oldCFKey.get() : cfKey))
-								    .detail("OldChangeFeed", readOldChangeFeed ? "T" : "F");
-							}
-							metadata->currentDeltas.push_back_deep(metadata->currentDeltas.arena(), deltas);
-
-							processedAnyMutations = true;
-							ASSERT(deltas.version != invalidVersion);
-							ASSERT(deltas.version > lastDeltaVersion);
-							lastDeltaVersion = deltas.version;
+						if (BW_DEBUG && rollbackVersion < metadata->durableDeltaVersion.get()) {
+							fmt::print("Granule [{0} - {1}) on BW {2} invalid rollback!! {3} -> {4} (DDV={5})\n",
+							           metadata->keyRange.begin.printable().c_str(),
+							           metadata->keyRange.end.printable().c_str(),
+							           bwData->id.toString().substr(0, 5).c_str(),
+							           deltas.version,
+							           rollbackVersion,
+							           metadata->durableDeltaVersion.get());
 						}
-					}
-					if (justDidRollback) {
-						break;
+						ASSERT(rollbackVersion >= metadata->durableDeltaVersion.get());
+
+						if (!rollbacksInProgress.empty()) {
+							ASSERT(rollbacksInProgress.front().first == rollbackVersion);
+							ASSERT(rollbacksInProgress.front().second == deltas.version);
+							if (BW_DEBUG) {
+								fmt::print("Passed rollback {0} -> {1}\n", deltas.version, rollbackVersion);
+							}
+							rollbacksCompleted.push_back(rollbacksInProgress.front());
+							rollbacksInProgress.pop_front();
+						} else {
+							// FIXME: add counter for granule rollbacks and rollbacks skipped?
+							// explicitly check last delta in currentDeltas because lastVersion and
+							// bufferedDeltaVersion include empties
+							if (metadata->pendingDeltaVersion.get() <= rollbackVersion &&
+							    (metadata->currentDeltas.empty() ||
+							     metadata->currentDeltas.back().version <= rollbackVersion)) {
+								CODE_PROBE(true, "Granule ignoring rollback");
+
+								if (BW_DEBUG) {
+									fmt::print("Granule [{0} - {1}) on BW {2} skipping rollback {3} -> {4} "
+									           "completely\n",
+									           metadata->keyRange.begin.printable().c_str(),
+									           metadata->keyRange.end.printable().c_str(),
+									           bwData->id.toString().substr(0, 5).c_str(),
+									           deltas.version,
+									           rollbackVersion);
+								}
+								// Still have to add to rollbacksCompleted. If we later roll the granule
+								// back past this because of cancelling a delta file, we need to count this
+								// as in progress so we can match the rollback mutation to a
+								// rollbackInProgress when we restart the stream.
+								rollbacksCompleted.push_back(std::pair(rollbackVersion, deltas.version));
+							} else {
+								CODE_PROBE(true, "Granule processing rollback");
+								if (BW_DEBUG) {
+									fmt::print("[{0} - {1}) on BW {2} ROLLBACK @ {3} -> {4}\n",
+									           metadata->keyRange.begin.printable(),
+									           metadata->keyRange.end.printable(),
+									           bwData->id.toString().substr(0, 5).c_str(),
+									           deltas.version,
+									           rollbackVersion);
+									TraceEvent(SevDebug, "GranuleRollback", bwData->id)
+									    .detail("Granule", metadata->keyRange)
+									    .detail("Version", deltas.version)
+									    .detail("RollbackVersion", rollbackVersion);
+								}
+
+								Version oldPendingSnapshot = metadata->pendingSnapshotVersion;
+								Version cfRollbackVersion = doGranuleRollback(metadata,
+								                                              deltas.version,
+								                                              rollbackVersion,
+								                                              inFlightFiles,
+								                                              rollbacksInProgress,
+								                                              rollbacksCompleted);
+
+								if (oldPendingSnapshot > metadata->pendingSnapshotVersion) {
+									// If rollback cancelled in-flight snapshot, merge candidate checker also got
+									// cancelled. Restart it
+									CODE_PROBE(true, "Restarting merge candidate checker after rolling back snapshot");
+									checkMergeCandidate = granuleCheckMergeCandidate(
+									    bwData,
+									    metadata,
+									    startState.granuleID,
+									    inFlightFiles.empty() ? Future<Void>(Void())
+									                          : success(inFlightFiles.back().future));
+									metadata->resetReadStats();
+								}
+								// reset force flush state, requests should retry and add it back once feed is ready
+								forceFlushVersions.clear();
+								lastForceFlushVersion = 0;
+								metadata->forceFlushVersion = NotifiedVersion();
+								nextForceFlush = metadata->forceFlushVersion.whenAtLeast(1);
+
+								Reference<ChangeFeedData> cfData = makeReference<ChangeFeedData>(bwData->db.getPtr());
+
+								if (!readOldChangeFeed && cfRollbackVersion + 1 < startState.changeFeedStartVersion) {
+									// It isn't possible to roll back across the parent/child feed boundary,
+									// but as part of rolling back we may need to cancel in-flight delta
+									// files, and those delta files may include stuff from before the
+									// parent/child boundary. So we have to go back to reading the old
+									// change feed
+									ASSERT(cfRollbackVersion >= startState.previousDurableVersion);
+									ASSERT(cfRollbackVersion >= metadata->durableDeltaVersion.get());
+									CODE_PROBE(true, "rollback crossed change feed boundaries");
+									readOldChangeFeed = true;
+									forceFlushCleanupFuture = Never();
+								}
+
+								if (readOldChangeFeed) {
+									ASSERT(cfRollbackVersion + 1 < startState.changeFeedStartVersion);
+									ASSERT(oldCFKey.present());
+									holdingOnOldFeedCounter = bwData->stats.granulesOnOldFeed.take(1);
+									// because several feeds will be reading the same version range of this change
+									// feed at the same time, set cache result to true
+									oldChangeFeedFuture =
+									    bwData->db->getChangeFeedStream(cfData,
+									                                    oldCFKey.get(),
+									                                    cfRollbackVersion + 1,
+									                                    startState.changeFeedStartVersion,
+									                                    metadata->keyRange,
+									                                    bwData->changeFeedStreamReplyBufferSize,
+									                                    false,
+									                                    { ReadType::NORMAL, CacheResult::True },
+									                                    false,
+									                                    getTenantPrefix(bwData, metadata->keyRange));
+
+								} else {
+									if (cfRollbackVersion + 1 < startState.changeFeedStartVersion) {
+										fmt::print("Rollback past CF start??. rollback={0}, start={1}\n",
+										           cfRollbackVersion,
+										           startState.changeFeedStartVersion);
+									}
+									ASSERT(cfRollbackVersion + 1 >= startState.changeFeedStartVersion);
+
+									changeFeedFuture =
+									    bwData->db->getChangeFeedStream(cfData,
+									                                    cfKey,
+									                                    cfRollbackVersion + 1,
+									                                    MAX_VERSION,
+									                                    metadata->keyRange,
+									                                    bwData->changeFeedStreamReplyBufferSize,
+									                                    false,
+									                                    { ReadType::NORMAL, CacheResult::False },
+									                                    false,
+									                                    getTenantPrefix(bwData, metadata->keyRange));
+								}
+
+								// Start actors BEFORE setting new change feed data to ensure the change
+								// feed data is properly initialized by the client
+								metadata->activeCFData.set(cfData);
+
+								justDidRollback = true;
+								lastDeltaVersion = cfRollbackVersion;
+								break;
+							}
+						}
+					} else if (!rollbacksInProgress.empty() && rollbacksInProgress.front().first < deltas.version &&
+					           rollbacksInProgress.front().second > deltas.version) {
+						CODE_PROBE(true, "Granule skipping mutations b/c prior rollback");
+						if (BW_DEBUG) {
+							fmt::print("Skipping mutations @ {} b/c prior rollback\n", deltas.version);
+						}
+					} else {
+						for (auto& delta : deltas.mutations) {
+							metadata->bufferedDeltaBytes += delta.totalSize();
+							bwData->stats.changeFeedInputBytes += delta.totalSize();
+							bwData->stats.mutationBytesBuffered += delta.totalSize();
+
+							DEBUG_MUTATION("BlobWorkerBuffer", deltas.version, delta, bwData->id)
+							    .detail("Granule", metadata->keyRange)
+							    .detail("ChangeFeedID", cfKeyToGranuleID(readOldChangeFeed ? oldCFKey.get() : cfKey))
+							    .detail("OldChangeFeed", readOldChangeFeed ? "T" : "F");
+						}
+						metadata->currentDeltas.push_back_deep(metadata->currentDeltas.arena(), deltas);
+
+						processedAnyMutations = true;
+						ASSERT(deltas.version != invalidVersion);
+						ASSERT(deltas.version > lastDeltaVersion);
+						lastDeltaVersion = deltas.version;
 					}
 				}
+				if (justDidRollback) {
+					break;
+				}
 			}
+
 			if (!justDidRollback && processedAnyMutations) {
 				// update buffered version
 				ASSERT(lastDeltaVersion != invalidVersion);
@@ -4188,13 +4202,15 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 						}
 
 						ASSERT(metadata->durableDeltaVersion.get() == metadata->pendingDeltaVersion.get());
+						int64_t byteCount = 0;
 						readGranuleDeltas(metadata->currentDeltas,
 						                  chunk.newDeltas,
 						                  rep.arena,
 						                  granuleBeginVersion,
 						                  req.readVersion,
 						                  chunk.includedVersion,
-						                  req.granuleMutationBytesLimit);
+						                  req.granuleMutationBytesLimit,
+						                  &byteCount);
 					}
 
 					// Update EncryptionKeysCtx information for the chunk->snapshotFile
@@ -4364,13 +4380,17 @@ ACTOR Future<Void> streamBlobGranuleMutations(Reference<BlobWorkerData> bwData,
 		Version includedVersion = beginVersion - 1;
 
 		// if iterator was stable with appends we could keep iterator and not binary search each loop
+		int64_t byteCount = 0;
 		readGranuleDeltas(metadata->currentDeltas,
 		                  rep.newDeltas,
 		                  rep.arena,
 		                  beginVersion,
 		                  req.readVersion,
 		                  includedVersion,
-		                  req.replyBatchSize);
+		                  req.replyBatchSize,
+		                  &byteCount);
+
+		bwData->stats.mutationStreamBytes += byteCount;
 
 		if (rep.newDeltas.empty()) {
 			// this shouldn't happen!!
@@ -4464,6 +4484,9 @@ ACTOR Future<Void> handleBlobGranuleMutationStreamRequest(Reference<BlobWorkerDa
 				throw wrong_shard_server();
 			}
 		}
+
+		double duration = g_network->timer() - req.requestTime();
+		bwData->stats.streamLatencySample.addMeasurement(duration);
 
 		--bwData->stats.activeMutationStreamRequests;
 	} catch (Error& e) {
@@ -5476,6 +5499,12 @@ ACTOR Future<Void> handleFlushGranuleReq(Reference<BlobWorkerData> self, FlushGr
 				req.reply.sendError(wrong_shard_server());
 				return Void();
 			}
+		}
+
+		if (metadata->isBulkLoadDirty) {
+			// FIXME: more specific error with longer retry timeout?
+			req.reply.sendError(wrong_shard_server());
+			return Void();
 		}
 
 		// if delta file is already written after flush version, but that delta file did not compact,

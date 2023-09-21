@@ -276,9 +276,23 @@ struct MutationRef {
 		if (cipherDetails.headerCipherDetails.present()) {
 			ASSERT(cipherDetails.headerCipherDetails.get().isValid());
 			textAndHeaderKeys.cipherHeaderKey = getCipherKey(cipherDetails.headerCipherDetails.get());
-		} else {
-			ASSERT(!needsHeaderCipherKey(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO)));
 		}
+		return textAndHeaderKeys;
+	}
+
+	TextAndHeaderCipherKeys getLatestCipherKeys(
+	    std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> latestCipherKeys) const {
+		auto getCipherKey = [&](const EncryptCipherDomainId& domainId) -> Reference<BlobCipherKey> {
+			auto iter = latestCipherKeys.find(domainId);
+			ASSERT(iter != latestCipherKeys.end() && iter->second.isValid());
+			return iter->second;
+		};
+		TextAndHeaderCipherKeys textAndHeaderKeys;
+		const BlobCipherEncryptHeaderRef header = configurableEncryptionHeader();
+		EncryptHeaderCipherDetails cipherDetails = header.getCipherDetails();
+		ASSERT(cipherDetails.textCipherDetails.isValid());
+		textAndHeaderKeys.cipherTextKey = getCipherKey(cipherDetails.textCipherDetails.encryptDomainId);
+		textAndHeaderKeys.cipherHeaderKey = getCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
 		return textAndHeaderKeys;
 	}
 

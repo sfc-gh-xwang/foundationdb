@@ -502,7 +502,9 @@ struct TenantManagementConcurrencyWorkload : TestWorkload {
 			} else if (operation == 2) {
 				wait(configureTenant(self));
 			} else if (operation == 3) {
-				wait(renameTenant(self));
+				if (CLIENT_KNOBS->TENANT_RENAME_ENABLED) {
+					wait(renameTenant(self));
+				}
 			} else if (operation == 4) {
 				wait(changeLockState(self));
 			}

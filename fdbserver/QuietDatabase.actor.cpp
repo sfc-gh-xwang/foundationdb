@@ -144,12 +144,12 @@ int64_t getStorageQueueSize(const TraceEventFields& md) {
 	int64_t inputBytes, durableBytes;
 
 	if (SERVER_KNOBS->STORAGE_QUEUE_USE_ALLOCATOR_SIZE) {
+		sscanf(md.getValue("BytesInputNew").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
+		sscanf(
+		    md.getValue("BytesDurableNew").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
+	} else {
 		sscanf(md.getValue("BytesInput").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
 		sscanf(md.getValue("BytesDurable").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
-	} else {
-		sscanf(md.getValue("BytesInputOld").c_str(), "%lf %lf %" SCNd64, &inputRate, &inputRoughness, &inputBytes);
-		sscanf(
-		    md.getValue("BytesDurableOld").c_str(), "%lf %lf %" SCNd64, &durableRate, &durableRoughness, &durableBytes);
 	}
 
 	return inputBytes - durableBytes;
@@ -1052,11 +1052,16 @@ struct QuietDatabaseChecker {
 				    .detail("Timeout", maxDDRunTime);
 				if (timedOut) {
 					// this bool is just created to make the assertion more readable
-					bool ddGotStuck = true;
+					// possible stuck point (not all possible reasons are listed):
+					// 1. Recovery - check `MasterRecoveryState`
+					// 2. Stuck inFlight movement - check `MovingData`
+					// 3. Stuck Version Lag, Storage Queue - check `StorageMetrics`
+					// 4. Stuck recruitment - check `DDRecruiting`
+					bool stuckDatabase = true;
 					// This assertion is here to make the test fail more quickly. If quietDatabase takes this
 					// long without completing, we can assume that the test will eventually time out. However,
 					// time outs are more annoying to debug. This will hopefully be easier to track down.
-					ASSERT(!ddGotStuck || !g_network->isSimulated());
+					ASSERT(!stuckDatabase || !g_network->isSimulated());
 				}
 				return false;
 			}

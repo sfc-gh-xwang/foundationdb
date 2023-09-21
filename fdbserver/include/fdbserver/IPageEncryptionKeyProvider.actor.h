@@ -79,6 +79,8 @@ public:
 		throw not_implemented();
 	}
 
+	virtual EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) { throw not_implemented(); }
+
 	// Get latest encryption key. If encryption domain is enabled, get encryption key for the default domain.
 	virtual Future<EncryptionKey> getLatestDefaultEncryptionKey() {
 		return getLatestEncryptionKey(getDefaultEncryptionDomainId());
@@ -149,6 +151,10 @@ public:
 		s.xorKey = h->xorKey;
 		s.xorWith = xorWith;
 		return s;
+	}
+
+	EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) override {
+		return EncryptionAtRestAlgo::LAST;
 	}
 
 	Future<EncryptionKey> getLatestDefaultEncryptionKey() override {
@@ -224,6 +230,12 @@ public:
 		s.aesKey.cipherHeaderKey =
 		    getCipherKey(ENCRYPT_HEADER_DOMAIN_ID, deterministicRandom()->randomInt(1, NUM_CIPHER + 1));
 		return s;
+	}
+
+	EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) override {
+		using Encoder = typename ArenaPage::AESEncryptionEncoder<encodingType>;
+		const BlobCipherEncryptHeaderRef headerRef = Encoder::getEncryptionHeaderRef(encodingHeader);
+		return headerRef.getEncryptionAtRestAlgo();
 	}
 
 	int64_t getDefaultEncryptionDomainId() const override { return FDB_DEFAULT_ENCRYPT_DOMAIN_ID; }
@@ -344,12 +356,17 @@ public:
 		return getEncryptionKey(this, encodingHeader, debugID);
 	}
 
+	EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) override {
+		const BlobCipherEncryptHeaderRef headerRef = Encoder::getEncryptionHeaderRef(encodingHeader);
+		return headerRef.getEncryptionAtRestAlgo();
+	}
+
 	Future<EncryptionKey> getLatestDefaultEncryptionKey() override {
 		return getLatestEncryptionKey(getDefaultEncryptionDomainId());
 	}
 
 	ACTOR static Future<EncryptionKey> getLatestEncryptionKey(AESEncryptionKeyProvider* self, int64_t domainId) {
-		ASSERT(self->encryptionMode == EncryptionAtRestMode::DOMAIN_AWARE || domainId < 0);
+		ASSERT(self->encryptionMode == EncryptionAtRestMode::DOMAIN_AWARE || isReservedEncryptDomain(domainId));
 		TextAndHeaderCipherKeys cipherKeys =
 		    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeysForDomain(
 		        self->db, domainId, BlobCipherMetrics::KV_REDWOOD, self->monitor));
@@ -381,6 +398,7 @@ public:
 		if (tenantId == TenantInfo::INVALID_TENANT) {
 			return { FDB_DEFAULT_ENCRYPT_DOMAIN_ID, 0 };
 		}
+
 		return { tenantId, TenantAPI::PREFIX_SIZE };
 	}
 

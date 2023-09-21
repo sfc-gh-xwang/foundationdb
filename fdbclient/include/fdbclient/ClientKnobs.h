@@ -326,6 +326,7 @@ public:
 	bool ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE;
 	bool HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK;
 	bool HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK;
+	bool HYBRID_READ_BYPASS_TENANT_LOCK;
 
 	// The coordinator key/value in storage server might be inconsistent to the value stored in the cluster file.
 	// This might happen when a recovery is happening together with a cluster controller coordinator key change.
@@ -345,6 +346,7 @@ public:
 	int METACLUSTER_RESTORE_BATCH_SIZE;
 	int TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL; // How often the TenantEntryCache is refreshed
 	bool CLIENT_ENABLE_USING_CLUSTER_ID_KEY;
+	bool TENANT_RENAME_ENABLED;
 
 	// Encryption-at-rest
 	bool ENABLE_ENCRYPTION_CPU_TIME_LOGGING;

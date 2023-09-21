@@ -702,7 +702,7 @@ ACTOR Future<Void> sendCommitTransactionRequest(CommitTransactionRequest req,
 	Key versionKey = BinaryWriter::toValue(newBeginVersion, Unversioned());
 	Key rangeEnd = getApplyKey(newBeginVersion, uid);
 
-	// mutations and encrypted mutations (and their relationship) is described in greater detail in the defenition of
+	// mutations and encrypted mutations (and their relationship) is described in greater detail in the definition of
 	// CommitTransactionRef in CommitTransaction.h
 	req.transaction.mutations.push_back_deep(req.arena, MutationRef(MutationRef::SetValue, applyBegin, versionKey));
 	req.transaction.encryptedMutations.push_back_deep(req.arena, Optional<MutationRef>());
@@ -715,11 +715,14 @@ ACTOR Future<Void> sendCommitTransactionRequest(CommitTransactionRequest req,
 	// choose, it's impossible for us to get a transaction_too_old error back, and it's impossible
 	// for our transaction to be aborted due to conflicts.
 	req.transaction.read_snapshot = committedVersion->get();
-	req.flags = req.flags | CommitTransactionRequest::FLAG_IS_LOCK_AWARE;
+	req.flags =
+	    req.flags | CommitTransactionRequest::FLAG_IS_LOCK_AWARE | CommitTransactionRequest::FLAG_BYPASS_RANGE_LOCK;
 
 	*totalBytes += *mutationSize;
 	wait(commitLock->take(TaskPriority::DefaultYield, *mutationSize));
 	Future<Void> commitAndUnlock = commitLock->releaseWhen(success(commit.getReply(req)), *mutationSize);
+
+	// NOTE(xwang): why we can send to addActor asynchronously here?
 	if (tenantMapChanging) {
 		// If tenant map is changing, we need to wait until it's committed before processing next mutations.
 		// Next muations need the updated tenant map for filtering.

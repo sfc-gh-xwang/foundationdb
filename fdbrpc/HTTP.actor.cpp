@@ -528,7 +528,7 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequestActor(Reference<IConnec
 
 	state bool earlyResponse = false;
 	state int total_sent = 0;
-	state double send_start;
+	state double sendStart = 0;
 
 	event.detail("DebugID", conn->getDebugID());
 	event.detail("RemoteAddress", conn->getPeerAddress());
@@ -570,7 +570,7 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequestActor(Reference<IConnec
 		state Reference<HTTP::IncomingResponse> r(new HTTP::IncomingResponse());
 		state Future<Void> responseReading = r->read(conn, request->isHeaderOnlyResponse());
 
-		send_start = timer();
+		sendStart = g_network->timer();
 
 		// too many state things here to refactor this with writing the response
 		loop {
@@ -603,11 +603,10 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequestActor(Reference<IConnec
 		}
 
 		wait(responseReading);
-		double elapsed = timer() - send_start;
+		double elapsed = g_network->timer() - sendStart;
 
 		event.detail("ResponseCode", r->code);
 		event.detail("ResponseContentLen", r->data.contentLen);
-		event.detail("Elapsed", elapsed);
 
 		Optional<Error> err;
 		if (!requestIDHeader.empty()) {
@@ -667,9 +666,10 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequestActor(Reference<IConnec
 			throw err.get();
 		}
 
+		event.detail("Elapsed", elapsed);
 		return r;
 	} catch (Error& e) {
-		double elapsed = timer() - send_start;
+		double elapsed = g_network->timer() - sendStart;
 		// A bad_request_id error would have already been logged in verbose mode before err is thrown above.
 		if (FLOW_KNOBS->HTTP_VERBOSE_LEVEL > 0 && e.code() != error_code_http_bad_request_id) {
 			fmt::print("[{}] HTTP *ERROR*={} early={}, time={}s {} {} contentLen={} [{} out]\n",
@@ -683,6 +683,7 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequestActor(Reference<IConnec
 			           total_sent);
 		}
 		event.errorUnsuppressed(e);
+		event.detail("Elapsed", elapsed);
 		throw;
 	}
 }

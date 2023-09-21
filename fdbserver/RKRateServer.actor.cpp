@@ -57,7 +57,7 @@ public:
 				p.lastTagPushTime = now();
 
 				IRKClusterThroughputTracker const* clusterThroughputTracker = nullptr;
-				if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
+				if (SERVER_KNOBS->USE_CLIENT_THROUGHPUT_TRACKER) {
 					clusterThroughputTracker = clientThroughputTracker;
 				} else {
 					clusterThroughputTracker = serverThroughputTracker;
