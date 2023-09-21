@@ -7868,19 +7868,6 @@ public:
 			const BTreePage* btPage() const { return (const BTreePage*)page->data(); };
 		};
 
-		std::function<Optional<UID>()> traceDebugIDGetter() {
-			if (!options.present() || !options->debugID.present()) {
-				return {};
-			}
-			return [this]() {
-				if (debugTraceCount >= SERVER_KNOBS->REDWOOD_CURSOR_DEBUG_TRACE_LIMIT) {
-					return Optional<UID>();
-				}
-				debugTraceCount++;
-				return options->debugID;
-			};
-		}
-
 	private:
 		PagerEventReasons reason;
 		Optional<ReadOptions> options;
@@ -7888,7 +7875,8 @@ public:
 		Reference<IPagerSnapshot> pager;
 		bool valid;
 		std::vector<PathEntry> path;
-		int debugTraceCount = 0;
+		// A lambda that will return debugID from read options, if trace log is needed.
+		std::function<Optional<UID>()> getTraceDebugID;
 
 	public:
 		BTreeCursor() : reason(PagerEventReasons::MAXEVENTREASONS) {}
@@ -7951,7 +7939,7 @@ public:
 			                    ioMaxPriority,
 			                    false,
 			                    !options.present() || options.get().cacheResult || path.back().btPage()->height != 2,
-			                    traceDebugIDGetter()),
+			                    getTraceDebugID),
 			           [=](Reference<const ArenaPage> p) {
 				           BTreePage::BinaryTree::Cursor cursor = btree->getCursor(p.getPtr(), link);
 #if REDWOOD_DEBUG
@@ -7986,7 +7974,7 @@ public:
 			                    ioMaxPriority,
 			                    false,
 			                    true,
-			                    traceDebugIDGetter()),
+			                    getTraceDebugID),
 			           [=](Reference<const ArenaPage> p) {
 #if REDWOOD_DEBUG
 				           path.push_back({ p, btree->getCursor(p.getPtr(), dbBegin, dbEnd), id });
@@ -8010,6 +7998,17 @@ public:
 			path.clear();
 			path.reserve(6);
 			valid = false;
+
+			if (options.present() && options->debugID.present()) {
+				getTraceDebugID = [count = 0, debugID = options->debugID.get()]() mutable -> Optional<UID> {
+					if (count >= SERVER_KNOBS->REDWOOD_CURSOR_DEBUG_TRACE_LIMIT) {
+						return {};
+					}
+					count++;
+					return debugID;
+				};
+			}
+
 			return root.empty() ? Void() : pushPage(root);
 		}
 
