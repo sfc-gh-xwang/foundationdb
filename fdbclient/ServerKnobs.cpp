@@ -72,7 +72,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( TLOG_MESSAGE_BLOCK_BYTES,                             10e6 );
 	init( TLOG_MESSAGE_BLOCK_OVERHEAD_FACTOR,      double(TLOG_MESSAGE_BLOCK_BYTES) / (TLOG_MESSAGE_BLOCK_BYTES - MAX_MESSAGE_SIZE) ); //1.0121466709838096006362758832473
 	init( PEEK_TRACKER_EXPIRATION_TIME,                          600 ); BUGGIFY_KNOB(PEEK_TRACKER_EXPIRATION_TIME, randomize && BUGGIFY, 120); // Cannot be buggified lower without changing the following assert in LogSystemPeekCursor.actor.cpp: ASSERT_WE_THINK(e.code() == error_code_operation_obsolete || SERVER_KNOBS->PEEK_TRACKER_EXPIRATION_TIME < 10));
-	init( PEEK_USING_STREAMING,                                false ); BUGGIFY_KNOB(PEEK_USING_STREAMING, randomize && isSimulated && BUGGIFY, true);
+	init( PEEK_USING_STREAMING,                                true ); BUGGIFY_KNOB(PEEK_USING_STREAMING, randomize && isSimulated && BUGGIFY, false);
 	init( PARALLEL_GET_MORE_REQUESTS,                             32 ); BUGGIFY_KNOB(PARALLEL_GET_MORE_REQUESTS, randomize && BUGGIFY, 2);
 	init( MULTI_CURSOR_PRE_FETCH_LIMIT,                           10 );
 	init( MAX_QUEUE_COMMIT_BYTES,                               15e6 ); BUGGIFY_KNOB(MAX_QUEUE_COMMIT_BYTES, randomize && BUGGIFY, 5000);
