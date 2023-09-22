@@ -1916,6 +1916,7 @@ ACTOR Future<Void> startDataDistributor(ClusterControllerData* self, double wait
 				checkOutstandingRequests(self);
 				return Void();
 			}
+			self->recruitingDistributorID.reset();
 		} catch (Error& e) {
 			TraceEvent("CCDataDistributorRecruitError", self->id).error(e);
 			if (e.code() != error_code_no_more_servers) {
@@ -2011,6 +2012,7 @@ ACTOR Future<Void> startRatekeeper(ClusterControllerData* self, double waitTime)
 				checkOutstandingRequests(self);
 				return Void();
 			}
+			self->recruitingRatekeeperID.reset();
 		} catch (Error& e) {
 			TraceEvent("CCRatekeeperRecruitError", self->id).error(e);
 			if (e.code() != error_code_no_more_servers) {
@@ -2105,6 +2107,7 @@ ACTOR Future<Void> startConsistencyScan(ClusterControllerData* self) {
 				return Void();
 			} else {
 				TraceEvent("CCConsistencyScanRecruitEmpty", self->id).log();
+				self->recruitingConsistencyScanID.reset();
 			}
 		} catch (Error& e) {
 			TraceEvent("CCConsistencyScanRecruitError", self->id).error(e);
@@ -2214,6 +2217,7 @@ ACTOR Future<Void> startEncryptKeyProxy(ClusterControllerData* self, EncryptionA
 				checkOutstandingRequests(self);
 				return Void();
 			}
+			self->recruitingEncryptKeyProxyID.reset();
 		} catch (Error& e) {
 			TraceEvent("CCEKPRecruitError", self->id).error(e);
 			if (e.code() != error_code_no_more_servers) {
@@ -2392,6 +2396,7 @@ ACTOR Future<Void> startBlobMigrator(ClusterControllerData* self, double waitTim
 				checkOutstandingRequests(self);
 				return Void();
 			}
+			self->recruitingBlobMigratorID.reset();
 		} catch (Error& e) {
 			TraceEvent("CCBlobMigratorRecruitError", self->id).error(e);
 			if (e.code() != error_code_no_more_servers) {
@@ -2499,6 +2504,7 @@ ACTOR Future<Void> startBlobManager(ClusterControllerData* self, double waitTime
 				checkOutstandingRequests(self);
 				return Void();
 			}
+			self->recruitingBlobManagerID.reset();
 		} catch (Error& e) {
 			TraceEvent("CCBlobManagerRecruitError", self->id).error(e);
 			if (e.code() != error_code_no_more_servers) {
