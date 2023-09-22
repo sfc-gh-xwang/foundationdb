@@ -453,7 +453,7 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					    wait(TenantAPI::tryGetTenant(tenant->database().getReference(), tenantId));
 					ASSERT(!idLookup);
 					ASSERT(entry.present());
-					ASSERT_NE(entry.get().tenantName, tenant->name);
+					ASSERT_NE(tenant->name, entry.get().tenantName);
 					tenant = makeReference<Tenant>(tenant->database(), tenantId);
 					tr = ReadYourWritesTransaction(tenant);
 					idLookup = true;

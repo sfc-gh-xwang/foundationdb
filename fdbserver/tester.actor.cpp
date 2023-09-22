@@ -996,7 +996,7 @@ ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
 
 		std::vector<Future<Void>> deleteDataFutures;
 		for (auto const& [id, entry] : tenants.results) {
-			if (entry.tenantName != defaultTenant) {
+			if (defaultTenant != entry.tenantName) {
 				deleteDataFutures.push_back(clearTenantData(makeReference<Tenant>(cx, id)));
 			}
 		}
@@ -1013,7 +1013,7 @@ ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
 
 				std::vector<Future<Void>> deleteFutures;
 				for (auto const& [id, entry] : tenants.results) {
-					if (entry.tenantName != defaultTenant) {
+					if (defaultTenant != entry.tenantName) {
 						deleteFutures.push_back(TenantAPI::deleteTenantTransaction(&tr, id));
 					}
 				}

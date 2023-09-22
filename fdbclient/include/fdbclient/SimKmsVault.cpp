@@ -205,7 +205,7 @@ TEST_CASE("/simKmsVault") {
 			const EncryptCipherDomainId domainId = deterministicRandom()->randomInt64(1, 100001);
 			keyCtx = SimKmsVault::getByDomainId(domainId);
 			ASSERT(keyCtx.isValid());
-			ASSERT_EQ(keyCtx->id, vaultCtx->getBaseCipherIdFromDomainId(domainId));
+			ASSERT_EQ(vaultCtx->getBaseCipherIdFromDomainId(domainId), keyCtx->id);
 		}
 		ASSERT_GT(keyCtx->kcv, 0);
 		ASSERT(!keyCtx->key.empty());
