@@ -15,6 +15,7 @@ public:
 
 			// Entering recovery
 			if (!self->recovering && self->inRecovery->get()) {
+				CODE_PROBE(true, "Ratekeeper tracking recovery");
 				self->recovering = true;
 				self->recoveryVersion = self->maxVersion;
 				if (self->recoveryVersion == 0) {
