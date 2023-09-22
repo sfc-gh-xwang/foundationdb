@@ -1142,6 +1142,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BG_CONSISTENCY_CHECK_ENABLED,                         true ); BUGGIFY_KNOB(BG_CONSISTENCY_CHECK_ENABLED, randomize && BUGGIFY, false);
 	init( BG_CONSISTENCY_CHECK_TARGET_SPEED_KB,                 1000 ); BUGGIFY_KNOB(BG_CONSISTENCY_CHECK_TARGET_SPEED_KB, randomize && BUGGIFY, BG_CONSISTENCY_CHECK_TARGET_SPEED_KB * (deterministicRandom()->randomInt(2, 50) / 10));
 	init( BG_KEY_TUPLE_TRUNCATE_OFFSET,                            0 );
+	init( BG_KEY_SNOWTRAM_AWARE,          isSimulated ? false : true ); // disable by default in simulation for now until we can convert more workloads to snowtram keys and not have issues with this in restarting tests
 	init( BG_ENABLE_SPLIT_TRUNCATED,                           false ); BUGGIFY_KNOB(BG_ENABLE_SPLIT_TRUNCATED, randomize && BUGGIFY, true);
 	init( BG_ENABLE_READ_DRIVEN_COMPACTION,                     true ); BUGGIFY_KNOB(BG_ENABLE_READ_DRIVEN_COMPACTION, randomize && BUGGIFY, false);
 	init( BG_RDC_BYTES_FACTOR,                                     2 ); BUGGIFY_KNOB(BG_RDC_BYTES_FACTOR, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));

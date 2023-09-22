@@ -10,6 +10,7 @@ tenantModes = ['required']
 
 [[knobs]]
 bg_key_tuple_truncate_offset = 1
+bg_key_snowtram_aware = true
 bg_metadata_source = "tenant"
 enable_rest_kms_communication = true
 

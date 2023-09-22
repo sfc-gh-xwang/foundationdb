@@ -108,6 +108,11 @@ struct Tuple {
 	Standalone<VectorRef<uint8_t>> getData() { return data; }
 	Standalone<StringRef> getDataAsStandalone() { return Standalone<StringRef>(pack(), data.arena()); }
 
+	// snowtram-specific methods
+
+	bool isSnowtramKey() const;
+	bool isSnowtramDataOrIndexSpace() const;
+
 	// Create a tuple from a parameter pack
 	template <class... Types>
 	static Tuple makeTuple(Types&&... args) {

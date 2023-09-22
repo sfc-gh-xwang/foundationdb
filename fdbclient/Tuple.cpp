@@ -1,3 +1,4 @@
+
 /*
  * Tuple.cpp
  *
@@ -23,6 +24,7 @@
 
 const uint8_t VERSIONSTAMP_96_CODE = 0x33;
 const uint8_t USER_TYPE_START = 0x40;
+const uint8_t USER_TYPE_SNOWTRAM = 0x41;
 const uint8_t USER_TYPE_END = 0x4f;
 
 // TODO: Many functions copied from bindings/flow/Tuple.cpp. Merge at some point.
@@ -127,6 +129,9 @@ std::string Tuple::tupleToString(const Tuple& tuple) {
 			              versionstamp.getVersion(),
 			              versionstamp.getBatchNumber(),
 			              versionstamp.getUserVersion());
+		} else if (type == Tuple::USER_TYPE) {
+			UserTypeStr userStr = tuple.getUserType(i);
+			str += "usertype " + format("%d: \'%s", userStr.code, userStr.str.printable().c_str()) + "\'";
 		} else {
 			ASSERT(false);
 		}
@@ -529,6 +534,28 @@ StringRef Tuple::subTupleRawString(size_t index) const {
 	return StringRef(data.begin() + offsets[index], endPos - offsets[index]);
 }
 
+bool Tuple::isSnowtramKey() const {
+	// snowtram format is (int table id, int table incarnation, int space enum, <one or more arbitrary user types,
+	// user-defined type stamp)
+	if (offsets.size() < 5) {
+		return false;
+	}
+	if (getType(0) != Tuple::INT || getType(1) != Tuple::INT || getType(2) != Tuple::INT) {
+		return false;
+	}
+	// we can get even more specific than user type - snowtram stamp specifically uses the \x41 user typecode in the
+	// user type range
+	uint8_t code = data[offsets.back()];
+	return code == USER_TYPE_SNOWTRAM;
+}
+
+// https://github.com/snowflakedb/snowflake/blob/e04d21bf19800d55ef83e775bb23a6d2f85cc98e/ExecPlatform/src/prod/snowtram_lib/snowtram/KeyValuePrefixBuilder.hpp#L112C1-L112C1
+// assumes isSnowtramKey is true
+bool Tuple::isSnowtramDataOrIndexSpace() const {
+	int space = getInt(2);
+	return space == 2 || space == 5;
+}
+
 TEST_CASE("/fdbclient/Tuple/makeTuple") {
 	Tuple t1 = Tuple::makeTuple(1,
 	                            1.0f,
@@ -598,6 +625,76 @@ TEST_CASE("/fdbclient/Tuple/unpack") {
 			throw e;
 		}
 	}
+
+	return Void();
+}
+
+TEST_CASE("/fdbclient/Tuple/snowtram") {
+	std::vector<Tuple> nonSnowtramKeys;
+	// key, whether it is dataOrIndexSpace
+	std::vector<std::pair<Tuple, bool>> snowtramKeys;
+	try {
+
+		Key aStr = "a"_sr;
+
+		fmt::print("snowtram tuple unit start\n");
+
+		nonSnowtramKeys.push_back(Tuple::makeTuple(aStr));
+		nonSnowtramKeys.push_back(Tuple::makeTuple(1));
+		nonSnowtramKeys.push_back(Tuple::makeTuple(1, 2));
+		nonSnowtramKeys.push_back(Tuple::makeTuple(1, 2, 3));
+		nonSnowtramKeys.push_back(Tuple::makeTuple(1, 2, 3, 4));
+		nonSnowtramKeys.push_back(Tuple::makeTuple(1, 2, 3, 4, 5));
+		nonSnowtramKeys.push_back(Tuple::makeTuple(1, 2, 3, aStr, 5));
+
+		// the c++ byte encoding will sometimes parse \xABC as a valid single-character identifier sometimes even though
+		// our printable format won't do that and will only do \xAB, so we have to break the string up into separate
+		// literals in those cases
+
+		// actual user space keys
+		Key userKey1 = "\x17\x01\x04\xd8\x14\x15\x02\x1b\x02\xc0\x08\x80\x9e\x93\xdc\x16:\x9f\x15\x01"_sr.withSuffix(
+		    "A\x01\x00\x06\x05\x13\x8b/\x1am\x00\x00\x01\x0f\x00"_sr);
+		snowtramKeys.push_back({ Tuple::unpackUserType(userKey1, false), true });
+
+		Key userKey2 = "\x17\x01\x04\xd8\x14\x15\x02\x1a\xfd\x02\xdc\x80\xf9q\x16"_sr.withSuffix("7\x0d\x15\x10"_sr)
+		                   .withSuffix("A\x01\x00\x06\x05\x13\x8b/\x1am\x00\x00\x01\x0f\x00"_sr);
+		snowtramKeys.push_back({ Tuple::unpackUserType(userKey2, false), true });
+
+		// actual olb keys
+		Key olbKey1 =
+		    "\x17\x01\x04\xd8\x14\x15\x03\x1c\x19sa&\x0eX\xa9N\x16\x01B\x15\x14"_sr.withSuffix("A\x00\x17\x86"_sr)
+		        .withSuffix(
+		            "9\xed\xc9|\xc4\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c\x00"_sr);
+		snowtramKeys.push_back({ Tuple::unpackUserType(olbKey1, false), false });
+
+		Key olbKey2 =
+		    "\x17\x01\x04\xd8\x14\x15\x03\x1c\x19sa&\x0eX\xa9N\x16\x01B\x15\x14"_sr.withSuffix("A\x00\x17\x86"_sr)
+		        .withSuffix(
+		            "9\xed\xc9|\xc4\x80\x00\x00\x00\x00\x00\x01\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1d\x00"_sr);
+		snowtramKeys.push_back({ Tuple::unpackUserType(olbKey2, false), false });
+
+		Key olbKey3 =
+		    "\x17\x01\x04\xd8\x14\x15\x03\x1c\x19sa&\x0eX\xa9N\x16\x01"_sr.withSuffix("B\x15\x19"_sr)
+		        .withSuffix(
+		            "A\x00\x00\x00\x01\x8a\x83\xf4\xd6\xc6\x00\x00\x00\x00\x02@)\x01\xeb\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\x00"_sr);
+		snowtramKeys.push_back({ Tuple::unpackUserType(olbKey3, false), false });
+
+		for (auto& it : nonSnowtramKeys) {
+			ASSERT_EQ(false, it.isSnowtramKey());
+		}
+
+		for (auto& it : snowtramKeys) {
+			fmt::print("{0}\n", Tuple::tupleToString(it.first));
+			ASSERT_EQ(true, it.first.isSnowtramKey());
+			ASSERT_EQ(it.second, it.first.isSnowtramDataOrIndexSpace());
+		}
+		fmt::print("done\n");
+	} catch (Error& e) {
+		fmt::print("ERROR: {0}\n", e.name());
+		throw e;
+	}
+
+	// FIXME: also unit test align keys in this scenario
 
 	return Void();
 }
