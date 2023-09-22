@@ -50,8 +50,9 @@ public:
 	int nHits;
 	int nDedups;
 	int nFetched;
+	int nExpiredEvicted;
 
-	LoadableCacheOpStats() : nHits(0), nDedups(0), nFetched(0) {}
+	LoadableCacheOpStats() : nHits(0), nDedups(0), nFetched(0), nExpiredEvicted(0) {}
 
 	static void reset(Reference<LoadableCacheOpStats> self) {
 		if (self.isValid()) {
@@ -76,6 +77,12 @@ public:
 			self->nFetched += count;
 		}
 	}
+
+	static void updateExpiredEvicted(Reference<LoadableCacheOpStats> self, const int count) {
+		if (self.isValid()) {
+			self->nExpiredEvicted += count;
+		}
+	}
 };
 
 // LoadableCache interface
@@ -97,14 +104,34 @@ class LoadableCache : public ReferenceCounted<LoadableCache<KeyType, ValueType, 
 	using KeyVec = std::vector<KeyType>;
 	using KeySet = std::unordered_set<KeyType>;
 	using LoadValueFunc = std::function<Future<Void>(void* data, const KeyVec&, KVMap*)>;
+	using CheckValueValidFunc = std::function<bool(const ValueType& v)>;
 
 public:
-	LoadableCache(UID id, LoadValueFunc loaderFunc) : id(id), loadValueFunc(loaderFunc) {}
-	LoadableCache(LoadValueFunc loaderFunc) : id(deterministicRandom()->randomUniqueID()), loadValueFunc(loaderFunc) {}
+	LoadableCache(UID id, LoadValueFunc loaderFunc) : id(id), loadValueFunc(loaderFunc), checkValueValidFunc(nullptr) {}
+	LoadableCache(UID id, LoadValueFunc loaderFunc, CheckValueValidFunc valueValidFunc)
+	  : id(id),
+	    loadValueFunc(loaderFunc),
+	    checkValueValidFunc(valueValidFunc) {}
+	LoadableCache(LoadValueFunc loaderFunc)
+	  : id(deterministicRandom()->randomUniqueID()),
+	    loadValueFunc(loaderFunc),
+	    checkValueValidFunc(nullptr) {}
+	LoadableCache(LoadValueFunc loaderFunc, CheckValueValidFunc valueValidFunc)
+	  : id(deterministicRandom()->randomUniqueID()),
+	    loadValueFunc(loaderFunc),
+	    checkValueValidFunc(valueValidFunc) {}
 
 	// Single key cache lookup API
-	// API returns corresponding ValueType future if key is present or can be loaded into the cache, otherwise, return
-	// an empty Optional.
+	// API returns corresponding ValueType future if key is present or can be loaded into the cache
+	//
+	// Input:
+	// key - key to lookup
+	// data - opaque pointer passed by the caller, assist in passing caller context if key fetch needs to be done
+	// expDurationSec - Optional expiration for cached cell, if not present, then expiry = double::max()
+	// stats - instance of LoadableCacheOpStats
+	//
+	// Return:
+	// Corresponding Value if cached and/or fetched, Optional<>() if failed to fetch the value.
 
 	Future<Optional<ValueType>> get(const KeyType& key,
 	                                void* data,
@@ -120,15 +147,48 @@ public:
 		               stats);
 	}
 
+	// Single key cache lookup API
+	// API returns corresponding ValueType future if key is present or can be loaded into the cache. Caller is expected
+	// to supply CheckValueValidFunc during cache initialization.
+	//
+	// Input:
+	// key - key to lookup
+	// data - opaque pointer passed by the caller, assist in passing caller context if key fetch needs to be done
+	// stats - instance of LoadableCacheOpStats
+	//
+	// Return:
+	// Corresponding Value if cached and/or fetched, Optional<>() if failed to fetch the value.
+
+	Future<Optional<ValueType>> get(const KeyType& key, void* data, Reference<LoadableCacheOpStats> stats) {
+
+		ASSERT(checkValueValidFunc != nullptr);
+
+		LoadableCacheOpStats::reset(stats);
+		return getImpl(Reference<LoadableCache<KeyType, ValueType, Hash, KeyEqual>>::addRef(this),
+		               key,
+		               data,
+		               Optional<double>(),
+		               stats);
+	}
+
 	// Vector Cache lookup API
-	// API returns an unsorted map {KeyType, ValueType} for keys present in the cache or can be loaded into the cache,
-	// 'missing-keys' are not accounted in the result. Caller is responsible to handle missing-key scenario. Further,
-	// cache supports partial key-lookup semantics i.e. no error is thrown if subset of keys can not be resolved.
+	//
+	// Input:
+	// {keys} - list of keys to lookup
+	// data - opaque pointer passed by the caller, assist in passing caller context if key fetch needs to be done
+	// expDurationSec - Optional expiration for cached cell, if not present, then expiry = double::max()
+	// stats - instance of LoadableCacheOpStats
+	//
+	// Return:
+	// std::unordered_map of {KeyType, ValueType} for all successful key lookups. Caller is responsible to handle
+	// missing-key scenario. Caller is responsible to handle missing - key scenario.Further, cache supports partial
+	// key-lookup semantics i.e. no error is thrown if subset of keys can not be resolved.
 
 	Future<KVMap> get(const KeyVec& keys,
 	                  void* data,
 	                  Optional<double> expDurationSec,
 	                  Reference<LoadableCacheOpStats> stats) {
+
 		ASSERT(!expDurationSec.present() || expDurationSec.get() > 0);
 
 		LoadableCacheOpStats::reset(stats);
@@ -140,6 +200,35 @@ public:
 		                           keys,
 		                           data,
 		                           expDurationSec.present() ? expDurationSec.get() : std::numeric_limits<double>::max(),
+		                           stats);
+	}
+
+	// Vector Cache lookup API. Caller is expected to provide valid CheckValueValidFunc during cache initialization
+	//
+	// Input:
+	// {keys} - list of keys to lookup
+	// data - opaque pointer passed by the caller, assist in passing caller context if key fetch needs to be done
+	// stats - instance of LoadableCacheOpStats
+	//
+	// Return:
+	// std::unordered_map of {KeyType, ValueType} for all successful key lookups. Caller is responsible to handle
+	// missing-key scenario. Caller is responsible to handle missing - key scenario.Further, cache supports partial
+	// key-lookup semantics i.e. no error is thrown if subset of keys can not be resolved.
+
+	Future<KVMap> get(const KeyVec& keys, void* data, Reference<LoadableCacheOpStats> stats) {
+
+		ASSERT(checkValueValidFunc != nullptr);
+
+		LoadableCacheOpStats::reset(stats);
+
+		if (keys.empty()) {
+			return {};
+		}
+
+		return resolveUncachedKeys(Reference<LoadableCache<KeyType, ValueType, Hash, KeyEqual>>::addRef(this),
+		                           keys,
+		                           data,
+		                           Optional<double>(),
 		                           stats);
 	}
 
@@ -165,15 +254,11 @@ private:
 
 		KeyType key;
 		ValueType value;
-		double ttl;
+		Optional<double> ttl;
 		bool isValid;
 
 		CacheEntry() : ttl(std::numeric_limits<double>::max()), isValid(false) {}
-		CacheEntry(const KeyType& k, const ValueType& v)
-		  : key(k),
-		    value(v),
-		    ttl(std::numeric_limits<double>::max()),
-		    isValid(true) {}
+		CacheEntry(const KeyType& k, const ValueType& v) : key(k), value(v), isValid(true) {}
 		CacheEntry(const KeyType& k, const ValueType& v, const double expDurationSec)
 		  : key(k),
 		    value(v),
@@ -193,9 +278,20 @@ private:
 
 	UID id;
 	KVMapImpl cache;
+	// Client supplied callback assisted load of keys if missing from cache
 	LoadValueFunc loadValueFunc;
 
-	bool expired(const CacheEntry& entry) const { return now() >= entry.ttl; }
+	// Client supplied callback to validate if a given "cached value" is valid, approach assists usecases where 'value'
+	// data model controls the validation of the "cached value"
+	CheckValueValidFunc checkValueValidFunc;
+
+	bool expired(const CacheEntry& entry) const {
+		if (checkValueValidFunc != nullptr) {
+			return checkValueValidFunc(entry.value);
+		}
+		ASSERT(entry.ttl.present());
+		return now() >= entry.ttl.get();
+	}
 
 	Optional<CacheValue> lookup(const KeyType& key, Reference<LoadableCacheOpStats> stats) {
 		auto it = cache.find(key);
@@ -208,6 +304,7 @@ private:
 			if (expired(entryPromise.getFuture().get())) {
 				// cached key is 'expired', remove entry and fetch a new one
 				cache.erase(it);
+				LoadableCacheOpStats::updateExpiredEvicted(stats, 1);
 
 				if (DEBUG_LOADABLE_CACHE) {
 					TraceEvent("LoadableCacheErase").detail("Key", key).detail("Size", cache.size());
@@ -222,7 +319,7 @@ private:
 	ACTOR static Future<Optional<ValueType>> getImpl(Reference<LoadableCache<KeyType, ValueType, Hash, KeyEqual>> self,
 	                                                 KeyType key,
 	                                                 void* data,
-	                                                 double expDurationSec,
+	                                                 Optional<double> expDurationSec,
 	                                                 Reference<LoadableCacheOpStats> stats) {
 		KVMap rMap = wait(resolveUncachedKeys(self, { key }, data, expDurationSec, stats));
 		if (rMap.empty()) {
@@ -236,7 +333,7 @@ private:
 	ACTOR static Future<KVMap> resolveUncachedKeys(Reference<LoadableCache<KeyType, ValueType, Hash, KeyEqual>> self,
 	                                               KeyVec keys,
 	                                               void* data,
-	                                               double expDurationSec,
+	                                               Optional<double> expDurationSec,
 	                                               Reference<LoadableCacheOpStats> stats) {
 		state KVMap rMap;
 		state std::vector<Future<CacheEntry>> pendingFetches;
@@ -346,7 +443,15 @@ private:
 						    .detail("CanSet", self->cache[e.first].canBeSet())
 						    .detail("ExpAt", expDurationSec);
 					}
-					self->cache[e.first].send(CacheEntry(e.first, e.second, expDurationSec));
+
+					if (self->checkValueValidFunc != nullptr) {
+						ASSERT(!expDurationSec.present());
+						self->cache[e.first].send(CacheEntry(e.first, e.second));
+					} else {
+						ASSERT(expDurationSec.present() && expDurationSec.get() > 0);
+						self->cache[e.first].send(CacheEntry(e.first, e.second, expDurationSec.get()));
+					}
+
 					rMap[e.first] = e.second;
 				}
 			}
