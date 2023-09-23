@@ -641,10 +641,9 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 					++stats->systemGRVQueueSize;
 					systemQueue->push_back(req);
 				} else if (req.priority >= TransactionPriority::LOW) {
-					if (req.throttlingId.present()) {
+					if (tagThrottler->tryAddRequest(req)) {
 						++stats->tagThrottlerGRVQueueSize;
 						stats->txnTagThrottlerIn += req.transactionCount;
-						tagThrottler->addRequest(req);
 					} else {
 						++stats->txnRequestIn;
 						stats->txnStartIn += req.transactionCount;
@@ -663,10 +662,9 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 						req.reply.sendError(batch_transaction_throttled());
 						stats->txnThrottled += req.transactionCount;
 					} else {
-						if (req.throttlingId.present()) {
+						if (tagThrottler->tryAddRequest(req)) {
 							++stats->tagThrottlerGRVQueueSize;
 							stats->txnTagThrottlerIn += req.transactionCount;
-							tagThrottler->addRequest(req);
 						} else {
 							++stats->txnRequestIn;
 							stats->txnStartIn += req.transactionCount;

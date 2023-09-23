@@ -131,7 +131,8 @@ public:
 	                                              Deque<GetReadVersionRequest>& outBatchPriority,
 	                                              Deque<GetReadVersionRequest>& outDefaultPriority);
 
-	void addRequest(GetReadVersionRequest const&);
+	// Returns true if and only if the request was added
+	bool tryAddRequest(GetReadVersionRequest const&);
 
 	void addLatencyBandThreshold(double value);
 

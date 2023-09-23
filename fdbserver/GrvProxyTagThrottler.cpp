@@ -228,8 +228,17 @@ void GrvProxyTagThrottler::updateRates(ThrottlingIdMap<double> const& newRates) 
 	                           [](const auto& kv) { return kv.second.isEmpty() && !kv.second.isRateInfoPresent(); });
 }
 
-void GrvProxyTagThrottler::addRequest(GetReadVersionRequest const& req) {
-	queues[req.throttlingId.get()].addRequest(req);
+bool GrvProxyTagThrottler::tryAddRequest(GetReadVersionRequest const& req) {
+	if (!req.throttlingId.present()) {
+		return false;
+	}
+	auto it = queues.find(req.throttlingId.get());
+	if (it != queues.end()) {
+		it->second.addRequest(req);
+		return true;
+	} else {
+		return false;
+	}
 }
 
 GrvProxyTagThrottler::ReleaseTransactionsResult GrvProxyTagThrottler::releaseTransactions(

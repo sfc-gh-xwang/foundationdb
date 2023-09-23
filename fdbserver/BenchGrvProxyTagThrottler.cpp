@@ -22,7 +22,8 @@ static void bench_grvProxyTagThrottler(benchmark::State& state) {
 	for (auto _ : state) {
 		state.PauseTiming();
 		for (const auto& req : reqs) {
-			throttler.addRequest(req);
+			// FIXME: For now this does nothing
+			throttler.tryAddRequest(req);
 		}
 
 		Deque<GetReadVersionRequest> outBatchPriority;
