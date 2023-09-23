@@ -1006,10 +1006,8 @@ ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
 		loop {
 			try {
 				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr.debugTransaction(debugRandom()->randomUniqueID());
-				ASSERT(tr.trState->readOptions.present() && tr.trState->readOptions.get().debugID.present());
 
-				TraceEvent("TesterClearingTenantsDeletingBatch", tr.trState->readOptions.get().debugID.get())
+				TraceEvent("TesterClearingTenantsDeletingBatch")
 				    .detail("FirstTenant", tenants.results.empty() ? "<none>"_sr : tenants.results[0].second.tenantName)
 				    .detail("BatchSize", tenants.results.size());
 
@@ -1025,20 +1023,19 @@ ACTOR Future<Void> clearData(Database cx, Optional<TenantName> defaultTenant) {
 				wait(waitForAll(deleteFutures));
 				wait(tr.commit());
 
-				TraceEvent("TesterClearingTenantsDeletedBatch", tr.trState->readOptions.get().debugID.get())
+				TraceEvent("TesterClearingTenantsDeletedBatch")
 				    .detail("FirstTenant", tenants.results.empty() ? "<none>"_sr : tenants.results[0].second.tenantName)
 				    .detail("BatchSize", tenants.results.size());
 
 				break;
 			} catch (Error& e) {
-				TraceEvent(SevWarn, "TesterClearingTenantsError", tr.trState->readOptions.get().debugID.get()).error(e);
+				TraceEvent(SevWarn, "TesterClearingTenantsError").error(e);
 				wait(tr.onError(e));
 			}
 		}
 
 		if (!tenants.more) {
-			TraceEvent("TesterClearingTenantsComplete", tr.trState->readOptions.get().debugID.get())
-			    .detail("AtVersion", tr.getCommittedVersion());
+			TraceEvent("TesterClearingTenantsComplete").detail("AtVersion", tr.getCommittedVersion());
 			break;
 		}
 	}
