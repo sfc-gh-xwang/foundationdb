@@ -1960,8 +1960,6 @@ public:
 
 double ShardInfo::getSampledReadRate(StorageServer* data) {
 	if (now() - lastReadSampleCacheTime >= SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL) {
-		lastReadSampleCacheTime = now();
-
 		KeyRangeRef sampleRange = keys;
 		KeyRangeRef totalRange = allKeys;
 		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
@@ -1978,6 +1976,8 @@ double ShardInfo::getSampledReadRate(StorageServer* data) {
 
 		shardSampledReads = data->metrics.opsReadSample.getEstimate(sampleRange);
 		totalSampledReads = data->metrics.opsReadSample.getEstimate(totalRange);
+
+		lastReadSampleCacheTime = now();
 	}
 
 	double readRate = shardSampledReads / std::max<double>(1.0, totalSampledReads);
