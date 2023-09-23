@@ -102,68 +102,79 @@ ACTOR static Future<std::vector<int>> getReplyOrder(std::vector<GetReadVersionRe
 	return result;
 }
 
-ACTOR static Future<Void> mockFifoClient(GrvProxyTagThrottler* throttler,
-                                         ThrottlingId throttlingId1,
-                                         ThrottlingId throttlingId2) {
-	state std::vector<GetReadVersionRequest> reqs;
+class MockFifoClient {
+	std::vector<GetReadVersionRequest> reqs;
 
-	// Tag half of requests with one tag, half with another, then randomly shuffle
-	for (int i = 0; i < 2000; ++i) {
-		auto& req = reqs.emplace_back();
-		req.priority = TransactionPriority::DEFAULT;
-		req.transactionCount = 1;
-		req.expectedTotalCost = 1;
-		if (i < 1000) {
-			req.throttlingId = throttlingId1;
-		} else {
-			req.throttlingId = throttlingId2;
-		}
-	}
-	deterministicRandom()->randomShuffle(reqs);
-
-	// Send requests to throttler and assert that responses are received in FIFO order
-	for (const auto& req : reqs) {
-		ASSERT(throttler->tryAddRequest(req));
-	}
-	std::vector<int> replyIndices = wait(getReplyOrder(reqs));
-	for (int i = 0; i < 2000; ++i) {
-		ASSERT_EQ(replyIndices[i], i);
-	}
-	return Void();
-}
-
-ACTOR static Future<Void> mockVariablePriorityClient(GrvProxyTagThrottler* throttler, ThrottlingId throttlingId) {
-	state std::vector<GetReadVersionRequest> reqs;
-
-	for (int i = 0; i < 2000; ++i) {
-		auto& req = reqs.emplace_back();
-		req.transactionCount = 1;
-		req.expectedTotalCost = 1;
-		req.throttlingId = throttlingId;
-		if (i < 1000) {
-			req.priority = TransactionPriority::LOW;
-		} else {
+public:
+	void sendRequests(GrvProxyTagThrottler& throttler,
+	                  ThrottlingId const& throttlingId1,
+	                  ThrottlingId const& throttlingId2) {
+		// Tag half of requests with one tag, half with another, then randomly shuffle
+		for (int i = 0; i < 2000; ++i) {
+			auto& req = reqs.emplace_back();
 			req.priority = TransactionPriority::DEFAULT;
+			req.transactionCount = 1;
+			req.expectedTotalCost = 1;
+			if (i < 1000) {
+				req.throttlingId = throttlingId1;
+			} else {
+				req.throttlingId = throttlingId2;
+			}
+		}
+		deterministicRandom()->randomShuffle(reqs);
+
+		// Send requests to throttler
+		for (const auto& req : reqs) {
+			ASSERT(throttler.tryAddRequest(req));
 		}
 	}
 
-	for (const auto& req : reqs) {
-		ASSERT(throttler->tryAddRequest(req));
+	ACTOR static Future<Void> checkReplyOrder(MockFifoClient* self) {
+		std::vector<int> replyIndices = wait(getReplyOrder(self->reqs));
+		for (int i = 0; i < 2000; ++i) {
+			ASSERT_EQ(replyIndices[i], i);
+		}
+		return Void();
+	}
+};
+
+class MockVariablePriorityClient {
+	std::vector<GetReadVersionRequest> reqs;
+
+public:
+	void sendRequests(GrvProxyTagThrottler& throttler, ThrottlingId const& throttlingId) {
+		for (int i = 0; i < 2000; ++i) {
+			auto& req = reqs.emplace_back();
+			req.transactionCount = 1;
+			req.expectedTotalCost = 1;
+			req.throttlingId = throttlingId;
+			if (i < 1000) {
+				req.priority = TransactionPriority::LOW;
+			} else {
+				req.priority = TransactionPriority::DEFAULT;
+			}
+		}
+
+		for (const auto& req : reqs) {
+			ASSERT(throttler.tryAddRequest(req));
+		}
 	}
 
-	std::vector<int> replyIndices = wait(getReplyOrder(reqs));
+	ACTOR static Future<Void> checkReplyOrder(MockVariablePriorityClient* self) {
+		std::vector<int> replyIndices = wait(getReplyOrder(self->reqs));
 
-	// The set of the first 1000 requests to receive a reply should
-	// be precisely the set of the last 1000 requests issued, because
-	// these requests have default priority:
-	for (int i = 0; i < 1000; ++i) {
-		ASSERT_GE(replyIndices[i], 1000);
+		// The set of the first 1000 requests to receive a reply should
+		// be precisely the set of the last 1000 requests issued, because
+		// these requests have default priority:
+		for (int i = 0; i < 1000; ++i) {
+			ASSERT_GE(replyIndices[i], 1000);
+		}
+		for (int i = 1000; i < 2000; ++i) {
+			ASSERT_LT(replyIndices[i], 1000);
+		}
+		return Void();
 	}
-	for (int i = 1000; i < 2000; ++i) {
-		ASSERT_LT(replyIndices[i], 1000);
-	}
-	return Void();
-}
+};
 
 ACTOR static Future<Void> mockServer(GrvProxyTagThrottler* throttler) {
 	state Deque<GetReadVersionRequest> outBatchPriority;
@@ -333,16 +344,23 @@ TEST_CASE("/GrvProxyTagThrottler/Fifo") {
 	state ThrottlingId throttlingId1 = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	state ThrottlingId throttlingId2 = ThrottlingIdRef::fromTag("sampleTag2"_sr);
 	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state MockFifoClient client;
 
+	// First set rates so that requests are queued in throttler
 	{
 		ThrottlingIdMap<double> rates;
-		// FIXME: More elegant here:
-		rates[throttlingId1] = rates[throttlingId2] = 1000000.0;
+		// Exact rate doesn't matter here:
+		rates[throttlingId1] = rates[throttlingId2] = 10.0;
 		throttler.updateRates(rates);
 	}
+	client.sendRequests(throttler, throttlingId1, throttlingId2);
 
+	// Clear rates here so that all requests are guaranteed to be released in the first release window
+	clearRates(throttler);
+
+	// Now run server to start release windows
 	state Future<Void> server = mockServer(&throttler);
-	wait(mockFifoClient(&throttler, throttlingId1, throttlingId2));
+	wait(MockFifoClient::checkReplyOrder(&client));
 	return Void();
 }
 
@@ -351,12 +369,19 @@ TEST_CASE("/GrvProxyTagThrottler/Fifo") {
 TEST_CASE("/GrvProxyTagThrottler/VariablePriorities") {
 	state ThrottlingId throttlingId = ThrottlingIdRef::fromTag("sampleTag1"_sr);
 	state GrvProxyTagThrottler throttler(/*maxThrottleDuration=*/5.0, /*starvationToleranceRatio=*/0.5);
+	state MockVariablePriorityClient client;
 
-	// FIXME: More elegant here
-	setRate(throttler, throttlingId, 1000000.0);
+	// First set rate so that requests are queued in throttler.
+	// Exact rate doesn't matter here:
+	setRate(throttler, throttlingId, 10.0);
+	client.sendRequests(throttler, throttlingId);
 
+	// Clear rates here so that all requests are guaranteed to be released in the first release window
+	clearRates(throttler);
+
+	// Clear rates here so that all requests are guaranteed to be released in the first release window
 	state Future<Void> server = mockServer(&throttler);
-	wait(mockVariablePriorityClient(&throttler, throttlingId));
+	wait(MockVariablePriorityClient::checkReplyOrder(&client));
 	return Void();
 }
 
