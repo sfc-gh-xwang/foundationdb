@@ -29,7 +29,7 @@
 #include "fdbclient/GrvProxyInterface.h"
 #include "fdbclient/VersionVector.h"
 #include "fdbserver/GrvProxyTagThrottler.h"
-#include "fdbserver/GrvTransactionRateInfo.h"
+#include "fdbserver/GrvRateInfo.h"
 #include "fdbserver/LogSystem.h"
 #include "fdbserver/LogSystemDiskQueueAdapter.h"
 #include "fdbserver/WaitFailure.h"
@@ -444,8 +444,8 @@ ACTOR Future<Void> getRate(UID myID,
                            Reference<AsyncVar<ServerDBInfo> const> db,
                            int64_t* inTransactionCount,
                            int64_t* inBatchTransactionCount,
-                           GrvTransactionRateInfo* transactionRateInfo,
-                           GrvTransactionRateInfo* batchTransactionRateInfo,
+                           GrvRateInfo* transactionRateInfo,
+                           GrvRateInfo* batchTransactionRateInfo,
                            GetHealthMetricsReply* healthMetricsReply,
                            GetHealthMetricsReply* detailedHealthMetricsReply,
                            ThrottlingIdMap<uint64_t>* throttlingIdTransactionCounter,
@@ -577,7 +577,7 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
                                                double* GRVBatchTime,
                                                FutureStream<double> normalGRVLatency,
                                                GrvProxyStats* stats,
-                                               GrvTransactionRateInfo* batchRateInfo,
+                                               GrvRateInfo* batchRateInfo,
                                                GrvProxyTagThrottler* tagThrottler) {
 	getCurrentLineage()->modify(&TransactionLineage::operation) =
 	    TransactionLineage::Operation::GetConsistentReadVersion;
@@ -913,14 +913,14 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 
 	state int64_t transactionCount = 0;
 	state int64_t batchTransactionCount = 0;
-	state GrvTransactionRateInfo normalRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
-	                                            SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                            /*rate=*/10,
-	                                            SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
-	state GrvTransactionRateInfo batchRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
-	                                           SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                           /*rate=*/0,
-	                                           SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
+	state GrvRateInfo normalRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
+	                                 SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
+	                                 /*rate=*/10,
+	                                 SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
+	state GrvRateInfo batchRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
+	                                SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
+	                                /*rate=*/0,
+	                                SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 
 	state Deque<GetReadVersionRequest> systemQueue;
 	state Deque<GetReadVersionRequest> defaultQueue;

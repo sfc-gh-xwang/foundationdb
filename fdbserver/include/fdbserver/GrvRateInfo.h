@@ -1,5 +1,5 @@
 /*
- * GrvTransactionRateInfo.h
+ * GrvRateInfo.h
  *
  * This source file is part of the FoundationDB open source project
  *
@@ -24,8 +24,8 @@
 
 // Used by GRV Proxy to enforce rate limits received from the Ratekeeper.
 //
-// Between waits, the GrvTransactionRateInfo executes a "release window" starting
-// with a call to the startReleaseWindow method. Within this release window, transactions are
+// Between waits, the GrvRateInfo executes a "release window" starting with
+// a call to the startReleaseWindow method. Within this release window, transactions are
 // released while canStart returns true. At the end of the release window, the
 // endReleaseWindow method is called, and the budget is updated to add or
 // remove capacity.
@@ -33,7 +33,7 @@
 // Meanwhile, the desired rate is updated through the setRate method.
 //
 // Smoothers are used to avoid turbulent throttling behaviour.
-class GrvTransactionRateInfo {
+class GrvRateInfo {
 	double rateWindow{ 1.0 };
 	double maxEmptyQueueBudget{ 0.0 };
 	double rate{ 0.0 };
@@ -45,7 +45,7 @@ class GrvTransactionRateInfo {
 	Smoother smoothReleased;
 
 public:
-	GrvTransactionRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate, double maxToStart);
+	GrvRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate, double maxToStart);
 
 	// Determines the number of transactions that this proxy is allowed to release
 	// in this release window.

@@ -22,14 +22,14 @@
 
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/ThroughputTracker.h"
-#include "fdbserver/GrvTransactionRateInfo.h"
+#include "fdbserver/GrvRateInfo.h"
 #include "fdbserver/LatencyBandsMap.h"
 
 // GrvProxyTagThrottler is used to throttle GetReadVersionRequests based on throttlingId quotas
 // before they're pushed into priority-partitioned queues.
 //
-// A GrvTransactionRateInfo object and a request queue are maintained for each throttlingId.
-// The GrvTransactionRateInfo object is used to determine when a request can be released.
+// A GrvRateInfo object and a request queue are maintained for each throttlingId.
+// The GrvRateInfo object is used to determine when a request can be released.
 //
 // Between each set of waits, releaseTransactions is run, releasing queued transactions
 // that have passed the throttlingId throttling stage. Transactions that are not yet ready
@@ -52,10 +52,10 @@ class GrvProxyTagThrottler {
 		bool isMaxThrottled(double maxThrottleDuration) const;
 	};
 
-	// Create a GrvTransactionRateInfo with the correct units and limits.
+	// Create a GrvRateInfo with the correct units and limits.
 	// If track-average-cost-on-client is enabled, then all the rate into
 	// will be in bytes per second, otherwise it will be in transactions per second.
-	static GrvTransactionRateInfo createGrvTransactionRateInfo(double rate);
+	static GrvRateInfo createGrvRateInfo(double rate);
 
 	class TagQueue {
 		Deque<DelayedRequest> lowPriorityRequests, highPriorityRequests;
@@ -63,7 +63,7 @@ class GrvProxyTagThrottler {
 		                                           double maxThrottledDuration,
 		                                           LatencyBandsMap&);
 		uint64_t prioritizedReleased{ 0 }, fifoReleased{ 0 };
-		Optional<GrvTransactionRateInfo> rateInfo;
+		Optional<GrvRateInfo> rateInfo;
 
 	public:
 		enum class Strategy {
@@ -78,7 +78,7 @@ class GrvProxyTagThrottler {
 
 	public:
 		TagQueue() = default;
-		explicit TagQueue(double rate) : rateInfo(createGrvTransactionRateInfo(rate)) {}
+		explicit TagQueue(double rate) : rateInfo(createGrvRateInfo(rate)) {}
 
 		DelayedRequest const& front(Strategy) const&;
 		DelayedRequest& front(Strategy) &;

@@ -55,14 +55,14 @@ bool GrvProxyTagThrottler::DelayedRequest::isMaxThrottled(double maxThrottleDura
 	return now() - startTime > maxThrottleDuration;
 }
 
-GrvTransactionRateInfo GrvProxyTagThrottler::createGrvTransactionRateInfo(double rate) {
-	return GrvTransactionRateInfo(
-	    SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
-	    isClientAverageCostTrackingEnabled() ? SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET
-	                                         : SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
-	    rate,
-	    isClientAverageCostTrackingEnabled() ? SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START
-	                                         : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
+GrvRateInfo GrvProxyTagThrottler::createGrvRateInfo(double rate) {
+	return GrvRateInfo(SERVER_KNOBS->TAG_THROTTLE_RATE_WINDOW,
+	                   isClientAverageCostTrackingEnabled() ? SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BYTES_BUDGET
+	                                                        : SERVER_KNOBS->TAG_THROTTLE_MAX_EMPTY_QUEUE_BUDGET,
+	                   rate,
+	                   isClientAverageCostTrackingEnabled()
+	                       ? SERVER_KNOBS->START_TRANSACTION_MAX_BYTES_TO_START
+	                       : SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 }
 
 bool GrvProxyTagThrottler::TagQueue::processingHighPriorityRequests(
@@ -182,7 +182,7 @@ void GrvProxyTagThrottler::TagQueue::setRate(double rate) {
 	if (rateInfo.present()) {
 		rateInfo.get().setRate(rate);
 	} else {
-		rateInfo = createGrvTransactionRateInfo(rate);
+		rateInfo = createGrvRateInfo(rate);
 	}
 }
 
