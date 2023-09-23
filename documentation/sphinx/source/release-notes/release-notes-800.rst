@@ -4,6 +4,51 @@
 Release Notes
 #############
 
+8.0.1
+=====
+
+Feature Improvements
+--------------------
+* Add print output to tenant movement for progress tracking. `(SNOW-895031) <https://snowflakecomputing.atlassian.net/browse/SNOW-895031>`_
+* Add trace details about over-replicated shard and range count. `(FDBCORE-6018) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6018>`_
+* Add the ability to disable tenant renames via knob and disable them by default. `(FDBCORE-6230) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6230>`_
+* Decrease logging level for BlobGranuleFlushRetry to avoid verbose logging. `(PR 826) <https://github.com/snowflakedb/frostdb/pull/826>`_
+* Use public endpoint for client throughput reporting to GRV proxies. `(FDBCORE-6261) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6261>`_
+* Prioritize transaction tags of tenant groups for quota throttling purposes. `(FDBCORE-6261) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6261>`_
+* Decouple quota throttler's throughput tracking mechanism from average cost tracking mechanism. `(FDBCORE-6327) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6327>`_
+* Disable TRACK_THROUGHPUT_ON_CLIENTS for compatibility with 8.0.0 clients `(PR 1064) <https://github.com/snowflakedb/frostdb/pull/1064>`_
+
+Fixes
+-----
+* Fix singleton recruitment logic to avoid extra singletons. `(PR 904) <https://github.com/snowflakedb/frostdb/pull/904>`_
+* Fix EKP re-recruitment failing to halt existing EKP process. `(FDBCORE-6059) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6059>`_
+* Make sure that the process ID data we are writing does not get freed before being written. `(PR 946) <https://github.com/snowflakedb/frostdb/pull/946>`_
+* The cluster controller would leak memory when fetching status. `(PR 955) <https://github.com/snowflakedb/frostdb/pull/955>`_
+* Some blob restore transactions were not lock aware and would fail if a tenant was locked. `(FDBCORE-6209) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6209>`_
+* After an aborted tenant move, a tenant could be left in a locked state. `(PR 1084) <https://github.com/snowflakedb/frostdb/pull/1084>`_
+* The commit proxy's tenant name index could become inconsistent during a restore. `(FDBCORE-6227) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6227>`_
+* Deleting multiple tenants in the same transaction could leave unnecessary tombstones. `(PR 1093) <https://github.com/snowflakedb/frostdb/pull/1093>`_
+* REST requests that failed with a retryable error would send an improper request on retry and effectively extend the retry interval. `(FDBCORE-6313) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6313>`_
+* The commit proxy would unnecessarily validate encryption keys for all tenant transactions in ``cluster_aware`` mode. `(PR 1114) <https://github.com/snowflakedb/frostdb/pull/1114>`_
+* Revert ratekeeper smoothing behavior that caused reduced stability in ratekeeper's transaction rates. `(FDBCORE-6354) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6354>`_
+* Handle IO timeout on commit proxies and storage servers due to KMS connectivity failures. `(FDBCORE-5370) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-5370>`_
+* Ensure exponential backoff while refreshing KMS URLs for a request. `(FDBCORE-5950) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-5950>`_
+* Fix a bug for blob manifest cleanup to make sure manifest files are deleted. `(FDBCORE-5952) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-5952>`_
+* Improve error handling for blob granules flush in blob manager. `(FDBCORE-5920) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-5920>`_
+* Simplify the quota throttler's estimation of clear costs, and fix inconsistencies between server and client. `(SNOW-897605) <https://snowflakecomputing.atlassian.net/browse/SNOW-897605>`_ and `(FDBCORE-6217) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6217>`_
+* Fixed hybrid force purge to drop data even if the blob workers are completely unavailable, so that hybrid can be dropped on a cluster where it is causing problems. `(FDBCORE-5951) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-5951>`_
+
+Performance Improvements
+------------------------
+* Reduce transaction batch size during blob restore, and reduce restore progress check interval during blob restore. `(FDBCORE-6161) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6161>`_
+* Improved the blob manager's algorithm to balance granules amongst blob workers such that it wouldn't over-favor new blob workers with fewer granules to the point of hotspotting. `(PR 826) <https://github.com/snowflakedb/frostdb/pull/826>`_
+* Hybrid read doesn't have to wait until the next commit cycle on an empty cluster to check if a tenant is locked. `(FDBCORE-6192) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6192>`_
+
+
+Reliability
+-----------
+* Lower KMS health check interval to 3 seconds. `(FDBCORE-6014) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6014>`_
+
 8.0.0
 =====
 
@@ -16,7 +61,7 @@ Features
 * Emergency tenant movement tool.
 
 
-Features Improvements
+Feature Improvements
 ---------------------
 * Columnar cache skew handling APIs.
 * Client-size average transaction cost tracking.
