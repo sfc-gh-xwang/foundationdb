@@ -5736,6 +5736,7 @@ ACTOR Future<GetMappedKeyValuesReply> mapKeyValues(StorageServer* data,
 	return result;
 }
 
+// returns tenant id for range, if any. if range intersects multiple tenants, returns first one
 Optional<int64_t> tenantIdForRange(VersionedMap<int64_t, TenantSSInfo>& tenantMap, KeyRangeRef range, Version ver) {
 	auto view = tenantMap.at(ver);
 
@@ -7165,6 +7166,7 @@ tryReadBlobGranuleChunks(Transaction* tr, KeyRange keys, Version fetchVersion, O
 			tr->trState->taskID = TaskPriority::FetchKeys;
 
 			if (bulkLoadIDKey.present()) {
+				tr->setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
 				Optional<BulkLoadStatus> bulkLoadStatus =
 				    wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadIDKey.get()));
 				if (!bulkLoadStatus.present() || bulkLoadStatus->state != BulkLoadStatus::State::STAGING_DDPREPARED) {
