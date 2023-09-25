@@ -2253,6 +2253,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 		// before starting, make sure worker persists range assignment, acquires the granule lock, and has a
 		// blob store
 		wait(store(startState, assignFuture));
+		metadata->isBulkLoadDirty = startState.isBulkLoading; // FIXME: races with this?
 		wait(store(bstore, bstoreFuture));
 
 		wait(delay(0, TaskPriority::BlobWorkerUpdateStorage));
@@ -2382,7 +2383,6 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 		metadata->bufferedDeltaVersion = startVersion;
 		metadata->knownCommittedVersion = startVersion;
 		metadata->resetReadStats();
-		metadata->isBulkLoadDirty = startState.isBulkLoading; // FIXME: races with this?
 
 		Reference<ChangeFeedData> cfData = makeReference<ChangeFeedData>(bwData->db.getPtr());
 
@@ -4522,15 +4522,85 @@ ACTOR Future<GranuleFiles> loadParentGranuleForMergeSnapshot(Transaction* tr, Ke
 	return prevFiles;
 }
 
-ACTOR Future<bool> isRangeBulkLoading(Transaction* tr, KeyRange range) {
+struct GranuleOpenBulkLoadState {
+	UID id;
+	KeyRange range;
+
+	GranuleOpenBulkLoadState() {}
+	GranuleOpenBulkLoadState(UID id, KeyRange range) : id(id), range(range) {}
+};
+
+ACTOR Future<Void> markBulkLoadCleanOnComplete(Reference<BlobWorkerData> bwData, GranuleOpenBulkLoadState loadState) {
+	// watch for bulk load key to be cleaned up
+	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bwData->db);
+	try {
+		loop {
+			try {
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+				Optional<BulkLoadMetadata::RangeMap::RangeValue> bulkLoadRange =
+				    wait(BulkLoadMetadata::rangeMap().getRangeForKey(tr, loadState.range.begin));
+				if (!bulkLoadRange.present() || bulkLoadRange->value.empty() ||
+				    loadState.range.begin != bulkLoadRange->range.begin ||
+				    loadState.range.end != bulkLoadRange->range.end) {
+					break;
+				}
+				UID newId = bulkLoadIdToUID(bulkLoadRange->value);
+				if (newId != loadState.id) {
+					break;
+				}
+				state Future<Void> waitLoading =
+				    tr->watch(loadState.range.begin.withPrefix(BulkLoadMetadata::bulkLoadRangeKeys.begin));
+				// if future triggered, that means load must have been cleaned up
+				wait(tr->commit());
+				wait(waitLoading);
+				tr->reset();
+			} catch (Error& e) {
+				wait(tr->onError(e));
+			}
+		}
+	} catch (Error& e2) {
+		if (e2.code() == error_code_operation_cancelled) {
+			throw e2;
+		}
+		TraceEvent(SevError, "BWWatchBulkLoadUnexpectedError", bwData->id)
+		    .error(e2)
+		    .detail("LoadRange", loadState.range)
+		    .detail("LoadID", loadState.id);
+		ASSERT_WE_THINK(false);
+
+		// if not simulation, kill the BW
+		if (bwData->fatalError.canBeSet()) {
+			bwData->fatalError.sendError(e2);
+		}
+		throw e2;
+	}
+
+	// this is a bit of a hack since it is dereferencing this future before destroying it - can we somehow incref around
+	// this block?
+	auto granulesToUpdate = bwData->granuleMetadata.intersectingRanges(loadState.range);
+	for (auto& it : granulesToUpdate) {
+		if (it.value().activeMetadata.isValid() && it.value().activeMetadata->cancelled.canBeSet()) {
+			auto metadata = it.value().activeMetadata;
+			metadata->isBulkLoadDirty = false;
+		}
+	}
+	bwData->waitForBulkLoadCompletes.erase(loadState.id);
+	return Void();
+}
+
+ACTOR Future<Optional<GranuleOpenBulkLoadState>> isRangeBulkLoading(Transaction* tr, KeyRange range) {
 	Optional<BulkLoadMetadata::RangeMap::RangeValue> bulkLoadRange =
 	    wait(BulkLoadMetadata::rangeMap().getRangeForKey(tr, range.begin));
-	if (!bulkLoadRange.present()) {
-		return false;
+	if (!bulkLoadRange.present() || bulkLoadRange->value.empty()) {
+		return Optional<GranuleOpenBulkLoadState>();
 	}
+
 	ASSERT(bulkLoadRange->range.begin <= range.begin);
 	ASSERT(bulkLoadRange->range.end >= range.end);
-	return !bulkLoadRange->value.empty();
+	return GranuleOpenBulkLoadState(bulkLoadIdToUID(bulkLoadRange->value),
+	                                KeyRangeRef(bulkLoadRange->range.begin, bulkLoadRange->range.end));
 }
 
 // FIXME: move this up by other granule state stuff like BGUF
@@ -4563,7 +4633,7 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 			state GranuleStartState info;
 			info.changeFeedStartVersion = invalidVersion;
 
-			state Future<bool> fIsBulkLoading = isRangeBulkLoading(&tr, req.keyRange);
+			state Future<Optional<GranuleOpenBulkLoadState>> fIsBulkLoading = isRangeBulkLoading(&tr, req.keyRange);
 			state Future<ValueReadResult> fLockValue = tr.get(lockKey);
 			state Future<ForcedPurgeState> fForcedPurgeState = getForcePurgedState(&tr, req.keyRange);
 			Reference<BlobRestoreController> restoreController =
@@ -4789,8 +4859,14 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 					}
 				}
 			}
-			wait(store(info.isBulkLoading, fIsBulkLoading));
+			state Optional<GranuleOpenBulkLoadState> openLoadState = wait(fIsBulkLoading);
+			info.isBulkLoading = openLoadState.present();
 			wait(tr.commit());
+			if (openLoadState.present() && SERVER_KNOBS->BULK_LOAD_SS_MOVE &&
+			    !bwData->waitForBulkLoadCompletes.count(openLoadState->id)) {
+				bwData->waitForBulkLoadCompletes[openLoadState->id] =
+				    markBulkLoadCleanOnComplete(bwData, openLoadState.get());
+			}
 			bwData->addGRVHistory(tr.getReadVersion().get());
 
 			if (info.changeFeedStartVersion == invalidVersion) {

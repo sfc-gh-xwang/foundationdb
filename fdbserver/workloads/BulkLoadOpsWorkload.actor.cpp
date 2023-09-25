@@ -570,8 +570,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				           range.end.printable());
 			}
 
+			bool readDirty = !SERVER_KNOBS->BULK_LOAD_SS_MOVE;
 			std::pair<RangeResult, Standalone<VectorRef<BlobGranuleChunkRef>>> result =
-			    wait(readFromBlob(cx, bstore, range, 0, grv, tenant, LockAware::False, false, true));
+			    wait(readFromBlob(cx, bstore, range, 0, grv, tenant, LockAware::False, false, readDirty));
 
 			ASSERT_EQ(outData->size(), result.first.size());
 			for (int i = 0; i < result.first.size(); i++) {

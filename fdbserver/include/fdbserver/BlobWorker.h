@@ -198,6 +198,8 @@ struct BlobWorkerData : NonCopyable, ReferenceCounted<BlobWorkerData> {
 	BGTenantMap tenantData;
 	Reference<AsyncVar<ServerDBInfo> const> dbInfo;
 
+	std::unordered_map<UID, Future<Void>> waitForBulkLoadCompletes;
+
 	// contains the history of completed granules before the existing ones. Maps to the latest one, and has
 	// back-pointers to earlier granules
 	// FIXME: expire from map after a delay when granule is revoked and the history is no longer needed
