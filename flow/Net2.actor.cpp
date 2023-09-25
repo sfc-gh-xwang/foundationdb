@@ -893,7 +893,9 @@ public:
 		if (iter != g_network->networkInfo.serverTLSConnectionThrottler.end()) {
 			if (now() < iter->second.second) {
 				if (iter->second.first >= FLOW_KNOBS->TLS_CLIENT_CONNECTION_THROTTLE_ATTEMPTS) {
-					TraceEvent(SevWarn, "TLSOutgoingConnectionThrottlingWarning").suppressFor(1.0).detail("PeerIP", addr);
+					TraceEvent(SevWarn, "TLSOutgoingConnectionThrottlingWarning")
+					    .suppressFor(1.0)
+					    .detail("PeerIP", addr);
 					wait(delay(FLOW_KNOBS->CONNECTION_MONITOR_TIMEOUT));
 					throw connection_failed();
 				}
