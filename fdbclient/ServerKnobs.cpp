@@ -1262,6 +1262,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL,                     10); if ( isSimulated ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = 5; BUGGIFY_KNOB(BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 5));
 	init( BULK_LOAD_FILE_VALIDATION_LEVEL,                         1 ); BUGGIFY_KNOB(BULK_LOAD_FILE_VALIDATION_LEVEL, randomize && BUGGIFY, deterministicRandom()->randomInt(0, 3));
 	init( BULK_LOAD_STAGE_GRANULES,                            false ); if ( isSimulated ) BULK_LOAD_STAGE_GRANULES = deterministicRandom()->coinflip();
+	init( BULK_LOAD_SS_MOVE,                                   false ); // if ( isSimulated ) BULK_LOAD_SS_MOVE = deterministicRandom()->coinflip();
+	// TODO enable once DD integration complete!
 
 	// clang-format on
 
