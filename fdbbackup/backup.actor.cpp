@@ -1734,6 +1734,10 @@ ACTOR Future<json_spirit::mObject> getLayerStatus(Database src, std::string root
 			state json_spirit::mObject statusDoc;
 			state JSONDoc modifier(statusDoc);
 			for (auto& kv : kvPairs) {
+				// If there are a large number of backup agents, this loop might do a significant amount of JSON
+				// parsing and post processing to combine the documents and apply the layer status aggregation
+				// operators, so we will yield after parsing the doc and yield after merging it into the
+				// consolidated document.
 				state json_spirit::mValue docValue;
 				json_spirit::read_string(kv.value.toString(), docValue);
 				wait(yield());
