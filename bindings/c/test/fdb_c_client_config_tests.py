@@ -765,7 +765,7 @@ class ClientConfigSeparateCluster(unittest.TestCase):
 
     def test_tls_cluster_tls_client_verifypeers(self):
         # Test connecting successfully to a TLS-enabled cluster with TLS-enabled
-        # client and verifying the subject common name
+        # client and verifying the subject, issuer and root common name
         tls_config = TLSConfig(
             verify_peers="Subject.CN>=FDB Testing Services,Issuer.CN>=FDB Testing Services,Root.CN>=FDB Testing Services"
         )
@@ -797,7 +797,9 @@ class ClientConfigSeparateCluster(unittest.TestCase):
 
     def test_tls_cluster_tls_client_verifypeers_valid_and_invalid_rule(self):
         # Test connecting successfully to a TLS-enabled cluster with TLS-enabled
-        # client and verifying the subject common name
+        # client with one valid rule and one invalid rule "OR'd" together with
+        # the | operator We expect the non-INVALID subject, issuer and root
+        # common names to allow the client to connect
         tls_config = TLSConfig(
             verify_peers="Subject.CN>=FDB Testing Services,Issuer.CN>=FDB Testing Services,Root.CN>=FDB Testing Services|Subject.CN>=INVALID_SUBJECT,Issuer.CN>=INVALID_ISSUER,Root.CN>=INVALID_ROOT"
         )
@@ -812,8 +814,9 @@ class ClientConfigSeparateCluster(unittest.TestCase):
             self.cluster.tear_down()
 
     def test_tls_cluster_tls_client_verifypeers_invalid_subject_commonname(self):
-        # Test connecting unsuccessfully to a TLS-enabled cluster with TLS-enabled
-        # client and failing subject common name verification, but with good issuer and root
+        # Test connecting unsuccessfully to a TLS-enabled cluster with
+        # TLS-enabled client and failing subject common name verification, but
+        # with correct issuer and root common name verifiers
         tls_config = TLSConfig(
             verify_peers="Subject.CN>=INVALID_SUBJECT,Issuer.CN>=FDB Testing Services,Root.CN>=FDB Testing Services"
         )
@@ -828,8 +831,9 @@ class ClientConfigSeparateCluster(unittest.TestCase):
             self.cluster.tear_down()
 
     def test_tls_cluster_tls_client_verifypeers_invalid_issuer_root_commonname(self):
-        # Test connecting unsuccessfully to a TLS-enabled cluster with TLS-enabled
-        # client and failing issuer and root common name verification, but with good subject
+        # Test connecting unsuccessfully to a TLS-enabled cluster with
+        # TLS-enabled client and failing issuer and root common name
+        # verification, but with correct subject common name
         tls_config = TLSConfig(
             verify_peers="Subject.CN>=FDB Testing Services,Issuer.CN>=INVALID_ISSUER,Root.CN>=INVALID_ROOT"
         )
