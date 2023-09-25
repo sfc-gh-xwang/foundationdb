@@ -1227,8 +1227,11 @@ ACTOR Future<BlobFileIndex> dumpInitialSnapshotFromFDB(Reference<BlobWorkerData>
 		           metadata->keyRange.begin.printable(),
 		           metadata->keyRange.end.printable());
 	}
-	wait(bwData->initialSnapshotLock->take());
-	state FlowLock::Releaser holdingLock(*bwData->initialSnapshotLock);
+
+	state bool checkedLoadLock = false;
+	state ActiveCounter<int>::Releaser holdingBlobbifyStarting = bwData->stats.initialBlobbifyStarting.take(1);
+	state ActiveCounter<int>::Releaser holdingBlobbifyEmptyActive;
+	state FlowLock::Releaser holdingLock;
 
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(bwData->db);
 	state int retries = 0;
@@ -1247,8 +1250,25 @@ ACTOR Future<BlobFileIndex> dumpInitialSnapshotFromFDB(Reference<BlobWorkerData>
 		try {
 			Version rv = wait(tr->getReadVersion());
 			bwData->addGRVHistory(rv);
-
 			readVersion = rv;
+
+			if (!checkedLoadLock) {
+				// check if range is empty, if so don't take parallelism lock
+				RangeReadResult r = wait(tr->getRange(metadata->keyRange, 1));
+				CODE_PROBE(r.empty(), "empty initial blob snapshot");
+				CODE_PROBE(!r.empty(), "non-empty initial blob snapshot");
+				holdingBlobbifyStarting.release();
+				checkedLoadLock = true;
+				if (!r.empty()) {
+					wait(bwData->initialSnapshotLock->take());
+					holdingLock = FlowLock::Releaser(*bwData->initialSnapshotLock);
+					tr->reset();
+					continue;
+				} else {
+					holdingBlobbifyEmptyActive = bwData->stats.initialBlobbifyEmptyActive.take(1);
+				}
+			}
+
 			ASSERT(lastReadVersion <= readVersion);
 			state PromiseStream<RangeReadResult> rowsStream;
 			state Future<BlobFileIndex> snapshotWriter = writeSnapshot(bwData,

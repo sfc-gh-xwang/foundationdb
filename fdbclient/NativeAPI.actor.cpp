@@ -11967,6 +11967,11 @@ ACTOR Future<Key> purgeBlobGranulesActor(Reference<DatabaseContext> db,
 		throw unsupported_operation();
 	}
 
+	if (range.empty()) {
+		TraceEvent(SevWarn, "PurgeBlobGranulesRangeEmpty").detail("Range", range);
+		throw unsupported_operation();
+	}
+
 	if (tenant.present()) {
 		CODE_PROBE(true, "NativeAPI purgeBlobGranules has tenant");
 		wait(tenant.get()->ready());

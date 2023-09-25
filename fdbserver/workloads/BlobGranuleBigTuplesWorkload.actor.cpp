@@ -47,6 +47,7 @@ struct BlobGranuleBigTuplesWorkload : TestWorkload {
 	int nodeCount;
 	int targetValueLen;
 	int bucketSize;
+	int bucketsInDataSpace;
 
 	Optional<TenantName> tenantName;
 	Optional<Reference<Tenant>> tenant;
@@ -67,19 +68,12 @@ struct BlobGranuleBigTuplesWorkload : TestWorkload {
 		nodeCount = (int)(targetBytes / targetValueLen);
 
 		bucketSize = deterministicRandom()->randomSkewedUInt32(1, nodeCount);
+		bucketsInDataSpace = deterministicRandom()->randomInt(0, nodeCount / bucketSize + 1);
 
 		tenantName = "bgBigTuplesTenant"_sr;
 
 		// FIXME: maybe enable for completeness at some point?
 		initAfter = false;
-
-		TraceEvent("BlobGranuleBigTuplesWorkloadInit")
-		    .detail("TargetGranules", targetGranules)
-		    .detail("InitAfter", initAfter)
-		    .detail("TargetValSize", targetValueLen)
-		    .detail("TargetBytes", targetBytes)
-		    .detail("GranuleSize", SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES)
-		    .detail("NodeCount", nodeCount);
 	}
 
 	Future<Void> setup(Database const& cx) override { return _setup(cx, this); }
@@ -91,8 +85,16 @@ struct BlobGranuleBigTuplesWorkload : TestWorkload {
 	}
 
 	// Functions required by `bulkSetup()`
-	// key is always a 3-tuple with the same first element, and 2 ints for the last element, that share common prefixes
-	Key keyForIndex(int n) { return Tuple::makeTuple(11, n / bucketSize, n % bucketSize).pack(); }
+	// key is a valid snowtram tuple. table 11, incarnation 0, keyspace 2 (user data space) or 3 (OLB space). Then the
+	// "user key" is number broken into 2 parts. each bucket is the same user key, the snowtram stamp is the index
+	// within the bucket. But since the stamp has to be a user type and not an int, and this function requires
+	// keyForIndex(X) < keyForIndex(Y) iff X < Y, make the user-type string an int tuple itself
+	Key keyForIndex(int n) {
+		int bucket = n / bucketSize;
+		int space = bucket < bucketsInDataSpace ? 2 : 3;
+		Standalone<StringRef> stamp = Tuple::makeTuple(n % bucketSize).pack();
+		return Tuple::makeTuple(11, 0, space, bucket).append(Tuple::UserTypeStr(0x41, stamp)).pack();
+	}
 	Value value(int n) {
 		int valLen = deterministicRandom()->randomInt(1, 2 * targetValueLen);
 		valLen = std::max(10, valLen);
@@ -107,7 +109,12 @@ struct BlobGranuleBigTuplesWorkload : TestWorkload {
 		TraceEvent("BlobGranuleBigTuplesInit")
 		    .detail("TargetGranules", self->targetGranules)
 		    .detail("InitAfter", self->initAfter)
-		    .detail("BucketSize", self->bucketSize);
+		    .detail("TargetValSize", self->targetValueLen)
+		    .detail("GranuleSize", SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_BYTES)
+		    .detail("NodeCount", self->nodeCount)
+		    .detail("BucketSize", self->bucketSize)
+		    .detail("Buckets", self->nodeCount / self->bucketSize + 1)
+		    .detail("BucketsInDataSpace", self->bucketsInDataSpace);
 
 		// set up blob granules
 		wait(success(ManagementAPI::changeConfig(cx.getReference(), "blob_granules_enabled=1", true)));
@@ -172,7 +179,7 @@ struct BlobGranuleBigTuplesWorkload : TestWorkload {
 		if (self->clientId != 0) {
 			return true;
 		}
-		state Key tuplePrefix = Tuple::makeTuple(11).pack();
+		state Key tuplePrefix = Tuple::makeTuple(11, 0).pack();
 		// FIXME: checking normalKeys finds another empty granule, that's metadata overhead we should fix at some point
 		state KeyRange tupleRange(KeyRangeRef(tuplePrefix, strinc(tuplePrefix)));
 		TraceEvent("BlobGranuleBigTuplesCheckStart").detail("Range", tupleRange);
@@ -188,34 +195,61 @@ struct BlobGranuleBigTuplesWorkload : TestWorkload {
 			wait(delay(1.0));
 		}
 
-		// check that all of the granule boundaries are 2-tuples that start with 11
 		state Transaction tr = Transaction::fromTenantOrDefault(self->tenant, cx);
+		state bool seenData = false;
+		state bool seenOLB = false;
 		loop {
 			try {
 				Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(tupleRange, 1000000));
 				TraceEvent("BlobGranuleBigTuplesCheckGranules").detail("GranuleCount", granules.size());
+				CODE_PROBE(granules.size() > 1, "bgbigtuples has at least 1 boundary");
 				for (int i = 0; i < granules.size() - 1; i++) {
 					ASSERT(granules[i].end == granules[i + 1].begin);
-					Tuple t = Tuple::unpackUserType(granules[i].end, true);
-					if (SERVER_KNOBS->BG_ENABLE_SPLIT_TRUNCATED) {
-						ASSERT(2 == t.size() || 3 == t.size());
+					Tuple t = Tuple::unpackUserType(granules[i].end, false);
+
+					TraceEvent ev("BlobGranuleBigTuplesBoundary");
+					ev.detail("Idx", i).detail("Size", t.size());
+					ev.detail("Table", t.getInt(0)).detail("Incarnation", t.getInt(1)).detail("Space", t.getInt(2));
+
+					ASSERT_EQ(11, t.getInt(0));
+					ASSERT_EQ(0, t.getInt(1));
+					// data (2) or OLB (3) space
+					int space = t.getInt(2);
+					ASSERT(2 == space || 3 == space);
+					seenData |= space == 2;
+					seenOLB |= space == 3;
+
+					if (SERVER_KNOBS->BG_ENABLE_SPLIT_TRUNCATED || space == 3) {
+						ASSERT(4 == t.size() || 5 == t.size());
 					} else {
-						ASSERT_EQ(2, t.size());
+						ASSERT_EQ(4, t.size());
 					}
 
-					TraceEvent("BlobGranuleBigTuplesBoundary")
-					    .detail("Idx", i)
-					    .detail("T0", t.getInt(0))
-					    .detail("T1", t.getInt(1));
-					ASSERT(t.getInt(0) == 11);
-					int v1 = t.getInt(1);
-					ASSERT(v1 >= 0 && v1 <= self->nodeCount / self->bucketSize);
+					// make sure that sometimes we do split olb space not because we have enable_split_truncated
+
+					int bucket = t.getInt(3);
+					ev.detail("Bucket", bucket);
+					ASSERT(bucket >= 0 && bucket <= self->nodeCount / self->bucketSize);
+
+					if (t.size() == 5) {
+						CODE_PROBE(!SERVER_KNOBS->BG_ENABLE_SPLIT_TRUNCATED && space == 3,
+						           "hybrid successfully split same user key into multiple granules in OLB space");
+						Tuple::UserTypeStr stamp = t.getUserType(4);
+						ASSERT(stamp.code == 0x41);
+						Tuple stampTuple = Tuple::unpack(stamp.str);
+						int stampNum = stampTuple.getInt(0);
+						ev.detail("T4", stampNum);
+						ASSERT(stampNum >= 0 && stampNum < self->bucketSize);
+					}
+					ev.log();
 				}
 				break;
 			} catch (Error& e) {
 				wait(tr.onError(e));
 			}
 		}
+
+		CODE_PROBE(seenData && seenOLB, "hybrid split points in both data and olb space");
 
 		return true;
 	}

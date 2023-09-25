@@ -83,6 +83,8 @@ struct BlobWorkerStats {
 	ActiveCounter<int> deltaFilesWriting;
 	ActiveCounter<int> snapshotFilesWriting;
 	ActiveCounter<int> granulesOnOldFeed;
+	ActiveCounter<int> initialBlobbifyStarting;
+	ActiveCounter<int> initialBlobbifyEmptyActive;
 
 	RecentActive::Tracker recentActiveGranuleFeedsTracker;
 	Future<Void> logger;
@@ -159,7 +161,9 @@ struct BlobWorkerStats {
 	    granulesBlockedCommittedVersion(0),
 	    deltaFilesWriting(0),
 	    snapshotFilesWriting(0),
-	    granulesOnOldFeed(0) {
+	    granulesOnOldFeed(0),
+	    initialBlobbifyStarting(0),
+	    initialBlobbifyEmptyActive(0) {
 		specialCounter(cc, "NumRangesAssigned", [this]() { return this->numRangesAssigned; });
 		specialCounter(cc, "MutationBytesBuffered", [this]() { return this->mutationBytesBuffered; });
 		specialCounter(cc, "ActiveReadRequests", [this]() { return this->activeReadRequests; });
@@ -188,6 +192,9 @@ struct BlobWorkerStats {
 		specialCounter(cc, "RecentActiveGranuleFeeds", [this]() {
 			return this->recentActiveGranuleFeedsTracker.getCountAndReset();
 		});
+		specialCounter(cc, "InitialBlobbifyStarting", [this]() { return this->initialBlobbifyStarting.getValue(); });
+		specialCounter(
+		    cc, "InitialBlobbifyEmptyActive", [this]() { return this->initialBlobbifyEmptyActive.getValue(); });
 
 		logger = cc.traceCounters("BlobWorkerMetrics", id, interval, "BlobWorkerMetrics");
 	}

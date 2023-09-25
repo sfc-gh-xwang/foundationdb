@@ -102,6 +102,7 @@ public:
 
 		self.addActor.send(self.quotaCache->run());
 		self.addActor.send(self.quotaThrottler.expireUnusedThrottlingIds());
+		self.addActor.send(self.recoveryTracker.run());
 
 		state Reference<BlobRestoreController> restoreController =
 		    makeReference<BlobRestoreController>(self.db, normalKeys);

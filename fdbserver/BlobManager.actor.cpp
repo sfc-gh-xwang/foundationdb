@@ -293,6 +293,35 @@ struct BoundaryEvaluation {
 	}
 };
 
+struct PurgeRangeDAGNode : ReferenceCounted<PurgeRangeDAGNode>, NonCopyable {
+	KeyRange range;
+	Key purgeKey;
+	Version purgeVersion;
+	bool force;
+	Future<Void> purgeFuture;
+	UID nodeID;
+	std::vector<Reference<PurgeRangeDAGNode>> replacedParents;
+	// FIXME : add alloc tracking to determine if we leak nodes
+
+	PurgeRangeDAGNode()
+	  : range(normalKeys),
+	    purgeKey(""_sr),
+	    purgeVersion(-1),
+	    force(false),
+	    purgeFuture(Future<Void>(Void())),
+	    nodeID(deterministicRandom()->randomUniqueID()) {}
+
+	PurgeRangeDAGNode(KeyRangeRef range, KeyRef purgeKey, Version purgeVersion, bool force)
+	  : range(range),
+	    purgeKey(purgeKey),
+	    purgeVersion(purgeVersion),
+	    force(force),
+	    purgeFuture(Never()),
+	    nodeID(deterministicRandom()->randomUniqueID()) {}
+
+	~PurgeRangeDAGNode() { purgeFuture.cancel(); }
+};
+
 struct BlobManagerStats {
 	CounterCollection cc;
 
@@ -315,6 +344,7 @@ struct BlobManagerStats {
 	Counter granuleStreamRepliesIgnored;
 	Counter granulesHitMedianLimit;
 	Counter cantSplitAlignment;
+	Counter noopPurges;
 
 	Counter bulkLoadsStaged;
 	Counter bulkLoadStagingErrors;
@@ -333,6 +363,8 @@ struct BlobManagerStats {
 
 	ActiveCounter<int> activeGranuleSplitChecks;
 	ActiveCounter<int> activePurges;
+	ActiveCounter<int> blockedPurges;
+	ActiveCounter<int> awaitingCleanupPurges;
 	ActiveCounter<int> activeBulkLoads;
 
 	// Current stats maintained for a given blob worker process
@@ -363,6 +395,7 @@ struct BlobManagerStats {
 	    granuleStreamRepliesIgnored("GranuleStreamRepliesIgnored", cc),
 	    granulesHitMedianLimit("GranulesHitMedianLimit", cc),
 	    cantSplitAlignment("CantSplitAlignment", cc),
+	    noopPurges("NoOpPurges", cc),
 	    bulkLoadsStaged("BulkLoadsStaged", cc),
 	    bulkLoadStagingErrors("BulkLoadStagingErrors", cc),
 	    bulkLoadAbortsCleanedUp("BulkLoadAbortsCleanedUp", cc),
@@ -376,6 +409,8 @@ struct BlobManagerStats {
 	    manifestSizeInBytes(0),
 	    activeGranuleSplitChecks(0),
 	    activePurges(0),
+	    blockedPurges(0),
+	    awaitingCleanupPurges(0),
 	    activeBulkLoads(0) {
 		specialCounter(cc, "WorkerCount", [workers]() { return workers->size(); });
 		specialCounter(cc, "Epoch", [epoch]() { return epoch; });
@@ -391,6 +426,8 @@ struct BlobManagerStats {
 		specialCounter(
 		    cc, "ActiveGranuleSplitChecks", [this]() -> int { return this->activeGranuleSplitChecks.getValue(); });
 		specialCounter(cc, "ActivePurges", [this]() -> int { return this->activePurges.getValue(); });
+		specialCounter(cc, "BlockedPurges", [this]() -> int { return this->blockedPurges.getValue(); });
+		specialCounter(cc, "AwaitingCleanupPurges", [this]() -> int { return this->awaitingCleanupPurges.getValue(); });
 		specialCounter(
 		    cc, "ActiveBlobWorkerRecruitments", [recruitingStream]() -> int { return recruitingStream->get(); });
 		specialCounter(cc, "ActiveBulkLoads", [this]() -> int { return this->activeBulkLoads.getValue(); });
@@ -472,6 +509,8 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	std::map<Key, bool> mergeHardBoundaries;
 	std::unordered_map<Key, BlobGranuleMergeBoundary> mergeBoundaries;
 	CoalescedKeyRangeMap<bool> forcePurgingRanges;
+	KeyRangeMap<Reference<PurgeRangeDAGNode>> latestActivePurges;
+	std::deque<Key> completedPurgeKeys;
 
 	FlowLock concurrentMergeChecks;
 
@@ -512,6 +551,7 @@ struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	    mergeCandidates(MergeCandidateInfo(MergeCandidateUnknown), normalKeys.end),
 	    activeGranuleMerges(invalidVersion, normalKeys.end),
 	    forcePurgingRanges(false, normalKeys.end),
+	    latestActivePurges(makeReference<PurgeRangeDAGNode>(), normalKeys.end),
 	    concurrentMergeChecks(SERVER_KNOBS->BLOB_MANAGER_CONCURRENT_MERGE_CHECKS),
 	    restartRecruiting(SERVER_KNOBS->DEBOUNCE_RECRUITING_DELAY),
 	    recruitingStream(0),
@@ -631,6 +671,7 @@ static void alignKeyBoundary(Reference<BlobManagerData> bmData,
                              Reference<GranuleTenantData> tenantData,
                              KeyRef key,
                              int offset,
+                             bool snowtramAware,
                              BlobGranuleSplitPoints& splitPoints) {
 	Standalone<VectorRef<KeyRef>>& keys = splitPoints.keys;
 	std::unordered_map<Key, BlobGranuleMergeBoundary>& boundaries = splitPoints.boundaries;
@@ -647,7 +688,22 @@ static void alignKeyBoundary(Reference<BlobManagerData> bmData,
 		alignedKey = alignedKey.removePrefix(tenantData->entry.prefix);
 	}
 	try {
-		t = Tuple::unpackUserType(alignedKey, true);
+		// if snowtram aware, tuple must parse and not be truncated, but maintain non-snowtram-aware case for backwards
+		// compatibility
+		t = Tuple::unpackUserType(alignedKey, !snowtramAware);
+		if (snowtramAware) {
+			bool snowtramKey = t.isSnowtramKey();
+			if (snowtramKey && t.isSnowtramDataOrIndexSpace()) {
+				CODE_PROBE(true, "snowtram-aware alignKeys found snowtram key to truncate");
+				ASSERT(offset == 1);
+			} else {
+				CODE_PROBE(snowtramKey, "found snowtram key in non-data/index space");
+				// if not valid snowtram key in the data or index space, don't truncate
+				// We expect TST entries to hit this, but if any user key does that's bad
+				CODE_PROBE(true, "snowtram-aware alignKeys found non-snowtram key, skipping truncate");
+				offset = t.size();
+			}
+		}
 		if (t.size() > offset) {
 			t2 = t.subTuple(0, t.size() - offset);
 			alignedKey = t2.pack();
@@ -703,7 +759,7 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 		wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange, false)));
 	}
 	for (; idx < splits.size() - 1; idx++) {
-		alignKeyBoundary(bmData, tenantData, splits[idx], offset, splitPoints);
+		alignKeyBoundary(bmData, tenantData, splits[idx], offset, SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE, splitPoints);
 	}
 
 	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), splits.back());
@@ -5710,7 +5766,11 @@ ACTOR Future<Void> revokeRangeFromAll(Reference<BlobManagerData> self,
  * Once all this is done, we finally clear the purgeIntent key, if possible, to indicate we are done
  * processing this purge intent.
  */
-ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range, Version purgeVersion, bool force) {
+ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self,
+                              KeyRangeRef range,
+                              Version purgeVersion,
+                              bool force,
+                              UID purgeID) {
 	if (BM_PURGE_DEBUG) {
 		fmt::print("BM {0} purgeRange starting for range [{1} - {2}) @ purgeVersion={3}, force={4}\n",
 		           self->epoch,
@@ -5720,7 +5780,6 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 		           force);
 	}
 
-	state UID purgeID = deterministicRandom()->randomUniqueID();
 	state ActiveCounter<int>::Releaser holdingPurgesCounter = self->stats.activePurges.take(1);
 
 	TraceEvent("PurgeGranulesBegin", self->id)
@@ -6272,25 +6331,176 @@ ACTOR Future<Void> purgeRange(Reference<BlobManagerData> self, KeyRangeRef range
 	return Void();
 }
 
+ACTOR Future<Void> cleanupPurgeKey(Reference<BlobManagerData> bmData, Key purgeKey, Future<Void> olderSubRangeFutures) {
+	state ActiveCounter<int>::Releaser holdingAwaitingCleanupPurgesCounter =
+	    bmData->stats.awaitingCleanupPurges.take(1);
+	if (BM_PURGE_DEBUG) {
+		fmt::print("BM {0} waiting cleanup up purge range {1}\n", bmData->epoch, purgeKey.printable());
+	}
+	wait(olderSubRangeFutures);
+	wait(delay(0));
+	// FIXME: add some simulated validation of purge processing ordering and marking completeness here?
+	if (BM_PURGE_DEBUG) {
+		fmt::print("BM {0} cleaning up purge range {1}\n", bmData->epoch, purgeKey.printable());
+	}
+	bmData->completedPurgeKeys.push_back(purgeKey);
+	CODE_PROBE(true, "BM finished processing a purge intent");
+	return Void();
+}
+
+ACTOR Future<Void> handlePurgeRangeDAGNode(Reference<BlobManagerData> bmData,
+                                           PurgeRangeDAGNode* node,
+                                           Future<Void> olderSubRangeFutures) {
+
+	if (BM_PURGE_DEBUG) {
+		fmt::print("BM {0} handle purge range {1} [{2} - {3}) @ {4}{5}: {6}\n",
+		           bmData->epoch,
+		           node->nodeID.shortString(),
+		           node->range.begin.printable(),
+		           node->range.end.printable(),
+		           node->purgeVersion,
+		           node->force ? " (force)" : "",
+		           node->purgeKey.printable());
+	}
+	state ActiveCounter<int>::Releaser holdingBlockedPurgesCounter = bmData->stats.blockedPurges.take(1);
+	wait(olderSubRangeFutures);
+	wait(delay(0));
+	holdingBlockedPurgesCounter.release();
+
+	if (BM_PURGE_DEBUG) {
+		fmt::print("BM {0} processing purge range {1} [{2} - {3}) @ {4}{5}\n",
+		           bmData->epoch,
+		           node->nodeID.shortString(),
+		           node->range.begin.printable(),
+		           node->range.end.printable(),
+		           node->purgeVersion,
+		           node->force ? " (force)" : "");
+	}
+
+	// if we were partially/entirely superceded by any ranges (as of the point of time of starting/skipping our purge),
+	// wait on their futures (in addition to ours if not skipping) before deleting purge key
+	state std::vector<Future<Void>> waitBeforeDeletingPurgeKey;
+	state bool stillDo = false;
+	auto ranges = bmData->latestActivePurges.intersectingRanges(node->range);
+	for (auto& activeNode : ranges) {
+		bool same = activeNode.cvalue()->nodeID == node->nodeID;
+		stillDo = stillDo || same;
+		if (!same) {
+			waitBeforeDeletingPurgeKey.push_back(activeNode.cvalue()->purgeFuture);
+		}
+	}
+
+	if (stillDo) {
+		if (BM_PURGE_DEBUG) {
+			fmt::print("BM {0} purging range {1} [{2} - {3}) @ {4}{5}\n",
+			           bmData->epoch,
+			           node->nodeID.shortString(),
+			           node->range.begin.printable(),
+			           node->range.end.printable(),
+			           node->purgeVersion,
+			           node->force ? " (force)" : "");
+		}
+		try {
+			wait(purgeRange(bmData, node->range, node->purgeVersion, node->force, node->nodeID));
+		} catch (Error& e) {
+			if (e.code() == error_code_operation_cancelled || e.code() == error_code_http_request_failed ||
+			    e.code() == error_code_blob_manager_replaced || e.code() == error_code_platform_error) {
+				throw e;
+			}
+			// FIXME: refactor this into a function on BlobManagerData
+			TraceEvent(SevError, "BlobManagerUnexpectedErrorPurgeRange", bmData->id)
+			    .error(e)
+			    .detail("Epoch", bmData->epoch)
+			    .detail("Range", node->range)
+			    .detail("Version", node->purgeVersion)
+			    .detail("Force", node->force);
+			ASSERT_WE_THINK(false);
+		}
+	} else {
+		++bmData->stats.noopPurges;
+		CODE_PROBE(true, "skipping purge as it is completely superceded by newer purges");
+		if (BM_PURGE_DEBUG) {
+			fmt::print("BM {0} skipping obsolete purge range [{1} - {2}) @ {3}{4}\n",
+			           bmData->epoch,
+			           node->range.begin.printable(),
+			           node->range.end.printable(),
+			           node->purgeVersion,
+			           node->force ? " (force)" : "");
+		}
+	}
+
+	// we're done processing so we can unblock future purges, but only clean up the purge key when any purges that
+	// superceded us in parallel are also done
+	bmData->addActor.send(cleanupPurgeKey(bmData, node->purgeKey, waitForAll(waitBeforeDeletingPurgeKey)));
+	if (BM_PURGE_DEBUG) {
+		fmt::print("BM {0} completed purge range {1} [{2} - {3}) @ {4}{5}\n",
+		           bmData->epoch,
+		           node->nodeID.shortString(),
+		           node->range.begin.printable(),
+		           node->range.end.printable(),
+		           node->purgeVersion,
+		           node->force ? " (force)" : "");
+	}
+	return Void();
+}
+
+ACTOR Future<Void> cleanupCompletedPurgeKeys(Reference<BlobManagerData> self) {
+	loop {
+		// do in delayed batches for efficiency
+		state Future<Void> nextDelay = delayJittered(1.0);
+		state int batchSize = 1000;
+		if (BUGGIFY_WITH_PROB(0.01)) {
+			batchSize = deterministicRandom()->randomInt(1, 10);
+		}
+
+		if (self->completedPurgeKeys.empty()) {
+			wait(nextDelay);
+			continue;
+		}
+
+		state std::vector<Key> purgeKeysToDelete;
+		purgeKeysToDelete.reserve(std::min<size_t>(batchSize, self->completedPurgeKeys.size()));
+		while (purgeKeysToDelete.size() < batchSize && !self->completedPurgeKeys.empty()) {
+			purgeKeysToDelete.push_back(self->completedPurgeKeys.front());
+			if (BM_PURGE_DEBUG) {
+				fmt::print(
+				    "BM {0} deleting purge key {1}\n", self->epoch, self->completedPurgeKeys.front().printable());
+			}
+			self->completedPurgeKeys.pop_front();
+		}
+		CODE_PROBE(!self->completedPurgeKeys.empty(), "too many completed purge keys for 1 batch");
+
+		state Transaction tr(self->db);
+		loop {
+			try {
+				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+				for (auto& it : purgeKeysToDelete) {
+					tr.clear(it);
+				}
+				wait(tr.commit());
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		if (self->completedPurgeKeys.empty()) {
+			wait(nextDelay);
+		}
+	}
+}
+
 /*
- * This monitor watches for changes to a key K that gets updated whenever there is a new purge intent.
- * On this change, we scan through all blobGranulePurgeKeys (which look like <startKey, endKey>=<purge_version,
- * force>) and purge any intents.
- *
- * Once the purge has succeeded, we clear the key IF the version is still the same one that was purged.
- * That way, if another purge intent arrived for the same range while we were working on an older one,
- * we wouldn't end up clearing the intent.
- *
- * When watching for changes, we might end up in scenarios where we failed to do the work
- * for a purge intent even though the watch was triggered (maybe the BM had a blip). This is problematic
- * if the intent is a force and there isn't another purge intent for quite some time. To remedy this,
- * if we don't see a watch change in X (configurable) seconds, we will just sweep through the purge intents,
- * consolidating any work we might have missed before.
- *
- * Note: we could potentially use a changefeed here to get the exact purgeIntent that was added
- * rather than iterating through all of them, but this might have too much overhead for latency
- * improvements we don't really need here (also we need to go over all purge intents anyways in the
- * case that the timer is up before any new purge intents arrive).
+ * This monitor watches for new granule purge intents to appear in the purge queue.
+ * Upon finding a purge intent, we will see if there is an already running purge for overlapping ranges.
+ * Because the purges cannot run in parallel, we will order them by their "newness", where a purge that is a force is
+ * always newer than a retention purge, and retention purges are ordered by their purge version. If a purge is at a
+ * higher version, it will wait for the previous one to complete. This has several additional optimizations. If a new
+ * "older" purge comes in after we are already processing a "newer" purge, it will simply be marked as complete when the
+ * already-running purge finishes If we get multiple "newer" purges while an old purge is running, we will coalesce them
+ * and only run the newest purge.
  */
 ACTOR Future<Void> monitorPurgeKeys(Reference<BlobManagerData> self) {
 	self->initBStore();
@@ -6314,13 +6524,15 @@ ACTOR Future<Void> monitorPurgeKeys(Reference<BlobManagerData> self) {
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 
-			state std::vector<Future<Void>> purges;
-			state CoalescedKeyRangeMap<std::pair<Version, bool>> purgeMap;
-			purgeMap.insert(allKeys, std::make_pair<Version, bool>(0, false));
 			try {
 				wait(checkManagerLock(tr, self));
 				// TODO: replace 10000 with a knob
-				state RangeReadResult purgeIntents = wait(tr->getRange(blobGranulePurgeKeys, BUGGIFY ? 1 : 10000));
+				int batchSize = 10000;
+				if (BUGGIFY_WITH_PROB(0.01)) {
+					batchSize = deterministicRandom()->randomInt(1, 10);
+				}
+				state RangeReadResult purgeIntents =
+				    wait(tr->getRange(KeyRangeRef(lastPurgeKey, blobGranulePurgeKeys.end), batchSize));
 				if (purgeIntents.size()) {
 					CODE_PROBE(true, "BM found purges to process");
 					int rangeIdx = 0;
@@ -6330,70 +6542,61 @@ ACTOR Future<Void> monitorPurgeKeys(Reference<BlobManagerData> self) {
 						bool force;
 						std::tie(purgeVersion, range, force) =
 						    decodeBlobGranulePurgeValue(purgeIntents[rangeIdx].value);
-						auto ranges = purgeMap.intersectingRanges(range);
-						bool foundConflict = false;
-						for (auto it : ranges) {
-							if ((it.value().second && !force && it.value().first < purgeVersion) ||
-							    (!it.value().second && force && purgeVersion < it.value().first)) {
-								foundConflict = true;
-								break;
-							}
-						}
-						if (foundConflict) {
-							break;
-						}
-						purgeMap.insert(range, std::make_pair(purgeVersion, force));
 
 						if (BM_PURGE_DEBUG) {
-							fmt::print("BM {0} about to purge range [{1} - {2}) @ {3}, force={4}\n",
+							fmt::print("BM {0} found intent to purge range [{1} - {2}) @ {3}{4}\n",
 							           self->epoch,
 							           range.begin.printable(),
 							           range.end.printable(),
 							           purgeVersion,
-							           force ? "T" : "F");
+							           force ? " (force)" : "");
+						}
+
+						auto ranges = self->latestActivePurges.intersectingRanges(range);
+						Reference<PurgeRangeDAGNode> node =
+						    makeReference<PurgeRangeDAGNode>(range, purgeIntents[rangeIdx].key, purgeVersion, force);
+						std::vector<KeyRange> newerSubRanges;
+						std::vector<Future<Void>> olderSubRangeFutures;
+						std::vector<Future<Void>> newerSubRangeFutures;
+						Future<Void> waitOnOlder = Future<Void>(Void());
+
+						for (auto prevNode : ranges) {
+							KeyRange intersection = prevNode.range() & range;
+							bool iAmNewer;
+							if (prevNode.cvalue()->force || force) {
+								iAmNewer = force && !prevNode.cvalue()->force;
+							} else {
+								iAmNewer = purgeVersion > prevNode.cvalue()->purgeVersion;
+							}
+
+							if (iAmNewer) {
+								newerSubRanges.push_back(intersection);
+								olderSubRangeFutures.push_back(prevNode.cvalue()->purgeFuture);
+								// reference from this node since now the reference is being removed from the purge map
+								node->replacedParents.push_back(prevNode.cvalue());
+							} else {
+								newerSubRangeFutures.push_back(prevNode.cvalue()->purgeFuture);
+							}
+						}
+
+						if (newerSubRanges.empty()) {
+							++self->stats.noopPurges;
+							// if no reference in the map because this is completely superceded by existing ranges, just
+							// wait for them to complete
+							self->addActor.send(
+							    cleanupPurgeKey(self, node->purgeKey, waitForAll(newerSubRangeFutures)));
+						} else {
+							for (auto& it : newerSubRanges) {
+								self->latestActivePurges.insert(it, node);
+							}
+							// even if this purge is already completely obsolete by other purges, we can't delete its
+							// purge key until the ones that obsolete this purge finish
+							node->purgeFuture =
+							    handlePurgeRangeDAGNode(self, node.getPtr(), waitForAll(olderSubRangeFutures));
+							self->addActor.send(node->purgeFuture);
 						}
 					}
-					lastPurgeKey = purgeIntents[rangeIdx - 1].key;
-
-					for (auto it : purgeMap.ranges()) {
-						if (it.value().first > 0) {
-							purges.emplace_back(purgeRange(self, it.range(), it.value().first, it.value().second));
-						}
-					}
-
-					// wait for this set of purges to complete before starting the next ones since if we
-					// purge a range R at version V and while we are doing that, the time expires, we will
-					// end up trying to purge the same range again since the work isn't finished and the
-					// purges will race
-					//
-					// TODO: this isn't that efficient though. Instead we could keep metadata as part of the
-					// BM's memory that tracks which purges are active. Once done, we can mark that work as
-					// done. If the BM fails then all purges will fail and so the next BM will have a clear
-					// set of metadata (i.e. no work in progress) so we will end up doing the work in the
-					// new BM
-					try {
-						wait(waitForAll(purges));
-					} catch (Error& e) {
-						// These should not get an error that then causes a transaction retry loop. All error handling
-						// should be done in the purge calls
-						// FIXME: retry purging if it gets blobstore errors instead of killing blob manager
-						if (e.code() == error_code_operation_cancelled || e.code() == error_code_http_request_failed ||
-						    e.code() == error_code_blob_manager_replaced || e.code() == error_code_platform_error) {
-							throw e;
-						}
-						// FIXME: refactor this into a function on BlobManagerData
-						TraceEvent(SevError, "BlobManagerUnexpectedErrorPurgeRanges", self->id)
-						    .error(e)
-						    .detail("Epoch", self->epoch);
-						ASSERT_WE_THINK(false);
-
-						// if not simulation, kill the BM
-						if (self->iAmReplaced.canBeSet()) {
-							self->iAmReplaced.sendError(e);
-						}
-						throw e;
-					}
-					break;
+					lastPurgeKey = keyAfter(purgeIntents[rangeIdx - 1].key);
 				} else {
 					state Future<Void> watchPurgeIntentsChange = tr->watch(blobGranulePurgeChangeKey);
 					wait(tr->commit());
@@ -6404,32 +6607,6 @@ ACTOR Future<Void> monitorPurgeKeys(Reference<BlobManagerData> self) {
 				wait(tr->onError(e));
 			}
 		}
-
-		if (BUGGIFY && self->maybeInjectTargetedRestart()) {
-			wait(delay(0)); // should be cancelled
-			ASSERT(false);
-		}
-
-		tr->reset();
-		loop {
-			try {
-				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
-				tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-				tr->clear(KeyRangeRef(blobGranulePurgeKeys.begin, keyAfter(lastPurgeKey)));
-				wait(checkManagerLock(tr, self));
-				wait(tr->commit());
-				break;
-			} catch (Error& e) {
-				wait(tr->onError(e));
-			}
-		}
-
-		if (BM_PURGE_DEBUG) {
-			fmt::print("BM {0} Done clearing current set of purge intents.\n", self->epoch);
-		}
-
-		CODE_PROBE(true, "BM finished processing purge intents");
 	}
 }
 
@@ -7596,6 +7773,7 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 		self->addActor.send(monitorClientRanges(self));
 		self->addActor.send(monitorTenants(self));
 		self->addActor.send(monitorPurgeKeys(self));
+		self->addActor.send(cleanupCompletedPurgeKeys(self));
 		if (SERVER_KNOBS->BG_CONSISTENCY_CHECK_ENABLED && !self->isFullRestoreMode &&
 		    (!CLIENT_KNOBS->ALLOW_BULK_LOADS || !SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES)) {
 			// FIXME: reenable once bulk load data in storage servers!!
@@ -7660,6 +7838,7 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 	// prevent a reference counting cycle
 	self->assignsInProgress = KeyRangeActorMap();
 	self->boundaryEvaluations.clear();
+	self->latestActivePurges.clear();
 	return Void();
 }
 

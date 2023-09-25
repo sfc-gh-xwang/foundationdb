@@ -810,8 +810,100 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		}
 
 		// tear down the part of the test that we didn't already do
-		wait(self->tearDownRangeAfterUnit(cx, self, KeyRangeRef(endKey, range.end)));
+		if (endKey < range.end) {
+			wait(self->tearDownRangeAfterUnit(cx, self, KeyRangeRef(endKey, range.end)));
+		}
 
+		return Void();
+	}
+
+	ACTOR Future<Void> multiPurgeUnit(Database cx, BlobGranuleRangesWorkload* self, std::vector<Key> boundaries) {
+		state int retentionPurges = deterministicRandom()->randomSkewedUInt32(1, 10);
+		state int forcePurges = deterministicRandom()->randomSkewedUInt32(1, 10);
+		state int i = 0;
+
+		// in the normal case, do R retention purges of strictly increasing versions followed by F force purges.
+		// to make it weird, sometimes mess the versions around so they're not strictly increasing, and otherwise
+		// sometimes do the forces first
+		state bool perturbVersions = deterministicRandom()->coinflip();
+		state bool doRetentionFirst = deterministicRandom()->coinflip();
+
+		ASSERT(boundaries.size() >= 2);
+
+		state std::vector<Future<Void>> waitCompleteFutures;
+		waitCompleteFutures.reserve(retentionPurges + forcePurges);
+		for (i = 0; i < retentionPurges + forcePurges; i++) {
+			// For each index randomly with 1/total purges chance, sleep and/or wait for either first or existing purges
+			// to complete before starting next purges
+			if (!waitCompleteFutures.empty() &&
+			    deterministicRandom()->randomInt(0, retentionPurges + forcePurges) == 0) {
+				if (deterministicRandom()->coinflip()) {
+					wait(delay(deterministicRandom()->random01()));
+				} else if (deterministicRandom()->coinflip()) {
+					wait(waitCompleteFutures[0]);
+				} else {
+					wait(waitForAll(waitCompleteFutures));
+				}
+			}
+
+			bool force = i >= retentionPurges;
+			if (!doRetentionFirst) {
+				force = !force;
+			}
+
+			Version purgeVersion = i + 1;
+			if (perturbVersions) {
+				purgeVersion += deterministicRandom()->randomInt(0, retentionPurges + forcePurges);
+			}
+
+			int windowSize = deterministicRandom()->randomSkewedUInt32(1, boundaries.size());
+			int startIdx = deterministicRandom()->randomInt(0, boundaries.size() - windowSize);
+			KeyRange purgeRange = KeyRangeRef(boundaries[startIdx], boundaries[startIdx + windowSize]);
+			Key purgeKey = wait(cx->purgeBlobGranules(purgeRange, purgeVersion, self->tenant, force));
+			waitCompleteFutures.push_back(cx->waitPurgeGranulesComplete(purgeKey));
+		}
+
+		wait(waitForAll(waitCompleteFutures));
+
+		wait(self->tearDownRangeAfterUnit(cx, self, KeyRangeRef(boundaries.front(), boundaries.back())));
+
+		return Void();
+	}
+
+	ACTOR Future<Void> repeatPurgeUnit(Database cx, BlobGranuleRangesWorkload* self, KeyRange range) {
+		bool blobbifySuccess = wait(cx->blobbifyRangeBlocking(range, self->tenant));
+		ASSERT(blobbifySuccess);
+
+		std::vector<Key> boundaries = { range.begin, range.end };
+		wait(self->multiPurgeUnit(cx, self, boundaries));
+		return Void();
+	}
+
+	ACTOR Future<Void> overlappingPurgeUnit(Database cx, BlobGranuleRangesWorkload* self, KeyRange range) {
+		// TODO: blobbify N different consecutive subranges
+		state int blobRanges = deterministicRandom()->randomInt(2, 10);
+		state std::vector<Key> boundaries;
+		boundaries.reserve(blobRanges + 1);
+		boundaries.push_back(range.begin);
+		for (int i = 0; i < blobRanges - 1; i++) {
+			std::string suffix = "/" + std::to_string(i) + "/";
+			boundaries.push_back(range.begin.withSuffix(suffix));
+		}
+		boundaries.push_back(range.end);
+
+		state std::vector<Future<bool>> blobbifies;
+		for (int i = 0; i < boundaries.size() - 1; i++) {
+			blobbifies.push_back(
+			    cx->blobbifyRangeBlocking(KeyRangeRef(boundaries[i], boundaries[i + 1]), self->tenant));
+		}
+
+		wait(waitForAll(blobbifies));
+
+		for (auto& it : blobbifies) {
+			ASSERT(it.get());
+		}
+
+		wait(self->multiPurgeUnit(cx, self, boundaries));
 		return Void();
 	}
 
@@ -830,17 +922,10 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		}
 		state int endUnblobbifyIdx = startUnblobbifyIdx + windowToUnblobbify;
 
-		fmt::print("DBG: Ranges={0}, Start={1}, Window={2}, End={3}\n",
-		           ranges,
-		           startUnblobbifyIdx,
-		           windowToUnblobbify,
-		           endUnblobbifyIdx);
-
 		state int i;
 		for (i = 0; i < ranges; i++) {
 			subRange = KeyRangeRef(range.begin.withSuffix("_" + std::to_string(i)),
 			                       range.begin.withSuffix("_" + std::to_string(i + 1)));
-			fmt::print("DBG: Blobbify [{0} - {1}\n", subRange.begin.printable(), subRange.end.printable());
 			bool success = wait(cx->blobbifyRange(subRange, self->tenant));
 			ASSERT(success);
 			wait(self->checkRange(cx, self, subRange, true, true));
@@ -850,7 +935,6 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 			int idx = i + startUnblobbifyIdx;
 			subRange = KeyRangeRef(range.begin.withSuffix("_" + std::to_string(idx)),
 			                       range.begin.withSuffix("_" + std::to_string(idx + 1)));
-			fmt::print("DBG: Unblobbify [{0} - {1}\n", subRange.begin.printable(), subRange.end.printable());
 			wait(store(purgeKey, self->versionedForcePurge(cx, subRange, self->tenant)));
 			wait(cx->waitPurgeGranulesComplete(purgeKey));
 
@@ -862,7 +946,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		state Standalone<VectorRef<KeyRangeRef>> blobRanges =
 		    wait(cx->listBlobbifiedRanges(range, 1000000, self->tenant));
 		if (blobRanges.size() != ranges - windowToUnblobbify) {
-			fmt::print("ERROR: incorret number of blob ranges! ({0}) - expecting {1}\n",
+			fmt::print("ERROR: incorrect number of blob ranges! ({0}) - expecting {1}\n",
 			           blobRanges.size(),
 			           ranges - windowToUnblobbify);
 			for (i = 0; i < blobRanges.size(); i++) {
@@ -914,7 +998,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 			expectedBoundaries += (ranges - endUnblobbifyIdx) + 1;
 		}
 		if (systemBoundaries.size() != expectedBoundaries) {
-			fmt::print("ERROR: incorret number of system boundaries! ({0}) - expecting {1} for {2} - {3}\n",
+			fmt::print("ERROR: incorrect number of system boundaries! ({0}) - expecting {1} for {2} - {3}\n",
 			           systemBoundaries.size(),
 			           expectedBoundaries,
 			           systemRange.begin.printable(),
@@ -943,15 +1027,23 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		DELETE_TENANT_UNIT,
 		UNBLOBBIFY_MANY_UNIT,
 		COALESCE_UNBLOBBIFY_UNIT,
-		OP_COUNT = 10 /* keep this last */
+		REPEAT_PURGE_UNIT,
+		OVERLAPPING_PURGE_UNIT,
+		OP_COUNT = 12 /* keep this last */
 	};
 
 	ACTOR Future<Void> blobGranuleRangesUnitTests(Database cx, BlobGranuleRangesWorkload* self) {
 		if (deterministicRandom()->coinflip()) {
 			cx->internal = IsInternal::False;
 		}
+		if (BGRW_DEBUG) {
+			fmt::print("Unit client starting.\n");
+		}
 		loop {
 			if (self->stopUnitClient) {
+				if (BGRW_DEBUG) {
+					fmt::print("Unit client exiting.\n");
+				}
 				return Void();
 			}
 			std::set<UnitTestTypes> excludedTypes;
@@ -998,6 +1090,10 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 				wait(self->unblobbifyManyUnit(cx, self, range));
 			} else if (op == COALESCE_UNBLOBBIFY_UNIT) {
 				wait(self->coalesceUnblobbifyUnit(cx, self, range));
+			} else if (op == REPEAT_PURGE_UNIT) {
+				wait(self->repeatPurgeUnit(cx, self, range));
+			} else if (op == OVERLAPPING_PURGE_UNIT) {
+				wait(self->overlappingPurgeUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}
