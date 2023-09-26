@@ -18,9 +18,9 @@ static ThrottlingId getThrottlingId(int index) {
 ACTOR static Future<Void> runWorkload(RKClientThroughputTracker* throughputTracker,
                                       double throughput,
                                       int numThrottlingIds) {
-	state ThrottlingIdMap<uint64_t> throughputPerInterval;
+	state ThrottlingIdMap<ThroughputStats> throughputPerInterval;
 	for (int i = 0; i < numThrottlingIds; ++i) {
-		throughputPerInterval[getThrottlingId(i)] = static_cast<uint64_t>(throughput * 0.1);
+		throughputPerInterval[getThrottlingId(i)].readThroughput = static_cast<uint64_t>(throughput * 0.1);
 	}
 	loop {
 		throughputTracker->update(throughputPerInterval);

@@ -61,9 +61,10 @@ int RKClientThroughputTracker::throttlingIdsTracked() const {
 	return throughput.size();
 }
 
-void RKClientThroughputTracker::update(ThrottlingIdMap<uint64_t> const& newThroughput) {
+void RKClientThroughputTracker::update(ThrottlingIdMap<ThroughputStats> const& newThroughput) {
 	for (auto const& [throttlingId, newPerThrottlingIdThroughput] : newThroughput) {
-		throughput[throttlingId].addThroughput(newPerThrottlingIdThroughput);
+		throughput[throttlingId].addThroughput(newPerThrottlingIdThroughput.readThroughput +
+		                                       newPerThrottlingIdThroughput.writeThroughput);
 	}
 	if (now() > lastExpirationCheck + expirationCheckInterval) {
 		expireThrottlingIds();

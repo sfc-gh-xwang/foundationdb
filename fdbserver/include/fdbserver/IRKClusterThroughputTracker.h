@@ -125,7 +125,7 @@ public:
 
 	// Updates per-throttlingId throughput statistics based on newly
 	// reported throughput metrics from a GRV proxy
-	void update(ThrottlingIdMap<uint64_t> const& newThroughput);
+	void update(ThrottlingIdMap<ThroughputStats> const& newThroughput);
 };
 
 class MockThroughputTracker : public IRKClusterThroughputTracker {
