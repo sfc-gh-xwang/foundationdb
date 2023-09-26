@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-#include "fdbclient/FDBOptions.g.h"
+#include "fdbrpc/Replication.h"
 #include "fdbrpc/simulator.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "fdbclient/ManagementAPI.actor.h"
@@ -101,32 +101,37 @@ struct MoveKeysWorkload : FailureInjectionWorkload {
 		return KeyRangeRef(doubleToTestKey(pos), doubleToTestKey(pos + len));
 	}
 
-	std::vector<StorageServerInterface> getRandomTeam(std::vector<StorageServerInterface> storageServers,
-	                                                  int teamSize) {
-		if (storageServers.size() < teamSize) {
+	std::vector<StorageServerInterface> getRandomTeam(std::vector<StorageServerInterface> storageServers) {
+		if (storageServers.size() < configuration.storageTeamSize) {
 			TraceEvent(SevWarnAlways, "LessThanThreeStorageServers").log();
 			throw operation_failed();
 		}
 
-		deterministicRandom()->randomShuffle(storageServers);
+		std::map<UID, StorageServerInterface> ssMap;
+		Reference<LocalitySet> localitySet = Reference<LocalitySet>(new LocalityMap<UID>());
+		LocalityMap<UID>* localityMap = (LocalityMap<UID>*)localitySet.getPtr();
 
-		std::set<StorageServerInterface> t;
-		std::set<Optional<Standalone<StringRef>>> machines;
-		while (t.size() < teamSize && storageServers.size()) {
-			auto s = storageServers.back();
-			storageServers.pop_back();
-			if (!machines.count(s.locality.zoneId())) {
-				machines.insert(s.locality.zoneId());
-				t.insert(s);
-			}
+		for (auto const& ssi : storageServers) {
+			localityMap->add(ssi.locality, &ssi.uniqueID);
+			ssMap[ssi.uniqueID] = ssi;
 		}
 
-		if (t.size() < teamSize) {
-			TraceEvent(SevWarnAlways, "LessThanThreeUniqueMachines").log();
+		std::vector<LocalityEntry> resultEntries;
+		bool result = localitySet->selectReplicas(configuration.storagePolicy, resultEntries);
+		if (!result || resultEntries.size() != configuration.storageTeamSize) {
+			TraceEvent(SevWarnAlways, "TooFewStorageServers").log();
 			throw operation_failed();
 		}
 
-		return std::vector<StorageServerInterface>(t.begin(), t.end());
+		std::vector<StorageServerInterface> team;
+		for (auto const& entry : resultEntries) {
+			auto itr = ssMap.find(*localityMap->getObject(entry));
+			ASSERT(itr != ssMap.end());
+			team.push_back(itr->second);
+		}
+
+		ASSERT(team.size() == configuration.storageTeamSize);
+		return team;
 	}
 
 	ACTOR Future<Void> doMoveKeys(Database cx,
@@ -242,8 +247,7 @@ struct MoveKeysWorkload : FailureInjectionWorkload {
 					wait(poisson(&lastTime, self->meanDelay));
 
 					KeyRange keys = self->getRandomKeys();
-					std::vector<StorageServerInterface> team =
-					    self->getRandomTeam(storageServers, self->configuration.storageTeamSize);
+					std::vector<StorageServerInterface> team = self->getRandomTeam(storageServers);
 
 					// update both inFlightActors and inFlight key range maps, cancelling deleted RelocateShards
 					std::vector<KeyRange> ranges;
