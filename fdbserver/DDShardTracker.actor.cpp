@@ -1255,7 +1255,6 @@ ACTOR Future<Void> trackInitialShards(DataDistributionTracker* self, Reference<I
 }
 
 ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, GetTopKMetricsRequest req) {
-	state Future<Void> onChange;
 	state std::vector<GetTopKMetricsReply::KeyRangeStorageMetrics> returnMetrics;
 	// random pick a portion of shard
 	if (req.keys.size() > SERVER_KNOBS->DD_SHARD_COMPARE_LIMIT) {
@@ -1263,7 +1262,6 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 	}
 	try {
 		loop {
-			onChange = Future<Void>();
 			returnMetrics.clear();
 			state int64_t minReadLoad = -1;
 			state int64_t maxReadLoad = -1;
@@ -1272,19 +1270,8 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 				state KeyRange range = req.keys[i];
 				state std::vector<Future<StorageMetrics>> actors;
 				for (auto t : self->shards->intersectingRanges(range)) {
-					auto& stats = t.value().stats;
-					if (!stats->get().present()) {
-						onChange = stats->onChange();
-						break;
-					}
 					actors.push_back(self->db->getStorageMetrics(t.range(), CLIENT_KNOBS->STORAGE_METRICS_SHARD_LIMIT));
 				}
-
-				// skip if current stats is invalid
-				if (onChange.isValid()) {
-					break;
-				}
-
 				wait(waitForAll(actors));
 				StorageMetrics latestMetrics;
 				for (int i = 0; i < actors.size(); i++) {
@@ -1303,23 +1290,19 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 				wait(yield());
 			}
 			// FIXME(xwang): Do we need to track slow task here?
-			if (!onChange.isValid()) {
-				if (req.getTopK() >= returnMetrics.size())
-					req.reply.send(GetTopKMetricsReply(returnMetrics, minReadLoad, maxReadLoad));
-				else {
-					std::nth_element(returnMetrics.begin(),
-					                 returnMetrics.begin() + req.getTopK() - 1,
-					                 returnMetrics.end(),
-					                 GetTopKMetricsRequest::compare);
-					req.reply.send(
-					    GetTopKMetricsReply(std::vector<GetTopKMetricsReply::KeyRangeStorageMetrics>(
-					                            returnMetrics.begin(), returnMetrics.begin() + req.getTopK()),
-					                        minReadLoad,
-					                        maxReadLoad));
-				}
-				return Void();
+			if (req.getTopK() >= returnMetrics.size())
+				req.reply.send(GetTopKMetricsReply(returnMetrics, minReadLoad, maxReadLoad));
+			else {
+				std::nth_element(returnMetrics.begin(),
+				                 returnMetrics.begin() + req.getTopK() - 1,
+				                 returnMetrics.end(),
+				                 GetTopKMetricsRequest::compare);
+				req.reply.send(GetTopKMetricsReply(std::vector<GetTopKMetricsReply::KeyRangeStorageMetrics>(
+				                                       returnMetrics.begin(), returnMetrics.begin() + req.getTopK()),
+				                                   minReadLoad,
+				                                   maxReadLoad));
 			}
-			wait(onChange);
+			return Void();
 		}
 	} catch (Error& e) {
 		if (e.code() != error_code_actor_cancelled && !req.reply.isSet())
@@ -1346,25 +1329,19 @@ ACTOR Future<Void> fetchTopKShardMetrics(DataDistributionTracker* self, GetTopKM
 ACTOR Future<Void> fetchShardMetrics_impl(DataDistributionTracker* self, GetMetricsRequest req) {
 	try {
 		loop {
-			state Future<Void> onChange;
-			state std::vector<Future<StorageMetrics>> actors;
+			Future<Void> onChange;
+			StorageMetrics returnMetrics;
 			for (auto t : self->shards->intersectingRanges(req.keys)) {
 				auto& stats = t.value().stats;
 				if (!stats->get().present()) {
 					onChange = stats->onChange();
 					break;
 				}
-				actors.push_back(self->db->getStorageMetrics(t.range(), CLIENT_KNOBS->STORAGE_METRICS_SHARD_LIMIT));
+				returnMetrics += t.value().stats->get().get().metrics;
 			}
 
 			if (!onChange.isValid()) {
-
-				wait(waitForAll(actors));
-				StorageMetrics latestMetrics;
-				for (int i = 0; i < actors.size(); i++) {
-					latestMetrics += actors[i].get();
-				}
-				req.reply.send(latestMetrics);
+				req.reply.send(returnMetrics);
 				return Void();
 			}
 
