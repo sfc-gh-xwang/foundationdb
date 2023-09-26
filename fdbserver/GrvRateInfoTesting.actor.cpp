@@ -1,10 +1,10 @@
 /**
- * GrvTransactionRateInfoTesting.actor.cpp
+ * GrvRateInfoTesting.actor.cpp
  *
  * Copyright (c) 2023 Snowflake Computing
  */
 
-#include "fdbserver/GrvTransactionRateInfo.h"
+#include "fdbserver/GrvRateInfo.h"
 #include "fdbserver/Knobs.h"
 #include "flow/UnitTest.h"
 #include "flow/actorcompiler.h" // must be last include
@@ -42,7 +42,7 @@ public:
 	bool isEmpty() const { return (reqsToRelease == 0); }
 };
 
-ACTOR static Future<Void> runThrottlingTest(GrvTransactionRateInfo* rateInfo, MockClient* client, int64_t* counter) {
+ACTOR static Future<Void> runThrottlingTest(GrvRateInfo* rateInfo, MockClient* client, int64_t* counter) {
 	state int batchSize = deterministicRandom()->randomInt(1, 11);
 	loop {
 		state double elapsed = 0.1 * deterministicRandom()->random01();
@@ -62,37 +62,37 @@ ACTOR static Future<Void> runThrottlingTest(GrvTransactionRateInfo* rateInfo, Mo
 
 // Rate limit set at 10, but client attempts 20 transactions per second.
 // Client should be throttled to only 10 transactions per second.
-TEST_CASE("/GrvTransactionRateInfo/Simple") {
+TEST_CASE("/GrvRateInfo/Simple") {
 	state double testDuration = 60.0;
 	state double desiredRate = 20.0;
 	state double throttledRate = 10.0;
 	state MockClient client(desiredRate);
-	state GrvTransactionRateInfo rateInfo(
+	state GrvRateInfo rateInfo(
 	    /*rateWindow=*/2.0, /*maxEmptyQueueBudget=*/100, throttledRate, /*maxToStart=*/100000);
 	state int64_t counter = 0;
 
 	client.start();
 	wait(timeout(runThrottlingTest(&rateInfo, &client, &counter), testDuration, Void()));
-	TraceEvent("GrvTransactionRateInfoSimpleTest").detail("Counter", counter);
+	TraceEvent("GrvRateInfoSimpleTest").detail("Counter", counter);
 	ASSERT(isNear(testDuration * throttledRate, counter));
 	return Void();
 }
 
 // Rate limit set at 30, but client only attempts 20 transactions per second.
 // Client should be unthrottled, and achieve its attempted throughput.
-TEST_CASE("/GrvTransactionRateInfo/Unthrottled") {
+TEST_CASE("/GrvRateInfo/Unthrottled") {
 	state double testDuration = 60.0;
 	state double desiredRate = 20.0;
 	state double throttledRate = 30.0;
 	state MockClient client(desiredRate);
-	state GrvTransactionRateInfo rateInfo(
+	state GrvRateInfo rateInfo(
 	    /*rateWindow=*/2.0, /*maxEmptyQueueBudget=*/100, throttledRate, /*maxToStart=*/100000);
 	state int64_t counter = 0;
 
 	client.start();
 	rateInfo.setRate(throttledRate);
 	wait(timeout(runThrottlingTest(&rateInfo, &client, &counter), testDuration, Void()));
-	TraceEvent("GrvTransactionRateInfoUnthrottledTest").detail("Counter", counter);
+	TraceEvent("GrvRateInfoUnthrottledTest").detail("Counter", counter);
 	ASSERT(isNear(testDuration * desiredRate, counter));
 	return Void();
 }
@@ -102,13 +102,13 @@ TEST_CASE("/GrvTransactionRateInfo/Unthrottled") {
 // client waits 20 seconds before starting, allowing the maximum budget
 // to fill up. Therefore, the client is able to achieve 100 + 10 * 60 =
 // 700 transactions in a minute.
-TEST_CASE("/GrvTransactionRateInfo/MaxEmptyQueueBudget") {
+TEST_CASE("/GrvRateInfo/MaxEmptyQueueBudget") {
 	state double testDuration = 60.0;
 	state double desiredRate = 20.0;
 	state double throttledRate = 10.0;
 	state int maxEmptyQueueBudget = 100;
 	state MockClient client(desiredRate);
-	state GrvTransactionRateInfo rateInfo(
+	state GrvRateInfo rateInfo(
 	    /*rateWindow=*/2.0, maxEmptyQueueBudget, throttledRate, /*maxToStart=*/100000);
 	state int64_t counter = 0;
 	state Future<Void> testFuture = runThrottlingTest(&rateInfo, &client, &counter);
@@ -118,7 +118,7 @@ TEST_CASE("/GrvTransactionRateInfo/MaxEmptyQueueBudget") {
 
 	client.start();
 	wait(timeout(testFuture, testDuration, Void()));
-	TraceEvent("GrvTransactionRateInfoMaxEmptyQueueBudgetTest").detail("Counter", counter);
+	TraceEvent("GrvRateInfoMaxEmptyQueueBudgetTest").detail("Counter", counter);
 	ASSERT(isNear(maxEmptyQueueBudget + testDuration * throttledRate, counter));
 	return Void();
 }
