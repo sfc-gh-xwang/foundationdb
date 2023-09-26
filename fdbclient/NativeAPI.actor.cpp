@@ -7888,7 +7888,7 @@ void TransactionState::addReadCost(uint64_t bytes) {
 	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
 		auto const throttlingId = getThrottlingId();
 		if (throttlingId.present()) {
-			cx->addCost(throttlingId.get(), bytes);
+			cx->addReadCost(throttlingId.get(), bytes);
 		}
 	}
 }
@@ -7901,7 +7901,7 @@ void TransactionState::flushWriteCost() {
 	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && !flushedWriteCost) {
 		auto const throttlingId = getThrottlingId();
 		if (throttlingId.present()) {
-			cx->addCost(throttlingId.get(), writeCost);
+			cx->addWriteCost(throttlingId.get(), writeCost);
 		}
 		flushedWriteCost = true;
 	}
@@ -11880,8 +11880,12 @@ Future<Void> DatabaseContext::popChangeFeedMutations(Key rangeID, Version versio
 	return popChangeFeedMutationsActor(Reference<DatabaseContext>::addRef(this), rangeID, version);
 }
 
-void DatabaseContext::addCost(ThrottlingId const& throttlingId, uint64_t bytes) {
-	throughputTracker.addCost(throttlingId, bytes);
+void DatabaseContext::addReadCost(ThrottlingId const& throttlingId, uint64_t bytes) {
+	throughputTracker.addReadCost(throttlingId, bytes);
+}
+
+void DatabaseContext::addWriteCost(ThrottlingId const& throttlingId, uint64_t bytes) {
+	throughputTracker.addWriteCost(throttlingId, bytes);
 }
 
 void DatabaseContext::addTransaction(const ThrottlingId& throttlingId, uint64_t numTransactions) {

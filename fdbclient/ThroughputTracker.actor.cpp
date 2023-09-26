@@ -58,8 +58,15 @@ Future<Void> ThroughputTracker::run(DatabaseContext& cx) {
 	return ThroughputTrackerImpl::run(this, &cx);
 }
 
-void ThroughputTracker::addCost(ThrottlingId const& throttlingId, uint64_t cost) {
-	throughput[throttlingId] += cost;
+void ThroughputTracker::addReadCost(ThrottlingId const& throttlingId, uint64_t cost) {
+	throughput[throttlingId].readThroughput += cost;
+	if (isClientAverageCostTrackingEnabled()) {
+		smoothThroughput[throttlingId].smoother.addDelta(cost);
+	}
+}
+
+void ThroughputTracker::addWriteCost(ThrottlingId const& throttlingId, uint64_t cost) {
+	throughput[throttlingId].writeThroughput += cost;
 	if (isClientAverageCostTrackingEnabled()) {
 		smoothThroughput[throttlingId].smoother.addDelta(cost);
 	}

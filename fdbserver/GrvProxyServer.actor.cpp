@@ -427,7 +427,8 @@ ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRe
 		ReportThroughputRequest req = waitNext(stream);
 		++(*throughputReportsReceived);
 		for (auto const& [throttlingId, clientThroughput] : req.throughput) {
-			(*throttlingIdToThroughput)[throttlingId] += clientThroughput;
+			(*throttlingIdToThroughput)[throttlingId] +=
+			    clientThroughput.readThroughput + clientThroughput.writeThroughput;
 		}
 
 		ReportThroughputReply reply;
