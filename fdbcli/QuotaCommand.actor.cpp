@@ -200,4 +200,21 @@ ACTOR Future<bool> quotaCommandActor(Reference<IDatabase> db, std::vector<String
 	}
 }
 
+void quotaGenerator(const char* text,
+                    const char* line,
+                    std::vector<std::string>& lc,
+                    std::vector<StringRef> const& tokens) {
+	const char* opts[] = { "get", "set", "clear", "reserved_throughput", "total_throughput", "storage", nullptr };
+	arrayGenerator(text, line, opts, lc);
+}
+
+CommandFactory quotaFactory("quota",
+                            CommandHelp("quota",
+                                        "quota [get <tag> [reserved_throughput|total_throughput|storage] | "
+                                        "set <tag> [reserved_throughput|total_throughput|storage] <value> | "
+                                        "clear <tag>]",
+                                        "Get, modify, or clear the reserved/total throughput quota (in bytes/s) or "
+                                        "storage quota (in bytes) for the specified tag."),
+                            &quotaGenerator);
+
 } // namespace fdb_cli
