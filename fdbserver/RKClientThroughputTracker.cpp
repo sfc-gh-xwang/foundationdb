@@ -63,13 +63,15 @@ double RKClientThroughputTracker::getWriteThroughput(ThrottlingId const& throttl
 	}
 }
 
-ThrottlingIdMap<double> RKClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	ThrottlingIdMap<double> result;
+ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> RKClientThroughputTracker::getActiveThrottlingIds(
+    double threshold) const {
+	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> result;
 	for (auto const& [throttlingId, throughputSmoother] : throughput) {
-		auto const smoothThroughput =
-		    throughputSmoother.readSmoother.smoothRate() + throughputSmoother.writeSmoother.smoothRate();
-		if (smoothThroughput > threshold) {
-			result.emplace(throttlingId, smoothThroughput);
+		auto const smoothReadThroughput = throughputSmoother.readSmoother.smoothRate();
+		auto const smoothWriteThroughput = throughputSmoother.writeSmoother.smoothRate();
+		if (smoothReadThroughput + smoothWriteThroughput > threshold) {
+			result.emplace(throttlingId,
+			               IRKClusterThroughputTracker::Throughput(smoothReadThroughput, smoothWriteThroughput));
 		}
 	}
 	return result;

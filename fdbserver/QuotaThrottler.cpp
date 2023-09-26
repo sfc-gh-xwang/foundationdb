@@ -450,7 +450,8 @@ public:
 
 			auto traceName = std::string("QuotaThrottler_GotTargetThroughput-").append(throttlingId.toString());
 			TraceEvent te(traceName.c_str(), id);
-			te.detail("Throughput", throughput);
+			te.detail("ReadThroughput", throughput.readThroughput)
+			    .detail("WriteThroughput", throughput.writeThroughput);
 
 			bool const traceEnabled = stats.canLog();
 			if (!traceEnabled) {
@@ -474,7 +475,9 @@ public:
 
 				if (isBusyThrottlingIdsTrackingEnabled()) {
 					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
-					if (isThrottlingIdBusy(throttlingId, throughput, targetPerProxyThroughput)) {
+					if (isThrottlingIdBusy(throttlingId,
+					                       throughput.readThroughput + throughput.writeThroughput,
+					                       targetPerProxyThroughput)) {
 						result[throttlingId] = targetPerProxyThroughput;
 					}
 				} else {

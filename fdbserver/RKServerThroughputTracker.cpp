@@ -208,14 +208,15 @@ double RKServerThroughputTracker::getWriteThroughput(ThrottlingId const& throttl
 	}
 }
 
-ThrottlingIdMap<double> RKServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	ThrottlingIdMap<double> result;
+ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> RKServerThroughputTracker::getActiveThrottlingIds(
+    double threshold) const {
+	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> result;
 	for (auto const& [throttlingId, throttlingIdThroughput] : throughputByThrottlingId) {
 		auto const readThroughput = throttlingIdThroughput.getReadThroughput();
 		auto const writeThroughput = throttlingIdThroughput.getWriteThroughput();
 
 		if (readThroughput + writeThroughput > threshold) {
-			result.emplace(throttlingId, readThroughput + writeThroughput);
+			result.emplace(throttlingId, IRKClusterThroughputTracker::Throughput(readThroughput, writeThroughput));
 		}
 	}
 	return result;
@@ -244,11 +245,13 @@ double MockThroughputTracker::getWriteThroughput(ThrottlingId const& throttlingI
 	return 0.0;
 }
 
-ThrottlingIdMap<double> MockThroughputTracker::getActiveThrottlingIds(double threshold) const {
-	ThrottlingIdMap<double> result;
-	for (auto const& [throttlingId, throughputValue] : throughput) {
-		if (throughputValue > threshold) {
-			result.emplace(throttlingId, throughputValue);
+ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> MockThroughputTracker::getActiveThrottlingIds(
+    double threshold) const {
+	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> result;
+	for (auto const& [throttlingId, readThroughputValue] : throughput) {
+		if (readThroughputValue > threshold) {
+			result.emplace(throttlingId,
+			               IRKClusterThroughputTracker::Throughput(readThroughputValue, /*writeThroughput=*/0.0));
 		}
 	}
 	return result;

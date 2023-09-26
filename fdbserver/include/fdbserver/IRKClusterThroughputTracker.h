@@ -21,8 +21,15 @@ public:
 	// Returns the current cluster-wide read throughput for the provided throttling ID
 	virtual double getWriteThroughput(ThrottlingId const&) const = 0;
 
-	// Returns the set of throttlingIds reporting throughput above the specified threshold
-	virtual ThrottlingIdMap<double> getActiveThrottlingIds(double threshold) const = 0;
+	struct Throughput {
+		double readThroughput, writeThroughput;
+		Throughput(double readThroughput, double writeThroughput)
+		  : readThroughput(readThroughput),
+		    writeThroughput(writeThroughput) {}
+	};
+
+	// Returns the throughput for the set of throttlingIds reporting throughput above the specified threshold
+	virtual ThrottlingIdMap<Throughput> getActiveThrottlingIds(double threshold) const = 0;
 
 	// Returns the number of throttlingIds for which metrics are currently being stored
 	virtual int throttlingIdsTracked() const = 0;
@@ -91,7 +98,7 @@ public:
 
 	double getWriteThroughput(ThrottlingId const&) const override;
 
-	ThrottlingIdMap<double> getActiveThrottlingIds(double threshold) const override;
+	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 
 	int throttlingIdsTracked() const override;
 
@@ -129,7 +136,7 @@ public:
 
 	double getWriteThroughput(ThrottlingId const&) const override;
 
-	ThrottlingIdMap<double> getActiveThrottlingIds(double threshold) const override;
+	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 
 	int throttlingIdsTracked() const override;
 
@@ -148,7 +155,7 @@ public:
 
 	double getWriteThroughput(ThrottlingId const&) const override;
 
-	ThrottlingIdMap<double> getActiveThrottlingIds(double threshold) const override;
+	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 
 	int throttlingIdsTracked() const override;
 
