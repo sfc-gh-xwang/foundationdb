@@ -93,6 +93,19 @@ struct ReadMetricsWorkload : KVWorkload {
 		highFrequency = deterministicRandom()->coinflip();
 
 		if (clientId == 0) {
+			// When including system keys in read metrics, we cannot easily validate the actual busyness values because
+			// system transactions interfere too much with the result.
+			//
+			// On the other hand, we can only validate that the range busyness is non-zero when including system keys.
+			// Otherwise, a shard that overlaps the system keys may have cached a zero busyness for the
+			// non-system portion as a result of a system read.
+			//
+			// For this reason, we run tests in both modes and do the corresponding checks depending
+			// on the mode.
+			IKnobCollection::getMutableGlobalKnobCollection().setKnob(
+			    "read_metrics_include_system_keys",
+			    KnobValueRef::create(bool{ deterministicRandom()->random01() < 0.05 }));
+
 			TraceEvent("ReadMetricsRepeatedOperation")
 			    .detail("OperationType", repeatedOperation.type)
 			    .detail("Begin", repeatedOperation.begin)
@@ -101,7 +114,8 @@ struct ReadMetricsWorkload : KVWorkload {
 			    .detail("Limit", repeatedOperation.limit)
 			    .detail("Reverse", repeatedOperation.reverse)
 			    .detail("Snapshot", repeatedOperation.snapshot)
-			    .detail("ExpectedAccuracy", repeatedOperation.expectedAccuracy);
+			    .detail("ExpectedAccuracy", repeatedOperation.expectedAccuracy)
+			    .detail("IncludeSystemKeys", SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS);
 		}
 
 		// We don't start checking the results until we've had enough time to aggregate metrics, and the test needs
@@ -208,7 +222,10 @@ struct ReadMetricsWorkload : KVWorkload {
 				if (readMetrics.getRangeBusyness() > expectedBusyness) {
 					++self->successfulOps;
 				} else {
-					ASSERT_GT(readMetrics.getRangeBusyness(), 0);
+					if (SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
+						ASSERT_GT(readMetrics.getRangeBusyness(), 0);
+					}
+
 					TraceEvent("OperationWithLowReadBusyness")
 					    .detail("ExpectedBusyness", expectedBusyness)
 					    .detail("ActualBusyness", readMetrics.getRangeBusyness());
@@ -218,7 +235,7 @@ struct ReadMetricsWorkload : KVWorkload {
 			}
 		}
 
-		if (self->successfulOps < self->totalOps * 0.9) {
+		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS && self->successfulOps < self->totalOps * 0.9) {
 			ASSERT(!busynessResults.empty());
 			std::sort(busynessResults.begin(), busynessResults.end());
 			TraceEvent(SevError, "TooManyReadOperationsReportedLowBusyness")
