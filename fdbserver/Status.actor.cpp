@@ -2950,19 +2950,22 @@ ACTOR Future<KMSHealthStatus> getKMSHealthStatus(Reference<const AsyncVar<Server
 	unhealthy.canConnectToEKP = false;
 	unhealthy.canConnectToKms = false;
 	unhealthy.lastUpdatedTS = now();
-	try {
+	state Future<Void> timeoutFuture = delay(FLOW_KNOBS->EKP_HEALTH_CHECK_REQUEST_TIMEOUT);
+	loop {
 		if (!db->get().client.encryptKeyProxy.present()) {
 			return unhealthy;
 		}
-		KMSHealthStatus reply = wait(timeoutError(
-		    db->get().client.encryptKeyProxy.get().getHealthStatus.getReply(EncryptKeyProxyHealthStatusRequest()),
-		    FLOW_KNOBS->EKP_HEALTH_CHECK_REQUEST_TIMEOUT));
-		return reply;
-	} catch (Error& e) {
-		if (e.code() != error_code_timed_out) {
-			throw;
+		choose {
+			when(wait(db->onChange())) {}
+			when(KMSHealthStatus reply =
+			         wait(brokenPromiseToNever(db->get().client.encryptKeyProxy.get().getHealthStatus.getReply(
+			             EncryptKeyProxyHealthStatusRequest())))) {
+				return reply;
+			}
+			when(wait(timeoutFuture)) {
+				return unhealthy;
+			}
 		}
-		return unhealthy;
 	}
 }
 
