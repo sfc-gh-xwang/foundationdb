@@ -55,14 +55,23 @@ double RKServerThroughputTracker::ThroughputCounters::getThroughput() const {
 }
 
 RKServerThroughputTracker::ThrottlingIdThroughput::ThrottlingIdThroughput()
-  : smoother(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME) {}
+  : readSmoother(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME),
+    writeSmoother(SERVER_KNOBS->GLOBAL_TAG_THROTTLING_COST_FOLDING_TIME) {}
 
-void RKServerThroughputTracker::ThrottlingIdThroughput::addDelta(double delta) {
-	smoother.addDelta(delta);
+void RKServerThroughputTracker::ThrottlingIdThroughput::addReadDelta(double delta) {
+	readSmoother.addDelta(delta);
 }
 
-double RKServerThroughputTracker::ThrottlingIdThroughput::getThroughput() const {
-	return smoother.smoothTotal();
+void RKServerThroughputTracker::ThrottlingIdThroughput::addWriteDelta(double delta) {
+	writeSmoother.addDelta(delta);
+}
+
+double RKServerThroughputTracker::ThrottlingIdThroughput::getReadThroughput() const {
+	return readSmoother.smoothTotal();
+}
+
+double RKServerThroughputTracker::ThrottlingIdThroughput::getWriteThroughput() const {
+	return writeSmoother.smoothTotal();
 }
 
 RKServerThroughputTracker::~RKServerThroughputTracker() = default;
@@ -78,11 +87,11 @@ void RKServerThroughputTracker::cleanupStorageServer(
 	for (auto& [throttlingId, throughputCounters] : throttlingIdToThroughputCounters) {
 		if (!seenReadThrottlingIds.count(throttlingId)) {
 			auto const delta = throughputCounters.updateThroughput(0, OpType::READ);
-			throughputByThrottlingId[throttlingId].addDelta(delta);
+			throughputByThrottlingId[throttlingId].addReadDelta(delta);
 		}
 		if (!seenWriteThrottlingIds.count(throttlingId)) {
 			auto const delta = throughputCounters.updateThroughput(0, OpType::WRITE);
-			throughputByThrottlingId[throttlingId].addDelta(delta);
+			throughputByThrottlingId[throttlingId].addWriteDelta(delta);
 		}
 	}
 
@@ -107,9 +116,10 @@ void RKServerThroughputTracker::cleanup(boost::unordered_flat_set<UID> const& se
 	for (auto& [ssId, throttlingIdToThroughputCounters] : throughputBySS) {
 		if (!seenStorageServers.count(ssId)) {
 			for (auto& [throttlingId, throughputCounters] : throttlingIdToThroughputCounters) {
-				auto const delta = throughputCounters.updateThroughput(0, OpType::READ) +
-				                   throughputCounters.updateThroughput(0, OpType::WRITE);
-				throughputByThrottlingId[throttlingId].addDelta(delta);
+				auto const readDelta = throughputCounters.updateThroughput(0, OpType::READ);
+				auto const writeDelta = throughputCounters.updateThroughput(0, OpType::WRITE);
+				throughputByThrottlingId[throttlingId].addReadDelta(readDelta);
+				throughputByThrottlingId[throttlingId].addWriteDelta(writeDelta);
 			}
 		}
 	}
@@ -132,7 +142,7 @@ void RKServerThroughputTracker::cleanup(boost::unordered_flat_set<UID> const& se
 	boost::unordered::erase_if(throughputByThrottlingId, [&seenThrottlingIds](auto const& kv) {
 		auto const& [throttlingId, throttlingIdThroughput] = kv;
 		return !seenThrottlingIds.count(throttlingId) &&
-		       (throttlingIdThroughput.getThroughput() <
+		       (throttlingIdThroughput.getReadThroughput() + throttlingIdThroughput.getWriteThroughput() <
 		        SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD);
 	});
 }
@@ -153,14 +163,14 @@ void RKServerThroughputTracker::update(Map<UID, StorageQueueInfo> const& sqInfos
 			seenThrottlingIds.insert(busyReader.throttlingId);
 			auto const delta = throttlingIdToThroughputCounters[busyReader.throttlingId].updateThroughput(
 			    busyReader.rate, OpType::READ);
-			throughputByThrottlingId[busyReader.throttlingId].addDelta(delta);
+			throughputByThrottlingId[busyReader.throttlingId].addReadDelta(delta);
 		}
 		for (const auto& busyWriter : ss.busiestWriters) {
 			seenWriteThrottlingIds.insert(busyWriter.throttlingId);
 			seenThrottlingIds.insert(busyWriter.throttlingId);
 			auto const delta = throttlingIdToThroughputCounters[busyWriter.throttlingId].updateThroughput(
 			    busyWriter.rate, OpType::WRITE);
-			throughputByThrottlingId[busyWriter.throttlingId].addDelta(delta);
+			throughputByThrottlingId[busyWriter.throttlingId].addWriteDelta(delta);
 		}
 
 		cleanupStorageServer(throttlingIdToThroughputCounters, seenReadThrottlingIds, seenWriteThrottlingIds);
@@ -180,10 +190,19 @@ Optional<double> RKServerThroughputTracker::getThroughput(UID storageServerId, T
 	return throughputCounter->getThroughput();
 }
 
-double RKServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
+double RKServerThroughputTracker::getReadThroughput(ThrottlingId const& throttlingId) const {
 	auto const throttlingIdThroughput = tryGet(throughputByThrottlingId, throttlingId);
 	if (throttlingIdThroughput) {
-		return throttlingIdThroughput->getThroughput();
+		return throttlingIdThroughput->getReadThroughput();
+	} else {
+		return 0.0;
+	}
+}
+
+double RKServerThroughputTracker::getWriteThroughput(ThrottlingId const& throttlingId) const {
+	auto const throttlingIdThroughput = tryGet(throughputByThrottlingId, throttlingId);
+	if (throttlingIdThroughput) {
+		return throttlingIdThroughput->getWriteThroughput();
 	} else {
 		return 0.0;
 	}
@@ -192,10 +211,11 @@ double RKServerThroughputTracker::getThroughput(ThrottlingId const& throttlingId
 ThrottlingIdMap<double> RKServerThroughputTracker::getActiveThrottlingIds(double threshold) const {
 	ThrottlingIdMap<double> result;
 	for (auto const& [throttlingId, throttlingIdThroughput] : throughputByThrottlingId) {
-		auto const throughput = throttlingIdThroughput.getThroughput();
+		auto const readThroughput = throttlingIdThroughput.getReadThroughput();
+		auto const writeThroughput = throttlingIdThroughput.getWriteThroughput();
 
-		if (throughput > threshold) {
-			result.emplace(throttlingId, throughput);
+		if (readThroughput + writeThroughput > threshold) {
+			result.emplace(throttlingId, readThroughput + writeThroughput);
 		}
 	}
 	return result;
@@ -211,13 +231,17 @@ int RKServerThroughputTracker::throttlingIdsTracked() const {
 
 MockThroughputTracker::~MockThroughputTracker() = default;
 
-double MockThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
+double MockThroughputTracker::getReadThroughput(ThrottlingId const& throttlingId) const {
 	auto it = throughput.find(throttlingId);
 	if (it == throughput.end()) {
 		return 0.0;
 	} else {
 		return it->second;
 	}
+}
+
+double MockThroughputTracker::getWriteThroughput(ThrottlingId const& throttlingId) const {
+	return 0.0;
 }
 
 ThrottlingIdMap<double> MockThroughputTracker::getActiveThrottlingIds(double threshold) const {
@@ -234,8 +258,8 @@ int MockThroughputTracker::throttlingIdsTracked() const {
 	return throughput.size();
 }
 
-void MockThroughputTracker::update(ThrottlingId const& throttlingId, double newThroughput) {
-	throughput[throttlingId] = newThroughput;
+void MockThroughputTracker::update(ThrottlingId const& throttlingId, double newReadThroughput) {
+	throughput[throttlingId] = newReadThroughput;
 }
 
 void MockThroughputTracker::removeThrottlingId(ThrottlingId const& throttlingId) {

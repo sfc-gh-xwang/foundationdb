@@ -158,17 +158,20 @@ class QuotaThrottlerImpl {
 	Optional<double> getAverageTransactionCost(ThrottlingId const& throttlingId,
 	                                           IRKClusterThroughputTracker const& throughputTracker,
 	                                           TraceEvent& te) const {
-		auto const cost = throughputTracker.getThroughput(throttlingId);
+		auto const readCost = throughputTracker.getReadThroughput(throttlingId);
+		auto const writeCost = throughputTracker.getWriteThroughput(throttlingId);
 		auto const transactionRate = getTransactionRate(throttlingId);
 		if (!transactionRate.present()) {
 			return CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
 		}
 		te.detail("TransactionRate", transactionRate.get());
-		te.detail("Cost", cost);
+		te.detail("ReadCost", readCost);
+		te.detail("WriteCost", writeCost);
 		if (transactionRate < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MIN_RATE) {
 			return {};
 		} else {
-			return std::max(static_cast<double>(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE), cost / transactionRate.get());
+			return std::max(static_cast<double>(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
+			                (readCost + writeCost) / transactionRate.get());
 		}
 	}
 
@@ -244,7 +247,8 @@ class QuotaThrottlerImpl {
 		if (!throttlingRatio.present()) {
 			return {};
 		}
-		auto const currentThroughput = clusterThroughputTracker.getThroughput(throttlingId);
+		auto const currentThroughput = clusterThroughputTracker.getReadThroughput(throttlingId) +
+		                               clusterThroughputTracker.getWriteThroughput(throttlingId);
 		return currentThroughput * throttlingRatio.get();
 	}
 

@@ -52,14 +52,20 @@ ACTOR static Future<Void> runWorkload(RKServerThroughputTracker* throughputTrack
 }
 
 template <class T>
-static bool checkThroughput(T const& throughputTracker, double desiredThroughput, int numThrottlingIds) {
+static bool checkThroughput(T const& throughputTracker,
+                            double desiredReadThroughput,
+                            double desiredWriteThroughput,
+                            int numThrottlingIds) {
 	for (int i = 0; i < numThrottlingIds; ++i) {
-		auto const throughput = throughputTracker.getThroughput(getThrottlingId(i));
-		if (!isNear(desiredThroughput, throughput)) {
+		auto const readThroughput = throughputTracker.getReadThroughput(getThrottlingId(i));
+		auto const writeThroughput = throughputTracker.getWriteThroughput(getThrottlingId(i));
+		if (!isNear(desiredReadThroughput, readThroughput) || !isNear(desiredWriteThroughput, writeThroughput)) {
 			TraceEvent("CheckThroughputMismatch")
 			    .detail("Index", i)
-			    .detail("DesiredThroughput", desiredThroughput)
-			    .detail("Throughput", throughput);
+			    .detail("DesiredReadThroughput", desiredReadThroughput)
+			    .detail("ReadThroughput", readThroughput)
+			    .detail("DesiredWriteThroughput", desiredWriteThroughput)
+			    .detail("WriteThroughput", writeThroughput);
 			return false;
 		}
 	}
@@ -71,7 +77,10 @@ TEST_CASE("/fdbserver/ratekeeper/RKClientThroughputTracker") {
 	state int const numThrottlingIds = 5;
 	state RKClientThroughputTracker throughputTracker(/*expirationCheckInterval=*/5.0);
 	state Future<Void> workloadFuture = runWorkload(&throughputTracker, throughput, numThrottlingIds);
-	while (!checkThroughput(throughputTracker, throughput, numThrottlingIds) &&
+	while (!checkThroughput(throughputTracker,
+	                        /*desiredReadThroughput=*/throughput,
+	                        /*desiredWriteThroughput=*/0.0,
+	                        numThrottlingIds) &&
 	       (throughputTracker.throttlingIdsTracked() != numThrottlingIds)) {
 		wait(delay(1.0));
 	}
@@ -80,7 +89,8 @@ TEST_CASE("/fdbserver/ratekeeper/RKClientThroughputTracker") {
 	// the throughput tracker will report a throughput of 0 for all throttlingIds,
 	// and stop tracking all thorttlingIds.
 	workloadFuture = runWorkload(&throughputTracker, throughput, /*numThrottlingIds=*/0);
-	while (!checkThroughput(throughputTracker, /*desiredThroughput=*/0.0, numThrottlingIds) &&
+	while (!checkThroughput(
+	           throughputTracker, /*desiredReadThroughput=*/0.0, /*desiredWriteThroughput=*/0.0, numThrottlingIds) &&
 	       (throughputTracker.throttlingIdsTracked() > 0)) {
 		wait(delay(1.0));
 	}
@@ -92,15 +102,14 @@ TEST_CASE("/fdbserver/ratekeeper/RKServerThroughputTracker") {
 	state int const numStorageServers = 10;
 	state int const numThrottlingIds = 5;
 	state RKServerThroughputTracker throughputTracker;
+	state bool isRead = deterministicRandom()->coinflip();
 
-	state Future<Void> workloadFuture = runWorkload(&throughputTracker,
-	                                                throughput,
-	                                                numStorageServers,
-	                                                numThrottlingIds,
-	                                                /*isRead=*/deterministicRandom()->coinflip());
-	while (!checkThroughput(throughputTracker, throughput, numThrottlingIds) ||
-	       (throughputTracker.storageServersTracked() != numStorageServers) ||
-	       (throughputTracker.throttlingIdsTracked() != numThrottlingIds)) {
+	state Future<Void> workloadFuture =
+	    runWorkload(&throughputTracker, throughput, numStorageServers, numThrottlingIds, isRead);
+	while (
+	    !checkThroughput(throughputTracker, isRead ? throughput : 0.0, isRead ? 0.0 : throughput, numThrottlingIds) ||
+	    (throughputTracker.storageServersTracked() != numStorageServers) ||
+	    (throughputTracker.throttlingIdsTracked() != numThrottlingIds)) {
 		wait(delay(1.0));
 	}
 
@@ -112,7 +121,8 @@ TEST_CASE("/fdbserver/ratekeeper/RKServerThroughputTracker") {
 	                             numStorageServers,
 	                             /*numThrottlingIds=*/0,
 	                             /*isRead=*/deterministicRandom()->coinflip());
-	while (!checkThroughput(throughputTracker, /*desiredThroughput=*/0.0, numThrottlingIds) ||
+	while (!checkThroughput(
+	           throughputTracker, /*desiredReadThroughput=*/0.0, /*desiredWriteThroughput=*/0.0, numThrottlingIds) ||
 	       (throughputTracker.throttlingIdsTracked() > 0)) {
 		wait(delay(1.0));
 	}
@@ -127,7 +137,8 @@ TEST_CASE("/fdbserver/ratekeeper/RKServerThroughputTracker") {
 	while (throughputTracker.storageServersTracked() > 0) {
 		wait(delay(1.0));
 	}
-	ASSERT(checkThroughput(throughputTracker, /*desiredThroughput=*/0.0, numThrottlingIds));
+	ASSERT(checkThroughput(
+	    throughputTracker, /*desiredReadThroughput=*/0.0, /*desiredWriteThroughput=*/0.0, numThrottlingIds));
 	ASSERT_EQ(throughputTracker.throttlingIdsTracked(), 0);
 	return Void();
 }
