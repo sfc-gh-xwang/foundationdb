@@ -212,7 +212,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( MAX_DEST_CPU_PERCENT,                                 100.0);
 	init( DD_TEAM_PIVOT_UPDATE_DELAY,                            5.0 );
 
-	init( SHARD_ENCODE_LOCATION_METADATA,                      false ); BUGGIFY_KNOB(SHARD_ENCODE_LOCATION_METADATA, randomize && BUGGIFY, true);
+	init( SHARD_ENCODE_LOCATION_METADATA,                      false );
 	init( ENABLE_DD_PHYSICAL_SHARD,                            false ); // EXPERIMENTAL; If true, SHARD_ENCODE_LOCATION_METADATA must be true; When true, optimization of data move between DCs is disabled
 	init( ENABLE_DD_PHYSICAL_SHARD_MOVE,                       false );
 	init( MAX_PHYSICAL_SHARD_BYTES,                         10000000 ); // 10 MB; for ENABLE_DD_PHYSICAL_SHARD; smaller leads to larger number of physicalShard per storage server
@@ -1143,6 +1143,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BG_CONSISTENCY_CHECK_ENABLED,                         true ); BUGGIFY_KNOB(BG_CONSISTENCY_CHECK_ENABLED, randomize && BUGGIFY, false);
 	init( BG_CONSISTENCY_CHECK_TARGET_SPEED_KB,                 1000 ); BUGGIFY_KNOB(BG_CONSISTENCY_CHECK_TARGET_SPEED_KB, randomize && BUGGIFY, BG_CONSISTENCY_CHECK_TARGET_SPEED_KB * (deterministicRandom()->randomInt(2, 50) / 10));
 	init( BG_KEY_TUPLE_TRUNCATE_OFFSET,                            0 );
+	init( BG_KEY_SNOWTRAM_AWARE,          isSimulated ? false : true ); // disable by default in simulation for now until we can convert more workloads to snowtram keys and not have issues with this in restarting tests
 	init( BG_ENABLE_SPLIT_TRUNCATED,                           false ); BUGGIFY_KNOB(BG_ENABLE_SPLIT_TRUNCATED, randomize && BUGGIFY, true);
 	init( BG_ENABLE_READ_DRIVEN_COMPACTION,                     true ); BUGGIFY_KNOB(BG_ENABLE_READ_DRIVEN_COMPACTION, randomize && BUGGIFY, false);
 	init( BG_RDC_BYTES_FACTOR,                                     2 ); BUGGIFY_KNOB(BG_RDC_BYTES_FACTOR, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
@@ -1262,6 +1263,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL,                     10); if ( isSimulated ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = 5; BUGGIFY_KNOB(BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 5));
 	init( BULK_LOAD_FILE_VALIDATION_LEVEL,                         1 ); BUGGIFY_KNOB(BULK_LOAD_FILE_VALIDATION_LEVEL, randomize && BUGGIFY, deterministicRandom()->randomInt(0, 3));
 	init( BULK_LOAD_STAGE_GRANULES,                            false ); if ( isSimulated ) BULK_LOAD_STAGE_GRANULES = deterministicRandom()->coinflip();
+	init( BULK_LOAD_SS_MOVE,                                   false ); // if ( isSimulated ) BULK_LOAD_SS_MOVE = deterministicRandom()->coinflip();
+	// TODO enable once DD integration complete!
 
 	// clang-format on
 

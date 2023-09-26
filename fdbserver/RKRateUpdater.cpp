@@ -295,6 +295,7 @@ void RKRateUpdater::update(IRKMetricsTracker const& metricsTracker,
 			}
 		}
 		double blobWorkerLag = (now() - blobWorkerTime) - recoveryTracker.getRecoveryDuration(lastBWVer);
+		CODE_PROBE(recoveryTracker.getRecoveryDuration(lastBWVer) > 0, "Blob worker lag excludes recovery time");
 		if (requireSmallBlobVersionLag() && limits.bwLagTarget == SERVER_KNOBS->TARGET_BW_LAG) {
 			ASSERT_LE(blobWorkerLag, 3 * limits.bwLagTarget);
 		}

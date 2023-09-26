@@ -58,6 +58,7 @@
 #include "fdbclient/AuditUtils.actor.h"
 #include "fdbclient/BlobConnectionProvider.h"
 #include "fdbclient/BlobGranuleReader.actor.h"
+#include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/FDBTypes.h"
@@ -1960,8 +1961,6 @@ public:
 
 double ShardInfo::getSampledReadRate(StorageServer* data) {
 	if (now() - lastReadSampleCacheTime >= SERVER_KNOBS->SHARD_READ_SAMPLE_UPDATE_INTERVAL) {
-		lastReadSampleCacheTime = now();
-
 		KeyRangeRef sampleRange = keys;
 		KeyRangeRef totalRange = allKeys;
 		if (!SERVER_KNOBS->READ_METRICS_INCLUDE_SYSTEM_KEYS) {
@@ -1978,6 +1977,8 @@ double ShardInfo::getSampledReadRate(StorageServer* data) {
 
 		shardSampledReads = data->metrics.opsReadSample.getEstimate(sampleRange);
 		totalSampledReads = data->metrics.opsReadSample.getEstimate(totalRange);
+
+		lastReadSampleCacheTime = now();
 	}
 
 	double readRate = shardSampledReads / std::max<double>(1.0, totalSampledReads);
@@ -5735,16 +5736,16 @@ ACTOR Future<GetMappedKeyValuesReply> mapKeyValues(StorageServer* data,
 	return result;
 }
 
-bool rangeIntersectsAnyTenant(VersionedMap<int64_t, TenantSSInfo>& tenantMap, KeyRangeRef range, Version ver) {
+Optional<int64_t> tenantIdForRange(VersionedMap<int64_t, TenantSSInfo>& tenantMap, KeyRangeRef range, Version ver) {
 	auto view = tenantMap.at(ver);
 
 	// There are no tenants, so we don't need to do any work
 	if (view.begin() == view.end()) {
-		return false;
+		return {};
 	}
 
 	if (range.begin >= "\x80"_sr) {
-		return false;
+		return {};
 	}
 
 	int64_t beginId;
@@ -5779,7 +5780,11 @@ bool rangeIntersectsAnyTenant(VersionedMap<int64_t, TenantSSInfo>& tenantMap, Ke
 	auto beginItr = view.lower_bound(beginId);
 
 	// If beginItr has a value less than or equal to endId, then it points to a tenant intersecting the range
-	return beginItr != view.end() && beginItr.key() <= endId;
+	return (beginItr != view.end() && beginItr.key() <= endId) ? beginItr.key() : Optional<int64_t>();
+}
+
+bool rangeIntersectsAnyTenant(VersionedMap<int64_t, TenantSSInfo>& tenantMap, KeyRangeRef range, Version ver) {
+	return tenantIdForRange(tenantMap, range, ver).present();
 }
 
 TEST_CASE("/fdbserver/storageserver/rangeIntersectsAnyTenant") {
@@ -7145,16 +7150,40 @@ ACTOR Future<Void> tryGetRange(PromiseStream<RangeReadResult> results, Transacti
 	}
 }
 
+// FIXME: metrics for live clusters
 // Read blob granules metadata. It keeps retrying until reaching maxRetryCount.
 // The key range should not cross tenant boundary.
-ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> tryReadBlobGranuleChunks(Transaction* tr,
-                                                                                  KeyRange keys,
-                                                                                  Version fetchVersion) {
+ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>>
+tryReadBlobGranuleChunks(Transaction* tr, KeyRange keys, Version fetchVersion, Optional<BulkLoadIDKey> bulkLoadIDKey) {
+	// FIXME: unloop!!
+	// once we unloop, the bulk load status check here is unecessary as we already checked it in the bulk load state in
+	// the main fetch loop
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 			tr->trState->taskID = TaskPriority::FetchKeys;
+
+			if (bulkLoadIDKey.present()) {
+				Optional<BulkLoadStatus> bulkLoadStatus =
+				    wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadIDKey.get()));
+				if (!bulkLoadStatus.present() || bulkLoadStatus->state != BulkLoadStatus::State::STAGING_DDPREPARED) {
+					// FIXME: make un-rare
+					CODE_PROBE(true, "", probe::decoration::rare);
+
+					// FIXME: add simulation-only validation that this load was in fact aborted
+					// assume load was aborted, meaning range will be cleared, and return empty chunks;
+
+					int stateInt = bulkLoadStatus.present() ? static_cast<int>(bulkLoadStatus->state) : -1;
+					TraceEvent(SevWarn, "BulkLoadFetchInvalidState")
+					    .suppressFor(10.0)
+					    .detail("TenantID", bulkLoadIDKey->first)
+					    .detail("BulkLoadID", bulkLoadIDKey->second)
+					    .detail("Keys", keys)
+					    .detail("BulkLoadState", stateInt);
+					return Standalone<VectorRef<BlobGranuleChunkRef>>();
+				}
+			}
 
 			TraceEvent(SevDebug, "ReadBlobGranules").detail("Keys", keys).detail("FetchVersion", fetchVersion);
 			Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr->readBlobGranules(keys, 0, fetchVersion));
@@ -7165,7 +7194,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> tryReadBlobGranuleChunk
 			return chunks;
 		} catch (Error& e) {
 			if (e.code() == error_code_blob_granule_transaction_too_old) {
-				if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES) {
+				if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES && !bulkLoadIDKey.present()) {
 					CODE_PROBE(true, "Skip blob ranges for restore", probe::decoration::rare);
 					TraceEvent(SevWarn, "SkipBlobGranuleForRestore").error(e).detail("Keys", keys);
 					Standalone<VectorRef<BlobGranuleChunkRef>> empty;
@@ -7179,17 +7208,24 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> tryReadBlobGranuleChunk
 	}
 }
 
-// Read blob granules metadata. The key range can cross tenant bundary.
+// Read blob granules metadata. The key range can cross tenant boundary if not a bulk load
 ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranuleChunks(Transaction* tr,
                                                                                Database cx,
                                                                                KeyRangeRef keys,
-                                                                               Version fetchVersion) {
+                                                                               Version fetchVersion,
+                                                                               Optional<BulkLoadIDKey> bulkLoadIDKey) {
 	state Standalone<VectorRef<BlobGranuleChunkRef>> results;
-	state Standalone<VectorRef<KeyRangeRef>> ranges = wait(cx->listBlobbifiedRanges(keys, CLIENT_KNOBS->TOO_MANY));
+	state Standalone<VectorRef<KeyRangeRef>> ranges;
+	// bulk load should always be wholly contained in 1 blobbified range
+	if (bulkLoadIDKey.present()) {
+		ranges.push_back_deep(ranges.arena(), keys);
+	} else {
+		wait(store(ranges, cx->listBlobbifiedRanges(keys, CLIENT_KNOBS->TOO_MANY)));
+	}
 	for (auto& range : ranges) {
 		KeyRangeRef intersectedRange(std::max(keys.begin, range.begin), std::min(keys.end, range.end));
 		Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-		    wait(tryReadBlobGranuleChunks(tr, intersectedRange, fetchVersion));
+		    wait(tryReadBlobGranuleChunks(tr, intersectedRange, fetchVersion, bulkLoadIDKey));
 		results.append(results.arena(), chunks.begin(), chunks.size());
 		results.arena().dependsOn(chunks.arena());
 	}
@@ -7202,10 +7238,11 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
                                        Database cx,
                                        KeyRange keys,
                                        Version fetchVersion,
-                                       BGTenantMap* tenantData) {
+                                       BGTenantMap* tenantData,
+                                       Optional<BulkLoadIDKey> bulkLoadIDKey) {
 	try {
 		state Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-		    wait(readBlobGranuleChunks(tr, cx, keys, fetchVersion));
+		    wait(readBlobGranuleChunks(tr, cx, keys, fetchVersion, bulkLoadIDKey));
 		TraceEvent(SevDebug, "ReadBlobGranuleChunks").detail("Keys", keys).detail("Chunks", chunks.size());
 
 		state int i;
@@ -7213,6 +7250,7 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 			state KeyRangeRef chunkRange = chunks[i].keyRange;
 			// Chunk is empty if no snapshot file. Skip it
 			if (!chunks[i].snapshotFile.present()) {
+				ASSERT(!bulkLoadIDKey.present());
 				TraceEvent("SkipEmptyBlobChunkForRestore")
 				    .detail("Chunk", chunks[i].keyRange)
 				    .detail("Version", chunks[i].includedVersion);
@@ -7248,10 +7286,13 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 					rows.readThrough = KeyRef(rows.arena(), std::min(chunkRange.end, keys.end));
 				}
 				results.send(RangeReadResult(std::move(rows)));
+				// FIXME: wait for that chunk to be processed before sending next chunk somehow? to reduce memory
+				// overhead
 			} catch (Error& err) {
 				if (err.code() == error_code_file_not_found ||
 				    err.code() == error_code_blob_granule_transaction_too_old) {
 					if (SERVER_KNOBS->BLOB_RESTORE_SKIP_EMPTY_RANGES) {
+						ASSERT(!bulkLoadIDKey.present());
 						// skip no data ranges and restore as much data as we can
 						TraceEvent(SevWarn, "SkipBlobChunkForRestore").error(err).detail("ChunkRange", chunkRange);
 						RangeResult rows;
@@ -7282,6 +7323,7 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 		tr->reset();
 		tr->setVersion(fetchVersion);
 		results.sendError(e);
+		// i think we need to throw here like other fetch ones do, and probably not reset transaction?
 	}
 	return Void();
 }
@@ -8022,6 +8064,64 @@ ACTOR Future<std::unordered_map<Key, Version>> dispatchChangeFeeds(StorageServer
 	}
 }
 
+struct BulkLoadFetchState {
+	bool enabled;
+	// if state is set, range is loading
+	Optional<BulkLoadStatus::State> loadState;
+	Optional<BulkLoadIDKey> idKey;
+
+	BulkLoadFetchState() : enabled(false) {}
+	BulkLoadFetchState(bool enabled) : enabled(enabled) {}
+
+	bool isLoading() const { return loadState.present(); }
+
+	bool fetchFromBlob() const {
+		ASSERT(loadState.present());
+		return loadState.get() == BulkLoadStatus::State::STAGING_DDPREPARED;
+	}
+};
+
+ACTOR Future<Void> updateBulkLoadFetchState(StorageServer* data,
+                                            Transaction* tr,
+                                            BulkLoadFetchState* fetchState,
+                                            KeyRangeRef range) {
+	if (!fetchState->enabled) {
+		return Void();
+	}
+	Optional<BulkLoadMetadata::RangeMap::RangeValue> bulkLoadValue =
+	    wait(BulkLoadMetadata::rangeMap().getRangeForKey(tr, range.begin));
+	if (!bulkLoadValue.present() || bulkLoadValue->value.empty()) {
+		fetchState->loadState.reset();
+		fetchState->idKey.reset();
+		return Void();
+	}
+
+	KeyRange bulkLoadRange = KeyRangeRef(bulkLoadValue->range.begin, bulkLoadValue->range.end);
+	if (!bulkLoadRange.contains(range)) {
+		// there are empty in-progress bulk loads that are not yet staged/fetching, just read normally
+		fetchState->loadState.reset();
+		fetchState->idKey.reset();
+		return Void();
+	}
+	Optional<int64_t> tenantId = tenantIdForRange(data->tenantMap, bulkLoadRange, data->tenantMap.getLatestVersion());
+	if (tenantId.present()) {
+		TenantMapEntry entry;
+		entry.id = tenantId.get();
+		entry.prefix = TenantAPI::idToPrefix(entry.id);
+		std::pair tenantPair = { entry.id, entry };
+		data->tenantData.addTenants({ tenantPair });
+	}
+
+	BulkLoadIDKey idKey = { tenantId.present() ? tenantId.get() : TenantInfo::INVALID_TENANT, bulkLoadValue->value };
+	fetchState->idKey = idKey;
+
+	Optional<BulkLoadStatus> bulkLoadStatus = wait(BulkLoadMetadata::statusMap().get(tr, fetchState->idKey.get()));
+	ASSERT(bulkLoadStatus.present());
+	fetchState->loadState = bulkLoadStatus->state;
+
+	return Void();
+}
+
 ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 	state const UID fetchKeysID = deterministicRandom()->randomUniqueID();
 	state TraceInterval interval("FetchKeys");
@@ -8029,6 +8129,7 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 	state Future<Void> warningLogger = logFetchKeysWarning(shard);
 	state const double startTime = now();
 	state Version fetchVersion = invalidVersion;
+	state Transaction tr(data->cx);
 
 	state PromiseStream<Key> destroyedFeeds;
 	state FetchKeysMetricReporter metricReporter(fetchKeysID,
@@ -8117,6 +8218,9 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 		state std::vector<Key> changeFeedsToFetch;
 		state Reference<BlobRestoreController> restoreController = makeReference<BlobRestoreController>(data->cx, keys);
 		state bool isFullRestore = wait(BlobRestoreController::isRestoring(restoreController));
+		// if no bulk loads, no need to check for bulk loading
+		state BulkLoadFetchState bulkLoadFetchState(!isFullRestore && CLIENT_KNOBS->ALLOW_BULK_LOADS &&
+		                                            SERVER_KNOBS->BULK_LOAD_SS_MOVE);
 		if (!isFullRestore) {
 			std::vector<Key> _cfToFetch = wait(fetchCFMetadata);
 			changeFeedsToFetch = _cfToFetch;
@@ -8139,7 +8243,7 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 		data->cx->invalidateCache(Key(), keys);
 
 		loop {
-			state Transaction tr(data->cx);
+			tr.reset();
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 			tr.trState->readOptions = readOptions;
@@ -8195,31 +8299,55 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 
 			state PromiseStream<RangeReadResult> results;
 			state Future<Void> hold;
+			state Key blockBegin = keys.begin;
 			state KeyRef rangeEnd;
-			if (isFullRestore) {
-				state BlobRestorePhase phase = wait(BlobRestoreController::currentPhase(restoreController));
-				// Read from blob only when it's copying data for full restore. Otherwise it may cause data
-				// corruptions e.g we don't want to copy from blob any more when it's applying mutation
-				// logs(APPLYING_MLOGS)
-				if (phase == BlobRestorePhase::COPYING_DATA || phase == BlobRestorePhase::ERROR) {
-					wait(loadBGTenantMap(&data->tenantData, &tr));
-					// only copy the range that intersects with full restore range
-					state KeyRangeRef range(std::max(keys.begin, normalKeys.begin), std::min(keys.end, normalKeys.end));
-					Version version = wait(BlobRestoreController::getTargetVersion(restoreController, fetchVersion));
-					hold = tryGetRangeFromBlob(results, &tr, data->cx, range, version, &data->tenantData);
-					rangeEnd = range.end;
+
+			try {
+				wait(updateBulkLoadFetchState(data, &tr, &bulkLoadFetchState, keys));
+				if (bulkLoadFetchState.isLoading()) {
+					if (bulkLoadFetchState.fetchFromBlob()) {
+						ASSERT(bulkLoadFetchState.idKey.present());
+						CODE_PROBE(true, "bulk load blob fetch");
+						hold = tryGetRangeFromBlob(results,
+						                           &tr,
+						                           data->cx,
+						                           keys,
+						                           fetchVersion,
+						                           &data->tenantData,
+						                           bulkLoadFetchState.idKey.get());
+					} else {
+						CODE_PROBE(true, "bulk load empty fetch");
+						// any other state where the range is loading (before dd prepared or aborted), range is locked
+						// so it must be empty
+						RangeReadResult empty;
+						empty.more = false;
+						results.send(empty);
+						results.sendError(end_of_stream());
+					}
+					rangeEnd = keys.end;
+				} else if (isFullRestore) {
+					state BlobRestorePhase phase = wait(BlobRestoreController::currentPhase(restoreController));
+					// Read from blob only when it's copying data for full restore. Otherwise it may cause data
+					// corruptions e.g we don't want to copy from blob any more when it's applying mutation
+					// logs(APPLYING_MLOGS)
+					if (phase == BlobRestorePhase::COPYING_DATA || phase == BlobRestorePhase::ERROR) {
+						wait(loadBGTenantMap(&data->tenantData, &tr));
+						// only copy the range that intersects with full restore range
+						state KeyRangeRef range(std::max(keys.begin, normalKeys.begin),
+						                        std::min(keys.end, normalKeys.end));
+						Version version =
+						    wait(BlobRestoreController::getTargetVersion(restoreController, fetchVersion));
+						hold = tryGetRangeFromBlob(results, &tr, data->cx, range, version, &data->tenantData, {});
+						rangeEnd = range.end;
+					} else {
+						hold = tryGetRange(results, &tr, keys);
+						rangeEnd = keys.end;
+					}
 				} else {
 					hold = tryGetRange(results, &tr, keys);
 					rangeEnd = keys.end;
 				}
-			} else {
-				hold = tryGetRange(results, &tr, keys);
-				rangeEnd = keys.end;
-			}
 
-			state Key blockBegin = keys.begin;
-
-			try {
 				loop {
 					CODE_PROBE(true, "Fetching keys for transferred shard");
 					while (data->fetchKeysBudgetUsed.get()) {
@@ -8565,6 +8693,7 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 		}
 		TraceEvent(SevError, "FetchKeysError", data->thisServerID)
 		    .error(e)
+		    .detail("FKID", interval.pairID)
 		    .detail("Elapsed", now() - startTime)
 		    .detail("KeyBegin", keys.begin)
 		    .detail("KeyEnd", keys.end);

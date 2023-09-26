@@ -671,6 +671,7 @@ static void alignKeyBoundary(Reference<BlobManagerData> bmData,
                              Reference<GranuleTenantData> tenantData,
                              KeyRef key,
                              int offset,
+                             bool snowtramAware,
                              BlobGranuleSplitPoints& splitPoints) {
 	Standalone<VectorRef<KeyRef>>& keys = splitPoints.keys;
 	std::unordered_map<Key, BlobGranuleMergeBoundary>& boundaries = splitPoints.boundaries;
@@ -687,7 +688,22 @@ static void alignKeyBoundary(Reference<BlobManagerData> bmData,
 		alignedKey = alignedKey.removePrefix(tenantData->entry.prefix);
 	}
 	try {
-		t = Tuple::unpackUserType(alignedKey, true);
+		// if snowtram aware, tuple must parse and not be truncated, but maintain non-snowtram-aware case for backwards
+		// compatibility
+		t = Tuple::unpackUserType(alignedKey, !snowtramAware);
+		if (snowtramAware) {
+			bool snowtramKey = t.isSnowtramKey();
+			if (snowtramKey && t.isSnowtramDataOrIndexSpace()) {
+				CODE_PROBE(true, "snowtram-aware alignKeys found snowtram key to truncate");
+				ASSERT(offset == 1);
+			} else {
+				CODE_PROBE(snowtramKey, "found snowtram key in non-data/index space");
+				// if not valid snowtram key in the data or index space, don't truncate
+				// We expect TST entries to hit this, but if any user key does that's bad
+				CODE_PROBE(true, "snowtram-aware alignKeys found non-snowtram key, skipping truncate");
+				offset = t.size();
+			}
+		}
 		if (t.size() > offset) {
 			t2 = t.subTuple(0, t.size() - offset);
 			alignedKey = t2.pack();
@@ -743,7 +759,7 @@ ACTOR Future<BlobGranuleSplitPoints> alignKeys(Reference<BlobManagerData> bmData
 		wait(store(tenantData, bmData->tenantData.getDataForGranule(granuleRange, false)));
 	}
 	for (; idx < splits.size() - 1; idx++) {
-		alignKeyBoundary(bmData, tenantData, splits[idx], offset, splitPoints);
+		alignKeyBoundary(bmData, tenantData, splits[idx], offset, SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE, splitPoints);
 	}
 
 	splitPoints.keys.push_back_deep(splitPoints.keys.arena(), splits.back());

@@ -15,6 +15,7 @@ public:
 
 			// Entering recovery
 			if (!self->recovering && self->inRecovery->get()) {
+				CODE_PROBE(true, "Ratekeeper tracking recovery");
 				self->recovering = true;
 				self->recoveryVersion = self->maxVersion;
 				if (self->recoveryVersion == 0) {
@@ -109,15 +110,19 @@ TEST_CASE("/fdbserver/RKRecoveryTracker") {
 	ASSERT_EQ(recoveryTracker.getMaxVersion(), 5);
 	wait(delay(5.0));
 	inRecovery->set(true);
+	state double recoveryStart = now();
 	wait(delay(10.0));
+	state double recoveryDuration1 = now() - recoveryStart;
 	inRecovery->set(false);
-	checkApproximatelyEqual(recoveryTracker.getRecoveryDuration(5), 10.0);
+	checkApproximatelyEqual(recoveryTracker.getRecoveryDuration(5), recoveryDuration1);
 	checkApproximatelyEqual(recoveryTracker.getRecoveryDuration(6), 0.0);
 	wait(delay(15.0));
 	recoveryTracker.updateMaxVersion(100);
 	inRecovery->set(true);
+	recoveryStart = now();
 	wait(delay(20.0));
-	checkApproximatelyEqual(recoveryTracker.getRecoveryDuration(5), 10.0 + 20.0);
-	checkApproximatelyEqual(recoveryTracker.getRecoveryDuration(6), 20.0);
+	double recoveryDuration2 = now() - recoveryStart;
+	checkApproximatelyEqual(recoveryTracker.getRecoveryDuration(5), recoveryDuration1 + recoveryDuration2);
+	checkApproximatelyEqual(recoveryTracker.getRecoveryDuration(6), recoveryDuration2);
 	return Void();
 }
