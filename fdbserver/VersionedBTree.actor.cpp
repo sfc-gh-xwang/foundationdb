@@ -53,6 +53,7 @@
 #include <cinttypes>
 #include <limits>
 #include <map>
+#include <memory>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -495,7 +496,7 @@ public:
 			debug_printf(
 			    "FIFOQueue::Cursor(%s) loadPage start id=%s\n", toString().c_str(), ::toString(nextPageID).c_str());
 			nextPageReader = queue->pager->readPage(
-			    PagerEventReasons::MetaData, nonBtreeLevel, nextPageID, ioMaxPriority, true, false);
+			    PagerEventReasons::MetaData, nonBtreeLevel, nextPageID, ioMaxPriority, true, false, {});
 			if (!nextPageReader.isReady()) {
 				nextPageReader = waitOrError(nextPageReader, queue->pagerError);
 			}
@@ -2835,11 +2836,13 @@ public:
 	// Read a physical page from the page file.  Note that header pages use a page size of smallestPhysicalBlock.
 	// If the user chosen physical page size is larger, then there will be a gap of unused space after the header pages
 	// and before the user-chosen sized pages.
-	ACTOR static Future<Reference<ArenaPage>> readPhysicalPage(DWALPager* self,
-	                                                           PhysicalPageID pageID,
-	                                                           int priority,
-	                                                           bool header,
-	                                                           PagerEventReasons reason) {
+	ACTOR static Future<Reference<ArenaPage>> readPhysicalPage(
+	    DWALPager* self,
+	    PhysicalPageID pageID,
+	    int priority,
+	    bool header,
+	    PagerEventReasons reason,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) {
 		ASSERT(!self->memoryOnly);
 
 		state Reference<ArenaPage> page =
@@ -2850,8 +2853,17 @@ public:
 		             page->rawData(),
 		             header);
 
+		state Optional<UID> debugID = getTraceDebugID ? (*getTraceDebugID)() : Optional<UID>();
+		if (debugID.present()) {
+			g_traceBatch.addEvent(
+			    "TransactionDebug", debugID->first(), "VersionedBTree.ReadPhysicalPage.ReadPhysicalBlock.Before");
+		}
 		int readBytes =
 		    wait(readPhysicalBlock(self, page, 0, page->rawSize(), (int64_t)pageID * page->rawSize(), priority));
+		if (debugID.present()) {
+			g_traceBatch.addEvent(
+			    "TransactionDebug", debugID->first(), "VersionedBTree.ReadPhysicalPage.ReadPhysicalBlock.After");
+		}
 		debug_printf("DWALPager(%s) op=readPhysicalDiskReadComplete %s ptr=%p bytes=%d\n",
 		             self->filename.c_str(),
 		             toString(pageID).c_str(),
@@ -2873,7 +2885,8 @@ public:
 					    .detail("EncodingTypeExpected", self->keyProvider->expectedEncodingType());
 					throw unexpected_encoding_type();
 				}
-				ArenaPage::EncryptionKey k = wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader()));
+				ArenaPage::EncryptionKey k =
+				    wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader(), debugID));
 				if (page->isAESEncrypted()) {
 					page->encryptionDomainId = k.aesKey.cipherTextKey->getDomainId();
 				}
@@ -2915,10 +2928,12 @@ public:
 		return page;
 	}
 
-	ACTOR static Future<Reference<ArenaPage>> readPhysicalMultiPage(DWALPager* self,
-	                                                                Standalone<VectorRef<PhysicalPageID>> pageIDs,
-	                                                                int priority,
-	                                                                Optional<PagerEventReasons> reason) {
+	ACTOR static Future<Reference<ArenaPage>> readPhysicalMultiPage(
+	    DWALPager* self,
+	    Standalone<VectorRef<PhysicalPageID>> pageIDs,
+	    int priority,
+	    Optional<PagerEventReasons> reason,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) {
 		ASSERT(!self->memoryOnly);
 
 		// if (g_network->getCurrentTask() > TaskPriority::DiskRead) {
@@ -2934,12 +2949,21 @@ public:
 		// TODO:  Could a dispatched read try to write to page after it has been destroyed if this actor is cancelled?
 		state int blockSize = self->physicalPageSize;
 		std::vector<Future<int>> reads;
+		state Optional<UID> debugID = getTraceDebugID ? (*getTraceDebugID)() : Optional<UID>();
+		if (debugID.present()) {
+			g_traceBatch.addEvent(
+			    "TransactionDebug", debugID->first(), "VersionedBTree.ReadPhysicalMultiPage.ReadPhysicalBlock.Before");
+		}
 		for (int i = 0; i < pageIDs.size(); ++i) {
 			reads.push_back(
 			    readPhysicalBlock(self, page, i * blockSize, blockSize, ((int64_t)pageIDs[i]) * blockSize, priority));
 		}
 		// wait for all the parallel read futures
 		wait(waitForAll(reads));
+		if (debugID.present()) {
+			g_traceBatch.addEvent(
+			    "TransactionDebug", debugID->first(), "VersionedBTree.ReadPhysicalMultiPage.ReadPhysicalBlock.After");
+		}
 
 		debug_printf("DWALPager(%s) op=readPhysicalMultiDiskReadsComplete %s ptr=%p bytes=%d\n",
 		             self->filename.c_str(),
@@ -2964,7 +2988,8 @@ public:
 					    .detail("EncodingTypeExpected", self->keyProvider->expectedEncodingType());
 					throw unexpected_encoding_type();
 				}
-				ArenaPage::EncryptionKey k = wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader()));
+				ArenaPage::EncryptionKey k =
+				    wait(self->keyProvider->getEncryptionKey(page->getEncodingHeader(), debugID));
 				if (page->isAESEncrypted()) {
 					page->encryptionDomainId = k.aesKey.cipherTextKey->getDomainId();
 				}
@@ -3003,7 +3028,7 @@ public:
 
 	Future<Reference<ArenaPage>> readHeaderPage(PhysicalPageID pageID) {
 		debug_printf("DWALPager(%s) readHeaderPage %s\n", filename.c_str(), toString(pageID).c_str());
-		return readPhysicalPage(this, pageID, ioMaxPriority, true, PagerEventReasons::MetaData);
+		return readPhysicalPage(this, pageID, ioMaxPriority, true, PagerEventReasons::MetaData, {});
 	}
 
 	static bool isReadRequest(PagerEventReasons reason) {
@@ -3018,7 +3043,8 @@ public:
 	                                      PhysicalPageID pageID,
 	                                      int priority,
 	                                      bool cacheable,
-	                                      bool noHit) override {
+	                                      bool noHit,
+	                                      std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) override {
 		// Use cached page if present, without triggering a cache hit.
 		// Otherwise, read the page and return it but don't add it to the cache
 		debug_printf("DWALPager(%s) op=read %s reason=%s  noHit=%d\n",
@@ -3038,7 +3064,7 @@ public:
 			}
 			++g_redwoodMetrics.metric.pagerProbeMiss;
 			debug_printf("DWALPager(%s) op=readUncachedMiss %s\n", filename.c_str(), toString(pageID).c_str());
-			return forwardError(readPhysicalPage(this, pageID, priority, false, reason), errorPromise);
+			return forwardError(readPhysicalPage(this, pageID, priority, false, reason, getTraceDebugID), errorPromise);
 		}
 		PageCacheEntry& cacheEntry = pageCache.get(pageID, physicalPageSize, noHit);
 		debug_printf("DWALPager(%s) op=read %s cached=%d reading=%d writing=%d noHit=%d\n",
@@ -3050,7 +3076,8 @@ public:
 		             noHit);
 		if (!cacheEntry.initialized()) {
 			debug_printf("DWALPager(%s) issuing actual read of %s\n", filename.c_str(), toString(pageID).c_str());
-			cacheEntry.readFuture = forwardError(readPhysicalPage(this, pageID, priority, false, reason), errorPromise);
+			cacheEntry.readFuture =
+			    forwardError(readPhysicalPage(this, pageID, priority, false, reason, getTraceDebugID), errorPromise);
 			cacheEntry.writeFuture = Void();
 
 			++g_redwoodMetrics.metric.pagerCacheMiss;
@@ -3062,12 +3089,14 @@ public:
 		return cacheEntry.readFuture;
 	}
 
-	Future<Reference<ArenaPage>> readMultiPage(PagerEventReasons reason,
-	                                           unsigned int level,
-	                                           VectorRef<PhysicalPageID> pageIDs,
-	                                           int priority,
-	                                           bool cacheable,
-	                                           bool noHit) override {
+	Future<Reference<ArenaPage>> readMultiPage(
+	    PagerEventReasons reason,
+	    unsigned int level,
+	    VectorRef<PhysicalPageID> pageIDs,
+	    int priority,
+	    bool cacheable,
+	    bool noHit,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) override {
 		// Use cached page if present, without triggering a cache hit.
 		// Otherwise, read the page and return it but don't add it to the cache
 		debug_printf("DWALPager(%s) op=read %s reason=%s noHit=%d\n",
@@ -3087,7 +3116,7 @@ public:
 			}
 			++g_redwoodMetrics.metric.pagerProbeMiss;
 			debug_printf("DWALPager(%s) op=readUncachedMiss %s\n", filename.c_str(), toString(pageIDs).c_str());
-			return forwardError(readPhysicalMultiPage(this, pageIDs, priority, reason), errorPromise);
+			return forwardError(readPhysicalMultiPage(this, pageIDs, priority, reason, getTraceDebugID), errorPromise);
 		}
 
 		PageCacheEntry& cacheEntry = pageCache.get(pageIDs.front(), pageIDs.size() * physicalPageSize, noHit);
@@ -3100,7 +3129,8 @@ public:
 		             noHit);
 		if (!cacheEntry.initialized()) {
 			debug_printf("DWALPager(%s) issuing actual read of %s\n", filename.c_str(), toString(pageIDs).c_str());
-			cacheEntry.readFuture = forwardError(readPhysicalMultiPage(this, pageIDs, priority, reason), errorPromise);
+			cacheEntry.readFuture =
+			    forwardError(readPhysicalMultiPage(this, pageIDs, priority, reason, getTraceDebugID), errorPromise);
 			cacheEntry.writeFuture = Void();
 
 			++g_redwoodMetrics.metric.pagerCacheMiss;
@@ -3147,9 +3177,10 @@ public:
 	                                               int priority,
 	                                               Version v,
 	                                               bool cacheable,
-	                                               bool noHit) {
+	                                               bool noHit,
+	                                               std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) {
 		PhysicalPageID physicalID = getPhysicalPageID(logicalID, v);
-		return readPage(reason, level, physicalID, priority, cacheable, noHit);
+		return readPage(reason, level, physicalID, priority, cacheable, noHit, getTraceDebugID);
 	}
 
 	void releaseExtentReadLock() override { concurrentExtentReads->release(); }
@@ -3413,8 +3444,8 @@ public:
 			debug_printf("DWALPager(%s) remapCleanup copy %s\n", self->filename.c_str(), p.toString().c_str());
 
 			// Read the data from the page that the original was mapped to
-			Reference<ArenaPage> data = wait(
-			    self->readPage(PagerEventReasons::MetaData, nonBtreeLevel, p.newPageID, ioLeafPriority, false, true));
+			Reference<ArenaPage> data = wait(self->readPage(
+			    PagerEventReasons::MetaData, nonBtreeLevel, p.newPageID, ioLeafPriority, false, true, {}));
 
 			// Write the data to the original page so it can be read using its original pageID
 			self->updatePage(
@@ -4030,25 +4061,30 @@ public:
 	DWALPagerSnapshot(DWALPager* pager, Key meta, Version version) : pager(pager), version(version), metaKey(meta) {}
 	~DWALPagerSnapshot() override {}
 
-	Future<Reference<const ArenaPage>> getPhysicalPage(PagerEventReasons reason,
-	                                                   unsigned int level,
-	                                                   LogicalPageID pageID,
-	                                                   int priority,
-	                                                   bool cacheable,
-	                                                   bool noHit) override {
+	Future<Reference<const ArenaPage>> getPhysicalPage(
+	    PagerEventReasons reason,
+	    unsigned int level,
+	    LogicalPageID pageID,
+	    int priority,
+	    bool cacheable,
+	    bool noHit,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) override {
 
-		return map(pager->readPageAtVersion(reason, level, pageID, priority, version, cacheable, noHit),
-		           [=](Reference<ArenaPage> p) { return Reference<const ArenaPage>(std::move(p)); });
+		return map(
+		    pager->readPageAtVersion(reason, level, pageID, priority, version, cacheable, noHit, getTraceDebugID),
+		    [=](Reference<ArenaPage> p) { return Reference<const ArenaPage>(std::move(p)); });
 	}
 
-	Future<Reference<const ArenaPage>> getMultiPhysicalPage(PagerEventReasons reason,
-	                                                        unsigned int level,
-	                                                        VectorRef<PhysicalPageID> pageIDs,
-	                                                        int priority,
-	                                                        bool cacheable,
-	                                                        bool noHit) override {
+	Future<Reference<const ArenaPage>> getMultiPhysicalPage(
+	    PagerEventReasons reason,
+	    unsigned int level,
+	    VectorRef<PhysicalPageID> pageIDs,
+	    int priority,
+	    bool cacheable,
+	    bool noHit,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) override {
 
-		return map(pager->readMultiPage(reason, level, pageIDs, priority, cacheable, noHit),
+		return map(pager->readMultiPage(reason, level, pageIDs, priority, cacheable, noHit, getTraceDebugID),
 		           [=](Reference<ArenaPage> p) { return Reference<const ArenaPage>(std::move(p)); });
 	}
 
@@ -5183,7 +5219,8 @@ public:
 				                                    q.get().pageID,
 				                                    ioLeafPriority,
 				                                    true,
-				                                    false));
+				                                    false,
+				                                    {}));
 				--toPop;
 			}
 			CODE_PROBE(entries.size() > 0, "Redwood processing lazy clear entries");
@@ -6433,14 +6470,16 @@ private:
 		return records;
 	}
 
-	ACTOR static Future<Reference<const ArenaPage>> readPage(VersionedBTree* self,
-	                                                         PagerEventReasons reason,
-	                                                         unsigned int level,
-	                                                         IPagerSnapshot* snapshot,
-	                                                         BTreeNodeLinkRef id,
-	                                                         int priority,
-	                                                         bool forLazyClear,
-	                                                         bool cacheable) {
+	ACTOR static Future<Reference<const ArenaPage>> readPage(
+	    VersionedBTree* self,
+	    PagerEventReasons reason,
+	    unsigned int level,
+	    IPagerSnapshot* snapshot,
+	    BTreeNodeLinkRef id,
+	    int priority,
+	    bool forLazyClear,
+	    bool cacheable,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) {
 
 		debug_printf("readPage() op=read%s %s @%" PRId64 "\n",
 		             forLazyClear ? "ForDeferredClear" : "",
@@ -6450,12 +6489,12 @@ private:
 		state Reference<const ArenaPage> page;
 		if (id.size() == 1) {
 			Reference<const ArenaPage> p =
-			    wait(snapshot->getPhysicalPage(reason, level, id.front(), priority, cacheable, false));
+			    wait(snapshot->getPhysicalPage(reason, level, id.front(), priority, cacheable, false, getTraceDebugID));
 			page = std::move(p);
 		} else {
 			ASSERT(!id.empty());
 			Reference<const ArenaPage> p =
-			    wait(snapshot->getMultiPhysicalPage(reason, level, id, priority, cacheable, false));
+			    wait(snapshot->getMultiPhysicalPage(reason, level, id, priority, cacheable, false, getTraceDebugID));
 			page = std::move(p);
 		}
 		debug_printf("readPage() op=readComplete %s @%" PRId64 " \n", toString(id).c_str(), snapshot->getVersion());
@@ -6515,10 +6554,10 @@ private:
 		g_redwoodMetrics.metric.btreeLeafPreloadExt += (pageIDs.size() - 1);
 		if (pageIDs.size() == 1) {
 			snapshot->getPhysicalPage(
-			    PagerEventReasons::RangePrefetch, nonBtreeLevel, pageIDs.front(), priority, true, true);
+			    PagerEventReasons::RangePrefetch, nonBtreeLevel, pageIDs.front(), priority, true, true, {});
 		} else {
 			snapshot->getMultiPhysicalPage(
-			    PagerEventReasons::RangePrefetch, nonBtreeLevel, pageIDs, priority, true, true);
+			    PagerEventReasons::RangePrefetch, nonBtreeLevel, pageIDs, priority, true, true, {});
 		}
 	}
 
@@ -6984,8 +7023,8 @@ private:
 			}
 		}
 
-		state Reference<const ArenaPage> page = wait(
-		    readPage(self, PagerEventReasons::Commit, height, batch->snapshot.getPtr(), rootID, height, false, true));
+		state Reference<const ArenaPage> page = wait(readPage(
+		    self, PagerEventReasons::Commit, height, batch->snapshot.getPtr(), rootID, height, false, true, {}));
 
 		// If the page exists in the cache, it must be copied before modification.
 		// That copy will be referenced by pageCopy, as page must stay in scope in case anything references its
@@ -7880,6 +7919,8 @@ public:
 		Reference<IPagerSnapshot> pager;
 		bool valid;
 		std::vector<PathEntry> path;
+		// A lambda that will return debugID from read options, if trace log is needed.
+		std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID;
 
 	public:
 		BTreeCursor() : reason(PagerEventReasons::MAXEVENTREASONS) {}
@@ -7941,7 +7982,8 @@ public:
 			                    link.get().getChildPage(),
 			                    ioMaxPriority,
 			                    false,
-			                    !options.present() || options.get().cacheResult || path.back().btPage()->height != 2),
+			                    !options.present() || options.get().cacheResult || path.back().btPage()->height != 2,
+			                    getTraceDebugID),
 			           [=](Reference<const ArenaPage> p) {
 				           BTreePage::BinaryTree::Cursor cursor = btree->getCursor(p.getPtr(), link);
 #if REDWOOD_DEBUG
@@ -7968,7 +8010,15 @@ public:
 
 		Future<Void> pushPage(BTreeNodeLinkRef id) {
 			debug_printf("pushPage(root=%s)\n", ::toString(id).c_str());
-			return map(readPage(btree, reason, btree->m_header.height, pager.getPtr(), id, ioMaxPriority, false, true),
+			return map(readPage(btree,
+			                    reason,
+			                    btree->m_header.height,
+			                    pager.getPtr(),
+			                    id,
+			                    ioMaxPriority,
+			                    false,
+			                    true,
+			                    getTraceDebugID),
 			           [=](Reference<const ArenaPage> p) {
 #if REDWOOD_DEBUG
 				           path.push_back({ p, btree->getCursor(p.getPtr(), dbBegin, dbEnd), id });
@@ -7992,6 +8042,18 @@ public:
 			path.clear();
 			path.reserve(6);
 			valid = false;
+
+			if (options.present() && options->debugID.present()) {
+				getTraceDebugID = std::make_shared<std::function<Optional<UID>()>>(
+				    [count = 0, debugID = options->debugID.get()]() mutable -> Optional<UID> {
+					    if (count >= SERVER_KNOBS->REDWOOD_CURSOR_DEBUG_TRACE_LIMIT) {
+						    return {};
+					    }
+					    count++;
+					    return debugID;
+				    });
+			}
+
 			return root.empty() ? Void() : pushPage(root);
 		}
 

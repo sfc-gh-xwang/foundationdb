@@ -1097,6 +1097,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REDWOOD_DECODECACHE_REUSE_MIN_HEIGHT,                    2 ); BUGGIFY_KNOB(REDWOOD_DECODECACHE_REUSE_MIN_HEIGHT, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 7));
 	init( REDWOOD_NODE_MAX_UNBALANCE,                              2 );
 	init( REDWOOD_IO_PRIORITIES,                       "32,32,32,32" );
+	init( REDWOOD_CURSOR_DEBUG_TRACE_LIMIT,                     1000 );
 
 	// Server request latency measurement
 	init( LATENCY_SKETCH_ACCURACY,                              0.01 );

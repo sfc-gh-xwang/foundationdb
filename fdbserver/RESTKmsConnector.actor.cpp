@@ -857,12 +857,22 @@ Future<T> kmsRequestImpl(
 					    .detail("DbgId", debugID);
 				}
 
+				if (debugID.present()) {
+					g_traceBatch.addEvent(
+					    "TransactionDebug", debugID.get().first(), "RESTKmsConnector.KMSRequest.Before");
+				}
+
 				HTTP::Headers headers;
 				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 				Reference<HTTP::IncomingResponse> resp =
 				    wait(ctx->restClient->doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), debugID, headers));
 				urlCtx->nRequests++;
+
+				if (debugID.present()) {
+					g_traceBatch.addEvent(
+					    "TransactionDebug", debugID.get().first(), "RESTKmsConnector.KMSRequest.After");
+				}
 
 				try {
 					T parsedResp = parseFunc(ctx, resp, debugID);
