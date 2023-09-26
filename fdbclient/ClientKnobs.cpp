@@ -289,7 +289,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( TRACK_AVERAGE_COST_ON_CLIENTS,           true ); BUGGIFY_KNOB(TRACK_AVERAGE_COST_ON_CLIENTS, randomize && BUGGIFY, false);
 	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
 	init( AVERAGE_COST_START_DELAY,                10.0 );
-	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
+	init( AVERAGE_COST_FOLDING_TIME,                1.0 );
+	init( AVERAGE_COST_RATE_FOLDING_TIME,           5.0 );
 	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); BUGGIFY_KNOB(USE_SIMPLE_THROUGHPUT_QUOTA_CACHE, randomize && BUGGIFY, false);
 	init( TRACK_BUSY_THROTTLING_IDS,               true ); BUGGIFY_KNOB(TRACK_BUSY_THROTTLING_IDS, randomize && BUGGIFY, false);
 

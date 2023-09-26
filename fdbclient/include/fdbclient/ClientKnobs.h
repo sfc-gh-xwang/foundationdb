@@ -304,9 +304,12 @@ public:
 	// Report DEFAULT_EXPECTED_TRANSACTION_COST for the first AVERAGE_COST_START_DELAY seconds,
 	// until sufficient data is collected for accurate tracking of average transaction costs.
 	double AVERAGE_COST_START_DELAY;
-	// Folding time parameter used by the ThroughputTracker's HoltLinearSmoother
+	// Folding time parameter used for value of the ThroughputTracker's HoltLinearSmoother
 	// for calculating the average cost.
 	double AVERAGE_COST_FOLDING_TIME;
+	// Folding time parameter used for rate of the ThroughputTracker's HoltLinearSmoother
+	// for calculating the average cost.
+	double AVERAGE_COST_RATE_FOLDING_TIME;
 
 	// Enable busy throttling ID tracking. Only those IDs in the busy set will be subject to throttling by the GRV
 	// proxy. If an ID is not considered busy, it can utilize the GRV cache. The thresholds for determining whether an
