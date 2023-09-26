@@ -1,4 +1,4 @@
-name: PR lint and build
+name: PR lint
 
 on:
   pull_request:
@@ -27,17 +27,3 @@ jobs:
                echo "Error: Please ensure you've prefixed your branch with '${ldap_name}' ."
                exit 1
             fi
-  macos_build:
-    runs-on: macos-latest-xl
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      - run: pip install ninja
-      - name: Build
-        run: |
-          mkdir build
-          cd build
-          cmake -G Ninja ..
-          ninja -j 12
