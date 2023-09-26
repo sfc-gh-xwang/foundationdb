@@ -747,20 +747,22 @@ public:
 
 class IPagerSnapshot {
 public:
-	virtual Future<Reference<const ArenaPage>> getPhysicalPage(PagerEventReasons reason,
-	                                                           unsigned int level,
-	                                                           LogicalPageID pageID,
-	                                                           int priority,
-	                                                           bool cacheable,
-	                                                           bool nohit,
-	                                                           std::function<Optional<UID>()> getTraceDebugID) = 0;
-	virtual Future<Reference<const ArenaPage>> getMultiPhysicalPage(PagerEventReasons reason,
-	                                                                unsigned int level,
-	                                                                VectorRef<LogicalPageID> pageIDs,
-	                                                                int priority,
-	                                                                bool cacheable,
-	                                                                bool nohit,
-	                                                                std::function<Optional<UID>()> getTraceDebugID) = 0;
+	virtual Future<Reference<const ArenaPage>> getPhysicalPage(
+	    PagerEventReasons reason,
+	    unsigned int level,
+	    LogicalPageID pageID,
+	    int priority,
+	    bool cacheable,
+	    bool nohit,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) = 0;
+	virtual Future<Reference<const ArenaPage>> getMultiPhysicalPage(
+	    PagerEventReasons reason,
+	    unsigned int level,
+	    VectorRef<LogicalPageID> pageIDs,
+	    int priority,
+	    bool cacheable,
+	    bool nohit,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) = 0;
 	virtual Version getVersion() const = 0;
 
 	virtual Key getMetaKey() const = 0;
@@ -842,14 +844,15 @@ public:
 	                                              int priority,
 	                                              bool cacheable,
 	                                              bool noHit,
-	                                              std::function<Optional<UID>()> getTraceDebugID) = 0;
-	virtual Future<Reference<ArenaPage>> readMultiPage(PagerEventReasons reason,
-	                                                   unsigned int level,
-	                                                   VectorRef<PhysicalPageID> pageIDs,
-	                                                   int priority,
-	                                                   bool cacheable,
-	                                                   bool noHit,
-	                                                   std::function<Optional<UID>()> getTraceDebugID) = 0;
+	                                              std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) = 0;
+	virtual Future<Reference<ArenaPage>> readMultiPage(
+	    PagerEventReasons reason,
+	    unsigned int level,
+	    VectorRef<PhysicalPageID> pageIDs,
+	    int priority,
+	    bool cacheable,
+	    bool noHit,
+	    std::shared_ptr<std::function<Optional<UID>()>> getTraceDebugID) = 0;
 
 	virtual Future<Reference<ArenaPage>> readExtent(LogicalPageID pageID) = 0;
 	virtual void releaseExtentReadLock() = 0;
