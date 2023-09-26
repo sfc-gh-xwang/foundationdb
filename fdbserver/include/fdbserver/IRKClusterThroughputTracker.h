@@ -96,13 +96,14 @@ public:
 // reported originally from clients
 class RKClientThroughputTracker : public IRKClusterThroughputTracker {
 	struct ThroughputSmoother {
-		HoltLinearSmoother smoother;
+		HoltLinearSmoother readSmoother, writeSmoother;
 		double lastUpdated;
 		ThroughputSmoother();
 
 	public:
-		void addThroughput(double newThroughput);
-		double smoothRate() const;
+		void addThroughput(ThroughputStats const& newThroughput);
+		double smoothReadRate() const;
+		double smoothWriteRate() const;
 		bool shouldForget(double expirationCheckInterval) const;
 	};
 

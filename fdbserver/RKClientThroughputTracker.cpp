@@ -6,22 +6,30 @@
 #include "fdbserver/Knobs.h"
 
 RKClientThroughputTracker::ThroughputSmoother::ThroughputSmoother()
-  : smoother(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,
-             SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME),
+  : readSmoother(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,
+                 SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME),
+    writeSmoother(SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_DATA_FOLDING_TIME,
+                  SERVER_KNOBS->CLIENT_THROUGHPUT_TRACKER_RATE_FOLDING_TIME),
     lastUpdated(now()) {}
 
-void RKClientThroughputTracker::ThroughputSmoother::addThroughput(double newThroughput) {
-	smoother.addDelta(newThroughput);
+void RKClientThroughputTracker::ThroughputSmoother::addThroughput(ThroughputStats const& newThroughput) {
+	readSmoother.addDelta(newThroughput.readThroughput);
+	writeSmoother.addDelta(newThroughput.writeThroughput);
 	lastUpdated = now();
 }
 
-double RKClientThroughputTracker::ThroughputSmoother::smoothRate() const {
-	return smoother.smoothRate();
+double RKClientThroughputTracker::ThroughputSmoother::smoothReadRate() const {
+	return readSmoother.smoothRate();
+}
+
+double RKClientThroughputTracker::ThroughputSmoother::smoothWriteRate() const {
+	return writeSmoother.smoothRate();
 }
 
 bool RKClientThroughputTracker::ThroughputSmoother::shouldForget(double expirationCheckInterval) const {
 	return (now() > lastUpdated + expirationCheckInterval &&
-	        smoother.smoothRate() < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD);
+	        readSmoother.smoothRate() + writeSmoother.smoothRate() <
+	            SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD);
 }
 
 void RKClientThroughputTracker::expireThrottlingIds() {
@@ -42,14 +50,15 @@ double RKClientThroughputTracker::getThroughput(ThrottlingId const& throttlingId
 	if (it == throughput.end()) {
 		return 0.0;
 	} else {
-		return it->second.smoothRate();
+		return it->second.smoothReadRate() + it->second.smoothWriteRate();
 	}
 }
 
 ThrottlingIdMap<double> RKClientThroughputTracker::getActiveThrottlingIds(double threshold) const {
 	ThrottlingIdMap<double> result;
 	for (auto const& [throttlingId, throughputSmoother] : throughput) {
-		auto const smoothThroughput = throughputSmoother.smoother.smoothRate();
+		auto const smoothThroughput =
+		    throughputSmoother.readSmoother.smoothRate() + throughputSmoother.writeSmoother.smoothRate();
 		if (smoothThroughput > threshold) {
 			result.emplace(throttlingId, smoothThroughput);
 		}
@@ -63,8 +72,7 @@ int RKClientThroughputTracker::throttlingIdsTracked() const {
 
 void RKClientThroughputTracker::update(ThrottlingIdMap<ThroughputStats> const& newThroughput) {
 	for (auto const& [throttlingId, newPerThrottlingIdThroughput] : newThroughput) {
-		throughput[throttlingId].addThroughput(newPerThrottlingIdThroughput.readThroughput +
-		                                       newPerThrottlingIdThroughput.writeThroughput);
+		throughput[throttlingId].addThroughput(newPerThrottlingIdThroughput);
 	}
 	if (now() > lastExpirationCheck + expirationCheckInterval) {
 		expireThrottlingIds();
