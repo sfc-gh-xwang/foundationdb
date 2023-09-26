@@ -558,7 +558,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		state Version grv = wait(self->doGRV(cx));
 
-		// FIXME: change duringBulkLoad to false!!
 		try {
 			state Optional<Key> tenantPrefix;
 			if (tenant.present()) {
@@ -583,13 +582,41 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				ASSERT_EQ(expectedKey, result.first[i].key);
 				ASSERT_EQ((*outData)[i].value, result.first[i].value);
 			}
-			return Void();
 		} catch (Error& e) {
 			if (e.code() == error_code_blob_granule_transaction_too_old) {
-				TraceEvent(SevError, "BulkLoadVerifyDataMissing").detail("Range", range);
+				TraceEvent(SevError, "BulkLoadVerifyDataMissingHybrid").detail("Range", range);
 			}
 			throw e;
 		}
+
+		if (!SERVER_KNOBS->BULK_LOAD_SS_MOVE) {
+			return Void();
+		}
+
+		// also check SS data
+		state Transaction tr = Transaction::fromTenantOrDefault(self->tenant, cx);
+		loop {
+			try {
+				RangeReadResult ssRows = wait(tr.getRange(range, 1000000));
+				ASSERT(!ssRows.more);
+
+				ASSERT_EQ(outData->size(), ssRows.size());
+				for (int i = 0; i < ssRows.size(); i++) {
+					Key expectedKey = (*outData)[i].key;
+					if (tenantPrefix.present()) {
+						expectedKey = expectedKey.removePrefix(tenantPrefix.get());
+					}
+					ASSERT_EQ(expectedKey, ssRows[i].key);
+					ASSERT_EQ((*outData)[i].value, ssRows[i].value);
+				}
+
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		return Void();
 	}
 
 	ACTOR Future<Void> doOneBulkLoad(Database cx, BulkLoadOpsWorkload* self, KeyRange range, bool injectAbort) {
