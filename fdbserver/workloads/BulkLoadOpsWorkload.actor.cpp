@@ -369,9 +369,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// completed for now
 		try {
 			wait(cx->waitBulkLoadComplete(id, tenant));
+			if (SERVER_KNOBS->BULK_LOAD_SS_MOVE) {
+				return Void();
+			}
 			ASSERT(false);
 		} catch (Error& e) {
-			if (e.code() == error_code_api_not_implemented) {
+			if (e.code() == error_code_api_not_implemented && !SERVER_KNOBS->BULK_LOAD_SS_MOVE) {
 				return Void();
 			}
 			throw e;
