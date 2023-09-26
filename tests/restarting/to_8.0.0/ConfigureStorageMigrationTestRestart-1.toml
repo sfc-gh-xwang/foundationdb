@@ -5,6 +5,9 @@ disableHostname=true
 storageEngineExcludeTypes=[4]
 simHTTPServerEnabled=false
 
+[[knobs]]
+encryption_at_rest_algo = "AES-256-CTR"
+
 [[test]]
 testTitle = 'CloggedConfigureDatabaseTest'
 clearAfterTest = false
