@@ -298,6 +298,23 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 				}
 			}
 
+			if (thisTry >= maxTries && (r.isValid() && isHTTPCodeRetryable(r->code))) {
+				TraceEvent e(SevWarn, "RESTClientRequestFailedMaxRetries");
+				if (remoteAddress.present()) {
+					e.detail("RemoteAddress", remoteAddress.get());
+				} else {
+					std::string remoteAddress = url.host + ":" + url.service;
+					e.detail("RemoteAddress", remoteAddress);
+				}
+
+				e.detail("Verb", verb).detail("Resource", url.resource).detail("ThisTry", thisTry);
+				e.detail("ResponseCode", r->code);
+
+				// Request attempts if maxed out, check if the requests are failing with retryable HTTP code, if then
+				// bubble up 'time_out' error to enable switching KMS server and retrying the request
+				throw timed_out();
+			}
+
 			throw http_request_failed();
 		}
 	}

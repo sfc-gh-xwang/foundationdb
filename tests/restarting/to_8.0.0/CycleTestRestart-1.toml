@@ -4,6 +4,9 @@ disableTss = true
 disableHostname = true
 simHTTPServerEnabled = false
 
+[[knobs]]
+encryption_at_rest_algo = "AES-256-CTR"
+
 [[test]]
 testTitle = 'Clogged'
 clearAfterTest = false
