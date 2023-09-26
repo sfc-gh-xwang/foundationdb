@@ -20,20 +20,22 @@
 
 #include "fdbclient/RESTClient.h"
 
-#include "fdbrpc/HTTP.h"
-#include "flow/IRateControl.h"
 #include "fdbclient/RESTUtils.h"
+
+#include "fdbrpc/HTTP.h"
+
 #include "flow/Arena.h"
 #include "flow/Error.h"
 #include "flow/FastRef.h"
+#include "flow/flow.h"
+#include "flow/IConnection.h"
+#include "flow/IRateControl.h"
 #include "flow/Knobs.h"
 #include "flow/Net2Packet.h"
-#include "flow/flow.h"
 #include "flow/network.h"
 #include "flow/serialize.h"
 #include "flow/Trace.h"
 #include "flow/UnitTest.h"
-#include "flow/IConnection.h"
 
 #include <memory>
 #include <unordered_map>
@@ -122,7 +124,7 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 
 	state int maxTries = std::min(client->knobs.request_tries, client->knobs.connect_tries);
 	state int thisTry = 1;
-	state double nextRetryDelay = 2.0;
+	state double nextRetryDelay = FLOW_KNOBS->REST_REQUEST_RETRY_DELAY_SEC;
 	state Reference<IRateControl> sendReceiveRate = makeReference<Unlimited>();
 	state double reqTimeout = (client->knobs.request_timeout_secs * 1.0);
 	state RESTConnectionPoolKey connectPoolKey = RESTConnectionPool::getConnectionPoolKey(url.host, url.service);
@@ -244,9 +246,9 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 
 		// We will wait delay seconds before the next retry, start with nextRetryDelay.
 		double delay = nextRetryDelay;
-		// Double but limit the *next* nextRetryDelay.
-		nextRetryDelay = std::min(nextRetryDelay * 2, 60.0);
-
+		// Determing next delay applying backoff
+		nextRetryDelay = std::min(nextRetryDelay * FLOW_KNOBS->REST_REQUEST_RETRY_BACKOFF_FACTOR,
+		                          FLOW_KNOBS->REST_REQUEST_MAX_RETRY_DELAY_SEC);
 		if (retryable) {
 			// If r is valid then obey the Retry-After response header if present.
 			if (r) {
@@ -263,7 +265,6 @@ ACTOR Future<Reference<HTTP::IncomingResponse>> doRequest_impl(Reference<RESTCli
 					delay = std::max(delay, retryAfter);
 				}
 			}
-
 			// Log the delay then wait.
 			event.detail("RetryDelay", delay);
 			wait(::delay(delay));

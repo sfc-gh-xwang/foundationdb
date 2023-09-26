@@ -331,6 +331,10 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( RESTCLIENT_REQUEST_TRIES,                             10 );
 	init( RESTCLIENT_REQUEST_TIMEOUT_SEC,                        6 ); BUGGIFY_KNOB(RESTCLIENT_REQUEST_TIMEOUT_SEC, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 6));
 	init( REST_LOG_LEVEL,                                        3 );
+	init( REST_REQUEST_RETRY_DELAY_SEC,                        0.1 );
+	init( REST_REQUEST_MAX_RETRY_DELAY_SEC,                   60.0 );
+	init( REST_REQUEST_RETRY_BACKOFF_FACTOR,                   2.0 );
+
 }
 // clang-format on
 
