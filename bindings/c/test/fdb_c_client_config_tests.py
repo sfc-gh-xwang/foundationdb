@@ -765,7 +765,13 @@ class ClientConfigSeparateCluster(unittest.TestCase):
 
     def test_tls_cluster_tls_client_verifypeers(self):
         # Test connecting successfully to a TLS-enabled cluster with TLS-enabled
-        # client and verifying the subject, issuer and root common name
+        # client and verifying the subject, issuer and root common name.
+        #
+        # TLS_VERIFY_PEERS uses the certificate field name as terminology for
+        # certificates:
+        # - Subject, usually leaf certificates are distributed to users/applications
+        # - Issuer, usually an Intermediate certicates are used to sign leaf certificates
+        # - Root certificates are used to sign intermediate certificates
         tls_config = TLSConfig(
             verify_peers="Subject.CN>=FDB Testing Services,Issuer.CN>=FDB Testing Services,Root.CN>=FDB Testing Services"
         )
@@ -797,9 +803,14 @@ class ClientConfigSeparateCluster(unittest.TestCase):
 
     def test_tls_cluster_tls_client_verifypeers_valid_and_invalid_rule(self):
         # Test connecting successfully to a TLS-enabled cluster with TLS-enabled
-        # client with one valid rule and one invalid rule "OR'd" together with
-        # the | operator We expect the non-INVALID subject, issuer and root
-        # common names to allow the client to connect
+        # client with one valid rule and one invalid rule. We expect the
+        # non-INVALID subject, issuer and root common names to pass and allow
+        # the client to connect.
+        #
+        # TLS_VERIFY_PEERS statements separated by commas are ANDed together and
+        # statements separated by the pipe operator | are OR'd" together. The
+        # comma operator takes precednece over the pipe operator. Statements
+        # separated by |s are called "rules" in the code.
         tls_config = TLSConfig(
             verify_peers="Subject.CN>=FDB Testing Services,Issuer.CN>=FDB Testing Services,Root.CN>=FDB Testing Services|Subject.CN>=INVALID_SUBJECT,Issuer.CN>=INVALID_ISSUER,Root.CN>=INVALID_ROOT"
         )
