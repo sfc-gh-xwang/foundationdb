@@ -1,6 +1,9 @@
 [configuration]
 minimumReplication = 2
 
+[[knobs]]
+rest_request_max_retry_delay_sec = 2.0
+
 [[test]]
 testTitle = 'LowLatencyWithFailures'
 connectionFailuresDisableDuration = 60

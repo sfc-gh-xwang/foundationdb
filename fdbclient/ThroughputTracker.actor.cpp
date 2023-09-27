@@ -106,8 +106,7 @@ bool isClientAverageCostTrackingEnabled() {
 
 bool isBusyThrottlingIdsTrackingEnabled() {
 	// TRACK_BUSY_THROTTLING_IDS depends on TRACK_THROUGHPUT_ON_CLIENTS
-	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS &&
-	       CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS;
+	return isClientAverageCostTrackingEnabled() && CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS;
 }
 
 bool ThroughputTracker::isThrottlingIdBusy(ThrottlingId const& throttlingId) const {

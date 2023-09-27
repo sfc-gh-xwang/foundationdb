@@ -75,7 +75,9 @@ public:
 	virtual bool enableEncryptionDomain() const = 0;
 
 	// Get an encryption key from given encoding header.
-	virtual Future<EncryptionKey> getEncryptionKey(const void* encodingHeader) { throw not_implemented(); }
+	virtual Future<EncryptionKey> getEncryptionKey(const void* encodingHeader, Optional<UID> debugID = {}) {
+		throw not_implemented();
+	}
 
 	virtual EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) { throw not_implemented(); }
 
@@ -142,7 +144,7 @@ public:
 
 	bool enableEncryptionDomain() const override { return false; }
 
-	Future<EncryptionKey> getEncryptionKey(const void* encodingHeader) override {
+	Future<EncryptionKey> getEncryptionKey(const void* encodingHeader, Optional<UID> /*debugID*/) override {
 
 		const EncodingHeader* h = reinterpret_cast<const EncodingHeader*>(encodingHeader);
 		EncryptionKey s;
@@ -205,7 +207,7 @@ public:
 
 	bool enableEncryptionDomain() const override { return mode > 0; }
 
-	Future<EncryptionKey> getEncryptionKey(const void* encodingHeader) override {
+	Future<EncryptionKey> getEncryptionKey(const void* encodingHeader, Optional<UID> /*debugID*/) override {
 		using Encoder = typename ArenaPage::AESEncryptionEncoder<encodingType>;
 		EncryptionKey s;
 		const BlobCipherEncryptHeaderRef headerRef = Encoder::getEncryptionHeaderRef(encodingHeader);
@@ -337,19 +339,21 @@ public:
 		return true;
 	}
 
-	ACTOR static Future<EncryptionKey> getEncryptionKey(AESEncryptionKeyProvider* self, const void* encodingHeader) {
+	ACTOR static Future<EncryptionKey> getEncryptionKey(AESEncryptionKeyProvider* self,
+	                                                    const void* encodingHeader,
+	                                                    Optional<UID> debugID) {
 		state TextAndHeaderCipherKeys cipherKeys;
 		BlobCipherEncryptHeaderRef headerRef = Encoder::getEncryptionHeaderRef(encodingHeader);
 		TextAndHeaderCipherKeys cks = wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-		    self->db, headerRef, BlobCipherMetrics::KV_REDWOOD, self->monitor));
+		    self->db, headerRef, BlobCipherMetrics::KV_REDWOOD, self->monitor, debugID));
 		cipherKeys = cks;
 		EncryptionKey encryptionKey;
 		encryptionKey.aesKey = cipherKeys;
 		return encryptionKey;
 	}
 
-	Future<EncryptionKey> getEncryptionKey(const void* encodingHeader) override {
-		return getEncryptionKey(this, encodingHeader);
+	Future<EncryptionKey> getEncryptionKey(const void* encodingHeader, Optional<UID> debugID) override {
+		return getEncryptionKey(this, encodingHeader, debugID);
 	}
 
 	EncryptionAtRestAlgo getEncryptionAtRestAlgo(const void* encodingHeader) override {

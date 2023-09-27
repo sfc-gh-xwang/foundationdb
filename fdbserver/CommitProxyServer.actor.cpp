@@ -1107,6 +1107,11 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 				}
 			}
 		}
+		if (self->debugID.present()) {
+			g_traceBatch.addEvent("CommitDebug",
+			                      self->debugID.get().first(),
+			                      "CommitProxyServer.commitBatch.GetLatestEncryptCipherKeys.Before");
+		}
 		getCipherKeys =
 		    GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(pProxyCommitData->db,
 		                                                                   encryptDomainIds,
@@ -1142,6 +1147,11 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 	}
 	if (pProxyCommitData->encryptMode.isEncryptionEnabled()) {
 		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys = wait(getCipherKeys);
+		if (self->debugID.present()) {
+			g_traceBatch.addEvent("CommitDebug",
+			                      self->debugID.get().first(),
+			                      "CommitProxyServer.commitBatch.GetLatestEncryptCipherKeys.After");
+		}
 		if (nonExistentTenants.size() > 0) {
 			handleEncryptKeyNotFound(self, nonExistentTenants);
 		}
@@ -1634,6 +1644,11 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
 				lookupDomains.insert(domainId);
 			}
 		}
+		if (self->debugID.present()) {
+			g_traceBatch.addEvent("CommitDebug",
+			                      self->debugID.get().first(),
+			                      "CommitProxyServer.commitBatch.GetLatestEncryptCipherKeysPostResolution.Before");
+		}
 		// API throws encrypt_key_not_found for domainId(s) missing corresponding encryption keys
 		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> extraCipherKeys = wait(
 		    GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(self->pProxyCommitData->db,
@@ -1643,6 +1658,11 @@ ACTOR Future<Void> validateEncryptionKeyExistence(CommitBatchContext* self,
 		                                                                   self->pProxyCommitData->encryptionMonitor,
 		                                                                   self->debugID));
 		self->cipherKeys.insert(extraCipherKeys.begin(), extraCipherKeys.end());
+		if (self->debugID.present()) {
+			g_traceBatch.addEvent("CommitDebug",
+			                      self->debugID.get().first(),
+			                      "CommitProxyServer.commitBatch.GetLatestEncryptCipherKeysPostResolution.After");
+		}
 	} catch (Error& e) {
 		if (e.code() == error_code_encrypt_key_not_found) {
 			self->trs[trIdx].reply.sendError(encrypt_key_not_found());
@@ -2167,7 +2187,7 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 				// the expectation of sampling is every COMMIT_SAMPLE_COST sample once
 				if (checkSample) {
 					double totalCosts = trCost->get().writeCosts;
-					double cost = getWriteOperationCost(m.expectedSize());
+					double cost = pProxyCommitData->quotaCostCalculator->getWriteCost(m.expectedSize());
 					double mul = std::max(1.0, totalCosts / std::max(1.0, (double)CLIENT_KNOBS->COMMIT_SAMPLE_COST));
 					ASSERT(totalCosts > 0);
 					double prob = mul * cost / totalCosts;

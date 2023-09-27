@@ -27,6 +27,7 @@
 
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/GetEncryptCipherKeys.h"
+#include "fdbclient/IQuotaCostCalculator.h"
 #include "fdbclient/Tenant.h"
 #include "fdbrpc/Stats.h"
 #include "fdbserver/Knobs.h"
@@ -306,6 +307,8 @@ struct ProxyCommitData {
 	// Finish applied all txnStateStore mutations after recovery;
 	bool txnStateStoreApplied = false;
 
+	std::unique_ptr<IQuotaCostCalculator> quotaCostCalculator;
+
 	// The tag related to a storage server rarely change, so we keep a vector of tags for each key range to be slightly
 	// more CPU efficient. When a tag related to a storage server does change, we empty out all of these vectors to
 	// signify they must be repopulated. We do not repopulate them immediately to avoid a slow task.
@@ -398,7 +401,8 @@ struct ProxyCommitData {
 	    lastMasterReset(now()),
 	    lastResolverReset(now()),
 	    encryptMode(encryptMode),
-	    encryptionMonitor(makeReference<GetEncryptCipherKeysMonitor>()) {
+	    encryptionMonitor(makeReference<GetEncryptCipherKeysMonitor>()),
+	    quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {
 		commitComputePerOperation.resize(SERVER_KNOBS->PROXY_COMPUTE_BUCKETS, 0.0);
 	}
 };

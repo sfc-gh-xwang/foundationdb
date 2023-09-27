@@ -34,7 +34,7 @@ class ThroughputTracker {
 	struct ThroughputSmoother {
 		HoltLinearSmoother smoother;
 		ThroughputSmoother()
-		  : smoother(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME) {}
+		  : smoother(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME) {}
 	};
 
 	ThrottlingIdMap<ThroughputSmoother> smoothThroughput;
