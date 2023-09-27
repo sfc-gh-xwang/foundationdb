@@ -6519,17 +6519,6 @@ void Transaction::atomicOp(const KeyRef& key,
 	CODE_PROBE(true, "NativeAPI atomic operation");
 }
 
-static uint64_t getClearCost() {
-	// NOTE: The throttling cost of each clear is assumed to be one page.
-	// This makes compuation fast, but can be inaccurate and may
-	// underestimate the cost of large clears.
-	return CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
-}
-
-void TransactionState::addClearCost() {
-	addWriteCost(getClearCost());
-}
-
 void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRange) {
 	++trState->cx->transactionClearMutations;
 	auto& req = trState->tr;
@@ -6554,9 +6543,6 @@ void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRa
 		return;
 
 	t.mutations.emplace_back(req.arena, MutationRef::ClearRange, r.begin, r.end);
-	// NOTE: The throttling cost of each clear is assumed to be one page.
-	// This makes compuation fast, but can be inaccurate and may
-	// underestimate the cost of large clears.
 	trState->addClearCost();
 	if (addConflictRange)
 		t.write_conflict_ranges.push_back(req.arena, r);
@@ -6958,8 +6944,9 @@ ACTOR Future<Optional<ClientTrCommitCostEstimation>> estimateCommitCosts(Referen
 				++trCommitCosts.expensiveCostEstCount;
 				++trState->cx->transactionsExpensiveClearCostEstCount;
 			} else {
-				trCommitCosts.clearIdxCosts.emplace_back(i, getClearCost());
-				trCommitCosts.writeCosts += getClearCost();
+				auto const cost = trState->cx->getClearOperationCost();
+				trCommitCosts.clearIdxCosts.emplace_back(i, cost);
+				trCommitCosts.writeCosts += cost;
 			}
 		}
 	}
@@ -7884,6 +7871,10 @@ Optional<ThrottlingId> TransactionState::getThrottlingId() {
 	}
 }
 
+uint64_t DatabaseContext::getClearOperationCost() const {
+	return quotaCostCalculator->getClearCost();
+}
+
 uint64_t DatabaseContext::getReadOperationCost(uint64_t bytes) const {
 	return quotaCostCalculator->getReadCost(bytes);
 }
@@ -7901,6 +7892,10 @@ void TransactionState::addReadCost(uint64_t bytes) {
 			cx->addCost(throttlingId.get(), cost);
 		}
 	}
+}
+
+void TransactionState::addClearCost() {
+	writeCost += cx->getClearOperationCost();
 }
 
 void TransactionState::addWriteCost(uint64_t bytes) {

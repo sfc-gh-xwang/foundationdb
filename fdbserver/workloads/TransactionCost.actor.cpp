@@ -158,7 +158,7 @@ class TransactionCostWorkload : public TestWorkload {
 		}
 
 		int64_t expectedFinalCost(TransactionCostWorkload const& workload) const override {
-			return workload.quotaCostCalculator->getWriteCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+			return workload.quotaCostCalculator->getClearCost();
 		}
 	};
 

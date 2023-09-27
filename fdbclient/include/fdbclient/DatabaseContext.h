@@ -801,6 +801,7 @@ public:
 
 	Future<TenantMode> getOrWaitForTenantMode();
 
+	uint64_t getClearOperationCost() const;
 	uint64_t getReadOperationCost(uint64_t bytes) const;
 	uint64_t getWriteOperationCost(uint64_t bytes) const;
 	void addCost(ThrottlingId const&, uint64_t bytes);

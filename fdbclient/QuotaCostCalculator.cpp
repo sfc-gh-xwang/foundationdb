@@ -61,6 +61,13 @@ IQuotaCostCalculator::IQuotaCostCalculator(double fungibilityRatio, uint64_t pag
   : fungibilityRatio(fungibilityRatio),
     pageSize(pageSize) {}
 
+uint64_t IQuotaCostCalculator::getClearCost() const {
+	// NOTE: The throttling cost of each clear is assumed to be one page.
+	// This makes compuation fast, but can be inaccurate and may
+	// underestimate the cost of large clears.
+	return fungibilityRatio * pageSize;
+}
+
 std::unique_ptr<IQuotaCostCalculator> IQuotaCostCalculator::create(std::string const& type,
                                                                    double fungibilityRatio,
                                                                    uint64_t pageSize) {
