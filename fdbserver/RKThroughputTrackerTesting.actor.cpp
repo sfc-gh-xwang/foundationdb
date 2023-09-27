@@ -57,15 +57,15 @@ static bool checkThroughput(T const& throughputTracker,
                             double desiredWriteThroughput,
                             int numThrottlingIds) {
 	for (int i = 0; i < numThrottlingIds; ++i) {
-		auto const readThroughput = throughputTracker.getReadThroughput(getThrottlingId(i));
-		auto const writeThroughput = throughputTracker.getWriteThroughput(getThrottlingId(i));
-		if (!isNear(desiredReadThroughput, readThroughput) || !isNear(desiredWriteThroughput, writeThroughput)) {
+		auto const throughput = throughputTracker.getThroughput(getThrottlingId(i));
+		if (!isNear(desiredReadThroughput, throughput.readThroughput) ||
+		    !isNear(desiredWriteThroughput, throughput.writeThroughput)) {
 			TraceEvent("CheckThroughputMismatch")
 			    .detail("Index", i)
 			    .detail("DesiredReadThroughput", desiredReadThroughput)
-			    .detail("ReadThroughput", readThroughput)
+			    .detail("ReadThroughput", throughput.readThroughput)
 			    .detail("DesiredWriteThroughput", desiredWriteThroughput)
-			    .detail("WriteThroughput", writeThroughput);
+			    .detail("WriteThroughput", throughput.writeThroughput);
 			return false;
 		}
 	}

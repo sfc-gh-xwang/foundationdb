@@ -66,12 +66,8 @@ void RKServerThroughputTracker::ThrottlingIdThroughput::addWriteDelta(double del
 	writeSmoother.addDelta(delta);
 }
 
-double RKServerThroughputTracker::ThrottlingIdThroughput::getReadThroughput() const {
-	return readSmoother.smoothTotal();
-}
-
-double RKServerThroughputTracker::ThrottlingIdThroughput::getWriteThroughput() const {
-	return writeSmoother.smoothTotal();
+IRKClusterThroughputTracker::Throughput RKServerThroughputTracker::ThrottlingIdThroughput::getThroughput() const {
+	return IRKClusterThroughputTracker::Throughput(readSmoother.smoothTotal(), writeSmoother.smoothTotal());
 }
 
 RKServerThroughputTracker::~RKServerThroughputTracker() = default;
@@ -141,9 +137,10 @@ void RKServerThroughputTracker::cleanup(boost::unordered_flat_set<UID> const& se
 	// Erase cluster-wide throughput statistics for throttlingIds reporting insufficient throughput.
 	boost::unordered::erase_if(throughputByThrottlingId, [&seenThrottlingIds](auto const& kv) {
 		auto const& [throttlingId, throttlingIdThroughput] = kv;
+		auto const totalThroughput = throttlingIdThroughput.getThroughput().readThroughput +
+		                             throttlingIdThroughput.getThroughput().writeThroughput;
 		return !seenThrottlingIds.count(throttlingId) &&
-		       (throttlingIdThroughput.getReadThroughput() + throttlingIdThroughput.getWriteThroughput() <
-		        SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD);
+		       (totalThroughput < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_FORGET_THROUGHPUT_THRESHOLD);
 	});
 }
 
@@ -190,21 +187,13 @@ Optional<double> RKServerThroughputTracker::getThroughput(UID storageServerId, T
 	return throughputCounter->getThroughput();
 }
 
-double RKServerThroughputTracker::getReadThroughput(ThrottlingId const& throttlingId) const {
+IRKClusterThroughputTracker::Throughput RKServerThroughputTracker::getThroughput(
+    ThrottlingId const& throttlingId) const {
 	auto const throttlingIdThroughput = tryGet(throughputByThrottlingId, throttlingId);
 	if (throttlingIdThroughput) {
-		return throttlingIdThroughput->getReadThroughput();
+		return throttlingIdThroughput->getThroughput();
 	} else {
-		return 0.0;
-	}
-}
-
-double RKServerThroughputTracker::getWriteThroughput(ThrottlingId const& throttlingId) const {
-	auto const throttlingIdThroughput = tryGet(throughputByThrottlingId, throttlingId);
-	if (throttlingIdThroughput) {
-		return throttlingIdThroughput->getWriteThroughput();
-	} else {
-		return 0.0;
+		return IRKClusterThroughputTracker::Throughput(0.0, 0.0);
 	}
 }
 
@@ -212,11 +201,10 @@ ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> RKServerThroughputTrack
     double threshold) const {
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> result;
 	for (auto const& [throttlingId, throttlingIdThroughput] : throughputByThrottlingId) {
-		auto const readThroughput = throttlingIdThroughput.getReadThroughput();
-		auto const writeThroughput = throttlingIdThroughput.getWriteThroughput();
+		auto const throughput = throttlingIdThroughput.getThroughput();
 
-		if (readThroughput + writeThroughput > threshold) {
-			result.emplace(throttlingId, IRKClusterThroughputTracker::Throughput(readThroughput, writeThroughput));
+		if (throughput.readThroughput + throughput.writeThroughput > threshold) {
+			result.emplace(throttlingId, throughput);
 		}
 	}
 	return result;
@@ -232,17 +220,10 @@ int RKServerThroughputTracker::throttlingIdsTracked() const {
 
 MockThroughputTracker::~MockThroughputTracker() = default;
 
-double MockThroughputTracker::getReadThroughput(ThrottlingId const& throttlingId) const {
+IRKClusterThroughputTracker::Throughput MockThroughputTracker::getThroughput(ThrottlingId const& throttlingId) const {
 	auto it = throughput.find(throttlingId);
-	if (it == throughput.end()) {
-		return 0.0;
-	} else {
-		return it->second;
-	}
-}
-
-double MockThroughputTracker::getWriteThroughput(ThrottlingId const& throttlingId) const {
-	return 0.0;
+	auto const readThroughput = (it == throughput.end()) ? 0.0 : it->second;
+	return IRKClusterThroughputTracker::Throughput(readThroughput, 0.0);
 }
 
 ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> MockThroughputTracker::getActiveThrottlingIds(

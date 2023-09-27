@@ -45,21 +45,13 @@ RKClientThroughputTracker::RKClientThroughputTracker(double expirationCheckInter
 
 RKClientThroughputTracker::~RKClientThroughputTracker() = default;
 
-double RKClientThroughputTracker::getReadThroughput(ThrottlingId const& throttlingId) const {
+IRKClusterThroughputTracker::Throughput RKClientThroughputTracker::getThroughput(
+    ThrottlingId const& throttlingId) const {
 	auto it = throughput.find(throttlingId);
 	if (it == throughput.end()) {
-		return 0.0;
+		return IRKClusterThroughputTracker::Throughput(0.0, 0.0);
 	} else {
-		return it->second.smoothReadRate();
-	}
-}
-
-double RKClientThroughputTracker::getWriteThroughput(ThrottlingId const& throttlingId) const {
-	auto it = throughput.find(throttlingId);
-	if (it == throughput.end()) {
-		return 0.0;
-	} else {
-		return it->second.smoothWriteRate();
+		return IRKClusterThroughputTracker::Throughput(it->second.smoothReadRate(), it->second.smoothWriteRate());
 	}
 }
 

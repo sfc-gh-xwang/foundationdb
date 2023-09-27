@@ -15,18 +15,15 @@ class IRKClusterThroughputTracker {
 public:
 	virtual ~IRKClusterThroughputTracker() = default;
 
-	// Returns the current cluster-wide read throughput for the provided throttling ID
-	virtual double getReadThroughput(ThrottlingId const&) const = 0;
-
-	// Returns the current cluster-wide read throughput for the provided throttling ID
-	virtual double getWriteThroughput(ThrottlingId const&) const = 0;
-
 	struct Throughput {
 		double readThroughput, writeThroughput;
 		Throughput(double readThroughput, double writeThroughput)
 		  : readThroughput(readThroughput),
 		    writeThroughput(writeThroughput) {}
 	};
+
+	// Returns the current cluster-wide read throughput for the provided throttling ID
+	virtual Throughput getThroughput(ThrottlingId const&) const = 0;
 
 	// Returns the throughput for the set of throttlingIds reporting throughput above the specified threshold
 	virtual ThrottlingIdMap<Throughput> getActiveThrottlingIds(double threshold) const = 0;
@@ -65,8 +62,7 @@ class RKServerThroughputTracker : public IRKClusterThroughputTracker {
 		ThrottlingIdThroughput();
 		void addReadDelta(double);
 		void addWriteDelta(double);
-		double getReadThroughput() const;
-		double getWriteThroughput() const;
+		IRKClusterThroughputTracker::Throughput getThroughput() const;
 	};
 
 	boost::unordered_flat_map<UID, ThrottlingIdMap<ThroughputCounters>> throughputBySS;
@@ -94,9 +90,7 @@ public:
 	// provided storage server
 	Optional<double> getThroughput(UID storageServerId, ThrottlingId const&) const;
 
-	double getReadThroughput(ThrottlingId const&) const override;
-
-	double getWriteThroughput(ThrottlingId const&) const override;
+	IRKClusterThroughputTracker::Throughput getThroughput(ThrottlingId const&) const override;
 
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 
@@ -132,9 +126,7 @@ public:
 
 	~RKClientThroughputTracker();
 
-	double getReadThroughput(ThrottlingId const&) const override;
-
-	double getWriteThroughput(ThrottlingId const&) const override;
+	IRKClusterThroughputTracker::Throughput getThroughput(ThrottlingId const&) const override;
 
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 
@@ -151,9 +143,7 @@ class MockThroughputTracker : public IRKClusterThroughputTracker {
 public:
 	~MockThroughputTracker();
 
-	double getReadThroughput(ThrottlingId const&) const override;
-
-	double getWriteThroughput(ThrottlingId const&) const override;
+	IRKClusterThroughputTracker::Throughput getThroughput(ThrottlingId const&) const override;
 
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 
