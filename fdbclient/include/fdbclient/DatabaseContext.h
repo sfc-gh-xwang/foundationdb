@@ -804,7 +804,8 @@ public:
 	uint64_t getClearOperationCost() const;
 	uint64_t getReadOperationCost(uint64_t bytes) const;
 	uint64_t getWriteOperationCost(uint64_t bytes) const;
-	void addCost(ThrottlingId const&, uint64_t bytes);
+	void addReadCost(ThrottlingId const&, uint64_t bytes);
+	void addWriteCost(ThrottlingId const&, uint64_t bytes);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
 

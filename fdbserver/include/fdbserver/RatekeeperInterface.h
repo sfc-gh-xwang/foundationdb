@@ -101,7 +101,7 @@ struct GetRateInfoRequest {
 	Version version;
 
 	ThrottlingIdMap<uint64_t> throttlingIdToTransactionCount;
-	ThrottlingIdMap<uint64_t> throttlingIdToThroughput;
+	ThrottlingIdMap<ThroughputStats> throttlingIdToThroughput;
 	bool detailed;
 	ReplyPromise<struct GetRateInfoReply> reply;
 
@@ -111,7 +111,7 @@ struct GetRateInfoRequest {
 	                   int64_t batchReleasedTransactions,
 	                   Version version,
 	                   ThrottlingIdMap<uint64_t>&& throttlingIdToTransactionCount,
-	                   ThrottlingIdMap<uint64_t>&& throttlingIdToThroughput,
+	                   ThrottlingIdMap<ThroughputStats>&& throttlingIdToThroughput,
 	                   bool detailed)
 	  : requesterID(requesterID),
 	    totalReleasedTransactions(totalReleasedTransactions),

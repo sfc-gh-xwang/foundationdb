@@ -420,14 +420,16 @@ ACTOR Future<Void> globalConfigRequestServer(GrvProxyData* grvProxyData, GrvProx
 }
 
 ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRequest> stream,
-                                                 ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
+                                                 ThrottlingIdMap<ThroughputStats>* throttlingIdToThroughput,
                                                  boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds,
                                                  Counter* throughputReportsReceived) {
 	loop {
 		ReportThroughputRequest req = waitNext(stream);
 		++(*throughputReportsReceived);
 		for (auto const& [throttlingId, clientThroughput] : req.throughput) {
-			(*throttlingIdToThroughput)[throttlingId] += clientThroughput;
+			auto& throughputStats = (*throttlingIdToThroughput)[throttlingId];
+			throughputStats.readThroughput += clientThroughput.readThroughput;
+			throughputStats.writeThroughput += clientThroughput.writeThroughput;
 		}
 
 		ReportThroughputReply reply;
@@ -449,7 +451,7 @@ ACTOR Future<Void> getRate(UID myID,
                            GetHealthMetricsReply* healthMetricsReply,
                            GetHealthMetricsReply* detailedHealthMetricsReply,
                            ThrottlingIdMap<uint64_t>* throttlingIdTransactionCounter,
-                           ThrottlingIdMap<uint64_t>* throttlingIdThroughput,
+                           ThrottlingIdMap<ThroughputStats>* throttlingIdThroughput,
                            GrvProxyStats* stats,
                            GrvProxyData* proxyData,
                            boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds) {
@@ -927,7 +929,7 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 	state Deque<GetReadVersionRequest> batchQueue;
 
 	state ThrottlingIdMap<uint64_t> throttlingIdTransactionCounter;
-	state ThrottlingIdMap<uint64_t> throttlingIdThroughput;
+	state ThrottlingIdMap<ThroughputStats> throttlingIdThroughput;
 
 	state boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 

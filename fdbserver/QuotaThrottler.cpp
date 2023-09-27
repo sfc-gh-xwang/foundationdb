@@ -164,11 +164,13 @@ class QuotaThrottlerImpl {
 			return CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
 		}
 		te.detail("TransactionRate", transactionRate.get());
-		te.detail("Cost", cost);
+		te.detail("ReadCost", cost.readThroughput);
+		te.detail("WriteCost", cost.writeThroughput);
 		if (transactionRate < SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MIN_RATE) {
 			return {};
 		} else {
-			return std::max(static_cast<double>(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE), cost / transactionRate.get());
+			return std::max(static_cast<double>(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
+			                (cost.readThroughput + cost.writeThroughput) / transactionRate.get());
 		}
 	}
 
@@ -245,7 +247,7 @@ class QuotaThrottlerImpl {
 			return {};
 		}
 		auto const currentThroughput = clusterThroughputTracker.getThroughput(throttlingId);
-		return currentThroughput * throttlingRatio.get();
+		return (currentThroughput.readThroughput + currentThroughput.writeThroughput) * throttlingRatio.get();
 	}
 
 	struct TargetTpsResult {
@@ -446,7 +448,8 @@ public:
 
 			auto traceName = std::string("QuotaThrottler_GotTargetThroughput-").append(throttlingId.toString());
 			TraceEvent te(traceName.c_str(), id);
-			te.detail("Throughput", throughput);
+			te.detail("ReadThroughput", throughput.readThroughput)
+			    .detail("WriteThroughput", throughput.writeThroughput);
 
 			bool const traceEnabled = stats.canLog();
 			if (!traceEnabled) {
@@ -470,7 +473,9 @@ public:
 
 				if (isBusyThrottlingIdsTrackingEnabled()) {
 					// If busy ThrottlingId tracking is enabled, then only report rates for busy Ids
-					if (isThrottlingIdBusy(throttlingId, throughput, targetPerProxyThroughput)) {
+					if (isThrottlingIdBusy(throttlingId,
+					                       throughput.readThroughput + throughput.writeThroughput,
+					                       targetPerProxyThroughput)) {
 						result[throttlingId] = targetPerProxyThroughput;
 					}
 				} else {

@@ -140,8 +140,8 @@ class TestEnv {
 			cost *= CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO;
 		}
 		if (clientThroughputTracker.present()) {
-			ThrottlingIdMap<uint64_t> newThroughput;
-			newThroughput[throttlingId] = cost;
+			ThrottlingIdMap<ThroughputStats> newThroughput;
+			newThroughput[throttlingId].readThroughput = cost;
 			clientThroughputTracker.get().update(newThroughput);
 		}
 	}
