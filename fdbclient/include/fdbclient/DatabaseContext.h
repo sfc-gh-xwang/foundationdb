@@ -26,6 +26,7 @@
 #include "flow/FastAlloc.h"
 #include "flow/FastRef.h"
 #include "fdbclient/GlobalConfig.actor.h"
+#include "fdbclient/IQuotaCostCalculator.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "flow/IRandom.h"
 #include "flow/genericactors.actor.h"
@@ -800,6 +801,9 @@ public:
 
 	Future<TenantMode> getOrWaitForTenantMode();
 
+	uint64_t getClearOperationCost() const;
+	uint64_t getReadOperationCost(uint64_t bytes) const;
+	uint64_t getWriteOperationCost(uint64_t bytes) const;
 	void addCost(ThrottlingId const&, uint64_t bytes);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
@@ -872,6 +876,7 @@ private:
 
 	ThroughputTracker throughputTracker;
 	Future<Void> throughputTrackerFuture;
+	std::unique_ptr<IQuotaCostCalculator> quotaCostCalculator;
 
 	void initializeSpecialCounters();
 };

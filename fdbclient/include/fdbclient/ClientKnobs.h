@@ -270,7 +270,16 @@ public:
 	double TAG_THROTTLE_SMOOTHING_WINDOW;
 	double TAG_THROTTLE_RECHECK_INTERVAL;
 	double TAG_THROTTLE_EXPIRATION_INTERVAL;
-	int64_t TAG_THROTTLING_PAGE_SIZE; // Used to round up the cost of operations
+	// String representing the formula used by the quota throttler to estimate
+	// the cost of an operation in bytes. Options include:
+	//   - minimum (enforce a minimum cost for each operation)
+	//   - round (round each operation up to a given page size)
+	//   - add (add a constant to the cost of each operation)
+	std::string QUOTA_THROTTLING_COST_FORMULA;
+	// "Page size" used by quota throttler for penalizing smaller operations,
+	// which are more expensive per-byte than larger operations
+	int64_t TAG_THROTTLING_PAGE_SIZE;
+	// Used to round up the cost of operations
 	// Cost multiplier for writes (because write operations are more expensive than reads):
 	double GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO;
 	// Maximum duration that a transaction can be tag throttled by proxy before being rejected
