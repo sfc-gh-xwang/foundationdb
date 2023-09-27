@@ -251,11 +251,15 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		TraceEvent("BulkLoadOpsCheck").detail("ClientId", self->clientId).log();
 
-		wait(waitForAll(self->loadClients));
-		TraceEvent("BulkLoadOpsClientsComplete");
+		state int i;
+		for (i = 0; i < self->loadClients.size(); i++) {
+			wait(self->loadClients[i]);
+			TraceEvent("BulkLoadOpsCheckClientComplete").detail("LoadClient", i);
+		}
+		TraceEvent("BulkLoadOpsCheckClientsComplete");
 
 		wait(self->unitClient);
-		TraceEvent("BulkLoadOpsUnitsComplete");
+		TraceEvent("BulkLoadOpsCheckUnitsComplete");
 
 		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp = wait(cx->listAllBulkLoads(false, self->tenant));
 		if (BLW_DEBUG) {
@@ -415,6 +419,75 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				throw e;
 			}
 		}
+		return Void();
+	}
+
+	ACTOR Future<Void> verifyCleanupAfterAbort(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// verify no data, and no granules, blobbified ranges, or change feeds that intersect this range
+		state KeyRange physicalRange = range;
+		if (self->tenant.present()) {
+			wait(self->tenant.get()->ready());
+			physicalRange = physicalRange.withPrefix(self->tenant.get()->prefix());
+		}
+		Standalone<VectorRef<KeyRangeRef>> blobbifiedRanges = wait(cx->listBlobbifiedRanges(physicalRange, 1));
+		if (!blobbifiedRanges.empty()) {
+			fmt::print("ERROR: Ranges for [{0} - {1}) not empty! ({2})\n",
+			           physicalRange.begin.printable(),
+			           physicalRange.end.printable(),
+			           blobbifiedRanges.size());
+			for (auto& it : blobbifiedRanges) {
+				fmt::print("    {0} - {1}\n", it.begin.printable(), it.end.printable());
+			}
+		}
+		ASSERT(blobbifiedRanges.empty());
+
+		state Transaction tr(cx);
+		loop {
+			try {
+				tr.setOption(FDBTransactionOptions::RAW_ACCESS);
+				Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(physicalRange, 1));
+				if (!granules.empty()) {
+					fmt::print("ERROR: Granules for [{0} - {1}) not empty! ({2})\n",
+					           physicalRange.begin.printable(),
+					           physicalRange.end.printable(),
+					           granules.size());
+					for (auto& it : granules) {
+						fmt::print("    {0} - {1}\n", it.begin.printable(), it.end.printable());
+					}
+				}
+				ASSERT(granules.empty());
+
+				RangeReadResult rows = wait(tr.getRange(physicalRange, 1));
+				ASSERT(rows.empty() && !rows.more);
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		tr.reset();
+		loop {
+			try {
+				tr.setOption(FDBTransactionOptions::RAW_ACCESS);
+				std::vector<std::pair<Key, KeyRange>> activeFeeds = wait(getActiveFeeds(&tr));
+				for (auto& it : activeFeeds) {
+					bool intersects = physicalRange.intersects(it.second);
+					if (intersects) {
+						fmt::print("ERROR: Change Feed {0}: [{1} - {2}) in aborted load range [{3} - {4})\n",
+						           it.first.printable(),
+						           it.second.begin.printable(),
+						           it.second.end.printable(),
+						           physicalRange.begin.printable(),
+						           physicalRange.end.printable());
+					}
+					ASSERT(!intersects);
+				}
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
 		return Void();
 	}
 
@@ -616,11 +689,11 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			    "BLW: {0} {1}: registered {2} rows\n", range.begin.printable(), id.printable(), dataWritten.size());
 		}
 
-		bool success = wait(self->waitOrInjectAbort(cx, self, id, range, injectAbort, &dataWritten));
-		CODE_PROBE(success, "WaitOrInjectAbort succeeded");
-		CODE_PROBE(!success, "WaitOrInjectAbort aborted");
+		state bool loadSuccess = wait(self->waitOrInjectAbort(cx, self, id, range, injectAbort, &dataWritten));
+		CODE_PROBE(loadSuccess, "WaitOrInjectAbort succeeded");
+		CODE_PROBE(!loadSuccess, "WaitOrInjectAbort aborted");
 
-		if (success && SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES) {
+		if (loadSuccess && SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES) {
 			if (BLW_DEBUG) {
 				fmt::print("BLW: {0} {1}: verifying data\n", range.begin.printable(), id.printable());
 			}
@@ -637,6 +710,10 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// up gets it
 		self->maybeReopenTenant(cx);
 		wait(cx->cleanupBulkLoad(id, self->tenant));
+
+		if (!loadSuccess) {
+			wait(self->verifyCleanupAfterAbort(cx, self, range));
+		}
 
 		// after load either completed or aborted, make sure we can write and read to range
 		if (BLW_DEBUG) {
@@ -1513,39 +1590,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 		CODE_PROBE(true, "blob cleanup unit test successfully aborted load");
 
-		// verify no granules, blobbified ranges, or change feeds that intersect this range
-		state KeyRange physicalRange = range;
-		if (self->tenant.present()) {
-			wait(self->tenant.get()->ready());
-			physicalRange = physicalRange.withPrefix(self->tenant.get()->prefix());
-		}
-		Standalone<VectorRef<KeyRangeRef>> blobbifiedRanges = wait(cx->listBlobbifiedRanges(physicalRange, 1));
-		if (!blobbifiedRanges.empty()) {
-			fmt::print("ERROR: Ranges for [{0} - {1}) not empty! ({2})\n",
-			           physicalRange.begin.printable(),
-			           physicalRange.end.printable(),
-			           blobbifiedRanges.size());
-			for (auto& it : blobbifiedRanges) {
-				fmt::print("    {0} - {1}\n", it.begin.printable(), it.end.printable());
-			}
-		}
-		ASSERT(blobbifiedRanges.empty());
-
-		state Transaction tr(cx);
-		loop {
-			try {
-				Standalone<VectorRef<KeyRangeRef>> granules = wait(tr.getBlobGranuleRanges(physicalRange, 1));
-				ASSERT(granules.empty());
-				break;
-			} catch (Error& e) {
-				wait(tr.onError(e));
-			}
-		}
-
-		std::vector<std::pair<Key, KeyRange>> activeFeeds = wait(getActiveFeeds(&tr));
-		for (auto& it : activeFeeds) {
-			ASSERT(!physicalRange.intersects(it.second));
-		}
+		wait(self->verifyCleanupAfterAbort(cx, self, range));
 
 		return Void();
 	}
@@ -1586,7 +1631,6 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 			// TODO REMOVE! FIXME soon!
 			if (SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES) {
-				excludedTypes.insert(BLOB_CLEANUP_ON_ABORT_UNIT);
 				excludedTypes.insert(ABORT_THEN_RELOAD_UNIT);
 			}
 

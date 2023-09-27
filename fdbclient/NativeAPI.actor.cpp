@@ -12118,6 +12118,12 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 				} else if (status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
 					throw bulk_load_invalid_state_transition();
 				}
+
+				// sanity check that the range is locked by us
+				UID bulkLoadUID = bulkLoadIdToUID(bulkLoadIDToCheck.get());
+				bool rangeIsLockedByMe =
+				    wait(RangeLockAPI::isRangeLockedWithId(tr, range.begin, range.end, bulkLoadUID));
+				ASSERT(rangeIsLockedByMe);
 			} else {
 				wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
 				     checkRangeLock(&tr->getTransaction(), range));

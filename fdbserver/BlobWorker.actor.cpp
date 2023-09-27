@@ -3941,6 +3941,7 @@ ACTOR Future<Void> doBlobGranuleFileRequest(Reference<BlobWorkerData> bwData, Bl
 			bool canReadDirty = req.readOptions.present() && req.readOptions->canReadDirty;
 			if (metadata->isBulkLoadDirty && !canReadDirty) {
 				CODE_PROBE(true, "BW rejected dirty read while bulk loading");
+				// FIXME: more specific error with longer retry timeout?
 				throw wrong_shard_server();
 			}
 
@@ -4796,6 +4797,7 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 			if (info.changeFeedStartVersion == invalidVersion) {
 				info.changeFeedStartVersion = tr.getCommittedVersion();
 			}
+			ASSERT(info.changeFeedStartVersion > 0);
 
 			TraceEvent openEv("GranuleOpen", bwData->id);
 			openEv.detail("GranuleID", info.granuleID)
