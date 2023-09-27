@@ -21,3 +21,5 @@ public:
 	                                                    double fungibilityRatio,
 	                                                    uint64_t pageSize);
 };
+
+std::unique_ptr<IQuotaCostCalculator> getQuotaCostCalculatorFromKnobs();

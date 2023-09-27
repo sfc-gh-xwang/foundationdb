@@ -3,6 +3,7 @@
  */
 
 #include "fdbclient/IQuotaCostCalculator.h"
+#include "fdbclient/Knobs.h"
 #include "flow/Trace.h"
 
 #include <algorithm>
@@ -73,4 +74,10 @@ std::unique_ptr<IQuotaCostCalculator> IQuotaCostCalculator::create(std::string c
 		TraceEvent(SevWarnAlways, "InvalidQuotaCostTypeSpecified").detail("SpecifiedType", type);
 		return std::make_unique<MinimumQuotaCostCalculator>(fungibilityRatio, pageSize);
 	}
+}
+
+std::unique_ptr<IQuotaCostCalculator> getQuotaCostCalculatorFromKnobs() {
+	return IQuotaCostCalculator::create(CLIENT_KNOBS->QUOTA_THROTTLING_COST_FORMULA,
+	                                    CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO,
+	                                    CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 }

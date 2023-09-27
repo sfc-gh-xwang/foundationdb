@@ -453,26 +453,6 @@ ACTOR Future<std::vector<std::pair<KeyRange, CheckpointMetaData>>> getCheckpoint
 // Checks with Data Distributor that it is safe to mark all servers in exclusions as failed
 ACTOR Future<bool> checkSafeExclusions(Database cx, std::vector<AddressExclusion> exclusions);
 
-// Measured in bytes, rounded up to the nearest page size. Multiply by fungibility ratio
-// because writes are more expensive than reads.
-inline uint64_t getWriteOperationCost(uint64_t bytes) {
-	if (bytes == 0) {
-		return CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
-	} else {
-		return CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE *
-		       ((bytes - 1) / CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE + 1);
-	}
-}
-
-// Measured in bytes, rounded up to the nearest page size.
-inline uint64_t getReadOperationCost(uint64_t bytes) {
-	if (bytes == 0) {
-		return CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
-	} else {
-		return ((bytes - 1) / CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE + 1) * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
-	}
-}
-
 // Create a transaction to set the value of system key \xff/conf/perpetual_storage_wiggle. If enable == true, the value
 // will be 1. Otherwise, the value will be 0. The caller should take care of the reset of StorageWiggleMetrics if
 // necessary. Returns the FDB version at which the transaction was committed.

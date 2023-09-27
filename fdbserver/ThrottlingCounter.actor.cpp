@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 
+#include "fdbclient/IQuotaCostCalculator.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/ThrottlingCounter.h"
@@ -34,6 +35,7 @@ class ThrottlingCounterImpl {
 
 	std::vector<BusyThrottlingIdInfo> previousBusiestReaders;
 	Reference<EventCacheHolder> busiestReaderEventHolder;
+	std::unique_ptr<IQuotaCostCalculator> quotaCostCalculator;
 
 	std::vector<BusyThrottlingIdInfo> getBusiestReadersFromLastInterval(double elapsed) const {
 		std::priority_queue<BusyThrottlingIdInfo, std::vector<BusyThrottlingIdInfo>, std::greater<BusyThrottlingIdInfo>>
@@ -62,11 +64,12 @@ public:
 	  : thisServerID(thisServerID),
 	    maxReadersTracked(maxReadersTracked),
 	    minRateTracked(minRateTracked),
-	    busiestReaderEventHolder(makeReference<EventCacheHolder>(thisServerID.toString() + "/BusiestReader")) {}
+	    busiestReaderEventHolder(makeReference<EventCacheHolder>(thisServerID.toString() + "/BusiestReader")),
+	    quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {}
 
 	// Tenant groups take priority over tags if both are available
 	void addRequest(Optional<TransactionTag> const& tag, Optional<TenantGroupName> const& tenantGroup, int64_t bytes) {
-		auto const cost = getReadOperationCost(bytes);
+		auto const cost = quotaCostCalculator->getReadCost(bytes);
 		intervalTotalCost += cost;
 		if (tag.present()) {
 			CODE_PROBE(true, "Tracking transaction tag in ThrottlingCounter");
