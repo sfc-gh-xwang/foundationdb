@@ -3378,15 +3378,14 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 		state Reference<ReadYourWritesTransaction> tr(new ReadYourWritesTransaction(cx));
 		state BackupConfig config(task);
 		state Future<Optional<bool>> partitionedLog;
+		state Future<Optional<bool>> blobBackupEnabled;
 		loop {
 			try {
 				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				partitionedLog = config.partitionedLogEnabled().get(tr);
-				state Future<Version> startVersionFuture = tr->getReadVersion();
-				wait(success(partitionedLog) && success(startVersionFuture));
-
-				Params.beginVersion().set(task, startVersionFuture.get());
+				blobBackupEnabled = config.blobBackupEnabled().get(tr);
+				wait(success(partitionedLog) && success(blobBackupEnabled));
 				break;
 			} catch (Error& e) {
 				wait(tr->onError(e));
@@ -3401,6 +3400,27 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 			// the flag was not set before.
 			wait(success(ManagementAPI::changeConfig(cx.getReference(), "backup_worker_enabled:=1", true)));
 			backupWorkerEnabled = true;
+			if (!blobBackupEnabled.get().present() || !blobBackupEnabled.get().get()) {
+				// if backup worker is not used with blob granules backup, the user is responsible for
+				// manually disabling backup worker after the last backup is done
+				TraceEvent(SevWarnAlways, "BackupWorkerManualDisable").log();
+			}
+		}
+
+		// Get start version after backup worker are enabled
+		loop {
+			try {
+				tr->reset();
+				tr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
+
+				state Future<Version> startVersionFuture = tr->getReadVersion();
+				wait(success(startVersionFuture));
+				Params.beginVersion().set(task, startVersionFuture.get());
+				break;
+			} catch (Error& e) {
+				wait(tr->onError(e));
+			}
 		}
 
 		// Set the "backupStartedKey" and wait for all backup worker started
@@ -3415,8 +3435,8 @@ struct StartFullBackupTaskFunc : BackupTaskFuncBase {
 				state Future<ValueReadResult> started = tr->get(deprecatedBackupStartedKey);
 				state Future<ValueReadResult> taskStarted = tr->get(config.allWorkerStarted().key);
 				partitionedLog = config.partitionedLogEnabled().get(tr);
-				wait(success(started) && success(taskStarted) && success(partitionedLog));
 
+				wait(success(started) && success(taskStarted) && success(partitionedLog));
 				if (!partitionedLog.get().present() || !partitionedLog.get().get()) {
 					return Void(); // Skip if not using partitioned logs
 				}
@@ -5739,7 +5759,7 @@ public:
 		    .detail("TagName", tagName.c_str())
 		    .detail("Status", BackupAgentBase::getStateText(status));
 
-		bool bgBackupEnabled = wait(config.blobBackupEnabled().getD(tr));
+		state bool bgBackupEnabled = wait(config.blobBackupEnabled().getD(tr));
 		if (bgBackupEnabled) {
 			BlobGranuleBackupConfig bgbackupConfig;
 			bgbackupConfig.enabled().set(tr, false);
@@ -5751,6 +5771,15 @@ public:
 
 		wait(eraseLogData(tr, config.getUidAsKey(), destUidValue) &&
 		     fileBackup::clearBackupStartID(tr, config.getUid()));
+
+		state bool backupWorkerEnabled = wait(config.backupWorkerEnabled().getD(tr, Snapshot::False, false));
+		state bool partitionedLog = wait(config.partitionedLogEnabled().getD(tr, Snapshot::False, false));
+		if (bgBackupEnabled && backupWorkerEnabled && partitionedLog) {
+			// Disable backup worker
+			wait(success(
+			    ManagementAPI::changeConfig(tr->getDatabase().getReference(), "backup_worker_enabled:=0", true)));
+			TraceEvent(SevInfo, "DisableBackupWorker").log();
+		}
 
 		config.stateEnum().set(tr, EBackupState::STATE_ABORTED);
 

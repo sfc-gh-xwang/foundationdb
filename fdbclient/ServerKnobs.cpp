@@ -656,7 +656,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BACKUP_TIMEOUT,                                        0.4 );
 	init( BACKUP_NOOP_POP_DELAY,                                 5.0 );
 	init( BACKUP_FILE_BLOCK_BYTES,                       1024 * 1024 );
-	init( BACKUP_LOCK_BYTES,                                     3e9 ); BUGGIFY_KNOB(BACKUP_LOCK_BYTES, randomize && BUGGIFY, deterministicRandom()->randomInt(1024, 4096) * 256 * 1024);
+	init( BACKUP_LOCK_BYTES,                                     3e9 ); BUGGIFY_KNOB(BACKUP_LOCK_BYTES, randomize && BUGGIFY, deterministicRandom()->randomInt(1024, 4096) * 1024);
 	init( BACKUP_UPLOAD_DELAY,                                  10.0 ); BUGGIFY_KNOB(BACKUP_UPLOAD_DELAY, randomize && BUGGIFY, deterministicRandom()->random01() * 60);
 	init( USE_EMERGENCY_BACKUP_WORKER,                         false );
 
