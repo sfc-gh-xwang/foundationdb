@@ -206,7 +206,7 @@ else()
   add_library(fdb_c_combify_test_impl OBJECT ${COMBIFY_CORE_SRCS} ${COMBIFY_TEST_SRCS})
   target_link_libraries(fdb_c_combify_test_impl PRIVATE fdb_c tokensign fmt::fmt Threads::Threads fdb_cpp boost_target rapidjson)
   add_executable(fdb_c_combify_test)
-  target_link_libraries(fdb_c_combify_test PRIVATE fdb_c_combify_test_impl)
+  target_link_libraries(fdb_c_combify_test PRIVATE fdb_c_shim fdb_c_combify_test_impl)
   strip_debug_symbols(fdb_c_performance_test)
   strip_debug_symbols(fdb_c_ryw_benchmark)
   strip_debug_symbols(fdb_c_txn_size_test)
@@ -283,13 +283,6 @@ else()
     @CLUSTER_FILE@
     fdb
     ${CMAKE_CURRENT_BINARY_DIR}/libfdb_c_external.so
-  )
-  add_python_venv_test(
-    NAME fdb_c_combify_test
-    COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py
-    --build_dir ${CMAKE_BINARY_DIR}
-    --combify_tests_bin $<TARGET_FILE:fdb_c_combify_test>
-    TEST_TIMEOUT 1200
   )
   add_python_venv_test(
     NAME fdb_c_bulk_load_test
@@ -541,17 +534,14 @@ elseif(NOT APPLE) # Linux Only
 
   set_tests_properties(fdb_c_shim_library_tests PROPERTIES FIXTURES_REQUIRED old_binaries)
 
-  add_executable(fdb_c_shim_combify_test)
-  target_link_libraries(fdb_c_shim_combify_test PRIVATE fdb_c_shim fdb_c_combify_test_impl)
   add_python_venv_test(
-    NAME fdb_c_shim_combify_test
+    NAME fdb_c_combify_test
     COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py
     --build_dir ${CMAKE_BINARY_DIR}
-    --combify_tests_bin $<TARGET_FILE:fdb_c_shim_combify_test>
+    --combify_tests_bin $<TARGET_FILE:fdb_c_combify_test>
     --local_client_lib_version="${FDB_CURRENT_VERSION}"
-    --tenant_mode=disabled
-    --tenant_count=0
-    )
+    TEST_TIMEOUT 1200
+  )
 
 endif() # End Linux only
 
