@@ -6,6 +6,7 @@ import platform
 import subprocess
 import sys
 
+from binary_download import FdbBinaryDownloader
 from local_cluster import TLSConfig
 from tmp_cluster import TempCluster
 
@@ -49,6 +50,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--tenant_count", required=False, type=int, help="Tenant counts"
+    )
+    parser.add_argument(
+        "--local_client_lib_version",
+        required=False,
+        type=str,
+        help="Used to specify version of FDB local client library. Only used for testing the shim-layer",
     )
 
     options = parser.parse_args()
@@ -118,6 +125,18 @@ if __name__ == "__main__":
             env[libpath_env_key] = "{}:{}".format(
                 env[libpath_env_key], os.path.join(build_dir, "lib")
             )
+            if options.local_client_lib_version:
+                print(
+                    "FDB_LOCAL_CLIENT_LIBRARY_PATH: {}".format(
+                        options.local_client_lib_version
+                    )
+                )
+                downloader = FdbBinaryDownloader(options.build_dir)
+                version = options.local_client_lib_version
+                env["FDB_LOCAL_CLIENT_LIBRARY_PATH"] = downloader.lib_path(
+                    version, external=False
+                )
+
             this_run = subprocess.run(
                 [
                     binary_abs_path,
