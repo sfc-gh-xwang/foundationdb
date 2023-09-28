@@ -794,9 +794,11 @@ ACTOR Future<Void> handleWaitCompleteRequest(Reference<BulkLoaderData> self,
 		if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
 			wait(Never());
 		}
-		// TODO: Change back once we actually have data loading implemented!
-		// req.reply.send(Void());
-		req.reply.sendError(api_not_implemented());
+		if (SERVER_KNOBS->BULK_LOAD_SS_MOVE) {
+			req.reply.send(Void());
+		} else {
+			req.reply.sendError(api_not_implemented());
+		}
 		--self->stats.activeRequests;
 		return Void();
 	} catch (Error& e) {

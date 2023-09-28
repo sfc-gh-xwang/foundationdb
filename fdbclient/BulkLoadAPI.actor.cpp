@@ -511,6 +511,12 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 					state std::pair<BulkLoadMetadata::FilePointerKey, BulkLoadMetadata::FilePointerKey> idRange =
 					    BulkLoadMetadata::allFilePointersForLoadRange(id);
 
+					// FIXME: this still somehow gets illegal_locked_range_access
+					/*if (desiredState == BulkLoadStatus::State::ABORTED_COMPLETE) {
+					    // clean up data for load
+					    tr->clear(physicalRange);
+					}*/
+
 					// Calculate the bulk load size and remove the reservation
 					if (tenant.present() && tenant.get()->tenantGroup().present()) {
 						state TenantGroupName tenantGroup = tenant.get()->tenantGroup().get();

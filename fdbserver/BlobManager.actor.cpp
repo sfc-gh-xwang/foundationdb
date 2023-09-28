@@ -7640,6 +7640,8 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData,
 	wait(store(bstore, getBStoreForGranule(bmData, physicalRange)));
 	ASSERT(bstore.isValid());
 
+	// FIXME: wait for data moves away from migrator to finish for range!
+
 	if (cleanupGranules) {
 		wait(bulkLoadAbortCleanupGranules(bmData, &writtenPointers, idKey, physicalRange));
 	}
@@ -7910,7 +7912,8 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 		self->addActor.send(monitorPurgeKeys(self));
 		self->addActor.send(cleanupCompletedPurgeKeys(self));
 		if (SERVER_KNOBS->BG_CONSISTENCY_CHECK_ENABLED && !self->isFullRestoreMode &&
-		    (!CLIENT_KNOBS->ALLOW_BULK_LOADS || !SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES)) {
+		    (!CLIENT_KNOBS->ALLOW_BULK_LOADS || !SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES ||
+		     (SERVER_KNOBS->BULK_LOAD_STAGE_GRANULES && SERVER_KNOBS->BULK_LOAD_SS_MOVE))) {
 			// FIXME: reenable once bulk load data in storage servers!!
 			self->addActor.send(bgConsistencyCheck(self));
 		}
