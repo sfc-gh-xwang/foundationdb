@@ -7,7 +7,9 @@
 #include "fdbclient/ConsistencyScanInterface.actor.h"
 #include "fdbclient/Knobs.h"
 
-bool ConsistencyScanState::RoundStats::shouldStartNewRound(const ConsistencyScanState::Config& config,
+// Returns how many seconds to wait before starting the next round or non-present if a new round
+// should not be started
+Optional<int64_t> ConsistencyScanState::RoundStats::nextRoundStartDelaySeconds(const ConsistencyScanState::Config& config,
                                                            Version currentVersion) {
 	// if the current round is running, but the configured minStartVersion is newer than the current round, it
 	// should start a new round.
