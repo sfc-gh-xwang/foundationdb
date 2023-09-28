@@ -5528,28 +5528,29 @@ int selectServerCandidate(const LocalityData& clientLocality, Reference<Location
 	int index = -1;
 
 	// Exclude failed servers.
-	std::vector<int> available_servers;
+	std::vector<int> availableServers;
 	for (int i = 0; i < serverLocations->size(); i++) {
 		if (!IFailureMonitor::failureMonitor()
 		         .getState(serverLocations->get(i, &StorageServerInterface::getKeyValuesStream).getEndpoint())
 		         .failed) {
-			available_servers.push_back(i);
+			availableServers.push_back(i);
 		}
 	}
 
-	int num_servers = available_servers.size();
+	int numServers = availableServers.size();
 	// No healthy servers available.
-	if (num_servers == 0) {
+	if (numServers == 0) {
 		return index;
 	}
 
 	// Try to find a server in the same AZ(DcId) as the input client.
-	auto client_dcid = clientLocality.dcId();
-	if (CLIENT_KNOBS->FETCH_RANGE_WITH_DC_ID_LOCALITY && client_dcid.present()) {
-		for (int i = 0; i < num_servers; i++) {
-			auto server_dcid = serverLocations->get(available_servers[i], &StorageServerInterface::locality).dcId();
-			if (server_dcid.present() && client_dcid == server_dcid) {
-				index = available_servers[i];
+	auto clientDataHallId = clientLocality.dataHallId();
+	if (CLIENT_KNOBS->FETCH_RANGE_WITH_DC_ID_LOCALITY && clientDataHallId.present()) {
+		for (int i = 0; i < numServers; i++) {
+			auto serverDataHallId =
+			    serverLocations->get(availableServers[i], &StorageServerInterface::locality).dataHallId();
+			if (clientDataHallId == serverDataHallId) {
+				index = availableServers[i];
 				break;
 			}
 		}
@@ -5558,7 +5559,7 @@ int selectServerCandidate(const LocalityData& clientLocality, Reference<Location
 	// If FETCH_RANGE_WITH_DC_ID_LOCALITY is false, or we fail to find a server with AZ locality, then choose a random
 	// healthy server.
 	if (index == -1) {
-		index = available_servers[deterministicRandom()->randomUInt32() % num_servers];
+		index = availableServers[deterministicRandom()->randomUInt32() % numServers];
 	}
 
 	return index;
