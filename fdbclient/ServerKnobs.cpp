@@ -332,7 +332,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_MOVE_KEYS_PARALLELISM,                               15 ); BUGGIFY_KNOB(DD_MOVE_KEYS_PARALLELISM, randomize && BUGGIFY, 1);
 	init( DD_FETCH_SOURCE_PARALLELISM,                          1000 ); BUGGIFY_KNOB(DD_FETCH_SOURCE_PARALLELISM, randomize && BUGGIFY, 1);
 	init( DD_MERGE_LIMIT,                                       2000 ); BUGGIFY_KNOB(DD_MERGE_LIMIT, randomize && BUGGIFY, 2);
-	init( DD_SHARD_METRICS_TIMEOUT,                             60.0 ); BUGGIFY_KNOB(DD_SHARD_METRICS_TIMEOUT, randomize && BUGGIFY, 0.1);
+	init( DD_SHARD_METRICS_TIMEOUT,                             60.0 );
 	init( DD_LOCATION_CACHE_SIZE,                            2000000 ); BUGGIFY_KNOB(DD_LOCATION_CACHE_SIZE, randomize && BUGGIFY, 3);
 	init( MOVEKEYS_LOCK_POLLING_DELAY,                           5.0 );
 	init( DEBOUNCE_RECRUITING_DELAY,                             5.0 );

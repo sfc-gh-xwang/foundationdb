@@ -21,8 +21,10 @@
 #include "fdbserver/DDTxnProcessor.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ManagementAPI.actor.h"
+#include "fdbclient/StorageServerInterface.h"
 #include "fdbserver/DataDistribution.actor.h"
 #include "fdbclient/DatabaseContext.h"
+#include "flow/Error.h"
 #include "flow/genericactors.actor.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -763,6 +765,10 @@ Future<Void> DDTxnProcessor::rawFinishMovement(const MoveKeysParams& params,
 	return ::rawFinishMovement(cx, params, tssMapping);
 }
 
+Future<StorageMetrics> DDTxnProcessor::getStorageMetrics(KeyRange const& keys, int shardLimit) const {
+	return cx->getStorageMetrics(keys, shardLimit);
+}
+
 struct DDMockTxnProcessorImpl {
 	// return when all status become FETCHED
 	ACTOR static Future<Void> checkFetchingState(DDMockTxnProcessor* self, std::vector<UID> ids, KeyRangeRef range) {
@@ -1011,6 +1017,10 @@ Future<std::pair<Optional<StorageMetrics>, int>> DDMockTxnProcessor::waitStorage
     int shardLimit,
     int expectedShardCount) const {
 	return mgs->waitStorageMetrics(keys, min, max, permittedError, shardLimit, expectedShardCount);
+}
+
+Future<StorageMetrics> DDMockTxnProcessor::getStorageMetrics(KeyRange const& keys, int shardLimit) const {
+	return mgs->getStorageMetrics(keys, shardLimit);
 }
 
 // FIXME: finish implementation
