@@ -1606,6 +1606,14 @@ ACTOR Future<int> cli(CLIOptions opt, LineNoise* plinenoise, Reference<ClusterCo
 					continue;
 				}
 
+				if (tokencmp(tokens[0], "global_config")) {
+					bool _result = wait(makeInterruptable(globalConfigCommandActor(db, tokens)));
+					if (!_result) {
+						is_error = true;
+					}
+					continue;
+				}
+
 				if (tokencmp(tokens[0], "reset")) {
 					if (tokens.size() != 1) {
 						printUsage(tokens[0]);

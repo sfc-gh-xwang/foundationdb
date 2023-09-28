@@ -53,6 +53,11 @@ extern const KeyRef transactionTagSampleCost;
 extern const KeyRef samplingFrequency;
 extern const KeyRef samplingWindow;
 
+// Quota throttling management
+extern const KeyRef quotaThrottlingPageSize;
+extern const KeyRef quotaThrottlingFungibilityRatio;
+extern const KeyRef quotaThrottlingCostFormula;
+
 // Structure used to hold the values stored by global configuration. The arena
 // is used as memory to store both the key and the value (the value is only
 // stored in the arena if it is an object; primitives are just copied).
@@ -120,7 +125,7 @@ public:
 			}
 
 			return defaultVal;
-		} catch (Error& e) {
+		} catch (...) {
 			throw;
 		}
 	}

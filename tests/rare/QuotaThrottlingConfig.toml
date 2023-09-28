@@ -1,0 +1,5 @@
+[[test]]
+testTitle = 'QuotaThrottlingConfigTest'
+
+[[test.workload]]
+testName = 'QuotaThrottlingConfig'

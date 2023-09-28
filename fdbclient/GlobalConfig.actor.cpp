@@ -37,6 +37,11 @@ const KeyRef transactionTagSampleCost = "config/transaction_tag_sample_cost"_sr;
 const KeyRef samplingFrequency = "visibility/sampling/frequency"_sr;
 const KeyRef samplingWindow = "visibility/sampling/window"_sr;
 
+// Quota throttling management
+const KeyRef quotaThrottlingPageSize = "quota_throttling/pageSize"_sr;
+const KeyRef quotaThrottlingFungibilityRatio = "quota_throttling/fungibilityRatio"_sr;
+const KeyRef quotaThrottlingCostFormula = "quota_throttling/costFormula"_sr;
+
 GlobalConfig::GlobalConfig(DatabaseContext* cx) : cx(cx), lastUpdate(0) {}
 
 void GlobalConfig::applyChanges(Transaction& tr,
@@ -204,6 +209,7 @@ ACTOR Future<Void> GlobalConfig::updater(GlobalConfig* self, const ClientDBInfo*
 						// history updates or the protocol version changed, so it
 						// must re-read the entire configuration range.
 						wait(self->refresh(self, history.back().version));
+
 						if (dbInfo->history.size() > 0) {
 							self->lastUpdate = dbInfo->history.back().version;
 						}
@@ -230,7 +236,6 @@ ACTOR Future<Void> GlobalConfig::updater(GlobalConfig* self, const ClientDBInfo*
 							self->lastUpdate = vh.version;
 						}
 					}
-
 					self->configChanged.trigger();
 				} catch (Error& e) {
 					throw;
