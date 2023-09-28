@@ -203,8 +203,10 @@ else()
   add_executable(disconnected_timeout_unit_tests ${DISCONNECTED_TIMEOUT_UNIT_TEST_SRCS})
   add_executable(fdb_c_api_tester)
   target_link_libraries(fdb_c_api_tester PRIVATE fdb_c fdb_c_api_tester_impl)
-  add_executable(fdb_c_combify_test ${COMBIFY_CORE_SRCS} ${COMBIFY_TEST_SRCS})
-  target_link_libraries(fdb_c_combify_test PRIVATE fdb_c tokensign fmt::fmt Threads::Threads fdb_cpp boost_target rapidjson)
+  add_library(fdb_c_combify_test_impl OBJECT ${COMBIFY_CORE_SRCS} ${COMBIFY_TEST_SRCS})
+  target_link_libraries(fdb_c_combify_test_impl PRIVATE fdb_c tokensign fmt::fmt Threads::Threads fdb_cpp boost_target rapidjson)
+  add_executable(fdb_c_combify_test)
+  target_link_libraries(fdb_c_combify_test PRIVATE fdb_c_combify_test_impl)
   strip_debug_symbols(fdb_c_performance_test)
   strip_debug_symbols(fdb_c_ryw_benchmark)
   strip_debug_symbols(fdb_c_txn_size_test)
@@ -284,7 +286,9 @@ else()
   )
   add_python_venv_test(
     NAME fdb_c_combify_test
-    COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py ${CMAKE_BINARY_DIR}
+    COMMAND python ${CMAKE_SOURCE_DIR}/tests/TestRunner/combify.py
+    --build_dir ${CMAKE_BINARY_DIR}
+    --combify_tests_bin $<TARGET_FILE:fdb_c_combify_test>
     TEST_TIMEOUT 1200
   )
   add_python_venv_test(

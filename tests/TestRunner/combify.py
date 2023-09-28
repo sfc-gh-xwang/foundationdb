@@ -20,15 +20,18 @@ def options_valid(tls_on, authz_on, tenant_mode, tenant_count):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: {} [BUILD_DIRECTORY_PATH]".format(sys.argv[0]))
-        sys.exit(1)
-
     # Create an ArgumentParser instance
     parser = argparse.ArgumentParser(description="Parser for combify.py")
 
     # The build directory path is required
-    parser.add_argument("build_dir", help="Build directory path.")
+    parser.add_argument(
+        "--build_dir", required=True, type=str, help="Build directory path."
+    )
+
+    # The combify binary path is required
+    parser.add_argument(
+        "--combify_tests_bin", required=True, type=str, help="Combify binary path."
+    )
 
     # The following options allow users to pin values of specified options
     parser.add_argument(
