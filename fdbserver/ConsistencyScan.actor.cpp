@@ -550,6 +550,8 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 			try {
 				systemDB->setOptions(tr);
 
+				state Optional<int64_t> nextRoundDelayTime;
+
 				// Get the config and store the cs trigger version so we can detect updates later.
 				// Get the ConsistencyScanState config andThe ConsistencyScanState trigger will update when any of its
 				// configuration members change.
@@ -568,7 +570,9 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 					wait(store(statsLifetime, cs.lifetimeStats().getD(tr)) &&
 					     store(statsCurrentRound, cs.currentRoundStats().getD(tr)));
 
-					if (statsCurrentRound.shouldStartNewRound(config, tr->getReadVersion().get())) {
+					nextRoundDelayTime =
+					    statsCurrentRound.nextRoundStartDelaySeconds(config, tr->getReadVersion().get());
+					if (nextRoundDelayTime.present()) {
 						// If not complete then end the round
 						if (!statsCurrentRound.complete) {
 							statsCurrentRound.endVersion = tr->getReadVersion().get();
@@ -607,16 +611,8 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 					break;
 				}
 
-				if (config.enabled && statsCurrentRound.complete) {
-					double delayTime =
-					    std::max<double>(statsCurrentRound.startTime + config.minRoundTimeSeconds - now(), 0.0);
-					// if delayTime is 0 means it should not wait and start a new round now, but shouldStartNewRound()
-					// uses version for the check, which may not exactly matches the clock time, so just delay 1 second
-					// if it's not ready to start a new round yet.
-					if (delayTime == 0 && !statsCurrentRound.shouldStartNewRound(config, tr->getReadVersion().get())) {
-						delayTime = 1;
-					}
-					onChange = onChange || delay(delayTime);
+				if (nextRoundDelayTime.present()) {
+					onChange = onChange || delay(nextRoundDelayTime.get());
 					memState->stats.waitingBetweenRounds = true;
 				} else {
 					memState->stats.waitingBetweenRounds = false;
