@@ -20,6 +20,7 @@
 
 #ifndef FDBCLIENT_BLOBGRANULECOMMON_H
 #define FDBCLIENT_BLOBGRANULECOMMON_H
+#include "fdbclient/GetEncryptCipherKeys.h"
 #pragma once
 
 #include "fdbclient/BlobCipher.h"
@@ -160,6 +161,20 @@ struct BlobGranuleCipherKeysMeta {
 // fdb_c.h!
 struct BlobGranuleCipherKey {
 	constexpr static FileIdentifier file_identifier = 7274734;
+
+	BlobGranuleCipherKey() = default;
+	BlobGranuleCipherKey(Arena& a, const BlobGranuleCipherKey& copyFrom)
+	  : encryptDomainId(copyFrom.encryptDomainId),
+	    baseCipherId(copyFrom.baseCipherId),
+	    baseCipherKCV(copyFrom.baseCipherKCV),
+	    salt(copyFrom.salt),
+	    baseCipher(a, copyFrom.baseCipher) {}
+
+	int expectedSize() const {
+		return sizeof(encryptDomainId) + sizeof(baseCipherId) + sizeof(baseCipherKCV) + sizeof(salt) +
+		       baseCipher.expectedSize();
+	}
+
 	EncryptCipherDomainId encryptDomainId;
 	EncryptCipherBaseKeyId baseCipherId;
 	EncryptCipherKeyCheckValue baseCipherKCV;
@@ -188,6 +203,16 @@ struct BlobGranuleCipherKey {
 // fdb_c.h!
 struct BlobGranuleCipherKeysCtx {
 	constexpr static FileIdentifier file_identifier = 1278718;
+	BlobGranuleCipherKeysCtx() = default;
+	BlobGranuleCipherKeysCtx(Arena& a, const BlobGranuleCipherKeysCtx& copyFrom)
+	  : textCipherKey(a, copyFrom.textCipherKey),
+	    headerCipherKey(a, copyFrom.headerCipherKey),
+	    ivRef(a, copyFrom.ivRef) {}
+
+	int expectedSize() const {
+		return textCipherKey.expectedSize() + headerCipherKey.expectedSize() + ivRef.expectedSize();
+	}
+
 	BlobGranuleCipherKey textCipherKey;
 	BlobGranuleCipherKey headerCipherKey;
 	StringRef ivRef;
