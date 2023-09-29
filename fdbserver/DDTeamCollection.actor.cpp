@@ -1126,95 +1126,27 @@ public:
 		state int targetTeamNumPerServer =
 		    (SERVER_KNOBS->DESIRED_TEAMS_PER_SERVER * (self->configuration.storageTeamSize + 1)) / 2;
 		state Future<Void> storageMetadataTracker = self->updateStorageMetadata(server);
+
+		state bool isBM = BlobMigratorInterface::isBlobMigrator(server->getId());
+
 		try {
 			loop {
-				state bool isBm = BlobMigratorInterface::isBlobMigrator(server->getLastKnownInterface().id());
 				status.isUndesired =
-				    (!self->disableFailingLaggingServers.get() && server->ssVersionTooFarBehind.get()) || isBm;
+				    (!self->disableFailingLaggingServers.get() && server->ssVersionTooFarBehind.get()) || isBM;
 
-				status.isWrongConfiguration = isBm;
+				status.isWrongConfiguration = isBM;
 				status.isWiggling = false;
 				hasWrongDC = !self->isCorrectDC(*server);
 				hasInvalidLocality =
 				    !self->isValidLocality(self->configuration.storagePolicy, server->getLastKnownInterface().locality);
 
-				// If there is any other server on this exact NetworkAddress, this server is undesired and will
-				// eventually be eliminated. This samAddress checking must be redo whenever the server's state (e.g.,
-				// storeType, dcLocation, interface) is changed.
 				state std::vector<Future<Void>> otherChanges;
-				std::vector<Promise<Void>> wakeUpTrackers;
-				for (const auto& i : self->server_and_tss_info) {
-					if (self->db->isMocked())
-						continue;
-					if (i.second.getPtr() != server &&
-					    i.second->getLastKnownInterface().address() == server->getLastKnownInterface().address()) {
-						auto& statusInfo = self->server_status.get(i.first);
-						TraceEvent("SameAddress", self->distributorId)
-						    .detail("Failed", statusInfo.isFailed)
-						    .detail("Undesired", statusInfo.isUndesired)
-						    .detail("Server", server->getId())
-						    .detail("OtherServer", i.second->getId())
-						    .detail("Address", server->getLastKnownInterface().address())
-						    .detail("NumShards", self->shardsAffectedByTeamFailure->getNumberOfShards(server->getId()))
-						    .detail("OtherNumShards",
-						            self->shardsAffectedByTeamFailure->getNumberOfShards(i.second->getId()))
-						    .detail("OtherHealthy", !self->server_status.get(i.second->getId()).isUnhealthy());
-						// wait for the server's ip to be changed
-						otherChanges.push_back(self->server_status.onChange(i.second->getId()));
-						if (!self->server_status.get(i.second->getId()).isUnhealthy()) {
-							if (self->shardsAffectedByTeamFailure->getNumberOfShards(i.second->getId()) >=
-							    self->shardsAffectedByTeamFailure->getNumberOfShards(server->getId())) {
-								TraceEvent(SevWarn, "UndesiredStorageServer", self->distributorId)
-								    .detail("Server", server->getId())
-								    .detail("Address", server->getLastKnownInterface().address())
-								    .detail("OtherServer", i.second->getId())
-								    .detail("NumShards",
-								            self->shardsAffectedByTeamFailure->getNumberOfShards(server->getId()))
-								    .detail("OtherNumShards",
-								            self->shardsAffectedByTeamFailure->getNumberOfShards(i.second->getId()));
 
-								status.isUndesired = true;
-							} else
-								wakeUpTrackers.push_back(i.second->wakeUpTracker);
-						}
-					}
-				}
-
-				for (auto& p : wakeUpTrackers) {
-					if (!p.isSet())
-						p.send(Void());
-				}
-
-				if (server->getLastKnownClass().machineClassFitness(ProcessClass::Storage) > ProcessClass::UnsetFit) {
-					// NOTE: Should not use self->healthyTeamCount > 0 in if statement, which will cause status bouncing
-					// between healthy and unhealthy and result in OOM (See PR#2228).
-
-					if (self->optimalTeamCount > 0) {
-						TraceEvent(SevWarn, "UndesiredStorageServer", self->distributorId)
-						    .detail("Server", server->getId())
-						    .detail("OptimalTeamCount", self->optimalTeamCount)
-						    .detail("Fitness", server->getLastKnownClass().machineClassFitness(ProcessClass::Storage));
-						status.isUndesired = true;
-					}
-					otherChanges.push_back(self->zeroOptimalTeams.onChange());
-				}
-
-				// If this storage server has the wrong key-value store type, then mark it undesired so it will be
-				// replaced with a server having the correct type
-				if (hasWrongDC || hasInvalidLocality) {
-					TraceEvent(SevWarn, "UndesiredDCOrLocality", self->distributorId)
-					    .detail("Server", server->getId())
-					    .detail("WrongDC", hasWrongDC)
-					    .detail("InvalidLocality", hasInvalidLocality);
-					status.isUndesired = true;
-					status.isWrongConfiguration = true;
-				}
-				if (server->wrongStoreTypeToRemove.get()) {
-					TraceEvent(SevWarn, "WrongStoreTypeToRemove", self->distributorId)
-					    .detail("Server", server->getId())
-					    .detail("StoreType", "?");
-					status.isUndesired = true;
-					status.isWrongConfiguration = true;
+				// Don't need to do the checks for fake storage server served by Blob Migrator
+				if (!isBM) {
+					self->sameAddressChecker(server, status, otherChanges);
+					self->machineFitnessChecker(server, status, otherChanges);
+					self->undesiredServerChecker(server, status, hasWrongDC, hasInvalidLocality);
 				}
 
 				// An invalid wiggle server should set itself the right status. Otherwise, it cannot be re-included by
@@ -1297,10 +1229,6 @@ public:
 				}
 
 				failureTracker = storageServerFailureTracker(self, server, &status, addedVersion);
-				// We need to recruit new storage servers if the key value store type has changed
-				if (hasWrongDC || hasInvalidLocality || server->wrongStoreTypeToRemove.get()) {
-					self->restartRecruiting.trigger();
-				}
 
 				if (lastIsUnhealthy && !status.isUnhealthy() && !isTss &&
 				    (server->getTeams().size() < targetTeamNumPerServer || self->lastBuildTeamsFailed)) {
@@ -1627,6 +1555,7 @@ public:
 	                                                      ServerStatus* status,
 	                                                      Version addedVersion) {
 		state StorageServerInterface interf = server->getLastKnownInterface();
+
 		loop {
 			state bool inHealthyZone = false; // healthChanged actor will be Never() if this flag is true
 			if (self->healthyZone.get().present()) {
@@ -3348,6 +3277,107 @@ public:
 		}
 	}
 }; // class DDTeamCollectionImpl
+
+// If there is any other server on the same NetworkAddress as `server`, status will be marked undesired
+// eventually be eliminated. This sameAddress checking must be redone whenever the server's state (e.g.,
+// storeType, dcLocation, interface) is changed, so also update otherChanges.
+void DDTeamCollection::sameAddressChecker(TCServerInfo* server,
+                                          ServerStatus& status,
+                                          std::vector<Future<Void>>& otherChanges) {
+	// In Mock DD, all storage servers are created within one process. So this check doesn't make sense
+	if (db->isMocked())
+		return;
+
+	std::vector<Promise<Void>> wakeUpTrackers;
+	for (const auto& i : server_and_tss_info) {
+		if (i.second.getPtr() != server &&
+		    i.second->getLastKnownInterface().address() == server->getLastKnownInterface().address()) {
+			auto& statusInfo = server_status.get(i.first);
+			int shardCount = shardsAffectedByTeamFailure->getNumberOfShards(server->getId());
+			int otherShardCount = shardsAffectedByTeamFailure->getNumberOfShards(i.second->getId());
+			bool otherHealthy = !server_status.get(i.second->getId()).isUnhealthy();
+			TraceEvent("SameAddress", distributorId)
+			    .detail("Failed", statusInfo.isFailed)
+			    .detail("Undesired", statusInfo.isUndesired)
+			    .detail("Server", server->getId())
+			    .detail("OtherServer", i.second->getId())
+			    .detail("Address", server->getLastKnownInterface().address())
+			    .detail("NumShards", shardCount)
+			    .detail("OtherNumShards", otherShardCount)
+			    .detail("OtherHealthy", otherHealthy);
+			// wait for the server's ip to be changed
+			otherChanges.push_back(server_status.onChange(i.second->getId()));
+			if (otherHealthy) {
+				// mark Undesired when has the less shards in order to moving less data
+				if (otherShardCount >= shardCount) {
+					TraceEvent(SevWarn, "UndesiredStorageServer", distributorId)
+					    .detail("Server", server->getId())
+					    .detail("Address", server->getLastKnownInterface().address())
+					    .detail("OtherServer", i.second->getId())
+					    .detail("NumShards", shardCount)
+					    .detail("OtherNumShards", otherShardCount);
+
+					status.isUndesired = true;
+				} else
+					wakeUpTrackers.push_back(i.second->wakeUpTracker);
+			}
+		}
+	}
+
+	for (auto& p : wakeUpTrackers) {
+		if (!p.isSet())
+			p.send(Void());
+	}
+}
+
+// If the SS is on an unfit machine, it'll be marked as undesired when there's enough optimal teams
+void DDTeamCollection::machineFitnessChecker(TCServerInfo* server,
+                                             ServerStatus& status,
+                                             std::vector<Future<Void>>& otherChanges) {
+	if (server->getLastKnownClass().machineClassFitness(ProcessClass::Storage) > ProcessClass::UnsetFit) {
+		// NOTE: Should not use self->healthyTeamCount > 0 in if statement, which will cause status bouncing
+		// between healthy and unhealthy and result in OOM (See PR#2228).
+
+		if (optimalTeamCount > 0) {
+			TraceEvent(SevWarn, "UndesiredStorageServer", distributorId)
+			    .detail("Server", server->getId())
+			    .detail("OptimalTeamCount", optimalTeamCount)
+			    .detail("Fitness", server->getLastKnownClass().machineClassFitness(ProcessClass::Storage));
+			status.isUndesired = true;
+		}
+		otherChanges.push_back(zeroOptimalTeams.onChange());
+	}
+}
+
+// If this storage server has the wrong key-value store type/locality, then mark it undesired. Then it will be
+// replaced with a server having the correct type
+void DDTeamCollection::undesiredServerChecker(TCServerInfo* server,
+                                              ServerStatus& status,
+                                              const bool& hasWrongDC,
+                                              const bool& hasInvalidLocality) {
+
+	if (hasWrongDC || hasInvalidLocality) {
+		TraceEvent(SevWarn, "UndesiredDCOrLocality", distributorId)
+		    .detail("Server", server->getId())
+		    .detail("WrongDC", hasWrongDC)
+		    .detail("InvalidLocality", hasInvalidLocality);
+		status.isUndesired = true;
+		status.isWrongConfiguration = true;
+	}
+
+	if (server->wrongStoreTypeToRemove.get()) {
+		TraceEvent(SevWarn, "WrongStoreTypeToRemove", distributorId)
+		    .detail("Server", server->getId())
+		    .detail("StoreType", "?");
+		status.isUndesired = true;
+		status.isWrongConfiguration = true;
+	}
+
+	// We need to recruit new storage servers if the key value store type has changed
+	if (hasWrongDC || hasInvalidLocality || server->wrongStoreTypeToRemove.get()) {
+		restartRecruiting.trigger();
+	}
+}
 
 void DDTeamCollection::updateLoadBytesPivot(std::vector<int64_t>& teamLoadBytes) {
 	if (!teamLoadBytes.empty()) {
@@ -5367,6 +5397,9 @@ void DDTeamCollection::addServer(StorageServerInterface newServer,
 		return;
 	}
 
+	bool isBM = BlobMigratorInterface::isBlobMigrator(newServer.id());
+	bool isNormalSS = !newServer.isTss() && !isBM;
+
 	if (!newServer.isTss()) {
 		allServers.push_back(newServer.id());
 	}
@@ -5401,7 +5434,7 @@ void DDTeamCollection::addServer(StorageServerInterface newServer,
 
 	r->setTracker(storageServerTracker(r.getPtr(), errorOut, addedVersion, ddEnabledState, newServer.isTss()));
 
-	if (!newServer.isTss()) {
+	if (isNormalSS) {
 		// link and wake up tss' tracker so it knows when this server gets removed
 		if (tss_info_by_pair.count(newServer.id())) {
 			tss_info_by_pair[newServer.id()]->onTSSPairRemoved = r->onRemoved;
