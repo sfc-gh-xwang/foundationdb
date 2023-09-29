@@ -27,6 +27,7 @@
 #include "TesterOptions.h"
 #include "TesterScheduler.h"
 #include <string_view>
+#include <unordered_set>
 #include <memory>
 
 namespace FdbApiTester {
@@ -51,9 +52,11 @@ public:
 	virtual fdb::Transaction tx() = 0;
 
 	// Schedule a continuation to be executed when the future gets ready
-	// retryOnError controls whether transaction is retried in case of an error instead
-	// of calling the continuation
-	virtual void continueAfter(fdb::Future f, TTaskFct cont, bool retryOnError = true) = 0;
+	// Retries in case of an error instead of calling the continuation if the error is not in expectedErrors
+	virtual void continueAfter(fdb::Future f, TTaskFct cont, std::unordered_set<int> expectedErrors = {}) = 0;
+
+	// Does not retry in case of an error instead of calling the continuation
+	virtual void continueAfterNoRetry(fdb::Future f, TTaskFct cont) = 0;
 
 	// Complete the transaction with a commit
 	virtual void commit() = 0;

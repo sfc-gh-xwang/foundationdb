@@ -1,5 +1,5 @@
 /*
- * GrvTransactionRateInfo.cpp
+ * GrvRateInfo.cpp
  *
  * This source file is part of the FoundationDB open source project
  *
@@ -18,12 +18,9 @@
  * limitations under the License.
  */
 
-#include "fdbserver/GrvTransactionRateInfo.h"
+#include "fdbserver/GrvRateInfo.h"
 
-GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow,
-                                               double maxEmptyQueueBudget,
-                                               double rate,
-                                               double maxToStart)
+GrvRateInfo::GrvRateInfo(double rateWindow, double maxEmptyQueueBudget, double rate, double maxToStart)
   : rateWindow(rateWindow),
     maxEmptyQueueBudget(maxEmptyQueueBudget),
     rate(rate),
@@ -33,15 +30,15 @@ GrvTransactionRateInfo::GrvTransactionRateInfo(double rateWindow,
 	smoothRate.setTotal(rate);
 }
 
-bool GrvTransactionRateInfo::canStart(int64_t costAlreadyReleased, int64_t cost) const {
+bool GrvRateInfo::canStart(int64_t costAlreadyReleased, int64_t cost) const {
 	return costAlreadyReleased + cost <= costAllowedToStart();
 }
 
-int64_t GrvTransactionRateInfo::costAllowedToStart() const {
+int64_t GrvRateInfo::costAllowedToStart() const {
 	return std::min(limit + budget, maxToStart);
 }
 
-void GrvTransactionRateInfo::endReleaseWindow(int64_t numStarted, bool queueEmpty, double elapsed) {
+void GrvRateInfo::endReleaseWindow(int64_t numStarted, bool queueEmpty, double elapsed) {
 	// Update the budget to accumulate any extra capacity available or remove any excess that was used.
 	// The actual delta is the portion of the limit we didn't use multiplied by the fraction of the rate window that
 	// elapsed.
@@ -69,13 +66,13 @@ void GrvTransactionRateInfo::endReleaseWindow(int64_t numStarted, bool queueEmpt
 	smoothReleased.addDelta(numStarted);
 }
 
-void GrvTransactionRateInfo::disable() {
+void GrvRateInfo::disable() {
 	disabled = true;
 	// Use smoothRate.setTotal(0) instead of setting rate to 0 so txns will not be throttled immediately.
 	smoothRate.setTotal(0);
 }
 
-void GrvTransactionRateInfo::setRate(double rate) {
+void GrvRateInfo::setRate(double rate) {
 	ASSERT(rate >= 0 && rate != std::numeric_limits<double>::infinity() && !std::isnan(rate));
 
 	this->rate = rate;
@@ -87,7 +84,7 @@ void GrvTransactionRateInfo::setRate(double rate) {
 	}
 }
 
-void GrvTransactionRateInfo::startReleaseWindow() {
+void GrvRateInfo::startReleaseWindow() {
 	// Determine the number of transaction cost that this proxy is allowed to release
 	// Roughly speaking, this is done by computing the cost over some historical window that we
 	// could have released but didn't, and making that our limit. More precisely, we track a smoothed rate limit and

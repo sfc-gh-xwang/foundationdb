@@ -29,7 +29,7 @@
 #include "fdbclient/GrvProxyInterface.h"
 #include "fdbclient/VersionVector.h"
 #include "fdbserver/GrvProxyTagThrottler.h"
-#include "fdbserver/GrvTransactionRateInfo.h"
+#include "fdbserver/GrvRateInfo.h"
 #include "fdbserver/LogSystem.h"
 #include "fdbserver/LogSystemDiskQueueAdapter.h"
 #include "fdbserver/WaitFailure.h"
@@ -420,14 +420,16 @@ ACTOR Future<Void> globalConfigRequestServer(GrvProxyData* grvProxyData, GrvProx
 }
 
 ACTOR Future<Void> handleClientThroughputReports(FutureStream<ReportThroughputRequest> stream,
-                                                 ThrottlingIdMap<uint64_t>* throttlingIdToThroughput,
+                                                 ThrottlingIdMap<ThroughputStats>* throttlingIdToThroughput,
                                                  boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds,
                                                  Counter* throughputReportsReceived) {
 	loop {
 		ReportThroughputRequest req = waitNext(stream);
 		++(*throughputReportsReceived);
 		for (auto const& [throttlingId, clientThroughput] : req.throughput) {
-			(*throttlingIdToThroughput)[throttlingId] += clientThroughput;
+			auto& throughputStats = (*throttlingIdToThroughput)[throttlingId];
+			throughputStats.readThroughput += clientThroughput.readThroughput;
+			throughputStats.writeThroughput += clientThroughput.writeThroughput;
 		}
 
 		ReportThroughputReply reply;
@@ -444,12 +446,12 @@ ACTOR Future<Void> getRate(UID myID,
                            Reference<AsyncVar<ServerDBInfo> const> db,
                            int64_t* inTransactionCount,
                            int64_t* inBatchTransactionCount,
-                           GrvTransactionRateInfo* transactionRateInfo,
-                           GrvTransactionRateInfo* batchTransactionRateInfo,
+                           GrvRateInfo* transactionRateInfo,
+                           GrvRateInfo* batchTransactionRateInfo,
                            GetHealthMetricsReply* healthMetricsReply,
                            GetHealthMetricsReply* detailedHealthMetricsReply,
                            ThrottlingIdMap<uint64_t>* throttlingIdTransactionCounter,
-                           ThrottlingIdMap<uint64_t>* throttlingIdThroughput,
+                           ThrottlingIdMap<ThroughputStats>* throttlingIdThroughput,
                            GrvProxyStats* stats,
                            GrvProxyData* proxyData,
                            boost::unordered::unordered_flat_set<ThrottlingId>* busyThrottlingIds) {
@@ -577,7 +579,7 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
                                                double* GRVBatchTime,
                                                FutureStream<double> normalGRVLatency,
                                                GrvProxyStats* stats,
-                                               GrvTransactionRateInfo* batchRateInfo,
+                                               GrvRateInfo* batchRateInfo,
                                                GrvProxyTagThrottler* tagThrottler) {
 	getCurrentLineage()->modify(&TransactionLineage::operation) =
 	    TransactionLineage::Operation::GetConsistentReadVersion;
@@ -641,10 +643,9 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 					++stats->systemGRVQueueSize;
 					systemQueue->push_back(req);
 				} else if (req.priority >= TransactionPriority::LOW) {
-					if (req.throttlingId.present()) {
+					if (tagThrottler->tryAddRequest(req)) {
 						++stats->tagThrottlerGRVQueueSize;
 						stats->txnTagThrottlerIn += req.transactionCount;
-						tagThrottler->addRequest(req);
 					} else {
 						++stats->txnRequestIn;
 						stats->txnStartIn += req.transactionCount;
@@ -663,10 +664,9 @@ ACTOR Future<Void> queueGetReadVersionRequests(Reference<AsyncVar<ServerDBInfo> 
 						req.reply.sendError(batch_transaction_throttled());
 						stats->txnThrottled += req.transactionCount;
 					} else {
-						if (req.throttlingId.present()) {
+						if (tagThrottler->tryAddRequest(req)) {
 							++stats->tagThrottlerGRVQueueSize;
 							stats->txnTagThrottlerIn += req.transactionCount;
-							tagThrottler->addRequest(req);
 						} else {
 							++stats->txnRequestIn;
 							stats->txnStartIn += req.transactionCount;
@@ -915,21 +915,21 @@ ACTOR static Future<Void> transactionStarter(GrvProxyInterface proxy,
 
 	state int64_t transactionCount = 0;
 	state int64_t batchTransactionCount = 0;
-	state GrvTransactionRateInfo normalRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
-	                                            SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                            /*rate=*/10,
-	                                            SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
-	state GrvTransactionRateInfo batchRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
-	                                           SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
-	                                           /*rate=*/0,
-	                                           SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
+	state GrvRateInfo normalRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
+	                                 SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
+	                                 /*rate=*/10,
+	                                 SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
+	state GrvRateInfo batchRateInfo(SERVER_KNOBS->START_TRANSACTION_RATE_WINDOW,
+	                                SERVER_KNOBS->START_TRANSACTION_MAX_EMPTY_QUEUE_BUDGET,
+	                                /*rate=*/0,
+	                                SERVER_KNOBS->START_TRANSACTION_MAX_TRANSACTIONS_TO_START);
 
 	state Deque<GetReadVersionRequest> systemQueue;
 	state Deque<GetReadVersionRequest> defaultQueue;
 	state Deque<GetReadVersionRequest> batchQueue;
 
 	state ThrottlingIdMap<uint64_t> throttlingIdTransactionCounter;
-	state ThrottlingIdMap<uint64_t> throttlingIdThroughput;
+	state ThrottlingIdMap<ThroughputStats> throttlingIdThroughput;
 
 	state boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 

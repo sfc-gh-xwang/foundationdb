@@ -1173,6 +1173,7 @@ public:
 	bool REDWOOD_EVICT_UPDATED_PAGES; // Whether to prioritize eviction of updated pages from cache.
 	int REDWOOD_DECODECACHE_REUSE_MIN_HEIGHT; // Minimum height for which to keep and reuse page decode caches
 	int REDWOOD_NODE_MAX_UNBALANCE; // Maximum imbalance in a node before it should be rebuilt instead of updated
+	int REDWOOD_CURSOR_DEBUG_TRACE_LIMIT; // Maximum page reads that gets debug trace log per b-tree cursor.
 
 	std::string REDWOOD_IO_PRIORITIES;
 
@@ -1328,6 +1329,7 @@ public:
 	int BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL;
 	int BULK_LOAD_FILE_VALIDATION_LEVEL;
 	bool BULK_LOAD_STAGE_GRANULES;
+	bool BULK_LOAD_SS_MOVE;
 
 	ServerKnobs(Randomize, ClientKnobs*, IsSimulated);
 	void initialize(Randomize, ClientKnobs*, IsSimulated);

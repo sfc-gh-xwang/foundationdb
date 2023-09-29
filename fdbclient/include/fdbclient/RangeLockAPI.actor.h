@@ -39,6 +39,19 @@ Future<bool> isRangeUnlockedTransaction(Transaction tr, KeyRef begin, KeyRef end
 	return true;
 }
 
+ACTOR template <class Transaction>
+Future<bool> isRangeLockedWithId(Transaction tr, KeyRef begin, KeyRef end, UID lockId) {
+	state Reference<RangeLockMapSnapshot> overlap = wait(rangeLockMap().getSnapshot(tr, begin, end));
+	state RangeLockMapSnapshot::Ranges ranges = overlap->ranges();
+	state RangeLockMapSnapshot::RangeIter it = ranges.begin();
+	for (; it != ranges.end(); ++it) {
+		if (it.value().status == RangeLockInfo::UNLOCKED || it.value().lockId != lockId) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // lock range [begin, end) with lockId
 ACTOR template <class Transaction>
 Future<Void> lockRangesTransaction(Transaction tr, KeyRef begin, KeyRef end, UID lockId) {

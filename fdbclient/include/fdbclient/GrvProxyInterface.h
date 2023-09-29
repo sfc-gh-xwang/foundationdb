@@ -23,6 +23,7 @@
 #pragma once
 
 #include "fdbclient/ThrottlingId.h"
+#include "fdbclient/ThroughputTracker.h"
 #include "flow/FileIdentifier.h"
 #include "fdbrpc/fdbrpc.h"
 #include "fdbclient/FDBTypes.h"
@@ -42,11 +43,12 @@ struct ReportThroughputReply {
 
 struct ReportThroughputRequest {
 	constexpr static FileIdentifier file_identifier = 8192740;
-	ThrottlingIdMap<uint64_t> throughput;
+	ThrottlingIdMap<ThroughputStats> throughput;
 	ReplyPromise<ReportThroughputReply> reply;
 
 	ReportThroughputRequest() = default;
-	explicit ReportThroughputRequest(ThrottlingIdMap<uint64_t>&& throughput) : throughput(std::move(throughput)) {}
+	explicit ReportThroughputRequest(ThrottlingIdMap<ThroughputStats>&& throughput)
+	  : throughput(std::move(throughput)) {}
 
 	bool verify() const { return true; }
 

@@ -434,7 +434,10 @@ public:
 namespace future_var {
 struct None {
 	struct Type {};
-	static Error extract(native::FDBFuture*, Type&) noexcept { return Error(0); }
+	static Error extract(native::FDBFuture* f, Type&) noexcept {
+		auto err = fdb_future_get_error(f);
+		return Error(err);
+	}
 };
 struct Bool {
 	using Type = native::fdb_bool_t;

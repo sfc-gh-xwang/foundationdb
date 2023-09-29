@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2022 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2023 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,80 @@
  * limitations under the License.
  */
 
-#ifndef KMS_CONNECTOR_H
-#define KMS_CONNECTOR_H
+#ifndef FDBSERVER_KMS_CONNECTOR_H
+#define FDBSERVER_KMS_CONNECTOR_H
 #pragma once
 
-#include "fdbserver/KmsConnectorInterface.h"
-#include "flow/Arena.h"
+#include "fdbclient/BlobMetadataUtils.h"
+
 #include "flow/EncryptUtils.h"
+
+#include <any>
+
+struct KmsConnLookupKeyIdsInfo {
+	// Encryption at-rest relies on partioning database to define encryption domains, one such possible domain is
+	// "Tenants". It is possible that KMS assigned 'baseCipherId' embedded 'encryption domain information', hence, make
+	// the field optional.
+	Optional<EncryptCipherDomainId> domainId;
+	EncryptCipherBaseKeyId baseCipherId;
+
+	KmsConnLookupKeyIdsInfo() : domainId(INVALID_ENCRYPT_DOMAIN_ID), baseCipherId(INVALID_ENCRYPT_CIPHER_KEY_ID) {}
+	explicit KmsConnLookupKeyIdsInfo(const Optional<EncryptCipherDomainId> dId, const EncryptCipherBaseKeyId bCId)
+	  : domainId(dId),
+	    baseCipherId(bCId) {}
+
+	bool operator==(const KmsConnLookupKeyIdsInfo& info) const {
+		if (domainId.present()) {
+			if (!info.domainId.present() || domainId.get() != info.domainId.get()) {
+				return false;
+			}
+		}
+		return baseCipherId == info.baseCipherId;
+	}
+};
+
+struct KmsCipherKeyDetailsRef {
+	EncryptCipherDomainId encryptDomainId;
+	EncryptCipherBaseKeyId encryptKeyId;
+	StringRef encryptKey;
+	EncryptCipherKeyCheckValue encryptKCV;
+	Optional<int64_t> refreshAfterSec;
+	Optional<int64_t> expireAfterSec;
+
+	KmsCipherKeyDetailsRef()
+	  : encryptDomainId(INVALID_ENCRYPT_DOMAIN_ID),
+	    encryptKeyId(INVALID_ENCRYPT_CIPHER_KEY_ID),
+	    encryptKey(StringRef()) {}
+	explicit KmsCipherKeyDetailsRef(Arena& arena,
+	                                EncryptCipherDomainId dId,
+	                                EncryptCipherBaseKeyId keyId,
+	                                StringRef key,
+	                                EncryptCipherKeyCheckValue keyKCV)
+	  : encryptDomainId(dId),
+	    encryptKeyId(keyId),
+	    encryptKey(StringRef(arena, key)),
+	    encryptKCV(keyKCV),
+	    refreshAfterSec(Optional<int64_t>()),
+	    expireAfterSec(Optional<int64_t>()) {}
+	explicit KmsCipherKeyDetailsRef(Arena& arena,
+	                                EncryptCipherDomainId dId,
+	                                EncryptCipherBaseKeyId keyId,
+	                                StringRef key,
+	                                EncryptCipherKeyCheckValue keyKCV,
+	                                Optional<int64_t> refAfterSec,
+	                                Optional<int64_t> expAfterSec)
+	  : encryptDomainId(dId),
+	    encryptKeyId(keyId),
+	    encryptKey(StringRef(arena, key)),
+	    encryptKCV(keyKCV),
+	    refreshAfterSec(refAfterSec),
+	    expireAfterSec(expAfterSec) {}
+
+	bool operator==(const KmsCipherKeyDetailsRef& toCompare) {
+		return encryptDomainId == toCompare.encryptDomainId && encryptKeyId == toCompare.encryptKeyId &&
+		       encryptKey.compare(toCompare.encryptKey) == 0 && encryptKCV == toCompare.encryptKCV;
+	}
+};
 
 // FDB encryption needs to interact with external Key Management Services (KMS) solutions to lookup/refresh encryption
 // keys. KmsConnector interface is an abstract interface enabling implementing specialized KMS connector
@@ -37,7 +104,18 @@ public:
 	KmsConnector(const std::string& conStr) : connectorStr(conStr) {}
 	virtual ~KmsConnector() {}
 
-	virtual Future<Void> connectorCore(struct KmsConnectorInterface interf) = 0;
+	virtual Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> fetchEncryptionKeysByDomainIds(
+	    std::any data,
+	    const std::vector<EncryptCipherDomainId>& domainIds,
+	    Optional<UID> debugId = Optional<UID>()) = 0;
+	virtual Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> fetchEncryptionKeysByKeyIds(
+	    std::any data,
+	    const std::vector<KmsConnLookupKeyIdsInfo>& encryptKeyInfos,
+	    Optional<UID> debugId = Optional<UID>()) = 0;
+	virtual Future<Standalone<VectorRef<BlobMetadataDetailsRef>>> fetchBlobMetadata(
+	    std::any data,
+	    const std::vector<EncryptCipherDomainId>& domainIds,
+	    Optional<UID> debugId = Optional<UID>()) = 0;
 
 	std::string getConnectorStr() const { return connectorStr; }
 

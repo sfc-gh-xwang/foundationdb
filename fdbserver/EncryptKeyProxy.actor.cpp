@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2022 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2023 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,13 +21,14 @@
 #include "fdbclient/BlobMetadataUtils.h"
 #include "fdbclient/EncryptKeyProxyInterface.h"
 
+#include "fdbclient/FDBTypes.h"
 #include "fdbrpc/Locality.h"
 #include "fdbrpc/simulator.h"
 
 #include "fdbserver/KmsConnector.h"
-#include "fdbserver/KmsConnectorInterface.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/RESTKmsConnector.h"
+#include "fdbserver/RESTKmsConnectorUtils.h"
 #include "fdbserver/RESTSimKmsVault.h"
 #include "fdbserver/ServerDBInfo.h"
 #include "fdbserver/ServerDBInfo.actor.h"
@@ -242,6 +243,7 @@ public:
 	BlobMetadataDomainIdCache blobMetadataDomainIdCache;
 
 	std::unique_ptr<KmsConnector> kmsConnector;
+	Reference<RESTKmsConnectorUtils::RESTKmsConnectorCtx> restKmsConnectorCtx;
 
 	bool canConnectToKms = true;
 	double canConnectToKmsLastUpdatedTS = 0;
@@ -452,7 +454,6 @@ getLookupDetails(
 }
 
 ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData> ekpProxyData,
-                                                   KmsConnectorInterface kmsConnectorInf,
                                                    EKPGetBaseCipherKeysByIdsRequest req) {
 	// Scan the cached cipher-keys and filter our baseCipherIds locally cached
 	// for the rest, reachout to KMS to fetch the required details
@@ -465,6 +466,11 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 	if (dbgTrace.present()) {
 		dbgTrace.get().setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
 		dbgTrace.get().detail("DbgId", keysByIds.debugId);
+	}
+
+	if (keysByIds.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetBaseCipherKeysByIds.Before");
 	}
 
 	// Dedup the requested pair<baseCipherId, encryptDomainId>
@@ -486,19 +492,26 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 			    .detail("LookupCipherIdsSize", lookupCipherInfoMap.size())
 			    .detail("UsageType", it->second)
 			    .detail("DbgId", keysByIds.debugId);
-			KmsConnLookupEKsByKeyIdsReq keysByIdsReq;
+			std::vector<KmsConnLookupKeyIdsInfo> keyInfos;
 			for (const auto& item : lookupCipherInfoMap) {
-				keysByIdsReq.encryptKeyInfos.emplace_back(item.second.domainId, item.second.baseCipherId);
+				keyInfos.emplace_back(item.second.domainId, item.second.baseCipherId);
 			}
-			keysByIdsReq.debugId = keysByIds.debugId;
+
+			ASSERT(ekpProxyData->restKmsConnectorCtx.isValid() ||
+			       ekpProxyData->kmsConnector->getConnectorStr() != REST_KMS_CONNECTOR_TYPE_STR);
+
 			state double startTime = now();
 			state ActiveCounter<int>::Releaser holdingRequestCounter = ekpProxyData->kmsLookupByIdsOutstanding.take(1);
-			KmsConnLookupEKsByKeyIdsRep keysByIdsRep =
-			    wait(brokenPromiseToNever(kmsConnectorInf.ekLookupByIds.getReply(keysByIdsReq)));
+			Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails =
+			    wait(ekpProxyData->kmsConnector->fetchEncryptionKeysByKeyIds(
+			        ekpProxyData->restKmsConnectorCtx.isValid() ? ekpProxyData->restKmsConnectorCtx.getPtr()
+			                                                    : std::any(),
+			        keyInfos,
+			        req.debugId));
 			ekpProxyData->kmsLookupByIdsReqLatency.addMeasurement(now() - startTime);
 			holdingRequestCounter.release();
 
-			for (const auto& item : keysByIdsRep.cipherKeyDetails) {
+			for (const auto& item : cipherKeyDetails) {
 				keyIdsReply.baseCipherDetails.emplace_back(
 				    item.encryptDomainId, item.encryptKeyId, item.encryptKey, item.encryptKCV);
 			}
@@ -506,7 +519,7 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 			// Record the fetched cipher details to the local cache for the future references
 			// Note: cache warm-up is done after reponding to the caller
 
-			for (auto& item : keysByIdsRep.cipherKeyDetails) {
+			for (auto& item : cipherKeyDetails) {
 				// KMS governs lifetime of a given CipherKey, however, for non-latest CipherKey there isn't a necessity
 				// to 'refresh' cipher (rotation is not applicable). But, 'expireInterval' is still valid if CipherKey
 				// is a 'revocable key'
@@ -536,10 +549,14 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 					                      "");
 				}
 			}
-			if (keysByIdsRep.cipherKeyDetails.size() > 0) {
+			if (cipherKeyDetails.size() > 0) {
 				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
+			if (keysByIds.debugId.present()) {
+				g_traceBatch.addEvent(
+				    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetBaseCipherKeysByIds.Error");
+			}
 			if (isKmsConnectionError(e)) {
 				ekpProxyData->setKMSHealthiness(false);
 			}
@@ -552,6 +569,11 @@ ACTOR Future<Void> getCipherKeysByBaseCipherKeyIds(Reference<EncryptKeyProxyData
 			ekpProxyData->sendErrorResponse(keysByIds.reply, e);
 			return Void();
 		}
+	}
+
+	if (keysByIds.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetBaseCipherKeysByIds.Send");
 	}
 
 	keyIdsReply.numHits = numHits;
@@ -603,7 +625,6 @@ std::unordered_set<EncryptCipherDomainId> getLookupDetailsLatest(
 }
 
 ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyData,
-                                       KmsConnectorInterface kmsConnectorInf,
                                        EKPGetLatestBaseCipherKeysRequest req) {
 	// Scan the cached cipher-keys and filter our baseCipherIds locally cached
 	// for the rest, reachout to KMS to fetch the required details
@@ -616,6 +637,11 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 	if (dbgTrace.present()) {
 		dbgTrace.get().setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
 		dbgTrace.get().detail("DbgId", latestKeysReq.debugId);
+	}
+
+	if (latestKeysReq.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestCipherKeys.Before");
 	}
 
 	// Dedup the requested domainIds.
@@ -638,6 +664,7 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 	state std::unordered_set<EncryptCipherDomainId> lookupCipherDomainIds =
 	    getLookupDetailsLatest(ekpProxyData, dbgTrace, latestCipherReply, numHits, dedupedDomainIds);
 	if (!lookupCipherDomainIds.empty()) {
+		std::vector<EncryptCipherDomainId> domainIds(lookupCipherDomainIds.begin(), lookupCipherDomainIds.end());
 		try {
 			auto it = BlobCipherMetrics::usageTypeNames.find(req.usageType);
 			ASSERT(it != BlobCipherMetrics::usageTypeNames.end());
@@ -645,21 +672,24 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 			    .detail("LookupDomainIdsSize", lookupCipherDomainIds.size())
 			    .detail("UsageType", it->second)
 			    .detail("DbgId", latestKeysReq.debugId);
-			KmsConnLookupEKsByDomainIdsReq keysByDomainIdReq;
-			for (const auto domainId : lookupCipherDomainIds) {
-				keysByDomainIdReq.encryptDomainIds.emplace_back(domainId);
-			}
-			keysByDomainIdReq.debugId = latestKeysReq.debugId;
 
 			state double startTime = now();
 			state ActiveCounter<int>::Releaser holdingRequestCounter =
 			    ekpProxyData->kmsLookupByDomainIdsOutstanding.take(1);
-			KmsConnLookupEKsByDomainIdsRep keysByDomainIdRep =
-			    wait(brokenPromiseToNever(kmsConnectorInf.ekLookupByDomainIds.getReply(keysByDomainIdReq)));
+
+			ASSERT(ekpProxyData->restKmsConnectorCtx.isValid() ||
+			       ekpProxyData->kmsConnector->getConnectorStr() != REST_KMS_CONNECTOR_TYPE_STR);
+
+			Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails =
+			    wait(ekpProxyData->kmsConnector->fetchEncryptionKeysByDomainIds(
+			        ekpProxyData->restKmsConnectorCtx.isValid() ? ekpProxyData->restKmsConnectorCtx.getPtr()
+			                                                    : std::any(),
+			        domainIds,
+			        req.debugId));
 			ekpProxyData->kmsLookupByDomainIdsReqLatency.addMeasurement(now() - startTime);
 			holdingRequestCounter.release();
 
-			for (auto& item : keysByDomainIdRep.cipherKeyDetails) {
+			for (auto& item : cipherKeyDetails) {
 				CipherKeyValidityTS validityTS = getCipherKeyValidityTS(item.refreshAfterSec, item.expireAfterSec);
 
 				latestCipherReply.baseCipherDetails.emplace_back(item.encryptDomainId,
@@ -693,10 +723,14 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 					                      "");
 				}
 			}
-			if (keysByDomainIdRep.cipherKeyDetails.size() > 0) {
+			if (cipherKeyDetails.size() > 0) {
 				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
+			if (latestKeysReq.debugId.present()) {
+				g_traceBatch.addEvent(
+				    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestCipherKeys.Error");
+			}
 			if (isKmsConnectionError(e)) {
 				ekpProxyData->setKMSHealthiness(false);
 			}
@@ -708,6 +742,11 @@ ACTOR Future<Void> getLatestCipherKeys(Reference<EncryptKeyProxyData> ekpProxyDa
 			ekpProxyData->sendErrorResponse(latestKeysReq.reply, e);
 			return Void();
 		}
+	}
+
+	if (latestKeysReq.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestCipherKeys.Send");
 	}
 
 	latestCipherReply.numHits = numHits;
@@ -737,8 +776,7 @@ bool isBlobMetadataEligibleForRefresh(const BlobMetadataDetailsRef& blobMetadata
 	return nextRefreshCycleTS > blobMetadata.expireAt || nextRefreshCycleTS > blobMetadata.refreshAt;
 }
 
-ACTOR Future<bool> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyData,
-                                       KmsConnectorInterface kmsConnectorInf) {
+ACTOR Future<bool> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyData) {
 	state UID debugId = deterministicRandom()->randomUniqueID();
 	if (DEBUG_ENCRYPT_KEY_PROXY) {
 		TraceEvent(SevDebug, "KMSHealthCheckStart", ekpProxyData->myId).detail("DbgId", debugId);
@@ -746,18 +784,21 @@ ACTOR Future<bool> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyDa
 
 	// Health check will try to fetch the encryption details for the system key
 	try {
-		KmsConnLookupEKsByDomainIdsReq req;
-		req.debugId = debugId;
-		req.encryptDomainIds.push_back(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID);
 		++ekpProxyData->numHealthCheckRequests;
-		KmsConnLookupEKsByDomainIdsRep rep =
-		    wait(timeoutError(brokenPromiseToNever(kmsConnectorInf.ekLookupByDomainIds.getReply(req)),
-		                      FLOW_KNOBS->EKP_HEALTH_CHECK_REQUEST_TIMEOUT));
-		if (rep.cipherKeyDetails.size() < 1) {
+
+		ASSERT(ekpProxyData->restKmsConnectorCtx.isValid() ||
+		       ekpProxyData->kmsConnector->getConnectorStr() != REST_KMS_CONNECTOR_TYPE_STR);
+
+		Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails =
+		    wait(ekpProxyData->kmsConnector->fetchEncryptionKeysByDomainIds(
+		        ekpProxyData->restKmsConnectorCtx.isValid() ? ekpProxyData->restKmsConnectorCtx.getPtr() : std::any(),
+		        { SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID },
+		        debugId));
+		if (cipherKeyDetails.size() < 1) {
 			TraceEvent(SevWarn, "KMSHealthCheckResponseEmpty");
 			throw encrypt_key_not_found();
 		}
-		EncryptCipherKeyDetailsRef cipherDetails = rep.cipherKeyDetails[0];
+		KmsCipherKeyDetailsRef cipherDetails = cipherKeyDetails[0];
 		if (cipherDetails.encryptDomainId != SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID) {
 			TraceEvent(SevWarn, "KMSHealthCheckNoSystemKeyFound");
 			throw encrypt_key_not_found();
@@ -781,14 +822,13 @@ ACTOR Future<bool> getHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyDa
 	return false;
 }
 
-ACTOR Future<Void> updateHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyData,
-                                          KmsConnectorInterface kmsConnectorInf) {
+ACTOR Future<Void> updateHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProxyData) {
 	// If the health check status has been updated recently avoid doing another refresh
 	if (now() - ekpProxyData->canConnectToKmsLastUpdatedTS < FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL) {
 		return Void();
 	}
 
-	bool canConnectToKms = wait(getHealthStatusImpl(ekpProxyData, kmsConnectorInf));
+	bool canConnectToKms = wait(getHealthStatusImpl(ekpProxyData));
 	if (canConnectToKms != ekpProxyData->canConnectToKms) {
 		TraceEvent("KmsConnectorHealthStatusChange")
 		    .detail("OldStatus", ekpProxyData->canConnectToKms)
@@ -798,42 +838,40 @@ ACTOR Future<Void> updateHealthStatusImpl(Reference<EncryptKeyProxyData> ekpProx
 	return Void();
 }
 
-ACTOR Future<Void> getEKPStatus(Reference<EncryptKeyProxyData> ekpProxyData,
-                                KmsConnectorInterface kmsConnectorInf,
-                                EncryptKeyProxyHealthStatusRequest req) {
-	state KMSHealthStatus status;
+Future<Void> getEKPStatus(Reference<EncryptKeyProxyData> ekpProxyData, EncryptKeyProxyHealthStatusRequest req) {
+	KMSHealthStatus status;
 	status.canConnectToEKP = true;
 	status.canConnectToKms = ekpProxyData->canConnectToKms;
 	status.lastUpdatedTS = ekpProxyData->canConnectToKmsLastUpdatedTS;
 	status.kmsConnectorType = ekpProxyData->kmsConnector->getConnectorStr();
 
-	KmsConnGetKMSStateReq getKMSStateReq;
-	try {
-		KmsConnGetKMSStateRep getKMSStateRep =
-		    wait(brokenPromiseToNever(kmsConnectorInf.getKMSStateReq.getReply(getKMSStateReq)));
-		status.restKMSUrls = getKMSStateRep.restKMSUrls;
-		status.kmsStable = getKMSStateRep.kmsStable;
-		req.reply.send(status);
-	} catch (Error& e) {
-		TraceEvent("EKPGetKMSStateFailed", ekpProxyData->myId).error(e);
-		throw e;
+	std::vector<std::string> urls;
+	if (ekpProxyData->restKmsConnectorCtx.isValid()) {
+		for (const auto& url : ekpProxyData->restKmsConnectorCtx->kmsUrlStore.kmsUrls) {
+			urls.push_back(url.url);
+		}
+	} else {
+		ASSERT_NE(ekpProxyData->kmsConnector->getConnectorStr(), REST_KMS_CONNECTOR_TYPE_STR);
 	}
+
+	status.kmsStable =
+	    ekpProxyData->restKmsConnectorCtx.isValid() ? ekpProxyData->restKmsConnectorCtx->kmsStable : true;
+	status.restKMSUrls = urls;
+	req.reply.send(status);
 
 	return Void();
 }
 
-ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpProxyData,
-                                             KmsConnectorInterface kmsConnectorInf) {
+ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpProxyData) {
 	state UID debugId = deterministicRandom()->randomUniqueID();
 
 	state TraceEvent t("RefreshEKsStart", ekpProxyData->myId);
 	t.setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
-	t.detail("KmsConnInf", kmsConnectorInf.id());
+	t.detail("EKPInf", ekpProxyData->myId);
 	t.detail("DebugId", debugId);
 
 	try {
-		KmsConnLookupEKsByDomainIdsReq req;
-		req.debugId = debugId;
+		std::vector<EncryptCipherDomainId> domainIds;
 		// req.encryptDomainInfos.reserve(req.arena, ekpProxyData->baseCipherDomainIdCache.size());
 
 		int64_t currTS = (int64_t)now();
@@ -841,7 +879,7 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 		     itr != ekpProxyData->baseCipherDomainIdCache.end();) {
 			if (isCipherKeyEligibleForRefresh(itr->second, currTS)) {
 				TraceEvent("RefreshEKs").detail("Id", itr->first).detail("DbgId", debugId);
-				req.encryptDomainIds.push_back(itr->first);
+				domainIds.push_back(itr->first);
 			}
 
 			// Garbage collect expired cached CipherKeys
@@ -852,17 +890,23 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 			}
 		}
 
-		if (req.encryptDomainIds.empty()) {
+		if (domainIds.empty()) {
 			// Nothing to refresh
 			TraceEvent(SevDebug, "RefreshEKsEmptyRefresh").detail("DbgId", debugId);
 			return Void();
 		}
 
+		ASSERT(ekpProxyData->restKmsConnectorCtx.isValid() ||
+		       ekpProxyData->kmsConnector->getConnectorStr() != REST_KMS_CONNECTOR_TYPE_STR);
+
 		state double startTime = now();
-		KmsConnLookupEKsByDomainIdsRep rep =
-		    wait(brokenPromiseToNever(kmsConnectorInf.ekLookupByDomainIds.getReply(req)));
+		Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails =
+		    wait(ekpProxyData->kmsConnector->fetchEncryptionKeysByDomainIds(
+		        ekpProxyData->restKmsConnectorCtx.isValid() ? ekpProxyData->restKmsConnectorCtx.getPtr() : std::any(),
+		        domainIds,
+		        debugId));
 		ekpProxyData->kmsLookupByDomainIdsReqLatency.addMeasurement(now() - startTime);
-		for (const auto& item : rep.cipherKeyDetails) {
+		for (const auto& item : cipherKeyDetails) {
 			const auto itr = ekpProxyData->baseCipherDomainIdCache.find(item.encryptDomainId);
 			if (itr == ekpProxyData->baseCipherDomainIdCache.end()) {
 				TraceEvent(SevInfo, "RefreshEKsDomainIdNotFound", ekpProxyData->myId)
@@ -888,12 +932,12 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 			         "");
 		}
 
-		ekpProxyData->baseCipherKeysRefreshed += rep.cipherKeyDetails.size();
-		if (rep.cipherKeyDetails.size() > 0) {
+		ekpProxyData->baseCipherKeysRefreshed += cipherKeyDetails.size();
+		if (cipherKeyDetails.size() > 0) {
 			ekpProxyData->setKMSHealthiness(true);
 		}
-		t.detail("NumKeys", rep.cipherKeyDetails.size());
-		CODE_PROBE(!rep.cipherKeyDetails.empty(), "EKP refresh cipherKeys");
+		t.detail("NumKeys", cipherKeyDetails.size());
+		CODE_PROBE(!cipherKeyDetails.empty(), "EKP refresh cipherKeys");
 	} catch (Error& e) {
 		if (isKmsConnectionError(e)) {
 			ekpProxyData->setKMSHealthiness(false);
@@ -909,16 +953,15 @@ ACTOR Future<Void> refreshEncryptionKeysImpl(Reference<EncryptKeyProxyData> ekpP
 	return Void();
 }
 
-Future<Void> refreshEncryptionKeys(Reference<EncryptKeyProxyData> ekpProxyData, KmsConnectorInterface kmsConnectorInf) {
-	return refreshEncryptionKeysImpl(ekpProxyData, kmsConnectorInf);
+Future<Void> refreshEncryptionKeys(Reference<EncryptKeyProxyData> ekpProxyData) {
+	return refreshEncryptionKeysImpl(ekpProxyData);
 }
 
-Future<Void> updateHealthStatus(Reference<EncryptKeyProxyData> ekpProxyData, KmsConnectorInterface kmsConnectorInf) {
-	return updateHealthStatusImpl(ekpProxyData, kmsConnectorInf);
+Future<Void> updateHealthStatus(Reference<EncryptKeyProxyData> ekpProxyData) {
+	return updateHealthStatusImpl(ekpProxyData);
 }
 
 ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxyData,
-                                         KmsConnectorInterface kmsConnectorInf,
                                          EKPGetLatestBlobMetadataRequest req) {
 	// Use cached metadata if it exists, otherwise reach out to KMS
 	state Standalone<VectorRef<BlobMetadataDetailsRef>> metadataDetails;
@@ -928,6 +971,11 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 	if (dbgTrace.present()) {
 		dbgTrace.get().setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
 		dbgTrace.get().detail("DbgId", req.debugId);
+	}
+
+	if (req.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestBlobMetadata.Before");
 	}
 
 	// Dedup the requested domainIds.
@@ -946,8 +994,7 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 
 	// First, check if the requested information is already cached by the server.
 	// Ensure the cached information is within SERVER_KNOBS->BLOB_METADATA_CACHE_TTL time window.
-	state KmsConnBlobMetadataReq kmsReq;
-	kmsReq.debugId = req.debugId;
+	state std::vector<EncryptCipherDomainId> lookupDomainIds;
 
 	for (const auto domainId : dedupedDomainIds) {
 		const auto itr = ekpProxyData->blobMetadataDomainIdCache.find(domainId);
@@ -960,25 +1007,30 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 				dbgTrace.get().detail("BMC" + std::to_string(domainId), "");
 			}
 		} else {
-			kmsReq.domainIds.emplace_back(domainId);
+			lookupDomainIds.emplace_back(domainId);
 		}
 	}
 
 	ekpProxyData->blobMetadataCacheHits += metadataDetails.size();
 
-	if (!kmsReq.domainIds.empty()) {
-		ekpProxyData->blobMetadataCacheMisses += kmsReq.domainIds.size();
+	ASSERT(ekpProxyData->restKmsConnectorCtx.isValid() ||
+	       ekpProxyData->kmsConnector->getConnectorStr() != REST_KMS_CONNECTOR_TYPE_STR);
+
+	if (!lookupDomainIds.empty()) {
+		ekpProxyData->blobMetadataCacheMisses += lookupDomainIds.size();
 		try {
 			state double startTime = now();
 			state ActiveCounter<int>::Releaser holdingRequestCounter = ekpProxyData->kmsBlobMetadataOutstanding.take(1);
-			KmsConnBlobMetadataRep kmsRep =
-			    wait(brokenPromiseToNever(kmsConnectorInf.blobMetadataReq.getReply(kmsReq)));
+			Standalone<VectorRef<BlobMetadataDetailsRef>> details = wait(ekpProxyData->kmsConnector->fetchBlobMetadata(
+			    ekpProxyData->restKmsConnectorCtx.isValid() ? ekpProxyData->restKmsConnectorCtx.getPtr() : std::any(),
+			    lookupDomainIds,
+			    req.debugId));
 			ekpProxyData->kmsBlobMetadataReqLatency.addMeasurement(now() - startTime);
 			holdingRequestCounter.release();
 
-			metadataDetails.arena().dependsOn(kmsRep.metadataDetails.arena());
+			metadataDetails.arena().dependsOn(details.arena());
 
-			for (auto& item : kmsRep.metadataDetails) {
+			for (auto& item : details) {
 				metadataDetails.push_back(metadataDetails.arena(), item);
 
 				// Record the fetched metadata to the local cache for the future references
@@ -988,10 +1040,14 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 					dbgTrace.get().detail("BMI" + std::to_string(item.domainId), "");
 				}
 			}
-			if (kmsRep.metadataDetails.size() > 0) {
+			if (details.size() > 0) {
 				ekpProxyData->setKMSHealthiness(true);
 			}
 		} catch (Error& e) {
+			if (req.debugId.present()) {
+				g_traceBatch.addEvent(
+				    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestBlobMetadata.Error");
+			}
 			if (isKmsConnectionError(e)) {
 				ekpProxyData->setKMSHealthiness(false);
 			}
@@ -1006,29 +1062,35 @@ ACTOR Future<Void> getLatestBlobMetadata(Reference<EncryptKeyProxyData> ekpProxy
 		}
 	}
 
+	if (req.debugId.present()) {
+		g_traceBatch.addEvent(
+		    "TransactionDebug", req.debugId.get().first(), "EncryptKeyProxy.GetLatestBlobMetadata.Send");
+	}
+
 	req.reply.send(EKPGetLatestBlobMetadataReply(metadataDetails));
 	return Void();
 }
 
-ACTOR Future<Void> refreshBlobMetadataCore(Reference<EncryptKeyProxyData> ekpProxyData,
-                                           KmsConnectorInterface kmsConnectorInf) {
+ACTOR Future<Void> refreshBlobMetadataCore(Reference<EncryptKeyProxyData> ekpProxyData) {
 	state UID debugId = ekpProxyData->myId;
 	state double startTime;
 
 	state TraceEvent t("RefreshBlobMetadataStart", ekpProxyData->myId);
 	t.setMaxEventLength(SERVER_KNOBS->ENCRYPT_PROXY_MAX_DBG_TRACE_LENGTH);
-	t.detail("KmsConnInf", kmsConnectorInf.id());
+	t.detail("EKPInf", ekpProxyData->myId);
 	t.detail("DebugId", debugId);
 
+	ASSERT(ekpProxyData->restKmsConnectorCtx.isValid() ||
+	       ekpProxyData->kmsConnector->getConnectorStr() != REST_KMS_CONNECTOR_TYPE_STR);
+
 	try {
-		KmsConnBlobMetadataReq req;
-		req.debugId = debugId;
+		state std::vector<EncryptCipherDomainId> domainIds;
 
 		int64_t currTS = (int64_t)now();
 		for (auto itr = ekpProxyData->blobMetadataDomainIdCache.begin();
 		     itr != ekpProxyData->blobMetadataDomainIdCache.end();) {
 			if (isBlobMetadataEligibleForRefresh(itr->second.metadataDetails, currTS)) {
-				req.domainIds.emplace_back(itr->first);
+				domainIds.emplace_back(itr->first);
 			}
 
 			// Garbage collect expired cached Blob Metadata
@@ -1039,23 +1101,27 @@ ACTOR Future<Void> refreshBlobMetadataCore(Reference<EncryptKeyProxyData> ekpPro
 			}
 		}
 
-		if (req.domainIds.empty()) {
+		if (domainIds.empty()) {
 			return Void();
 		}
 
 		startTime = now();
-		KmsConnBlobMetadataRep rep = wait(brokenPromiseToNever(kmsConnectorInf.blobMetadataReq.getReply(req)));
+		Standalone<VectorRef<BlobMetadataDetailsRef>> metadataDetails =
+		    wait(ekpProxyData->kmsConnector->fetchBlobMetadata(
+		        ekpProxyData->restKmsConnectorCtx.isValid() ? ekpProxyData->restKmsConnectorCtx.getPtr() : std::any(),
+		        domainIds,
+		        debugId));
 		ekpProxyData->kmsBlobMetadataReqLatency.addMeasurement(now() - startTime);
-		for (auto& item : rep.metadataDetails) {
+		for (auto& item : metadataDetails) {
 			ekpProxyData->insertIntoBlobMetadataCache(item.domainId, item);
 			t.detail("BM" + std::to_string(item.domainId), "");
 		}
 
-		ekpProxyData->blobMetadataRefreshed += rep.metadataDetails.size();
-		if (rep.metadataDetails.size() > 0) {
+		ekpProxyData->blobMetadataRefreshed += metadataDetails.size();
+		if (metadataDetails.size() > 0) {
 			ekpProxyData->setKMSHealthiness(true);
 		}
-		t.detail("nKeys", rep.metadataDetails.size());
+		t.detail("nKeys", metadataDetails.size());
 	} catch (Error& e) {
 		if (isKmsConnectionError(e)) {
 			ekpProxyData->setKMSHealthiness(false);
@@ -1072,12 +1138,11 @@ ACTOR Future<Void> refreshBlobMetadataCore(Reference<EncryptKeyProxyData> ekpPro
 	return Void();
 }
 
-void refreshBlobMetadata(Reference<EncryptKeyProxyData> ekpProxyData, KmsConnectorInterface kmsConnectorInf) {
-	Future<Void> ignored = refreshBlobMetadataCore(ekpProxyData, kmsConnectorInf);
+void refreshBlobMetadata(Reference<EncryptKeyProxyData> ekpProxyData) {
+	Future<Void> ignored = refreshBlobMetadataCore(ekpProxyData);
 }
 
-ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyData,
-                                        KmsConnectorInterface kmsConnectorInf) {
+ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyData) {
 	if (g_network->isSimulated() && !SERVER_KNOBS->USE_REST_SIM_KMS_VAULT) {
 		// support restart tests
 		ekpProxyData->kmsConnector = std::make_unique<SimKmsConnector>(FDB_SIM_KMS_CONNECTOR_TYPE_STR);
@@ -1089,15 +1154,16 @@ ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyD
 			wait(RestSimKms::initConfigFiles());
 		}
 		ekpProxyData->kmsConnector = std::make_unique<RESTKmsConnector>(REST_KMS_CONNECTOR_TYPE_STR);
+		ekpProxyData->restKmsConnectorCtx =
+		    makeReference<RESTKmsConnectorUtils::RESTKmsConnectorCtx>(ekpProxyData->myId, ekpProxyData->actors);
 	} else {
 		throw not_implemented();
 	}
 
 	TraceEvent("EKPActiveKmsConnector", ekpProxyData->myId)
 	    .detail("ConnectorType", ekpProxyData->kmsConnector->getConnectorStr())
-	    .detail("InfId", kmsConnectorInf.id());
+	    .detail("EPInf", ekpProxyData->myId);
 
-	ekpProxyData->actors.add(ekpProxyData->kmsConnector->connectorCore(kmsConnectorInf));
 	return Void();
 }
 
@@ -1106,15 +1172,13 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
                                          EncryptionAtRestMode encryptMode) {
 
 	state Reference<EncryptKeyProxyData> self = makeReference<EncryptKeyProxyData>(ekpInterface.id());
-	state KmsConnectorInterface kmsConnectorInf;
 
 	try {
-		kmsConnectorInf.initEndpoints();
-		TraceEvent("EKPStart", self->myId).detail("KmsConnectorInf", kmsConnectorInf.id());
+		TraceEvent("EKPStart", self->myId).detail("EKPInf", ekpInterface.id());
 		self->actors.add(waitFailureServer(ekpInterface.waitFailure.getFuture()));
 		self->actors.add(traceRole(Role::ENCRYPT_KEY_PROXY, ekpInterface.id()));
 
-		wait(activateKmsConnector(self, kmsConnectorInf));
+		wait(activateKmsConnector(self));
 
 		// Register a recurring task to refresh the cached Encryption keys and blob metadata.
 		// Approach avoids external RPCs due to EncryptionKey refreshes for the inline write encryption codepath such
@@ -1123,17 +1187,16 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 		// FLOW_KNOB->ENCRRYPTION_KEY_REFRESH_INTERVAL_SEC, allowing the interactions with external Encryption Key
 		// Manager mostly not co-inciding with FDB process encryption key refresh attempts.
 
-		self->actors.add(recurringAsync([&]() { return refreshEncryptionKeys(self, kmsConnectorInf); },
+		self->actors.add(recurringAsync([&]() { return refreshEncryptionKeys(self); },
 		                                FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* interval */
 		                                true, /* absoluteIntervalDelay */
 		                                FLOW_KNOBS->ENCRYPT_KEY_REFRESH_INTERVAL, /* initialDelay */
 		                                TaskPriority::Worker));
 
-		self->actors.add(recurring([&]() { refreshBlobMetadata(self, kmsConnectorInf); },
-		                           CLIENT_KNOBS->BLOB_METADATA_REFRESH_INTERVAL,
-		                           TaskPriority::Worker));
+		self->actors.add(recurring(
+		    [&]() { refreshBlobMetadata(self); }, CLIENT_KNOBS->BLOB_METADATA_REFRESH_INTERVAL, TaskPriority::Worker));
 
-		self->actors.add(recurringAsync([&]() { return updateHealthStatus(self, kmsConnectorInf); },
+		self->actors.add(recurringAsync([&]() { return updateHealthStatus(self); },
 		                                FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
 		                                true,
 		                                FLOW_KNOBS->ENCRYPT_KEY_HEALTH_CHECK_INTERVAL,
@@ -1145,15 +1208,15 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 		loop choose {
 			when(EKPGetBaseCipherKeysByIdsRequest req = waitNext(ekpInterface.getBaseCipherKeysByIds.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled());
-				self->actors.add(getCipherKeysByBaseCipherKeyIds(self, kmsConnectorInf, req));
+				self->actors.add(getCipherKeysByBaseCipherKeyIds(self, req));
 			}
 			when(EKPGetLatestBaseCipherKeysRequest req = waitNext(ekpInterface.getLatestBaseCipherKeys.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled());
-				self->actors.add(getLatestCipherKeys(self, kmsConnectorInf, req));
+				self->actors.add(getLatestCipherKeys(self, req));
 			}
 			when(EKPGetLatestBlobMetadataRequest req = waitNext(ekpInterface.getLatestBlobMetadata.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
-				self->actors.add(getLatestBlobMetadata(self, kmsConnectorInf, req));
+				self->actors.add(getLatestBlobMetadata(self, req));
 			}
 			when(HaltEncryptKeyProxyRequest req = waitNext(ekpInterface.haltEncryptKeyProxy.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
@@ -1163,7 +1226,7 @@ ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ekpInterface,
 			}
 			when(EncryptKeyProxyHealthStatusRequest req = waitNext(ekpInterface.getHealthStatus.getFuture())) {
 				ASSERT(encryptMode.isEncryptionEnabled() || SERVER_KNOBS->ENABLE_REST_KMS_COMMUNICATION);
-				self->actors.add(getEKPStatus(self, kmsConnectorInf, req));
+				self->actors.add(getEKPStatus(self, req));
 			}
 			when(wait(self->actors.getResult())) {}
 		}

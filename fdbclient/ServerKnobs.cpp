@@ -332,7 +332,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_MOVE_KEYS_PARALLELISM,                               15 ); BUGGIFY_KNOB(DD_MOVE_KEYS_PARALLELISM, randomize && BUGGIFY, 1);
 	init( DD_FETCH_SOURCE_PARALLELISM,                          1000 ); BUGGIFY_KNOB(DD_FETCH_SOURCE_PARALLELISM, randomize && BUGGIFY, 1);
 	init( DD_MERGE_LIMIT,                                       2000 ); BUGGIFY_KNOB(DD_MERGE_LIMIT, randomize && BUGGIFY, 2);
-	init( DD_SHARD_METRICS_TIMEOUT,                             60.0 ); BUGGIFY_KNOB(DD_SHARD_METRICS_TIMEOUT, randomize && BUGGIFY, 0.1);
+	init( DD_SHARD_METRICS_TIMEOUT,                             60.0 );
 	init( DD_LOCATION_CACHE_SIZE,                            2000000 ); BUGGIFY_KNOB(DD_LOCATION_CACHE_SIZE, randomize && BUGGIFY, 3);
 	init( MOVEKEYS_LOCK_POLLING_DELAY,                           5.0 );
 	init( DEBOUNCE_RECRUITING_DELAY,                             5.0 );
@@ -851,7 +851,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,                      10 ); BUGGIFY_KNOB(THROUGHPUT_QUOTA_CACHE_BATCH_SIZE, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 20));
 	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL,      5.0 );
 	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD,          60.0 );
-	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,         409600.0 );
+	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,             10e6 );
 	init( CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL,   5.0 );
 	init( THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS,                true );
 	init( LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO,           0.5 ); BUGGIFY_KNOB(LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO, randomize && BUGGIFY, deterministicRandom()->random01());
@@ -896,7 +896,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( FETCH_KEYS_PARALLELISM_BYTES,                          4e6 ); BUGGIFY_KNOB(FETCH_KEYS_PARALLELISM_BYTES, randomize && BUGGIFY, 3e6);
 	init( FETCH_KEYS_PARALLELISM,                                  2 );
 	init( FETCH_KEYS_PARALLELISM_CHANGE_FEED,                      6 );
-	init( FETCH_KEYS_LOWER_PRIORITY,                               0 );
+	init( FETCH_KEYS_LOWER_PRIORITY,                               0 ); BUGGIFY_KNOB(FETCH_KEYS_LOWER_PRIORITY, randomize && BUGGIFY, 1);
 	init( SERVE_FETCH_CHECKPOINT_PARALLELISM,                      4 );
 	init( SERVE_AUDIT_STORAGE_PARALLELISM,                         1 );
 	init( BUGGIFY_BLOCK_BYTES,                                 10000 );
@@ -1097,6 +1097,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( REDWOOD_DECODECACHE_REUSE_MIN_HEIGHT,                    2 ); BUGGIFY_KNOB(REDWOOD_DECODECACHE_REUSE_MIN_HEIGHT, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 7));
 	init( REDWOOD_NODE_MAX_UNBALANCE,                              2 );
 	init( REDWOOD_IO_PRIORITIES,                       "32,32,32,32" );
+	init( REDWOOD_CURSOR_DEBUG_TRACE_LIMIT,                     1000 );
 
 	// Server request latency measurement
 	init( LATENCY_SKETCH_ACCURACY,                              0.01 );
@@ -1262,6 +1263,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL,                     10); if ( isSimulated ) BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL = 5; BUGGIFY_KNOB(BULK_LOAD_OVER_QUOTA_CHECK_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 5));
 	init( BULK_LOAD_FILE_VALIDATION_LEVEL,                         1 ); BUGGIFY_KNOB(BULK_LOAD_FILE_VALIDATION_LEVEL, randomize && BUGGIFY, deterministicRandom()->randomInt(0, 3));
 	init( BULK_LOAD_STAGE_GRANULES,                            false ); if ( isSimulated ) BULK_LOAD_STAGE_GRANULES = deterministicRandom()->coinflip();
+	init( BULK_LOAD_SS_MOVE,                                   false ); // if ( isSimulated ) BULK_LOAD_SS_MOVE = deterministicRandom()->coinflip();
+	// TODO enable once DD integration complete!
 
 	// clang-format on
 

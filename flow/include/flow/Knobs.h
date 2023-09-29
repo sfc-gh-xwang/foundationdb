@@ -434,6 +434,9 @@ public:
 	int RESTCLIENT_REQUEST_TRIES;
 	int RESTCLIENT_REQUEST_TIMEOUT_SEC;
 	int REST_LOG_LEVEL;
+	double REST_REQUEST_RETRY_DELAY_SEC;
+	double REST_REQUEST_MAX_RETRY_DELAY_SEC;
+	double REST_REQUEST_RETRY_BACKOFF_FACTOR;
 
 	FlowKnobs(class Randomize, class IsSimulated);
 	void initialize(class Randomize, class IsSimulated);

@@ -11,6 +11,7 @@ storageEngineExcludeTypes = [4, 5]
 simHTTPServerEnabled=false
 
 [[knobs]]
+encryption_at_rest_algo = "AES-256-CTR"
 blob_worker_disk_enabled = false
 
 [[test]]

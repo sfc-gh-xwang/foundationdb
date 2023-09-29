@@ -1706,7 +1706,8 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     detailedHealthMetricsLastUpdated(0),
     smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
     specialKeySpace(std::make_unique<SpecialKeySpace>(specialKeys.begin, specialKeys.end, /* test */ false)),
-    connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())) {
+    connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())),
+    quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {
 
 	TraceEvent("DatabaseContextCreated", dbId).backtrace();
 
@@ -4093,8 +4094,7 @@ ACTOR Future<ValueReadResult> getValue(Reference<TransactionState> trState,
 			}
 			trState->cx->getValueCompleted->latency = timer_int() - startTime;
 			trState->cx->getValueCompleted->log();
-			trState->addReadCost(
-			    getReadOperationCost(key.size() + (reply.value.present() ? reply.value.get().size() : 0)));
+			trState->addReadCost(key.size() + (reply.value.present() ? reply.value.get().size() : 0));
 
 			if (getValueID.present()) {
 				g_traceBatch.addEvent("GetValueDebug",
@@ -4971,7 +4971,7 @@ void getRangeFinished(Reference<TransactionState> trState,
 	int64_t bytes = getRangeResultFamilyBytes(result);
 	double timeNow = now();
 
-	trState->addReadCost(getReadOperationCost(bytes));
+	trState->addReadCost(bytes);
 	trState->cx->transactionBytesRead += bytes;
 	trState->cx->transactionKeysRead += result.size();
 	trState->cx->readRangeLatencies.addSample(timeNow - startTime);
@@ -6483,7 +6483,7 @@ void Transaction::set(const KeyRef& key, const ValueRef& value, AddConflictRange
 	auto r = singleKeyRange(key, req.arena);
 	auto v = ValueRef(req.arena, value);
 	t.mutations.emplace_back(req.arena, MutationRef::SetValue, r.begin, v);
-	trState->addWriteCost(getWriteOperationCost(key.expectedSize() + value.expectedSize()));
+	trState->addWriteCost(key.expectedSize() + value.expectedSize());
 
 	if (addConflictRange) {
 		t.write_conflict_ranges.push_back(req.arena, r);
@@ -6511,23 +6511,12 @@ void Transaction::atomicOp(const KeyRef& key,
 	auto v = ValueRef(req.arena, operand);
 
 	t.mutations.emplace_back(req.arena, operationType, r.begin, v);
-	trState->addWriteCost(getWriteOperationCost(key.expectedSize()));
+	trState->addWriteCost(key.expectedSize());
 
 	if (addConflictRange && operationType != MutationRef::SetVersionstampedKey)
 		t.write_conflict_ranges.push_back(req.arena, r);
 
 	CODE_PROBE(true, "NativeAPI atomic operation");
-}
-
-static uint64_t getClearCost() {
-	// NOTE: The throttling cost of each clear is assumed to be one page.
-	// This makes compuation fast, but can be inaccurate and may
-	// underestimate the cost of large clears.
-	return getWriteOperationCost(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
-}
-
-void TransactionState::addClearCost() {
-	addWriteCost(getClearCost());
 }
 
 void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRange) {
@@ -6554,9 +6543,6 @@ void Transaction::clear(const KeyRangeRef& range, AddConflictRange addConflictRa
 		return;
 
 	t.mutations.emplace_back(req.arena, MutationRef::ClearRange, r.begin, r.end);
-	// NOTE: The throttling cost of each clear is assumed to be one page.
-	// This makes compuation fast, but can be inaccurate and may
-	// underestimate the cost of large clears.
 	trState->addClearCost();
 	if (addConflictRange)
 		t.write_conflict_ranges.push_back(req.arena, r);
@@ -6946,19 +6932,21 @@ ACTOR Future<Optional<ClientTrCommitCostEstimation>> estimateCommitCosts(Referen
 
 		if (mutation.type == MutationRef::Type::SetValue || mutation.isAtomicOp()) {
 			trCommitCosts.opsCount++;
-			trCommitCosts.writeCosts += getWriteOperationCost(mutation.expectedSize());
+			trCommitCosts.writeCosts += trState->cx->getWriteOperationCost(mutation.expectedSize());
 		} else if (mutation.type == MutationRef::Type::ClearRange) {
 			trCommitCosts.opsCount++;
 			keyRange = KeyRangeRef(mutation.param1, mutation.param2);
 			if (trState->options.expensiveClearCostEstimation) {
 				StorageMetrics m = wait(trState->cx->getStorageMetrics(keyRange, CLIENT_KNOBS->TOO_MANY, trState));
-				trCommitCosts.clearIdxCosts.emplace_back(i, getWriteOperationCost(m.bytes));
-				trCommitCosts.writeCosts += getWriteOperationCost(m.bytes);
+				auto const writeCost = trState->cx->getWriteOperationCost(m.bytes);
+				trCommitCosts.clearIdxCosts.emplace_back(i, writeCost);
+				trCommitCosts.writeCosts += writeCost;
 				++trCommitCosts.expensiveCostEstCount;
 				++trState->cx->transactionsExpensiveClearCostEstCount;
 			} else {
-				trCommitCosts.clearIdxCosts.emplace_back(i, getClearCost());
-				trCommitCosts.writeCosts += getClearCost();
+				auto const cost = trState->cx->getClearOperationCost();
+				trCommitCosts.clearIdxCosts.emplace_back(i, cost);
+				trCommitCosts.writeCosts += cost;
 			}
 		}
 	}
@@ -7883,25 +7871,42 @@ Optional<ThrottlingId> TransactionState::getThrottlingId() {
 	}
 }
 
+uint64_t DatabaseContext::getClearOperationCost() const {
+	return quotaCostCalculator->getClearCost();
+}
+
+uint64_t DatabaseContext::getReadOperationCost(uint64_t bytes) const {
+	return quotaCostCalculator->getReadCost(bytes);
+}
+
+uint64_t DatabaseContext::getWriteOperationCost(uint64_t bytes) const {
+	return quotaCostCalculator->getWriteCost(bytes);
+}
+
 void TransactionState::addReadCost(uint64_t bytes) {
-	readCost += bytes;
+	auto const cost = cx->getReadOperationCost(bytes);
+	readCost += cost;
 	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS) {
 		auto const throttlingId = getThrottlingId();
 		if (throttlingId.present()) {
-			cx->addCost(throttlingId.get(), bytes);
+			cx->addReadCost(throttlingId.get(), cost);
 		}
 	}
 }
 
+void TransactionState::addClearCost() {
+	writeCost += cx->getClearOperationCost();
+}
+
 void TransactionState::addWriteCost(uint64_t bytes) {
-	writeCost += bytes;
+	writeCost += cx->getWriteOperationCost(bytes);
 }
 
 void TransactionState::flushWriteCost() {
 	if (CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && !flushedWriteCost) {
 		auto const throttlingId = getThrottlingId();
 		if (throttlingId.present()) {
-			cx->addCost(throttlingId.get(), writeCost);
+			cx->addWriteCost(throttlingId.get(), writeCost);
 		}
 		flushedWriteCost = true;
 	}
@@ -8255,6 +8260,8 @@ ACTOR Future<StorageMetrics> waitStorageMetricsMultipleLocations(TenantInfo tena
 
 ACTOR Future<StorageMetrics> extractMetrics(Future<std::pair<Optional<StorageMetrics>, int>> fMetrics) {
 	std::pair<Optional<StorageMetrics>, int> x = wait(fMetrics);
+	// x.first.present() is always true right now
+	ASSERT_WE_THINK(x.first.present());
 	return x.first.get();
 }
 
@@ -11880,8 +11887,12 @@ Future<Void> DatabaseContext::popChangeFeedMutations(Key rangeID, Version versio
 	return popChangeFeedMutationsActor(Reference<DatabaseContext>::addRef(this), rangeID, version);
 }
 
-void DatabaseContext::addCost(ThrottlingId const& throttlingId, uint64_t bytes) {
-	throughputTracker.addCost(throttlingId, bytes);
+void DatabaseContext::addReadCost(ThrottlingId const& throttlingId, uint64_t bytes) {
+	throughputTracker.addReadCost(throttlingId, bytes);
+}
+
+void DatabaseContext::addWriteCost(ThrottlingId const& throttlingId, uint64_t bytes) {
+	throughputTracker.addWriteCost(throttlingId, bytes);
 }
 
 void DatabaseContext::addTransaction(const ThrottlingId& throttlingId, uint64_t numTransactions) {
@@ -12109,6 +12120,12 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 				} else if (status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
 					throw bulk_load_invalid_state_transition();
 				}
+
+				// sanity check that the range is locked by us
+				UID bulkLoadUID = bulkLoadIdToUID(bulkLoadIDToCheck.get());
+				bool rangeIsLockedByMe =
+				    wait(RangeLockAPI::isRangeLockedWithId(tr, range.begin, range.end, bulkLoadUID));
+				ASSERT(rangeIsLockedByMe);
 			} else {
 				wait(checkTenantLock(&tr->getTransaction(), tenant, originalRange) &&
 				     checkRangeLock(&tr->getTransaction(), range));

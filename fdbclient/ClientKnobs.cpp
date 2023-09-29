@@ -278,7 +278,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( TAG_THROTTLE_SMOOTHING_WINDOW,            2.0 );
 	init( TAG_THROTTLE_RECHECK_INTERVAL,            5.0 ); BUGGIFY_KNOB(TAG_THROTTLE_RECHECK_INTERVAL, randomize && BUGGIFY, 0.0);
 	init( TAG_THROTTLE_EXPIRATION_INTERVAL,        60.0 ); BUGGIFY_KNOB(TAG_THROTTLE_EXPIRATION_INTERVAL, randomize && BUGGIFY, 1.0);
-	init( TAG_THROTTLING_PAGE_SIZE,                4096 ); BUGGIFY_KNOB(TAG_THROTTLING_PAGE_SIZE, randomize && BUGGIFY, 4096);
+	init( QUOTA_THROTTLING_COST_FORMULA,      "minimum" ); BUGGIFY_KNOB(QUOTA_THROTTLING_COST_FORMULA, randomize && BUGGIFY, deterministicRandom()->coinflip() ? "round" : "add");
+	init( TAG_THROTTLING_PAGE_SIZE,                1024 ); BUGGIFY_KNOB(TAG_THROTTLING_PAGE_SIZE, randomize && BUGGIFY, 4096);
 	init( GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO,            4.0 );
 	init( PROXY_MAX_TAG_THROTTLE_DURATION,          5.0 ); BUGGIFY_KNOB(PROXY_MAX_TAG_THROTTLE_DURATION, randomize && BUGGIFY, 0.5);
 	init( MAX_GRV_BATCHERS,                        1000 );
@@ -289,7 +290,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( TRACK_AVERAGE_COST_ON_CLIENTS,           true ); BUGGIFY_KNOB(TRACK_AVERAGE_COST_ON_CLIENTS, randomize && BUGGIFY, false);
 	init( DEFAULT_EXPECTED_TRANSACTION_COST,       4096 );
 	init( AVERAGE_COST_START_DELAY,                10.0 );
-	init( AVERAGE_COST_FOLDING_TIME,                5.0 );
+	init( AVERAGE_COST_FOLDING_TIME,                1.0 );
+	init( AVERAGE_COST_RATE_FOLDING_TIME,           5.0 );
 	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); BUGGIFY_KNOB(USE_SIMPLE_THROUGHPUT_QUOTA_CACHE, randomize && BUGGIFY, false);
 	init( TRACK_BUSY_THROTTLING_IDS,               true ); BUGGIFY_KNOB(TRACK_BUSY_THROTTLING_IDS, randomize && BUGGIFY, false);
 

@@ -58,8 +58,15 @@ Future<Void> ThroughputTracker::run(DatabaseContext& cx) {
 	return ThroughputTrackerImpl::run(this, &cx);
 }
 
-void ThroughputTracker::addCost(ThrottlingId const& throttlingId, uint64_t cost) {
-	throughput[throttlingId] += cost;
+void ThroughputTracker::addReadCost(ThrottlingId const& throttlingId, uint64_t cost) {
+	throughput[throttlingId].readThroughput += cost;
+	if (isClientAverageCostTrackingEnabled()) {
+		smoothThroughput[throttlingId].smoother.addDelta(cost);
+	}
+}
+
+void ThroughputTracker::addWriteCost(ThrottlingId const& throttlingId, uint64_t cost) {
+	throughput[throttlingId].writeThroughput += cost;
 	if (isClientAverageCostTrackingEnabled()) {
 		smoothThroughput[throttlingId].smoother.addDelta(cost);
 	}
@@ -99,8 +106,7 @@ bool isClientAverageCostTrackingEnabled() {
 
 bool isBusyThrottlingIdsTrackingEnabled() {
 	// TRACK_BUSY_THROTTLING_IDS depends on TRACK_THROUGHPUT_ON_CLIENTS
-	return CLIENT_KNOBS->TRACK_THROUGHPUT_ON_CLIENTS && CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS &&
-	       CLIENT_KNOBS->TRACK_AVERAGE_COST_ON_CLIENTS;
+	return isClientAverageCostTrackingEnabled() && CLIENT_KNOBS->TRACK_BUSY_THROTTLING_IDS;
 }
 
 bool ThroughputTracker::isThrottlingIdBusy(ThrottlingId const& throttlingId) const {

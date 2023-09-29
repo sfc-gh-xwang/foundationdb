@@ -5,8 +5,6 @@ enable_consistency_scan = false
 ops_read_units_per_sample = 1 
 # read sampling is needed to produce metrics about how many reads are being performed to each range
 read_sampling_enabled = true
-# system key reads interfere with the test
-read_metrics_include_system_keys = false
 # update the read sample per shard more frequently to reduce variability of test results
 shard_read_sample_update_interval = 5.0
 

@@ -9,12 +9,22 @@
 #include "fdbrpc/Smoother.h"
 #include <boost/unordered/unordered_flat_set.hpp>
 
+struct ThroughputStats {
+	uint64_t readThroughput{ 0 };
+	uint64_t writeThroughput{ 0 };
+
+	template <class Ar>
+	void serialize(Ar& ar) {
+		serializer(ar, readThroughput, writeThroughput);
+	}
+};
+
 // The ThroughputTracker class is responsible for periodically reporting each
 // throttlingId's throughput to GRV proxies. This class also tracks the average
 // transaction cost for each throttlingId.
 class ThroughputTracker {
 	friend class ThroughputTrackerImpl;
-	ThrottlingIdMap<uint64_t> throughput;
+	ThrottlingIdMap<ThroughputStats> throughput;
 
 	uint64_t throughputReportsSent{ 0 };
 	uint64_t throughputReportErrors{ 0 };
@@ -24,7 +34,7 @@ class ThroughputTracker {
 	struct ThroughputSmoother {
 		HoltLinearSmoother smoother;
 		ThroughputSmoother()
-		  : smoother(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME) {}
+		  : smoother(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME) {}
 	};
 
 	ThrottlingIdMap<ThroughputSmoother> smoothThroughput;
@@ -34,7 +44,8 @@ class ThroughputTracker {
 
 public:
 	Future<Void> run(class DatabaseContext& cx);
-	void addCost(ThrottlingId const&, uint64_t cost);
+	void addReadCost(ThrottlingId const&, uint64_t cost);
+	void addWriteCost(ThrottlingId const&, uint64_t cost);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
 	double getAverageTransactionCost(ThrottlingId const&) const;
 	bool isThrottlingIdBusy(ThrottlingId const&) const;

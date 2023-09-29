@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2022 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2023 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,13 @@
 #include "fdbserver/RESTKmsConnector.h"
 
 #include "fdbclient/BlobCipher.h"
+#include "fdbclient/BlobMetadataUtils.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/RESTClient.h"
 
 #include "fdbrpc/HTTP.h"
 
-#include "fdbserver/KmsConnectorInterface.h"
+#include "fdbserver/KmsConnector.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/RESTKmsConnectorUtils.h"
 
@@ -62,23 +63,6 @@
 using namespace RESTKmsConnectorUtils;
 
 namespace {
-bool canReplyWith(Error e) {
-	switch (e.code()) {
-	case error_code_encrypt_invalid_kms_config:
-	case error_code_encrypt_keys_fetch_failed:
-	case error_code_file_not_found:
-	case error_code_file_too_large:
-	case error_code_http_request_failed:
-	case error_code_io_error:
-	case error_code_operation_failed:
-	case error_code_value_too_large:
-	case error_code_timed_out:
-	case error_code_connection_failed:
-		return true;
-	default:
-		return false;
-	}
-}
 
 bool isKmsNotReachable(const int errCode) {
 	return errCode == error_code_timed_out || errCode == error_code_connection_failed;
@@ -92,173 +76,8 @@ void removeTrailingChar(std::string& str, char c) {
 
 } // namespace
 
-template <class Params>
-struct KmsUrlCtx {
-	enum class PenaltyType { TIMEOUT = 1, MALFORMED_RESPONSE = 2 };
-
-	std::string url;
-	uint64_t nRequests;
-	uint64_t nFailedResponses;
-	uint64_t nResponseParseFailures;
-	double unresponsivenessPenalty;
-	double unresponsivenessPenaltyTS;
-
-	KmsUrlCtx()
-	  : url(""),
-	    nRequests(0),
-	    nFailedResponses(0),
-	    nResponseParseFailures(0),
-	    unresponsivenessPenalty(0.0),
-	    unresponsivenessPenaltyTS(0) {}
-	explicit KmsUrlCtx(const std::string& u)
-	  : url(u),
-	    nRequests(0),
-	    nFailedResponses(0),
-	    nResponseParseFailures(0),
-	    unresponsivenessPenalty(0.0),
-	    unresponsivenessPenaltyTS(0) {}
-
-	bool operator==(const KmsUrlCtx& toCompare) const { return url.compare(toCompare.url) == 0; }
-
-	void refreshUnresponsivenessPenalty() {
-		if (unresponsivenessPenaltyTS == 0) {
-			return;
-		}
-		int64_t timeSinceLastPenalty = now() - unresponsivenessPenaltyTS;
-		unresponsivenessPenalty = Params::penalty(timeSinceLastPenalty);
-	}
-
-	void penalize(const PenaltyType type) {
-		if (type == PenaltyType::TIMEOUT) {
-			nFailedResponses++;
-			unresponsivenessPenaltyTS = now();
-		} else {
-			ASSERT_EQ(type, PenaltyType::MALFORMED_RESPONSE);
-			nResponseParseFailures++;
-		}
-	}
-
-	std::string toString() const {
-		return fmt::format(
-		    "{} {} {} {} {}", url, nRequests, nFailedResponses, nResponseParseFailures, unresponsivenessPenalty);
-	}
-};
-
-// Current implementation is designed to favor the most-preferable KMS for all outbound requests allowing leveraging KMS
-// implemented caching if supported
-//
-// TODO: Implement load-balancing requests to available KMS servers maintaining prioritized KMS server list based on
-// observed errors/connection failures/timeouts etc.
-
-template <class Params>
-struct KmsUrlStore {
-	void sort() {
-		std::sort(kmsUrls.begin(), kmsUrls.end(), [](const KmsUrlCtx<Params>& l, const KmsUrlCtx<Params>& r) {
-			// Sort the available URLs based on following rules:
-			// 1. URL with higher unresponsiveness-penalty are least preferred
-			// 2. Among URLs with same unresponsiveness-penalty weight, URLs with more number of failed-respones are
-			// less preferrred
-			// 3. Lastly, URLs with more malformed response messages are less preferred
-
-			if (l.unresponsivenessPenalty != r.unresponsivenessPenalty) {
-				return l.unresponsivenessPenalty < r.unresponsivenessPenalty;
-			}
-			if (l.nFailedResponses != r.nFailedResponses) {
-				return l.nFailedResponses < r.nFailedResponses;
-			}
-			return l.nResponseParseFailures < r.nResponseParseFailures;
-		});
-	}
-
-	void penalize(const KmsUrlCtx<Params>& toPenalize, const typename KmsUrlCtx<Params>::PenaltyType type) {
-		bool found = false;
-		for (KmsUrlCtx<Params>& urlCtx : kmsUrls) {
-			if (urlCtx == toPenalize) {
-				urlCtx.penalize(type);
-				found = true;
-				break;
-			}
-		}
-		ASSERT(found);
-
-		// update the penalties
-		for (auto& url : kmsUrls) {
-			url.refreshUnresponsivenessPenalty();
-		}
-
-		if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
-			std::string details;
-			for (const auto& url : kmsUrls) {
-				details.append(fmt::format("[ {} ], ", url.toString()));
-			}
-			TraceEvent("RESTKmsUrlStoreBeforeSort")
-			    .detail("Details", details)
-			    .detail("Penalize", toPenalize.toString());
-		}
-
-		// Reshuffle the URLs
-		sort();
-
-		if (FLOW_KNOBS->REST_LOG_LEVEL >= RESTLogSeverity::DEBUG) {
-			std::string details;
-			for (const auto& url : kmsUrls) {
-				details.append(fmt::format("[ {} ], ", url.toString()));
-			}
-			TraceEvent("RESTKmsUrlStoreAfterSort").detail("Details", details);
-		}
-	}
-
-	std::vector<KmsUrlCtx<Params>> kmsUrls;
-};
-
 FDB_BOOLEAN_PARAM(RefreshPersistedUrls);
 FDB_BOOLEAN_PARAM(IsCipherType);
-
-// Routine to determine penalty for cached KMSUrl based on unresponsive KMS behavior observed in recent past. The
-// routine is desgined to assign a maximum penalty if KMS responses are unacceptable in very recent past, with time the
-// the penalty weight deteorates (matches real world outage OR server overload scenario)
-
-struct KmsUrlPenaltyParams {
-	static double penalty(int64_t timeSinceLastPenalty) { return continuousTimeDecay(1.0, 0.1, timeSinceLastPenalty); }
-};
-
-struct RESTKmsConnectorCtx : public ReferenceCounted<RESTKmsConnectorCtx> {
-	UID uid;
-	KmsUrlStore<KmsUrlPenaltyParams> kmsUrlStore;
-	double lastKmsUrlsRefreshTs;
-	double lastKmsUrlDiscoverTS;
-	bool kmsStable;
-	Reference<RESTClient> restClient;
-	ValidationTokenMap validationTokenMap;
-	ActorCollection actors;
-
-	CounterCollection kmsConnectorMetrics;
-
-	Counter numMalformedResponses;
-
-	RESTKmsConnectorCtx()
-	  : uid(deterministicRandom()->randomUniqueID()),
-	    lastKmsUrlsRefreshTs(0),
-	    lastKmsUrlDiscoverTS(0.0),
-	    kmsStable(true),
-	    restClient(makeReference<RESTClient>()),
-	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
-	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
-		actors.add(kmsConnectorMetrics.traceCounters(
-		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics"));
-	}
-	explicit RESTKmsConnectorCtx(const UID& id)
-	  : uid(id),
-	    lastKmsUrlsRefreshTs(0),
-	    lastKmsUrlDiscoverTS(0.0),
-	    kmsStable(true),
-	    restClient(makeReference<RESTClient>()),
-	    kmsConnectorMetrics("KMSConnectorMetrics", uid.toString()),
-	    numMalformedResponses("KMSNumMalformedResponses", kmsConnectorMetrics) {
-		actors.add(kmsConnectorMetrics.traceCounters(
-		    "RESTKmsConnectorMetrics", uid, SERVER_KNOBS->KMS_LOGGING_INTERVAL, "RESTKmsConnectorMetrics"));
-	}
-};
 
 std::string getFullRequestUrl(Reference<RESTKmsConnectorCtx> ctx, const std::string& url, const std::string& suffix) {
 	if (suffix.empty()) {
@@ -473,9 +292,9 @@ void checkDocForNewKmsUrls(Reference<RESTKmsConnectorCtx> ctx,
 	}
 }
 
-Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Reference<RESTKmsConnectorCtx> ctx,
-                                                                             Reference<HTTP::IncomingResponse> resp,
-                                                                             Optional<UID> debugId = {}) {
+Standalone<VectorRef<KmsCipherKeyDetailsRef>> parseEncryptCipherResponse(Reference<RESTKmsConnectorCtx> ctx,
+                                                                         Reference<HTTP::IncomingResponse> resp,
+                                                                         Optional<UID> debugId = {}) {
 	// Acceptable response payload json format:
 	//
 	// response_json_payload {
@@ -515,7 +334,7 @@ Standalone<VectorRef<EncryptCipherKeyDetailsRef>> parseEncryptCipherResponse(Ref
 
 	checkResponseForError(ctx, doc, IsCipherType::True);
 
-	Standalone<VectorRef<EncryptCipherKeyDetailsRef>> result;
+	Standalone<VectorRef<KmsCipherKeyDetailsRef>> result;
 
 	// Extract CipherKeyDetails
 	if (!doc.HasMember(CIPHER_KEY_DETAILS_TAG) || !doc[CIPHER_KEY_DETAILS_TAG].IsArray()) {
@@ -752,10 +571,10 @@ Standalone<VectorRef<BlobMetadataDetailsRef>> parseBlobMetadataResponse(Referenc
 	return result;
 }
 
-StringRef getEncryptKeysByKeyIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx,
-                                            const KmsConnLookupEKsByKeyIdsReq& req,
-                                            const bool refreshKmsUrls,
-                                            Arena& arena) {
+Standalone<StringRef> getEncryptKeysByKeyIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx,
+                                                        const std::vector<KmsConnLookupKeyIdsInfo>& encryptKeyInfos,
+                                                        Optional<UID> debugId,
+                                                        const bool refreshKmsUrls) {
 	// Acceptable request payload json format:
 	//
 	// request_json_payload {
@@ -790,7 +609,7 @@ StringRef getEncryptKeysByKeyIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx,
 
 	// Append 'cipher_key_details' as json array
 	rapidjson::Value keyIdDetails(rapidjson::kArrayType);
-	for (const auto& detail : req.encryptKeyInfos) {
+	for (const auto& detail : encryptKeyInfos) {
 		addBaseCipherIdDomIdToDoc(doc, keyIdDetails, detail.baseCipherId, detail.domainId);
 	}
 	rapidjson::Value memberKey(CIPHER_KEY_DETAILS_TAG, doc.GetAllocator());
@@ -803,14 +622,14 @@ StringRef getEncryptKeysByKeyIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx,
 	addRefreshKmsUrlsSectionToJsonDoc(doc, refreshKmsUrls);
 
 	// Append 'debug_uid' section if needed
-	addDebugUidSectionToJsonDoc(doc, req.debugId);
+	addDebugUidSectionToJsonDoc(doc, debugId);
 
 	// Serialize json to string
 	rapidjson::StringBuffer sb;
 	rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
 	doc.Accept(writer);
 
-	StringRef ref = makeString(sb.GetSize(), arena);
+	Standalone<StringRef> ref = makeString(sb.GetSize());
 	memcpy(mutateString(ref), sb.GetString(), sb.GetSize());
 	return ref;
 }
@@ -819,7 +638,7 @@ ACTOR template <class T>
 Future<T> kmsRequestImpl(
     Reference<RESTKmsConnectorCtx> ctx,
     std::string urlSuffix,
-    StringRef requestBodyRef,
+    Standalone<StringRef> requestBodyRef,
     std::function<T(Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>, Optional<UID> debugId)>
         parseFunc,
     Optional<UID> debugID) {
@@ -857,12 +676,22 @@ Future<T> kmsRequestImpl(
 					    .detail("DbgId", debugID);
 				}
 
+				if (debugID.present()) {
+					g_traceBatch.addEvent(
+					    "TransactionDebug", debugID.get().first(), "RESTKmsConnector.KMSRequest.Before");
+				}
+
 				HTTP::Headers headers;
 				headers["Content-type"] = RESTKmsConnectorUtils::HTTP_CONTENT_TYPE;
 				headers["Accept"] = RESTKmsConnectorUtils::HTTP_ACCEPT;
 				Reference<HTTP::IncomingResponse> resp =
 				    wait(ctx->restClient->doPost(kmsEncryptionFullUrl, requestBodyRef.toString(), debugID, headers));
 				urlCtx->nRequests++;
+
+				if (debugID.present()) {
+					g_traceBatch.addEvent(
+					    "TransactionDebug", debugID.get().first(), "RESTKmsConnector.KMSRequest.After");
+				}
 
 				try {
 					T parsedResp = parseFunc(ctx, resp, debugID);
@@ -931,36 +760,45 @@ Future<T> kmsRequestImpl(
 	}
 }
 
-ACTOR Future<Void> fetchEncryptionKeysByKeyIds(Reference<RESTKmsConnectorCtx> ctx, KmsConnLookupEKsByKeyIdsReq req) {
-	state KmsConnLookupEKsByKeyIdsRep reply;
+ACTOR Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> fetchEncryptionKeysByKeyIdsImpl(
+    Reference<RESTKmsConnectorCtx> ctx,
+    std::vector<KmsConnLookupKeyIdsInfo> encryptKeyInfos,
+    Optional<UID> debugId) {
+	state Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails;
 
 	try {
 		bool refreshKmsUrls = shouldRefreshKmsUrls(ctx);
-		StringRef requestBodyRef = getEncryptKeysByKeyIdsRequestBody(ctx, req, refreshKmsUrls, req.arena);
-		std::function<Standalone<VectorRef<EncryptCipherKeyDetailsRef>>(
+		Standalone<StringRef> requestBodyRef =
+		    getEncryptKeysByKeyIdsRequestBody(ctx, encryptKeyInfos, debugId, refreshKmsUrls);
+		std::function<Standalone<VectorRef<KmsCipherKeyDetailsRef>>(
 		    Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>, Optional<UID>)>
 		    f = &parseEncryptCipherResponse;
-		wait(store(reply.cipherKeyDetails,
+		wait(store(cipherKeyDetails,
 		           kmsRequestImpl(ctx,
 		                          SERVER_KNOBS->REST_KMS_CONNECTOR_GET_ENCRYPTION_KEYS_ENDPOINT,
 		                          requestBodyRef,
 		                          std::move(f),
-		                          req.debugId)));
-		req.reply.send(reply);
+		                          debugId)));
+		return cipherKeyDetails;
 	} catch (Error& e) {
 		TraceEvent("RESTLookupEKsByKeyIdsFailed", ctx->uid).error(e);
-		if (!canReplyWith(e)) {
-			throw e;
-		}
-		req.reply.sendError(e);
+		throw e;
 	}
-	return Void();
 }
 
-StringRef getEncryptKeysByDomainIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx,
-                                               const KmsConnLookupEKsByDomainIdsReq& req,
-                                               const bool refreshKmsUrls,
-                                               Arena& arena) {
+Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> RESTKmsConnector::fetchEncryptionKeysByKeyIds(
+    std::any data,
+    const std::vector<KmsConnLookupKeyIdsInfo>& encryptKeyInfos,
+    Optional<UID> debugId) {
+	RESTKmsConnectorCtx* ctxPtr = std::any_cast<RESTKmsConnectorCtx*>(data);
+	Reference<RESTKmsConnectorCtx> ctx = Reference<RESTKmsConnectorCtx>::addRef(ctxPtr);
+	return fetchEncryptionKeysByKeyIdsImpl(ctx, encryptKeyInfos, debugId);
+}
+
+Standalone<StringRef> getEncryptKeysByDomainIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx,
+                                                           const std ::vector<EncryptCipherDomainId>& domainIds,
+                                                           Optional<UID> debugId,
+                                                           const bool refreshKmsUrls) {
 	// Acceptable request payload json format:
 	//
 	// request_json_payload {
@@ -993,7 +831,7 @@ StringRef getEncryptKeysByDomainIdsRequestBody(Reference<RESTKmsConnectorCtx> ct
 	addVersionToDoc(doc, SERVER_KNOBS->REST_KMS_CURRENT_CIPHER_REQUEST_VERSION);
 
 	// Append 'cipher_key_details' as json array
-	addLatestDomainDetailsToDoc(doc, CIPHER_KEY_DETAILS_TAG, ENCRYPT_DOMAIN_ID_TAG, req.encryptDomainIds);
+	addLatestDomainDetailsToDoc(doc, CIPHER_KEY_DETAILS_TAG, ENCRYPT_DOMAIN_ID_TAG, domainIds);
 
 	// Append 'validation_tokens' as json array
 	addValidationTokensSectionToJsonDoc(doc, ctx->validationTokenMap);
@@ -1002,49 +840,59 @@ StringRef getEncryptKeysByDomainIdsRequestBody(Reference<RESTKmsConnectorCtx> ct
 	addRefreshKmsUrlsSectionToJsonDoc(doc, refreshKmsUrls);
 
 	// Append 'debug_uid' section if needed
-	addDebugUidSectionToJsonDoc(doc, req.debugId);
+	addDebugUidSectionToJsonDoc(doc, debugId);
 
 	// Serialize json to string
 	rapidjson::StringBuffer sb;
 	rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
 	doc.Accept(writer);
 
-	StringRef ref = makeString(sb.GetSize(), arena);
+	Standalone<StringRef> ref = makeString(sb.GetSize());
 	memcpy(mutateString(ref), sb.GetString(), sb.GetSize());
 	return ref;
 }
 
-ACTOR Future<Void> fetchEncryptionKeysByDomainIds(Reference<RESTKmsConnectorCtx> ctx,
-                                                  KmsConnLookupEKsByDomainIdsReq req) {
-	state KmsConnLookupEKsByDomainIdsRep reply;
+ACTOR Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> fetchEncryptionKeysByDomainIdsImpl(
+    Reference<RESTKmsConnectorCtx> ctx,
+    std::vector<EncryptCipherDomainId> domainIds,
+    Optional<UID> debugId) {
+	state Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails;
+
 	try {
 		bool refreshKmsUrls = shouldRefreshKmsUrls(ctx);
-		StringRef requestBodyRef = getEncryptKeysByDomainIdsRequestBody(ctx, req, refreshKmsUrls, req.arena);
+		Standalone<StringRef> requestBodyRef =
+		    getEncryptKeysByDomainIdsRequestBody(ctx, domainIds, debugId, refreshKmsUrls);
 
-		std::function<Standalone<VectorRef<EncryptCipherKeyDetailsRef>>(
+		std::function<Standalone<VectorRef<KmsCipherKeyDetailsRef>>(
 		    Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>, Optional<UID>)>
 		    f = &parseEncryptCipherResponse;
 
-		wait(store(reply.cipherKeyDetails,
+		wait(store(cipherKeyDetails,
 		           kmsRequestImpl(ctx,
 		                          SERVER_KNOBS->REST_KMS_CONNECTOR_GET_LATEST_ENCRYPTION_KEYS_ENDPOINT,
 		                          requestBodyRef,
 		                          std::move(f),
-		                          req.debugId)));
-		req.reply.send(reply);
+		                          debugId)));
+		return cipherKeyDetails;
 	} catch (Error& e) {
 		TraceEvent("RESTLookupEKsByDomainIdsFailed", ctx->uid).error(e);
-		if (!canReplyWith(e)) {
-			throw e;
-		}
-		req.reply.sendError(e);
+		throw e;
 	}
-	return Void();
 }
 
-StringRef getBlobMetadataRequestBody(Reference<RESTKmsConnectorCtx> ctx,
-                                     KmsConnBlobMetadataReq& req,
-                                     const bool refreshKmsUrls) {
+Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> RESTKmsConnector::fetchEncryptionKeysByDomainIds(
+    std::any data,
+    const std::vector<EncryptCipherDomainId>& domainIds,
+    Optional<UID> debugId) {
+	RESTKmsConnectorCtx* ctxPtr = std::any_cast<RESTKmsConnectorCtx*>(data);
+	Reference<RESTKmsConnectorCtx> ctx = Reference<RESTKmsConnectorCtx>::addRef(ctxPtr);
+	return fetchEncryptionKeysByDomainIdsImpl(ctx, domainIds, debugId);
+}
+
+Standalone<StringRef> getBlobMetadataRequestBody(Reference<RESTKmsConnectorCtx> ctx,
+                                                 const std::vector<EncryptCipherDomainId>& domainIds,
+                                                 Optional<UID> debugId,
+                                                 const bool refreshKmsUrls) {
 	// Acceptable request payload json format:
 	//
 	// request_json_payload {
@@ -1077,7 +925,7 @@ StringRef getBlobMetadataRequestBody(Reference<RESTKmsConnectorCtx> ctx,
 	addVersionToDoc(doc, SERVER_KNOBS->REST_KMS_CURRENT_BLOB_METADATA_REQUEST_VERSION);
 
 	// Append 'blob_metadata_details' as json array
-	addLatestDomainDetailsToDoc(doc, BLOB_METADATA_DETAILS_TAG, BLOB_METADATA_DOMAIN_ID_TAG, req.domainIds);
+	addLatestDomainDetailsToDoc(doc, BLOB_METADATA_DETAILS_TAG, BLOB_METADATA_DOMAIN_ID_TAG, domainIds);
 
 	// Append 'validation_tokens' as json array
 	addValidationTokensSectionToJsonDoc(doc, ctx->validationTokenMap);
@@ -1086,45 +934,53 @@ StringRef getBlobMetadataRequestBody(Reference<RESTKmsConnectorCtx> ctx,
 	addRefreshKmsUrlsSectionToJsonDoc(doc, refreshKmsUrls);
 
 	// Append 'debug_uid' section if needed
-	addDebugUidSectionToJsonDoc(doc, req.debugId);
+	addDebugUidSectionToJsonDoc(doc, debugId);
 
 	// Serialize json to string
 	rapidjson::StringBuffer sb;
 	rapidjson::Writer<rapidjson::StringBuffer> writer(sb);
 	doc.Accept(writer);
 
-	StringRef ref = makeString(sb.GetSize(), req.arena);
+	Standalone<StringRef> ref = makeString(sb.GetSize());
 	memcpy(mutateString(ref), sb.GetString(), sb.GetSize());
 	return ref;
 }
 
 // FIXME: add lookup error stats and suppress error trace events on interval
-ACTOR Future<Void> fetchBlobMetadata(Reference<RESTKmsConnectorCtx> ctx, KmsConnBlobMetadataReq req) {
-	state KmsConnBlobMetadataRep reply;
+ACTOR Future<Standalone<VectorRef<BlobMetadataDetailsRef>>> fetchBlobMetadataImpl(
+    Reference<RESTKmsConnectorCtx> ctx,
+    std::vector<EncryptCipherDomainId> domainIds,
+    Optional<UID> debugId) {
+	state Standalone<VectorRef<BlobMetadataDetailsRef>> metadataDetails;
 	try {
 		bool refreshKmsUrls = shouldRefreshKmsUrls(ctx);
-		StringRef requestBodyRef = getBlobMetadataRequestBody(ctx, req, refreshKmsUrls);
+		Standalone<StringRef> requestBodyRef = getBlobMetadataRequestBody(ctx, domainIds, debugId, refreshKmsUrls);
 
 		// for some reason the compiler can't handle just passing &parseBlobMetadata, so you have to explicitly
 		// declare its templated return type as part of an std::function first
 		std::function<Standalone<VectorRef<BlobMetadataDetailsRef>>(
 		    Reference<RESTKmsConnectorCtx>, Reference<HTTP::IncomingResponse>, Optional<UID>)>
 		    f = &parseBlobMetadataResponse;
-		wait(store(reply.metadataDetails,
+		wait(store(metadataDetails,
 		           kmsRequestImpl(ctx,
 		                          SERVER_KNOBS->REST_KMS_CONNECTOR_GET_BLOB_METADATA_ENDPOINT,
 		                          requestBodyRef,
 		                          std::move(f),
-		                          req.debugId)));
-		req.reply.send(reply);
+		                          debugId)));
+		return metadataDetails;
 	} catch (Error& e) {
 		TraceEvent("RESTLookupBlobMetadataFailed", ctx->uid).error(e);
-		if (!canReplyWith(e)) {
-			throw e;
-		}
-		req.reply.sendError(e);
+		throw e;
 	}
-	return Void();
+}
+
+Future<Standalone<VectorRef<BlobMetadataDetailsRef>>> RESTKmsConnector::fetchBlobMetadata(
+    std::any data,
+    const std::vector<EncryptCipherDomainId>& domainIds,
+    Optional<UID> debugId) {
+	RESTKmsConnectorCtx* ctxPtr = std::any_cast<RESTKmsConnectorCtx*>(data);
+	Reference<RESTKmsConnectorCtx> ctx = Reference<RESTKmsConnectorCtx>::addRef(ctxPtr);
+	return fetchBlobMetadataImpl(ctx, domainIds, debugId);
 }
 
 ACTOR Future<Void> procureValidationTokensFromFiles(Reference<RESTKmsConnectorCtx> ctx, std::string details) {
@@ -1247,62 +1103,6 @@ void updateKMSStability(Reference<RESTKmsConnectorCtx> self) {
 		s.second->clear();
 	}
 	self->kmsStable = stable;
-}
-
-Future<Void> getKMSState(Reference<RESTKmsConnectorCtx> self, KmsConnGetKMSStateReq req) {
-	KmsConnGetKMSStateRep reply;
-	reply.kmsStable = self->kmsStable;
-
-	try {
-		for (const auto& url : self->kmsUrlStore.kmsUrls) {
-			reply.restKMSUrls.push_back(url.url);
-		}
-		req.reply.send(reply);
-	} catch (Error& e) {
-		TraceEvent(SevWarn, "RestKMSGetKMSStateFailed", self->uid).error(e);
-		throw e;
-	}
-
-	return Void();
-}
-
-ACTOR Future<Void> restConnectorCoreImpl(KmsConnectorInterface interf) {
-	state Reference<RESTKmsConnectorCtx> self = makeReference<RESTKmsConnectorCtx>(interf.id());
-
-	try {
-		TraceEvent("RESTKmsConnectorInit", self->uid).log();
-
-		self->actors.add(
-		    recurring([self = self]() { updateKMSStability(self); }, SERVER_KNOBS->REST_KMS_STABILITY_CHECK_INTERVAL));
-		wait(discoverKmsUrls(self, RefreshPersistedUrls::False));
-		wait(procureValidationTokens(self));
-
-		loop {
-			choose {
-				when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
-					self->actors.add(fetchEncryptionKeysByKeyIds(self, req));
-				}
-				when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
-					self->actors.add(fetchEncryptionKeysByDomainIds(self, req));
-				}
-				when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
-					self->actors.add(fetchBlobMetadata(self, req));
-				}
-				when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
-					self->actors.add(getKMSState(self, req));
-				}
-				when(wait(self->actors.getResult())) {}
-			}
-		}
-	} catch (Error& e) {
-		TraceEvent("RESTKmsConnectorError", self->uid).errorUnsuppressed(e);
-		self->actors = ActorCollection(false);
-		throw e;
-	}
-}
-
-Future<Void> RESTKmsConnector::connectorCore(KmsConnectorInterface interf) {
-	return restConnectorCoreImpl(interf);
 }
 
 // Only used to link unit tests
@@ -1632,28 +1432,31 @@ void validateKmsUrls(Reference<RESTKmsConnectorCtx> ctx) {
 }
 
 void testGetEncryptKeysByKeyIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx, Arena& arena) {
-	KmsConnLookupEKsByKeyIdsReq req;
+	std::vector<KmsConnLookupKeyIdsInfo> encryptKeyInfos;
 	std::unordered_map<EncryptCipherBaseKeyId, EncryptCipherDomainId> keyMap;
+	Optional<UID> debugId;
+
 	const int nKeys = deterministicRandom()->randomInt(7, 8);
 	for (int i = 1; i < nKeys; i++) {
 		EncryptCipherDomainId domainId = getRandomDomainId();
-		req.encryptKeyInfos.emplace_back(domainId, i);
+		encryptKeyInfos.emplace_back(domainId, i);
 		keyMap[i] = domainId;
 	}
 
 	bool refreshKmsUrls = deterministicRandom()->coinflip();
 	if (deterministicRandom()->coinflip()) {
-		req.debugId = deterministicRandom()->randomUniqueID();
+		debugId = deterministicRandom()->randomUniqueID();
 	}
 
-	StringRef requestBodyRef = getEncryptKeysByKeyIdsRequestBody(ctx, req, refreshKmsUrls, arena);
+	Standalone<StringRef> requestBodyRef =
+	    getEncryptKeysByKeyIdsRequestBody(ctx, encryptKeyInfos, debugId, refreshKmsUrls);
 	TraceEvent("FetchKeysByKeyIds", ctx->uid).setMaxFieldLength(100000).detail("JsonReqStr", requestBodyRef.toString());
 	Reference<HTTP::IncomingResponse> httpResp = makeReference<HTTP::IncomingResponse>();
 	httpResp->code = HTTP::HTTP_STATUS_CODE_OK;
 	getFakeEncryptCipherResponse(requestBodyRef, true, httpResp);
 	TraceEvent("FetchKeysByKeyIds", ctx->uid).setMaxFieldLength(100000).detail("HttpRespStr", httpResp->data.content);
 
-	Standalone<VectorRef<EncryptCipherKeyDetailsRef>> cipherDetails = parseEncryptCipherResponse(ctx, httpResp);
+	Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherDetails = parseEncryptCipherResponse(ctx, httpResp);
 	ASSERT_EQ(cipherDetails.size(), keyMap.size());
 	for (const auto& detail : cipherDetails) {
 		ASSERT(keyMap.find(detail.encryptKeyId) != keyMap.end());
@@ -1667,52 +1470,58 @@ void testGetEncryptKeysByKeyIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx, A
 }
 
 void testGetEncryptKeysByDomainIdsRequestBody(Reference<RESTKmsConnectorCtx> ctx, Arena& arena) {
-	KmsConnLookupEKsByDomainIdsReq req;
-	std::unordered_set<EncryptCipherDomainId> domainIds;
+	std::vector<EncryptCipherDomainId> domainIdVec;
+	std::unordered_set<EncryptCipherDomainId> domainIdSet;
+	Optional<UID> debugId =
+	    deterministicRandom()->coinflip() ? deterministicRandom()->randomUniqueID() : Optional<UID>();
+
 	const int nKeys = deterministicRandom()->randomInt(7, 25);
 	for (int i = 1; i < nKeys; i++) {
 		EncryptCipherDomainId domainId = getRandomDomainId();
-		if (domainIds.insert(domainId).second) {
-			req.encryptDomainIds.push_back(domainId);
+		if (domainIdSet.insert(domainId).second) {
+			domainIdVec.push_back(domainId);
 		}
 	}
 
 	bool refreshKmsUrls = deterministicRandom()->coinflip();
 
-	StringRef jsonReqRef = getEncryptKeysByDomainIdsRequestBody(ctx, req, refreshKmsUrls, arena);
+	Standalone<StringRef> jsonReqRef = getEncryptKeysByDomainIdsRequestBody(ctx, domainIdVec, debugId, refreshKmsUrls);
 	TraceEvent("FetchKeysByDomainIds", ctx->uid).detail("JsonReqStr", jsonReqRef.toString());
 	Reference<HTTP::IncomingResponse> httpResp = makeReference<HTTP::IncomingResponse>();
 	httpResp->code = HTTP::HTTP_STATUS_CODE_OK;
 	getFakeEncryptCipherResponse(jsonReqRef, false, httpResp);
 	TraceEvent("FetchKeysByDomainIds", ctx->uid).detail("HttpRespStr", httpResp->data.content);
 
-	Standalone<VectorRef<EncryptCipherKeyDetailsRef>> cipherDetails = parseEncryptCipherResponse(ctx, httpResp);
-	ASSERT_EQ(domainIds.size(), cipherDetails.size());
+	Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherDetails = parseEncryptCipherResponse(ctx, httpResp);
+	ASSERT_EQ(domainIdSet.size(), cipherDetails.size());
 	for (const auto& detail : cipherDetails) {
-		ASSERT(domainIds.find(detail.encryptDomainId) != domainIds.end());
+		ASSERT_NE(domainIdSet.count(detail.encryptDomainId), 0);
 		ASSERT_EQ(detail.encryptKey.size(), sizeof(BASE_CIPHER_KEY_TEST));
 		ASSERT_EQ(memcmp(detail.encryptKey.begin(), &BASE_CIPHER_KEY_TEST[0], sizeof(BASE_CIPHER_KEY_TEST)), 0);
 	}
+
 	if (refreshKmsUrls) {
 		validateKmsUrls(ctx);
 	}
 }
 
 void testGetBlobMetadataRequestBody(Reference<RESTKmsConnectorCtx> ctx) {
-	KmsConnBlobMetadataReq req;
+	std::vector<EncryptCipherDomainId> domIds;
 	std::unordered_set<BlobMetadataDomainId> domainIds;
+	Optional<UID> debugId =
+	    deterministicRandom()->coinflip() ? deterministicRandom()->randomUniqueID() : Optional<UID>();
 	const int nKeys = deterministicRandom()->randomInt(7, 25);
 	for (int i = 1; i < nKeys; i++) {
 		EncryptCipherDomainId domainId = deterministicRandom()->randomInt(0, 1000);
 		if (domainIds.insert(domainId).second) {
-			req.domainIds.push_back(domainId);
+			domIds.push_back(domainId);
 		}
 	}
 
 	bool refreshKmsUrls = deterministicRandom()->coinflip();
 
 	TraceEvent("FetchBlobMetadataStart", ctx->uid);
-	StringRef jsonReqRef = getBlobMetadataRequestBody(ctx, req, refreshKmsUrls);
+	Standalone<StringRef> jsonReqRef = getBlobMetadataRequestBody(ctx, domIds, debugId, refreshKmsUrls);
 	TraceEvent("FetchBlobMetadataReq", ctx->uid).detail("JsonReqStr", jsonReqRef.toString());
 	Reference<HTTP::IncomingResponse> httpResp = makeReference<HTTP::IncomingResponse>();
 	httpResp->code = HTTP::HTTP_STATUS_CODE_OK;
@@ -2085,7 +1894,8 @@ void setKnobs() {
 } // namespace
 
 TEST_CASE("/KmsConnector/REST/ParseKmsDiscoveryUrls") {
-	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>();
+	state ActorCollection testActors;
+	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>(testActors);
 	state Arena arena;
 
 	setKnobs();
@@ -2101,7 +1911,8 @@ TEST_CASE("/KmsConnector/REST/ParseKmsDiscoveryUrls") {
 }
 
 TEST_CASE("/KmsConnector/REST/ParseValidationTokenFile") {
-	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>();
+	state ActorCollection testActors;
+	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>(testActors);
 	state Arena arena;
 
 	setKnobs();
@@ -2120,7 +1931,8 @@ TEST_CASE("/KmsConnector/REST/ParseValidationTokenFile") {
 }
 
 TEST_CASE("/KmsConnector/REST/ParseEncryptCipherResponse") {
-	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>();
+	state ActorCollection testActors;
+	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>(testActors);
 	state Arena arena;
 
 	setKnobs();
@@ -2138,7 +1950,8 @@ TEST_CASE("/KmsConnector/REST/ParseEncryptCipherResponse") {
 }
 
 TEST_CASE("/KmsConnector/REST/ParseBlobMetadataResponse") {
-	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>();
+	state ActorCollection testActors;
+	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>(testActors);
 	state Arena arena;
 
 	setKnobs();
@@ -2153,7 +1966,8 @@ TEST_CASE("/KmsConnector/REST/ParseBlobMetadataResponse") {
 }
 
 TEST_CASE("/KmsConnector/REST/GetEncryptionKeyOps") {
-	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>();
+	state ActorCollection testActors;
+	state Reference<RESTKmsConnectorCtx> ctx = makeReference<RESTKmsConnectorCtx>(testActors);
 	state Arena arena;
 
 	setKnobs();
