@@ -1193,6 +1193,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_MANIFEST_BACKUP,                                false );
 	init( BLOB_MANIFEST_BACKUP_INTERVAL,  isSimulated ?  5.0 : 600.0 );
 	init( BLOB_MIGRATOR_CHECK_INTERVAL,    isSimulated ?  1.0 : 60.0 );
+	init( BLOB_MIGRATOR_BULK_LOAD_CHECK_INTERVAL,                5.0 ); BUGGIFY_KNOB(BLOB_MIGRATOR_BULK_LOAD_CHECK_INTERVAL, randomize && BUGGIFY, 10.0 * deterministicRandom()->random01());
 	init( BLOB_MANIFEST_RW_ROWS,            isSimulated ?  10 : 1000 );
 	init( BLOB_MANIFEST_MAX_ROWS_PER_TRANSACTION,  isSimulated ?  30 : 10000 );
 	init( BLOB_MANIFEST_RETRY_INTERVAL,        isSimulated ?  1 : 30 );

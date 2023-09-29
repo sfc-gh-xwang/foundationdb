@@ -36,7 +36,6 @@
 #include "flow/Platform.h"
 #include "flow/Trace.h"
 #include "fdbclient/BlobGranuleCommon.h"
-#include "fdbclient/BulkLoadTracker.h"
 #include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "fdbclient/BlobConnectionProvider.h"
@@ -69,20 +68,66 @@ static inline void dprint(fmt::format_string<T...> fmt, T&&... args) {
 }
 
 using GranuleSizeMap = KeyRangeMap<int64_t>;
+using GranuleFeedMap = KeyRangeMap<UID>;
 
 // state for 1 bulk load in the blob migrator
 struct BulkLoadMigratorState : ReferenceCounted<BulkLoadMigratorState>, NonCopyable {
-	bool granuleSizesLoaded = false;
+	// FIXME: coalesce into 1 map?
 	GranuleSizeMap granuleSizes;
+	GranuleFeedMap granuleFeeds;
+	Promise<Void> granuleMapsLoaded;
+	Promise<Void> cancelled;
+
+	BulkLoadMigratorState() {}
+
+	Future<Void> waitReady() { return granuleMapsLoaded.getFuture() || cancelled.getFuture(); }
+
+	bool isCancelled() { return cancelled.isSet(); }
+
+	bool isReady() const { return granuleMapsLoaded.isSet() && cancelled.canBeSet(); }
 };
 
 // BlobMigrator offers APIs to migrate data from blob storage to storage server. It implements a minimal set of
 // StorageServerInterface APIs which are needed for DataDistributor to start data migration.
 class BlobMigrator final : public NonCopyable, public ReferenceCounted<BlobMigrator>, public IStorageMetricsService {
 public:
+	struct Stats {
+		CounterCollection cc;
+		Future<Void> logger;
+
+		Counter overlappingFeedQueries;
+		Counter feedStreamQueries;
+		Counter feedVersionQueries;
+		Counter feedPopQueries;
+
+		ActiveCounter<int> activeOverlappingFeeds;
+		ActiveCounter<int> activeFeedStreams;
+		ActiveCounter<int> activeFeedPops;
+		ActiveCounter<int> activeFeedVersionUpdates;
+
+		explicit Stats(UID id, double interval)
+		  : cc("BlobMigratorStats", id.toString()),
+		    overlappingFeedQueries("OverlappingFeedQueries", cc),
+		    feedStreamQueries("FeedStreamQueries", cc),
+		    feedVersionQueries("FeedVersionQueries", cc),
+		    feedPopQueries("FeedPopQueries", cc),
+		    activeOverlappingFeeds(0),
+		    activeFeedStreams(0),
+		    activeFeedPops(0),
+		    activeFeedVersionUpdates(0) {
+			specialCounter(cc, "ActiveRequests", [this]() { return this->activeOverlappingFeeds.getValue(); });
+			specialCounter(cc, "ActiveFeedStreams", [this]() { return this->activeFeedStreams.getValue(); });
+			specialCounter(cc, "ActiveFeedPops", [this]() { return this->activeFeedPops.getValue(); });
+			specialCounter(
+			    cc, "ActiveFeedVersionUpdates", [this]() { return this->activeFeedVersionUpdates.getValue(); });
+			logger = cc.traceCounters("BlobMigratorMetrics", id, interval, "BlobMigratorMetrics");
+		}
+	};
+
 	BlobMigrator(BlobMigratorInterface interf, Reference<AsyncVar<ServerDBInfo> const> dbInfo)
 	  : interf_(interf),
 	    actors_(false),
+	    stats_(interf.id(), SERVER_KNOBS->WORKER_LOGGING_INTERVAL),
 	    dbInfo_(dbInfo) {
 		db_ = openDBOnServer(dbInfo, TaskPriority::DefaultEndpoint, LockAware::True);
 	}
@@ -102,12 +147,7 @@ private:
 		wait(store(self->isFullRestore_, BlobRestoreController::isRestoring(controller)));
 		wait(BlobRestoreController::setLockOwner(controller, self->interf_.id()));
 		if (!self->isFullRestore_) {
-			BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
-			                                                         const BulkLoadStatus::State& state) {
-				return trackBulkLoad(self, id, state);
-			};
-			self->bulkLoadTracker_ = BulkLoadTracker(self->db_, bulkLoadHandler);
-			self->addActor(self->bulkLoadTracker_.start());
+			self->addActor(monitorBulkLoads(self));
 			return Void();
 		}
 
@@ -637,6 +677,9 @@ private:
 		self->addActor(waitFailureServer(self->interf_.waitFailure.getFuture()));
 		self->addActor(handleRequest(self));
 		self->addActor(handleUnsupportedRequest(self));
+		if (!self->isFullRestore_) {
+			self->addActor(handleChangeFeedRequest(self));
+		}
 		self->addActor(serveStorageMetricsRequests(self.getPtr(), self->interf_.ssi));
 		loop {
 			try {
@@ -738,6 +781,204 @@ private:
 		}
 	}
 
+	/*
+	 * This algorithm combines tracking active bulk loads in the database with identifying a minimum change feed version
+	 * it is legal to propagate to all active change feed streams for the active bulk loads. The logic is as follows, in
+	 * a loop:
+	 *  1. Find all active loads as of a certain version
+	 *  2. Start tracking any newly found loads
+	 *  3. For any loads that were active as of the previous version but are no longer active, cancel all of their feed
+	 * streams and prevent new ones from starting
+	 *  4. Set the new empty version for the blob migrator to the read version
+	 * This guarantees that the empty version propagates for all active feeds, and as soon as a load is complete, all
+	 * feeds must have switched over to the storage server at or before the version at which the feed was completed and
+	 * the range was unlocked.
+	 */
+	ACTOR static Future<Void> monitorBulkLoads(Reference<BlobMigrator> self) {
+		state std::unordered_map<UID, Reference<BulkLoadMigratorState>> activeBulkLoads;
+		loop {
+			state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db_);
+			state Future<Void> waitFuture = delayJittered(SERVER_KNOBS->BLOB_MIGRATOR_BULK_LOAD_CHECK_INTERVAL);
+			loop {
+				try {
+					SystemDBWriteLockedNow(self->db_.getReference())->setOptions(tr);
+					state BulkLoadMetadata::StatusMap::RangeResultType result =
+					    wait(BulkLoadMetadata::statusMap().getRange(tr, {}, {}, CLIENT_KNOBS->TOO_MANY));
+					ASSERT(!result.more);
+					state std::unordered_set<UID> newInactiveBulkLoads;
+					state Version readVersion = tr->getReadVersion().get();
+					for (auto& it : activeBulkLoads) {
+						newInactiveBulkLoads.insert(it.first);
+					}
+					wait(yield());
+					state int i;
+					for (i = 0; i < result.results.size(); i++) {
+						auto& it = result.results[i];
+						UID id = bulkLoadIdToUID(it.first.second);
+						auto st = it.second.state;
+						bool active = st != BulkLoadStatus::State::DONE && st != BulkLoadStatus::State::ABORTED &&
+						              st != BulkLoadStatus::State::ABORTED_COMPLETE;
+						if (active) {
+							newInactiveBulkLoads.erase(id);
+							Reference<BulkLoadMigratorState> loadState = makeReference<BulkLoadMigratorState>();
+							if (activeBulkLoads.insert({ id, loadState }).second) {
+								self->addActor(trackBulkLoad(self, it.first, it.second.state, loadState));
+							}
+						}
+						if (i % 1000 == 999) {
+							wait(yield());
+						}
+					}
+
+					// after loop this now contains all bulk loads not found in db or that are in inactive state
+					// we must cancel all streams for inactive loads BEFORE updating the empty version
+					for (auto& id : newInactiveBulkLoads) {
+						auto it = activeBulkLoads.find(id);
+						ASSERT(it != activeBulkLoads.end());
+						ASSERT(it->second->cancelled.canBeSet());
+						it->second->cancelled.send(Void());
+						activeBulkLoads.erase(it);
+					}
+					wait(yield());
+
+					self->bulkLoadFeedEmptyVersion_.set(readVersion);
+
+					break;
+				} catch (Error& e) {
+					wait(tr->onError(e));
+				}
+			}
+			wait(waitFuture);
+		}
+	}
+
+	ACTOR static Future<Void> handleChangeFeedStream(Reference<BlobMigrator> self, ChangeFeedStreamRequest req) {
+		++self->stats_.feedStreamQueries;
+		state ActiveCounter<int>::Releaser holdingFeedStreamCounter = self->stats_.activeFeedStreams.take(1);
+		state Reference<BulkLoadMigratorState> loadState = getLoadState(self, req.range);
+		req.reply.setByteLimit(1);
+
+		wait(self->bulkLoadFeedEmptyVersion_.whenAtLeast(req.begin));
+
+		if (!loadState->isReady()) {
+			wait(loadState->waitReady());
+		}
+		wait(delay(0));
+		if (loadState->isCancelled()) {
+			req.reply.sendError(wrong_shard_server());
+			return Void();
+		}
+
+		// sanity check that this feed actually exists and is for the correct range
+		auto feedEntry = loadState->granuleFeeds.rangeContaining(req.range.begin);
+		KeyRange feedRange = feedEntry.range();
+		ASSERT(feedRange.contains(req.range));
+		UID feedUID = cfKeyToGranuleID(req.rangeID);
+		ASSERT_EQ(feedUID, feedEntry.value());
+
+		// send empty version to establish stream handshake
+		ChangeFeedStreamReply emptyInitialReply;
+		MutationsAndVersionRef emptyInitialVersion;
+		emptyInitialVersion.version = req.begin - 1;
+		emptyInitialReply.mutations.push_back_deep(emptyInitialReply.arena, emptyInitialVersion);
+		ASSERT(emptyInitialReply.atLatestVersion == false);
+		ASSERT(emptyInitialReply.minStreamVersion == invalidVersion);
+		req.reply.send(emptyInitialReply);
+
+		// wait until feeds not live and cancel stream
+		wait(loadState->cancelled.getFuture());
+		req.reply.sendError(wrong_shard_server());
+
+		return Void();
+	}
+
+	ACTOR static Future<Void> handleOverlappingChangeFeeds(Reference<BlobMigrator> self,
+	                                                       OverlappingChangeFeedsRequest req) {
+		++self->stats_.overlappingFeedQueries;
+		state ActiveCounter<int>::Releaser holdingOverlappingFeedsCounter = self->stats_.activeOverlappingFeeds.take(1);
+		state Reference<BulkLoadMigratorState> loadState = getLoadState(self, req.range);
+
+		wait(self->bulkLoadFeedEmptyVersion_.whenAtLeast(req.minVersion));
+
+		if (!loadState->isReady()) {
+			wait(loadState->waitReady());
+		}
+		wait(delay(0));
+		if (loadState->isCancelled()) {
+			req.reply.sendError(wrong_shard_server());
+			return Void();
+		}
+
+		OverlappingChangeFeedsReply reply;
+		reply.feedMetadataVersion = self->bulkLoadFeedEmptyVersion_.get();
+
+		auto queryFeeds = loadState->granuleFeeds.intersectingRanges(req.range);
+
+		for (auto& it : queryFeeds) {
+			Key cfKey = granuleIDToCFKey(it.cvalue());
+			KeyRange cfRange = it.range();
+			reply.feeds.push_back_deep(
+			    reply.arena,
+			    OverlappingChangeFeedEntry(
+			        cfKey, cfRange, 0 /* emptyVersion */, MAX_VERSION /* stopVersion */, reply.feedMetadataVersion));
+		}
+
+		req.reply.send(reply);
+		return Void();
+	}
+
+	ACTOR static Future<Void> handleChangeFeedPopRequest(Reference<BlobMigrator> self, ChangeFeedPopRequest req) {
+		// This is a bit of a hack - but just hang indefinitely, the request will time out and cancel, and the pop will
+		// go through the front door fallback
+		// We also shouldn't be popping feeds while bulk loading anyway
+		++self->stats_.feedPopQueries;
+		state ActiveCounter<int>::Releaser holdingFeedPopsCounter = self->stats_.activeFeedPops.take(1);
+		wait(Never());
+		return Void();
+	}
+
+	ACTOR static Future<Void> handleChangeFeedVersionUpdateRequest(Reference<BlobMigrator> self,
+	                                                               ChangeFeedVersionUpdateRequest req) {
+
+		++self->stats_.feedVersionQueries;
+		state ActiveCounter<int>::Releaser holdingVersionUpdatesCounter = self->stats_.activeFeedVersionUpdates.take(1);
+		// FIXME: is this necessary?
+		wait(self->bulkLoadFeedEmptyVersion_.whenAtLeast(req.minVersion));
+		req.reply.send(ChangeFeedVersionUpdateReply(self->bulkLoadFeedEmptyVersion_.get()));
+		return Void();
+	}
+
+	// Handle SS change feed requests (only when bulk loading)
+	ACTOR static Future<Void> handleChangeFeedRequest(Reference<BlobMigrator> self) {
+		state StorageServerInterface ssi = self->interf_.ssi;
+		ASSERT(!self->isFullRestore_);
+		loop {
+			try {
+				choose {
+					when(ChangeFeedStreamRequest req = waitNext(ssi.changeFeedStream.getFuture())) {
+						dprint("Handle ChangeFeedStreamRequest\n");
+						self->addActor(handleChangeFeedStream(self, req));
+					}
+					when(OverlappingChangeFeedsRequest req = waitNext(ssi.overlappingChangeFeeds.getFuture())) {
+						dprint("Handle OverlappingChangeFeedsRequest\n");
+						self->addActor(handleOverlappingChangeFeeds(self, req));
+					}
+					when(ChangeFeedPopRequest req = waitNext(ssi.changeFeedPop.getFuture())) {
+						dprint("Handle ChangeFeedPopRequest\n");
+						self->addActor(handleChangeFeedPopRequest(self, req));
+					}
+					when(ChangeFeedVersionUpdateRequest req = waitNext(ssi.changeFeedVersionUpdate.getFuture())) {
+						dprint("Handle ChangeFeedVersionUpdateRequest\n");
+						self->addActor(handleChangeFeedVersionUpdateRequest(self, req));
+					}
+				}
+			} catch (Error& e) {
+				dprint("Unexpected blob migrator change feed request error {}\n", e.what());
+				throw;
+			}
+		}
+	}
+
 	ACTOR static Future<Void> waitMetricsTenantAwareImpl(Reference<BlobMigrator> self, WaitMetricsRequest req) {
 		state WaitMetricsRequest waitMetricsRequest = req;
 		state StorageMetrics metrics;
@@ -770,7 +1011,7 @@ private:
 		return Void();
 	}
 
-	ACTOR static Future<Void> bulkLoadGetGranuleSizes(Reference<BlobMigrator> self,
+	ACTOR static Future<Void> bulkLoadGetInitialState(Reference<BlobMigrator> self,
 	                                                  Reference<BulkLoadMigratorState> loadState,
 	                                                  KeyRange physicalRange,
 	                                                  BulkLoadIDKey idKey) {
@@ -813,7 +1054,8 @@ private:
 
 					Optional<GranuleHistory> history = wait(getLatestGranuleHistory(&tr, granules[i]));
 					ASSERT(history.present());
-					state KeyRange fileRange = blobGranuleFileKeyRangeFor(history->value.granuleID);
+					state UID granuleID = history->value.granuleID;
+					state KeyRange fileRange = blobGranuleFileKeyRangeFor(granuleID);
 					RangeReadResult r = wait(tr.getRange(fileRange, 2));
 					ASSERT(r.size() == 1);
 
@@ -828,6 +1070,7 @@ private:
 					    decodeBlobGranuleFileValue(r[0].value);
 
 					loadState->granuleSizes.insert(granules[i], logicalSize);
+					loadState->granuleFeeds.insert(granules[i], granuleID);
 					break;
 				} catch (Error& e) {
 					wait(tr.onError(e));
@@ -836,7 +1079,7 @@ private:
 			}
 		}
 
-		loadState->granuleSizesLoaded = true;
+		loadState->granuleMapsLoaded.send(Void());
 		return Void();
 	}
 
@@ -847,17 +1090,16 @@ private:
 	                                          Optional<Reference<Tenant>> tenant) {
 
 		// in parallel
-		state Future<Void> loadGranuleSizes = bulkLoadGetGranuleSizes(
+		state Future<Void> loadInitialState = bulkLoadGetInitialState(
 		    self, loadState, physicalRange, idKey); // use summarize call to get granule snapshot sizes
 
 		dprint("BlobMigrator: TrackLoad {0}: preparing load\n", idKey.second.printable());
-		wait(prepare(self, physicalRange));
-		dprint("BlobMigrator: TrackLoad {0}: marking load prepared\n", idKey.second.printable());
-
-		wait(self->db_->updateBulkLoadState(idKey.second, BulkLoadStatus::State::STAGING_DDPREPARED, tenant));
+		// wait(prepare(self, physicalRange));
+		// dprint("BlobMigrator: TrackLoad {0}: marking load prepared\n", idKey.second.printable());
+		// wait(self->db_->updateBulkLoadState(idKey.second, BulkLoadStatus::State::STAGING_DDPREPARED, tenant));
 
 		dprint("BlobMigrator: TrackLoad {0}: marked load prepared\n", idKey.second.printable());
-		wait(loadGranuleSizes);
+		wait(loadInitialState);
 
 		state double sleepTime = 2.0;
 
@@ -883,7 +1125,8 @@ private:
 
 	ACTOR static Future<Void> trackBulkLoad(Reference<BlobMigrator> self,
 	                                        BulkLoadIDKey idKey,
-	                                        BulkLoadStatus::State state) {
+	                                        BulkLoadStatus::State state,
+	                                        Reference<BulkLoadMigratorState> loadState) {
 		dprint("BlobMigrator: TrackLoad {0}: start\n", idKey.second.printable());
 		// TODO: handle
 		if (state >= BulkLoadStatus::State::DONE || state == BulkLoadStatus::State::ABORTED ||
@@ -934,7 +1177,6 @@ private:
 				}
 			}
 
-			Reference<BulkLoadMigratorState> loadState = makeReference<BulkLoadMigratorState>();
 			self->bulkLoadState_.insert(physicalRange.get(), loadState);
 
 			state Future<Void> waitAborted =
@@ -957,16 +1199,20 @@ private:
 		return Void();
 	}
 
+	// assume range is part of exactly 1 bulk load
+	static Reference<BulkLoadMigratorState> getLoadState(Reference<BlobMigrator> self, KeyRangeRef range) {
+		auto loadState = self->bulkLoadState_.rangeContaining(range.begin);
+		// FIXME: handle errors if this isn't true? throw wrong_shard_server maybe?
+		ASSERT(loadState.cvalue().isValid() && loadState.range().contains(range) &&
+		       loadState.cvalue()->granuleMapsLoaded.isSet());
+		return loadState.cvalue();
+	}
+
 	static GranuleSizeMap& getGranuleSizeMap(Reference<BlobMigrator> self, KeyRangeRef range) {
 		if (self->isFullRestore_) {
 			return self->granuleSizes_;
 		} else {
-			// assume this range is part of exactly 1 bulk load
-			auto loadState = self->bulkLoadState_.rangeContaining(range.begin);
-			// FIXME: handle errors if this isn't true? throw wrong_shard_server maybe?
-			ASSERT(loadState.cvalue().isValid() && loadState.range().contains(range) &&
-			       loadState.cvalue()->granuleSizesLoaded);
-			return loadState.cvalue()->granuleSizes;
+			return getLoadState(self, range)->granuleSizes;
 		}
 	}
 
@@ -1067,9 +1313,10 @@ private:
 	BlobMigratorInterface interf_;
 	ActorCollection actors_;
 	FileBackupAgent backupAgent_;
-	BulkLoadTracker bulkLoadTracker_;
 	bool isFullRestore_;
 	CoalescedKeyRangeMap<Reference<BulkLoadMigratorState>> bulkLoadState_;
+	NotifiedVersion bulkLoadFeedEmptyVersion_;
+	Stats stats_;
 
 	Key mlogsUrl_;
 	Version targetVersion_;
