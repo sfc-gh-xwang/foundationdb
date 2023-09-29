@@ -25,7 +25,7 @@
 #include <utility>
 #include <stdexcept>
 
-#include <fdb_api.hpp>
+#include <test/fdb_api.hpp>
 
 #include <fmt/format.h>
 #include <rapidjson/document.h>
