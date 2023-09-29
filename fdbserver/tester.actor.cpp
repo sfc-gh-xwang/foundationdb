@@ -2063,6 +2063,20 @@ ACTOR Future<Void> writeTenantKey(Database db, Reference<Tenant> tenant) {
 	}
 }
 
+ACTOR Future<bool> checkBackupWorkerStarted(Database db) {
+	state ReadYourWritesTransaction tr(db);
+	loop {
+		try {
+			tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+			ValueReadResult value = wait(tr.get(deprecatedBackupStartedKey));
+			return value.present();
+		} catch (Error& e) {
+			wait(tr.onError(e));
+		}
+	}
+}
+
 /**
  * \brief Test orchestrator: sends test specification to testers in the right order and collects the results.
  *
@@ -2094,7 +2108,7 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 	state Database cx;
 	state Reference<AsyncVar<ServerDBInfo>> dbInfo(new AsyncVar<ServerDBInfo>);
 	state Future<Void> ccMonitor = monitorServerDBInfo(cc, LocalityData(), dbInfo); // FIXME: locality
-
+	state Arena arena;
 	state bool useDB = false;
 	state bool waitForQuiescenceBegin = false;
 	state bool waitForQuiescenceEnd = false;
@@ -2148,7 +2162,18 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 	consistencyScanState.enableAfter = consistencyScanState.waitForComplete && deterministicRandom()->random01() < 0.1;
 
 	disableConnectionFailures("Tester");
-
+	if (restartingTest && useDB) {
+		// if backup worker is not running in phase 1 of restarting test, force to disable it in phase 2
+		bool backupWorkerStarted = wait(checkBackupWorkerStarted(cx));
+		if (!backupWorkerStarted) {
+			if (startingConfiguration.empty()) {
+				startingConfiguration = "backup_worker_enabled:=0"_sr;
+			} else {
+				std::string conf = startingConfiguration.toString() + " backup_worker_enabled:=0";
+				startingConfiguration = StringRef(arena, conf);
+			}
+		}
+	}
 	// Change the configuration (and/or create the database) if necessary
 	printf("startingConfiguration:%s start\n", startingConfiguration.toString().c_str());
 	fmt::print("useDB: {}\n", useDB);
