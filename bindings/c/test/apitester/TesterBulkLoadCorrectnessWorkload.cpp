@@ -43,8 +43,7 @@ public:
 
 private:
 	int loadCap;
-	// FIXME: expected error checking doesn't quite work
-	// FIXME: write files
+	bool completedAny = false;
 	// FIXME: also add expect-error ops? re-load same range, already done abort failed, cleanup failed, invalid id
 	enum OpType {
 		OP_START,
@@ -133,7 +132,7 @@ private:
 		    },
 		    cont,
 		    getTenant(tenantId),
-		    /* failOnError = */ false);
+		    /* failOnError = */ true);
 	}
 
 	void randomOpGetFile(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
@@ -175,7 +174,7 @@ private:
 		    },
 		    cont,
 		    getTenant(tenantId),
-		    /* failOnError = */ false);
+		    /* failOnError = */ true);
 	}
 
 	void randomOpWriteFile(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
@@ -226,7 +225,7 @@ private:
 		    },
 		    cont,
 		    getTenant(tenantId),
-		    /* failOnError = */ false);
+		    /* failOnError = */ true);
 	}
 
 	void randomOpRegisterFile(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
@@ -257,7 +256,7 @@ private:
 		    },
 		    cont,
 		    getTenant(tenantId),
-		    /* failOnError = */ false);
+		    /* failOnError = */ true);
 	}
 
 	void randomOpRegisterComplete(TTaskFct cont,
@@ -278,7 +277,7 @@ private:
 		    },
 		    cont,
 		    getTenant(tenantId),
-		    /* failOnError = */ false);
+		    /* failOnError = */ true);
 	}
 
 	void randomOpWaitComplete(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
@@ -287,14 +286,18 @@ private:
 		execOperation(
 		    [this, metadata, id](auto ctx) {
 			    fdb::Future f = ctx->dbOps()->waitBulkLoadComplete(id).eraseType();
-			    ctx->continueAfter(f, [this, ctx, metadata, id, f]() {
-				    checkVoidError(id, f);
-				    info("Bulk Load {0} Complete", fdb::toHexString(id));
-				    metadata->loadsWaiting.erase(id);
-				    metadata->loadsDone.insert(id);
+			    ctx->continueAfter(f,
+			                       [this, ctx, metadata, id, f]() {
+				                       fdb::future_var::None::Type ignore;
+				                       fdb::Error err = f.getNothrow<fdb::future_var::None>(ignore);
+				                       ASSERT(err.code() == 2051 /* api_not_implemented */);
+				                       info("Bulk Load {0} Complete", fdb::toHexString(id));
+				                       metadata->loadsWaiting.erase(id);
+				                       metadata->loadsDone.insert(id);
 
-				    ctx->done();
-			    });
+				                       ctx->done();
+			                       },
+			                       { 2051 });
 		    },
 		    [this, cont]() { schedule(cont); },
 		    getTenant(tenantId),
@@ -315,25 +318,28 @@ private:
 		execOperation(
 		    [this, metadata, id, couldAlreadyBeDone](auto ctx) {
 			    fdb::Future f = ctx->dbOps()->abortBulkLoad(id).eraseType();
-			    ctx->continueAfter(f, [this, ctx, metadata, id, couldAlreadyBeDone, f]() {
-				    fdb::future_var::None::Type ignore;
-				    fdb::Error err = f.getNothrow<fdb::future_var::None>(ignore);
-				    // could be in any so just erase from all
-				    metadata->loadsStagingNeedFiles.erase(id);
-				    metadata->loadsStagingNeedToWriteFiles.erase(id);
-				    metadata->loadsStagingNeedToRegisterFiles.erase(id);
-				    metadata->loadsWaiting.erase(id);
-				    if (err) {
-					    info("Bulk Load {0} Got Error {1} aborting", fdb::toHexString(id), err.code());
-					    ASSERT(err.code() == 2601 /*bulk load abort failed*/ && couldAlreadyBeDone);
-					    metadata->loadsDone.insert(id);
-				    } else {
-					    info("Bulk Load {0} Aborted", fdb::toHexString(id));
-					    metadata->loadsAborted.insert(id);
-				    }
+			    ctx->continueAfter(
+			        f,
+			        [this, ctx, metadata, id, couldAlreadyBeDone, f]() {
+				        fdb::future_var::None::Type ignore;
+				        fdb::Error err = f.getNothrow<fdb::future_var::None>(ignore);
+				        // could be in any so just erase from all
+				        metadata->loadsStagingNeedFiles.erase(id);
+				        metadata->loadsStagingNeedToWriteFiles.erase(id);
+				        metadata->loadsStagingNeedToRegisterFiles.erase(id);
+				        metadata->loadsWaiting.erase(id);
+				        if (err) {
+					        info("Bulk Load {0} Got Error {1} aborting", fdb::toHexString(id), err.code());
+					        ASSERT(err.code() == 2601 /*bulk load abort failed*/ && couldAlreadyBeDone);
+					        metadata->loadsDone.insert(id);
+				        } else {
+					        info("Bulk Load {0} Aborted", fdb::toHexString(id));
+					        metadata->loadsAborted.insert(id);
+				        }
 
-				    ctx->done();
-			    });
+				        ctx->done();
+			        },
+			        { 2601 });
 		    },
 		    [this, cont]() { schedule(cont); },
 		    getTenant(tenantId),
@@ -364,7 +370,7 @@ private:
 		    },
 		    [this, cont]() { schedule(cont); },
 		    getTenant(tenantId),
-		    /* failOnError = */ false);
+		    /* failOnError = */ true);
 	}
 
 	OpType chooseRandomAllowedOp(std::shared_ptr<BulkLoadMetadata> metadata) {
@@ -388,7 +394,7 @@ private:
 		if (!metadata->loadsWaiting.empty()) {
 			allowed.push_back(OP_WAIT_COMPLETE);
 		}
-		if (!metadata->loadsWaiting.empty() || metadata->hasLoadsStaging()) {
+		if (completedAny && (!metadata->loadsWaiting.empty() || metadata->hasLoadsStaging())) {
 			allowed.push_back(OP_ABORT);
 		}
 		if (!metadata->loadsDone.empty() || !metadata->loadsAborted.empty()) {
@@ -435,6 +441,7 @@ private:
 			break;
 		case OP_CLEANUP:
 			metadata->activeLoads--;
+			randomOpCleanup(cont, metadata, tenantId);
 			break;
 		default:
 			ASSERT(false);

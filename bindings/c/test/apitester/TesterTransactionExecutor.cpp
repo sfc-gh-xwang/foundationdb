@@ -45,23 +45,20 @@ void ITransactionContext::continueAfterAll(std::vector<fdb::Future> futures, TTa
 	auto errorCode = std::make_shared<std::atomic<fdb::Error>>(fdb::Error::success());
 	auto thisPtr = shared_from_this();
 	for (auto& f : futures) {
-		continueAfter(
-		    f,
-		    [thisPtr, f, counter, errorCode, cont]() {
-			    if (f.error().code() != error_code_success) {
-				    (*errorCode) = f.error();
-			    }
-			    if (--(*counter) == 0) {
-				    if (errorCode->load().code() == error_code_success) {
-					    // all futures successful -> continue
-					    cont();
-				    } else {
-					    // at least one future failed -> retry the transaction
-					    thisPtr->onError(*errorCode);
-				    }
-			    }
-		    },
-		    false);
+		continueAfterNoRetry(f, [thisPtr, f, counter, errorCode, cont]() {
+			if (f.error().code() != error_code_success) {
+				(*errorCode) = f.error();
+			}
+			if (--(*counter) == 0) {
+				if (errorCode->load().code() == error_code_success) {
+					// all futures successful -> continue
+					cont();
+				} else {
+					// at least one future failed -> retry the transaction
+					thisPtr->onError(*errorCode);
+				}
+			}
+		});
 	}
 }
 
@@ -126,9 +123,12 @@ public:
 	fdb::Transaction tx() override { return fdbTx.atomic_load(); }
 
 	// Set a continuation to be executed when a future gets ready
-	void continueAfter(fdb::Future f, TTaskFct cont, bool retryOnError) override {
-		doContinueAfter(f, cont, retryOnError);
+	void continueAfter(fdb::Future f, TTaskFct cont, std::unordered_set<int> expectedErrors) override {
+		doContinueAfter(f, cont, true, expectedErrors);
 	}
+
+	// Set a continuation to be executed when a future gets ready
+	void continueAfterNoRetry(fdb::Future f, TTaskFct cont) override { doContinueAfter(f, cont, false, {}); }
 
 	// Complete the transaction with a commit
 	void commit() override {
@@ -141,8 +141,7 @@ public:
 		lock.unlock();
 		fdb::Future f = fdbTx.commit();
 		auto thisRef = shared_from_this();
-		doContinueAfter(
-		    f, [thisRef]() { thisRef->done(); }, true);
+		doContinueAfter(f, [thisRef]() { thisRef->done(); }, true, {});
 	}
 
 	// Complete the transaction without a commit (for read transactions)
@@ -184,6 +183,11 @@ public:
 
 	std::string getBGBasePath() override { return bgBasePath; }
 
+	bool isDBOpRetryable(fdb::Error err) const {
+		// FIXME: add stuff like client version change
+		return false;
+	}
+
 	virtual void onError(fdb::Error err) override {
 		std::unique_lock<std::mutex> lock(mutex);
 		if (txState != TxState::IN_PROGRESS) {
@@ -214,6 +218,8 @@ public:
 			handleOnErrorFuture();
 		} else if (err.retryable()) {
 			restartTransaction();
+		} else if (!transactional && isDBOpRetryable(err)) {
+			restartTransaction();
 		} else {
 			transactionFailed(err);
 		}
@@ -236,7 +242,10 @@ public:
 	}
 
 protected:
-	virtual void doContinueAfter(fdb::Future f, TTaskFct cont, bool retryOnError) = 0;
+	virtual void doContinueAfter(fdb::Future f,
+	                             TTaskFct cont,
+	                             bool retryOnError,
+	                             std::unordered_set<int> expectedErrors) = 0;
 
 	virtual void handleOnErrorFuture() = 0;
 
@@ -462,13 +471,20 @@ public:
 	}
 
 protected:
-	void doContinueAfter(fdb::Future f, TTaskFct cont, bool retryOnError) override {
+	void doContinueAfter(fdb::Future f,
+	                     TTaskFct cont,
+	                     bool retryOnError,
+	                     std::unordered_set<int> expectedErrors) override {
 		auto thisRef = std::static_pointer_cast<BlockingTransactionContext>(shared_from_this());
-		scheduler->schedule(
-		    [thisRef, f, cont, retryOnError]() mutable { thisRef->blockingContinueAfter(f, cont, retryOnError); });
+		scheduler->schedule([thisRef, f, cont, retryOnError, expectedErrors]() mutable {
+			thisRef->blockingContinueAfter(f, cont, retryOnError, expectedErrors);
+		});
 	}
 
-	void blockingContinueAfter(fdb::Future f, TTaskFct cont, bool retryOnError) {
+	void blockingContinueAfter(fdb::Future f,
+	                           TTaskFct cont,
+	                           bool retryOnError,
+	                           std::unordered_set<int> expectedErrors) {
 		std::unique_lock<std::mutex> lock(mutex);
 		if (txState != TxState::IN_PROGRESS) {
 			return;
@@ -492,7 +508,7 @@ protected:
 		if (err.code() == error_code_transaction_cancelled) {
 			return;
 		}
-		if (err.code() == error_code_success || !retryOnError) {
+		if (err.code() == error_code_success || !retryOnError || expectedErrors.contains(err.code())) {
 			scheduler->schedule([cont]() { cont(); });
 			return;
 		}
@@ -563,12 +579,15 @@ public:
 	}
 
 protected:
-	void doContinueAfter(fdb::Future f, TTaskFct cont, bool retryOnError) override {
+	void doContinueAfter(fdb::Future f,
+	                     TTaskFct cont,
+	                     bool retryOnError,
+	                     std::unordered_set<int> expectedErrors) override {
 		std::unique_lock<std::mutex> lock(mutex);
 		if (txState != TxState::IN_PROGRESS) {
 			return;
 		}
-		callbackMap[f] = CallbackInfo{ f, cont, shared_from_this(), retryOnError, timeNow(), false };
+		callbackMap[f] = CallbackInfo{ f, cont, shared_from_this(), retryOnError, timeNow(), false, expectedErrors };
 		lock.unlock();
 		try {
 			f.then([this](fdb::Future f) { futureReadyCallback(f, this); });
@@ -618,7 +637,7 @@ protected:
 		if (err.code() == error_code_transaction_cancelled || cbInfo.cancelled) {
 			return;
 		}
-		if (err.code() == error_code_success || !cbInfo.retryOnError) {
+		if (err.code() == error_code_success || !cbInfo.retryOnError || cbInfo.expectedErrors.contains(err.code())) {
 			scheduler->schedule(cbInfo.cont);
 			return;
 		}
@@ -702,6 +721,7 @@ protected:
 		bool retryOnError;
 		TimePoint startTime;
 		bool cancelled;
+		std::unordered_set<int> expectedErrors;
 	};
 
 	// Map for keeping track of future waits and holding necessary object references
