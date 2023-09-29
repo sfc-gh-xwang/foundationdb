@@ -24,9 +24,9 @@ continuously advances the version, at a rate of one million versions per
 second. In this regard, the current version can be thought of as the uptime of
 the cluster in microseconds. However, this is not quite true; other factors can
 affect the version. For example, a recovery in FDB advances the version by
-100,000,000, as a way to signal to other processes that a recovery has
-occurred. Therefore, relying on FDB versions as a timestamp (prior to version
-correction) was incorrect.
+10,000,000, as a way to signal to other processes that a recovery has occurred.
+Therefore, relying on FDB versions as a timestamp (prior to version correction)
+was incorrect.
 
 Overview
 ========
@@ -87,9 +87,9 @@ Caveats
 
 The above two changes mean FDB versions become representative of time. However,
 the user must take care to factor in an error bound. Immediately after a
-recovery, the version will be off by 100 seconds and will take some time to
-recover. If multiple FDB recoveries happen in a short time interval, the
-version can become greatly elevated relative to time.
+recovery, the version will be off by 10 seconds and will take a short period of
+time to recover. If multiple FDB recoveries happen in a short time interval,
+the version can become greatly elevated relative to time.
 
 
 .. _version-correction-production:
