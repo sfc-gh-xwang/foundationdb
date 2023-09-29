@@ -261,7 +261,8 @@ public:
 			// Custom Replication
 			if (ddLargeTeamEnabled() && req.keys.present()) {
 				int customReplicas = self->configuration.storageTeamSize;
-				for (auto it : self->userRangeConfig->intersectingRanges(req.keys->begin, req.keys->end)) {
+				for (auto it :
+				     self->userRangeConfig->getSnapshot()->intersectingRanges(req.keys->begin, req.keys->end)) {
 					customReplicas = std::max(customReplicas, it->value().replicationFactor.orDefault(0));
 				}
 				if (customReplicas > self->configuration.storageTeamSize) {
@@ -3845,7 +3846,7 @@ void DDTeamCollection::fixUnderReplication() {
 			}
 
 			int customReplicas = configuration.storageTeamSize;
-			for (auto it : userRangeConfig->intersectingRanges(r.range().begin, r.range().end)) {
+			for (auto it : userRangeConfig->getSnapshot()->intersectingRanges(r.range().begin, r.range().end)) {
 				customReplicas = std::max(customReplicas, it->value().replicationFactor.orDefault(0));
 			}
 

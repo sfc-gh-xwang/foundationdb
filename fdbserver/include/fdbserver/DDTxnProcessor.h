@@ -145,6 +145,8 @@ public:
 	virtual Future<std::vector<ProcessData>> getWorkers() const = 0;
 
 	virtual Future<Optional<HealthMetrics::StorageStats>> getStorageStats(const UID& id, double maxStaleness) const = 0;
+
+	virtual Future<StorageMetrics> getStorageMetrics(KeyRange const& keys, int shardLimit) const = 0;
 };
 
 class DDTxnProcessorImpl;
@@ -236,6 +238,8 @@ public:
 	    const Version& addedVersion,
 	    Reference<ShardsAffectedByTeamFailure> shardsAffectedByTeamFailure) const override;
 
+	Future<StorageMetrics> getStorageMetrics(KeyRange const& keys, int shardLimit) const override;
+
 protected:
 	Future<Void> rawStartMovement(const MoveKeysParams& params, std::map<UID, StorageServerInterface>& tssMapping);
 
@@ -291,6 +295,8 @@ public:
 	                                                                    StorageMetrics const& permittedError,
 	                                                                    int shardLimit,
 	                                                                    int expectedShardCount) const override;
+
+	Future<StorageMetrics> getStorageMetrics(KeyRange const& keys, int shardLimit) const override;
 
 	Future<Standalone<VectorRef<KeyRef>>> splitStorageMetrics(KeyRange const& keys,
 	                                                          StorageMetrics const& limit,

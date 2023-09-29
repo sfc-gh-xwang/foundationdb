@@ -190,15 +190,12 @@ private:
 				            // 3. Fetch the final value.
 				            [key, result](auto ctx) {
 					            auto f = ctx->tx().get(key, false);
-					            ctx->continueAfter(
-					                f,
-					                [ctx, f, result]() {
-						                auto outputVal = f.get();
-						                ASSERT(outputVal.has_value());
-						                *result = outputVal.value();
-						                ctx->done();
-					                },
-					                true);
+					            ctx->continueAfter(f, [ctx, f, result]() {
+						            auto outputVal = f.get();
+						            ASSERT(outputVal.has_value());
+						            *result = outputVal.value();
+						            ctx->done();
+					            });
 				            },
 				            [this, opFunc, key, val1, val2, result, cont]() {
 					            // 4. Assert expectation.
@@ -275,15 +272,12 @@ private:
 			        // 2. Fetch the resulting versionstamped value.
 			        [key, result](auto ctx) {
 				        auto f = ctx->tx().get(key, false);
-				        ctx->continueAfter(
-				            f,
-				            [ctx, f, result]() {
-					            auto outputVal = f.get();
-					            ASSERT(outputVal.has_value());
-					            *result = outputVal.value();
-					            ctx->done();
-				            },
-				            true);
+				        ctx->continueAfter(f, [ctx, f, result]() {
+					        auto outputVal = f.get();
+					        ASSERT(outputVal.has_value());
+					        *result = outputVal.value();
+					        ctx->done();
+				        });
 			        },
 			        [this, key, valPrefix, result, versionstamp, cont]() {
 				        // 3. Assert expectation.
@@ -316,14 +310,11 @@ private:
 				            // 3. Verify that the key was cleared.
 				            [key](auto ctx) {
 					            auto f = ctx->tx().get(key, false);
-					            ctx->continueAfter(
-					                f,
-					                [ctx, f]() {
-						                auto outputVal = f.get();
-						                ASSERT(!outputVal.has_value());
-						                ctx->done();
-					                },
-					                true);
+					            ctx->continueAfter(f, [ctx, f]() {
+						            auto outputVal = f.get();
+						            ASSERT(!outputVal.has_value());
+						            ctx->done();
+					            });
 				            },
 				            [this, cont]() { schedule(cont); });
 			        });

@@ -19,6 +19,7 @@
  */
 
 #include "fdbserver/MockGlobalState.h"
+#include "fdbclient/StorageServerInterface.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "fdbserver/DataDistribution.actor.h"
 #include "fdbclient/FDBTypes.h"
@@ -76,6 +77,13 @@ public:
 			// Avoid busy spin
 			wait(delay(0.1, TaskPriority::DataDistribution));
 		}
+	}
+	ACTOR static Future<StorageMetrics> getStorageMetrics(MockGlobalState* mgs, KeyRange keys, int shardLimit) {
+		StorageMetrics max;
+		max.bytes = -1;
+		std::pair<Optional<StorageMetrics>, int> metrics =
+		    wait(waitStorageMetrics(mgs, keys, StorageMetrics{}, max, StorageMetrics{}, shardLimit, -1));
+		return metrics.first.get();
 	}
 
 	// SOMEDAY: reuse the NativeAPI implementation
@@ -751,6 +759,10 @@ Future<std::pair<Optional<StorageMetrics>, int>> MockGlobalState::waitStorageMet
     int expectedShardCount) {
 	return MockGlobalStateImpl::waitStorageMetrics(
 	    this, keys, min, max, permittedError, shardLimit, expectedShardCount);
+}
+
+Future<StorageMetrics> MockGlobalState::getStorageMetrics(KeyRange const& keys, int shardLimit) {
+	return MockGlobalStateImpl::getStorageMetrics(this, keys, shardLimit);
 }
 
 Reference<LocationInfo> buildLocationInfo(const std::vector<StorageServerInterface>& interfaces) {

@@ -162,13 +162,10 @@ private:
 		execTransaction(
 		    [keyRange, results](auto ctx) {
 			    fdb::Future f = ctx->tx().getBlobGranuleRanges(keyRange.beginKey, keyRange.endKey, 1000).eraseType();
-			    ctx->continueAfter(
-			        f,
-			        [ctx, f, results]() {
-				        *results = copyKeyRangeArray(f.get<fdb::future_var::KeyRangeRefArray>());
-				        ctx->done();
-			        },
-			        true);
+			    ctx->continueAfter(f, [ctx, f, results]() {
+				    *results = copyKeyRangeArray(f.get<fdb::future_var::KeyRangeRefArray>());
+				    ctx->done();
+			    });
 		    },
 		    [this, keyRange, tenantId, results, cont]() {
 			    debugOp("GetGranules", keyRange, tenantId, fmt::format("complete with {0} granules", results->size()));
@@ -190,13 +187,10 @@ private:
 			        ctx->tx()
 			            .summarizeBlobGranules(keyRange.beginKey, keyRange.endKey, -2 /*latest version*/, 1000)
 			            .eraseType();
-			    ctx->continueAfter(
-			        f,
-			        [ctx, f, results]() {
-				        *results = copyGranuleSummaryArray(f.get<fdb::future_var::GranuleSummaryRefArray>());
-				        ctx->done();
-			        },
-			        true);
+			    ctx->continueAfter(f, [ctx, f, results]() {
+				    *results = copyGranuleSummaryArray(f.get<fdb::future_var::GranuleSummaryRefArray>());
+				    ctx->done();
+			    });
 		    },
 		    [this, keyRange, tenantId, results, cont]() {
 			    debugOp("Summarize", keyRange, tenantId, fmt::format("complete with {0} granules", results->size()));
@@ -564,19 +558,12 @@ private:
 
 			    auto f =
 			        ctx->tx().readBlobGranulesDescription(keyRange.beginKey, keyRange.endKey, 0, -2, mutationByteLimit);
-			    ctx->continueAfter(
-			        f,
-			        [this, ctx, keyRange, tenantId, mutationByteLimit, results, f]() {
-				        *results = f.get();
-				        this->validateBlobGranuleDescriptions(ctx,
-				                                              results->descs(),
-				                                              keyRange,
-				                                              tenantId,
-				                                              results->data()->read_version,
-				                                              mutationByteLimit);
-				        ctx->done();
-			        },
-			        true);
+			    ctx->continueAfter(f, [this, ctx, keyRange, tenantId, mutationByteLimit, results, f]() {
+				    *results = f.get();
+				    this->validateBlobGranuleDescriptions(
+				        ctx, results->descs(), keyRange, tenantId, results->data()->read_version, mutationByteLimit);
+				    ctx->done();
+			    });
 		    },
 		    [this, keyRange, tenantId, results, cont]() {
 			    debugOp("ReadDescV3",
@@ -607,19 +594,16 @@ private:
 			    ctx->tx().setOption(FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE);
 
 			    auto f = ctx->tx().readBlobGranulesDescriptionV2(keyRange.beginKey, keyRange.endKey, 0, -2);
-			    ctx->continueAfter(
-			        f,
-			        [this, ctx, keyRange, tenantId, results, f]() {
-				        *results = f.get();
-				        this->validateBlobGranuleDescriptions(ctx,
-				                                              results->descs(),
-				                                              keyRange,
-				                                              tenantId,
-				                                              results->data()->read_version,
-				                                              std::numeric_limits<int64_t>::max());
-				        ctx->done();
-			        },
-			        true);
+			    ctx->continueAfter(f, [this, ctx, keyRange, tenantId, results, f]() {
+				    *results = f.get();
+				    this->validateBlobGranuleDescriptions(ctx,
+				                                          results->descs(),
+				                                          keyRange,
+				                                          tenantId,
+				                                          results->data()->read_version,
+				                                          std::numeric_limits<int64_t>::max());
+				    ctx->done();
+			    });
 		    },
 		    [this, keyRange, tenantId, results, cont]() {
 			    debugOp("ReadDescV2",
@@ -645,15 +629,12 @@ private:
 			    ctx->tx().setOption(FDB_TR_OPTION_READ_YOUR_WRITES_DISABLE);
 			    int64_t* rvo = (int64_t*)readVersionOut.get();
 			    auto f = ctx->tx().readBlobGranulesDescriptionV1(keyRange.beginKey, keyRange.endKey, 0, -2, rvo);
-			    ctx->continueAfter(
-			        f,
-			        [this, ctx, keyRange, tenantId, results, readVersionOut, f]() {
-				        *results = f.get();
-				        this->validateBlobGranuleDescriptions(
-				            ctx, *results, keyRange, tenantId, *readVersionOut, std::numeric_limits<int64_t>::max());
-				        ctx->done();
-			        },
-			        true);
+			    ctx->continueAfter(f, [this, ctx, keyRange, tenantId, results, readVersionOut, f]() {
+				    *results = f.get();
+				    this->validateBlobGranuleDescriptions(
+				        ctx, *results, keyRange, tenantId, *readVersionOut, std::numeric_limits<int64_t>::max());
+				    ctx->done();
+			    });
 		    },
 		    [this, keyRange, tenantId, results, readVersionOut, cont]() {
 			    debugOp("ReadDescV1",

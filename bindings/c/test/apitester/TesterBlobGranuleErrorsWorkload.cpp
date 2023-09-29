@@ -128,14 +128,11 @@ private:
 		execOperation(
 		    [this, keyRange](auto ctx) {
 			    fdb::Future f = ctx->db().purgeBlobGranules(keyRange.beginKey, keyRange.endKey, -2, false).eraseType();
-			    ctx->continueAfter(
-			        f,
-			        [this, ctx, f]() {
-				        info("unaligned purge got {}", f.error().code());
-				        ASSERT(f.error().code() == error_code_unsupported_operation);
-				        ctx->done();
-			        },
-			        true);
+			    ctx->continueAfter(f, [this, ctx, f]() {
+				    info("unaligned purge got {}", f.error().code());
+				    ASSERT(f.error().code() == error_code_unsupported_operation);
+				    ctx->done();
+			    });
 		    },
 		    [this, cont]() { schedule(cont); });
 	}
@@ -148,13 +145,10 @@ private:
 		    [keyRange, blobbify, success](auto ctx) {
 			    fdb::Future f = blobbify ? ctx->db().blobbifyRange(keyRange.beginKey, keyRange.endKey).eraseType()
 			                             : ctx->db().unblobbifyRange(keyRange.beginKey, keyRange.endKey).eraseType();
-			    ctx->continueAfter(
-			        f,
-			        [ctx, f, success]() {
-				        *success = f.get<fdb::future_var::Bool>();
-				        ctx->done();
-			        },
-			        true);
+			    ctx->continueAfter(f, [ctx, f, success]() {
+				    *success = f.get<fdb::future_var::Bool>();
+				    ctx->done();
+			    });
 		    },
 		    [this, cont, success]() {
 			    ASSERT(!(*success));
@@ -259,13 +253,10 @@ private:
 		    [keyRange, compact, success](auto ctx) {
 			    // version of 1 should be too old
 			    fdb::Future f = ctx->db().flushBlobRange(keyRange.beginKey, keyRange.endKey, compact, 1).eraseType();
-			    ctx->continueAfter(
-			        f,
-			        [ctx, f, success]() {
-				        *success = f.get<fdb::future_var::Bool>();
-				        ctx->done();
-			        },
-			        true);
+			    ctx->continueAfter(f, [ctx, f, success]() {
+				    *success = f.get<fdb::future_var::Bool>();
+				    ctx->done();
+			    });
 		    },
 		    [this, cont, success]() {
 			    ASSERT(!(*success));

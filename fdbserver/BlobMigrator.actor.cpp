@@ -37,6 +37,7 @@
 #include "flow/Trace.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BulkLoadTracker.h"
+#include "fdbclient/BulkLoadMetadata.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "fdbclient/BlobConnectionProvider.h"
 #include "fdbclient/FDBTypes.h"
@@ -44,6 +45,7 @@
 #include "fdbclient/SystemData.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ManagementAPI.actor.h"
+#include "fdbclient/TenantManagement.actor.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/BackupAgent.actor.h"
 #include "fdbclient/BlobRestoreCommon.h"
@@ -65,6 +67,14 @@ static inline void dprint(fmt::format_string<T...> fmt, T&&... args) {
 	if (ENABLE_DEBUG_MG)
 		fmt::print(fmt, std::forward<T>(args)...);
 }
+
+using GranuleSizeMap = KeyRangeMap<int64_t>;
+
+// state for 1 bulk load in the blob migrator
+struct BulkLoadMigratorState : ReferenceCounted<BulkLoadMigratorState>, NonCopyable {
+	bool granuleSizesLoaded = false;
+	GranuleSizeMap granuleSizes;
+};
 
 // BlobMigrator offers APIs to migrate data from blob storage to storage server. It implements a minimal set of
 // StorageServerInterface APIs which are needed for DataDistributor to start data migration.
@@ -89,8 +99,9 @@ private:
 	// Initialize blob migrator to COPYING_DATA state.
 	ACTOR static Future<Void> initialize(Reference<BlobMigrator> self) {
 		state Reference<BlobRestoreController> controller = makeReference<BlobRestoreController>(self->db_, normalKeys);
-		bool isRestoring = wait(BlobRestoreController::isRestoring(controller));
-		if (!isRestoring) {
+		wait(store(self->isFullRestore_, BlobRestoreController::isRestoring(controller)));
+		wait(BlobRestoreController::setLockOwner(controller, self->interf_.id()));
+		if (!self->isFullRestore_) {
 			BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
 			                                                         const BulkLoadStatus::State& state) {
 				return trackBulkLoad(self, id, state);
@@ -99,7 +110,6 @@ private:
 			self->addActor(self->bulkLoadTracker_.start());
 			return Void();
 		}
-		wait(BlobRestoreController::setLockOwner(controller, self->interf_.id()));
 
 		loop {
 			state BlobRestorePhase phase = wait(BlobRestoreController::currentPhase(controller));
@@ -120,8 +130,11 @@ private:
 			Reference<BlobConnectionProvider> blobConn = BlobConnectionProvider::newBlobConnectionProvider(url);
 			BlobGranuleRestoreVersionVector granules = wait(listBlobGranules(self->db_, self->dbInfo_, blobConn));
 			self->blobGranules_ = granules;
+
+			wait(buildGranuleSizesMap(self));
+
 			TraceEvent("RestorableGranule", self->interf_.id()).detail("Size", self->blobGranules_.size());
-			if (granules.empty()) {
+			if (self->blobGranules_.empty()) {
 				TraceEvent("EmptyBlobGranules", self->interf_.id()).log();
 				CODE_PROBE(true, "Blob restore with no blob granules", probe::decoration::rare);
 				wait(canRestore(self));
@@ -174,6 +187,7 @@ private:
 		loop {
 			choose {
 				when(wait(dbInfoChange)) {
+					// FIXME: don't redo request if DD id still the same
 					if (self->dbInfo_->get().distributor.present()) {
 						requestId = deterministicRandom()->randomUniqueID();
 						replyFuture = timeout(self->dbInfo_->get().distributor.get().prepareBlobRestoreReq.tryGetReply(
@@ -246,9 +260,10 @@ private:
 
 	// Wait until all pending data movements are done. Data movement starts earlier may still potentially
 	// read data from blob, which may cause race with applying mutation logs.
+	// FIXME: make this not re-check ranges it already knows are complete!
 	ACTOR static Future<Void> waitForPendingDataMovements(Reference<BlobMigrator> self) {
 		loop {
-			bool pending = wait(checkPendingDataMovements(self));
+			bool pending = wait(checkPendingDataMovements(self, normalKeys));
 			TraceEvent("BlobMigratorCheckPendingMovement", self->interf_.id()).detail("Pending", pending);
 			if (!pending)
 				return Void();
@@ -257,10 +272,10 @@ private:
 	}
 
 	// Check if there is any pending data movement
-	ACTOR static Future<bool> checkPendingDataMovements(Reference<BlobMigrator> self) {
-		state Reference<BlobRestoreController> controller = makeReference<BlobRestoreController>(self->db_, normalKeys);
+
+	ACTOR static Future<bool> checkPendingDataMovements(Reference<BlobMigrator> self, KeyRange range) {
 		state Transaction tr(self->db_);
-		state Key begin = normalKeys.begin;
+		state Key begin = range.begin;
 
 		loop {
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
@@ -273,10 +288,10 @@ private:
 				state UID srcId;
 				state UID destId;
 				ASSERT(!UIDtoTagMap.more && UIDtoTagMap.size() < CLIENT_KNOBS->TOO_MANY);
-				while (begin < normalKeys.end) {
+				while (begin < range.end) {
 					state RangeResult keyServers = wait(krmGetRanges(&tr,
 					                                                 keyServersPrefix,
-					                                                 KeyRangeRef(begin, normalKeys.end),
+					                                                 KeyRangeRef(begin, range.end),
 					                                                 SERVER_KNOBS->MOVE_KEYS_KRM_LIMIT,
 					                                                 SERVER_KNOBS->MOVE_KEYS_KRM_LIMIT_BYTES));
 					state int i = 0;
@@ -347,6 +362,7 @@ private:
 				}
 
 				int64_t total = sizeInBytes(self);
+				incompleted = std::min(incompleted, total);
 				state int progress = (total - incompleted) * 100 / total;
 				state bool done = incompleted == 0;
 				dprint("Migration progress :{}%. done {}\n", progress, done);
@@ -395,6 +411,20 @@ private:
 			}
 		}
 		return false;
+	}
+
+	// SOMEDAY: i wonder if it's faster to build this in random order or sequential?
+	ACTOR static Future<Void> buildGranuleSizesMap(Reference<BlobMigrator> self) {
+		self->granuleSizes_.insert(normalKeys, 0);
+		state int i;
+		for (i = 0; i < self->blobGranules_.size(); i++) {
+			auto& it = self->blobGranules_[i];
+			self->granuleSizes_.insert(it.keyRange, it.sizeInBytes);
+			if (i % 1000 == 999) {
+				wait(yield());
+			}
+		}
+		return Void();
 	}
 
 	// Check if we can restore based on blob granule data and mutation logs.
@@ -728,11 +758,216 @@ private:
 		return Void();
 	}
 
+	ACTOR static Future<Void> checkStillLoading(Transaction* tr, BulkLoadIDKey idKey) {
+		Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
+		if (status.present() && (status.get().state == BulkLoadStatus::State::ABORTED ||
+		                         status.get().state == BulkLoadStatus::State::ABORTED_COMPLETE)) {
+			throw bulk_load_aborted();
+		} else if (!status.present() || (status.get().state != BulkLoadStatus::State::STAGING_BLOB_DONE &&
+		                                 status.get().state != BulkLoadStatus::State::STAGING_DDPREPARED)) {
+			throw bulk_load_invalid_state_transition();
+		}
+		return Void();
+	}
+
+	ACTOR static Future<Void> bulkLoadGetGranuleSizes(Reference<BlobMigrator> self,
+	                                                  Reference<BulkLoadMigratorState> loadState,
+	                                                  KeyRange physicalRange,
+	                                                  BulkLoadIDKey idKey) {
+
+		state Transaction tr(self->db_);
+		state Standalone<VectorRef<KeyRangeRef>> granules;
+		loop {
+			try {
+				tr.setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
+				tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+
+				wait(checkStillLoading(&tr, idKey));
+				// FIXME: this might have issues for big ranges! might need to break up
+				wait(store(granules, tr.getBlobGranuleRanges(physicalRange, 1000000)));
+
+				break;
+			} catch (Error& e) {
+				wait(tr.onError(e));
+			}
+		}
+
+		ASSERT(granules.size() >= 1);
+		ASSERT(granules.front().begin == physicalRange.begin);
+		ASSERT(granules.back().end == physicalRange.end);
+		state int i;
+
+		for (i = 0; i < granules.size() - 1; i++) {
+			ASSERT(granules[i].end == granules[i + 1].begin);
+		}
+
+		state bool checkLoad = true;
+		tr.reset();
+		for (i = 0; i < granules.size(); i++) {
+			loop {
+				try {
+					if (checkLoad) {
+						wait(checkStillLoading(&tr, idKey));
+					}
+
+					Optional<GranuleHistory> history = wait(getLatestGranuleHistory(&tr, granules[i]));
+					ASSERT(history.present());
+					state KeyRange fileRange = blobGranuleFileKeyRangeFor(history->value.granuleID);
+					RangeReadResult r = wait(tr.getRange(fileRange, 2));
+					ASSERT(r.size() == 1);
+
+					Standalone<StringRef> filename;
+					int64_t offset;
+					int64_t length;
+					int64_t fullFileLength;
+					int64_t logicalSize;
+					Optional<BlobGranuleCipherKeysMeta> cipherKeysMeta;
+
+					std::tie(filename, offset, length, fullFileLength, logicalSize, cipherKeysMeta) =
+					    decodeBlobGranuleFileValue(r[0].value);
+
+					loadState->granuleSizes.insert(granules[i], logicalSize);
+					break;
+				} catch (Error& e) {
+					wait(tr.onError(e));
+					checkLoad = true;
+				}
+			}
+		}
+
+		loadState->granuleSizesLoaded = true;
+		return Void();
+	}
+
+	ACTOR static Future<Void> migrateBulkLoad(Reference<BlobMigrator> self,
+	                                          Reference<BulkLoadMigratorState> loadState,
+	                                          KeyRange physicalRange,
+	                                          BulkLoadIDKey idKey,
+	                                          Optional<Reference<Tenant>> tenant) {
+
+		// in parallel
+		state Future<Void> loadGranuleSizes = bulkLoadGetGranuleSizes(
+		    self, loadState, physicalRange, idKey); // use summarize call to get granule snapshot sizes
+
+		dprint("BlobMigrator: TrackLoad {0}: preparing load\n", idKey.second.printable());
+		wait(prepare(self, physicalRange));
+		dprint("BlobMigrator: TrackLoad {0}: marking load prepared\n", idKey.second.printable());
+
+		wait(self->db_->updateBulkLoadState(idKey.second, BulkLoadStatus::State::STAGING_DDPREPARED, tenant));
+
+		dprint("BlobMigrator: TrackLoad {0}: marked load prepared\n", idKey.second.printable());
+		wait(loadGranuleSizes);
+
+		state double sleepTime = 2.0;
+
+		dprint("BlobMigrator: TrackLoad {0}: waiting movement complete\n", idKey.second.printable());
+		// wait for data movements away from migrator to finish
+		loop {
+			bool pending = wait(checkPendingDataMovements(self, physicalRange));
+			if (!pending) {
+				break;
+			}
+
+			wait(delayJittered(sleepTime));
+			sleepTime = std::min(sleepTime + 1.0, 60.0);
+		}
+
+		dprint("BlobMigrator: TrackLoad {0}: marking load done\n", idKey.second.printable());
+
+		// once move complete, mark done
+		wait(self->db_->updateBulkLoadState(idKey.second, BulkLoadStatus::State::DONE, tenant));
+
+		return Void();
+	}
+
 	ACTOR static Future<Void> trackBulkLoad(Reference<BlobMigrator> self,
 	                                        BulkLoadIDKey idKey,
 	                                        BulkLoadStatus::State state) {
+		dprint("BlobMigrator: TrackLoad {0}: start\n", idKey.second.printable());
 		// TODO: handle
+		if (state >= BulkLoadStatus::State::DONE || state == BulkLoadStatus::State::ABORTED ||
+		    state == BulkLoadStatus::State::ABORTED_COMPLETE) {
+			dprint("BlobMigrator: TrackLoad {0}: already complete\n", idKey.second.printable());
+			return Void();
+		}
+
+		if (!SERVER_KNOBS->BULK_LOAD_SS_MOVE) {
+			return Void();
+		}
+
+		state Optional<KeyRange> physicalRange;
+
+		try {
+			state Optional<Reference<Tenant>> tenant;
+			if (idKey.first != TenantInfo::INVALID_TENANT) {
+				state Optional<TenantMapEntry> entry =
+				    wait(TenantAPI::tryGetTenant(self->db_.getReference(), idKey.first));
+				if (entry.present()) {
+					tenant = makeReference<Tenant>(self->db_, entry.get());
+				} else {
+					tenant = makeReference<Tenant>(self->db_, idKey.first);
+				}
+			}
+
+			if (state < BulkLoadStatus::State::STAGING_BLOB_DONE) {
+				wait(self->db_->waitBulkLoadStateAtLeast(
+				    idKey.second, BulkLoadStatus::State::STAGING_BLOB_DONE, tenant));
+			}
+
+			// load actual key range of bulk load
+			state Transaction tr(self->db_);
+			loop {
+				try {
+					Optional<BulkLoadInfo> info = wait(BulkLoadMetadata::infoMap().get(&tr, idKey));
+					if (!info.present()) {
+						throw bulk_load_not_found();
+					}
+
+					physicalRange = info.get().keyRange;
+					if (idKey.first != TenantInfo::INVALID_TENANT) {
+						physicalRange = physicalRange->withPrefix(TenantAPI::idToPrefix(idKey.first));
+					}
+					break;
+				} catch (Error& e) {
+					wait(tr.onError(e));
+				}
+			}
+
+			Reference<BulkLoadMigratorState> loadState = makeReference<BulkLoadMigratorState>();
+			self->bulkLoadState_.insert(physicalRange.get(), loadState);
+
+			state Future<Void> waitAborted =
+			    self->db_->waitBulkLoadStateAtLeast(idKey.second, BulkLoadStatus::State::DONE, tenant);
+			state Future<Void> migrateLoad = migrateBulkLoad(self, loadState, physicalRange.get(), idKey, tenant);
+			wait(waitAborted || migrateLoad);
+			CODE_PROBE(true, "Blob migrator finished a bulk load");
+			dprint("BlobMigrator: TrackLoad {0}: completed\n", idKey.second.printable());
+		} catch (Error& e) {
+			dprint("BlobMigrator: TrackLoad {0}: error {1}\n", idKey.second.printable(), e.name());
+			if (e.code() != error_code_bulk_load_not_found && e.code() != error_code_bulk_load_aborted) {
+				// If bulk load aborted/cleaned up, stop tracking it
+				throw e;
+			}
+		}
+		// clear state when this actor exits if we had set it
+		if (physicalRange.present()) {
+			self->bulkLoadState_.insert(physicalRange.get(), Reference<BulkLoadMigratorState>());
+		}
 		return Void();
+	}
+
+	static GranuleSizeMap& getGranuleSizeMap(Reference<BlobMigrator> self, KeyRangeRef range) {
+		if (self->isFullRestore_) {
+			return self->granuleSizes_;
+		} else {
+			// assume this range is part of exactly 1 bulk load
+			auto loadState = self->bulkLoadState_.rangeContaining(range.begin);
+			// FIXME: handle errors if this isn't true? throw wrong_shard_server maybe?
+			ASSERT(loadState.cvalue().isValid() && loadState.range().contains(range) &&
+			       loadState.cvalue()->granuleSizesLoaded);
+			return loadState.cvalue()->granuleSizes;
+		}
 	}
 
 	// Return total storage size in bytes for migration
@@ -740,10 +975,11 @@ private:
 
 	// Return storage size in bytes for given key range
 	static int64_t sizeInBytes(Reference<BlobMigrator> self, KeyRangeRef range) {
+		GranuleSizeMap& granuleSizes = getGranuleSizeMap(self, range);
 		int64_t bytes = 0;
-		for (auto granule : self->blobGranules_) {
-			if (range.contains(granule.keyRange))
-				bytes += granule.sizeInBytes;
+		auto queryRanges = granuleSizes.intersectingRanges(range);
+		for (auto& it : queryRanges) {
+			bytes += it.value();
 		}
 		return bytes;
 	}
@@ -788,18 +1024,18 @@ public: // Methods for IStorageMetricsService
 	// This API is used by DD to figure out split points for data movement.
 	void getSplitMetrics(const SplitMetricsRequest& req) override {
 		Reference<BlobMigrator> self = Reference<BlobMigrator>::addRef(this);
+		GranuleSizeMap& granuleSizes = getGranuleSizeMap(self, req.keys);
 		SplitMetricsReply rep;
 		int64_t bytes = 0; // number of bytes accumulated for current split
-		for (auto& granule : self->blobGranules_) {
-			if (!req.keys.contains(granule.keyRange)) {
-				continue;
-			}
-			bytes += granule.sizeInBytes;
+
+		auto queryRanges = granuleSizes.intersectingRanges(req.keys);
+		for (auto& granule : queryRanges) {
+			bytes += granule.cvalue();
 			if (bytes < req.limits.bytes) {
 				continue;
 			}
 			// Add a split point if the key range exceeds expected minimal size in bytes
-			rep.splits.push_back_deep(rep.splits.arena(), granule.keyRange.end);
+			rep.splits.push_back_deep(rep.splits.arena(), granule.end());
 			bytes = 0;
 			// Limit number of splits in single response for fast RPC processing
 			if (rep.splits.size() > SERVER_KNOBS->SPLIT_METRICS_MAX_ROWS) {
@@ -827,10 +1063,13 @@ public: // Methods for IStorageMetricsService
 private:
 	Database db_;
 	BlobGranuleRestoreVersionVector blobGranules_;
+	GranuleSizeMap granuleSizes_;
 	BlobMigratorInterface interf_;
 	ActorCollection actors_;
 	FileBackupAgent backupAgent_;
 	BulkLoadTracker bulkLoadTracker_;
+	bool isFullRestore_;
+	CoalescedKeyRangeMap<Reference<BulkLoadMigratorState>> bulkLoadState_;
 
 	Key mlogsUrl_;
 	Version targetVersion_;

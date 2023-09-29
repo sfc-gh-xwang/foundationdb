@@ -332,7 +332,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_MOVE_KEYS_PARALLELISM,                               15 ); BUGGIFY_KNOB(DD_MOVE_KEYS_PARALLELISM, randomize && BUGGIFY, 1);
 	init( DD_FETCH_SOURCE_PARALLELISM,                          1000 ); BUGGIFY_KNOB(DD_FETCH_SOURCE_PARALLELISM, randomize && BUGGIFY, 1);
 	init( DD_MERGE_LIMIT,                                       2000 ); BUGGIFY_KNOB(DD_MERGE_LIMIT, randomize && BUGGIFY, 2);
-	init( DD_SHARD_METRICS_TIMEOUT,                             60.0 ); BUGGIFY_KNOB(DD_SHARD_METRICS_TIMEOUT, randomize && BUGGIFY, 0.1);
+	init( DD_SHARD_METRICS_TIMEOUT,                             60.0 );
 	init( DD_LOCATION_CACHE_SIZE,                            2000000 ); BUGGIFY_KNOB(DD_LOCATION_CACHE_SIZE, randomize && BUGGIFY, 3);
 	init( MOVEKEYS_LOCK_POLLING_DELAY,                           5.0 );
 	init( DEBOUNCE_RECRUITING_DELAY,                             5.0 );
@@ -896,7 +896,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( FETCH_KEYS_PARALLELISM_BYTES,                          4e6 ); BUGGIFY_KNOB(FETCH_KEYS_PARALLELISM_BYTES, randomize && BUGGIFY, 3e6);
 	init( FETCH_KEYS_PARALLELISM,                                  2 );
 	init( FETCH_KEYS_PARALLELISM_CHANGE_FEED,                      6 );
-	init( FETCH_KEYS_LOWER_PRIORITY,                               0 );
+	init( FETCH_KEYS_LOWER_PRIORITY,                               0 ); BUGGIFY_KNOB(FETCH_KEYS_LOWER_PRIORITY, randomize && BUGGIFY, 1);
 	init( SERVE_FETCH_CHECKPOINT_PARALLELISM,                      4 );
 	init( SERVE_AUDIT_STORAGE_PARALLELISM,                         1 );
 	init( BUGGIFY_BLOCK_BYTES,                                 10000 );
