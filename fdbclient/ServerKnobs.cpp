@@ -896,7 +896,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( FETCH_KEYS_PARALLELISM_BYTES,                          4e6 ); BUGGIFY_KNOB(FETCH_KEYS_PARALLELISM_BYTES, randomize && BUGGIFY, 3e6);
 	init( FETCH_KEYS_PARALLELISM,                                  2 );
 	init( FETCH_KEYS_PARALLELISM_CHANGE_FEED,                      6 );
-	init( FETCH_KEYS_LOWER_PRIORITY,                               0 );
+	init( FETCH_KEYS_LOWER_PRIORITY,                               0 ); BUGGIFY_KNOB(FETCH_KEYS_LOWER_PRIORITY, randomize && BUGGIFY, 1);
 	init( SERVE_FETCH_CHECKPOINT_PARALLELISM,                      4 );
 	init( SERVE_AUDIT_STORAGE_PARALLELISM,                         1 );
 	init( BUGGIFY_BLOCK_BYTES,                                 10000 );
