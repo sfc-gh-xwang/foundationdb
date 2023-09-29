@@ -25,7 +25,7 @@
 #include "fdbrpc/sim_validation.h"
 #include "fdbrpc/simulator.h"
 
-#include "fdbserver/KmsConnectorInterface.h"
+#include "fdbserver/KmsConnector.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/SimKmsConnector.h"
 
@@ -50,6 +50,7 @@
 #include <memory>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -73,15 +74,16 @@ Optional<int64_t> getExpireInterval(Optional<int64_t> refTS, const int64_t defau
 }
 } // namespace
 
-ACTOR Future<Void> ekLookupByIds(KmsConnectorInterface interf, KmsConnLookupEKsByKeyIdsReq req) {
-	state KmsConnLookupEKsByKeyIdsRep rep;
-	state bool success = true;
+ACTOR Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> ekLookupByIds(
+    std::vector<KmsConnLookupKeyIdsInfo> encryptKeyInfos,
+    Optional<UID> debugId) {
+	state Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails;
 	state Optional<TraceEvent> dbgKIdTrace =
-	    req.debugId.present() ? TraceEvent("SimKmsGetByKeyIds", interf.id()) : Optional<TraceEvent>();
+	    debugId.present() ? TraceEvent("SimKmsGetByKeyIds", debugId.get()) : Optional<TraceEvent>();
 
 	if (dbgKIdTrace.present()) {
 		dbgKIdTrace.get().setMaxEventLength(100000);
-		dbgKIdTrace.get().detail("DbgId", req.debugId.get());
+		dbgKIdTrace.get().detail("DbgId", debugId.get());
 	}
 
 	// Lookup corresponding EncryptKeyCtx for input keyId
@@ -91,13 +93,13 @@ ACTOR Future<Void> ekLookupByIds(KmsConnectorInterface interf, KmsConnLookupEKsB
 	Optional<int64_t> refAtTS = getRefreshInterval(currTS, defaultTtl);
 	Optional<int64_t> expAtTS = getExpireInterval(refAtTS, defaultTtl);
 	TraceEvent("SimKmsEKLookupById").detail("RefreshAt", refAtTS).detail("ExpireAt", expAtTS);
-	for (const auto& item : req.encryptKeyInfos) {
+	for (const auto& item : encryptKeyInfos) {
 		Reference<SimKmsVaultKeyCtx> keyCtx = SimKmsVault::getByBaseCipherId(item.baseCipherId);
 		if (keyCtx.isValid()) {
 			// TODO: Relax assert if EKP APIs are updated to make 'domain_id' optional for encryption keys point lookups
 			ASSERT(item.domainId.present());
-			rep.cipherKeyDetails.emplace_back_deep(
-			    rep.arena, item.domainId.get(), keyCtx->id, keyCtx->key, keyCtx->kcv, refAtTS, expAtTS);
+			cipherKeyDetails.emplace_back_deep(
+			    cipherKeyDetails.arena(), item.domainId.get(), keyCtx->id, keyCtx->key, keyCtx->kcv, refAtTS, expAtTS);
 
 			if (dbgKIdTrace.present()) {
 				// {encryptDomainId, baseCipherId} forms a unique tuple across encryption domains
@@ -116,24 +118,31 @@ ACTOR Future<Void> ekLookupByIds(KmsConnectorInterface interf, KmsConnLookupEKsB
 			TraceEvent("SimKmsEKLookupByIdsKeyNotFound")
 			    .detail("DomId", item.domainId)
 			    .detail("BaseCipherId", item.baseCipherId);
-			success = false;
-			break;
+			throw encrypt_key_not_found();
 		}
 	}
 
 	wait(delayJittered(1.0)); // simulate network delay
-	success ? req.reply.send(rep) : req.reply.sendError(encrypt_key_not_found());
-	return Void();
+	return cipherKeyDetails;
 }
 
-ACTOR Future<Void> ekLookupByDomainIds(KmsConnectorInterface interf, KmsConnLookupEKsByDomainIdsReq req) {
-	state KmsConnLookupEKsByDomainIdsRep rep;
-	state bool success = true;
+Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> SimKmsConnector::fetchEncryptionKeysByKeyIds(
+    std::any data,
+    const std::vector<KmsConnLookupKeyIdsInfo>& encryptKeyInfos,
+    Optional<UID> debugId) {
+	ASSERT(!data.has_value());
+	return ekLookupByIds(encryptKeyInfos, debugId);
+}
+
+ACTOR Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> ekLookupByDomainIds(
+    std::vector<EncryptCipherDomainId> domainIds,
+    Optional<UID> debugId) {
+	state Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails;
 	state Optional<TraceEvent> dbgDIdTrace =
-	    req.debugId.present() ? TraceEvent("SimKmsGetsByDomIds", interf.id()) : Optional<TraceEvent>();
+	    debugId.present() ? TraceEvent("SimKmsGetsByDomIds", debugId.get()) : Optional<TraceEvent>();
 
 	if (dbgDIdTrace.present()) {
-		dbgDIdTrace.get().setMaxEventLength(16384).detail("DbgId", req.debugId.get());
+		dbgDIdTrace.get().setMaxEventLength(16384).detail("DbgId", debugId.get());
 	}
 
 	// Map encryptionDomainId to corresponding EncryptKeyCtx element using a modulo operation. This
@@ -145,17 +154,16 @@ ACTOR Future<Void> ekLookupByDomainIds(KmsConnectorInterface interf, KmsConnLook
 	Optional<int64_t> refAtTS = getRefreshInterval(currTS, defaultTtl);
 	Optional<int64_t> expAtTS = getExpireInterval(refAtTS, defaultTtl);
 	TraceEvent("SimKmsEKLookupByDomainId").detail("RefreshAt", refAtTS).detail("ExpireAt", expAtTS);
-	for (const auto domainId : req.encryptDomainIds) {
+	for (const auto domainId : domainIds) {
 		// Ensure domainIds are acceptable
 		if (domainId < FDB_DEFAULT_ENCRYPT_DOMAIN_ID) {
-			success = false;
 			break;
 		}
 
 		Reference<SimKmsVaultKeyCtx> keyCtx = SimKmsVault::getByDomainId(domainId);
 		if (keyCtx.isValid()) {
-			rep.cipherKeyDetails.emplace_back_deep(
-			    req.arena, domainId, keyCtx->id, keyCtx->key, keyCtx->kcv, refAtTS, expAtTS);
+			cipherKeyDetails.emplace_back_deep(
+			    cipherKeyDetails.arena(), domainId, keyCtx->id, keyCtx->key, keyCtx->kcv, refAtTS, expAtTS);
 			if (dbgDIdTrace.present()) {
 				// {encryptId, baseCipherId} forms a unique tuple across encryption domains
 				dbgDIdTrace.get().detail(getEncryptDbgTraceKey(ENCRYPT_DBG_TRACE_RESULT_PREFIX, domainId, keyCtx->id),
@@ -170,28 +178,36 @@ ACTOR Future<Void> ekLookupByDomainIds(KmsConnectorInterface interf, KmsConnLook
 			}
 		} else {
 			TraceEvent("SimKmsEKLookupByDomainIdKeyNotFound").detail("DomId", domainId);
-			success = false;
-			break;
+			throw encrypt_key_not_found();
 		}
 	}
 
 	wait(delayJittered(1.0)); // simulate network delay
-	success ? req.reply.send(rep) : req.reply.sendError(encrypt_key_not_found());
-	return Void();
+	return cipherKeyDetails;
 }
 
-ACTOR Future<Void> blobMetadataLookup(KmsConnectorInterface interf, KmsConnBlobMetadataReq req) {
-	state KmsConnBlobMetadataRep rep;
+Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> SimKmsConnector::fetchEncryptionKeysByDomainIds(
+    std::any data,
+    const std::vector<EncryptCipherDomainId>& domainIds,
+    Optional<UID> debugId) {
+	ASSERT(!data.has_value());
+	return ekLookupByDomainIds(domainIds, debugId);
+}
+
+ACTOR Future<Standalone<VectorRef<BlobMetadataDetailsRef>>> blobMetadataLookup(
+    std::vector<EncryptCipherDomainId> domainIds,
+    Optional<UID> debugId) {
+	state Standalone<VectorRef<BlobMetadataDetailsRef>> metadataDetails;
 	state Optional<TraceEvent> dbgDIdTrace =
-	    req.debugId.present() ? TraceEvent("SimKmsBlobMetadataLookup", interf.id()) : Optional<TraceEvent>();
+	    debugId.present() ? TraceEvent("SimKmsBlobMetadataLookup", debugId.get()) : Optional<TraceEvent>();
 	if (dbgDIdTrace.present()) {
-		dbgDIdTrace.get().detail("DbgId", req.debugId.get());
+		dbgDIdTrace.get().detail("DbgId", debugId.get());
 	}
 
-	for (auto const domainId : req.domainIds) {
+	for (auto const domainId : domainIds) {
 		Standalone<BlobMetadataDetailsRef> metadataRef = SimKmsVault::getBlobMetadata(domainId, SERVER_KNOBS->BG_URL);
-		rep.metadataDetails.arena().dependsOn(metadataRef.arena());
-		rep.metadataDetails.push_back(rep.metadataDetails.arena(), metadataRef);
+		metadataDetails.arena().dependsOn(metadataRef.arena());
+		metadataDetails.push_back(metadataDetails.arena(), metadataRef);
 	}
 
 	wait(delay(deterministicRandom()->random01())); // simulate network delay
@@ -201,17 +217,16 @@ ACTOR Future<Void> blobMetadataLookup(KmsConnectorInterface interf, KmsConnBlobM
 		int bug = deterministicRandom()->randomInt(0, 3);
 		if (bug == 0) {
 			// remove some number of tenants from the response
-			int targetSize = deterministicRandom()->randomInt(0, rep.metadataDetails.size());
-			while (rep.metadataDetails.size() > targetSize) {
-				swapAndPop(&rep.metadataDetails, deterministicRandom()->randomInt(0, rep.metadataDetails.size()));
+			int targetSize = deterministicRandom()->randomInt(0, metadataDetails.size());
+			while (metadataDetails.size() > targetSize) {
+				swapAndPop(&metadataDetails, deterministicRandom()->randomInt(0, metadataDetails.size()));
 			}
 		} else if (bug == 1) {
 			// send error
-			req.reply.sendError(connection_failed());
-			return Void();
+			throw connection_failed();
 		} else if (bug == 2) {
-			int targetDetail = deterministicRandom()->randomInt(0, rep.metadataDetails.size());
-			auto& locs = rep.metadataDetails[targetDetail].locations;
+			int targetDetail = deterministicRandom()->randomInt(0, metadataDetails.size());
+			auto& locs = metadataDetails[targetDetail].locations;
 			if (locs.size() > 1) {
 				int targetIdx1 = deterministicRandom()->randomInt(0, locs.size());
 				int targetIdx2 = targetIdx1;
@@ -226,62 +241,42 @@ ACTOR Future<Void> blobMetadataLookup(KmsConnectorInterface interf, KmsConnBlobM
 		}
 	}
 
-	req.reply.send(rep);
-
-	return Void();
+	return metadataDetails;
 }
 
-ACTOR Future<Void> simconnectorCoreImpl(KmsConnectorInterface interf) {
-	TraceEvent("SimEncryptKmsProxyInit", interf.id()).detail("MaxEncryptKeys", SERVER_KNOBS->SIM_KMS_MAX_KEYS);
-
-	state PromiseStream<Future<Void>> addActor;
-	state Future<Void> collection = actorCollection(addActor.getFuture());
-	loop {
-		choose {
-			when(KmsConnLookupEKsByKeyIdsReq req = waitNext(interf.ekLookupByIds.getFuture())) {
-				addActor.send(ekLookupByIds(interf, req));
-			}
-			when(KmsConnLookupEKsByDomainIdsReq req = waitNext(interf.ekLookupByDomainIds.getFuture())) {
-				addActor.send(ekLookupByDomainIds(interf, req));
-			}
-			when(KmsConnBlobMetadataReq req = waitNext(interf.blobMetadataReq.getFuture())) {
-				addActor.send(blobMetadataLookup(interf, req));
-			}
-			when(KmsConnGetKMSStateReq req = waitNext(interf.getKMSStateReq.getFuture())) {
-				req.reply.send(KmsConnGetKMSStateRep());
-			}
-			when(wait(collection)) {
-				// this should throw an error, not complete
-				ASSERT(false);
-			}
-		}
-	}
+Future<Standalone<VectorRef<BlobMetadataDetailsRef>>> SimKmsConnector::fetchBlobMetadata(
+    std::any data,
+    const std::vector<EncryptCipherDomainId>& domainIds,
+    Optional<UID> debugId) {
+	ASSERT(!data.has_value());
+	return blobMetadataLookup(domainIds, debugId);
 }
 
-Future<Void> SimKmsConnector::connectorCore(KmsConnectorInterface interf) {
-	return simconnectorCoreImpl(interf);
-}
 void forceLinkSimKmsConnectorTests() {}
 
 namespace {
 
-ACTOR Future<Void> testRunWorkload(KmsConnectorInterface inf) {
+ACTOR Future<Void> testRunWorkload(KmsConnector* connInf) {
 	state uint32_t maxEncryptionKeys = SimKmsVault::maxSimKeys();
 	state int maxDomainIds = deterministicRandom()->randomInt(121, 295);
 	state int maxIterations = deterministicRandom()->randomInt(5, 15);
+	state Optional<UID> debugId =
+	    deterministicRandom()->coinflip() ? deterministicRandom()->randomUniqueID() : Optional<UID>();
 	state int i;
+	state std::vector<KmsConnLookupKeyIdsInfo> encryptKeyInfos;
 
 	TraceEvent("RunWorkloadStart").detail("MaxDomainIds", maxDomainIds).detail("MaxIterations", maxIterations);
 
 	// construct {encryptId -> baseCipherId} mapping
 	state std::unordered_map<EncryptCipherDomainId, EncryptCipherBaseKeyId> domainIdMap;
 	state std::vector<EncryptCipherDomainId> domainIds;
-	KmsConnLookupEKsByDomainIdsReq domainIdsReq;
+	state std::vector<EncryptCipherDomainId> domainIdsReq;
 	for (i = 0; i < maxDomainIds; i++) {
-		domainIdsReq.encryptDomainIds.emplace_back(i);
+		domainIds.emplace_back(i);
 	}
-	KmsConnLookupEKsByDomainIdsRep domainIdsRep = wait(inf.ekLookupByDomainIds.getReply(domainIdsReq));
-	for (auto& element : domainIdsRep.cipherKeyDetails) {
+	state Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails =
+	    wait(connInf->fetchEncryptionKeysByDomainIds(nullptr, domainIdsReq));
+	for (auto& element : cipherKeyDetails) {
 		Reference<SimKmsVaultKeyCtx> keyCtx = SimKmsVault::getByDomainId(element.encryptDomainId);
 		ASSERT(keyCtx.isValid());
 		ASSERT_EQ(element.encryptKeyId, keyCtx->id);
@@ -295,12 +290,13 @@ ACTOR Future<Void> testRunWorkload(KmsConnectorInterface inf) {
 		const int batchSize = deterministicRandom()->randomInt(1, maxEncryptionKeys);
 		int domIdx = deterministicRandom()->randomInt(0, domainIds.size() - 1);
 		if (deterministicRandom()->coinflip()) {
-			KmsConnLookupEKsByDomainIdsReq domainIdsReq;
+			state std::vector<EncryptCipherDomainId> domIds;
 			for (int j = 0; j < batchSize && domIdx < domainIds.size(); j++, domIdx++) {
-				domainIdsReq.encryptDomainIds.emplace_back(domIdx);
+				domIds.emplace_back(domIdx);
 			}
-			KmsConnLookupEKsByDomainIdsRep domainIdsRep = wait(inf.ekLookupByDomainIds.getReply(domainIdsReq));
-			for (auto& element : domainIdsRep.cipherKeyDetails) {
+			Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails =
+			    wait(connInf->fetchEncryptionKeysByDomainIds(nullptr, domIds, debugId));
+			for (auto& element : cipherKeyDetails) {
 				Reference<SimKmsVaultKeyCtx> keyCtx = SimKmsVault::getByDomainId(element.encryptDomainId);
 				ASSERT(keyCtx.isValid());
 				ASSERT_EQ(element.encryptKeyId, keyCtx->id);
@@ -308,14 +304,15 @@ ACTOR Future<Void> testRunWorkload(KmsConnectorInterface inf) {
 				ASSERT_EQ(element.encryptKCV, keyCtx->kcv);
 			}
 		} else {
-			state KmsConnLookupEKsByKeyIdsReq keyIdsReq;
+			encryptKeyInfos.clear();
 			for (int j = 0; j < batchSize && domIdx < domainIds.size(); j++, domIdx++) {
 				auto itr = domainIdMap.find(domIdx);
 				ASSERT(itr != domainIdMap.end());
-				keyIdsReq.encryptKeyInfos.emplace_back(domIdx, itr->second);
+				encryptKeyInfos.emplace_back(domIdx, itr->second);
 			}
-			state KmsConnLookupEKsByKeyIdsRep keyIdsReply = wait(inf.ekLookupByIds.getReply(keyIdsReq));
-			for (auto& element : keyIdsReply.cipherKeyDetails) {
+			Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails =
+			    wait(connInf->fetchEncryptionKeysByKeyIds(nullptr, encryptKeyInfos, debugId));
+			for (auto& element : cipherKeyDetails) {
 				Reference<SimKmsVaultKeyCtx> keyCtx = SimKmsVault::getByBaseCipherId(element.encryptKeyId);
 				ASSERT(keyCtx.isValid());
 				ASSERT_EQ(element.encryptKeyId, keyCtx->id);
@@ -327,10 +324,11 @@ ACTOR Future<Void> testRunWorkload(KmsConnectorInterface inf) {
 
 	{
 		// Verify unknown key access returns the error
-		state KmsConnLookupEKsByKeyIdsReq req;
-		req.encryptKeyInfos.emplace_back(1, maxEncryptionKeys + 1);
+		encryptKeyInfos.clear();
+		encryptKeyInfos.emplace_back(1, maxEncryptionKeys + 1);
 		try {
-			KmsConnLookupEKsByKeyIdsRep reply = wait(inf.ekLookupByIds.getReply(req));
+			Standalone<VectorRef<KmsCipherKeyDetailsRef>> cipherKeyDetails =
+			    wait(ekLookupByIds(encryptKeyInfos, Optional<UID>()));
 		} catch (Error& e) {
 			ASSERT(e.code() == error_code_encrypt_key_not_found);
 		}
@@ -343,16 +341,7 @@ ACTOR Future<Void> testRunWorkload(KmsConnectorInterface inf) {
 } // namespace
 
 TEST_CASE("fdbserver/SimKmsConnector") {
-	state KmsConnectorInterface inf;
-	state SimKmsConnector connector("SimKmsConnector");
-
-	loop choose {
-		when(wait(connector.connectorCore(inf))) {
-			throw internal_error();
-		}
-		when(wait(testRunWorkload(inf))) {
-			break;
-		}
-	}
+	std::unique_ptr<KmsConnector> connInf = std::make_unique<SimKmsConnector>("SimKmsConnector");
+	wait(testRunWorkload(connInf.get()));
 	return Void();
 }
