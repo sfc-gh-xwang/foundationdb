@@ -334,7 +334,7 @@ protected:
 
 	LocalityMap<UID> machineLocalityMap; // locality info of machines
 
-	Reference<DDConfiguration::RangeConfigMapSnapshot> userRangeConfig;
+	Reference<SpecialBoundaryInfo> userRangeConfig;
 	CoalescedKeyRangeMap<bool> underReplication;
 
 	// A mechanism to tell actors that reference a DDTeamCollection object through a direct

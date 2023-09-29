@@ -481,33 +481,25 @@ public:
 			}
 		}
 
-		state std::vector<Key> customBoundaries;
-		for (auto it : self->initData->userRangeConfig->ranges()) {
-			auto range = it->range();
-			customBoundaries.push_back(range.begin);
-			TraceEvent(SevDebug, "DDInitCustomRangeConfig", self->ddId)
-			    .detail("Range", KeyRangeRef(range.begin, range.end))
-			    .detail("Config", it->value());
+		if (FLOW_KNOBS->MIN_TRACE_SEVERITY <= SevDebug) {
+			// only iterate over the config when needed
+			for (auto it : self->initData->userRangeConfig->getSnapshot()->ranges()) {
+				auto range = it->range();
+				TraceEvent(SevDebug, "DDInitCustomRangeConfig", self->ddId)
+				    .detail("Range", KeyRangeRef(range.begin, range.end))
+				    .detail("Config", it->value());
+			}
 		}
 
 		state int shard = 0;
-		state int customBoundary = 0;
 		state int overreplicatedCount = 0;
 		for (; shard < self->initData->shards.size() - 1; shard++) {
 			const DDShardInfo& iShard = self->initData->shards[shard];
-			std::vector<KeyRangeRef> ranges;
 
 			Key beginKey = iShard.key;
 			Key endKey = self->initData->shards[shard + 1].key;
-			while (customBoundary < customBoundaries.size() && customBoundaries[customBoundary] <= beginKey) {
-				customBoundary++;
-			}
-			while (customBoundary < customBoundaries.size() && customBoundaries[customBoundary] < endKey) {
-				ranges.push_back(KeyRangeRef(beginKey, customBoundaries[customBoundary]));
-				beginKey = customBoundaries[customBoundary];
-				customBoundary++;
-			}
-			ranges.push_back(KeyRangeRef(beginKey, endKey));
+			std::vector<KeyRangeRef> ranges =
+			    self->initData->userRangeConfig->splitRangeBySpecialBoundaries(KeyRangeRef(beginKey, endKey));
 
 			std::vector<ShardsAffectedByTeamFailure::Team> teams;
 			teams.push_back(ShardsAffectedByTeamFailure::Team(iShard.primarySrc, true));
@@ -519,7 +511,7 @@ public:
 				auto& keys = ranges[r];
 				self->shardsAffectedByTeamFailure->defineShard(keys);
 
-				auto it = self->initData->userRangeConfig->rangeContaining(keys.begin);
+				auto it = self->initData->userRangeConfig->getSnapshot()->rangeContaining(keys.begin);
 				int customReplicas =
 				    std::max(self->configuration.storageTeamSize, it->value().replicationFactor.orDefault(0));
 				ASSERT_WE_THINK(KeyRangeRef(it->range().begin, it->range().end).contains(keys));
@@ -758,7 +750,7 @@ ACTOR Future<Void> serveBlobMigratorRequests(Reference<DataDistributor> self,
 			if (self->context->ddEnabledState->trySetBlobRestorePreparing(req.requesterID)) {
 				// trySetBlobRestorePreparing won't destroy DataDistributor, but will destroy tracker and queue
 				self->addActor.send(prepareDataMigration(req, self->context, self->txnProcessor->context()));
-				// force reloading initData and restarting DD components
+				// TODO: remove this once online cancelling is implemented
 				throw dd_config_changed();
 			} else {
 				auto reason = self->context->ddEnabledState->isBlobRestorePreparing()

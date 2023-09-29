@@ -898,7 +898,7 @@ static bool shardForwardMergeFeasible(DataDistributionTracker* self, KeyRange co
 		return false;
 	}
 
-	if (self->userRangeConfig->rangeContaining(keys.begin)->range().end < nextRange.end) {
+	if (self->userRangeConfig->violatesBoundary(KeyRangeRef(keys.begin, nextRange.end))) {
 		return false;
 	}
 
@@ -910,7 +910,7 @@ static bool shardBackwardMergeFeasible(DataDistributionTracker* self, KeyRange c
 		return false;
 	}
 
-	if (self->userRangeConfig->rangeContaining(keys.begin)->range().begin > prevRange.begin) {
+	if (self->userRangeConfig->violatesBoundary(KeyRangeRef(prevRange.begin, keys.end))) {
 		return false;
 	}
 
@@ -1220,9 +1220,7 @@ ACTOR Future<Void> trackInitialShards(DataDistributionTracker* self, Reference<I
 	// SOMEDAY: Figure out what this priority should actually be
 	wait(delay(0.0, TaskPriority::DataDistribution));
 
-	state std::vector<Key> customBoundaries;
-	for (auto it : self->userRangeConfig->ranges()) {
-		customBoundaries.push_back(it->range().begin);
+	for (auto it : self->userRangeConfig->getSnapshot()->ranges()) {
 		if (it->value().replicationFactor.present() && it->value().replicationFactor.get() > self->teamSize) {
 			self->largeTeamSizeRanges[it->value().replicationFactor.get()]++;
 		}
@@ -1233,16 +1231,11 @@ ACTOR Future<Void> trackInitialShards(DataDistributionTracker* self, Reference<I
 	for (s = 0; s < initData->shards.size() - 1; s++) {
 		Key beginKey = initData->shards[s].key;
 		Key endKey = initData->shards[s + 1].key;
-		while (customBoundary < customBoundaries.size() && customBoundaries[customBoundary] <= beginKey) {
-			customBoundary++;
+		std::vector<KeyRangeRef> ranges =
+		    self->userRangeConfig->splitRangeBySpecialBoundaries(KeyRangeRef(beginKey, endKey));
+		for (auto& range : ranges) {
+			restartShardTrackers(self, range, Optional<ShardMetrics>(), true);
 		}
-		while (customBoundary < customBoundaries.size() && customBoundaries[customBoundary] < endKey) {
-			restartShardTrackers(
-			    self, KeyRangeRef(beginKey, customBoundaries[customBoundary]), Optional<ShardMetrics>(), true);
-			beginKey = customBoundaries[customBoundary];
-			customBoundary++;
-		}
-		restartShardTrackers(self, KeyRangeRef(beginKey, endKey), Optional<ShardMetrics>(), true);
 		wait(yield(TaskPriority::DataDistribution));
 	}
 

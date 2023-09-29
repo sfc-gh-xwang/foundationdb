@@ -251,9 +251,10 @@ class DDTxnProcessorImpl {
 		state Transaction tr(cx);
 
 		if (ddLargeTeamEnabled()) {
-			wait(store(result->userRangeConfig,
-			           DDConfiguration().userRangeConfig().getSnapshot(
-			               SystemDBWriteLockedNow(cx.getReference()), allKeys.begin, allKeys.end)));
+			Reference<DDConfiguration::RangeConfigMapSnapshot> snapshot =
+			    wait(DDConfiguration().userRangeConfig().getSnapshot(
+			        SystemDBWriteLockedNow(cx.getReference()), allKeys.begin, allKeys.end));
+			result->userRangeConfig->reset(snapshot);
 		}
 		state std::map<UID, Optional<Key>> server_dc;
 		state std::map<std::vector<UID>, std::pair<std::vector<UID>, std::vector<UID>>> team_cache;

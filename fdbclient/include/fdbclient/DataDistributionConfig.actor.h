@@ -36,8 +36,34 @@
 #include "fdbclient/json_spirit/json_spirit_value.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
+// Give a sorted boundaries and a range. Split the range into multiple ranges aligned with boundaries
+//
+std::vector<KeyRangeRef> splitRangeByBoundaries(KeyRangeRef keys, const std::vector<Key>& boundaries);
+
+template <class ForwardIt, class Func>
+std::vector<KeyRangeRef> splitRangeByBoundaries(KeyRangeRef keys,
+                                                ForwardIt boundaryBegin,
+                                                ForwardIt boundaryEnd,
+                                                Func keyAccess) {
+	std::vector<KeyRangeRef> ranges;
+	if (boundaryBegin == boundaryEnd) {
+		ranges.push_back(keys);
+		return ranges;
+	}
+	KeyRef beginKey = keys.begin;
+
+	while (boundaryBegin != boundaryEnd && keys.contains(keyAccess(boundaryBegin))) {
+		// fmt::print("splitBeginRangeByBoundaries Range 1: begin: {}, boundaryBegin {} \n", beginKey, *boundaryBegin);
+		ranges.emplace_back(beginKey, keyAccess(boundaryBegin));
+		beginKey = KeyRef(keyAccess(boundaryBegin));
+		boundaryBegin++;
+	}
+	ranges.emplace_back(beginKey, keys.end);
+	return ranges;
+}
+
 // DD Configuration for a key range range.
-// There are many properties here, all Optional, because for a given key range range a property
+// There are many properties here, all Optional, because for a given key range, a property
 // can be unspecified which means it continues the setting of the preceding range.
 struct DDRangeConfig {
 	constexpr static FileIdentifier file_identifier = 9193856;
@@ -104,6 +130,8 @@ struct Traceable<DDRangeConfig> : std::true_type {
 template <>
 struct fmt::formatter<DDRangeConfig> : FormatUsingTraceable<DDRangeConfig> {};
 
+struct SpecialBoundaryInfo;
+
 struct DDConfiguration : public KeyBackedClass {
 	DDConfiguration(KeyRef prefix = SystemKey("\xff\x02/ddconfig/"_sr)) : KeyBackedClass(prefix) {}
 
@@ -120,6 +148,25 @@ struct DDConfiguration : public KeyBackedClass {
 	RangeConfigMap userRangeConfig() const { return { subspace.pack(__FUNCTION__sr), trigger, IncludeVersion() }; }
 
 	static json_spirit::mValue toJSON(RangeConfigMapSnapshot const& snapshot, bool includeDefaultRanges = false);
+};
+
+struct SpecialBoundaryInfo : public ReferenceCounted<SpecialBoundaryInfo> {
+	bool violatesBoundary(KeyRangeRef range);
+	std::vector<KeyRangeRef> splitRangeBySpecialBoundaries(KeyRangeRef keys);
+	const std::vector<Key>& getSpecialBoundaries();
+	Reference<const DDConfiguration::RangeConfigMapSnapshot> getSnapshot() const { return snapshot; }
+
+	explicit SpecialBoundaryInfo(Reference<DDConfiguration::RangeConfigMapSnapshot> snapshot);
+	SpecialBoundaryInfo()
+	  : SpecialBoundaryInfo(makeReference<DDConfiguration::RangeConfigMapSnapshot>(allKeys.begin, allKeys.end)) {}
+
+	void reset(Reference<DDConfiguration::RangeConfigMapSnapshot> snapshot);
+
+private:
+	Reference<DDConfiguration::RangeConfigMapSnapshot> snapshot;
+	// lazy build
+	bool boundaryLoaded = false;
+	std::vector<Key> boundaries;
 };
 
 #include "flow/unactorcompiler.h"
