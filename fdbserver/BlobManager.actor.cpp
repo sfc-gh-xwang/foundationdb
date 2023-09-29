@@ -7398,6 +7398,7 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 
 				tr->setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
 
+				// FIXME: this might always time out for big ranges
 				wait(success(tr->summarizeBlobGranules(physicalRange, tr->getReadVersion().get(), 1000000)));
 				break;
 			} catch (Error& e) {
