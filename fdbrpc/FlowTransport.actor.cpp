@@ -571,14 +571,14 @@ ACTOR Future<Void> connectionMonitor(Reference<Peer> peer) {
 		FlowTransport::transport().sendUnreliable(SerializeSource<PingRequest>(pingRequest), remotePingEndpoint, true);
 		state int64_t startingBytes = peer->bytesReceived;
 		state int timeouts = 0;
-		state double startTime = now();
+		state double startTime = g_network->timer_monotonic();
 		loop {
 			choose {
 				when(wait(delay(FLOW_KNOBS->CONNECTION_MONITOR_TIMEOUT))) {
 					peer->timeoutCount++;
 					if (startingBytes == peer->bytesReceived) {
 						if (peer->destination.isPublic()) {
-							peer->pingLatencies.addSample(now() - startTime);
+							peer->pingLatencies.addSample(g_network->timer_monotonic() - startTime);
 						}
 						TraceEvent("ConnectionTimeout").suppressFor(1.0).detail("WithAddr", peer->destination);
 						throw connection_failed();
@@ -594,7 +594,7 @@ ACTOR Future<Void> connectionMonitor(Reference<Peer> peer) {
 				}
 				when(wait(pingRequest.reply.getFuture())) {
 					if (peer->destination.isPublic()) {
-						peer->pingLatencies.addSample(now() - startTime);
+						peer->pingLatencies.addSample(g_network->timer_monotonic() - startTime);
 					}
 					break;
 				}
@@ -677,6 +677,7 @@ ACTOR Future<Void> connectionKeeper(Reference<Peer> self,
 	state Optional<double> firstConnFailedTime = Optional<double>();
 	state int retryConnect = false;
 	state bool tooManyConnectionsClosed = false;
+	state double startConnectTime = 0;
 
 	loop {
 		try {
@@ -708,6 +709,9 @@ ACTOR Future<Void> connectionKeeper(Reference<Peer> self,
 				                            self->lastConnectTime + self->reconnectionDelay -
 				                                now()))); // Don't connect() to the same peer more than once per 2 sec
 				self->lastConnectTime = now();
+				// lastConnectTime is compared with now() and used to control connection behavior, thus we use a
+				// separate timer for statistics
+				startConnectTime = g_network->timer_monotonic();
 
 				TraceEvent("ConnectingTo", conn ? conn->getDebugID() : UID())
 				    .suppressFor(1.0)
@@ -723,7 +727,7 @@ ACTOR Future<Void> connectionKeeper(Reference<Peer> self,
 						         wait(INetworkConnections::net()->connect(self->destination))) {
 							conn = _conn;
 							wait(conn->connectHandshake());
-							self->connectLatencies.addSample(now() - self->lastConnectTime);
+							self->connectLatencies.addSample(g_network->timer_monotonic() - startConnectTime);
 							if (FlowTransport::isClient()) {
 								IFailureMonitor::failureMonitor().setStatus(self->destination, FailureStatus(false));
 							}
