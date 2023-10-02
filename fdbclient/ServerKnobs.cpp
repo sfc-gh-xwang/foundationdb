@@ -230,7 +230,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( RETRY_RELOCATESHARD_DELAY,                             0.1 );
 	init( DATA_DISTRIBUTION_FAILURE_REACTION_TIME,              60.0 ); BUGGIFY_KNOB(DATA_DISTRIBUTION_FAILURE_REACTION_TIME, randomize && BUGGIFY, 1.0);
 	bool buggifySmallShards = randomize && BUGGIFY;
-	bool simulationMediumShards = !buggifySmallShards && isSimulated && randomize && !BUGGIFY; // prefer smaller shards in simulation
+	bool simulationMediumShards = !buggifySmallShards && isSimulated && randomize && deterministicRandom()->random01() < 0.8; // prefer smaller shards in simulation
 	// FIXME: increase this even more eventually
 	init( MIN_SHARD_BYTES,                                  10000000 ); BUGGIFY_KNOB(MIN_SHARD_BYTES, buggifySmallShards, 40000); BUGGIFY_KNOB(MIN_SHARD_BYTES, simulationMediumShards, 200000); //FIXME: data distribution tracker (specifically StorageMetrics) relies on this number being larger than the maximum size of a key value pair
 	init( SHARD_BYTES_RATIO,                                       4 );
