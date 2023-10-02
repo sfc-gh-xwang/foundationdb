@@ -3,6 +3,10 @@ minimumReplication = 2
 
 [[knobs]]
 rest_request_max_retry_delay_sec = 2.0
+# Extending the leader election polling frequency can cause long recovery outages in rare cases where the leader 
+# doesn't converge immediately. Use the default values for the following two knobs to prevent them from being buggified.
+polling_frequency = 2.0
+heartbeat_frequency = 0.5
 
 [[test]]
 testTitle = 'LowLatencyWithFailures'
