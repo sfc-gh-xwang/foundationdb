@@ -4,6 +4,13 @@
 Release Notes
 #############
 
+8.0.2
+=====
+
+Feature Improvements
+--------------------
+* Support multiple quota cost calculation formulas. `(FDBCORE-6418) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6418>`_
+
 8.0.1
 =====
 
