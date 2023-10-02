@@ -1106,7 +1106,9 @@ static void printBackupUsage(bool devhelp) {
 	       "                 If not specified, the entire database will be backed up or no filter will be applied.\n");
 	printf("  --keys-file FILE\n"
 	       "                 Same as -k option, except keys are specified in the input file.\n");
-	printf("  --partitioned-log-experimental  Starts with new type of backup system using partitioned logs.\n");
+	printf("  --partitioned-log-experimental\n");
+	printf("                 Starts with new type of backup system using partitioned logs.\n");
+	printf("                 Note that no range filter will be applied for log backup.\n");
 	printf("  -n, --dryrun   For backup start or restore start, performs a trial run with no actual changes made.\n");
 	printf("  --log          Enables trace file logging for the CLI session.\n"
 	       "  --logdir PATH  Specifes the output directory for trace files. If\n"
