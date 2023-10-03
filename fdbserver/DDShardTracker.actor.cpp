@@ -32,6 +32,8 @@
 #include "flow/FastRef.h"
 #include "flow/Trace.h"
 #include "fdbserver/DDShardTracker.h"
+#include "flow/genericactors.actor.h"
+#include "flow/network.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 // The used bandwidth of a shard. The higher the value is, the busier the shard is.
@@ -896,7 +898,7 @@ static bool shardForwardMergeFeasible(DataDistributionTracker* self, KeyRange co
 		return false;
 	}
 
-	if (self->userRangeConfig->rangeContaining(keys.begin)->range().end < nextRange.end) {
+	if (self->userRangeConfig->violatesBoundary(KeyRangeRef(keys.begin, nextRange.end))) {
 		return false;
 	}
 
@@ -908,7 +910,7 @@ static bool shardBackwardMergeFeasible(DataDistributionTracker* self, KeyRange c
 		return false;
 	}
 
-	if (self->userRangeConfig->rangeContaining(keys.begin)->range().begin > prevRange.begin) {
+	if (self->userRangeConfig->violatesBoundary(KeyRangeRef(prevRange.begin, keys.end))) {
 		return false;
 	}
 
@@ -1218,9 +1220,7 @@ ACTOR Future<Void> trackInitialShards(DataDistributionTracker* self, Reference<I
 	// SOMEDAY: Figure out what this priority should actually be
 	wait(delay(0.0, TaskPriority::DataDistribution));
 
-	state std::vector<Key> customBoundaries;
-	for (auto it : self->userRangeConfig->ranges()) {
-		customBoundaries.push_back(it->range().begin);
+	for (auto it : self->userRangeConfig->getSnapshot()->ranges()) {
 		if (it->value().replicationFactor.present() && it->value().replicationFactor.get() > self->teamSize) {
 			self->largeTeamSizeRanges[it->value().replicationFactor.get()]++;
 		}
@@ -1231,16 +1231,11 @@ ACTOR Future<Void> trackInitialShards(DataDistributionTracker* self, Reference<I
 	for (s = 0; s < initData->shards.size() - 1; s++) {
 		Key beginKey = initData->shards[s].key;
 		Key endKey = initData->shards[s + 1].key;
-		while (customBoundary < customBoundaries.size() && customBoundaries[customBoundary] <= beginKey) {
-			customBoundary++;
+		std::vector<KeyRangeRef> ranges =
+		    self->userRangeConfig->splitRangeBySpecialBoundaries(KeyRangeRef(beginKey, endKey));
+		for (auto& range : ranges) {
+			restartShardTrackers(self, range, Optional<ShardMetrics>(), true);
 		}
-		while (customBoundary < customBoundaries.size() && customBoundaries[customBoundary] < endKey) {
-			restartShardTrackers(
-			    self, KeyRangeRef(beginKey, customBoundaries[customBoundary]), Optional<ShardMetrics>(), true);
-			beginKey = customBoundaries[customBoundary];
-			customBoundary++;
-		}
-		restartShardTrackers(self, KeyRangeRef(beginKey, endKey), Optional<ShardMetrics>(), true);
 		wait(yield(TaskPriority::DataDistribution));
 	}
 
@@ -1253,7 +1248,6 @@ ACTOR Future<Void> trackInitialShards(DataDistributionTracker* self, Reference<I
 }
 
 ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, GetTopKMetricsRequest req) {
-	state Future<Void> onChange;
 	state std::vector<GetTopKMetricsReply::KeyRangeStorageMetrics> returnMetrics;
 	// random pick a portion of shard
 	if (req.keys.size() > SERVER_KNOBS->DD_SHARD_COMPARE_LIMIT) {
@@ -1261,57 +1255,47 @@ ACTOR Future<Void> fetchTopKShardMetrics_impl(DataDistributionTracker* self, Get
 	}
 	try {
 		loop {
-			onChange = Future<Void>();
 			returnMetrics.clear();
 			state int64_t minReadLoad = -1;
 			state int64_t maxReadLoad = -1;
 			state int i;
 			for (i = 0; i < SERVER_KNOBS->DD_SHARD_COMPARE_LIMIT && i < req.keys.size(); ++i) {
-				auto range = req.keys[i];
-				StorageMetrics metrics;
+				state KeyRange range = req.keys[i];
+				state std::vector<Future<StorageMetrics>> actors;
 				for (auto t : self->shards->intersectingRanges(range)) {
-					auto& stats = t.value().stats;
-					if (!stats->get().present()) {
-						onChange = stats->onChange();
-						break;
-					}
-					metrics += t.value().stats->get().get().metrics;
+					actors.push_back(self->db->getStorageMetrics(t.range(), CLIENT_KNOBS->STORAGE_METRICS_SHARD_LIMIT));
+				}
+				wait(waitForAll(actors));
+				StorageMetrics latestMetrics;
+				for (int i = 0; i < actors.size(); i++) {
+					latestMetrics += actors[i].get();
 				}
 
-				// skip if current stats is invalid
-				if (onChange.isValid()) {
-					break;
-				}
-
-				auto readLoad = metrics.readLoadKSecond();
+				auto readLoad = latestMetrics.readLoadKSecond();
 				if (readLoad > 0) {
 					minReadLoad = std::min(readLoad, minReadLoad);
 					maxReadLoad = std::max(readLoad, maxReadLoad);
 					if (req.minReadLoadPerKSecond <= readLoad && readLoad <= req.maxReadLoadPerKSecond) {
-						returnMetrics.emplace_back(range, metrics);
+						returnMetrics.emplace_back(range, latestMetrics);
 					}
 				}
 
 				wait(yield());
 			}
 			// FIXME(xwang): Do we need to track slow task here?
-			if (!onChange.isValid()) {
-				if (req.getTopK() >= returnMetrics.size())
-					req.reply.send(GetTopKMetricsReply(returnMetrics, minReadLoad, maxReadLoad));
-				else {
-					std::nth_element(returnMetrics.begin(),
-					                 returnMetrics.begin() + req.getTopK() - 1,
-					                 returnMetrics.end(),
-					                 GetTopKMetricsRequest::compare);
-					req.reply.send(
-					    GetTopKMetricsReply(std::vector<GetTopKMetricsReply::KeyRangeStorageMetrics>(
-					                            returnMetrics.begin(), returnMetrics.begin() + req.getTopK()),
-					                        minReadLoad,
-					                        maxReadLoad));
-				}
-				return Void();
+			if (req.getTopK() >= returnMetrics.size())
+				req.reply.send(GetTopKMetricsReply(returnMetrics, minReadLoad, maxReadLoad));
+			else {
+				std::nth_element(returnMetrics.begin(),
+				                 returnMetrics.begin() + req.getTopK() - 1,
+				                 returnMetrics.end(),
+				                 GetTopKMetricsRequest::compare);
+				req.reply.send(GetTopKMetricsReply(std::vector<GetTopKMetricsReply::KeyRangeStorageMetrics>(
+				                                       returnMetrics.begin(), returnMetrics.begin() + req.getTopK()),
+				                                   minReadLoad,
+				                                   maxReadLoad));
 			}
-			wait(onChange);
+			return Void();
 		}
 	} catch (Error& e) {
 		if (e.code() != error_code_actor_cancelled && !req.reply.isSet())
@@ -1325,7 +1309,9 @@ ACTOR Future<Void> fetchTopKShardMetrics(DataDistributionTracker* self, GetTopKM
 		// simulate time_out
 		when(wait(g_network->isSimulated() && BUGGIFY_WITH_PROB(0.01) ? Never()
 		                                                              : fetchTopKShardMetrics_impl(self, req))) {}
-		when(wait(delay(SERVER_KNOBS->DD_SHARD_METRICS_TIMEOUT))) {
+		when(wait(
+		    delay(g_network->isSimulated() && BUGGIFY_WITH_PROB(0.1) ? 0.1 : SERVER_KNOBS->DD_SHARD_METRICS_TIMEOUT,
+		          TaskPriority::DataDistribution))) {
 			CODE_PROBE(true, "TopK DD_SHARD_METRICS_TIMEOUT");
 			req.reply.send(GetTopKMetricsReply());
 		}
@@ -1364,7 +1350,9 @@ ACTOR Future<Void> fetchShardMetrics_impl(DataDistributionTracker* self, GetMetr
 ACTOR Future<Void> fetchShardMetrics(DataDistributionTracker* self, GetMetricsRequest req) {
 	choose {
 		when(wait(fetchShardMetrics_impl(self, req))) {}
-		when(wait(delay(SERVER_KNOBS->DD_SHARD_METRICS_TIMEOUT, TaskPriority::DataDistribution))) {
+		when(wait(
+		    delay(g_network->isSimulated() && BUGGIFY_WITH_PROB(0.1) ? 0.1 : SERVER_KNOBS->DD_SHARD_METRICS_TIMEOUT,
+		          TaskPriority::DataDistribution))) {
 			CODE_PROBE(true, "DD_SHARD_METRICS_TIMEOUT");
 			StorageMetrics largeMetrics;
 			largeMetrics.bytes = getMaxShardSize(self->dbSizeEstimate->get());

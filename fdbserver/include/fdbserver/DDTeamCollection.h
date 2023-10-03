@@ -334,7 +334,7 @@ protected:
 
 	LocalityMap<UID> machineLocalityMap; // locality info of machines
 
-	Reference<DDConfiguration::RangeConfigMapSnapshot> userRangeConfig;
+	Reference<SpecialBoundaryInfo> userRangeConfig;
 	CoalescedKeyRangeMap<bool> underReplication;
 
 	// A mechanism to tell actors that reference a DDTeamCollection object through a direct
@@ -487,6 +487,17 @@ protected:
 	// Track a team and issue RelocateShards when the level of degradation changes
 	// A bad team can be unhealthy or just a redundant team removed by machineTeamRemover() or serverTeamRemover()
 	Future<Void> teamTracker(Reference<TCTeamInfo> team, IsBadTeam, IsRedundantTeam);
+
+	void sameAddressChecker(TCServerInfo* server, ServerStatus& serverStatus, std::vector<Future<Void>>& otherChanges);
+
+	void machineFitnessChecker(TCServerInfo* server,
+	                           ServerStatus& serverStatus,
+	                           std::vector<Future<Void>>& otherChanges);
+
+	void undesiredServerChecker(TCServerInfo* server,
+	                            ServerStatus& serverStatus,
+	                            const bool& hasWrongDC,
+	                            const bool& hasInvalidLocality);
 
 	// Check the status of a storage server.
 	// Apply all requirements to the server and mark it as excluded if it fails to satisfies these requirements

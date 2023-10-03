@@ -230,7 +230,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( RETRY_RELOCATESHARD_DELAY,                             0.1 );
 	init( DATA_DISTRIBUTION_FAILURE_REACTION_TIME,              60.0 ); BUGGIFY_KNOB(DATA_DISTRIBUTION_FAILURE_REACTION_TIME, randomize && BUGGIFY, 1.0);
 	bool buggifySmallShards = randomize && BUGGIFY;
-	bool simulationMediumShards = !buggifySmallShards && isSimulated && randomize && !BUGGIFY; // prefer smaller shards in simulation
+	bool simulationMediumShards = !buggifySmallShards && isSimulated && randomize && deterministicRandom()->random01() < 0.8; // prefer smaller shards in simulation
 	// FIXME: increase this even more eventually
 	init( MIN_SHARD_BYTES,                                  10000000 ); BUGGIFY_KNOB(MIN_SHARD_BYTES, buggifySmallShards, 40000); BUGGIFY_KNOB(MIN_SHARD_BYTES, simulationMediumShards, 200000); //FIXME: data distribution tracker (specifically StorageMetrics) relies on this number being larger than the maximum size of a key value pair
 	init( SHARD_BYTES_RATIO,                                       4 );
@@ -332,7 +332,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_MOVE_KEYS_PARALLELISM,                               15 ); BUGGIFY_KNOB(DD_MOVE_KEYS_PARALLELISM, randomize && BUGGIFY, 1);
 	init( DD_FETCH_SOURCE_PARALLELISM,                          1000 ); BUGGIFY_KNOB(DD_FETCH_SOURCE_PARALLELISM, randomize && BUGGIFY, 1);
 	init( DD_MERGE_LIMIT,                                       2000 ); BUGGIFY_KNOB(DD_MERGE_LIMIT, randomize && BUGGIFY, 2);
-	init( DD_SHARD_METRICS_TIMEOUT,                             60.0 ); BUGGIFY_KNOB(DD_SHARD_METRICS_TIMEOUT, randomize && BUGGIFY, 0.1);
+	init( DD_SHARD_METRICS_TIMEOUT,                             60.0 );
 	init( DD_LOCATION_CACHE_SIZE,                            2000000 ); BUGGIFY_KNOB(DD_LOCATION_CACHE_SIZE, randomize && BUGGIFY, 3);
 	init( MOVEKEYS_LOCK_POLLING_DELAY,                           5.0 );
 	init( DEBOUNCE_RECRUITING_DELAY,                             5.0 );
@@ -656,7 +656,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BACKUP_TIMEOUT,                                        0.4 );
 	init( BACKUP_NOOP_POP_DELAY,                                 5.0 );
 	init( BACKUP_FILE_BLOCK_BYTES,                       1024 * 1024 );
-	init( BACKUP_LOCK_BYTES,                                     3e9 ); BUGGIFY_KNOB(BACKUP_LOCK_BYTES, randomize && BUGGIFY, deterministicRandom()->randomInt(1024, 4096) * 256 * 1024);
+	init( BACKUP_LOCK_BYTES,                                     3e9 ); BUGGIFY_KNOB(BACKUP_LOCK_BYTES, randomize && BUGGIFY, deterministicRandom()->randomInt(1024, 4096) * 4096);
 	init( BACKUP_UPLOAD_DELAY,                                  10.0 ); BUGGIFY_KNOB(BACKUP_UPLOAD_DELAY, randomize && BUGGIFY, deterministicRandom()->random01() * 60);
 	init( USE_EMERGENCY_BACKUP_WORKER,                         false );
 
@@ -851,7 +851,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( THROUGHPUT_QUOTA_CACHE_BATCH_SIZE,                      10 ); BUGGIFY_KNOB(THROUGHPUT_QUOTA_CACHE_BATCH_SIZE, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 20));
 	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_CHECK_INTERVAL,      5.0 );
 	init( THROUGHPUT_QUOTA_CACHE_EXPIRATION_THRESHOLD,          60.0 );
-	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,         409600.0 );
+	init( GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,             10e6 );
 	init( CLIENT_THROUGHPUT_TRACKER_EXPIRATION_CHECK_INTERVAL,   5.0 );
 	init( THROTTLE_WITH_UNSET_THROUGHPUT_QUOTAS,                true );
 	init( LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO,           0.5 ); BUGGIFY_KNOB(LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO, randomize && BUGGIFY, deterministicRandom()->random01());
@@ -896,7 +896,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( FETCH_KEYS_PARALLELISM_BYTES,                          4e6 ); BUGGIFY_KNOB(FETCH_KEYS_PARALLELISM_BYTES, randomize && BUGGIFY, 3e6);
 	init( FETCH_KEYS_PARALLELISM,                                  2 );
 	init( FETCH_KEYS_PARALLELISM_CHANGE_FEED,                      6 );
-	init( FETCH_KEYS_LOWER_PRIORITY,                               0 );
+	init( FETCH_KEYS_LOWER_PRIORITY,                               0 ); BUGGIFY_KNOB(FETCH_KEYS_LOWER_PRIORITY, randomize && BUGGIFY, 1);
 	init( SERVE_FETCH_CHECKPOINT_PARALLELISM,                      4 );
 	init( SERVE_AUDIT_STORAGE_PARALLELISM,                         1 );
 	init( BUGGIFY_BLOCK_BYTES,                                 10000 );
@@ -1192,6 +1192,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_MANIFEST_BACKUP,                                false );
 	init( BLOB_MANIFEST_BACKUP_INTERVAL,  isSimulated ?  5.0 : 600.0 );
 	init( BLOB_MIGRATOR_CHECK_INTERVAL,    isSimulated ?  1.0 : 60.0 );
+	init( BLOB_MIGRATOR_BULK_LOAD_CHECK_INTERVAL,                5.0 ); BUGGIFY_KNOB(BLOB_MIGRATOR_BULK_LOAD_CHECK_INTERVAL, randomize && BUGGIFY, 10.0 * deterministicRandom()->random01());
 	init( BLOB_MANIFEST_RW_ROWS,            isSimulated ?  10 : 1000 );
 	init( BLOB_MANIFEST_MAX_ROWS_PER_TRANSACTION,  isSimulated ?  30 : 10000 );
 	init( BLOB_MANIFEST_RETRY_INTERVAL,        isSimulated ?  1 : 30 );

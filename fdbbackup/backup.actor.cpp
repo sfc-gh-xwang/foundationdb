@@ -1106,7 +1106,9 @@ static void printBackupUsage(bool devhelp) {
 	       "                 If not specified, the entire database will be backed up or no filter will be applied.\n");
 	printf("  --keys-file FILE\n"
 	       "                 Same as -k option, except keys are specified in the input file.\n");
-	printf("  --partitioned-log-experimental  Starts with new type of backup system using partitioned logs.\n");
+	printf("  --partitioned-log-experimental\n");
+	printf("                 Starts with new type of backup system using partitioned logs.\n");
+	printf("                 Note that no range filter will be applied for log backup.\n");
 	printf("  -n, --dryrun   For backup start or restore start, performs a trial run with no actual changes made.\n");
 	printf("  --log          Enables trace file logging for the CLI session.\n"
 	       "  --logdir PATH  Specifes the output directory for trace files. If\n"
@@ -1731,12 +1733,18 @@ ACTOR Future<json_spirit::mObject> getLayerStatus(Database src, std::string root
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
 			state RangeReadResult kvPairs =
 			    wait(tr.getRange(KeyRangeRef(rootKey, strinc(rootKey)), GetRangeLimits::ROW_LIMIT_UNLIMITED));
-			json_spirit::mObject statusDoc;
-			JSONDoc modifier(statusDoc);
+			state json_spirit::mObject statusDoc;
+			state JSONDoc modifier(statusDoc);
 			for (auto& kv : kvPairs) {
-				json_spirit::mValue docValue;
+				// If there are a large number of backup agents, this loop might do a significant amount of JSON
+				// parsing and post processing to combine the documents and apply the layer status aggregation
+				// operators, so we will yield after parsing the doc and yield after merging it into the
+				// consolidated document.
+				state json_spirit::mValue docValue;
 				json_spirit::read_string(kv.value.toString(), docValue);
+				wait(yield());
 				modifier.absorb(docValue);
+				wait(yield());
 			}
 			JSONDoc::expires_reference_version = (uint64_t)tr.getReadVersion().get();
 			modifier.cleanOps();

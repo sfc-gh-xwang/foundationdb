@@ -231,7 +231,7 @@ public:
 	~LatencyBands();
 };
 
-class LatencySample : public IMetric {
+class LatencySample : public IMetric, public ReferenceCounted<LatencySample> {
 public:
 	LatencySample(std::string name,
 	              UID id,

@@ -33,6 +33,7 @@
 #include "fdbclient/TransactionState.h"
 #include "fdbserver/BlobMigratorInterface.h"
 #include "fdbserver/TSSMappingUtil.actor.h"
+#include "fdbclient/DataDistributionConfig.actor.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -2844,6 +2845,10 @@ ACTOR Future<Void> prepareBlobRestore(Database occ,
 				TraceEvent("BlobMigratorReplaced", traceId).detail("Current", currentOwnerId).detail("BM", bmId);
 				throw blob_migrator_replaced();
 			}
+
+			// will trigger DD restart
+			wait(DDConfiguration().userRangeConfig().updateRange(
+			    &tr, keys.begin, keys.end, DDRangeConfig({}, {}, reqId)));
 			wait(unassignServerKeys(traceId, &tr, keys, { bmId }));
 			wait(assignKeysToServer(traceId, &tr, keys, bmId));
 			wait(tr.commit());

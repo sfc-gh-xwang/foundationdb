@@ -21,8 +21,10 @@
 #include "fdbserver/DDTxnProcessor.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ManagementAPI.actor.h"
+#include "fdbclient/StorageServerInterface.h"
 #include "fdbserver/DataDistribution.actor.h"
 #include "fdbclient/DatabaseContext.h"
+#include "flow/Error.h"
 #include "flow/genericactors.actor.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -249,9 +251,10 @@ class DDTxnProcessorImpl {
 		state Transaction tr(cx);
 
 		if (ddLargeTeamEnabled()) {
-			wait(store(result->userRangeConfig,
-			           DDConfiguration().userRangeConfig().getSnapshot(
-			               SystemDBWriteLockedNow(cx.getReference()), allKeys.begin, allKeys.end)));
+			Reference<DDConfiguration::RangeConfigMapSnapshot> snapshot =
+			    wait(DDConfiguration().userRangeConfig().getSnapshot(
+			        SystemDBWriteLockedNow(cx.getReference()), allKeys.begin, allKeys.end));
+			result->userRangeConfig->reset(snapshot);
 		}
 		state std::map<UID, Optional<Key>> server_dc;
 		state std::map<std::vector<UID>, std::pair<std::vector<UID>, std::vector<UID>>> team_cache;
@@ -763,6 +766,10 @@ Future<Void> DDTxnProcessor::rawFinishMovement(const MoveKeysParams& params,
 	return ::rawFinishMovement(cx, params, tssMapping);
 }
 
+Future<StorageMetrics> DDTxnProcessor::getStorageMetrics(KeyRange const& keys, int shardLimit) const {
+	return cx->getStorageMetrics(keys, shardLimit);
+}
+
 struct DDMockTxnProcessorImpl {
 	// return when all status become FETCHED
 	ACTOR static Future<Void> checkFetchingState(DDMockTxnProcessor* self, std::vector<UID> ids, KeyRangeRef range) {
@@ -1013,6 +1020,10 @@ Future<std::pair<Optional<StorageMetrics>, int>> DDMockTxnProcessor::waitStorage
 	return mgs->waitStorageMetrics(keys, min, max, permittedError, shardLimit, expectedShardCount);
 }
 
+Future<StorageMetrics> DDMockTxnProcessor::getStorageMetrics(KeyRange const& keys, int shardLimit) const {
+	return mgs->getStorageMetrics(keys, shardLimit);
+}
+
 // FIXME: finish implementation
 Future<std::vector<ProcessData>> DDMockTxnProcessor::getWorkers() const {
 	return Future<std::vector<ProcessData>>();
@@ -1186,7 +1197,8 @@ Future<Void> DDMockTxnProcessor::waitForAllDataRemoved(
 	return checkUntil(
 	    SERVER_KNOBS->ALL_DATA_REMOVED_DELAY,
 	    [=]() -> bool {
-		    return cpMgs->allShardsRemovedFromServer(serverID) && cpMgs->shardMapping->getNumberOfShards(serverID) == 0;
+		    return shardsAffectedByTeamFailure->getNumberOfShards(serverID) == 0 &&
+		           cpMgs->allShardsRemovedFromServer(serverID) && cpMgs->shardMapping->getNumberOfShards(serverID) == 0;
 	    },
 	    TaskPriority::DataDistribution);
 }

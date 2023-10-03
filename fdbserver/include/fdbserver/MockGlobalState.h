@@ -331,6 +331,7 @@ public:
 	                                                                    StorageMetrics const& permittedError,
 	                                                                    int shardLimit,
 	                                                                    int expectedShardCount);
+	Future<StorageMetrics> getStorageMetrics(KeyRange const& keys, int shardLimit);
 
 	Future<Standalone<VectorRef<KeyRef>>> splitStorageMetrics(const KeyRange& keys,
 	                                                          const StorageMetrics& limit,

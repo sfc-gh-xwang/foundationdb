@@ -8260,6 +8260,8 @@ ACTOR Future<StorageMetrics> waitStorageMetricsMultipleLocations(TenantInfo tena
 
 ACTOR Future<StorageMetrics> extractMetrics(Future<std::pair<Optional<StorageMetrics>, int>> fMetrics) {
 	std::pair<Optional<StorageMetrics>, int> x = wait(fMetrics);
+	// x.first.present() is always true right now
+	ASSERT_WE_THINK(x.first.present());
 	return x.first.get();
 }
 
@@ -8654,12 +8656,18 @@ ACTOR Future<Void> streamRemainingGranuleMutations(BlobWorkerInterface bwInterf,
 	streamReq.beginVersion = fileReply->chunks[i].includedVersion + 1;
 	streamReq.readVersion = readVersion;
 	streamReq.tenantInfo = tenantInfo;
-	streamReq.replyBatchSize = CLIENT_KNOBS->REPLY_BYTE_LIMIT;
+	streamReq.replyBatchSize = CLIENT_KNOBS->BG_MUTATION_STREAM_CHUNK_SIZE;
 	if (BUGGIFY_WITH_PROB(0.01)) {
 		streamReq.replyBatchSize = deterministicRandom()->randomSkewedUInt32(1, 2 * streamReq.replyBatchSize);
 	}
 
 	ASSERT(fileReply->chunks[i].includedVersion < readVersion);
+	if (tenantInfo.hasTenant()) {
+		// cut off tenant prefix since server has to check tenant anyway and add it back
+		ASSERT(tenantInfo.prefix.present());
+		streamReq.keyRange = KeyRangeRef(streamReq.keyRange.begin.removePrefix(tenantInfo.prefix.get()),
+		                                 streamReq.keyRange.end.removePrefix(tenantInfo.prefix.get()));
+	}
 
 	if (BG_REQUEST_DEBUG) {
 		fmt::print("Streaming mutations {0} - {1} from granule [{2} - {3}) from BW {4}. Already have {5} mutations\n",
@@ -8956,14 +8964,17 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranulesActor(
 		req.tenantInfo = self->getTenant().present() ? self->trState->getTenantInfo() : TenantInfo();
 		req.readOptions = readOptions;
 
-		state bool streamRemainingMutations = true;
-		if (mutationByteLimit < req.granuleMutationBytesLimit) {
-			req.granuleMutationBytesLimit = mutationByteLimit;
-			streamRemainingMutations = false;
-		} else if (BUGGIFY_WITH_PROB(0.1)) {
-			req.granuleMutationBytesLimit = 0;
-		} else if (BUGGIFY_WITH_PROB(0.1)) {
-			req.granuleMutationBytesLimit = deterministicRandom()->randomSkewedUInt32(1, 1000000);
+		state bool streamRemainingMutations = CLIENT_KNOBS->BG_STREAM_MUTATIONS;
+		if (streamRemainingMutations) {
+			req.granuleMutationBytesLimit = CLIENT_KNOBS->BG_MUTATION_NOSTREAM_LIMIT;
+			if (mutationByteLimit < req.granuleMutationBytesLimit) {
+				req.granuleMutationBytesLimit = mutationByteLimit;
+				streamRemainingMutations = false;
+			} else if (BUGGIFY_WITH_PROB(0.1)) {
+				req.granuleMutationBytesLimit = 0;
+			} else if (BUGGIFY_WITH_PROB(0.1)) {
+				req.granuleMutationBytesLimit = deterministicRandom()->randomSkewedUInt32(1, 1000000);
+			}
 		}
 
 		if (rbgID.present()) {

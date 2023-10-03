@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2022 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2023 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@
  * limitations under the License.
  */
 
-#ifndef REST_KMS_CONNECTOR_H
-#define REST_KMS_CONNECTOR_H
+#ifndef FDBSERVER_REST_KMS_CONNECTOR_H
+#define FDBSERVER_REST_KMS_CONNECTOR_H
 #pragma once
 
 #include "fdbserver/KmsConnector.h"
@@ -27,7 +27,20 @@
 class RESTKmsConnector : public KmsConnector {
 public:
 	RESTKmsConnector(const std::string& conStr) : KmsConnector(conStr) {}
-	Future<Void> connectorCore(KmsConnectorInterface interf);
+	~RESTKmsConnector() {}
+
+	Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> fetchEncryptionKeysByDomainIds(
+	    std::any data,
+	    const std::vector<EncryptCipherDomainId>& domainIds,
+	    Optional<UID> debugId = Optional<UID>());
+	Future<Standalone<VectorRef<KmsCipherKeyDetailsRef>>> fetchEncryptionKeysByKeyIds(
+	    std::any data,
+	    const std::vector<KmsConnLookupKeyIdsInfo>& encryptKeyInfos,
+	    Optional<UID> debugId = Optional<UID>());
+	Future<Standalone<VectorRef<BlobMetadataDetailsRef>>> fetchBlobMetadata(
+	    std::any data,
+	    const std::vector<EncryptCipherDomainId>& domainIds,
+	    Optional<UID> debugId = Optional<UID>());
 };
 
 #endif

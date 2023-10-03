@@ -110,7 +110,7 @@ public:
 
 	Optional<Reference<TenantCache>> ddTenantCache;
 
-	Reference<DDConfiguration::RangeConfigMapSnapshot> userRangeConfig;
+	Reference<SpecialBoundaryInfo> userRangeConfig;
 	int teamSize;
 	// logical range configured to be over-replicated. key: replica, value: range count
 	std::map<int, int> largeTeamSizeRanges;

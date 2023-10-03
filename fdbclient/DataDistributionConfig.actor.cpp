@@ -55,3 +55,89 @@ json_spirit::mValue DDConfiguration::toJSON(RangeConfigMapSnapshot const& config
 
 	return doc;
 }
+
+std::vector<KeyRangeRef> splitRangeByBoundaries(KeyRangeRef keys, const std::vector<Key>& boundaries) {
+	auto it = std::upper_bound(boundaries.begin(), boundaries.end(), keys.begin);
+	return splitRangeByBoundaries(keys, it, boundaries.end(), [](decltype(it) it) { return *it; });
+}
+
+SpecialBoundaryInfo::SpecialBoundaryInfo(Reference<DDConfiguration::RangeConfigMapSnapshot> snapshot)
+  : snapshot(snapshot),
+    boundaryLoaded(false) {}
+
+void SpecialBoundaryInfo::reset(Reference<DDConfiguration::RangeConfigMapSnapshot> newSnapshot) {
+	snapshot = newSnapshot;
+	boundaryLoaded = false;
+	boundaries.clear();
+}
+
+const std::vector<Key>& SpecialBoundaryInfo::getSpecialBoundaries() {
+	if (boundaryLoaded)
+		return boundaries;
+
+	boundaries.clear();
+	for (const auto it : snapshot->ranges()) {
+		if (boundaries.empty())
+			boundaries.push_back(it->range().begin);
+		boundaries.push_back(it->range().end);
+	}
+	boundaryLoaded = true;
+	return boundaries;
+}
+
+// whether range go across a boundary point
+bool SpecialBoundaryInfo::violatesBoundary(KeyRangeRef range) {
+	getSpecialBoundaries();
+	auto it = std::upper_bound(boundaries.begin(), boundaries.end(), range.begin);
+	if (it == boundaries.end()) {
+		return false;
+	}
+	return range.contains(*it);
+}
+
+std::vector<KeyRangeRef> SpecialBoundaryInfo::splitRangeBySpecialBoundaries(KeyRangeRef keys) {
+	getSpecialBoundaries();
+	auto it = std::upper_bound(boundaries.begin(), boundaries.end(), keys.begin);
+	return splitRangeByBoundaries(keys, it, boundaries.end(), [](decltype(it) it) { return *it; });
+}
+
+TEST_CASE("/Shard/SplitBoundary") {
+	KeyRange range(KeyRangeRef("a"_sr, "o"_sr));
+	Reference<DDConfiguration::RangeConfigMapSnapshot> snapshot(
+	    new DDConfiguration::RangeConfigMapSnapshot(""_sr, "\xff"_sr));
+	snapshot->map["b"_sr] = {};
+	snapshot->map["c"_sr] = {};
+	snapshot->map["z"_sr] = {};
+	std::vector<Key> expBoundaries{ ""_sr, "b"_sr, "c"_sr, "z"_sr, "\xff"_sr };
+
+	SpecialBoundaryInfo info(snapshot);
+	auto& boundaries = info.getSpecialBoundaries();
+	ASSERT(boundaries == expBoundaries);
+	auto ranges = info.splitRangeBySpecialBoundaries(range);
+	// a, b, c, o
+	ASSERT_EQ(ranges.size(), 3);
+	ASSERT_EQ(KeyRangeRef("a"_sr, "b"_sr), ranges[0]);
+	ASSERT_EQ(KeyRangeRef("b"_sr, "c"_sr), ranges[1]);
+	ASSERT_EQ(KeyRangeRef("c"_sr, "o"_sr), ranges[2]);
+	KeyRange r1(KeyRangeRef("a"_sr, "o"_sr));
+	ASSERT(info.violatesBoundary(r1));
+	r1 = KeyRangeRef("z"_sr, "\xff"_sr);
+	ASSERT(!info.violatesBoundary(r1));
+	r1 = KeyRangeRef("d"_sr, "f"_sr);
+	ASSERT(!info.violatesBoundary(r1));
+
+	expBoundaries = std::vector<Key>{ ""_sr, "a"_sr, "c"_sr, "\xff"_sr };
+	ranges = splitRangeByBoundaries(range, expBoundaries);
+	// a, c, o
+	ASSERT_EQ(ranges.size(), 2);
+	ASSERT_EQ(KeyRangeRef("a"_sr, "c"_sr), ranges[0]);
+	ASSERT_EQ(KeyRangeRef("c"_sr, "o"_sr), ranges[1]);
+
+	expBoundaries = std::vector<Key>{ ""_sr, "a"_sr, "o"_sr, "\xff"_sr };
+	ranges = splitRangeByBoundaries(range, expBoundaries);
+	// a, o
+	ASSERT_EQ(ranges.size(), 1);
+	ASSERT_EQ(range, ranges[0]);
+
+	return Void();
+}
