@@ -3257,8 +3257,8 @@ void Tenant::setOption(FDBTenantOptions::Option option, Optional<StringRef> valu
 	// Currently there is only one tenant option, which is also for transaction defaults.
 	ASSERT(optionProps.defaultFor == 2000); /*FDBTransactionOptions::AUTHORIZATION_TOKEN*/
 	ASSERT(optionProps.sensitive);
-	sensitiveTransactionDefaults.addOption((FDBTransactionOptions::Option)optionProps.defaultFor,
-	                                       value.castTo<WipedString>());
+	authToken = value.castTo<WipedString>();
+	sensitiveTransactionDefaults.addOption((FDBTransactionOptions::Option)optionProps.defaultFor, authToken);
 }
 
 std::string Tenant::description() const {
