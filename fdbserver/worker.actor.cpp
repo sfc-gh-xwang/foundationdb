@@ -1124,21 +1124,12 @@ TEST_CASE("/fdbserver/worker/addressIsRemoteLogRouter") {
 
 // Returns true if the `peer` has enough measurement samples that should be checked by the health monitor.
 bool shouldCheckPeer(Reference<Peer> peer) {
-	if (peer->connectFailedCount != 0) {
+	if (peer->gfdConnectionFailureCount != 0) {
 		return true;
 	}
 
-	if (peer->pingLatencies.getPopulationSize() >= SERVER_KNOBS->PEER_LATENCY_CHECK_MIN_POPULATION) {
-		// Ignore peers that don't have enough samples.
-		// TODO(zhewu): Currently, FlowTransport latency monitor clears ping latency samples on a
-		// regular basis, which may affect the measurement count. Currently,
-		// WORKER_HEALTH_MONITOR_INTERVAL is much smaller than the ping clearance interval, so it may be
-		// ok. If this ends to be a problem, we need to consider keep track of last ping latencies
-		// logged.
-		return true;
-	}
-
-	return false;
+	// Ignore peers that don't have enough samples.
+	return peer->gfdPingLatencies.getPopulationSize() >= SERVER_KNOBS->PEER_LATENCY_CHECK_MIN_POPULATION;
 }
 
 // Returns true if `address` is a degraded/disconnected peer in `lastReq` sent to CC.
@@ -1153,6 +1144,13 @@ bool isDegradedPeer(const UpdateWorkerHealthRequest& lastReq, const NetworkAddre
 	}
 
 	return false;
+}
+
+void resetGFDMetrics(Reference<Peer> peer) {
+	peer->gfdConnectionFailureCount = 0;
+	peer->gfdPingTimeoutCount = 0;
+	peer->gfdPingLatencies.clear();
+	peer->gfdLastCheckTime = now();
 }
 
 // Check if the current worker is a transaction worker, and is experiencing degraded or disconnected peers.
@@ -1191,19 +1189,19 @@ UpdateWorkerHealthRequest doPeerHealthCheck(const WorkerInterface& interf,
 		bool disconnectedPeer = false;
 
 		// If peer->lastLoggedTime == 0, we just started monitor this peer and haven't logged it once yet.
-		double lastLoggedTime = peer->lastLoggedTime <= 0.0 ? peer->lastConnectTime : peer->lastLoggedTime;
+		double lastLoggedTime = peer->gfdLastCheckTime <= 0.0 ? peer->lastConnectTime : peer->gfdLastCheckTime;
 		if ((workerLocation == Primary && addressInDbAndPrimaryDc(address, dbInfo)) ||
 		    (workerLocation == Remote && addressInDbAndRemoteDc(address, dbInfo))) {
 			// Monitors intra DC latencies between servers that in the primary or remote DC's transaction
 			// systems. Note that currently we are not monitor storage servers, since lagging in storage
 			// servers today already can trigger server exclusion by data distributor.
 
-			if (peer->connectFailedCount >= SERVER_KNOBS->PEER_DEGRADATION_CONNECTION_FAILURE_COUNT) {
+			if (peer->gfdConnectionFailureCount >= SERVER_KNOBS->PEER_DEGRADATION_CONNECTION_FAILURE_COUNT) {
 				disconnectedPeer = true;
-			} else if (peer->pingLatencies.percentile(SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE) >
+			} else if (peer->gfdPingLatencies.percentile(SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE) >
 			               SERVER_KNOBS->PEER_LATENCY_DEGRADATION_THRESHOLD ||
-			           peer->timeoutCount / (double)(peer->pingLatencies.getPopulationSize()) >
-			               SERVER_KNOBS->PEER_TIMEOUT_PERCENTAGE_DEGRADATION_THRESHOLD) {
+			           peer->gfdPingTimeoutCount > (peer->gfdPingLatencies.getPopulationSize() *
+			                                        SERVER_KNOBS->PEER_TIMEOUT_PERCENTAGE_DEGRADATION_THRESHOLD)) {
 				degradedPeer = true;
 			}
 			if (disconnectedPeer || degradedPeer) {
@@ -1211,26 +1209,26 @@ UpdateWorkerHealthRequest doPeerHealthCheck(const WorkerInterface& interf,
 				    .detail("Peer", address)
 				    .detail("Elapsed", now() - lastLoggedTime)
 				    .detail("Disconnected", disconnectedPeer)
-				    .detail("MinLatency", peer->pingLatencies.min())
-				    .detail("MaxLatency", peer->pingLatencies.max())
-				    .detail("MeanLatency", peer->pingLatencies.mean())
-				    .detail("MedianLatency", peer->pingLatencies.median())
+				    .detail("MinLatency", peer->gfdPingLatencies.min())
+				    .detail("MaxLatency", peer->gfdPingLatencies.max())
+				    .detail("MeanLatency", peer->gfdPingLatencies.mean())
+				    .detail("MedianLatency", peer->gfdPingLatencies.median())
 				    .detail("CheckedPercentile", SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE)
 				    .detail("CheckedPercentileLatency",
-				            peer->pingLatencies.percentile(SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE))
-				    .detail("PingCount", peer->pingLatencies.getPopulationSize())
-				    .detail("PingTimeoutCount", peer->timeoutCount)
-				    .detail("ConnectionFailureCount", peer->connectFailedCount);
+				            peer->gfdPingLatencies.percentile(SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE))
+				    .detail("PingCount", peer->gfdPingLatencies.getPopulationSize())
+				    .detail("PingTimeoutCount", peer->gfdPingTimeoutCount)
+				    .detail("ConnectionFailureCount", peer->gfdConnectionFailureCount);
 			}
 		} else if (workerLocation == Primary && addressInDbAndPrimarySatelliteDc(address, dbInfo)) {
 			// Monitors inter DC latencies between servers in primary and primary satellite DC. Note that
 			// TLog workers in primary satellite DC are on the critical path of serving a commit.
-			if (peer->connectFailedCount >= SERVER_KNOBS->PEER_DEGRADATION_CONNECTION_FAILURE_COUNT) {
+			if (peer->gfdConnectionFailureCount >= SERVER_KNOBS->PEER_DEGRADATION_CONNECTION_FAILURE_COUNT) {
 				disconnectedPeer = true;
-			} else if (peer->pingLatencies.percentile(SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE_SATELLITE) >
+			} else if (peer->gfdPingLatencies.percentile(SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE_SATELLITE) >
 			               SERVER_KNOBS->PEER_LATENCY_DEGRADATION_THRESHOLD_SATELLITE ||
-			           peer->timeoutCount / (double)(peer->pingLatencies.getPopulationSize()) >
-			               SERVER_KNOBS->PEER_TIMEOUT_PERCENTAGE_DEGRADATION_THRESHOLD) {
+			           peer->gfdPingTimeoutCount > (peer->gfdPingLatencies.getPopulationSize() *
+			                                        SERVER_KNOBS->PEER_TIMEOUT_PERCENTAGE_DEGRADATION_THRESHOLD)) {
 				degradedPeer = true;
 			}
 
@@ -1240,36 +1238,37 @@ UpdateWorkerHealthRequest doPeerHealthCheck(const WorkerInterface& interf,
 				    .detail("Satellite", true)
 				    .detail("Elapsed", now() - lastLoggedTime)
 				    .detail("Disconnected", disconnectedPeer)
-				    .detail("MinLatency", peer->pingLatencies.min())
-				    .detail("MaxLatency", peer->pingLatencies.max())
-				    .detail("MeanLatency", peer->pingLatencies.mean())
-				    .detail("MedianLatency", peer->pingLatencies.median())
+				    .detail("MinLatency", peer->gfdPingLatencies.min())
+				    .detail("MaxLatency", peer->gfdPingLatencies.max())
+				    .detail("MeanLatency", peer->gfdPingLatencies.mean())
+				    .detail("MedianLatency", peer->gfdPingLatencies.median())
 				    .detail("CheckedPercentile", SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE_SATELLITE)
-				    .detail("CheckedPercentileLatency",
-				            peer->pingLatencies.percentile(SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE_SATELLITE))
-				    .detail("PingCount", peer->pingLatencies.getPopulationSize())
-				    .detail("PingTimeoutCount", peer->timeoutCount)
-				    .detail("ConnectionFailureCount", peer->connectFailedCount);
+				    .detail(
+				        "CheckedPercentileLatency",
+				        peer->gfdPingLatencies.percentile(SERVER_KNOBS->PEER_LATENCY_DEGRADATION_PERCENTILE_SATELLITE))
+				    .detail("PingCount", peer->gfdPingLatencies.getPopulationSize())
+				    .detail("PingTimeoutCount", peer->gfdPingTimeoutCount)
+				    .detail("ConnectionFailureCount", peer->gfdConnectionFailureCount);
 			}
 		} else if (checkRemoteLogRouterConnectivity && (workerLocation == Primary || workerLocation == Satellite) &&
 		           addressIsRemoteLogRouter(address, dbInfo)) {
 			// Monitor remote log router's connectivity to the primary DCs' transaction system. We ignore
 			// latency based degradation between primary region and remote region due to that remote region
 			// may be distant from primary region.
-			if (peer->connectFailedCount >= SERVER_KNOBS->PEER_DEGRADATION_CONNECTION_FAILURE_COUNT) {
+			if (peer->gfdConnectionFailureCount >= SERVER_KNOBS->PEER_DEGRADATION_CONNECTION_FAILURE_COUNT) {
 				TraceEvent("HealthMonitorDetectDegradedPeer")
 				    .detail("WorkerLocation", workerLocation)
 				    .detail("Peer", address)
 				    .detail("RemoteLogRouter", true)
 				    .detail("Elapsed", now() - lastLoggedTime)
 				    .detail("Disconnected", true)
-				    .detail("MinLatency", peer->pingLatencies.min())
-				    .detail("MaxLatency", peer->pingLatencies.max())
-				    .detail("MeanLatency", peer->pingLatencies.mean())
-				    .detail("MedianLatency", peer->pingLatencies.median())
-				    .detail("PingCount", peer->pingLatencies.getPopulationSize())
-				    .detail("PingTimeoutCount", peer->timeoutCount)
-				    .detail("ConnectionFailureCount", peer->connectFailedCount);
+				    .detail("MinLatency", peer->gfdPingLatencies.min())
+				    .detail("MaxLatency", peer->gfdPingLatencies.max())
+				    .detail("MeanLatency", peer->gfdPingLatencies.mean())
+				    .detail("MedianLatency", peer->gfdPingLatencies.median())
+				    .detail("PingCount", peer->gfdPingLatencies.getPopulationSize())
+				    .detail("PingTimeoutCount", peer->gfdPingTimeoutCount)
+				    .detail("ConnectionFailureCount", peer->gfdConnectionFailureCount);
 				disconnectedPeer = true;
 			}
 		}
@@ -1327,6 +1326,11 @@ UpdateWorkerHealthRequest doPeerHealthCheck(const WorkerInterface& interf,
 		}
 	}
 
+	// reset ping latency metrics used by gray failure detection
+	for (const auto& [_, peer] : allPeers) {
+		resetGFDMetrics(peer);
+	}
+
 	return req;
 }
 
@@ -1336,6 +1340,7 @@ ACTOR Future<Void> healthMonitor(Reference<AsyncVar<Optional<ClusterControllerFu
                                  LocalityData locality,
                                  Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
 	state UpdateWorkerHealthRequest req;
+	state double lastCheckTime = now();
 	loop {
 		Future<Void> nextHealthCheckDelay = Never();
 		if (dbInfo->get().recoveryState >= RecoveryState::ACCEPTING_COMMITS && ccInterface->get().present()) {
@@ -1360,6 +1365,16 @@ ACTOR Future<Void> healthMonitor(Reference<AsyncVar<Optional<ClusterControllerFu
 				req.address = FlowTransport::transport().getLocalAddress();
 				ccInterface->get().get().updateWorkerHealth.send(req);
 			}
+			lastCheckTime = now();
+		} else if ((now() - lastCheckTime) > 10 * SERVER_KNOBS->WORKER_HEALTH_MONITOR_INTERVAL) {
+			// reset metrics, avoid persisting too many latency samples
+			const auto& allPeers = FlowTransport::transport().getAllPeers();
+			for (const auto& [_, peer] : allPeers) {
+				resetGFDMetrics(peer);
+			}
+			TraceEvent(SevWarn, "HealthMonitorStuckTooLong")
+			    .detail("Elapsed", now() - lastCheckTime)
+			    .detail("RecoveryGeneration", dbInfo->get().infoGeneration);
 		}
 		choose {
 			when(wait(nextHealthCheckDelay)) {}
@@ -2488,7 +2503,7 @@ ACTOR Future<Void> workerServer(Reference<IClusterConnectionRecord> connRecord,
 			errorForwarders.add(brokenPromiseToNever(localConfig->consume(configBroadcastInterface)));
 		}
 
-		if (SERVER_KNOBS->ENABLE_WORKER_HEALTH_MONITOR) {
+		if (FLOW_KNOBS->ENABLE_WORKER_HEALTH_MONITOR) {
 			errorForwarders.add(healthMonitor(ccInterface, interf, locality, dbInfo));
 		}
 

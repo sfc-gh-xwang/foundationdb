@@ -1035,7 +1035,6 @@ public:
 	                                                 // become the leader.
 	double MAX_DELAY_CC_WORST_FIT_CANDIDACY_SECONDS;
 	double DBINFO_FAILED_DELAY;
-	bool ENABLE_WORKER_HEALTH_MONITOR;
 	double WORKER_HEALTH_MONITOR_INTERVAL; // Interval between two health monitor health check.
 	int PEER_LATENCY_CHECK_MIN_POPULATION; // The minimum number of latency samples required to check a peer.
 	double PEER_LATENCY_DEGRADATION_PERCENTILE; // The percentile latency used to check peer health among workers inside
