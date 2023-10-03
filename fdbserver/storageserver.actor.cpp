@@ -6816,7 +6816,7 @@ void applyChangeFeedMutation(StorageServer* self,
                              Version version,
                              KeyRangeRef const& shard) {
 	ASSERT(self->encryptionMode.present());
-	ASSERT(!self->encryptionMode.get().isEncryptionEnabled() || encryptedMutation.mutation.isEncrypted() ||
+	ASSERT(!self->encryptionMode.get().isEncryptionEnabled() || encryptedMutation.encryptedMutation.isEncrypted() ||
 	       isBackupLogMutation(m) || mutationForKey(m, lastEpochEndPrivateKey));
 	if (m.type == MutationRef::SetValue) {
 		for (auto& it : self->keyChangeFeed[m.param1]) {
@@ -6825,13 +6825,13 @@ void applyChangeFeedMutation(StorageServer* self,
 					it->mutations.push_back(
 					    EncryptedMutationsAndVersionRef(version, self->knownCommittedVersion.get()));
 				}
-				if (encryptedMutation.mutation.isValid()) {
+				if (encryptedMutation.encryptedMutation.isValid()) {
 					if (!it->mutations.back().encrypted.present()) {
 						it->mutations.back().encrypted = it->mutations.back().mutations;
 						it->mutations.back().cipherKeys.resize(it->mutations.back().mutations.size());
 					}
 					it->mutations.back().encrypted.get().push_back_deep(it->mutations.back().arena(),
-					                                                    encryptedMutation.mutation);
+					                                                    encryptedMutation.encryptedMutation);
 					it->mutations.back().cipherKeys.push_back(encryptedMutation.cipherKeys);
 				} else if (it->mutations.back().encrypted.present()) {
 					it->mutations.back().encrypted.get().push_back_deep(it->mutations.back().arena(), m);
@@ -6884,7 +6884,7 @@ void applyChangeFeedMutation(StorageServer* self,
 						it->mutations.push_back(
 						    EncryptedMutationsAndVersionRef(version, self->knownCommittedVersion.get()));
 					}
-					if (encryptedMutation.mutation.isEncrypted()) {
+					if (encryptedMutation.encryptedMutation.isEncrypted()) {
 						if (!it->mutations.back().encrypted.present()) {
 							it->mutations.back().encrypted = it->mutations.back().mutations;
 							it->mutations.back().cipherKeys.resize(it->mutations.back().mutations.size());
@@ -6897,7 +6897,7 @@ void applyChangeFeedMutation(StorageServer* self,
 							                          BlobCipherMetrics::TLOG));
 						} else {
 							it->mutations.back().encrypted.get().push_back_deep(it->mutations.back().arena(),
-							                                                    encryptedMutation.mutation);
+							                                                    encryptedMutation.encryptedMutation);
 						}
 						it->mutations.back().cipherKeys.push_back(encryptedMutation.cipherKeys);
 					} else if (it->mutations.back().encrypted.present()) {
@@ -9406,9 +9406,9 @@ void StorageServer::addMutation(Version version,
 		// arena, and thus would go out of scope if it wasn't copied into the change feed arena
 
 		MutationRefAndCipherKeys encrypt = encryptedMutation;
-		if (encrypt.mutation.isEncrypted() && mutation.type != MutationRef::SetValue &&
+		if (encrypt.encryptedMutation.isEncrypted() && mutation.type != MutationRef::SetValue &&
 		    mutation.type != MutationRef::ClearRange) {
-			encrypt.mutation = expanded.encrypt(encrypt.cipherKeys, mLog.arena(), BlobCipherMetrics::TLOG);
+			encrypt.encryptedMutation = expanded.encrypt(encrypt.cipherKeys, mLog.arena(), BlobCipherMetrics::TLOG);
 		}
 
 		applyChangeFeedMutation(
@@ -10333,7 +10333,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				       isBackupLogMutation(msg));
 				if (msg.isEncrypted()) {
 					ASSERT(cipherKeys.present() && latestCipherKeys.present());
-					encryptedMutation.mutation = msg;
+					encryptedMutation.encryptedMutation = msg;
 					// Set to latest cipher keys since this mutation will get re-encrypted later
 					encryptedMutation.cipherKeys = msg.getLatestCipherKeys(latestCipherKeys.get());
 					double decryptionTimeV = 0;

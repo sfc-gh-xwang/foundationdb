@@ -467,7 +467,7 @@ struct MutationsAndVersionRef {
 };
 
 struct MutationRefAndCipherKeys {
-	MutationRef mutation;
+	MutationRef encryptedMutation;
 	TextAndHeaderCipherKeys cipherKeys;
 };
 
