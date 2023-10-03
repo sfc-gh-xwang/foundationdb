@@ -677,7 +677,7 @@ static void alignKeyBoundary(Reference<BlobManagerData> bmData,
                              BlobGranuleSplitPoints& splitPoints) {
 	Standalone<VectorRef<KeyRef>>& keys = splitPoints.keys;
 	std::unordered_map<Key, BlobGranuleMergeBoundary>& boundaries = splitPoints.boundaries;
-	KeyRef alignedKey = key;
+	Key alignedKey = key;
 	Tuple t, t2;
 
 	if (!offset) {
@@ -690,26 +690,7 @@ static void alignKeyBoundary(Reference<BlobManagerData> bmData,
 		alignedKey = alignedKey.removePrefix(tenantData->entry.prefix);
 	}
 	try {
-		// if snowtram aware, tuple must parse and not be truncated, but maintain non-snowtram-aware case for backwards
-		// compatibility
-		t = Tuple::unpackUserType(alignedKey, !snowtramAware);
-		if (snowtramAware) {
-			bool snowtramKey = t.isSnowtramKey();
-			if (snowtramKey && t.isSnowtramDataOrIndexSpace()) {
-				CODE_PROBE(true, "snowtram-aware alignKeys found snowtram key to truncate");
-				ASSERT(offset == 1);
-			} else {
-				CODE_PROBE(snowtramKey, "found snowtram key in non-data/index space");
-				// if not valid snowtram key in the data or index space, don't truncate
-				// We expect TST entries to hit this, but if any user key does that's bad
-				CODE_PROBE(true, "snowtram-aware alignKeys found non-snowtram key, skipping truncate");
-				offset = t.size();
-			}
-		}
-		if (t.size() > offset) {
-			t2 = t.subTuple(0, t.size() - offset);
-			alignedKey = t2.pack();
-		}
+		alignedKey = BlobGranuleKeyHelpers::truncateKey(alignedKey, offset, snowtramAware);
 	} catch (Error& e) {
 		if (e.code() != error_code_invalid_tuple_data_type) {
 			throw;
