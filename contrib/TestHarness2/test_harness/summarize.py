@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import collections
 import inspect
 import json
@@ -741,3 +742,38 @@ class Summary:
                 self.stderr_severity = attrs["NewSeverity"]
 
         self.handler.add_handler(("Type", "StderrSeverity"), stderr_severity)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        "Summarize", formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    # pretty print should be default as summarize is intended for humans to run
+    config.change_default("pretty_print", True)
+    config.build_arguments(parser)
+    parser.add_argument(
+        "test_files", nargs="+", type=str, help="trace files to summarize"
+    )
+    args = parser.parse_args()
+    config.extract_args(args)
+    trace_files: List[Path] = []
+    for f in args.test_files:
+        trace_files.append(Path(f))
+    summary = Summary(Path("fdbserver"))
+    summary.summarize_files(trace_files)
+    hitProbes = SummaryTree("HitProbes")
+    missedProbes = SummaryTree("MissedProbes")
+    for cov, hit in summary.coverage.items():
+        probe = SummaryTree("CodeProbe")
+        probe.attributes["File"] = cov.file
+        probe.attributes["Line"] = cov.line
+        probe.attributes["Comment"] = "" if cov.comment is None else cov.comment
+        probe.attributes["Rare"] = "1" if cov.rare else "0"
+        if hit:
+            hitProbes.append(probe)
+        else:
+            missedProbes.append(probe)
+    summary.out.append(hitProbes)
+    if config.details:
+        summary.out.append(missedProbes)
+    summary.out.dump(sys.stdout)
