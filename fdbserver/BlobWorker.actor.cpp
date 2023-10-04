@@ -4637,9 +4637,10 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 			state Future<Optional<GranuleOpenBulkLoadState>> fIsBulkLoading = isRangeBulkLoading(&tr, req.keyRange);
 			state Future<ValueReadResult> fLockValue = tr.get(lockKey);
 			state Future<ForcedPurgeState> fForcedPurgeState = getForcePurgedState(&tr, req.keyRange);
-			Reference<BlobRestoreController> restoreController =
+			state Reference<BlobRestoreController> restoreController =
 			    makeReference<BlobRestoreController>(bwData->db, req.keyRange);
-			state Future<bool> fIsRestoring = BlobRestoreController::isRestoring(restoreController);
+			state Future<BlobRestorePhase> fRestorePhase =
+			    BlobGranuleRestoreConfig().phase().getD(&tr, Snapshot::False, BlobRestorePhase::UNINIT);
 			state Future<Void> fKrmSetRange =
 			    krmSetRange(&tr, blobGranuleMappingKeys.begin, req.keyRange, blobGranuleMappingValueFor(bwData->id));
 			Future<Optional<GranuleHistory>> fHistory = getLatestGranuleHistory(&tr, req.keyRange);
@@ -4658,13 +4659,12 @@ ACTOR Future<GranuleStartState> openGranule(Reference<BlobWorkerData> bwData, As
 				throw granule_assignment_conflict();
 			}
 
-			bool isFullRestore = wait(fIsRestoring);
-			bwData->isFullRestoreMode = isFullRestore;
+			BlobRestorePhase restorePhase = wait(fRestorePhase);
+			bwData->isFullRestoreMode = restoreController->isRestoring(restorePhase);
 
 			ValueReadResult prevLockValue = wait(fLockValue);
 			state bool hasPrevOwner = prevLockValue.present();
 			state bool createChangeFeed = false;
-
 			if (hasPrevOwner) {
 				CODE_PROBE(true, "Granule open found previous owner");
 				std::tuple<int64_t, int64_t, UID> prevOwner = decodeBlobGranuleLockValue(prevLockValue.get());

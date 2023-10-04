@@ -218,6 +218,8 @@ public:
 	ACTOR static Future<Void> setProgress(Reference<BlobRestoreController> self, int progress, UID blobMigratorId);
 	ACTOR static Future<Void> setLockOwner(Reference<BlobRestoreController> self, UID migratorId);
 
+	bool isRestoring(BlobRestorePhase phase);
+
 private:
 	Database db_;
 	Standalone<KeyRangeRef> range_;
