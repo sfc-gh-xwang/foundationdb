@@ -1593,10 +1593,14 @@ ACTOR Future<BlobGranuleSplitPoints> getSplitPointsFromWrittenPointers(
 	state int i;
 	for (i = 0; i < writtenPointers->results.size(); i++) {
 		KeyRange r = writtenPointers->results[i].second.keyRange;
+		// The client gives us unaligned keys. Align them by truncating the user-provided tuple(s).
+		Key truncatedStart = BlobGranuleKeyHelpers::truncateKey(
+		    r.begin, SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET, SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE);
+		KeyRange truncatedKeyRange(KeyRangeRef(truncatedStart, r.end));
 		if (tenantId != TenantInfo::INVALID_TENANT) {
-			r = r.withPrefix(TenantAPI::idToPrefix(tenantId));
+			truncatedKeyRange = truncatedKeyRange.withPrefix(TenantAPI::idToPrefix(tenantId));
 		}
-		writtenPointerIdxByRange.insert(r, i);
+		writtenPointerIdxByRange.insert(truncatedKeyRange, i);
 		if (i % 1000 == 999 || BUGGIFY_WITH_PROB(0.01)) {
 			wait(yield());
 		}
@@ -7274,7 +7278,11 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 			}
 
 			try {
-				validateBulkLoadWrittenPointers(idKey.second, info.get(), filesToValidate);
+				validateBulkLoadWrittenPointers(idKey.second,
+				                                info.get(),
+				                                filesToValidate,
+				                                SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET,
+				                                SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE);
 			} catch (Error& e) {
 				if (e.code() == error_code_bulk_load_invalid_file_metadata) {
 					CODE_PROBE(true, "bulk load invalid file metadata when staging");

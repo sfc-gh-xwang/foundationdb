@@ -232,7 +232,9 @@ Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMeta(Reference<Asyn
 
 void validateBulkLoadWrittenPointers(const BulkLoadID& id,
                                      const BulkLoadInfo& info,
-                                     const VectorRef<BulkLoadWrittenFileRef>& files);
+                                     const VectorRef<BulkLoadWrittenFileRef>& files,
+                                     int truncateOffset,
+                                     bool isSnowtramAware);
 namespace BlobGranuleKeyHelpers {
 
 // Returns a snowtram "aligned key" by removing any user defined type tuples from the end of the key.

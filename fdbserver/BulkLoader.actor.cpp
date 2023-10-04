@@ -7,6 +7,7 @@
 #include <map>
 #include "fdbserver/BulkLoader.h"
 
+#include "fdbserver/Knobs.h"
 #include "flow/ActorCollection.h"
 #include "flow/network.h"
 #include "fdbrpc/simulator.h"
@@ -539,7 +540,11 @@ ACTOR Future<Void> handleFilesWrittenRequest(Reference<BulkLoaderData> self,
 		state int idx = 0;
 
 		// do some basic validation that all files are in range and don't overlap
-		validateBulkLoadWrittenPointers(req.id, info, req.filesWritten);
+		validateBulkLoadWrittenPointers(req.id,
+		                                info,
+		                                req.filesWritten,
+		                                SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET,
+		                                SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE);
 
 		state std::set<BulkLoadFileID> validatedFiles;
 		loop {

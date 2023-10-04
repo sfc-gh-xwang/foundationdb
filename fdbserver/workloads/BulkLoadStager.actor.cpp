@@ -150,8 +150,6 @@ private:
 			startKey = startKey.removePrefix(self->tenant.get()->prefix());
 			endKey = endKey.removePrefix(self->tenant.get()->prefix());
 		}
-		startKey = BlobGranuleKeyHelpers::truncateKey(
-		    startKey, SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET, SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE);
 		KeyRange keyRange(KeyRangeRef(startKey, keyAfter(endKey)));
 		writtenFile.arena().dependsOn(keyRange.arena());
 		writtenFile.keyRange = keyRange;

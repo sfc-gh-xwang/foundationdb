@@ -19,6 +19,7 @@
  */
 
 #include "fdbclient/BulkLoad.h"
+#include "fdbclient/Tuple.h"
 #include "flow/Error.h"
 #include "fmt/format.h"
 #include "fdbclient/BlobGranuleCommon.h"
@@ -695,7 +696,9 @@ ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(BGTenantMap*
 // FIXME: for large number of files, maybe break up with yields?
 void validateBulkLoadWrittenPointers(const BulkLoadID& id,
                                      const BulkLoadInfo& info,
-                                     const VectorRef<BulkLoadWrittenFileRef>& files) {
+                                     const VectorRef<BulkLoadWrittenFileRef>& files,
+                                     int truncateOffset,
+                                     bool isSnowtramAware) {
 	std::vector<KeyRange> ranges;
 	std::unordered_set<BulkLoadFileID> fileIds;
 	ranges.reserve(files.size());
@@ -724,7 +727,9 @@ void validateBulkLoadWrittenPointers(const BulkLoadID& id,
 		// Truncate & align the start key, so that the checks below use
 		// aligned keys. This ensures checking that granules aren't split in between
 		// aligned keys.
-		ranges.push_back(p.keyRange);
+		Key truncatedStartKey = BlobGranuleKeyHelpers::truncateKey(p.keyRange.begin, truncateOffset, isSnowtramAware);
+		KeyRange truncatedKeyRange(KeyRangeRef(truncatedStartKey, p.keyRange.end));
+		ranges.push_back(truncatedKeyRange);
 		if (!fileIds.insert(p.fileId).second) {
 			// duplicate file ids
 			TraceEvent("BulkLoadInvalidPointerDuplicateFileID").detail("LoadID", id).detail("FileID", p.fileId);
@@ -750,13 +755,15 @@ void validateBulkLoadWrittenPointers(const BulkLoadID& id,
 // helper to convert std::vector to VectorRef
 void validateBulkLoadWrittenPointers(const BulkLoadID& id,
                                      const BulkLoadInfo& info,
-                                     const std::vector<BulkLoadWrittenFileRef>& files) {
+                                     const std::vector<BulkLoadWrittenFileRef>& files,
+                                     int truncateOffset,
+                                     bool isSnowtramAware) {
 	Standalone<VectorRef<BulkLoadWrittenFileRef>> vRef;
 	vRef.reserve(vRef.arena(), files.size());
 	for (auto& it : files) {
 		vRef.push_back(vRef.arena(), it);
 	}
-	return validateBulkLoadWrittenPointers(id, info, vRef);
+	return validateBulkLoadWrittenPointers(id, info, vRef, truncateOffset, isSnowtramAware);
 }
 
 BulkLoadWrittenFileRef createPtr(const BulkLoadInfo& info, Arena& ar) {
@@ -772,7 +779,9 @@ BulkLoadWrittenFileRef createPtr(const BulkLoadInfo& info, Arena& ar) {
 void checkKeyRanges(bool expectSuccess,
                     const BulkLoadID& id,
                     const BulkLoadInfo& info,
-                    const std::vector<KeyRangeRef>& ranges) {
+                    const std::vector<KeyRangeRef>& ranges,
+                    int truncateOffset,
+                    bool isSnowtramAware) {
 	Standalone<VectorRef<BulkLoadWrittenFileRef>> ptrs;
 	ptrs.reserve(ptrs.arena(), ranges.size());
 	for (auto& it : ranges) {
@@ -782,7 +791,7 @@ void checkKeyRanges(bool expectSuccess,
 	}
 
 	try {
-		validateBulkLoadWrittenPointers(id, info, ptrs);
+		validateBulkLoadWrittenPointers(id, info, ptrs, truncateOffset, isSnowtramAware);
 		ASSERT(expectSuccess);
 	} catch (Error& e) {
 		ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
@@ -790,93 +799,147 @@ void checkKeyRanges(bool expectSuccess,
 	}
 }
 
+Key getKeyWithUserType(const std::string& key, const std::string& userTypeStr) {
+	Tuple::UserTypeStr udt(0x41, userTypeStr);
+	return Tuple::makeTuple(key, udt).pack();
+}
+
 TEST_CASE("/fdbserver/bulkload/validateBulkLoadWrittenPointers") {
 	state Arena ar;
-	state Standalone<StringRef> keyA = "a"_sr;
-	state Standalone<StringRef> keyB = "b"_sr;
-	state Standalone<StringRef> keyC = "c"_sr;
-	state Standalone<StringRef> keyD = "d"_sr;
-	state Standalone<StringRef> keyZ = "z"_sr;
+	state Standalone<StringRef> keyA;
+	state Standalone<StringRef> keyB;
+	state Standalone<StringRef> keyC;
+	state Standalone<StringRef> keyD;
+	state Standalone<StringRef> keyZ;
 	state BulkLoadID id = "bulkloadid"_sr;
 	state BulkLoadInfo info;
-	info.keyRange = KeyRangeRef(keyA, keyD);
 
-	// check default pointer is valid
-	{
-		BulkLoadWrittenFileRef ptr = createPtr(info, ar);
-		validateBulkLoadWrittenPointers(id, info, { ptr });
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB) });
-	}
+	state std::vector<bool> keysWithUdt(true, false);
+	for (auto useUdt : keysWithUdt) {
+		if (useUdt) {
+			keyA = getKeyWithUserType("a", "0");
+			keyB = getKeyWithUserType("b", "0");
+			keyC = getKeyWithUserType("c", "0");
+			keyD = getKeyWithUserType("d", "0");
+			keyZ = getKeyWithUserType("z", "0");
+		} else {
+			keyA = "a"_sr;
+			keyB = "b"_sr;
+			keyC = "c"_sr;
+			keyD = "d"_sr;
+			keyZ = "z"_sr;
+		}
+		info.keyRange = KeyRangeRef(keyA, keyD);
 
-	// check invalid logical/physical size
-	{
-		try {
+		state int truncateOffset = useUdt ? 1 : 0;
+
+		// check default pointer is valid
+		{
 			BulkLoadWrittenFileRef ptr = createPtr(info, ar);
-			ptr.logicalSize = -1;
-			validateBulkLoadWrittenPointers(id, info, { ptr });
-			ASSERT(false);
-		} catch (Error& e) {
-			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+			validateBulkLoadWrittenPointers(id, info, { ptr }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB) }, truncateOffset, false);
+		}
+
+		// check invalid logical/physical size
+		{
+			try {
+				BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+				ptr.logicalSize = -1;
+				validateBulkLoadWrittenPointers(id, info, { ptr }, truncateOffset, false);
+				ASSERT(false);
+			} catch (Error& e) {
+				ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+			}
+		}
+
+		{
+			try {
+				BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+				ptr.physicalSize = -1;
+				validateBulkLoadWrittenPointers(id, info, { ptr }, truncateOffset, false);
+				ASSERT(false);
+			} catch (Error& e) {
+				ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+			}
+		}
+
+		// check duplicate file ids
+		{
+			try {
+				BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+				validateBulkLoadWrittenPointers(id, info, { ptr, ptr }, truncateOffset, false);
+				ASSERT(false);
+			} catch (Error& e) {
+				ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+			}
+		}
+
+		// check ranges outside of bulk load range
+		{
+			checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyZ) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyA) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyB) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyD) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(keyA, keyZ) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(keyB, keyZ) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(keyZ, "\xff"_sr) }, truncateOffset, false);
+		}
+
+		// check overlapping ranges within bulk load range
+		{
+
+			checkKeyRanges(
+			    false, id, info, { KeyRangeRef(keyA, keyC), KeyRangeRef(keyB, keyD) }, truncateOffset, false);
+			checkKeyRanges(
+			    false, id, info, { KeyRangeRef(keyA, keyD), KeyRangeRef(keyB, keyC) }, truncateOffset, false);
+			// reverse order
+			checkKeyRanges(
+			    false, id, info, { KeyRangeRef(keyB, keyD), KeyRangeRef(keyA, keyC) }, truncateOffset, false);
+			checkKeyRanges(
+			    false, id, info, { KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyD) }, truncateOffset, false);
+		}
+
+		// check valid subsets of ranges
+		{
+			// one range or subranges
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyD) }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB) }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyB, keyC) }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD) }, truncateOffset, false);
+			// non-connecting but multiple
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB), KeyRangeRef(keyC, keyD) }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD), KeyRangeRef(keyA, keyB) }, truncateOffset, false);
+			// multiple connecting
+			checkKeyRanges(true,
+			               id,
+			               info,
+			               { KeyRangeRef(keyA, keyB), KeyRangeRef(keyB, keyC), KeyRangeRef(keyC, keyD) },
+			               truncateOffset,
+			               false);
+			checkKeyRanges(true,
+			               id,
+			               info,
+			               { KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyB), KeyRangeRef(keyC, keyD) },
+			               truncateOffset,
+			               false);
+			checkKeyRanges(true,
+			               id,
+			               info,
+			               { KeyRangeRef(keyC, keyD), KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyB) },
+			               truncateOffset,
+			               false);
 		}
 	}
-
+	state Standalone<StringRef> keyA0 = getKeyWithUserType("a", "0");
+	state Standalone<StringRef> keyB1 = getKeyWithUserType("b", "1");
+	state Standalone<StringRef> keyB2 = getKeyWithUserType("b", "2");
+	state Standalone<StringRef> keyC0 = getKeyWithUserType("c", "0");
+	state Standalone<StringRef> keyD0 = getKeyWithUserType("c", "0");
+	// Check splits in between truncated keys.
 	{
-		try {
-			BulkLoadWrittenFileRef ptr = createPtr(info, ar);
-			ptr.physicalSize = -1;
-			validateBulkLoadWrittenPointers(id, info, { ptr });
-			ASSERT(false);
-		} catch (Error& e) {
-			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
-		}
-	}
-
-	// check duplicate file ids
-	{
-		try {
-			BulkLoadWrittenFileRef ptr = createPtr(info, ar);
-			validateBulkLoadWrittenPointers(id, info, { ptr, ptr });
-			ASSERT(false);
-		} catch (Error& e) {
-			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
-		}
-	}
-
-	// check ranges outside of bulk load range
-	{
-		checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyZ) });
-		checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyA) });
-		checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyB) });
-		checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyD) });
-		checkKeyRanges(false, id, info, { KeyRangeRef(keyA, keyZ) });
-		checkKeyRanges(false, id, info, { KeyRangeRef(keyB, keyZ) });
-		checkKeyRanges(false, id, info, { KeyRangeRef(keyZ, "\xff"_sr) });
-	}
-
-	// check overlapping ranges within bulk load range
-	{
-
-		checkKeyRanges(false, id, info, { KeyRangeRef(keyA, keyC), KeyRangeRef(keyB, keyD) });
-		checkKeyRanges(false, id, info, { KeyRangeRef(keyA, keyD), KeyRangeRef(keyB, keyC) });
-		// reverse order
-		checkKeyRanges(false, id, info, { KeyRangeRef(keyB, keyD), KeyRangeRef(keyA, keyC) });
-		checkKeyRanges(false, id, info, { KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyD) });
-	}
-
-	// check valid subsets of ranges
-	{
-		// one range or subranges
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyD) });
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB) });
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyB, keyC) });
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD) });
-		// non-connecting but multiple
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB), KeyRangeRef(keyC, keyD) });
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD), KeyRangeRef(keyA, keyB) });
-		// multiple connecting
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB), KeyRangeRef(keyB, keyC), KeyRangeRef(keyC, keyD) });
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyB), KeyRangeRef(keyC, keyD) });
-		checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD), KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyB) });
+		info.keyRange = KeyRangeRef(keyA0, keyD0);
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyA0, keyB1), KeyRangeRef(keyB1, keyC0) }, 1, false);
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyA0, keyB1), KeyRangeRef(keyB2, keyC0) }, 1, false);
 	}
 
 	return Void();
@@ -905,11 +968,11 @@ Key truncateKey(KeyRef key, int truncateOffset, bool isSnowtramAware) {
 			truncateOffset = t.size();
 		}
 	}
+
 	if (t.size() > truncateOffset) {
 		Tuple t2 = t.subTuple(0, t.size() - truncateOffset);
 		truncatedKey = t2.pack();
 	}
-
 	return truncatedKey;
 }
 
@@ -924,11 +987,6 @@ bool canSplit(KeyRef prevKey, KeyRef nextKey, int truncateOffset, bool isSnowtra
 }
 
 } // namespace BlobGranuleKeyHelpers
-
-Key getKeyWithUserType(const std::string& key, const std::string& userTypeStr) {
-	Tuple::UserTypeStr udt(0x41, userTypeStr);
-	return Tuple::makeTuple(key, udt).pack();
-}
 
 TEST_CASE("/fdbserver/bulkload/truncateKey") {
 	state Key key = getKeyWithUserType("TestKey", "UserType");
