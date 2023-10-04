@@ -293,7 +293,6 @@ void ApiWorkload::createTenantsIfNecessary(TTaskFct cont) {
 		// if client is untrusted, tenants are pre-populated.
 		createTenants(cont);
 	} else {
-		info("Skipping tenant creation");
 		schedule(cont);
 	}
 }
