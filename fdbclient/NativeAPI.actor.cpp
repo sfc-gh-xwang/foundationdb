@@ -5523,6 +5523,50 @@ maybeDuplicateTSSStreamFragment(Request& req, QueueModel* model, RequestStream<R
 	return Optional<TSSDuplicateStreamData<REPLYSTREAM_TYPE(Request)>>();
 }
 
+// Given client locality and candidate servers, select a target server to fetchKeys from.
+int selectServerCandidate(const LocalityData& clientLocality,
+                          Reference<LocationInfo> serverLocations,
+                          bool preferLocalStorageServer) {
+	int index = -1;
+
+	// Exclude failed servers.
+	std::vector<int> availableServers;
+	for (int i = 0; i < serverLocations->size(); i++) {
+		if (!IFailureMonitor::failureMonitor()
+		         .getState(serverLocations->get(i, &StorageServerInterface::getKeyValuesStream).getEndpoint())
+		         .failed) {
+			availableServers.push_back(i);
+		}
+	}
+
+	int numServers = availableServers.size();
+	// No healthy servers available.
+	if (numServers == 0) {
+		return index;
+	}
+
+	// Try to find a server in the same AZ(dataHallId) as the input client.
+	auto clientDataHallId = clientLocality.dataHallId();
+	if (preferLocalStorageServer && clientDataHallId.present()) {
+		for (int i = 0; i < numServers; i++) {
+			auto serverDataHallId =
+			    serverLocations->get(availableServers[i], &StorageServerInterface::locality).dataHallId();
+			if (clientDataHallId == serverDataHallId) {
+				index = availableServers[i];
+				break;
+			}
+		}
+	}
+
+	// If preferLocalStorageServer is false, or we fail to find a server with AZ locality, then choose a random
+	// healthy server.
+	if (index == -1) {
+		index = deterministicRandom()->randomChoice(availableServers);
+	}
+
+	return index;
+}
+
 // Streams all of the KV pairs in a target key range into a ParallelStream fragment
 ACTOR Future<Void> getRangeStreamFragment(Reference<TransactionState> trState,
                                           ParallelStream<RangeReadResult>::Fragment* results,
@@ -5586,19 +5630,9 @@ ACTOR Future<Void> getRangeStreamFragment(Reference<TransactionState> trState,
 				loop {
 					// FIXME: create a load balance function for this code so future users of reply streams do not have
 					// to duplicate this code
-					int count = 0;
-					for (int i = 0; i < locations[shard].locations->size(); i++) {
-						if (!IFailureMonitor::failureMonitor()
-						         .getState(locations[shard]
-						                       .locations->get(i, &StorageServerInterface::getKeyValuesStream)
-						                       .getEndpoint())
-						         .failed) {
-							if (deterministicRandom()->random01() <= 1.0 / ++count) {
-								useIdx = i;
-							}
-						}
-					}
-
+					useIdx = selectServerCandidate(trState->cx->clientLocality,
+					                               locations[shard].locations,
+					                               trState->options.preferLocalStorageServer);
 					if (useIdx >= 0) {
 						break;
 					}
@@ -6642,6 +6676,7 @@ void TransactionOptions::clear() {
 	skipGrvCache = false;
 	rawAccess = false;
 	bypassStorageQuota = false;
+	preferLocalStorageServer = false;
 }
 
 TransactionOptions::TransactionOptions() {
@@ -7643,6 +7678,10 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 
 	case FDBTransactionOptions::BYPASS_STORAGE_QUOTA:
 		trState->options.bypassStorageQuota = true;
+		break;
+
+	case FDBTransactionOptions::PREFER_LOCAL_STORAGE_SERVER:
+		trState->options.preferLocalStorageServer = true;
 		break;
 
 	case FDBTransactionOptions::AUTHORIZATION_TOKEN:
@@ -12387,3 +12426,83 @@ ACTOR Future<std::vector<std::pair<StorageServerInterface, ProcessClass>>> getSe
 }
 
 } // namespace NativeAPI
+
+TEST_CASE("/fdbclient/nativeAPI/selectServerCandidate") {
+	// Setup the client locality.
+	LocalityData testClientLocality;
+	std::string clientDataHallId = "0";
+	testClientLocality.set(LocalityData::keyDataHallId, StringRef(clientDataHallId));
+
+	// Setup 3 storage servers. Use different addresses and dataHallId.
+	std::vector<StorageServerInterface> servers;
+	StorageServerInterface s0;
+	s0.initEndpoints();
+	NetworkAddress s0Addr(IPAddress(0x00000000), 1);
+	s0.getKeyValuesStream = PublicRequestStream<struct GetKeyValuesStreamRequest>(Endpoint({ s0Addr }, UID(1, 1)));
+	std::string s0DataHallId = "0";
+	s0.locality.set(LocalityData::keyDataHallId, StringRef(s0DataHallId));
+	servers.emplace_back(s0);
+
+	StorageServerInterface s1;
+	s1.initEndpoints();
+	NetworkAddress s1Addr(IPAddress(0x00000001), 1);
+	s1.getKeyValuesStream = PublicRequestStream<struct GetKeyValuesStreamRequest>(Endpoint({ s1Addr }, UID(1, 2)));
+	std::string s1DataHallId = "1";
+	s1.locality.set(LocalityData::keyDataHallId, StringRef(s1DataHallId));
+	servers.emplace_back(s1);
+
+	StorageServerInterface s2;
+	s2.initEndpoints();
+	NetworkAddress s2Addr(IPAddress(0x00000002), 1);
+	s2.getKeyValuesStream = PublicRequestStream<struct GetKeyValuesStreamRequest>(Endpoint({ s2Addr }, UID(1, 3)));
+	std::string s2DataHallId = "2";
+	s2.locality.set(LocalityData::keyDataHallId, StringRef(s2DataHallId));
+	servers.emplace_back(s2);
+
+	std::vector<Reference<ReferencedInterface<StorageServerInterface>>> serverRefs;
+	serverRefs.reserve(servers.size());
+	for (int i = 0; i < servers.size(); i++) {
+		serverRefs.push_back(makeReference<ReferencedInterface<StorageServerInterface>>(servers[i]));
+	}
+	// Note that, serverLocations is a class of MultiInterface, which does a random shuffle in the constructor.
+	// To work around this unavoidable random behavior, we verify the selected server's dataHallId, not server index.
+	auto serverLocations = makeReference<LocationInfo>(serverRefs);
+
+	// Case 1: enable the dataHallId locality; all 3 servers are available.
+	IFailureMonitor::failureMonitor().setStatus(s0Addr, FailureStatus(false));
+	IFailureMonitor::failureMonitor().setStatus(s1Addr, FailureStatus(false));
+	IFailureMonitor::failureMonitor().setStatus(s2Addr, FailureStatus(false));
+
+	int result = selectServerCandidate(testClientLocality, serverLocations, true);
+	ASSERT_EQ(clientDataHallId,
+	          serverLocations->get(result, &StorageServerInterface::locality).dataHallId()->toString());
+
+	// Case 2: enable the dataHallId locality; s0 and s1 are available while s2 is not.
+	IFailureMonitor::failureMonitor().setStatus(s2Addr, FailureStatus(true));
+	result = selectServerCandidate(testClientLocality, serverLocations, true);
+	ASSERT_EQ(clientDataHallId,
+	          serverLocations->get(result, &StorageServerInterface::locality).dataHallId()->toString());
+
+	// Case 3: enable the dataHallId locality; all 3 servers are not available.
+	IFailureMonitor::failureMonitor().setStatus(s0Addr, FailureStatus(true));
+	IFailureMonitor::failureMonitor().setStatus(s1Addr, FailureStatus(true));
+	IFailureMonitor::failureMonitor().setStatus(s2Addr, FailureStatus(true));
+	result = selectServerCandidate(testClientLocality, serverLocations, true);
+	ASSERT_EQ(-1, result);
+
+	// Case 4: enable the dataHallId locality; the local server s0 is not available, pick a remote one.
+	IFailureMonitor::failureMonitor().setStatus(s0Addr, FailureStatus(true));
+	IFailureMonitor::failureMonitor().setStatus(s1Addr, FailureStatus(false));
+	IFailureMonitor::failureMonitor().setStatus(s2Addr, FailureStatus(false));
+
+	result = selectServerCandidate(testClientLocality, serverLocations, true);
+	ASSERT_NE(clientDataHallId,
+	          serverLocations->get(result, &StorageServerInterface::locality).dataHallId()->toString());
+
+	// Case 5: disable the dataHallId locality; all 3 are available, pick a random one.
+	IFailureMonitor::failureMonitor().setStatus(s0Addr, FailureStatus(false));
+	result = selectServerCandidate(testClientLocality, serverLocations, false);
+	ASSERT_NE(-1, result);
+
+	return Void();
+}

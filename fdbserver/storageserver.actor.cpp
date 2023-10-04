@@ -8178,6 +8178,7 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 
 	// Set read options to use non-caching reads and set Fetch type unless low priority data fetching is disabled by
 	// a knob
+	// Note that FETCH_KEYS_LOWER_PRIORITY is 0 by default. So, we use NORMAL for fetchKeys.
 	state ReadOptions readOptions = ReadOptions(
 	    {}, SERVER_KNOBS->FETCH_KEYS_LOWER_PRIORITY ? ReadType::FETCH : ReadType::NORMAL, CacheResult::False);
 
@@ -8282,6 +8283,11 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 			tr.reset();
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+			// When a stoarge server fetchKeys from another storage server, we prefer to pick one which is located
+			// in the same AZ if possible.
+			if (SERVER_KNOBS->DD_FETCHKEYS_WITH_LOCALITY) {
+				tr.setOption(FDBTransactionOptions::PREFER_LOCAL_STORAGE_SERVER);
+			}
 			tr.trState->readOptions = readOptions;
 			tr.trState->taskID = TaskPriority::FetchKeys;
 

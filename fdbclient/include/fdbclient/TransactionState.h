@@ -33,6 +33,7 @@ struct TransactionOptions {
 	bool skipGrvCache : 1;
 	bool rawAccess : 1;
 	bool bypassStorageQuota : 1;
+	bool preferLocalStorageServer : 1;
 
 	TransactionPriority priority;
 
