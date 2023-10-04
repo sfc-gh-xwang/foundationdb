@@ -18,6 +18,8 @@
  * limitations under the License.
  */
 
+#include "fdbclient/BulkLoad.h"
+#include "flow/Error.h"
 #include "fmt/format.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/CommitTransaction.h"
@@ -686,6 +688,198 @@ ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(BGTenantMap*
 		TraceEvent(SevError, "MissingBlobStoreConfig").detail("KeyRange", keyRange);
 		throw restore_error();
 	}
+}
+
+// ensure sizes are valid, all ids are unique, all key ranges are within bulk load key range, and key ranges are all
+// disjoint
+// FIXME: for large number of files, maybe break up with yields?
+void validateBulkLoadWrittenPointers(const BulkLoadID& id,
+                                     const BulkLoadInfo& info,
+                                     const VectorRef<BulkLoadWrittenFileRef>& files) {
+	std::vector<KeyRange> ranges;
+	std::unordered_set<BulkLoadFileID> fileIds;
+	ranges.reserve(files.size());
+	fileIds.reserve(files.size());
+	for (int i = 0; i < files.size(); i++) {
+		auto& p = files[i];
+		if (p.logicalSize < 0 || p.physicalSize < 0) {
+			TraceEvent("BulkLoadInvalidPointerSize")
+			    .detail("LoadID", id)
+			    .detail("FileID", p.fileId)
+			    .detail("LogicalSize", p.logicalSize)
+			    .detail("PhysicalSize", p.physicalSize);
+			throw bulk_load_invalid_file_metadata();
+		}
+		if (!info.keyRange.contains(p.keyRange)) {
+			TraceEvent("BulkLoadInvalidPointerNotInsideLoadRange")
+			    .detail("LoadID", id)
+			    .detail("FileID", p.fileId)
+			    .detail("LoadRange", info.keyRange)
+			    .detail("PointerRange", p.keyRange);
+			// file key range not inside bulk load key range
+			throw bulk_load_invalid_file_metadata();
+		}
+
+		// Clients provide unaligned keys in the written file metadata.
+		// Truncate & align the start key, so that the checks below use
+		// aligned keys. This ensures checking that granules aren't split in between
+		// aligned keys.
+		ranges.push_back(p.keyRange);
+		if (!fileIds.insert(p.fileId).second) {
+			// duplicate file ids
+			TraceEvent("BulkLoadInvalidPointerDuplicateFileID").detail("LoadID", id).detail("FileID", p.fileId);
+			throw bulk_load_invalid_file_metadata();
+		}
+	}
+	std::sort(ranges.begin(), ranges.end(), KeyRangeRef::ArbitraryOrder());
+	for (int i = 1; i < ranges.size(); i++) {
+		// meta-check: validate sort worked
+		ASSERT(ranges[i - 1].begin <= ranges[i].begin);
+		if (ranges[i - 1].end > ranges[i].begin) {
+			TraceEvent("BulkLoadInvalidPointerOverlappingKeyRanges")
+			    .detail("LoadID", id)
+			    .detail("FileRange", ranges[i])
+			    .detail("OtherRange", ranges[i - 1]);
+			// non-disjoint key ranges
+			throw bulk_load_invalid_file_metadata();
+		}
+	}
+}
+
+// ----- Unit Tests + Helper Functions for testing validateBulkLoadWrittenPointers -----
+// helper to convert std::vector to VectorRef
+void validateBulkLoadWrittenPointers(const BulkLoadID& id,
+                                     const BulkLoadInfo& info,
+                                     const std::vector<BulkLoadWrittenFileRef>& files) {
+	Standalone<VectorRef<BulkLoadWrittenFileRef>> vRef;
+	vRef.reserve(vRef.arena(), files.size());
+	for (auto& it : files) {
+		vRef.push_back(vRef.arena(), it);
+	}
+	return validateBulkLoadWrittenPointers(id, info, vRef);
+}
+
+BulkLoadWrittenFileRef createPtr(const BulkLoadInfo& info, Arena& ar) {
+	BulkLoadWrittenFileRef ptr;
+	UID fileUID = deterministicRandom()->randomUniqueID();
+	ptr.fileId = StringRef(ar, fileUID.toString());
+	ptr.keyRange = info.keyRange;
+	ptr.logicalSize = 1;
+	ptr.physicalSize = 1;
+	return ptr;
+}
+
+void checkKeyRanges(bool expectSuccess,
+                    const BulkLoadID& id,
+                    const BulkLoadInfo& info,
+                    const std::vector<KeyRangeRef>& ranges) {
+	Standalone<VectorRef<BulkLoadWrittenFileRef>> ptrs;
+	ptrs.reserve(ptrs.arena(), ranges.size());
+	for (auto& it : ranges) {
+		BulkLoadWrittenFileRef ptr = createPtr(info, ptrs.arena());
+		ptr.keyRange = it;
+		ptrs.push_back(ptrs.arena(), ptr);
+	}
+
+	try {
+		validateBulkLoadWrittenPointers(id, info, ptrs);
+		ASSERT(expectSuccess);
+	} catch (Error& e) {
+		ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+		ASSERT(!expectSuccess);
+	}
+}
+
+TEST_CASE("/fdbserver/bulkload/validateBulkLoadWrittenPointers") {
+	state Arena ar;
+	state Standalone<StringRef> keyA = "a"_sr;
+	state Standalone<StringRef> keyB = "b"_sr;
+	state Standalone<StringRef> keyC = "c"_sr;
+	state Standalone<StringRef> keyD = "d"_sr;
+	state Standalone<StringRef> keyZ = "z"_sr;
+	state BulkLoadID id = "bulkloadid"_sr;
+	state BulkLoadInfo info;
+	info.keyRange = KeyRangeRef(keyA, keyD);
+
+	// check default pointer is valid
+	{
+		BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+		validateBulkLoadWrittenPointers(id, info, { ptr });
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB) });
+	}
+
+	// check invalid logical/physical size
+	{
+		try {
+			BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+			ptr.logicalSize = -1;
+			validateBulkLoadWrittenPointers(id, info, { ptr });
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+		}
+	}
+
+	{
+		try {
+			BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+			ptr.physicalSize = -1;
+			validateBulkLoadWrittenPointers(id, info, { ptr });
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+		}
+	}
+
+	// check duplicate file ids
+	{
+		try {
+			BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+			validateBulkLoadWrittenPointers(id, info, { ptr, ptr });
+			ASSERT(false);
+		} catch (Error& e) {
+			ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+		}
+	}
+
+	// check ranges outside of bulk load range
+	{
+		checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyZ) });
+		checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyA) });
+		checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyB) });
+		checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyD) });
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyA, keyZ) });
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyB, keyZ) });
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyZ, "\xff"_sr) });
+	}
+
+	// check overlapping ranges within bulk load range
+	{
+
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyA, keyC), KeyRangeRef(keyB, keyD) });
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyA, keyD), KeyRangeRef(keyB, keyC) });
+		// reverse order
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyB, keyD), KeyRangeRef(keyA, keyC) });
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyD) });
+	}
+
+	// check valid subsets of ranges
+	{
+		// one range or subranges
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyD) });
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB) });
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyB, keyC) });
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD) });
+		// non-connecting but multiple
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB), KeyRangeRef(keyC, keyD) });
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD), KeyRangeRef(keyA, keyB) });
+		// multiple connecting
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB), KeyRangeRef(keyB, keyC), KeyRangeRef(keyC, keyD) });
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyB), KeyRangeRef(keyC, keyD) });
+		checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD), KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyB) });
+	}
+
+	return Void();
 }
 
 namespace BlobGranuleKeyHelpers {

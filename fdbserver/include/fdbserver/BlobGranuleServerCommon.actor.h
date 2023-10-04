@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "fdbclient/BulkLoad.h"
 #include "fdbclient/BlobConnectionProvider.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BlobRestoreCommon.h"
@@ -228,6 +229,10 @@ private:
 Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMeta(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                                                   BlobGranuleCipherKeysMeta cipherKeysMeta,
                                                                   Arena* arena);
+
+void validateBulkLoadWrittenPointers(const BulkLoadID& id,
+                                     const BulkLoadInfo& info,
+                                     const VectorRef<BulkLoadWrittenFileRef>& files);
 namespace BlobGranuleKeyHelpers {
 
 // Returns a snowtram "aligned key" by removing any user defined type tuples from the end of the key.
