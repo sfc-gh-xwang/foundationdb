@@ -24,6 +24,7 @@
 #define APITESTER_TESTER_OPTIONS_H
 
 #include "TesterTestSpec.h"
+#include <optional>
 
 namespace FdbApiTester {
 
