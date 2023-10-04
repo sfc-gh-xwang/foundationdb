@@ -252,7 +252,7 @@ FDBResult* createErrorResult(Error e) {
 
 template <class ResultType>
 ResultType* futureGetTypedResult(FDBFuture* f) {
-	FDBResult* result = (TSAV(ApiResult, f))->get().extractPtr();
+	FDBResult* result = (TSAV(ApiResult, f))->get().getPtr();
 	ASSERT(result->header->result_type == ApiResultTraits<ResultType>::type);
 	return (ResultType*)result;
 }
