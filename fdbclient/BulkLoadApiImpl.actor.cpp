@@ -13,7 +13,7 @@ ACTOR Future<ApiResult> startBulkLoadImpl(DatabaseContext* db, ApiRequest req, O
 	auto input = req.getTypedRequest<FDBStartBulkLoadRequest>();
 	BulkLoadID id = wait(db->startBulkLoad((KeyRangeRef&)input->key_range, tenant));
 
-	auto res = TypedApiResult<FDBBulkLoadIDResult>::create(FDBApiResult_BulkLoadID);
+	auto res = TypedApiResult<FDBBulkLoadIDResult>::create();
 	Arena& arena = res.arena();
 	arena.dependsOn(id.arena());
 
@@ -34,7 +34,7 @@ ACTOR Future<ApiResult> bulkLoadAllFilesRegisteredImpl(DatabaseContext* db,
 	BulkLoadID id((StringRef&)input->id);
 	wait(db->bulkLoadAllFilesRegistered(id, tenant));
 
-	return TypedApiResult<FDBVoidResult>::create(FDBApiResult_Void);
+	return TypedApiResult<FDBVoidResult>::create();
 }
 
 Future<ApiResult> bulkLoadAllFilesRegistered(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant) {
@@ -46,7 +46,7 @@ ACTOR Future<ApiResult> abortBulkLoadImpl(DatabaseContext* db, ApiRequest req, O
 	BulkLoadID id((StringRef&)input->id);
 	wait(db->abortBulkLoad(id, tenant));
 
-	return TypedApiResult<FDBVoidResult>::create(FDBApiResult_Void);
+	return TypedApiResult<FDBVoidResult>::create();
 }
 
 Future<ApiResult> abortBulkLoad(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant) {
@@ -58,7 +58,7 @@ ACTOR Future<ApiResult> cleanupBulkLoadImpl(DatabaseContext* db, ApiRequest req,
 	BulkLoadID id((StringRef&)input->id);
 	wait(db->cleanupBulkLoad(id, tenant));
 
-	return TypedApiResult<FDBVoidResult>::create(FDBApiResult_Void);
+	return TypedApiResult<FDBVoidResult>::create();
 }
 
 Future<ApiResult> cleanupBulkLoad(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant) {
@@ -72,7 +72,7 @@ ACTOR Future<ApiResult> waitBulkLoadCompleteImpl(DatabaseContext* db,
 	BulkLoadID id((StringRef&)input->id);
 	wait(db->waitBulkLoadComplete(id, tenant));
 
-	return TypedApiResult<FDBVoidResult>::create(FDBApiResult_Void);
+	return TypedApiResult<FDBVoidResult>::create();
 }
 
 Future<ApiResult> waitBulkLoadComplete(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant) {
@@ -111,7 +111,7 @@ ACTOR Future<ApiResult> bulkLoadFilesToWriteImpl(DatabaseContext* db,
 	BulkLoadID id((StringRef&)input->id);
 	Standalone<VectorRef<BulkLoadFileToWriteRef>> files = wait(db->getBulkLoadFilesToWrite(id, input->count, tenant));
 
-	auto res = TypedApiResult<FDBBulkLoadFilesToWriteResult>::create(FDBApiResult_BulkLoadFilesToWrite);
+	auto res = TypedApiResult<FDBBulkLoadFilesToWriteResult>::create();
 
 	Arena& arena = res.arena();
 	arena.dependsOn(files.arena());
@@ -157,7 +157,7 @@ ACTOR Future<ApiResult> bulkLoadFilesWrittenImpl(DatabaseContext* db,
 
 	wait(db->markBulkLoadFilesWritten(id, files, tenant));
 
-	return TypedApiResult<FDBVoidResult>::create(FDBApiResult_Void);
+	return TypedApiResult<FDBVoidResult>::create();
 }
 
 Future<ApiResult> bulkLoadFilesWritten(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant) {

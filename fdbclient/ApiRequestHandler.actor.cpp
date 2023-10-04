@@ -51,7 +51,7 @@ Future<ApiResult> handleDatabaseOrTenantApiRequest(DatabaseContext* db,
 }
 
 ReadRangeApiResult createReadRangeApiResult(RangeResult rangeResult) {
-	auto ret = ReadRangeApiResult::create(FDBApiResult_ReadRange);
+	auto ret = ReadRangeApiResult::create();
 	ret.arena().dependsOn(rangeResult.arena());
 	auto data = ret.getPtr();
 	static_assert(sizeof(FDBKeyValue) == sizeof(KeyValueRef));
