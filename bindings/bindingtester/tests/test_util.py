@@ -43,13 +43,17 @@ class RandomGenerator(object):
     def random_unicode_str(self, length):
         return "".join(self.random_unicode_char() for i in range(0, length))
 
-    def random_int(self):
-        num_bits = random.randint(
-            0, self.max_int_bits
-        )  # This way, we test small numbers with higher probability
+    def random_int(self, min_value=None, max_value=None):
+        if min_value is None or max_value is None:
+            num_bits = random.randint(
+                0, self.max_int_bits
+            )  # This way, we test small numbers with higher probability
 
-        max_value = (1 << num_bits) - 1
-        min_value = -max_value - 1
+            if max_value is None:
+                max_value = (1 << num_bits) - 1
+            if min_value is None:
+                min_value = -max_value - 1
+
         num = random.randint(min_value, max_value)
 
         # util.get_logger().debug('generating int (%d): %d - %s' % (num_bits, num, repr(fdb.tuple.pack((num,)))))
