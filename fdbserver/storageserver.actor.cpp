@@ -8249,6 +8249,9 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 			tr.reset();
 			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
 			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+			// When a stoarge server fetchKeys from another storage server, we prefer to pick one which is located
+			// in the same AZ if possible.
+			tr.setOption(FDBTransactionOptions::PREFER_LOCAL_STORAGE_SERVER);
 			tr.trState->readOptions = readOptions;
 			tr.trState->taskID = TaskPriority::FetchKeys;
 
