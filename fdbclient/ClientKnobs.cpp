@@ -327,6 +327,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL,   2 ); BUGGIFY_KNOB(TENANT_ENTRY_CACHE_LIST_REFRESH_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10));
 	init( CLIENT_ENABLE_USING_CLUSTER_ID_KEY,     false );
 	init( TENANT_RENAME_ENABLED,                  false ); BUGGIFY_KNOB(TENANT_RENAME_ENABLED, randomize && deterministicRandom()->coinflip(), true);
+	init( CREATE_TENANT_PREFER_EMPTIEST_CLUSTER,   true ); BUGGIFY_KNOB(CREATE_TENANT_PREFER_EMPTIEST_CLUSTER, randomize && BUGGIFY, false);
 
 	init( ENABLE_ENCRYPTION_CPU_TIME_LOGGING,        true );
 	init( SIMULATION_EKP_TENANT_IDS_TO_DROP,         "-1" );
