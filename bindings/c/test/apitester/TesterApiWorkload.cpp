@@ -239,7 +239,9 @@ void ApiWorkload::clearTenantData(TTaskFct cont, std::optional<int> tenantId) {
 }
 
 void ApiWorkload::clearData(TTaskFct cont) {
-	if (!tenants.empty()) {
+	if (!tenants.empty() && WorkloadBase::untrustedClient) {
+		// With untrusted clients in multi-tenant mode, tenants are pre-populated.
+		// Clear under each tenant's keyspace just in case.
 		clearTenantData(cont, std::make_optional<int>(0));
 	} else {
 		execTransaction(
