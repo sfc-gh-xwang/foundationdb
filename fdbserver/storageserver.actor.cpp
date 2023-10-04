@@ -263,10 +263,7 @@ struct AddingShard : NonCopyable {
 			readWrite.send(Void());
 	}
 
-	void addMutation(Version version,
-	                 bool fromFetch,
-	                 MutationRef const& mutation,
-	                 MutationRefAndCipherKeys const& encryptedMutation);
+	void addMutation(Version version, bool fromFetch, MutationRefAndCipherKeys const& mutation);
 
 	bool isDataTransferred() const { return phase >= FetchingCF; }
 	bool isDataAndCFTransferred() const { return phase >= Waiting; }
@@ -377,10 +374,7 @@ public:
 	bool assigned() const { return readWrite || adding; }
 	bool isInVersionedData() const { return readWrite || (adding && adding->isDataTransferred()); }
 	bool isCFInVersionedData() const { return readWrite || (adding && adding->isDataAndCFTransferred()); }
-	void addMutation(Version version,
-	                 bool fromFetch,
-	                 MutationRef const& mutation,
-	                 MutationRefAndCipherKeys const& encryptedMutation);
+	void addMutation(Version version, bool fromFetch, MutationRefAndCipherKeys const& mutation);
 	bool isFetched() const { return readWrite || (adding && adding->fetchComplete.isSet()); }
 
 	const char* debugDescribeState() const {
@@ -1719,8 +1713,7 @@ public:
 	}
 	void addMutation(Version version,
 	                 bool fromFetch,
-	                 MutationRef const& mutation,
-	                 MutationRefAndCipherKeys const& encryptedMutation,
+	                 MutationRefAndCipherKeys const& mutation,
 	                 KeyRangeRef const& shard,
 	                 UpdateEagerReadInfo* eagerReads);
 	void setInitialVersion(Version ver) {
@@ -6811,12 +6804,12 @@ void applyMutation(StorageServer* self,
 }
 
 void applyChangeFeedMutation(StorageServer* self,
-                             MutationRef const& m,
-                             MutationRefAndCipherKeys const& encryptedMutation,
+                             MutationRefAndCipherKeys const& mutation,
                              Version version,
                              KeyRangeRef const& shard) {
+	MutationRef const& m = mutation.mutation;
 	ASSERT(self->encryptionMode.present());
-	ASSERT(!self->encryptionMode.get().isEncryptionEnabled() || encryptedMutation.encryptedMutation.isEncrypted() ||
+	ASSERT(!self->encryptionMode.get().isEncryptionEnabled() || mutation.encryptedMutation.isEncrypted() ||
 	       isBackupLogMutation(m) || mutationForKey(m, lastEpochEndPrivateKey));
 	if (m.type == MutationRef::SetValue) {
 		for (auto& it : self->keyChangeFeed[m.param1]) {
@@ -6825,14 +6818,14 @@ void applyChangeFeedMutation(StorageServer* self,
 					it->mutations.push_back(
 					    EncryptedMutationsAndVersionRef(version, self->knownCommittedVersion.get()));
 				}
-				if (encryptedMutation.encryptedMutation.isValid()) {
+				if (mutation.encryptedMutation.isValid()) {
 					if (!it->mutations.back().encrypted.present()) {
 						it->mutations.back().encrypted = it->mutations.back().mutations;
 						it->mutations.back().cipherKeys.resize(it->mutations.back().mutations.size());
 					}
 					it->mutations.back().encrypted.get().push_back_deep(it->mutations.back().arena(),
-					                                                    encryptedMutation.encryptedMutation);
-					it->mutations.back().cipherKeys.push_back(encryptedMutation.cipherKeys);
+					                                                    mutation.encryptedMutation);
+					it->mutations.back().cipherKeys.push_back(mutation.cipherKeys);
 				} else if (it->mutations.back().encrypted.present()) {
 					it->mutations.back().encrypted.get().push_back_deep(it->mutations.back().arena(), m);
 					it->mutations.back().cipherKeys.push_back(TextAndHeaderCipherKeys());
@@ -6884,7 +6877,7 @@ void applyChangeFeedMutation(StorageServer* self,
 						it->mutations.push_back(
 						    EncryptedMutationsAndVersionRef(version, self->knownCommittedVersion.get()));
 					}
-					if (encryptedMutation.encryptedMutation.isEncrypted()) {
+					if (mutation.encryptedMutation.isEncrypted()) {
 						if (!it->mutations.back().encrypted.present()) {
 							it->mutations.back().encrypted = it->mutations.back().mutations;
 							it->mutations.back().cipherKeys.resize(it->mutations.back().mutations.size());
@@ -6892,14 +6885,13 @@ void applyChangeFeedMutation(StorageServer* self,
 						if (modified) {
 							it->mutations.back().encrypted.get().push_back_deep(
 							    it->mutations.back().arena(),
-							    clearMutation.encrypt(encryptedMutation.cipherKeys,
-							                          it->mutations.back().arena(),
-							                          BlobCipherMetrics::TLOG));
+							    clearMutation.encrypt(
+							        mutation.cipherKeys, it->mutations.back().arena(), BlobCipherMetrics::TLOG));
 						} else {
 							it->mutations.back().encrypted.get().push_back_deep(it->mutations.back().arena(),
-							                                                    encryptedMutation.encryptedMutation);
+							                                                    mutation.encryptedMutation);
 						}
-						it->mutations.back().cipherKeys.push_back(encryptedMutation.cipherKeys);
+						it->mutations.back().cipherKeys.push_back(mutation.cipherKeys);
 					} else if (it->mutations.back().encrypted.present()) {
 						it->mutations.back().encrypted.get().push_back_deep(it->mutations.back().arena(), m);
 						it->mutations.back().cipherKeys.push_back(TextAndHeaderCipherKeys());
@@ -7035,40 +7027,32 @@ void coalesceShards(StorageServer* data, KeyRangeRef keys) {
 }
 
 template <class T>
-void addMutation(T& target,
-                 Version version,
-                 bool fromFetch,
-                 MutationRef const& mutation,
-                 MutationRefAndCipherKeys const& encryptedMutation) {
-	target.addMutation(version, fromFetch, mutation, encryptedMutation);
+void addMutation(T& target, Version version, bool fromFetch, MutationRefAndCipherKeys const& mutation) {
+	target.addMutation(version, fromFetch, mutation);
 }
 
 template <class T>
-void addMutation(Reference<T>& target,
-                 Version version,
-                 bool fromFetch,
-                 MutationRef const& mutation,
-                 MutationRefAndCipherKeys const& encryptedMutation) {
-	addMutation(*target, version, fromFetch, mutation, encryptedMutation);
+void addMutation(Reference<T>& target, Version version, bool fromFetch, MutationRefAndCipherKeys const& mutation) {
+	addMutation(*target, version, fromFetch, mutation);
 }
 
 template <class T>
 void splitMutations(StorageServer* data, KeyRangeMap<T>& map, VerUpdateRef const& update) {
 	for (int i = 0; i < update.mutations.size(); i++) {
-		splitMutation(data, map, update.mutations[i], MutationRefAndCipherKeys(), update.version, update.version);
+		splitMutation(data, map, MutationRefAndCipherKeys(update.mutations[i]), update.version, update.version);
 	}
 }
 
 template <class T>
 void splitMutation(StorageServer* data,
                    KeyRangeMap<T>& map,
-                   MutationRef const& m,
-                   MutationRefAndCipherKeys const& encryptedMutation,
+                   MutationRefAndCipherKeys const& mutation,
                    Version ver,
                    bool fromFetch) {
+	MutationRef const& m = mutation.mutation;
 	if (isSingleKeyMutation((MutationRef::Type)m.type)) {
 		if (!SHORT_CIRCUT_ACTUAL_STORAGE || !normalKeys.contains(m.param1))
-			addMutation(map.rangeContaining(m.param1)->value(), ver, fromFetch, m, encryptedMutation);
+			addMutation(map.rangeContaining(m.param1)->value(), ver, fromFetch, mutation);
 	} else if (m.type == MutationRef::ClearRange) {
 		KeyRangeRef mKeys(m.param1, m.param2);
 		if (!SHORT_CIRCUT_ACTUAL_STORAGE || !normalKeys.contains(mKeys)) {
@@ -7078,8 +7062,9 @@ void splitMutation(StorageServer* data,
 				addMutation(i->value(),
 				            ver,
 				            fromFetch,
-				            MutationRef((MutationRef::Type)m.type, k.begin, k.end),
-				            encryptedMutation);
+				            MutationRefAndCipherKeys(MutationRef((MutationRef::Type)m.type, k.begin, k.end),
+				                                     mutation.encryptedMutation,
+				                                     mutation.cipherKeys));
 			}
 		}
 	} else
@@ -8750,19 +8735,17 @@ AddingShard::AddingShard(StorageServer* server, KeyRangeRef const& keys)
 	fetchClient = fetchKeys(server, this);
 }
 
-void AddingShard::addMutation(Version version,
-                              bool fromFetch,
-                              MutationRef const& mutation,
-                              MutationRefAndCipherKeys const& encryptedMutation) {
+void AddingShard::addMutation(Version version, bool fromFetch, MutationRefAndCipherKeys const& mutation) {
+	MutationRef const& m = mutation.mutation;
 	if (version <= fetchVersion) {
 		return;
 	}
 
-	server->counters.logicalBytesMoveInOverhead += mutation.expectedSize();
-	if (mutation.type == mutation.ClearRange) {
-		ASSERT(keys.begin <= mutation.param1 && mutation.param2 <= keys.end);
-	} else if (isSingleKeyMutation((MutationRef::Type)mutation.type)) {
-		ASSERT(keys.contains(mutation.param1));
+	server->counters.logicalBytesMoveInOverhead += m.expectedSize();
+	if (m.type == MutationRef::ClearRange) {
+		ASSERT(keys.begin <= m.param1 && m.param2 <= keys.end);
+	} else if (isSingleKeyMutation((MutationRef::Type)m.type)) {
+		ASSERT(keys.contains(m.param1));
 	}
 
 	if (phase == WaitPrevious) {
@@ -8780,26 +8763,23 @@ void AddingShard::addMutation(Version version,
 			ASSERT(version == updates.end()[-1].version);
 		}
 		// Add the mutation to the version.
-		updates.back().mutations.push_back_deep(updates.back().arena(), mutation);
+		updates.back().mutations.push_back_deep(updates.back().arena(), m);
 	} else if (phase == FetchingCF || phase == Waiting) {
-		server->addMutation(version, fromFetch, mutation, encryptedMutation, keys, server->updateEagerReads);
+		server->addMutation(version, fromFetch, mutation, keys, server->updateEagerReads);
 	} else
 		ASSERT(false);
 }
 
-void ShardInfo::addMutation(Version version,
-                            bool fromFetch,
-                            MutationRef const& mutation,
-                            MutationRefAndCipherKeys const& encryptedMutation) {
+void ShardInfo::addMutation(Version version, bool fromFetch, MutationRefAndCipherKeys const& mutation) {
+	MutationRef const& m = mutation.mutation;
 	ASSERT((void*)this);
-	ASSERT(keys.contains(mutation.param1));
+	ASSERT(keys.contains(m.param1));
 	if (adding) {
-		adding->addMutation(version, fromFetch, mutation, encryptedMutation);
+		adding->addMutation(version, fromFetch, mutation);
 	} else if (readWrite) {
-		readWrite->addMutation(
-		    version, fromFetch, mutation, encryptedMutation, this->keys, readWrite->updateEagerReads);
-	} else if (mutation.type != MutationRef::ClearRange) {
-		TraceEvent(SevError, "DeliveredToNotAssigned").detail("Version", version).detail("Mutation", mutation);
+		readWrite->addMutation(version, fromFetch, mutation, this->keys, readWrite->updateEagerReads);
+	} else if (m.type != MutationRef::ClearRange) {
+		TraceEvent(SevError, "DeliveredToNotAssigned").detail("Version", version).detail("Mutation", m);
 		ASSERT(false); // Mutation delivered to notAssigned shard!
 	}
 }
@@ -9115,12 +9095,8 @@ void changeServerKeys(StorageServer* data,
 	// Clear the moving-in empty range, and set it available at the latestVersion.
 	for (const auto& range : newEmptyRanges) {
 		MutationRef clearRange(MutationRef::ClearRange, range.begin, range.end);
-		data->addMutation(data->data().getLatestVersion(),
-		                  true,
-		                  clearRange,
-		                  MutationRefAndCipherKeys(),
-		                  range,
-		                  data->updateEagerReads);
+		data->addMutation(
+		    data->data().getLatestVersion(), true, MutationRefAndCipherKeys(clearRange), range, data->updateEagerReads);
 		data->newestAvailableVersion.insert(range, latestVersion);
 		setAvailableStatus(data, range, true);
 		++data->counters.kvSystemClearRanges;
@@ -9344,12 +9320,8 @@ void changeServerKeysWithPhysicalShards(StorageServer* data,
 	// Clear the moving-in empty range, and set it available at the latestVersion.
 	for (const auto& range : newEmptyRanges) {
 		MutationRef clearRange(MutationRef::ClearRange, range.begin, range.end);
-		data->addMutation(data->data().getLatestVersion(),
-		                  true,
-		                  clearRange,
-		                  MutationRefAndCipherKeys(),
-		                  range,
-		                  data->updateEagerReads);
+		data->addMutation(
+		    data->data().getLatestVersion(), true, MutationRefAndCipherKeys(clearRange), range, data->updateEagerReads);
 		data->newestAvailableVersion.insert(range, latestVersion);
 		setAvailableStatus(data, range, true);
 		++data->counters.kvSystemClearRanges;
@@ -9380,11 +9352,10 @@ void rollback(StorageServer* data, Version rollbackVersion, Version nextVersion)
 
 void StorageServer::addMutation(Version version,
                                 bool fromFetch,
-                                MutationRef const& mutation,
-                                MutationRefAndCipherKeys const& encryptedMutation,
+                                MutationRefAndCipherKeys const& mutation,
                                 KeyRangeRef const& shard,
                                 UpdateEagerReadInfo* eagerReads) {
-	MutationRef expanded = mutation;
+	MutationRef expanded = mutation.mutation;
 	MutationRef
 	    nonExpanded; // need to keep non-expanded but atomic converted version of clear mutations for change feeds
 	auto& mLog = addVersionToMutationLog(version);
@@ -9405,14 +9376,18 @@ void StorageServer::addMutation(Version version,
 		// have to do change feed before applyMutation because nonExpanded wasn't copied into the mutation log
 		// arena, and thus would go out of scope if it wasn't copied into the change feed arena
 
-		MutationRefAndCipherKeys encrypt = encryptedMutation;
-		if (encrypt.encryptedMutation.isEncrypted() && mutation.type != MutationRef::SetValue &&
-		    mutation.type != MutationRef::ClearRange) {
-			encrypt.encryptedMutation = expanded.encrypt(encrypt.cipherKeys, mLog.arena(), BlobCipherMetrics::TLOG);
+		MutationRef encrypted = mutation.encryptedMutation;
+		if (mutation.encryptedMutation.isEncrypted() && mutation.mutation.type != MutationRef::SetValue &&
+		    mutation.mutation.type != MutationRef::ClearRange) {
+			encrypted = expanded.encrypt(mutation.cipherKeys, mLog.arena(), BlobCipherMetrics::TLOG);
 		}
 
 		applyChangeFeedMutation(
-		    this, expanded.type == MutationRef::ClearRange ? nonExpanded : expanded, encrypt, version, shard);
+		    this,
+		    MutationRefAndCipherKeys(
+		        expanded.type == MutationRef::ClearRange ? nonExpanded : expanded, encrypted, mutation.cipherKeys),
+		    version,
+		    shard);
 	}
 	applyMutation(this, expanded, mLog.arena(), mutableData(), version);
 
@@ -9445,11 +9420,8 @@ public:
 	    processedStartKey(false),
 	    processedCacheStartKey(false) {}
 
-	void applyMutation(StorageServer* data,
-	                   MutationRef const& m,
-	                   MutationRefAndCipherKeys const& encryptedMutation,
-	                   Version ver,
-	                   bool fromFetch) {
+	void applyMutation(StorageServer* data, MutationRefAndCipherKeys const& mutation, Version ver, bool fromFetch) {
+		MutationRef const& m = mutation.mutation;
 		//TraceEvent("SSNewVersion", data->thisServerID).detail("VerWas", data->mutableData().latestVersion).detail("ChVer", ver);
 
 		if (currentVersion != ver) {
@@ -9471,7 +9443,7 @@ public:
 				DEBUG_MUTATION("SSUpdateMutation", ver, m, data->thisServerID).detail("FromFetch", fromFetch);
 			}
 
-			splitMutation(data, data->shards, m, encryptedMutation, ver, fromFetch);
+			splitMutation(data, data->shards, mutation, ver, fromFetch);
 		}
 
 		if (data->otherError.getFuture().isReady())
@@ -10260,7 +10232,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 			state VerUpdateRef* pUpdate = &fii.changes[changeNum];
 			for (; mutationNum < pUpdate->mutations.size(); mutationNum++) {
 				updater.applyMutation(
-				    data, pUpdate->mutations[mutationNum], MutationRefAndCipherKeys(), pUpdate->version, true);
+				    data, MutationRefAndCipherKeys(pUpdate->mutations[mutationNum]), pUpdate->version, true);
 				mutationBytes += pUpdate->mutations[mutationNum].totalSize();
 				// data->counters.mutationBytes or data->counters.mutations should not be updated because they
 				// should have counted when the mutations arrive from cursor initially.
@@ -10325,17 +10297,17 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				rd >> scm;
 				spanContext = scm.spanContext;
 			} else {
-				MutationRef msg;
-				MutationRefAndCipherKeys encryptedMutation;
+				MutationRefAndCipherKeys mutation;
+				MutationRef& msg = mutation.mutation;
 				rd >> msg;
 				ASSERT(data->encryptionMode.present());
 				ASSERT(!data->encryptionMode.get().isEncryptionEnabled() || msg.isEncrypted() ||
 				       isBackupLogMutation(msg));
 				if (msg.isEncrypted()) {
 					ASSERT(cipherKeys.present() && latestCipherKeys.present());
-					encryptedMutation.encryptedMutation = msg;
+					mutation.encryptedMutation = msg;
 					// Set to latest cipher keys since this mutation will get re-encrypted later
-					encryptedMutation.cipherKeys = msg.getLatestCipherKeys(latestCipherKeys.get());
+					mutation.cipherKeys = msg.getLatestCipherKeys(latestCipherKeys.get());
 					double decryptionTimeV = 0;
 					msg = msg.decrypt(msg.getCipherKeys(cipherKeys.get()),
 					                  rd.arena(),
@@ -10373,7 +10345,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 						    .detail("Version", cloneCursor2->version().toString());
 					}
 
-					updater.applyMutation(data, msg, encryptedMutation, ver, false);
+					updater.applyMutation(data, mutation, ver, false);
 					mutationBytes += msg.totalSize();
 					data->counters.mutationBytes += msg.totalSize();
 					data->counters.logicalBytesInput += msg.expectedSize();
