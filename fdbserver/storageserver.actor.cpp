@@ -24,6 +24,7 @@
 #include <limits>
 #include <type_traits>
 #include <unordered_map>
+#include <variant>
 
 #include "benchmark/benchmark.h"
 #include "fdbclient/BlobCipher.h"
@@ -10098,6 +10099,10 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 		state std::unordered_set<EncryptCipherDomainId> domainIds = { ENCRYPT_HEADER_DOMAIN_ID };
 		state bool collectingCipherKeys = false;
 
+		// Processed messages from the cursor.
+		state std::vector<LogMessage> messages;
+		messages.reserve(20000);
+
 		// Collect eager read keys.
 		// If encrypted mutation is encountered, we collect cipher details and fetch cipher keys, then start over.
 		loop {
@@ -10109,7 +10114,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 
 			std::unordered_set<BlobCipherDetails> cipherDetails;
 
-			Reference<ILogSystem::IPeekCursor> cloneCursor1 = cloneCursor2->cloneNoMore();
+			state Reference<ILogSystem::IPeekCursor> cloneCursor1 = cloneCursor2->cloneNoMore();
 
 			cloneCursor1->setProtocolVersion(data->logProtocol);
 
@@ -10122,14 +10127,23 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 					//TraceEvent(SevDebug, "SSReadingLPM", data->thisServerID).detail("Mutation", lpm);
 					dbgLastMessageWasProtocol = true;
 					cloneCursor1->setProtocolVersion(cloneReader.protocolVersion());
+					if (!collectingCipherKeys) {
+						messages.emplace_back(cloneCursor1->version(), cloneReader.protocolVersion());
+					}
 				} else if (cloneReader.protocolVersion().hasSpanContext() &&
 				           SpanContextMessage::isNextIn(cloneReader)) {
 					SpanContextMessage scm;
 					cloneReader >> scm;
+					if (!collectingCipherKeys) {
+						messages.emplace_back(cloneCursor1->version(), scm);
+					}
 				} else if (cloneReader.protocolVersion().hasOTELSpanContext() &&
 				           OTELSpanContextMessage::isNextIn(cloneReader)) {
 					OTELSpanContextMessage scm;
 					cloneReader >> scm;
+					if (!collectingCipherKeys) {
+						messages.emplace_back(cloneCursor1->version(), scm);
+					}
 				} else {
 					MutationRef msg;
 					cloneReader >> msg;
@@ -10138,16 +10152,28 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 					       isBackupLogMutation(msg));
 					if (msg.isEncrypted()) {
 						if (!cipherKeys.present()) {
+							if (!collectingCipherKeys) {
+								collectingCipherKeys = true;
+								messages.clear();
+							}
 							msg.updateEncryptCipherDetails(cipherDetails);
 							domainIds.emplace(msg.configurableEncryptionHeader()
 							                      .getCipherDetails()
 							                      .textCipherDetails.encryptDomainId);
-							collectingCipherKeys = true;
+
 						} else {
 							double decryptionTimeV = 0;
-							msg = msg.decrypt(
+							MutationRef decrypted = msg.decrypt(
 							    cipherKeys.get(), eager.arena, BlobCipherMetrics::TLOG, nullptr, &decryptionTimeV);
+							messages.emplace_back(
+							    cloneCursor1->version(),
+							    MutationRefAndCipherKeys(decrypted, msg, msg.getLatestCipherKeys(*latestCipherKeys)));
+							msg = decrypted;
 							decryptionTime += decryptionTimeV;
+						}
+					} else {
+						if (!collectingCipherKeys) {
+							messages.emplace_back(cloneCursor1->version(), MutationRefAndCipherKeys(msg));
 						}
 					}
 					// TraceEvent(SevDebug, "SSReadingLog", data->thisServerID).detail("Mutation", msg);
@@ -10203,7 +10229,6 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				// SOMEDAY: Theoretically we could check the change counters of individual shards and retry the
 				// reads only selectively
 				eager = UpdateEagerReadInfo(enableClearRangeEagerReads);
-				cloneCursor2 = cursor->cloneNoMore();
 			}
 		}
 		data->eagerReadsLatencyHistogram->sampleSeconds(now() - start);
@@ -10246,24 +10271,25 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 		data->fetchKeysPTreeUpdatesLatencyHistogram->sampleSeconds(now() - beforeFetchKeysUpdates);
 
 		state Version ver = invalidVersion;
-		cloneCursor2->setProtocolVersion(data->logProtocol);
 		state SpanContext spanContext = SpanContext();
 		state double beforeTLogMsgsUpdates = now();
 		state std::set<Key> updatedChangeFeeds;
-		for (; cloneCursor2->hasMessage(); cloneCursor2->nextMessage()) {
+		state int i;
+		for (i = 0; i < messages.size(); i++) {
 			if (mutationBytes > SERVER_KNOBS->DESIRED_UPDATE_BYTES) {
 				mutationBytes = 0;
 				// Instead of just yielding, leave time for the storage server to respond to reads
 				wait(delay(SERVER_KNOBS->UPDATE_DELAY));
 			}
 
-			if (cloneCursor2->version().version > ver) {
-				ASSERT(cloneCursor2->version().version > data->version.get());
+			auto& logMsg = messages[i];
+			Version msgVersion = logMsg.version.version;
+
+			if (msgVersion > ver) {
+				ASSERT(msgVersion > data->version.get());
 			}
 
-			auto& rd = *cloneCursor2->reader();
-
-			if (cloneCursor2->version().version > ver && cloneCursor2->version().version > data->version.get()) {
+			if (msgVersion > ver && msgVersion > data->version.get()) {
 				++data->counters.updateVersions;
 				if (data->currentChangeFeeds.size()) {
 					data->changeFeedVersions.emplace_back(
@@ -10271,51 +10297,32 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 					updatedChangeFeeds.insert(data->currentChangeFeeds.begin(), data->currentChangeFeeds.end());
 					data->currentChangeFeeds.clear();
 				}
-				ver = cloneCursor2->version().version;
+				ver = msgVersion;
 			}
 
-			if (LogProtocolMessage::isNextIn(rd)) {
-				LogProtocolMessage lpm;
-				rd >> lpm;
-
-				data->logProtocol = rd.protocolVersion();
+			if (std::holds_alternative<ProtocolVersion>(logMsg.content)) {
+				data->logProtocol = std::get<ProtocolVersion>(logMsg.content);
 				data->storage.changeLogProtocol(ver, data->logProtocol);
-				cloneCursor2->setProtocolVersion(rd.protocolVersion());
 				spanContext.traceID = UID();
-			} else if (rd.protocolVersion().hasSpanContext() && SpanContextMessage::isNextIn(rd)) {
-				SpanContextMessage scm;
-				rd >> scm;
+			} else if (std::holds_alternative<SpanContextMessage>(logMsg.content)) {
+				SpanContextMessage& scm = std::get<SpanContextMessage>(logMsg.content);
 				CODE_PROBE(true, "storageserveractor converting SpanContextMessage into OTEL SpanContext");
 				spanContext =
 				    SpanContext(UID(scm.spanContext.first(), scm.spanContext.second()),
 				                0,
 				                scm.spanContext.first() != 0 && scm.spanContext.second() != 0 ? TraceFlags::sampled
 				                                                                              : TraceFlags::unsampled);
-			} else if (rd.protocolVersion().hasOTELSpanContext() && OTELSpanContextMessage::isNextIn(rd)) {
+			} else if (std::holds_alternative<OTELSpanContextMessage>(logMsg.content)) {
 				CODE_PROBE(true, "storageserveractor reading OTELSpanContextMessage");
-				OTELSpanContextMessage scm;
-				rd >> scm;
+				OTELSpanContextMessage scm = std::get<OTELSpanContextMessage>(logMsg.content);
 				spanContext = scm.spanContext;
 			} else {
-				MutationRefAndCipherKeys mutation;
+				MutationRefAndCipherKeys& mutation = std::get<MutationRefAndCipherKeys>(logMsg.content);
 				MutationRef& msg = mutation.mutation;
-				rd >> msg;
+				ASSERT(!msg.isEncrypted());
 				ASSERT(data->encryptionMode.present());
-				ASSERT(!data->encryptionMode.get().isEncryptionEnabled() || msg.isEncrypted() ||
+				ASSERT(!data->encryptionMode.get().isEncryptionEnabled() || mutation.encryptedMutation.isEncrypted() ||
 				       isBackupLogMutation(msg));
-				if (msg.isEncrypted()) {
-					ASSERT(cipherKeys.present() && latestCipherKeys.present());
-					mutation.encryptedMutation = msg;
-					// Set to latest cipher keys since this mutation will get re-encrypted later
-					mutation.cipherKeys = msg.getLatestCipherKeys(latestCipherKeys.get());
-					double decryptionTimeV = 0;
-					msg = msg.decrypt(msg.getCipherKeys(cipherKeys.get()),
-					                  rd.arena(),
-					                  BlobCipherMetrics::TLOG,
-					                  nullptr,
-					                  &decryptionTimeV);
-					decryptionTime += decryptionTimeV;
-				}
 
 				Span span("SS:update"_loc, spanContext);
 
@@ -10329,12 +10336,12 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				    deterministicRandom()->random01() < 0.05) {
 					TraceEvent(SevWarnAlways, "TSSInjectDropMutation", data->thisServerID)
 					    .detail("Mutation", msg)
-					    .detail("Version", cloneCursor2->version().toString());
+					    .detail("Version", logMsg.version.toString());
 				} else if (data->isTSSInQuarantine() &&
 				           (msg.param1.size() < 2 || msg.param1[0] != 0xff || msg.param1[1] != 0xff)) {
 					TraceEvent("TSSQuarantineDropMutation", data->thisServerID)
 					    .suppressFor(10.0)
-					    .detail("Version", cloneCursor2->version().toString());
+					    .detail("Version", logMsg.version.toString());
 				} else if (ver != invalidVersion) { // This change belongs to a version < minVersion
 					DEBUG_MUTATION("SSPeek", ver, msg, data->thisServerID);
 					if (ver == data->initialClusterVersion) {
@@ -10342,7 +10349,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 						// The following trace event may produce a value with special characters
 						TraceEvent("SSPeekMutation", data->thisServerID)
 						    .detail("Mutation", msg)
-						    .detail("Version", cloneCursor2->version().toString());
+						    .detail("Version", logMsg.version.toString());
 					}
 
 					updater.applyMutation(data, mutation, ver, false);
@@ -10375,7 +10382,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				} else
 					TraceEvent(SevError, "DiscardingPeekedData", data->thisServerID)
 					    .detail("Mutation", msg)
-					    .detail("Version", cloneCursor2->version().toString());
+					    .detail("Version", logMsg.version.toString());
 			}
 		}
 		data->tLogMsgsPTreeUpdatesLatencyHistogram->sampleSeconds(now() - beforeTLogMsgsUpdates);
@@ -10389,7 +10396,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 		if (ver != invalidVersion) {
 			data->lastVersionWithData = ver;
 		}
-		ver = cloneCursor2->version().version - 1;
+		ver = cloneCursor1->version().version - 1;
 
 		if (injectedChanges)
 			data->lastVersionWithData = ver;
@@ -10485,7 +10492,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 			}
 		}
 
-		data->logCursor->advanceTo(cloneCursor2->version());
+		data->logCursor->advanceTo(cloneCursor1->version());
 		if (cursor->version().version >= data->lastTLogVersion) {
 			if (data->behind) {
 				TraceEvent("StorageServerNoLongerBehind", data->thisServerID)
