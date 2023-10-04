@@ -35,7 +35,11 @@
 // Return true if the given key range is restoring. It returns true even if part of the key range is restoring
 ACTOR Future<bool> BlobRestoreController::isRestoring(Reference<BlobRestoreController> self) {
 	BlobRestorePhase phase = wait(BlobRestoreController::currentPhase(self));
-	if (!self->range_.intersects(normalKeys)) {
+	return self->isRestoring(phase);
+}
+
+bool BlobRestoreController::isRestoring(BlobRestorePhase phase) {
+	if (!range_.intersects(normalKeys)) {
 		return false;
 	}
 	if (phase < BlobRestorePhase::INIT || phase == BlobRestorePhase::DONE) {
