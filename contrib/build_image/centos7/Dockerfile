@@ -610,7 +610,23 @@ RUN if [ ! "$(uname -m)" == "aarch64" ]; then \
 
 RUN echo "Setup sphinx" && \
     source /opt/rh/rh-python38/enable && \
-    python3 -m pip install setuptools==65.3.0 sphinx-bootstrap-theme==0.8.1 docutils==0.19 sphinx==5.1.1 sphinx-autobuild Jinja2==3.1.2 urllib3==2.0.2
+    python3 -m pip install setuptools==65.3.0 sphinx-bootstrap-theme==0.8.1 docutils==0.19 sphinx==5.1.1 sphinx-autobuild Jinja2==3.1.2 urllib3==2.0.2 wheel==0.41.0
+
+RUN BAZELISK_VERSION="1.17.0-sf1"; \
+    if [ "$(uname -m)" == "aarch64" ]; then \
+        # pragma: allowlist nextline secret
+        BAZELISK_SHA256="c2723adeea4cbdf10ded4e55ab4d458a4f7af118f8921bb6f9a034e483796c66"; \
+    else \
+        # pragma: allowlist nextline secret
+        BAZELISK_SHA256="63e2cb2fe8d9c5f54a6f3059905f037d3852116006ff0a0165879459871cba94"; \
+    fi && \
+    curl -Ls https://nexus.int.snowflakecomputing.com/repository/Releases/com/snowflake/devtools/packages/bazelisk/${BAZELISK_VERSION}/bazelisk-${BAZELISK_VERSION}-$(uname -m)-linux-${BAZELISK_SHA256}.bin -o /usr/local/bin/bazelisk && \
+    echo "${BAZELISK_SHA256}  /usr/local/bin/bazelisk" > bazelisk.txt && \
+    sha256sum --quiet -c bazelisk.txt && \
+    chmod +x /usr/local/bin/bazelisk && \
+    ln -s /usr/local/bin/bazelisk /usr/local/bin/bazel && \
+    export USE_BAZEL_VERSION=6.2.0 && \
+    bazel version
 
 # =========================== END OF LAYER: build ==============================
 FROM build as devel
