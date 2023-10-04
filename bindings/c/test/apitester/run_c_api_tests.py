@@ -106,6 +106,14 @@ def run_tester(args, cluster, test_file):
             "--tls-cert-file",
             cluster.client_cert_file,
         ]
+        if cluster.authorization_kty:
+            # authorization is enabled
+            cmd += [
+                "--authz-private-key-pem-file",
+                cluster.authorization_private_key_pem_file,
+                "--authz-keypair-id",
+                cluster.authorization_keypair_id,
+            ]
 
     for knob in args.knobs:
         knob_name, knob_value = knob.split("=")
@@ -163,6 +171,7 @@ class TestConfig:
         self.num_processes = random.randint(
             self.min_num_processes, self.max_num_processes
         )
+        self.authz_enabled = server_config.get("authz_enabled", False)
 
         self.server_knobs = {
             name: value
@@ -190,6 +199,10 @@ def run_test(args, test_file):
         tls_config=tls_config,
         custom_config=config.server_knobs,
         cluster_version=args.cluster_version,
+        authorization_kty="EC" if config.authz_enabled else "",
+        authorization_keypair_id="apitester-authz-keypair"
+        if config.authz_enabled
+        else "",
     ) as cluster:
         ret_code = run_tester(args, cluster, test_file)
         if not cluster.check_cluster_logs():

@@ -116,6 +116,20 @@ struct TransactionExecutorOptions {
 	// Maximum number of retries per transaction (0 - unlimited)
 	int transactionRetryLimit = 0;
 
+	// Client is connecting in untrusted mode (requires authorization).
+	bool untrustedClient = false;
+
+	// Authz token is signed on-the-fly and set as option if authzPrivateKey and authzKeypairId is set and untrustedClient == true.
+	// Below flag indicates whether to set authz token option at the tenant level or the transaction level.
+	// (false == transaction level)
+	bool authzSetTokenAtTenant = false;
+
+	// PEM bytes containing the private key with which to sign authz tokens.
+	std::optional<std::string> authzPrivateKeyPem;
+
+	// ID of the public key to verify the token (goes in token header).
+	std::optional<std::string> authzKeypairId;
+
 	// Temporary directory
 	std::string tmpDir;
 };

@@ -20,6 +20,7 @@
 
 #include "TesterUtil.h"
 #include "fmt/chrono.h"
+#include "fdbrpc/TokenSignStdTypes.h"
 #include <cstdio>
 #include <algorithm>
 #include <ctype.h>
@@ -28,6 +29,7 @@
 #include <fstream>
 #include <string>
 #include <sstream>
+#include <thread>
 
 namespace FdbApiTester {
 
@@ -185,6 +187,38 @@ void TmpFile::remove() {
 	if (!std::filesystem::remove(std::filesystem::path(filename))) {
 		log::warn("Failed to remove file {}", filename);
 	}
+}
+
+std::string signToken(fdb::Tenant tenant, const std::string& keyId, const std::string& privateKeyPem) {
+	int64_t tenantId = -1;
+	while (true) {
+		// For MultiVersion clients, fdb::Tenant::getId() could return cluster_version_changed due to deferred DB initialization.
+		// As there aren't any transaction to rely on for onError(), simply back off 0.5s for every failed request.
+		auto f = tenant.getId();
+		auto err = f.blockUntilReady();
+		ASSERT(!err);
+		if (f.error()) {
+			log::warn("Tenant name to ID resolution failed with '{}'; retrying", f.error().what());
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		} else {
+			tenantId = f.get();
+			break;
+		}
+	}
+	ASSERT(tenantId >= 0);
+	auto t = authz::jwt::stdtypes::TokenSpec{};
+	auto const now = std::chrono::duration_cast<std::chrono::duration<uint64_t>>(std::chrono::system_clock::now().time_since_epoch()).count();
+	t.algorithm = authz::Algorithm::ES256; // For simplicity, assume that we always use EC keys to sign/verify tokens.
+	t.keyId = keyId;
+	t.issuer = "apitester";
+	t.subject = "correctness";
+	t.audience = std::vector<std::string>{ "fdb_apitester_server" };
+	t.issuedAtUnixTime = now;
+	t.expiresAtUnixTime = now + 60 * 60 * 6; // Good for 6 hours
+	t.notBeforeUnixTime = now - 60 * 5; // activated 5 mins ago
+	t.tokenId = Random::get().randomStringLowerCase<std::string>(36, 36);
+	t.tenants = std::vector<int64_t>{ tenantId };
+	return authz::jwt::stdtypes::signToken(t, privateKeyPem);
 }
 
 } // namespace FdbApiTester

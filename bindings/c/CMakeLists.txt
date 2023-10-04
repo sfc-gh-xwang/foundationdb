@@ -220,7 +220,7 @@ target_link_libraries(fdb_c_txn_size_test PRIVATE fdb_c Threads::Threads)
 target_link_libraries(fdb_c_client_memory_test PRIVATE fdb_cpp Threads::Threads)
 
 target_include_directories(fdb_c_api_tester_impl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/foundationdb/ ${CMAKE_SOURCE_DIR}/flow/include ${CMAKE_BINARY_DIR}/flow/include)
-target_link_libraries(fdb_c_api_tester_impl PRIVATE fdb_cpp toml11_target Threads::Threads fmt::fmt boost_target)
+target_link_libraries(fdb_c_api_tester_impl PRIVATE fdb_cpp tokensign toml11_target Threads::Threads fmt::fmt boost_target)
 if(NOT APPLE)
   target_link_libraries(fdb_c_api_tester_impl PRIVATE stdc++fs)
 endif()
@@ -544,6 +544,7 @@ elseif(NOT APPLE) # Linux Only
   )
 
 endif() # End Linux only
+
 
 if (NOT OPEN_FOR_IDE)
   # We have a broader set of API tests located in test/apitester/tests and a narrower set of

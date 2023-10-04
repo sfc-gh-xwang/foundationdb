@@ -27,10 +27,13 @@
 #include "SimpleOpt/SimpleOpt.h"
 #include "test/fdb_api.hpp"
 
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <thread>
 #include <fmt/format.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace FdbApiTester {
 
@@ -58,6 +61,8 @@ enum TesterOptionId {
 	OPT_TLS_CERT_FILE,
 	OPT_TLS_KEY_FILE,
 	OPT_TLS_CA_FILE,
+	OPT_AUTHZ_KEY_FILE,
+	OPT_AUTHZ_KEYPAIR_ID,
 	OPT_RETAIN_CLIENT_LIB_COPIES,
 	OPT_VERBOSITY
 };
@@ -87,6 +92,8 @@ CSimpleOpt::SOption TesterOptionDefs[] = //
 	  { OPT_TLS_CERT_FILE, "--tls-cert-file", SO_REQ_SEP },
 	  { OPT_TLS_KEY_FILE, "--tls-key-file", SO_REQ_SEP },
 	  { OPT_TLS_CA_FILE, "--tls-ca-file", SO_REQ_SEP },
+	  { OPT_AUTHZ_KEY_FILE, "--authz-private-key-pem-file", SO_REQ_SEP },
+	  { OPT_AUTHZ_KEYPAIR_ID, "--authz-keypair-id", SO_REQ_SEP },
 	  { OPT_RETAIN_CLIENT_LIB_COPIES, "--retain-client-lib-copies", SO_NONE },
 	  { OPT_VERBOSITY, "-V", SO_REQ_SEP },
 	  { OPT_VERBOSITY, "--verbosity", SO_REQ_SEP },
@@ -141,6 +148,10 @@ void printProgramUsage(const char* execName) {
 	       "                 Path to file containing TLS CA certificate\n"
 	       "  --retain-client-lib-copies\n"
 	       "                 Retain temporary external client library copies\n"
+	       "  --authz-private-key-pem-file\n"
+	       "                 PEM file containing the private key with which to sign the authorization tokens\n"
+	       "  --authz-private-key-id\n"
+	       "                 ID of the server-side public key to verify the authorization token (goes in token header)\n"
 	       "  -V, --verbosity LEVEL\n"
 	       "                 Set verbosity level, one of [ERROR, WARNING, INFO, DEBUG] (default: INFO)\n"
 	       "  -h, --help     Display this help and exit.\n",
@@ -249,6 +260,12 @@ bool processArg(TesterOptions& options, const CSimpleOpt& args) {
 	case OPT_TLS_CA_FILE:
 		options.tlsCaFile.assign(args.OptionArg());
 		break;
+	case OPT_AUTHZ_KEY_FILE:
+		options.authzKeyFile.emplace(args.OptionArg());
+		break;
+	case OPT_AUTHZ_KEYPAIR_ID:
+		options.authzKeypairId.emplace(args.OptionArg());
+		break;
 	case OPT_RETAIN_CLIENT_LIB_COPIES:
 		options.retainClientLibCopies = true;
 		break;
@@ -344,11 +361,11 @@ void applyNetworkOptions(TesterOptions& options) {
 		fdb::network::setOption(FDBNetworkOption::FDB_NET_OPTION_TRACE_LOG_GROUP, options.logGroup);
 	}
 
-	if (!options.tlsCertFile.empty()) {
+	if (!options.tlsCertFile.empty() && !options.testSpec.untrustedClient) {
 		fdb::network::setOption(FDBNetworkOption::FDB_NET_OPTION_TLS_CERT_PATH, options.tlsCertFile);
 	}
 
-	if (!options.tlsKeyFile.empty()) {
+	if (!options.tlsKeyFile.empty() && !options.testSpec.untrustedClient) {
 		fdb::network::setOption(FDBNetworkOption::FDB_NET_OPTION_TLS_KEY_PATH, options.tlsKeyFile);
 	}
 
@@ -364,6 +381,78 @@ void applyNetworkOptions(TesterOptions& options) {
 		log::info("Setting knob {}={}", knob.first.c_str(), knob.second.c_str());
 		fdb::network::setOption(FDBNetworkOption::FDB_NET_OPTION_KNOB,
 		                        fmt::format("{}={}", knob.first.c_str(), knob.second.c_str()));
+	}
+}
+
+void prepopulateTenants(const TesterOptions& options) {
+	// Requirement: TLS credentials are configured.
+	if (options.tlsCertFile.empty() || options.tlsKeyFile.empty() || options.tlsCaFile.empty()) {
+		throw TesterError(fmt::format("TLS credentials must be set to pre-populate tenants in trusted mode"));
+	}
+	// flush in advance to forking such that console buffers do not get duplicated to child and print twice.
+	fflush(stdout);
+	fflush(stderr);
+	auto const pid = fork();
+	if (pid == 0) {
+		fdb::selectApiVersion(FDB_LATEST_API_VERSION);
+		fdb::network::setOption(FDBNetworkOption::FDB_NET_OPTION_TLS_CERT_PATH, options.tlsCertFile);
+		fdb::network::setOption(FDBNetworkOption::FDB_NET_OPTION_TLS_KEY_PATH, options.tlsKeyFile);
+		fdb::network::setOption(FDBNetworkOption::FDB_NET_OPTION_TLS_CA_PATH, options.tlsCaFile);
+		fdb::network::setup();
+		bool tenantCreateOk = false;
+		{
+			auto nwt = std::thread([]() { fdb_check(fdb::network::run(), "Admin FDB network thread failed"); });
+			auto networkStopGuard = ScopeExit([nwt=std::move(nwt)]() mutable {
+				if (auto err = fdb::network::stop()) {
+					log::error("error stopping network thread for admin subprocess: {}", err.what());
+				}
+				nwt.join();
+			});
+			auto db = fdb::Database(options.clusterFile);
+			auto tr = db.createTransaction();
+			while (true) {
+				for (auto i = 0; i < options.numTenants; i++) {
+					fdb::Tenant::createTenant(tr, fdb::toBytesRef(fmt::format("tenant{}", i)));
+				}
+				auto commitFuture = tr.commit();
+				auto err = commitFuture.blockUntilReady();
+				ASSERT(!err);
+				if ((err = commitFuture.error())) {
+					auto errf = tr.onError(err);
+					err = errf.blockUntilReady();
+					ASSERT(!err);
+					if ((err = errf.error())) {
+						log::error("Unretryable error while committing tenant creation: {}", err.what());
+						tenantCreateOk = false;
+						break;
+					} else {
+						log::info("Retryable error while committing tenant creation: {}", err.what());
+					}
+				} else {
+					log::info("Successfully pre-populated {} tenants", options.numTenants);
+					tenantCreateOk = true;
+					break;
+				}
+			}
+		}
+		std::exit(!tenantCreateOk);
+	} else if (pid > 0) {
+		int status = 0;
+		auto wpid = ::waitpid(pid, &status, 0);
+		if (wpid < 0) {
+			throw TesterError(fmt::format("waitpid() for admin subprocess failed with {}", strerror(errno)));
+		}
+		if (status != 0) {
+			throw TesterError(fmt::format("Admin subprocess returned abnormally with status: exited({}) exitstatus({}) signaled({}) signal({})",
+						WIFEXITED(status),
+						WEXITSTATUS(status),
+						WIFSIGNALED(status),
+						WTERMSIG(status)));
+		} else {
+			log::info("Admin subprocess exited normally");
+		}
+	} else {
+		throw TesterError(fmt::format("Failed to fork and pre-populate tenants in trusted mode: {}", strerror(errno)));
 	}
 }
 
@@ -393,6 +482,12 @@ bool runWorkloads(TesterOptions& options) {
 		txExecOptions.tmpDir = options.tmpDir.empty() ? std::string("/tmp") : options.tmpDir;
 		txExecOptions.tamperClusterFile = options.testSpec.tamperClusterFile;
 		txExecOptions.numTenants = options.numTenants;
+		txExecOptions.untrustedClient = options.testSpec.untrustedClient;
+		if (options.authzKeyFile) {
+			txExecOptions.authzPrivateKeyPem = readFile(options.authzKeyFile.value());
+		}
+		txExecOptions.authzKeypairId = options.authzKeypairId;
+		txExecOptions.authzSetTokenAtTenant = options.testSpec.authzSetTokenAtTenant;
 
 		std::vector<std::shared_ptr<IWorkload>> workloads;
 		workloads.reserve(options.testSpec.workloads.size() * options.numClients);
@@ -406,6 +501,7 @@ bool runWorkloads(TesterOptions& options) {
 				config.numClients = options.numClients;
 				config.numTenants = options.numTenants;
 				config.apiVersion = options.apiVersion;
+				config.untrustedClient = options.testSpec.untrustedClient;
 				std::shared_ptr<IWorkload> workload = IWorkloadFactory::create(workloadSpec.name, config);
 				if (!workload) {
 					throw TesterError(fmt::format("Unknown workload '{}'", workloadSpec.name));
@@ -464,6 +560,13 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 		randomizeOptions(options);
+		if (options.testSpec.untrustedClient && options.numTenants > 0) {
+			// Untrusted mode clients cannot create tenants.
+			// Making the current process a trusted client would force subsequent code to run in trusted client mode.
+			// Therefore we first fork, go into trusted client mode, and pre-populate tenants in following schema: "tenant" + std::to_string(tenant_index) where tenant_index = [0, options.numTenants).
+			ASSERT(!options.tlsCertFile.empty() && !options.tlsKeyFile.empty() && !options.tlsCaFile.empty());
+			prepopulateTenants(options);
+		}
 
 		fdb::selectApiVersionCapped(options.apiVersion);
 		applyNetworkOptions(options);

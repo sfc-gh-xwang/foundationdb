@@ -65,6 +65,13 @@ struct TestSpec {
 	// Test tampering the cluster file
 	bool tamperClusterFile = false;
 
+	// Connect to TLS-enabled database as an untrusted client, which requires an authorization token to access tenant data.
+	bool untrustedClient = false;
+
+	// If server authorization is enabled and client is in untrusted mode (untrustedClient == true),
+	// set authorization token on the tenant object, instead of on the transaction object.
+	bool authzSetTokenAtTenant = false;
+
 	// Size of the FDB client thread pool (a random number in the [min,max] range)
 	int minFdbThreads = 1;
 	int maxFdbThreads = 1;

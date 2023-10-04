@@ -56,6 +56,8 @@ public:
 	std::string tlsCertFile;
 	std::string tlsKeyFile;
 	std::string tlsCaFile;
+	std::optional<std::string> authzKeyFile;
+	std::optional<std::string> authzKeypairId;
 	bool retainClientLibCopies = false;
 };
 

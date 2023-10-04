@@ -29,6 +29,9 @@
 #include <optional>
 #include <fmt/format.h>
 #include <chrono>
+#include <fstream>
+#include <type_traits>
+#include <utility>
 
 #include "test/fdb_api.hpp"
 
@@ -218,6 +221,29 @@ public:
 
 private:
 	std::string filename;
+};
+
+// Read entire file into std::string
+inline std::string readFile(const std::string& path) {
+	std::ifstream ifs(path);
+	std::ostringstream ost;
+	ost << ifs.rdbuf();
+	return std::move(ost).str();
+}
+
+// Signs a token for accessing tenant data in an authz-enabled cluster.
+// fdb::Tenant is necessary to retrieve tenant ID, which is required to sign a token.
+std::string signToken(fdb::Tenant tenant, const std::string& keyId, const std::string& privateKeyPem);
+
+// Execute lambda as this object goes out of scope.
+template <typename Func>
+class ScopeExit {
+	std::decay_t<Func> fn;
+
+public:
+	ScopeExit(Func&& fn) : fn(std::forward<Func>(fn)) {}
+
+	~ScopeExit() { fn(); }
 };
 
 } // namespace FdbApiTester
