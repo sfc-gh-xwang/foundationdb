@@ -695,7 +695,9 @@ class ConfigNodeImpl {
 					req.reply.send(ConfigBroadcastRegisteredReply{ isRegistered, generation.committedVersion });
 				}
 				when(state ConfigBroadcastReadyRequest readyReq = waitNext(cbi->ready.getFuture())) {
+					state ConfigGeneration generation = wait(getGeneration(self));
 					state Optional<CoordinatorsHash> locked = wait(getLocked(self));
+					state CoordinatorsHash coordinatorsHash = wait(getCoordinatorsHash(self));
 
 					// New ConfigNodes with no previous state should always
 					// apply snapshots from the ConfigBroadcaster. Otherwise,
@@ -704,6 +706,8 @@ class ConfigNodeImpl {
 					// shouldn't apply a snapshot and overwrite its state if
 					// the set of coordinators hasn't changed.
 					if ((!infinite && !locked.present()) ||
+					    (readyReq.snapshotVersion > generation.committedVersion &&
+					     coordinatorsHash != readyReq.coordinatorsHash) ||
 					    (locked.present() && locked.get() != readyReq.coordinatorsHash)) {
 						// Apply snapshot if necessary.
 						if (readyReq.snapshot.size() > 0) {
