@@ -44,22 +44,14 @@ void updateClusterMetadata(Transaction tr,
                            DataClusterEntry const& previousEntry,
                            DataClusterEntry const& updatedEntry,
                            IsRestoring isRestoring = IsRestoring::False) {
-	if (previousEntry.clusterState == DataClusterState::REGISTERING &&
-	    updatedEntry.clusterState != DataClusterState::READY &&
-	    updatedEntry.clusterState != DataClusterState::REMOVING) {
-		CODE_PROBE(true, "Updating cluster state from registering to unexpected state");
-		throw cluster_not_found();
-	} else if (previousEntry.clusterState == DataClusterState::REMOVING) {
-		CODE_PROBE(true, "Attempting to configure cluster that is being removed");
-		throw cluster_removed();
-	} else if (isRestoring) {
+	ASSERT(previousEntry.clusterState != DataClusterState::REMOVING);
+	if (isRestoring) {
 		ASSERT(previousEntry.clusterState == DataClusterState::RESTORING &&
 		       updatedEntry.clusterState == DataClusterState::RESTORING);
-	} else if (previousEntry.clusterState == DataClusterState::RESTORING &&
-	           (updatedEntry.clusterState != DataClusterState::READY &&
-	            updatedEntry.clusterState != DataClusterState::REMOVING)) {
-		CODE_PROBE(true, "Attempting to configure cluster that is being restored");
-		throw cluster_restoring();
+	} else if (previousEntry.clusterState == DataClusterState::REGISTERING ||
+	           previousEntry.clusterState == DataClusterState::RESTORING) {
+		ASSERT(updatedEntry.clusterState == DataClusterState::READY ||
+		       updatedEntry.clusterState == DataClusterState::REMOVING);
 	}
 	metadata::management::dataClusters().set(tr, name, updatedEntry);
 	internal::updateClusterCapacityIndex(tr, name, previousEntry, updatedEntry);

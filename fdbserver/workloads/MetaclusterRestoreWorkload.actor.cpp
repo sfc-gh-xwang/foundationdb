@@ -359,7 +359,8 @@ struct MetaclusterRestoreWorkload : TestWorkload {
 					}
 				}
 
-				CODE_PROBE(!successfulRestore && !tenantNotFound, "Simultaneous restores all failed");
+				CODE_PROBE(
+				    !successfulRestore && !tenantNotFound, "Simultaneous restores all failed", probe::decoration::rare);
 				ASSERT(successfulRestore || restoreFutures.size() > 1 || deletedTenantsAfterBackup);
 				numRestores = 1;
 				forceDeleteMissingTenants = metacluster::ForceDeleteMissingTenants(deterministicRandom()->coinflip());
