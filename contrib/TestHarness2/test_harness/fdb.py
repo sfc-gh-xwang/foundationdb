@@ -50,26 +50,13 @@ def write_coverage_chunk(
     path: Tuple[str, ...],
     metadata: Tuple[str, ...],
     coverage: List[Tuple[Coverage, bool]],
-    initialized: bool,
-) -> bool:
+):
     cov_dir = fdb.directory.create_or_open(tr, path)
-    if not initialized:
-        metadata_dir = fdb.directory.create_or_open(tr, metadata)
-        v = tr[metadata_dir["initialized"]]
-        initialized = v.present()
     for cov, covered in coverage:
-        if not initialized or covered:
-            tr.add(
-                cov_dir.pack((cov.file, cov.line, cov.comment, cov.rare)),
-                struct.pack("<I", 1 if covered else 0),
-            )
-    return initialized
-
-
-@fdb.transactional
-def set_initialized(tr, metadata: Tuple[str, ...]):
-    metadata_dir = fdb.directory.create_or_open(tr, metadata)
-    tr[metadata_dir["initialized"]] = fdb.tuple.pack((True,))
+        tr.add(
+            cov_dir.pack((cov.file, cov.line, cov.comment, cov.rare)),
+            struct.pack("<I", 1 if covered else 0),
+        )
 
 
 def write_coverage(
@@ -80,11 +67,8 @@ def write_coverage(
 ):
     db = open_db(cluster_file)
     assert config.joshua_dir is not None
-    initialized: bool = False
     for chunk in chunkify(coverage.items(), 100):
-        initialized = write_coverage_chunk(db, cov_path, metadata, chunk, initialized)
-    if not initialized:
-        set_initialized(db, metadata)
+        write_coverage_chunk(db, cov_path, metadata, chunk)
 
 
 @fdb.transactional
