@@ -52,7 +52,6 @@ struct VersionedMessage {
 	StringRef message;
 	VectorRef<Tag> tags;
 	Arena arena; // Keep a reference to the memory containing the message
-	Arena decryptArena; // Arena used for decrypt buffer.
 	size_t bytes; // arena's size when inserted, which can grow afterwards
 
 	VersionedMessage(LogMessageVersion v, StringRef m, const VectorRef<Tag>& t, const Arena& a, size_t n)
@@ -66,8 +65,7 @@ struct VersionedMessage {
 
 	// Returns true if the message is a mutation that could be backed up (normal keys, system key backup ranges, or the
 	// metadata version key)
-	bool isCandidateBackupMessage(MutationRef* m,
-	                              const std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>& cipherKeys) {
+	bool isCandidateBackupMessage() {
 		for (Tag tag : tags) {
 			if (tag.locality == tagLocalitySpecial || tag.locality == tagLocalityTxs) {
 				return false; // skip Txs mutations
@@ -75,7 +73,6 @@ struct VersionedMessage {
 		}
 
 		ArenaReader reader(arena, message, AssumeVersion(g_network->protocolVersion()));
-
 		// Return false for LogProtocolMessage and SpanContextMessage metadata messages.
 		if (LogProtocolMessage::isNextIn(reader))
 			return false;
@@ -85,38 +82,7 @@ struct VersionedMessage {
 			CODE_PROBE(true, "Returning false for OTELSpanContextMessage");
 			return false;
 		}
-		reader >> *m;
-		if (m->isEncrypted()) {
-			// In case the mutation is encrypted, get the decrypted mutation and also update message to point to
-			// the decrypted mutation.
-			// We use dedicated arena for decrypt buffer, as the other arena is used to count towards backup lock bytes.
-			*m = m->decrypt(cipherKeys, decryptArena, BlobCipherMetrics::BACKUP, &message);
-		}
-
-		// Return true if the mutation intersects any legal backup ranges
-		if (normalKeys.contains(m->param1) || m->param1 == metadataVersionKey) {
-			return true;
-		} else if (m->type != MutationRef::Type::ClearRange) {
-			return systemBackupMutationMask().rangeContaining(m->param1).value();
-		} else {
-			for (auto& r : systemBackupMutationMask().intersectingRanges(KeyRangeRef(m->param1, m->param2))) {
-				if (r->value()) {
-					return true;
-				}
-			}
-
-			return false;
-		}
-	}
-
-	void collectCipherDetailIfEncrypted(std::unordered_set<BlobCipherDetails>& cipherDetails) {
-		ASSERT(!message.empty());
-		if (*message.begin() == MutationRef::Encrypted) {
-			ArenaReader reader(arena, message, AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
-			MutationRef m;
-			reader >> m;
-			m.updateEncryptCipherDetails(cipherDetails);
-		}
+		return true;
 	}
 };
 
@@ -809,10 +775,7 @@ ACTOR static Future<Void> updateLogBytesWritten(BackupData* self,
 // Saves messages in the range of [0, numMsg) to a file and then remove these
 // messages. The file content format is a sequence of (Version, sub#, msgSize, message).
 // Note only ready backups are saved.
-ACTOR Future<Void> saveMutationsToFile(BackupData* self,
-                                       Version popVersion,
-                                       int numMsg,
-                                       std::unordered_set<BlobCipherDetails> cipherDetails) {
+ACTOR Future<Void> saveMutationsToFile(BackupData* self, Version popVersion, int numMsg) {
 	state int blockSize = SERVER_KNOBS->BACKUP_FILE_BLOCK_BYTES;
 	state std::vector<Future<Reference<IBackupFile>>> logFileFutures;
 	state std::vector<Reference<IBackupFile>> logFiles;
@@ -821,7 +784,6 @@ ACTOR Future<Void> saveMutationsToFile(BackupData* self,
 	state std::vector<Version> beginVersions; // logFiles' begin versions
 	state KeyRangeMap<std::set<int>> keyRangeMap; // range to index in logFileFutures, logFiles, & blockEnds
 	state std::vector<Standalone<StringRef>> mutations;
-	state std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> cipherKeys;
 	state int idx;
 
 	// Make sure all backups are ready, otherwise mutations will be lost.
@@ -872,53 +834,19 @@ ACTOR Future<Void> saveMutationsToFile(BackupData* self,
 		    .detail("File", logFiles[i]->getFileName());
 	}
 
-	// Fetch cipher keys if any of the messages are encrypted.
-	if (!cipherDetails.empty()) {
-		std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>> getCipherKeysResult =
-		    wait(GetEncryptCipherKeys<ServerDBInfo>::getEncryptCipherKeys(
-		        self->db, cipherDetails, BlobCipherMetrics::BLOB_GRANULE));
-		cipherKeys = getCipherKeysResult;
-	}
-
 	blockEnds = std::vector<int64_t>(logFiles.size(), 0);
 	for (idx = 0; idx < numMsg; idx++) {
 		auto& message = self->messages[idx];
-		MutationRef m;
-		if (!message.isCandidateBackupMessage(&m, cipherKeys))
+		if (!message.isCandidateBackupMessage())
 			continue;
 
-		DEBUG_MUTATION("addMutation", message.version.version, m)
-		    .detail("KCV", self->minKnownCommittedVersion)
-		    .detail("SavedVersion", self->savedVersion);
-
 		std::vector<Future<Void>> adds;
-		if (m.type != MutationRef::Type::ClearRange) {
-			for (int index : keyRangeMap[m.param1]) {
-				if (message.getVersion() >= beginVersions[index]) {
-					adds.push_back(
-					    addMutation(logFiles[index], message, message.message, &blockEnds[index], blockSize));
-				}
-			}
-		} else {
-			KeyRangeRef mutationRange(m.param1, m.param2);
-			KeyRangeRef intersectionRange;
-
-			// Find intersection ranges and create mutations for sub-ranges
-			for (auto range : keyRangeMap.intersectingRanges(mutationRange)) {
-				const auto& subrange = range.range();
-				intersectionRange = mutationRange & subrange;
-				MutationRef subm(MutationRef::Type::ClearRange, intersectionRange.begin, intersectionRange.end);
-				BinaryWriter wr(AssumeVersion(g_network->protocolVersion()));
-				wr << subm;
-				mutations.push_back(wr.toValue());
-				for (int index : range.value()) {
-					if (message.getVersion() >= beginVersions[index]) {
-						adds.push_back(
-						    addMutation(logFiles[index], message, mutations.back(), &blockEnds[index], blockSize));
-					}
-				}
+		for (int i = 0; i < logFiles.size(); ++i) {
+			if (message.getVersion() >= beginVersions[i]) {
+				adds.push_back(addMutation(logFiles[i], message, message.message, &blockEnds[i], blockSize));
 			}
 		}
+
 		wait(waitForAll(adds));
 		mutations.clear();
 	}
@@ -952,7 +880,6 @@ ACTOR Future<Void> uploadData(BackupData* self) {
 		state Future<Void> uploadDelay = delay(SERVER_KNOBS->BACKUP_UPLOAD_DELAY);
 
 		state int numMsg = 0;
-		state std::unordered_set<BlobCipherDetails> cipherDetails;
 		Version lastPopVersion = popVersion;
 		// index of last version's end position in self->messages
 		int lastVersionIndex = 0;
@@ -969,7 +896,6 @@ ACTOR Future<Void> uploadData(BackupData* self) {
 				lastVersion = popVersion;
 				popVersion = version;
 			}
-			message.collectCipherDetailIfEncrypted(cipherDetails);
 			numMsg++;
 		}
 		if (self->pullFinished()) {
@@ -992,7 +918,7 @@ ACTOR Future<Void> uploadData(BackupData* self) {
 			    .detail("NumMsg", numMsg)
 			    .detail("MsgQ", self->messages.size());
 			// save an empty file for old epochs so that log file versions are continuous
-			wait(saveMutationsToFile(self, popVersion, numMsg, cipherDetails));
+			wait(saveMutationsToFile(self, popVersion, numMsg));
 			self->eraseMessages(numMsg);
 		}
 
@@ -1012,7 +938,6 @@ ACTOR Future<Void> uploadData(BackupData* self) {
 		}
 
 		if (self->allMessageSaved()) {
-			self->eraseMessages(self->messages.size());
 			return Void();
 		}
 

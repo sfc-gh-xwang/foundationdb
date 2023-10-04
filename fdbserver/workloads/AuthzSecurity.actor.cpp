@@ -113,7 +113,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 	    crossTenantGetGranulesPositive, crossTenantGetGranulesNegative, blobbifyNegative, unblobbifyNegative,
 	    listBlobNegative, verifyBlobNegative, flushBlobNegative, purgeBlobNegative;
 	BulkLoadCounter bulkLoadStart, bulkLoadStateChange, bulkLoadCleanup, bulkLoadWaitComplete, bulkLoadList,
-	    bulkLoadListAll, bulkLoadStatus, bulkLoadFilesToWrite, bulkLoadFilesWritten;
+	    bulkLoadListAll, bulkLoadStatus, bulkLoadFilesToWrite, bulkLoadFilesWritten, bulkLoadStartExternal;
 	std::vector<std::function<Future<Void>(Database cx)>> testFunctions;
 	bool checkBlobGranules, checkBlobManagement, checkBulkLoad;
 	std::unordered_map<Key, BulkLoadID> bulkLoadIDs;
@@ -152,7 +152,8 @@ struct AuthzSecurityWorkload : TestWorkload {
 	    bulkLoadListAll("List", false),
 	    bulkLoadStatus("Status"),
 	    bulkLoadFilesToWrite("FilesToWrite"),
-	    bulkLoadFilesWritten("FilesWritten") {
+	    bulkLoadFilesWritten("FilesWritten"),
+	    bulkLoadStartExternal("StartExternal", false) {
 		testDuration = getOption(options, "testDuration"_sr, 15.0);
 		transactionsPerSecond = getOption(options, "transactionsPerSecond"_sr, 500.0) / clientCount;
 		actorCount = getOption(options, "actorsPerClient"_sr, transactionsPerSecond / 5);
@@ -216,6 +217,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 		}
 		if (checkBulkLoad) {
 			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadStart(this, cx); });
+			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadStartExternal(this, cx); });
 			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadStatusChange(this, cx); });
 			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadCleanup(this, cx); });
 			testFunctions.push_back([this](Database cx) { return testRandomBulkLoadFilesToWrite(this, cx); });
@@ -281,6 +283,8 @@ struct AuthzSecurityWorkload : TestWorkload {
 
 		CODE_PROBE(bulkLoadStart.positive.getValue(), "AuthzSecurity bulkLoadStartPositive > 0");
 		CODE_PROBE(bulkLoadStart.negative.getValue(), "AuthzSecurity bulkLoadStartNegative > 0");
+		CODE_PROBE(bulkLoadStartExternal.positive.getValue(), "AuthzSecurity bulkLoadStartExternalPositive > 0");
+		CODE_PROBE(bulkLoadStartExternal.negative.getValue(), "AuthzSecurity bulkLoadStartExternalNegative > 0");
 		CODE_PROBE(bulkLoadStateChange.positive.getValue(), "AuthzSecurity bulkLoadStateChangePositive > 0");
 		CODE_PROBE(bulkLoadStateChange.negative.getValue(), "AuthzSecurity bulkLoadStateChangeNegative > 0");
 		CODE_PROBE(bulkLoadStateChange.tenantMismatch.getValue(), "AuthzSecurity bulkLoadStateChangeMismatch > 0");
@@ -339,6 +343,7 @@ struct AuthzSecurityWorkload : TestWorkload {
 		}
 		if (checkBulkLoad) {
 			bulkLoadStart.getMetrics(m);
+			bulkLoadStartExternal.getMetrics(m);
 			bulkLoadStateChange.getMetrics(m);
 			bulkLoadCleanup.getMetrics(m);
 			bulkLoadWaitComplete.getMetrics(m);
@@ -1096,6 +1101,72 @@ struct AuthzSecurityWorkload : TestWorkload {
 		} else {
 			ASSERT(false);
 		}
+	}
+
+	using BulkLoadExternalFunc = std::function<
+	    Future<Optional<Error>>(AuthzSecurityWorkload* self, Database cx, Reference<Tenant> tenant, KeyRange keyRange)>;
+
+	ACTOR static Future<Void> runAndCheckRandomBulkLoadExternalOp(AuthzSecurityWorkload* self,
+	                                                              Database cx,
+	                                                              KeyRange keyRange,
+	                                                              BulkLoadExternalFunc func,
+	                                                              BulkLoadCounter* counter) {
+
+		std::vector<BulkLoadTestCase> cases;
+		cases.push_back(BulkLoadTestCase::POSITIVE);
+		cases.push_back(BulkLoadTestCase::NEGATIVE);
+		if (counter->checkMismatch) {
+			cases.push_back(BulkLoadTestCase::TENANT_MISMATCH);
+		}
+		state BulkLoadTestCase testCase = cases[deterministicRandom()->randomInt(0, cases.size())];
+
+		int64_t tenantIdToUse;
+		WipedString tokenToUse;
+		switch (testCase) {
+		case BulkLoadTestCase::POSITIVE:
+			tenantIdToUse = self->tenant->id();
+			tokenToUse = self->signedToken;
+			break;
+		case BulkLoadTestCase::NEGATIVE:
+			tenantIdToUse = self->tenant->id();
+			tokenToUse = self->signedTokenAnotherTenant;
+			break;
+		case BulkLoadTestCase::TENANT_MISMATCH:
+			tenantIdToUse = self->anotherTenant->id();
+			tokenToUse = self->signedTokenAnotherTenant;
+			break;
+		default:
+			ASSERT(false);
+		}
+
+		Reference<Tenant> tenantToUse = makeReference<Tenant>(cx, tenantIdToUse);
+		tenantToUse->setOption(FDBTenantOptions::AUTHORIZATION_TOKEN, tokenToUse);
+
+		Optional<Error> outcome = wait(func(self, cx, tenantToUse, keyRange));
+
+		checkBulkLoadOutcome(counter, outcome, testCase);
+
+		return Void();
+	}
+
+	ACTOR static Future<Optional<Error>> tryBulkLoadStartExternal(AuthzSecurityWorkload* self,
+	                                                              Database cx,
+	                                                              Reference<Tenant> tenant,
+	                                                              KeyRange keyRange) {
+		try {
+			BulkLoadID id = wait(cx->startBulkLoad(keyRange, tenant));
+			self->bulkLoadIDs[keyRange.begin] = id;
+			return Optional<Error>();
+		} catch (Error& e) {
+			return e;
+		}
+	}
+
+	ACTOR static Future<Void> testRandomBulkLoadStartExternal(AuthzSecurityWorkload* self, Database cx) {
+		KeyRange keyRange = singleKeyRange(self->randomString());
+		wait(runAndCheckRandomBulkLoadExternalOp(
+		    self, cx, keyRange, tryBulkLoadStartExternal, &self->bulkLoadStartExternal));
+		return Void();
 	}
 
 	using BulkLoadFunc = std::function<Future<Optional<Error>>(AuthzSecurityWorkload* self,

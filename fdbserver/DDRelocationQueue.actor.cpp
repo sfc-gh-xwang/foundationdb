@@ -1473,6 +1473,7 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 								req.keys = rd.keys;
 							}
 						}
+
 						// bestTeam.second = false if the bestTeam in the teamCollection (in the DC) does not have any
 						// server that hosts the relocateData. This is possible, for example, in a fearless
 						// configuration when the remote DC is just brought up.
@@ -1484,7 +1485,7 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 							// self->shardsAffectedByTeamFailure->moveShard must be called without any waits after
 							// getting the destination team or we could miss failure notifications for the storage
 							// servers in the destination team
-							TraceEvent("BestTeamNotReady");
+							TraceEvent("BestTeamNotReady").log();
 							self->retryFindDstReasonCount[DDQueue::RetryFindDstReason::RemoteBestTeamNotReady]++;
 							foundTeams = false;
 							break;
@@ -1575,6 +1576,14 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 								       physicalShardIDCandidate != anonymousShardId.first());
 							}
 						} else {
+							DebugRelocationTraceEvent(SevDebug, "RelocateShardGetTeam", distributorId)
+							    .detail("RandomId", rd.randomId)
+							    .detail("TCIdx", tciIndex)
+							    .detail("GetTeamRequest", req.getDesc())
+							    .detail("BestTeam", bestTeam.first.get()->getServerIDs())
+							    .detail("TeamHealthy", bestTeam.first.get()->isHealthy())
+							    .detail("FoundSrc", bestTeam.second);
+
 							bestTeams.emplace_back(bestTeam.first.get(), bestTeam.second);
 						}
 					}

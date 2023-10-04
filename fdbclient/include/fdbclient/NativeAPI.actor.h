@@ -168,6 +168,7 @@ public:
 	KeyRef prefix() const;
 	void setOption(FDBTenantOptions::Option option, Optional<StringRef> value = Optional<StringRef>());
 	std::string description() const;
+	Optional<WipedString> getAuthToken() { return authToken; }
 
 	Optional<TenantName> name;
 
@@ -179,6 +180,7 @@ private:
 	mutable int64_t bigEndianId = -1;
 	Future<TenantLookupInfo> lookupFuture;
 	Future<Database> dbFuture;
+	Optional<WipedString> authToken;
 
 	UniqueOrderedSensitiveOptionList<FDBTransactionOptions> sensitiveTransactionDefaults;
 };
