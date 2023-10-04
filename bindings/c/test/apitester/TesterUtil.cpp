@@ -192,8 +192,9 @@ void TmpFile::remove() {
 std::string signToken(fdb::Tenant tenant, const std::string& keyId, const std::string& privateKeyPem) {
 	int64_t tenantId = -1;
 	while (true) {
-		// For MultiVersion clients, fdb::Tenant::getId() could return cluster_version_changed due to deferred DB initialization.
-		// As there aren't any transaction to rely on for onError(), simply back off 0.5s for every failed request.
+		// For MultiVersion clients, fdb::Tenant::getId() could return cluster_version_changed due to deferred DB
+		// initialization. As there aren't any transaction to rely on for onError(), simply back off 0.5s for every
+		// failed request.
 		auto f = tenant.getId();
 		auto err = f.blockUntilReady();
 		ASSERT(!err);
@@ -207,7 +208,9 @@ std::string signToken(fdb::Tenant tenant, const std::string& keyId, const std::s
 	}
 	ASSERT(tenantId >= 0);
 	auto t = authz::jwt::stdtypes::TokenSpec{};
-	auto const now = std::chrono::duration_cast<std::chrono::duration<uint64_t>>(std::chrono::system_clock::now().time_since_epoch()).count();
+	auto const now =
+	    std::chrono::duration_cast<std::chrono::duration<uint64_t>>(std::chrono::system_clock::now().time_since_epoch())
+	        .count();
 	t.algorithm = authz::Algorithm::ES256; // For simplicity, assume that we always use EC keys to sign/verify tokens.
 	t.keyId = keyId;
 	t.issuer = "apitester";

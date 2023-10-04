@@ -103,59 +103,60 @@ void printProgramUsage(const char* execName) {
 	printf("usage: %s [OPTIONS]\n"
 	       "\n",
 	       execName);
-	printf("  -C, --cluster-file FILE\n"
-	       "                 The path of a file containing the connection string for the\n"
-	       "                 FoundationDB cluster. The default is `fdb.cluster'\n"
-	       "  --log          Enables trace file logging for the CLI session.\n"
-	       "  --log-dir PATH Specifes the output directory for trace files. If\n"
-	       "                 unspecified, defaults to the current directory. Has\n"
-	       "                 no effect unless --log is specified.\n"
-	       "  --log-group LOG_GROUP\n"
-	       "                 Sets the LogGroup field with the specified value for all\n"
-	       "                 events in the trace output (defaults to `default').\n"
-	       "  --trace-format FORMAT\n"
-	       "                 Select the format of the log files. xml (the default) and json\n"
-	       "                 are supported. Has no effect unless --log is specified.\n"
-	       "  --external-client-library FILE\n"
-	       "                 Path to the external client library.\n"
-	       "  --external-client-dir DIR\n"
-	       "                 Directory containing external client libraries.\n"
-	       "  --future-version-client-library FILE\n"
-	       "                 Path to a client library to be used with a future protocol version.\n"
-	       "  --tmp-dir DIR\n"
-	       "                 Directory for temporary files of the client.\n"
-	       "  --disable-local-client DIR\n"
-	       "                 Disable the local client, i.e. use only external client libraries.\n"
-	       "  --input-pipe NAME\n"
-	       "                 Name of the input pipe for communication with the test controller.\n"
-	       "  --output-pipe NAME\n"
-	       "                 Name of the output pipe for communication with the test controller.\n"
-	       "  --api-version VERSION\n"
-	       "                 Required FDB API version (default %d).\n"
-	       "  --transaction-retry-limit NUMBER\n"
-	       "				 Maximum number of retries per tranaction (default: 0 - unlimited)\n"
-	       "  --blob-granule-local-file-path PATH\n"
-	       "				 Path to blob granule files on local filesystem\n"
-	       "  -f, --test-file FILE\n"
-	       "                 Test file to run.\n"
-	       "  --stats-interval MILLISECONDS\n"
-	       "                 Time interval in milliseconds for printing workload statistics (default: 0 - disabled).\n"
-	       "  --tls-cert-file FILE\n"
-	       "                 Path to file containing client's TLS certificate chain\n"
-	       "  --tls-key-file FILE\n"
-	       "                 Path to file containing client's TLS private key\n"
-	       "  --tls-ca-file FILE\n"
-	       "                 Path to file containing TLS CA certificate\n"
-	       "  --retain-client-lib-copies\n"
-	       "                 Retain temporary external client library copies\n"
-	       "  --authz-private-key-pem-file\n"
-	       "                 PEM file containing the private key with which to sign the authorization tokens\n"
-	       "  --authz-private-key-id\n"
-	       "                 ID of the server-side public key to verify the authorization token (goes in token header)\n"
-	       "  -V, --verbosity LEVEL\n"
-	       "                 Set verbosity level, one of [ERROR, WARNING, INFO, DEBUG] (default: INFO)\n"
-	       "  -h, --help     Display this help and exit.\n",
-	       FDB_API_VERSION);
+	printf(
+	    "  -C, --cluster-file FILE\n"
+	    "                 The path of a file containing the connection string for the\n"
+	    "                 FoundationDB cluster. The default is `fdb.cluster'\n"
+	    "  --log          Enables trace file logging for the CLI session.\n"
+	    "  --log-dir PATH Specifes the output directory for trace files. If\n"
+	    "                 unspecified, defaults to the current directory. Has\n"
+	    "                 no effect unless --log is specified.\n"
+	    "  --log-group LOG_GROUP\n"
+	    "                 Sets the LogGroup field with the specified value for all\n"
+	    "                 events in the trace output (defaults to `default').\n"
+	    "  --trace-format FORMAT\n"
+	    "                 Select the format of the log files. xml (the default) and json\n"
+	    "                 are supported. Has no effect unless --log is specified.\n"
+	    "  --external-client-library FILE\n"
+	    "                 Path to the external client library.\n"
+	    "  --external-client-dir DIR\n"
+	    "                 Directory containing external client libraries.\n"
+	    "  --future-version-client-library FILE\n"
+	    "                 Path to a client library to be used with a future protocol version.\n"
+	    "  --tmp-dir DIR\n"
+	    "                 Directory for temporary files of the client.\n"
+	    "  --disable-local-client DIR\n"
+	    "                 Disable the local client, i.e. use only external client libraries.\n"
+	    "  --input-pipe NAME\n"
+	    "                 Name of the input pipe for communication with the test controller.\n"
+	    "  --output-pipe NAME\n"
+	    "                 Name of the output pipe for communication with the test controller.\n"
+	    "  --api-version VERSION\n"
+	    "                 Required FDB API version (default %d).\n"
+	    "  --transaction-retry-limit NUMBER\n"
+	    "				 Maximum number of retries per tranaction (default: 0 - unlimited)\n"
+	    "  --blob-granule-local-file-path PATH\n"
+	    "				 Path to blob granule files on local filesystem\n"
+	    "  -f, --test-file FILE\n"
+	    "                 Test file to run.\n"
+	    "  --stats-interval MILLISECONDS\n"
+	    "                 Time interval in milliseconds for printing workload statistics (default: 0 - disabled).\n"
+	    "  --tls-cert-file FILE\n"
+	    "                 Path to file containing client's TLS certificate chain\n"
+	    "  --tls-key-file FILE\n"
+	    "                 Path to file containing client's TLS private key\n"
+	    "  --tls-ca-file FILE\n"
+	    "                 Path to file containing TLS CA certificate\n"
+	    "  --retain-client-lib-copies\n"
+	    "                 Retain temporary external client library copies\n"
+	    "  --authz-private-key-pem-file\n"
+	    "                 PEM file containing the private key with which to sign the authorization tokens\n"
+	    "  --authz-private-key-id\n"
+	    "                 ID of the server-side public key to verify the authorization token (goes in token header)\n"
+	    "  -V, --verbosity LEVEL\n"
+	    "                 Set verbosity level, one of [ERROR, WARNING, INFO, DEBUG] (default: INFO)\n"
+	    "  -h, --help     Display this help and exit.\n",
+	    FDB_API_VERSION);
 }
 
 bool validateTraceFormat(std::string_view format) {
@@ -402,7 +403,7 @@ void prepopulateTenants(const TesterOptions& options) {
 		bool tenantCreateOk = false;
 		{
 			auto nwt = std::thread([]() { fdb_check(fdb::network::run(), "Admin FDB network thread failed"); });
-			auto networkStopGuard = ScopeExit([nwt=std::move(nwt)]() mutable {
+			auto networkStopGuard = ScopeExit([nwt = std::move(nwt)]() mutable {
 				if (auto err = fdb::network::stop()) {
 					log::error("error stopping network thread for admin subprocess: {}", err.what());
 				}
@@ -443,11 +444,12 @@ void prepopulateTenants(const TesterOptions& options) {
 			throw TesterError(fmt::format("waitpid() for admin subprocess failed with {}", strerror(errno)));
 		}
 		if (status != 0) {
-			throw TesterError(fmt::format("Admin subprocess returned abnormally with status: exited({}) exitstatus({}) signaled({}) signal({})",
-						WIFEXITED(status),
-						WEXITSTATUS(status),
-						WIFSIGNALED(status),
-						WTERMSIG(status)));
+			throw TesterError(fmt::format(
+			    "Admin subprocess returned abnormally with status: exited({}) exitstatus({}) signaled({}) signal({})",
+			    WIFEXITED(status),
+			    WEXITSTATUS(status),
+			    WIFSIGNALED(status),
+			    WTERMSIG(status)));
 		} else {
 			log::info("Admin subprocess exited normally");
 		}
@@ -563,7 +565,8 @@ int main(int argc, char** argv) {
 		if (options.testSpec.untrustedClient && options.numTenants > 0) {
 			// Untrusted mode clients cannot create tenants.
 			// Making the current process a trusted client would force subsequent code to run in trusted client mode.
-			// Therefore we first fork, go into trusted client mode, and pre-populate tenants in following schema: "tenant" + std::to_string(tenant_index) where tenant_index = [0, options.numTenants).
+			// Therefore we first fork, go into trusted client mode, and pre-populate tenants in following schema:
+			// "tenant" + std::to_string(tenant_index) where tenant_index = [0, options.numTenants).
 			ASSERT(!options.tlsCertFile.empty() && !options.tlsKeyFile.empty() && !options.tlsCaFile.empty());
 			prepopulateTenants(options);
 		}

@@ -65,7 +65,8 @@ struct TestSpec {
 	// Test tampering the cluster file
 	bool tamperClusterFile = false;
 
-	// Connect to TLS-enabled database as an untrusted client, which requires an authorization token to access tenant data.
+	// Connect to TLS-enabled database as an untrusted client, which requires an authorization token to access tenant
+	// data.
 	bool untrustedClient = false;
 
 	// If server authorization is enabled and client is in untrusted mode (untrustedClient == true),

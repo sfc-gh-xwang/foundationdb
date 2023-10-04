@@ -243,15 +243,15 @@ void ApiWorkload::clearData(TTaskFct cont) {
 		clearTenantData(cont, std::make_optional<int>(0));
 	} else {
 		execTransaction(
-			[this](auto ctx) {
-				// Make this self-conflicting, so that if we're retrying on timeouts
-				// once we get a successful commit all previous attempts are no
-				// longer in-flight.
-				ctx->makeSelfConflicting();
-				ctx->tx().clearRange(keyPrefix, keyPrefix + fdb::Key(1, '\xff'));
-				ctx->commit();
-			},
-			[this, cont]() { schedule(cont); });
+		    [this](auto ctx) {
+			    // Make this self-conflicting, so that if we're retrying on timeouts
+			    // once we get a successful commit all previous attempts are no
+			    // longer in-flight.
+			    ctx->makeSelfConflicting();
+			    ctx->tx().clearRange(keyPrefix, keyPrefix + fdb::Key(1, '\xff'));
+			    ctx->commit();
+		    },
+		    [this, cont]() { schedule(cont); });
 	}
 }
 

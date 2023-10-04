@@ -119,9 +119,9 @@ struct TransactionExecutorOptions {
 	// Client is connecting in untrusted mode (requires authorization).
 	bool untrustedClient = false;
 
-	// Authz token is signed on-the-fly and set as option if authzPrivateKey and authzKeypairId is set and untrustedClient == true.
-	// Below flag indicates whether to set authz token option at the tenant level or the transaction level.
-	// (false == transaction level)
+	// Authz token is signed on-the-fly and set as option if authzPrivateKey and authzKeypairId is set and
+	// untrustedClient == true. Below flag indicates whether to set authz token option at the tenant level or the
+	// transaction level. (false == transaction level)
 	bool authzSetTokenAtTenant = false;
 
 	// PEM bytes containing the private key with which to sign authz tokens.
