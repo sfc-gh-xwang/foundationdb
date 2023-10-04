@@ -88,6 +88,9 @@ struct WorkloadConfig {
 	// Selected FDB API version
 	int apiVersion;
 
+	// Is the workload client untrusted by server?
+	bool untrustedClient;
+
 	// Workload options: as key-value pairs
 	std::unordered_map<std::string, std::string> options;
 
@@ -190,6 +193,9 @@ protected:
 
 	// The maximum number of errors before stoppoing the workload
 	int maxErrors;
+
+	// Indication of whether the client is set up as untrusted
+	bool untrustedClient;
 
 	// The timeout (in ms) automatically set for all transactions to a random value
 	// in the range [minTxTimeoutMs, maxTxTimeoutMs]

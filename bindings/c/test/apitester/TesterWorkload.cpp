@@ -92,6 +92,7 @@ WorkloadBase::WorkloadBase(const WorkloadConfig& config)
     numTxStarted(0),
     inProgress(false) {
 	maxErrors = config.getIntOption("maxErrors", 10);
+	untrustedClient = config.untrustedClient;
 	minTxTimeoutMs = config.getIntOption("minTxTimeoutMs", 0);
 	maxTxTimeoutMs = config.getIntOption("maxTxTimeoutMs", 0);
 	enableTransactionTracing = config.getBoolOption("enableTransactionTracing", false);

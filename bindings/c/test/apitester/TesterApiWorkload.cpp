@@ -42,6 +42,7 @@ ApiWorkload::ApiWorkload(const WorkloadConfig& config) : WorkloadBase(config) {
 	checkingProgress = false;
 	apiVersion = config.apiVersion;
 
+	// NOTE: The tenant names are coupled with fdb_c_api_tester.cpp:prepopulateTenants()
 	for (int i = 0; i < config.numTenants; ++i) {
 		tenants.push_back(fdb::ByteString(fdb::toBytesRef("tenant" + std::to_string(i))));
 	}
@@ -238,16 +239,22 @@ void ApiWorkload::clearTenantData(TTaskFct cont, std::optional<int> tenantId) {
 }
 
 void ApiWorkload::clearData(TTaskFct cont) {
-	execTransaction(
-	    [this](auto ctx) {
-		    // Make this self-conflicting, so that if we're retrying on timeouts
-		    // once we get a successful commit all previous attempts are no
-		    // longer in-flight.
-		    ctx->makeSelfConflicting();
-		    ctx->tx().clearRange(keyPrefix, keyPrefix + fdb::Key(1, '\xff'));
-		    ctx->commit();
-	    },
-	    [this, cont]() { schedule(cont); });
+	if (!tenants.empty() && WorkloadBase::untrustedClient) {
+		// With untrusted clients in multi-tenant mode, tenants are pre-populated.
+		// Clear under each tenant's keyspace just in case.
+		clearTenantData(cont, std::make_optional<int>(0));
+	} else {
+		execTransaction(
+		    [this](auto ctx) {
+			    // Make this self-conflicting, so that if we're retrying on timeouts
+			    // once we get a successful commit all previous attempts are no
+			    // longer in-flight.
+			    ctx->makeSelfConflicting();
+			    ctx->tx().clearRange(keyPrefix, keyPrefix + fdb::Key(1, '\xff'));
+			    ctx->commit();
+		    },
+		    [this, cont]() { schedule(cont); });
+	}
 }
 
 void ApiWorkload::populateTenantData(TTaskFct cont, std::optional<int> tenantId) {
@@ -256,7 +263,6 @@ void ApiWorkload::populateTenantData(TTaskFct cont, std::optional<int> tenantId)
 	}
 
 	if (tenantId >= tenants.size() || stores[tenantId].size() >= initialSize) {
-		info("Data population completed");
 		schedule(cont);
 	} else {
 		populateDataTx([this, cont, tenantId]() { populateTenantData(cont, tenantId); }, tenantId);
@@ -283,7 +289,8 @@ void ApiWorkload::createTenants(TTaskFct cont) {
 }
 
 void ApiWorkload::createTenantsIfNecessary(TTaskFct cont) {
-	if (tenants.size() > 0) {
+	if (tenants.size() > 0 && !WorkloadBase::untrustedClient) {
+		// if client is untrusted, tenants are pre-populated.
 		createTenants(cont);
 	} else {
 		schedule(cont);

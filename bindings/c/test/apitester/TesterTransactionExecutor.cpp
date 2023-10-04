@@ -103,8 +103,21 @@ public:
 			fdbDbOps = std::make_shared<fdb::Database>(fdbDb);
 		}
 
+		const auto& execOptions = executor->getOptions();
+		const bool authzEnabled = needAuthzToken() && !databaseCreateErrorInjected;
+		std::string authzToken;
+		if (fdbTenant && authzEnabled) {
+			authzToken = signTokenForTenant(fdbTenant);
+			if (execOptions.authzSetTokenAtTenant) {
+				fdbTenant.setOption(FDB_TENANT_OPTION_AUTHORIZATION_TOKEN, authzToken);
+			}
+		}
+
 		if (transactional) {
 			fdbTx = fdbDbOps->createTransaction();
+			if (fdbTenant && authzEnabled && !execOptions.authzSetTokenAtTenant) {
+				fdbTx.setOption(FDB_TR_OPTION_AUTHORIZATION_TOKEN, authzToken);
+			}
 		}
 	}
 
@@ -297,23 +310,42 @@ protected:
 
 	void recreateAndRestartTransaction() {
 		auto thisRef = std::static_pointer_cast<TransactionContextBase>(shared_from_this());
-		scheduler->schedule([thisRef]() {
-			fdb::Database db = thisRef->executor->selectDatabase();
-			thisRef->fdbDb.atomic_store(db);
-			if (thisRef->tenantName) {
-				fdb::Tenant tenant = db.openTenant(*thisRef->tenantName);
-				thisRef->fdbTenant.atomic_store(tenant);
-				std::atomic_store(&thisRef->fdbDbOps,
+		scheduler->schedule([this, thisRef]() {
+			fdb::Database db = executor->selectDatabase();
+			fdbDb.atomic_store(db);
+			fdb::Tenant tenant;
+			if (tenantName) {
+				tenant = db.openTenant(*tenantName);
+				fdbTenant.atomic_store(tenant);
+				std::atomic_store(&fdbDbOps,
 				                  std::dynamic_pointer_cast<fdb::IDatabaseOps>(std::make_shared<fdb::Tenant>(tenant)));
+				if (needAuthzToken() && executor->getOptions().authzSetTokenAtTenant) {
+					tenant.setOption(FDB_TENANT_OPTION_AUTHORIZATION_TOKEN, signTokenForTenant(tenant));
+				}
 			} else {
-				std::atomic_store(&thisRef->fdbDbOps,
+				std::atomic_store(&fdbDbOps,
 				                  std::dynamic_pointer_cast<fdb::IDatabaseOps>(std::make_shared<fdb::Database>(db)));
 			}
-			if (thisRef->transactional) {
-				thisRef->fdbTx.atomic_store(thisRef->fdbDbOps->createTransaction());
+			if (transactional) {
+				auto tr = fdbDbOps->createTransaction();
+				if (tenant && needAuthzToken() && !executor->getOptions().authzSetTokenAtTenant) {
+					tr.setOption(FDB_TR_OPTION_AUTHORIZATION_TOKEN, signTokenForTenant(tenant));
+				}
+				fdbTx.atomic_store(tr);
 			}
-			thisRef->restartTransaction();
+			restartTransaction();
 		});
+	}
+
+	std::string signTokenForTenant(fdb::Tenant tenant) {
+		const auto& execOptions = executor->getOptions();
+		ASSERT(execOptions.authzKeypairId && execOptions.authzPrivateKeyPem);
+		return signToken(tenant, execOptions.authzKeypairId.value(), execOptions.authzPrivateKeyPem.value());
+	}
+
+	bool needAuthzToken() const {
+		const auto& execOptions = executor->getOptions();
+		return execOptions.untrustedClient;
 	}
 
 	// Checks if a transaction can be retried. Fails the transaction if the check fails
