@@ -1,0 +1,23 @@
+[configuration]
+allowDefaultTenant = false
+allowCreatingTenants = false
+isMetacluster = true
+extraDatabaseMode = 'Multiple'
+extraDatabaseCount = 5
+config = 'double'
+generateFearless = false
+processesPerMachine = 1
+machineCount = 3
+
+[[knobs]]
+metacluster_assignment_first_choice_delay = 100.0
+metacluster_assignment_availability_timeout = 200.0
+
+[[test]]
+testTitle = 'MetaclusterPlacementTest'
+clearAfterTest = true
+timeout = 2100
+runSetup = true
+
+    [[test.workload]]
+    testName = 'MetaclusterPlacement'

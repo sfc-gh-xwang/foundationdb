@@ -66,7 +66,8 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
     Optional<DataClusterEntry> dataClusterConfig = DataClusterEntry(),
     SkipMetaclusterCreation skipMetaclusterCreation = SkipMetaclusterCreation::False,
     WaitForMetaclusterCreation waitForMetaclusterCreation = WaitForMetaclusterCreation::False,
-    WaitForDataClusterRegistration waitForDataClusterRegistration = WaitForDataClusterRegistration::False);
+    WaitForDataClusterRegistration waitForDataClusterRegistration = WaitForDataClusterRegistration::False,
+    int clustersToRegister = -1);
 
 ACTOR Future<Void> decommissionSimulatedMetacluster(SimulatedMetacluster metacluster);
 
