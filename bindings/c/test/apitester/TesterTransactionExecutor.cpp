@@ -312,6 +312,7 @@ protected:
 		auto thisRef = std::static_pointer_cast<TransactionContextBase>(shared_from_this());
 		scheduler->schedule([this, thisRef]() {
 			fdb::Database db = executor->selectDatabase();
+			fdbDb.atomic_store(db);
 			fdb::Tenant tenant;
 			if (tenantName) {
 				tenant = db.openTenant(*tenantName);
