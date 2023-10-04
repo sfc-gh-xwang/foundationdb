@@ -200,7 +200,6 @@ private:
 			} else if (phase == BlobRestorePhase::COPYING_DATA) {
 				CODE_PROBE(true, "Restart blob migrator during data copy");
 				try {
-					wait(prepare(self, normalKeys));
 					dprint("Replace storage server interface {}\n", self->interf_.ssi.id().toString());
 					TraceEvent("ReplacedStorageInterface", self->interf_.id()).log();
 

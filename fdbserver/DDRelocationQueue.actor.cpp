@@ -1265,6 +1265,10 @@ void traceRelocateDecision(TraceEvent& ev, const UID& pairId, const RelocateDeci
 	    .detail("CompleteSources", describe(decision.rd.completeSources))
 	    .detail("DestinationServers", describe(decision.destIds))
 	    .detail("ExtraIds", describe(decision.extraIds));
+
+	if (decision.rd.healthPriority > SERVER_KNOBS->PRIORITY_TEAM_HEALTHY)
+		return;
+
 	if (SERVER_KNOBS->DD_ENABLE_VERBOSE_TRACING) {
 		// StorageMetrics is the rd shard's metrics, e.g., bytes and write bandwidth
 		ev.detail("StorageMetrics", decision.metrics.toString());
@@ -1366,14 +1370,16 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 		state Optional<StorageMetrics> parentMetrics;
 		state StorageMetrics metrics;
 
-		Future<StorageMetrics> metricsF =
-		    brokenPromiseToNever(self->getShardMetrics.getReply(GetMetricsRequest(rd.keys)));
-		if (rd.getParentRange().present()) {
-			Future<StorageMetrics> parentMetricsF =
-			    brokenPromiseToNever(self->getShardMetrics.getReply(GetMetricsRequest(rd.getParentRange().get())));
-			wait(store(metrics, metricsF) && store(parentMetrics, parentMetricsF));
-		} else {
-			wait(store(metrics, metricsF));
+		if (rd.healthPriority <= SERVER_KNOBS->PRIORITY_TEAM_HEALTHY) {
+			Future<StorageMetrics> metricsF =
+			    brokenPromiseToNever(self->getShardMetrics.getReply(GetMetricsRequest(rd.keys)));
+			if (rd.getParentRange().present()) {
+				Future<StorageMetrics> parentMetricsF =
+				    brokenPromiseToNever(self->getShardMetrics.getReply(GetMetricsRequest(rd.getParentRange().get())));
+				wait(store(metrics, metricsF) && store(parentMetrics, parentMetricsF));
+			} else {
+				wait(store(metrics, metricsF));
+			}
 		}
 
 		state std::unordered_set<uint64_t> excludedDstPhysicalShards;
