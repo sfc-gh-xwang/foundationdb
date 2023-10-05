@@ -336,7 +336,7 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( REST_REQUEST_RETRY_BACKOFF_FACTOR,                   2.0 );
 
 	// Gray Failure Detection
-	init( ENABLE_WORKER_HEALTH_MONITOR,                       true ); BUGGIFY_KNOB(ENABLE_WORKER_HEALTH_MONITOR, randomize && BUGGIFY, true);
+	init( ENABLE_WORKER_HEALTH_MONITOR,                      false ); BUGGIFY_KNOB(ENABLE_WORKER_HEALTH_MONITOR, randomize && BUGGIFY, true);
 
 }
 // clang-format on
