@@ -594,7 +594,6 @@ Future<REPLY_TYPE(Request)> loadBalance(
 		// nextAlt. This logic matters only if model == nullptr. Otherwise, the
 		// bestAlt and nextAlt have been decided.
 		state RequestStream<Request, P> const* stream = nullptr;
-		state LBDistance::Type distance;
 		for (int alternativeNum = 0; alternativeNum < alternatives->size(); alternativeNum++) {
 			int useAlt = nextAlt;
 			if (nextAlt == startAlt)
@@ -603,7 +602,6 @@ Future<REPLY_TYPE(Request)> loadBalance(
 				useAlt = (nextAlt + alternatives->size() - 1) % alternatives->size();
 
 			stream = &alternatives->get(useAlt, channel);
-			distance = alternatives->getDistance(useAlt);
 			if (!IFailureMonitor::failureMonitor().getState(stream->getEndpoint()).failed &&
 			    (!firstRequestEndpoint.present() || stream->getEndpoint().token.first() != firstRequestEndpoint.get()))
 				break;
@@ -611,7 +609,6 @@ Future<REPLY_TYPE(Request)> loadBalance(
 			if (nextAlt == startAlt)
 				triedAllOptions = TriedAllOptions::True;
 			stream = nullptr;
-			distance = LBDistance::DISTANT;
 		}
 
 		if (!stream && !firstRequestData.isValid()) {
