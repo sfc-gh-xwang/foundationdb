@@ -261,7 +261,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		wait(self->unitClient);
 		TraceEvent("BulkLoadOpsCheckUnitsComplete");
 
-		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp = wait(cx->listAllBulkLoads(false, self->tenant));
+		Standalone<VectorRef<BulkLoadIDRef>> loadsNotCleanedUp =
+		    wait(cx->listAllBulkLoads(false, normalKeys, self->tenant));
 		if (BLW_DEBUG) {
 			fmt::print("Found {0} loads at end of test:\n", loadsNotCleanedUp.size());
 			for (auto& it : loadsNotCleanedUp) {
@@ -834,7 +835,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		RESERVATION_SUCCEEDED,
 		ABORT_THEN_RELOAD_UNIT,
 		BLOB_CLEANUP_ON_ABORT_UNIT,
-		OP_COUNT = 29 /* keep this last */
+		LIST_RANGE_FILTER_UNIT,
+		OP_COUNT = 30 /* keep this last */
 	};
 
 	// FIXME: once file contents validation isn't asserting and throws an error instead, add unit tests for invalid file
@@ -1048,9 +1050,12 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> listDuringLoadUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that the active bulk load is correctly listed
+		state KeyRange listRange = deterministicRandom()->coinflip() ? normalKeys : range;
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->listTenant));
-		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listBulkLoads(true, self->listTenant));
-		state Standalone<VectorRef<BulkLoadIDRef>> otherTenantList = wait(cx->listBulkLoads(true, self->tenant));
+
+		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listBulkLoads(true, listRange, self->listTenant));
+		state Standalone<VectorRef<BulkLoadIDRef>> otherTenantList =
+		    wait(cx->listBulkLoads(true, listRange, self->tenant));
 
 		ASSERT(list.size() == 1);
 		ASSERT(std::find(list.begin(), list.end(), id) != std::end(list));
@@ -1059,7 +1064,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// cleanup
 		wait(self->abortAndCleanupAfterUnit(cx, id, self->listTenant));
 
-		wait(store(list, cx->listBulkLoads(true, self->listTenant)));
+		wait(store(list, cx->listBulkLoads(true, listRange, self->listTenant)));
 		ASSERT(list.size() == 0);
 
 		return Void();
@@ -1069,7 +1074,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// Test that the all bulk loads are correctly listed
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 		state BulkLoadID listId = wait(cx->startBulkLoad(range, self->listTenant));
-		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listAllBulkLoads(true, self->tenant));
+		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listAllBulkLoads(false, normalKeys, self->tenant));
 
 		ASSERT(std::find(list.begin(), list.end(), id) != std::end(list));
 		ASSERT(std::find(list.begin(), list.end(), listId) != std::end(list));
@@ -1086,7 +1091,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// Test that the active bulk load has a valid status
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 		state BulkLoadStatus status = wait(cx->getBulkLoadStatus(id, self->tenant));
-		ASSERT(status.state != BulkLoadStatus::State::UNKNOWN);
+		ASSERT_EQ(status.state, BulkLoadStatus::State::STARTED);
 
 		// cleanup
 		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
@@ -1626,6 +1631,25 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		return Void();
 	}
 
+	ACTOR Future<Void> listRangeFilterUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
+		// Test that the active bulk load is correctly listed and none others are, even though the tenant should be
+		// doing other loads
+		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
+
+		state Standalone<VectorRef<BulkLoadIDRef>> list = wait(cx->listBulkLoads(true, range, self->tenant));
+
+		ASSERT(list.size() == 1);
+		ASSERT(std::find(list.begin(), list.end(), id) != std::end(list));
+
+		// cleanup
+		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));
+
+		wait(store(list, cx->listBulkLoads(true, range, self->tenant)));
+		ASSERT(list.size() == 0);
+
+		return Void();
+	}
+
 	ACTOR Future<Void> bulkLoadUnitTests(Database cx, BulkLoadOpsWorkload* self) {
 		if (deterministicRandom()->coinflip()) {
 			cx->internal = IsInternal::False;
@@ -1741,6 +1765,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 				wait(self->abortThenReloadUnit(cx, self, range));
 			} else if (op == BLOB_CLEANUP_ON_ABORT_UNIT) {
 				wait(self->blobCleanupOnAbortUnit(cx, self, range));
+			} else if (op == LIST_RANGE_FILTER_UNIT) {
+				wait(self->listRangeFilterUnit(cx, self, range));
 			} else {
 				ASSERT(false);
 			}

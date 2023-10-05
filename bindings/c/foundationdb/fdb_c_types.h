@@ -237,6 +237,19 @@ typedef struct FDBBulkLoadWrittenFile_ {
 	int64_t physical_size;
 } FDBBulkLoadWrittenFile;
 
+/* user-level logical status of a bulk load */
+typedef enum {
+	FDB_BULK_LOAD_ADDING_FILES = 0,
+	FDB_BULK_LOAD_COPYING = 1,
+	FDB_BULK_LOAD_DONE = 2,
+	FDB_BULK_LOAD_ABORTED = 3,
+	FDB_BULK_LOAD_UNKNOWN = 4
+} FDBBulkLoadState;
+
+typedef struct FDBBulkLoadStatus_ {
+	/* FDBBulkLoadState */ uint8_t state;
+} FDBBulkLoadStatus;
+
 #ifdef __cplusplus
 }
 #endif

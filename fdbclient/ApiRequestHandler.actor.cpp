@@ -45,6 +45,12 @@ Future<ApiResult> handleDatabaseOrTenantApiRequest(DatabaseContext* db,
 	case FDBApiRequest_BulkLoadFilesWritten:
 		return bulkLoadFilesWritten(db, req, tenant);
 		break;
+	case FDBApiRequest_ListBulkLoads:
+		return listBulkLoads(db, req, tenant);
+		break;
+	case FDBApiRequest_GetBulkLoadStatus:
+		return getBulkLoadStatus(db, req, tenant);
+		break;
 	default:
 		throw unknown_api_request();
 	}

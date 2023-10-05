@@ -828,7 +828,8 @@ Future<Void> handleListRequest(Reference<BulkLoaderData> self, Reference<BlobWor
 		if (std::is_same_v<Request, BulkLoadListAllRequest>) {
 			tenantId.reset();
 		}
-		Standalone<VectorRef<BulkLoadIDRef>> list = wait(self->db->listBulkLoadsInternal(req.onlyActive, tenantId));
+		Standalone<VectorRef<BulkLoadIDRef>> list =
+		    wait(self->db->listBulkLoadsInternal(req.onlyActive, req.keyRange, tenantId));
 		rep.arena.dependsOn(list.arena());
 		rep.list = list;
 		req.reply.send(rep);

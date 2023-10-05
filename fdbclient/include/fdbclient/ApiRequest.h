@@ -63,6 +63,16 @@ struct ApiRequestTraits<FDBBulkLoadFilesWrittenRequest> {
 	constexpr static FDBApiRequestType type = FDBApiRequest_BulkLoadFilesWritten;
 };
 
+template <>
+struct ApiRequestTraits<FDBListBulkLoadsRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_ListBulkLoads;
+};
+
+template <>
+struct ApiRequestTraits<FDBGetBulkLoadStatusRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_GetBulkLoadStatus;
+};
+
 template <typename T>
 struct ApiResultTraits {
 	constexpr static FDBApiResultType type = FDBApiResult_Invalid;
@@ -106,6 +116,16 @@ struct ApiResultTraits<FDBVoidResult> {
 template <>
 struct ApiResultTraits<FDBBulkLoadFilesToWriteResult> {
 	constexpr static FDBApiResultType type = FDBApiResult_BulkLoadFilesToWrite;
+};
+
+template <>
+struct ApiResultTraits<FDBListBulkLoadsResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_ListBulkLoads;
+};
+
+template <>
+struct ApiResultTraits<FDBGetBulkLoadStatusResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_GetBulkLoadStatus;
 };
 
 FDBAllocatorIfc* localAllocatorInterface();
