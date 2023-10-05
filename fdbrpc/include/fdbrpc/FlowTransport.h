@@ -178,7 +178,7 @@ struct Peer : public ReferenceCounted<Peer> {
 	DDSketch<double> connectLatencies;
 	Promise<Void> disconnect;
 
-	// Metrics used for gray failure detection
+	// Following metrics are replicated for gray failure detection with minimal overheads.
 	// Same definition with a different reset interval
 	// Only used and updated on the fdbserver
 	int gfdPingTimeoutCount;

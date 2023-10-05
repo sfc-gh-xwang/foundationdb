@@ -1053,9 +1053,9 @@ void Peer::updateConnectionFailureMetrics() {
 }
 
 void Peer::updatePingTimeoutMetrics() {
-	// reset everytime it logs the PingLatency event
+	// Reset everytime it logs the PingLatency event
 	++timeoutCount;
-	// reset interval controlled by WORKER_HEALTH_MONITOR_INTERVAL
+	// Reset interval controlled by WORKER_HEALTH_MONITOR_INTERVAL
 	if (!FlowTransport::isClient() && FLOW_KNOBS->ENABLE_WORKER_HEALTH_MONITOR) {
 		++gfdPingTimeoutCount;
 	}

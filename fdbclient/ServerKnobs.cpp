@@ -987,6 +987,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( MAX_DELAY_CC_WORST_FIT_CANDIDACY_SECONDS,             30.0 );
 	init( DBINFO_FAILED_DELAY,                                   1.0 );
 	init( WORKER_HEALTH_MONITOR_INTERVAL,                       60.0 );
+	init( WORKER_HEALTH_MONITOR_STUCK_LIMIT, 10 * WORKER_HEALTH_MONITOR_INTERVAL );
 	init( PEER_LATENCY_CHECK_MIN_POPULATION,                      10 );
 	init( PEER_LATENCY_DEGRADATION_PERCENTILE,                  0.50 );
 	init( PEER_LATENCY_DEGRADATION_THRESHOLD,                   0.05 );

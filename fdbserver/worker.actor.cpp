@@ -1326,7 +1326,7 @@ UpdateWorkerHealthRequest doPeerHealthCheck(const WorkerInterface& interf,
 		}
 	}
 
-	// reset ping latency metrics used by gray failure detection
+	// Reset ping latency metrics used by gray failure detection
 	for (const auto& [_, peer] : allPeers) {
 		resetGFDMetrics(peer);
 	}
@@ -1366,7 +1366,7 @@ ACTOR Future<Void> healthMonitor(Reference<AsyncVar<Optional<ClusterControllerFu
 				ccInterface->get().get().updateWorkerHealth.send(req);
 			}
 			lastCheckTime = now();
-		} else if ((now() - lastCheckTime) > 10 * SERVER_KNOBS->WORKER_HEALTH_MONITOR_INTERVAL) {
+		} else if ((now() - lastCheckTime) > SERVER_KNOBS->WORKER_HEALTH_MONITOR_STUCK_LIMIT) {
 			// reset metrics, avoid persisting too many latency samples
 			const auto& allPeers = FlowTransport::transport().getAllPeers();
 			for (const auto& [_, peer] : allPeers) {
@@ -3940,7 +3940,7 @@ TEST_CASE("/fdbserver/worker/gray_failure_detection/ping_latency_metrics/update"
 		ISimulator::ProcessInfo* info = allProcesses[index];
 		currentProcess = g_simulator->getCurrentProcess();
 		wait(g_simulator->onProcess(info));
-		// randomly enable the feature
+		// Randomly enable the feature
 		bool enable_health_monitor = deterministicRandom()->coinflip();
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("enable_worker_health_monitor",
 		                                                          KnobValueRef::create(enable_health_monitor));
@@ -3952,7 +3952,7 @@ TEST_CASE("/fdbserver/worker/gray_failure_detection/ping_latency_metrics/update"
 			gfdPingTimeoutBase = peer->gfdPingTimeoutCount;
 			gfdConnectionFailureBase = peer->gfdConnectionFailureCount;
 			gfdConnectionFailureChange = gfdPingTimeoutChange = gfdPingLatenciesChange = 0;
-			// randomly update ping latency metrics
+			// Randomly update ping latency metrics
 			for (int i = 0; i < deterministicRandom()->randomInt(0, 10); i++) {
 				peer->updateConnectionFailureMetrics();
 				peer->updatePingTimeoutMetrics();
@@ -3964,12 +3964,12 @@ TEST_CASE("/fdbserver/worker/gray_failure_detection/ping_latency_metrics/update"
 				}
 			}
 			if (enabled) {
-				// if enabled, check metrics are updated correctly
+				// If enabled, check metrics are updated correctly
 				ASSERT_EQ(gfdConnectionFailureBase + gfdConnectionFailureChange, peer->gfdConnectionFailureCount);
 				ASSERT_EQ(gfdPingTimeoutBase + gfdPingTimeoutChange, peer->gfdPingTimeoutCount);
 				ASSERT_EQ(gfdPingLatenciesBase + gfdPingLatenciesChange, peer->gfdPingLatencies.getPopulationSize());
 			} else {
-				// if disabled, check metrics are never updated
+				// If disabled, check metrics are never updated
 				ASSERT_EQ(peer->gfdConnectionFailureCount, gfdConnectionFailureBase);
 				ASSERT_EQ(peer->gfdPingTimeoutCount, gfdPingTimeoutBase);
 				ASSERT_EQ(peer->gfdPingLatencies.getPopulationSize(), gfdPingLatenciesBase);
