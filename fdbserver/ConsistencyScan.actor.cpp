@@ -572,7 +572,7 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 
 					nextRoundDelayTime =
 					    statsCurrentRound.nextRoundStartDelaySeconds(config, tr->getReadVersion().get());
-					if (nextRoundDelayTime.present()) {
+					if (nextRoundDelayTime == 0) {
 						// If not complete then end the round
 						if (!statsCurrentRound.complete) {
 							statsCurrentRound.endVersion = tr->getReadVersion().get();
