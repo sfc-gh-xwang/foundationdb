@@ -189,5 +189,11 @@ bool needsHeaderCipherKey(EncryptionAtRestAlgo algo) {
 
 std::string getRandomAuthenticatedEncryptionAtRestAlgo() {
 	std::vector<std::string> encryptionAlgos = { "AES-256-CMAC", "AES-256-HMAC", "AES-256-GCM" };
-	return deterministicRandom()->randomChoice(encryptionAlgos);
+	// Test GCM with a higher probability (90% of the time)
+	if (deterministicRandom()->random01() < 0.9) {
+		return "AES-256-GCM";
+	} else if (deterministicRandom()->coinflip()) {
+		return "AES-256-CMAC";
+	}
+	return "AES-256-HMAC";
 }

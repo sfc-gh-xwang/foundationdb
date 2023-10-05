@@ -2444,10 +2444,58 @@ void testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(const int minD
 	TraceEvent("TestConfigurableEncryptionInvalidEncryptKeySingleAuthTokenEnd").detail("Mode", authAlgoStr);
 }
 
+template <class Params>
+void testIVGenerationNoReuse(const int minDomainId) {
+	// Validate Encryption ops
+	Reference<BlobCipherKeyCache> cipherKeyCache = BlobCipherKeyCache::getInstance();
+	Reference<BlobCipherKey> cipherKey = cipherKeyCache->getLatestCipherKey(minDomainId);
+	Reference<BlobCipherKey> headerCipherKey = cipherKeyCache->getLatestCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
+	const int bufLen = deterministicRandom()->randomInt(786, 2127) + 512;
+	Arena arena;
+	EncryptionAtRestAlgo algo;
+	int ivSize;
+
+	if (std::is_same_v<Params, AesGcm>) {
+		algo = EncryptionAtRestAlgo::AES_GCM;
+		ivSize = AesGcmParams::ivSize;
+	} else if (std::is_same_v<Params, AesCtrNoAuth>) {
+		algo = EncryptionAtRestAlgo::AES_CTR;
+		ivSize = AES_256_CTR_IV_LENGTH;
+	} else if (std::is_same_v<Params, AesCtrWithHmacParams>) {
+		algo = EncryptionAtRestAlgo::AES_CTR_HMAC;
+		ivSize = AES_256_CTR_IV_LENGTH;
+	} else {
+		algo = EncryptionAtRestAlgo::AES_CTR_CMAC;
+		ivSize = AES_256_CTR_IV_LENGTH;
+	}
+
+	uint8_t iv[ivSize];
+	deterministicRandom()->randomBytes(&iv[0], ivSize);
+	uint8_t orgData[bufLen];
+	deterministicRandom()->randomBytes(&orgData[0], bufLen);
+
+	Reference<EncryptBlobCipher> encryptor =
+	    EncryptBlobCipher::getEncryptor(cipherKey, headerCipherKey, iv, ivSize, algo, BlobCipherMetrics::TEST);
+	BlobCipherEncryptHeaderRef headerRef;
+	if (encryptor->supportsInplaceEncryption()) {
+		encryptor->encryptInplace(&orgData[0], bufLen, &headerRef);
+	} else {
+		encryptor->encrypt(&orgData[0], bufLen, &headerRef, arena);
+	}
+	ASSERT_EQ(memcmp(iv, headerRef.getIV(), ivSize), 0);
+	// using the same encryptor should provide a different IV
+	if (encryptor->supportsInplaceEncryption()) {
+		encryptor->encryptInplace(&orgData[0], bufLen, &headerRef);
+	} else {
+		encryptor->encrypt(&orgData[0], bufLen, &headerRef, arena);
+	}
+	ASSERT_NE(memcmp(iv, headerRef.getIV(), ivSize), 0);
+}
+
 TEST_CASE("/blobCipher") {
 	DomainKeyMap domainKeyMap;
 	const EncryptCipherDomainId minDomainId = 1;
-	const EncryptCipherDomainId maxDomainId = deterministicRandom()->randomInt(minDomainId + 1, minDomainId + 10) + 5;
+	const EncryptCipherDomainId maxDomainId = deterministicRandom()->randomInt(minDomainId + 2, minDomainId + 10) + 5;
 	const EncryptCipherBaseKeyId minBaseCipherKeyId = 100;
 	const EncryptCipherBaseKeyId maxBaseCipherKeyId =
 	    deterministicRandom()->randomInt(minBaseCipherKeyId, minBaseCipherKeyId + 50) + 15;
@@ -2487,8 +2535,13 @@ TEST_CASE("/blobCipher") {
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthMode<AesCtrWithCmacParams>(minDomainId);
 	testConfigurableEncryptionInvalidEncryptKeySingleAuthModeGcm(minDomainId);
 
-	testNonceGeneration(minDomainId);
-	testNonceIVGenerationGcm(minDomainId + 1);
+	testIVGenerationNoReuse<AesGcm>(minDomainId);
+	testIVGenerationNoReuse<AesCtrNoAuth>(minDomainId);
+	testIVGenerationNoReuse<AesCtrWithHmacParams>(minDomainId);
+	testIVGenerationNoReuse<AesCtrWithCmacParams>(minDomainId);
+
+	testNonceGeneration(minDomainId + 1);
+	testNonceIVGenerationGcm(minDomainId + 2);
 
 	testKeyCacheCleanup(minDomainId, maxDomainId);
 
