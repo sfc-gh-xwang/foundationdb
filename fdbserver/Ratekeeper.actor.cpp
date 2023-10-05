@@ -104,13 +104,16 @@ public:
 		self.addActor.send(self.quotaThrottler.expireUnusedThrottlingIds());
 		self.addActor.send(self.recoveryTracker.run());
 
-		state Reference<BlobRestoreController> restoreController =
-		    makeReference<BlobRestoreController>(self.db, normalKeys);
-		bool isFullRestore = wait(BlobRestoreController::isRestoring(restoreController));
-		state bool isBwThrottlingEnabled = SERVER_KNOBS->BW_THROTTLING_ENABLED && !isFullRestore;
-		if (isBwThrottlingEnabled) {
+		if (SERVER_KNOBS->BW_THROTTLING_ENABLED) {
 			self.addActor.send(self.blobMonitor.run(self.configurationMonitor, self.recoveryTracker));
 		}
+
+		// Check for isRestoring as best effort to avoid blocking on it - if we don't know yet whether the cluster is
+		// being restored, assumed it's not, allowing progress using throttled rates.
+		state Reference<BlobRestoreController> restoreController =
+		    makeReference<BlobRestoreController>(self.db, normalKeys);
+		state Future<bool> isRestoring = isClusterRestoring(&self, restoreController);
+		state bool isBwThrottlingEnabled = SERVER_KNOBS->BW_THROTTLING_ENABLED;
 
 		// Perform one round of rate updates before starting the RateServer, so it has a
 		// valid rate to serve.
@@ -146,6 +149,8 @@ public:
 		try {
 			loop choose {
 				when(wait(timeout)) {
+					isBwThrottlingEnabled =
+					    SERVER_KNOBS->BW_THROTTLING_ENABLED && !(isRestoring.canGet() && isRestoring.get());
 					self.doRateupdate(isBwThrottlingEnabled);
 					timeout = delayJittered(SERVER_KNOBS->METRIC_UPDATE_RATE);
 				}
@@ -163,6 +168,11 @@ public:
 			TraceEvent("RatekeeperDied", rkInterf.id()).errorUnsuppressed(err);
 		}
 		return Void();
+	}
+
+private:
+	static Future<bool> isClusterRestoring(Ratekeeper* self, Reference<BlobRestoreController> restoreController) {
+		return BlobRestoreController::isRestoring(restoreController);
 	}
 }; // class RatekeeperImpl
 
