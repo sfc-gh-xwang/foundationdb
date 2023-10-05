@@ -687,3 +687,119 @@ ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(BGTenantMap*
 		throw restore_error();
 	}
 }
+
+namespace BlobGranuleKeyHelpers {
+
+Key truncateKey(KeyRef key, int truncateOffset, bool isSnowtramAware) {
+	if (truncateOffset <= 0) {
+		return key;
+	}
+	Key truncatedKey = key;
+	// if snowtram aware, tuple must parse and not be truncated, but maintain non-snowtram-aware case for backwards
+	// compatibility
+	Tuple t = Tuple::unpackUserType(key, !isSnowtramAware);
+	if (isSnowtramAware) {
+		bool snowtramKey = t.isSnowtramKey();
+		if (snowtramKey && t.isSnowtramDataOrIndexSpace()) {
+			CODE_PROBE(true, "snowtram-aware alignKeys found snowtram key to truncate");
+			ASSERT(truncateOffset == 1);
+		} else {
+			CODE_PROBE(snowtramKey, "found snowtram key in non-data/index space");
+			// if not valid snowtram key in the data or index space, don't truncate
+			// We expect TST entries to hit this, but if any user key does that's bad
+			CODE_PROBE(true, "snowtram-aware alignKeys found non-snowtram key, skipping truncate");
+			truncateOffset = t.size();
+		}
+	}
+	if (t.size() > truncateOffset) {
+		Tuple t2 = t.subTuple(0, t.size() - truncateOffset);
+		truncatedKey = t2.pack();
+	}
+
+	return truncatedKey;
+}
+
+bool canSplit(KeyRef prevKey, KeyRef nextKey, int truncateOffset, bool isSnowtramAware) {
+	Key truncatedNextKey = truncateKey(nextKey, truncateOffset, isSnowtramAware);
+	Key truncatedPrevKey = truncateKey(prevKey, truncateOffset, isSnowtramAware);
+	// Allow splitting only if this truncated key is greater than the previous.
+	if (truncatedNextKey > truncatedPrevKey) {
+		return true;
+	}
+	return false;
+}
+
+} // namespace BlobGranuleKeyHelpers
+
+Key getKeyWithUserType(const std::string& key, const std::string& userTypeStr) {
+	Tuple::UserTypeStr udt(0x41, userTypeStr);
+	return Tuple::makeTuple(key, udt).pack();
+}
+
+TEST_CASE("/fdbserver/bulkload/truncateKey") {
+	state Key key = getKeyWithUserType("TestKey", "UserType");
+	state Key expectedKey = Tuple::makeTuple("TestKey"_sr).pack();
+
+	// Verify that truncation works.
+	state Key truncated = BlobGranuleKeyHelpers::truncateKey(key, 1, false);
+	ASSERT_EQ(truncated, expectedKey);
+
+	// No truncation with 0 offset.
+	truncated = BlobGranuleKeyHelpers::truncateKey(key, 0, false);
+	ASSERT_EQ(truncated, key);
+
+	// Snowtram aware truncation does nothing on non-snowtram keys.
+	truncated = BlobGranuleKeyHelpers::truncateKey(key, 1, true);
+	ASSERT_EQ(truncated, key);
+
+	// Snowtram aware compaction does nothing on non-data or index space keys
+	state Tuple snowtramNonDataIndexTuple = Tuple::makeTuple(/*table id=*/1,
+	                                                         /*table incarnation=*/2,
+	                                                         /*space enum */ 1,
+	                                                         "TestKey"_sr,
+	                                                         Tuple::UserTypeStr(0x41, "UserTypeStr"_sr));
+	state Key fakeSnowtramKey = snowtramNonDataIndexTuple.pack();
+	truncated = BlobGranuleKeyHelpers::truncateKey(fakeSnowtramKey, 1, true);
+	ASSERT_EQ(truncated, fakeSnowtramKey);
+
+	// Snowtram aware truncation on snowtram keys.
+	state Tuple snowtramTuple =
+	    Tuple::makeTuple(/*table id=*/1, /*table incarnation=*/2, /*space enum */ 2, "TestKey"_sr);
+	expectedKey = snowtramTuple.pack();
+	fakeSnowtramKey = snowtramTuple.append(Tuple::UserTypeStr(0x41, "UserTypeStr"_sr)).pack();
+	truncated = BlobGranuleKeyHelpers::truncateKey(fakeSnowtramKey, 1, true);
+	ASSERT_EQ(truncated, expectedKey);
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/bulkload/canSplit") {
+	state Key keyA1 = getKeyWithUserType("a", "1");
+	state Key keyA5 = getKeyWithUserType("a", "5");
+
+	// Don't split the same aligned key.
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyA1, keyA5, 1, false), false);
+
+	// Don't split keys smaller or equal to than the previous, with and without truncation being enabled.
+	state Key keyB1 = getKeyWithUserType("b", "1");
+	state Key keyB5 = getKeyWithUserType("b", "5");
+	for (bool truncateOffset : { 0, 1 }) {
+		ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyB1, keyA5, truncateOffset, false), false);
+		ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyB5, keyA1, truncateOffset, false), false);
+		ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyA5, keyA5, truncateOffset, false), false);
+	}
+
+	// Allow splitting if truncated next key > previous.
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyA5, keyB1, 1, false), true);
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyA1, keyB5, 1, false), true);
+
+	// Allow splitting unaligned keys if truncation is disabled.
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyB1, keyB5, 0, false), true);
+
+	// Raw key comparison if truncation is disabled.
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit("abc"_sr, "abc1"_sr, 0, false), true);
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit("abc1"_sr, "abc"_sr, 0, false), false);
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit("abc"_sr, "abc"_sr, 0, false), false);
+
+	return Void();
+}

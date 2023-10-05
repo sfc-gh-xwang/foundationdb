@@ -74,21 +74,6 @@ ACTOR Future<Void> requestWayInTheFuture(Database cx, KeyRange range, Optional<R
 
 ACTOR Future<Void> killBlobWorkers(Database cx);
 
-namespace BlobGranuleKeyHelpers {
-
-// Truncates the provided key by removing an "offset" number of fields
-// from the end of the tuple. If BG_KEY_SNOWTRAM_AWARE is set, the "offset" is
-// 1, if the key is in the data/index space. If not snowtram aware, the "offset"
-// is specified by BG_KEY_TUPLE_TRUNCATE_OFFSET.
-// TODO: Update BlobManager to use this helper method instead of its own splitting logic.
-Key truncateKey(KeyRef key);
-
-// Returns true iff "nextKey" is allowed to be placed in a different granule than "prevKey".
-// TODO: Update BlobManager to use this helper method instead of its own splitting logic.
-bool canSplit(KeyRef prevKey, KeyRef nextKey);
-
-} // namespace BlobGranuleKeyHelpers
-
 #include "flow/unactorcompiler.h"
 
 #endif

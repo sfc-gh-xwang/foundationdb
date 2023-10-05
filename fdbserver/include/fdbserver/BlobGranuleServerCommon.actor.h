@@ -228,6 +228,18 @@ private:
 Future<BlobGranuleCipherKeysCtx> getGranuleCipherKeysFromKeysMeta(Reference<AsyncVar<ServerDBInfo> const> dbInfo,
                                                                   BlobGranuleCipherKeysMeta cipherKeysMeta,
                                                                   Arena* arena);
+namespace BlobGranuleKeyHelpers {
+
+// Returns a snowtram "aligned key" by removing any user defined type tuples from the end of the key.
+// The number of such tuples to remove is specified by "truncateOffset".
+// If isSnowtramAware is set, the "truncateOffset" must be 1, if the key is in the data/index space.
+Key truncateKey(KeyRef key, int truncateOffset, bool isSnowtramAware);
+
+// Returns true iff "nextKey" is allowed to be placed in a different granule than "prevKey".
+bool canSplit(KeyRef prevKey, KeyRef nextKey, int truncateOffset, bool isSnowtramAware);
+
+} // namespace BlobGranuleKeyHelpers
+
 #include "flow/unactorcompiler.h"
 
 #endif

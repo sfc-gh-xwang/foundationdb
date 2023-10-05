@@ -10,10 +10,6 @@
 #include <utility>
 
 #include "fdbrpc/Locality.h"
-#include "fdbserver/BlobGranuleValidation.actor.h"
-#include "fdbserver/Knobs.h"
-#include "fdbserver/workloads/BulkLoadStager.actor.h"
-#include "fdbserver/BlobGranuleValidation.actor.h"
 #include "fdbclient/BackupContainerFileSystem.h"
 #include "fdbclient/BlobConnectionProvider.h"
 #include "fdbclient/BlobGranuleCommon.h"
@@ -22,6 +18,9 @@
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/NativeAPI.actor.h"
+#include "fdbserver/BlobGranuleServerCommon.actor.h"
+#include "fdbserver/Knobs.h"
+#include "fdbserver/workloads/BulkLoadStager.actor.h"
 #include "flow/Arena.h"
 #include "flow/Error.h"
 #include "flow/FastRef.h"
@@ -151,7 +150,8 @@ private:
 			startKey = startKey.removePrefix(self->tenant.get()->prefix());
 			endKey = endKey.removePrefix(self->tenant.get()->prefix());
 		}
-		startKey = BlobGranuleKeyHelpers::truncateKey(startKey);
+		startKey = BlobGranuleKeyHelpers::truncateKey(
+		    startKey, SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET, SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE);
 		KeyRange keyRange(KeyRangeRef(startKey, keyAfter(endKey)));
 		writtenFile.arena().dependsOn(keyRange.arena());
 		writtenFile.keyRange = keyRange;
@@ -202,7 +202,10 @@ Future<Void> BulkLoadStager::addRow(KeyValue row) {
 		// Do this check before making the call into the ACTOR to ensure
 		// this is always serialized and ordered with other calls to `addRow`.
 		ASSERT_GT(row.key, previousKey.get());
-		allowSplit = BlobGranuleKeyHelpers::canSplit(previousKey.get(), row.key);
+		allowSplit = BlobGranuleKeyHelpers::canSplit(previousKey.get(),
+		                                             row.key,
+		                                             SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET,
+		                                             SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE);
 	}
 	previousKey = row.key;
 	return BulkLoadStagerActors::addRow(this, row, allowSplit);
