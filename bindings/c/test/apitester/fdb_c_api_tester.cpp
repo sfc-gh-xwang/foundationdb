@@ -435,6 +435,20 @@ void prepopulateTenants(const TesterOptions& options) {
 					break;
 				}
 			}
+
+			if (options.testSpec.preBlobbifyTenants) {
+				log::info("Pre blobbifying {} tenants", options.numTenants);
+				fdb::Key begin(1, '\x00');
+				fdb::Key end(1, '\xff');
+				for (auto i = 0; i < options.numTenants; i++) {
+					fdb::Tenant tenant = db.openTenant(fdb::toBytesRef(fmt::format("tenant{}", i)));
+					auto blobbifyFuture = tenant.blobbifyRangeBlocking(begin, end);
+					auto err = blobbifyFuture.blockUntilReady();
+					ASSERT(!err);
+					// FIXME: assert that returned bool was true
+				}
+				log::info("Successfully blobbified {} tenants", options.numTenants);
+			}
 		}
 		std::exit(!tenantCreateOk);
 	} else if (pid > 0) {

@@ -73,6 +73,9 @@ struct TestSpec {
 	// set authorization token on the tenant object, instead of on the transaction object.
 	bool authzSetTokenAtTenant = false;
 
+	// in untrusted mode, blobbify ranges externally before starting test
+	bool preBlobbifyTenants = false;
+
 	// Size of the FDB client thread pool (a random number in the [min,max] range)
 	int minFdbThreads = 1;
 	int maxFdbThreads = 1;
