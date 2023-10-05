@@ -2044,12 +2044,9 @@ struct TenantManagementWorkload : TestWorkload {
 
 		Optional<Reference<Tenant>> newTenant = wait(reopenTenantAndVerify(self, tenant, tName, tenantExists, tData));
 		tenant = newTenant;
-		if (!tenantExists && newTenant.present()) {
-			// Might have opened a different tenant
-			if (newTenant.get()->id() == TenantInfo::INVALID_TENANT) {
-				CODE_PROBE(true, "Invalid tenant");
-				return Void();
-			}
+		if (!tenantExists && tenant.present()) {
+			ASSERT_NE(tenant.get()->id(), TenantInfo::INVALID_TENANT);
+
 			// Re-check if the newly opened tenant exists and update corresponding information
 			tName = tenant.flatMapRef(&Tenant::name);
 			if (tName.present()) {
