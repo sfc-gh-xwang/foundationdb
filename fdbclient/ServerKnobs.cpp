@@ -1206,6 +1206,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_RESTORE_MLOGS_RETENTION_SECS,  isSimulated ?  180 : 3600 * 24 * 14 );
 	init( BLOB_RESTORE_LOAD_KEY_VERSION_MAP_STEP_SIZE,  isSimulated ?  10 : 2000 );
 	init( BLOB_RESTORE_SKIP_EMPTY_RANGES,                      false ); BUGGIFY_KNOB(BLOB_RESTORE_SKIP_EMPTY_RANGES, randomize && BUGGIFY, true);
+	init( BLOB_COMPRESS_MANIFEST,                               true ); BUGGIFY_KNOB(BLOB_COMPRESS_MANIFEST, randomize && BUGGIFY, deterministicRandom()->coinflip());
 
 	init( BLOB_GRANULES_FLUSH_BATCH_SIZE,      isSimulated ?  2 : 64 );
 
