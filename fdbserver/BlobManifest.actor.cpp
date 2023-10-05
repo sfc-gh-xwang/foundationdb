@@ -39,9 +39,11 @@
 #include "fdbclient/SystemData.h"
 #include "fdbclient/BackupContainerFileSystem.h"
 #include "fdbclient/BlobGranuleReader.actor.h"
+#include "fdbclient/DatabaseContext.h"
 #include "fdbclient/ManagementAPI.actor.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/BlobGranuleServerCommon.actor.h"
+#include "fdbserver/BlobWorker.h"
 
 #include "flow/actorcompiler.h" // has to be last include
 
@@ -309,8 +311,12 @@ public:
 		rows.reserve(rows.arena(), self->rows_.size());
 		rows.append_deep(rows.arena(), self->rows_.begin(), self->rows_.size());
 
+		Optional<CompressionFilter> compressFilter;
+		if (SERVER_KNOBS->BLOB_COMPRESS_MANIFEST) {
+			compressFilter = getBlobFileCompressFilter();
+		}
 		Value bytes = wait(serializeChunkedSnapshot(
-		    filename, &rows, SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_CHUNK_BYTES, {}, cipherKeysCtx, false));
+		    filename, &rows, SERVER_KNOBS->BG_SNAPSHOT_FILE_TARGET_CHUNK_BYTES, compressFilter, cipherKeysCtx, false));
 		self->totalBytes_ += bytes.size();
 
 		// clear rows to reduce memory while writing file
