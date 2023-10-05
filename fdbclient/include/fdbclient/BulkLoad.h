@@ -107,6 +107,22 @@ enum class BulkLoadFileFormat : uint8_t { ROW_V1 = 1, COLUMNAR_V1 = 2 };
 
 struct BulkLoadFileToWriteRef {
 	constexpr static FileIdentifier file_identifier = 5109804;
+	BulkLoadFileToWriteRef() = default;
+	BulkLoadFileToWriteRef(Arena& a, const BulkLoadFileToWriteRef& copyFrom)
+	  : fileId(a, copyFrom.fileId),
+	    fileName(a, copyFrom.fileName),
+	    targetSize(copyFrom.targetSize),
+	    tenantPrefix(a, copyFrom.tenantPrefix),
+	    cipherKeysCtx(a, copyFrom.cipherKeysCtx),
+	    type(copyFrom.type),
+	    format(copyFrom.format),
+	    compression(copyFrom.compression) {}
+
+	int expectedSize() const {
+		return fileId.expectedSize() + fileName.expectedSize() + sizeof(targetSize) + tenantPrefix->expectedSize() +
+		       cipherKeysCtx.expectedSize() + sizeof(type) + sizeof(format) + sizeof(compression);
+	}
+
 	// file id - pass back to fdb along with file metadata when file is successfully written to mark as registered
 	BulkLoadFileIDRef fileId;
 

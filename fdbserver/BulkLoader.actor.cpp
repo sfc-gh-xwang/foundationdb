@@ -416,7 +416,7 @@ ACTOR Future<Void> validateBlobPointer(Reference<BulkLoaderData> self,
 			// validate sorted and logical size
 			int64_t actualLogicalSize = kvPairs.back().key.size() + kvPairs.back().value.size();
 			for (int i = 0; i < kvPairs.size() - 1; i++) {
-				actualLogicalSize += kvPairs[i].key.size() + kvPairs.back().value.size();
+				actualLogicalSize += kvPairs[i].key.size() + kvPairs[i].value.size();
 				ASSERT(kvPairs[i].key < kvPairs[i + 1].key);
 			}
 
