@@ -287,6 +287,10 @@ void addDebugUidSectionToJsonDoc(rapidjson::Document& doc, Optional<UID> dbgId);
 
 Optional<ErrorDetail> getError(const rapidjson::Document& doc);
 
+void removeTrailingChar(std::string& str, char c);
+Future<Void> procureValidationTokensFromFiles(Reference<RESTKmsConnectorCtx> ctx, std::string details);
+Future<Void> procureValidationTokens(Reference<RESTKmsConnectorCtx> ctx);
+
 } // namespace RESTKmsConnectorUtils
 
 #endif
