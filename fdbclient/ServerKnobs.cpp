@@ -704,7 +704,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_MIN_DEGRADATION_INTERVAL,                         120.0 );
 	init( TENANT_BALANCER_FAILURE_TIME,                          1.0 );
 	init( ENCRYPT_KEY_PROXY_FAILURE_TIME,                        0.1 ); BUGGIFY_KNOB(ENCRYPT_KEY_PROXY_FAILURE_TIME, isSimulated, 1.0 + deterministicRandom()->random01());
-	init( CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE,                      3 );
+	init( CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE,                     10 );
 	init( CC_MAX_EXCLUSION_DUE_TO_HEALTH,                          2 );
 	init( CC_HEALTH_TRIGGER_RECOVERY,                          false );
 	init( CC_TRACKING_HEALTH_RECOVERY_INTERVAL,               3600.0 );
@@ -991,10 +991,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( WORKER_HEALTH_MONITOR_INTERVAL,                       60.0 );
 	init( PEER_LATENCY_CHECK_MIN_POPULATION,                      30 );
 	init( PEER_LATENCY_DEGRADATION_PERCENTILE,                  0.50 );
-	init( PEER_LATENCY_DEGRADATION_THRESHOLD,                   0.05 );
+	init( PEER_LATENCY_DEGRADATION_THRESHOLD,                   0.01 );
 	init( PEER_LATENCY_DEGRADATION_PERCENTILE_SATELLITE,        0.50 );
 	init( PEER_LATENCY_DEGRADATION_THRESHOLD_SATELLITE,          0.1 );
-	init( PEER_TIMEOUT_PERCENTAGE_DEGRADATION_THRESHOLD,         0.1 );
+	init( PEER_TIMEOUT_PERCENTAGE_DEGRADATION_THRESHOLD,         0.5 );
 	init( PEER_DEGRADATION_CONNECTION_FAILURE_COUNT,               5 );
 	init( WORKER_HEALTH_REPORT_RECENT_DESTROYED_PEER,           true );
 	init( STORAGE_SERVER_REBOOT_ON_IO_TIMEOUT,                 false ); BUGGIFY_KNOB(STORAGE_SERVER_REBOOT_ON_IO_TIMEOUT, randomize && BUGGIFY, true);
