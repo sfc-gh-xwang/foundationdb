@@ -301,7 +301,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 	// Blob granules
 	init( BG_MAX_GRANULE_PARALLELISM,                10 );
-	init( BG_TOO_MANY_GRANULES,                   20000 );
+	init( BG_TOO_MANY_GRANULES,                  100000 );
 	init( BG_STREAM_MUTATIONS,                     true ); BUGGIFY_KNOB(BG_STREAM_MUTATIONS, randomize && BUGGIFY, false);
 	init( BG_MUTATION_NOSTREAM_LIMIT,             80000 ); BUGGIFY_KNOB(BG_MUTATION_NOSTREAM_LIMIT, randomize && BUGGIFY, deterministicRandom()->randomSkewedUInt32(0, 1000000));
 	init( BG_MUTATION_STREAM_CHUNK_SIZE,          80000 ); BUGGIFY_KNOB(BG_MUTATION_STREAM_CHUNK_SIZE, randomize && BUGGIFY, deterministicRandom()->randomSkewedUInt32(1000, 1000000));
