@@ -3925,6 +3925,65 @@ TEST_CASE("/fdbserver/storageengine/clearInflightCommits") {
 }
 } // anonymous namespace
 
+namespace {
+
+// The unit test guarantees the function updateConnectionFailureMetrics(), updatePingTimeoutMetrics(),
+// updatePingLatencyMetrics() are working as expected according to the knob enable_worker_health_monitor and whether
+// it's on the client or not
+TEST_CASE("/fdbserver/worker/gray_failure_detection/ping_latency_metrics/update") {
+	state int index;
+	state std::vector<ISimulator::ProcessInfo*> allProcesses = g_simulator->getAllProcesses();
+	state ISimulator::ProcessInfo* currentProcess;
+	state int gfdConnectionFailureBase, gfdPingTimeoutBase, gfdPingLatenciesBase;
+	state int gfdConnectionFailureChange, gfdPingTimeoutChange, gfdPingLatenciesChange;
+	for (index = 0; index < allProcesses.size(); index++) {
+		ISimulator::ProcessInfo* info = allProcesses[index];
+		currentProcess = g_simulator->getCurrentProcess();
+		wait(g_simulator->onProcess(info));
+		// randomly enable the feature
+		bool enable_health_monitor = deterministicRandom()->coinflip();
+		IKnobCollection::getMutableGlobalKnobCollection().setKnob("enable_worker_health_monitor",
+		                                                          KnobValueRef::create(enable_health_monitor));
+		bool enabled = enable_health_monitor && !FlowTransport::transport().isClient();
+		const auto& allPeers = FlowTransport::transport().getAllPeers();
+		for (const auto& [_, peer] : allPeers) {
+			// record the numbers before updating
+			gfdPingLatenciesBase = peer->gfdPingLatencies.getPopulationSize();
+			gfdPingTimeoutBase = peer->gfdPingTimeoutCount;
+			gfdConnectionFailureBase = peer->gfdConnectionFailureCount;
+			gfdConnectionFailureChange = gfdPingTimeoutChange = gfdPingLatenciesChange = 0;
+			// randomly update ping latency metrics
+			for (int i = 0; i < deterministicRandom()->randomInt(0, 10); i++) {
+				peer->updateConnectionFailureMetrics();
+				peer->updatePingTimeoutMetrics();
+				peer->updatePingLatencyMetrics(deterministicRandom()->random01());
+				if (enabled) {
+					++gfdPingLatenciesChange;
+					++gfdPingTimeoutChange;
+					++gfdConnectionFailureChange;
+				}
+			}
+			if (enabled) {
+				// if enabled, check metrics are updated correctly
+				ASSERT_EQ(gfdConnectionFailureBase + gfdConnectionFailureChange, peer->gfdConnectionFailureCount);
+				ASSERT_EQ(gfdPingTimeoutBase + gfdPingTimeoutChange, peer->gfdPingTimeoutCount);
+				ASSERT_EQ(gfdPingLatenciesBase + gfdPingLatenciesChange, peer->gfdPingLatencies.getPopulationSize());
+			} else {
+				// if disabled, check metrics are never updated
+				ASSERT_EQ(peer->gfdConnectionFailureCount, gfdConnectionFailureBase);
+				ASSERT_EQ(peer->gfdPingTimeoutCount, gfdPingTimeoutBase);
+				ASSERT_EQ(peer->gfdPingLatencies.getPopulationSize(), gfdPingLatenciesBase);
+			}
+		}
+
+		// Change back to the beginning process
+		wait(g_simulator->onProcess(currentProcess));
+	}
+	return Void();
+}
+
+} // anonymous namespace
+
 ACTOR Future<UID> createAndLockProcessIdFile(std::string folder) {
 	state UID processIDUid;
 	platform::createDirectory(folder);
