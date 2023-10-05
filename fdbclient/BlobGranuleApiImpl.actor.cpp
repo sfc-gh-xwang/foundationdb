@@ -311,7 +311,7 @@ Standalone<VectorRef<BlobGranuleChunkRef>> apiToNativeBGFileDescriptions(FDBBGFi
 }
 
 ReadBGMutationsApiResult createBGMutationsApiResult(Standalone<VectorRef<GranuleMutationRef>> mutationsResult) {
-	auto ret = ReadBGMutationsApiResult::create(FDBApiResult_ReadBGMutations);
+	auto ret = ReadBGMutationsApiResult::create();
 	ret.arena().dependsOn(mutationsResult.arena());
 	auto data = ret.getPtr();
 	static_assert(sizeof(FDBBGMutation) == sizeof(GranuleMutationRef));
@@ -455,7 +455,7 @@ ACTOR Future<ApiResult> readBlobGranuleDescriptionsImpl(ISingleThreadTransaction
 	                                                                              &readVersionOut,
 	                                                                              input->mutation_byte_limit));
 
-	auto res = TypedApiResult<FDBReadBGDescriptionResult>::create(FDBApiResult_ReadBGDescription);
+	auto res = TypedApiResult<FDBReadBGDescriptionResult>::create();
 	Arena& arena = res.arena();
 	arena.dependsOn(chunks.arena());
 
