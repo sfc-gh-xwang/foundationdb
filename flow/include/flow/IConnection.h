@@ -26,12 +26,8 @@
 
 #include <boost/asio/ip/tcp.hpp>
 
+#include "flow/flow.h"
 #include "flow/NetworkAddress.h"
-
-class Void;
-
-template <typename T>
-class Future;
 
 class IConnection {
 public:
@@ -198,6 +194,31 @@ public:
 	DNSCache dnsCache;
 
 	// Returns the interface that should be used to make and accept socket connections
+};
+
+class BindPromise {
+	Promise<Void> p;
+	std::variant<const char*, AuditedEvent> errContext;
+	UID errID;
+	NetworkAddress peerAddr;
+
+public:
+	BindPromise(const char* errContext, UID errID) : errContext(errContext), errID(errID) {}
+	BindPromise(AuditedEvent auditedEvent, UID errID) : errContext(auditedEvent), errID(errID) {}
+	BindPromise(BindPromise const& r) : p(r.p), errContext(r.errContext), errID(r.errID), peerAddr(r.peerAddr) {}
+	BindPromise(BindPromise&& r) noexcept
+	  : p(std::move(r.p)),
+	    errContext(r.errContext),
+	    errID(r.errID),
+	    peerAddr(r.peerAddr) {}
+
+	Future<Void> getFuture() const { return p.getFuture(); }
+
+	NetworkAddress getPeerAddr() const { return peerAddr; }
+
+	void setPeerAddr(const NetworkAddress& addr) { peerAddr = addr; }
+
+	void operator()(const boost::system::error_code& error, size_t bytesWritten = 0);
 };
 
 #endif // FLOW_ICONNECTION_H

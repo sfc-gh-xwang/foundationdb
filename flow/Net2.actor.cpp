@@ -342,63 +342,6 @@ static boost::asio::local::stream_protocol::endpoint unixEndpoint(const std::str
 	return boost::asio::local::stream_protocol::endpoint(pathname);
 }
 
-class BindPromise {
-	Promise<Void> p;
-	std::variant<const char*, AuditedEvent> errContext;
-	UID errID;
-	NetworkAddress peerAddr;
-
-public:
-	BindPromise(const char* errContext, UID errID) : errContext(errContext), errID(errID) {}
-	BindPromise(AuditedEvent auditedEvent, UID errID) : errContext(auditedEvent), errID(errID) {}
-	BindPromise(BindPromise const& r) : p(r.p), errContext(r.errContext), errID(r.errID), peerAddr(r.peerAddr) {}
-	BindPromise(BindPromise&& r) noexcept
-	  : p(std::move(r.p)),
-	    errContext(r.errContext),
-	    errID(r.errID),
-	    peerAddr(r.peerAddr) {}
-
-	Future<Void> getFuture() const { return p.getFuture(); }
-
-	NetworkAddress getPeerAddr() const { return peerAddr; }
-
-	void setPeerAddr(const NetworkAddress& addr) { peerAddr = addr; }
-
-	void operator()(const boost::system::error_code& error, size_t bytesWritten = 0) {
-		try {
-			if (error) {
-				// Log the error...
-				{
-					std::optional<TraceEvent> traceEvent;
-					if (std::holds_alternative<AuditedEvent>(errContext))
-						traceEvent.emplace(SevWarn, std::get<AuditedEvent>(errContext), errID);
-					else
-						traceEvent.emplace(SevWarn, std::get<const char*>(errContext), errID);
-					TraceEvent& evt = *traceEvent;
-					evt.suppressFor(1.0).detail("ErrorCode", error.value()).detail("Message", error.message());
-					// There is no function in OpenSSL to use to check if an error code is from OpenSSL,
-					// but all OpenSSL errors have a non-zero "library" code set in bits 24-32, and linux
-					// error codes should never go that high.
-					if (error.value() >= (1 << 24L)) {
-						evt.detail("WhichMeans", TLSPolicy::ErrorString(error));
-					}
-
-					if (peerAddr.isValid()) {
-						evt.detail("PeerAddr", peerAddr);
-					}
-				}
-
-				p.sendError(connection_failed());
-			} else
-				p.send(Void());
-		} catch (Error& e) {
-			p.sendError(e);
-		} catch (...) {
-			p.sendError(unknown_error());
-		}
-	}
-};
-
 class TCPConnection final : public IConnection, ReferenceCounted<TCPConnection> {
 public:
 	void addref() override { ReferenceCounted<TCPConnection>::addref(); }
@@ -2349,6 +2292,40 @@ void SendBufferIterator::operator++() {
 
 boost::asio::const_buffer SendBufferIterator::operator*() const {
 	return boost::asio::const_buffer(p->data() + p->bytes_sent, std::min(limit, p->bytes_written - p->bytes_sent));
+}
+
+void BindPromise::operator()(const boost::system::error_code& error, size_t bytesWritten) {
+	try {
+		if (error) {
+			// Log the error...
+			{
+				std::optional<TraceEvent> traceEvent;
+				if (std::holds_alternative<AuditedEvent>(errContext))
+					traceEvent.emplace(SevWarn, std::get<AuditedEvent>(errContext), errID);
+				else
+					traceEvent.emplace(SevWarn, std::get<const char*>(errContext), errID);
+				TraceEvent& evt = *traceEvent;
+				evt.suppressFor(1.0).detail("ErrorCode", error.value()).detail("Message", error.message());
+				// There is no function in OpenSSL to use to check if an error code is from OpenSSL,
+				// but all OpenSSL errors have a non-zero "library" code set in bits 24-32, and linux
+				// error codes should never go that high.
+				if (error.value() >= (1 << 24L)) {
+					evt.detail("WhichMeans", TLSPolicy::ErrorString(error));
+				}
+
+				if (peerAddr.isValid()) {
+					evt.detail("PeerAddr", peerAddr);
+				}
+			}
+
+			p.sendError(connection_failed());
+		} else
+			p.send(Void());
+	} catch (Error& e) {
+		p.sendError(e);
+	} catch (...) {
+		p.sendError(unknown_error());
+	}
 }
 
 INetwork* newNet2(const TLSConfig& tlsConfig, bool useThreadPool, bool useMetrics) {
