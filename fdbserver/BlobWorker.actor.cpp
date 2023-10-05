@@ -24,6 +24,7 @@
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/GetEncryptCipherKeys.h"
 #include "fdbclient/KeyRangeMap.h"
+#include "fdbclient/ServerKnobs.h"
 #include "fdbclient/SystemData.h"
 #include "fdbclient/BackupContainerFileSystem.h"
 #include "fdbclient/BlobConnectionProvider.h"
@@ -2406,7 +2407,8 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 			                                                      false,
 			                                                      { ReadType::NORMAL, CacheResult::True },
 			                                                      false,
-			                                                      getTenantPrefix(bwData, metadata->keyRange));
+			                                                      getTenantPrefix(bwData, metadata->keyRange),
+			                                                      SERVER_KNOBS->BLOB_WORKER_FETCH_FEED_WITH_LOCALITY);
 
 		} else {
 			readOldChangeFeed = false;
@@ -2419,7 +2421,8 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 			                                                   false,
 			                                                   { ReadType::NORMAL, CacheResult::False },
 			                                                   false,
-			                                                   getTenantPrefix(bwData, metadata->keyRange));
+			                                                   getTenantPrefix(bwData, metadata->keyRange),
+			                                                   SERVER_KNOBS->BLOB_WORKER_FETCH_FEED_WITH_LOCALITY);
 			// in case previous worker died before popping the latest version, start another pop
 			if (startState.previousDurableVersion != invalidVersion) {
 				ASSERT(startState.previousDurableVersion + 1 >= startState.changeFeedStartVersion);
@@ -2590,7 +2593,8 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 				                                                   false,
 				                                                   { ReadType::NORMAL, CacheResult::False },
 				                                                   false,
-				                                                   getTenantPrefix(bwData, metadata->keyRange));
+				                                                   getTenantPrefix(bwData, metadata->keyRange),
+				                                                   SERVER_KNOBS->BLOB_WORKER_FETCH_FEED_WITH_LOCALITY);
 
 				// Start actors BEFORE setting new change feed data to ensure the change feed data is properly
 				// initialized by the client
@@ -2725,17 +2729,18 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 									holdingOnOldFeedCounter = bwData->stats.granulesOnOldFeed.take(1);
 									// because several feeds will be reading the same version range of this change
 									// feed at the same time, set cache result to true
-									oldChangeFeedFuture =
-									    bwData->db->getChangeFeedStream(cfData,
-									                                    oldCFKey.get(),
-									                                    cfRollbackVersion + 1,
-									                                    startState.changeFeedStartVersion,
-									                                    metadata->keyRange,
-									                                    bwData->changeFeedStreamReplyBufferSize,
-									                                    false,
-									                                    { ReadType::NORMAL, CacheResult::True },
-									                                    false,
-									                                    getTenantPrefix(bwData, metadata->keyRange));
+									oldChangeFeedFuture = bwData->db->getChangeFeedStream(
+									    cfData,
+									    oldCFKey.get(),
+									    cfRollbackVersion + 1,
+									    startState.changeFeedStartVersion,
+									    metadata->keyRange,
+									    bwData->changeFeedStreamReplyBufferSize,
+									    false,
+									    { ReadType::NORMAL, CacheResult::True },
+									    false,
+									    getTenantPrefix(bwData, metadata->keyRange),
+									    SERVER_KNOBS->BLOB_WORKER_FETCH_FEED_WITH_LOCALITY);
 
 								} else {
 									if (cfRollbackVersion + 1 < startState.changeFeedStartVersion) {
@@ -2745,17 +2750,18 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 									}
 									ASSERT(cfRollbackVersion + 1 >= startState.changeFeedStartVersion);
 
-									changeFeedFuture =
-									    bwData->db->getChangeFeedStream(cfData,
-									                                    cfKey,
-									                                    cfRollbackVersion + 1,
-									                                    MAX_VERSION,
-									                                    metadata->keyRange,
-									                                    bwData->changeFeedStreamReplyBufferSize,
-									                                    false,
-									                                    { ReadType::NORMAL, CacheResult::False },
-									                                    false,
-									                                    getTenantPrefix(bwData, metadata->keyRange));
+									changeFeedFuture = bwData->db->getChangeFeedStream(
+									    cfData,
+									    cfKey,
+									    cfRollbackVersion + 1,
+									    MAX_VERSION,
+									    metadata->keyRange,
+									    bwData->changeFeedStreamReplyBufferSize,
+									    false,
+									    { ReadType::NORMAL, CacheResult::False },
+									    false,
+									    getTenantPrefix(bwData, metadata->keyRange),
+									    SERVER_KNOBS->BLOB_WORKER_FETCH_FEED_WITH_LOCALITY);
 								}
 
 								// Start actors BEFORE setting new change feed data to ensure the change

@@ -1180,6 +1180,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_WORKER_DISK_ENABLED,                            false ); BUGGIFY_KNOB(BLOB_WORKER_DISK_ENABLED, randomize && BUGGIFY, true);
 	init( BLOB_WORKER_STORE_TYPE,                                  3 );
 	init( BLOB_WORKER_REJOIN_TIME,                              10.0 );
+	init( BLOB_WORKER_FETCH_FEED_WITH_LOCALITY,                false ); BUGGIFY_KNOB(BLOB_WORKER_FETCH_FEED_WITH_LOCALITY, randomize && BUGGIFY, true);
 
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_MIN,                   0.1 );
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_MAX,                   5.0 );

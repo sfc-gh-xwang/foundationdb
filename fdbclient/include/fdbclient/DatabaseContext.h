@@ -419,7 +419,8 @@ public:
 	                                 bool canReadPopped = true,
 	                                 ReadOptions readOptions = { ReadType::NORMAL, CacheResult::False },
 	                                 bool encrypted = false,
-	                                 Future<Key> tenantPrefix = Key());
+	                                 Future<Key> tenantPrefix = Key(),
+	                                 bool preferLocalStorageServer = false);
 
 	Future<OverlappingChangeFeedsInfo> getOverlappingChangeFeeds(KeyRangeRef ranges, Version minVersion);
 	Future<Void> popChangeFeedMutations(Key rangeID, Version version);
