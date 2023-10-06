@@ -10164,7 +10164,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 						} else {
 							double decryptionTimeV = 0;
 							MutationRef decrypted = msg.decrypt(
-							    cipherKeys.get(), eager.arena, BlobCipherMetrics::TLOG, nullptr, &decryptionTimeV);
+							    cipherKeys.get(), cloneReader.arena(), BlobCipherMetrics::TLOG, nullptr, &decryptionTimeV);
 							messages.emplace_back(
 							    cloneCursor1->version(),
 							    MutationRefAndCipherKeys(decrypted, msg, msg.getLatestCipherKeys(*latestCipherKeys)));
