@@ -67,7 +67,8 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
     Optional<DataClusterEntry> dataClusterConfig,
     SkipMetaclusterCreation skipMetaclusterCreation,
     WaitForMetaclusterCreation waitForMetaclusterCreation,
-    WaitForDataClusterRegistration waitForDataClusterRegistration) {
+    WaitForDataClusterRegistration waitForDataClusterRegistration,
+    int clustersToRegister) {
 	ASSERT(g_network->isSimulated());
 	state SimulatedMetacluster simMetacluster;
 
@@ -96,26 +97,28 @@ ACTOR Future<SimulatedMetacluster> createSimulatedMetacluster(
 		simMetacluster.dataDbs[clusterName] =
 		    Database::createSimulatedExtraDatabase(g_simulator->extraDatabases[clusterIndex], db->defaultTenant);
 
-		if (dataClusterConfig.present()) {
-			wait(metacluster::registerCluster(simMetacluster.managementDb,
-			                                  clusterName,
-			                                  g_simulator->extraDatabases[clusterIndex],
-			                                  dataClusterConfig.get()));
+		if (clustersToRegister < 0 || clusterIndex < clustersToRegister) {
+			if (dataClusterConfig.present()) {
+				wait(metacluster::registerCluster(simMetacluster.managementDb,
+				                                  clusterName,
+				                                  g_simulator->extraDatabases[clusterIndex],
+				                                  dataClusterConfig.get()));
 
-			// Run a transaction to verify that the data cluster has recovered
-			wait(
-			    runRYWTransactionVoid(simMetacluster.dataDbs[clusterName], [](Reference<ReadYourWritesTransaction> tr) {
-				    tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-				    return success(tr->get("\xff"_sr));
-			    }));
-		} else if (waitForDataClusterRegistration) {
-			loop {
-				Optional<DataClusterMetadata> metadata = wait(tryGetCluster(db.getReference(), clusterName));
-				if (metadata.present() && metadata.get().entry.clusterState == DataClusterState::READY) {
-					break;
+				// Run a transaction to verify that the data cluster has recovered
+				wait(runRYWTransactionVoid(simMetacluster.dataDbs[clusterName],
+				                           [](Reference<ReadYourWritesTransaction> tr) {
+					                           tr->setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+					                           return success(tr->get("\xff"_sr));
+				                           }));
+			} else if (waitForDataClusterRegistration) {
+				loop {
+					Optional<DataClusterMetadata> metadata = wait(tryGetCluster(db.getReference(), clusterName));
+					if (metadata.present() && metadata.get().entry.clusterState == DataClusterState::READY) {
+						break;
+					}
+
+					wait(delay(1.0));
 				}
-
-				wait(delay(1.0));
 			}
 		}
 	}

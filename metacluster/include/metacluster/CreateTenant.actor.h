@@ -196,7 +196,7 @@ struct CreateTenantImpl {
 			        {},
 			        CLIENT_KNOBS->METACLUSTER_ASSIGNMENT_CLUSTERS_TO_CHECK,
 			        Snapshot::False,
-			        Reverse::True));
+			        Reverse(!CLIENT_KNOBS->CREATE_TENANT_PREFER_EMPTIEST_CLUSTER)));
 			if (availableClusters.results.empty()) {
 				TraceEvent("MetaclusterCreateTenantMetaclusterNoCapacity")
 				    .detail("TenantName", self->tenantEntry.tenantName)
@@ -234,7 +234,7 @@ struct CreateTenantImpl {
 		CODE_PROBE(!clusterAvailabilityChecks[0].isReady(), "Preferred cluster not available");
 
 		// Get the first cluster that was available
-		state Optional<ClusterName> chosenCluster;
+		Optional<ClusterName> chosenCluster;
 		for (auto const& f : clusterAvailabilityChecks) {
 			if (f.isReady()) {
 				chosenCluster = f.get();

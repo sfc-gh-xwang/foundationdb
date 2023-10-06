@@ -780,7 +780,7 @@ def delete_tenants_test(logger, cluster_files):
 def configure_tenant_group_test(logger, cluster_files):
     tenants = [
         {"name": "tenant1", "tenant_group": "group0", "assigned_cluster": "data1"},
-        {"name": "tenant2"},
+        {"name": "tenant2", "assigned_cluster": "data1"},
         {"name": "tenant3", "assigned_cluster": "data2"},
     ]
     setup_tenants(cluster_files[0], tenants)
