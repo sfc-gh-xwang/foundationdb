@@ -270,7 +270,7 @@ struct IndexBlockRef {
 		                                    eKeys.headerCipherKey,
 		                                    cipherKeysCtx.ivRef.begin(),
 		                                    cipherKeysCtx.ivRef.size(),
-		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO),
 		                                    BlobCipherMetrics::BLOB_GRANULE,
 		                                    false);
 
@@ -408,7 +408,7 @@ struct IndexBlobGranuleFileChunkRef {
 		                                    eKeys.headerCipherKey,
 		                                    cipherKeysCtx.ivRef.begin(),
 		                                    cipherKeysCtx.ivRef.size(),
-		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO),
 		                                    BlobCipherMetrics::BLOB_GRANULE,
 		                                    false);
 		BlobCipherEncryptHeaderRef headerRef;
@@ -1769,7 +1769,7 @@ BlobGranuleCipherKeysCtx getCipherKeysCtx(Arena& arena) {
 	cipherKeysCtx.headerCipherKey.salt = encryptSalt;
 	cipherKeysCtx.headerCipherKey.baseCipher = StringRef(arena, encryptBaseCipher);
 
-	int ivLength = getIVLengthFromEncryptionAtRestAlgo(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO));
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO));
 	cipherKeysCtx.ivRef = makeString(ivLength, arena);
 	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), ivLength);
 

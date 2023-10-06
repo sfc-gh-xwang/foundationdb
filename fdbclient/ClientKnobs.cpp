@@ -337,6 +337,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( ENCRYPT_HEADER_AES_GCM_AUTH_VERSION,          1 );
 	init( ENCRYPT_LIST_CIPHER_KEYS_LIMIT,           10000 );
 	init( ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD, 6.0);
+	init( ENCRYPTION_AT_REST_ALGO,          "AES-256-CTR" ); if (randomize && BUGGIFY) ENCRYPTION_AT_REST_ALGO = getRandomAuthenticatedEncryptionAtRestAlgo();
 
 	init( REST_KMS_ALLOW_NOT_SECURE_CONNECTION,     false ); BUGGIFY_KNOB(REST_KMS_ALLOW_NOT_SECURE_CONNECTION, randomize && BUGGIFY, !REST_KMS_ALLOW_NOT_SECURE_CONNECTION);
 	init( SIM_KMS_VAULT_MAX_KEYS,                    4096 );

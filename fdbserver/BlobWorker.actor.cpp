@@ -388,7 +388,7 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestGranuleCipherKeysActor(Reference
 	ASSERT(systemCipherKeys.cipherHeaderKey.isValid());
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(systemCipherKeys.cipherHeaderKey, *arena);
 
-	EncryptionAtRestAlgo algo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	EncryptionAtRestAlgo algo = encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO);
 	int ivLength = getIVLengthFromEncryptionAtRestAlgo(algo);
 	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
 	generateIV(algo, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());

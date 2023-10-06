@@ -176,7 +176,7 @@ struct MutationRef {
 		Reference<EncryptBlobCipher> cipher =
 		    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
 		                                    cipherKeys.cipherHeaderKey,
-		                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+		                                    encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO),
 		                                    usageType);
 
 		StringRef serializedHeader;
@@ -203,14 +203,14 @@ struct MutationRef {
 		};
 		Reference<BlobCipherKey> textCipherKey = getCipherKey(domainId);
 		Reference<BlobCipherKey> headerCipherKey;
-		if (needsHeaderCipherKey(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
+		if (needsHeaderCipherKey(encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO))) {
 			headerCipherKey = getCipherKey(ENCRYPT_HEADER_DOMAIN_ID);
 		}
 		BinaryWriter bw(AssumeVersion(ProtocolVersion::withEncryptionAtRest()));
 		bw << *this;
 
 		Reference<EncryptBlobCipher> cipher = EncryptBlobCipher::getEncryptor(
-		    textCipherKey, headerCipherKey, encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO), usageType);
+		    textCipherKey, headerCipherKey, encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO), usageType);
 
 		BlobCipherEncryptHeaderRef header;
 		auto payload =

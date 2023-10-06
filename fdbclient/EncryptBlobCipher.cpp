@@ -1060,7 +1060,7 @@ void computeAuthToken(const std::vector<std::pair<const uint8_t*, size_t>>& payl
 
 EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptAuthTokenMode mode) {
 	// Override mode if authToken isn't enabled
-	return isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))
+	return isAuthenticatedEncryption(encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO))
 	           ? mode
 	           : EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
 }

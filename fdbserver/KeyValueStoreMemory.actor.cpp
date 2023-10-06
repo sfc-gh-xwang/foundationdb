@@ -521,7 +521,7 @@ private:
 			Reference<EncryptBlobCipher> encryptor =
 			    EncryptBlobCipher::getEncryptor(cipherKeys.cipherTextKey,
 			                                    cipherKeys.cipherHeaderKey,
-			                                    encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO),
+			                                    encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO),
 			                                    BlobCipherMetrics::KV_MEMORY);
 			uint16_t encryptHeaderSize;
 			// TODO: If possible we want to avoid memcpy to the disk log by using the same arena used by IDiskQueue

@@ -2607,7 +2607,7 @@ public:
 			            : keyProvider->getLatestDefaultEncryptionKey(),
 			        [=](ArenaPage::EncryptionKey k) {
 				        page->encryptionKey = k;
-				        page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+				        page->encryptionAlgo = encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO);
 				        return Void();
 			        });
 		}
@@ -5174,7 +5174,7 @@ public:
 				page->encryptionDomainId = self->m_keyProvider->getDefaultEncryptionDomainId();
 			}
 			page->encryptionKey = k;
-			page->encryptionAlgo = encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+			page->encryptionAlgo = encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO);
 		}
 
 		BTreePage* btpage = (BTreePage*)page->mutateData();
@@ -5308,7 +5308,7 @@ public:
 			expectedEncodingType = EncodingType::XXHash64;
 		} else {
 			expectedEncodingType =
-			    isAuthenticatedEncryption(encryptionAlgoFromString(FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO))
+			    isAuthenticatedEncryption(encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO))
 			        ? EncodingType::AESEncryptionWithAuth
 			        : EncodingType::AESEncryption;
 		}

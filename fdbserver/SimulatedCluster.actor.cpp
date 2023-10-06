@@ -1325,7 +1325,7 @@ ACTOR Future<Void> restartSimulatedSystem(std::vector<Future<Void>>* systemActor
 			g_knobs.setKnob("remote_kv_store", KnobValueRef::create(bool{ false }));
 			TraceEvent(SevDebug, "DisableRemoteKVS");
 		}
-		TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+		TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO);
 		*pConnString = conn;
 		*pTesterCount = testerCount;
 		bool usingSSL = conn.toString().find(":tls") != std::string::npos || listenersPerProcess > 1;
@@ -2201,7 +2201,7 @@ void setupSimulatedSystem(std::vector<Future<Void>>* systemActors,
 		g_knobs.setKnob("remote_kv_store", KnobValueRef::create(bool{ false }));
 		TraceEvent(SevDebug, "DisableRemoteKVS");
 	}
-	TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	TraceEvent("EncryptionAtRestKnobValues").detail("EncryptMode", CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO);
 	auto configDBType = testConfig.getConfigDBType();
 	startingConfigString += DatabaseConfiguration::configureStringFromJSON(startingConfigJSON);
 

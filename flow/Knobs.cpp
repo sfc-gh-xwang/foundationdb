@@ -321,7 +321,6 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( ENCRYPT_KEY_CACHE_LOGGING_INTERVAL,                  5.0 );
 	init( ENCRYPT_KEY_CACHE_LATENCY_LOGGING_INTERVAL,         60.0 );
 	init( ENCRYPT_KEY_CACHE_LOGGING_SKETCH_ACCURACY,          0.01 );
-	init( ENCRYPTION_AT_REST_ALGO,                   "AES-256-CTR" ); if (randomize && BUGGIFY) ENCRYPTION_AT_REST_ALGO = getRandomAuthenticatedEncryptionAtRestAlgo();
 
 	// REST Client
 	init( RESTCLIENT_MAX_CONNECTIONPOOL_SIZE,                   10 );

@@ -3066,7 +3066,7 @@ ACTOR Future<StatusReply> clusterGetStatus(
 			// encryption-at-rest status
 			JsonBuilderObject earStatusObj;
 			earStatusObj["ekp_is_healthy"] = status.canConnectToEKP;
-			earStatusObj["encryption_algo"] = FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO;
+			earStatusObj["encryption_algo"] = CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO;
 			statusObj["encryption_at_rest"] = earStatusObj;
 
 			JsonBuilderObject kmsStatusObj;
