@@ -10254,6 +10254,9 @@ Reference<ChangeFeedStorageData> DatabaseContext::getStorageData(StorageServerIn
 		Reference<ChangeFeedStorageData> newStorageUpdater = makeReference<ChangeFeedStorageData>();
 		newStorageUpdater->id = interf.id();
 		newStorageUpdater->interfToken = token;
+		// set desired version to non-zero so it immediately does its first ping
+		ASSERT_EQ(0, newStorageUpdater->desired.get());
+		newStorageUpdater->desired.set(1);
 		newStorageUpdater->updater = storageFeedVersionUpdater(this, interf, newStorageUpdater.getPtr());
 		newStorageUpdater->context = this;
 		newStorageUpdater->created = now();
@@ -11593,6 +11596,10 @@ ACTOR Future<Void> durableChangeFeedMonitor(Reference<DatabaseContext> db,
 	state Error err = success();
 	state Version originalBegin = begin;
 	state ActiveCounter<int>::Releaser holdingActiveStreamsCounter = db->activeFeedStreams.take(1);
+	// initialize feed begin version to start of feed instead of 0
+	if (results->lastReturnedVersion.get() < begin) {
+		results->lastReturnedVersion.set(begin - 1);
+	}
 	results->endVersion = end;
 	db->usedAnyChangeFeeds = true;
 	try {
