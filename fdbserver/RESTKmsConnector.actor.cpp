@@ -68,12 +68,6 @@ bool isKmsNotReachable(const int errCode) {
 	return errCode == error_code_timed_out || errCode == error_code_connection_failed;
 }
 
-void removeTrailingChar(std::string& str, char c) {
-	while (!str.empty() && str[str.length() - 1] == c) {
-		str.erase(str.length() - 1);
-	}
-}
-
 } // namespace
 
 FDB_BOOLEAN_PARAM(RefreshPersistedUrls);
@@ -981,113 +975,6 @@ Future<Standalone<VectorRef<BlobMetadataDetailsRef>>> RESTKmsConnector::fetchBlo
 	RESTKmsConnectorCtx* ctxPtr = std::any_cast<RESTKmsConnectorCtx*>(data);
 	Reference<RESTKmsConnectorCtx> ctx = Reference<RESTKmsConnectorCtx>::addRef(ctxPtr);
 	return fetchBlobMetadataImpl(ctx, domainIds, debugId);
-}
-
-ACTOR Future<Void> procureValidationTokensFromFiles(Reference<RESTKmsConnectorCtx> ctx, std::string details) {
-	Standalone<StringRef> detailsRef(details);
-	if (details.empty()) {
-		TraceEvent("RESTValidationTokenEmptyFileDetails", ctx->uid).log();
-		throw encrypt_invalid_kms_config();
-	}
-
-	TraceEvent("RESTValidationToken", ctx->uid).detail("DetailsStr", details);
-
-	state std::unordered_map<std::string, std::string> tokenFilePathMap;
-	loop {
-		StringRef name = detailsRef.eat(TOKEN_NAME_FILE_SEP);
-		if (name.empty()) {
-			break;
-		}
-		StringRef path = detailsRef.eat(TOKEN_TUPLE_SEP);
-		if (path.empty()) {
-			TraceEvent("RESTValidationTokenFileDetailsMalformed", ctx->uid).detail("FileDetails", details);
-			throw operation_failed();
-		}
-
-		std::string tokenName = boost::trim_copy(name.toString());
-		std::string tokenFile = boost::trim_copy(path.toString());
-		if (!fileExists(tokenFile)) {
-			TraceEvent("RESTValidationTokenFileNotFound", ctx->uid)
-			    .detail("TokenName", tokenName)
-			    .detail("Filename", tokenFile);
-			throw encrypt_invalid_kms_config();
-		}
-
-		tokenFilePathMap.emplace(tokenName, tokenFile);
-		TraceEvent("RESTValidationToken", ctx->uid).detail("FName", tokenName).detail("Filename", tokenFile);
-	}
-
-	// Clear existing cached validation tokens
-	ctx->validationTokenMap.clear();
-
-	// Enumerate all token files and extract details
-	state uint64_t tokensPayloadSize = 0;
-	for (const auto& item : tokenFilePathMap) {
-		state std::string tokenName = item.first;
-		state std::string tokenFile = item.second;
-		state Reference<IAsyncFile> tFile = wait(IAsyncFileSystem::filesystem()->open(
-		    tokenFile, IAsyncFile::OPEN_NO_AIO | IAsyncFile::OPEN_READONLY | IAsyncFile::OPEN_UNCACHED, 0644));
-
-		state int64_t fSize = wait(tFile->size());
-		if (fSize > SERVER_KNOBS->REST_KMS_CONNECTOR_VALIDATION_TOKEN_MAX_SIZE) {
-			TraceEvent(SevWarnAlways, "RESTValidationTokenFileTooLarge", ctx->uid)
-			    .detail("FileName", tokenFile)
-			    .detail("Size", fSize)
-			    .detail("MaxAllowedSize", SERVER_KNOBS->REST_KMS_CONNECTOR_VALIDATION_TOKEN_MAX_SIZE);
-			throw file_too_large();
-		}
-
-		tokensPayloadSize += fSize;
-		if (tokensPayloadSize > SERVER_KNOBS->REST_KMS_CONNECTOR_VALIDATION_TOKENS_MAX_PAYLOAD_SIZE) {
-			TraceEvent(SevWarnAlways, "RESTValidationTokenPayloadTooLarge", ctx->uid)
-			    .detail("MaxAllowedSize", SERVER_KNOBS->REST_KMS_CONNECTOR_VALIDATION_TOKENS_MAX_PAYLOAD_SIZE);
-			throw value_too_large();
-		}
-
-		state Standalone<StringRef> buff = makeString(fSize);
-		int bytesRead = wait(uncancellable(holdWhile(buff, tFile->read(mutateString(buff), fSize, 0))));
-		if (bytesRead != fSize) {
-			TraceEvent(SevError, "RESTDiscoveryKmsUrlFileReadShort", ctx->uid)
-			    .detail("Filename", tokenFile)
-			    .detail("Expected", fSize)
-			    .detail("Actual", bytesRead);
-			throw io_error();
-		}
-
-		// Populate validation token details
-		ValidationTokenCtx tokenCtx =
-		    ValidationTokenCtx(tokenName, ValidationTokenSource::VALIDATION_TOKEN_SOURCE_FILE);
-		tokenCtx.value.resize(fSize);
-		memcpy(tokenCtx.value.data(), buff.begin(), fSize);
-		tokenCtx.filePath = tokenFile;
-
-		if (SERVER_KNOBS->REST_KMS_CONNECTOR_REMOVE_TRAILING_NEWLINE) {
-			removeTrailingChar(tokenCtx.value, '\n');
-		}
-
-		// NOTE: avoid logging token-value to prevent token leaks in log files..
-		TraceEvent("RESTValidationTokenReadFile", ctx->uid)
-		    .detail("TokenName", tokenCtx.name)
-		    .detail("TokenSize", tokenCtx.value.size())
-		    .detail("TokenFilePath", tokenCtx.filePath.get())
-		    .detail("TotalPayloadSize", tokensPayloadSize);
-
-		ctx->validationTokenMap.emplace(tokenName, std::move(tokenCtx));
-	}
-
-	return Void();
-}
-
-ACTOR Future<Void> procureValidationTokens(Reference<RESTKmsConnectorCtx> ctx) {
-	std::string_view mode{ SERVER_KNOBS->REST_KMS_CONNECTOR_VALIDATION_TOKEN_MODE };
-
-	if (mode.compare("file") == 0) {
-		wait(procureValidationTokensFromFiles(ctx, SERVER_KNOBS->REST_KMS_CONNECTOR_VALIDATION_TOKEN_DETAILS));
-	} else {
-		throw not_implemented();
-	}
-
-	return Void();
 }
 
 // Check if KMS is table by checking request failure count from RESTClient metrics.

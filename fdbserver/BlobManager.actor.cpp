@@ -5232,7 +5232,7 @@ ACTOR Future<Void> haltBlobGranules(Reference<BlobManagerData> bmData) {
 		bmData->addActor.send(haltBlobWorker(bmData, worker));
 		deregisterBlobWorkers.emplace_back(deregisterBlobWorker(bmData, worker));
 	}
-	waitForAll(deregisterBlobWorkers);
+	wait(waitForAll(deregisterBlobWorkers));
 
 	return Void();
 }
@@ -7020,7 +7020,15 @@ ACTOR Future<Void> truncateMutationsLoop(Reference<BlobManagerData> bmData) {
 					}
 					wait(bmData->manifestCompletitionTrigger.onTrigger());
 				}
-				// Truncate mutations up to lastFlushVersion -
+
+				// check again since flush may take long time
+				bool enabled2 =
+				    wait(BlobGranuleBackupConfig().enabled().getD(SystemDBWriteLockedNow(bmData->db.getReference())));
+				if (!enabled2) {
+					TraceEvent("TruncateMutationLogsLoopExit").log();
+					return Void();
+				}
+				// Truncate mutations up to lastFlushVersion
 				wait(truncateMutations(bmData, lastFlushVersion));
 			}
 		} catch (Error& e) {

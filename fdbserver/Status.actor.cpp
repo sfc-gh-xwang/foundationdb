@@ -24,6 +24,7 @@
 #include "fdbclient/json_spirit/json_spirit_value.h"
 #include "fdbserver/BlobGranuleServerCommon.actor.h"
 #include "fdbserver/BlobManagerInterface.h"
+#include "flow/Knobs.h"
 #include "flow/genericactors.actor.h"
 #include "fmt/format.h"
 #include "fdbclient/BackupAgent.actor.h"
@@ -3065,6 +3066,7 @@ ACTOR Future<StatusReply> clusterGetStatus(
 			// encryption-at-rest status
 			JsonBuilderObject earStatusObj;
 			earStatusObj["ekp_is_healthy"] = status.canConnectToEKP;
+			earStatusObj["encryption_algo"] = FLOW_KNOBS->ENCRYPTION_AT_REST_ALGO;
 			statusObj["encryption_at_rest"] = earStatusObj;
 
 			JsonBuilderObject kmsStatusObj;

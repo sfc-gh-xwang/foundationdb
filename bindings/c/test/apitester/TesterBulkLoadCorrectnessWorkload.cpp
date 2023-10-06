@@ -52,6 +52,8 @@ private:
 		OP_REGISTER_FILE,
 		OP_REGISTER_COMPLETE,
 		OP_WAIT_COMPLETE,
+		OP_LIST,
+		OP_STATUS,
 		OP_ABORT,
 		OP_CLEANUP,
 		OP_LAST = OP_CLEANUP
@@ -304,6 +306,65 @@ private:
 		    /* failOnError = */ false);
 	}
 
+	void randomOpList(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
+		fdb::BulkLoadID id = randomLoadIDWithState(metadata->loadsStagingNeedFiles);
+		State st = metadata->loadsStagingNeedFiles[id];
+		info("Bulk Load {0} Listing {1} - {2}",
+		     fdb::toHexString(id),
+		     fdb::toCharsRef(st.keyRange.beginKey),
+		     fdb::toCharsRef(st.keyRange.endKey));
+		execOperation(
+		    [this, id, st](auto ctx) {
+			    fdb::Future f = ctx->dbOps()->listBulkLoads(st.keyRange.beginKey, st.keyRange.endKey).eraseType();
+			    ctx->continueAfter(f, [this, ctx, id, f]() {
+				    fdb::BulkLoadListResult listResult = f.get<fdb::future_var::BulkLoadListResult>();
+				    auto ids = listResult.ids();
+				    ASSERT(ids.size() == 1);
+				    auto foundId = ids[0]->id();
+				    info("Bulk Load {0} List Found {1}", fdb::toHexString(id), fdb::toHexString(foundId));
+				    ASSERT(foundId == id);
+				    info("Bulk Load {0} List Successful", fdb::toHexString(id));
+				    ctx->done();
+			    });
+		    },
+		    [this, cont]() { schedule(cont); },
+		    getTenant(tenantId),
+		    /* failOnError = */ true);
+	}
+
+	void randomOpStatus(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
+		fdb::BulkLoadID id;
+		bool couldAlreadyBeDone;
+		if ((!metadata->loadsWaiting.empty() && Random::get().randomBool(0.5)) || !metadata->hasLoadsStaging()) {
+			id = randomLoadIDFromSet(metadata->loadsWaiting);
+			couldAlreadyBeDone = true;
+		} else {
+			id = metadata->getRandomStagingID();
+			couldAlreadyBeDone = false;
+		}
+		info("Bulk Load {0} Getting Status", fdb::toHexString(id));
+		execOperation(
+		    [this, id, couldAlreadyBeDone](auto ctx) {
+			    fdb::Future f = ctx->dbOps()->getBulkLoadStatus(id).eraseType();
+			    ctx->continueAfter(f, [this, ctx, id, couldAlreadyBeDone, f]() {
+				    auto statusResult = f.get<fdb::future_var::BulkLoadStatusResult>();
+				    auto stateCode = statusResult.state;
+				    info("Bulk Load {0} Status {1}", fdb::toHexString(id), stateCode);
+				    if (couldAlreadyBeDone) {
+					    ASSERT(stateCode == fdb::native::FDB_BULK_LOAD_COPYING ||
+					           stateCode == fdb::native::FDB_BULK_LOAD_DONE);
+				    } else {
+					    ASSERT(stateCode == fdb::native::FDB_BULK_LOAD_ADDING_FILES);
+				    }
+
+				    ctx->done();
+			    });
+		    },
+		    [this, cont]() { schedule(cont); },
+		    getTenant(tenantId),
+		    /* failOnError = */ true);
+	}
+
 	void randomOpAbort(TTaskFct cont, std::shared_ptr<BulkLoadMetadata> metadata, std::optional<int> tenantId) {
 		fdb::BulkLoadID id;
 		bool couldAlreadyBeDone;
@@ -374,13 +435,16 @@ private:
 	}
 
 	OpType chooseRandomAllowedOp(std::shared_ptr<BulkLoadMetadata> metadata) {
-		// enum OpType { OP_START, OP_REGISTER_COMPLETE, OP_WAIT_COMPLETE, OP_ABORT, OP_CLEANUP, OP_LAST = OP_CLEANUP };
 		std::vector<OpType> allowed;
 		if (metadata->activeLoads < loadCap) {
 			allowed.push_back(OP_START);
 		}
 		if (!metadata->loadsStagingNeedFiles.empty()) {
 			allowed.push_back(OP_GET_FILE);
+			if (completedAny || Random::get().randomBool(0.2)) {
+				// for simplicity only do list for files in this stage
+				allowed.push_back(OP_LIST);
+			}
 		}
 		if (!metadata->loadsStagingNeedToWriteFiles.empty()) {
 			allowed.push_back(OP_WRITE_FILE);
@@ -394,12 +458,18 @@ private:
 		if (!metadata->loadsWaiting.empty()) {
 			allowed.push_back(OP_WAIT_COMPLETE);
 		}
-		if (completedAny && (!metadata->loadsWaiting.empty() || metadata->hasLoadsStaging())) {
-			allowed.push_back(OP_ABORT);
+		if (!metadata->loadsWaiting.empty() || metadata->hasLoadsStaging()) {
+			if (Random::get().randomBool(0.2)) {
+				allowed.push_back(OP_STATUS);
+			}
+			if (completedAny) {
+				allowed.push_back(OP_ABORT);
+			}
 		}
 		if (!metadata->loadsDone.empty() || !metadata->loadsAborted.empty()) {
 			allowed.push_back(OP_CLEANUP);
 		}
+
 		ASSERT(!allowed.empty());
 		int randomIdx = Random::get().randomInt(0, allowed.size() - 1);
 		return allowed[randomIdx];
@@ -435,6 +505,12 @@ private:
 			break;
 		case OP_WAIT_COMPLETE:
 			randomOpWaitComplete(cont, metadata, tenantId);
+			break;
+		case OP_LIST:
+			randomOpList(cont, metadata, tenantId);
+			break;
+		case OP_STATUS:
+			randomOpStatus(cont, metadata, tenantId);
 			break;
 		case OP_ABORT:
 			randomOpAbort(cont, metadata, tenantId);

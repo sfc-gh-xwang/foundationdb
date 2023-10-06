@@ -676,8 +676,12 @@ Future<Void> DatabaseContext::waitBulkLoadStateAtLeast(BulkLoadID id,
 	return waitBulkLoadStateAtLeastActor(Reference<DatabaseContext>::addRef(this), id, desiredState, tenant);
 }
 
+// tenant id being non-present means list all bulk loads. Does not filter and thus cannot be used with onlyActive
+// tenant id != -1 means list all bulk loads for that tenant
+// tenant id == -1 means list all bulk loads that are not associated with a tenant
 ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternalActor(Reference<DatabaseContext> db,
                                                                               bool onlyActive,
+                                                                              KeyRange keyRange,
                                                                               Optional<int64_t> tenantId) {
 	state Database cx(db);
 	state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(cx);
@@ -687,11 +691,22 @@ ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternalActor(Re
 		fmt::print("ListBulkLoads: begin\n");
 	}
 
-	state Optional<BulkLoadIDKey> startKey;
-	state Optional<BulkLoadIDKey> endKey;
-	if (tenantId.present()) {
-		std::tie(startKey, endKey) = getBulkLoadTenantRange(tenantId.get());
+	if (onlyActive && !tenantId.present()) {
+		throw unsupported_operation();
 	}
+
+	// if tenant list, scope to range
+	state KeyRange physicalRange = keyRange;
+	if (tenantId.present() && tenantId.get() != TenantInfo::INVALID_TENANT) {
+		physicalRange = physicalRange.withPrefix(TenantAPI::idToPrefix(tenantId.get()));
+	}
+
+	// if tenant id was present, we already implicitly scoped to tenant range.
+	// if it wasn't, we need to validate that each load actually belongs to no tenant
+	// if the user wants to filter out only active loads then we also have to check the state
+	state bool checkState = onlyActive || (tenantId.present() && tenantId.get() == TenantInfo::INVALID_TENANT);
+	state Standalone<VectorRef<BulkLoadIDRef>> ids;
+
 	loop {
 		try {
 			SystemDBWriteLockedNow(db)->setOptions(tr);
@@ -699,24 +714,23 @@ ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternalActor(Re
 			if (BULKLOAD_DEBUG) {
 				fmt::print("ListBulkLoads: get\n");
 			}
+			state Reference<BulkLoadMetadata::RangeMapSnapshot> existingRanges =
+			    wait(BulkLoadMetadata::rangeMap().getSnapshot(tr, physicalRange.begin, physicalRange.end));
+			ASSERT(ids.empty());
 
-			values = Standalone<VectorRef<BulkLoadIDRef>>();
-			BulkLoadMetadata::StatusMap::RangeResultType result =
-			    wait(BulkLoadMetadata::statusMap().getRange(tr, startKey, endKey, CLIENT_KNOBS->TOO_MANY));
-			ASSERT(!result.more);
-			for (auto& it : result.results) {
-				if (!onlyActive || (it.second.state != BulkLoadStatus::State::ABORTED &&
-				                    it.second.state != BulkLoadStatus::State::ABORTED_COMPLETE &&
-				                    it.second.state != BulkLoadStatus::State::DONE)) {
-					values.push_back_deep(values.arena(), it.first.second);
+			// detect conflicts but exempt this load already existing for idempotency. Do this before the updateRange
+			// call to avoid conflicts/issues
+
+			auto ranges = existingRanges->ranges();
+			auto it = ranges.begin();
+			while (it != ranges.end()) {
+				if (!it.value().empty()) {
+					ids.push_back_deep(ids.arena(), it.value());
 				}
+				++it;
 			}
 
-			if (BULKLOAD_DEBUG) {
-				fmt::print("ListBulkLoads: done ({0} result(s))\n", values.size());
-			}
-
-			return values;
+			break;
 		} catch (Error& e) {
 			if (BULKLOAD_DEBUG) {
 				fmt::print("ListBulkLoads: error {0}\n", e.name());
@@ -724,18 +738,55 @@ ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternalActor(Re
 			wait(tr->onError(e));
 		}
 	}
+
+	if (ids.empty() || !checkState) {
+		return ids;
+	}
+
+	state Standalone<VectorRef<BulkLoadIDRef>> checkedIds;
+	loop {
+		try {
+			SystemDBWriteLockedNow(db)->setOptions(tr);
+			state std::vector<Future<Optional<BulkLoadStatus>>> futures;
+			for (auto& id : ids) {
+				futures.push_back(BulkLoadMetadata::statusMap().get(tr, { tenantId.get(), id }));
+			}
+			wait(waitForAll(futures));
+			for (int i = 0; i < ids.size(); i++) {
+				auto& status = futures[i].get();
+				if (!status.present()) {
+					continue;
+				}
+				auto& st = status->state;
+				if (!onlyActive ||
+				    (st != BulkLoadStatus::State::ABORTED && st != BulkLoadStatus::State::ABORTED_COMPLETE &&
+				     st != BulkLoadStatus::State::DONE)) {
+					checkedIds.push_back_deep(checkedIds.arena(), ids[i]);
+				}
+			}
+			break;
+
+		} catch (Error& e) {
+			wait(tr->onError(e));
+		}
+	}
+
+	return checkedIds;
 }
 
 Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listBulkLoadsInternal(bool onlyActive,
+                                                                                    KeyRange keyRange,
                                                                                     Optional<int64_t> tenantId) {
-	return listBulkLoadsInternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenantId);
+	return listBulkLoadsInternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, keyRange, tenantId);
 }
 
 ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsExternalActor(Reference<DatabaseContext> db,
                                                                               bool onlyActive,
+                                                                              KeyRange keyRange,
                                                                               Optional<Reference<Tenant>> tenant) {
 	BulkLoadListRequest req;
 	req.onlyActive = onlyActive;
+	req.keyRange = keyRange;
 	if (BULKLOAD_DEBUG) {
 		fmt::print("ListExternal: begin\n");
 	}
@@ -744,15 +795,18 @@ ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsExternalActor(Re
 }
 
 Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listBulkLoads(bool onlyActive,
+                                                                            KeyRange keyRange,
                                                                             Optional<Reference<Tenant>> tenant) {
-	return listBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenant);
+	return listBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, keyRange, tenant);
 }
 
 ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoadsExternalActor(Reference<DatabaseContext> db,
                                                                                  bool onlyActive,
+                                                                                 KeyRange keyRange,
                                                                                  Optional<Reference<Tenant>> tenant) {
 	BulkLoadListAllRequest req;
 	req.onlyActive = onlyActive;
+	req.keyRange = keyRange;
 	if (BULKLOAD_DEBUG) {
 		fmt::print("ListAllExternal: begin\n");
 	}
@@ -761,8 +815,9 @@ ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoadsExternalActor
 }
 
 Future<Standalone<VectorRef<BulkLoadIDRef>>> DatabaseContext::listAllBulkLoads(bool onlyActive,
+                                                                               KeyRange keyRange,
                                                                                Optional<Reference<Tenant>> tenant) {
-	return listAllBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, tenant);
+	return listAllBulkLoadsExternalActor(Reference<DatabaseContext>::addRef(this), onlyActive, keyRange, tenant);
 }
 
 ACTOR Future<BulkLoadStatus> getBulkLoadStatusInternalActor(Reference<DatabaseContext> db,

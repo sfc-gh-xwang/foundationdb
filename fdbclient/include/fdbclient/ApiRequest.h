@@ -13,6 +13,121 @@
 #include "foundationdb/fdb_c_requests.h"
 #include "flow/Arena.h"
 
+template <typename T>
+struct ApiRequestTraits {
+	constexpr static FDBApiRequestType type = FDBApiRequest_Invalid;
+};
+
+template <typename T>
+constexpr static bool isValidApiRequestType() {
+	return ApiRequestTraits<T>::type != FDBApiRequest_Invalid;
+}
+
+template <>
+struct ApiRequestTraits<FDBReadBGDescriptionRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_ReadBGDescription;
+};
+
+template <>
+struct ApiRequestTraits<FDBStartBulkLoadRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_StartBulkLoad;
+};
+
+template <>
+struct ApiRequestTraits<FDBBulkLoadAllFilesRegisteredRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_BulkLoadAllFilesRegistered;
+};
+
+template <>
+struct ApiRequestTraits<FDBAbortBulkLoadRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_AbortBulkLoad;
+};
+
+template <>
+struct ApiRequestTraits<FDBCleanupBulkLoadRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_CleanupBulkLoad;
+};
+
+template <>
+struct ApiRequestTraits<FDBWaitBulkLoadCompleteRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_WaitBulkLoadComplete;
+};
+
+template <>
+struct ApiRequestTraits<FDBBulkLoadFilesToWriteRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_BulkLoadFilesToWrite;
+};
+
+template <>
+struct ApiRequestTraits<FDBBulkLoadFilesWrittenRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_BulkLoadFilesWritten;
+};
+
+template <>
+struct ApiRequestTraits<FDBListBulkLoadsRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_ListBulkLoads;
+};
+
+template <>
+struct ApiRequestTraits<FDBGetBulkLoadStatusRequest> {
+	constexpr static FDBApiRequestType type = FDBApiRequest_GetBulkLoadStatus;
+};
+
+template <typename T>
+struct ApiResultTraits {
+	constexpr static FDBApiResultType type = FDBApiResult_Invalid;
+};
+
+template <typename T>
+constexpr static bool isValidApiResultType() {
+	return ApiResultTraits<T>::type != FDBApiResult_Invalid;
+}
+
+template <>
+struct ApiResultTraits<FDBErrorResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_Error;
+};
+
+template <>
+struct ApiResultTraits<FDBReadBGDescriptionResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_ReadBGDescription;
+};
+
+template <>
+struct ApiResultTraits<FDBReadRangeResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_ReadRange;
+};
+
+template <>
+struct ApiResultTraits<FDBReadBGMutationsResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_ReadBGMutations;
+};
+
+template <>
+struct ApiResultTraits<FDBBulkLoadIDResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_BulkLoadID;
+};
+
+template <>
+struct ApiResultTraits<FDBVoidResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_Void;
+};
+
+template <>
+struct ApiResultTraits<FDBBulkLoadFilesToWriteResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_BulkLoadFilesToWrite;
+};
+
+template <>
+struct ApiResultTraits<FDBListBulkLoadsResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_ListBulkLoads;
+};
+
+template <>
+struct ApiResultTraits<FDBGetBulkLoadStatusResult> {
+	constexpr static FDBApiResultType type = FDBApiResult_GetBulkLoadStatus;
+};
+
 FDBAllocatorIfc* localAllocatorInterface();
 
 class ApiRequest {
@@ -138,18 +253,19 @@ public:
 	ResultType* getPtr() const { return reinterpret_cast<ResultType*>(ApiResult::getPtr()); }
 	ResultType* getData() const { return reinterpret_cast<ResultType*>(ApiResult::getData()); }
 
-	static TypedApiResult<ResultType> create(FDBApiResultType resType) {
+	static TypedApiResult<ResultType> create() {
+		static_assert(isValidApiResultType<ResultType>());
 		Arena arena(sizeof(ResultType) + sizeof(FDBResultHeader));
 		ResultType* res = new (arena) ResultType();
 		res->header = new (arena) FDBResultHeader();
-		res->header->result_type = resType;
+		res->header->result_type = ApiResultTraits<ResultType>::type;
 		res->header->allocator.handle = arena.getPtr();
 		res->header->allocator.ifc = localAllocatorInterface();
 		return TypedApiResult<ResultType>(addRef((FDBResult*)res));
 	}
 
 	static TypedApiResult<ResultType> createError(Error err) {
-		auto errRes = TypedApiResult<FDBErrorResult>::create(FDBApiResult_Error);
+		auto errRes = TypedApiResult<FDBErrorResult>::create();
 		errRes.getPtr()->error = err.code();
 		return TypedApiResult<ResultType>(errRes);
 	}

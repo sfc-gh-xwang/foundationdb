@@ -987,9 +987,9 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( MIN_DELAY_CC_WORST_FIT_CANDIDACY_SECONDS,             10.0 );
 	init( MAX_DELAY_CC_WORST_FIT_CANDIDACY_SECONDS,             30.0 );
 	init( DBINFO_FAILED_DELAY,                                   1.0 );
-	init( ENABLE_WORKER_HEALTH_MONITOR,                        false ); BUGGIFY_KNOB(ENABLE_WORKER_HEALTH_MONITOR, randomize && BUGGIFY, true);
 	init( WORKER_HEALTH_MONITOR_INTERVAL,                       60.0 );
-	init( PEER_LATENCY_CHECK_MIN_POPULATION,                      30 );
+	init( WORKER_HEALTH_MONITOR_STUCK_LIMIT, 10 * WORKER_HEALTH_MONITOR_INTERVAL );
+	init( PEER_LATENCY_CHECK_MIN_POPULATION,                      10 );
 	init( PEER_LATENCY_DEGRADATION_PERCENTILE,                  0.50 );
 	init( PEER_LATENCY_DEGRADATION_THRESHOLD,                   0.01 );
 	init( PEER_LATENCY_DEGRADATION_PERCENTILE_SATELLITE,        0.50 );
@@ -1180,6 +1180,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_WORKER_DISK_ENABLED,                            false ); BUGGIFY_KNOB(BLOB_WORKER_DISK_ENABLED, randomize && BUGGIFY, true);
 	init( BLOB_WORKER_STORE_TYPE,                                  3 );
 	init( BLOB_WORKER_REJOIN_TIME,                              10.0 );
+	init( BLOB_WORKER_FETCH_FEED_WITH_LOCALITY,                false ); BUGGIFY_KNOB(BLOB_WORKER_FETCH_FEED_WITH_LOCALITY, randomize && BUGGIFY, true);
 
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_MIN,                   0.1 );
 	init( BLOB_MANAGER_STATUS_EXP_BACKOFF_MAX,                   5.0 );
@@ -1205,6 +1206,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( BLOB_RESTORE_MLOGS_RETENTION_SECS,  isSimulated ?  180 : 3600 * 24 * 14 );
 	init( BLOB_RESTORE_LOAD_KEY_VERSION_MAP_STEP_SIZE,  isSimulated ?  10 : 2000 );
 	init( BLOB_RESTORE_SKIP_EMPTY_RANGES,                      false ); BUGGIFY_KNOB(BLOB_RESTORE_SKIP_EMPTY_RANGES, randomize && BUGGIFY, true);
+	init( BLOB_COMPRESS_MANIFEST,                               true ); BUGGIFY_KNOB(BLOB_COMPRESS_MANIFEST, randomize && BUGGIFY, deterministicRandom()->coinflip());
 
 	init( BLOB_GRANULES_FLUSH_BATCH_SIZE,      isSimulated ?  2 : 64 );
 

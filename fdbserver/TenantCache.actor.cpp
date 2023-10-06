@@ -248,7 +248,7 @@ public:
 				// for that tenant.
 				state Reference<Tenant> tenant = makeReference<Tenant>(tenantCache->dbcx(), tenantId);
 				state Standalone<VectorRef<BulkLoadIDRef>> loads =
-				    wait(tenantCache->dbcx()->listBulkLoads(/*onlyActive=*/true, tenant));
+				    wait(tenantCache->dbcx()->listBulkLoads(/*onlyActive=*/true, normalKeys, tenant));
 				state int idx = 0;
 				for (; idx < loads.size(); idx++) {
 					state BulkLoadIDRef id = loads[idx];

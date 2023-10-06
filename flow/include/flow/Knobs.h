@@ -438,6 +438,9 @@ public:
 	double REST_REQUEST_MAX_RETRY_DELAY_SEC;
 	double REST_REQUEST_RETRY_BACKOFF_FACTOR;
 
+	// Gray Failure Detection
+	bool ENABLE_WORKER_HEALTH_MONITOR;
+
 	FlowKnobs(class Randomize, class IsSimulated);
 	void initialize(class Randomize, class IsSimulated);
 };

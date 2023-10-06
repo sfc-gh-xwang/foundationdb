@@ -58,7 +58,6 @@ using KeyRef = BytesRef;
 using Value = ByteString;
 using ValueRef = BytesRef;
 using BulkLoadID = ByteString;
-using BulkLoadIDRef = BytesRef;
 
 class Future;
 
@@ -104,6 +103,10 @@ struct MappedKeyValueRef : native::FDBMappedKeyValue {
 	KeyValueRef rangeKeyValue(int i) const noexcept {
 		return (KeyValueRef&)native::FDBMappedKeyValue::getRange.data[i];
 	}
+};
+
+struct BulkLoadIDRef : native::FDBBulkLoadID {
+	BytesRef id() const noexcept { return BytesRef(native::FDBBulkLoadID::begin, native::FDBBulkLoadID::length); }
 };
 
 // Trivially construct a BytesRef out of string literals
@@ -228,6 +231,8 @@ struct BulkLoadWrittenFileRef : native::FDBBulkLoadWrittenFile {
 	BulkLoadWrittenFileRef(const BulkLoadWrittenFileRef&) = delete;
 	// FIXME: add constructor with logical data?
 };
+
+struct BulkLoadStatus : public native::FDBBulkLoadStatus {};
 
 inline uint8_t const* toBytePtr(char const* ptr) noexcept {
 	return reinterpret_cast<uint8_t const*>(ptr);
@@ -388,6 +393,13 @@ public:
 
 using BulkLoadFilesWrittenArray = VectorRef<BulkLoadWrittenFileRef>;
 
+class BulkLoadListResult : public Result<native::FDBListBulkLoadsResult, BulkLoadListResult> {
+public:
+	VectorRef<BulkLoadIDRef*> ids() const noexcept {
+		return VectorRef<BulkLoadIDRef*>((BulkLoadIDRef**)data()->ids_arr, data()->ids_count);
+	}
+};
+
 class ReadRangeResult : public Result<native::FDBReadRangeResult, ReadRangeResult> {
 public:
 	using KeyValueRefArray = std::tuple<KeyValueRef const*, int, bool>;
@@ -497,6 +509,14 @@ struct BulkLoadIDResult {
 	}
 };
 
+struct BulkLoadStatusResult {
+	using Type = BulkLoadStatus;
+	static Error extract(native::FDBFuture* f, Type& out) noexcept {
+		auto err = Error(fdb_future_get_bulk_load_status_result(f, &out));
+		return Error(err);
+	}
+};
+
 struct Void {};
 struct VoidResult {
 	using Type = Void;
@@ -599,6 +619,7 @@ struct Result {
 
 using ReadBlobGranulesDescriptionResult = Result<fdb::ReadBlobGranulesDescriptionResult>;
 using BulkLoadFilesToWriteResult = Result<fdb::BulkLoadFilesToWriteResult>;
+using BulkLoadListResult = Result<fdb::BulkLoadListResult>;
 
 } // namespace future_var
 
@@ -1144,6 +1165,8 @@ public:
 	virtual TypedFuture<future_var::None> waitBulkLoadComplete(BulkLoadID id) = 0;
 	virtual TypedFuture<future_var::BulkLoadFilesToWriteResult> bulkLoadGetFilesToWrite(BulkLoadID id, int count) = 0;
 	virtual TypedFuture<future_var::None> bulkLoadMarkFilesWritten(BulkLoadID id, BulkLoadFilesWrittenArray files) = 0;
+	virtual TypedFuture<future_var::BulkLoadListResult> listBulkLoads(KeyRef begin, KeyRef end) = 0;
+	virtual TypedFuture<future_var::BulkLoadStatusResult> getBulkLoadStatus(BulkLoadID id) = 0;
 
 	// no difference between tenant and db here. This function is only here for convenience/as a proxy for testing
 	TypedFuture<future_var::KeyRef> writeSnapshotFile(VectorRef<KeyValueRef> data,
@@ -1308,6 +1331,14 @@ public:
 		return native::fdb_tenant_bulk_load_mark_files_written(
 		    getTenant(), id.data(), intSize(id), files.begin(), files.size());
 	}
+
+	TypedFuture<future_var::BulkLoadListResult> listBulkLoads(KeyRef begin, KeyRef end) override {
+		return native::fdb_tenant_list_bulk_loads(getTenant(), begin.data(), intSize(begin), end.data(), intSize(end));
+	}
+
+	TypedFuture<future_var::BulkLoadStatusResult> getBulkLoadStatus(BulkLoadID id) override {
+		return native::fdb_tenant_get_bulk_load_status(getTenant(), id.data(), intSize(id));
+	}
 };
 
 class Database : public IDatabaseOps {
@@ -1471,6 +1502,14 @@ public:
 	TypedFuture<future_var::None> bulkLoadMarkFilesWritten(BulkLoadID id, BulkLoadFilesWrittenArray files) override {
 		return native::fdb_database_bulk_load_mark_files_written(
 		    getDB(), id.data(), intSize(id), files.begin(), files.size());
+	}
+
+	TypedFuture<future_var::BulkLoadListResult> listBulkLoads(KeyRef begin, KeyRef end) override {
+		return native::fdb_database_list_bulk_loads(getDB(), begin.data(), intSize(begin), end.data(), intSize(end));
+	}
+
+	TypedFuture<future_var::BulkLoadStatusResult> getBulkLoadStatus(BulkLoadID id) override {
+		return native::fdb_database_get_bulk_load_status(getDB(), id.data(), intSize(id));
 	}
 };
 

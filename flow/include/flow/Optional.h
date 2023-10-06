@@ -250,7 +250,6 @@ public:
 	}
 
 	bool operator==(Optional const& o) const { return impl == o.impl; }
-	bool operator!=(Optional const& o) const { return !(*this == o); }
 	// Ordering: If T is ordered, then Optional() < Optional(t) and (Optional(u)<Optional(v))==(u<v)
 	bool operator<(Optional const& o) const { return impl < o.impl; }
 

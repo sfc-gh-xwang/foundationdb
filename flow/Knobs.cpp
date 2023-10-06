@@ -317,7 +317,7 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	BUGGIFY_KNOB(ENCRYPT_KEY_HEALTH_CHECK_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(3, 60));
 	init( EKP_HEALTH_CHECK_REQUEST_TIMEOUT,                    2.0 );
 	BUGGIFY_KNOB(ENCRYPT_KEY_HEALTH_CHECK_INTERVAL, randomize && BUGGIFY, deterministicRandom()->randomInt(2, 30));
-	init( ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING,           false ); BUGGIFY_KNOB(ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING, randomize && BUGGIFY, true);
+	init( ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING,           true ); BUGGIFY_KNOB(ENCRYPT_KEY_CACHE_ENABLE_DETAIL_LOGGING, randomize && BUGGIFY, false);
 	init( ENCRYPT_KEY_CACHE_LOGGING_INTERVAL,                  5.0 );
 	init( ENCRYPT_KEY_CACHE_LATENCY_LOGGING_INTERVAL,         60.0 );
 	init( ENCRYPT_KEY_CACHE_LOGGING_SKETCH_ACCURACY,          0.01 );
@@ -334,6 +334,9 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( REST_REQUEST_RETRY_DELAY_SEC,                        0.1 );
 	init( REST_REQUEST_MAX_RETRY_DELAY_SEC,                   60.0 );
 	init( REST_REQUEST_RETRY_BACKOFF_FACTOR,                   2.0 );
+
+	// Gray Failure Detection
+	init( ENABLE_WORKER_HEALTH_MONITOR,                      false ); BUGGIFY_KNOB(ENABLE_WORKER_HEALTH_MONITOR, randomize && BUGGIFY, true);
 
 }
 // clang-format on

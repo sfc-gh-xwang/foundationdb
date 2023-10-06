@@ -36,6 +36,7 @@ EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
                                      const EncryptAuthTokenMode mode,
                                      const EncryptAuthTokenAlgo algo,
                                      const EncryptCipherMode encryptCipherMode,
+                                     const EncryptionAtRestAlgo encryptAlgo,
                                      BlobCipherMetrics::UsageType usageType,
                                      bool incrementCounters)
   : ctx(EVP_CIPHER_CTX_new()),
@@ -44,6 +45,7 @@ EncryptBlobCipher::EncryptBlobCipher(Reference<BlobCipherKey> tCipherKey,
     authTokenMode(mode),
     authTokenAlgo(algo),
     encryptMode(encryptCipherMode),
+    encryptAlgo(encryptAlgo),
     usageType(usageType),
     incrementCounters(incrementCounters) {
 	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
@@ -81,6 +83,7 @@ Reference<EncryptBlobCipher> EncryptBlobCipher::getEncryptor(Reference<BlobCiphe
 		                                                 mode,
 		                                                 authAlgo,
 		                                                 encryptCipherMode,
+		                                                 algo,
 		                                                 usageType,
 		                                                 incrementCounters);
 	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
@@ -91,6 +94,7 @@ Reference<EncryptBlobCipher> EncryptBlobCipher::getEncryptor(Reference<BlobCiphe
 		                                                 mode,
 		                                                 authAlgo,
 		                                                 encryptCipherMode,
+		                                                 algo,
 		                                                 usageType,
 		                                                 incrementCounters);
 	}
@@ -110,10 +114,10 @@ Reference<EncryptBlobCipher> EncryptBlobCipher::getEncryptor(Reference<BlobCiphe
 	EncryptAuthTokenAlgo authAlgo = authTokenAlgoFromEncryptionAtRestAlgo(algo);
 	if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR) {
 		return makeReference<EncryptBlobCipherAes256Ctr>(
-		    tCipherKey, hCipherKey, iv, ivLen, mode, authAlgo, encryptCipherMode, usageType, incrementCounters);
+		    tCipherKey, hCipherKey, iv, ivLen, mode, authAlgo, encryptCipherMode, algo, usageType, incrementCounters);
 	} else if (encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM) {
 		return makeReference<EncryptBlobCipherAes256Gcm>(
-		    tCipherKey, hCipherKey, iv, ivLen, mode, authAlgo, encryptCipherMode, usageType, incrementCounters);
+		    tCipherKey, hCipherKey, iv, ivLen, mode, authAlgo, encryptCipherMode, algo, usageType, incrementCounters);
 	}
 	// Currently only AES-CTR is supported
 	throw not_implemented();
@@ -146,6 +150,12 @@ void EncryptBlobCipher::setCipherAlgoHeaderV1(const uint8_t* ciphertext,
 	} else {
 		setCipherAlgoHeaderWithAuthV1(
 		    ciphertext, ciphertextLen, flags, headerRef, (EncryptAuthTokenAlgo)flags.authTokenAlgo);
+	}
+}
+
+void EncryptBlobCipher::regenerateIVIfNeeded() {
+	if (numEncryptOps++ > 0) {
+		generateIV(encryptAlgo, textCipherKey, mutateString(ivRef), ivRef.size());
 	}
 }
 
@@ -183,6 +193,7 @@ EncryptBlobCipherAes256Gcm::EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> 
                                                        const EncryptAuthTokenMode mode,
                                                        const EncryptAuthTokenAlgo algo,
                                                        const EncryptCipherMode encryptCipherMode,
+                                                       const EncryptionAtRestAlgo encryptAlgo,
                                                        BlobCipherMetrics::UsageType usageType,
                                                        bool incrementCounters)
   : EncryptBlobCipher(tCipherKey,
@@ -192,6 +203,7 @@ EncryptBlobCipherAes256Gcm::EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> 
                       mode,
                       algo,
                       encryptCipherMode,
+                      encryptAlgo,
                       usageType,
                       incrementCounters) {
 	ASSERT_EQ(encryptCipherMode, EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM);
@@ -225,6 +237,8 @@ StringRef EncryptBlobCipherAes256Gcm::encrypt(const uint8_t* plaintext,
 	if (CLIENT_KNOBS->ENABLE_ENCRYPTION_CPU_TIME_LOGGING && encryptTime) {
 		startTime = timer_monotonic();
 	}
+
+	regenerateIVIfNeeded();
 
 	if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1) {
 		throw encrypt_ops_error();
@@ -316,6 +330,7 @@ EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> 
                                                        const EncryptAuthTokenMode mode,
                                                        const EncryptAuthTokenAlgo algo,
                                                        const EncryptCipherMode encryptCipherMode,
+                                                       const EncryptionAtRestAlgo encryptAlgo,
                                                        BlobCipherMetrics::UsageType usageType,
                                                        bool incrementCounters)
   : EncryptBlobCipher(tCipherKey,
@@ -325,6 +340,7 @@ EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> 
                       mode,
                       algo,
                       encryptCipherMode,
+                      encryptAlgo,
                       usageType,
                       incrementCounters) {
 	ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
@@ -411,6 +427,8 @@ StringRef EncryptBlobCipherAes256Ctr::encrypt(const uint8_t* plaintext,
 		startTime = timer_monotonic();
 	}
 
+	regenerateIVIfNeeded();
+
 	if (EVP_EncryptInit_ex(ctx, EVP_aes_256_ctr(), nullptr, nullptr, nullptr) != 1) {
 		throw encrypt_ops_error();
 	}
@@ -471,6 +489,8 @@ void EncryptBlobCipherAes256Ctr::encryptInplace(uint8_t* plaintext,
 	if (CLIENT_KNOBS->ENABLE_ENCRYPTION_CPU_TIME_LOGGING && encryptTime) {
 		startTime = timer_monotonic();
 	}
+
+	regenerateIVIfNeeded();
 
 	if (EVP_EncryptInit_ex(ctx, EVP_aes_256_ctr(), nullptr, nullptr, nullptr) != 1) {
 		throw encrypt_ops_error();

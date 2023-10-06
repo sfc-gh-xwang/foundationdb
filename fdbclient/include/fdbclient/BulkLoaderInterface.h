@@ -231,6 +231,7 @@ struct BulkLoadListRequest : TimedRequest {
 
 	TenantInfo tenantInfo;
 	bool onlyActive;
+	KeyRange keyRange;
 
 	ReplyPromise<BulkLoadListReply> reply;
 
@@ -240,7 +241,7 @@ struct BulkLoadListRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantInfo, onlyActive, reply);
+		serializer(ar, tenantInfo, onlyActive, reply, keyRange);
 	}
 };
 
@@ -249,6 +250,7 @@ struct BulkLoadListAllRequest : TimedRequest {
 
 	TenantInfo tenantInfo;
 	bool onlyActive;
+	KeyRange keyRange;
 
 	ReplyPromise<BulkLoadListReply> reply;
 
@@ -258,7 +260,7 @@ struct BulkLoadListAllRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, tenantInfo, onlyActive, reply);
+		serializer(ar, tenantInfo, onlyActive, reply, keyRange);
 	}
 };
 

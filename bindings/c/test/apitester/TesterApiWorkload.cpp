@@ -389,6 +389,10 @@ std::string ApiWorkload::debugTenantStr(std::optional<int> tenantId) {
 // BlobGranule setup.
 // This blobbifies ['\x00', '\xff') per tenant or for the whole database if there are no tenants.
 void ApiWorkload::setupBlobGranules(TTaskFct cont) {
+	if (WorkloadBase::untrustedClient) {
+		schedule(cont);
+		return;
+	}
 	// This count is used to synchronize the # of tenant blobbifyRange() calls to ensure
 	// we only start the workload once blobbification has fully finished.
 	auto blobbifiedCount = std::make_shared<std::atomic<int>>(1);

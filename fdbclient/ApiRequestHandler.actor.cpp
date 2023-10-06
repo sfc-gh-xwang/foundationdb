@@ -45,13 +45,19 @@ Future<ApiResult> handleDatabaseOrTenantApiRequest(DatabaseContext* db,
 	case FDBApiRequest_BulkLoadFilesWritten:
 		return bulkLoadFilesWritten(db, req, tenant);
 		break;
+	case FDBApiRequest_ListBulkLoads:
+		return listBulkLoads(db, req, tenant);
+		break;
+	case FDBApiRequest_GetBulkLoadStatus:
+		return getBulkLoadStatus(db, req, tenant);
+		break;
 	default:
 		throw unknown_api_request();
 	}
 }
 
 ReadRangeApiResult createReadRangeApiResult(RangeResult rangeResult) {
-	auto ret = ReadRangeApiResult::create(FDBApiResult_ReadRange);
+	auto ret = ReadRangeApiResult::create();
 	ret.arena().dependsOn(rangeResult.arena());
 	auto data = ret.getPtr();
 	static_assert(sizeof(FDBKeyValue) == sizeof(KeyValueRef));

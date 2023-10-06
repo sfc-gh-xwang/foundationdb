@@ -19,5 +19,7 @@ Future<ApiResult> cleanupBulkLoad(DatabaseContext* db, ApiRequest req, Optional<
 Future<ApiResult> waitBulkLoadComplete(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
 Future<ApiResult> bulkLoadFilesToWrite(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
 Future<ApiResult> bulkLoadFilesWritten(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
+Future<ApiResult> listBulkLoads(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
+Future<ApiResult> getBulkLoadStatus(DatabaseContext* db, ApiRequest req, Optional<Reference<Tenant>> tenant);
 
 #endif

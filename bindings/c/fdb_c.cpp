@@ -152,29 +152,43 @@ extern "C" DLLEXPORT fdb_bool_t fdb_error_predicate(int predicate_test, fdb_erro
 namespace {
 
 template <class RequestType>
-RequestType* createApiRequest(FDBAllocatorIfc* allocIfc, int32_t request_type) {
+RequestType* createApiRequest(FDBAllocatorIfc* allocIfc) {
+	static_assert(isValidApiRequestType<RequestType>());
 	void* alloc = nullptr;
-	RequestType* request = reinterpret_cast<RequestType*>(allocIfc->allocate(&alloc, sizeof(RequestType)));
-	request->header = reinterpret_cast<FDBRequestHeader*>(allocIfc->allocate(&alloc, sizeof(FDBRequestHeader)));
+	RequestType* request =
+	    reinterpret_cast<RequestType*>(allocIfc->allocate(&alloc, sizeof(RequestType) + sizeof(FDBRequestHeader)));
+	request->header = reinterpret_cast<FDBRequestHeader*>(request + 1);
 	request->header->allocator.handle = alloc;
 	request->header->allocator.ifc = allocIfc;
-	request->header->request_type = request_type;
+	request->header->request_type = ApiRequestTraits<RequestType>::type;
 	return request;
 }
 
 template <class RequestType>
-FDBFuture* transactionExecuteApiRequest(FDBTransaction* tr, RequestType* request) {
-	return (FDBFuture*)TXN(tr)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+void releaseApiRequest(RequestType* request) {
+	FDBRequestHeader* header = request->header;
+	header->allocator.ifc->delref(header->allocator.handle);
 }
 
 template <class RequestType>
-FDBFuture* databaseExecuteApiRequest(FDBDatabase* db, RequestType* request) {
-	return (FDBFuture*)DB(db)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+FDBFuture* transactionExecuteAndReleaseApiRequest(FDBTransaction* tr, RequestType* request) {
+	FDBFuture* f = (FDBFuture*)TXN(tr)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+	releaseApiRequest(request);
+	return f;
 }
 
 template <class RequestType>
-FDBFuture* tenantExecuteApiRequest(FDBTenant* tenant, RequestType* request) {
-	return (FDBFuture*)TENANT(tenant)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+FDBFuture* databaseExecuteAndReleaseApiRequest(FDBDatabase* db, RequestType* request) {
+	FDBFuture* f = (FDBFuture*)DB(db)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+	releaseApiRequest(request);
+	return f;
+}
+
+template <class RequestType>
+FDBFuture* tenantExecuteAndReleaseApiRequest(FDBTenant* tenant, RequestType* request) {
+	FDBFuture* f = (FDBFuture*)TENANT(tenant)->execAsyncRequest(ApiRequest::addRef((FDBRequest*)request)).extractPtr();
+	releaseApiRequest(request);
+	return f;
 }
 
 template <class RequestType>
@@ -222,12 +236,6 @@ FDBBulkLoadWrittenFile** copyBulkLoadFilesWrittenIntoApiRequest(RequestType* req
 	return result;
 }
 
-template <class RequestType>
-void releaseApiRequest(RequestType* request) {
-	FDBRequestHeader* header = request->header;
-	header->allocator.ifc->delref(header->allocator.handle);
-}
-
 template <class ResultType>
 fdb_error_t getResultData(FDBResult* in, ResultType** out) noexcept {
 	if (in->header->result_type == FDBApiResult_Error) {
@@ -240,6 +248,13 @@ fdb_error_t getResultData(FDBResult* in, ResultType** out) noexcept {
 
 FDBResult* createErrorResult(Error e) {
 	return TypedApiResult<FDBErrorResult>::createError(e).extractPtr();
+}
+
+template <class ResultType>
+ResultType* futureGetTypedResult(FDBFuture* f) {
+	FDBResult* result = (TSAV(ApiResult, f))->get().getPtr();
+	ASSERT(result->header->result_type == ApiResultTraits<ResultType>::type);
+	return (ResultType*)result;
 }
 
 } // namespace
@@ -447,54 +462,50 @@ extern "C" DLLEXPORT fdb_error_t fdb_future_readbg_get_descriptions_v2(FDBFuture
                                                                        FDBBGFileDescriptionV2*** out_descs,
                                                                        int* out_count) {
 
-	FDBResult* result;
-	fdb_error_t err = fdb_future_get_result(f, &result);
-	if (err) {
-		return err;
-	}
-	FDBReadBGDescriptionResult* data = (FDBReadBGDescriptionResult*)result;
-	ASSERT(data->header->result_type == FDBApiResultType::FDBApiResult_ReadBGDescription);
-	*out_descs = data->desc_arr;
-	*out_count = data->desc_count;
-	// Reference count was increased by fdb_future_get_result
-	ApiResult::release(result);
-	return 0;
+	CATCH_AND_RETURN({
+		auto data = futureGetTypedResult<FDBReadBGDescriptionResult>(f);
+		*out_descs = data->desc_arr;
+		*out_count = data->desc_count;
+	});
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_future_get_bulk_load_id_result(FDBFuture* f,
                                                                     uint8_t const** out_id,
                                                                     int* out_id_length) {
 
-	FDBResult* result;
-	fdb_error_t err = fdb_future_get_result(f, &result);
-	if (err) {
-		return err;
-	}
-	FDBBulkLoadIDResult* data = (FDBBulkLoadIDResult*)result;
-	ASSERT(data->header->result_type == FDBApiResultType::FDBApiResult_BulkLoadID);
-	*out_id = data->id.begin;
-	*out_id_length = data->id.length;
-	// Reference count was increased by fdb_future_get_result
-	ApiResult::release(result);
-	return 0;
+	CATCH_AND_RETURN({
+		auto data = futureGetTypedResult<FDBBulkLoadIDResult>(f);
+		*out_id = data->id.begin;
+		*out_id_length = data->id.length;
+	});
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_future_get_bulk_load_files_to_write_result(FDBFuture* f,
                                                                                 FDBBulkLoadFileToWrite*** out_files,
                                                                                 int* out_count) {
+	CATCH_AND_RETURN({
+		auto data = futureGetTypedResult<FDBBulkLoadFilesToWriteResult>(f);
+		*out_files = data->files_arr;
+		*out_count = data->files_count;
+	});
+}
 
-	FDBResult* result;
-	fdb_error_t err = fdb_future_get_result(f, &result);
-	if (err) {
-		return err;
-	}
-	FDBBulkLoadFilesToWriteResult* data = (FDBBulkLoadFilesToWriteResult*)result;
-	ASSERT(data->header->result_type == FDBApiResultType::FDBApiResult_BulkLoadFilesToWrite);
-	*out_files = data->files_arr;
-	*out_count = data->files_count;
-	// Reference count was increased by fdb_future_get_result
-	ApiResult::release(result);
-	return 0;
+extern "C" DLLEXPORT fdb_error_t fdb_future_get_list_bulk_loads_result(FDBFuture* f,
+                                                                       FDBBulkLoadID*** out_ids,
+                                                                       int* out_count) {
+
+	CATCH_AND_RETURN({
+		auto data = futureGetTypedResult<FDBListBulkLoadsResult>(f);
+		*out_ids = data->ids_arr;
+		*out_count = data->ids_count;
+	});
+}
+
+extern "C" DLLEXPORT fdb_error_t fdb_future_get_bulk_load_status_result(FDBFuture* f, FDBBulkLoadStatus* out_status) {
+	CATCH_AND_RETURN({
+		auto data = futureGetTypedResult<FDBGetBulkLoadStatusResult>(f);
+		*out_status = data->status;
+	});
 }
 
 extern "C" DLLEXPORT fdb_error_t fdb_future_readbg_get_descriptions(FDBFuture* f,
@@ -787,31 +798,26 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_start_bulk_load(
                                                                                 int end_key_name_length) {
 	RETURN_FUTURE_ON_ERROR(
 	    ApiResult,
-	    FDBStartBulkLoadRequest* request =
-	        createApiRequest<FDBStartBulkLoadRequest>(DB(db)->getAllocatorInterface(), FDBApiRequest_StartBulkLoad);
+	    FDBStartBulkLoadRequest* request = createApiRequest<FDBStartBulkLoadRequest>(DB(db)->getAllocatorInterface());
 	    request->key_range.begin_key =
 	        (uint8_t*)copyBytesIntoApiRequest(request, begin_key_name, begin_key_name_length);
 	    request->key_range.begin_key_length = begin_key_name_length;
 	    request->key_range.end_key = (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
 	    request->key_range.end_key_length = end_key_name_length;
-	    FDBFuture* future = databaseExecuteApiRequest<FDBStartBulkLoadRequest>(db, request);
-	    releaseApiRequest(request);
-	    return future;);
+	    return databaseExecuteAndReleaseApiRequest(db, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_bulk_load_all_files_registered(
     FDBDatabase* db,
     uint8_t const* bulk_load_id_name,
     int bulk_load_id_name_length) {
-	RETURN_FUTURE_ON_ERROR(
-	    ApiResult,
-	    FDBBulkLoadAllFilesRegisteredRequest* request = createApiRequest<FDBBulkLoadAllFilesRegisteredRequest>(
-	        DB(db)->getAllocatorInterface(), FDBApiRequest_BulkLoadAllFilesRegistered);
-	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
-	    request->id.length = bulk_load_id_name_length;
-	    FDBFuture* future = databaseExecuteApiRequest<FDBBulkLoadAllFilesRegisteredRequest>(db, request);
-	    releaseApiRequest(request);
-	    return future;);
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBBulkLoadAllFilesRegisteredRequest* request =
+	                           createApiRequest<FDBBulkLoadAllFilesRegisteredRequest>(DB(db)->getAllocatorInterface());
+	                       request->id.begin =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	                       request->id.length = bulk_load_id_name_length;
+	                       return databaseExecuteAndReleaseApiRequest(db, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_abort_bulk_load(FDBDatabase* db,
@@ -819,40 +825,33 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_abort_bulk_load(
                                                                                 int bulk_load_id_name_length) {
 	RETURN_FUTURE_ON_ERROR(
 	    ApiResult,
-	    FDBAbortBulkLoadRequest* request =
-	        createApiRequest<FDBAbortBulkLoadRequest>(DB(db)->getAllocatorInterface(), FDBApiRequest_AbortBulkLoad);
+	    FDBAbortBulkLoadRequest* request = createApiRequest<FDBAbortBulkLoadRequest>(DB(db)->getAllocatorInterface());
 	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	    request->id.length = bulk_load_id_name_length;
-	    FDBFuture* future = databaseExecuteApiRequest<FDBAbortBulkLoadRequest>(db, request);
-	    releaseApiRequest(request);
-	    return future;);
+	    return databaseExecuteAndReleaseApiRequest(db, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_cleanup_bulk_load(FDBDatabase* db,
                                                                                   uint8_t const* bulk_load_id_name,
                                                                                   int bulk_load_id_name_length) {
-	RETURN_FUTURE_ON_ERROR(
-	    ApiResult,
-	    FDBCleanupBulkLoadRequest* request =
-	        createApiRequest<FDBCleanupBulkLoadRequest>(DB(db)->getAllocatorInterface(), FDBApiRequest_CleanupBulkLoad);
-	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
-	    request->id.length = bulk_load_id_name_length;
-	    FDBFuture* future = databaseExecuteApiRequest<FDBCleanupBulkLoadRequest>(db, request);
-	    releaseApiRequest(request);
-	    return future;);
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBCleanupBulkLoadRequest* request =
+	                           createApiRequest<FDBCleanupBulkLoadRequest>(DB(db)->getAllocatorInterface());
+	                       request->id.begin =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	                       request->id.length = bulk_load_id_name_length;
+	                       return databaseExecuteAndReleaseApiRequest(db, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture*
 fdb_database_wait_bulk_load_complete(FDBDatabase* db, uint8_t const* bulk_load_id_name, int bulk_load_id_name_length) {
 	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBWaitBulkLoadCompleteRequest* request = createApiRequest<FDBWaitBulkLoadCompleteRequest>(
-	                           DB(db)->getAllocatorInterface(), FDBApiRequest_WaitBulkLoadComplete);
+	                       FDBWaitBulkLoadCompleteRequest* request =
+	                           createApiRequest<FDBWaitBulkLoadCompleteRequest>(DB(db)->getAllocatorInterface());
 	                       request->id.begin =
 	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	                       request->id.length = bulk_load_id_name_length;
-	                       FDBFuture* future = databaseExecuteApiRequest<FDBWaitBulkLoadCompleteRequest>(db, request);
-	                       releaseApiRequest(request);
-	                       return future;);
+	                       return databaseExecuteAndReleaseApiRequest(db, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_bulk_load_get_files_to_write(
@@ -861,15 +860,13 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_bulk_load_get_fi
     int bulk_load_id_name_length,
     int count) {
 	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBBulkLoadFilesToWriteRequest* request = createApiRequest<FDBBulkLoadFilesToWriteRequest>(
-	                           DB(db)->getAllocatorInterface(), FDBApiRequest_BulkLoadFilesToWrite);
+	                       FDBBulkLoadFilesToWriteRequest* request =
+	                           createApiRequest<FDBBulkLoadFilesToWriteRequest>(DB(db)->getAllocatorInterface());
 	                       request->id.begin =
 	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	                       request->id.length = bulk_load_id_name_length;
 	                       request->count = count;
-	                       FDBFuture* future = databaseExecuteApiRequest<FDBBulkLoadFilesToWriteRequest>(db, request);
-	                       releaseApiRequest(request);
-	                       return future;);
+	                       return databaseExecuteAndReleaseApiRequest(db, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_bulk_load_mark_files_written(
@@ -880,15 +877,41 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_bulk_load_mark_f
     int written_file_count) {
 	RETURN_FUTURE_ON_ERROR(
 	    ApiResult,
-	    FDBBulkLoadFilesWrittenRequest* request = createApiRequest<FDBBulkLoadFilesWrittenRequest>(
-	        DB(db)->getAllocatorInterface(), FDBApiRequest_BulkLoadFilesWritten);
+	    FDBBulkLoadFilesWrittenRequest* request =
+	        createApiRequest<FDBBulkLoadFilesWrittenRequest>(DB(db)->getAllocatorInterface());
 	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	    request->id.length = bulk_load_id_name_length;
 	    request->files_arr = copyBulkLoadFilesWrittenIntoApiRequest(request, written_files, written_file_count);
 	    request->files_count = written_file_count;
-	    FDBFuture* future = databaseExecuteApiRequest<FDBBulkLoadFilesWrittenRequest>(db, request);
-	    releaseApiRequest(request);
-	    return future;);
+	    return databaseExecuteAndReleaseApiRequest(db, request););
+}
+
+extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_list_bulk_loads(FDBDatabase* db,
+                                                                                uint8_t const* begin_key_name,
+                                                                                int begin_key_name_length,
+                                                                                uint8_t const* end_key_name,
+                                                                                int end_key_name_length) {
+	RETURN_FUTURE_ON_ERROR(
+	    ApiResult,
+	    FDBListBulkLoadsRequest* request = createApiRequest<FDBListBulkLoadsRequest>(DB(db)->getAllocatorInterface());
+	    request->key_range.begin_key =
+	        (uint8_t*)copyBytesIntoApiRequest(request, begin_key_name, begin_key_name_length);
+	    request->key_range.begin_key_length = begin_key_name_length;
+	    request->key_range.end_key = (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
+	    request->key_range.end_key_length = end_key_name_length;
+	    return databaseExecuteAndReleaseApiRequest<FDBListBulkLoadsRequest>(db, request););
+}
+
+extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_bulk_load_status(FDBDatabase* db,
+                                                                                     uint8_t const* bulk_load_id_name,
+                                                                                     int bulk_load_id_name_length) {
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBGetBulkLoadStatusRequest* request =
+	                           createApiRequest<FDBGetBulkLoadStatusRequest>(DB(db)->getAllocatorInterface());
+	                       request->id.begin =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	                       request->id.length = bulk_load_id_name_length;
+	                       return databaseExecuteAndReleaseApiRequest<FDBGetBulkLoadStatusRequest>(db, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_database_get_client_status(FDBDatabase* db) {
@@ -1025,17 +1048,15 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_start_bulk_load(FD
                                                                               uint8_t const* end_key_name,
                                                                               int end_key_name_length) {
 	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBStartBulkLoadRequest* request = createApiRequest<FDBStartBulkLoadRequest>(
-	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_StartBulkLoad);
+	                       FDBStartBulkLoadRequest* request =
+	                           createApiRequest<FDBStartBulkLoadRequest>(TENANT(tenant)->getAllocatorInterface());
 	                       request->key_range.begin_key =
 	                           (uint8_t*)copyBytesIntoApiRequest(request, begin_key_name, begin_key_name_length);
 	                       request->key_range.begin_key_length = begin_key_name_length;
 	                       request->key_range.end_key =
 	                           (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
 	                       request->key_range.end_key_length = end_key_name_length;
-	                       FDBFuture* future = tenantExecuteApiRequest<FDBStartBulkLoadRequest>(tenant, request);
-	                       releaseApiRequest(request);
-	                       return future;);
+	                       return tenantExecuteAndReleaseApiRequest(tenant, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_all_files_registered(
@@ -1044,55 +1065,47 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_all_file
     int bulk_load_id_name_length) {
 	RETURN_FUTURE_ON_ERROR(
 	    ApiResult,
-	    FDBBulkLoadAllFilesRegisteredRequest* request = createApiRequest<FDBBulkLoadAllFilesRegisteredRequest>(
-	        TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_BulkLoadAllFilesRegistered);
+	    FDBBulkLoadAllFilesRegisteredRequest* request =
+	        createApiRequest<FDBBulkLoadAllFilesRegisteredRequest>(TENANT(tenant)->getAllocatorInterface());
 	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	    request->id.length = bulk_load_id_name_length;
-	    FDBFuture* future = tenantExecuteApiRequest<FDBBulkLoadAllFilesRegisteredRequest>(tenant, request);
-	    releaseApiRequest(request);
-	    return future;);
+	    return tenantExecuteAndReleaseApiRequest(tenant, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_abort_bulk_load(FDBTenant* tenant,
                                                                               uint8_t const* bulk_load_id_name,
                                                                               int bulk_load_id_name_length) {
 	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBAbortBulkLoadRequest* request = createApiRequest<FDBAbortBulkLoadRequest>(
-	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_AbortBulkLoad);
+	                       FDBAbortBulkLoadRequest* request =
+	                           createApiRequest<FDBAbortBulkLoadRequest>(TENANT(tenant)->getAllocatorInterface());
 	                       request->id.begin =
 	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	                       request->id.length = bulk_load_id_name_length;
-	                       FDBFuture* future = tenantExecuteApiRequest<FDBAbortBulkLoadRequest>(tenant, request);
-	                       releaseApiRequest(request);
-	                       return future;);
+	                       return tenantExecuteAndReleaseApiRequest(tenant, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_cleanup_bulk_load(FDBTenant* tenant,
                                                                                 uint8_t const* bulk_load_id_name,
                                                                                 int bulk_load_id_name_length) {
 	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBCleanupBulkLoadRequest* request = createApiRequest<FDBCleanupBulkLoadRequest>(
-	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_CleanupBulkLoad);
+	                       FDBCleanupBulkLoadRequest* request =
+	                           createApiRequest<FDBCleanupBulkLoadRequest>(TENANT(tenant)->getAllocatorInterface());
 	                       request->id.begin =
 	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	                       request->id.length = bulk_load_id_name_length;
-	                       FDBFuture* future = tenantExecuteApiRequest<FDBCleanupBulkLoadRequest>(tenant, request);
-	                       releaseApiRequest(request);
-	                       return future;);
+	                       return tenantExecuteAndReleaseApiRequest(tenant, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_wait_bulk_load_complete(FDBTenant* tenant,
                                                                                       uint8_t const* bulk_load_id_name,
                                                                                       int bulk_load_id_name_length) {
-	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBWaitBulkLoadCompleteRequest* request = createApiRequest<FDBWaitBulkLoadCompleteRequest>(
-	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_WaitBulkLoadComplete);
-	                       request->id.begin =
-	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
-	                       request->id.length = bulk_load_id_name_length;
-	                       FDBFuture* future = tenantExecuteApiRequest<FDBWaitBulkLoadCompleteRequest>(tenant, request);
-	                       releaseApiRequest(request);
-	                       return future;);
+	RETURN_FUTURE_ON_ERROR(
+	    ApiResult,
+	    FDBWaitBulkLoadCompleteRequest* request =
+	        createApiRequest<FDBWaitBulkLoadCompleteRequest>(TENANT(tenant)->getAllocatorInterface());
+	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	    request->id.length = bulk_load_id_name_length;
+	    return tenantExecuteAndReleaseApiRequest(tenant, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_get_files_to_write(
@@ -1100,16 +1113,14 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_get_file
     uint8_t const* bulk_load_id_name,
     int bulk_load_id_name_length,
     int count) {
-	RETURN_FUTURE_ON_ERROR(ApiResult,
-	                       FDBBulkLoadFilesToWriteRequest* request = createApiRequest<FDBBulkLoadFilesToWriteRequest>(
-	                           TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_BulkLoadFilesToWrite);
-	                       request->id.begin =
-	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
-	                       request->id.length = bulk_load_id_name_length;
-	                       request->count = count;
-	                       FDBFuture* future = tenantExecuteApiRequest<FDBBulkLoadFilesToWriteRequest>(tenant, request);
-	                       releaseApiRequest(request);
-	                       return future;);
+	RETURN_FUTURE_ON_ERROR(
+	    ApiResult,
+	    FDBBulkLoadFilesToWriteRequest* request =
+	        createApiRequest<FDBBulkLoadFilesToWriteRequest>(TENANT(tenant)->getAllocatorInterface());
+	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	    request->id.length = bulk_load_id_name_length;
+	    request->count = count;
+	    return tenantExecuteAndReleaseApiRequest(tenant, request););
 }
 
 extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_mark_files_written(
@@ -1120,15 +1131,42 @@ extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_bulk_load_mark_fil
     int written_file_count) {
 	RETURN_FUTURE_ON_ERROR(
 	    ApiResult,
-	    FDBBulkLoadFilesWrittenRequest* request = createApiRequest<FDBBulkLoadFilesWrittenRequest>(
-	        TENANT(tenant)->getAllocatorInterface(), FDBApiRequest_BulkLoadFilesWritten);
+	    FDBBulkLoadFilesWrittenRequest* request =
+	        createApiRequest<FDBBulkLoadFilesWrittenRequest>(TENANT(tenant)->getAllocatorInterface());
 	    request->id.begin = (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
 	    request->id.length = bulk_load_id_name_length;
 	    request->files_arr = copyBulkLoadFilesWrittenIntoApiRequest(request, written_files, written_file_count);
 	    request->files_count = written_file_count;
-	    FDBFuture* future = tenantExecuteApiRequest<FDBBulkLoadFilesWrittenRequest>(tenant, request);
-	    releaseApiRequest(request);
-	    return future;);
+	    return tenantExecuteAndReleaseApiRequest(tenant, request););
+}
+
+extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_list_bulk_loads(FDBTenant* tenant,
+                                                                              uint8_t const* begin_key_name,
+                                                                              int begin_key_name_length,
+                                                                              uint8_t const* end_key_name,
+                                                                              int end_key_name_length) {
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBListBulkLoadsRequest* request =
+	                           createApiRequest<FDBListBulkLoadsRequest>(TENANT(tenant)->getAllocatorInterface());
+	                       request->key_range.begin_key =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, begin_key_name, begin_key_name_length);
+	                       request->key_range.begin_key_length = begin_key_name_length;
+	                       request->key_range.end_key =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, end_key_name, end_key_name_length);
+	                       request->key_range.end_key_length = end_key_name_length;
+	                       return tenantExecuteAndReleaseApiRequest<FDBListBulkLoadsRequest>(tenant, request););
+}
+
+extern "C" DLLEXPORT WARN_UNUSED_RESULT FDBFuture* fdb_tenant_get_bulk_load_status(FDBTenant* tenant,
+                                                                                   uint8_t const* bulk_load_id_name,
+                                                                                   int bulk_load_id_name_length) {
+	RETURN_FUTURE_ON_ERROR(ApiResult,
+	                       FDBGetBulkLoadStatusRequest* request =
+	                           createApiRequest<FDBGetBulkLoadStatusRequest>(TENANT(tenant)->getAllocatorInterface());
+	                       request->id.begin =
+	                           (uint8_t*)copyBytesIntoApiRequest(request, bulk_load_id_name, bulk_load_id_name_length);
+	                       request->id.length = bulk_load_id_name_length;
+	                       return tenantExecuteAndReleaseApiRequest<FDBGetBulkLoadStatusRequest>(tenant, request););
 }
 
 extern "C" DLLEXPORT void fdb_tenant_destroy(FDBTenant* tenant) {
@@ -1484,8 +1522,8 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v
                                                                                   int64_t mutation_byte_limit) {
 	RETURN_FUTURE_ON_ERROR(
 	    ApiResult,
-	    FDBReadBGDescriptionRequest* request = createApiRequest<FDBReadBGDescriptionRequest>(
-	        TXN(tr)->getAllocatorInterface(), FDBApiRequest_ReadBGDescription);
+	    FDBReadBGDescriptionRequest* request =
+	        createApiRequest<FDBReadBGDescriptionRequest>(TXN(tr)->getAllocatorInterface());
 	    request->read_version = read_version;
 	    request->begin_version = begin_version;
 	    request->key_range.begin_key =
@@ -1497,9 +1535,7 @@ extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v
 	    if (g_api_version < 800000 && mutation_byte_limit != std::numeric_limits<int64_t>::max()) {
 		    throw unsupported_operation();
 	    };
-	    FDBFuture* future = transactionExecuteApiRequest<FDBReadBGDescriptionRequest>(tr, request);
-	    releaseApiRequest(request);
-	    return future;);
+	    return transactionExecuteAndReleaseApiRequest(tr, request););
 }
 
 extern "C" DLLEXPORT FDBFuture* fdb_transaction_read_blob_granules_description_v2(FDBTransaction* tr,

@@ -890,6 +890,7 @@ struct MetaclusterManagementWorkload : TestWorkload {
 		state Optional<Reference<DataClusterData>> connectionStringDb;
 
 		state std::map<std::string, metacluster::DataClusterEntry::ConfigValue> configParams;
+		state bool useInvalidConfig = deterministicRandom()->random01() < 0.1;
 		state Optional<ClusterConnectionString> connectionString;
 		if (deterministicRandom()->coinflip()) {
 			configParams["max_tenant_groups"] = deterministicRandom()->randomInt(0, 4);
@@ -897,6 +898,9 @@ struct MetaclusterManagementWorkload : TestWorkload {
 		if (deterministicRandom()->coinflip()) {
 			configParams["auto_tenant_assignment"] =
 			    (metacluster::AutoTenantAssignment)deterministicRandom()->randomInt(0, 2);
+		}
+		if (useInvalidConfig) {
+			configParams["invalid_config"] = 0;
 		}
 		if (deterministicRandom()->coinflip()) {
 			// Half the time, use the current connection string. Otherwise, use the connection string from a different
@@ -927,6 +931,7 @@ struct MetaclusterManagementWorkload : TestWorkload {
 			ASSERT(self->metaclusterCreated);
 			ASSERT(dataDb->registered);
 			ASSERT(self->isValidVersion(connectionStringDb));
+			ASSERT(!useInvalidConfig);
 
 			metacluster::DataClusterEntry entry;
 			entry.configure(configParams);
@@ -958,6 +963,9 @@ struct MetaclusterManagementWorkload : TestWorkload {
 				return Void();
 			} else if (e.code() == error_code_cluster_removed) {
 				ASSERT(!dataDb->registered);
+				return Void();
+			} else if (e.code() == error_code_invalid_cluster_configuration) {
+				ASSERT(useInvalidConfig);
 				return Void();
 			}
 

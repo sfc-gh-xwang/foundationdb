@@ -39,7 +39,12 @@ public:
 		if (Random::get().randomInt(0, 1) == 0) {
 			excludedOpTypes.push_back(OP_CLEAR_RANGE);
 		}
-		if (Random::get().randomInt(0, 1) == 0) {
+		if (untrustedClient) {
+			// Can't do privileged blob management operations in untrusted mode
+			excludedOpTypes.push_back(OP_GET_BLOB_RANGES);
+			excludedOpTypes.push_back(OP_VERIFY);
+			excludedOpTypes.push_back(OP_FLUSH);
+		} else if (Random::get().randomInt(0, 1) == 0) {
 			excludedOpTypes.push_back(OP_FLUSH);
 		}
 	}

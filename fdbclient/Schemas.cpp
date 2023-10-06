@@ -1031,7 +1031,8 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
          "num_data_clusters":10
       },
       "encryption_at_rest": {
-         "ekp_is_healthy": true
+         "ekp_is_healthy": true,
+         "encryption_algo": "AES-256-CTR"
       },
       "kms" : {
          "kms_connector_type": "RESTKmsConnector",

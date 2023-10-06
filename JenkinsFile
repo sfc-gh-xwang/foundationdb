@@ -126,6 +126,7 @@ pipeline {
                     def isLatest = "false"
                     def isRelease = "false"
                     def git_branch = "${scmInfo.GIT_COMMIT}"
+                    def changedFiles = getChangedFiles()
 
                     // If branch is main, set isLatest = true
                     if (env.BRANCH_NAME == "main") {
@@ -139,7 +140,10 @@ pipeline {
                         dryrun = "false"
                     }
 
-                    def changedFiles = getChangedFiles()
+                    //If branch is main or release* get changed files in commit only
+                    if (env.BRANCH_NAME == "main" || env.BRANCH_NAME.startsWith("release")) {
+                        changedFiles = sh(script:"git diff HEAD~1 HEAD  --name-only", returnStdout: true)
+                    }
                     println(changedFiles)
 
                     // if any changes detected in path "/contrib/build_image/" or in case of new branch creation run FDB_ECR/Build_Image job

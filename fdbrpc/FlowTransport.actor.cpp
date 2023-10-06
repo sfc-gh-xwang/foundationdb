@@ -575,10 +575,10 @@ ACTOR Future<Void> connectionMonitor(Reference<Peer> peer) {
 		loop {
 			choose {
 				when(wait(delay(FLOW_KNOBS->CONNECTION_MONITOR_TIMEOUT))) {
-					peer->timeoutCount++;
+					peer->updatePingTimeoutMetrics();
 					if (startingBytes == peer->bytesReceived) {
 						if (peer->destination.isPublic()) {
-							peer->pingLatencies.addSample(g_network->timer_monotonic() - startTime);
+							peer->updatePingLatencyMetrics(g_network->timer_monotonic() - startTime);
 						}
 						TraceEvent("ConnectionTimeout").suppressFor(1.0).detail("WithAddr", peer->destination);
 						throw connection_failed();
@@ -594,7 +594,7 @@ ACTOR Future<Void> connectionMonitor(Reference<Peer> peer) {
 				}
 				when(wait(pingRequest.reply.getFuture())) {
 					if (peer->destination.isPublic()) {
-						peer->pingLatencies.addSample(g_network->timer_monotonic() - startTime);
+						peer->updatePingLatencyMetrics(g_network->timer_monotonic() - startTime);
 					}
 					break;
 				}
@@ -756,7 +756,7 @@ ACTOR Future<Void> connectionKeeper(Reference<Peer> self,
 						}
 					}
 				} catch (Error& e) {
-					++self->connectFailedCount;
+					self->updateConnectionFailureMetrics();
 					if (e.code() != error_code_connection_failed) {
 						throw;
 					}
@@ -934,7 +934,11 @@ Peer::Peer(TransportData* transport, NetworkAddress const& destination)
     connectOutgoingCount(0),
     connectIncomingCount(0),
     connectFailedCount(0),
-    connectLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1) {
+    connectLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1),
+    gfdPingTimeoutCount(0),
+    gfdConnectionFailureCount(0),
+    gfdPingLatencies(destination.isPublic() ? FLOW_KNOBS->PING_SKETCH_ACCURACY : 0.1),
+    gfdLastCheckTime(0.0) {
 	IFailureMonitor::failureMonitor().setStatus(destination, FailureStatus(false));
 }
 
@@ -1034,6 +1038,34 @@ void Peer::onIncomingConnection(Reference<Peer> self, Reference<IConnection> con
 		// Send an (ignored) packet to make sure that, if our outgoing connection died before the peer made this
 		// connection attempt, we eventually find out that our connection is dead, close it, and then respond to the
 		// next connection reattempt from peer.
+	}
+}
+
+void Peer::updateConnectionFailureMetrics() {
+	++connectFailedCount;
+	// Same definition, but the reset interval is different
+	// In particular, connectFailedCount is reset everytime it logs the PingLatency event
+	// gfdConnectionFailureCount is reset every time the worker checks the metrics, controlled by the knob
+	// CC_WORKER_HEALTH_CHECKING_INTERVAL
+	if (!FlowTransport::isClient() && FLOW_KNOBS->ENABLE_WORKER_HEALTH_MONITOR) {
+		++gfdConnectionFailureCount;
+	}
+}
+
+void Peer::updatePingTimeoutMetrics() {
+	// Reset everytime it logs the PingLatency event
+	++timeoutCount;
+	// Reset interval controlled by WORKER_HEALTH_MONITOR_INTERVAL
+	if (!FlowTransport::isClient() && FLOW_KNOBS->ENABLE_WORKER_HEALTH_MONITOR) {
+		++gfdPingTimeoutCount;
+	}
+}
+
+void Peer::updatePingLatencyMetrics(double latency) {
+	// Same as above, same definition with a different reset interval
+	pingLatencies.addSample(latency);
+	if (!FlowTransport::isClient() && FLOW_KNOBS->ENABLE_WORKER_HEALTH_MONITOR) {
+		gfdPingLatencies.addSample(latency);
 	}
 }
 

@@ -178,6 +178,16 @@ struct Peer : public ReferenceCounted<Peer> {
 	DDSketch<double> connectLatencies;
 	Promise<Void> disconnect;
 
+	// Following metrics are replicated for gray failure detection with minimal overheads.
+	// Same definition with a different reset interval
+	// Only used and updated on the fdbserver
+	int gfdPingTimeoutCount;
+	int gfdConnectionFailureCount;
+	// DDSketch is space efficient so it won't cost much to keep another copy of samples with a smaller reset interval
+	DDSketch<double> gfdPingLatencies;
+	// Last time the worker checked and reset the metrics
+	double gfdLastCheckTime;
+
 	explicit Peer(TransportData* transport, NetworkAddress const& destination);
 
 	void send(PacketBuffer* pb, ReliablePacket* rp, bool firstUnsent);
@@ -187,6 +197,12 @@ struct Peer : public ReferenceCounted<Peer> {
 	void discardUnreliablePackets();
 
 	void onIncomingConnection(Reference<Peer> self, Reference<IConnection> conn, Future<Void> reader);
+
+	void updateConnectionFailureMetrics();
+
+	void updatePingTimeoutMetrics();
+
+	void updatePingLatencyMetrics(double latency);
 };
 
 class IPAllowList;

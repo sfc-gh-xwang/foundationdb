@@ -5523,18 +5523,19 @@ maybeDuplicateTSSStreamFragment(Request& req, QueueModel* model, RequestStream<R
 	return Optional<TSSDuplicateStreamData<REPLYSTREAM_TYPE(Request)>>();
 }
 
-// Given client locality and candidate servers, select a target server to fetchKeys from.
+// Given client locality, candidate servers, storager server member, and whether prefer local storage server or not,
+// select a target storage server.
+template <class F>
 int selectServerCandidate(const LocalityData& clientLocality,
                           Reference<LocationInfo> serverLocations,
+                          F StorageServerInterface::*member,
                           bool preferLocalStorageServer) {
 	int index = -1;
 
 	// Exclude failed servers.
 	std::vector<int> availableServers;
 	for (int i = 0; i < serverLocations->size(); i++) {
-		if (!IFailureMonitor::failureMonitor()
-		         .getState(serverLocations->get(i, &StorageServerInterface::getKeyValuesStream).getEndpoint())
-		         .failed) {
+		if (!IFailureMonitor::failureMonitor().getState(serverLocations->get(i, member).getEndpoint()).failed) {
 			availableServers.push_back(i);
 		}
 	}
@@ -5632,6 +5633,7 @@ ACTOR Future<Void> getRangeStreamFragment(Reference<TransactionState> trState,
 					// to duplicate this code
 					useIdx = selectServerCandidate(trState->cx->clientLocality,
 					                               locations[shard].locations,
+					                               &StorageServerInterface::getKeyValuesStream,
 					                               trState->options.preferLocalStorageServer);
 					if (useIdx >= 0) {
 						break;
@@ -10252,6 +10254,9 @@ Reference<ChangeFeedStorageData> DatabaseContext::getStorageData(StorageServerIn
 		Reference<ChangeFeedStorageData> newStorageUpdater = makeReference<ChangeFeedStorageData>();
 		newStorageUpdater->id = interf.id();
 		newStorageUpdater->interfToken = token;
+		// set desired version to non-zero so it immediately does its first ping
+		ASSERT_EQ(0, newStorageUpdater->desired.get());
+		newStorageUpdater->desired.set(1);
 		newStorageUpdater->updater = storageFeedVersionUpdater(this, interf, newStorageUpdater.getPtr());
 		newStorageUpdater->context = this;
 		newStorageUpdater->created = now();
@@ -11397,7 +11402,8 @@ ACTOR Future<Void> getChangeFeedStreamActor(Reference<DatabaseContext> db,
                                             ReadOptions readOptions,
                                             bool encrypted,
                                             Reference<ChangeFeedCacheData> cacheData,
-                                            Key tenantPrefix) {
+                                            Key tenantPrefix,
+                                            bool preferLocalStorageServer) {
 	state Database cx(db);
 	state Span span("NAPI:GetChangeFeedStream"_loc);
 
@@ -11436,19 +11442,12 @@ ACTOR Future<Void> getChangeFeedStreamActor(Reference<DatabaseContext> db,
 			while (loc < locations.size()) {
 				// FIXME: create a load balance function for this code so future users of reply streams do not have
 				// to duplicate this code
-				int count = 0;
+
 				int useIdx = -1;
-				for (int i = 0; i < locations[loc].locations->size(); i++) {
-					if (!IFailureMonitor::failureMonitor()
-					         .getState(locations[loc]
-					                       .locations->get(i, &StorageServerInterface::changeFeedStream)
-					                       .getEndpoint())
-					         .failed) {
-						if (deterministicRandom()->random01() <= 1.0 / ++count) {
-							useIdx = i;
-						}
-					}
-				}
+				useIdx = selectServerCandidate(db->clientLocality,
+				                               locations[loc].locations,
+				                               &StorageServerInterface::changeFeedStream,
+				                               preferLocalStorageServer);
 
 				if (useIdx >= 0) {
 					chosenLocations[loc] = useIdx;
@@ -11590,12 +11589,17 @@ ACTOR Future<Void> durableChangeFeedMonitor(Reference<DatabaseContext> db,
                                             bool canReadPopped,
                                             ReadOptions readOptions,
                                             bool encrypted,
-                                            Future<Key> tenantPrefix) {
+                                            Future<Key> tenantPrefix,
+                                            bool preferLocalStorageServer) {
 	state Optional<ChangeFeedCacheRange> cacheRange;
 	state Reference<ChangeFeedCacheData> data;
 	state Error err = success();
 	state Version originalBegin = begin;
 	state ActiveCounter<int>::Releaser holdingActiveStreamsCounter = db->activeFeedStreams.take(1);
+	// initialize feed begin version to start of feed instead of 0
+	if (results->lastReturnedVersion.get() < begin) {
+		results->lastReturnedVersion.set(begin - 1);
+	}
 	results->endVersion = end;
 	db->usedAnyChangeFeeds = true;
 	try {
@@ -11654,7 +11658,8 @@ ACTOR Future<Void> durableChangeFeedMonitor(Reference<DatabaseContext> db,
 		                              readOptions,
 		                              encrypted,
 		                              data,
-		                              cacheRange.present() ? cacheRange.get().tenantPrefix : Key()));
+		                              cacheRange.present() ? cacheRange.get().tenantPrefix : Key(),
+		                              preferLocalStorageServer));
 	} catch (Error& e) {
 		err = e;
 	}
@@ -11677,7 +11682,8 @@ Future<Void> DatabaseContext::getChangeFeedStream(Reference<ChangeFeedData> resu
                                                   bool canReadPopped,
                                                   ReadOptions readOptions,
                                                   bool encrypted,
-                                                  Future<Key> tenantPrefix) {
+                                                  Future<Key> tenantPrefix,
+                                                  bool preferLocalStorageServer) {
 	return durableChangeFeedMonitor(Reference<DatabaseContext>::addRef(this),
 	                                results,
 	                                rangeID,
@@ -11688,7 +11694,8 @@ Future<Void> DatabaseContext::getChangeFeedStream(Reference<ChangeFeedData> resu
 	                                canReadPopped,
 	                                readOptions,
 	                                encrypted,
-	                                tenantPrefix);
+	                                tenantPrefix,
+	                                preferLocalStorageServer);
 }
 
 Version OverlappingChangeFeedsInfo::getFeedMetadataVersion(const KeyRangeRef& range) const {
@@ -12473,13 +12480,15 @@ TEST_CASE("/fdbclient/nativeAPI/selectServerCandidate") {
 	IFailureMonitor::failureMonitor().setStatus(s1Addr, FailureStatus(false));
 	IFailureMonitor::failureMonitor().setStatus(s2Addr, FailureStatus(false));
 
-	int result = selectServerCandidate(testClientLocality, serverLocations, true);
+	int result =
+	    selectServerCandidate(testClientLocality, serverLocations, &StorageServerInterface::getKeyValuesStream, true);
 	ASSERT_EQ(clientDataHallId,
 	          serverLocations->get(result, &StorageServerInterface::locality).dataHallId()->toString());
 
 	// Case 2: enable the dataHallId locality; s0 and s1 are available while s2 is not.
 	IFailureMonitor::failureMonitor().setStatus(s2Addr, FailureStatus(true));
-	result = selectServerCandidate(testClientLocality, serverLocations, true);
+	result =
+	    selectServerCandidate(testClientLocality, serverLocations, &StorageServerInterface::getKeyValuesStream, true);
 	ASSERT_EQ(clientDataHallId,
 	          serverLocations->get(result, &StorageServerInterface::locality).dataHallId()->toString());
 
@@ -12487,7 +12496,8 @@ TEST_CASE("/fdbclient/nativeAPI/selectServerCandidate") {
 	IFailureMonitor::failureMonitor().setStatus(s0Addr, FailureStatus(true));
 	IFailureMonitor::failureMonitor().setStatus(s1Addr, FailureStatus(true));
 	IFailureMonitor::failureMonitor().setStatus(s2Addr, FailureStatus(true));
-	result = selectServerCandidate(testClientLocality, serverLocations, true);
+	result =
+	    selectServerCandidate(testClientLocality, serverLocations, &StorageServerInterface::getKeyValuesStream, true);
 	ASSERT_EQ(-1, result);
 
 	// Case 4: enable the dataHallId locality; the local server s0 is not available, pick a remote one.
@@ -12495,13 +12505,15 @@ TEST_CASE("/fdbclient/nativeAPI/selectServerCandidate") {
 	IFailureMonitor::failureMonitor().setStatus(s1Addr, FailureStatus(false));
 	IFailureMonitor::failureMonitor().setStatus(s2Addr, FailureStatus(false));
 
-	result = selectServerCandidate(testClientLocality, serverLocations, true);
+	result =
+	    selectServerCandidate(testClientLocality, serverLocations, &StorageServerInterface::getKeyValuesStream, true);
 	ASSERT_NE(clientDataHallId,
 	          serverLocations->get(result, &StorageServerInterface::locality).dataHallId()->toString());
 
 	// Case 5: disable the dataHallId locality; all 3 are available, pick a random one.
 	IFailureMonitor::failureMonitor().setStatus(s0Addr, FailureStatus(false));
-	result = selectServerCandidate(testClientLocality, serverLocations, false);
+	result =
+	    selectServerCandidate(testClientLocality, serverLocations, &StorageServerInterface::getKeyValuesStream, false);
 	ASSERT_NE(-1, result);
 
 	return Void();

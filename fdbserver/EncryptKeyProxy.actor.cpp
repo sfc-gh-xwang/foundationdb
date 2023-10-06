@@ -1156,6 +1156,11 @@ ACTOR Future<Void> activateKmsConnector(Reference<EncryptKeyProxyData> ekpProxyD
 		ekpProxyData->kmsConnector = std::make_unique<RESTKmsConnector>(REST_KMS_CONNECTOR_TYPE_STR);
 		ekpProxyData->restKmsConnectorCtx =
 		    makeReference<RESTKmsConnectorUtils::RESTKmsConnectorCtx>(ekpProxyData->myId, ekpProxyData->actors);
+		wait(RESTKmsConnectorUtils::procureValidationTokens(ekpProxyData->restKmsConnectorCtx));
+		ASSERT(!g_network->isSimulated() || !ekpProxyData->restKmsConnectorCtx->validationTokenMap.empty());
+		if (ekpProxyData->restKmsConnectorCtx->validationTokenMap.empty()) {
+			TraceEvent(SevWarnAlways, "RESTEmptyValidationTokensFile");
+		}
 	} else {
 		throw not_implemented();
 	}

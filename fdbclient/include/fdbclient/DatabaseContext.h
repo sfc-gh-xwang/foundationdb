@@ -419,7 +419,8 @@ public:
 	                                 bool canReadPopped = true,
 	                                 ReadOptions readOptions = { ReadType::NORMAL, CacheResult::False },
 	                                 bool encrypted = false,
-	                                 Future<Key> tenantPrefix = Key());
+	                                 Future<Key> tenantPrefix = Key(),
+	                                 bool preferLocalStorageServer = false);
 
 	Future<OverlappingChangeFeedsInfo> getOverlappingChangeFeeds(KeyRangeRef ranges, Version minVersion);
 	Future<Void> popChangeFeedMutations(Key rangeID, Version version);
@@ -469,13 +470,17 @@ public:
 	                                 BulkLoadStatus::State desiredState,
 	                                 Optional<Reference<Tenant>> tenant = {});
 	Future<Version> getBulkLoadVersion(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
-	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternal(bool onlyActive, Optional<int64_t> tenantId);
+	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternal(bool onlyActive,
+	                                                                   KeyRange keyRange,
+	                                                                   Optional<int64_t> tenantId);
 	Future<BulkLoadStatus> getBulkLoadStatusInternal(BulkLoadID id, Optional<Reference<Tenant>> tenant);
 
 	// operational management
 	Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoads(bool onlyActive,
+	                                                           KeyRange keyRange = normalKeys,
 	                                                           Optional<Reference<Tenant>> tenant = {});
 	Future<Standalone<VectorRef<BulkLoadIDRef>>> listAllBulkLoads(bool onlyActive,
+	                                                              KeyRange keyRange = normalKeys,
 	                                                              Optional<Reference<Tenant>> tenant = {});
 	Future<BulkLoadStatus> getBulkLoadStatus(BulkLoadID id, Optional<Reference<Tenant>> tenant = {});
 

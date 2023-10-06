@@ -23,7 +23,9 @@ enum FDBApiRequestType {
 	FDBApiRequest_CleanupBulkLoad = 5, //
 	FDBApiRequest_WaitBulkLoadComplete = 6, //
 	FDBApiRequest_BulkLoadFilesToWrite = 7, //
-	FDBApiRequest_BulkLoadFilesWritten = 8
+	FDBApiRequest_BulkLoadFilesWritten = 8, //
+	FDBApiRequest_ListBulkLoads = 9, //
+	FDBApiRequest_GetBulkLoadStatus = 10
 };
 
 enum FDBApiResultType {
@@ -34,7 +36,9 @@ enum FDBApiResultType {
 	FDBApiResult_ReadBGMutations = 3, //
 	FDBApiResult_BulkLoadID = 4, //
 	FDBApiResult_Void = 5, //
-	FDBApiResult_BulkLoadFilesToWrite = 6
+	FDBApiResult_BulkLoadFilesToWrite = 6, //
+	FDBApiResult_ListBulkLoads = 7, //
+	FDBApiResult_GetBulkLoadStatus = 8
 };
 
 typedef struct FDBRequestHeader_ FDBRequestHeader;
@@ -86,6 +90,16 @@ typedef struct FDBBulkLoadFilesWrittenRequest_ {
 	int files_count;
 } FDBBulkLoadFilesWrittenRequest;
 
+typedef struct FDBListBulkLoadsRequest_ {
+	FDBRequestHeader* header;
+	FDBKeyRange key_range;
+} FDBListBulkLoadsRequest;
+
+typedef struct FDBGetBulkLoadStatusRequest_ {
+	FDBRequestHeader* header;
+	FDBBulkLoadID id;
+} FDBGetBulkLoadStatusRequest;
+
 typedef struct FDBErrorResult_ {
 	FDBResultHeader* header;
 	fdb_error_t error;
@@ -125,6 +139,17 @@ typedef struct FDBBulkLoadFilesToWriteResult_ {
 	FDBBulkLoadFileToWrite** files_arr;
 	int files_count;
 } FDBBulkLoadFilesToWriteResult;
+
+typedef struct FDBListBulkLoadsResult_ {
+	FDBResultHeader* header;
+	FDBBulkLoadID** ids_arr;
+	int ids_count;
+} FDBListBulkLoadsResult;
+
+typedef struct FDBGetBulkLoadStatusResult_ {
+	FDBResultHeader* header;
+	FDBBulkLoadStatus status;
+} FDBGetBulkLoadStatusResult;
 
 #ifdef __cplusplus
 }

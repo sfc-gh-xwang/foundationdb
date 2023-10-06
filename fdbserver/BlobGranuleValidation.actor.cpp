@@ -20,6 +20,7 @@
 
 #include "fdbserver/BlobGranuleValidation.actor.h"
 #include "fdbclient/FDBOptions.h"
+#include "fdbclient/FDBTypes.h"
 #include "fdbserver/Knobs.h"
 #include "fdbclient/BlobGranuleRequest.actor.h"
 #include "fdbclient/DatabaseContext.h"
@@ -245,7 +246,6 @@ ACTOR Future<Void> validateGranuleSummaries(Database cx,
 	state KeyRangeMap<Optional<BlobGranuleSummaryRef>> lastSummary;
 	state Version lastSummaryVersion = invalidVersion;
 	state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
-	state int successCount = 0;
 	try {
 		loop {
 			// get grv and get latest summaries
@@ -314,8 +314,6 @@ ACTOR Future<Void> validateGranuleSummaries(Database cx,
 					return Void();
 				}
 			}
-
-			successCount++;
 
 			lastSummaryArena = nextSummary.arena();
 			lastSummaryVersion = nextSummaryVersion;
@@ -678,3 +676,48 @@ ACTOR Future<Void> killBlobWorkers(Database cx) {
 		}
 	}
 }
+
+namespace BlobGranuleKeyHelpers {
+
+Key truncateKey(KeyRef key) {
+	int offset = SERVER_KNOBS->BG_KEY_TUPLE_TRUNCATE_OFFSET;
+	if (offset <= 0) {
+		return key;
+	}
+	Key truncatedKey = key;
+	// if snowtram aware, tuple must parse and not be truncated, but maintain non-snowtram-aware case for backwards
+	// compatibility
+	bool snowtramAware = SERVER_KNOBS->BG_KEY_SNOWTRAM_AWARE;
+	Tuple t = Tuple::unpackUserType(key, !snowtramAware);
+	if (snowtramAware) {
+		bool snowtramKey = t.isSnowtramKey();
+		if (snowtramKey && t.isSnowtramDataOrIndexSpace()) {
+			CODE_PROBE(true, "snowtram-aware alignKeys found snowtram key to truncate");
+			ASSERT(offset == 1);
+		} else {
+			CODE_PROBE(snowtramKey, "found snowtram key in non-data/index space");
+			// if not valid snowtram key in the data or index space, don't truncate
+			// We expect TST entries to hit this, but if any user key does that's bad
+			CODE_PROBE(true, "snowtram-aware alignKeys found non-snowtram key, skipping truncate");
+			offset = t.size();
+		}
+	}
+	if (t.size() > offset) {
+		Tuple t2 = t.subTuple(0, t.size() - offset);
+		truncatedKey = t2.pack();
+	}
+
+	return truncatedKey;
+}
+
+bool canSplit(KeyRef prevKey, KeyRef nextKey) {
+	Key truncatedNextKey = truncateKey(nextKey);
+	Key truncatedPrevKey = truncateKey(prevKey);
+	// Allow splitting only if this truncated key is greater than the previous.
+	if (truncatedNextKey > truncatedPrevKey) {
+		return true;
+	}
+	return false;
+}
+
+} // namespace BlobGranuleKeyHelpers

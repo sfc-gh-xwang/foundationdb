@@ -51,6 +51,7 @@ public:
 	                  const EncryptAuthTokenMode mode,
 	                  const EncryptAuthTokenAlgo algo,
 	                  const EncryptCipherMode encryptCipherMode,
+	                  const EncryptionAtRestAlgo encryptAlgo,
 	                  BlobCipherMetrics::UsageType usageType,
 	                  bool incrementCounters);
 	virtual ~EncryptBlobCipher();
@@ -86,14 +87,18 @@ protected:
 	                                           BlobCipherEncryptHeaderRef*,
 	                                           const EncryptAuthTokenAlgo) = 0;
 
+	void regenerateIVIfNeeded();
+
 	EVP_CIPHER_CTX* ctx;
 	Reference<BlobCipherKey> textCipherKey;
 	Optional<Reference<BlobCipherKey>> headerCipherKeyOpt;
 	EncryptAuthTokenMode authTokenMode;
 	EncryptAuthTokenAlgo authTokenAlgo;
 	EncryptCipherMode encryptMode;
+	EncryptionAtRestAlgo encryptAlgo;
 	Standalone<StringRef> ivRef;
 	BlobCipherMetrics::UsageType usageType;
+	int numEncryptOps = 0;
 	bool incrementCounters;
 };
 
@@ -106,6 +111,7 @@ public:
 	                           const EncryptAuthTokenMode mode,
 	                           const EncryptAuthTokenAlgo algo,
 	                           const EncryptCipherMode encryptCipherMode,
+	                           const EncryptionAtRestAlgo encryptAlgo,
 	                           BlobCipherMetrics::UsageType usageType,
 	                           bool incrementCounters);
 
@@ -149,6 +155,7 @@ public:
 	                           const EncryptAuthTokenMode mode,
 	                           const EncryptAuthTokenAlgo algo,
 	                           const EncryptCipherMode encryptCipherMode,
+	                           const EncryptionAtRestAlgo encryptAlgo,
 	                           BlobCipherMetrics::UsageType usageType,
 	                           bool incrementCounters);
 
