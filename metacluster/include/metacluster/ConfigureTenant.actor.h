@@ -259,7 +259,7 @@ struct ConfigureTenantImpl {
 			return Void();
 		}
 
-		if (tenantEntry == self->updatedEntry.toTenantMapEntry()) {
+		if (self->updatedEntry.toTenantMapEntry() == tenantEntry) {
 			// No update to write to data cluster, just return.
 			return Void();
 		}

@@ -47,7 +47,7 @@ void assertWorkers(std::vector<WorkerDetails> workers,
 	for (const auto& worker : workers) {
 		ASSERT_EQ(worker.processClass.classType(), expectedClass);
 		if (expectedMachineId.present()) {
-			ASSERT_EQ(expectedMachineId, worker.interf.locality.machineId().get());
+			ASSERT_EQ(worker.interf.locality.machineId().get(), expectedMachineId);
 		}
 	}
 }

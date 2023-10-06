@@ -65,7 +65,7 @@ class UpdateStreamImpl {
 		if (value.present()) {
 			currentLeaseId = BinaryReader::fromStringRef<UID>(value.get(), Unversioned());
 		}
-		if (!currentLeaseId.present() || currentLeaseId != self->leaseId) {
+		if (!currentLeaseId.present() || self->leaseId != currentLeaseId) {
 			TraceEvent(SevWarn, "UpdateStreamLostLease")
 			    .detail("LeaseId", self->leaseId)
 			    .detail("CurrentLeaseId", currentLeaseId)
