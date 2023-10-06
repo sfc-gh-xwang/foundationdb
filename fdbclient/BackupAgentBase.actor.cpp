@@ -763,6 +763,7 @@ ACTOR Future<int> kvMutationLogToTransactions(Database cx,
 				lock->release(group.items.expectedSize());
 				state int curBatchMutationSize = 0;
 				tenantMapChanging = false;
+				state bool writeNormalKeys = false;
 
 				BinaryWriter bw(Unversioned());
 				for (int i = 0; i < group.items.size(); ++i) {
@@ -812,8 +813,50 @@ ACTOR Future<int> kvMutationLogToTransactions(Database cx,
 					mutationSize = 0;
 				}
 
-				state int i;
-				for (i = 0; i < curReq.transaction.mutations.size(); i++) {
+				// Changes to tenant map and normal keys shouldn't be mixed in single transaction, but it's still
+				// possible that they are batched by Commit Proxy to same commit version. So we need to detect and
+				// seperate them when restoring mutations from a commit
+				if (tenantMapChanging) {
+					writeNormalKeys = false;
+					for (int i = 0; i < curReq.transaction.mutations.size(); i++) {
+						if (!isSystemKey(curReq.transaction.mutations[i].param1)) {
+							writeNormalKeys = true;
+							req.transaction.mutations.push_back_deep(req.arena, curReq.transaction.mutations[i]);
+							req.transaction.encryptedMutations.push_back_deep(req.arena,
+							                                                  curReq.transaction.encryptedMutations[i]);
+						}
+					}
+
+					if (writeNormalKeys) {
+						// Changes to tenant map and normal keys are found in same commit
+						newBeginVersion = group.groupKey + 1;
+						TraceEvent("MutationLogRestoreSplitTenantAndNormalKeys")
+						    .detail("BeginVersion", newBeginVersion);
+						CODE_PROBE(true, "split mutations for tenant map and normal keys", probe::decoration::rare);
+						wait(sendCommitTransactionRequest(req,
+						                                  uid,
+						                                  newBeginVersion,
+						                                  rangeBegin,
+						                                  committedVersion,
+						                                  &totalBytes,
+						                                  &mutationSize,
+						                                  addActor,
+						                                  commitLock,
+						                                  commit,
+						                                  false));
+						req = CommitTransactionRequest();
+						mutationSize = 0;
+					}
+				}
+
+				for (int i = 0; i < curReq.transaction.mutations.size(); i++) {
+					if (tenantMapChanging && writeNormalKeys) {
+						// Changes to tenant map and normal keys are found in same commit
+						if (!isSystemKey(curReq.transaction.mutations[i].param1)) {
+							// Skip mutations to normal keys which have been commited
+							continue;
+						}
+					}
 					req.transaction.mutations.push_back_deep(req.arena, curReq.transaction.mutations[i]);
 					req.transaction.encryptedMutations.push_back_deep(req.arena,
 					                                                  curReq.transaction.encryptedMutations[i]);
