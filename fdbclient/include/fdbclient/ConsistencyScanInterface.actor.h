@@ -225,6 +225,11 @@ struct ConsistencyScanState : public KeyBackedClass {
 
 		Key lastEndKey = ""_sr;
 
+		// Returns how many seconds to wait before starting the next round or non-present if a new round
+		// should not be started
+		Optional<int64_t> nextRoundStartDelaySeconds(const ConsistencyScanState::Config& config,
+		                                             Version currentVersion);
+
 		/*
 		// TODO:  Ideas of more things to track:
 		int64_t shardsScanned = 0;

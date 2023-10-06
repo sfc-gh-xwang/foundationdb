@@ -544,11 +544,13 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 			TraceEvent(SevDebug, "ConsistencyScanProgressLoopStart", memState->csId);
 		}
 
-		// Read/watch the config until the scan is enabled.
+		// Read/watch the config until the scan is enabled and ready to run
 		tr->reset();
 		loop {
 			try {
 				systemDB->setOptions(tr);
+
+				state Optional<int64_t> nextRoundDelayTime;
 
 				// Get the config and store the cs trigger version so we can detect updates later.
 				// Get the ConsistencyScanState config andThe ConsistencyScanState trigger will update when any of its
@@ -568,11 +570,9 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 					wait(store(statsLifetime, cs.lifetimeStats().getD(tr)) &&
 					     store(statsCurrentRound, cs.currentRoundStats().getD(tr)));
 
-					// If the current round is complete OR
-					// If the current round has a nonzero start version but it is < minStartVersion
-					// Then save the current round to history and reset the current round.
-					if (statsCurrentRound.complete || (statsCurrentRound.startVersion != 0 &&
-					                                   statsCurrentRound.startVersion < config.minStartVersion)) {
+					nextRoundDelayTime =
+					    statsCurrentRound.nextRoundStartDelaySeconds(config, tr->getReadVersion().get());
+					if (nextRoundDelayTime == 0) {
 						// If not complete then end the round
 						if (!statsCurrentRound.complete) {
 							statsCurrentRound.endVersion = tr->getReadVersion().get();
@@ -602,24 +602,35 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 				                      tr->getReadVersion().get() - (CLIENT_KNOBS->CORE_VERSIONSPERSECOND * 60 * 60 *
 				                                                    24 * config.roundHistoryDays)));
 
-				state Future<Void> watch = config.enabled ? Void() : cs.trigger.watch(tr);
+				state Future<Void> onChange = cs.trigger.watch(tr);
+
 				wait(tr->commit());
 
-				if (config.enabled) {
+				// If the current round is running, break and continue the scan
+				if (config.enabled && !statsCurrentRound.complete) {
 					break;
+				}
+
+				if (nextRoundDelayTime.present()) {
+					onChange = onChange || delay(nextRoundDelayTime.get());
+					memState->stats.waitingBetweenRounds = true;
+				} else {
+					memState->stats.waitingBetweenRounds = false;
 				}
 
 				if (DEBUG_SCAN_PROGRESS) {
 					TraceEvent(SevDebug, "ConsistencyScanProgressDisabledWatching", memState->csId);
 				}
 
-				wait(watch);
+				wait(onChange);
 				tr->reset();
 			} catch (Error& e) {
 				TraceEvent("ConsistencyScan_MainLoopError", memState->csId).error(e);
 				wait(tr->onError(e));
 			}
 		}
+
+		memState->stats.waitingBetweenRounds = false;
 
 		if (DEBUG_SCAN_PROGRESS) {
 			TraceEvent(SevDebug, "ConsistencyScanProgressEnabled", memState->csId);
@@ -635,7 +646,6 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 		}
 
 		state bool restartMainLoop = false;
-		state Future<Void> delayBeforeMainLoopRestart = Void();
 
 		// Scan loop.  Each iteration makes incremental, durable progress on the scan.
 		loop {
@@ -983,12 +993,8 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 							    .detail("BytesRead", statsCurrentRound.logicalBytesScanned);
 						}
 
-						// Return to main loop after this commit, but delay first for the difference between the time
-						// the round took and minRoundTimeSeconds
+						// Return to main loop after this commit
 						restartMainLoop = true;
-						delayBeforeMainLoopRestart = delay(std::max<double>(
-						    config.minRoundTimeSeconds - (statsCurrentRound.endTime - statsCurrentRound.startTime),
-						    0.0));
 					}
 
 					// fmt::print("CONSISTENCY SCAN PROGRESS: {}\n",
@@ -1071,12 +1077,6 @@ ACTOR Future<Void> consistencyScanCore(Database db,
 			}
 
 			if (restartMainLoop) {
-				if (DEBUG_SCAN_PROGRESS) {
-					TraceEvent(SevDebug, "ConsistencyScanProgressWait", memState->csId);
-				}
-				memState->stats.waitingBetweenRounds = true;
-				wait(delayBeforeMainLoopRestart);
-				memState->stats.waitingBetweenRounds = false;
 				break;
 			}
 		} // Scan loop
