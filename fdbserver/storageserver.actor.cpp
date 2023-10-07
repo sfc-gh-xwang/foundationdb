@@ -10154,7 +10154,6 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 						if (!cipherKeys.present()) {
 							if (!collectingCipherKeys) {
 								collectingCipherKeys = true;
-								messages.clear();
 							}
 							msg.updateEncryptCipherDetails(cipherDetails);
 							domainIds.emplace(msg.configurableEncryptionHeader()
@@ -10205,6 +10204,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				latestCipherKeys = getLatestCipherKeysResult;
 				collectingCipherKeys = false;
 				eager = UpdateEagerReadInfo(enableClearRangeEagerReads);
+				messages.clear();
 			} else {
 				// Any fetchKeys which are ready to transition their shards to the adding,transferred state do so
 				// now. If there is an epoch end we skip this step, to increase testability and to prevent inserting
@@ -10229,6 +10229,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 				// SOMEDAY: Theoretically we could check the change counters of individual shards and retry the
 				// reads only selectively
 				eager = UpdateEagerReadInfo(enableClearRangeEagerReads);
+				messages.clear();
 			}
 		}
 		data->eagerReadsLatencyHistogram->sampleSeconds(now() - start);
