@@ -6,16 +6,6 @@
 #include "fdbserver/Knobs.h"
 #include "flow/Optional.h"
 
-static Optional<double> getMin(Optional<double> a, Optional<double> b) {
-	if (!a.present()) {
-		return b;
-	} else if (!b.present()) {
-		return a;
-	} else {
-		return std::min(a.get(), b.get());
-	}
-}
-
 ACTOR static Future<Void> splitError(Future<Void> in, Promise<Void> errOut) {
 	try {
 		wait(in);
@@ -375,33 +365,6 @@ UpdateCommitCostRequest StorageQueueInfo::refreshCommitCost(double elapsed) {
 	totalWriteCosts = 0;
 
 	return updateCommitCostRequest;
-}
-
-static Optional<double> getThrottlingRatio(int64_t value, int64_t target, int64_t spring) {
-	double inverseResult = std::min(2.0, (value - target + spring) / static_cast<double>(spring));
-	if (inverseResult > 0) {
-		return 1.0 / inverseResult;
-	} else {
-		return {};
-	}
-}
-
-Optional<double> StorageQueueInfo::getTagThrottlingRatio(double throughputBps,
-                                                         double throughputTargetBps,
-                                                         double throughputSpringBps,
-                                                         int64_t storageTargetBytes,
-                                                         int64_t storageSpringBytes,
-                                                         int64_t targetDurabilityLag,
-                                                         int64_t springDurabilityLag) const {
-	// TODO: Remove duplicate calculation from RKRateUpdater::updateRate
-	auto const throughputRatio = getThrottlingRatio(throughputBps, throughputTargetBps, throughputSpringBps);
-	auto const storageRatio = getThrottlingRatio(getStorageQueueBytes(), storageTargetBytes, storageSpringBytes);
-	auto const durabilityLagRatio = getThrottlingRatio(getDurabilityLag(), targetDurabilityLag, springDurabilityLag);
-
-	Optional<double> result = throughputRatio;
-	result = getMin(result, storageRatio);
-	result = getMin(result, durabilityLagRatio);
-	return result;
 }
 
 StorageQueueInfo StorageQueueInfo::createTestInfo(UID id, int64_t storageQueueBytes) {

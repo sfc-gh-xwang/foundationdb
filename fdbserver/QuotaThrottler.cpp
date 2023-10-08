@@ -141,6 +141,7 @@ class QuotaThrottlerImpl {
 
 	ThrottlingIdMap<PerThrottlingIdStatistics> throttlingStatistics;
 	ThrottlingIdMap<ThroughputStatistics> throughputStatistics;
+	LimitingThrottlingRatioCalculator limitingThrottlingRatioCalculator;
 
 	boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 
@@ -186,14 +187,8 @@ class QuotaThrottlerImpl {
 		auto const& storageQueueInfo = metricsTracker.getStorageQueueInfo();
 		for (auto const& [id, ssInfo] : storageQueueInfo) {
 			auto const totalThroughputOnServer = serverThroughputTracker.getThroughput(id);
-			auto const throttlingRatio =
-			    ssInfo.getTagThrottlingRatio(totalThroughputOnServer,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_TARGET_SS_BPS,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_SS_BPS,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS,
-			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_DURABILITY_LAG);
+			auto const throttlingRatio = limitingThrottlingRatioCalculator.getRatio(
+			    totalThroughputOnServer, ssInfo.getStorageQueueBytes(), ssInfo.getDurabilityLag());
 			if (!throttlingRatio.present()) {
 				continue;
 			}
@@ -364,10 +359,14 @@ class QuotaThrottlerImpl {
 	}
 
 public:
-	QuotaThrottlerImpl(UID id, int maxFallingBehind, double limitingThreshold)
+	QuotaThrottlerImpl(UID id,
+	                   int maxFallingBehind,
+	                   double limitingThreshold,
+	                   LimitingThrottlingRatioCalculator const& limitingThrottlingRatioCalculator)
 	  : id(id),
 	    maxFallingBehind(maxFallingBehind),
-	    limitingThreshold(limitingThreshold) {}
+	    limitingThreshold(limitingThreshold),
+	    limitingThrottlingRatioCalculator(limitingThrottlingRatioCalculator) {}
 
 	void addRequests(ThrottlingId const& throttlingId, int count) {
 		auto it = throttlingStatistics.find(throttlingId);
@@ -524,8 +523,13 @@ public:
 	uint32_t throttlingIdsTracked() const { return throttlingStatistics.size(); }
 };
 
-QuotaThrottler::QuotaThrottler(UID id, int maxFallingBehind, double limitingThreshold)
-  : impl(PImpl<QuotaThrottlerImpl>::create(id, maxFallingBehind, limitingThreshold)) {}
+QuotaThrottler::QuotaThrottler(UID id,
+                               int maxFallingBehind,
+                               double limitingThreshold,
+                               LimitingThrottlingRatioCalculator const& limitingThrottlingRatioCalculator)
+  : impl(
+        PImpl<QuotaThrottlerImpl>::create(id, maxFallingBehind, limitingThreshold, limitingThrottlingRatioCalculator)) {
+}
 
 QuotaThrottler::~QuotaThrottler() = default;
 

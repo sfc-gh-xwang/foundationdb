@@ -185,7 +185,10 @@ class TestEnv {
 
 public:
 	TestEnv(int numSS, int throughputPerSS, int maxFallingBehind = 0)
-	  : quotaThrottler(UID{}, maxFallingBehind, /*limitingThreshold=*/CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
+	  : quotaThrottler(UID{},
+	                   maxFallingBehind,
+	                   /*limitingThreshold=*/CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
+	                   LimitingThrottlingRatioCalculator::fromKnobs()),
 	    storageServers(numSS, throughputPerSS) {
 		if (SERVER_KNOBS->USE_CLIENT_THROUGHPUT_TRACKER) {
 			clientThroughputTracker = RKClientThroughputTracker(/*expirationCheckInterval=*/5.0);
