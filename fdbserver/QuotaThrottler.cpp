@@ -185,8 +185,12 @@ class QuotaThrottlerImpl {
 		boost::unordered_flat_map<Optional<Standalone<StringRef>>, double> zoneThrottlingRatios;
 		auto const& storageQueueInfo = metricsTracker.getStorageQueueInfo();
 		for (auto const& [id, ssInfo] : storageQueueInfo) {
+			auto const totalThroughputOnServer = serverThroughputTracker.getThroughput(id);
 			auto const throttlingRatio =
-			    ssInfo.getTagThrottlingRatio(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
+			    ssInfo.getTagThrottlingRatio(totalThroughputOnServer,
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_TARGET_SS_BPS,
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_SS_BPS,
+			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
 			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER,
 			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS,
 			                                 SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_DURABILITY_LAG);

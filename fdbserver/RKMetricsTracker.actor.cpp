@@ -6,6 +6,16 @@
 #include "fdbserver/Knobs.h"
 #include "flow/Optional.h"
 
+static Optional<double> getMin(Optional<double> a, Optional<double> b) {
+	if (!a.present()) {
+		return b;
+	} else if (!b.present()) {
+		return a;
+	} else {
+		return std::min(a.get(), b.get());
+	}
+}
+
 ACTOR static Future<Void> splitError(Future<Void> in, Promise<Void> errOut) {
 	try {
 		wait(in);
@@ -376,23 +386,22 @@ static Optional<double> getThrottlingRatio(int64_t value, int64_t target, int64_
 	}
 }
 
-Optional<double> StorageQueueInfo::getTagThrottlingRatio(int64_t storageTargetBytes,
+Optional<double> StorageQueueInfo::getTagThrottlingRatio(double throughputBps,
+                                                         double throughputTargetBps,
+                                                         double throughputSpringBps,
+                                                         int64_t storageTargetBytes,
                                                          int64_t storageSpringBytes,
                                                          int64_t targetDurabilityLag,
                                                          int64_t springDurabilityLag) const {
 	// TODO: Remove duplicate calculation from RKRateUpdater::updateRate
-	const auto storageRatio = getThrottlingRatio(getStorageQueueBytes(), storageTargetBytes, storageSpringBytes);
-	const auto durabilityLagRatio = getThrottlingRatio(getDurabilityLag(), targetDurabilityLag, springDurabilityLag);
+	auto const throughputRatio = getThrottlingRatio(throughputBps, throughputTargetBps, throughputSpringBps);
+	auto const storageRatio = getThrottlingRatio(getStorageQueueBytes(), storageTargetBytes, storageSpringBytes);
+	auto const durabilityLagRatio = getThrottlingRatio(getDurabilityLag(), targetDurabilityLag, springDurabilityLag);
 
-	if (!storageRatio.present() && !durabilityLagRatio.present()) {
-		return {};
-	} else if (!storageRatio.present()) {
-		return durabilityLagRatio;
-	} else if (!durabilityLagRatio.present()) {
-		return storageRatio;
-	} else {
-		return (storageRatio.get() < durabilityLagRatio.get()) ? storageRatio : durabilityLagRatio;
-	}
+	Optional<double> result = throughputRatio;
+	result = getMin(result, storageRatio);
+	result = getMin(result, durabilityLagRatio);
+	return result;
 }
 
 StorageQueueInfo StorageQueueInfo::createTestInfo(UID id, int64_t storageQueueBytes) {
