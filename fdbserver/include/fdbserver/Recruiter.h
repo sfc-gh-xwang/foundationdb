@@ -116,7 +116,9 @@ public:
 	    bool checkStable = false);
 
 	// Pass the sequencer to prefer recruitment of workers to colocate with it.
-	std::vector<WorkerDetails> getColocatedWorkersForRoleInDatacenter(
+	// Will fall back to recruitment of non-sequencer roles in other
+	// datacenters if necessary.
+	std::vector<WorkerDetails> getColocatedWorkersForRoleInPreferredDatacenter(
 	    ClusterControllerData const* clusterControllerData,
 	    Optional<Standalone<StringRef>> const& dcId,
 	    ProcessClass::ClusterRole role,

@@ -678,30 +678,31 @@ public:
 		std::vector<WorkerDetails> grv_proxies;
 		std::vector<WorkerDetails> resolvers;
 		if (SERVER_KNOBS->COLOCATE_STATELESS_PROCESSES && db.config.regions.size() == 0) {
-			commit_proxies = recruiter.getColocatedWorkersForRoleInDatacenter(this,
-			                                                                  clusterControllerDcId,
-			                                                                  ProcessClass::CommitProxy,
-			                                                                  db.config.getDesiredCommitProxies(),
-			                                                                  db.config,
-			                                                                  id_used,
-			                                                                  true,
-			                                                                  mworker.worker);
-			grv_proxies = recruiter.getColocatedWorkersForRoleInDatacenter(this,
-			                                                               clusterControllerDcId,
-			                                                               ProcessClass::GrvProxy,
-			                                                               db.config.getDesiredGrvProxies(),
-			                                                               db.config,
-			                                                               id_used,
-			                                                               true,
-			                                                               mworker.worker);
-			resolvers = recruiter.getColocatedWorkersForRoleInDatacenter(this,
-			                                                             clusterControllerDcId,
-			                                                             ProcessClass::Resolver,
-			                                                             db.config.getDesiredResolvers(),
-			                                                             db.config,
-			                                                             id_used,
-			                                                             true,
-			                                                             mworker.worker);
+			commit_proxies =
+			    recruiter.getColocatedWorkersForRoleInPreferredDatacenter(this,
+			                                                              clusterControllerDcId,
+			                                                              ProcessClass::CommitProxy,
+			                                                              db.config.getDesiredCommitProxies(),
+			                                                              db.config,
+			                                                              id_used,
+			                                                              true,
+			                                                              mworker.worker);
+			grv_proxies = recruiter.getColocatedWorkersForRoleInPreferredDatacenter(this,
+			                                                                        clusterControllerDcId,
+			                                                                        ProcessClass::GrvProxy,
+			                                                                        db.config.getDesiredGrvProxies(),
+			                                                                        db.config,
+			                                                                        id_used,
+			                                                                        true,
+			                                                                        mworker.worker);
+			resolvers = recruiter.getColocatedWorkersForRoleInPreferredDatacenter(this,
+			                                                                      clusterControllerDcId,
+			                                                                      ProcessClass::Resolver,
+			                                                                      db.config.getDesiredResolvers(),
+			                                                                      db.config,
+			                                                                      id_used,
+			                                                                      true,
+			                                                                      mworker.worker);
 		} else {
 			std::map<Optional<Standalone<StringRef>>, int> preferredSharing;
 			auto first_commit_proxy = recruiter.getWorkerForRoleInDatacenter(this,

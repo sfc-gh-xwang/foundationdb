@@ -1824,32 +1824,32 @@ public:
 		}
 
 		recruitment.commitProxies =
-		    self->getColocatedWorkersForRoleInDatacenter(clusterControllerData,
-		                                                 clusterControllerData->clusterControllerDcId,
-		                                                 ProcessClass::CommitProxy,
-		                                                 info.configuration.getDesiredCommitProxies(),
-		                                                 info.configuration,
-		                                                 id_used,
-		                                                 false,
-		                                                 recruitment.sequencer);
+		    self->getColocatedWorkersForRoleInPreferredDatacenter(clusterControllerData,
+		                                                          clusterControllerData->clusterControllerDcId,
+		                                                          ProcessClass::CommitProxy,
+		                                                          info.configuration.getDesiredCommitProxies(),
+		                                                          info.configuration,
+		                                                          id_used,
+		                                                          false,
+		                                                          recruitment.sequencer);
 		recruitment.grvProxies =
-		    self->getColocatedWorkersForRoleInDatacenter(clusterControllerData,
-		                                                 clusterControllerData->clusterControllerDcId,
-		                                                 ProcessClass::GrvProxy,
-		                                                 info.configuration.getDesiredGrvProxies(),
-		                                                 info.configuration,
-		                                                 id_used,
-		                                                 false,
-		                                                 recruitment.sequencer);
+		    self->getColocatedWorkersForRoleInPreferredDatacenter(clusterControllerData,
+		                                                          clusterControllerData->clusterControllerDcId,
+		                                                          ProcessClass::GrvProxy,
+		                                                          info.configuration.getDesiredGrvProxies(),
+		                                                          info.configuration,
+		                                                          id_used,
+		                                                          false,
+		                                                          recruitment.sequencer);
 		recruitment.resolvers =
-		    self->getColocatedWorkersForRoleInDatacenter(clusterControllerData,
-		                                                 clusterControllerData->clusterControllerDcId,
-		                                                 ProcessClass::Resolver,
-		                                                 info.configuration.getDesiredResolvers(),
-		                                                 info.configuration,
-		                                                 id_used,
-		                                                 false,
-		                                                 recruitment.sequencer);
+		    self->getColocatedWorkersForRoleInPreferredDatacenter(clusterControllerData,
+		                                                          clusterControllerData->clusterControllerDcId,
+		                                                          ProcessClass::Resolver,
+		                                                          info.configuration.getDesiredResolvers(),
+		                                                          info.configuration,
+		                                                          id_used,
+		                                                          false,
+		                                                          recruitment.sequencer);
 
 		if (info.configuration.backupWorkerEnabled) {
 			const int nBackup = std::max<int>(tLogs.size(), info.maxOldLogRouters);
@@ -2456,7 +2456,7 @@ std::vector<WorkerDetails> Recruiter::getWorkersForRoleInDatacenter(
 	                                                    Optional<WorkerDetails>());
 }
 
-std::vector<WorkerDetails> Recruiter::getColocatedWorkersForRoleInDatacenter(
+std::vector<WorkerDetails> Recruiter::getColocatedWorkersForRoleInPreferredDatacenter(
     ClusterControllerData const* clusterControllerData,
     Optional<Standalone<StringRef>> const& dcId,
     ProcessClass::ClusterRole role,
@@ -2465,17 +2465,40 @@ std::vector<WorkerDetails> Recruiter::getColocatedWorkersForRoleInDatacenter(
     std::map<Optional<Standalone<StringRef>>, int>& id_used,
     bool checkStable,
     Optional<WorkerDetails> const& sequencer) {
-	return RecruiterImpl::getWorkersForRoleInDatacenter(this,
-	                                                    clusterControllerData,
-	                                                    dcId,
-	                                                    role,
-	                                                    amount,
-	                                                    conf,
-	                                                    id_used,
-	                                                    {},
-	                                                    Optional<WorkerFitnessInfo>(),
-	                                                    checkStable,
-	                                                    sequencer);
+	auto results = RecruiterImpl::getWorkersForRoleInDatacenter(this,
+	                                                            clusterControllerData,
+	                                                            dcId,
+	                                                            role,
+	                                                            amount,
+	                                                            conf,
+	                                                            id_used,
+	                                                            {},
+	                                                            Optional<WorkerFitnessInfo>(),
+	                                                            checkStable,
+	                                                            sequencer);
+
+	if (results.empty()) {
+		auto datacenters = RecruiterImpl::getDatacenters(this, clusterControllerData, conf);
+		datacenters.erase(dcId);
+
+		for (auto dcId : datacenters) {
+			results = RecruiterImpl::getWorkersForRoleInDatacenter(this,
+			                                                       clusterControllerData,
+			                                                       dcId,
+			                                                       role,
+			                                                       amount,
+			                                                       conf,
+			                                                       id_used,
+			                                                       {},
+			                                                       Optional<WorkerFitnessInfo>(),
+			                                                       checkStable,
+			                                                       sequencer);
+			if (!results.empty()) {
+				break;
+			}
+		}
+	}
+	return results;
 }
 
 std::vector<WorkerDetails> Recruiter::getWorkersForTLogs(ClusterControllerData const* clusterControllerData,
