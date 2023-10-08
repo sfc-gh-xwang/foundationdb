@@ -12,6 +12,85 @@
 
 namespace {
 
+enum class LimitType { RESERVED, TOTAL };
+enum class OpType { READ, WRITE };
+
+class WorkloadConfig {
+	ThrottlingId throttlingId;
+	int totalQuotaInPages;
+	int reservedQuotaInPages;
+	double attemptedTps;
+	double pagesPerTransaction;
+	OpType opType;
+
+	WorkloadConfig(ThrottlingId const& throttlingId,
+	               int totalQuotaInPages,
+	               int reservedQuotaInPages,
+	               double attemptedTps,
+	               double pagesPerTransaction,
+	               OpType opType)
+	  : throttlingId(throttlingId),
+	    totalQuotaInPages(totalQuotaInPages),
+	    reservedQuotaInPages(reservedQuotaInPages),
+	    attemptedTps(attemptedTps),
+	    pagesPerTransaction(pagesPerTransaction),
+	    opType(opType) {}
+
+public:
+	ThrottlingId getThrottlingId() const { return throttlingId; }
+
+	int getTotalQuotaInPages() const { return totalQuotaInPages; }
+
+	int getReservedQuotaInPages() const { return reservedQuotaInPages; }
+
+	int getPagesPerTransaction() const { return pagesPerTransaction; }
+
+	double getAttemptedTps() const { return attemptedTps; }
+
+	OpType getOpType() const { return opType; }
+
+	class Builder {
+		ThrottlingId throttlingId;
+		int totalQuotaInPages{ 100 };
+		int reservedQuotaInPages{ 0 };
+		double attemptedTps{ 5.0 };
+		double pagesPerTransaction{ 6.0 };
+		OpType opType{ OpType::READ };
+
+	public:
+		Builder() : throttlingId(ThrottlingIdRef::fromTag("sampleTag"_sr)) {}
+
+		Builder& setThrottlingId(ThrottlingId const& throttlingId) {
+			this->throttlingId = throttlingId;
+			return *this;
+		}
+		Builder& setTotalQuotaInPages(int totalQuotaInPages) {
+			this->totalQuotaInPages = totalQuotaInPages;
+			return *this;
+		}
+		Builder& setReservedQuotaInPages(int reservedQuotaInPages) {
+			this->reservedQuotaInPages = reservedQuotaInPages;
+			return *this;
+		}
+		Builder& setAttemptedTps(double attemptedTps) {
+			this->attemptedTps = attemptedTps;
+			return *this;
+		}
+		Builder& setPagesPerTransaction(double pagesPerTransaction) {
+			this->pagesPerTransaction = pagesPerTransaction;
+			return *this;
+		}
+		Builder& setOpType(OpType opType) {
+			this->opType = opType;
+			return *this;
+		}
+		WorkloadConfig build() const {
+			return WorkloadConfig(
+			    throttlingId, totalQuotaInPages, reservedQuotaInPages, attemptedTps, pagesPerTransaction, opType);
+		}
+	};
+};
+
 bool isNear(double a, double b) {
 	return abs(a - b) < 0.1 * a;
 }
@@ -23,9 +102,6 @@ bool isNear(Optional<double> a, Optional<double> b) {
 		return !b.present();
 	}
 }
-
-enum class LimitType { RESERVED, TOTAL };
-enum class OpType { READ, WRITE };
 
 class MockStorageServer {
 	class Cost {
@@ -146,19 +222,17 @@ class TestEnv {
 		}
 	}
 
-	ACTOR static Future<Void> _runClient(TestEnv* self,
-	                                     ThrottlingId throttlingId,
-	                                     double tps,
-	                                     double pagesPerTransaction,
-	                                     OpType opType,
-	                                     std::vector<int> storageServerIndices) {
+	ACTOR static Future<Void> _runClient(TestEnv* self, WorkloadConfig config, std::vector<int> storageServerIndices) {
+		state ThrottlingId throttlingId = config.getThrottlingId();
 		loop {
 			auto tpsLimit = self->getTPSLimit(throttlingId);
-			state double enforcedRate = tpsLimit.present() ? std::min<double>(tps, tpsLimit.get()) : tps;
+			state double enforcedRate = tpsLimit.present() ? std::min<double>(config.getAttemptedTps(), tpsLimit.get())
+			                                               : config.getAttemptedTps();
 			wait(delay(1 / enforcedRate));
-			self->storageServers.addCost(throttlingId, pagesPerTransaction, storageServerIndices, opType);
+			self->storageServers.addCost(
+			    throttlingId, config.getPagesPerTransaction(), storageServerIndices, config.getOpType());
 			self->quotaThrottler.addRequests(throttlingId, 1);
-			self->updateThroughput(throttlingId, pagesPerTransaction, opType);
+			self->updateThroughput(throttlingId, config.getPagesPerTransaction(), config.getOpType());
 		}
 	}
 
@@ -225,12 +299,9 @@ public:
 		return {};
 	}
 
-	Future<Void> runClient(ThrottlingId const& throttlingId,
-	                       double tps,
-	                       double pagesPerTransaction,
-	                       OpType opType,
+	Future<Void> runClient(WorkloadConfig const& config,
 	                       std::vector<int> const& storageServerIndices = std::vector<int>()) {
-		return _runClient(this, throttlingId, tps, pagesPerTransaction, opType, storageServerIndices);
+		return _runClient(this, config, storageServerIndices);
 	}
 
 	bool targetRateIsNear(ThrottlingId const& throttlingId, Optional<double> expected, bool shouldBeBusy = false) {
@@ -277,13 +348,13 @@ public:
 
 	Future<Void> update() { return _update(this); }
 
-	void setQuota(ThrottlingId const& throttlingId, double totalQuotaInPages, double reservedQuotaInPages = 0.0) {
-		quotaCache.setQuota(throttlingId,
-		                    totalQuotaInPages * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
-		                    reservedQuotaInPages * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+	void setQuota(WorkloadConfig const& config) {
+		quotaCache.setQuota(config.getThrottlingId(),
+		                    config.getTotalQuotaInPages() * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
+		                    config.getReservedQuotaInPages() * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 	}
 
-	void removeQuota(ThrottlingId const& throttlingId) { quotaCache.removeQuota(throttlingId); }
+	void removeQuota(WorkloadConfig const& config) { quotaCache.removeQuota(config.getThrottlingId()); }
 
 	int throttlingIdsTracked() const { return quotaThrottler.throttlingIdsTracked(); }
 
@@ -318,88 +389,6 @@ Future<Void> monitorActor(TestEnv* env, Check check) {
 	}
 }
 
-class WorkloadConfig {
-	ThrottlingId throttlingId;
-	int totalQuotaInPages;
-	int reservedQuotaInPages;
-	double attemptedTps;
-	double pagesPerTransaction;
-	OpType opType;
-
-	WorkloadConfig(ThrottlingId const& throttlingId,
-	               int totalQuotaInPages,
-	               int reservedQuotaInPages,
-	               double attemptedTps,
-	               double pagesPerTransaction,
-	               OpType opType)
-	  : throttlingId(throttlingId),
-	    totalQuotaInPages(totalQuotaInPages),
-	    reservedQuotaInPages(reservedQuotaInPages),
-	    attemptedTps(attemptedTps),
-	    pagesPerTransaction(pagesPerTransaction),
-	    opType(opType) {}
-
-public:
-	ThrottlingId getThrottlingId() const { return throttlingId; }
-
-	int getTotalQuotaInPages() const { return totalQuotaInPages; }
-
-	int getReservedQuotaInPages() const { return reservedQuotaInPages; }
-
-	int getPagesPerTransaction() const { return pagesPerTransaction; }
-
-	double getAttemptedTps() const { return attemptedTps; }
-
-	Future<Void> runClient(TestEnv& env, std::vector<int> storageServerIndices = {}) const {
-		return env.runClient(throttlingId, attemptedTps, pagesPerTransaction, opType, storageServerIndices);
-	}
-
-	void setQuota(TestEnv& env) const { env.setQuota(throttlingId, totalQuotaInPages, reservedQuotaInPages); }
-
-	void removeQuota(TestEnv& env) const { env.removeQuota(throttlingId); }
-
-	class Builder {
-		ThrottlingId throttlingId;
-		int totalQuotaInPages{ 100 };
-		int reservedQuotaInPages{ 0 };
-		double attemptedTps{ 5.0 };
-		double pagesPerTransaction{ 6.0 };
-		OpType opType{ OpType::READ };
-
-	public:
-		Builder() : throttlingId(ThrottlingIdRef::fromTag("sampleTag"_sr)) {}
-
-		Builder& setThrottlingId(ThrottlingId const& throttlingId) {
-			this->throttlingId = throttlingId;
-			return *this;
-		}
-		Builder& setTotalQuotaInPages(int totalQuotaInPages) {
-			this->totalQuotaInPages = totalQuotaInPages;
-			return *this;
-		}
-		Builder& setReservedQuotaInPages(int reservedQuotaInPages) {
-			this->reservedQuotaInPages = reservedQuotaInPages;
-			return *this;
-		}
-		Builder& setAttemptedTps(double attemptedTps) {
-			this->attemptedTps = attemptedTps;
-			return *this;
-		}
-		Builder& setPagesPerTransaction(double pagesPerTransaction) {
-			this->pagesPerTransaction = pagesPerTransaction;
-			return *this;
-		}
-		Builder& setOpType(OpType opType) {
-			this->opType = opType;
-			return *this;
-		}
-		WorkloadConfig build() const {
-			return WorkloadConfig(
-			    throttlingId, totalQuotaInPages, reservedQuotaInPages, attemptedTps, pagesPerTransaction, opType);
-		}
-	};
-};
-
 } // namespace
 
 // 10 storage servers can handle 100 pages/second each.
@@ -410,8 +399,8 @@ public:
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/Simple") {
 	state TestEnv env = TestEnv::Builder().build();
 	auto const config = WorkloadConfig::Builder().build();
-	config.setQuota(env);
-	state Future<Void> client = config.runClient(env);
+	env.setQuota(config);
+	state Future<Void> client = env.runClient(config);
 	state Future<Void> monitor = monitorActor(&env, [config](auto& env) {
 		return env.targetRateIsNear(config.getThrottlingId(),
 		                            config.getTotalQuotaInPages() / config.getPagesPerTransaction(),
@@ -430,8 +419,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/Simple") {
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/WriteThrottling") {
 	state TestEnv env = TestEnv::Builder().build();
 	auto const config = WorkloadConfig::Builder().setOpType(OpType::WRITE).build();
-	config.setQuota(env);
-	state Future<Void> client = config.runClient(env);
+	env.setQuota(config);
+	state Future<Void> client = env.runClient(config);
 	state Future<Void> monitor = monitorActor(&env, [config](auto& env) {
 		return env.targetRateIsNear(
 		    config.getThrottlingId(),
@@ -453,12 +442,12 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagThrottling") {
 	state TestEnv env = TestEnv::Builder().build();
 	auto const config1 = WorkloadConfig::Builder().setThrottlingId(ThrottlingIdRef::fromTag("sampleTag1"_sr)).build();
 	auto const config2 = WorkloadConfig::Builder().setThrottlingId(ThrottlingIdRef::fromTag("sampleTag1"_sr)).build();
-	config1.setQuota(env);
-	config2.setQuota(env);
+	env.setQuota(config1);
+	env.setQuota(config2);
 	state std::vector<Future<Void>> futures;
 	state std::vector<Future<Void>> monitorFutures;
-	futures.push_back(config1.runClient(env));
-	futures.push_back(config2.runClient(env));
+	futures.push_back(env.runClient(config1));
+	futures.push_back(env.runClient(config2));
 	futures.push_back(env.update());
 	state Future<Void> monitor = monitorActor(&env, [config1, config2](auto& env) {
 		return env.targetRateIsNear(config1.getThrottlingId(),
@@ -480,8 +469,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagThrottling") {
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/AttemptWorkloadAboveQuota") {
 	state TestEnv env = TestEnv::Builder().build();
 	auto const config = WorkloadConfig::Builder().setAttemptedTps(20.0).setPagesPerTransaction(10.0).build();
-	config.setQuota(env);
-	state Future<Void> client = config.runClient(env);
+	env.setQuota(config);
+	state Future<Void> client = env.runClient(config);
 	state Future<Void> monitor = monitorActor(&env, [config](auto& env) {
 		return env.targetRateIsNear(config.getThrottlingId(),
 		                            config.getTotalQuotaInPages() / config.getPagesPerTransaction(),
@@ -504,8 +493,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/AttemptWorkloadAboveQuota") {
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/UpdateQuota") {
 	state TestEnv env = TestEnv::Builder().build();
 	auto const initialConfig = WorkloadConfig::Builder().build();
-	initialConfig.setQuota(env);
-	state Future<Void> client = initialConfig.runClient(env);
+	env.setQuota(initialConfig);
+	state Future<Void> client = env.runClient(initialConfig);
 	state Future<Void> monitor = monitorActor(&env, [initialConfig](auto& env) {
 		return env.targetRateIsNear(initialConfig.getThrottlingId(),
 		                            initialConfig.getTotalQuotaInPages() / initialConfig.getPagesPerTransaction(),
@@ -516,7 +505,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/UpdateQuota") {
 	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
 
 	auto const updatedConfig = WorkloadConfig::Builder().setTotalQuotaInPages(30).build();
-	updatedConfig.setQuota(env);
+	env.setQuota(updatedConfig);
 	monitor = monitorActor(&env, [updatedConfig](auto& env) {
 		return env.targetRateIsNear(updatedConfig.getThrottlingId(),
 		                            updatedConfig.getTotalQuotaInPages() / updatedConfig.getPagesPerTransaction(),
@@ -536,8 +525,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/UpdateQuota") {
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuota") {
 	state TestEnv env = TestEnv::Builder().build();
 	state WorkloadConfig config = WorkloadConfig::Builder().build();
-	config.setQuota(env);
-	state Future<Void> client = config.runClient(env);
+	env.setQuota(config);
+	state Future<Void> client = env.runClient(config);
 	auto const _config = config;
 	state Future<Void> monitor = monitorActor(&env, [_config](auto& env) {
 		return env.targetRateIsNear(
@@ -545,7 +534,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuota") {
 	});
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
-	env.removeQuota(config.getThrottlingId());
+	env.removeQuota(config);
 	auto const _config = config;
 	monitor = monitorActor(&env, [_config](auto& env) {
 		return env.targetRateIsNear(_config.getThrottlingId(), {}, /*shouldBeBusy=*/false);
@@ -564,8 +553,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuota") {
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuotaBusyId") {
 	state TestEnv env = TestEnv::Builder().build();
 	state WorkloadConfig config = WorkloadConfig::Builder().setTotalQuotaInPages(30).build();
-	config.setQuota(env);
-	state Future<Void> client = config.runClient(env);
+	env.setQuota(config);
+	state Future<Void> client = env.runClient(config);
 	auto const _config = config;
 	state Future<Void> monitor = monitorActor(&env, [_config](auto& env) {
 		return env.targetRateIsNear(_config.getThrottlingId(),
@@ -574,7 +563,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuotaBusyId") {
 	});
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
-	env.removeQuota(config.getThrottlingId());
+	env.removeQuota(config);
 	auto const _config = config;
 	monitor = monitorActor(&env, [_config](auto& env) {
 		return env.targetRateIsNear(_config.getThrottlingId(), {}, /*shouldBeBusy=*/false);
@@ -600,9 +589,9 @@ ACTOR static Future<Void> testActiveThrottling(Optional<long> totalQuotaInPages 
 	auto const config = configBuilder.build();
 	if (totalQuotaInPages.present()) {
 		ASSERT_GE(totalQuotaInPages.get(), config.getAttemptedTps() * pagesPerSecondPerSS);
-		config.setQuota(env);
+		env.setQuota(config);
 	}
-	state Future<Void> client = config.runClient(env);
+	state Future<Void> client = env.runClient(config);
 	state Future<Void> monitor = monitorActor(&env, [numSS, pagesPerSecondPerSS, config](auto& env) {
 		return env.targetRateIsNear(config.getThrottlingId(),
 		                            numSS * pagesPerSecondPerSS / config.getPagesPerTransaction(),
@@ -645,11 +634,11 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling1") {
 	                         .setTotalQuotaInPages(100)
 	                         .setAttemptedTps(10.0)
 	                         .build();
-	config1.setQuota(env);
-	config2.setQuota(env);
+	env.setQuota(config1);
+	env.setQuota(config2);
 	std::vector<Future<Void>> futures;
-	futures.push_back(config1.runClient(env));
-	futures.push_back(config2.runClient(env));
+	futures.push_back(env.runClient(config1));
+	futures.push_back(env.runClient(config2));
 	ASSERT_EQ(config1.getPagesPerTransaction(), config2.getPagesPerTransaction());
 	state Future<Void> monitor = monitorActor(&env, [numSS, pagesPerSecondPerSS, config1, config2](auto& env) {
 		return env.totalTargetRateIsNear((numSS * pagesPerSecondPerSS) / config1.getPagesPerTransaction()) &&
@@ -681,11 +670,11 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling2") {
 	                   .setThrottlingId(ThrottlingIdRef::fromTag("sampleTag2"_sr))
 	                   .setAttemptedTps(10.0)
 	                   .build();
-	config1.setQuota(env);
-	config2.setQuota(env);
+	env.setQuota(config1);
+	env.setQuota(config2);
 	std::vector<Future<Void>> futures;
-	futures.push_back(config1.runClient(env, { 0, 1 }));
-	futures.push_back(config2.runClient(env, { 1, 2 }));
+	futures.push_back(env.runClient(config1, { 0, 1 }));
+	futures.push_back(env.runClient(config2, { 1, 2 }));
 	ASSERT_EQ(config1.getPagesPerTransaction(), config2.getPagesPerTransaction());
 	state Future<Void> monitor = monitorActor(&env, [pagesPerSecondPerSS, config1, config2](auto& env) {
 		return env.totalTargetRateIsNear((2 * pagesPerSecondPerSS) / config1.getPagesPerTransaction()) &&
@@ -717,11 +706,11 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling3") {
 	                   .setThrottlingId(ThrottlingIdRef::fromTag("sampleTag2"_sr))
 	                   .setAttemptedTps(10.0)
 	                   .build();
-	config1.setQuota(env);
-	config2.setQuota(env);
+	env.setQuota(config1);
+	env.setQuota(config2);
 	std::vector<Future<Void>> futures;
-	futures.push_back(config1.runClient(env, { 0 }));
-	futures.push_back(config2.runClient(env, { 1, 2 }));
+	futures.push_back(env.runClient(config1, { 0 }));
+	futures.push_back(env.runClient(config2, { 1, 2 }));
 	state Future<Void> monitor = monitorActor(&env, [pagesPerSecondPerSS, config1, config2](auto& env) {
 		return env.targetRateIsNear(config1.getThrottlingId(),
 		                            pagesPerSecondPerSS / config1.getPagesPerTransaction(),
@@ -745,8 +734,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling3") {
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ReservedQuota") {
 	state TestEnv env = TestEnv::Builder().setPagesPerSecondPerSS(5).build();
 	auto const config = WorkloadConfig::Builder().setReservedQuotaInPages(70).setAttemptedTps(10.0).build();
-	config.setQuota(env);
-	state Future<Void> client = config.runClient(env);
+	env.setQuota(config);
+	state Future<Void> client = env.runClient(config);
 	state Future<Void> monitor = monitorActor(&env, [config](auto& env) {
 		return env.targetRateIsNear(config.getThrottlingId(),
 		                            config.getReservedQuotaInPages() / config.getPagesPerTransaction(),
@@ -763,9 +752,9 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ExpireTags") {
 	state TestEnv env = TestEnv::Builder().setPagesPerSecondPerSS(5).build();
 	state WorkloadConfig config = WorkloadConfig::Builder().setTotalQuotaInPages(30).setAttemptedTps(10.0).build();
 
-	config.setQuota(env);
+	env.setQuota(config);
 
-	state Future<Void> client = timeout(config.runClient(env), 60.0, Void());
+	state Future<Void> client = timeout(env.runClient(config), 60.0, Void());
 	state Future<Void> updater = timeout(env.update(), 60.0, Void());
 	wait(client && updater);
 	client.cancel();
@@ -805,7 +794,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TagLimit") {
 		TransactionTag tag = makeString(8, arena);
 		deterministicRandom()->randomBytes(mutateString(tag), tag.size());
 		auto const config = WorkloadConfig::Builder().setThrottlingId(ThrottlingIdRef::fromTag(tag)).build();
-		futures.push_back(config.runClient(env));
+		futures.push_back(env.runClient(config));
 	}
 	wait(timeout(waitForAll(futures), 60.0, Void()));
 	ASSERT_EQ(env.throttlingIdsTracked(), SERVER_KNOBS->GLOBAL_TAG_THROTTLING_MAX_TAGS_TRACKED);
@@ -825,8 +814,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/IgnoreWorstZone") {
 	state int limitingPagesPerSecond = 5;
 	state WorkloadConfig config = WorkloadConfig::Builder().setAttemptedTps(10.0).build();
 	env.setCapacity(/*index=*/0, limitingPagesPerSecond);
-	config.setQuota(env);
-	state Future<Void> client = config.runClient(env);
+	env.setQuota(config);
+	state Future<Void> client = env.runClient(config);
 	auto const _config = config;
 	state Future<Void> monitor = monitorActor(&env, [_config](auto& env) {
 		return env.targetRateIsNear(_config.getThrottlingId(),
@@ -859,11 +848,11 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
 		return Void();
 	}
 
-	initialConfig.setQuota(env); // 50 TPS effective quota
+	env.setQuota(initialConfig); // 50 TPS effective quota
 	state Future<Void> updater = env.update();
 
 	// 10% < Forget threshold, tag should not be tracked as busy.
-	wait(timeoutError(initialConfig.runClient(env) ||
+	wait(timeoutError(env.runClient(initialConfig) ||
 	                      monitorActor(&env,
 	                                   [initialConfig](auto& env) {
 		                                   return env.targetRateIsNear(
@@ -873,7 +862,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
 
 	// Forget threshold < 60% < Busy threshold, tag should not be tracked as busy.
 	auto const lowWorkloadConfig = WorkloadConfig::Builder().setAttemptedTps(30.0).build();
-	wait(timeoutError(lowWorkloadConfig.runClient(env) ||
+	wait(timeoutError(env.runClient(lowWorkloadConfig) ||
 	                      monitorActor(&env,
 	                                   [lowWorkloadConfig](auto& env) {
 		                                   return env.targetRateIsNear(
@@ -884,7 +873,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
 	// Busy threshold < 100%, tag should be tracked as busy
 	auto const highWorkloadConfig = WorkloadConfig::Builder().setAttemptedTps(50.0).build();
 	int const _totalQuotaInPages = totalQuotaInPages;
-	wait(timeoutError(highWorkloadConfig.runClient(env) ||
+	wait(timeoutError(env.runClient(highWorkloadConfig) ||
 	                      monitorActor(&env,
 	                                   [_totalQuotaInPages, highWorkloadConfig](auto& env) {
 		                                   return env.targetRateIsNear(highWorkloadConfig.getThrottlingId(),
@@ -897,7 +886,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
 	// Forget threshold < 70% < Busy threshold, tag below busy threshold, but above forget threshold
 	auto const stillRememberedConfig = WorkloadConfig::Builder().setAttemptedTps(35.0).build();
 	int const _totalQuotaInPages = totalQuotaInPages;
-	wait(timeoutError(stillRememberedConfig.runClient(env) ||
+	wait(timeoutError(env.runClient(stillRememberedConfig) ||
 	                      monitorActor(&env,
 	                                   [_totalQuotaInPages, stillRememberedConfig](auto& env) {
 		                                   return env.targetRateIsNear(
@@ -909,7 +898,7 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
 
 	// 40% < Forget threshold, less than forget threshold, should be no longer be tracked as busy
 	auto const forgottenConfig = WorkloadConfig::Builder().setAttemptedTps(20.0).build();
-	wait(timeoutError(forgottenConfig.runClient(env) ||
+	wait(timeoutError(env.runClient(forgottenConfig) ||
 	                      monitorActor(&env,
 	                                   [forgottenConfig](auto& env) {
 		                                   return env.targetRateIsNear(
