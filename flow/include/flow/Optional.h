@@ -29,6 +29,7 @@
 #include "flow/Error.h"
 
 class Arena;
+class Void;
 
 // Optional is a wrapper for std::optional. There
 // are two primary reasons to use this wrapper instead
