@@ -327,6 +327,7 @@ class Summary:
         error_out: str = None,
         will_restart: bool = False,
         long_running: bool = False,
+        binary_under_test: bool = True,
     ):
         self.binary = binary
         self.runtime: float = runtime
@@ -355,6 +356,7 @@ class Summary:
         self.negative_test_success = False
         self.max_trace_time = -1
         self.max_trace_time_type = "None"
+        self.binary_under_test = binary_under_test
 
         if uid is not None:
             self.out.attributes["TestUID"] = str(uid)
@@ -699,7 +701,10 @@ class Summary:
             if covered or c not in self.coverage:
                 self.coverage[c] = covered
 
-        self.handler.add_handler(("Type", "CodeCoverage"), coverage)
+        # We only want to look at code probes produced by binaries that are under test.
+        # As of now, the only binary under test is the one that is in the ensemble
+        if self.binary_under_test:
+            self.handler.add_handler(("Type", "CodeCoverage"), coverage)
 
         def expected_test_pass(attrs: Dict[str, str]):
             self.test_count = int(attrs["Count"])

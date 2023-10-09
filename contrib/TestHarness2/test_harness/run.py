@@ -282,22 +282,22 @@ class OldBinaries:
         ver = Version.parse(version_str)
         self.binaries[ver] = file
 
-    def choose_binary(self, test_file: Path) -> Path:
+    def choose_binary(self, test_file: Path) -> (Path, bool):
         if len(self.binaries) == 0:
-            return config.binary
+            return config.binary, True
         max_version = Version.max_version()
         min_version = Version.parse("5.0.0")
         dirs = test_file.parent.parts
         if "restarting" not in dirs:
-            return config.binary
+            return config.binary, True
         version_expr = dirs[-1].split("_")
         first_file = self.first_file_expr.match(test_file.name) is not None
         if first_file and version_expr[0] == "to":
             # downgrade test -- first binary should be current one
-            return config.binary
+            return config.binary, True
         if not first_file and version_expr[0] == "from":
             # upgrade test -- we only return an old version for the first test file
-            return config.binary
+            return config.binary, True
         if version_expr[0] == "from" or version_expr[0] == "to":
             min_version = Version.parse(version_expr[1])
         if len(version_expr) == 4 and version_expr[2] == "until":
@@ -307,8 +307,8 @@ class OldBinaries:
             if min_version <= ver < max_version:
                 candidates.append(binary)
         if len(candidates) == 0:
-            return config.binary
-        return config.random.choice(candidates)
+            return config.binary, True
+        return config.random.choice(candidates), False
 
 
 def is_restarting_test(test_file: Path):
@@ -369,6 +369,7 @@ class TestRun:
         stats: str | None = None,
         expected_unseed: int | None = None,
         will_restart: bool = False,
+        binary_under_test: bool = True,
     ):
         self.binary = binary
         self.test_file = test_file
@@ -396,6 +397,7 @@ class TestRun:
             expected_unseed=self.expected_unseed,
             will_restart=will_restart,
             long_running=config.long_running,
+            binary_under_test=binary_under_test,
         )
         self.run_time: int = 0
         self.success = self.run()
@@ -568,7 +570,7 @@ class TestRunner:
         result: bool = True
         for count, file in enumerate(test_files):
             will_restart = count + 1 < len(test_files)
-            binary = self.binary_chooser.choose_binary(file)
+            binary, binary_under_test = self.binary_chooser.choose_binary(file)
             unseed_check = (
                 not is_no_sim(file)
                 and config.random.random() < config.unseed_check_ratio
@@ -589,6 +591,7 @@ class TestRunner:
                 stats=test_picker.dump_stats(),
                 will_restart=will_restart,
                 buggify_enabled=buggify_enabled,
+                binary_under_test=binary_under_test,
             )
             result = result and run.success
             test_picker.add_time(test_files[0], run.run_time, run.summary.out)
@@ -618,6 +621,7 @@ class TestRunner:
                     expected_unseed=run.summary.unseed,
                     will_restart=will_restart,
                     buggify_enabled=buggify_enabled,
+                    binary_under_test=binary_under_test,
                 )
                 test_picker.add_time(file, run2.run_time, run.summary.out)
                 decorate_summary(
