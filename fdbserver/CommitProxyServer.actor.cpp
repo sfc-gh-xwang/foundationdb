@@ -181,11 +181,6 @@ struct ResolutionRequestBuilder {
 						break;
 				}
 			}
-			if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS && systemKeys.intersects(r)) {
-				for (int k = 0; k < self->resolvers.size(); k++) {
-					resolvers.insert(k);
-				}
-			}
 			ASSERT(resolvers.size());
 			for (int resolver : resolvers) {
 				getOutTransaction(resolver, trIn.read_snapshot)
@@ -204,11 +199,6 @@ struct ResolutionRequestBuilder {
 				auto& version_resolver = ir.value();
 				if (!version_resolver.empty()) {
 					resolvers.insert(version_resolver.back().second);
-				}
-			}
-			if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS && systemKeys.intersects(r)) {
-				for (int k = 0; k < self->resolvers.size(); k++) {
-					resolvers.insert(k);
 				}
 			}
 			ASSERT(resolvers.size());
@@ -1901,7 +1891,7 @@ ACTOR Future<Void> applyMetadataToCommittedTransactions(CommitBatchContext* self
 			                       self->arena,
 			                       pProxyCommitData->logSystem,
 			                       self->trs[trIdx].transaction.mutations,
-			                       SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS ? nullptr : &self->toCommit,
+			                       &self->toCommit,
 			                       &self->cipherKeys,
 			                       pProxyCommitData->encryptMode,
 			                       self->forceRecovery,
@@ -1922,17 +1912,6 @@ ACTOR Future<Void> applyMetadataToCommittedTransactions(CommitBatchContext* self
 		for (; trIdx < self->trs.size(); trIdx++)
 			self->committed[trIdx] = ConflictBatch::TransactionConflict;
 		TraceEvent(SevWarn, "RestartingTxnSubsystem", pProxyCommitData->dbgid).detail("Stage", "AwaitCommit");
-	}
-	if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS) {
-		// Resolver also calculates forceRecovery and only applies metadata mutations
-		// in the same set of transactions as this proxy.
-		ResolveTransactionBatchReply& reply = self->resolution[0];
-		self->toCommit.setMutations(reply.privateMutationCount, reply.privateMutations);
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST) {
-			// TraceEvent("ResolverReturn").detail("ReturnTags",reply.writtenTags).detail("TPCVsize",reply.tpcvMap.size()).detail("ReqTags",self->writtenTagsPreResolution);
-			self->tpcvMap = reply.tpcvMap;
-		}
-		self->toCommit.addWrittenTags(reply.writtenTags);
 	}
 
 	self->lockedKey = pProxyCommitData->txnStateStore->readValue(databaseLockedKey).get();
@@ -2766,19 +2745,7 @@ ACTOR Future<Void> reply(CommitBatchContext* self) {
 			if (r->value().size() && r->value().front().first < oldestVersion)
 				r->value().front().first = 0;
 		}
-		if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS) {
-			// Only normal key space, because \xff key space is processed by all resolvers.
-			pProxyCommitData->keyResolvers.coalesce(normalKeys);
-			auto& versions = pProxyCommitData->systemKeyVersions;
-			while (versions.size() > 1 && versions[1] < oldestVersion) {
-				versions.pop_front();
-			}
-			if (!versions.empty() && versions[0] < oldestVersion) {
-				versions[0] = 0;
-			}
-		} else {
-			pProxyCommitData->keyResolvers.coalesce(allKeys);
-		}
+		pProxyCommitData->keyResolvers.coalesce(allKeys);
 		if (pProxyCommitData->keyResolvers.size() != lastSize)
 			TraceEvent("KeyResolverSize", pProxyCommitData->dbgid)
 			    .detail("Size", pProxyCommitData->keyResolvers.size());
@@ -4113,7 +4080,7 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 	}
 
 	// Initialize keyResolvers map
-	auto rs = commitData.keyResolvers.modify(SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS ? normalKeys : allKeys);
+	auto rs = commitData.keyResolvers.modify(allKeys);
 	for (auto r = rs.begin(); r != rs.end(); ++r)
 		r->value().emplace_back(0, 0);
 	commitData.systemKeyVersions.push_back(0);

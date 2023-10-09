@@ -585,7 +585,6 @@ public:
 	// RKMetricsTracker
 	int64_t CP_MIN_TAG_WRITE_PAGES_RATE;
 	bool PROXY_REJECT_BATCH_QUEUED_TOO_LONG;
-	bool PROXY_USE_RESOLVER_PRIVATE_MUTATIONS;
 	bool BURSTINESS_METRICS_ENABLED;
 	// Interval on which to emit burstiness metrics on the commit proxy (in
 	// seconds).

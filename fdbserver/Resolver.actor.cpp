@@ -388,23 +388,8 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 		int64_t stateNormalMutations = 0;
 		std::unique_ptr<LogPushData> toCommit(nullptr); // For accumulating private mutations
 		std::unique_ptr<ResolverData> resolverData(nullptr);
-		bool isLocked = false;
 		// We don't want to cache more state transactions, so we will reject state transactions in this batch
 		bool rejectStateTransaction = self->totalStateBytes.get() > SERVER_KNOBS->RESOLVER_STATE_MEMORY_LIMIT;
-		if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS) {
-			auto lockedKey = self->txnStateStore->readValue(databaseLockedKey).get();
-			isLocked = lockedKey.present() && lockedKey.get().size();
-			toCommit.reset(new LogPushData(self->logSystem, self->localTLogCount));
-			resolverData.reset(new ResolverData(self->dbgid,
-			                                    self->logSystem,
-			                                    self->txnStateStore,
-			                                    &self->keyInfo,
-			                                    toCommit.get(),
-			                                    self->forceRecovery,
-			                                    req.version + 1,
-			                                    &self->storageCache,
-			                                    &self->tssMapping));
-		}
 
 		for (int t : req.txnStateTransactions) {
 			bool committed = reply.committed[t] == ConflictBatch::TransactionCommitted;
@@ -430,21 +415,6 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 			if (committed) {
 				stateNormalMutations += req.transactions[t].normalKeyMutations.size();
 				stateNormalMutationBytes += req.transactions[t].normalKeyMutations.expectedSize();
-
-				// Generate private mutations for metadata mutations
-				// The condition here must match CommitBatch::applyMetadataToCommittedTransactions()
-				if (!self->forceRecovery && SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS &&
-				    (!isLocked || req.transactions[t].lock_aware)) {
-					SpanContext spanContext = req.transactions[t].spanContext.present()
-					                              ? req.transactions[t].spanContext.get()
-					                              : SpanContext();
-
-					applyMetadataMutations(spanContext,
-					                       *resolverData,
-					                       req.transactions[t].mutations,
-					                       self->encryptMode.isEncryptionEnabled() ? &cipherKeys : nullptr,
-					                       self->encryptMode);
-				}
 			}
 			// for (const auto& m : req.transactions[t].mutations)
 			//	DEBUG_MUTATION("Resolver", req.version, m, self->dbgid);
@@ -483,18 +453,6 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 		stateTransactionsPair.first = toCommit && toCommit->isShardChanged();
 		bool shardChanged = self->recentStateTransactionsInfo.applyStateTxnsToBatchReply(
 		    &reply, firstUnseenVersion, req.version, toCommit && toCommit->isShardChanged());
-
-		// Adds private mutation messages to the reply message.
-		if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS) {
-			auto privateMutations = toCommit->getAllMessages();
-			for (const auto& mutations : privateMutations) {
-				reply.privateMutations.push_back(reply.arena, mutations);
-				reply.arena.dependsOn(mutations.arena());
-			}
-			// merge mutation tags with sent client tags
-			toCommit->saveTags(reply.writtenTags);
-			reply.privateMutationCount = toCommit->getMutationCount();
-		}
 
 		//TraceEvent("ResolveBatch", self->dbgid).detail("PrevVersion", req.prevVersion).detail("Version", req.version).detail("StateTransactionVersions", self->recentStateTransactionsInfo.size()).detail("StateBytes", stateBytes).detail("FirstVersion", self->recentStateTransactionsInfo.empty() ? -1 : self->recentStateTransactionsInfo.firstVersion()).detail("StateMutationsIn", req.txnStateTransactions.size()).detail("StateMutationsOut", reply.stateMutations.size()).detail("From", proxyAddress);
 
@@ -597,175 +555,6 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 	return Void();
 }
 
-namespace {
-
-// TODO: refactor with the one in CommitProxyServer.actor.cpp
-struct TransactionStateResolveContext {
-	// Maximum sequence for txnStateRequest, this is defined when the request last flag is set.
-	Sequence maxSequence = std::numeric_limits<Sequence>::max();
-
-	// Flags marks received transaction state requests, we only process the transaction request when *all* requests are
-	// received.
-	std::unordered_set<Sequence> receivedSequences;
-
-	Reference<Resolver> pResolverData;
-
-	// Pointer to transaction state store, shortcut for commitData.txnStateStore
-	Reference<IKeyValueStore> pTxnStateStore;
-
-	// Actor streams
-	PromiseStream<Future<Void>>* pActors = nullptr;
-
-	// Flag reports if the transaction state request is complete. This request should only happen during recover, i.e.
-	// once per Resolver.
-	bool processed = false;
-
-	TransactionStateResolveContext() = default;
-
-	TransactionStateResolveContext(Reference<Resolver> pResolverData_, PromiseStream<Future<Void>>* pActors_)
-	  : pResolverData(pResolverData_),
-	    pTxnStateStore(pResolverData_->txnStateStore),
-	    pActors(pActors_) {
-		ASSERT(pTxnStateStore.isValid() || !SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS);
-	}
-};
-
-ACTOR Future<Void> processCompleteTransactionStateRequest(
-    Reference<Resolver> self,
-    TransactionStateResolveContext* pContext,
-    Reference<AsyncVar<ServerDBInfo> const> db,
-    std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>* cipherKeys) {
-	state KeyRange txnKeys = allKeys;
-	state std::map<Tag, UID> tag_uid;
-
-	RangeResult UIDtoTagMap = pContext->pTxnStateStore->readRange(serverTagKeys).get();
-	for (const KeyValueRef& kv : UIDtoTagMap) {
-		tag_uid[decodeServerTagValue(kv.value)] = decodeServerTagKey(kv.key);
-	}
-
-	loop {
-		wait(yield());
-
-		RangeResult data =
-		    pContext->pTxnStateStore
-		        ->readRange(txnKeys, SERVER_KNOBS->BUGGIFIED_ROW_LIMIT, SERVER_KNOBS->APPLY_MUTATION_BYTES)
-		        .get();
-		if (!data.size())
-			break;
-
-		((KeyRangeRef&)txnKeys) = KeyRangeRef(keyAfter(data.back().key, txnKeys.arena()), txnKeys.end);
-
-		MutationsVec mutations;
-		std::vector<std::pair<MapPair<Key, ServerCacheInfo>, int>> keyInfoData;
-		std::vector<UID> src, dest;
-		ServerCacheInfo info;
-		// NOTE: An ACTOR will be compiled into several classes, the this pointer is from one of them.
-		auto updateTagInfo = [pContext = pContext](const std::vector<UID>& uids,
-		                                           std::vector<Tag>& tags,
-		                                           std::vector<Reference<StorageInfo>>& storageInfoItems) {
-			for (const auto& id : uids) {
-				auto storageInfo =
-				    getStorageInfo(id, &pContext->pResolverData->storageCache, pContext->pTxnStateStore.getPtr());
-				ASSERT(storageInfo->tag != invalidTag);
-				tags.push_back(storageInfo->tag);
-				storageInfoItems.push_back(storageInfo);
-			}
-		};
-		for (auto& kv : data) {
-			if (!kv.key.startsWith(keyServersPrefix)) {
-				mutations.emplace_back(mutations.arena(), MutationRef::SetValue, kv.key, kv.value);
-				continue;
-			}
-
-			KeyRef k = kv.key.removePrefix(keyServersPrefix);
-			if (k == allKeys.end) {
-				continue;
-			}
-			decodeKeyServersValue(tag_uid, kv.value, src, dest);
-
-			info.tags.clear();
-
-			info.src_info.clear();
-			updateTagInfo(src, info.tags, info.src_info);
-
-			info.dest_info.clear();
-			updateTagInfo(dest, info.tags, info.dest_info);
-
-			uniquify(info.tags);
-			keyInfoData.emplace_back(MapPair<Key, ServerCacheInfo>(k, info), 1);
-		}
-
-		// insert keyTag data separately from metadata mutations so that we can do one bulk insert which
-		// avoids a lot of map lookups.
-		pContext->pResolverData->keyInfo.rawInsert(keyInfoData);
-
-		bool confChanges; // Ignore configuration changes for initial commits.
-		ResolverData resolverData(
-		    pContext->pResolverData->dbgid, pContext->pTxnStateStore, &pContext->pResolverData->keyInfo, confChanges);
-		applyMetadataMutations(SpanContext(), resolverData, mutations, cipherKeys, self->encryptMode);
-	} // loop
-
-	auto lockedKey = pContext->pTxnStateStore->readValue(databaseLockedKey).get();
-	// pContext->pCommitData->locked = lockedKey.present() && lockedKey.get().size();
-	// pContext->pCommitData->metadataVersion = pContext->pTxnStateStore->readValue(metadataVersionKey).get();
-
-	pContext->pTxnStateStore->enableSnapshot();
-
-	return Void();
-}
-
-ACTOR Future<Void> processTransactionStateRequestPart(Reference<Resolver> self,
-                                                      TransactionStateResolveContext* pContext,
-                                                      TxnStateRequest request,
-                                                      Reference<AsyncVar<ServerDBInfo> const> db) {
-	ASSERT(pContext->pResolverData.getPtr() != nullptr);
-	ASSERT(pContext->pActors != nullptr);
-
-	if (pContext->receivedSequences.count(request.sequence)) {
-		// This part is already received. Still we will re-broadcast it to other CommitProxies & Resolvers
-		pContext->pActors->send(broadcastTxnRequest(request, SERVER_KNOBS->TXN_STATE_SEND_AMOUNT, true));
-		wait(yield());
-		return Void();
-	}
-
-	if (request.last) {
-		// This is the last piece of subsequence, yet other pieces might still on the way.
-		pContext->maxSequence = request.sequence + 1;
-	}
-	pContext->receivedSequences.insert(request.sequence);
-
-	// ASSERT(!pContext->pResolverData->validState.isSet());
-
-	for (auto& kv : request.data) {
-		pContext->pTxnStateStore->set(kv, &request.arena);
-	}
-	pContext->pTxnStateStore->commit(true);
-
-	if (pContext->receivedSequences.size() == pContext->maxSequence) {
-		// Received all components of the txnStateRequest
-		ASSERT(!pContext->processed);
-		state std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys;
-		if (self->encryptMode.isEncryptionEnabled()) {
-			static const std::unordered_set<EncryptCipherDomainId> metadataDomainIds = {
-				SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID, ENCRYPT_HEADER_DOMAIN_ID
-			};
-			std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cks =
-			    wait(GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-			        db, metadataDomainIds, BlobCipherMetrics::TLOG));
-			cipherKeys = cks;
-		}
-		wait(processCompleteTransactionStateRequest(
-		    self, pContext, db, self->encryptMode.isEncryptionEnabled() ? &cipherKeys : nullptr));
-		pContext->processed = true;
-	}
-
-	pContext->pActors->send(broadcastTxnRequest(request, SERVER_KNOBS->TXN_STATE_SEND_AMOUNT, true));
-	wait(yield());
-	return Void();
-}
-
-} // anonymous namespace
-
 ACTOR Future<Void> resolverCore(ResolverInterface resolver,
                                 InitializeResolverRequest initReq,
                                 Reference<AsyncVar<ServerDBInfo> const> db) {
@@ -793,24 +582,6 @@ ACTOR Future<Void> resolverCore(ResolverInterface resolver,
 	self->localTLogCount = db->get().logSystemConfig.numLogs();
 	state Future<Void> onError =
 	    transformError(actorCollection(addActor.getFuture()), broken_promise(), resolver_failed());
-	state TransactionStateResolveContext transactionStateResolveContext;
-	if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS) {
-		self->logAdapter = new LogSystemDiskQueueAdapter(self->logSystem, Reference<AsyncVar<PeekTxsInfo>>(), 1, false);
-		self->txnStateStore = keyValueStoreLogSystem(
-		    self->logAdapter, db, resolver.id(), 2e9, true, true, true, self->encryptMode.isEncryptionEnabled());
-
-		// wait for txnStateStore recovery
-		wait(success(self->txnStateStore->readValue(StringRef())));
-
-		// This has to be declared after the self->txnStateStore get initialized
-		transactionStateResolveContext = TransactionStateResolveContext(self, &addActor);
-
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST) {
-			self->numLogs = db->get().logSystemConfig.numLogs();
-			self->tpcvVector.resize(1 + self->numLogs, 0);
-			std::fill(self->tpcvVector.begin(), self->tpcvVector.end(), invalidVersion);
-		}
-	}
 
 	loop choose {
 		when(ResolveTransactionBatchRequest batch = waitNext(resolver.resolve.getFuture())) {
@@ -818,8 +589,7 @@ ACTOR Future<Void> resolverCore(ResolverInterface resolver,
 		}
 		when(ResolutionMetricsRequest req = waitNext(resolver.metrics.getFuture())) {
 			++self->metricsRequests;
-			req.reply.send(self->iopsSample.getEstimate(SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS ? normalKeys
-			                                                                                               : allKeys));
+			req.reply.send(self->iopsSample.getEstimate(allKeys));
 		}
 		when(ResolutionSplitRequest req = waitNext(resolver.split.getFuture())) {
 			++self->splitRequests;
@@ -834,13 +604,6 @@ ACTOR Future<Void> resolverCore(ResolverInterface resolver,
 		when(wait(doPollMetrics)) {
 			self->iopsSample.poll();
 			doPollMetrics = delay(SERVER_KNOBS->SAMPLE_POLL_TIME);
-		}
-		when(TxnStateRequest request = waitNext(resolver.txnState.getFuture())) {
-			if (SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS) {
-				addActor.send(processTransactionStateRequestPart(self, &transactionStateResolveContext, request, db));
-			} else {
-				ASSERT(false);
-			}
 		}
 	}
 }

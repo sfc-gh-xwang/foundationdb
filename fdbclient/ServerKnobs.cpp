@@ -612,7 +612,6 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CP_MIN_TAG_WRITE_PAGES_RATE,                             50 ); if( isSimulated ) CP_MIN_TAG_WRITE_PAGES_RATE = 1;
 	init( CP_THROTTLE_TAGS_TRACKED,                                10 ); BUGGIFY_KNOB(CP_THROTTLE_TAGS_TRACKED, randomize && BUGGIFY, deterministicRandom()->randomInt(5, 15));
 	init( PROXY_REJECT_BATCH_QUEUED_TOO_LONG,                    true );
-	init( PROXY_USE_RESOLVER_PRIVATE_MUTATIONS,                 false ); BUGGIFY_KNOB(PROXY_USE_RESOLVER_PRIVATE_MUTATIONS, randomize && BUGGIFY && !ENABLE_VERSION_VECTOR_TLOG_UNICAST, deterministicRandom()->coinflip());
 
 	init( BURSTINESS_METRICS_ENABLED  ,                         false );
 	init( BURSTINESS_METRICS_LOG_INTERVAL,                        0.1 );
