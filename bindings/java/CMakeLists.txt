@@ -10,6 +10,7 @@ set(JAVA_BINDING_SRCS
   src/main/com/apple/foundationdb/async/CloneableException.java
   src/main/com/apple/foundationdb/async/CloseableAsyncIterator.java
   src/main/com/apple/foundationdb/async/package-info.java
+  src/main/com/apple/foundationdb/BulkLoadStatus.java
   src/main/com/apple/foundationdb/Cluster.java
   src/main/com/apple/foundationdb/ClusterOptions.java
   src/main/com/apple/foundationdb/Database.java
@@ -38,6 +39,9 @@ set(JAVA_BINDING_SRCS
   src/main/com/apple/foundationdb/FDBTenant.java
   src/main/com/apple/foundationdb/FDBTransaction.java
   src/main/com/apple/foundationdb/FutureBool.java
+  src/main/com/apple/foundationdb/FutureBulkLoadId.java
+  src/main/com/apple/foundationdb/FutureBulkLoadIDArray.java
+  src/main/com/apple/foundationdb/FutureBulkLoadStatus.java
   src/main/com/apple/foundationdb/FutureBytes.java
   src/main/com/apple/foundationdb/FutureDouble.java
   src/main/com/apple/foundationdb/FutureInt64.java

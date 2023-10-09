@@ -241,6 +241,66 @@ class FDBTenant extends NativeObjectWrapper implements Tenant, OptionConsumer {
 	}
 
 	@Override
+	public CompletableFuture<byte[]> startBulkLoad(byte[] beginKey, byte[] endKey, Executor e) {
+		pointerReadLock.lock();
+		try {
+			return new FutureBulkLoadId(Tenant_startBulkLoad(getPtr(), beginKey, endKey), e);
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
+	@Override
+	public CompletableFuture<Void> abortBulkLoad(byte[] bulkLoadId, Executor e) {
+		pointerReadLock.lock();
+		try {
+			return new FutureVoid(Tenant_abortBulkLoad(getPtr(), bulkLoadId), e);
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
+	@Override
+	public CompletableFuture<Void> cleanupBulkLoad(byte[] bulkLoadId, Executor e) {
+		pointerReadLock.lock();
+		try {
+			return new FutureVoid(Tenant_cleanupBulkLoad(getPtr(), bulkLoadId), e);
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
+	@Override
+	public CompletableFuture<Void> waitBulkLoadComplete(byte[] bulkLoadId, Executor e) {
+		pointerReadLock.lock();
+		try {
+			return new FutureVoid(Tenant_waitBulkLoadComplete(getPtr(), bulkLoadId), e);
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
+	@Override
+	public CompletableFuture<KeyArrayResult> listBulkLoads(byte[] beginKey, byte[] endKey, Executor e) {
+		pointerReadLock.lock();
+		try {
+			return new FutureBulkLoadIDArray(Tenant_listBulkLoads(getPtr(), beginKey, endKey), e);
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
+	@Override
+	public CompletableFuture<BulkLoadStatus> getBulkLoadStatus(byte[] bulkLoadId, Executor e) {
+		pointerReadLock.lock();
+		try {
+			return new FutureBulkLoadStatus(Tenant_getBulkLoadStatus(getPtr(), bulkLoadId), e);
+		} finally {
+			pointerReadLock.unlock();
+		}
+	}
+
+	@Override
 	public CompletableFuture<Long> getId(Executor e) {
 		pointerReadLock.lock();
 		try {
@@ -289,6 +349,12 @@ class FDBTenant extends NativeObjectWrapper implements Tenant, OptionConsumer {
 	private native long Tenant_listBlobbifiedRanges(long cPtr, byte[] beginKey, byte[] endKey, int rangeLimit);
 	private native long Tenant_verifyBlobRange(long cPtr, byte[] beginKey, byte[] endKey, long version);
 	private native long Tenant_flushBlobRange(long cPtr, byte[] beginKey, byte[] endKey, boolean compact, long version);
+	private native long Tenant_startBulkLoad(long cPtr, byte[] beginKey, byte[] endKey);
+	private native long Tenant_abortBulkLoad(long cPtr, byte[] bulkLoadId);
+	private native long Tenant_cleanupBulkLoad(long cPtr, byte[] bulkLoadId);
+	private native long Tenant_waitBulkLoadComplete(long cPtr, byte[] bulkLoadId);
+	private native long Tenant_listBulkLoads(long cPtr, byte[] beginKey, byte[] endKey);
+	private native long Tenant_getBulkLoadStatus(long cPtr, byte[] bulkLoadId);
 	private native long Tenant_getId(long cPtr);
 	private native long Tenant_getClientStatus(long cPtr);
 }
