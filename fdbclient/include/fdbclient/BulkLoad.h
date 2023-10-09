@@ -119,8 +119,15 @@ struct BulkLoadFileToWriteRef {
 	    compression(copyFrom.compression) {}
 
 	int expectedSize() const {
-		return fileId.expectedSize() + fileName.expectedSize() + sizeof(targetSize) + tenantPrefix->expectedSize() +
-		       cipherKeysCtx.expectedSize() + sizeof(type) + sizeof(format) + sizeof(compression);
+		int expectedSize = fileId.expectedSize() + fileName.expectedSize() + sizeof(targetSize) + sizeof(type) +
+		                   sizeof(format) + sizeof(compression);
+		if (tenantPrefix.has_value()) {
+			expectedSize += tenantPrefix.expectedSize();
+		}
+		if (cipherKeysCtx.has_value()) {
+			expectedSize += cipherKeysCtx->expectedSize();
+		}
+		return expectedSize;
 	}
 
 	// file id - pass back to fdb along with file metadata when file is successfully written to mark as registered
