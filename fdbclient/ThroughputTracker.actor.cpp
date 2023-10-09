@@ -7,11 +7,30 @@
 #include "fdbrpc/LoadBalance.actor.h"
 #include "flow/actorcompiler.h" // must be last include
 
+Optional<double> ThroughputTracker::ThroughputStatistics::getAverageTransactionCost() const {
+	// Wait until we gather enough data
+	if (now() - startTime < CLIENT_KNOBS->AVERAGE_COST_START_DELAY) {
+		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+	}
+
+	auto const throughput = smoothReadThroughput.smoothRate() + smoothWriteThroughput.smoothRate();
+	auto const transactionRate = smoothTransactionRate.smoothRate();
+
+	// In this case, throughput is extremely low, and an
+	// average cost estimation cannot be made
+	if (throughput <= 0.0 || transactionRate < 1.0) {
+		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+	}
+	return throughput / transactionRate;
+}
+
 class ThroughputTrackerImpl {
 public:
 	ACTOR static Future<Void> run(ThroughputTracker* self, DatabaseContext* cx) {
 		state Future<Void> timer = Never();
 		loop {
+			self->removeExpiredThrottlingIds();
+
 			timer = delayJittered(CLIENT_KNOBS->CLIENT_THROUGHPUT_REPORT_INTERVAL);
 			if (self->throughput.empty()) {
 				wait(timer);
@@ -99,6 +118,13 @@ double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttli
 		return throughputStat->second.getAverageTransactionCost().orDefault(
 		    CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST);
 	}
+}
+
+void ThroughputTracker::removeExpiredThrottlingIds() {
+	boost::unordered::erase_if(throughputStatistics, [](const auto& item) {
+		auto const& [id, stat] = item;
+		return !stat.recentTransactionsAdded();
+	});
 }
 
 bool isClientAverageCostTrackingEnabled() {

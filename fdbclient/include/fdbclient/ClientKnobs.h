@@ -304,6 +304,9 @@ public:
 	bool USE_SIMPLE_THROUGHPUT_QUOTA_CACHE;
 	// Interval at which per-throttlingId throughput statistics are logged by the client.
 	double CLIENT_THROUGHPUT_TRACE_INTERVAL;
+	// ThroughputTracker forgets about statistics from a tag once no new transactions from that
+	// tag have been received for this duration (in seconds):
+	int64_t CLIENT_THROUGHPUT_TAG_EXPIRE_AFTER;
 
 	// Enables client-side tracking of average transaction costs. The clients will track and
 	// report the expected cost per ThrottlingID along with each GRV requests.

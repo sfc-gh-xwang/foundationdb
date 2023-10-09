@@ -32,6 +32,7 @@ class ThroughputTracker {
 
 	struct ThroughputStatistics {
 		double startTime;
+		double lastUpdate;
 		double lastLogged;
 
 		HoltLinearSmoother smoothReadThroughput;
@@ -40,36 +41,35 @@ class ThroughputTracker {
 
 		ThroughputStatistics()
 		  : startTime(now()),
-		    lastLogged(0),
+		    lastUpdate(now()),
+		    lastLogged(now()),
+
 		    smoothReadThroughput(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME),
 		    smoothWriteThroughput(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME,
 		                          CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME),
 		    smoothTransactionRate(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME,
 		                          CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME) {}
 
-		Optional<double> getAverageTransactionCost() const {
-			// Wait until we gather enough data
-			if (now() - startTime < CLIENT_KNOBS->AVERAGE_COST_START_DELAY) {
-				return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
-			}
-
-			auto const throughput = smoothReadThroughput.smoothRate() + smoothWriteThroughput.smoothRate();
-			auto const transactionRate = smoothTransactionRate.smoothRate();
-
-			// In this case, throughput is extremely low, and an
-			// average cost estimation cannot be made
-			if (throughput <= 0.0 || transactionRate < 1.0) {
-				return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
-			}
-			return throughput / transactionRate;
+		Optional<double> getAverageTransactionCost() const;
+		void addReadCost(uint64_t cost) {
+			lastUpdate = now();
+			smoothReadThroughput.addDelta(cost);
 		}
-
-		void addReadCost(uint64_t cost) { smoothReadThroughput.addDelta(cost); }
-		void addWriteCost(uint64_t cost) { smoothWriteThroughput.addDelta(cost); }
-		void addTransaction(uint64_t numTransactions) { smoothTransactionRate.addDelta(numTransactions); }
+		void addWriteCost(uint64_t cost) {
+			lastUpdate = now();
+			smoothWriteThroughput.addDelta(cost);
+		}
+		void addTransaction(uint64_t numTransactions) {
+			lastUpdate = now();
+			smoothTransactionRate.addDelta(numTransactions);
+		}
 
 		bool canLog() const { return now() - lastLogged > CLIENT_KNOBS->CLIENT_THROUGHPUT_TRACE_INTERVAL; }
 		void updateLastLogged() { lastLogged = now(); }
+
+		bool recentTransactionsAdded() const {
+			return now() - lastUpdate < CLIENT_KNOBS->CLIENT_THROUGHPUT_TAG_EXPIRE_AFTER;
+		}
 	};
 
 	ThrottlingIdMap<ThroughputStatistics> throughputStatistics;
@@ -81,6 +81,7 @@ public:
 	void addReadCost(ThrottlingId const&, uint64_t cost);
 	void addWriteCost(ThrottlingId const&, uint64_t cost);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
+	void removeExpiredThrottlingIds();
 	double getAverageTransactionCost(ThrottlingId const&) const;
 	bool isThrottlingIdBusy(ThrottlingId const&) const;
 	uint64_t getThroughputReportsSent() const;
