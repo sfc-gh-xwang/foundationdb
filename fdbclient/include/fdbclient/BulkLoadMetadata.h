@@ -123,8 +123,5 @@ std::pair<FilePointerKey, FilePointerKey> allFilePointersForLoadRange(const Bulk
 }; // namespace BulkLoadMetadata
 
 bool checkValidBulkLoadStateTransition(BulkLoadStatus::State current, BulkLoadStatus::State desired);
-void validateBulkLoadWrittenPointers(const BulkLoadID& id,
-                                     const BulkLoadInfo& info,
-                                     const VectorRef<BulkLoadWrittenFileRef>& files);
 
 #endif

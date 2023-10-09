@@ -18,6 +18,9 @@
  * limitations under the License.
  */
 
+#include "fdbclient/BulkLoad.h"
+#include "fdbclient/Tuple.h"
+#include "flow/Error.h"
 #include "fmt/format.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/CommitTransaction.h"
@@ -686,4 +689,369 @@ ACTOR Future<Reference<BlobConnectionProvider>> loadBStoreForTenant(BGTenantMap*
 		TraceEvent(SevError, "MissingBlobStoreConfig").detail("KeyRange", keyRange);
 		throw restore_error();
 	}
+}
+
+// ensure sizes are valid, all ids are unique, all key ranges are within bulk load key range, and key ranges are all
+// disjoint
+// FIXME: for large number of files, maybe break up with yields?
+void validateBulkLoadWrittenPointers(const BulkLoadID& id,
+                                     const BulkLoadInfo& info,
+                                     const VectorRef<BulkLoadWrittenFileRef>& files,
+                                     int truncateOffset,
+                                     bool isSnowtramAware) {
+	std::vector<KeyRange> ranges;
+	std::unordered_set<BulkLoadFileID> fileIds;
+	ranges.reserve(files.size());
+	fileIds.reserve(files.size());
+	for (int i = 0; i < files.size(); i++) {
+		auto& p = files[i];
+		if (p.logicalSize < 0 || p.physicalSize < 0) {
+			TraceEvent("BulkLoadInvalidPointerSize")
+			    .detail("LoadID", id)
+			    .detail("FileID", p.fileId)
+			    .detail("LogicalSize", p.logicalSize)
+			    .detail("PhysicalSize", p.physicalSize);
+			throw bulk_load_invalid_file_metadata();
+		}
+		if (!info.keyRange.contains(p.keyRange)) {
+			TraceEvent("BulkLoadInvalidPointerNotInsideLoadRange")
+			    .detail("LoadID", id)
+			    .detail("FileID", p.fileId)
+			    .detail("LoadRange", info.keyRange)
+			    .detail("PointerRange", p.keyRange);
+			// file key range not inside bulk load key range
+			throw bulk_load_invalid_file_metadata();
+		}
+
+		// Clients provide unaligned keys in the written file metadata.
+		// Truncate & align the start key, so that the checks below use
+		// aligned keys. This ensures checking that granules aren't split in between
+		// aligned keys.
+		Key truncatedStartKey = BlobGranuleKeyHelpers::truncateKey(p.keyRange.begin, truncateOffset, isSnowtramAware);
+		KeyRange truncatedKeyRange(KeyRangeRef(truncatedStartKey, p.keyRange.end));
+		ranges.push_back(truncatedKeyRange);
+		if (!fileIds.insert(p.fileId).second) {
+			// duplicate file ids
+			TraceEvent("BulkLoadInvalidPointerDuplicateFileID").detail("LoadID", id).detail("FileID", p.fileId);
+			throw bulk_load_invalid_file_metadata();
+		}
+	}
+	std::sort(ranges.begin(), ranges.end(), KeyRangeRef::ArbitraryOrder());
+	for (int i = 1; i < ranges.size(); i++) {
+		// meta-check: validate sort worked
+		ASSERT(ranges[i - 1].begin <= ranges[i].begin);
+		if (ranges[i - 1].end > ranges[i].begin) {
+			TraceEvent("BulkLoadInvalidPointerOverlappingKeyRanges")
+			    .detail("LoadID", id)
+			    .detail("FileRange", ranges[i])
+			    .detail("OtherRange", ranges[i - 1]);
+			// non-disjoint key ranges
+			throw bulk_load_invalid_file_metadata();
+		}
+	}
+}
+
+// ----- Unit Tests + Helper Functions for testing validateBulkLoadWrittenPointers -----
+// helper to convert std::vector to VectorRef
+void validateBulkLoadWrittenPointers(const BulkLoadID& id,
+                                     const BulkLoadInfo& info,
+                                     const std::vector<BulkLoadWrittenFileRef>& files,
+                                     int truncateOffset,
+                                     bool isSnowtramAware) {
+	Standalone<VectorRef<BulkLoadWrittenFileRef>> vRef;
+	vRef.reserve(vRef.arena(), files.size());
+	for (auto& it : files) {
+		vRef.push_back(vRef.arena(), it);
+	}
+	return validateBulkLoadWrittenPointers(id, info, vRef, truncateOffset, isSnowtramAware);
+}
+
+BulkLoadWrittenFileRef createPtr(const BulkLoadInfo& info, Arena& ar) {
+	BulkLoadWrittenFileRef ptr;
+	UID fileUID = deterministicRandom()->randomUniqueID();
+	ptr.fileId = StringRef(ar, fileUID.toString());
+	ptr.keyRange = info.keyRange;
+	ptr.logicalSize = 1;
+	ptr.physicalSize = 1;
+	return ptr;
+}
+
+void checkKeyRanges(bool expectSuccess,
+                    const BulkLoadID& id,
+                    const BulkLoadInfo& info,
+                    const std::vector<KeyRangeRef>& ranges,
+                    int truncateOffset,
+                    bool isSnowtramAware) {
+	Standalone<VectorRef<BulkLoadWrittenFileRef>> ptrs;
+	ptrs.reserve(ptrs.arena(), ranges.size());
+	for (auto& it : ranges) {
+		BulkLoadWrittenFileRef ptr = createPtr(info, ptrs.arena());
+		ptr.keyRange = it;
+		ptrs.push_back(ptrs.arena(), ptr);
+	}
+
+	try {
+		validateBulkLoadWrittenPointers(id, info, ptrs, truncateOffset, isSnowtramAware);
+		ASSERT(expectSuccess);
+	} catch (Error& e) {
+		ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+		ASSERT(!expectSuccess);
+	}
+}
+
+Key getKeyWithUserType(const std::string& key, const std::string& userTypeStr) {
+	Tuple::UserTypeStr udt(0x41, userTypeStr);
+	return Tuple::makeTuple(key, udt).pack();
+}
+
+TEST_CASE("/fdbserver/bulkload/validateBulkLoadWrittenPointers") {
+	state Arena ar;
+	state Standalone<StringRef> keyA;
+	state Standalone<StringRef> keyB;
+	state Standalone<StringRef> keyC;
+	state Standalone<StringRef> keyD;
+	state Standalone<StringRef> keyZ;
+	state BulkLoadID id = "bulkloadid"_sr;
+	state BulkLoadInfo info;
+
+	state std::vector<bool> keysWithUdt(true, false);
+	for (auto useUdt : keysWithUdt) {
+		if (useUdt) {
+			keyA = getKeyWithUserType("a", "0");
+			keyB = getKeyWithUserType("b", "0");
+			keyC = getKeyWithUserType("c", "0");
+			keyD = getKeyWithUserType("d", "0");
+			keyZ = getKeyWithUserType("z", "0");
+		} else {
+			keyA = "a"_sr;
+			keyB = "b"_sr;
+			keyC = "c"_sr;
+			keyD = "d"_sr;
+			keyZ = "z"_sr;
+		}
+		info.keyRange = KeyRangeRef(keyA, keyD);
+
+		state int truncateOffset = useUdt ? 1 : 0;
+
+		// check default pointer is valid
+		{
+			BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+			validateBulkLoadWrittenPointers(id, info, { ptr }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB) }, truncateOffset, false);
+		}
+
+		// check invalid logical/physical size
+		{
+			try {
+				BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+				ptr.logicalSize = -1;
+				validateBulkLoadWrittenPointers(id, info, { ptr }, truncateOffset, false);
+				ASSERT(false);
+			} catch (Error& e) {
+				ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+			}
+		}
+
+		{
+			try {
+				BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+				ptr.physicalSize = -1;
+				validateBulkLoadWrittenPointers(id, info, { ptr }, truncateOffset, false);
+				ASSERT(false);
+			} catch (Error& e) {
+				ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+			}
+		}
+
+		// check duplicate file ids
+		{
+			try {
+				BulkLoadWrittenFileRef ptr = createPtr(info, ar);
+				validateBulkLoadWrittenPointers(id, info, { ptr, ptr }, truncateOffset, false);
+				ASSERT(false);
+			} catch (Error& e) {
+				ASSERT(e.code() == error_code_bulk_load_invalid_file_metadata);
+			}
+		}
+
+		// check ranges outside of bulk load range
+		{
+			checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyZ) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyA) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyB) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(""_sr, keyD) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(keyA, keyZ) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(keyB, keyZ) }, truncateOffset, false);
+			checkKeyRanges(false, id, info, { KeyRangeRef(keyZ, "\xff"_sr) }, truncateOffset, false);
+		}
+
+		// check overlapping ranges within bulk load range
+		{
+
+			checkKeyRanges(
+			    false, id, info, { KeyRangeRef(keyA, keyC), KeyRangeRef(keyB, keyD) }, truncateOffset, false);
+			checkKeyRanges(
+			    false, id, info, { KeyRangeRef(keyA, keyD), KeyRangeRef(keyB, keyC) }, truncateOffset, false);
+			// reverse order
+			checkKeyRanges(
+			    false, id, info, { KeyRangeRef(keyB, keyD), KeyRangeRef(keyA, keyC) }, truncateOffset, false);
+			checkKeyRanges(
+			    false, id, info, { KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyD) }, truncateOffset, false);
+		}
+
+		// check valid subsets of ranges
+		{
+			// one range or subranges
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyD) }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB) }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyB, keyC) }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD) }, truncateOffset, false);
+			// non-connecting but multiple
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyA, keyB), KeyRangeRef(keyC, keyD) }, truncateOffset, false);
+			checkKeyRanges(true, id, info, { KeyRangeRef(keyC, keyD), KeyRangeRef(keyA, keyB) }, truncateOffset, false);
+			// multiple connecting
+			checkKeyRanges(true,
+			               id,
+			               info,
+			               { KeyRangeRef(keyA, keyB), KeyRangeRef(keyB, keyC), KeyRangeRef(keyC, keyD) },
+			               truncateOffset,
+			               false);
+			checkKeyRanges(true,
+			               id,
+			               info,
+			               { KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyB), KeyRangeRef(keyC, keyD) },
+			               truncateOffset,
+			               false);
+			checkKeyRanges(true,
+			               id,
+			               info,
+			               { KeyRangeRef(keyC, keyD), KeyRangeRef(keyB, keyC), KeyRangeRef(keyA, keyB) },
+			               truncateOffset,
+			               false);
+		}
+	}
+	state Standalone<StringRef> keyA0 = getKeyWithUserType("a", "0");
+	state Standalone<StringRef> keyB1 = getKeyWithUserType("b", "1");
+	state Standalone<StringRef> keyB2 = getKeyWithUserType("b", "2");
+	state Standalone<StringRef> keyC0 = getKeyWithUserType("c", "0");
+	state Standalone<StringRef> keyD0 = getKeyWithUserType("c", "0");
+	// Check splits in between truncated keys.
+	{
+		info.keyRange = KeyRangeRef(keyA0, keyD0);
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyA0, keyB1), KeyRangeRef(keyB1, keyC0) }, 1, false);
+		checkKeyRanges(false, id, info, { KeyRangeRef(keyA0, keyB1), KeyRangeRef(keyB2, keyC0) }, 1, false);
+	}
+
+	return Void();
+}
+
+namespace BlobGranuleKeyHelpers {
+
+Key truncateKey(KeyRef key, int truncateOffset, bool isSnowtramAware) {
+	if (truncateOffset <= 0) {
+		return key;
+	}
+	Key truncatedKey = key;
+	// if snowtram aware, tuple must parse and not be truncated, but maintain non-snowtram-aware case for backwards
+	// compatibility
+	Tuple t = Tuple::unpackUserType(key, !isSnowtramAware);
+	if (isSnowtramAware) {
+		bool snowtramKey = t.isSnowtramKey();
+		if (snowtramKey && t.isSnowtramDataOrIndexSpace()) {
+			CODE_PROBE(true, "snowtram-aware alignKeys found snowtram key to truncate");
+			ASSERT(truncateOffset == 1);
+		} else {
+			CODE_PROBE(snowtramKey, "found snowtram key in non-data/index space");
+			// if not valid snowtram key in the data or index space, don't truncate
+			// We expect TST entries to hit this, but if any user key does that's bad
+			CODE_PROBE(true, "snowtram-aware alignKeys found non-snowtram key, skipping truncate");
+			truncateOffset = t.size();
+		}
+	}
+
+	if (t.size() > truncateOffset) {
+		Tuple t2 = t.subTuple(0, t.size() - truncateOffset);
+		truncatedKey = t2.pack();
+	}
+	return truncatedKey;
+}
+
+bool canSplit(KeyRef prevKey, KeyRef nextKey, int truncateOffset, bool isSnowtramAware) {
+	Key truncatedNextKey = truncateKey(nextKey, truncateOffset, isSnowtramAware);
+	Key truncatedPrevKey = truncateKey(prevKey, truncateOffset, isSnowtramAware);
+	// Allow splitting only if this truncated key is greater than the previous.
+	if (truncatedNextKey > truncatedPrevKey) {
+		return true;
+	}
+	return false;
+}
+
+} // namespace BlobGranuleKeyHelpers
+
+TEST_CASE("/fdbserver/bulkload/truncateKey") {
+	state Key key = getKeyWithUserType("TestKey", "UserType");
+	state Key expectedKey = Tuple::makeTuple("TestKey"_sr).pack();
+
+	// Verify that truncation works.
+	state Key truncated = BlobGranuleKeyHelpers::truncateKey(key, 1, false);
+	ASSERT_EQ(truncated, expectedKey);
+
+	// No truncation with 0 offset.
+	truncated = BlobGranuleKeyHelpers::truncateKey(key, 0, false);
+	ASSERT_EQ(truncated, key);
+
+	// Snowtram aware truncation does nothing on non-snowtram keys.
+	truncated = BlobGranuleKeyHelpers::truncateKey(key, 1, true);
+	ASSERT_EQ(truncated, key);
+
+	// Snowtram aware compaction does nothing on non-data or index space keys
+	state Tuple snowtramNonDataIndexTuple = Tuple::makeTuple(/*table id=*/1,
+	                                                         /*table incarnation=*/2,
+	                                                         /*space enum */ 1,
+	                                                         "TestKey"_sr,
+	                                                         Tuple::UserTypeStr(0x41, "UserTypeStr"_sr));
+	state Key fakeSnowtramKey = snowtramNonDataIndexTuple.pack();
+	truncated = BlobGranuleKeyHelpers::truncateKey(fakeSnowtramKey, 1, true);
+	ASSERT_EQ(truncated, fakeSnowtramKey);
+
+	// Snowtram aware truncation on snowtram keys.
+	state Tuple snowtramTuple =
+	    Tuple::makeTuple(/*table id=*/1, /*table incarnation=*/2, /*space enum */ 2, "TestKey"_sr);
+	expectedKey = snowtramTuple.pack();
+	fakeSnowtramKey = snowtramTuple.append(Tuple::UserTypeStr(0x41, "UserTypeStr"_sr)).pack();
+	truncated = BlobGranuleKeyHelpers::truncateKey(fakeSnowtramKey, 1, true);
+	ASSERT_EQ(truncated, expectedKey);
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/bulkload/canSplit") {
+	state Key keyA1 = getKeyWithUserType("a", "1");
+	state Key keyA5 = getKeyWithUserType("a", "5");
+
+	// Don't split the same aligned key.
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyA1, keyA5, 1, false), false);
+
+	// Don't split keys smaller or equal to than the previous, with and without truncation being enabled.
+	state Key keyB1 = getKeyWithUserType("b", "1");
+	state Key keyB5 = getKeyWithUserType("b", "5");
+	for (bool truncateOffset : { 0, 1 }) {
+		ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyB1, keyA5, truncateOffset, false), false);
+		ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyB5, keyA1, truncateOffset, false), false);
+		ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyA5, keyA5, truncateOffset, false), false);
+	}
+
+	// Allow splitting if truncated next key > previous.
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyA5, keyB1, 1, false), true);
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyA1, keyB5, 1, false), true);
+
+	// Allow splitting unaligned keys if truncation is disabled.
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit(keyB1, keyB5, 0, false), true);
+
+	// Raw key comparison if truncation is disabled.
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit("abc"_sr, "abc1"_sr, 0, false), true);
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit("abc1"_sr, "abc"_sr, 0, false), false);
+	ASSERT_EQ(BlobGranuleKeyHelpers::canSplit("abc"_sr, "abc"_sr, 0, false), false);
+
+	return Void();
 }
