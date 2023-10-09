@@ -3409,6 +3409,8 @@ TEST_CASE("/fdbserver/clustercontroller/updateRecoveredWorkers") {
 }
 
 TEST_CASE("/fdbserver/clustercontroller/getDegradationInfo") {
+	IKnobCollection::getMutableGlobalKnobCollection().setKnob("cc_degraded_peer_degree_to_exclude",
+	                                                          KnobValueRef::create(int{ 3 }));
 	// Create a testing ClusterControllerData. Most of the internal states do not matter in this test.
 	ClusterControllerData data(ClusterControllerFullInterface(),
 	                           LocalityData(),
