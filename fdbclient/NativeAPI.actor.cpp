@@ -5901,19 +5901,24 @@ ACTOR Future<Void> getRangeStream(Reference<TransactionState> trState,
 		state KeyRangeLocationInfo locationInfo = wait(getKeyLocation(
 		    trState, reverse ? e : b, &StorageServerInterface::getKeyValuesStream, reverse, UseTenant::True));
 		state KeyRange shardIntersection = intersect(locationInfo.range, KeyRangeRef(b, e));
-		state Standalone<VectorRef<KeyRef>> splitPoints =
-		    wait(getRangeSplitPoints(trState, shardIntersection, CLIENT_KNOBS->RANGESTREAM_FRAGMENT_SIZE));
 		state std::vector<KeyRange> toSend;
-		// state std::vector<Future<std::list<KeyRangeRef>::iterator>> outstandingRequests;
 
-		if (!splitPoints.empty()) {
-			toSend.push_back(KeyRange(KeyRangeRef(shardIntersection.begin, splitPoints.front()), splitPoints.arena()));
-			for (int i = 0; i < splitPoints.size() - 1; ++i) {
-				toSend.push_back(KeyRange(KeyRangeRef(splitPoints[i], splitPoints[i + 1]), splitPoints.arena()));
-			}
-			toSend.push_back(KeyRange(KeyRangeRef(splitPoints.back(), shardIntersection.end), splitPoints.arena()));
-		} else {
+		if (trState->options.disable_range_fragments) {
 			toSend.push_back(KeyRange(KeyRangeRef(shardIntersection.begin, shardIntersection.end)));
+		} else {
+			state Standalone<VectorRef<KeyRef>> splitPoints =
+			    wait(getRangeSplitPoints(trState, shardIntersection, CLIENT_KNOBS->RANGESTREAM_FRAGMENT_SIZE));
+
+			if (!splitPoints.empty()) {
+				toSend.push_back(
+				    KeyRange(KeyRangeRef(shardIntersection.begin, splitPoints.front()), splitPoints.arena()));
+				for (int i = 0; i < splitPoints.size() - 1; ++i) {
+					toSend.push_back(KeyRange(KeyRangeRef(splitPoints[i], splitPoints[i + 1]), splitPoints.arena()));
+				}
+				toSend.push_back(KeyRange(KeyRangeRef(splitPoints.back(), shardIntersection.end), splitPoints.arena()));
+			} else {
+				toSend.push_back(KeyRange(KeyRangeRef(shardIntersection.begin, shardIntersection.end)));
+			}
 		}
 
 		state int idx = 0;
@@ -7688,6 +7693,10 @@ void Transaction::setOption(FDBTransactionOptions::Option option, Optional<Strin
 
 	case FDBTransactionOptions::PREFER_LOCAL_STORAGE_SERVER:
 		trState->options.preferLocalStorageServer = true;
+		break;
+
+	case FDBTransactionOptions::DISABLE_RANGE_FRAGMENTS:
+		trState->options.disable_range_fragments = true;
 		break;
 
 	case FDBTransactionOptions::AUTHORIZATION_TOKEN:

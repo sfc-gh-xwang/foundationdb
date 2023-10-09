@@ -8288,6 +8288,10 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 			if (SERVER_KNOBS->DD_FETCHKEYS_WITH_LOCALITY) {
 				tr.setOption(FDBTransactionOptions::PREFER_LOCAL_STORAGE_SERVER);
 			}
+			// If true, don't further partition a range into 1MB of fragments.
+			if (SERVER_KNOBS->DD_FETCHKEYS_DISABLE_RANGE_FRAGMENTS) {
+				tr.setOption(FDBTransactionOptions::DISABLE_RANGE_FRAGMENTS);
+			}
 			tr.trState->readOptions = readOptions;
 			tr.trState->taskID = TaskPriority::FetchKeys;
 
