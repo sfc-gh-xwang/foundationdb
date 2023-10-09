@@ -859,7 +859,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( TRACK_TENANT_GROUP_THROUGHPUT,                       false );
 	init( USE_CLIENT_THROUGHPUT_TRACKER,                       false ); BUGGIFY_KNOB(USE_CLIENT_THROUGHPUT_TRACKER, randomize && BUGGIFY, true);
 	init( AUTO_TAG_THROTTLE_TARGET_SS_BPS,                     100e6 );
-	init( AUTO_TAG_THROTTLE_SPRING_SS_BPS,                      20e6 );
+	init( AUTO_TAG_THROTTLE_SPRING_SS_BPS,                      50e6 );
 
 	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,         1.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   1.0 );
