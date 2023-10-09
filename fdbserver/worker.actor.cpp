@@ -3939,7 +3939,7 @@ TEST_CASE("/fdbserver/worker/gray_failure_detection/ping_latency_metrics/update"
 	for (index = 0; index < allProcesses.size(); index++) {
 		ISimulator::ProcessInfo* info = allProcesses[index];
 		currentProcess = g_simulator->getCurrentProcess();
-		wait(g_simulator->onProcess(info));
+		wait(g_simulator->onProcess(info, TaskPriority::DefaultYield));
 		// Randomly enable the feature
 		bool enable_health_monitor = deterministicRandom()->coinflip();
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("enable_worker_health_monitor",
@@ -3977,7 +3977,7 @@ TEST_CASE("/fdbserver/worker/gray_failure_detection/ping_latency_metrics/update"
 		}
 
 		// Change back to the beginning process
-		wait(g_simulator->onProcess(currentProcess));
+		wait(g_simulator->onProcess(currentProcess, TaskPriority::DefaultYield));
 	}
 	return Void();
 }
