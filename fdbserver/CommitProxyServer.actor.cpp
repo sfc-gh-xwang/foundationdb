@@ -2503,8 +2503,9 @@ ACTOR Future<Void> postResolution(CommitBatchContext* self) {
 		firstMessage = false;
 	}
 
-	if (self->prevVersion && self->commitVersion - self->prevVersion < SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT / 2)
+	if (self->prevVersion && self->commitVersion - self->prevVersion < SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT) {
 		debug_advanceMaxCommittedVersion(UID(), self->commitVersion); //< Is this valid?
+	}
 
 	// TraceEvent("ProxyPush", pProxyCommitData->dbgid)
 	//     .detail("PrevVersion", self->prevVersion)
@@ -2512,9 +2513,6 @@ ACTOR Future<Void> postResolution(CommitBatchContext* self) {
 	//     .detail("TransactionsSubmitted", trs.size())
 	//     .detail("TransactionsCommitted", self->commitCount)
 	//     .detail("TxsPopTo", self->msg.popTo);
-
-	if (self->prevVersion && self->commitVersion - self->prevVersion < SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT / 2)
-		debug_advanceMaxCommittedVersion(UID(), self->commitVersion);
 
 	self->commitStartTime = now();
 	pProxyCommitData->lastStartCommit = self->commitStartTime;
@@ -2625,7 +2623,7 @@ ACTOR Future<Void> reply(CommitBatchContext* self) {
 
 	state const Optional<UID>& debugID = self->debugID;
 
-	if (self->prevVersion && self->commitVersion - self->prevVersion < SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT / 2) {
+	if (self->prevVersion && self->commitVersion - self->prevVersion < SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT) {
 		//TraceEvent("CPAdvanceMinVersion", self->pProxyCommitData->dbgid).detail("PrvVersion", self->prevVersion).detail("CommitVersion", self->commitVersion).detail("Master", self->pProxyCommitData->master.id().toString()).detail("TxSize", self->trs.size());
 		debug_advanceMinCommittedVersion(UID(), self->commitVersion);
 	}

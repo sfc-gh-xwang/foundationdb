@@ -4378,9 +4378,13 @@ ACTOR Future<Version> watchValue(Database cx, Reference<const WatchParameters> p
 			// than the current update loop)
 			Version v = wait(waitForCommittedVersion(cx, resp.version, span.context));
 
-			// False if there is a master failure between getting the response and getting the committed version,
-			// Dependent on SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT
-			if (v - resp.version < 50000000) {
+			// False if there is a master failure between getting the response
+			// and getting the committed version, Dependent on
+			// SERVER_KNOBS->MAX_VERSIONS_IN_FLIGHT. Set to around half of the
+			// max versions in flight in an attempt to reliably recognize when
+			// a recovery has occurred, but avoid triggering if it just takes a
+			// little while to get the committed version.
+			if (v - resp.version < 5'000'000) {
 				return resp.version;
 			}
 			ver = v;
