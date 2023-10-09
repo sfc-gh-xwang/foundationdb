@@ -34,11 +34,43 @@ Optional<double> LimitingThrottlingRatioCalculator::getRatio(double throughputVa
 	return result;
 }
 
-LimitingThrottlingRatioCalculator LimitingThrottlingRatioCalculator::fromKnobs() {
-	return LimitingThrottlingRatioCalculator(SERVER_KNOBS->AUTO_TAG_THROTTLE_TARGET_SS_BPS,
-	                                         SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_SS_BPS,
-	                                         SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES,
-	                                         SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER,
-	                                         SERVER_KNOBS->AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS,
-	                                         SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_DURABILITY_LAG);
+LimitingThrottlingRatioCalculator::Builder::Builder()
+  : throughputTargetBps(SERVER_KNOBS->AUTO_TAG_THROTTLE_TARGET_SS_BPS),
+    throughputSpringBps(SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_SS_BPS),
+    storageTargetBytes(SERVER_KNOBS->AUTO_TAG_THROTTLE_STORAGE_QUEUE_BYTES),
+    storageSpringBytes(SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_BYTES_STORAGE_SERVER),
+    targetDurabilityLag(SERVER_KNOBS->AUTO_TAG_THROTTLE_DURABILITY_LAG_VERSIONS),
+    springDurabilityLag(SERVER_KNOBS->AUTO_TAG_THROTTLE_SPRING_DURABILITY_LAG) {}
+
+LimitingThrottlingRatioCalculator::Builder& LimitingThrottlingRatioCalculator::Builder::setThroughputParameters(
+    double targetBps,
+    double springBps) {
+	throughputTargetBps = targetBps;
+	throughputSpringBps = springBps;
+	return *this;
+}
+
+LimitingThrottlingRatioCalculator::Builder& LimitingThrottlingRatioCalculator::Builder::setStorageQueueParameters(
+    int64_t targetBytes,
+    int64_t springBytes) {
+	storageTargetBytes = targetBytes;
+	storageSpringBytes = springBytes;
+	return *this;
+}
+
+LimitingThrottlingRatioCalculator::Builder& LimitingThrottlingRatioCalculator::Builder::setDurabilityLagParameters(
+    int64_t targetVersions,
+    int64_t springVersions) {
+	targetDurabilityLag = targetVersions;
+	springDurabilityLag = springVersions;
+	return *this;
+}
+
+LimitingThrottlingRatioCalculator LimitingThrottlingRatioCalculator::Builder::build() const {
+	return LimitingThrottlingRatioCalculator(throughputTargetBps,
+	                                         throughputSpringBps,
+	                                         storageTargetBytes,
+	                                         storageSpringBytes,
+	                                         targetDurabilityLag,
+	                                         springDurabilityLag);
 }

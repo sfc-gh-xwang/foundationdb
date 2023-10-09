@@ -41,6 +41,21 @@ struct LimitingThrottlingRatioCalculator {
 	    durabilityLag(targetDurabilityLag, springDurabilityLag) {}
 
 public:
+	class Builder {
+		double throughputTargetBps;
+		double throughputSpringBps;
+		int64_t storageTargetBytes;
+		int64_t storageSpringBytes;
+		int64_t targetDurabilityLag;
+		int64_t springDurabilityLag;
+
+	public:
+		Builder();
+		Builder& setThroughputParameters(double targetBps, double springBps);
+		Builder& setStorageQueueParameters(int64_t targetBytes, int64_t springBytes);
+		Builder& setDurabilityLagParameters(int64_t targetVersions, int64_t springVersions);
+		LimitingThrottlingRatioCalculator build() const;
+	};
+
 	Optional<double> getRatio(double throughputValue, double storageQueueValue, double durabilityLagValue) const;
-	static LimitingThrottlingRatioCalculator fromKnobs();
 };

@@ -257,11 +257,14 @@ class TestEnv {
 		}
 	}
 
-	TestEnv(int numSS, int throughputPerSS, int maxFallingBehind)
+	TestEnv(int numSS,
+	        int throughputPerSS,
+	        int maxFallingBehind,
+	        LimitingThrottlingRatioCalculator const& limitingThrottlingRatioCalculator)
 	  : quotaThrottler(UID{},
 	                   maxFallingBehind,
 	                   /*limitingThreshold=*/CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
-	                   LimitingThrottlingRatioCalculator::fromKnobs()),
+	                   limitingThrottlingRatioCalculator),
 	    storageServers(numSS, throughputPerSS) {
 		if (SERVER_KNOBS->USE_CLIENT_THROUGHPUT_TRACKER) {
 			clientThroughputTracker = RKClientThroughputTracker(/*expirationCheckInterval=*/5.0);
@@ -273,8 +276,10 @@ public:
 		int numSS{ 10 };
 		int pagesPerSecondPerSS{ 100 };
 		int maxFallingBehind{ 0 };
+		LimitingThrottlingRatioCalculator limitingThrottlingRatioCalculator;
 
 	public:
+		Builder() : limitingThrottlingRatioCalculator(LimitingThrottlingRatioCalculator::Builder().build()) {}
 		Builder& setNumSS(int numSS) {
 			this->numSS = numSS;
 			return *this;
@@ -287,7 +292,14 @@ public:
 			this->maxFallingBehind = maxFallingBehind;
 			return *this;
 		}
-		TestEnv build() { return TestEnv(numSS, pagesPerSecondPerSS, maxFallingBehind); }
+		Builder& setLimitingThrottlingRatioCalculator(
+		    LimitingThrottlingRatioCalculator const& limitingThrottlingRatioCalculator) {
+			this->limitingThrottlingRatioCalculator = limitingThrottlingRatioCalculator;
+			return *this;
+		}
+		TestEnv build() {
+			return TestEnv(numSS, pagesPerSecondPerSS, maxFallingBehind, limitingThrottlingRatioCalculator);
+		}
 	};
 
 	Optional<double> getTPSLimit(ThrottlingId const& throttlingId) {

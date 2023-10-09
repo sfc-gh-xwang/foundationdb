@@ -64,7 +64,7 @@ ACTOR static Future<Void> benchQuotaThrottlerActor(benchmark::State* benchState)
 	state QuotaThrottler quotaThrottler(UID{},
 	                                    SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND,
 	                                    SERVER_KNOBS->GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,
-	                                    LimitingThrottlingRatioCalculator::fromKnobs());
+	                                    LimitingThrottlingRatioCalculator::Builder().build());
 	wait(simulateWorkload(&quotaThrottler, &serverThroughputTracker, &metricsTracker, numThrottlingIds));
 	MockRKThroughputQuotaCache quotaCache = getQuotaCache(numThrottlingIds);
 	while (benchState->KeepRunning()) {

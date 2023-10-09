@@ -218,7 +218,7 @@ Ratekeeper::Ratekeeper(UID id,
     quotaThrottler(id,
                    SERVER_KNOBS->MAX_MACHINES_FALLING_BEHIND,
                    SERVER_KNOBS->GLOBAL_TAG_THROTTLING_LIMITING_THRESHOLD,
-                   LimitingThrottlingRatioCalculator::fromKnobs()) {}
+                   LimitingThrottlingRatioCalculator::Builder().build()) {}
 
 void Ratekeeper::updateTagThrottling() {
 	serverThroughputTracker.update(metricsTracker.getStorageQueueInfo());
