@@ -53,12 +53,6 @@ public:
 	double getSmoothInputBytesRate() const { return smoothInputBytes.smoothRate(); }
 	double getVerySmoothDurableBytesRate() const { return verySmoothDurableBytes.smoothRate(); }
 
-	// Determine the ratio (limit / current throughput) for throttling based on write queue size
-	Optional<double> getTagThrottlingRatio(int64_t storageTargetBytes,
-	                                       int64_t storageSpringBytes,
-	                                       int64_t targetDurabilityLag,
-	                                       int64_t springDurabilityLag) const;
-
 	// Testing:
 public:
 	static StorageQueueInfo createTestInfo(UID id, int64_t storageQueueBytes);

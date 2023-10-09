@@ -857,6 +857,12 @@ public:
 	// to track per-throttlingId throughput. If disabled, metrics from storage
 	// servers and commit proxies will be aggregated
 	bool USE_CLIENT_THROUGHPUT_TRACKER;
+	// Target total throughput in bytes per second across all throttlingIds on
+	// an individual storage server, in bytes per second.
+	double AUTO_TAG_THROTTLE_TARGET_SS_BPS;
+	// Spring knob, in bytes per second, used to smooth enforcement
+	// of AUTO_TAG_THROTTLE_TARGET_SS_BPS
+	double AUTO_TAG_THROTTLE_SPRING_SS_BPS;
 
 	double GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME;
 	double GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME;

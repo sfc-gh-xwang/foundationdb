@@ -175,6 +175,18 @@ void RKServerThroughputTracker::update(Map<UID, StorageQueueInfo> const& sqInfos
 	cleanup(seenStorageServerIds, seenThrottlingIds);
 }
 
+double RKServerThroughputTracker::getThroughput(UID storageServerId) const {
+	auto const throttlingIdToThroughputCounters = tryGet(throughputBySS, storageServerId);
+	if (!throttlingIdToThroughputCounters) {
+		return {};
+	}
+	double result{ 0.0 };
+	for (auto const& [_, throughputCounter] : *throttlingIdToThroughputCounters) {
+		result += throughputCounter.getThroughput();
+	}
+	return result;
+}
+
 Optional<double> RKServerThroughputTracker::getThroughput(UID storageServerId, ThrottlingId const& throttlingId) const {
 	auto const throttlingIdToThroughputCounters = tryGet(throughputBySS, storageServerId);
 	if (!throttlingIdToThroughputCounters) {
