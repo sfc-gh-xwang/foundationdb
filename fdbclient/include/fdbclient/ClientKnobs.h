@@ -302,6 +302,8 @@ public:
 	// clients, then on servers. Otherwise, servers will miss mutations to the
 	// tag quota system keyspace.
 	bool USE_SIMPLE_THROUGHPUT_QUOTA_CACHE;
+	// Interval at which per-throttlingId throughput statistics are logged by the client.
+	double CLIENT_THROUGHPUT_TRACE_INTERVAL;
 
 	// Enables client-side tracking of average transaction costs. The clients will track and
 	// report the expected cost per ThrottlingID along with each GRV requests.

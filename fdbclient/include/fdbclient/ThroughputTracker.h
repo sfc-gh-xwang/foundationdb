@@ -31,14 +31,42 @@ class ThroughputTracker {
 	uint64_t throughputReportTimeouts{ 0 };
 	double startTime;
 
-	struct ThroughputSmoother {
-		HoltLinearSmoother smoother;
-		ThroughputSmoother()
-		  : smoother(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME) {}
+	struct ThroughputStatistics {
+		double lastLogged;
+
+		HoltLinearSmoother smoothReadThroughput;
+		HoltLinearSmoother smoothWriteThroughput;
+		HoltLinearSmoother smoothTransactionRate;
+
+		ThroughputStatistics()
+		  : lastLogged(0),
+		    smoothReadThroughput(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME),
+		    smoothWriteThroughput(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME,
+		                          CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME),
+		    smoothTransactionRate(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME,
+		                          CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME) {}
+
+		Optional<double> getAverageTransactionCost() const {
+			auto const throughput = smoothReadThroughput.smoothRate() + smoothWriteThroughput.smoothRate();
+			auto const transactionRate = smoothTransactionRate.smoothRate();
+
+			// In this case, throughput is extremely low, and an
+			// average cost estimation cannot be made
+			if (throughput <= 0.0 || transactionRate < 1.0) {
+				return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+			}
+			return throughput / transactionRate;
+		}
+
+		void addReadCost(uint64_t cost) { smoothReadThroughput.addDelta(cost); }
+		void addWriteCost(uint64_t cost) { smoothWriteThroughput.addDelta(cost); }
+		void addTransaction(uint64_t numTransactions) { smoothTransactionRate.addDelta(numTransactions); }
+
+		bool canLog() const { return now() - lastLogged > CLIENT_KNOBS->CLIENT_THROUGHPUT_TRACE_INTERVAL; }
+		void updateLastLogged() { lastLogged = now(); }
 	};
 
-	ThrottlingIdMap<ThroughputSmoother> smoothThroughput;
-	ThrottlingIdMap<ThroughputSmoother> smoothTransactionRate;
+	ThrottlingIdMap<ThroughputStatistics> throughputStatistics;
 
 	boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 
