@@ -10101,7 +10101,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 
 		// Processed messages from the cursor.
 		state std::vector<LogMessage> messages;
-		messages.reserve(20000);
+		messages.reserve(20000); // Arbitrary large size, enough to hold 10MB data with 500 byte KV size.
 
 		// Collect eager read keys.
 		// If encrypted mutation is encountered, we collect cipher details and fetch cipher keys, then start over.
@@ -10162,8 +10162,11 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 
 						} else {
 							double decryptionTimeV = 0;
-							MutationRef decrypted = msg.decrypt(
-							    cipherKeys.get(), cloneReader.arena(), BlobCipherMetrics::TLOG, nullptr, &decryptionTimeV);
+							MutationRef decrypted = msg.decrypt(cipherKeys.get(),
+							                                    cloneReader.arena(),
+							                                    BlobCipherMetrics::TLOG,
+							                                    nullptr,
+							                                    &decryptionTimeV);
 							messages.emplace_back(
 							    cloneCursor1->version(),
 							    MutationRefAndCipherKeys(decrypted, msg, msg.getLatestCipherKeys(*latestCipherKeys)));
