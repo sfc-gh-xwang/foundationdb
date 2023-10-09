@@ -253,6 +253,7 @@ if(WITH_PYTHON)
     add_fdb_test(TEST_FILES fast/MockDDUndesiredServer.toml)
   endif()
 
+  add_fdb_test(TEST_FILES rare/BulkLoadGenerator.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleRanges.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleRangesBypassLock.toml)
   add_fdb_test(TEST_FILES rare/BlobGranuleMergeBoundaries.toml)
