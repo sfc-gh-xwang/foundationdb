@@ -276,10 +276,10 @@ public:
 		int numSS{ 10 };
 		int pagesPerSecondPerSS{ 100 };
 		int maxFallingBehind{ 0 };
-		LimitingThrottlingRatioCalculator limitingThrottlingRatioCalculator;
+		double limitingTargetThroughput{ 100e6 };
+		double limitingSpringThroughput{ 20e6 };
 
 	public:
-		Builder() : limitingThrottlingRatioCalculator(LimitingThrottlingRatioCalculator::Builder().build()) {}
 		Builder& setNumSS(int numSS) {
 			this->numSS = numSS;
 			return *this;
@@ -292,13 +292,18 @@ public:
 			this->maxFallingBehind = maxFallingBehind;
 			return *this;
 		}
-		Builder& setLimitingThrottlingRatioCalculator(
-		    LimitingThrottlingRatioCalculator const& limitingThrottlingRatioCalculator) {
-			this->limitingThrottlingRatioCalculator = limitingThrottlingRatioCalculator;
+		Builder& setLimitingThroughputParameters(double targetBps, double springBps) {
+			this->limitingTargetThroughput = targetBps;
+			this->limitingSpringThroughput = springBps;
 			return *this;
 		}
-		TestEnv build() {
-			return TestEnv(numSS, pagesPerSecondPerSS, maxFallingBehind, limitingThrottlingRatioCalculator);
+		TestEnv build() const {
+			return TestEnv(numSS,
+			               pagesPerSecondPerSS,
+			               maxFallingBehind,
+			               LimitingThrottlingRatioCalculator::Builder()
+			                   .setThroughputParameters(limitingTargetThroughput, limitingSpringThroughput)
+			                   .build());
 		}
 	};
 
@@ -615,13 +620,35 @@ ACTOR static Future<Void> testActiveThrottling(Optional<long> totalQuotaInPages 
 	return Void();
 }
 
-TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottling") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottlingOnSQ") {
 	wait(testActiveThrottling(/*totalQuotaInPages=*/100));
 	return Void();
 }
 
-TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottlingNoQuota") {
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottlingOnSQNoQuota") {
 	wait(testActiveThrottling());
+	return Void();
+}
+
+TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottlingOnThroughput") {
+	state double targetThroughputInPagesPerSecond = 100.0;
+	state TestEnv env =
+	    TestEnv::Builder()
+	        .setMaxFallingBehind(0)
+	        .setPagesPerSecondPerSS(100000)
+	        .setLimitingThroughputParameters(targetThroughputInPagesPerSecond * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
+	                                         50.0 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE)
+	        .build();
+	auto const pagesPerTransaction = 10;
+	auto config = WorkloadConfig::Builder().setAttemptedTps(20.0).setPagesPerTransaction(pagesPerTransaction).build();
+	state Future<Void> client = env.runClient(config, { 0 });
+	auto const targetTps = targetThroughputInPagesPerSecond / pagesPerTransaction;
+	state Future<Void> monitor = monitorActor(&env, [config, targetTps](auto& env) {
+		return env.targetRateIsNear(config.getThrottlingId(), targetTps, /*shouldBeBusy=*/true) &&
+		       env.throttleCount() == 1;
+	});
+	state Future<Void> updater = env.update();
+	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
 	return Void();
 }
 
