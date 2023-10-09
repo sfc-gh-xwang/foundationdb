@@ -29,9 +29,9 @@ class ThroughputTracker {
 	uint64_t throughputReportsSent{ 0 };
 	uint64_t throughputReportErrors{ 0 };
 	uint64_t throughputReportTimeouts{ 0 };
-	double startTime;
 
 	struct ThroughputStatistics {
+		double startTime;
 		double lastLogged;
 
 		HoltLinearSmoother smoothReadThroughput;
@@ -39,7 +39,8 @@ class ThroughputTracker {
 		HoltLinearSmoother smoothTransactionRate;
 
 		ThroughputStatistics()
-		  : lastLogged(0),
+		  : startTime(now()),
+		    lastLogged(0),
 		    smoothReadThroughput(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME),
 		    smoothWriteThroughput(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME,
 		                          CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME),
@@ -47,6 +48,11 @@ class ThroughputTracker {
 		                          CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME) {}
 
 		Optional<double> getAverageTransactionCost() const {
+			// Wait until we gather enough data
+			if (now() - startTime < CLIENT_KNOBS->AVERAGE_COST_START_DELAY) {
+				return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
+			}
+
 			auto const throughput = smoothReadThroughput.smoothRate() + smoothWriteThroughput.smoothRate();
 			auto const transactionRate = smoothTransactionRate.smoothRate();
 

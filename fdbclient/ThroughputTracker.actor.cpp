@@ -54,7 +54,6 @@ public:
 }; // class ThroughputTrackersImpl
 
 Future<Void> ThroughputTracker::run(DatabaseContext& cx) {
-	startTime = now();
 	return ThroughputTrackerImpl::run(this, &cx);
 }
 
@@ -91,9 +90,6 @@ void ThroughputTracker::addTransaction(ThrottlingId const& throttlingId, uint64_
 }
 
 double ThroughputTracker::getAverageTransactionCost(ThrottlingId const& throttlingId) const {
-	if (now() - startTime < CLIENT_KNOBS->AVERAGE_COST_START_DELAY) {
-		return CLIENT_KNOBS->DEFAULT_EXPECTED_TRANSACTION_COST;
-	}
 
 	auto throughputStat = throughputStatistics.find(throttlingId);
 
