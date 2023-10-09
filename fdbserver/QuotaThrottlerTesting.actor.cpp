@@ -578,10 +578,9 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuotaBusyId") {
 // Target is adjusted to 50/6 transactions per second, to match the total capacity all storage servers.
 // Throttling ID should be reported as busy.
 ACTOR static Future<Void> testActiveThrottling(Optional<long> totalQuotaInPages = Optional<long>()) {
-	state TestEnv env = TestEnv::Builder().setNumSS(10).setPagesPerSecondPerSS(5.0).build();
-	// FIXME: Declaring numSS and pagesPerSecondPerSS here is a hack to satisfy the flow compiler
-	int const numSS = 10;
-	double const pagesPerSecondPerSS = 5.0;
+	state int numSS = 10;
+	state double pagesPerSecondPerSS = 5.0;
+	state TestEnv env = TestEnv::Builder().setNumSS(numSS).setPagesPerSecondPerSS(pagesPerSecondPerSS).build();
 	auto configBuilder = WorkloadConfig::Builder().setAttemptedTps(10.0);
 	if (totalQuotaInPages.present()) {
 		configBuilder.setTotalQuotaInPages(totalQuotaInPages.get());
@@ -592,9 +591,10 @@ ACTOR static Future<Void> testActiveThrottling(Optional<long> totalQuotaInPages 
 		env.setQuota(config);
 	}
 	state Future<Void> client = env.runClient(config);
-	state Future<Void> monitor = monitorActor(&env, [numSS, pagesPerSecondPerSS, config](auto& env) {
+	auto const totalSSCapacity = numSS * pagesPerSecondPerSS;
+	state Future<Void> monitor = monitorActor(&env, [totalSSCapacity, config](auto& env) {
 		return env.targetRateIsNear(config.getThrottlingId(),
-		                            numSS * pagesPerSecondPerSS / config.getPagesPerTransaction(),
+		                            totalSSCapacity / config.getPagesPerTransaction(),
 		                            /*shouldBeBusy=*/true) &&
 		       env.throttleCount() == 1;
 	});
@@ -620,10 +620,9 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/ActiveThrottlingNoQuota") {
 // storage servers. The two tags' total target rate will stabilize at 50 / 6.0
 // transactions per second.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling1") {
-	state TestEnv env = TestEnv::Builder().setNumSS(10).setPagesPerSecondPerSS(5).build();
-	// FIXME: Declaring numSS and pagesPerSecondPerSS here is a hack to satisfy the flow compiler
-	int const numSS = 10;
-	int const pagesPerSecondPerSS = 5;
+	state int numSS = 10;
+	state int pagesPerSecondPerSS = 5;
+	state TestEnv env = TestEnv::Builder().setNumSS(numSS).setPagesPerSecondPerSS(pagesPerSecondPerSS).build();
 	auto const config1 = WorkloadConfig::Builder()
 	                         .setThrottlingId(ThrottlingIdRef::fromTag("sampleTag1"_sr))
 	                         .setTotalQuotaInPages(50)
@@ -640,8 +639,9 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling1") {
 	futures.push_back(env.runClient(config1));
 	futures.push_back(env.runClient(config2));
 	ASSERT_EQ(config1.getPagesPerTransaction(), config2.getPagesPerTransaction());
-	state Future<Void> monitor = monitorActor(&env, [numSS, pagesPerSecondPerSS, config1, config2](auto& env) {
-		return env.totalTargetRateIsNear((numSS * pagesPerSecondPerSS) / config1.getPagesPerTransaction()) &&
+	auto const totalSSCapacity = numSS * pagesPerSecondPerSS;
+	state Future<Void> monitor = monitorActor(&env, [totalSSCapacity, config1, config2](auto& env) {
+		return env.totalTargetRateIsNear(totalSSCapacity / config1.getPagesPerTransaction()) &&
 		       env.throttleCount() == 2 &&
 		       // Both tags should be busy
 		       (!isBusyThrottlingIdsTrackingEnabled() || (env.isThrottlingIdBusy(config1.getThrottlingId()) &&
@@ -659,9 +659,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling1") {
 // Target rates for both tags are adjusted to 50/6 transactions per second to match the throughput
 //   that the busiest server can handle.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling2") {
-	state TestEnv env = TestEnv::Builder().setNumSS(3).setPagesPerSecondPerSS(50).build();
-	// FIXME: Declaring pagesPerSecondPerSS here is a hack to satisfy the flow compiler
-	int const pagesPerSecondPerSS = 50;
+	state int pagesPerSecondPerSS = 50;
+	state TestEnv env = TestEnv::Builder().setNumSS(3).setPagesPerSecondPerSS(pagesPerSecondPerSS).build();
 	auto config1 = WorkloadConfig::Builder()
 	                   .setThrottlingId(ThrottlingIdRef::fromTag("sampleTag1"_sr))
 	                   .setAttemptedTps(10.0)
@@ -676,8 +675,9 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling2") {
 	futures.push_back(env.runClient(config1, { 0, 1 }));
 	futures.push_back(env.runClient(config2, { 1, 2 }));
 	ASSERT_EQ(config1.getPagesPerTransaction(), config2.getPagesPerTransaction());
-	state Future<Void> monitor = monitorActor(&env, [pagesPerSecondPerSS, config1, config2](auto& env) {
-		return env.totalTargetRateIsNear((2 * pagesPerSecondPerSS) / config1.getPagesPerTransaction()) &&
+	auto const totalTargetRatePagesPerSecond = 2 * pagesPerSecondPerSS;
+	state Future<Void> monitor = monitorActor(&env, [totalTargetRatePagesPerSecond, config1, config2](auto& env) {
+		return env.totalTargetRateIsNear(totalTargetRatePagesPerSecond / config1.getPagesPerTransaction()) &&
 		       env.throttleCount() == 2 &&
 		       // Both tags should be busy
 		       (!isBusyThrottlingIdsTrackingEnabled() || (env.isThrottlingIdBusy(config1.getThrottlingId()) &&
@@ -695,9 +695,8 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling2") {
 // servers. Target rates adjust to 50/6 and 100/6 transactions per second for the two clients, based on the capacities
 // of the storage servers being accessed.
 TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling3") {
-	state TestEnv env = TestEnv::Builder().setNumSS(3).setPagesPerSecondPerSS(50).build();
-	// FIXME: Declaring pagesPerSecondPerSS here is a hack to satisfy the flow compiler
-	int const pagesPerSecondPerSS = 50;
+	state int pagesPerSecondPerSS = 50;
+	state TestEnv env = TestEnv::Builder().setNumSS(3).setPagesPerSecondPerSS(pagesPerSecondPerSS).build();
 	auto config1 = WorkloadConfig::Builder()
 	                   .setThrottlingId(ThrottlingIdRef::fromTag("sampleTag1"_sr))
 	                   .setAttemptedTps(10.0)
@@ -711,12 +710,13 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/MultiTagActiveThrottling3") {
 	std::vector<Future<Void>> futures;
 	futures.push_back(env.runClient(config1, { 0 }));
 	futures.push_back(env.runClient(config2, { 1, 2 }));
-	state Future<Void> monitor = monitorActor(&env, [pagesPerSecondPerSS, config1, config2](auto& env) {
+	auto const _pagesPerSecondPerSS = pagesPerSecondPerSS;
+	state Future<Void> monitor = monitorActor(&env, [_pagesPerSecondPerSS, config1, config2](auto& env) {
 		return env.targetRateIsNear(config1.getThrottlingId(),
-		                            pagesPerSecondPerSS / config1.getPagesPerTransaction(),
+		                            _pagesPerSecondPerSS / config1.getPagesPerTransaction(),
 		                            /*shouldBeBusy=*/true) &&
 		       env.targetRateIsNear(config2.getThrottlingId(),
-		                            2 * pagesPerSecondPerSS / config2.getPagesPerTransaction(),
+		                            2 * _pagesPerSecondPerSS / config2.getPagesPerTransaction(),
 		                            /*shouldBeBusy=*/false) &&
 		       env.throttleCount() == 1;
 	});
