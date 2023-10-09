@@ -355,7 +355,7 @@ public:
 	                                                               UseProvisionalProxies useProvisionalProxies,
 	                                                               Version version) override;
 
-	int getRangeSize(KeyRangeRef const& range);
+	int getRangeSize(KeyRangeRef const& range, bool countRangeRead = false);
 
 	// data ops - the key is not accurate, only the shard the key locate in matters.
 

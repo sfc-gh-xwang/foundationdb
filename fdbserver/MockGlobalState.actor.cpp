@@ -152,7 +152,6 @@ public:
 	ACTOR static Future<Void> waitFetchKeysFinish(MockStorageServer* self, MockStorageServer::FetchKeysParams params) {
 		state TraceInterval interval("MockFetchKeys");
 		// between each chunk delay for random time, and finally set the fetchComplete signal.
-		ASSERT(params.totalRangeBytes > 0);
 		state int chunkCount = std::ceil(params.totalRangeBytes * 1.0 / SERVER_KNOBS->FETCH_BLOCK_BYTES);
 		state int64_t currentTotal = 0;
 		state Key lastKey = params.keys.begin;
@@ -862,24 +861,8 @@ Future<Void> MockGlobalState::runMockServer(const UID& id) {
 	return allServers.at(id)->run();
 }
 
-int MockGlobalState::getRangeSize(KeyRangeRef const& range) {
-	// FIXME: return realistic number
-	return SERVER_KNOBS->MIN_SHARD_BYTES;
-}
-
-int64_t MockGlobalState::get(KeyRef const& key) {
-	auto ids = shardMapping->getSourceServerIdsFor(key);
-	int64_t randomBytes = 0;
-	if (deterministicRandom()->random01() > emptyProb) {
-		randomBytes = deterministicRandom()->randomInt64(minByteSize, maxByteSize + 1);
-	}
-	// randomly choose 1 server
-	auto id = deterministicRandom()->randomChoice(ids);
-	allServers.at(id)->get(key, randomBytes);
-	return randomBytes;
-}
-
-int64_t MockGlobalState::getRange(KeyRangeRef const& range) {
+// if countRangeRead is true, this range size calculation will increase the read range samples
+int MockGlobalState::getRangeSize(KeyRangeRef const& range, bool countRangeRead) {
 	auto ranges = shardMapping->intersectingRanges(range);
 	int64_t totalSize = 0;
 	KeyRef begin, end;
@@ -896,9 +879,29 @@ int64_t MockGlobalState::getRange(KeyRangeRef const& range) {
 		auto id = deterministicRandom()->randomChoice(ids);
 		int64_t beginSize = deterministicRandom()->randomInt64(0, SERVER_KNOBS->MIN_SHARD_BYTES),
 		        endSize = deterministicRandom()->randomInt64(0, SERVER_KNOBS->MIN_SHARD_BYTES);
-		totalSize += allServers.at(id)->getRange(KeyRangeRef(begin, end), beginSize, endSize);
+		if (countRangeRead) {
+			totalSize += allServers.at(id)->getRange(KeyRangeRef(begin, end), beginSize, endSize);
+		} else {
+			totalSize += allServers.at(id)->sumRangeSize(KeyRangeRef(begin, end));
+		}
 	}
 	return totalSize;
+}
+
+int64_t MockGlobalState::get(KeyRef const& key) {
+	auto ids = shardMapping->getSourceServerIdsFor(key);
+	int64_t randomBytes = 0;
+	if (deterministicRandom()->random01() > emptyProb) {
+		randomBytes = deterministicRandom()->randomInt64(minByteSize, maxByteSize + 1);
+	}
+	// randomly choose 1 server
+	auto id = deterministicRandom()->randomChoice(ids);
+	allServers.at(id)->get(key, randomBytes);
+	return randomBytes;
+}
+
+int64_t MockGlobalState::getRange(KeyRangeRef const& range) {
+	return getRangeSize(range, true);
 }
 
 int64_t MockGlobalState::set(KeyRef const& key, int valueSize, bool insert) {
