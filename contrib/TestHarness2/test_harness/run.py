@@ -644,7 +644,9 @@ class TestRunner:
         if config.clean_up:
             if config.retain_trace:
                 # Only delete simfdb, leaving trace file intact directly under run_dir / self.uid
-                shutil.rmtree(config.run_dir / str(self.uid) / "simfdb")
+                shutil.rmtree(
+                    config.run_dir / str(self.uid) / "simfdb", ignore_errors=True
+                )
             else:
                 shutil.rmtree(config.run_dir / str(self.uid))
         return success
