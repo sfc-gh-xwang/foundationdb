@@ -6688,6 +6688,7 @@ void TransactionOptions::clear() {
 	rawAccess = false;
 	bypassStorageQuota = false;
 	preferLocalStorageServer = false;
+	disable_range_fragments = false;
 }
 
 TransactionOptions::TransactionOptions() {
