@@ -549,18 +549,8 @@ struct GetKeyValuesStreamRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar,
-		           begin,
-		           end,
-		           version,
-		           limit,
-		           limitBytes,
-		           throttlingTag,
-		           reply,
-		           spanContext,
-		           tenantInfo,
-		           options,
-		           arena);
+		serializer(
+		    ar, begin, end, version, limit, limitBytes, throttlingTag, reply, spanContext, tenantInfo, options, arena);
 	}
 };
 
@@ -612,8 +602,7 @@ struct GetKeyRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(
-		    ar, sel, version, throttlingTag, reply, spanContext, tenantInfo, options, arena);
+		serializer(ar, sel, version, throttlingTag, reply, spanContext, tenantInfo, options, arena);
 	}
 };
 
