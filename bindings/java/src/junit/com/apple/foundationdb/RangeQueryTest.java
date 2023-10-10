@@ -170,36 +170,6 @@ class RangeQueryTest {
 			}
 
 			@Override
-			public CompletableFuture<byte[]> startBulkLoad(byte[] beginKey, byte[] endKey, Executor e) {
-				throw new UnsupportedOperationException("Unimplemented method 'startBulkLoad'");
-			}
-
-			@Override
-			public CompletableFuture<Void> abortBulkLoad(byte[] bulkLoadId, Executor e) {
-				throw new UnsupportedOperationException("Unimplemented method 'abortBulkLoad'");
-			}
-
-			@Override
-			public CompletableFuture<Void> cleanupBulkLoad(byte[] bulkLoadId, Executor e) {
-				throw new UnsupportedOperationException("Unimplemented method 'cleanupBulkLoad'");
-			}
-
-			@Override
-			public CompletableFuture<Void> waitBulkLoadComplete(byte[] bulkLoadId, Executor e) {
-				throw new UnsupportedOperationException("Unimplemented method 'waitBulkLoadComplete'");
-			}
-
-			@Override
-			public CompletableFuture<KeyArrayResult> listBulkLoads(byte[] beginKey, byte[] endKey, Executor e) {
-				throw new UnsupportedOperationException("Unimplemented method 'listBulkLoads'");
-			}
-
-			@Override
-			public CompletableFuture<BulkLoadStatus> getBulkLoadStatus(byte[] bulkLoadId, Executor e) {
-				throw new UnsupportedOperationException("Unimplemented method 'getBulkLoadStatus'");
-			}
-
-			@Override
 			public <T> T read(Function<? super ReadTransaction, T> retryable, Executor e) {
 				throw new UnsupportedOperationException("Unimplemented method 'read'");
 			}
