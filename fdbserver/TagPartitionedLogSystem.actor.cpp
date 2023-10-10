@@ -1999,44 +1999,6 @@ ACTOR Future<Void> TagPartitionedLogSystem::getDurableVersionChanged(LogLockInfo
 	return Void();
 }
 
-// If VERSION_VECTOR_UNICAST is enabled, one tLog's DV may advance beyond the min(DV) over all tLogs.
-// This function finds the highest recoverable version for each tLog group over all log groups.
-// All prior versions to the chosen RV must also be recoverable.
-// TODO: unit tests to stress UNICAST
-Version getRecoverVersionUnicast(std::vector<std::tuple<int, std::vector<TLogLockResult>>>& logGroupResults,
-                                 Version minEnd) {
-	Version minLogGroup = std::numeric_limits<Version>::max();
-	for (auto& logGroupResult : logGroupResults) {
-		std::unordered_map<Version, int> versionRepCount;
-		std::map<Version, int> versionTLogCount;
-		int replicationFactor = std::get<0>(logGroupResult);
-		for (auto& tLogResult : std::get<1>(logGroupResult)) {
-			bool logGroupCandidate = false;
-			for (auto& unknownCommittedVersion : tLogResult.unknownCommittedVersions) {
-				Version k = std::get<0>(unknownCommittedVersion);
-				if (k > minEnd) {
-					versionRepCount[k]++;
-					versionTLogCount[k] = std::get<1>(unknownCommittedVersion);
-					logGroupCandidate = true;
-				}
-			}
-			if (!logGroupCandidate) {
-				return minEnd;
-			}
-		}
-		Version minTLogs = minEnd;
-		for (auto const& [version, tLogCount] : versionTLogCount) {
-			if (versionRepCount[version] >= tLogCount - replicationFactor + 1) {
-				minTLogs = version;
-			} else {
-				break;
-			}
-		}
-		minLogGroup = std::min(minLogGroup, minTLogs);
-	}
-	return minLogGroup;
-}
-
 ACTOR Future<Void> TagPartitionedLogSystem::epochEnd(Reference<AsyncVar<Reference<ILogSystem>>> outLogSystem,
                                                      UID dbgid,
                                                      DBCoreState prevState,
