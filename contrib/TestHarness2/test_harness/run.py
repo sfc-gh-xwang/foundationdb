@@ -641,12 +641,12 @@ class TestRunner:
         )
         test_files = self.test_picker.choose_test()
         success = self.run_tests(test_files, seed, self.test_picker)
-        if config.clean_up:
-            if config.retain_trace:
-                # Only delete simfdb, leaving trace file intact directly under run_dir / self.uid
+        if config.clean_up != "none":
+            if config.clean_up == "simfdb":
+                # Only delete simfdb, leaving trace and any artifacts (e.g. core dumps) intact directly under self.run_dir / self.uid
                 shutil.rmtree(
                     config.run_dir / str(self.uid) / "simfdb", ignore_errors=True
                 )
-            else:
+            else:  # all
                 shutil.rmtree(config.run_dir / str(self.uid))
         return success

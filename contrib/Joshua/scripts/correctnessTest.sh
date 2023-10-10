@@ -3,4 +3,4 @@
 # Simulation currently has memory leaks. We need to investigate before we can enable leak detection in joshua.
 export ASAN_OPTIONS="detect_leaks=0"
 
-python3 -m test_harness.app -s ${JOSHUA_SEED}
+python3 -m test_harness.app -s ${JOSHUA_SEED} --clean-up simfdb
