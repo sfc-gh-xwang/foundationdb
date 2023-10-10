@@ -348,7 +348,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( TENANT_BALANCER_REQUEST_TIMEOUT,             20 );
 
 	// Bulk Loading
-	init( ALLOW_BULK_LOADS,                          true );
+	init( ALLOW_BULK_LOADS,                         false );
 	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );
 	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); BUGGIFY_KNOB(BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10000000));
 	init( BULK_LOAD_STORAGE_RESERVATION_ENABLED, 	false ); BUGGIFY_KNOB(BULK_LOAD_STORAGE_RESERVATION_ENABLED, randomize && BUGGIFY, deterministicRandom()->coinflip());

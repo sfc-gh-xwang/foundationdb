@@ -48,7 +48,6 @@ set(JUNIT_RESOURCES
 set(JAVA_INTEGRATION_TESTS
   src/integration/com/apple/foundationdb/BasicMultiClientIntegrationTest.java
   src/integration/com/apple/foundationdb/BlobGranuleIntegrationTest.java
-  src/integration/com/apple/foundationdb/BulkLoadIntegrationTest.java
   src/integration/com/apple/foundationdb/CycleMultiClientIntegrationTest.java
   src/integration/com/apple/foundationdb/DirectoryTest.java
   src/integration/com/apple/foundationdb/FutureIntegrationTest.java
