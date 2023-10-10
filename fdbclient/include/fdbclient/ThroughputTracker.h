@@ -29,16 +29,50 @@ class ThroughputTracker {
 	uint64_t throughputReportsSent{ 0 };
 	uint64_t throughputReportErrors{ 0 };
 	uint64_t throughputReportTimeouts{ 0 };
-	double startTime;
 
-	struct ThroughputSmoother {
-		HoltLinearSmoother smoother;
-		ThroughputSmoother()
-		  : smoother(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME) {}
+	struct ThroughputStatistics {
+		double startTime;
+		double lastUpdate;
+		double lastLogged;
+
+		HoltLinearSmoother smoothReadThroughput;
+		HoltLinearSmoother smoothWriteThroughput;
+		HoltLinearSmoother smoothTransactionRate;
+
+		ThroughputStatistics()
+		  : startTime(now()),
+		    lastUpdate(now()),
+		    lastLogged(now()),
+
+		    smoothReadThroughput(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME, CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME),
+		    smoothWriteThroughput(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME,
+		                          CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME),
+		    smoothTransactionRate(CLIENT_KNOBS->AVERAGE_COST_FOLDING_TIME,
+		                          CLIENT_KNOBS->AVERAGE_COST_RATE_FOLDING_TIME) {}
+
+		Optional<double> getAverageTransactionCost() const;
+		void addReadCost(uint64_t cost) {
+			lastUpdate = now();
+			smoothReadThroughput.addDelta(cost);
+		}
+		void addWriteCost(uint64_t cost) {
+			lastUpdate = now();
+			smoothWriteThroughput.addDelta(cost);
+		}
+		void addTransaction(uint64_t numTransactions) {
+			lastUpdate = now();
+			smoothTransactionRate.addDelta(numTransactions);
+		}
+
+		bool canLog() const { return now() - lastLogged > CLIENT_KNOBS->CLIENT_THROUGHPUT_TRACE_INTERVAL; }
+		void updateLastLogged() { lastLogged = now(); }
+
+		bool recentTransactionsAdded() const {
+			return now() - lastUpdate < CLIENT_KNOBS->CLIENT_THROUGHPUT_TAG_EXPIRE_AFTER;
+		}
 	};
 
-	ThrottlingIdMap<ThroughputSmoother> smoothThroughput;
-	ThrottlingIdMap<ThroughputSmoother> smoothTransactionRate;
+	ThrottlingIdMap<ThroughputStatistics> throughputStatistics;
 
 	boost::unordered::unordered_flat_set<ThrottlingId> busyThrottlingIds;
 
@@ -47,6 +81,7 @@ public:
 	void addReadCost(ThrottlingId const&, uint64_t cost);
 	void addWriteCost(ThrottlingId const&, uint64_t cost);
 	void addTransaction(ThrottlingId const&, uint64_t numTransactions);
+	void removeExpiredThrottlingIds();
 	double getAverageTransactionCost(ThrottlingId const&) const;
 	bool isThrottlingIdBusy(ThrottlingId const&) const;
 	uint64_t getThroughputReportsSent() const;

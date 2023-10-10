@@ -289,66 +289,6 @@ class FDBDatabase extends NativeObjectWrapper implements Database, OptionConsume
 	}
 
 	@Override
-	public CompletableFuture<byte[]> startBulkLoad(byte[] beginKey, byte[] endKey, Executor e) {
-		pointerReadLock.lock();
-		try {
-			return new FutureBulkLoadId(Database_startBulkLoad(getPtr(), beginKey, endKey), e);
-		} finally {
-			pointerReadLock.unlock();
-		}
-	}
-
-	@Override
-	public CompletableFuture<Void> abortBulkLoad(byte[] bulkLoadId, Executor e) {
-		pointerReadLock.lock();
-		try {
-			return new FutureVoid(Database_abortBulkLoad(getPtr(), bulkLoadId), e);
-		} finally {
-			pointerReadLock.unlock();
-		}
-	}
-
-	@Override
-	public CompletableFuture<Void> cleanupBulkLoad(byte[] bulkLoadId, Executor e) {
-		pointerReadLock.lock();
-		try {
-			return new FutureVoid(Database_cleanupBulkLoad(getPtr(), bulkLoadId), e);
-		} finally {
-			pointerReadLock.unlock();
-		}
-	}
-
-	@Override
-	public CompletableFuture<Void> waitBulkLoadComplete(byte[] bulkLoadId, Executor e) {
-		pointerReadLock.lock();
-		try {
-			return new FutureVoid(Database_waitBulkLoadComplete(getPtr(), bulkLoadId), e);
-		} finally {
-			pointerReadLock.unlock();
-		}
-	}
-
-	@Override
-	public CompletableFuture<KeyArrayResult> listBulkLoads(byte[] beginKey, byte[] endKey, Executor e) {
-		pointerReadLock.lock();
-		try {
-			return new FutureBulkLoadIDArray(Database_listBulkLoads(getPtr(), beginKey, endKey), e);
-		} finally {
-			pointerReadLock.unlock();
-		}
-	}
-
-	@Override
-	public CompletableFuture<BulkLoadStatus> getBulkLoadStatus(byte[] bulkLoadId, Executor e) {
-		pointerReadLock.lock();
-		try {
-			return new FutureBulkLoadStatus(Database_getBulkLoadStatus(getPtr(), bulkLoadId), e);
-		} finally {
-			pointerReadLock.unlock();
-		}
-	}
-
-	@Override
 	public Executor getExecutor() {
 		return executor;
 	}
@@ -381,11 +321,5 @@ class FDBDatabase extends NativeObjectWrapper implements Database, OptionConsume
 	private native long Database_listBlobbifiedRanges(long cPtr, byte[] beginKey, byte[] endKey, int rangeLimit);
 	private native long Database_verifyBlobRange(long cPtr, byte[] beginKey, byte[] endKey, long version);
 	private native long Database_flushBlobRange(long cPtr, byte[] beginKey, byte[] endKey, boolean compact, long version);
-	private native long Database_startBulkLoad(long cPtr, byte[] beginKey, byte[] endKey);
-	private native long Database_abortBulkLoad(long cPtr, byte[] bulkLoadId);
-	private native long Database_cleanupBulkLoad(long cPtr, byte[] bulkLoadId);
-	private native long Database_waitBulkLoadComplete(long cPtr, byte[] bulkLoadId);
-	private native long Database_listBulkLoads(long cPtr, byte[] beginKey, byte[] endKey);
-	private native long Database_getBulkLoadStatus(long cPtr, byte[] bulkLoadId);
 	private native long Database_getClientStatus(long cPtr);
 }

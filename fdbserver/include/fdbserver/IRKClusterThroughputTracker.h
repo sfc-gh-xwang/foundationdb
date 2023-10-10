@@ -86,6 +86,10 @@ public:
 	// Updates throughput statistics based on new storage queue info
 	void update(Map<UID, StorageQueueInfo> const&);
 
+	// Returns the current throughput for the provided storage server,
+	// summmed across all throttlingIds
+	double getThroughput(UID storageServerId) const;
+
 	// Returns the current throughput for the provided throttling ID on the
 	// provided storage server
 	Optional<double> getThroughput(UID storageServerId, ThrottlingId const&) const;

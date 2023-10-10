@@ -27,9 +27,6 @@
 #include "com_apple_foundationdb_FDBTenant.h"
 #include "com_apple_foundationdb_FDBTransaction.h"
 #include "com_apple_foundationdb_FutureBool.h"
-#include "com_apple_foundationdb_FutureBulkLoadStatus.h"
-#include "com_apple_foundationdb_FutureBulkLoadId.h"
-#include "com_apple_foundationdb_FutureBulkLoadIDArray.h"
 #include "com_apple_foundationdb_FutureInt64.h"
 #include "com_apple_foundationdb_FutureDouble.h"
 #include "com_apple_foundationdb_FutureKey.h"
@@ -65,7 +62,6 @@ static jclass string_class;
 static jclass key_array_result_class;
 static jclass keyrange_class;
 static jclass keyrange_array_result_class;
-static jclass bulk_load_status_class;
 static jmethodID key_array_result_init;
 static jmethodID keyrange_init;
 static jmethodID keyrange_array_result_init;
@@ -74,7 +70,6 @@ static jmethodID range_result_init;
 static jmethodID mapped_range_result_init;
 static jmethodID mapped_key_value_from_bytes;
 static jmethodID range_result_summary_init;
-static jmethodID bulk_load_status_init;
 
 void detachIfExternalThread(void* ignore) {
 	if (is_external && g_thread_jenv != nullptr) {
@@ -310,29 +305,6 @@ JNIEXPORT jboolean JNICALL Java_com_apple_foundationdb_FutureBool_FutureBool_1ge
 	return (jboolean)value;
 }
 
-JNIEXPORT jobject JNICALL Java_com_apple_foundationdb_FutureBulkLoadStatus_FutureBulkLoadStatus_1get(JNIEnv* jenv,
-                                                                                                     jobject,
-                                                                                                     jlong future) {
-	if (!future) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-	FDBFuture* f = (FDBFuture*)future;
-
-	FDBBulkLoadStatus value;
-	fdb_error_t err = fdb_future_get_bulk_load_status_result(f, &value);
-	if (err) {
-		safeThrow(jenv, getThrowable(jenv, err));
-		return 0;
-	}
-
-	jobject result = jenv->NewObject(bulk_load_status_class, bulk_load_status_init, (jint)value.state);
-	if (jenv->ExceptionOccurred())
-		return JNI_NULL;
-
-	return result;
-}
-
 JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FutureInt64_FutureInt64_1get(JNIEnv* jenv, jobject, jlong future) {
 	if (!future) {
 		throwParamNotNull(jenv);
@@ -475,76 +447,6 @@ JNIEXPORT jobject JNICALL Java_com_apple_foundationdb_FutureKeyArray_FutureKeyAr
 	jenv->ReleaseIntArrayElements(lengthArray, length_barr, 0);
 
 	jobject result = jenv->NewObject(key_array_result_class, key_array_result_init, keyArray, lengthArray);
-	if (jenv->ExceptionOccurred())
-		return JNI_NULL;
-
-	return result;
-}
-
-JNIEXPORT jobject JNICALL Java_com_apple_foundationdb_FutureBulkLoadIDArray_FutureBulkLoadIDArray_1get(JNIEnv* jenv,
-                                                                                                       jobject,
-                                                                                                       jlong future) {
-	if (!future) {
-		throwParamNotNull(jenv);
-		return JNI_NULL;
-	}
-
-	FDBFuture* f = (FDBFuture*)future;
-
-	FDBBulkLoadID** ids;
-	int count;
-	fdb_error_t err = fdb_future_get_list_bulk_loads_result(f, &ids, &count);
-	if (err) {
-		safeThrow(jenv, getThrowable(jenv, err));
-		return JNI_NULL;
-	}
-
-	int totalSize = 0;
-	for (int i = 0; i < count; i++) {
-		totalSize += ids[i]->length;
-	}
-
-	jbyteArray idsArray = jenv->NewByteArray(totalSize);
-	if (!idsArray) {
-		if (!jenv->ExceptionOccurred())
-			throwOutOfMem(jenv);
-		return JNI_NULL;
-	}
-	uint8_t* ids_barr = (uint8_t*)jenv->GetByteArrayElements(idsArray, JNI_NULL);
-	if (!ids_barr) {
-		throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return JNI_NULL;
-	}
-
-	jintArray lengthArray = jenv->NewIntArray(count);
-	if (!lengthArray) {
-		if (!jenv->ExceptionOccurred())
-			throwOutOfMem(jenv);
-
-		jenv->ReleaseByteArrayElements(idsArray, (jbyte*)ids_barr, 0);
-		return JNI_NULL;
-	}
-
-	jint* length_barr = jenv->GetIntArrayElements(lengthArray, JNI_NULL);
-	if (!length_barr) {
-		if (!jenv->ExceptionOccurred())
-			throwOutOfMem(jenv);
-
-		jenv->ReleaseByteArrayElements(idsArray, (jbyte*)ids_barr, 0);
-		return JNI_NULL;
-	}
-
-	int offset = 0;
-	for (int i = 0; i < count; i++) {
-		memcpy(ids_barr + offset, ids[i]->begin, ids[i]->length);
-		length_barr[i] = ids[i]->length;
-		offset += ids[i]->length;
-	}
-
-	jenv->ReleaseByteArrayElements(idsArray, (jbyte*)ids_barr, 0);
-	jenv->ReleaseIntArrayElements(lengthArray, length_barr, 0);
-
-	jobject result = jenv->NewObject(key_array_result_class, key_array_result_init, idsArray, lengthArray);
 	if (jenv->ExceptionOccurred())
 		return JNI_NULL;
 
@@ -943,34 +845,6 @@ JNIEXPORT jobject JNICALL Java_com_apple_foundationdb_FutureKey_FutureKey_1get(J
 	return result;
 }
 
-JNIEXPORT jbyteArray JNICALL Java_com_apple_foundationdb_FutureBulkLoadId_FutureBulkLoadId_1get(JNIEnv* jenv,
-                                                                                                jobject,
-                                                                                                jlong future) {
-	if (!future) {
-		throwParamNotNull(jenv);
-		return JNI_NULL;
-	}
-	FDBFuture* f = (FDBFuture*)future;
-
-	const uint8_t* value;
-	int length;
-	fdb_error_t err = fdb_future_get_bulk_load_id_result(f, &value, &length);
-	if (err) {
-		safeThrow(jenv, getThrowable(jenv, err));
-		return JNI_NULL;
-	}
-
-	jbyteArray result = jenv->NewByteArray(length);
-	if (!result) {
-		if (!jenv->ExceptionOccurred())
-			throwOutOfMem(jenv);
-		return JNI_NULL;
-	}
-
-	jenv->SetByteArrayRegion(result, 0, length, (const jbyte*)value);
-	return result;
-}
-
 JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBDatabase_Database_1openTenant(JNIEnv* jenv,
                                                                                      jobject,
                                                                                      jlong dbPtr,
@@ -1357,168 +1231,6 @@ JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBDatabase_Database_1flushB
 	return (jlong)f;
 }
 
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBDatabase_Database_1startBulkLoad(JNIEnv* jenv,
-                                                                                        jobject,
-                                                                                        jlong dbPtr,
-                                                                                        jbyteArray beginKeyBytes,
-                                                                                        jbyteArray endKeyBytes) {
-	if (!dbPtr || !beginKeyBytes || !endKeyBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBDatabase* database = (FDBDatabase*)dbPtr;
-
-	uint8_t* beginKeyArr = (uint8_t*)jenv->GetByteArrayElements(beginKeyBytes, JNI_NULL);
-	if (!beginKeyArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	uint8_t* endKeyArr = (uint8_t*)jenv->GetByteArrayElements(endKeyBytes, JNI_NULL);
-	if (!endKeyArr) {
-		jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)beginKeyArr, JNI_ABORT);
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_database_start_bulk_load(
-	    database, beginKeyArr, jenv->GetArrayLength(beginKeyBytes), endKeyArr, jenv->GetArrayLength(endKeyBytes));
-	jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)beginKeyArr, JNI_ABORT);
-	jenv->ReleaseByteArrayElements(endKeyBytes, (jbyte*)endKeyArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBDatabase_Database_1abortBulkLoad(JNIEnv* jenv,
-                                                                                        jobject,
-                                                                                        jlong dbPtr,
-                                                                                        jbyteArray bulkLoadIdBytes) {
-	if (!dbPtr || !bulkLoadIdBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBDatabase* database = (FDBDatabase*)dbPtr;
-
-	uint8_t* bulkLoadIdArr = (uint8_t*)jenv->GetByteArrayElements(bulkLoadIdBytes, JNI_NULL);
-	if (!bulkLoadIdArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_database_abort_bulk_load(database, bulkLoadIdArr, jenv->GetArrayLength(bulkLoadIdBytes));
-	jenv->ReleaseByteArrayElements(bulkLoadIdBytes, (jbyte*)bulkLoadIdArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBDatabase_Database_1cleanupBulkLoad(JNIEnv* jenv,
-                                                                                          jobject,
-                                                                                          jlong dbPtr,
-                                                                                          jbyteArray bulkLoadIdBytes) {
-	if (!dbPtr || !bulkLoadIdBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBDatabase* database = (FDBDatabase*)dbPtr;
-
-	uint8_t* bulkLoadIdArr = (uint8_t*)jenv->GetByteArrayElements(bulkLoadIdBytes, JNI_NULL);
-	if (!bulkLoadIdArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_database_cleanup_bulk_load(database, bulkLoadIdArr, jenv->GetArrayLength(bulkLoadIdBytes));
-	jenv->ReleaseByteArrayElements(bulkLoadIdBytes, (jbyte*)bulkLoadIdArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL
-Java_com_apple_foundationdb_FDBDatabase_Database_1waitBulkLoadComplete(JNIEnv* jenv,
-                                                                       jobject,
-                                                                       jlong dbPtr,
-                                                                       jbyteArray bulkLoadIdBytes) {
-	if (!dbPtr || !bulkLoadIdBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBDatabase* database = (FDBDatabase*)dbPtr;
-
-	uint8_t* bulkLoadIdArr = (uint8_t*)jenv->GetByteArrayElements(bulkLoadIdBytes, JNI_NULL);
-	if (!bulkLoadIdArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_database_wait_bulk_load_complete(database, bulkLoadIdArr, jenv->GetArrayLength(bulkLoadIdBytes));
-	jenv->ReleaseByteArrayElements(bulkLoadIdBytes, (jbyte*)bulkLoadIdArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBDatabase_Database_1listBulkLoads(JNIEnv* jenv,
-                                                                                        jobject,
-                                                                                        jlong dbPtr,
-                                                                                        jbyteArray beginKeyBytes,
-                                                                                        jbyteArray endKeyBytes) {
-	if (!dbPtr || !beginKeyBytes || !endKeyBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBDatabase* database = (FDBDatabase*)dbPtr;
-
-	uint8_t* beginKeyArr = (uint8_t*)jenv->GetByteArrayElements(beginKeyBytes, JNI_NULL);
-	if (!beginKeyArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	uint8_t* endKeyArr = (uint8_t*)jenv->GetByteArrayElements(endKeyBytes, JNI_NULL);
-	if (!endKeyArr) {
-		jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)beginKeyArr, JNI_ABORT);
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_database_list_bulk_loads(
-	    database, beginKeyArr, jenv->GetArrayLength(beginKeyBytes), endKeyArr, jenv->GetArrayLength(endKeyBytes));
-	jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)beginKeyArr, JNI_ABORT);
-	jenv->ReleaseByteArrayElements(endKeyBytes, (jbyte*)endKeyArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL
-Java_com_apple_foundationdb_FDBDatabase_Database_1getBulkLoadStatus(JNIEnv* jenv,
-                                                                    jobject,
-                                                                    jlong dbPtr,
-                                                                    jbyteArray bulkLoadIdBytes) {
-	if (!dbPtr || !bulkLoadIdBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBDatabase* database = (FDBDatabase*)dbPtr;
-
-	uint8_t* bulkLoadIdArr = (uint8_t*)jenv->GetByteArrayElements(bulkLoadIdBytes, JNI_NULL);
-	if (!bulkLoadIdArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_database_get_bulk_load_status(database, bulkLoadIdArr, jenv->GetArrayLength(bulkLoadIdBytes));
-	jenv->ReleaseByteArrayElements(bulkLoadIdBytes, (jbyte*)bulkLoadIdArr, JNI_ABORT);
-	return (jlong)f;
-}
-
 JNIEXPORT jboolean JNICALL Java_com_apple_foundationdb_FDB_Error_1predicate(JNIEnv* jenv,
                                                                             jobject,
                                                                             jint predicate,
@@ -1873,166 +1585,6 @@ JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1flushBlobR
 	                                           version);
 	jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)startKey, JNI_ABORT);
 	jenv->ReleaseByteArrayElements(endKeyBytes, (jbyte*)endKey, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1startBulkLoad(JNIEnv* jenv,
-                                                                                    jobject,
-                                                                                    jlong tPtr,
-                                                                                    jbyteArray beginKeyBytes,
-                                                                                    jbyteArray endKeyBytes) {
-	if (!tPtr || !beginKeyBytes || !endKeyBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBTenant* tenant = (FDBTenant*)tPtr;
-
-	uint8_t* beginKeyArr = (uint8_t*)jenv->GetByteArrayElements(beginKeyBytes, JNI_NULL);
-	if (!beginKeyArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	uint8_t* endKeyArr = (uint8_t*)jenv->GetByteArrayElements(endKeyBytes, JNI_NULL);
-	if (!endKeyArr) {
-		jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)beginKeyArr, JNI_ABORT);
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_tenant_start_bulk_load(
-	    tenant, beginKeyArr, jenv->GetArrayLength(beginKeyBytes), endKeyArr, jenv->GetArrayLength(endKeyBytes));
-	jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)beginKeyArr, JNI_ABORT);
-	jenv->ReleaseByteArrayElements(endKeyBytes, (jbyte*)endKeyArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1abortBulkLoad(JNIEnv* jenv,
-                                                                                    jobject,
-                                                                                    jlong tPtr,
-                                                                                    jbyteArray bulkLoadIdBytes) {
-	if (!tPtr || !bulkLoadIdBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBTenant* tenant = (FDBTenant*)tPtr;
-
-	uint8_t* bulkLoadIdArr = (uint8_t*)jenv->GetByteArrayElements(bulkLoadIdBytes, JNI_NULL);
-	if (!bulkLoadIdArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_tenant_abort_bulk_load(tenant, bulkLoadIdArr, jenv->GetArrayLength(bulkLoadIdBytes));
-	jenv->ReleaseByteArrayElements(bulkLoadIdBytes, (jbyte*)bulkLoadIdArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1cleanupBulkLoad(JNIEnv* jenv,
-                                                                                      jobject,
-                                                                                      jlong tPtr,
-                                                                                      jbyteArray bulkLoadIdBytes) {
-	if (!tPtr || !bulkLoadIdBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBTenant* tenant = (FDBTenant*)tPtr;
-
-	uint8_t* bulkLoadIdArr = (uint8_t*)jenv->GetByteArrayElements(bulkLoadIdBytes, JNI_NULL);
-	if (!bulkLoadIdArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_tenant_cleanup_bulk_load(tenant, bulkLoadIdArr, jenv->GetArrayLength(bulkLoadIdBytes));
-	jenv->ReleaseByteArrayElements(bulkLoadIdBytes, (jbyte*)bulkLoadIdArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1waitBulkLoadComplete(JNIEnv* jenv,
-                                                                                           jobject,
-                                                                                           jlong tPtr,
-                                                                                           jbyteArray bulkLoadIdBytes) {
-	if (!tPtr || !bulkLoadIdBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBTenant* tenant = (FDBTenant*)tPtr;
-
-	uint8_t* bulkLoadIdArr = (uint8_t*)jenv->GetByteArrayElements(bulkLoadIdBytes, JNI_NULL);
-	if (!bulkLoadIdArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_tenant_wait_bulk_load_complete(tenant, bulkLoadIdArr, jenv->GetArrayLength(bulkLoadIdBytes));
-	jenv->ReleaseByteArrayElements(bulkLoadIdBytes, (jbyte*)bulkLoadIdArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1listBulkLoads(JNIEnv* jenv,
-                                                                                    jobject,
-                                                                                    jlong tPtr,
-                                                                                    jbyteArray beginKeyBytes,
-                                                                                    jbyteArray endKeyBytes) {
-	if (!tPtr || !beginKeyBytes || !endKeyBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBTenant* tenant = (FDBTenant*)tPtr;
-
-	uint8_t* beginKeyArr = (uint8_t*)jenv->GetByteArrayElements(beginKeyBytes, JNI_NULL);
-	if (!beginKeyArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	uint8_t* endKeyArr = (uint8_t*)jenv->GetByteArrayElements(endKeyBytes, JNI_NULL);
-	if (!endKeyArr) {
-		jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)beginKeyArr, JNI_ABORT);
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_tenant_list_bulk_loads(
-	    tenant, beginKeyArr, jenv->GetArrayLength(beginKeyBytes), endKeyArr, jenv->GetArrayLength(endKeyBytes));
-	jenv->ReleaseByteArrayElements(beginKeyBytes, (jbyte*)beginKeyArr, JNI_ABORT);
-	jenv->ReleaseByteArrayElements(endKeyBytes, (jbyte*)endKeyArr, JNI_ABORT);
-	return (jlong)f;
-}
-
-JNIEXPORT jlong JNICALL Java_com_apple_foundationdb_FDBTenant_Tenant_1getBulkLoadStatus(JNIEnv* jenv,
-                                                                                        jobject,
-                                                                                        jlong tPtr,
-                                                                                        jbyteArray bulkLoadIdBytes) {
-	if (!tPtr || !bulkLoadIdBytes) {
-		throwParamNotNull(jenv);
-		return 0;
-	}
-
-	FDBTenant* tenant = (FDBTenant*)tPtr;
-
-	uint8_t* bulkLoadIdArr = (uint8_t*)jenv->GetByteArrayElements(bulkLoadIdBytes, JNI_NULL);
-	if (!bulkLoadIdArr) {
-		if (!jenv->ExceptionOccurred())
-			throwRuntimeEx(jenv, "Error getting handle to native resources");
-		return 0;
-	}
-
-	FDBFuture* f = fdb_tenant_get_bulk_load_status(tenant, bulkLoadIdArr, jenv->GetArrayLength(bulkLoadIdBytes));
-	jenv->ReleaseByteArrayElements(bulkLoadIdBytes, (jbyte*)bulkLoadIdArr, JNI_ABORT);
 	return (jlong)f;
 }
 
@@ -3037,10 +2589,6 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 		jclass local_string_class = env->FindClass("java/lang/String");
 		string_class = (jclass)(env)->NewGlobalRef(local_string_class);
 
-		jclass local_bulk_load_status_class = env->FindClass("com/apple/foundationdb/BulkLoadStatus");
-		bulk_load_status_init = env->GetMethodID(local_bulk_load_status_class, "<init>", "(I)V");
-		bulk_load_status_class = (jclass)(env)->NewGlobalRef(local_bulk_load_status_class);
-
 		return JNI_VERSION_1_6;
 	}
 }
@@ -3075,9 +2623,6 @@ void JNI_OnUnload(JavaVM* vm, void* reserved) {
 		}
 		if (string_class != JNI_NULL) {
 			env->DeleteGlobalRef(string_class);
-		}
-		if (bulk_load_status_class != JNI_NULL) {
-			env->DeleteGlobalRef(bulk_load_status_class);
 		}
 	}
 }

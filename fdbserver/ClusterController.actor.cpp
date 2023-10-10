@@ -1643,7 +1643,12 @@ ACTOR Future<Void> monitorGlobalConfig(ClusterControllerData::DBInfo* db) {
 
 ACTOR Future<Void> updatedChangingDatacenters(ClusterControllerData* self) {
 	// do not change the cluster controller until all the processes have had a chance to register
-	wait(delay(SERVER_KNOBS->WAIT_FOR_GOOD_RECRUITMENT_DELAY));
+	// FIXME: Implement a better solution than a delay multiplier. We have
+	// observed thrashing in cluster controller recruitment between datacenters
+	// due to a timing issue between recruitment and checkRegions. Increase the
+	// delay before updated datacenter fitness can be returned to workers as an
+	// intermediate fix.
+	wait(delay(SERVER_KNOBS->WAIT_FOR_GOOD_RECRUITMENT_DELAY * 3));
 	loop {
 		state Future<Void> onChange = self->desiredDcIds.onChange();
 		if (!self->desiredDcIds.get().present()) {
@@ -3409,6 +3414,8 @@ TEST_CASE("/fdbserver/clustercontroller/updateRecoveredWorkers") {
 }
 
 TEST_CASE("/fdbserver/clustercontroller/getDegradationInfo") {
+	IKnobCollection::getMutableGlobalKnobCollection().setKnob("cc_degraded_peer_degree_to_exclude",
+	                                                          KnobValueRef::create(int{ 3 }));
 	// Create a testing ClusterControllerData. Most of the internal states do not matter in this test.
 	ClusterControllerData data(ClusterControllerFullInterface(),
 	                           LocalityData(),

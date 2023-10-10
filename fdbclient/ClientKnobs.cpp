@@ -294,6 +294,8 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( AVERAGE_COST_RATE_FOLDING_TIME,           5.0 );
 	init( USE_SIMPLE_THROUGHPUT_QUOTA_CACHE,       true ); BUGGIFY_KNOB(USE_SIMPLE_THROUGHPUT_QUOTA_CACHE, randomize && BUGGIFY, false);
 	init( TRACK_BUSY_THROTTLING_IDS,               true ); BUGGIFY_KNOB(TRACK_BUSY_THROTTLING_IDS, randomize && BUGGIFY, false);
+	init( CLIENT_THROUGHPUT_TRACE_INTERVAL,        15.0 );
+	init( CLIENT_THROUGHPUT_TAG_EXPIRE_AFTER,     300.0 ); 
 
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
@@ -346,7 +348,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( TENANT_BALANCER_REQUEST_TIMEOUT,             20 );
 
 	// Bulk Loading
-	init( ALLOW_BULK_LOADS,                          true );
+	init( ALLOW_BULK_LOADS,                         false );
 	init( BULK_LOAD_FILE_POINTER_TOO_MANY,          10000 );
 	init( BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, 1000000 ); BUGGIFY_KNOB(BULK_LOAD_MAX_CREATE_VERSION_DIFFERENCE, randomize && BUGGIFY, deterministicRandom()->randomInt(1, 10000000));
 	init( BULK_LOAD_STORAGE_RESERVATION_ENABLED, 	false ); BUGGIFY_KNOB(BULK_LOAD_STORAGE_RESERVATION_ENABLED, randomize && BUGGIFY, deterministicRandom()->coinflip());

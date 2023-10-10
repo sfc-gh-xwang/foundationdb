@@ -29,9 +29,11 @@
 #endif
 #include <boost/asio.hpp>
 #include <boost/range.hpp>
+#include <chrono>
 #include <thread>
 
 #include "fdbrpc/SimExternalConnection.h"
+#include "flow/IConnection.h"
 #include "flow/Net2Packet.h"
 #include "flow/Platform.h"
 #include "flow/SendBufferIterator.h"
@@ -63,9 +65,24 @@ public:
 		} else {
 			address = boost::asio::ip::address_v4(ip.toV4());
 		}
-		boost::system::error_code err;
-		socket.connect(ip::tcp::endpoint(address, toAddr.port), err);
-		if (err) {
+		BindPromise p("SimExternalConnectError", UID());
+		Future f = p.getFuture();
+		socket.async_connect(ip::tcp::endpoint(address, toAddr.port), std::move(p));
+		int sleepCount = 0;
+
+		// To keep determinism in simulation, we must block until the connection is established. We don't want to use
+		// the default timeout behavior of the connection that is many seconds long, however, so we poll for
+		// completeness of the future and fail if it takes too long.
+		while (!f.isReady() && ++sleepCount < 50) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+
+		if (!f.isReady()) {
+			TraceEvent("SimExternalConnectTimeout").detail("To", toAddr);
+			socket.close();
+		}
+
+		if (!f.isReady() || f.isError()) {
 			return Reference<IConnection>();
 		} else {
 			return Reference<IConnection>(new SimExternalConnection(std::move(socket)));
@@ -105,8 +122,8 @@ int SimExternalConnection::write(SendBuffer const* buffer, int limit) {
 	bool triggerReaders = (socket.available() == 0);
 	int bytesSent = socket.write_some(
 	    boost::iterator_range<SendBufferIterator>(SendBufferIterator(buffer, limit), SendBufferIterator()), err);
-	ASSERT(!err);
-	ASSERT(bytesSent > 0);
+	ASSERT_EQ(err.value(), 0);
+	ASSERT_GT(bytesSent, 0);
 	threadSleep(0.1);
 	const auto bytesReadable = socket.available();
 	std::vector<uint8_t> tempReadBuffer(bytesReadable);
@@ -114,8 +131,8 @@ int SimExternalConnection::write(SendBuffer const* buffer, int limit) {
 		index += socket.read_some(mutable_buffers_1(&tempReadBuffer[index], bytesReadable), err);
 	}
 	std::copy(tempReadBuffer.begin(), tempReadBuffer.end(), std::inserter(readBuffer, readBuffer.end()));
-	ASSERT(!err);
-	ASSERT(socket.available() == 0);
+	ASSERT_EQ(err.value(), 0);
+	ASSERT_EQ(socket.available(), 0);
 	if (triggerReaders) {
 		onReadableTrigger.trigger();
 	}
@@ -207,7 +224,7 @@ static void testEchoServer() {
 		if (err == boost::asio::error::eof) {
 			return;
 		}
-		ASSERT(!err);
+		ASSERT_EQ(err.value(), 0);
 		write(socket, buffer(readBuffer, length));
 	}
 }
@@ -238,7 +255,7 @@ TEST_CASE("fdbrpc/SimExternalClient") {
 	externalConn->read(&vec[0], &vec[0] + vec.size());
 	externalConn->close();
 	StringRef echo(&vec[0], vec.size());
-	ASSERT(echo.toString() == data.toString());
+	ASSERT_EQ(echo.toString(), data.toString());
 	serverThread.join();
 	return Void();
 }
@@ -250,7 +267,7 @@ TEST_CASE("fdbrpc/MockDNS") {
 	INetworkConnections::net()->addMockTCPEndpoint("testhost1", "port1", networkAddresses);
 	state std::vector<NetworkAddress> resolvedNetworkAddresses =
 	    wait(INetworkConnections::net()->resolveTCPEndpoint("testhost1", "port1"));
-	ASSERT(resolvedNetworkAddresses.size() == 1);
+	ASSERT_EQ(resolvedNetworkAddresses.size(), 1);
 	ASSERT(std::find(resolvedNetworkAddresses.begin(), resolvedNetworkAddresses.end(), address1) !=
 	       resolvedNetworkAddresses.end());
 	INetworkConnections::net()->removeMockTCPEndpoint("testhost1", "port1");
@@ -258,7 +275,7 @@ TEST_CASE("fdbrpc/MockDNS") {
 	networkAddresses.push_back(address2);
 	INetworkConnections::net()->addMockTCPEndpoint("testhost1", "port1", networkAddresses);
 	wait(store(resolvedNetworkAddresses, INetworkConnections::net()->resolveTCPEndpoint("testhost1", "port1")));
-	ASSERT(resolvedNetworkAddresses.size() == 2);
+	ASSERT_EQ(resolvedNetworkAddresses.size(), 2);
 	ASSERT(std::find(resolvedNetworkAddresses.begin(), resolvedNetworkAddresses.end(), address2) !=
 	       resolvedNetworkAddresses.end());
 

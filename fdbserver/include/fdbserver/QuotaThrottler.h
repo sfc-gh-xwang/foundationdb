@@ -24,12 +24,13 @@
 #include "fdbclient/ThrottlingId.h"
 #include "fdbserver/IRKMetricsTracker.h"
 #include "fdbserver/IRKThroughputQuotaCache.h"
+#include "fdbserver/LimitingThrottlingRatioCalculator.h"
 
 class QuotaThrottler {
 	PImpl<class QuotaThrottlerImpl> impl;
 
 public:
-	QuotaThrottler(UID id, int maxFallingBehind, double limitingThreshold);
+	QuotaThrottler(UID id, int maxFallingBehind, double limitingThreshold, LimitingThrottlingRatioCalculator const&);
 	~QuotaThrottler();
 
 	// Periodically forget throttlingIds reporting low throughput

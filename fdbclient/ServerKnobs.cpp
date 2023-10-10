@@ -34,13 +34,13 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( ALLOW_DANGEROUS_KNOBS,                               isSimulated );
 	// Versions
 	init( VERSIONS_PER_SECOND,                                   1e6 );
-	init( MAX_VERSIONS_IN_FLIGHT,                100 * VERSIONS_PER_SECOND );
+	init( MAX_VERSIONS_IN_FLIGHT,                 10 * VERSIONS_PER_SECOND );
 	init( MAX_VERSIONS_IN_FLIGHT_FORCED,         6e5 * VERSIONS_PER_SECOND ); //one week of versions
 	init( ENABLE_VERSION_VECTOR,                               false );
 	init( ENABLE_VERSION_VECTOR_TLOG_UNICAST,                  false );
 
 	bool buggifyShortReadWindow = randomize && BUGGIFY && !ENABLE_VERSION_VECTOR;
-	init( MAX_READ_TRANSACTION_LIFE_VERSIONS,      5 * VERSIONS_PER_SECOND ); if (BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, randomize && BUGGIFY, VERSIONS_PER_SECOND)) {} else if (BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, buggifyShortReadWindow, std::max<int>(1, 0.1 * VERSIONS_PER_SECOND))) {} else BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, randomize && BUGGIFY, 10 * VERSIONS_PER_SECOND);
+	init( MAX_READ_TRANSACTION_LIFE_VERSIONS,      5 * VERSIONS_PER_SECOND ); if (BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, randomize && BUGGIFY, VERSIONS_PER_SECOND)) {} else if (BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, buggifyShortReadWindow, std::max<int>(1, 0.1 * VERSIONS_PER_SECOND))) {} else BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, randomize && BUGGIFY, 9 * VERSIONS_PER_SECOND);
 	init( MAX_WRITE_TRANSACTION_LIFE_VERSIONS,     5 * VERSIONS_PER_SECOND ); BUGGIFY_KNOB(MAX_WRITE_TRANSACTION_LIFE_VERSIONS, randomize && BUGGIFY, std::max<int>(1, 1 * VERSIONS_PER_SECOND));
 	init( MAX_COMMIT_BATCH_INTERVAL,                             2.0 ); BUGGIFY_KNOB(MAX_COMMIT_BATCH_INTERVAL, randomize && BUGGIFY, 0.5); // Each commit proxy generates a CommitTransactionBatchRequest at least this often, so that versions always advance smoothly
 	MAX_COMMIT_BATCH_INTERVAL = std::min(MAX_COMMIT_BATCH_INTERVAL, MAX_READ_TRANSACTION_LIFE_VERSIONS/double(2*VERSIONS_PER_SECOND)); // Ensure that the proxy commits 2 times every MAX_READ_TRANSACTION_LIFE_VERSIONS, otherwise the master will not give out versions fast enough
@@ -636,7 +636,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( MIN_BALANCE_DIFFERENCE,                                1e6 ); BUGGIFY_KNOB(MIN_BALANCE_DIFFERENCE, fastBalancing, 1e4);
 	init( SECONDS_BEFORE_NO_FAILURE_DELAY,                  8 * 3600 );
 	init( MAX_TXS_SEND_MEMORY,                                   1e7 ); BUGGIFY_KNOB(MAX_TXS_SEND_MEMORY, randomize && BUGGIFY, 1e5);
-	init( MAX_RECOVERY_VERSIONS,           200 * VERSIONS_PER_SECOND );
+	init( MAX_RECOVERY_VERSIONS,            20 * VERSIONS_PER_SECOND );
 	init( MAX_RECOVERY_TIME,                                    20.0 ); BUGGIFY_KNOB(MAX_RECOVERY_TIME, randomize && BUGGIFY, 1.0);
 	init( PROVISIONAL_START_DELAY,                               1.0 );
 	init( PROVISIONAL_MAX_DELAY,                                60.0 );
@@ -704,7 +704,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_MIN_DEGRADATION_INTERVAL,                         120.0 );
 	init( TENANT_BALANCER_FAILURE_TIME,                          1.0 );
 	init( ENCRYPT_KEY_PROXY_FAILURE_TIME,                        0.1 ); BUGGIFY_KNOB(ENCRYPT_KEY_PROXY_FAILURE_TIME, isSimulated, 1.0 + deterministicRandom()->random01());
-	init( CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE,                      3 );
+	init( CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE,                     10 );
 	init( CC_MAX_EXCLUSION_DUE_TO_HEALTH,                          2 );
 	init( CC_HEALTH_TRIGGER_RECOVERY,                          false );
 	init( CC_TRACKING_HEALTH_RECOVERY_INTERVAL,               3600.0 );
@@ -858,6 +858,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO,           0.5 ); BUGGIFY_KNOB(LOW_PRIORITY_GRV_STARVATION_TOLERANCE_RATIO, randomize && BUGGIFY, deterministicRandom()->random01());
 	init( TRACK_TENANT_GROUP_THROUGHPUT,                       false );
 	init( USE_CLIENT_THROUGHPUT_TRACKER,                       false ); BUGGIFY_KNOB(USE_CLIENT_THROUGHPUT_TRACKER, randomize && BUGGIFY, true);
+	init( AUTO_TAG_THROTTLE_TARGET_SS_BPS,                     100e6 );
+	init( AUTO_TAG_THROTTLE_SPRING_SS_BPS,                      50e6 );
 
 	init( GLOBAL_TAG_THROTTLING_TARGET_RATE_FOLDING_TIME,         1.0 );
 	init( GLOBAL_TAG_THROTTLING_TRANSACTION_COUNT_FOLDING_TIME,   1.0 );
@@ -991,10 +993,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( WORKER_HEALTH_MONITOR_STUCK_LIMIT, 10 * WORKER_HEALTH_MONITOR_INTERVAL );
 	init( PEER_LATENCY_CHECK_MIN_POPULATION,                      10 );
 	init( PEER_LATENCY_DEGRADATION_PERCENTILE,                  0.50 );
-	init( PEER_LATENCY_DEGRADATION_THRESHOLD,                   0.05 );
+	init( PEER_LATENCY_DEGRADATION_THRESHOLD,                   0.01 );
 	init( PEER_LATENCY_DEGRADATION_PERCENTILE_SATELLITE,        0.50 );
 	init( PEER_LATENCY_DEGRADATION_THRESHOLD_SATELLITE,          0.1 );
-	init( PEER_TIMEOUT_PERCENTAGE_DEGRADATION_THRESHOLD,         0.1 );
+	init( PEER_TIMEOUT_PERCENTAGE_DEGRADATION_THRESHOLD,         0.5 );
 	init( PEER_DEGRADATION_CONNECTION_FAILURE_COUNT,               5 );
 	init( WORKER_HEALTH_REPORT_RECENT_DESTROYED_PEER,           true );
 	init( STORAGE_SERVER_REBOOT_ON_IO_TIMEOUT,                 false ); BUGGIFY_KNOB(STORAGE_SERVER_REBOOT_ON_IO_TIMEOUT, randomize && BUGGIFY, true);
