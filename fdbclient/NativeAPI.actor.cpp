@@ -269,117 +269,6 @@ void DatabaseContext::removeTssMapping(StorageServerInterface const& ssi) {
 	}
 }
 
-void DatabaseContext::addSSIdTagMapping(const UID& uid, const Tag& tag) {
-	ssidTagMapping[uid] = tag;
-}
-
-void DatabaseContext::getLatestCommitVersionForSSID(const UID& ssid, Tag& tag, Version& commitVersion) {
-	// initialization
-	tag = invalidTag;
-	commitVersion = invalidVersion;
-
-	auto iter = ssidTagMapping.find(ssid);
-	if (iter != ssidTagMapping.end()) {
-		tag = iter->second;
-
-		if (ssVersionVectorCache.hasVersion(tag)) {
-			commitVersion = ssVersionVectorCache.getVersion(tag);
-		}
-	}
-}
-
-void DatabaseContext::getLatestCommitVersion(const StorageServerInterface& ssi,
-                                             Version readVersion,
-                                             VersionVector& latestCommitVersion) {
-	latestCommitVersion.clear();
-
-	if (ssVersionVectorCache.getMaxVersion() == invalidVersion) {
-		return;
-	}
-
-	// Error checking (based on the assumption that the read version was not obtained
-	// from the client's grv cache).
-	if (readVersion > ssVersionVectorCache.getMaxVersion()) {
-		TraceEvent(SevError, "ReadVersionExceedsVersionVectorMax")
-		    .detail("ReadVersion", readVersion)
-		    .detail("VersionVector", ssVersionVectorCache.toString());
-		if (g_network->isSimulated()) {
-			ASSERT(false);
-		} else {
-			return; // Do not return a stale commit version in production.
-		}
-	}
-
-	Tag tag = invalidTag;
-	Version commitVersion = invalidVersion;
-	getLatestCommitVersionForSSID(ssi.id(), tag, commitVersion);
-
-	if (tag != invalidTag && commitVersion != invalidVersion && commitVersion < readVersion) {
-		latestCommitVersion.setVersion(tag, commitVersion);
-	}
-}
-
-void DatabaseContext::getLatestCommitVersions(const Reference<LocationInfo>& locationInfo,
-                                              Reference<TransactionState> info,
-                                              VersionVector& latestCommitVersions) {
-	latestCommitVersions.clear();
-
-	if (info->readOptions.present() && info->readOptions.get().debugID.present()) {
-		g_traceBatch.addEvent(
-		    "TransactionDebug", info->readOptions.get().debugID.get().first(), "NativeAPI.getLatestCommitVersions");
-	}
-
-	if (!info->readVersionObtainedFromGrvProxy) {
-		return;
-	}
-
-	if (ssVersionVectorCache.getMaxVersion() == invalidVersion) {
-		return;
-	}
-
-	if (info->readVersion() > ssVersionVectorCache.getMaxVersion()) {
-		if (!CLIENT_KNOBS->FORCE_GRV_CACHE_OFF && !info->options.skipGrvCache && info->options.useGrvCache) {
-			return;
-		} else {
-			TraceEvent(SevError, "GetLatestCommitVersions")
-			    .detail("ReadVersion", info->readVersion())
-			    .detail("VersionVector", ssVersionVectorCache.toString());
-			ASSERT(false);
-		}
-	}
-
-	std::map<Version, std::set<Tag>> versionMap; // order the versions to be returned
-	for (int i = 0; i < locationInfo->locations()->size(); i++) {
-		Tag tag = invalidTag;
-		Version commitVersion = invalidVersion; // latest commit version
-		getLatestCommitVersionForSSID(locationInfo->locations()->getId(i), tag, commitVersion);
-
-		bool updatedVersionMap = false;
-		if (tag != invalidTag && commitVersion != invalidVersion && commitVersion < info->readVersion()) {
-			updatedVersionMap = true;
-			versionMap[commitVersion].insert(tag);
-		}
-
-		// Do not log if commitVersion >= readVersion.
-		if (!updatedVersionMap && commitVersion == invalidVersion) {
-			TraceEvent(SevDebug, "CommitVersionNotFoundForSS")
-			    .detail("InSSIDMap", tag != invalidTag ? 1 : 0)
-			    .detail("Tag", tag)
-			    .detail("CommitVersion", commitVersion)
-			    .detail("ReadVersion", info->readVersion())
-			    .detail("VersionVector", ssVersionVectorCache.toString())
-			    .setMaxEventLength(11000)
-			    .setMaxFieldLength(10000);
-			++transactionCommitVersionNotFoundForSS;
-		}
-	}
-
-	// insert the commit versions in the version vector.
-	for (auto& iter : versionMap) {
-		latestCommitVersions.setVersion(iter.second, iter.first);
-	}
-}
-
 void updateCachedReadVersionShared(double t, Version v, DatabaseSharedState* p) {
 	MutexHolder mutex(p->mutexLock);
 	if (v >= p->grvCacheSpace.cachedReadVersion) {
@@ -2381,8 +2270,6 @@ ACTOR static Future<Void> switchConnectionRecordImpl(Reference<IClusterConnectio
 	self->minAcceptableReadVersion = std::numeric_limits<Version>::max();
 	self->invalidateCache({}, allKeys);
 
-	self->ssVersionVectorCache.clear();
-
 	auto clearedClientInfo = self->clientInfo->get();
 	clearedClientInfo.commitProxies.clear();
 	clearedClientInfo.grvProxies.clear();
@@ -2922,7 +2809,6 @@ void DatabaseContext::updateProxies() {
 	proxiesLastChange = clientInfo->get().id;
 	commitProxies.clear();
 	grvProxies.clear();
-	ssVersionVectorCache.clear();
 	bool commitProxyProvisional = false, grvProxyProvisional = false;
 	if (clientInfo->get().commitProxies.size()) {
 		commitProxies = makeReference<CommitProxyInfo>(clientInfo->get().commitProxies);
@@ -3338,12 +3224,6 @@ void updateTssMappings(Database cx, const GetKeyServerLocationsReply& reply) {
 	}
 }
 
-void updateTagMappings(Database cx, const GetKeyServerLocationsReply& reply) {
-	for (const auto& mapping : reply.resultsTagMapping) {
-		cx->addSSIdTagMapping(mapping.first, mapping.second);
-	}
-}
-
 // If isBackward == true, returns the shard containing the key before 'key' (an infinitely long, inexpressible key).
 // Otherwise returns the shard containing key
 ACTOR Future<KeyRangeLocationInfo> getKeyLocation_internal(Database cx,
@@ -3384,7 +3264,6 @@ ACTOR Future<KeyRangeLocationInfo> getKeyLocation_internal(Database cx,
 
 				auto locationInfo = cx->setCachedLocation(rep.results[0].first, rep.results[0].second);
 				updateTssMappings(cx, rep);
-				updateTagMappings(cx, rep);
 
 				return KeyRangeLocationInfo(
 				    KeyRange(toPrefixRelativeRange(rep.results[0].first, tenant.prefix), rep.arena), locationInfo);
@@ -3519,7 +3398,6 @@ ACTOR Future<std::vector<KeyRangeLocationInfo>> getKeyRangeLocations_internal(
 					wait(yield());
 				}
 				updateTssMappings(cx, rep);
-				updateTagMappings(cx, rep);
 
 				return results;
 			}
@@ -4022,10 +3900,8 @@ ACTOR Future<ValueReadResult> getValue(Reference<TransactionState> trState,
 		state Optional<UID> getValueID = Optional<UID>();
 		state uint64_t startTime;
 		state double startTimeD;
-		state VersionVector ssLatestCommitVersions;
 		state Optional<ReadOptions> readOptions = trState->readOptions;
 
-		trState->cx->getLatestCommitVersions(locationInfo.locations, trState, ssLatestCommitVersions);
 		try {
 			if (trState->readOptions.present() && trState->readOptions.get().debugID.present()) {
 				getValueID = nondeterministicRandom()->randomUniqueID();
@@ -4067,8 +3943,7 @@ ACTOR Future<ValueReadResult> getValue(Reference<TransactionState> trState,
 					                         trState->readVersion(),
 					                         trState->cx->sampleReadTags() ? trState->options.throttlingTag
 					                                                       : Optional<TransactionTag>(),
-					                         readOptions,
-					                         ssLatestCommitVersions),
+					                         readOptions),
 					         TaskPriority::DefaultPromiseEndpoint,
 					         AtMostOnce::False,
 					         trState->cx->enableLocalityLoadBalance ? &trState->cx->queueModel : nullptr))) {
@@ -4180,9 +4055,6 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 		state KeyRangeLocationInfo locationInfo = wait(getKeyLocation(
 		    trState, locationKey, &StorageServerInterface::getKey, Reverse{ k.isBackward() }, useTenant));
 
-		state VersionVector ssLatestCommitVersions;
-		trState->cx->getLatestCommitVersions(locationInfo.locations, trState, ssLatestCommitVersions);
-
 		try {
 			if (getKeyID.present())
 				g_traceBatch.addEvent(
@@ -4198,8 +4070,7 @@ ACTOR Future<KeyReadResult> getKey(Reference<TransactionState> trState,
 			                  trState->readVersion(),
 			                  trState->cx->sampleReadTags() ? trState->options.throttlingTag
 			                                                : Optional<TransactionTag>(),
-			                  readOptions,
-			                  ssLatestCommitVersions);
+			                  readOptions);
 			req.arena.dependsOn(k.arena());
 
 			state GetKeyReply reply;
@@ -4257,22 +4128,14 @@ ACTOR Future<Version> waitForCommittedVersion(Database cx, Version version, Span
 		try {
 			choose {
 				when(wait(cx->onProxiesChanged())) {}
-				when(GetReadVersionReply v = wait(basicLoadBalance(
-				         cx->getGrvProxies(UseProvisionalProxies::False),
-				         &GrvProxyInterface::getConsistentReadVersion,
-				         GetReadVersionRequest(
-				             span.context, 0, TransactionPriority::IMMEDIATE, cx->ssVersionVectorCache.getMaxVersion()),
-				         cx->taskID))) {
+				when(GetReadVersionReply v =
+				         wait(basicLoadBalance(cx->getGrvProxies(UseProvisionalProxies::False),
+				                               &GrvProxyInterface::getConsistentReadVersion,
+				                               GetReadVersionRequest(span.context, 0, TransactionPriority::IMMEDIATE),
+				                               cx->taskID))) {
 					cx->minAcceptableReadVersion = std::min(cx->minAcceptableReadVersion, v.version);
 					if (v.midShardSize > 0)
 						cx->smoothMidShardSize.setTotal(v.midShardSize);
-					if (cx->versionVectorCacheActive(v.ssVersionVectorDelta)) {
-						if (cx->isCurrentGrvProxy(v.proxyId)) {
-							cx->ssVersionVectorCache.applyDelta(v.ssVersionVectorDelta);
-						} else {
-							cx->ssVersionVectorCache.clear();
-						}
-					}
 					if (v.version >= version)
 						return v.version;
 					// SOMEDAY: Do the wait on the server side, possibly use less expensive source of committed version
@@ -4298,21 +4161,11 @@ ACTOR Future<Version> getRawVersion(Reference<TransactionState> trState) {
 	loop {
 		choose {
 			when(wait(trState->cx->onProxiesChanged())) {}
-			when(GetReadVersionReply v =
-			         wait(basicLoadBalance(trState->cx->getGrvProxies(UseProvisionalProxies::False),
-			                               &GrvProxyInterface::getConsistentReadVersion,
-			                               GetReadVersionRequest(trState->spanContext,
-			                                                     0,
-			                                                     TransactionPriority::IMMEDIATE,
-			                                                     trState->cx->ssVersionVectorCache.getMaxVersion()),
-			                               trState->cx->taskID))) {
-				if (trState->cx->versionVectorCacheActive(v.ssVersionVectorDelta)) {
-					if (trState->cx->isCurrentGrvProxy(v.proxyId)) {
-						trState->cx->ssVersionVectorCache.applyDelta(v.ssVersionVectorDelta);
-					} else {
-						trState->cx->ssVersionVectorCache.clear();
-					}
-				}
+			when(GetReadVersionReply v = wait(
+			         basicLoadBalance(trState->cx->getGrvProxies(UseProvisionalProxies::False),
+			                          &GrvProxyInterface::getConsistentReadVersion,
+			                          GetReadVersionRequest(trState->spanContext, 0, TransactionPriority::IMMEDIATE),
+			                          trState->cx->taskID))) {
 				return v.version;
 			}
 		}
@@ -4709,7 +4562,6 @@ Future<RangeReadResultFamily> getExactRange(Reference<TransactionState> trState,
 
 			setMatchIndex<GetKeyValuesFamilyRequest>(req, matchIndex);
 			req.spanContext = span.context;
-			trState->cx->getLatestCommitVersions(locations[shard].locations, trState, req.ssLatestCommitVersions);
 
 			// keep shard's arena around in case of async tss comparison
 			req.arena.dependsOn(locations[shard].range.arena());
@@ -5087,8 +4939,6 @@ Future<RangeReadResultFamily> getRange(Reference<TransactionState> trState,
 			req.tenantInfo = useTenant ? trState->getTenantInfo() : TenantInfo();
 			req.options = trState->readOptions;
 			req.version = trState->readVersion();
-
-			trState->cx->getLatestCommitVersions(beginServer.locations, trState, req.ssLatestCommitVersions);
 
 			// In case of async tss comparison, also make req arena depend on begin, end, and/or shard's arena depending
 			// on which  is used
@@ -5604,8 +5454,6 @@ ACTOR Future<Void> getRangeStreamFragment(Reference<TransactionState> trState,
 			req.limitBytes = std::numeric_limits<int>::max();
 			req.options = trState->readOptions;
 
-			trState->cx->getLatestCommitVersions(locations[shard].locations, trState, req.ssLatestCommitVersions);
-
 			// keep shard's arena around in case of async tss comparison
 			req.arena.dependsOn(range.arena());
 
@@ -6031,10 +5879,6 @@ void Transaction::debugTransaction(UID dID) {
 		trState->readOptions = ReadOptions(dID);
 	}
 	trState->hybridReadOptions.withDefault(HybridReadOptions()).debugID = dID;
-}
-
-VersionVector Transaction::getVersionVector() const {
-	return trState->cx->ssVersionVectorCache;
 }
 
 SpanContext Transaction::getSpanContext() const {
@@ -7877,13 +7721,6 @@ ACTOR Future<Version> getReadVersion_internal(TransactionState* trState, uint32_
 	}
 
 	trState->metadataVersion.send(rep.metadataVersion);
-	if (trState->cx->versionVectorCacheActive(rep.ssVersionVectorDelta)) {
-		if (trState->cx->isCurrentGrvProxy(rep.proxyId)) {
-			trState->cx->ssVersionVectorCache.applyDelta(rep.ssVersionVectorDelta);
-		} else {
-			trState->cx->ssVersionVectorCache.clear();
-		}
-	}
 	return rep.version;
 }
 

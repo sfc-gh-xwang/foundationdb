@@ -141,7 +141,6 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	    spanContext(spanContext),
 	    tenantSet(false) {}
 
-	// VERSION_VECTOR changed default values of readVersionObtainedFromGrvProxy
 	TransactionState(Database cx,
 	                 Optional<Reference<Tenant>> tenant,
 	                 TaskPriority taskID,

@@ -843,18 +843,6 @@ struct LogData : NonCopyable, public ReferenceCounted<LogData> {
 
 	bool shouldSpillByReference(Tag t) const { return !shouldSpillByValue(t); }
 
-	void unblockWaitingPeeks() {
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR) {
-			for (auto& iter : waitingTags) {
-				TraceEvent("UnblockWaitingPeeks", tLogData->dbgid)
-				    .detail("LogId", logId)
-				    .detail("Tag", iter.first.toString());
-				iter.second.send(Void());
-			}
-			waitingTags.clear();
-		}
-	}
-
 	bool stopped() const { return stoppedPromise.isSet(); }
 
 	void stop() {
@@ -924,7 +912,6 @@ ACTOR Future<Void> tLogLock(TLogData* self, ReplyPromise<TLogLockResult> reply, 
 	    .detail("QueueCommitted", logData->queueCommittedVersion.get());
 
 	logData->stop();
-	logData->unblockWaitingPeeks();
 	if (!logData->recoveryComplete.isSet()) {
 		logData->recoveryComplete.sendError(end_of_stream());
 	}
@@ -1645,14 +1632,6 @@ void commitMessages(TLogData* self,
 				} else {
 					txsBytes += tagData->versionMessages.back().second.expectedSize();
 				}
-				if (SERVER_KNOBS->ENABLE_VERSION_VECTOR) {
-					auto iter = logData->waitingTags.find(tag);
-					if (iter != logData->waitingTags.end()) {
-						auto promise = iter->second;
-						logData->waitingTags.erase(iter);
-						promise.send(Void());
-					}
-				}
 
 				// The factor of VERSION_MESSAGES_OVERHEAD is intended to be an overestimate of the actual memory used
 				// to store this data in a std::deque. In practice, this number is probably something like 528/512
@@ -1942,29 +1921,6 @@ Future<Void> tLogPeekMessages(PromiseType replyPromise,
 		poppedVer = poppedVersion(logData, reqTag);
 
 		auto tagData = logData->getTagData(reqTag);
-		bool tagRecovered = tagData && !tagData->unpoppedRecovered;
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR && poppedVer <= reqBegin &&
-		    reqBegin > logData->persistentDataDurableVersion && !reqOnlySpilled && reqTag.locality >= 0 &&
-		    !reqReturnIfBlocked && tagRecovered) {
-			state double startTime = g_network->timer();
-			// TODO (version vector) check if this should be included in "status details" json
-			// TODO (version vector) all tags may be too many, instead,  standard deviation?
-			wait(waitForMessagesForTag(logData, reqTag, reqBegin, SERVER_KNOBS->BLOCKING_PEEK_TIMEOUT));
-			double latency = g_network->timer() - startTime;
-			if (logData->blockingPeekLatencies.find(reqTag) == logData->blockingPeekLatencies.end()) {
-				UID ssID = nondeterministicRandom()->randomUniqueID();
-				std::string s = "BlockingPeekLatencies-" + reqTag.toString();
-				logData->blockingPeekLatencies.try_emplace(reqTag,
-				                                           s,
-				                                           ssID,
-				                                           SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
-				                                           SERVER_KNOBS->LATENCY_SKETCH_ACCURACY);
-			}
-			LatencySample& sample = logData->blockingPeekLatencies.at(reqTag);
-			sample.addMeasurement(latency);
-			poppedVer = poppedVersion(logData, reqTag);
-		}
-
 		DebugLogTraceEvent("TLogPeekMessages2", self->dbgid)
 		    .detail("LogId", logData->logId)
 		    .detail("Tag", reqTag.toString())
@@ -2571,13 +2527,6 @@ ACTOR Future<Void> tLogCommit(TLogData* self,
 		}
 		// Notifies the commitQueue actor to commit persistentQueue, and also unblocks tLogPeekMessages actors
 		logData->version.set(req.version);
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST) {
-			self->unknownCommittedVersions.push_front(std::make_tuple(req.version, req.tLogCount));
-			while (!self->unknownCommittedVersions.empty() &&
-			       std::get<0>(self->unknownCommittedVersions.back()) <= req.knownCommittedVersion) {
-				self->unknownCommittedVersions.pop_back();
-			}
-		}
 
 		if (req.debugID.present())
 			g_traceBatch.addEvent("CommitDebug", tlogDebugID.get().first(), "TLog.tLogCommit.AfterTLogCommit");
@@ -2992,7 +2941,6 @@ void removeLog(TLogData* self, Reference<LogData> logData) {
 	    .detail("Input", logData->bytesInput.getValue())
 	    .detail("Durable", logData->bytesDurable.getValue());
 	logData->stop();
-	logData->unblockWaitingPeeks();
 	if (!logData->recoveryComplete.isSet()) {
 		logData->recoveryComplete.sendError(end_of_stream());
 	}
@@ -3436,7 +3384,6 @@ ACTOR Future<Void> restorePersistentState(TLogData* self,
 		                                 "Restored");
 		logData->locality = id_locality[id1];
 		logData->stop();
-		logData->unblockWaitingPeeks();
 		self->id_data[id1] = logData;
 		id_interf[id1] = recruited;
 
@@ -3659,7 +3606,6 @@ void stopAllTLogs(TLogData* self, UID newLogId) {
 			}
 		}
 		it.second->stop();
-		it.second->unblockWaitingPeeks();
 		if (!it.second->recoveryComplete.isSet()) {
 			it.second->recoveryComplete.sendError(end_of_stream());
 		}

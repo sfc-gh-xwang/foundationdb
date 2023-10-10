@@ -150,7 +150,6 @@ public:
 
 	[[nodiscard]] Future<Void> commit() override;
 	Version getCommittedVersion() const override { return tr.getCommittedVersion(); }
-	VersionVector getVersionVector() const override { return tr.getVersionVector(); }
 	SpanContext getSpanContext() const override { return tr.getSpanContext(); }
 
 	double getTagThrottledDuration() const override { return tr.getTagThrottledDuration(); }

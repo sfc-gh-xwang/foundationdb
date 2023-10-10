@@ -719,14 +719,6 @@ Version ThreadSafeTransaction::getCommittedVersion() {
 	return tr->getCommittedVersion();
 }
 
-ThreadFuture<VersionVector> ThreadSafeTransaction::getVersionVector() {
-	ISingleThreadTransaction* tr = this->tr;
-	return onMainThread([tr]() -> Future<VersionVector> {
-		tr->checkDeferredError();
-		return tr->getVersionVector();
-	});
-}
-
 ThreadFuture<SpanContext> ThreadSafeTransaction::getSpanContext() {
 	ISingleThreadTransaction* tr = this->tr;
 	return onMainThread([tr]() -> Future<SpanContext> {

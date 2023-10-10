@@ -101,7 +101,6 @@ public:
 	virtual void addWriteConflictRange(KeyRangeRef const& keys) = 0;
 	virtual Future<Void> commit() = 0;
 	virtual Version getCommittedVersion() const = 0;
-	virtual VersionVector getVersionVector() const = 0;
 	virtual SpanContext getSpanContext() const = 0;
 	virtual double getTagThrottledDuration() const = 0;
 	virtual int64_t getTotalCost() const = 0;

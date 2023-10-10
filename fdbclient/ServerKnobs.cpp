@@ -36,10 +36,8 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( VERSIONS_PER_SECOND,                                   1e6 );
 	init( MAX_VERSIONS_IN_FLIGHT,                 10 * VERSIONS_PER_SECOND );
 	init( MAX_VERSIONS_IN_FLIGHT_FORCED,         6e5 * VERSIONS_PER_SECOND ); //one week of versions
-	init( ENABLE_VERSION_VECTOR,                               false );
-	init( ENABLE_VERSION_VECTOR_TLOG_UNICAST,                  false );
 
-	bool buggifyShortReadWindow = randomize && BUGGIFY && !ENABLE_VERSION_VECTOR;
+	bool buggifyShortReadWindow = randomize && BUGGIFY;
 	init( MAX_READ_TRANSACTION_LIFE_VERSIONS,      5 * VERSIONS_PER_SECOND ); if (BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, randomize && BUGGIFY, VERSIONS_PER_SECOND)) {} else if (BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, buggifyShortReadWindow, std::max<int>(1, 0.1 * VERSIONS_PER_SECOND))) {} else BUGGIFY_KNOB(MAX_READ_TRANSACTION_LIFE_VERSIONS, randomize && BUGGIFY, 9 * VERSIONS_PER_SECOND);
 	init( MAX_WRITE_TRANSACTION_LIFE_VERSIONS,     5 * VERSIONS_PER_SECOND ); BUGGIFY_KNOB(MAX_WRITE_TRANSACTION_LIFE_VERSIONS, randomize && BUGGIFY, std::max<int>(1, 1 * VERSIONS_PER_SECOND));
 	init( MAX_COMMIT_BATCH_INTERVAL,                             2.0 ); BUGGIFY_KNOB(MAX_COMMIT_BATCH_INTERVAL, randomize && BUGGIFY, 0.5); // Each commit proxy generates a CommitTransactionBatchRequest at least this often, so that versions always advance smoothly
@@ -47,7 +45,6 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	MAX_COMMIT_BATCH_INTERVAL = std::min(MAX_COMMIT_BATCH_INTERVAL, MAX_WRITE_TRANSACTION_LIFE_VERSIONS/double(2*VERSIONS_PER_SECOND)); // Ensure that the proxy commits 2 times every MAX_WRITE_TRANSACTION_LIFE_VERSIONS, otherwise the master will not give out versions fast enough
 	init( MAX_VERSION_RATE_MODIFIER,                             0.1 );
 	init( MAX_VERSION_RATE_OFFSET,               VERSIONS_PER_SECOND ); // If the calculated version is more than this amount away from the expected version, it will be clamped to this value. This prevents huge version jumps.
-	init( ENABLE_VERSION_VECTOR_HA_OPTIMIZATION,               false );
 	init( MAX_RECOVERY_VERSION_EPOCH_CORRECTION_SECONDS,       86400 );
 
 	// TLogs
@@ -612,7 +609,6 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CP_MIN_TAG_WRITE_PAGES_RATE,                             50 ); if( isSimulated ) CP_MIN_TAG_WRITE_PAGES_RATE = 1;
 	init( CP_THROTTLE_TAGS_TRACKED,                                10 ); BUGGIFY_KNOB(CP_THROTTLE_TAGS_TRACKED, randomize && BUGGIFY, deterministicRandom()->randomInt(5, 15));
 	init( PROXY_REJECT_BATCH_QUEUED_TOO_LONG,                    true );
-	init( PROXY_USE_RESOLVER_PRIVATE_MUTATIONS,                 false ); BUGGIFY_KNOB(PROXY_USE_RESOLVER_PRIVATE_MUTATIONS, randomize && BUGGIFY && !ENABLE_VERSION_VECTOR_TLOG_UNICAST, deterministicRandom()->coinflip());
 
 	init( BURSTINESS_METRICS_ENABLED  ,                         false );
 	init( BURSTINESS_METRICS_LOG_INTERVAL,                        0.1 );
