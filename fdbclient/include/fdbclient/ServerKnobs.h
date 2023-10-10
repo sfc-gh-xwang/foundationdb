@@ -347,6 +347,7 @@ public:
 	    DD_STORAGE_WIGGLE_MIN_SS_AGE_SEC; // Minimal age of a correct-configured server before it's chosen to be wiggled
 	bool DD_TENANT_AWARENESS_ENABLED;
 	bool DD_FETCHKEYS_WITH_LOCALITY;
+	bool DD_FETCHKEYS_DISABLE_RANGE_FRAGMENTS;
 
 	// Knobs for Storage Quota feature
 	bool STORAGE_QUOTA_ENABLED; // Whether storage quota enforcement for tenant groups and all the relevant storage

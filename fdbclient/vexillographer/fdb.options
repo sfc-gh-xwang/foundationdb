@@ -288,6 +288,8 @@ description is not currently required but encouraged.
             description="Allows this transaction to bypass storage quota enforcement. Should only be used for transactions that directly or indirectly decrease the size of the tenant group's data."/>
     <Option name="prefer_local_storage_server" code="305"
             description="If true, this transaction prefers to pick a local storage server (same AZ) to fetch data."/>
+     <Option name="disable_range_fragments" code="306"
+            description="If true, this transaction disables the range fragments during the fetchKeys."/>
     <Option name="debug_dump" code="400" 
             hidden="true" />
     <Option name="debug_retry_logging" code="401" paramType="String" paramDescription="Optional transaction name" />

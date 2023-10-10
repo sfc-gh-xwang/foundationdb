@@ -34,6 +34,7 @@ struct TransactionOptions {
 	bool rawAccess : 1;
 	bool bypassStorageQuota : 1;
 	bool preferLocalStorageServer : 1;
+	bool disable_range_fragments : 1;
 
 	TransactionPriority priority;
 

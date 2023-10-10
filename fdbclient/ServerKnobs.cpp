@@ -357,6 +357,7 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( DD_TENANT_AWARENESS_ENABLED,                         false );
 	init( DD_BUILD_EXTRA_TEAMS_OVERRIDE,                          10 ); BUGGIFY_KNOB(DD_BUILD_EXTRA_TEAMS_OVERRIDE, randomize && BUGGIFY, 2);
 	init( DD_FETCHKEYS_WITH_LOCALITY,       				   false ); BUGGIFY_KNOB(DD_FETCHKEYS_WITH_LOCALITY, randomize && BUGGIFY, true); // If true, when fetchKeys uses streaming reads, try to read from local dataHallId if possible.
+	init( DD_FETCHKEYS_DISABLE_RANGE_FRAGMENTS,       		   false ); BUGGIFY_KNOB(DD_FETCHKEYS_DISABLE_RANGE_FRAGMENTS, randomize && BUGGIFY, true); // If true, when fetchKeys uses streaming reads, disable the range fragments.
 
 	// Knobs for Storage Quota feature
 	init( STORAGE_QUOTA_ENABLED,                                true ); BUGGIFY_KNOB(STORAGE_QUOTA_ENABLED, isSimulated, deterministicRandom()->coinflip());
