@@ -29,24 +29,27 @@
 #include <limits>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #define DEBUG_LOADABLE_CACHE_WORKLOAD 0
 
-struct Value {
+struct TestValue {
 	int64_t v;
 	Optional<double> ttl;
 
-	Value() : v(-1), ttl(std::numeric_limits<double>::max()) {}
-	Value(int64_t val) : v(val) {}
-	Value(int64_t val, double t) : v(val), ttl(t) {}
+	TestValue() : v(-1), ttl(std::numeric_limits<double>::max()) {}
+	TestValue(int64_t val) : v(val) {}
+	TestValue(int64_t val, double t) : v(val), ttl(t) {}
+
+	bool isEqual(const TestValue& toCompare) const { return v == toCompare.v && ttl == toCompare.ttl; }
 
 	std::string toString() const { return fmt::format("{}, {}", v, ttl.present() ? ttl.get() : -1); }
 };
 
 template <>
-struct Traceable<Value> : std::true_type {
+struct Traceable<TestValue> : std::true_type {
 	// FIXME: more human-readable string for debugging
-	static std::string toString(const Value& v) { return v.toString(); }
+	static std::string toString(const TestValue& v) { return v.toString(); }
 };
 
 namespace {
@@ -72,9 +75,11 @@ struct Int64Equal {
 //  2.4. Vector (valid + invalid) key lookup.
 //  2.5. Spin multiple actors each randomly accessing keyspace, further, BUGGIFY to include "invalid keys" lookup
 //  too
+//  2.6. Vectorized put {key,value} to the cache.
+//  2.7. Enable cache background auto-refresh key enable/disable
 
 class LoadableCacheWorkload : public ReferenceCounted<LoadableCacheWorkload>, NonCopyable {
-	using KVMap = std::unordered_map<int64_t, Value, Int64Hash, Int64Equal>;
+	using KVMap = std::unordered_map<int64_t, TestValue, Int64Hash, Int64Equal>;
 
 public:
 	int numIterations;
@@ -82,11 +87,13 @@ public:
 	int nWorkers;
 	Reference<LoadableCacheOpStats> wStats;
 	std::vector<int64_t> sourceVec;
-	std::unordered_map<int64_t, Value> sourceCache;
-	Reference<LoadableCache<int64_t, Value, Int64Hash, Int64Equal>> cache;
+	std::unordered_map<int64_t, TestValue> sourceCache;
+	Reference<LoadableCache<int64_t, TestValue, Int64Hash, Int64Equal>> cache;
 	bool failKeyLoads = false;
 	bool checkValidFunc = false;
 	bool fetchOnMiss = false;
+	int minTtlMS = 1;
+	int maxTtlMS = 5;
 
 	LoadableCacheWorkload() { init(); }
 
@@ -113,6 +120,12 @@ public:
 		ASSERT_EQ(self->wStats->nFetched, self->cache->size() + expectedExtraMisses);
 		ASSERT_EQ(self->wStats->nExpiredEvicted, expectedExpiredEviction);
 
+		// Validate put() APIs as well as refreshTask functionality
+		wait(testPutKeys(self));
+		// wait to let few keys expire
+		wait(delay(self->minTtlMS));
+		wait(testRefreshKeys(self));
+
 		return Void();
 	}
 
@@ -122,18 +135,18 @@ private:
 		itemCount = deterministicRandom()->randomInt(32768, 65536);
 		nWorkers = deterministicRandom()->randomInt(5, 12);
 
-		std::function<Future<Void>(void* data, const std::vector<int64_t>&, KVMap*)> loaderFunc =
+		std::function<Future<Void>(std::any data, const std::vector<int64_t>&, KVMap*)> loaderFunc =
 		    &LoadableCacheWorkload::loadKeys;
-		std::function<bool(const Value&)> isValidFunc = &LoadableCacheWorkload::isValueValid;
+		std::function<bool(const TestValue&)> isValidFunc = &LoadableCacheWorkload::isValueValid;
 
 		checkValidFunc = deterministicRandom()->coinflip();
 		checkValidFunc
-		    ? cache = makeReference<LoadableCache<int64_t, Value, Int64Hash, Int64Equal>>(loaderFunc, isValidFunc)
-		    : cache = makeReference<LoadableCache<int64_t, Value, Int64Hash, Int64Equal>>(loaderFunc);
+		    ? cache = makeReference<LoadableCache<int64_t, TestValue, Int64Hash, Int64Equal>>(loaderFunc, isValidFunc)
+		    : cache = makeReference<LoadableCache<int64_t, TestValue, Int64Hash, Int64Equal>>(loaderFunc);
 
 		for (int i = 0; i < itemCount; i++) {
-			checkValidFunc ? sourceCache[i] = Value(i + 1024, std::numeric_limits<double>::max())
-			               : sourceCache[i] = Value(i + 1024);
+			checkValidFunc ? sourceCache[i] = TestValue(i + 1024, std::numeric_limits<double>::max())
+			               : sourceCache[i] = TestValue(i + 1024);
 			sourceVec.push_back(i);
 		}
 		wStats = makeReference<LoadableCacheOpStats>();
@@ -174,10 +187,10 @@ private:
 				if (self->checkValidFunc) {
 					if (self->fetchOnMiss) {
 						// Validating key expiry semantics, override the expiry
-						Value v(it->second.v, now() + testLoadOnMissTTL);
+						TestValue v(it->second.v, now() + testLoadOnMissTTL);
 						result->emplace(it->first, v);
 					} else {
-						Value v(it->second.v, std::numeric_limits<double>::max());
+						TestValue v(it->second.v, std::numeric_limits<double>::max());
 						result->emplace(it->first, v);
 					}
 				} else {
@@ -197,14 +210,14 @@ private:
 		return Void();
 	}
 
-	static bool isValueValid(const Value& v) {
+	static bool isValueValid(const TestValue& v) {
 		ASSERT(v.ttl.present());
 		return now() > v.ttl.get();
 	}
 
-	static Future<Void> loadKeys(void* data, const std::vector<int64_t>& keys, KVMap* result) {
-		ASSERT(data != nullptr);
-		return loadKeysImpl(static_cast<LoadableCacheWorkload*>(data), keys, result);
+	static Future<Void> loadKeys(std::any data, const std::vector<int64_t>& keys, KVMap* result) {
+		ASSERT(data.has_value());
+		return loadKeysImpl(std::any_cast<LoadableCacheWorkload*>(data), keys, result);
 	}
 
 	static std::vector<int64_t> getLookupVec(Reference<LoadableCacheWorkload> self, bool* invalidKeyAdded) {
@@ -288,10 +301,10 @@ private:
 
 		TraceEvent("TestInvalidKey");
 		if (self->checkValidFunc) {
-			Optional<Value> value = wait(self->cache->get(self->itemCount + 100, self.getPtr(), stats));
+			Optional<TestValue> value = wait(self->cache->get(self->itemCount + 100, self.getPtr(), stats));
 			ASSERT(!value.present());
 		} else {
-			Optional<Value> value =
+			Optional<TestValue> value =
 			    wait(self->cache->get(self->itemCount + 100, self.getPtr(), Optional<double>(), stats));
 			ASSERT(!value.present());
 		}
@@ -313,11 +326,11 @@ private:
 		TraceEvent("TestLoadOnMissStart");
 		self->fetchOnMiss = true;
 		if (self->checkValidFunc) {
-			Optional<Value> value = wait(self->cache->get(key, self.getPtr(), stats));
+			Optional<TestValue> value = wait(self->cache->get(key, self.getPtr(), stats));
 			ASSERT(value.present());
 			validate(self, { { key, value.get() } });
 		} else {
-			Optional<Value> value = wait(self->cache->get(key, self.getPtr(), expDurationSec, stats));
+			Optional<TestValue> value = wait(self->cache->get(key, self.getPtr(), expDurationSec, stats));
 			ASSERT(value.present());
 			validate(self, { { key, value.get() } });
 		}
@@ -337,11 +350,11 @@ private:
 
 		TraceEvent("TestLoadExpiredKeyStart");
 		if (self->checkValidFunc) {
-			Optional<Value> value = wait(self->cache->get(key, self.getPtr(), stats));
+			Optional<TestValue> value = wait(self->cache->get(key, self.getPtr(), stats));
 			ASSERT(value.present());
 			validate(self, { { key, value.get() } });
 		} else {
-			Optional<Value> value = wait(self->cache->get(key, self.getPtr(), Optional<double>(), stats));
+			Optional<TestValue> value = wait(self->cache->get(key, self.getPtr(), Optional<double>(), stats));
 			ASSERT(value.present());
 			validate(self, { { key, value.get() } });
 		}
@@ -364,11 +377,11 @@ private:
 		// ensure repeated access to cached keys result in cache-hits
 		for (i = 0; i < count; i++) {
 			if (self->checkValidFunc) {
-				Optional<Value> value = wait(self->cache->get(key, self.getPtr(), stats));
+				Optional<TestValue> value = wait(self->cache->get(key, self.getPtr(), stats));
 				ASSERT(value.present());
 				validate(self, { { key, value.get() } });
 			} else {
-				Optional<Value> value = wait(self->cache->get(key, self.getPtr(), Optional<double>(), stats));
+				Optional<TestValue> value = wait(self->cache->get(key, self.getPtr(), Optional<double>(), stats));
 				ASSERT(value.present());
 				validate(self, { { key, value.get() } });
 			}
@@ -438,6 +451,81 @@ private:
 		ASSERT_EQ(stats->nExpiredEvicted, 0);
 		updateWorkloadStats(self, stats);
 		TraceEvent("TestLoadKeysWithInvalidEnd");
+
+		return Void();
+	}
+
+	ACTOR static Future<Void> testPutKeys(Reference<LoadableCacheWorkload> self) {
+		state std::vector<std::pair<int64_t, TestValue>> toInsert;
+		state std::vector<int64_t> lookupVec;
+		state int i;
+		state int idx;
+		state int nValidations;
+		state const int startIdx = self->itemCount + 1;
+		state const int endIdx = self->itemCount + deterministicRandom()->randomInt(10, 50);
+		state Reference<LoadableCacheOpStats> stats = makeReference<LoadableCacheOpStats>();
+		state double ttl = (deterministicRandom()->randomInt(self->minTtlMS, self->maxTtlMS + 1) * 1.0) / 1000;
+
+		TraceEvent("TestLoadKeysPutKeysStart");
+		for (int i = startIdx; i <= endIdx; i++) {
+			ASSERT_EQ(self->sourceCache.count(i), 0);
+			int64_t v = i + 1024;
+			TestValue value = self->checkValidFunc ? TestValue(v, now() + ttl) : TestValue(v);
+
+			self->sourceCache[i] = value;
+			self->sourceVec.push_back(i);
+			toInsert.push_back(std::make_pair(i, value));
+		}
+		std::vector<int64_t> inserted = self->cache->put(toInsert, ttl);
+		ASSERT_EQ(inserted.size(), toInsert.size());
+
+		state std::unordered_set<int64_t> lookupSet;
+		nValidations = deterministicRandom()->randomInt(1, (endIdx - startIdx));
+		for (i = 0; i < nValidations;) {
+			idx = deterministicRandom()->randomInt(startIdx, endIdx + 1);
+			if (lookupSet.count(idx) == 0) {
+				lookupVec.push_back(idx);
+				lookupSet.insert(idx);
+				i++;
+			}
+		}
+
+		if (self->checkValidFunc) {
+			KVMap ret = wait(self->cache->get(lookupVec, self.getPtr(), stats));
+			validate(self, ret);
+			TraceEvent("LookupVec")
+			    .detail("SetSize", lookupSet.size())
+			    .detail("VecSize", lookupVec.size())
+			    .detail("MapSize", ret.size());
+
+		} else {
+			KVMap ret = wait(self->cache->get(lookupVec, self.getPtr(), ttl, stats));
+			validate(self, ret);
+			TraceEvent("LookupVec")
+			    .detail("SetSize", lookupSet.size())
+			    .detail("VecSize", lookupVec.size())
+			    .detail("MapSize", ret.size());
+		}
+		TraceEvent("TestLoadKeysPutKeysDone");
+
+		return Void();
+	}
+
+	ACTOR static Future<Void> testRefreshKeys(Reference<LoadableCacheWorkload> self) {
+		state double refreshInterval = 0.1; // 100 ms
+
+		TraceEvent("TestRefreshKeysStart");
+		self->cache->enableKeyRefreshes(self.getPtr(), refreshInterval, .001, (self->maxTtlMS * 1.0) / 1000);
+		ASSERT(self->cache->isRefreshKeyEnabled());
+		// wait till 10 refresh cycles
+		wait(delay(4 * refreshInterval));
+		self->failKeyLoads = true;
+		wait(delay(6 * refreshInterval));
+		ASSERT_GT(self->cache->numKeysRefreshed(), 0);
+		self->cache->disableKeyRefreshes();
+		ASSERT(!self->cache->isRefreshKeyEnabled());
+		self->failKeyLoads = false;
+		TraceEvent("TestRefreshKeysDone");
 
 		return Void();
 	}
