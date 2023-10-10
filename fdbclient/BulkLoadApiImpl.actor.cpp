@@ -192,7 +192,7 @@ Future<ApiResult> listBulkLoads(DatabaseContext* db, ApiRequest req, Optional<Re
 }
 
 uint8_t getUserFacingBulkLoadState(const BulkLoadStatus& inStatus) {
-	switch (inStatus.state) {
+	switch (inStatus.stateCode) {
 	case BulkLoadStatus::State::STARTED:
 		return FDB_BULK_LOAD_ADDING_FILES;
 	case BulkLoadStatus::State::STAGING:

@@ -12023,7 +12023,7 @@ ACTOR Future<bool> setBlobRangeActor(Reference<DatabaseContext> cx,
 				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadKey));
 				if (!status.present()) {
 					throw bulk_load_not_found();
-				} else if (status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+				} else if (status.get().stateCode != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
 					throw bulk_load_invalid_state_transition();
 				}
 

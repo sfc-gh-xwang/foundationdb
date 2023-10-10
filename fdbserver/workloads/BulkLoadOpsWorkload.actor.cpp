@@ -529,7 +529,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// Validate bulk load state at end.
 
 		BulkLoadStatus status = wait(cx->getBulkLoadStatus(id, self->tenant));
-		BulkLoadStatus::State current = status.state;
+		BulkLoadStatus::State current = status.stateCode;
 
 		if (BLW_DEBUG) {
 			fmt::print(
@@ -1091,7 +1091,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		// Test that the active bulk load has a valid status
 		state BulkLoadID id = wait(cx->startBulkLoad(range, self->tenant));
 		state BulkLoadStatus status = wait(cx->getBulkLoadStatus(id, self->tenant));
-		ASSERT_EQ(status.state, BulkLoadStatus::State::STARTED);
+		ASSERT_EQ(status.stateCode, BulkLoadStatus::State::STARTED);
 
 		// cleanup
 		wait(self->abortAndCleanupAfterUnit(cx, id, self->tenant));

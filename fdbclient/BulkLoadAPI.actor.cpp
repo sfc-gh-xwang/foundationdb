@@ -423,7 +423,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 				throw bulk_load_not_found();
 			}
 
-			auto st = currentStatus.get().state;
+			auto st = currentStatus.get().stateCode;
 
 			// throw an error if invalid state transition, otherwise if current state already meets desired, return
 			if (BULKLOAD_DEBUG) {
@@ -474,7 +474,7 @@ ACTOR Future<Void> updateBulkLoadStateActor(Reference<DatabaseContext> db,
 				BulkLoadMetadata::versionMap().erase(tr, bulkLoadKey);
 			} else {
 				BulkLoadStatus newStatus = currentStatus.get();
-				newStatus.state = desiredState;
+				newStatus.stateCode = desiredState;
 				BulkLoadMetadata::statusMap().set(tr, bulkLoadKey, newStatus);
 
 				// if cleaning up after abort or completed, clean up other metadata since it is no longer active
@@ -601,7 +601,7 @@ ACTOR Future<Void> waitBulkLoadStateAtLeastActor(Reference<DatabaseContext> db,
 					}
 					throw bulk_load_not_found();
 				}
-				state BulkLoadStatus::State st = status.get().state;
+				state BulkLoadStatus::State st = status.get().stateCode;
 
 				if (st == BulkLoadStatus::State::ABORTED_COMPLETE || st == BulkLoadStatus::State::ABORTED) {
 					if (desiredState != BulkLoadStatus::State::ABORTED &&
@@ -636,9 +636,9 @@ ACTOR Future<Void> cleanupBulkLoadInternalActor(Reference<DatabaseContext> db,
 	try {
 		BulkLoadStatus startStatus = wait(db->getBulkLoadStatusInternal(id, tenant));
 		if (BULKLOAD_DEBUG) {
-			fmt::print("CleanUpBulkLoad {0}: status {1}\n", id.printable(), static_cast<int>(startStatus.state));
+			fmt::print("CleanUpBulkLoad {0}: status {1}\n", id.printable(), static_cast<int>(startStatus.stateCode));
 		}
-		if (startStatus.state == BulkLoadStatus::State::ABORTED) {
+		if (startStatus.stateCode == BulkLoadStatus::State::ABORTED) {
 			if (BULKLOAD_DEBUG) {
 				fmt::print("CleanUpBulkLoad {0}: waiting abort complete\n", id.printable());
 			}
@@ -757,7 +757,7 @@ ACTOR Future<Standalone<VectorRef<BulkLoadIDRef>>> listBulkLoadsInternalActor(Re
 				if (!status.present()) {
 					continue;
 				}
-				auto& st = status->state;
+				auto& st = status->stateCode;
 				if (!onlyActive ||
 				    (st != BulkLoadStatus::State::ABORTED && st != BulkLoadStatus::State::ABORTED_COMPLETE &&
 				     st != BulkLoadStatus::State::DONE)) {

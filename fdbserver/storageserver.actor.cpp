@@ -7122,14 +7122,15 @@ tryReadBlobGranuleChunks(Transaction* tr, KeyRange keys, Version fetchVersion, O
 				tr->setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
 				Optional<BulkLoadStatus> bulkLoadStatus =
 				    wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadIDKey.get()));
-				if (!bulkLoadStatus.present() || bulkLoadStatus->state != BulkLoadStatus::State::STAGING_DDPREPARED) {
+				if (!bulkLoadStatus.present() ||
+				    bulkLoadStatus->stateCode != BulkLoadStatus::State::STAGING_DDPREPARED) {
 					// FIXME: make un-rare
 					CODE_PROBE(true, "", probe::decoration::rare);
 
 					// FIXME: add simulation-only validation that this load was in fact aborted
 					// assume load was aborted, meaning range will be cleared, and return empty chunks;
 
-					int stateInt = bulkLoadStatus.present() ? static_cast<int>(bulkLoadStatus->state) : -1;
+					int stateInt = bulkLoadStatus.present() ? static_cast<int>(bulkLoadStatus->stateCode) : -1;
 					TraceEvent(SevWarn, "BulkLoadFetchInvalidState")
 					    .suppressFor(10.0)
 					    .detail("TenantID", bulkLoadIDKey->first)
@@ -8072,7 +8073,7 @@ ACTOR Future<Void> updateBulkLoadFetchState(StorageServer* data,
 
 	Optional<BulkLoadStatus> bulkLoadStatus = wait(BulkLoadMetadata::statusMap().get(tr, fetchState->idKey.get()));
 	ASSERT(bulkLoadStatus.present());
-	fetchState->loadState = bulkLoadStatus->state;
+	fetchState->loadState = bulkLoadStatus->stateCode;
 
 	return Void();
 }

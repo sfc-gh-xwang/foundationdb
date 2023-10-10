@@ -23,7 +23,7 @@ ACTOR Future<Void> trackNewBulkLoadsActor(BulkLoadTracker* self) {
 				for (auto& it : result.results) {
 					newActiveBulkLoads.insert(it.first);
 					if (!self->activeBulkLoads.count(it.first)) {
-						self->addActor.send(self->handler(it.first, it.second.state));
+						self->addActor.send(self->handler(it.first, it.second.stateCode));
 					}
 				}
 				self->activeBulkLoads = newActiveBulkLoads;
