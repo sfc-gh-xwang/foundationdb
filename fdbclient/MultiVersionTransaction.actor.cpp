@@ -38,7 +38,6 @@
 #include "fdbclient/MultiVersionAssignmentVars.h"
 #include "fdbclient/ClientVersion.h"
 #include "fdbclient/LocalClientAPI.h"
-#include "fdbclient/VersionVector.h"
 
 #include "flow/ThreadPrimitives.h"
 #include "flow/network.h"
@@ -466,10 +465,6 @@ void DLTransaction::debugTrace(BaseTraceEvent&& event) {
 
 void DLTransaction::debugPrint(std::string const& message) {
 	fmt::print("[Deferred logging unsupported] {}\n", message);
-}
-
-ThreadFuture<VersionVector> DLTransaction::getVersionVector() {
-	return VersionVector(); // not implemented
 }
 
 ThreadFuture<ApiResult> DLTransaction::execAsyncRequest(ApiRequest request) {
@@ -1710,15 +1705,6 @@ Version MultiVersionTransaction::getCommittedVersion() {
 		return tr.transaction->getCommittedVersion();
 	}
 	return invalidVersion;
-}
-
-ThreadFuture<VersionVector> MultiVersionTransaction::getVersionVector() {
-	auto tr = getTransaction();
-	if (tr.transaction) {
-		return tr.transaction->getVersionVector();
-	}
-
-	return VersionVector();
 }
 
 ThreadFuture<SpanContext> MultiVersionTransaction::getSpanContext() {

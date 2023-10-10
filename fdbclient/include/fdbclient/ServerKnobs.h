@@ -38,13 +38,10 @@ public:
 	int64_t MAX_VERSIONS_IN_FLIGHT_FORCED;
 	int64_t MAX_READ_TRANSACTION_LIFE_VERSIONS;
 	int64_t MAX_WRITE_TRANSACTION_LIFE_VERSIONS;
-	bool ENABLE_VERSION_VECTOR;
-	bool ENABLE_VERSION_VECTOR_TLOG_UNICAST;
 	double MAX_COMMIT_BATCH_INTERVAL; // Each commit proxy generates a CommitTransactionBatchRequest at least this
 	                                  // often, so that versions always advance smoothly
 	double MAX_VERSION_RATE_MODIFIER;
 	int64_t MAX_VERSION_RATE_OFFSET;
-	bool ENABLE_VERSION_VECTOR_HA_OPTIMIZATION;
 	// Maximum correction recovery can make to the version if the actual
 	// version of the cluster is behind the expected version (version
 	// correction must be enabled). Denoted as a value in seconds.

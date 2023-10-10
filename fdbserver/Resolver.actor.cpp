@@ -75,24 +75,18 @@ public:
 	}
 
 	// Adds state transactions between two versions to the reply message.
-	// "initialShardChanged" indicates if commitVersion has shard changes.
-	// Returns if shardChanged has ever happened for these versions.
-	[[nodiscard]] bool applyStateTxnsToBatchReply(ResolveTransactionBatchReply* reply,
-	                                              Version firstUnseenVersion,
-	                                              Version commitVersion,
-	                                              bool initialShardChanged) {
-		bool shardChanged = initialShardChanged;
+	void applyStateTxnsToBatchReply(ResolveTransactionBatchReply* reply,
+	                                Version firstUnseenVersion,
+	                                Version commitVersion) {
 		auto stateTransactionItr = recentStateTransactions.lower_bound(firstUnseenVersion);
 		auto endItr = recentStateTransactions.lower_bound(commitVersion);
 		// Resolver only sends back prior state txns back, because the proxy
 		// sends this request has them and will apply them via applyMetadataToCommittedTransactions();
 		// and other proxies will get this version's state txns as a prior version.
 		for (; stateTransactionItr != endItr; ++stateTransactionItr) {
-			shardChanged = shardChanged || stateTransactionItr->value.first;
 			reply->stateMutations.push_back(reply->arena, stateTransactionItr->value.second);
 			reply->arena.dependsOn(stateTransactionItr->value.second.arena());
 		}
-		return shardChanged;
 	}
 
 	bool empty() const { return recentStateTransactionSizes.empty(); }
@@ -152,9 +146,6 @@ struct Resolver : ReferenceCounted<Resolver> {
 	bool forceRecovery = false;
 
 	Version debugMinRecentStateVersion = 0;
-
-	// The previous commit versions per tlog
-	std::vector<Version> tpcvVector;
 
 	CounterCollection cc;
 	Counter resolveBatchIn;
@@ -448,11 +439,7 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 
 		CODE_PROBE(firstUnseenVersion == req.version, "Resolver first unseen version is current version");
 
-		// If shardChanged at or before this commit version, the proxy may have computed
-		// the wrong set of groups. Then we need to broadcast to all groups below.
-		stateTransactionsPair.first = toCommit && toCommit->isShardChanged();
-		bool shardChanged = self->recentStateTransactionsInfo.applyStateTxnsToBatchReply(
-		    &reply, firstUnseenVersion, req.version, toCommit && toCommit->isShardChanged());
+		self->recentStateTransactionsInfo.applyStateTxnsToBatchReply(&reply, firstUnseenVersion, req.version);
 
 		//TraceEvent("ResolveBatch", self->dbgid).detail("PrevVersion", req.prevVersion).detail("Version", req.version).detail("StateTransactionVersions", self->recentStateTransactionsInfo.size()).detail("StateBytes", stateBytes).detail("FirstVersion", self->recentStateTransactionsInfo.empty() ? -1 : self->recentStateTransactionsInfo.firstVersion()).detail("StateMutationsIn", req.txnStateTransactions.size()).detail("StateMutationsOut", reply.stateMutations.size()).detail("From", proxyAddress);
 
@@ -487,27 +474,6 @@ ACTOR Future<Void> resolveBatch(Reference<Resolver> self,
 			stateBytes -= erasedBytes;
 		}
 
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST) {
-			if (!self->numLogs) {
-				reply.tpcvMap.clear();
-			} else {
-				std::set<uint16_t> writtenTLogs;
-				if (shardChanged || reply.privateMutationCount) {
-					for (int i = 0; i < self->numLogs; i++) {
-						writtenTLogs.insert(i);
-					}
-				} else {
-					toCommit->getLocations(reply.writtenTags, writtenTLogs);
-				}
-				if (self->tpcvVector[0] == invalidVersion) {
-					std::fill(self->tpcvVector.begin(), self->tpcvVector.end(), req.prevVersion);
-				}
-				for (uint16_t tLog : writtenTLogs) {
-					reply.tpcvMap[tLog] = self->tpcvVector[tLog];
-					self->tpcvVector[tLog] = req.version;
-				}
-			}
-		}
 		self->version.set(req.version);
 		bool breachedLimit = self->totalStateBytes.get() <= SERVER_KNOBS->RESOLVER_STATE_MEMORY_LIMIT &&
 		                     self->totalStateBytes.get() + stateBytes + stateNormalMutationBytes >

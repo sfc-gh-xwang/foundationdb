@@ -372,7 +372,6 @@ public:
 	double getBackoff(int errCode);
 
 	void debugTransaction(UID dID);
-	VersionVector getVersionVector() const;
 	SpanContext getSpanContext() const;
 
 	Future<Void> commitMutations();

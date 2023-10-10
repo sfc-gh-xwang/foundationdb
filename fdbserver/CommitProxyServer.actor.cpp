@@ -734,7 +734,6 @@ struct CommitBatchContext {
 
 	double commitStartTime;
 
-	std::unordered_map<uint16_t, Version> tpcvMap; // obtained from resolver
 	std::set<Tag> writtenTags; // final set tags written to in the batch
 	std::set<Tag> writtenTagsPreResolution; // tags written to in the batch not including any changes from the resolver.
 
@@ -926,9 +925,6 @@ ACTOR Future<Void> preresolutionProcessing(CommitBatchContext* self) {
 		    "CommitDebug", debugID.get().first(), "CommitProxyServer.commitBatch.GettingCommitVersion");
 	}
 
-	if (SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST) {
-		self->writtenTagsPreResolution = self->getWrittenTagsPreResolution();
-	}
 	GetCommitVersionRequest req(span.context,
 	                            pProxyCommitData->commitVersionRequestNumber++,
 	                            pProxyCommitData->mostRecentProcessedRequestNumber,
@@ -1154,9 +1150,6 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 void assertResolutionStateMutationsSizeConsistent(const std::vector<ResolveTransactionBatchReply>& resolution) {
 	for (int r = 1; r < resolution.size(); r++) {
 		ASSERT(resolution[r].stateMutations.size() == resolution[0].stateMutations.size());
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST) {
-			ASSERT_EQ(resolution[0].tpcvMap.size(), resolution[r].tpcvMap.size());
-		}
 		for (int s = 0; s < resolution[r].stateMutations.size(); s++) {
 			ASSERT(resolution[r].stateMutations[s].size() == resolution[0].stateMutations[s].size());
 		}
@@ -2444,11 +2437,8 @@ ACTOR Future<Void> postResolution(CommitBatchContext* self) {
 					break;
 				}
 				when(wait(pProxyCommitData->cx->onProxiesChanged())) {}
-				// @todo probably there is no need to get the (entire) version vector from the sequencer
-				// in this case, and if so, consider adding a flag to the request to tell the sequencer
-				// to not send the version vector information.
 				when(GetRawCommittedVersionReply v = wait(pProxyCommitData->master.getLiveCommittedVersion.getReply(
-				         GetRawCommittedVersionRequest(waitVersionSpan.context, debugID, invalidVersion),
+				         GetRawCommittedVersionRequest(waitVersionSpan.context, debugID),
 				         TaskPriority::GetLiveCommittedVersionReply))) {
 					if (v.version > pProxyCommitData->committedVersion.get()) {
 						pProxyCommitData->locked = v.locked;
@@ -2495,18 +2485,13 @@ ACTOR Future<Void> postResolution(CommitBatchContext* self) {
 
 	self->commitStartTime = now();
 	pProxyCommitData->lastStartCommit = self->commitStartTime;
-	Optional<std::unordered_map<uint16_t, Version>> tpcvMap = Optional<std::unordered_map<uint16_t, Version>>();
-	if (SERVER_KNOBS->ENABLE_VERSION_VECTOR) {
-		tpcvMap = self->tpcvMap;
-	}
 	self->loggingComplete = pProxyCommitData->logSystem->push(self->prevVersion,
 	                                                          self->commitVersion,
 	                                                          pProxyCommitData->committedVersion.get(),
 	                                                          pProxyCommitData->minKnownCommittedVersion,
 	                                                          self->toCommit,
 	                                                          span.context,
-	                                                          self->debugID,
-	                                                          tpcvMap);
+	                                                          self->debugID);
 
 	float ratio = self->toCommit.getEmptyMessageRatio();
 	pProxyCommitData->stats.commitBatchingEmptyMessageRatio.addMeasurement(ratio);
@@ -2630,9 +2615,6 @@ ACTOR Future<Void> reply(CommitBatchContext* self) {
 
 	if (self->commitVersion >= pProxyCommitData->committedVersion.get()) {
 		state Optional<std::set<Tag>> writtenTags;
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR) {
-			writtenTags = self->writtenTags;
-		}
 		wait(pProxyCommitData->master.reportLiveCommittedVersion.getReply(
 		    ReportRawCommittedVersionRequest(self->commitVersion,
 		                                     self->lockedAfter,
@@ -2827,16 +2809,6 @@ void maybeAddTssMapping(GetKeyServerLocationsReply& reply,
 	}
 }
 
-void addTagMapping(GetKeyServerLocationsReply& reply, ProxyCommitData* commitData) {
-	for (const auto& [_, shard] : reply.results) {
-		for (auto& ssi : shard) {
-			auto iter = commitData->storageCache.find(ssi.id());
-			ASSERT_WE_THINK(iter != commitData->storageCache.end());
-			reply.resultsTagMapping.emplace_back(ssi.id(), iter->second->tag);
-		}
-	}
-}
-
 ACTOR static Future<Void> doTenantLookupRequest(TenantLookupRequest req, ProxyCommitData* commitData) {
 	// We can't respond to these requests until we have valid txnStateStore
 	wait(commitData->validState.getFuture());
@@ -2983,7 +2955,6 @@ ACTOR static Future<Void> doKeyServerLocationRequest(GetKeyServerLocationsReques
 			--r;
 		}
 	}
-	addTagMapping(rep, commitData);
 	req.reply.send(rep);
 	++commitData->stats.keyServerLocationOut;
 	return Void();

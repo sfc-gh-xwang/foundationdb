@@ -27,7 +27,6 @@
 #include "fdbclient/Tuple.h"
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/GrvProxyInterface.h"
-#include "fdbclient/VersionVector.h"
 #include "fdbserver/GrvProxyTagThrottler.h"
 #include "fdbserver/GrvRateInfo.h"
 #include "fdbserver/LogSystem.h"
@@ -227,7 +226,6 @@ struct GrvProxyData {
 	Optional<LatencyBandConfig> latencyBandConfig;
 	double lastStartCommit;
 	double lastCommitLatency;
-	LatencySample versionVectorSizeOnGRVReply;
 	int updateCommitRequests;
 	NotifiedDouble lastCommitTime;
 
@@ -235,9 +233,6 @@ struct GrvProxyData {
 	Version minKnownCommittedVersion; // we should ask master for this version.
 
 	GrvProxyTagThrottler tagThrottler;
-
-	// Cache of the latest commit versions of storage servers.
-	VersionVector ssVersionVectorCache;
 
 	void updateLatencyBandConfig(Optional<LatencyBandConfig> newLatencyBandConfig) {
 		if (newLatencyBandConfig.present() != latencyBandConfig.present() ||
@@ -268,10 +263,6 @@ struct GrvProxyData {
 	    db(db),
 	    lastStartCommit(0),
 	    lastCommitLatency(SERVER_KNOBS->REQUIRED_MIN_RECOVERY_DURATION),
-	    versionVectorSizeOnGRVReply("VersionVectorSizeOnGRVReply",
-	                                dbgid,
-	                                SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
-	                                SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
 	    updateCommitRequests(0),
 	    lastCommitTime(0),
 	    version(0),
@@ -744,8 +735,7 @@ ACTOR Future<GetReadVersionReply> getLiveCommittedVersion(std::vector<SpanContex
 	state double grvStart = now();
 	state Future<GetRawCommittedVersionReply> replyFromMasterFuture;
 	replyFromMasterFuture = grvProxyData->master.getLiveCommittedVersion.getReply(
-	    GetRawCommittedVersionRequest(span.context, debugID, grvProxyData->ssVersionVectorCache.getMaxVersion()),
-	    TaskPriority::GetLiveCommittedVersionReply);
+	    GetRawCommittedVersionRequest(span.context, debugID), TaskPriority::GetLiveCommittedVersionReply);
 
 	if (!SERVER_KNOBS->ALWAYS_CAUSAL_READ_RISKY && !(flags & GetReadVersionRequest::FLAG_CAUSAL_READ_RISKY)) {
 		wait(transformError(updateLastCommit(grvProxyData, debugID), broken_promise(), tlog_failed()));
@@ -766,10 +756,6 @@ ACTOR Future<GetReadVersionReply> getLiveCommittedVersion(std::vector<SpanContex
 	grvProxyData->version = std::max(grvProxyData->version, repFromMaster.version);
 	grvProxyData->minKnownCommittedVersion =
 	    std::max(grvProxyData->minKnownCommittedVersion, repFromMaster.minKnownCommittedVersion);
-	if (SERVER_KNOBS->ENABLE_VERSION_VECTOR) {
-		// TODO add to "status json"
-		grvProxyData->ssVersionVectorCache.applyDelta(repFromMaster.ssVersionVectorDelta);
-	}
 	grvProxyData->stats.grvGetCommittedVersionRpcDist->sampleSeconds(now() - grvConfirmEpochLive);
 	GetReadVersionReply rep;
 	rep.version = repFromMaster.version;
@@ -828,10 +814,6 @@ ACTOR Future<Void> sendGrvReplies(Future<GetReadVersionReply> replyFuture,
 			reply.version = replyVersion;
 		}
 		reply.midShardSize = midShardSize;
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR) {
-			grvProxyData->ssVersionVectorCache.getDelta(request.maxVersion, reply.ssVersionVectorDelta);
-			grvProxyData->versionVectorSizeOnGRVReply.addMeasurement(reply.ssVersionVectorDelta.size());
-		}
 		reply.proxyId = grvProxyData->dbgid;
 		reply.proxyTagThrottledDuration = request.proxyTagThrottledDuration;
 

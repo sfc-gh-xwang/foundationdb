@@ -80,9 +80,6 @@ struct TransactionWrapper : public ReferenceCounted<TransactionWrapper> {
 	// Gets the committed version of a transaction
 	virtual Version getCommittedVersion() = 0;
 
-	// Gets the version vector cached in a transaction
-	virtual Future<VersionVector> getVersionVector() = 0;
-
 	// Gets the spanContext of a transaction
 	virtual Future<SpanContext> getSpanContext() = 0;
 
@@ -165,9 +162,6 @@ struct FlowTransactionWrapper : public TransactionWrapper {
 	// Gets the committed version of a transaction
 	Version getCommittedVersion() override { return transaction.getCommittedVersion(); }
 
-	// Gets the version vector cached in a transaction
-	Future<VersionVector> getVersionVector() override { return transaction.getVersionVector(); }
-
 	// Gets the spanContext of a transaction
 	Future<SpanContext> getSpanContext() override { return transaction.getSpanContext(); }
 
@@ -236,11 +230,6 @@ struct ThreadTransactionWrapper : public TransactionWrapper {
 
 	// Gets the committed version of a transaction
 	Version getCommittedVersion() override { return transaction->getCommittedVersion(); }
-
-	// Gets the version vector cached in a transaction
-	Future<VersionVector> getVersionVector() override {
-		return unsafeThreadFutureToFuture(transaction->getVersionVector());
-	}
 
 	// Gets the spanContext of a transaction
 	Future<SpanContext> getSpanContext() override { return unsafeThreadFutureToFuture(transaction->getSpanContext()); }

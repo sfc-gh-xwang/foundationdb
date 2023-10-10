@@ -35,7 +35,6 @@
 #include "fdbclient/GrvProxyInterface.h"
 #include "fdbclient/IdempotencyId.actor.h"
 #include "fdbclient/StorageServerInterface.h"
-#include "fdbclient/VersionVector.h"
 #include "fdbclient/TenantLookupInfo.h"
 
 #include "fdbrpc/Stats.h"
@@ -298,7 +297,6 @@ struct GetReadVersionReply : public BasicLoadBalancedReply {
 
 	double proxyTagThrottledDuration{ 0.0 };
 
-	VersionVector ssVersionVectorDelta;
 	UID proxyId; // GRV proxy ID to detect old GRV proxies at client side
 
 	GetReadVersionReply() : version(invalidVersion), locked(false) {}
@@ -313,7 +311,6 @@ struct GetReadVersionReply : public BasicLoadBalancedReply {
 		           midShardSize,
 		           rkDefaultThrottled,
 		           rkBatchThrottled,
-		           ssVersionVectorDelta,
 		           proxyId,
 		           proxyTagThrottledDuration);
 	}
@@ -351,14 +348,11 @@ struct GetReadVersionRequest : TimedRequest {
 	Optional<UID> debugID;
 	ReplyPromise<GetReadVersionReply> reply;
 
-	Version maxVersion; // max version in the client's version vector cache
-
-	GetReadVersionRequest() : transactionCount(1), flags(0), maxVersion(invalidVersion) {}
+	GetReadVersionRequest() : transactionCount(1), flags(0) {}
 
 	GetReadVersionRequest(SpanContext spanContext,
 	                      uint32_t transactionCount,
 	                      TransactionPriority priority,
-	                      Version maxVersion,
 	                      uint32_t flags = 0,
 	                      Optional<ThrottlingId> const& throttlingId = Optional<ThrottlingId>(),
 	                      Optional<UID> debugID = Optional<UID>(),
@@ -369,8 +363,7 @@ struct GetReadVersionRequest : TimedRequest {
 	    priority(priority),
 	    throttlingId(throttlingId),
 	    expectedTotalCost(expectedTotalCost),
-	    debugID(debugID),
-	    maxVersion(maxVersion) {
+	    debugID(debugID) {
 		flags = flags & ~FLAG_PRIORITY_MASK;
 		switch (priority) {
 		case TransactionPriority::BATCH:
@@ -396,8 +389,7 @@ struct GetReadVersionRequest : TimedRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(
-		    ar, transactionCount, flags, debugID, reply, spanContext, maxVersion, throttlingId, expectedTotalCost);
+		serializer(ar, transactionCount, flags, debugID, reply, spanContext, throttlingId, expectedTotalCost);
 
 		if (ar.isDeserializing) {
 			if ((flags & PRIORITY_SYSTEM_IMMEDIATE) == PRIORITY_SYSTEM_IMMEDIATE) {
@@ -447,16 +439,9 @@ struct GetKeyServerLocationsReply {
 	// if any storage servers in results have a TSS pair, that mapping is in here
 	std::vector<std::pair<UID, StorageServerInterface>> resultsTssMapping;
 
-	// maps storage server interfaces (captured in "results") to the tags of
-	// their corresponding storage servers
-	// @note this map allows the client to identify the latest commit versions
-	// of storage servers (the version vector, which captures the latest commit
-	// versions of storage servers, identifies storage servers by their tags).
-	std::vector<std::pair<UID, Tag>> resultsTagMapping;
-
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, results, resultsTssMapping, resultsTagMapping, arena);
+		serializer(ar, results, resultsTssMapping, arena);
 	}
 };
 
@@ -618,7 +603,6 @@ struct GetRawCommittedVersionReply {
 	bool locked;
 	Optional<Value> metadataVersion;
 	Version minKnownCommittedVersion;
-	VersionVector ssVersionVectorDelta;
 
 	GetRawCommittedVersionReply()
 	  : debugID(Optional<UID>()),
@@ -629,7 +613,7 @@ struct GetRawCommittedVersionReply {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, debugID, version, locked, metadataVersion, minKnownCommittedVersion, ssVersionVectorDelta);
+		serializer(ar, debugID, version, locked, metadataVersion, minKnownCommittedVersion);
 	}
 };
 
@@ -638,19 +622,15 @@ struct GetRawCommittedVersionRequest {
 	SpanContext spanContext;
 	Optional<UID> debugID;
 	ReplyPromise<GetRawCommittedVersionReply> reply;
-	Version maxVersion; // max version in the grv proxy's version vector cache
 
-	explicit GetRawCommittedVersionRequest(SpanContext spanContext,
-	                                       Optional<UID> const& debugID = Optional<UID>(),
-	                                       Version maxVersion = invalidVersion)
+	explicit GetRawCommittedVersionRequest(SpanContext spanContext, Optional<UID> const& debugID = Optional<UID>())
 	  : spanContext(spanContext),
-	    debugID(debugID),
-	    maxVersion(maxVersion) {}
-	explicit GetRawCommittedVersionRequest() : spanContext(), debugID(), maxVersion(invalidVersion) {}
+	    debugID(debugID) {}
+	explicit GetRawCommittedVersionRequest() : spanContext(), debugID() {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, debugID, reply, spanContext, maxVersion);
+		serializer(ar, debugID, reply, spanContext);
 	}
 };
 

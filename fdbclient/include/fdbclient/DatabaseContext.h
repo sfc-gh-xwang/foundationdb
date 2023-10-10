@@ -42,7 +42,6 @@
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/SpecialKeySpace.actor.h"
 #include "fdbclient/ThroughputTracker.h"
-#include "fdbclient/VersionVector.h"
 #include "fdbclient/IKeyValueStore.actor.h"
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/ClusterInterface.h"
@@ -582,12 +581,6 @@ public:
 	Version getMinimumChangeFeedVersion();
 	void setDesiredChangeFeedVersion(Version v);
 
-	// map from ssid -> ss tag
-	// @note this map allows the client to identify the latest commit versions
-	// of storage servers (note that "ssVersionVectorCache" identifies storage
-	// servers by their tags).
-	std::unordered_map<UID, Tag> ssidTagMapping;
-
 	IsInternal internal; // Only contexts created through the C client and fdbcli are non-internal
 
 	CounterCollection cc;
@@ -748,17 +741,6 @@ public:
 	bool debugUseTag = false;
 	static const std::vector<std::string> debugTransactionTagChoices;
 
-	// Cache of the latest commit versions of storage servers.
-	VersionVector ssVersionVectorCache;
-
-	// Introduced mainly to optimize out the version vector related code (on the client side)
-	// when the version vector feature is disabled (on the server side).
-	// @param ssVersionVectorDelta version vector changes sent by GRV proxy
-	inline bool versionVectorCacheActive(const VersionVector& ssVersionVectorDelta) {
-		return (ssVersionVectorCache.getMaxVersion() != invalidVersion ||
-		        ssVersionVectorDelta.getMaxVersion() != invalidVersion);
-	}
-
 	// Adds or updates the specified (SS, TSS) pair in the TSS mapping (if not already present).
 	// Requests to the storage server will be duplicated to the TSS.
 	void addTssMapping(StorageServerInterface const& ssi, StorageServerInterface const& tssi);
@@ -766,30 +748,6 @@ public:
 	// Removes the storage server and its TSS pair from the TSS mapping (if present).
 	// Requests to the storage server will no longer be duplicated to its pair TSS.
 	void removeTssMapping(StorageServerInterface const& ssi);
-
-	// Adds or updates the specified (UID, Tag) pair in the tag mapping.
-	void addSSIdTagMapping(const UID& uid, const Tag& tag);
-
-	// Returns the latest commit version that mutated the specified storage server.
-	// @in ssid id of the storage server interface
-	// @out tag storage server's tag, if an entry exists for "ssid" in "ssidTagMapping"
-	// @out commitVersion latest commit version that mutated the storage server
-	void getLatestCommitVersionForSSID(const UID& ssid, Tag& tag, Version& commitVersion);
-
-	// Returns the latest commit versions that mutated the specified storage servers
-	/// @note returns the latest commit version for a storage server only if the latest
-	// commit version of that storage server is below the transaction's readVersion.
-	void getLatestCommitVersions(const Reference<LocationInfo>& locationInfo,
-	                             Reference<TransactionState> info,
-	                             VersionVector& latestCommitVersions);
-
-	// Returns the latest commit version that mutated the specified storage server.
-	// @note this is a lightweight version of "getLatestCommitVersions()", to be used
-	// when the state ("TransactionState") of the transaction that fetched the read
-	// version is not available.
-	void getLatestCommitVersion(const StorageServerInterface& ssi,
-	                            Version readVersion,
-	                            VersionVector& latestCommitVersion);
 
 	// Gets the tenant mode stored in the DatabaseContext's ClientDBInfo
 	// If the ClientDBInfo is provisional, it is possible we don't actually know the tenant mode, in which case we

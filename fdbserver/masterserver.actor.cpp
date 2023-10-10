@@ -31,7 +31,6 @@
 #include "fdbserver/WaitFailure.h"
 #include "flow/ActorCollection.h"
 #include "flow/Trace.h"
-#include "fdbclient/VersionVector.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -69,23 +68,14 @@ struct MasterData : NonCopyable, ReferenceCounted<MasterData> {
 
 	bool forceRecovery;
 
-	// Captures the latest commit version targeted for each storage server in the cluster.
-	// @todo We need to ensure that the latest commit versions of storage servers stay
-	// up-to-date in the presence of key range splits/merges.
-	VersionVector ssVersionVector;
-
 	int8_t locality; // sequencer locality
 
 	CounterCollection cc;
 	Counter getCommitVersionRequests;
 	Counter getLiveCommittedVersionRequests;
 	Counter reportLiveCommittedVersionRequests;
-	// This counter gives an estimate of the number of non-empty peeks that storage servers
-	// should do from tlogs (in the worst case, ignoring blocking peek timeouts).
-	LatencySample versionVectorTagUpdates;
 	Counter waitForPrevCommitRequests;
 	Counter nonWaitForPrevCommitRequests;
-	LatencySample versionVectorSizeOnCVReply;
 	LatencySample waitForPrevLatencies;
 
 	PromiseStream<Future<Void>> addActor;
@@ -116,16 +106,8 @@ struct MasterData : NonCopyable, ReferenceCounted<MasterData> {
 	    getCommitVersionRequests("GetCommitVersionRequests", cc),
 	    getLiveCommittedVersionRequests("GetLiveCommittedVersionRequests", cc),
 	    reportLiveCommittedVersionRequests("ReportLiveCommittedVersionRequests", cc),
-	    versionVectorTagUpdates("VersionVectorTagUpdates",
-	                            dbgid,
-	                            SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
-	                            SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
 	    waitForPrevCommitRequests("WaitForPrevCommitRequests", cc),
 	    nonWaitForPrevCommitRequests("NonWaitForPrevCommitRequests", cc),
-	    versionVectorSizeOnCVReply("VersionVectorSizeOnCVReply",
-	                               dbgid,
-	                               SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
-	                               SERVER_KNOBS->LATENCY_SKETCH_ACCURACY),
 	    waitForPrevLatencies("WaitForPrevLatencies",
 	                         dbgid,
 	                         SERVER_KNOBS->LATENCY_METRICS_LOGGING_INTERVAL,
@@ -266,13 +248,6 @@ void updateLiveCommittedVersion(Reference<MasterData> self, ReportRawCommittedVe
 	self->minKnownCommittedVersion = std::max(self->minKnownCommittedVersion, req.minKnownCommittedVersion);
 
 	if (req.version > self->liveCommittedVersion.get()) {
-		if (SERVER_KNOBS->ENABLE_VERSION_VECTOR && req.writtenTags.present()) {
-			// TraceEvent("Received ReportRawCommittedVersionRequest").detail("Version",req.version);
-			int8_t primaryLocality =
-			    SERVER_KNOBS->ENABLE_VERSION_VECTOR_HA_OPTIMIZATION ? self->locality : tagLocalityInvalid;
-			self->ssVersionVector.setVersion(req.writtenTags.get(), req.version, primaryLocality);
-			self->versionVectorTagUpdates.addMeasurement(req.writtenTags.get().size());
-		}
 		auto curTime = now();
 		// add debug here to change liveCommittedVersion to time bound of now()
 		debug_advanceVersionTimestamp(self->liveCommittedVersion.get(), curTime + CLIENT_KNOBS->MAX_VERSION_CACHE_LAG);
@@ -315,23 +290,13 @@ ACTOR Future<Void> serveLiveCommittedVersion(Reference<MasterData> self) {
 				reply.locked = self->databaseLocked;
 				reply.metadataVersion = self->proxyMetadataVersion;
 				reply.minKnownCommittedVersion = self->minKnownCommittedVersion;
-				if (SERVER_KNOBS->ENABLE_VERSION_VECTOR) {
-					self->ssVersionVector.getDelta(req.maxVersion, reply.ssVersionVectorDelta);
-					self->versionVectorSizeOnCVReply.addMeasurement(reply.ssVersionVectorDelta.size());
-				}
 				req.reply.send(reply);
 			}
 			when(ReportRawCommittedVersionRequest req =
 			         waitNext(self->myInterface.reportLiveCommittedVersion.getFuture())) {
-				if (SERVER_KNOBS->ENABLE_VERSION_VECTOR && req.prevVersion.present() &&
-				    (self->liveCommittedVersion.get() != invalidVersion) &&
-				    (self->liveCommittedVersion.get() < req.prevVersion.get())) {
-					self->addActor.send(waitForPrev(self, req));
-				} else {
-					updateLiveCommittedVersion(self, req);
-					++self->nonWaitForPrevCommitRequests;
-					req.reply.send(Void());
-				}
+				updateLiveCommittedVersion(self, req);
+				++self->nonWaitForPrevCommitRequests;
+				req.reply.send(Void());
 			}
 		}
 	}
