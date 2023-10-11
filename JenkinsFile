@@ -219,6 +219,14 @@ pipeline {
                         }
                     }
                 }
+
+                stage('Build and Test - OPEN_FOR_IDE') {
+                    steps {
+                        script {
+                            trigger_job("precommit_ide", "precommit_ide.yml")
+                        }
+                    }
+                }
             }
         }
         stage('Update Build Status') {
