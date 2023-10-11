@@ -1271,6 +1271,8 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	// Require 3 consecutive successful quiet database checks spaced 2 second apart
 	state int numSuccesses = 0;
 	loop {
+		blobManagerMetrics = Never();
+		blobWorkerMetrics = Never();
 		try {
 			TraceEvent("QuietDatabaseWaitingOnDataDistributor").log();
 			state WorkerInterface distributorWorker = wait(getDataDistributorWorker(cx, dbInfo));
