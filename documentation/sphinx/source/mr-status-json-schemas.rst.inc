@@ -870,8 +870,8 @@
          "tenant_mode": {
              "$enum":[
              "disabled",
-             "optional_experimental",
-             "required_experimental"
+             "optional",
+             "required"
          ]},
          "encryption_at_rest_mode": {
              "$enum":[

@@ -325,7 +325,7 @@ CommandFactory configureFactory(
         "commit_proxies=<COMMIT_PROXIES>|grv_proxies=<GRV_PROXIES>|logs=<LOGS>|resolvers=<RESOLVERS>>*|"
         "count=<TSS_COUNT>|perpetual_storage_wiggle=<WIGGLE_SPEED>|perpetual_storage_wiggle_locality="
         "<<LOCALITY_KEY>:<LOCALITY_VALUE>|0>|storage_migration_type={disabled|gradual|aggressive}"
-        "|tenant_mode={disabled|optional_experimental|required_experimental}|blob_granules_enabled={0|1}"
+        "|tenant_mode={disabled|optional|required}|blob_granules_enabled={0|1}"
         "|encryption_at_rest_mode={disabled|domain_aware|cluster_aware}"
         "|exclude=<ADDRESS...>",
         "change the database configuration",
@@ -358,7 +358,7 @@ CommandFactory configureFactory(
         "perpetual_storage_wiggle_locality=<<LOCALITY_KEY>:<LOCALITY_VALUE>|0>: Set the process filter for wiggling. "
         "The processes that match the given locality key and locality value are only wiggled. The value 0 will disable "
         "the locality filter and matches all the processes for wiggling.\n\n"
-        "tenant_mode=<disabled|optional_experimental|required_experimental>: Sets the tenant mode for the cluster. If "
+        "tenant_mode=<disabled|optional|required>: Sets the tenant mode for the cluster. If "
         "optional, then transactions can be run with or without specifying tenants. If required, all data must be "
         "accessed using tenants.\n\n"
         "encryption_at_rest_mode=<disabled|domain_aware|cluster_aware>: Sets the cluster encryption data at-rest "

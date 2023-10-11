@@ -127,7 +127,7 @@ def blobrange_list_cmd(logger, start="\\x00", end="\\xff", tenant=None):
 @enable_logging()
 def blobrange_list(logger):
     run_fdbcli_command("configure blob_granules_enabled=1")
-    run_fdbcli_command("configure tenant_mode=optional_experimental")
+    run_fdbcli_command("configure tenant_mode=optional")
     r = blobrange_list_cmd(logger)
     assert r == []
 
@@ -1561,6 +1561,14 @@ def idempotency_ids(logger):
     assert output == "Usage: idempotencyids [status | clear <min_age_seconds>]", output
 
 
+@enable_logging()
+def test_tenant_modes(logger):
+    # required mode cannot be tested here because for now it can only be set during 'configure new'
+    run_fdbcli_command("configure tenant_mode=disabled")
+    run_fdbcli_command("configure tenant_mode=optional")
+    run_fdbcli_command("configure tenant_mode=optional_experimental")
+
+
 def integer_options():
     process = subprocess.Popen(
         command_template[:-1],
@@ -1688,6 +1696,7 @@ if __name__ == "__main__":
         # TODO: fix the issue when running through the external client
         # quota()
         idempotency_ids()
+        test_tenant_modes()
     else:
         assert args.process_number > 1, "Process number should be positive"
         coordinators()

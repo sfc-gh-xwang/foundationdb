@@ -154,6 +154,8 @@ class TestConfig:
     def __init__(self, test_file):
         config = toml.load(test_file)
         server_config = config.get("server", [{}])[0]
+        # This uses optional_experimental for compatibility with old versions. When we no longer test
+        # with versions before 9.0, it can be changed to optional.
         self.tenant_mode = (
             "optional_experimental"
             if server_config.get("tenants_enabled", True)

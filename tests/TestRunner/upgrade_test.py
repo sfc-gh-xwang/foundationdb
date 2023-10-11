@@ -220,6 +220,8 @@ class UpgradeTest:
     def __enter__(self):
         logger.info("Starting cluster version {}".format(self.cluster_version))
         self.cluster.start_cluster()
+        # We need to use 'optional_experimental' until we stop upgrading from versions prior to 9.0.
+        # Once we are 9.0+, we can use 'optional' instead.
         self.cluster.create_database(
             tenant_mode="optional_experimental"
             if (self.api_version >= TENANT_API_VERSION)

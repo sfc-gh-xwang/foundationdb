@@ -73,23 +73,23 @@ def get_cluster_connection_str(cluster_file_path):
 @enable_logging()
 def metacluster_create(logger, cluster_file, name, tenant_id_prefix):
     # creating a metacluster with optional tenant mode should fail
-    rc, out, err = run_fdbcli_command(
-        cluster_file, "configure tenant_mode=optional_experimental"
-    )
+    rc, out, err = run_fdbcli_command(cluster_file, "configure tenant_mode=optional")
     if rc != 0:
         raise Exception(err)
     rc, out, err = run_fdbcli_command(
-        cluster_file, "metacluster create_experimental", name, str(tenant_id_prefix)
+        cluster_file, "metacluster create", name, str(tenant_id_prefix)
     )
     if "ERROR" not in out:
         raise Exception("Metacluster creation should have failed")
+
     # set the tenant mode to disabled for the metacluster otherwise creation will fail
     rc, out, err = run_fdbcli_command(cluster_file, "configure tenant_mode=disabled")
     logger.debug("Metacluster tenant mode set to disabled")
     if rc != 0:
         raise Exception(err)
+
     rc, out, err = run_fdbcli_command(
-        cluster_file, "metacluster create_experimental", name, str(tenant_id_prefix)
+        cluster_file, "metacluster create", name, str(tenant_id_prefix)
     )
     if rc != 0:
         raise Exception(err)
@@ -128,6 +128,7 @@ def setup_metacluster(
     tenant_id_prefix = random.randint(0, 32767)
     logger.debug("management cluster: {}".format(management_cluster_name))
     logger.debug("data clusters: {}".format([name for (_, name, _) in data_clusters]))
+
     metacluster_create(
         management_cluster_file, management_cluster_name, tenant_id_prefix
     )
@@ -875,8 +876,36 @@ def configure_tenants_test_disableConfigureTenantState(logger, cluster_files):
 
 
 @enable_logging()
+def test_create_experimental(logger, cluster_file):
+    rc, out, err = run_fdbcli_command(
+        cluster_file, "metacluster create_experimental", "test_experimental", str(0)
+    )
+    if rc == 0:
+        logger.debug("Metacluster create should have failed due to tenant mode")
+        assert False
+
+    rc, out, err = run_fdbcli_command(cluster_file, "configure tenant_mode=disabled")
+    if rc != 0:
+        raise Exception(err)
+
+    rc, out, err = run_fdbcli_command(
+        cluster_file, "metacluster create_experimental", "test_experimental", str(0)
+    )
+
+    if rc != 0:
+        raise Exception(err)
+
+    # Tear the metacluster down and retry creating it using 'create_experimental'
+    rc, out, err = run_fdbcli_command(cluster_file, "metacluster decommission")
+    if rc != 0:
+        raise Exception(err)
+
+
+@enable_logging()
 def test_main(logger):
     logger.debug("Tests start")
+
+    test_create_experimental(cluster_files[0])
 
     usecluster_test(cluster_files)
 
