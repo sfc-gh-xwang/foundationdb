@@ -412,6 +412,10 @@ public:
 		if (s.size() > std::numeric_limits<int>::max())
 			abort();
 	}
+	template <size_t N>
+	StringRef(char const (&literal)[N]) : data(reinterpret_cast<uint8_t const*>(literal)),
+	                                      length(N - 1) {}
+
 	// StringRef( const StringRef& p );
 
 	const uint8_t* begin() const { return data; }
@@ -619,7 +623,7 @@ public:
 
 private:
 	// Unimplemented; blocks conversion through std::string
-	StringRef(char*);
+	StringRef(char*) = delete;
 
 	const uint8_t* data;
 	int length;
