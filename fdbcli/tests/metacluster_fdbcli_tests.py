@@ -427,12 +427,16 @@ def register_and_configure_data_clusters_test(logger, cluster_files):
     assert 0 == rc
 
 
-@enable_logging()
-def clusters_status_test(logger, cluster_files, max_tenant_groups_per_cluster):
+def ensure_no_metacluster_members(cluster_files, logger):
     logger.debug("Verifying no cluster is part of a metacluster")
     for cf in cluster_files:
         output = metacluster_status(cf)
         assert output == "This cluster is not part of a metacluster"
+
+
+@enable_logging()
+def clusters_status_test(logger, cluster_files, max_tenant_groups_per_cluster):
+    ensure_no_metacluster_members(cluster_files, logger)
 
     logger.debug("Verified")
     num_clusters = len(cluster_files)
@@ -470,10 +474,7 @@ number of data clusters: {}
 
 @enable_logging()
 def usecluster_test(logger, cluster_files):
-    logger.debug("Verifying no cluster is part of a metacluster")
-    for cf in cluster_files:
-        output = metacluster_status(cf)
-        assert output == "This cluster is not part of a metacluster"
+    ensure_no_metacluster_members(cluster_files, logger)
 
     _, _, err = usecluster(cluster_files[0], "mgmt")
     assert err == "ERROR: This cluster is not part of a metacluster"
@@ -578,10 +579,7 @@ def usecluster_test(logger, cluster_files):
 
 @enable_logging()
 def usemanagementcluster_test(logger, cluster_files):
-    logger.debug("Verifying no cluster is part of a metacluster")
-    for cf in cluster_files:
-        output = metacluster_status(cf)
-        assert output == "This cluster is not part of a metacluster"
+    ensure_no_metacluster_members(cluster_files, logger)
 
     _, _, err = run_fdbcli_command(cluster_files[0], "usemanagementcluster")
     assert err == "ERROR: This cluster is not part of a metacluster"
@@ -627,10 +625,7 @@ def usemanagementcluster_test(logger, cluster_files):
 
 @enable_logging()
 def create_tenants_test(logger, cluster_files):
-    logger.debug("Verifying no cluster is part of a metacluster")
-    for cf in cluster_files:
-        output = metacluster_status(cf)
-        assert output == "This cluster is not part of a metacluster"
+    ensure_no_metacluster_members(cluster_files, logger)
     logger.debug("Verified")
     num_clusters = len(cluster_files)
     logger.debug("Setting up a metacluster")
