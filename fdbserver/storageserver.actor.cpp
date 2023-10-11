@@ -7108,20 +7108,18 @@ ACTOR Future<Void> tryGetRange(PromiseStream<RangeReadResult> results, Transacti
 // Read blob granules metadata. It keeps retrying until reaching maxRetryCount.
 // The key range should not cross tenant boundary.
 ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>>
-tryReadBlobGranuleChunks(Transaction* tr, KeyRange keys, Version fetchVersion, Optional<BulkLoadIDKey> bulkLoadIDKey) {
-	// FIXME: unloop!!
-	// once we unloop, the bulk load status check here is unecessary as we already checked it in the bulk load state in
-	// the main fetch loop
+tryReadBlobGranuleChunks(Database cx, KeyRange keys, Version fetchVersion, Optional<BulkLoadIDKey> bulkLoadIDKey) {
+	state Transaction tr(cx);
 	loop {
 		try {
-			tr->setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-			tr->setOption(FDBTransactionOptions::LOCK_AWARE);
-			tr->trState->taskID = TaskPriority::FetchKeys;
+			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+			tr.trState->taskID = TaskPriority::FetchKeys;
 
 			if (bulkLoadIDKey.present()) {
-				tr->setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
+				tr.setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
 				Optional<BulkLoadStatus> bulkLoadStatus =
-				    wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadIDKey.get()));
+				    wait(BulkLoadMetadata::statusMap().get(&tr, bulkLoadIDKey.get()));
 				if (!bulkLoadStatus.present() ||
 				    bulkLoadStatus->stateCode != BulkLoadStatus::State::STAGING_DDPREPARED) {
 					// FIXME: make un-rare
@@ -7142,7 +7140,7 @@ tryReadBlobGranuleChunks(Transaction* tr, KeyRange keys, Version fetchVersion, O
 			}
 
 			TraceEvent(SevDebug, "ReadBlobGranules").detail("Keys", keys).detail("FetchVersion", fetchVersion);
-			Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr->readBlobGranules(keys, 0, fetchVersion));
+			Standalone<VectorRef<BlobGranuleChunkRef>> chunks = wait(tr.readBlobGranules(keys, 0, fetchVersion));
 			TraceEvent(SevDebug, "ReadBlobGranulesComplete")
 			    .detail("Keys", keys)
 			    .detail("Chunks", chunks.size())
@@ -7159,14 +7157,13 @@ tryReadBlobGranuleChunks(Transaction* tr, KeyRange keys, Version fetchVersion, O
 					TraceEvent(SevWarn, "NotRestorableBlobGranule").error(e).detail("Keys", keys);
 				}
 			}
-			wait(tr->onError(e));
+			wait(tr.onError(e));
 		}
 	}
 }
 
 // Read blob granules metadata. The key range can cross tenant boundary if not a bulk load
-ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranuleChunks(Transaction* tr,
-                                                                               Database cx,
+ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranuleChunks(Database cx,
                                                                                KeyRangeRef keys,
                                                                                Version fetchVersion,
                                                                                Optional<BulkLoadIDKey> bulkLoadIDKey) {
@@ -7181,7 +7178,7 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranuleChunks(T
 	for (auto& range : ranges) {
 		KeyRangeRef intersectedRange(std::max(keys.begin, range.begin), std::min(keys.end, range.end));
 		Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-		    wait(tryReadBlobGranuleChunks(tr, intersectedRange, fetchVersion, bulkLoadIDKey));
+		    wait(tryReadBlobGranuleChunks(cx, intersectedRange, fetchVersion, bulkLoadIDKey));
 		results.append(results.arena(), chunks.begin(), chunks.size());
 		results.arena().dependsOn(chunks.arena());
 	}
@@ -7190,7 +7187,6 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleChunkRef>>> readBlobGranuleChunks(T
 
 // Read keys from blob storage
 ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
-                                       Transaction* tr,
                                        Database cx,
                                        KeyRange keys,
                                        Version fetchVersion,
@@ -7198,7 +7194,7 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
                                        Optional<BulkLoadIDKey> bulkLoadIDKey) {
 	try {
 		state Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-		    wait(readBlobGranuleChunks(tr, cx, keys, fetchVersion, bulkLoadIDKey));
+		    wait(readBlobGranuleChunks(cx, keys, fetchVersion, bulkLoadIDKey));
 		TraceEvent(SevDebug, "ReadBlobGranuleChunks").detail("Keys", keys).detail("Chunks", chunks.size());
 
 		state int i;
@@ -7276,10 +7272,8 @@ ACTOR Future<Void> tryGetRangeFromBlob(PromiseStream<RangeReadResult> results,
 		    .detail("Keys", keys)
 		    .detail("FetchVersion", fetchVersion)
 		    .detail("Error", e.what());
-		tr->reset();
-		tr->setVersion(fetchVersion);
 		results.sendError(e);
-		// i think we need to throw here like other fetch ones do, and probably not reset transaction?
+		throw;
 	}
 	return Void();
 }
@@ -8274,13 +8268,8 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 					if (bulkLoadFetchState.fetchFromBlob()) {
 						ASSERT(bulkLoadFetchState.idKey.present());
 						CODE_PROBE(true, "bulk load blob fetch");
-						hold = tryGetRangeFromBlob(results,
-						                           &tr,
-						                           data->cx,
-						                           keys,
-						                           fetchVersion,
-						                           &data->tenantData,
-						                           bulkLoadFetchState.idKey.get());
+						hold = tryGetRangeFromBlob(
+						    results, data->cx, keys, fetchVersion, &data->tenantData, bulkLoadFetchState.idKey.get());
 					} else {
 						CODE_PROBE(true, "bulk load empty fetch");
 						// any other state where the range is loading (before dd prepared or aborted), range is locked
@@ -8303,7 +8292,7 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 						                        std::min(keys.end, normalKeys.end));
 						Version version =
 						    wait(BlobRestoreController::getTargetVersion(restoreController, fetchVersion));
-						hold = tryGetRangeFromBlob(results, &tr, data->cx, range, version, &data->tenantData, {});
+						hold = tryGetRangeFromBlob(results, data->cx, range, version, &data->tenantData, {});
 						rangeEnd = range.end;
 					} else {
 						hold = tryGetRange(results, &tr, keys);
