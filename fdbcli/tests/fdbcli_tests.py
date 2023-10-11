@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+import base64
 import functools
 import json
 import logging
@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from typing import Tuple
 
 
 def enable_logging(level=logging.DEBUG):
@@ -56,6 +57,13 @@ def run_fdbcli_command(*args, check=True):
         commands, check=check, stdout=subprocess.PIPE, env=fdbcli_env
     )
     return process.stdout.decode("utf-8").strip()
+
+
+def run_fdbcli_json_command(*args, check=True) -> dict:
+    """
+    run_fdbcli_command, but with the result parsed as JSON
+    """
+    return json.loads(run_fdbcli_command(*args, check=check))
 
 
 def run_fdbcli_command_and_get_error(*args):
@@ -1465,8 +1473,27 @@ def tenant_old_commands(logger):
 
 @enable_logging()
 def tenant_group_list(logger):
+    def run_fdbcli_plain_and_json(cmd: str) -> Tuple[str, dict]:
+        return run_fdbcli_command(cmd), run_fdbcli_json_command(f"{cmd} JSON")
+
     output = run_fdbcli_command("tenantgroup list")
     assert output == "The cluster has no tenant groups"
+    output_json = run_fdbcli_json_command("tenantgroup list a z JSON")
+    assert output_json == {"tenantgroups": [], "type": "success"}
+
+    tg2_json = {
+        "name": {
+            "base64": base64.b64encode(b"tenant_group2").decode("ascii"),
+            "printable": "tenant_group2"
+        },
+    }
+    tg3_json = {
+        "name": {
+            "base64": base64.b64encode(b"tenant_group3").decode("ascii"),
+            "printable": "tenant_group3"
+        },
+    }
+
 
     setup_tenants(
         [
@@ -1478,18 +1505,24 @@ def tenant_group_list(logger):
 
     output = run_fdbcli_command("tenantgroup list")
     assert output == "1. tenant_group2\n  2. tenant_group3"
+    output_json = run_fdbcli_json_command("tenantgroup list a z JSON")
+    assert output_json == {"tenantgroups": [tg2_json, tg3_json], "type": "success"}
 
-    output = run_fdbcli_command("tenantgroup list a z 1")
+    output, output_json = run_fdbcli_plain_and_json("tenantgroup list a z 1")
     assert output == "1. tenant_group2"
+    assert output_json == {"tenantgroups": [tg2_json], "type": "success"}
 
-    output = run_fdbcli_command("tenantgroup list a tenant_group3")
+    output, output_json = run_fdbcli_plain_and_json("tenantgroup list a tenant_group3")
     assert output == "1. tenant_group2"
+    assert output_json == {"tenantgroups": [tg2_json], "type": "success"}
 
-    output = run_fdbcli_command("tenantgroup list tenant_group3 z")
+    output, output_json = run_fdbcli_plain_and_json("tenantgroup list tenant_group3 z")
     assert output == "1. tenant_group3"
+    assert output_json == {"tenantgroups": [tg3_json], "type": "success"}
 
-    output = run_fdbcli_command("tenantgroup list a b")
+    output, output_json = run_fdbcli_plain_and_json("tenantgroup list a b")
     assert output == "The cluster has no tenant groups in the specified range"
+    assert output_json == {"tenantgroups": [], "type": "success"}
 
     output = run_fdbcli_command_and_get_error("tenantgroup list b a")
     assert output == "ERROR: end must be larger than begin"

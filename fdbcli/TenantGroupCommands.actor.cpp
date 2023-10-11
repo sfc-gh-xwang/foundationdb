@@ -54,19 +54,38 @@ void tenantGroupListOutput(std::vector<std::pair<TenantGroupName, TenantGroupEnt
 	}
 }
 
+template <class TenantGroupEntryImpl>
+void tenantGroupListOutputJson(std::vector<std::pair<TenantGroupName, TenantGroupEntryImpl>> tenantGroups) {
+	json_spirit::mArray tenantGroupsArr;
+	for (const auto& tenantGroup : tenantGroups) {
+		auto tenantGroupJson = tenantGroup.second.toJson();
+		tenantGroupJson["name"] = binaryToJson(tenantGroup.first);
+		tenantGroupsArr.push_back(tenantGroupJson);
+	}
+
+	json_spirit::mObject resultObj;
+	resultObj["tenantgroups"] = tenantGroupsArr;
+	resultObj["type"] = "success";
+
+	fmt::print("{}\n", json_spirit::write_string(json_spirit::mValue(resultObj), json_spirit::pretty_print).c_str());
+}
+
 // tenantgroup list command
 ACTOR Future<bool> tenantGroupListCommand(Reference<IDatabase> db, std::vector<StringRef> tokens) {
-	if (tokens.size() > 5) {
-		fmt::print("Usage: tenantgroup list [BEGIN] [END] [LIMIT]\n\n");
+	if (tokens.size() > 6) {
+		fmt::print("Usage: tenantgroup list [BEGIN] [END] [LIMIT] [JSON]\n\n");
 		fmt::print("Lists the tenant groups in a cluster.\n");
 		fmt::print("Only tenant groups in the range BEGIN - END will be printed.\n");
 		fmt::print("An optional LIMIT can be specified to limit the number of results (default 100).\n");
+		fmt::print("If JSON is specified, then the output will be in JSON format.\n");
+		fmt::print("JSON format requires specification of BEGIN and END, as 'JSON' is also a valid key.\n");
 		return false;
 	}
 
 	state StringRef beginTenantGroup = ""_sr;
 	state StringRef endTenantGroup = "\xff\xff"_sr;
 	state int limit = 100;
+	state bool useJson = false;
 
 	if (tokens.size() >= 3) {
 		beginTenantGroup = tokens[2];
@@ -78,11 +97,22 @@ ACTOR Future<bool> tenantGroupListCommand(Reference<IDatabase> db, std::vector<S
 			return false;
 		}
 	}
-	if (tokens.size() == 5) {
-		int n = 0;
-		if (sscanf(tokens[4].toString().c_str(), "%d%n", &limit, &n) != 1 || n != tokens[4].size() || limit <= 0) {
-			fmt::print(stderr, "ERROR: invalid limit `{}'\n", tokens[4].toString());
-			return false;
+	if (tokens.size() >= 5) {
+		for (int tokenNum = 4; tokenNum < tokens.size(); ++tokenNum) {
+			if (tokencmp(tokens[tokenNum], "JSON")) {
+				useJson = true;
+				if (tokenNum != tokens.size() - 1) {
+					fmt::print(stderr, "ERROR: JSON format specifier must be the final argument\n");
+					return false;
+				}
+			} else {
+				int n = 0;
+				if (sscanf(tokens[tokenNum].toString().c_str(), "%d%n", &limit, &n) != 1 ||
+				    n != tokens[tokenNum].size() || limit <= 0) {
+					fmt::print(stderr, "ERROR: invalid limit `{}'\n", tokens[tokenNum].toString());
+					return false;
+				}
+			}
 		}
 	}
 
@@ -97,11 +127,19 @@ ACTOR Future<bool> tenantGroupListCommand(Reference<IDatabase> db, std::vector<S
 				std::vector<std::pair<TenantGroupName, metacluster::MetaclusterTenantGroupEntry>>
 				    metaclusterTenantGroups =
 				        wait(metacluster::listTenantGroupsTransaction(tr, beginTenantGroup, endTenantGroup, limit));
-				tenantGroupListOutput(metaclusterTenantGroups, tokens.size());
+				if (useJson) {
+					tenantGroupListOutputJson(metaclusterTenantGroups);
+				} else {
+					tenantGroupListOutput(metaclusterTenantGroups, tokens.size());
+				}
 			} else {
 				std::vector<std::pair<TenantGroupName, TenantGroupEntry>> tenantGroups =
 				    wait(TenantAPI::listTenantGroupsTransaction(tr, beginTenantGroup, endTenantGroup, limit));
-				tenantGroupListOutput(tenantGroups, tokens.size());
+				if (useJson) {
+					tenantGroupListOutputJson(tenantGroups);
+				} else {
+					tenantGroupListOutput(tenantGroups, tokens.size());
+				}
 			}
 
 			return true;
@@ -226,8 +264,8 @@ void tenantGroupGenerator(const char* text,
 std::vector<const char*> tenantGroupHintGenerator(std::vector<StringRef> const& tokens, bool inArgument) {
 	if (tokens.size() == 1) {
 		return { "<list|get>", "[ARGS]" };
-	} else if (tokencmp(tokens[1], "list") && tokens.size() < 5) {
-		static std::vector<const char*> opts = { "[BEGIN]", "[END]", "[LIMIT]" };
+	} else if (tokencmp(tokens[1], "list") && tokens.size() < 6) {
+		static std::vector<const char*> opts = { "[BEGIN]", "[END]", "[LIMIT]", "[JSON]" };
 		return std::vector<const char*>(opts.begin() + tokens.size() - 2, opts.end());
 	} else if (tokencmp(tokens[1], "get") && tokens.size() < 4) {
 		static std::vector<const char*> opts = { "<NAME>", "[JSON]" };

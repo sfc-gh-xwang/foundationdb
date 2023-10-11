@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import base64
 import functools
+import json
 import logging
 import os
 import random
@@ -206,7 +208,7 @@ def setup_tenants(management_cluster_file, tenant_creation_args):
             assigned_cluster,
         )
         expected_output = "The tenant `{}' has been created".format(tenant)
-        assert output == expected_output
+        assert output == expected_output, f"{output!r} != {expected_output!r}. err({err!r})"
         assert len(err) == 0
 
 
@@ -428,12 +430,16 @@ def register_and_configure_data_clusters_test(logger, cluster_files):
     assert 0 == rc
 
 
-@enable_logging()
-def clusters_status_test(logger, cluster_files, max_tenant_groups_per_cluster):
+def ensure_no_metacluster_members(cluster_files, logger):
     logger.debug("Verifying no cluster is part of a metacluster")
     for cf in cluster_files:
         output = metacluster_status(cf)
         assert output == "This cluster is not part of a metacluster"
+
+
+@enable_logging()
+def clusters_status_test(logger, cluster_files, max_tenant_groups_per_cluster):
+    ensure_no_metacluster_members(cluster_files, logger)
 
     logger.debug("Verified")
     num_clusters = len(cluster_files)
@@ -471,10 +477,7 @@ number of data clusters: {}
 
 @enable_logging()
 def usecluster_test(logger, cluster_files):
-    logger.debug("Verifying no cluster is part of a metacluster")
-    for cf in cluster_files:
-        output = metacluster_status(cf)
-        assert output == "This cluster is not part of a metacluster"
+    ensure_no_metacluster_members(cluster_files, logger)
 
     _, _, err = usecluster(cluster_files[0], "mgmt")
     assert err == "ERROR: This cluster is not part of a metacluster"
@@ -579,10 +582,7 @@ def usecluster_test(logger, cluster_files):
 
 @enable_logging()
 def usemanagementcluster_test(logger, cluster_files):
-    logger.debug("Verifying no cluster is part of a metacluster")
-    for cf in cluster_files:
-        output = metacluster_status(cf)
-        assert output == "This cluster is not part of a metacluster"
+    ensure_no_metacluster_members(cluster_files, logger)
 
     _, _, err = run_fdbcli_command(cluster_files[0], "usemanagementcluster")
     assert err == "ERROR: This cluster is not part of a metacluster"
@@ -628,10 +628,7 @@ def usemanagementcluster_test(logger, cluster_files):
 
 @enable_logging()
 def create_tenants_test(logger, cluster_files):
-    logger.debug("Verifying no cluster is part of a metacluster")
-    for cf in cluster_files:
-        output = metacluster_status(cf)
-        assert output == "This cluster is not part of a metacluster"
+    ensure_no_metacluster_members(cluster_files, logger)
     logger.debug("Verified")
     num_clusters = len(cluster_files)
     logger.debug("Setting up a metacluster")
@@ -726,6 +723,30 @@ def list_tenants_test(logger, cluster_files):
     assert ["tenant10"] == tenants4
     tenants5 = get_tenant_names(cluster_files[0], "tenant10", "tenant10")
     assert [] == tenants5
+    clear_all_tenants(cluster_files[0])
+
+
+@enable_logging()
+def list_tenant_groups_test(logger, cluster_files):
+    tenants = [
+        {"name": "tenant1", "tenant_group": "group0", "assigned_cluster": "data1"},
+        {"name": "tenant2", "assigned_cluster": "data1"},
+        {"name": "tenant3", "assigned_cluster": "data2"},
+    ]
+    setup_tenants(cluster_files[0], tenants)
+    d1_json = {"base64": base64.b64encode(b"data1").decode("ascii"), "printable": "data1"}
+    tg0_json = {"base64": base64.b64encode(b"group0").decode("ascii"), "printable": "group0"}
+    rc, raw_output, err = run_fdbcli_command(cluster_files[0], "tenantgroup list a z JSON")
+    output = json.loads(raw_output)
+    assert output == {
+        "tenantgroups": [
+            {
+                "assigned_cluster": d1_json,
+                "name": tg0_json
+            }
+        ],
+        "type": "success"
+    }
     clear_all_tenants(cluster_files[0])
 
 
@@ -922,6 +943,8 @@ def test_main(logger):
     configure_tenants_test_disableConfigureTenantState(cluster_files)
 
     list_tenants_test(cluster_files)
+
+    list_tenant_groups_test(cluster_files)
 
     delete_tenants_test(cluster_files)
 
