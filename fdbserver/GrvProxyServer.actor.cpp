@@ -451,7 +451,6 @@ ACTOR Future<Void> getRate(UID myID,
 	state Future<GetRateInfoReply> reply = Never();
 	state double lastDetailedReply = 0.0; // request detailed metrics immediately
 	state bool expectingDetailedReply = false;
-	state int64_t lastTC = 0;
 
 	if (db->get().ratekeeper.present())
 		nextRequestTimer = Void();
@@ -491,7 +490,6 @@ ACTOR Future<Void> getRate(UID myID,
 			stats->batchTransactionRateAllowed = rep.batchTransactionRate;
 			++stats->updatesFromRatekeeper;
 			//TraceEvent("GrvProxyRate", myID).detail("Rate", rep.transactionRate).detail("BatchRate", rep.batchTransactionRate).detail("Lease", rep.leaseDuration).detail("ReleasedTransactions", *inTransactionCount - lastTC);
-			lastTC = *inTransactionCount;
 			leaseTimeout = delay(rep.leaseDuration);
 			nextRequestTimer = delayJittered(rep.leaseDuration / 2);
 			healthMetricsReply->update(rep.healthMetrics, expectingDetailedReply, true);

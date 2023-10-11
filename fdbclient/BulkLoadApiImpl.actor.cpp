@@ -218,7 +218,7 @@ ACTOR Future<ApiResult> getBulkLoadStatusImpl(DatabaseContext* db, ApiRequest re
 	auto res = TypedApiResult<FDBGetBulkLoadStatusResult>::create();
 
 	auto resp = res.getPtr();
-	resp->status.state = getUserFacingBulkLoadState(status);
+	resp->status.status = getUserFacingBulkLoadState(status);
 	return res;
 }
 

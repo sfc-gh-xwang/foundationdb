@@ -247,7 +247,7 @@ typedef enum {
 } FDBBulkLoadState;
 
 typedef struct FDBBulkLoadStatus_ {
-	/* FDBBulkLoadState */ uint8_t state;
+	/* FDBBulkLoadState */ uint8_t status;
 } FDBBulkLoadStatus;
 
 #ifdef __cplusplus

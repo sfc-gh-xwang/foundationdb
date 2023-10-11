@@ -1082,7 +1082,7 @@ ACTOR Future<Optional<ClusterConnectionString>> getClusterConnectionStringFromSt
 			return Optional<ClusterConnectionString>();
 		}
 
-		Version readVersion = wait(tr->getReadVersion());
+		wait(success(tr->getReadVersion()));
 		state ValueReadResult currentKey = wait(tr->get(coordinatorsKey));
 		if (g_network->isSimulated() && currentKey.present()) {
 			// If the change coordinators request succeeded, the coordinators

@@ -5,6 +5,7 @@
 #include "fdbserver/IRKMetricsTracker.h"
 #include "fdbserver/Knobs.h"
 #include "flow/Optional.h"
+#include "flow/actorcompiler.h"
 
 ACTOR static Future<Void> splitError(Future<Void> in, Promise<Void> errOut) {
 	try {

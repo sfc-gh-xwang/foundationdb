@@ -32,8 +32,6 @@ public:
 	                              IRKRecoveryTracker const* recoveryTracker) {
 		state std::vector<BlobWorkerInterface> blobWorkers;
 		state int workerFetchCount = 0;
-		state double lastStartTime = 0;
-		state double startTime = 0;
 		state bool blobWorkerDead = false;
 		state double lastLoggedTime = 0;
 
@@ -56,9 +54,6 @@ public:
 			} else {
 				grv = recoveryTracker->getMaxVersion();
 			}
-
-			lastStartTime = startTime;
-			startTime = now();
 
 			if (blobWorkers.size() > 0) {
 				state Future<Optional<BlobManagerBlockedReply>> blockedAssignments;

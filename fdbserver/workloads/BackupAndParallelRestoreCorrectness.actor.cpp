@@ -400,7 +400,6 @@ struct BackupAndParallelRestoreCorrectnessWorkload : TestWorkload {
 	ACTOR static Future<Void> _start(Database cx, BackupAndParallelRestoreCorrectnessWorkload* self) {
 		state FileBackupAgent backupAgent;
 		state Future<Void> extraBackup;
-		state bool extraTasks = false;
 		state UID randomID = nondeterministicRandom()->randomUniqueID();
 		state int restoreIndex = 0;
 		state ReadYourWritesTransaction tr2(cx);
@@ -624,7 +623,6 @@ struct BackupAndParallelRestoreCorrectnessWorkload : TestWorkload {
 			// Q: What is the extra backup and why do we need to care about it?
 			if (extraBackup.isValid()) { // SOMEDAY: Handle this case
 				TraceEvent("BARW_WaitExtraBackup", randomID).detail("BackupTag", printable(self->backupTag));
-				extraTasks = true;
 				try {
 					wait(extraBackup);
 				} catch (Error& e) {

@@ -891,7 +891,7 @@ private:
 
 				lastLatency = latency;
 			} else {
-				wait(self->streaming ? server_streaming(self) : server(self););
+				wait(self->streaming ? server_streaming(self) : server(self));
 			}
 		}
 
@@ -1086,7 +1086,7 @@ private:
 				lastLatency = latency;
 			} else {
 				::printf("%3d: ", i);
-				wait(self->streaming ? server_streaming(self) : server(self););
+				wait(self->streaming ? server_streaming(self) : server(self));
 				::printf("DONE\n");
 			}
 		}

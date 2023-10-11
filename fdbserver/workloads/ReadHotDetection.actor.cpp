@@ -67,7 +67,6 @@ struct ReadHotDetectionWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> _setup(Database cx, ReadHotDetectionWorkload* self) {
-		state int g = 0;
 		state Standalone<StringRef> largeValue;
 		state Standalone<StringRef> smallValue;
 		largeValue = self->randomString(largeValue.arena(), 100000);
@@ -98,7 +97,7 @@ struct ReadHotDetectionWorkload : TestWorkload {
 		loop {
 			state Transaction tr(cx);
 			try {
-				StorageMetrics sm = wait(cx->getStorageMetrics(self->wholeRange, 100));
+				wait(success(cx->getStorageMetrics(self->wholeRange, 100)));
 				// TraceEvent("RHDCheckPhaseLog")
 				//     .detail("KeyRangeSize", sm.bytes)
 				//     .detail("KeyRangeReadBandwidth", sm.bytesReadPerKSecond);

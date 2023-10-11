@@ -1227,7 +1227,6 @@ ACTOR Future<Void> trackInitialShards(DataDistributionTracker* self, Reference<I
 	}
 
 	state int s;
-	state int customBoundary = 0;
 	for (s = 0; s < initData->shards.size() - 1; s++) {
 		Key beginKey = initData->shards[s].key;
 		Key endKey = initData->shards[s + 1].key;

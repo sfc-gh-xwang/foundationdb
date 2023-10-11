@@ -638,11 +638,12 @@ struct AuthzSecurityWorkload : TestWorkload {
 	ACTOR static Future<Void> testKeyLocationLeakDisallowed(AuthzSecurityWorkload* self, Database cx) {
 		state Key key = self->randomString();
 		state Value value = self->randomString();
-		state Version v1 =
-		    wait(setAndCommitKeyValueAndGetVersion(self, cx, self->tenant, self->signedToken, key, value));
-		state Version v2 = wait(setAndCommitKeyValueAndGetVersion(
-		    self, cx, self->anotherTenant, self->signedTokenAnotherTenant, key, value));
+		state Version v2;
 
+		wait(success(setAndCommitKeyValueAndGetVersion(self, cx, self->tenant, self->signedToken, key, value)));
+		wait(store(v2,
+		           setAndCommitKeyValueAndGetVersion(
+		               self, cx, self->anotherTenant, self->signedTokenAnotherTenant, key, value)));
 		{
 			GetKeyServerLocationsReply rep =
 			    wait(basicLoadBalance(cx->getCommitProxies(UseProvisionalProxies::False),
@@ -722,27 +723,28 @@ struct AuthzSecurityWorkload : TestWorkload {
 	ACTOR static Future<Void> testBlobGranuleLocationLeakDisallowed(AuthzSecurityWorkload* self, Database cx) {
 		state Key key = self->randomString();
 		state Value value = self->randomString();
-		state Version v1 =
-		    wait(setAndCommitKeyValueAndGetVersion(self, cx, self->tenant, self->signedToken, key, value));
-		state Version v2 = wait(setAndCommitKeyValueAndGetVersion(
-		    self, cx, self->anotherTenant, self->signedTokenAnotherTenant, key, value));
+		state Version v2;
+		wait(success(setAndCommitKeyValueAndGetVersion(self, cx, self->tenant, self->signedToken, key, value)));
+		wait(store(v2,
+		           setAndCommitKeyValueAndGetVersion(
+		               self, cx, self->anotherTenant, self->signedTokenAnotherTenant, key, value)));
 
-		state bool success = true;
+		state bool succeeded = true;
 		state TenantInfo tenantInfo;
 
 		{
 			tenantInfo = TenantInfo(self->tenant->id(), self->signedToken);
 			ErrorOr<GetBlobGranuleLocationsReply> rep = wait(getGranuleLocations(self, cx, tenantInfo, v2));
 			bool checkSuccess = checkGranuleLocations(rep, tenantInfo);
-			success &= checkSuccess;
+			succeeded &= checkSuccess;
 		}
 		{
 			tenantInfo = TenantInfo(self->anotherTenant->id(), self->signedTokenAnotherTenant);
 			ErrorOr<GetBlobGranuleLocationsReply> rep = wait(getGranuleLocations(self, cx, tenantInfo, v2));
 			bool checkSuccess = checkGranuleLocations(rep, tenantInfo);
-			success &= checkSuccess;
+			succeeded &= checkSuccess;
 		}
-		if (success) {
+		if (succeeded) {
 			++self->bgLocationLeakNegative;
 		}
 

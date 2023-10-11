@@ -3084,10 +3084,10 @@ ACTOR static Future<Void> doBlobGranuleLocationRequest(GetBlobGranuleLocationsRe
 	// FIXME: add retry loop? likely less expensive to handle retryable errors here than to propagate back to client?
 
 	// make tenant transaction and do set read version
+	state GetBlobGranuleLocationsReply rep;
 	try {
 		state Transaction tr(commitData->cx);
 
-		state GetBlobGranuleLocationsReply rep;
 		state KeyRange keyRange;
 		if (req.end.present()) {
 			keyRange = KeyRangeRef(req.begin, req.end.get());

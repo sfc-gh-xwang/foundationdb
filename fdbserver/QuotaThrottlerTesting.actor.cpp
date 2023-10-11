@@ -552,9 +552,9 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuota") {
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
 	env.removeQuota(config);
-	auto const _config = config;
-	monitor = monitorActor(&env, [_config](auto& env) {
-		return env.targetRateIsNear(_config.getThrottlingId(), {}, /*shouldBeBusy=*/false);
+	auto const _config2 = config;
+	monitor = monitorActor(&env, [_config2](auto& env) {
+		return env.targetRateIsNear(_config2.getThrottlingId(), {}, /*shouldBeBusy=*/false);
 	});
 	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
 	return Void();
@@ -581,9 +581,9 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/RemoveQuotaBusyId") {
 	state Future<Void> updater = env.update();
 	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
 	env.removeQuota(config);
-	auto const _config = config;
-	monitor = monitorActor(&env, [_config](auto& env) {
-		return env.targetRateIsNear(_config.getThrottlingId(), {}, /*shouldBeBusy=*/false);
+	auto const _config2 = config;
+	monitor = monitorActor(&env, [_config2](auto& env) {
+		return env.targetRateIsNear(_config2.getThrottlingId(), {}, /*shouldBeBusy=*/false);
 	});
 	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
 	return Void();
@@ -866,10 +866,10 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/IgnoreWorstZone") {
 	env.setCapacity(/*index=*/1, limitingPagesPerSecond);
 	double const _numSS = numSS;
 	double const _limitingPagesPerSecond = limitingPagesPerSecond;
-	auto const _config = config;
-	monitor = monitorActor(&env, [_numSS, _limitingPagesPerSecond, _config](auto& env) {
-		return env.targetRateIsNear(_config.getThrottlingId(),
-		                            (_numSS * _limitingPagesPerSecond) / _config.getPagesPerTransaction(),
+	auto const _config2 = config;
+	monitor = monitorActor(&env, [_numSS, _limitingPagesPerSecond, _config2](auto& env) {
+		return env.targetRateIsNear(_config2.getThrottlingId(),
+		                            (_numSS * _limitingPagesPerSecond) / _config2.getPagesPerTransaction(),
 		                            /*shouldBeBusy=*/true);
 	});
 	wait(timeoutError(monitor || client || updater, TestEnv::getTimeoutDuration()));
@@ -924,13 +924,13 @@ TEST_CASE("/fdbserver/ratekeeper/QuotaThrottler/TrackBusyIDs") {
 
 	// Forget threshold < 70% < Busy threshold, tag below busy threshold, but above forget threshold
 	auto const stillRememberedConfig = WorkloadConfig::Builder().setAttemptedTps(35.0).build();
-	int const _totalQuotaInPages = totalQuotaInPages;
+	int const _totalQuotaInPages2 = totalQuotaInPages;
 	wait(timeoutError(env.runClient(stillRememberedConfig) ||
 	                      monitorActor(&env,
-	                                   [_totalQuotaInPages, stillRememberedConfig](auto& env) {
+	                                   [_totalQuotaInPages2, stillRememberedConfig](auto& env) {
 		                                   return env.targetRateIsNear(
 		                                       stillRememberedConfig.getThrottlingId(),
-		                                       _totalQuotaInPages / stillRememberedConfig.getPagesPerTransaction(),
+		                                       _totalQuotaInPages2 / stillRememberedConfig.getPagesPerTransaction(),
 		                                       /*shouldBeBusy=*/true);
 	                                   }),
 	                  TestEnv::getTimeoutDuration()));

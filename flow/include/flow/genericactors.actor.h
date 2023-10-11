@@ -931,7 +931,7 @@ Future<Void> setWhenDoneOrError(Future<Void> condition, Reference<AsyncVar<T>> v
 	return Void();
 }
 
-[[nodiscard]] Future<Void> lowPriorityDelay(double const& waitTime);
+ACTOR Future<Void> lowPriorityDelay(double waitTime);
 
 // Delay after condition is cleared (i.e. equal to false).
 // If during delay, condition changes to true, wait till condition become false again, and repeat.

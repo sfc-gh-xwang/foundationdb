@@ -662,6 +662,7 @@ ACTOR static Future<Void> startMoveKeys(Database occ,
 	wait(startMoveKeysLock->take(TaskPriority::DataDistributionLaunch));
 	state FlowLock::Releaser releaser(*startMoveKeysLock);
 	state bool loadedTssMapping = false;
+	state int maxRetries = 0;
 
 	TraceEvent(SevDebug, interval.begin(), relocationIntervalId);
 
@@ -669,7 +670,6 @@ ACTOR static Future<Void> startMoveKeys(Database occ,
 		state Key begin = keys.begin;
 		state int batches = 0;
 		state int shards = 0;
-		state int maxRetries = 0;
 
 		// If it's multiple transaction, how do we achieve atomicity?
 		// This process can be split up into multiple transactions if there are too many existing overlapping shards
@@ -1331,7 +1331,6 @@ ACTOR static Future<Void> startMoveShards(Database occ,
 		loop {
 			state Key begin = keys.begin;
 			state KeyRange currentKeys = keys;
-			state int maxRetries = 0;
 			state bool complete = false;
 
 			state Transaction tr(occ);
