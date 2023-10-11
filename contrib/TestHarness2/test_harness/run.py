@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 
+from contextlib import contextmanager
 from functools import total_ordering
 from pathlib import Path
 from test_harness.version import Version
@@ -356,6 +357,23 @@ class ResourceMonitor(threading.Thread):
         self.join()
 
 
+@contextmanager
+def on_exit(callback, *args, **kwargs):
+    try:
+        yield
+    finally:
+        callback(*args, **kwargs)
+
+
+def cleanup_test_dir(uid: uuid.UUID):
+    if config.clean_up != "none":
+        if config.clean_up == "simfdb":
+            # Only delete simfdb, leaving trace and any artifacts (e.g. core dumps) intact directly under config.run_dir / uid
+            shutil.rmtree(config.run_dir / str(uid) / "simfdb", ignore_errors=True)
+        else:  # all
+            shutil.rmtree(config.run_dir / str(uid), ignore_errors=True)
+
+
 class TestRun:
     def __init__(
         self,
@@ -491,7 +509,7 @@ class TestRun:
         with ResourceMonitor() as resources:
             process = subprocess.Popen(
                 command,
-                stdout=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=self.temp_path,
                 text=True,
@@ -505,11 +523,12 @@ class TestRun:
                 else (None if config.long_running else config.kill_seconds)
             )
             err_out: str
+            out_out: str
             try:
-                _, err_out = process.communicate(timeout=timeout)
+                out_out, err_out = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 process.kill()
-                _, err_out = process.communicate()
+                out_out, err_out = process.communicate()
                 did_kill = True
         # we're rounding times up, otherwise we will prefer running very short tests (<1s)
         self.run_time = math.ceil(resources.time())
@@ -520,6 +539,13 @@ class TestRun:
         self.summary.valgrind_out_file = valgrind_file
         self.summary.error_out = err_out
         self.summary.summarize(self.temp_path, " ".join(command))
+        try:
+            with (self.temp_path / Path("stdout.log")).open("w") as stdout_file:
+                stdout_file.write(out_out)
+        except OSError as e:
+            sys.stderr.write(
+                "Failed to write correctness stdout log to file: {}\n".format(e)
+            )
 
         if not self.summary.is_negative_test and not self.summary.ok():
             self._run_rocksdb_logtool()
@@ -639,14 +665,7 @@ class TestRunner:
             if config.random_seed is not None
             else config.random.randint(0, 2**32 - 1)
         )
-        test_files = self.test_picker.choose_test()
-        success = self.run_tests(test_files, seed, self.test_picker)
-        if config.clean_up != "none":
-            if config.clean_up == "simfdb":
-                # Only delete simfdb, leaving trace and any artifacts (e.g. core dumps) intact directly under self.run_dir / self.uid
-                shutil.rmtree(
-                    config.run_dir / str(self.uid) / "simfdb", ignore_errors=True
-                )
-            else:  # all
-                shutil.rmtree(config.run_dir / str(self.uid))
+        with on_exit(cleanup_test_dir, self.uid):
+            test_files = self.test_picker.choose_test()
+            success = self.run_tests(test_files, seed, self.test_picker)
         return success
