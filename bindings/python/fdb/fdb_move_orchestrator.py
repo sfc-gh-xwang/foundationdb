@@ -307,7 +307,14 @@ def clear_stored_split_point(
 def process_queue(
     mgmtDbName: str, tenantGroup: bytes, srcClusterName: bytes, dstClusterName: bytes
 ) -> int:
-    print("Process Queue Started")
+    print(
+        "Process Queue Started mgmtDb=%r tenantGroup=%r src=%r dst=%r"
+        % (mgmtDbName, tenantGroup, srcClusterName, dstClusterName)
+    )
+    # TODO: parameterize the following
+    fdb.options.set_tls_cert_path("/etc/foundationdb/fdb.pem")
+    fdb.options.set_tls_ca_path("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem")
+    fdb.options.set_tls_key_path("/etc/foundationdb/fdb.pem")
     mgmtDb = fdb.open(mgmtDbName)
     mgmtDb.options.set_transaction_timeout(timeoutLen)
     moveRecord = get_move_record(mgmtDb, tenantGroup)
