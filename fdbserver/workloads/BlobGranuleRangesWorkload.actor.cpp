@@ -1221,7 +1221,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		// pair of callback and lock_aware bool
 		state std::vector<std::tuple<LockTestFunc, bool, bool>> testFunctions;
 
-		LockTestFunc blobbifyFunc = [this](const KeyRange& keyRange,
+		LockTestFunc blobbifyFunc = [&cx=cx](const KeyRange& keyRange,
 		                                   Optional<Reference<Tenant>> tenant) -> Future<Void> {
 			return success(cx->blobbifyRange(keyRange, tenant));
 		};
@@ -1229,7 +1229,7 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		                          CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,
 		                          CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK });
 
-		LockTestFunc unblobbifyFunc = [this](const KeyRange& keyRange,
+		LockTestFunc unblobbifyFunc = [&cx=cx](const KeyRange& keyRange,
 		                                     Optional<Reference<Tenant>> tenant) -> Future<Void> {
 			return success(cx->unblobbifyRange(keyRange, tenant));
 		};
@@ -1237,19 +1237,19 @@ struct BlobGranuleRangesWorkload : TestWorkload {
 		                          CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,
 		                          CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK });
 
-		LockTestFunc purgeFunc = [this](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
+		LockTestFunc purgeFunc = [&cx=cx](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
 			return success(cx->purgeBlobGranules(keyRange, 1, tenant, false));
 		};
 		testFunctions.push_back({ purgeFunc,
 		                          CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_TENANT_LOCK,
 		                          CLIENT_KNOBS->HYBRID_MANAGEMENT_BYPASS_RANGE_LOCK });
 
-		LockTestFunc readFunc1 = [this](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
+		LockTestFunc readFunc1 = [&cx=cx](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
 			return checkHybridReadable(cx, tenant, keyRange, false);
 		};
 		testFunctions.push_back({ readFunc1, CLIENT_KNOBS->HYBRID_READ_BYPASS_TENANT_LOCK, true });
 
-		LockTestFunc readFunc2 = [this](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
+		LockTestFunc readFunc2 = [&cx=cx](const KeyRange& keyRange, Optional<Reference<Tenant>> tenant) -> Future<Void> {
 			return checkHybridReadable(cx, tenant, keyRange, true);
 		};
 		testFunctions.push_back({ readFunc2, true, true });

@@ -5,6 +5,7 @@
  */
 
 #include "fdbclient/BlobGranuleRequest.actor.h"
+#include "flow/actorcompiler.h" // has to be last include
 
 ACTOR Future<Standalone<VectorRef<KeyRangeRef>>> getBlobRanges(Transaction* tr, KeyRange range, int batchLimit) {
 	state Standalone<VectorRef<KeyRangeRef>> blobRanges;

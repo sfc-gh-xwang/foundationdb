@@ -439,7 +439,6 @@ struct IDDTxnProcessorApiWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> worker(Database cx, IDDTxnProcessorApiWorkload* self) {
-		state double lastTime = now();
 		state int choice = 0;
 		state int maxChoice = self->testStartOnly ? 1 : 2;
 		loop {

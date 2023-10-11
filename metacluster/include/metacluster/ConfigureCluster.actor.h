@@ -32,6 +32,7 @@
 #include "metacluster/MetaclusterMetadata.h"
 #include "metacluster/MetaclusterOperationContext.actor.h"
 #include "metacluster/MetaclusterTypes.h"
+#include "flow/actorcompiler.h" // has to be last include
 
 namespace metacluster {
 
@@ -139,4 +140,5 @@ Future<Void> configureCluster(Reference<DB> db,
 
 } // namespace metacluster
 
+#include "flow/unactorcompiler.h"
 #endif

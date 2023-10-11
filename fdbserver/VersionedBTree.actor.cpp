@@ -6974,9 +6974,9 @@ private:
 				// Then if it does not match the next boundary then insert a dummy record
 				if (nextBoundary == nullptr || (nextBoundary != &u.expectedUpperBound.get() &&
 				                                !nextBoundary->sameExceptValue(u.expectedUpperBound.get()))) {
-					debug_printf("applyUpdate adding dummy record %s\n", rec.toString(false).c_str());
 					CODE_PROBE(true, "Redwood InternalPageModifier adding null link");
 					RedwoodRecordRef rec = u.expectedUpperBound.get().withoutValue();
+					debug_printf("applyUpdate adding dummy record %s\n", rec.toString(false).c_str());
 
 					cloneForUpdate();
 					insert(u.cEnd, { &rec, 1 });

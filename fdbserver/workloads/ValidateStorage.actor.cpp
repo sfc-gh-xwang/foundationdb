@@ -78,7 +78,7 @@ struct ValidateStorage : TestWorkload {
 		                                 { "TestKeyF"_sr, "TestValueF"_sr } });
 		state UID auditId;
 
-		Version _ = wait(self->populateData(self, cx, &kvs));
+		wait(success(self->populateData(self, cx, &kvs)));
 
 		TraceEvent("TestValueWritten");
 

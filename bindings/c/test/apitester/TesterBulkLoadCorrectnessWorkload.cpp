@@ -348,7 +348,7 @@ private:
 			    fdb::Future f = ctx->dbOps()->getBulkLoadStatus(id).eraseType();
 			    ctx->continueAfter(f, [this, ctx, id, couldAlreadyBeDone, f]() {
 				    auto statusResult = f.get<fdb::future_var::BulkLoadStatusResult>();
-				    auto stateCode = statusResult.state;
+				    auto stateCode = statusResult.status;
 				    info("Bulk Load {0} Status {1}", fdb::toHexString(id), stateCode);
 				    if (couldAlreadyBeDone) {
 					    ASSERT(stateCode == fdb::native::FDB_BULK_LOAD_COPYING ||

@@ -41,7 +41,10 @@
 #include "fmt/format.h"
 
 #include <cstring>
+// somehow this makes OPEN_FOR_IDE on macOS fail...
+#ifndef OPEN_FOR_IDE
 #include <fstream> // for perf microbenchmark
+#endif
 #include <limits>
 #include <vector>
 
@@ -2919,6 +2922,8 @@ TEST_CASE("/blobgranule/files/bgReadDeltaFile") {
 
 // performance micro-benchmarks
 
+#ifndef OPEN_FOR_IDE
+
 struct FileSet {
 	std::tuple<std::string, Version, Value, Standalone<GranuleSnapshot>> snapshotFile;
 	std::vector<std::tuple<std::string, Version, Value, Standalone<GranuleDeltas>>> deltaFiles;
@@ -3608,3 +3613,5 @@ TEST_CASE("!/blobgranule/files/repeatFromFiles") {
 
 	return Void();
 }
+
+#endif

@@ -634,9 +634,9 @@ struct BulkLoadOpsWorkload : TestWorkload {
 		ASSERT(!outData->empty());
 
 		state Version grv = wait(self->doGRV(cx));
+		state Optional<Key> tenantPrefix;
 
 		try {
-			state Optional<Key> tenantPrefix;
 			if (tenant.present()) {
 				wait(tenant.get()->ready());
 				tenantPrefix = tenant.get()->prefix();
@@ -961,7 +961,8 @@ struct BulkLoadOpsWorkload : TestWorkload {
 
 	ACTOR Future<Void> invalidLoadIDUnit(Database cx, BulkLoadOpsWorkload* self, KeyRange range) {
 		// Test that client accessing invalid bulk load id gets expected error
-		state BulkLoadID id = deterministicRandom()->randomUniqueID().toString();
+		state BulkLoadID id;
+		id = Standalone<StringRef>(deterministicRandom()->randomUniqueID().toString());
 		wait(self->checkCorrectInvalidIDError(cx->bulkLoadAllFilesRegistered(id, self->tenant)));
 		wait(self->checkCorrectInvalidIDError(cx->abortBulkLoad(id, self->tenant)));
 		wait(self->checkCorrectInvalidIDError(cx->waitBulkLoadComplete(id, self->tenant)));
@@ -1350,7 +1351,7 @@ struct BulkLoadOpsWorkload : TestWorkload {
 			state Reference<IAsyncFile> reader = wait(blobConn->readFile(filename));
 			// read 1 byte from file to make sure it exists
 			state uint8_t data;
-			int readSize = wait(reader->read(&data, 1, 0));
+			wait(success(reader->read(&data, 1, 0)));
 			ASSERT(!shouldBeDeleted);
 		} catch (Error& e) {
 			ASSERT(shouldBeDeleted);

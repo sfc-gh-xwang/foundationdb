@@ -534,11 +534,9 @@ ACTOR Future<Void> getValueQ(StorageCacheData* data, GetValueRequest req) {
 			throw future_version();
 		}
 
-		state int path = 0;
 		auto i = data->data().at(version).lastLessOrEqual(req.key);
 		if (i && i->isValue() && i.key() == req.key) {
 			v = (Value)i->getValue();
-			path = 1;
 			// TODO: do we need to check changeCounter here?
 			data->checkChangeCounter(changeCounter, req.key);
 		}
@@ -791,7 +789,7 @@ ACTOR Future<Void> getKeyValues(StorageCacheData* data, GetKeyValuesRequest req)
 			throw wrong_shard_server();
 		}
 
-		state int offset1;
+		state int offset1 = 0;
 		state int offset2;
 		state Key begin = req.begin.isFirstGreaterOrEqual()
 		                      ? req.begin.getKey()

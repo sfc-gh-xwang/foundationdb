@@ -1246,6 +1246,8 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 	state Version maxDcLag = 30e6;
 	state DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
 	state std::string traceMessage = "QuietDatabase" + phase + "Begin";
+	state Future<TraceEventFields> blobManagerMetrics;
+	state Future<std::vector<Future<TraceEventFields>>> blobWorkerMetrics;
 	TraceEvent(traceMessage.c_str()).log();
 
 	// In a simulated environment, wait 5 seconds so that workers can move to their optimal locations
@@ -1289,10 +1291,9 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
 
 			if (config.blobGranulesEnabled) {
 				state WorkerInterface blobManagerWorker = wait(getBlobManagerWorker(cx, dbInfo));
-				state Future<TraceEventFields> blobManagerMetrics =
-				    blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr));
-				state Future<std::vector<Future<TraceEventFields>>> blobWorkerMetrics =
-				    getBlobWorkerMetrics(cx, dbInfo);
+				wait(store(blobManagerMetrics,
+				           blobManagerWorker.eventLogRequest.getReply(EventLogRequest("BlobManagerMetrics"_sr))));
+				wait(store(blobWorkerMetrics, getBlobWorkerMetrics(cx, dbInfo)));
 				wait(success(blobManagerMetrics) && success(blobWorkerMetrics));
 
 				activeGranuleSplits = getActiveGranuleSplits(blobManagerMetrics.get(), blobManagerWorker.id());

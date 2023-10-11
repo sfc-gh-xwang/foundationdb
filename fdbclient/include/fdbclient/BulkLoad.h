@@ -52,7 +52,7 @@ public:
 	// noarg for serialization
 	BulkLoadStatus() : stateCode(State::UNKNOWN) {}
 
-	BulkLoadStatus(State state) : stateCode(state) { ASSERT(state != State::UNKNOWN); }
+	BulkLoadStatus(State stateCode) : stateCode(stateCode) { ASSERT(stateCode != State::UNKNOWN); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {

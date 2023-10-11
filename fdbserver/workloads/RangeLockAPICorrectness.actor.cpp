@@ -426,26 +426,26 @@ struct RangeLockAPICorrectnessWorkload : KVWorkload {
 		fmt::print("unitSimpleFailures Start\n");
 		// disable ryw: unsupported operation
 		{
-			Optional<Version> v = wait(executeOperations(self,
-			                                             { OpParam{ OpParam::UnlockRange,
-			                                                        0,
-			                                                        1,
-			                                                        self->keyForIndex(0),
-			                                                        self->keyForIndex(1),
-			                                                        UID(0, 1),
-			                                                        unsupported_operation() } },
-			                                             cx,
-			                                             self->lastCommittedVersion,
-			                                             /*useRYW=*/false));
+			wait(success(executeOperations(self,
+			                               { OpParam{ OpParam::UnlockRange,
+			                                          0,
+			                                          1,
+			                                          self->keyForIndex(0),
+			                                          self->keyForIndex(1),
+			                                          UID(0, 1),
+			                                          unsupported_operation() } },
+			                               cx,
+			                               self->lastCommittedVersion,
+			                               /*useRYW=*/false)));
 		}
 
 		// lock system keys
 		{
-			Optional<Version> v = wait(executeOperations(
+			wait(success(executeOperations(
 			    self,
 			    { OpParam{ OpParam::LockRange, 0, 1, "z"_sr, "\xff\x02"_sr, UID(0, 1), illegal_range_lock_param() } },
 			    cx,
-			    self->lastCommittedVersion));
+			    self->lastCommittedVersion)));
 		}
 
 		// normal key change with range lock
@@ -460,21 +460,21 @@ struct RangeLockAPICorrectnessWorkload : KVWorkload {
 				         self->keyForIndex(ie),
 				         UID(ib, ie),
 				         illegal_range_lock_operation() } };
-			Optional<Version> v = wait(executeOperations(self, params, cx, self->lastCommittedVersion));
+			wait(success(executeOperations(self, params, cx, self->lastCommittedVersion)));
 		}
 
 		// unlock use wrong lock Id
 		{
-			Optional<Version> v = wait(executeOperations(self,
-			                                             { OpParam{ OpParam::UnlockRange,
-			                                                        0,
-			                                                        1,
-			                                                        self->keyForIndex(0),
-			                                                        self->keyForIndex(1),
-			                                                        UID(88, 99),
+			wait(success(executeOperations(self,
+			                               { OpParam{ OpParam::UnlockRange,
+			                                          0,
+			                                          1,
+			                                          self->keyForIndex(0),
+			                                          self->keyForIndex(1),
+			                                          UID(88, 99),
 			                                                        illegal_range_lock_param() } },
 			                                             cx,
-			                                             self->lastCommittedVersion));
+			                               self->lastCommittedVersion)));
 		}
 
 		// read locked key with txn state change
@@ -482,13 +482,12 @@ struct RangeLockAPICorrectnessWorkload : KVWorkload {
 		{
 			params = { { OpParam::Write, 1, -1, self->keyForIndex(1), ""_sr, UID(1, 1), {} },
 				       { OpParam::Write, -1, -1, stateKey, "bad"_sr, UID(1, 1), illegal_locked_range_access() } };
-			Optional<Version> v = wait(executeOperations(self, params, cx, self->lastCommittedVersion));
+			wait(success(executeOperations(self, params, cx, self->lastCommittedVersion)));
 			// expect an empty result
-			Optional<Version> v1 =
-			    wait(executeOperations(self,
-			                           { { OpParam::Read, -1, -1, stateKey, Optional<Key>(), UID(1, 1), {} } },
-			                           cx,
-			                           self->lastCommittedVersion));
+			wait(success(executeOperations(self,
+			                               { { OpParam::Read, -1, -1, stateKey, Optional<Key>(), UID(1, 1), {} } },
+			                               cx,
+			                               self->lastCommittedVersion)));
 		}
 
 		fmt::print("unitSimpleFailures Pass\n");
@@ -570,11 +569,11 @@ struct RangeLockAPICorrectnessWorkload : KVWorkload {
 		// lock [2, 4) using the same ID as lock[2, 5) should fail
 		begin = self->keyForIndex(2);
 		{
-			Optional<Version> v1 = wait(executeOperations(
+			wait(success(executeOperations(
 			    self,
 			    { OpParam{ OpParam::LockRange, 2, 4, begin, end, UID(2, 5), illegal_range_lock_param() } },
 			    cx,
-			    self->lastCommittedVersion));
+			    self->lastCommittedVersion)));
 		}
 
 		// tx1 (success): unlock [2, 6), lock [2, 3)
@@ -683,12 +682,11 @@ struct RangeLockAPICorrectnessWorkload : KVWorkload {
 			CODE_PROBE(true, "Txn B lock success");
 			ASSERT(txnA.isError());
 			// read stateKey
-			Optional<Version> v =
-			    wait(executeOperations(self,
-			                           { OpParam{ OpParam::Read, -1, -1, stateKey, stateKey, /*UID=*/{}, {} },
-			                             OpParam{ OpParam::UnlockRange, -1, -1, begin, end, lockId, {} } },
-			                           cx,
-			                           lastVersion.get()));
+			wait(success(executeOperations(self,
+			                               { OpParam{ OpParam::Read, -1, -1, stateKey, stateKey, /*UID=*/{}, {} },
+			                                 OpParam{ OpParam::UnlockRange, -1, -1, begin, end, lockId, {} } },
+			                               cx,
+			                               lastVersion.get())));
 		}
 
 		if (!txnA.isError()) {

@@ -476,11 +476,17 @@ struct MergeCandidateInfo {
 	bool mergeEligible() const { return st == MergeCandidateCanMerge && seen; }
 };
 
+}
+// types that we want to wait on currently need to be in a non-anonymous namespace. Otherwise `OPEN_FOR_IDE` will
+// fail to compile, since `wait` won't have external linkage. This is annoying, but this problem will go away with
+// C++ coroutines.
+
 struct BlobGranuleSplitPoints {
 	Standalone<VectorRef<KeyRef>> keys;
 	std::unordered_map<Key, BlobGranuleMergeBoundary> boundaries;
 };
 
+namespace {
 struct BlobManagerData : NonCopyable, ReferenceCounted<BlobManagerData> {
 	UID id;
 	Database db;

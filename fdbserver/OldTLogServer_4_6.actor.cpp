@@ -573,7 +573,6 @@ ACTOR Future<Void> updatePersistentData(TLogData* self, Reference<LogData> logDa
 
 	//TraceEvent("UpdatePersistentData", self->dbgid).detail("Seq", newPersistentDataSeq);
 
-	state bool anyData = false;
 	state Map<OldTag, LogData::TagData>::iterator tag;
 	// For all existing tags
 	for (tag = logData->tag_data.begin(); tag != logData->tag_data.end(); ++tag) {
@@ -585,7 +584,6 @@ ACTOR Future<Void> updatePersistentData(TLogData* self, Reference<LogData> logDa
 		    tag->value.version_messages.begin();
 		while (msg != tag->value.version_messages.end() && msg->first <= newPersistentDataVersion) {
 			currentVersion = msg->first;
-			anyData = true;
 			tag->value.nothing_persistent = false;
 			BinaryWriter wr(Unversioned());
 

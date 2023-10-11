@@ -7,6 +7,8 @@
 #include "fdbclient/BulkLoadTracker.h"
 #include "fdbclient/BulkLoadMetadata.h"
 
+#include "flow/actorcompiler.h" // has to be last include
+
 ACTOR Future<Void> trackNewBulkLoadsActor(BulkLoadTracker* self) {
 	loop {
 		state Reference<ReadYourWritesTransaction> tr = makeReference<ReadYourWritesTransaction>(self->db);

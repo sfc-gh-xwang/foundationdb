@@ -180,6 +180,7 @@ struct RKRateUpdaterTestEnvironment {
 		                   /*tagsThrottled=*/0);
 	}
 };
+}
 
 struct RateAndReason {
 	double tpsLimit;
@@ -187,6 +188,7 @@ struct RateAndReason {
 	RateAndReason(double tpsLimit, limitReason_t limitReason) : tpsLimit(tpsLimit), limitReason(limitReason) {}
 };
 
+namespace {
 ACTOR static Future<RateAndReason> testIgnoreWorstZones(int numBadStorageServers) {
 	state std::vector<Future<StorageQueueInfo>> ssFutures;
 	int smallStorageQueueBytes = testTargetQueueBytes - 5 * testSpringBytes;

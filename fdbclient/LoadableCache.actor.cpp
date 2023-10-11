@@ -57,6 +57,7 @@ const double testLoadOnMissTTL = 1.0;
 const double testLoadOnMissWait = 1.001;
 const int expectedExtraMisses = 1;
 const int expectedExpiredEviction = 1;
+}
 
 struct Int64Hash {
 	std::size_t operator()(int64_t key) const { return static_cast<std::size_t>(key); }
@@ -66,6 +67,7 @@ struct Int64Equal {
 	bool operator()(int64_t lhs, int64_t rhs) const { return lhs == rhs; }
 };
 
+namespace {
 // Workload generator for validation LoadableCache functionality; salient poitns
 // 1. Implement in-memory caching using 'LoadableCache' for KeyType = 'int64_t' & ValueType = 'int64_t'
 // 2. Test cases covered includes:
