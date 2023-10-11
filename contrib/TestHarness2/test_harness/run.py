@@ -366,12 +366,11 @@ def on_exit(callback, *args, **kwargs):
 
 
 def cleanup_test_dir(uid: uuid.UUID):
-    if config.clean_up != "none":
-        if config.clean_up == "simfdb":
-            # Only delete simfdb, leaving trace and any artifacts (e.g. core dumps) intact directly under config.run_dir / uid
-            shutil.rmtree(config.run_dir / str(uid) / "simfdb", ignore_errors=True)
-        else:  # all
-            shutil.rmtree(config.run_dir / str(uid), ignore_errors=True)
+    if config.clean_up == "all":
+        shutil.rmtree(config.run_dir / str(uid), ignore_errors=True)
+    elif config.clean_up == "simfdb":
+        # Only delete simfdb, leaving trace and any artifacts (e.g. core dumps) intact directly under config.run_dir / uid
+        shutil.rmtree(config.run_dir / str(uid) / "simfdb", ignore_errors=True)
 
 
 class TestRun:
