@@ -192,8 +192,11 @@ class Config:
         self.buggify_args = {"short_name": "b", "choices": ["on", "off", "random"]}
         self.pretty_print: bool = False
         self.pretty_print_args = {"short_name": "P", "action": "store_true"}
-        self.clean_up: bool = True
-        self.clean_up_args = {"long_name": "no_clean_up", "action": "store_false"}
+        self.clean_up: str = "all"
+        self.clean_up_args = {
+            "long_name": "clean_up",
+            "choices": ["all", "none", "simfdb"],
+        }
         self.run_dir: Path = Path("tmp")
         self.joshua_seed: int = random.randint(0, 2**32 - 1)
         self.joshua_seed_args = {
