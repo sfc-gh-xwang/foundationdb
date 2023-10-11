@@ -118,10 +118,11 @@ ACTOR Future<bool> metaclusterCreateCommand(Reference<IDatabase> db, std::vector
 	Optional<std::string> errorStr = wait(metacluster::createMetacluster(db, tokens[2], tenantIdPrefix, true));
 	if (errorStr.present()) {
 		fmt::print("ERROR: {}.\n", errorStr.get());
+		return false;
 	} else {
 		fmt::print("The cluster has been configured as a metacluster.\n");
+		return true;
 	}
-	return true;
 }
 
 // metacluster decommission command
