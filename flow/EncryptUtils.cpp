@@ -197,3 +197,10 @@ std::string getRandomAuthenticatedEncryptionAtRestAlgo() {
 	}
 	return "AES-256-HMAC";
 }
+
+std::string getRandomEncryptionAtRestAlgo() {
+	if (deterministicRandom()->coinflip()) {
+		return "AES-256-CTR";
+	}
+	return "AES-256-GCM";
+}

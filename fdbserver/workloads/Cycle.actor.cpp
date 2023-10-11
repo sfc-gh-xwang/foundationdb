@@ -18,7 +18,9 @@
  * limitations under the License.
  */
 
+#include "fdbclient/Knobs.h"
 #include "flow/Arena.h"
+#include "flow/EncryptUtils.h"
 #include "flow/IRandom.h"
 #include "flow/Trace.h"
 #include "flow/WipedString.h"
@@ -59,6 +61,7 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 	int actorCount, nodeCount;
 	double testDuration, transactionsPerSecond, minExpectedTransactionsPerSecond, traceParentProbability;
 	Key keyPrefix;
+	bool switchEncryptionAlgos;
 
 	std::vector<Future<Void>> clients;
 	PerfIntCounter transactions, retries, tooOldRetries, commitFailedRetries;
@@ -78,6 +81,7 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 		keyPrefix = unprintable(getOption(options, "keyPrefix"_sr, ""_sr).toString());
 		traceParentProbability = getOption(options, "traceParentProbability"_sr, 0.01);
 		minExpectedTransactionsPerSecond = transactionsPerSecond * getOption(options, "expectedRate"_sr, 0.7);
+		switchEncryptionAlgos = getOption(options, "switchEncryptionAlgos"_sr, false);
 		if constexpr (MultiTenancy) {
 			ASSERT(g_network->isSimulated());
 			this->useToken = getOption(options, "useToken"_sr, true);
@@ -141,6 +145,17 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 		    .detailf("From", "%016llx", debug_lastLoadBalanceResultEndpointToken);
 	}
 
+	void switchEncryptionAtRestAlgo() {
+		std::string encryptionAlgo = getRandomEncryptionAtRestAlgo();
+		if (CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO != encryptionAlgo) {
+			TraceEvent("CycleSwitchingEncryptionAlgo")
+			    .detail("Current", CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO)
+			    .detail("New", encryptionAlgo);
+			IKnobCollection::getMutableGlobalKnobCollection().setKnob("encryption_at_rest_algo",
+			                                                          KnobValueRef::create(encryptionAlgo));
+		}
+	}
+
 	template <bool B = MultiTenancy>
 	std::enable_if_t<B> setAuthToken(Transaction& tr) const {
 		if (this->useToken)
@@ -191,8 +206,10 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 						// TraceEvent("CyclicTest").detail("Key", self->key(r).toString()).detail("Value", self->value(r3).toString());
 						// TraceEvent("CyclicTest").detail("Key", self->key(r2).toString()).detail("Value", self->value(r4).toString());
 						// TraceEvent("CyclicTest").detail("Key", self->key(r3).toString()).detail("Value", self->value(r2).toString());
-
 						wait(tr.commit());
+						if (self->switchEncryptionAlgos && deterministicRandom()->coinflip()) {
+							self->switchEncryptionAtRestAlgo();
+						}
 						// TraceEvent("CycleCommit");
 						break;
 					} catch (Error& e) {

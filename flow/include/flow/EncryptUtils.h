@@ -145,5 +145,6 @@ EncryptAuthTokenMode authTokenModeFromEncryptionAtRestAlgo(EncryptionAtRestAlgo 
 bool isAuthenticatedEncryption(EncryptionAtRestAlgo algo);
 bool needsHeaderCipherKey(EncryptionAtRestAlgo algo);
 std::string getRandomAuthenticatedEncryptionAtRestAlgo();
+std::string getRandomEncryptionAtRestAlgo();
 
 #endif
