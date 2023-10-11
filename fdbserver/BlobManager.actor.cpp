@@ -476,7 +476,7 @@ struct MergeCandidateInfo {
 	bool mergeEligible() const { return st == MergeCandidateCanMerge && seen; }
 };
 
-}
+} // namespace
 // types that we want to wait on currently need to be in a non-anonymous namespace. Otherwise `OPEN_FOR_IDE` will
 // fail to compile, since `wait` won't have external linkage. This is annoying, but this problem will go away with
 // C++ coroutines.

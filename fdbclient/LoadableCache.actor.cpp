@@ -57,7 +57,7 @@ const double testLoadOnMissTTL = 1.0;
 const double testLoadOnMissWait = 1.001;
 const int expectedExtraMisses = 1;
 const int expectedExpiredEviction = 1;
-}
+} // namespace
 
 struct Int64Hash {
 	std::size_t operator()(int64_t key) const { return static_cast<std::size_t>(key); }

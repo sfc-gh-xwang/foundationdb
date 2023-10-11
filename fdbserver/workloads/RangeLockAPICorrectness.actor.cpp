@@ -472,8 +472,8 @@ struct RangeLockAPICorrectnessWorkload : KVWorkload {
 			                                          self->keyForIndex(0),
 			                                          self->keyForIndex(1),
 			                                          UID(88, 99),
-			                                                        illegal_range_lock_param() } },
-			                                             cx,
+			                                          illegal_range_lock_param() } },
+			                               cx,
 			                               self->lastCommittedVersion)));
 		}
 

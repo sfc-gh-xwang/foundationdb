@@ -180,7 +180,7 @@ struct RKRateUpdaterTestEnvironment {
 		                   /*tagsThrottled=*/0);
 	}
 };
-}
+} // namespace
 
 struct RateAndReason {
 	double tpsLimit;

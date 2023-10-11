@@ -3823,7 +3823,7 @@ TEST_CASE("/fdbserver/worker/swversion/runNewer") {
 	{
 		wait(success(errorOr(updateNewestSoftwareVersion(swversionTestDirName,
 		                                                 ProtocolVersion::withStorageInterfaceReadiness(),
-		                                                           ProtocolVersion::withStorageInterfaceReadiness(),
+		                                                 ProtocolVersion::withStorageInterfaceReadiness(),
 		                                                 ProtocolVersion::withTSS()))));
 	}
 
