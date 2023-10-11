@@ -31,14 +31,8 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 				expectedTotalCost = averageCost * (transactionCount - expectedCostsCount) + expectedCosts;
 			}
 
-			state GetReadVersionRequest req(span.context,
-			                                transactionCount,
-			                                priority,
-			                                cx->ssVersionVectorCache.getMaxVersion(),
-			                                flags,
-			                                throttlingId,
-			                                debugID,
-			                                expectedTotalCost);
+			state GetReadVersionRequest req(
+			    span.context, transactionCount, priority, flags, throttlingId, debugID, expectedTotalCost);
 			state Future<Void> onProxiesChanged = cx->onProxiesChanged();
 
 			choose {
@@ -63,13 +57,6 @@ ACTOR static Future<GetReadVersionReply> getConsistentReadVersion(SpanContext pa
 						    "TransactionDebug", debugID.get().first(), "NativeAPI.getConsistentReadVersion.After");
 					ASSERT(v.version > 0);
 					cx->minAcceptableReadVersion = std::min(cx->minAcceptableReadVersion, v.version);
-					if (cx->versionVectorCacheActive(v.ssVersionVectorDelta)) {
-						if (cx->isCurrentGrvProxy(v.proxyId)) {
-							cx->ssVersionVectorCache.applyDelta(v.ssVersionVectorDelta);
-						} else {
-							continue; // stale GRV reply, retry
-						}
-					}
 					return v;
 				}
 			}

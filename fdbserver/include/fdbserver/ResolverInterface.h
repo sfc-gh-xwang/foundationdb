@@ -43,8 +43,6 @@ struct ResolverInterface {
 	RequestStream<struct ResolutionSplitRequest> split;
 
 	RequestStream<ReplyPromise<Void>> waitFailure;
-	// For receiving initial transaction state store broadcast from the master
-	RequestStream<TxnStateRequest> txnState;
 
 	ResolverInterface() : uniqueID(deterministicRandom()->randomUniqueID()) {}
 	UID id() const { return uniqueID; }
@@ -57,13 +55,12 @@ struct ResolverInterface {
 		metrics.getEndpoint(TaskPriority::ResolutionMetrics);
 		split.getEndpoint(TaskPriority::ResolutionMetrics);
 		waitFailure.getEndpoint();
-		txnState.getEndpoint();
 	}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
 		// TODO: save space by using getAdjustedEndpoint() as in CommitProxyInterface
-		serializer(ar, uniqueID, locality, resolve, metrics, split, waitFailure, txnState);
+		serializer(ar, uniqueID, locality, resolve, metrics, split, waitFailure);
 	}
 };
 
@@ -117,7 +114,6 @@ struct ResolveTransactionBatchReply {
 	VectorRef<StringRef> privateMutations;
 	uint32_t privateMutationCount;
 
-	std::unordered_map<uint16_t, Version> tpcvMap;
 	std::set<Tag> writtenTags;
 
 	template <class Archive>
@@ -129,7 +125,6 @@ struct ResolveTransactionBatchReply {
 		           conflictingKeyRangeMap,
 		           privateMutations,
 		           privateMutationCount,
-		           tpcvMap,
 		           writtenTags,
 		           arena);
 	}

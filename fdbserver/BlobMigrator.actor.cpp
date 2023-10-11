@@ -814,14 +814,14 @@ private:
 					for (i = 0; i < result.results.size(); i++) {
 						auto& it = result.results[i];
 						UID id = bulkLoadIdToUID(it.first.second);
-						auto st = it.second.state;
+						auto st = it.second.stateCode;
 						bool active = st != BulkLoadStatus::State::DONE && st != BulkLoadStatus::State::ABORTED &&
 						              st != BulkLoadStatus::State::ABORTED_COMPLETE;
 						if (active) {
 							newInactiveBulkLoads.erase(id);
 							Reference<BulkLoadMigratorState> loadState = makeReference<BulkLoadMigratorState>();
 							if (activeBulkLoads.insert({ id, loadState }).second) {
-								self->addActor(trackBulkLoad(self, it.first, it.second.state, loadState));
+								self->addActor(trackBulkLoad(self, it.first, it.second.stateCode, loadState));
 							}
 						}
 						if (i % 1000 == 999) {
@@ -1000,11 +1000,11 @@ private:
 
 	ACTOR static Future<Void> checkStillLoading(Transaction* tr, BulkLoadIDKey idKey) {
 		Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
-		if (status.present() && (status.get().state == BulkLoadStatus::State::ABORTED ||
-		                         status.get().state == BulkLoadStatus::State::ABORTED_COMPLETE)) {
+		if (status.present() && (status.get().stateCode == BulkLoadStatus::State::ABORTED ||
+		                         status.get().stateCode == BulkLoadStatus::State::ABORTED_COMPLETE)) {
 			throw bulk_load_aborted();
-		} else if (!status.present() || (status.get().state != BulkLoadStatus::State::STAGING_BLOB_DONE &&
-		                                 status.get().state != BulkLoadStatus::State::STAGING_DDPREPARED)) {
+		} else if (!status.present() || (status.get().stateCode != BulkLoadStatus::State::STAGING_BLOB_DONE &&
+		                                 status.get().stateCode != BulkLoadStatus::State::STAGING_DDPREPARED)) {
 			throw bulk_load_invalid_state_transition();
 		}
 		return Void();
@@ -1124,12 +1124,12 @@ private:
 
 	ACTOR static Future<Void> trackBulkLoad(Reference<BlobMigrator> self,
 	                                        BulkLoadIDKey idKey,
-	                                        BulkLoadStatus::State state,
+	                                        BulkLoadStatus status,
 	                                        Reference<BulkLoadMigratorState> loadState) {
 		dprint("BlobMigrator: TrackLoad {0}: start\n", idKey.second.printable());
 		// TODO: handle
-		if (state >= BulkLoadStatus::State::DONE || state == BulkLoadStatus::State::ABORTED ||
-		    state == BulkLoadStatus::State::ABORTED_COMPLETE) {
+		if (status.stateCode >= BulkLoadStatus::State::DONE || status.stateCode == BulkLoadStatus::State::ABORTED ||
+		    status.stateCode == BulkLoadStatus::State::ABORTED_COMPLETE) {
 			dprint("BlobMigrator: TrackLoad {0}: already complete\n", idKey.second.printable());
 			return Void();
 		}
@@ -1152,7 +1152,7 @@ private:
 				}
 			}
 
-			if (state < BulkLoadStatus::State::STAGING_BLOB_DONE) {
+			if (status.stateCode < BulkLoadStatus::State::STAGING_BLOB_DONE) {
 				wait(self->db_->waitBulkLoadStateAtLeast(
 				    idKey.second, BulkLoadStatus::State::STAGING_BLOB_DONE, tenant));
 			}

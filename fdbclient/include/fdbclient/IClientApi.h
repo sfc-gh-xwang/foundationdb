@@ -31,8 +31,6 @@
 #include "flow/ProtocolVersion.h"
 #include "flow/ThreadHelper.actor.h"
 
-struct VersionVector;
-
 // An interface that represents a transaction created by a client
 class ITransaction {
 public:
@@ -98,10 +96,9 @@ public:
 
 	virtual ThreadFuture<Void> commit() = 0;
 	virtual Version getCommittedVersion() = 0;
-	// @todo This API and the "getSpanContext()" API may help with debugging simulation
+	// @todo getSpanContext() may help with debugging simulation
 	// test failures. (These APIs are not currently invoked anywhere.) Remove them
 	// later if they are not really needed.
-	virtual ThreadFuture<VersionVector> getVersionVector() = 0;
 	virtual ThreadFuture<SpanContext> getSpanContext() = 0;
 	virtual ThreadFuture<double> getTagThrottledDuration() = 0;
 	virtual ThreadFuture<int64_t> getTotalCost() = 0;

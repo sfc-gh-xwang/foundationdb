@@ -34,6 +34,7 @@ struct TransactionOptions {
 	bool rawAccess : 1;
 	bool bypassStorageQuota : 1;
 	bool preferLocalStorageServer : 1;
+	bool disable_range_fragments : 1;
 
 	TransactionPriority priority;
 
@@ -141,7 +142,6 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	    spanContext(spanContext),
 	    tenantSet(false) {}
 
-	// VERSION_VECTOR changed default values of readVersionObtainedFromGrvProxy
 	TransactionState(Database cx,
 	                 Optional<Reference<Tenant>> tenant,
 	                 TaskPriority taskID,

@@ -2311,23 +2311,6 @@ ACTOR Future<Version> waitForVersionActor(StorageServer* data,
 	}
 }
 
-// If the latest commit version that mutated the shard(s) being served by the specified storage
-// server is below the client specified read version then do a read at the latest commit version
-// of the storage server.
-Version getRealReadVersion(VersionVector& ssLatestCommitVersions, Tag& tag, Version specifiedReadVersion) {
-	Version realReadVersion =
-	    ssLatestCommitVersions.hasVersion(tag) ? ssLatestCommitVersions.getVersion(tag) : specifiedReadVersion;
-	ASSERT(realReadVersion <= specifiedReadVersion);
-	return realReadVersion;
-}
-
-// Find the latest commit version of the given tag.
-Version getLatestCommitVersion(VersionVector& ssLatestCommitVersions, Tag& tag) {
-	Version commitVersion =
-	    ssLatestCommitVersions.hasVersion(tag) ? ssLatestCommitVersions.getVersion(tag) : invalidVersion;
-	return commitVersion;
-}
-
 Future<Version> waitForVersion(StorageServer* data,
                                Version version,
                                SpanContext spanContext,
@@ -2363,52 +2346,6 @@ Future<Version> waitForVersion(StorageServer* data,
 	}
 	emptyVersionWaitEdgeTriggeredEmergency(data);
 	return waitForVersionActor(data, version, spanContext, emptyVersionWaitSample, versionArrivalTime);
-}
-
-Future<Version> waitForVersion(StorageServer* data,
-                               Version commitVersion,
-                               Version readVersion,
-                               SpanContext spanContext,
-                               double versionArrivalTime) {
-	ASSERT(commitVersion == invalidVersion || commitVersion < readVersion);
-
-	if (commitVersion == invalidVersion) {
-		return waitForVersion(data, readVersion, spanContext, versionArrivalTime);
-	}
-
-	if (readVersion == latestVersion) {
-		readVersion = std::max(Version(1), data->version.get());
-	}
-
-	if (readVersion < data->oldestVersion.get() || readVersion <= 0) {
-		return transaction_too_old();
-	} else {
-		// It is correct to read any version between [commitVersion, readVersion],
-		// because version vector guarantees no mutations between them.
-		if (commitVersion < data->oldestVersion.get()) {
-			if (data->version.get() < readVersion) {
-				// Majority of the case, try using higher version to avoid
-				// transaction_too_old error when oldestVersion advances.
-				// BTW, any version in the range [oldestVersion, data->version.get()] is valid in this case.
-				return data->version.get();
-			} else {
-				ASSERT(readVersion >= data->oldestVersion.get());
-				return readVersion;
-			}
-		} else if (commitVersion <= data->version.get()) {
-			return commitVersion;
-		}
-	}
-
-	if ((data->behind || data->versionBehind) && commitVersion > data->version.get()) {
-		return process_behind();
-	}
-
-	if (deterministicRandom()->random01() < 0.001) {
-		TraceEvent("WaitForVersion1000x");
-	}
-	return waitForVersionActor(
-	    data, std::max(commitVersion, data->oldestVersion.get()), spanContext, false, versionArrivalTime);
 }
 
 ACTOR Future<Version> waitForVersionNoTooOld(StorageServer* data, Version version) {
@@ -2576,8 +2513,7 @@ ACTOR Future<Void> getValueQ(StorageServer* data, GetValueRequest req) {
 			                      "getValueQ.DoRead"); //.detail("TaskID", g_network->getCurrentTask());
 
 		state Optional<Value> v;
-		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext, queueWaitEnd));
+		state Version version = wait(waitForVersion(data, req.version, req.spanContext, queueWaitEnd));
 		double versionWaitTime = g_network->timer() - queueWaitEnd;
 
 		data->latencies.readVersionWaitSample->addMeasurement(versionWaitTime);
@@ -2732,8 +2668,7 @@ ACTOR Future<Version> watchWaitForValueChange(StorageServer* data, SpanContext p
 			CODE_PROBE(latest >= minVersion && latest < data->data().latestVersion,
 			           "Starting watch loop with latestVersion > data->version",
 			           probe::decoration::rare);
-			GetValueRequest getReq(
-			    span.context, TenantInfo(), metadata->key, latest, metadata->throttlingTag, options, VersionVector());
+			GetValueRequest getReq(span.context, TenantInfo(), metadata->key, latest, metadata->throttlingTag, options);
 			state Future<Void> getValue = getValueQ(
 			    data, getReq); // we are relying on the delay zero at the top of getValueQ, if removed we need one here
 			GetValueReply reply = wait(getReq.reply.getFuture());
@@ -4231,8 +4166,7 @@ ACTOR Future<GetValueReqAndResultRef> quickGetValue(StorageServer* data,
 			                    key,
 			                    version,
 			                    pOriginalReq->throttlingTag,
-			                    pOriginalReq->options,
-			                    VersionVector());
+			                    pOriginalReq->options);
 			// Note that it does not use readGuard to avoid server being overloaded here. Throttling is enforced at the
 			// original request level, rather than individual underlying lookups. The reason is that throttle any
 			// individual underlying lookup will fail the original request, which is not productive.
@@ -4770,16 +4704,7 @@ ACTOR Future<Void> getKeyValuesQ(StorageServer* data, GetKeyValuesRequest req)
 			g_traceBatch.addEvent(
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getKeyValues.Before");
 
-		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context, queueWaitEnd));
-		DisabledTraceEvent("VVV", data->thisServerID)
-		    .detail("Version", version)
-		    .detail("ReqVersion", req.version)
-		    .detail("Oldest", data->oldestVersion.get())
-		    .detail("VV", req.ssLatestCommitVersions.toString())
-		    .detail("DebugID",
-		            req.options.present() && req.options.get().debugID.present() ? req.options.get().debugID.get()
-		                                                                         : UID());
+		state Version version = wait(waitForVersion(data, req.version, span.context, queueWaitEnd));
 		data->latencies.readVersionWaitSample->addMeasurement(g_network->timer() - queueWaitEnd);
 
 		tenantGroup =
@@ -5002,7 +4927,6 @@ ACTOR Future<GetRangeReqAndResultRef> quickGetKeyValues(
 		req.options = pOriginalReq->options;
 		// TODO: tweak priorities in req.options.get().type?
 		req.throttlingTag = pOriginalReq->throttlingTag;
-		req.ssLatestCommitVersions = VersionVector();
 
 		// Note that it does not use readGuard to avoid server being overloaded here. Throttling is enforced at the
 		// original request level, rather than individual underlying lookups. The reason is that throttle any individual
@@ -5975,9 +5899,7 @@ ACTOR Future<Void> getMappedKeyValuesQ(StorageServer* data, GetMappedKeyValuesRe
 		if (req.options.present() && req.options.get().debugID.present())
 			g_traceBatch.addEvent(
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getMappedKeyValues.Before");
-		// VERSION_VECTOR change
-		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, span.context, queueWaitEnd));
+		state Version version = wait(waitForVersion(data, req.version, span.context, queueWaitEnd));
 		data->latencies.readVersionWaitSample->addMeasurement(g_network->timer() - queueWaitEnd);
 
 		data->checkTenantEntry(
@@ -6194,9 +6116,7 @@ ACTOR Future<Void> getKeyValuesStreamQ(StorageServer* data, GetKeyValuesStreamRe
 			g_traceBatch.addEvent(
 			    "TransactionDebug", req.options.get().debugID.get().first(), "storageserver.getKeyValuesStream.Before");
 
-		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version =
-		    wait(waitForVersion(data, commitVersion, req.version, span.context, g_network->timer()));
+		state Version version = wait(waitForVersion(data, req.version, span.context, g_network->timer()));
 
 		data->checkTenantEntry(version, req.tenantInfo, req.options.present() ? req.options.get().lockAware : false);
 		if (req.tenantInfo.hasTenant()) {
@@ -6413,8 +6333,7 @@ ACTOR Future<Void> getKeyQ(StorageServer* data, GetKeyRequest req) {
 	data->latencies.readQueueWaitSample->addMeasurement(queueWaitEnd - req.requestTime());
 
 	try {
-		Version commitVersion = getLatestCommitVersion(req.ssLatestCommitVersions, data->tag);
-		state Version version = wait(waitForVersion(data, commitVersion, req.version, req.spanContext, queueWaitEnd));
+		state Version version = wait(waitForVersion(data, req.version, req.spanContext, queueWaitEnd));
 		data->latencies.readVersionWaitSample->addMeasurement(g_network->timer() - queueWaitEnd);
 
 		tenantGroup =
@@ -7203,14 +7122,15 @@ tryReadBlobGranuleChunks(Transaction* tr, KeyRange keys, Version fetchVersion, O
 				tr->setOption(FDBTransactionOptions::HYBRID_READ_DIRTY);
 				Optional<BulkLoadStatus> bulkLoadStatus =
 				    wait(BulkLoadMetadata::statusMap().get(tr, bulkLoadIDKey.get()));
-				if (!bulkLoadStatus.present() || bulkLoadStatus->state != BulkLoadStatus::State::STAGING_DDPREPARED) {
+				if (!bulkLoadStatus.present() ||
+				    bulkLoadStatus->stateCode != BulkLoadStatus::State::STAGING_DDPREPARED) {
 					// FIXME: make un-rare
 					CODE_PROBE(true, "", probe::decoration::rare);
 
 					// FIXME: add simulation-only validation that this load was in fact aborted
 					// assume load was aborted, meaning range will be cleared, and return empty chunks;
 
-					int stateInt = bulkLoadStatus.present() ? static_cast<int>(bulkLoadStatus->state) : -1;
+					int stateInt = bulkLoadStatus.present() ? static_cast<int>(bulkLoadStatus->stateCode) : -1;
 					TraceEvent(SevWarn, "BulkLoadFetchInvalidState")
 					    .suppressFor(10.0)
 					    .detail("TenantID", bulkLoadIDKey->first)
@@ -8153,7 +8073,7 @@ ACTOR Future<Void> updateBulkLoadFetchState(StorageServer* data,
 
 	Optional<BulkLoadStatus> bulkLoadStatus = wait(BulkLoadMetadata::statusMap().get(tr, fetchState->idKey.get()));
 	ASSERT(bulkLoadStatus.present());
-	fetchState->loadState = bulkLoadStatus->state;
+	fetchState->loadState = bulkLoadStatus->stateCode;
 
 	return Void();
 }
@@ -8287,6 +8207,10 @@ ACTOR Future<Void> fetchKeys(StorageServer* data, AddingShard* shard) {
 			// in the same AZ if possible.
 			if (SERVER_KNOBS->DD_FETCHKEYS_WITH_LOCALITY) {
 				tr.setOption(FDBTransactionOptions::PREFER_LOCAL_STORAGE_SERVER);
+			}
+			// If true, don't further partition a range into 1MB of fragments.
+			if (SERVER_KNOBS->DD_FETCHKEYS_DISABLE_RANGE_FRAGMENTS) {
+				tr.setOption(FDBTransactionOptions::DISABLE_RANGE_FRAGMENTS);
 			}
 			tr.trState->readOptions = readOptions;
 			tr.trState->taskID = TaskPriority::FetchKeys;
@@ -12282,13 +12206,8 @@ ACTOR Future<Void> serveWatchValueRequestsImpl(StorageServer* self, FutureStream
 					state Version latest = self->version.get();
 					options.debugID = metadata->debugID;
 
-					GetValueRequest getReq(span.context,
-					                       TenantInfo(),
-					                       metadata->key,
-					                       latest,
-					                       metadata->throttlingTag,
-					                       options,
-					                       VersionVector());
+					GetValueRequest getReq(
+					    span.context, TenantInfo(), metadata->key, latest, metadata->throttlingTag, options);
 					state Future<Void> getValue = getValueQ(self, getReq);
 					GetValueReply reply = wait(getReq.reply.getFuture());
 					metadata = self->getWatchMetadata(req.key.contents(), req.tenantInfo.tenantId);

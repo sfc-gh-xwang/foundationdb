@@ -47,20 +47,20 @@ public:
 		UNKNOWN = 255 // dummy type used for noargs constructor, should never be seen in practice
 	};
 
-	State state;
+	State stateCode;
 
 	// noarg for serialization
-	BulkLoadStatus() : state(State::UNKNOWN) {}
+	BulkLoadStatus() : stateCode(State::UNKNOWN) {}
 
-	BulkLoadStatus(State state) : state(state) { ASSERT(state != State::UNKNOWN); }
+	BulkLoadStatus(State state) : stateCode(state) { ASSERT(state != State::UNKNOWN); }
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, state);
+		serializer(ar, stateCode);
 	}
 
 	std::string toStateString() const {
-		switch (state) {
+		switch (stateCode) {
 		case State::STARTED:
 			return "Started";
 		case State::STAGING:

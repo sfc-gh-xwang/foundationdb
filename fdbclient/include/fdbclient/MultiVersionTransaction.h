@@ -483,7 +483,6 @@ public:
 
 	ThreadFuture<Void> commit() override;
 	Version getCommittedVersion() override;
-	ThreadFuture<VersionVector> getVersionVector() override;
 	ThreadFuture<SpanContext> getSpanContext() override { return SpanContext(); };
 	ThreadFuture<double> getTagThrottledDuration() override;
 	ThreadFuture<int64_t> getTotalCost() override;
@@ -724,7 +723,6 @@ public:
 
 	ThreadFuture<Void> commit() override;
 	Version getCommittedVersion() override;
-	ThreadFuture<VersionVector> getVersionVector() override;
 	ThreadFuture<SpanContext> getSpanContext() override;
 	ThreadFuture<double> getTagThrottledDuration() override;
 	ThreadFuture<int64_t> getTotalCost() override;

@@ -37,7 +37,6 @@ void forceLinkSimKmsConnectorTests();
 void forceLinkIThreadPoolTests();
 void forceLinkTokenSignTests();
 void forceLinkJsonWebKeySetTests();
-void forceLinkVersionVectorTests();
 void forceLinkRESTClientTests();
 void forceLinkRESTUtilsTests();
 void forceLinkRESTKmsConnectorTest();
@@ -112,7 +111,6 @@ struct UnitTestWorkload : TestWorkload {
 		forceLinkIThreadPoolTests();
 		forceLinkTokenSignTests();
 		forceLinkJsonWebKeySetTests();
-		forceLinkVersionVectorTests();
 		forceLinkRESTClientTests();
 		forceLinkRESTUtilsTests();
 		forceLinkRESTKmsConnectorTest();

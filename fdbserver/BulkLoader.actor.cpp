@@ -66,7 +66,7 @@ ACTOR Future<Void> checkCanLoadFiles(Reference<ReadYourWritesTransaction> tr, Bu
 	if (!status.present()) {
 		throw bulk_load_not_found();
 	}
-	if (status.get().state != BulkLoadStatus::State::STARTED) {
+	if (status.get().stateCode != BulkLoadStatus::State::STARTED) {
 		throw bulk_load_not_registering_files();
 	}
 	return Void();

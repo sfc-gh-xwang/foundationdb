@@ -1757,7 +1757,7 @@ ACTOR Future<BlobGranuleSplitPoints> bulkLoadInitialSplitRange(Reference<BlobMan
 
 				if (noTenantStatus.present()) {
 					idKey = candidateIDKey;
-					currentState = noTenantStatus->state;
+					currentState = noTenantStatus->stateCode;
 				} else {
 					if (TenantAPI::withinSingleTenant(originalRange)) {
 						int64_t tenantId = TenantAPI::extractTenantIdFromKeyRef(originalRange.begin);
@@ -1766,7 +1766,7 @@ ACTOR Future<BlobGranuleSplitPoints> bulkLoadInitialSplitRange(Reference<BlobMan
 						    wait(BulkLoadMetadata::statusMap().get(tr, candidateIDKey));
 						if (withTenantStatus.present()) {
 							idKey = candidateIDKey;
-							currentState = withTenantStatus->state;
+							currentState = withTenantStatus->stateCode;
 						}
 					}
 				}
@@ -1794,7 +1794,7 @@ ACTOR Future<BlobGranuleSplitPoints> bulkLoadInitialSplitRange(Reference<BlobMan
 					    .detail("BulkLoadID", bulkLoadID.printable());
 					throw bulk_load_invalid_state_transition();
 				}
-				currentState = updatedStatus->state;
+				currentState = updatedStatus->stateCode;
 			}
 			// if idkey present still need to check that we're in staging blob validated
 			ASSERT(idKey.present());
@@ -1877,8 +1877,8 @@ ACTOR Future<BlobGranuleSplitPoints> bulkLoadInitialSplitRange(Reference<BlobMan
 				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey.get()));
 				// since we cached info, on a re-read it could be non-present if bulk load finished by us or someone
 				// else
-				if (!status.present() || status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
-					int stateInt = status.present() ? static_cast<int>(status->state) : -1;
+				if (!status.present() || status.get().stateCode != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					int stateInt = status.present() ? static_cast<int>(status->stateCode) : -1;
 					DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
 					    .detail("BulkLoadID", bulkLoadID)
 					    .detail("Stage", "CreateFeedError")
@@ -1953,8 +1953,8 @@ ACTOR Future<BlobGranuleSplitPoints> bulkLoadInitialSplitRange(Reference<BlobMan
 				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey.get()));
 				// since we cached info, on a re-read it could be non-present if bulk load finished by us or someone
 				// else
-				if (!status.present() || status.get().state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
-					int stateInt = status.present() ? static_cast<int>(status->state) : -1;
+				if (!status.present() || status.get().stateCode != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					int stateInt = status.present() ? static_cast<int>(status->stateCode) : -1;
 					DebugBulkLoadTraceEvent(SevDebug, "BulkLoadInitialSplit", bmData->id)
 					    .detail("BulkLoadID", bulkLoadID)
 					    .detail("Stage", "CreateGranulesError")
@@ -7218,9 +7218,9 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 			if (!status.present()) {
 				return true;
 			}
-			if (status.get().state != BulkLoadStatus::State::STAGING) {
-				ASSERT(status.get().state > BulkLoadStatus::State::STAGING);
-				if (status.get().state >= BulkLoadStatus::State::STAGING_BLOB_DONE) {
+			if (status.get().stateCode != BulkLoadStatus::State::STAGING) {
+				ASSERT(status.get().stateCode > BulkLoadStatus::State::STAGING);
+				if (status.get().stateCode >= BulkLoadStatus::State::STAGING_BLOB_DONE) {
 					return true;
 				}
 				break;
@@ -7378,9 +7378,9 @@ ACTOR Future<bool> bulkLoadStageBlob(Reference<BlobManagerData> bmData,
 
 				wait(checkManagerLock(tr, bmData));
 				Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
-				int stateInt = status.present() ? static_cast<int>(status->state) : -1;
-				if (!status.present() || status->state != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
-					if (status.present() && status->state == BulkLoadStatus::State::ABORTED) {
+				int stateInt = status.present() ? static_cast<int>(status->stateCode) : -1;
+				if (!status.present() || status->stateCode != BulkLoadStatus::State::STAGING_BLOB_VALIDATED) {
+					if (status.present() && status->stateCode == BulkLoadStatus::State::ABORTED) {
 						CODE_PROBE(true, "bulk load aborted while creating granules");
 						throw bulk_load_aborted();
 					}
@@ -7423,7 +7423,7 @@ ACTOR Future<Void> checkLoadAbortedAndManagerLock(Reference<BlobManagerData> bmD
                                                   BulkLoadIDKey idKey) {
 	state Future<Void> checkManagerF = checkManagerLock(tr, bmData);
 	Optional<BulkLoadStatus> status = wait(BulkLoadMetadata::statusMap().get(tr, idKey));
-	if (!status.present() || status->state != BulkLoadStatus::State::ABORTED) {
+	if (!status.present() || status->stateCode != BulkLoadStatus::State::ABORTED) {
 		if (BM_BULKLOAD_DEBUG) {
 			fmt::print("CleanupAbortedBulkLoad {0}: already cleaned up\n", idKey.second.printable());
 		}
@@ -7431,7 +7431,7 @@ ACTOR Future<Void> checkLoadAbortedAndManagerLock(Reference<BlobManagerData> bmD
 		DebugBulkLoadTraceEvent(SevDebug, "BulkLoadCheckLoadAbortedFailed", bmData->id)
 		    .detail("BulkLoadID", idKey.second)
 		    .detail("TenantId", idKey.first)
-		    .detail("State", status.present() ? static_cast<int>(status->state) : -1);
+		    .detail("State", status.present() ? static_cast<int>(status->stateCode) : -1);
 		throw bulk_load_invalid_state_transition();
 	}
 	wait(checkManagerF);
@@ -7703,7 +7703,7 @@ ACTOR Future<Void> cleanupAbortedBulkLoad(Reference<BlobManagerData> bmData,
 }
 
 // FIXME: handle state transitions from STAGING_BLOB_VALIDATED to STAGING_BLOB_DONE
-ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKey idKey, BulkLoadStatus::State state) {
+ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKey idKey, BulkLoadStatus status) {
 	state ActiveCounter<int>::Releaser holdingLoadCounter = bmData->stats.activeBulkLoads.take(1);
 
 	wait(bmData->doneRecovering.getFuture());
@@ -7724,7 +7724,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKe
 		}
 	}
 	state BulkLoadID id = idKey.second;
-	if (state == BulkLoadStatus::State::ABORTED) {
+	if (status.stateCode == BulkLoadStatus::State::ABORTED) {
 		if (BM_BULKLOAD_DEBUG) {
 			fmt::print("DBGBM {0}: TrackBL {1}: already aborted, cleaning up\n", bmData->epoch, id.printable());
 		}
@@ -7739,7 +7739,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKe
 		}
 		return Void();
 	}
-	if (state >= BulkLoadStatus::State::DONE) {
+	if (status.stateCode >= BulkLoadStatus::State::DONE) {
 		if (BM_BULKLOAD_DEBUG) {
 			fmt::print("DBGBM {0}: TrackBL {1}: already done\n", bmData->epoch, id.printable());
 		}
@@ -7747,7 +7747,7 @@ ACTOR Future<Void> trackBulkLoad(Reference<BlobManagerData> bmData, BulkLoadIDKe
 	}
 
 	try {
-		if (state < BulkLoadStatus::State::STAGING) {
+		if (status.stateCode < BulkLoadStatus::State::STAGING) {
 			wait(bmData->db->waitBulkLoadStateAtLeast(id, BulkLoadStatus::State::STAGING, tenant));
 		}
 
@@ -7927,8 +7927,8 @@ ACTOR Future<Void> blobManager(BlobManagerInterface bmInterf,
 
 		if (CLIENT_KNOBS->ALLOW_BULK_LOADS) {
 			BulkLoadTracker::Handler bulkLoadHandler = [self = self](const BulkLoadIDKey& id,
-			                                                         const BulkLoadStatus::State& state) {
-				return trackBulkLoad(self, id, state);
+			                                                         const BulkLoadStatus& status) {
+				return trackBulkLoad(self, id, status);
 			};
 			state BulkLoadTracker bulkLoadTracker(self->db, bulkLoadHandler);
 			self->addActor.send(bulkLoadTracker.start());

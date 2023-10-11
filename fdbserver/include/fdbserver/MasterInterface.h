@@ -25,7 +25,6 @@
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/DatabaseConfiguration.h"
-#include "fdbclient/VersionVector.h"
 #include "fdbserver/TLogInterface.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/Notified.h"
