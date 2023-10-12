@@ -954,7 +954,7 @@ Key truncateKey(KeyRef key, int truncateOffset, bool isSnowtramAware) {
 	Key truncatedKey = key;
 	// if snowtram aware, tuple must parse and not be truncated, but maintain non-snowtram-aware case for backwards
 	// compatibility
-	Tuple t = Tuple::unpackUserType(key, !isSnowtramAware);
+	Tuple t = Tuple::unpackUserType(key, true);
 	if (isSnowtramAware) {
 		bool snowtramKey = t.isSnowtramKey();
 		if (snowtramKey && t.isSnowtramDataOrIndexSpace()) {
