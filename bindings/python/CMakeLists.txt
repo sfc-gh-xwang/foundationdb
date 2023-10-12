@@ -84,6 +84,17 @@ add_custom_target(python_package DEPENDS ${package_file})
 add_dependencies(python_package python_binding)
 add_dependencies(packages python_package)
 
+set(setup_file_name_whl foundationdb-${FDB_VERSION}-py3-none-any.whl)
+set(package_file_whl ${CMAKE_BINARY_DIR}/packages/foundationdb-${FDB_VERSION}${not_fdb_release_string}-py3-none-any.whl)
+add_custom_command(OUTPUT ${package_file_whl}
+  COMMAND $<TARGET_FILE:Python3::Interpreter> setup.py bdist_wheel &&
+          ${CMAKE_COMMAND} -E copy dist/${setup_file_name_whl} ${package_file_whl}
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  COMMENT "Create Python bdist_wheel package")
+add_custom_target(python_package_whl DEPENDS ${package_file_whl})
+add_dependencies(python_package_whl python_binding)
+add_dependencies(packages python_package_whl)
+
 if(NOT OPEN_FOR_IDE AND NOT USE_SANITIZER)
 
   add_fdbclient_test(
