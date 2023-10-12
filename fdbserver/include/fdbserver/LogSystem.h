@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <vector>
 
+#include "fdbclient/CommitTransaction.h"
 #include "fdbserver/SpanContextMessage.h"
 #include "fdbserver/OTELSpanContextMessage.h"
 #include "fdbserver/TLogInterface.h"
@@ -913,5 +914,18 @@ void LogPushData::writeTypedMessage(T const& item, bool metadataMessage, bool al
 	written_tags.insert(next_message_tags.begin(), next_message_tags.end());
 	next_message_tags.clear();
 }
+
+// Variant representing all of the types that could be found in a log cursor's message stream
+struct LogMessage {
+	// Template constructor to forward the second argument to content's constructor
+	// This exists so that emplace_back(version, content) will work.
+	// In c++20 this should no longer be necessary as default aggregate initialization should handle it
+	template <typename T>
+	LogMessage(LogMessageVersion version, T&& content) : version(version),
+	                                                     content(std::forward<T>(content)) {}
+
+	LogMessageVersion version;
+	std::variant<ProtocolVersion, SpanContextMessage, OTELSpanContextMessage, MutationRefAndCipherKeys> content;
+};
 
 #endif // FDBSERVER_LOGSYSTEM_H

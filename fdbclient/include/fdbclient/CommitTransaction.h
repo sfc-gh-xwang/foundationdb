@@ -468,7 +468,15 @@ struct MutationsAndVersionRef {
 
 struct MutationRefAndCipherKeys {
 	MutationRef mutation;
+	MutationRef encryptedMutation;
 	TextAndHeaderCipherKeys cipherKeys;
+
+	MutationRefAndCipherKeys() = default;
+	explicit MutationRefAndCipherKeys(MutationRef m) : mutation(m) {}
+	MutationRefAndCipherKeys(MutationRef m, MutationRef encrypted, TextAndHeaderCipherKeys cks)
+	  : mutation(m),
+	    encryptedMutation(encrypted),
+	    cipherKeys(cks) {}
 };
 
 struct EncryptedMutationsAndVersionRef {
