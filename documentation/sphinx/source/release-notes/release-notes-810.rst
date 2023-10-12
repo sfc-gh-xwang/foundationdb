@@ -43,24 +43,24 @@ Reliability
 * Shorten perpetual_wiggle_delay in simulation to avoid check timeout `(FDBCORE-6159) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6159>`_
 * Trace RFC7638 thumbprint for each AuthZ public key  `(FDBCORE-6181) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6181>`_
 * Add more diagnostic to verify failed case for cached tokens `(FDBCORE-6282) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6282>`_
-* Perform more accurate checking of the recovery tracker `<https://github.com/snowflakedb/frostdb/pull/1143>`_
-* Remove debug transaction call that can be very verbose `<https://github.com/snowflakedb/frostdb/pull/1147>`_
-* Update random move keys to choose a team according to the storage policy `<https://github.com/snowflakedb/frostdb/pull/1173>`_
-* Remove go ctest test `<https://github.com/snowflakedb/frostdb/pull/1175>`_
-* Don't buggify leader election knobs in latency sensitive test `<https://github.com/snowflakedb/frostdb/pull/1208>`_
+* Perform more accurate checking of the recovery tracker `(PR 1143) <https://github.com/snowflakedb/frostdb/pull/1143>`_
+* Remove debug transaction call that can be very verbose `(PR 1147) <https://github.com/snowflakedb/frostdb/pull/1147>`_
+* Update random move keys to choose a team according to the storage policy `(PR 1173) <https://github.com/snowflakedb/frostdb/pull/1173>`_
+* Remove go ctest test `(PR 1175) <https://github.com/snowflakedb/frostdb/pull/1175>`_
+* Don't buggify leader election knobs in latency sensitive test `(PR 1208) <https://github.com/snowflakedb/frostdb/pull/1208>`_
 * Avoid Cluser blocking on isRestoring check on RateKeeper (re)start `(FDBCORE-6285) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6285>`_
 * Fix issue with quota throttler target rate initialization `(FDBCORE-6154) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6154>`_
-* Fix issue where multiple instances of a singleton role could run simultaneously `<https://github.com/snowflakedb/frostdb/pull/1154>`_
-* Status could fail with a broken promise if the encryption key proxy died during the request `<https://github.com/snowflakedb/frostdb/pull/1156>`_
+* Fix issue where multiple instances of a singleton role could run simultaneously `(PR 1154) <https://github.com/snowflakedb/frostdb/pull/1154>`_
+* Status could fail with a broken promise if the encryption key proxy died during the request `(PR 1156) <https://github.com/snowflakedb/frostdb/pull/1156>`_
 * Fix a race in Ratekeeper and disable between throttling on restore `(FDBCORE-5036) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-5036>`_
 * Return normalKeyMutations when resolver decide it’s committed and trace metrics `(FDBCORE-6056) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6056>`_
 * Add a new blob restore state to fix a race after data copy `(FDBCORE-5856) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-5856>`_
-* Initialize metacluster version to avoid invalid access  `<https://github.com/snowflakedb/frostdb/pull/927>`_
-* Encryption at-Rest Fix Header Validation `<https://github.com/snowflakedb/frostdb/pull/941>`_
-* Fix read metrics test validation `<https://github.com/snowflakedb/frostdb/pull/1149>`_
-* Reset recruiting field when singleton recruitment fails  `<https://github.com/snowflakedb/frostdb/pull/1154>`_
-* Fix broken promise in status caused by failures to fetch KMSHealthStatus `<https://github.com/snowflakedb/frostdb/pull/1156>`_
-* Fix binding tester tenant list error `<https://github.com/snowflakedb/frostdb/pull/1234>`_
+* Initialize metacluster version to avoid invalid access `(PR 927) <https://github.com/snowflakedb/frostdb/pull/927>`_
+* Encryption at-Rest Fix Header Validation `(PR 941) <https://github.com/snowflakedb/frostdb/pull/941>`_
+* Fix read metrics test validation `(PR 1149) <https://github.com/snowflakedb/frostdb/pull/1149>`_
+* Reset recruiting field when singleton recruitment fails  `(PR 1154) <https://github.com/snowflakedb/frostdb/pull/1154>`_
+* Fix broken promise in status caused by failures to fetch KMSHealthStatus `(PR 1156) <https://github.com/snowflakedb/frostdb/pull/1156>`_
+* Fix binding tester tenant list error `(PR 1234) <https://github.com/snowflakedb/frostdb/pull/1234>`_
 * Fix hybrid storage corruption caused by change feed fetching race `(FDBCORE-6255) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6255>`_
 
 
