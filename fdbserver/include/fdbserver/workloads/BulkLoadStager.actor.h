@@ -23,6 +23,7 @@
 #include "flow/flow.h"
 
 #include "flow/actorcompiler.h" // This must be the last #include.
+#include "flow/genericactors.actor.h"
 
 #pragma once
 
@@ -66,6 +67,7 @@ private:
 	const BulkLoadID id;
 	const KeyRange keyRange;
 	const Optional<Reference<Tenant>> tenant;
+	FlowMutex mutex;
 
 	Optional<Key> previousKey;
 	Standalone<GranuleSnapshot> currentSnapshot;
@@ -75,6 +77,8 @@ private:
 	// we can depend on the arena(s) of individual elements instead of the entire VectorRef
 	std::deque<Standalone<BulkLoadFileToWriteRef>> availableFileRefs;
 	std::deque<Standalone<BulkLoadWrittenFileRef>> filesWritten;
+
+	std::deque<Future<Void>> pendingSnapshotWrites;
 };
 
 } // namespace BulkLoadHelpers

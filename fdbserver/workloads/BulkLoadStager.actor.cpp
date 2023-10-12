@@ -25,10 +25,15 @@
 #include "flow/Error.h"
 #include "flow/FastRef.h"
 #include "flow/flow.h"
-
+#include "flow/genericactors.actor.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
+
 namespace BulkLoadHelpers {
 namespace {
+
+// The maximum number of snapshot writes allowed to be in-flight
+// without waiting on completion.
+constexpr int maxPendingSnapshotWrites = 100;
 
 // Returns physical size of written file.
 ACTOR Future<int64_t> writeOneFileToBlob(Reference<BlobConnectionProvider> bstore,
@@ -54,7 +59,13 @@ public:
 			return Void();
 		}
 		// Write out any pending snapshots, and mark any files as written.
-		wait(writeSnapshot(self));
+		wait(writeSnapshot(self, self->currentSnapshot));
+		std::vector<Future<Void>> pendingSnapshots;
+		while (!self->pendingSnapshotWrites.empty()) {
+			pendingSnapshots.push_back(self->pendingSnapshotWrites.front());
+			self->pendingSnapshotWrites.pop_front();
+		}
+		wait(waitForAll(pendingSnapshots));
 		wait(markFilesAsWritten(self));
 		// maybeReopenTenant(cx); TODO : Do this sometimes?
 		wait(self->cx->bulkLoadAllFilesRegistered(self->id, self->tenant));
@@ -86,9 +97,16 @@ public:
 		int64_t targetSize = wait(getCurrentTargetSize(self));
 		if (allowSplit && self->currentSnapshotSize >= targetSize) {
 			// Write out a granule file
-			// TODO: Rather than block on this, make this async so that future addRows can continue
-			// without waiting on this (expensive) blob write.
-			wait(writeSnapshot(self));
+			Standalone<GranuleSnapshot> snapshot;
+			snapshot.append_deep(snapshot.arena(), self->currentSnapshot.begin(), self->currentSnapshot.size());
+			self->pendingSnapshotWrites.push_back(writeSnapshot(self, snapshot));
+			self->currentSnapshot.clear();
+			self->currentSnapshotSize = 0;
+		}
+		// If we have too many file writes in-flight, wait for at least one to finish.
+		if (self->pendingSnapshotWrites.size() > maxPendingSnapshotWrites) {
+			wait(self->pendingSnapshotWrites.front());
+			self->pendingSnapshotWrites.pop_front();
 		}
 		return Void();
 	}
@@ -123,28 +141,37 @@ private:
 		return Void();
 	}
 
-	ACTOR static Future<Void> writeSnapshot(BulkLoadStager* self) {
-		if (self->currentSnapshot.empty()) {
+	ACTOR static Future<Void> writeSnapshot(BulkLoadStager* self, Standalone<GranuleSnapshot> snapshot) {
+		if (snapshot.empty()) {
 			return Void();
 		}
-		// Fetch more file refs if we ran out.
-		if (self->availableFileRefs.empty()) {
-			wait(fetchMoreFilesToWrite(self));
+
+		state Standalone<BulkLoadFileToWriteRef> fileToWrite;
+		{
+			// Fetch more file refs if we ran out.
+			// Serialize this with a lock so that multiple calls to this ACTOR don't all
+			// end up requesting files at the same time.
+			state FlowMutex::Lock lock = wait(self->mutex.take());
+			if (self->availableFileRefs.empty()) {
+				wait(fetchMoreFilesToWrite(self));
+			}
+			fileToWrite = self->availableFileRefs.front();
+			self->availableFileRefs.pop_front();
+			lock.release();
 		}
-		state Standalone<BulkLoadFileToWriteRef> fileToWrite = self->availableFileRefs.front();
-		self->availableFileRefs.pop_front();
+
 		ASSERT_EQ(fileToWrite.tenantPrefix.present(), self->tenant.present());
 		if (self->tenant.present()) {
 			ASSERT_EQ(fileToWrite.tenantPrefix.get(), self->tenant.get()->prefix());
 		}
-		int64_t physicalSize = wait(writeOneFileToBlob(self->bstore, fileToWrite, &self->currentSnapshot));
+		int64_t physicalSize = wait(writeOneFileToBlob(self->bstore, fileToWrite, &snapshot));
 
 		Standalone<BulkLoadWrittenFileRef> writtenFile;
 		writtenFile.arena().dependsOn(fileToWrite.arena());
 		writtenFile.fileId = fileToWrite.fileId;
 
-		Key startKey(self->currentSnapshot.front().key);
-		Key endKey(self->currentSnapshot.back().key);
+		Key startKey(snapshot.front().key);
+		Key endKey(snapshot.back().key);
 		if (self->tenant.has_value()) {
 			// The keyRange in BulkLoadWrittenFileRef does not include the tenant prefix
 			startKey = startKey.removePrefix(self->tenant.get()->prefix());
@@ -155,20 +182,17 @@ private:
 		writtenFile.keyRange = keyRange;
 		writtenFile.physicalSize = physicalSize;
 		writtenFile.logicalSize = 0;
-		for (int i = 0; i < self->currentSnapshot.size(); ++i) {
-			writtenFile.logicalSize += self->currentSnapshot[i].key.size() + self->currentSnapshot[i].value.size();
+		for (int i = 0; i < snapshot.size(); ++i) {
+			writtenFile.logicalSize += snapshot[i].key.size() + snapshot[i].value.size();
 		}
+
 		self->filesWritten.push_back(writtenFile);
-
 		// maybeReopenTenant(cx); TODO: Do this sometimes?
-
 		// Flip a coin and mark files as written.
 		if (deterministicRandom()->coinflip()) {
 			wait(markFilesAsWritten(self));
 		}
 
-		self->currentSnapshot.clear();
-		self->currentSnapshotSize = 0;
 		return Void();
 	}
 
@@ -182,12 +206,13 @@ private:
 			writtenFiles.arena().dependsOn(self->filesWritten[i].arena());
 			writtenFiles.push_back(writtenFiles.arena(), self->filesWritten[i]);
 		}
+		self->filesWritten.clear();
+
 		wait(self->cx->markBulkLoadFilesWritten(self->id, writtenFiles, self->tenant));
 		// Sometimes re-register the files again. This should be idempotent.
 		if (BUGGIFY_WITH_PROB(0.1)) {
 			wait(self->cx->markBulkLoadFilesWritten(self->id, writtenFiles, self->tenant));
 		}
-		self->filesWritten.clear();
 
 		return Void();
 	}
