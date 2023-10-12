@@ -1,0 +1,25 @@
+# This workload is mainly intended to run on a real cluster.
+# Having it run infrequently is worthwhile to keep the workload itself bug free, so
+# run with reduced priority.
+testPriority = '10'
+
+[configuration]
+blobGranulesEnabled = true 
+allowDefaultTenant = false
+tenantModes = ['optional']
+# Exclude memory storage engines - this test does a significant amount
+# of bulk loads, which causes OOMs with in-memory engines.
+storageEngineExcludeTypes = [1, 2]
+
+[[knobs]]
+allow_bulk_loads = true
+bg_metadata_source = "knobs"
+bg_key_tuple_truncate_offset = 1
+enable_rest_kms_communication = false
+
+[[test]]
+testTitle = 'BulkLoad'
+
+    [[test.workload]]
+    testName = 'BulkLoadGenerator'
+    bulkLoadSizeKiB = 51200  # 50 MiB
