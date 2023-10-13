@@ -6490,7 +6490,7 @@ ACTOR Future<Void> handlePurgeRangeDAGNode(Reference<BlobManagerData> bmData,
 ACTOR Future<Void> cleanupCompletedPurgeKeys(Reference<BlobManagerData> self) {
 	loop {
 		// do in delayed batches for efficiency
-		state Future<Void> nextDelay = delayJittered(1.0);
+		state Future<Void> nextDelay = delayJittered(SERVER_KNOBS->BLOB_MANAGER_PURGE_KEY_CLEANUP_COALESCE_DELAY);
 		state int batchSize = 1000;
 		if (BUGGIFY_WITH_PROB(0.01)) {
 			batchSize = deterministicRandom()->randomInt(1, 10);
