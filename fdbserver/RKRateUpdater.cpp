@@ -25,7 +25,8 @@ void RKRateUpdater::update(IRKMetricsTracker const& metricsTracker,
                            Deque<double> const& actualTpsHistory,
                            IRKBlobMonitor& blobMonitor,
                            bool isBwThrottlingEnabled,
-                           int throttledTags) {
+                           int throttledTags,
+                           IRKClusterThroughputTracker const& throughputTracker) {
 	// double controlFactor = ;  // dt / eFoldingTime
 	double actualTps = getActualTps(rateServer, metricsTracker);
 
@@ -634,6 +635,7 @@ void RKRateUpdater::update(IRKMetricsTracker const& metricsTracker,
 		    .detail("WorstStorageServerDurabilityLag", worstDurabilityLag)
 		    .detail("LimitingStorageServerDurabilityLag", limitingDurabilityLag)
 		    .detail("TagsAutoThrottled", throttledTags)
+		    .detail("AggregateThroughput", throughputTracker.getAggregateThroughput().totalThroughput())
 		    .trackLatest(name);
 	}
 }

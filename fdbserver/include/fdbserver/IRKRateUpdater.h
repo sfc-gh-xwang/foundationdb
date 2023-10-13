@@ -5,6 +5,7 @@
 #pragma once
 
 #include "fdbclient/FDBTypes.h"
+#include "fdbserver/IRKClusterThroughputTracker.h"
 #include "fdbserver/RatekeeperLimits.h"
 #include "flow/Deque.h"
 #include "flow/TDMetric.actor.h"
@@ -35,7 +36,8 @@ public:
 	                    Deque<double> const& actualTpsHistory,
 	                    class IRKBlobMonitor&,
 	                    bool isBwThrottlingEnabled,
-	                    int throttledTags) = 0;
+	                    int throttledTags,
+	                    class IRKClusterThroughputTracker const&) = 0;
 
 	// In simulation, after a certain period of time has passed,
 	// we expect blob worker lag to be low, and fail an assertion
@@ -81,7 +83,8 @@ public:
 	            Deque<double> const& actualTpsHistory,
 	            class IRKBlobMonitor&,
 	            bool isBwThrottlingEnabled,
-	            int throttledTags) override;
+	            int throttledTags,
+	            class IRKClusterThroughputTracker const&) override;
 
 	HealthMetrics const& getHealthMetrics() const& override;
 };

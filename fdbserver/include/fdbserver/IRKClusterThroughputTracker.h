@@ -30,6 +30,7 @@ public:
 			writeThroughput += other.writeThroughput;
 			return *this;
 		}
+		double totalThroughput() const { return readThroughput + writeThroughput; }
 	};
 
 	// Returns the current cluster-wide read throughput for the provided throttling ID
