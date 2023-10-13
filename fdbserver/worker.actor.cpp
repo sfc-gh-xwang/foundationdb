@@ -3933,13 +3933,18 @@ namespace {
 TEST_CASE("/fdbserver/worker/gray_failure_detection/ping_latency_metrics/update") {
 	state int index;
 	state std::vector<ISimulator::ProcessInfo*> allProcesses = g_simulator->getAllProcesses();
-	state ISimulator::ProcessInfo* currentProcess;
+	state ISimulator::ProcessInfo* currentProcess = g_simulator->getCurrentProcess();
 	state int gfdConnectionFailureBase, gfdPingTimeoutBase, gfdPingLatenciesBase;
 	state int gfdConnectionFailureChange, gfdPingTimeoutChange, gfdPingLatenciesChange;
 	for (index = 0; index < allProcesses.size(); index++) {
 		ISimulator::ProcessInfo* info = allProcesses[index];
-		currentProcess = g_simulator->getCurrentProcess();
 		wait(g_simulator->onProcess(info, TaskPriority::DefaultYield));
+		if (!g_network->global(INetwork::enFlowTransport)) {
+			// There are sometimes processes added without creating the flowtransport instance
+			// E.g. the unit test "/ManagementAPI/AutoQuorumChange/checkLocality".
+			// Simply skip these processes
+			continue;
+		}
 		// Randomly enable the feature
 		bool enable_health_monitor = deterministicRandom()->coinflip();
 		IKnobCollection::getMutableGlobalKnobCollection().setKnob("enable_worker_health_monitor",
