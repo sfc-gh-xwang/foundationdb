@@ -20,10 +20,23 @@ public:
 		Throughput(double readThroughput, double writeThroughput)
 		  : readThroughput(readThroughput),
 		    writeThroughput(writeThroughput) {}
+
+		Throughput operator+(const Throughput& other) const {
+			return Throughput(readThroughput + other.readThroughput, writeThroughput + other.writeThroughput);
+		}
+
+		Throughput& operator+=(const Throughput& other) {
+			readThroughput += other.readThroughput;
+			writeThroughput += other.writeThroughput;
+			return *this;
+		}
 	};
 
 	// Returns the current cluster-wide read throughput for the provided throttling ID
 	virtual Throughput getThroughput(ThrottlingId const&) const = 0;
+
+	// Returns the current throughput aggregated over all the throttling Ids.
+	virtual Throughput getAggregateThroughput() const = 0;
 
 	// Returns the throughput for the set of throttlingIds reporting throughput above the specified threshold
 	virtual ThrottlingIdMap<Throughput> getActiveThrottlingIds(double threshold) const = 0;
@@ -96,6 +109,8 @@ public:
 
 	IRKClusterThroughputTracker::Throughput getThroughput(ThrottlingId const&) const override;
 
+	IRKClusterThroughputTracker::Throughput getAggregateThroughput() const override;
+
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 
 	int throttlingIdsTracked() const override;
@@ -132,6 +147,8 @@ public:
 
 	IRKClusterThroughputTracker::Throughput getThroughput(ThrottlingId const&) const override;
 
+	IRKClusterThroughputTracker::Throughput getAggregateThroughput() const override;
+
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 
 	int throttlingIdsTracked() const override;
@@ -148,6 +165,8 @@ public:
 	~MockThroughputTracker();
 
 	IRKClusterThroughputTracker::Throughput getThroughput(ThrottlingId const&) const override;
+
+	IRKClusterThroughputTracker::Throughput getAggregateThroughput() const override;
 
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> getActiveThrottlingIds(double threshold) const override;
 

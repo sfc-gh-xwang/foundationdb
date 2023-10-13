@@ -209,6 +209,14 @@ IRKClusterThroughputTracker::Throughput RKServerThroughputTracker::getThroughput
 	}
 }
 
+IRKClusterThroughputTracker::Throughput RKServerThroughputTracker::getAggregateThroughput() const {
+	IRKClusterThroughputTracker::Throughput result{ 0.0, 0.0 };
+	for (const auto& [_, throughput] : throughputByThrottlingId) {
+		result += throughput.getThroughput();
+	}
+	return result;
+}
+
 ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> RKServerThroughputTracker::getActiveThrottlingIds(
     double threshold) const {
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> result;
@@ -236,6 +244,14 @@ IRKClusterThroughputTracker::Throughput MockThroughputTracker::getThroughput(Thr
 	auto it = throughput.find(throttlingId);
 	auto const readThroughput = (it == throughput.end()) ? 0.0 : it->second;
 	return IRKClusterThroughputTracker::Throughput(readThroughput, 0.0);
+}
+
+IRKClusterThroughputTracker::Throughput MockThroughputTracker::getAggregateThroughput() const {
+	IRKClusterThroughputTracker::Throughput result{ 0.0, 0.0 };
+	for (const auto& [_, t] : throughput) {
+		result.readThroughput += t;
+	}
+	return result;
 }
 
 ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> MockThroughputTracker::getActiveThrottlingIds(

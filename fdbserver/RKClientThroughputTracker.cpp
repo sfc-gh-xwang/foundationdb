@@ -55,6 +55,16 @@ IRKClusterThroughputTracker::Throughput RKClientThroughputTracker::getThroughput
 	}
 }
 
+IRKClusterThroughputTracker::Throughput RKClientThroughputTracker::getAggregateThroughput() const {
+	IRKClusterThroughputTracker::Throughput result{ 0.0, 0.0 };
+	for (const auto& [_, smoother] : throughput) {
+		result.readThroughput += smoother.smoothReadRate();
+		result.writeThroughput += smoother.smoothWriteRate();
+	}
+
+	return result;
+}
+
 ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> RKClientThroughputTracker::getActiveThrottlingIds(
     double threshold) const {
 	ThrottlingIdMap<IRKClusterThroughputTracker::Throughput> result;
