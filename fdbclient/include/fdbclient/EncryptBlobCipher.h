@@ -343,7 +343,7 @@ void computeAuthToken(const std::vector<std::pair<const uint8_t*, size_t>>& payl
                       const EncryptAuthTokenAlgo algo,
                       unsigned int digestMaxBufSz);
 
-EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptAuthTokenMode mode);
+EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptionAtRestAlgo algo);
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo);
 void generateIV(EncryptionAtRestAlgo algo, Reference<BlobCipherKey> textCipherKey, uint8_t* iv, int ivLen);
 inline void incrementEncryptOrDecryptOps(Counter& counter);

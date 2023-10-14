@@ -22,6 +22,7 @@
 #include "fdbclient/ApiRequestHandler.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/BlobGranuleApiImpl.h"
+#include "flow/ApiVersion.h"
 #include "flow/ProtocolVersion.h"
 #include <boost/asio/bind_executor.hpp>
 #include <cstdint>
@@ -521,7 +522,8 @@ extern "C" DLLEXPORT FDBResult* fdb_readbg_parse_snapshot_file_v2(const uint8_t*
                                                                   FDBBGTenantPrefix const* tenant_prefix,
                                                                   FDBBGEncryptionCtxV2 const* encryption_ctx) {
 	RETURN_RESULT_ON_ERROR(
-	    return parseBlobGranulesSnapshotFileV2(StringRef(file_data, file_len), tenant_prefix, encryption_ctx)
+	    return parseBlobGranulesSnapshotFileV2(
+	               StringRef(file_data, file_len), tenant_prefix, encryption_ctx, ApiVersion(g_api_version))
 	        .extractPtr(););
 }
 
@@ -539,7 +541,8 @@ extern "C" DLLEXPORT FDBResult* fdb_readbg_parse_delta_file_v2(const uint8_t* fi
                                                                FDBBGTenantPrefix const* tenant_prefix,
                                                                FDBBGEncryptionCtxV2 const* encryption_ctx) {
 	RETURN_RESULT_ON_ERROR(
-	    return parseBlobGranulesDeltaFileV2(StringRef(file_data, file_len), tenant_prefix, encryption_ctx)
+	    return parseBlobGranulesDeltaFileV2(
+	               StringRef(file_data, file_len), tenant_prefix, encryption_ctx, ApiVersion(g_api_version))
 	        .extractPtr(););
 }
 
@@ -562,7 +565,8 @@ extern "C" DLLEXPORT FDBFuture* fdb_writebg_snapshot_file(FDBKeyValue const* key
 	                                  VectorRef<KeyValueRef>((KeyValueRef*)key_value_array, key_value_array_length),
 	                                  compression,
 	                                  tenant_prefix,
-	                                  encryption_ctx)
+	                                  encryption_ctx,
+	                                  ApiVersion(g_api_version))
 	                           .extractPtr(););
 }
 

@@ -8,6 +8,8 @@
 #include "fdbclient/ApiRequestHandler.h"
 #include "fdbclient/BlobGranuleCommon.h"
 #include "fdbclient/BlobGranuleFiles.actor.h"
+#include "flow/ApiVersion.h"
+#include "flow/EncryptUtils.h"
 #include "flow/actorcompiler.h" // has to be last include
 
 namespace {
@@ -176,23 +178,31 @@ void apiToNativeBGEncryptionKeyCtxV1(Optional<BlobGranuleCipherKeysCtx>& dest, F
 	}
 }
 
-void apiToNativeBGEncryptionKeyCtxV2(Optional<BlobGranuleCipherKeysCtx>& dest, FDBBGEncryptionCtxV2 const* source) {
+void apiToNativeBGEncryptionKeyCtxV2(Optional<BlobGranuleCipherKeysCtx>& dest,
+                                     FDBBGEncryptionCtxV2 const* source,
+                                     ApiVersion apiVersion) {
 	if (source) {
 		dest = BlobGranuleCipherKeysCtx();
 		apiToNativeBGEncryptionKey(dest.get().textCipherKey, source->textKey);
 		apiToNativeBGEncryptionKey(dest.get().headerCipherKey, source->headerKey);
 		dest.get().ivRef = StringRef(source->iv.key, source->iv.key_length);
+		// If a newer primary client is communicating with an older server (< 9.0) it must be using CTR encryption
+		if (apiVersion >= ApiVersion::withEncryptionAlgo()) {
+			dest.get().encryptionAlgo = (EncryptionAtRestAlgo)source->encryptionAlgo;
+		} else {
+			dest.get().encryptionAlgo = EncryptionAtRestAlgo::AES_CTR;
+		}
 	}
 }
 
-void apiToNativeBGFilePointer(BlobFilePointerRef& dest, const FDBBGFilePointerV2* source) {
+void apiToNativeBGFilePointer(BlobFilePointerRef& dest, const FDBBGFilePointerV2* source, ApiVersion apiVersion) {
 	dest.filename = StringRef(source->filename_ptr, source->filename_length);
 	dest.offset = source->file_offset;
 	dest.length = source->file_length;
 	dest.fullFileLength = source->full_file_length;
 	dest.fileVersion = source->file_version;
 
-	apiToNativeBGEncryptionKeyCtxV2(dest.cipherKeysCtx, source->encryption_ctx);
+	apiToNativeBGEncryptionKeyCtxV2(dest.cipherKeysCtx, source->encryption_ctx, apiVersion);
 }
 
 KeyRef applyTenantPrefix(const KeyRef& key, const Optional<KeyRef>& tenantPrefix, Arena& ar) {
@@ -275,14 +285,14 @@ void apiToNativeBGFileDescription(BlobGranuleChunkRef& dest,
 	dest.snapshotVersion = invalidVersion;
 	if (source->snapshot_file_pointer) {
 		dest.snapshotFile = BlobFilePointerRef();
-		apiToNativeBGFilePointer(dest.snapshotFile.get(), source->snapshot_file_pointer);
+		apiToNativeBGFilePointer(dest.snapshotFile.get(), source->snapshot_file_pointer, apiVersion);
 		dest.snapshotVersion = dest.snapshotFile->fileVersion;
 	}
 
 	if (source->delta_file_count > 0) {
 		dest.deltaFiles.resize(ar, source->delta_file_count);
 		for (int i = 0; i < source->delta_file_count; i++) {
-			apiToNativeBGFilePointer(dest.deltaFiles[i], source->delta_files[i]);
+			apiToNativeBGFilePointer(dest.deltaFiles[i], source->delta_files[i], apiVersion);
 		}
 	}
 
@@ -498,22 +508,24 @@ ReadBGMutationsApiResult parseBlobGranulesDeltaFileV1(StringRef fileName,
 
 ReadRangeApiResult parseBlobGranulesSnapshotFileV2(StringRef fileName,
                                                    FDBBGTenantPrefix const* tenant_prefix,
-                                                   FDBBGEncryptionCtxV2 const* encryption_ctx) {
+                                                   FDBBGEncryptionCtxV2 const* encryption_ctx,
+                                                   ApiVersion apiVersion) {
 	Optional<KeyRef> tenantPrefix;
 	Optional<BlobGranuleCipherKeysCtx> encryptionCtx;
 	apiToNativeBGTenantPrefix(tenantPrefix, tenant_prefix);
-	apiToNativeBGEncryptionKeyCtxV2(encryptionCtx, encryption_ctx);
+	apiToNativeBGEncryptionKeyCtxV2(encryptionCtx, encryption_ctx, apiVersion);
 	auto parsedData = bgReadSnapshotFile(fileName, tenantPrefix, encryptionCtx);
 	return createReadRangeApiResult(parsedData);
 }
 
 ReadBGMutationsApiResult parseBlobGranulesDeltaFileV2(StringRef fileName,
                                                       FDBBGTenantPrefix const* tenant_prefix,
-                                                      FDBBGEncryptionCtxV2 const* encryption_ctx) {
+                                                      FDBBGEncryptionCtxV2 const* encryption_ctx,
+                                                      ApiVersion apiVersion) {
 	Optional<KeyRef> tenantPrefix;
 	Optional<BlobGranuleCipherKeysCtx> encryptionCtx;
 	apiToNativeBGTenantPrefix(tenantPrefix, tenant_prefix);
-	apiToNativeBGEncryptionKeyCtxV2(encryptionCtx, encryption_ctx);
+	apiToNativeBGEncryptionKeyCtxV2(encryptionCtx, encryption_ctx, apiVersion);
 	auto parsedData = bgReadDeltaFile(fileName, tenantPrefix, encryptionCtx);
 	return createBGMutationsApiResult(parsedData);
 }
@@ -546,12 +558,13 @@ Future<ApiResult> readBlobGranuleDescriptions(ISingleThreadTransaction* tr, ApiR
 ThreadFuture<Value> writeBlobGranulesSnapshotFileV1(VectorRef<KeyValueRef> rows,
                                                     int8_t compression,
                                                     FDBBGTenantPrefix const* tenant_prefix,
-                                                    FDBBGEncryptionCtxV2 const* encryption_ctx) {
+                                                    FDBBGEncryptionCtxV2 const* encryption_ctx,
+                                                    ApiVersion apiVersion) {
 	CompressionFilter compressFilter = CompressionUtils::fromInt(compression);
 	Optional<KeyRef> tenantPrefix;
 	Optional<BlobGranuleCipherKeysCtx> encryptionCtx;
 	apiToNativeBGTenantPrefix(tenantPrefix, tenant_prefix);
-	apiToNativeBGEncryptionKeyCtxV2(encryptionCtx, encryption_ctx);
+	apiToNativeBGEncryptionKeyCtxV2(encryptionCtx, encryption_ctx, apiVersion);
 
 	// copy rows for memory lifetime + type + add tenant prefix
 	Standalone<GranuleSnapshot> myRows;
@@ -648,4 +661,5 @@ void nativeToApiBGEncryptionKeyCtx(FDBBGEncryptionCtxV2* dest, const BlobGranule
 	dest->headerKCV = source.headerCipherKey.baseCipherKCV;
 	dest->iv.key = source.ivRef.begin();
 	dest->iv.key_length = source.ivRef.size();
+	dest->encryptionAlgo = source.encryptionAlgo;
 }

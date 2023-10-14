@@ -638,11 +638,11 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 			self->cipherKeys.textCipherKey = cipherKey;
 		}
 
-		Reference<EncryptBlobCipher> encryptor =
-		    EncryptBlobCipher::getEncryptor(self->cipherKeys.textCipherKey,
-		                                    self->cipherKeys.headerCipherKey,
-		                                    encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO),
-		                                    BlobCipherMetrics::BACKUP);
+		ASSERT(isEncryptAlgoValid(self->encryptAlgo));
+		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(self->cipherKeys.textCipherKey,
+		                                                                         self->cipherKeys.headerCipherKey,
+		                                                                         self->encryptAlgo,
+		                                                                         BlobCipherMetrics::BACKUP);
 		int64_t payloadSize = self->wPtr - self->dataPayloadStart;
 		StringRef encryptedData;
 		BlobCipherEncryptHeaderRef headerRef;
@@ -762,10 +762,9 @@ struct EncryptedRangeFileWriter : public IRangeFileWriter {
 
 		// calculate encryption header size
 		uint32_t headerSize = 0;
-		EncryptAuthTokenMode authTokenMode =
-		    getEncryptAuthTokenMode(EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
-		EncryptAuthTokenAlgo authTokenAlgo =
-		    authTokenAlgoFromEncryptionAtRestAlgo(encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO));
+		self->encryptAlgo = encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO);
+		EncryptAuthTokenMode authTokenMode = getEncryptAuthTokenMode(self->encryptAlgo);
+		EncryptAuthTokenAlgo authTokenAlgo = authTokenAlgoFromEncryptionAtRestAlgo(self->encryptAlgo);
 		headerSize =
 		    BlobCipherEncryptHeaderRef::getHeaderSize(CLIENT_KNOBS->ENCRYPT_HEADER_FLAGS_VERSION,
 		                                              getEncryptCurrentAlgoHeaderVersion(authTokenMode, authTokenAlgo),
@@ -930,6 +929,7 @@ private:
 	Key lastKey;
 	Key lastValue;
 	SnapshotFileBackupEncryptionKeys cipherKeys;
+	EncryptionAtRestAlgo encryptAlgo = EncryptionAtRestAlgo::LAST;
 };
 
 // File Format handlers.

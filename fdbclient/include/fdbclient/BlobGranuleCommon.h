@@ -207,15 +207,18 @@ struct BlobGranuleCipherKeysCtx {
 	BlobGranuleCipherKeysCtx(Arena& a, const BlobGranuleCipherKeysCtx& copyFrom)
 	  : textCipherKey(a, copyFrom.textCipherKey),
 	    headerCipherKey(a, copyFrom.headerCipherKey),
-	    ivRef(a, copyFrom.ivRef) {}
+	    ivRef(a, copyFrom.ivRef),
+	    encryptionAlgo(copyFrom.encryptionAlgo) {}
 
 	int expectedSize() const {
-		return textCipherKey.expectedSize() + headerCipherKey.expectedSize() + ivRef.expectedSize();
+		return textCipherKey.expectedSize() + headerCipherKey.expectedSize() + ivRef.expectedSize() +
+		       sizeof(EncryptionAtRestAlgo);
 	}
 
 	BlobGranuleCipherKey textCipherKey;
 	BlobGranuleCipherKey headerCipherKey;
 	StringRef ivRef;
+	EncryptionAtRestAlgo encryptionAlgo = EncryptionAtRestAlgo::LAST;
 
 	static BlobGranuleCipherKeysMeta toCipherKeysMeta(const BlobGranuleCipherKeysCtx& ctx) {
 		return BlobGranuleCipherKeysMeta(ctx.textCipherKey.encryptDomainId,
@@ -231,7 +234,7 @@ struct BlobGranuleCipherKeysCtx {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, textCipherKey, headerCipherKey, ivRef);
+		serializer(ar, textCipherKey, headerCipherKey, ivRef, encryptionAlgo);
 	}
 };
 

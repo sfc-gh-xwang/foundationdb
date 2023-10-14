@@ -268,14 +268,14 @@ struct IndexBlockRef {
 		}
 
 		Value serializedBuff = ObjectWriter::toValue(block, IncludeVersion(ProtocolVersion::withBlobGranuleFile()));
-		Reference<EncryptBlobCipher> encryptor =
-		    EncryptBlobCipher::getEncryptor(eKeys.textCipherKey,
-		                                    eKeys.headerCipherKey,
-		                                    cipherKeysCtx.ivRef.begin(),
-		                                    cipherKeysCtx.ivRef.size(),
-		                                    encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO),
-		                                    BlobCipherMetrics::BLOB_GRANULE,
-		                                    false);
+		ASSERT(isEncryptAlgoValid(cipherKeysCtx.encryptionAlgo));
+		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(eKeys.textCipherKey,
+		                                                                         eKeys.headerCipherKey,
+		                                                                         cipherKeysCtx.ivRef.begin(),
+		                                                                         cipherKeysCtx.ivRef.size(),
+		                                                                         cipherKeysCtx.encryptionAlgo,
+		                                                                         BlobCipherMetrics::BLOB_GRANULE,
+		                                                                         false);
 
 		BlobCipherEncryptHeaderRef headerRef;
 		if (encryptor->supportsInplaceEncryption()) {
@@ -406,14 +406,14 @@ struct IndexBlobGranuleFileChunkRef {
 			TraceEvent(SevDebug, "BlobChunkEncrypt_Before").detail("Chksum", chksum);
 		}
 
-		Reference<EncryptBlobCipher> encryptor =
-		    EncryptBlobCipher::getEncryptor(eKeys.textCipherKey,
-		                                    eKeys.headerCipherKey,
-		                                    cipherKeysCtx.ivRef.begin(),
-		                                    cipherKeysCtx.ivRef.size(),
-		                                    encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO),
-		                                    BlobCipherMetrics::BLOB_GRANULE,
-		                                    false);
+		ASSERT(isEncryptAlgoValid(cipherKeysCtx.encryptionAlgo));
+		Reference<EncryptBlobCipher> encryptor = EncryptBlobCipher::getEncryptor(eKeys.textCipherKey,
+		                                                                         eKeys.headerCipherKey,
+		                                                                         cipherKeysCtx.ivRef.begin(),
+		                                                                         cipherKeysCtx.ivRef.size(),
+		                                                                         cipherKeysCtx.encryptionAlgo,
+		                                                                         BlobCipherMetrics::BLOB_GRANULE,
+		                                                                         false);
 		BlobCipherEncryptHeaderRef headerRef;
 		if (encryptor->supportsInplaceEncryption()) {
 			encryptor->encryptInplace(mutateString(chunkRef.buffer), chunkRef.buffer.size(), &headerRef);
@@ -1772,7 +1772,9 @@ BlobGranuleCipherKeysCtx getCipherKeysCtx(Arena& arena) {
 	cipherKeysCtx.headerCipherKey.salt = encryptSalt;
 	cipherKeysCtx.headerCipherKey.baseCipher = StringRef(arena, encryptBaseCipher);
 
-	int ivLength = getIVLengthFromEncryptionAtRestAlgo(encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO));
+	cipherKeysCtx.encryptionAlgo = encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO);
+
+	int ivLength = getIVLengthFromEncryptionAtRestAlgo(cipherKeysCtx.encryptionAlgo);
 	cipherKeysCtx.ivRef = makeString(ivLength, arena);
 	deterministicRandom()->randomBytes(mutateString(cipherKeysCtx.ivRef), ivLength);
 

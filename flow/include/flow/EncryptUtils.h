@@ -112,6 +112,7 @@ static_assert(EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_LAST <= std::
 bool isEncryptHeaderAuthTokenModeValid(const EncryptAuthTokenMode mode);
 bool isEncryptHeaderAuthTokenAlgoValid(const EncryptAuthTokenAlgo algo);
 bool isEncryptHeaderAuthTokenDetailsValid(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo);
+bool isEncryptAlgoValid(const EncryptionAtRestAlgo algo);
 EncryptAuthTokenMode getRandomAuthTokenMode();
 EncryptAuthTokenAlgo getRandomAuthTokenAlgo();
 

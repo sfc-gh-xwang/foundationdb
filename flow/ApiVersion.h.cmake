@@ -84,6 +84,7 @@ public: // introduced features
     API_VERSION_FEATURE(@FDB_AV_SET_EXPECTED_COST@, SetExpectedCost);
     API_VERSION_FEATURE(@FDB_AV_COLUMNAR_CACHE_SKEW_HANDLING@, ColumnarCacheSkewHandling);
     API_VERSION_FEATURE(@FDB_AV_READ_METRICS@, ReadMetrics);
+    API_VERSION_FEATURE(@FDB_AV_ENCRYPTION_ALGO@, EncryptionAlgo);
 };
 
 #endif // FLOW_CODE_API_VERSION_H
