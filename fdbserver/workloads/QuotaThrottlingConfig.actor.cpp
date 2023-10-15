@@ -36,8 +36,10 @@ class QuotaThrottlingConfigWorkload : public TestWorkload {
 			wait(delay(1.0));
 		}
 		wait(setGlobalConfigKey(cx, quotaThrottlingPageSize, 4096));
+		wait(setGlobalConfigKey(cx, quotaThrottlingCostFormula, Tuple::UnicodeStr("add"_sr)));
+		wait(setGlobalConfigKey(cx, quotaThrottlingFungibilityRatio, 1.0));
 		loop {
-			if (cx->getClearOperationCost() == 16384) {
+			if (cx->getWriteOperationCost(20) == 4116) {
 				break;
 			}
 			wait(delay(1.0));

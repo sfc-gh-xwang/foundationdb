@@ -11,6 +11,20 @@
 #include "flow/actorcompiler.h" // must be last include
 
 class QuotaThrottlingConfigImpl {
+	static std::string getQuotaCostFormula(GlobalConfig const& globalConfig) {
+		Reference<ConfigValue const> const configValue = globalConfig.get(quotaThrottlingCostFormula);
+		try {
+			if (configValue.isValid() && configValue->value.has_value()) {
+				return std::any_cast<StringRef>(configValue->value).toString();
+			} else {
+				return CLIENT_KNOBS->QUOTA_THROTTLING_COST_FORMULA;
+			}
+		} catch (...) {
+			TraceEvent(SevWarnAlways, "ErrorGettingQuotaCostFormula");
+			throw;
+		}
+	}
+
 public:
 	ACTOR static Future<Void> update(QuotaThrottlingConfig* self, Reference<GlobalConfig const> globalConfig) {
 		wait(globalConfig->onInitialized());
@@ -19,8 +33,8 @@ public:
 			    quotaThrottlingFungibilityRatio, CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO);
 			auto const pageSize =
 			    globalConfig->get<int64_t>(quotaThrottlingPageSize, CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
-			self->quotaCostCalculator =
-			    IQuotaCostCalculator::create(CLIENT_KNOBS->QUOTA_THROTTLING_COST_FORMULA, fungibilityRatio, pageSize);
+			auto const quotaCostFormula = getQuotaCostFormula(*globalConfig);
+			self->quotaCostCalculator = IQuotaCostCalculator::create(quotaCostFormula, fungibilityRatio, pageSize);
 			wait(globalConfig->onChange());
 		}
 	}
