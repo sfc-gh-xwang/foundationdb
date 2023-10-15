@@ -46,6 +46,7 @@
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/ClusterInterface.h"
 #include "fdbclient/CommitProxyInterface.h"
+#include "fdbclient/QuotaThrottlingConfig.h"
 #include "fdbrpc/QueueModel.h"
 #include "fdbrpc/MultiInterface.h"
 #include "flow/TDMetric.actor.h"
@@ -840,7 +841,7 @@ private:
 
 	ThroughputTracker throughputTracker;
 	Future<Void> throughputTrackerFuture;
-	std::unique_ptr<IQuotaCostCalculator> quotaCostCalculator;
+	QuotaThrottlingConfig quotaThrottlingConfig;
 
 	void initializeSpecialCounters();
 };

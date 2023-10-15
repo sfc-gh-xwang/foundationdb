@@ -1595,8 +1595,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     detailedHealthMetricsLastUpdated(0),
     smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
     specialKeySpace(std::make_unique<SpecialKeySpace>(specialKeys.begin, specialKeys.end, /* test */ false)),
-    connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())),
-    quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {
+    connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())) {
 
 	TraceEvent("DatabaseContextCreated", dbId).backtrace();
 
@@ -1626,6 +1625,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 
 	smoothMidShardSize.reset(CLIENT_KNOBS->INIT_MID_SHARD_BYTES);
 	globalConfig = makeReference<GlobalConfig>(this);
+	quotaThrottlingConfig.startUpdater(globalConfig);
 
 	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ERRORMSG,
 	                        SpecialKeySpace::IMPLTYPE::READONLY,
@@ -7764,15 +7764,15 @@ Optional<ThrottlingId> TransactionState::getThrottlingId() {
 }
 
 uint64_t DatabaseContext::getClearOperationCost() const {
-	return quotaCostCalculator->getClearCost();
+	return quotaThrottlingConfig.getClearCost();
 }
 
 uint64_t DatabaseContext::getReadOperationCost(uint64_t bytes) const {
-	return quotaCostCalculator->getReadCost(bytes);
+	return quotaThrottlingConfig.getReadCost(bytes);
 }
 
 uint64_t DatabaseContext::getWriteOperationCost(uint64_t bytes) const {
-	return quotaCostCalculator->getWriteCost(bytes);
+	return quotaThrottlingConfig.getWriteCost(bytes);
 }
 
 void TransactionState::addReadCost(uint64_t bytes) {
