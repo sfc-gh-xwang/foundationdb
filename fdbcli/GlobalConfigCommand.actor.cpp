@@ -7,11 +7,13 @@
 
 namespace {
 
+const KeyRef globalConfigSpecialKeysPrefix = "\xff\xff/global_config/"_sr;
+
 ACTOR Future<Void> globalConfigGet(Reference<IDatabase> db, Key key) {
 	state Reference<ITransaction> tr = db->createTransaction();
 	loop {
 		try {
-			state ThreadFuture<ValueReadResult> resultFuture = tr->get(GlobalConfig::prefixedKey(key));
+			state ThreadFuture<ValueReadResult> resultFuture = tr->get(key.withPrefix(globalConfigSpecialKeysPrefix));
 			ValueReadResult v = wait(safeThreadFutureToFuture(resultFuture));
 			if (v.present()) {
 				fmt::print("{}\n", v.get().toString());
@@ -29,7 +31,7 @@ ACTOR Future<Void> globalConfigSet(Reference<IDatabase> db, Key key, Value value
 	state Reference<ITransaction> tr = db->createTransaction();
 	loop {
 		try {
-			tr->set(GlobalConfig::prefixedKey(key), value);
+			tr->set(key.withPrefix(globalConfigSpecialKeysPrefix), value);
 			wait(safeThreadFutureToFuture(tr->commit()));
 			return Void();
 		} catch (Error& e) {
