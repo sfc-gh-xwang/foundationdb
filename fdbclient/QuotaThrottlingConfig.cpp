@@ -8,6 +8,8 @@
 #include "fdbclient/IQuotaThrottlingConfig.h"
 #include "fdbclient/IQuotaCostCalculator.h"
 
+IQuotaThrottlingConfig::~IQuotaThrottlingConfig() = default;
+
 QuotaThrottlingConfig::QuotaThrottlingConfig(Database const& db) : db(db) {}
 
 uint64_t QuotaThrottlingConfig::getClearCost() const {
@@ -23,6 +25,8 @@ uint64_t QuotaThrottlingConfig::getWriteCost(uint64_t bytes) const {
 }
 
 MockQuotaThrottlingConfig::MockQuotaThrottlingConfig() : quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {}
+
+MockQuotaThrottlingConfig::~MockQuotaThrottlingConfig() = default;
 
 uint64_t MockQuotaThrottlingConfig::getClearCost() const {
 	return quotaCostCalculator->getClearCost();

@@ -14,6 +14,7 @@
 // parameters
 class IQuotaThrottlingConfig {
 public:
+	virtual ~IQuotaThrottlingConfig();
 	virtual uint64_t getClearCost() const = 0;
 	virtual uint64_t getReadCost(uint64_t bytes) const = 0;
 	virtual uint64_t getWriteCost(uint64_t bytes) const = 0;
@@ -38,6 +39,7 @@ class MockQuotaThrottlingConfig : public IQuotaThrottlingConfig {
 
 public:
 	MockQuotaThrottlingConfig();
+	~MockQuotaThrottlingConfig();
 	uint64_t getClearCost() const override;
 	uint64_t getReadCost(uint64_t bytes) const override;
 	uint64_t getWriteCost(uint64_t bytes) const override;

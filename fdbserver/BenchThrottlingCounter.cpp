@@ -4,12 +4,14 @@
 
 #include "benchmark/benchmark.h"
 
+#include "fdbclient/IQuotaThrottlingConfig.h"
 #include "fdbserver/ThrottlingCounter.h"
 #include "flow/Arena.h"
 #include "flow/IRandom.h"
 
 static void bench_ThrottlingCounter_addRequest(benchmark::State& state) {
-	ThrottlingCounter counter(UID(), /*maxReadersTracked=*/2, /*minRateTracked=*/0);
+	ThrottlingCounter counter(
+	    UID(), /*maxReadersTracked=*/2, /*minRateTracked=*/0, std::make_unique<MockQuotaThrottlingConfig>());
 
 	VectorRef<StringRef> tenantGroups;
 	Arena arena;
@@ -28,7 +30,10 @@ static void bench_ThrottlingCounter_addRequest(benchmark::State& state) {
 BENCHMARK(bench_ThrottlingCounter_addRequest)->RangeMultiplier(2)->Range(8 << 4, 8 << 14);
 
 static void bench_ThrottlingCounter_startNewInterval(benchmark::State& state) {
-	ThrottlingCounter counter(UID(), /*maxReadersTracked=*/state.range(0), /*minRateTracked=*/0);
+	ThrottlingCounter counter(UID(),
+	                          /*maxReadersTracked=*/state.range(0),
+	                          /*minRateTracked=*/0,
+	                          std::make_unique<MockQuotaThrottlingConfig>());
 
 	VectorRef<StringRef> tenantGroups;
 	Arena arena;

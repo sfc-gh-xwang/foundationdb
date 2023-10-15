@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-#include "fdbclient/IQuotaCostCalculator.h"
+#include "fdbclient/IQuotaThrottlingConfig.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/ThrottlingCounter.h"
@@ -35,7 +35,7 @@ class ThrottlingCounterImpl {
 
 	std::vector<BusyThrottlingIdInfo> previousBusiestReaders;
 	Reference<EventCacheHolder> busiestReaderEventHolder;
-	std::unique_ptr<IQuotaCostCalculator> quotaCostCalculator;
+	std::unique_ptr<IQuotaThrottlingConfig> quotaThrottlingConfig;
 
 	std::vector<BusyThrottlingIdInfo> getBusiestReadersFromLastInterval(double elapsed) const {
 		std::priority_queue<BusyThrottlingIdInfo, std::vector<BusyThrottlingIdInfo>, std::greater<BusyThrottlingIdInfo>>
@@ -60,16 +60,19 @@ class ThrottlingCounterImpl {
 	}
 
 public:
-	ThrottlingCounterImpl(UID thisServerID, int maxReadersTracked, double minRateTracked)
+	ThrottlingCounterImpl(UID thisServerID,
+	                      int maxReadersTracked,
+	                      double minRateTracked,
+	                      std::unique_ptr<IQuotaThrottlingConfig>&& quotaThrottlingConfig)
 	  : thisServerID(thisServerID),
 	    maxReadersTracked(maxReadersTracked),
 	    minRateTracked(minRateTracked),
 	    busiestReaderEventHolder(makeReference<EventCacheHolder>(thisServerID.toString() + "/BusiestReader")),
-	    quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {}
+	    quotaThrottlingConfig(std::move(quotaThrottlingConfig)) {}
 
 	// Tenant groups take priority over tags if both are available
 	void addRequest(Optional<TransactionTag> const& tag, Optional<TenantGroupName> const& tenantGroup, int64_t bytes) {
-		auto const cost = quotaCostCalculator->getReadCost(bytes);
+		auto const cost = quotaThrottlingConfig->getReadCost(bytes);
 		intervalTotalCost += cost;
 		if (tag.present()) {
 			CODE_PROBE(true, "Tracking transaction tag in ThrottlingCounter");
@@ -117,8 +120,14 @@ public:
 	std::vector<BusyThrottlingIdInfo> const& getBusiestReaders() const { return previousBusiestReaders; }
 };
 
-ThrottlingCounter::ThrottlingCounter(UID thisServerID, int maxReadersTracked, double minRateTracked)
-  : impl(PImpl<ThrottlingCounterImpl>::create(thisServerID, maxReadersTracked, minRateTracked)) {}
+ThrottlingCounter::ThrottlingCounter(UID thisServerID,
+                                     int maxReadersTracked,
+                                     double minRateTracked,
+                                     std::unique_ptr<IQuotaThrottlingConfig>&& quotaThrottlingConfig)
+  : impl(PImpl<ThrottlingCounterImpl>::create(thisServerID,
+                                              maxReadersTracked,
+                                              minRateTracked,
+                                              std::move(quotaThrottlingConfig))) {}
 
 ThrottlingCounter::~ThrottlingCounter() = default;
 
@@ -150,8 +159,10 @@ bool containsTag(std::vector<BusyThrottlingIdInfo> const& busyReaders, Transacti
 } // namespace
 
 TEST_CASE("/fdbserver/ThrottlingCounter/IgnoreBeyondMaxReaders") {
-	state ThrottlingCounter counter(
-	    UID(), /*maxReadersTracked=*/2, /*minRateTracked=*/10.0 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
+	state ThrottlingCounter counter(UID(),
+	                                /*maxReadersTracked=*/2,
+	                                /*minRateTracked=*/10.0 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
+	                                std::make_unique<MockQuotaThrottlingConfig>());
 	counter.startNewInterval();
 	ASSERT_EQ(counter.getBusiestReaders().size(), 0);
 	{
@@ -174,7 +185,8 @@ TEST_CASE("/fdbserver/ThrottlingCounter/IgnoreBelowMinRate") {
 	state ThrottlingCounter counter(UID(),
 	                                /*maxReadersTracked=*/2,
 	                                /*minRateTracked=*/10.0 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE /
-	                                    CLIENT_KNOBS->READ_TAG_SAMPLE_RATE);
+	                                    CLIENT_KNOBS->READ_TAG_SAMPLE_RATE,
+	                                std::make_unique<MockQuotaThrottlingConfig>());
 	counter.startNewInterval();
 	ASSERT_EQ(counter.getBusiestReaders().size(), 0);
 	{

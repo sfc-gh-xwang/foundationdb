@@ -63,6 +63,7 @@
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/FDBTypes.h"
+#include "fdbclient/IQuotaThrottlingConfig.h"
 #include "fdbclient/KeyBackedTypes.actor.h"
 #include "fdbclient/KeyRangeMap.h"
 #include "fdbclient/NativeAPI.actor.h"
@@ -1599,6 +1600,7 @@ public:
 	    thisServerID(ssi.id()),
 	    tssInQuarantine(false),
 	    db(db),
+	    cx(openDBOnServer(db, TaskPriority::DefaultEndpoint, LockAware::True)),
 	    actors(false),
 	    byteSampleClears(false, "\xff\xff\xff"_sr),
 	    durableInProgress(Void()),
@@ -1627,7 +1629,8 @@ public:
 	    throttlingCounter(ssi.id(),
 	                      /*maxTagsTracked=*/SERVER_KNOBS->SS_THROTTLE_TAGS_TRACKED,
 	                      /*minRateTracked=*/SERVER_KNOBS->MIN_TAG_READ_PAGES_RATE *
-	                          CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE),
+	                          CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
+	                      std::make_unique<QuotaThrottlingConfig>(cx)),
 	    busiestWriteTagContext(ssi.id()),
 	    getEncryptCipherKeysMonitor(encryptionMonitor),
 	    counters(this),
@@ -1650,8 +1653,6 @@ public:
 		} else {
 			addShard(ShardInfo::newNotAssigned(allKeys));
 		}
-
-		cx = openDBOnServer(db, TaskPriority::DefaultEndpoint, LockAware::True);
 
 		this->storage.kvCommitLogicalBytes = &counters.kvCommitLogicalBytes;
 		this->storage.kvClearRanges = &counters.kvClearRanges;
