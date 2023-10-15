@@ -29,17 +29,15 @@ class QuotaThrottlingConfigWorkload : public TestWorkload {
 	}
 
 	ACTOR static Future<Void> _start(Database cx) {
-		state QuotaThrottlingConfig quotaThrottlingConfig;
-		quotaThrottlingConfig.startUpdater(cx->globalConfig);
 		loop {
-			if (quotaThrottlingConfig.getClearCost() == 4096) {
+			if (cx->getClearOperationCost() == 4096) {
 				break;
 			}
 			wait(delay(1.0));
 		}
 		wait(setGlobalConfigKey(cx, quotaThrottlingPageSize, 4096));
 		loop {
-			if (quotaThrottlingConfig.getClearCost() == 16384) {
+			if (cx->getClearOperationCost() == 16384) {
 				break;
 			}
 			wait(delay(1.0));
