@@ -2147,15 +2147,23 @@ Future<Void> DatabaseContext::onProxiesChanged() const {
 }
 
 bool DatabaseContext::sampleReadTags() const {
-	double sampleRate = globalConfig->get(transactionTagSampleRate, CLIENT_KNOBS->READ_TAG_SAMPLE_RATE);
+	double const sampleRate = getReadSampleRate();
 	return sampleRate > 0 && deterministicRandom()->random01() <= sampleRate;
 }
 
 bool DatabaseContext::sampleOnCost(uint64_t cost) const {
-	double sampleCost = globalConfig->get<double>(transactionTagSampleCost, CLIENT_KNOBS->COMMIT_SAMPLE_COST);
+	double const sampleCost = getCommitSampleCost();
 	if (sampleCost <= 0)
 		return false;
 	return deterministicRandom()->random01() <= (double)cost / sampleCost;
+}
+
+double DatabaseContext::getReadSampleRate() const {
+	return quotaThrottlingConfigUpdater.getReadSampleRate();
+}
+
+uint64_t DatabaseContext::getCommitSampleCost() const {
+	return quotaThrottlingConfigUpdater.getCommitSampleCost();
 }
 
 int64_t extractIntOption(Optional<StringRef> value, int64_t minValue, int64_t maxValue) {

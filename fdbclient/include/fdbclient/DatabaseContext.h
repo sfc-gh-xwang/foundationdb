@@ -774,6 +774,9 @@ public:
 
 	bool isThrottlingIdBusy(ThrottlingId const&) const;
 
+	double getReadSampleRate() const;
+	uint64_t getCommitSampleCost() const;
+
 	// used in template functions to create a transaction
 	using TransactionT = ReadYourWritesTransaction;
 	Reference<TransactionT> createTransaction();

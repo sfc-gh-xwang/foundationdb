@@ -41,6 +41,8 @@ const KeyRef samplingWindow = "visibility/sampling/window"_sr;
 const KeyRef quotaThrottlingPageSize = "quota_throttling/pageSize"_sr;
 const KeyRef quotaThrottlingFungibilityRatio = "quota_throttling/fungibilityRatio"_sr;
 const KeyRef quotaThrottlingCostFormula = "quota_throttling/costFormula"_sr;
+const KeyRef quotaThrottlingReadSampleRate = "quota_throttling/readSampleRate"_sr;
+const KeyRef quotaThrottlingCommitSampleCost = "quota_throttling/commitSampleCost"_sr;
 
 GlobalConfig::GlobalConfig(DatabaseContext* cx) : cx(cx), lastUpdate(0) {}
 

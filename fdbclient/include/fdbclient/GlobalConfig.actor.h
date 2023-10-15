@@ -58,6 +58,8 @@ extern const KeyRef samplingWindow;
 extern const KeyRef quotaThrottlingPageSize;
 extern const KeyRef quotaThrottlingFungibilityRatio;
 extern const KeyRef quotaThrottlingCostFormula;
+extern const KeyRef quotaThrottlingReadSampleRate;
+extern const KeyRef quotaThrottlingCommitSampleCost;
 
 // Structure used to hold the values stored by global configuration. The arena
 // is used as memory to store both the key and the value (the value is only

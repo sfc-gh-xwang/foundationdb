@@ -24,7 +24,13 @@ uint64_t QuotaThrottlingConfig::getWriteCost(uint64_t bytes) const {
 	return db->getWriteOperationCost(bytes);
 }
 
-MockQuotaThrottlingConfig::MockQuotaThrottlingConfig() : quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {}
+double QuotaThrottlingConfig::getReadSampleRate() const {
+	return db->getReadSampleRate();
+}
+
+MockQuotaThrottlingConfig::MockQuotaThrottlingConfig()
+  : quotaCostCalculator(getQuotaCostCalculatorFromKnobs()),
+    readSampleRate(CLIENT_KNOBS->READ_TAG_SAMPLE_RATE) {}
 
 MockQuotaThrottlingConfig::~MockQuotaThrottlingConfig() = default;
 
@@ -38,4 +44,8 @@ uint64_t MockQuotaThrottlingConfig::getReadCost(uint64_t bytes) const {
 
 uint64_t MockQuotaThrottlingConfig::getWriteCost(uint64_t bytes) const {
 	return quotaCostCalculator->getWriteCost(bytes);
+}
+
+double MockQuotaThrottlingConfig::getReadSampleRate() const {
+	return readSampleRate;
 }

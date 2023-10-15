@@ -18,6 +18,8 @@ class QuotaThrottlingConfigUpdater {
 	friend class QuotaThrottlingConfigUpdaterImpl;
 
 	std::unique_ptr<class IQuotaCostCalculator const> quotaCostCalculator;
+	double readSampleRate;
+	uint64_t commitSampleCost;
 	Future<Void> updaterFuture;
 
 public:
@@ -27,4 +29,6 @@ public:
 	uint64_t getClearCost() const;
 	uint64_t getReadCost(uint64_t bytes) const;
 	uint64_t getWriteCost(uint64_t bytes) const;
+	double getReadSampleRate() const;
+	uint64_t getCommitSampleCost() const;
 };

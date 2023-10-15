@@ -18,6 +18,7 @@ public:
 	virtual uint64_t getClearCost() const = 0;
 	virtual uint64_t getReadCost(uint64_t bytes) const = 0;
 	virtual uint64_t getWriteCost(uint64_t bytes) const = 0;
+	virtual double getReadSampleRate() const = 0;
 };
 
 // Exposes quota throttling parameters from a database. Takes
@@ -30,12 +31,14 @@ public:
 	uint64_t getClearCost() const override;
 	uint64_t getReadCost(uint64_t bytes) const override;
 	uint64_t getWriteCost(uint64_t bytes) const override;
+	double getReadSampleRate() const override;
 };
 
 // Used for mocking the quota throttling config parameters when
 // no database is available in a test environment.
 class MockQuotaThrottlingConfig : public IQuotaThrottlingConfig {
 	std::unique_ptr<class IQuotaCostCalculator> quotaCostCalculator;
+	double readSampleRate;
 
 public:
 	MockQuotaThrottlingConfig();
@@ -43,4 +46,5 @@ public:
 	uint64_t getClearCost() const override;
 	uint64_t getReadCost(uint64_t bytes) const override;
 	uint64_t getWriteCost(uint64_t bytes) const override;
+	double getReadSampleRate() const override;
 };

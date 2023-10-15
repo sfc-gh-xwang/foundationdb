@@ -35,6 +35,10 @@ public:
 			    globalConfig->get<int64_t>(quotaThrottlingPageSize, CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 			auto const quotaCostFormula = getQuotaCostFormula(*globalConfig);
 			self->quotaCostCalculator = IQuotaCostCalculator::create(quotaCostFormula, fungibilityRatio, pageSize);
+			self->readSampleRate =
+			    globalConfig->get<double>(quotaThrottlingReadSampleRate, CLIENT_KNOBS->READ_TAG_SAMPLE_RATE);
+			self->commitSampleCost =
+			    globalConfig->get<int64_t>(quotaThrottlingCommitSampleCost, CLIENT_KNOBS->COMMIT_SAMPLE_COST);
 			wait(globalConfig->onChange());
 		}
 	}
@@ -59,4 +63,12 @@ uint64_t QuotaThrottlingConfigUpdater::getReadCost(uint64_t bytes) const {
 
 uint64_t QuotaThrottlingConfigUpdater::getWriteCost(uint64_t bytes) const {
 	return quotaCostCalculator->getWriteCost(bytes);
+}
+
+double QuotaThrottlingConfigUpdater::getReadSampleRate() const {
+	return readSampleRate;
+}
+
+uint64_t QuotaThrottlingConfigUpdater::getCommitSampleCost() const {
+	return commitSampleCost;
 }

@@ -76,7 +76,7 @@ public:
 		intervalTotalCost += cost;
 		if (tag.present()) {
 			CODE_PROBE(true, "Tracking transaction tag in ThrottlingCounter");
-			intervalCosts[ThrottlingIdRef::fromTag(tag.get())] += cost / CLIENT_KNOBS->READ_TAG_SAMPLE_RATE;
+			intervalCosts[ThrottlingIdRef::fromTag(tag.get())] += cost / quotaThrottlingConfig->getReadSampleRate();
 		} else if (SERVER_KNOBS->TRACK_TENANT_GROUP_THROUGHPUT && tenantGroup.present()) {
 			CODE_PROBE(true, "Tracking tenant group in ThrottlingCounter");
 			intervalCosts[ThrottlingIdRef::fromTenantGroup(tenantGroup.get())] += cost;
@@ -86,7 +86,7 @@ public:
 	void startNewInterval() {
 		double elapsed = now() - intervalStart;
 		previousBusiestReaders.clear();
-		if (intervalStart > 0 && CLIENT_KNOBS->READ_TAG_SAMPLE_RATE > 0 && elapsed > 0) {
+		if (intervalStart > 0 && quotaThrottlingConfig->getReadSampleRate() > 0 && elapsed > 0) {
 			previousBusiestReaders = getBusiestReadersFromLastInterval(elapsed);
 
 			// For status, report the busiest tag:

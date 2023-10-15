@@ -2156,11 +2156,12 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 				auto& tags = pProxyCommitData->tagsForKey(m.param1);
 
 				// sample single key mutation based on cost
-				// the expectation of sampling is every COMMIT_SAMPLE_COST sample once
+				// the expectation is one sample every commitSampleCost bytes
+				auto const commitSampleCost = pProxyCommitData->cx->getCommitSampleCost();
 				if (checkSample) {
 					double totalCosts = trCost->get().writeCosts;
 					double cost = pProxyCommitData->cx->getWriteOperationCost(m.expectedSize());
-					double mul = std::max(1.0, totalCosts / std::max(1.0, (double)CLIENT_KNOBS->COMMIT_SAMPLE_COST));
+					double mul = std::max(1.0, totalCosts / std::max(1.0, static_cast<double>(commitSampleCost)));
 					ASSERT(totalCosts > 0);
 					double prob = mul * cost / totalCosts;
 
@@ -2169,7 +2170,7 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 						for (const auto& ssInfo : storageServers) {
 							auto id = ssInfo->interf.id();
 							// scale cost
-							cost = cost < CLIENT_KNOBS->COMMIT_SAMPLE_COST ? CLIENT_KNOBS->COMMIT_SAMPLE_COST : cost;
+							cost = cost < commitSampleCost ? commitSampleCost : cost;
 							pProxyCommitData->updateSSTagCost(
 							    id, trs[self->transactionNum].throttlingTag.get(), m, cost / storageServers.size());
 						}
