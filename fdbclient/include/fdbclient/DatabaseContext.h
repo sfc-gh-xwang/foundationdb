@@ -26,7 +26,6 @@
 #include "flow/FastAlloc.h"
 #include "flow/FastRef.h"
 #include "fdbclient/GlobalConfig.actor.h"
-#include "fdbclient/IQuotaCostCalculator.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "flow/IRandom.h"
 #include "flow/genericactors.actor.h"
@@ -46,7 +45,7 @@
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/ClusterInterface.h"
 #include "fdbclient/CommitProxyInterface.h"
-#include "fdbclient/QuotaThrottlingConfig.h"
+#include "fdbclient/QuotaThrottlingConfigUpdater.h"
 #include "fdbrpc/QueueModel.h"
 #include "fdbrpc/MultiInterface.h"
 #include "flow/TDMetric.actor.h"
@@ -841,7 +840,7 @@ private:
 
 	ThroughputTracker throughputTracker;
 	Future<Void> throughputTrackerFuture;
-	QuotaThrottlingConfig quotaThrottlingConfig;
+	QuotaThrottlingConfigUpdater quotaThrottlingConfigUpdater;
 
 	void initializeSpecialCounters();
 };

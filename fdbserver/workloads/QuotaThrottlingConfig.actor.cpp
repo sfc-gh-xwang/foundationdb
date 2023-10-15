@@ -4,7 +4,6 @@
  * Copyright (c) 2023 Snowflake Computing
  */
 
-#include "fdbclient/QuotaThrottlingConfig.h"
 #include "fdbclient/ReadYourWrites.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "flow/actorcompiler.h"

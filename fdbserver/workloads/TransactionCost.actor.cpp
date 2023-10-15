@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 
+#include "fdbclient/IQuotaCostCalculator.h"
 #include "fdbclient/ReadYourWrites.h"
 #include "fdbserver/workloads/workloads.actor.h"
 #include "flow/actorcompiler.h"

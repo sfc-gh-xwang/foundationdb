@@ -1,16 +1,16 @@
 /**
- * QuotaThrottlingConfig.actor.cpp
+ * QuotaThrottlingConfigUpdater.actor.cpp
  *
  * Copyright (c) 2023 Snowflake Computing
  */
 
 #include "fdbclient/IQuotaCostCalculator.h"
-#include "fdbclient/QuotaThrottlingConfig.h"
+#include "fdbclient/QuotaThrottlingConfigUpdater.h"
 #include "fdbclient/Knobs.h"
 #include "fdbclient/GlobalConfig.actor.h"
 #include "flow/actorcompiler.h" // must be last include
 
-class QuotaThrottlingConfigImpl {
+class QuotaThrottlingConfigUpdaterImpl {
 	static std::string getQuotaCostFormula(GlobalConfig const& globalConfig) {
 		Reference<ConfigValue const> const configValue = globalConfig.get(quotaThrottlingCostFormula);
 		try {
@@ -26,7 +26,7 @@ class QuotaThrottlingConfigImpl {
 	}
 
 public:
-	ACTOR static Future<Void> update(QuotaThrottlingConfig* self, Reference<GlobalConfig const> globalConfig) {
+	ACTOR static Future<Void> update(QuotaThrottlingConfigUpdater* self, Reference<GlobalConfig const> globalConfig) {
 		wait(globalConfig->onInitialized());
 		loop {
 			auto const fungibilityRatio = globalConfig->get<double>(
@@ -40,23 +40,23 @@ public:
 	}
 };
 
-QuotaThrottlingConfig::QuotaThrottlingConfig() : quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {}
+QuotaThrottlingConfigUpdater::QuotaThrottlingConfigUpdater() : quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {}
 
-QuotaThrottlingConfig::~QuotaThrottlingConfig() = default;
+QuotaThrottlingConfigUpdater::~QuotaThrottlingConfigUpdater() = default;
 
-void QuotaThrottlingConfig::startUpdater(Reference<GlobalConfig const> globalConfig) {
+void QuotaThrottlingConfigUpdater::start(Reference<GlobalConfig const> globalConfig) {
 	ASSERT(!updaterFuture.isValid());
-	updaterFuture = QuotaThrottlingConfigImpl::update(this, globalConfig);
+	updaterFuture = QuotaThrottlingConfigUpdaterImpl::update(this, globalConfig);
 }
 
-uint64_t QuotaThrottlingConfig::getClearCost() const {
+uint64_t QuotaThrottlingConfigUpdater::getClearCost() const {
 	return quotaCostCalculator->getClearCost();
 }
 
-uint64_t QuotaThrottlingConfig::getReadCost(uint64_t bytes) const {
+uint64_t QuotaThrottlingConfigUpdater::getReadCost(uint64_t bytes) const {
 	return quotaCostCalculator->getReadCost(bytes);
 }
 
-uint64_t QuotaThrottlingConfig::getWriteCost(uint64_t bytes) const {
+uint64_t QuotaThrottlingConfigUpdater::getWriteCost(uint64_t bytes) const {
 	return quotaCostCalculator->getWriteCost(bytes);
 }

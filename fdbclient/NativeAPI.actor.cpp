@@ -1625,7 +1625,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 
 	smoothMidShardSize.reset(CLIENT_KNOBS->INIT_MID_SHARD_BYTES);
 	globalConfig = makeReference<GlobalConfig>(this);
-	quotaThrottlingConfig.startUpdater(globalConfig);
+	quotaThrottlingConfigUpdater.start(globalConfig);
 
 	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ERRORMSG,
 	                        SpecialKeySpace::IMPLTYPE::READONLY,
@@ -7764,15 +7764,15 @@ Optional<ThrottlingId> TransactionState::getThrottlingId() {
 }
 
 uint64_t DatabaseContext::getClearOperationCost() const {
-	return quotaThrottlingConfig.getClearCost();
+	return quotaThrottlingConfigUpdater.getClearCost();
 }
 
 uint64_t DatabaseContext::getReadOperationCost(uint64_t bytes) const {
-	return quotaThrottlingConfig.getReadCost(bytes);
+	return quotaThrottlingConfigUpdater.getReadCost(bytes);
 }
 
 uint64_t DatabaseContext::getWriteOperationCost(uint64_t bytes) const {
-	return quotaThrottlingConfig.getWriteCost(bytes);
+	return quotaThrottlingConfigUpdater.getWriteCost(bytes);
 }
 
 void TransactionState::addReadCost(uint64_t bytes) {
