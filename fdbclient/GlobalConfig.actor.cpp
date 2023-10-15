@@ -70,7 +70,7 @@ Key GlobalConfig::prefixedKey(KeyRef key) {
 	return key.withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::GLOBALCONFIG).begin);
 }
 
-const Reference<ConfigValue> GlobalConfig::get(KeyRef name) {
+Reference<ConfigValue> GlobalConfig::get(KeyRef name) const {
 	auto it = data.find(name);
 	if (it == data.end()) {
 		return Reference<ConfigValue>();
@@ -78,7 +78,7 @@ const Reference<ConfigValue> GlobalConfig::get(KeyRef name) {
 	return it->second;
 }
 
-const std::map<KeyRef, Reference<ConfigValue>> GlobalConfig::get(KeyRangeRef range) {
+std::map<KeyRef, Reference<ConfigValue>> GlobalConfig::get(KeyRangeRef range) const {
 	std::map<KeyRef, Reference<ConfigValue>> results;
 	for (const auto& [key, value] : data) {
 		if (range.contains(key)) {
@@ -88,11 +88,11 @@ const std::map<KeyRef, Reference<ConfigValue>> GlobalConfig::get(KeyRangeRef ran
 	return results;
 }
 
-Future<Void> GlobalConfig::onInitialized() {
+Future<Void> GlobalConfig::onInitialized() const {
 	return initialized.getFuture();
 }
 
-Future<Void> GlobalConfig::onChange() {
+Future<Void> GlobalConfig::onChange() const {
 	return configChanged.onTrigger();
 }
 

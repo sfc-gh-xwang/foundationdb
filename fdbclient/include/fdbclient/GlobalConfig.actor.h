@@ -103,14 +103,14 @@ public:
 	// reference which also contains the arena holding the object. As long as
 	// the caller keeps the ConfigValue reference, the value is guaranteed to
 	// be readable. An empty reference is returned if the value does not exist.
-	const Reference<ConfigValue> get(KeyRef name);
-	const std::map<KeyRef, Reference<ConfigValue>> get(KeyRangeRef range);
+	Reference<ConfigValue> get(KeyRef name) const;
+	std::map<KeyRef, Reference<ConfigValue>> get(KeyRangeRef range) const;
 
 	// For arithmetic value types, returns a copy of the value for the given
 	// key, or the supplied default value if the framework does not know about
 	// the key.
 	template <typename T, typename std::enable_if<std::is_arithmetic<T>{}, bool>::type = true>
-	const T get(KeyRef name, T defaultVal) {
+	T get(KeyRef name, T defaultVal) const {
 		try {
 			auto configValue = get(name);
 			if (configValue.isValid()) {
@@ -133,11 +133,11 @@ public:
 
 	// Triggers the returned future when the global configuration singleton has
 	// been created and is ready.
-	Future<Void> onInitialized();
+	Future<Void> onInitialized() const;
 
 	// Triggers the returned future when any key-value pair in the global
 	// configuration changes.
-	Future<Void> onChange();
+	Future<Void> onChange() const;
 
 	// Calls \ref fn when the value associated with \ref key is changed. \ref
 	// key should be one of the string literals defined at the top of
