@@ -266,9 +266,6 @@ public:
 	int MAX_TAGS_PER_TRANSACTION;
 	int COMMIT_SAMPLE_COST; // The expectation of sampling is every COMMIT_SAMPLE_COST sample once
 	double READ_TAG_SAMPLE_RATE; // Communicated to clients from cluster
-	double TAG_THROTTLE_SMOOTHING_WINDOW;
-	double TAG_THROTTLE_RECHECK_INTERVAL;
-	double TAG_THROTTLE_EXPIRATION_INTERVAL;
 	// String representing the formula used by the quota throttler to estimate
 	// the cost of an operation in bytes. Options include:
 	//   - minimum (enforce a minimum cost for each operation)
