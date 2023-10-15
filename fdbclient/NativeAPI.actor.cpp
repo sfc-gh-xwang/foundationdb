@@ -1625,7 +1625,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	}
 
 	smoothMidShardSize.reset(CLIENT_KNOBS->INIT_MID_SHARD_BYTES);
-	globalConfig = std::make_unique<GlobalConfig>(this);
+	globalConfig = makeReference<GlobalConfig>(this);
 
 	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ERRORMSG,
 	                        SpecialKeySpace::IMPLTYPE::READONLY,

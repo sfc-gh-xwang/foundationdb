@@ -13,6 +13,6 @@ class QuotaThrottlingConfig {
 	Future<Void> updaterFuture;
 
 public:
-	QuotaThrottlingConfig(class GlobalConfig const& globalConfig);
+	QuotaThrottlingConfig(Reference<class GlobalConfig const>);
 	int64_t getPageSize() const;
 };

@@ -11,7 +11,7 @@
 
 class QuotaThrottlingConfigImpl {
 public:
-	ACTOR static Future<Void> update(QuotaThrottlingConfig* self, GlobalConfig const* globalConfig) {
+	ACTOR static Future<Void> update(QuotaThrottlingConfig* self, Reference<GlobalConfig const> globalConfig) {
 		wait(globalConfig->onInitialized());
 		loop {
 			self->pageSize =
@@ -21,9 +21,9 @@ public:
 	}
 };
 
-QuotaThrottlingConfig::QuotaThrottlingConfig(GlobalConfig const& globalConfig)
+QuotaThrottlingConfig::QuotaThrottlingConfig(Reference<GlobalConfig const> globalConfig)
   : pageSize(CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE) {
-	updaterFuture = QuotaThrottlingConfigImpl::update(this, &globalConfig);
+	updaterFuture = QuotaThrottlingConfigImpl::update(this, globalConfig);
 }
 
 int64_t QuotaThrottlingConfig::getPageSize() const {

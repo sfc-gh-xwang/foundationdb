@@ -35,6 +35,7 @@
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/GlobalConfig.h"
 #include "fdbclient/ReadYourWrites.h"
+#include "flow/FastRef.h"
 
 #include "flow/actorcompiler.h" // has to be last include
 
@@ -69,7 +70,7 @@ struct ConfigValue : ReferenceCounted<ConfigValue> {
 	ConfigValue(Arena&& a, std::any&& v) : arena(a), value(v) {}
 };
 
-class GlobalConfig : NonCopyable {
+class GlobalConfig : public ReferenceCounted<GlobalConfig> {
 public:
 	// Requires a database pointer to allow global configuration to run
 	// transactions on the database.

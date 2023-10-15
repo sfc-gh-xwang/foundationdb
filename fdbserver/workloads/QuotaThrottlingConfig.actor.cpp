@@ -29,7 +29,7 @@ class QuotaThrottlingConfigWorkload : public TestWorkload {
 	}
 
 	ACTOR static Future<Void> _start(Database cx) {
-		state QuotaThrottlingConfig quotaThrottlingConfig(*(cx->globalConfig));
+		state QuotaThrottlingConfig quotaThrottlingConfig(cx->globalConfig);
 		loop {
 			if (quotaThrottlingConfig.getPageSize() == CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE) {
 				break;

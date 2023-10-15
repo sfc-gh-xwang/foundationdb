@@ -778,7 +778,7 @@ public:
 	using TransactionT = ReadYourWritesTransaction;
 	Reference<TransactionT> createTransaction();
 
-	std::unique_ptr<GlobalConfig> globalConfig;
+	Reference<GlobalConfig> globalConfig;
 	EventCacheHolder connectToDatabaseEventCacheHolder;
 
 	Future<TenantLookupInfo> lookupTenant(TenantName tenant);
