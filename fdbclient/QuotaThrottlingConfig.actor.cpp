@@ -16,7 +16,7 @@ public:
 		wait(globalConfig->onInitialized());
 		loop {
 			auto const fungibilityRatio = globalConfig->get<double>(
-			    quotaThrottlingPageSize, CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO);
+			    quotaThrottlingFungibilityRatio, CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO);
 			auto const pageSize =
 			    globalConfig->get<int64_t>(quotaThrottlingPageSize, CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE);
 			self->quotaCostCalculator =
