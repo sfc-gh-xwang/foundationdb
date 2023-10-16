@@ -18,7 +18,6 @@
  * limitations under the License.
  */
 
-#include "fdbclient/Knobs.h"
 #include "flow/Arena.h"
 #include "flow/EncryptUtils.h"
 #include "flow/IRandom.h"
@@ -29,6 +28,7 @@
 #include "fdbrpc/TokenSign.h"
 #include "fdbrpc/TenantInfo.h"
 #include "fdbclient/FDBOptions.g.h"
+#include "fdbclient/ManagementAPI.actor.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/Tracing.h"
 #include "fdbserver/TesterInterface.actor.h"
@@ -81,7 +81,8 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 		keyPrefix = unprintable(getOption(options, "keyPrefix"_sr, ""_sr).toString());
 		traceParentProbability = getOption(options, "traceParentProbability"_sr, 0.01);
 		minExpectedTransactionsPerSecond = transactionsPerSecond * getOption(options, "expectedRate"_sr, 0.7);
-		switchEncryptionAlgos = getOption(options, "switchEncryptionAlgos"_sr, false);
+		switchEncryptionAlgos = getOption(options, "switchEncryptionAlgos"_sr, true);
+		switchEncryptionAlgos = switchEncryptionAlgos && deterministicRandom()->coinflip();
 		if constexpr (MultiTenancy) {
 			ASSERT(g_network->isSimulated());
 			this->useToken = getOption(options, "useToken"_sr, true);
@@ -147,8 +148,13 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 
 	void switchEncryptionAtRestAlgo() {
 		std::string encryptionAlgo = getRandomEncryptionAtRestAlgo();
+		CODE_PROBE(encryptionAlgo == "AES-256-CTR" && CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO == "AES-256-GCM",
+		           "switching from GCM to CTR");
+		CODE_PROBE(encryptionAlgo == "AES-256-GCM" && CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO == "AES-256-CTR",
+		           "switching from CTR to GCM");
 		if (CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO != encryptionAlgo) {
 			TraceEvent("CycleSwitchingEncryptionAlgo")
+			    .suppressFor(60)
 			    .detail("Current", CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO)
 			    .detail("New", encryptionAlgo);
 			IKnobCollection::getMutableGlobalKnobCollection().setKnob("encryption_at_rest_algo",
@@ -167,6 +173,12 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 
 	ACTOR Future<Void> cycleClient(Database cx, CycleWorkload* self, double delay) {
 		state double lastTime = now();
+		state bool encryptionEnabled = false;
+		// When running in an untrusted client we cannot read system keys to fetch db config
+		if (!MultiTenancy) {
+			DatabaseConfiguration config = wait(getDatabaseConfiguration(cx));
+			encryptionEnabled = config.encryptionAtRestMode.isEncryptionEnabled();
+		}
 		try {
 			loop {
 				wait(poisson(&lastTime, delay));
@@ -207,7 +219,7 @@ struct CycleWorkload : TestWorkload, CycleMembers<MultiTenancy> {
 						// TraceEvent("CyclicTest").detail("Key", self->key(r2).toString()).detail("Value", self->value(r4).toString());
 						// TraceEvent("CyclicTest").detail("Key", self->key(r3).toString()).detail("Value", self->value(r2).toString());
 						wait(tr.commit());
-						if (self->switchEncryptionAlgos && deterministicRandom()->coinflip()) {
+						if (encryptionEnabled && self->switchEncryptionAlgos && deterministicRandom()->coinflip()) {
 							self->switchEncryptionAtRestAlgo();
 						}
 						// TraceEvent("CycleCommit");

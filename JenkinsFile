@@ -22,7 +22,8 @@ pipeline {
                                          'jslocum',
                                          'abeamon',
                                          'dadkins',
-                                         'yajin']
+                                         'yajin',
+                                         'clin']
 
                     user_id = sh(script: "git show -s --pretty=%ae | cut -d '@' -f 1 | cut -d '-' -f 3", returnStdout: true).trim()
                     labels = []

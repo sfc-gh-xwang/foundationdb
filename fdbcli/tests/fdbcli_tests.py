@@ -182,6 +182,39 @@ def blobrange_list(logger):
 
 
 @enable_logging()
+def blobkey_history(logger):
+    # Runs after blobrange_list, so there should be something to examine
+    r = run_fdbcli_command("usetenant tenant1 ; blobkey history A")
+    logger.debug("blobkey history said {}".format(r))
+    lines = r.split("\n")
+
+    # Line 7 is the only one which isn't exactly the same every time, so validate it differently
+    assert lines[0] == r">>> usetenant tenant1"
+    assert lines[1] == r"Using tenant `tenant1'"
+    assert lines[2] == r">>> blobkey history A"
+    assert lines[3] == r"Printing blob history for A"
+    assert (
+        lines[4]
+        == r"Active granule: [\x00\x00\x00\x00\x00\x00\x00\x01A - \x00\x00\x00\x00\x00\x00\x00\x01B)"
+    )
+    assert lines[5] == r"History:"
+    assert lines[6] == r""
+    l7 = lines[7]
+    assert lines[8].strip() == r"\x00\x00\x00\x00\x00\x00\x00\x01A"
+    assert lines[9].strip() == r"\x00\x00\x00\x00\x00\x00\x00\x01B"
+    assert lines[10] == r"(root)"
+    assert lines[11] == r""
+    assert lines[12] == r"Done"
+
+    # minimal validation on line 7. It should be <decimal int>) <hexadecimal int>
+    w = l7.split()
+    assert len(w) == 2
+    assert w[0][-1] == ")"
+    assert int(w[0][:-1], 10) > 0
+    assert int(w[1], 16) > 0
+
+
+@enable_logging()
 def advanceversion(logger):
     # get current read version
     version1 = int(run_fdbcli_command("getversion"))
@@ -834,6 +867,8 @@ def coordinators(logger):
     assert output2.split("\n")[1] == "Cluster coordinators ({}): {}".format(
         args.process_number, ",".join(addresses)
     )
+    # wait for the database becomes available after the coordinator change
+    wait_for_database_available(logger)
     # auto change should go back to 1 coordinator
     run_fdbcli_command("coordinators", "auto")
     assert (
@@ -1484,16 +1519,15 @@ def tenant_group_list(logger):
     tg2_json = {
         "name": {
             "base64": base64.b64encode(b"tenant_group2").decode("ascii"),
-            "printable": "tenant_group2"
+            "printable": "tenant_group2",
         },
     }
     tg3_json = {
         "name": {
             "base64": base64.b64encode(b"tenant_group3").decode("ascii"),
-            "printable": "tenant_group3"
+            "printable": "tenant_group3",
         },
     }
-
 
     setup_tenants(
         [
@@ -1705,6 +1739,7 @@ if __name__ == "__main__":
     test_available()
     if args.blobs:
         blobrange_list()
+        blobkey_history()
     elif args.process_number == 1:
         # TODO: disable for now, the change can cause the database unavailable
         # advanceversion()

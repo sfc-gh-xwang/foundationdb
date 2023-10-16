@@ -10012,6 +10012,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 
 		start = now();
 		state FetchInjectionInfo fii;
+		state Reference<ILogSystem::IPeekCursor> cloneCursor1;
 		state Reference<ILogSystem::IPeekCursor> cloneCursor2 = cursor->cloneNoMore();
 		state Optional<std::unordered_map<BlobCipherDetails, Reference<BlobCipherKey>>> cipherKeys;
 		state Optional<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> latestCipherKeys;
@@ -10033,8 +10034,7 @@ ACTOR Future<Void> update(StorageServer* data, bool* pReceivedUpdate) {
 
 			std::unordered_set<BlobCipherDetails> cipherDetails;
 
-			state Reference<ILogSystem::IPeekCursor> cloneCursor1 = cloneCursor2->cloneNoMore();
-
+			cloneCursor1 = cloneCursor2->cloneNoMore();
 			cloneCursor1->setProtocolVersion(data->logProtocol);
 
 			for (; cloneCursor1->hasMessage(); cloneCursor1->nextMessage()) {

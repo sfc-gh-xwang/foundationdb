@@ -157,6 +157,7 @@ typedef struct FDBBGEncryptionCtxV2_ {
 	FDBBGEncryptionKey* headerKey;
 	uint32_t headerKCV;
 	FDBKey iv;
+	uint8_t encryptionAlgo;
 } FDBBGEncryptionCtxV2;
 
 /* contains actual encryption keys (for external use if necessary) */

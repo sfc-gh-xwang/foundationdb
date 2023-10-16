@@ -13,6 +13,7 @@ clearAfterTest = false
 
     [[test.workload]]
     testName = 'Cycle'
+    switchEncryptionAlgos = false
     transactionsPerSecond = 500.0
     nodeCount = 2500
     testDuration = 10.0

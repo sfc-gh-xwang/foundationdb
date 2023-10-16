@@ -19,7 +19,8 @@ ReadRangeApiResult parseBlobGranulesSnapshotFileV1(StringRef fileName,
 
 ReadRangeApiResult parseBlobGranulesSnapshotFileV2(StringRef fileName,
                                                    FDBBGTenantPrefix const* tenant_prefix,
-                                                   FDBBGEncryptionCtxV2 const* encryption_ctx);
+                                                   FDBBGEncryptionCtxV2 const* encryption_ctx,
+                                                   ApiVersion apiVersion);
 
 ReadBGMutationsApiResult parseBlobGranulesDeltaFileV1(StringRef fileName,
                                                       FDBBGTenantPrefix const* tenant_prefix,
@@ -27,7 +28,8 @@ ReadBGMutationsApiResult parseBlobGranulesDeltaFileV1(StringRef fileName,
 
 ReadBGMutationsApiResult parseBlobGranulesDeltaFileV2(StringRef fileName,
                                                       FDBBGTenantPrefix const* tenant_prefix,
-                                                      FDBBGEncryptionCtxV2 const* encryption_ctx);
+                                                      FDBBGEncryptionCtxV2 const* encryption_ctx,
+                                                      ApiVersion apiVersion);
 
 ReadRangeApiResult loadAndMaterializeBlobGranules(const ReadBGDescriptionsApiResult& blobGranuleDescr,
                                                   const KeyRangeRef& keyRange,
@@ -38,7 +40,8 @@ ReadRangeApiResult loadAndMaterializeBlobGranules(const ReadBGDescriptionsApiRes
 ThreadFuture<Value> writeBlobGranulesSnapshotFileV1(VectorRef<KeyValueRef> rows,
                                                     int8_t compression,
                                                     FDBBGTenantPrefix const* tenant_prefix,
-                                                    FDBBGEncryptionCtxV2 const* encryption_ctx);
+                                                    FDBBGEncryptionCtxV2 const* encryption_ctx,
+                                                    ApiVersion apiVersion);
 
 Future<ApiResult> readBlobGranuleDescriptions(ISingleThreadTransaction* tr, ApiRequest req);
 

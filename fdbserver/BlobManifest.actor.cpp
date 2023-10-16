@@ -413,6 +413,7 @@ ACTOR Future<BlobGranuleCipherKeysCtx> getLatestManifestCipherKeys(Reference<Asy
 	cipherKeysCtx.headerCipherKey = BlobGranuleCipherKey::fromBlobCipherKey(cipherKeys.cipherHeaderKey, *arena);
 
 	EncryptionAtRestAlgo algo = encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO);
+	cipherKeysCtx.encryptionAlgo = algo;
 	int ivLength = getIVLengthFromEncryptionAtRestAlgo(algo);
 	cipherKeysCtx.ivRef = makeString(ivLength, *arena);
 	generateIV(algo, textCipherKey, mutateString(cipherKeysCtx.ivRef), cipherKeysCtx.ivRef.size());

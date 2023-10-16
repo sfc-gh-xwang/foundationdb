@@ -6825,7 +6825,9 @@ ACTOR Future<Void> tryFlushRange(Reference<BlobManagerData> bmData, KeyRange ran
 	loop {
 		try {
 			FlushGranuleRequest req(bmData->epoch, range, logEndVersion, false);
+			TraceEvent(SevDebug, "FlushBlobGranuleBegin").detail("Range", range).detail("Version", logEndVersion);
 			wait(success(doBlobGranuleRequests(bmData->db, range, req, &BlobWorkerInterface::flushGranuleRequest)));
+			TraceEvent(SevDebug, "FlushBlobGranuleEnd").detail("Range", range);
 			return Void();
 		} catch (Error& e) {
 			if (e.code() != error_code_blob_granule_transaction_too_old) {
@@ -6837,7 +6839,7 @@ ACTOR Future<Void> tryFlushRange(Reference<BlobManagerData> bmData, KeyRange ran
 			// so we try to check that first when seeing non-fatal errors
 			bool knownRange = false;
 			for (auto& r : bmData->knownBlobRanges.intersectingRanges(range)) {
-				if (r.value()) {
+				if (r.value() && !bmData->isForcePurging(r.range())) {
 					knownRange = true;
 					break;
 				}
@@ -6885,6 +6887,10 @@ ACTOR Future<Version> maybeFlushGranules(Reference<BlobManagerData> bmData) {
 	state std::vector<KeyRange> flushRanges;
 	for (auto& it : bmData->knownBlobRanges.intersectingRanges(normalKeys)) {
 		if (it.cvalue()) {
+			if (bmData->isForcePurging(it.range())) {
+				TraceEvent("SkipForcePurgingRanges").detail("Range", it.range());
+				continue;
+			}
 			flushRanges.push_back(it.range());
 		}
 	}

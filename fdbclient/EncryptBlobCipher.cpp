@@ -206,6 +206,7 @@ EncryptBlobCipherAes256Gcm::EncryptBlobCipherAes256Gcm(Reference<BlobCipherKey> 
                       encryptAlgo,
                       usageType,
                       incrementCounters) {
+	ASSERT_EQ(encryptAlgo, EncryptionAtRestAlgo::AES_GCM);
 	ASSERT_EQ(encryptCipherMode, EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_GCM);
 	ASSERT_EQ(mode, EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE);
 	ASSERT_EQ(algo, EncryptAuthTokenAlgo::ENCRYPT_HEADER_AUTH_TOKEN_ALGO_AES_GCM);
@@ -344,6 +345,8 @@ EncryptBlobCipherAes256Ctr::EncryptBlobCipherAes256Ctr(Reference<BlobCipherKey> 
                       usageType,
                       incrementCounters) {
 	ASSERT_EQ(ivLen, AES_256_CTR_IV_LENGTH);
+	ASSERT(encryptAlgo == EncryptionAtRestAlgo::AES_CTR || encryptAlgo == EncryptionAtRestAlgo::AES_CTR_CMAC ||
+	       encryptAlgo == EncryptionAtRestAlgo::AES_CTR_HMAC);
 	ASSERT(encryptCipherMode == EncryptCipherMode::ENCRYPT_CIPHER_MODE_AES_256_CTR);
 	init();
 }
@@ -1058,11 +1061,10 @@ void computeAuthToken(const std::vector<std::pair<const uint8_t*, size_t>>& payl
 	}
 }
 
-EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptAuthTokenMode mode) {
+EncryptAuthTokenMode getEncryptAuthTokenMode(const EncryptionAtRestAlgo algo) {
 	// Override mode if authToken isn't enabled
-	return isAuthenticatedEncryption(encryptionAlgoFromString(CLIENT_KNOBS->ENCRYPTION_AT_REST_ALGO))
-	           ? mode
-	           : EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
+	return isAuthenticatedEncryption(algo) ? EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE
+	                                       : EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE;
 }
 
 int getEncryptCurrentAlgoHeaderVersion(const EncryptAuthTokenMode mode, const EncryptAuthTokenAlgo algo) {

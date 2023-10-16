@@ -4,6 +4,16 @@
 Release Notes
 #############
 
+8.1.1
+=====
+
+Bug Fixes
+---------
+
+* Fix tuple truncation logic for snowtram_aware setting in blob manager for keys that are not snowtram keys `(FDBCORE-6364) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6364>`_
+* Fix the wrong usage of g_simulator in the disk-based snapshot function in the Data Distributor `(FDBCORE-6612) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6612>`_
+* Fix incorrect assert when parsing int elements out of large tuples `(FDBCORE-6364) <https://snowflakecomputing.atlassian.net/browse/FDBCORE-6364>`_
+
 8.1.0
 =====
 

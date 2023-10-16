@@ -72,7 +72,7 @@ ACTOR Future<bool> printBlobHistory(Database db,
 	loop {
 		try {
 			RangeReadResult result =
-			    wait(tr.getRange(blobGranuleHistoryKeyRangeFor(activeGranule), 1, Snapshot::False, Reverse::True));
+			    wait(tr2.getRange(blobGranuleHistoryKeyRangeFor(activeGranule), 1, Snapshot::False, Reverse::True));
 			ASSERT(result.size() <= 1);
 
 			if (result.empty()) {

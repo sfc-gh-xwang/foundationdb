@@ -96,6 +96,10 @@ bool isEncryptHeaderAuthTokenDetailsValid(const EncryptAuthTokenMode mode, const
 	return true;
 }
 
+bool isEncryptAlgoValid(const EncryptionAtRestAlgo algo) {
+	return algo >= EncryptionAtRestAlgo::AES_CTR && algo < EncryptionAtRestAlgo::LAST;
+}
+
 EncryptAuthTokenMode getRandomAuthTokenMode() {
 	return deterministicRandom()->coinflip() ? EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_NONE
 	                                         : EncryptAuthTokenMode::ENCRYPT_HEADER_AUTH_TOKEN_MODE_SINGLE;
