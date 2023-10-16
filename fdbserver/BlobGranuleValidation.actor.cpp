@@ -212,10 +212,12 @@ ACTOR Future<Void> clearAndAwaitMerge(Database cx, KeyRange range) {
 	}
 }
 
-ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> getSummaries(Database cx,
-                                                                        KeyRange range,
-                                                                        Version summaryVersion,
-                                                                        Optional<Reference<Tenant>> tenant) {
+ACTOR Future<Void> getSummaries(Database cx,
+                                KeyRange range,
+                                Version summaryVersion,
+                                Optional<Reference<Tenant>> tenant,
+                                Arena* outArena,
+                                KeyRangeMap<Optional<BlobGranuleSummaryRef>>* out) {
 	state Transaction tr = Transaction::fromTenantOrDefault(tenant, cx);
 	loop {
 		try {
@@ -231,9 +233,103 @@ ACTOR Future<Standalone<VectorRef<BlobGranuleSummaryRef>>> getSummaries(Database
 				ASSERT(summaries[i].keyRange.end == summaries[i + 1].keyRange.begin);
 			}
 
-			return summaries;
+			outArena->dependsOn(summaries.arena());
+			out->insert(range, {});
+			for (auto& it : summaries) {
+				out->insert(it.keyRange, it);
+			}
+			return Void();
 		} catch (Error& e) {
 			wait(tr.onError(e));
+		}
+	}
+}
+
+void compareSummaries(Version oldSummaryVersion,
+                      const KeyRangeMap<Optional<BlobGranuleSummaryRef>>& oldSummary,
+                      Version newSummaryVersion,
+                      const KeyRangeMap<Optional<BlobGranuleSummaryRef>>& newSummary) {
+	ASSERT(oldSummaryVersion <= newSummaryVersion);
+	CODE_PROBE(true, "comparing multiple summaries");
+	CoalescedKeyRangeMap<bool> snapshotVersionChanged;
+	snapshotVersionChanged.insert(normalKeys, false);
+	// diff with last summary ranges to ensure versions never decreased for any range
+	auto newSummaries = newSummary.intersectingRanges(normalKeys);
+	for (auto& itNew : newSummaries) {
+		if (!itNew.cvalue().present()) {
+			continue;
+		}
+		auto& it = itNew.cvalue().get();
+		auto lastSummaries = oldSummary.intersectingRanges(it.keyRange);
+
+		for (auto& itOld : lastSummaries) {
+			if (!itOld.cvalue().present()) {
+				ASSERT(oldSummaryVersion == invalidVersion);
+				snapshotVersionChanged.insert(itOld.range(), true);
+				continue;
+			}
+			auto& last = itOld.cvalue().get();
+
+			ASSERT(it.snapshotVersion >= last.snapshotVersion);
+			if (it.snapshotVersion != last.snapshotVersion) {
+				snapshotVersionChanged.insert(it.keyRange & last.keyRange, true);
+			}
+			// same invariant isn't always true for delta version because of force flushing around granule
+			// merges
+			if (it.keyRange == itOld.range()) {
+				if (it.snapshotVersion == last.snapshotVersion) {
+					ASSERT(it.snapshotSize == last.snapshotSize);
+				}
+				if (it.snapshotVersion == last.snapshotVersion && it.deltaVersion == last.deltaVersion) {
+					ASSERT(it.snapshotSize == last.snapshotSize);
+					ASSERT(it.deltaSize == last.deltaSize);
+				} else if (it.snapshotVersion == last.snapshotVersion) {
+					// empty delta files can cause version to decrease or size to remain same with a version
+					// increase
+					if (it.deltaVersion >= last.deltaVersion) {
+						ASSERT(it.deltaSize >= last.deltaSize);
+					} // else can happen because of empty delta file version bump
+				}
+				break;
+			}
+		}
+	}
+
+	// check contract incremental compaction expects. If old summary had A - B @ snapshot version S1, all new
+	// intersecting ranges must either all have S1, or all have a higher snapshot version
+	auto oldSummaries = oldSummary.intersectingRanges(normalKeys);
+	for (auto& itOld : oldSummaries) {
+		if (!itOld.cvalue().present()) {
+			continue;
+		}
+
+		auto& last = itOld.cvalue().get();
+		auto newSummaries = newSummary.intersectingRanges(last.keyRange);
+
+		int numHigher = 0;
+		int numEqual = 0;
+
+		for (auto& itNew : newSummaries) {
+			ASSERT(itNew.cvalue().present());
+			auto& it = itNew.cvalue().get();
+			ASSERT(it.snapshotVersion >= last.snapshotVersion);
+			if (it.snapshotVersion == last.snapshotVersion) {
+				numEqual++;
+			} else {
+				numHigher++;
+			}
+		}
+		ASSERT(numHigher == 0 || numEqual == 0);
+	}
+
+	// and that all boundaries of points that changed snapshot versions between old and new were boundaries in old
+	auto changedSnapshotBoundaries = snapshotVersionChanged.intersectingRanges(normalKeys);
+	for (auto& changed : changedSnapshotBoundaries) {
+		if (changed.cvalue()) {
+			auto beginBoundary = oldSummary.rangeContaining(changed.begin());
+			ASSERT(beginBoundary.begin() == changed.begin());
+			auto endBoundary = oldSummary.rangeContaining(changed.end());
+			ASSERT(endBoundary.begin() == changed.end());
 		}
 	}
 }
@@ -261,9 +357,26 @@ ACTOR Future<Void> validateGranuleSummaries(Database cx,
 				}
 			}
 
-			state Standalone<VectorRef<BlobGranuleSummaryRef>> nextSummary;
+			state bool haveRepeatSummary = false;
+			state KeyRangeMap<Optional<BlobGranuleSummaryRef>> reReadLastSummary;
+			state Arena reReadLastSummaryArena;
+			if (BUGGIFY && lastSummaryVersion != invalidVersion) {
+				try {
+					wait(getSummaries(
+					    cx, range, lastSummaryVersion, tenant, &reReadLastSummaryArena, &reReadLastSummary));
+					haveRepeatSummary = true;
+				} catch (Error& e) {
+					// if we purged range since last summary just ignore this
+					if (e.code() != error_code_blob_granule_transaction_too_old) {
+						throw e;
+					}
+				}
+			}
+
+			state KeyRangeMap<Optional<BlobGranuleSummaryRef>> nextSummary;
+			state Arena nextSummaryArena;
 			try {
-				wait(store(nextSummary, getSummaries(cx, range, nextSummaryVersion, tenant)));
+				wait(getSummaries(cx, range, nextSummaryVersion, tenant, &nextSummaryArena, &nextSummary));
 			} catch (Error& e) {
 				if (e.code() == error_code_blob_granule_transaction_too_old) {
 					ASSERT(lastSummaryVersion == invalidVersion);
@@ -275,52 +388,21 @@ ACTOR Future<Void> validateGranuleSummaries(Database cx,
 				}
 			}
 
+			if (haveRepeatSummary) {
+				compareSummaries(lastSummaryVersion, reReadLastSummary, nextSummaryVersion, nextSummary);
+			}
+
 			if (lastSummaryVersion != invalidVersion) {
-				CODE_PROBE(true, "comparing multiple summaries");
-				// diff with last summary ranges to ensure versions never decreased for any range
-				for (auto& it : nextSummary) {
-					auto lastSummaries = lastSummary.intersectingRanges(it.keyRange);
-					for (auto& itLast : lastSummaries) {
-
-						if (!itLast.cvalue().present()) {
-							ASSERT(lastSummaryVersion == invalidVersion);
-							continue;
-						}
-						auto& last = itLast.cvalue().get();
-
-						ASSERT(it.snapshotVersion >= last.snapshotVersion);
-						// same invariant isn't always true for delta version because of force flushing around granule
-						// merges
-						if (it.keyRange == itLast.range()) {
-							if (it.snapshotVersion == last.snapshotVersion) {
-								ASSERT(it.snapshotSize == last.snapshotSize);
-							}
-							if (it.snapshotVersion == last.snapshotVersion && it.deltaVersion == last.deltaVersion) {
-								ASSERT(it.snapshotSize == last.snapshotSize);
-								ASSERT(it.deltaSize == last.deltaSize);
-							} else if (it.snapshotVersion == last.snapshotVersion) {
-								// empty delta files can cause version to decrease or size to remain same with a version
-								// increase
-								if (it.deltaVersion >= last.deltaVersion) {
-									ASSERT(it.deltaSize >= last.deltaSize);
-								} // else can happen because of empty delta file version bump
-							}
-							break;
-						}
-					}
-				}
+				compareSummaries(lastSummaryVersion, lastSummary, nextSummaryVersion, nextSummary);
 
 				if (!testComplete.canBeSet()) {
 					return Void();
 				}
 			}
 
-			lastSummaryArena = nextSummary.arena();
 			lastSummaryVersion = nextSummaryVersion;
-			lastSummary.insert(range, {});
-			for (auto& it : nextSummary) {
-				lastSummary.insert(it.keyRange, it);
-			}
+			lastSummaryArena = nextSummaryArena;
+			lastSummary = std::move(nextSummary);
 
 			wait(delayJittered(deterministicRandom()->randomInt(1, 10)));
 		}
