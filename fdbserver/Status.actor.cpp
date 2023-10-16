@@ -2269,7 +2269,7 @@ ACTOR static Future<JsonBuilderObject> workloadStatusFetcher(
 		(*qos)["batch_transactions_per_second_limit"] = batchTpsLimit;
 		(*qos)["released_transactions_per_second"] = transPerSec;
 		(*qos)["batch_released_transactions_per_second"] = batchTransPerSec;
-		(*qos)["aggregate_throughput"] = ratekeeper.getDouble("AggregateThroughput");
+		(*qos)["aggregate_throughput_quota_utilization"] = ratekeeper.getDouble("AggregateThroughput");
 
 		JsonBuilderObject throttledTagsObj;
 		JsonBuilderObject autoThrottledTagsObj;
