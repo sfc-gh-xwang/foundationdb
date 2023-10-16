@@ -1614,6 +1614,26 @@ def test_tenant_modes(logger):
     run_fdbcli_command("configure tenant_mode=optional_experimental")
 
 
+@enable_logging()
+def test_global_config_update(logger, key: str, value: str, expected: str):
+    command = "global_config set {} {}".format(key, value)
+    output = run_fdbcli_command(command)
+    logger.debug("{} : {}".format(command, output))
+    time.sleep(3)
+    command = "global_config get {}".format(key)
+    output = run_fdbcli_command(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == expected
+
+
+@enable_logging()
+def test_global_config(logger):
+    test_global_config_update("quotaThrottling/readSampleRate", "0.5", "0.500000")
+    test_global_config_update("quotaThrottling/fungibilityRatio", "2.0", "2.000000")
+    test_global_config_update("quotaThrottling/pageSize", "1000", "1000")
+    test_global_config_update("quotaThrottling/commitSampleCost", "10000", "10000")
+
+
 def integer_options():
     process = subprocess.Popen(
         command_template[:-1],
@@ -1741,6 +1761,7 @@ if __name__ == "__main__":
         # quota()
         idempotency_ids()
         test_tenant_modes()
+        test_global_config()
     else:
         assert args.process_number > 1, "Process number should be positive"
         coordinators()

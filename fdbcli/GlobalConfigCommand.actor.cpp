@@ -36,9 +36,28 @@ public:
 	}
 };
 
+class GlobalConfigKeyLong : public IGlobalConfigKey {
+public:
+	GlobalConfigKeyLong(Key key) : IGlobalConfigKey(key) {}
+	Optional<Value> pack(Value value) const override {
+		try {
+			return Tuple::makeTuple(static_cast<int64_t>(std::stol(value.toString()))).pack();
+		} catch (...) {
+			TraceEvent(SevWarnAlways, "GlobalConfigKeyLongFailedToPackTuple").detail("Key", key).detail("Value", value);
+			return {};
+		}
+	}
+};
+
 Reference<IGlobalConfigKey> IGlobalConfigKey::create(Key key) {
 	if (key.compare("quotaThrottling/readSampleRate"_sr) == 0) {
 		return makeReference<GlobalConfigKeyDouble>(key);
+	} else if (key.compare("quotaThrottling/pageSize"_sr) == 0) {
+		return makeReference<GlobalConfigKeyLong>(key);
+	} else if (key.compare("quotaThrottling/fungibilityRatio"_sr) == 0) {
+		return makeReference<GlobalConfigKeyDouble>(key);
+	} else if (key.compare("quotaThrottling/commitSampleCost"_sr) == 0) {
+		return makeReference<GlobalConfigKeyLong>(key);
 	} else {
 		return Reference<IGlobalConfigKey>();
 	}
