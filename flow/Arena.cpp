@@ -1060,3 +1060,9 @@ TEST_CASE("/flow/Arena/Secure") {
 	}
 	return Void();
 }
+
+TEST_CASE("/flow/StringRef/Init") {
+	StringRef something("something");
+	ASSERT_EQ(something.toString(), std::string("something"));
+	return Void();
+}
