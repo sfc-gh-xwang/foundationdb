@@ -82,11 +82,12 @@ Reference<IGlobalConfigKey> IGlobalConfigKey::create(Key key) {
 
 ACTOR Future<Void> globalConfigGet(Reference<IDatabase> db, Reference<IGlobalConfigKey> key) {
 	state Reference<ITransaction> tr = db->createTransaction();
+	state ThreadFuture<ValueReadResult> resultFuture;
 	loop {
 		try {
 			tr->setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
 			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
-			ThreadFuture<ValueReadResult> resultFuture = tr->get(key->withPrefix());
+			resultFuture = tr->get(key->withPrefix());
 			ValueReadResult v = wait(safeThreadFutureToFuture(resultFuture));
 			if (v.present()) {
 				fmt::print("{}\n", v.get().toString());
