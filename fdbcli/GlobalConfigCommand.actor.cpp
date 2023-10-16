@@ -141,7 +141,7 @@ ACTOR Future<Void> globalConfigClear(Reference<IDatabase> db, Reference<IGlobalC
 constexpr auto usage = "global_config [get <key> | set <key> <value> | clear <key>]";
 
 bool exitFailure() {
-	fmt::print("{}\n", usage);
+	fmt::print(stderr, "{}\n", usage);
 	return false;
 }
 
@@ -156,7 +156,7 @@ ACTOR Future<bool> globalConfigCommandActor(Reference<IDatabase> db, std::vector
 		auto const key = IGlobalConfigKey::create(tokens[2]);
 		if (!key.isValid()) {
 			fmt::print(stderr, "Unrecognized key: {}\n", tokens[2].toString());
-			exitFailure();
+			return exitFailure();
 		}
 		if (tokens[1] == "get"_sr) {
 			if (tokens.size() != 3) {

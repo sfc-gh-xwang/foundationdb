@@ -1620,15 +1620,38 @@ def test_global_config_update(logger, key: str, value: str, expected: str):
     output = run_fdbcli_command(command)
     logger.debug("{} : {}".format(command, output))
     assert output == "Successfully set global_config value."
+
+    # Wait for global config update to propagate
     time.sleep(3)
+
     command = "global_config get {}".format(key)
     output = run_fdbcli_command(command)
     logger.debug("{} : {}".format(command, output))
     assert output == expected
+
     command = "global_config clear {}".format(key)
     output = run_fdbcli_command(command)
     logger.debug("{} : {}".format(command, output))
     assert output == "Successfully cleared global_config value."
+
+
+@enable_logging()
+def test_invalid_global_config_commands(logger):
+    usage = "global_config [get <key> | set <key> <value> | clear <key>]"
+    command = "global_config get"
+    output = run_fdbcli_command_and_get_error(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == usage
+
+    command = "global_config get quotaThrottling/invalidKey"
+    output = run_fdbcli_command_and_get_error(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Unrecognized key: quotaThrottling/invalidKey\n{}".format(usage)
+
+    command = "global_config set quotaThrottling/pageSize not_a_number"
+    output = run_fdbcli_command_and_get_error(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Unable to pack value"
 
 
 def test_global_config():
@@ -1637,6 +1660,7 @@ def test_global_config():
     test_global_config_update("quotaThrottling/pageSize", "1000", "1000")
     test_global_config_update("quotaThrottling/commitSampleCost", "10000", "10000")
     test_global_config_update("quotaThrottling/costFormula", "add", "add")
+    test_invalid_global_config_commands()
 
 
 def integer_options():
