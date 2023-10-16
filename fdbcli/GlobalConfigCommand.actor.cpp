@@ -89,7 +89,7 @@ ACTOR Future<Void> globalConfigGet(Reference<IDatabase> db, Reference<IGlobalCon
 			ThreadFuture<ValueReadResult> resultFuture = tr->get(key->withPrefix());
 			ValueReadResult v = wait(safeThreadFutureToFuture(resultFuture));
 			if (v.present()) {
-				fmt::print("{}", v.get().toString());
+				fmt::print("{}\n", v.get().toString());
 			} else {
 				fmt::print("<not set>\n");
 			}
