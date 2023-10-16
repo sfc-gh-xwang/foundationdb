@@ -7,12 +7,13 @@
 #pragma once
 
 #include "fdbclient/NativeAPI.actor.h"
+#include "flow/FastRef.h"
 
 #include <memory>
 
 // This read-only interface is used for accessing quota throttling
 // parameters
-class IQuotaThrottlingConfig {
+class IQuotaThrottlingConfig : public ReferenceCounted<IQuotaThrottlingConfig> {
 public:
 	virtual ~IQuotaThrottlingConfig();
 	virtual uint64_t getClearCost() const = 0;

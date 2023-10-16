@@ -35,7 +35,7 @@ class ThrottlingCounterImpl {
 
 	std::vector<BusyThrottlingIdInfo> previousBusiestReaders;
 	Reference<EventCacheHolder> busiestReaderEventHolder;
-	std::unique_ptr<IQuotaThrottlingConfig> quotaThrottlingConfig;
+	Reference<IQuotaThrottlingConfig const> quotaThrottlingConfig;
 
 	std::vector<BusyThrottlingIdInfo> getBusiestReadersFromLastInterval(double elapsed) const {
 		std::priority_queue<BusyThrottlingIdInfo, std::vector<BusyThrottlingIdInfo>, std::greater<BusyThrottlingIdInfo>>
@@ -63,12 +63,12 @@ public:
 	ThrottlingCounterImpl(UID thisServerID,
 	                      int maxReadersTracked,
 	                      double minRateTracked,
-	                      std::unique_ptr<IQuotaThrottlingConfig>&& quotaThrottlingConfig)
+	                      Reference<IQuotaThrottlingConfig const> quotaThrottlingConfig)
 	  : thisServerID(thisServerID),
 	    maxReadersTracked(maxReadersTracked),
 	    minRateTracked(minRateTracked),
 	    busiestReaderEventHolder(makeReference<EventCacheHolder>(thisServerID.toString() + "/BusiestReader")),
-	    quotaThrottlingConfig(std::move(quotaThrottlingConfig)) {}
+	    quotaThrottlingConfig(quotaThrottlingConfig) {}
 
 	// Tenant groups take priority over tags if both are available
 	void addRequest(Optional<TransactionTag> const& tag, Optional<TenantGroupName> const& tenantGroup, int64_t bytes) {
@@ -123,11 +123,9 @@ public:
 ThrottlingCounter::ThrottlingCounter(UID thisServerID,
                                      int maxReadersTracked,
                                      double minRateTracked,
-                                     std::unique_ptr<IQuotaThrottlingConfig>&& quotaThrottlingConfig)
-  : impl(PImpl<ThrottlingCounterImpl>::create(thisServerID,
-                                              maxReadersTracked,
-                                              minRateTracked,
-                                              std::move(quotaThrottlingConfig))) {}
+                                     Reference<IQuotaThrottlingConfig const> quotaThrottlingConfig)
+  : impl(PImpl<ThrottlingCounterImpl>::create(thisServerID, maxReadersTracked, minRateTracked, quotaThrottlingConfig)) {
+}
 
 ThrottlingCounter::~ThrottlingCounter() = default;
 
@@ -162,7 +160,7 @@ TEST_CASE("/fdbserver/ThrottlingCounter/IgnoreBeyondMaxReaders") {
 	state ThrottlingCounter counter(UID(),
 	                                /*maxReadersTracked=*/2,
 	                                /*minRateTracked=*/10.0 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
-	                                std::make_unique<MockQuotaThrottlingConfig>());
+	                                makeReference<MockQuotaThrottlingConfig>());
 	counter.startNewInterval();
 	ASSERT_EQ(counter.getBusiestReaders().size(), 0);
 	{
@@ -182,11 +180,12 @@ TEST_CASE("/fdbserver/ThrottlingCounter/IgnoreBeyondMaxReaders") {
 }
 
 TEST_CASE("/fdbserver/ThrottlingCounter/IgnoreBelowMinRate") {
+	state Reference<IQuotaThrottlingConfig> quotaThrottlingConfig = makeReference<MockQuotaThrottlingConfig>();
 	state ThrottlingCounter counter(UID(),
 	                                /*maxReadersTracked=*/2,
 	                                /*minRateTracked=*/10.0 * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE /
-	                                    CLIENT_KNOBS->READ_TAG_SAMPLE_RATE,
-	                                std::make_unique<MockQuotaThrottlingConfig>());
+	                                    quotaThrottlingConfig->getReadSampleRate(),
+	                                quotaThrottlingConfig);
 	counter.startNewInterval();
 	ASSERT_EQ(counter.getBusiestReaders().size(), 0);
 	{

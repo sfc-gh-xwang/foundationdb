@@ -11,7 +11,7 @@
 
 static void bench_ThrottlingCounter_addRequest(benchmark::State& state) {
 	ThrottlingCounter counter(
-	    UID(), /*maxReadersTracked=*/2, /*minRateTracked=*/0, std::make_unique<MockQuotaThrottlingConfig>());
+	    UID(), /*maxReadersTracked=*/2, /*minRateTracked=*/0, makeReference<MockQuotaThrottlingConfig>());
 
 	VectorRef<StringRef> tenantGroups;
 	Arena arena;
@@ -33,7 +33,7 @@ static void bench_ThrottlingCounter_startNewInterval(benchmark::State& state) {
 	ThrottlingCounter counter(UID(),
 	                          /*maxReadersTracked=*/state.range(0),
 	                          /*minRateTracked=*/0,
-	                          std::make_unique<MockQuotaThrottlingConfig>());
+	                          makeReference<MockQuotaThrottlingConfig>());
 
 	VectorRef<StringRef> tenantGroups;
 	Arena arena;

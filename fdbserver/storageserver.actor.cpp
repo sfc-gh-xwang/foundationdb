@@ -1630,7 +1630,7 @@ public:
 	                      /*maxTagsTracked=*/SERVER_KNOBS->SS_THROTTLE_TAGS_TRACKED,
 	                      /*minRateTracked=*/SERVER_KNOBS->MIN_TAG_READ_PAGES_RATE *
 	                          CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE,
-	                      std::make_unique<QuotaThrottlingConfig>(cx)),
+	                      makeReference<QuotaThrottlingConfig>(cx)),
 	    busiestWriteTagContext(ssi.id()),
 	    getEncryptCipherKeysMonitor(encryptionMonitor),
 	    counters(this),

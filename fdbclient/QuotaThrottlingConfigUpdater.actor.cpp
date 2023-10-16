@@ -44,7 +44,10 @@ public:
 	}
 };
 
-QuotaThrottlingConfigUpdater::QuotaThrottlingConfigUpdater() : quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {}
+QuotaThrottlingConfigUpdater::QuotaThrottlingConfigUpdater()
+  : quotaCostCalculator(getQuotaCostCalculatorFromKnobs()),
+    readSampleRate(CLIENT_KNOBS->READ_TAG_SAMPLE_RATE),
+    commitSampleCost(CLIENT_KNOBS->COMMIT_SAMPLE_COST) {}
 
 QuotaThrottlingConfigUpdater::~QuotaThrottlingConfigUpdater() = default;
 
