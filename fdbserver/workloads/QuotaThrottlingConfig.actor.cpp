@@ -34,10 +34,14 @@ class QuotaThrottlingConfigWorkload : public TestWorkload {
 		state double readSampleRate = deterministicRandom()->random01();
 		wait(setGlobalConfigKey(cx, quotaThrottlingReadSampleRate, readSampleRate));
 		loop {
+			wait(delay(0.1));
 			if (cx->getReadSampleRate() == readSampleRate) {
 				return Void();
+			} else {
+				TraceEvent(SevWarn, "QuotaThrottlingConfigReadSampleRateMismatch")
+				    .detail("Value", cx->getReadSampleRate())
+				    .detail("Expected", readSampleRate);
 			}
-			wait(delay(1.0));
 		}
 	}
 
@@ -45,10 +49,14 @@ class QuotaThrottlingConfigWorkload : public TestWorkload {
 		state int64_t sampleCommitCost = deterministicRandom()->randomInt64(1, 100e3);
 		wait(setGlobalConfigKey(cx, quotaThrottlingCommitSampleCost, sampleCommitCost));
 		loop {
+			wait(delay(0.1));
 			if (cx->getCommitSampleCost() == sampleCommitCost) {
 				return Void();
+			} else {
+				TraceEvent(SevWarn, "QuotaThrottlingConfigCommitSampleRateMismatch")
+				    .detail("Value", cx->getCommitSampleCost())
+				    .detail("Expected", sampleCommitCost);
 			}
-			wait(delay(1.0));
 		}
 	}
 
@@ -74,11 +82,19 @@ class QuotaThrottlingConfigWorkload : public TestWorkload {
 		wait(setGlobalConfigKey(cx, quotaThrottlingFungibilityRatio, fungibilityRatio));
 		wait(setGlobalConfigKey(cx, quotaThrottlingCostFormula, Tuple::UnicodeStr(costFormula)));
 		loop {
+			wait(delay(0.1));
 			auto const oracle = IQuotaCostCalculator::create(costFormula.toString(), fungibilityRatio, pageSize);
 			if (cx->getWriteOperationCost(bytes) == oracle->getWriteCost(bytes)) {
 				return Void();
+			} else {
+				TraceEvent(SevWarn, "QuotaThrottlingConfigCostCalculationMismatch")
+				    .detail("PageSize", pageSize)
+				    .detail("FungibilityRatio", fungibilityRatio)
+				    .detail("CostFormula", costFormula)
+				    .detail("Bytes", bytes)
+				    .detail("Value", cx->getWriteOperationCost(bytes))
+				    .detail("Expected", oracle->getWriteCost(bytes));
 			}
-			wait(delay(1.0));
 		}
 	}
 
