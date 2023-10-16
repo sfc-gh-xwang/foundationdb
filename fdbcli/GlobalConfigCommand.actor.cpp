@@ -166,7 +166,14 @@ void globalConfigGenerator(const char* text,
                            const char* line,
                            std::vector<std::string>& lc,
                            std::vector<StringRef> const& tokens) {
-	const char* opts[] = { "get", "set", nullptr };
+	const char* opts[] = { "get",
+		                   "set",
+		                   "quotaThrottling/pageSize",
+		                   "quotaThrottling/costFormula",
+		                   "quotaThrottling/fungibilityRatio",
+		                   "quotaThrottling/readSampleRate",
+		                   "quotaThrottling/commitSampleCost",
+		                   nullptr };
 	arrayGenerator(text, line, opts, lc);
 }
 
