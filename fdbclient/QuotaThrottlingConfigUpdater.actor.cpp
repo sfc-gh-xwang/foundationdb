@@ -13,15 +13,16 @@
 class QuotaThrottlingConfigUpdaterImpl {
 	static std::string getQuotaCostFormula(GlobalConfig const& globalConfig) {
 		Reference<ConfigValue const> const configValue = globalConfig.get(quotaThrottlingCostFormula);
-		try {
-			if (configValue.isValid() && configValue->value.has_value()) {
+		if (configValue.isValid() && configValue->value.has_value()) {
+			try {
 				return std::any_cast<StringRef>(configValue->value).toString();
-			} else {
+			} catch (std::bad_any_cast const&) {
+				TraceEvent(SevWarnAlways, "QuotaThrottlingConfigUpdaterBadCostFormulaCast")
+				    .detail("Default", CLIENT_KNOBS->QUOTA_THROTTLING_COST_FORMULA);
 				return CLIENT_KNOBS->QUOTA_THROTTLING_COST_FORMULA;
 			}
-		} catch (...) {
-			TraceEvent(SevWarnAlways, "ErrorGettingQuotaCostFormula");
-			throw;
+		} else {
+			return CLIENT_KNOBS->QUOTA_THROTTLING_COST_FORMULA;
 		}
 	}
 

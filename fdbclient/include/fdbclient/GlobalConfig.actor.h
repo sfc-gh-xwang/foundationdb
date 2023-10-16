@@ -119,18 +119,18 @@ public:
 	// the key.
 	template <typename T, typename std::enable_if<std::is_arithmetic<T>{}, bool>::type = true>
 	T get(KeyRef name, T defaultVal) const {
-		try {
-			auto configValue = get(name);
-			if (configValue.isValid()) {
-				if (configValue->value.has_value()) {
+		auto const configValue = get(name);
+		if (configValue.isValid()) {
+			if (configValue->value.has_value()) {
+				try {
 					return std::any_cast<T>(configValue->value);
+				} catch (std::bad_any_cast const&) {
+					TraceEvent(SevWarnAlways, "GlobalConfigBadCast").detail("Default", defaultVal);
+					return defaultVal;
 				}
 			}
-
-			return defaultVal;
-		} catch (...) {
-			throw;
 		}
+		return defaultVal;
 	}
 
 	// Trying to write into the global configuration keyspace? To write data,
