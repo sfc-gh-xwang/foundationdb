@@ -1653,6 +1653,11 @@ def test_invalid_global_config_commands(logger):
     logger.debug("{} : {}".format(command, output))
     assert output == "Unable to pack value"
 
+    command = "global_config set quotaThrottling/pageSize 10KB"
+    output = run_fdbcli_command_and_get_error(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Unable to pack value"
+
 
 def test_global_config():
     test_global_config_update("quotaThrottling/readSampleRate", "0.5", "0.500000")
