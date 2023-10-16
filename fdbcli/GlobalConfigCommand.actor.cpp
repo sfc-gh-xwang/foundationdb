@@ -1,10 +1,13 @@
 /**
  * GlobalConfigCommand.actor.cpp
+ *
+ * Copyright (c) 2023 Snowflake Computing
  */
 
 #include "fmt/format.h"
 #include "fdbcli/fdbcli.actor.h"
 #include "fdbclient/Tuple.h"
+#include "flow/SafeParse.h"
 #include "flow/actorcompiler.h" // This must be the last include
 
 namespace {
@@ -26,7 +29,7 @@ public:
 	GlobalConfigKeyDouble(Key key) : IGlobalConfigKey(key) {}
 	Optional<Value> pack(Value value) const override {
 		try {
-			return Tuple::makeTuple(static_cast<double>(std::stod(value.toString()))).pack();
+			return Tuple::makeTuple(safe_stod(value.toString())).pack();
 		} catch (...) {
 			TraceEvent(SevWarnAlways, "GlobalConfigKeyDoubleFailedToPackTuple")
 			    .detail("Key", key)
@@ -41,7 +44,7 @@ public:
 	GlobalConfigKeyLong(Key key) : IGlobalConfigKey(key) {}
 	Optional<Value> pack(Value value) const override {
 		try {
-			return Tuple::makeTuple(static_cast<int64_t>(std::stol(value.toString()))).pack();
+			return Tuple::makeTuple(safe_stoi64(value.toString())).pack();
 		} catch (...) {
 			TraceEvent(SevWarnAlways, "GlobalConfigKeyLongFailedToPackTuple").detail("Key", key).detail("Value", value);
 			return {};
