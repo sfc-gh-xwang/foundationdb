@@ -49,6 +49,21 @@ public:
 	}
 };
 
+class GlobalConfigKeyString : public IGlobalConfigKey {
+public:
+	GlobalConfigKeyString(Key key) : IGlobalConfigKey(key) {}
+	Optional<Value> pack(Value value) const override {
+		try {
+			return Tuple::makeTuple(Tuple::UnicodeStr(value)).pack();
+		} catch (...) {
+			TraceEvent(SevWarnAlways, "GlobalConfigKeyStringFailedToPackTuple")
+			    .detail("Key", key)
+			    .detail("Value", value);
+			return {};
+		}
+	}
+};
+
 Reference<IGlobalConfigKey> IGlobalConfigKey::create(Key key) {
 	if (key.compare("quotaThrottling/readSampleRate"_sr) == 0) {
 		return makeReference<GlobalConfigKeyDouble>(key);
@@ -58,6 +73,8 @@ Reference<IGlobalConfigKey> IGlobalConfigKey::create(Key key) {
 		return makeReference<GlobalConfigKeyDouble>(key);
 	} else if (key.compare("quotaThrottling/commitSampleCost"_sr) == 0) {
 		return makeReference<GlobalConfigKeyLong>(key);
+	} else if (key.compare("quotaThrottling/costFormula"_sr) == 0) {
+		return makeReference<GlobalConfigKeyString>(key);
 	} else {
 		return Reference<IGlobalConfigKey>();
 	}

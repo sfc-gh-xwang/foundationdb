@@ -1632,6 +1632,7 @@ def test_global_config(logger):
     test_global_config_update("quotaThrottling/fungibilityRatio", "2.0", "2.000000")
     test_global_config_update("quotaThrottling/pageSize", "1000", "1000")
     test_global_config_update("quotaThrottling/commitSampleCost", "10000", "10000")
+    test_global_config_update("quotaThrottling/costFormula", "add", "add")
 
 
 def integer_options():
