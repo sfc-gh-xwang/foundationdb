@@ -106,9 +106,16 @@ ACTOR Future<Void> doBlobDebug(Database db,
                                Optional<Version> readVersion) {
 	state Transaction tr = Transaction::fromTenantOrDefault(tenant, db);
 
-	state Version version = wait(tr.getReadVersion());
-	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks =
-	    wait(tr.readBlobGranules(KeyRangeRef(startKey, endKey), version, readVersion));
+	state Standalone<VectorRef<BlobGranuleChunkRef>> chunks;
+	try {
+		wait(store(chunks, tr.readBlobGranules(KeyRangeRef(startKey, endKey), 0, readVersion)));
+	} catch (Error& e) {
+		if (e.code() != error_code_blob_granule_transaction_too_old) {
+			throw;
+		}
+		fmt::print("Range is not blobbified or version too old\n");
+		return Void();
+	}
 	printGranuleChunks(chunks);
 	return Void();
 }
