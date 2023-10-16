@@ -750,6 +750,7 @@ ACTOR Future<BlobFileIndex> writeDeltaFile(Reference<BlobWorkerData> bwData,
                                            int64_t epoch,
                                            int64_t seqno,
                                            Standalone<GranuleDeltas> deltasToWrite,
+                                           int64_t logicalSize,
                                            Version currentDeltaVersion,
                                            Future<BlobFileIndex> previousDeltaFileFuture,
                                            Future<Void> waitCommitted,
@@ -782,7 +783,6 @@ ACTOR Future<BlobFileIndex> writeDeltaFile(Reference<BlobWorkerData> bwData,
 	                                                        SERVER_KNOBS->BG_DELTA_FILE_TARGET_CHUNK_BYTES,
 	                                                        compressFilter,
 	                                                        cipherKeysCtx));
-	state size_t logicalSize = deltasToWrite.expectedSize();
 	state size_t serializedSize = serialized.size();
 	bwData->stats.compressionBytesRaw += logicalSize;
 	bwData->stats.compressionBytesFinal += serializedSize;
@@ -851,15 +851,16 @@ ACTOR Future<BlobFileIndex> writeDeltaFile(Reference<BlobWorkerData> bwData,
 				wait(tr->commit());
 				bwData->addGRVHistory(tr->getReadVersion().get());
 				if (BW_DEBUG) {
-					fmt::print(
-					    "Granule {0} [{1} - {2}) updated fdb with delta file {3} of size {4} at version {5}, cv={6}\n",
-					    granuleID.toString(),
-					    keyRange.begin.printable(),
-					    keyRange.end.printable(),
-					    fname,
-					    serializedSize,
-					    currentDeltaVersion,
-					    tr->getCommittedVersion());
+					fmt::print("Granule {0} [{1} - {2}) updated fdb with delta file {3} of size {4} ({5}) at version "
+					           "{6}, cv={7}\n",
+					           granuleID.toString(),
+					           keyRange.begin.printable(),
+					           keyRange.end.printable(),
+					           fname,
+					           serializedSize,
+					           logicalSize,
+					           currentDeltaVersion,
+					           tr->getCommittedVersion());
 				}
 
 				if (BUGGIFY && bwData->maybeInjectTargetedRestart()) {
@@ -1512,7 +1513,7 @@ ACTOR Future<BlobFileIndex> checkSplitAndReSnapshot(Reference<BlobWorkerData> bw
 		fmt::print("Granule [{0} - {1}) checking with BM for re-snapshot after {2} bytes\n",
 		           metadata->keyRange.begin.printable(),
 		           metadata->keyRange.end.printable(),
-		           metadata->bytesInNewDeltaFiles);
+		           bytesInNewDeltaFiles);
 	}
 
 	TraceEvent(SevDebug, "BlobGranuleSnapshotCheck", bwData->id)
@@ -2907,6 +2908,7 @@ ACTOR Future<Void> blobGranuleUpdateFiles(Reference<BlobWorkerData> bwData,
 					                          metadata->originalEpoch,
 					                          metadata->originalSeqno,
 					                          metadata->currentDeltas,
+					                          metadata->bufferedDeltaBytes,
 					                          lastDeltaVersion,
 					                          previousFuture,
 					                          waitVersionCommitted(bwData, metadata, lastDeltaVersion),
