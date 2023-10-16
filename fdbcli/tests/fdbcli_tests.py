@@ -951,26 +951,6 @@ def read_system_key(k):
     return value
 
 
-@enable_logging()
-def throttle(logger):
-    # no throttled tags at the beginning
-    no_throttle_tags_output = "There are no throttled tags"
-    output = run_fdbcli_command("throttle", "list")
-    logger.debug(output)
-    assert output == no_throttle_tags_output
-    # test 'throttle enable auto'
-    run_fdbcli_command("throttle", "enable", "auto")
-    # verify the change is applied by reading the system key
-    # not an elegant way, may change later
-    enable_flag = read_system_key("\\xff\\x02/throttledTags/autoThrottlingEnabled")
-    assert enable_flag == "`1'"
-    run_fdbcli_command("throttle", "disable", "auto")
-    enable_flag = read_system_key("\\xff\\x02/throttledTags/autoThrottlingEnabled")
-    # verify disabled
-    assert enable_flag == "`0'"
-    # TODO : test manual throttling, not easy to do now
-
-
 def wait_for_database_available(logger):
     # sometimes the change takes some time to have effect and the database can be unavailable at that time
     # this is to wait until the database is available again
@@ -1751,8 +1731,6 @@ if __name__ == "__main__":
         # TODO: reenable it until it's stable
         # suspend()
         transaction()
-        # this is replaced by the "quota" command
-        # throttle()
         triggerddteaminfolog()
         tenants()
         versionepoch()
