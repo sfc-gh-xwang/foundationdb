@@ -539,7 +539,12 @@ class TestRun:
         self.summary.error_out = err_out
         self.summary.summarize(self.temp_path, " ".join(command))
         try:
-            with (self.temp_path / Path("stdout.log")).open("w") as stdout_file:
+            stdout_filepath = self.temp_path / Path("stdout.log")
+            i = 0
+            while stdout_filepath.exists():
+                stdout_filepath = self.temp_path / Path("stdout-{}.log".format(i))
+                i += 1
+            with stdout_filepath.open("w") as stdout_file:
                 stdout_file.write(out_out)
         except OSError as e:
             sys.stderr.write(
