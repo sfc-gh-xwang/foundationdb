@@ -122,7 +122,23 @@ ACTOR Future<Void> globalConfigSet(Reference<IDatabase> db, Reference<IGlobalCon
 	}
 }
 
-constexpr auto usage = "global_config [get <key> | set <key> <value>]";
+ACTOR Future<Void> globalConfigClear(Reference<IDatabase> db, Reference<IGlobalConfigKey> key) {
+	state Reference<ITransaction> tr = db->createTransaction();
+	loop {
+		try {
+			tr->setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
+			tr->setOption(FDBTransactionOptions::RAW_ACCESS);
+			tr->clear(key->withPrefix());
+			wait(safeThreadFutureToFuture(tr->commit()));
+			fmt::print("Successfully cleared global_config value.\n");
+			return Void();
+		} catch (Error& e) {
+			wait(safeThreadFutureToFuture(tr->onError(e)));
+		}
+	}
+}
+
+constexpr auto usage = "global_config [get <key> | set <key> <value> | clear <key>]";
 
 bool exitFailure() {
 	fmt::print("{}\n", usage);
@@ -134,7 +150,6 @@ bool exitFailure() {
 namespace fdb_cli {
 
 ACTOR Future<bool> globalConfigCommandActor(Reference<IDatabase> db, std::vector<StringRef> tokens) {
-	state bool result = true;
 	if (tokens.size() != 3 && tokens.size() != 4) {
 		return exitFailure();
 	} else {
@@ -156,6 +171,12 @@ ACTOR Future<bool> globalConfigCommandActor(Reference<IDatabase> db, std::vector
 			auto const value = tokens[3];
 			wait(globalConfigSet(db, key, value));
 			return true;
+		} else if (tokens[1] == "clear"_sr) {
+			if (tokens.size() != 3) {
+				return exitFailure();
+			}
+			wait(globalConfigClear(db, key));
+			return true;
 		} else {
 			return exitFailure();
 		}
@@ -168,6 +189,7 @@ void globalConfigGenerator(const char* text,
                            std::vector<StringRef> const& tokens) {
 	const char* opts[] = { "get",
 		                   "set",
+		                   "clear",
 		                   "quotaThrottling/pageSize",
 		                   "quotaThrottling/costFormula",
 		                   "quotaThrottling/fungibilityRatio",

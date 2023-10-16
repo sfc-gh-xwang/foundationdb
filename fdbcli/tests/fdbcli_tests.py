@@ -1619,15 +1619,19 @@ def test_global_config_update(logger, key: str, value: str, expected: str):
     command = "global_config set {} {}".format(key, value)
     output = run_fdbcli_command(command)
     logger.debug("{} : {}".format(command, output))
+    assert output == "Successfully set global_config value."
     time.sleep(3)
     command = "global_config get {}".format(key)
     output = run_fdbcli_command(command)
     logger.debug("{} : {}".format(command, output))
     assert output == expected
+    command = "global_config clear {}".format(key)
+    output = run_fdbcli_command(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Successfully cleared global_config value."
 
 
-@enable_logging()
-def test_global_config(logger):
+def test_global_config():
     test_global_config_update("quotaThrottling/readSampleRate", "0.5", "0.500000")
     test_global_config_update("quotaThrottling/fungibilityRatio", "2.0", "2.000000")
     test_global_config_update("quotaThrottling/pageSize", "1000", "1000")
