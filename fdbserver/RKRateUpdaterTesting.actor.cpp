@@ -4,6 +4,7 @@
 
 #include "fdbrpc/Locality.h"
 #include "fdbserver/IRKBlobMonitor.h"
+#include "fdbserver/IRKClusterThroughputTracker.h"
 #include "fdbserver/IRKConfigurationMonitor.h"
 #include "fdbserver/IRKMetricsTracker.h"
 #include "fdbserver/IRKRateServer.h"
@@ -148,6 +149,7 @@ struct RKRateUpdaterTestEnvironment {
 	MockRKRecoveryTracker recoveryTracker;
 	Deque<double> actualTpsHistory;
 	MockRKBlobMonitor blobMonitor;
+	MockThroughputTracker throughputTracker;
 
 	RKRateUpdater rateUpdater;
 
@@ -177,7 +179,8 @@ struct RKRateUpdaterTestEnvironment {
 		                   actualTpsHistory,
 		                   blobMonitor,
 		                   /*isBwThrottlingEnabled*/ true,
-		                   /*tagsThrottled=*/0);
+		                   /*tagsThrottled=*/0,
+		                   throughputTracker);
 	}
 };
 } // namespace

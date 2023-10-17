@@ -426,6 +426,7 @@
          "max_zone_failures_without_losing_data":0
       },
       "qos":{
+         "aggregate_throughput_quota_utilization": 0,
          "worst_queue_bytes_log_server":460,
          "batch_performance_limited_by":{
             "reason_server_id":"7f8d623d0cb9966e",

@@ -248,7 +248,8 @@ void Ratekeeper::doRateupdate(bool isBwThrottlingEnabled) {
 	                         actualTpsHistory,
 	                         blobMonitor,
 	                         isBwThrottlingEnabled,
-	                         quotaThrottler.throttleCount());
+	                         quotaThrottler.throttleCount(),
+	                         serverThroughputTracker);
 	batchRateUpdater.update(metricsTracker,
 	                        rateServer,
 	                        configurationMonitor,
@@ -256,7 +257,8 @@ void Ratekeeper::doRateupdate(bool isBwThrottlingEnabled) {
 	                        actualTpsHistory,
 	                        blobMonitor,
 	                        isBwThrottlingEnabled,
-	                        quotaThrottler.throttleCount());
+	                        quotaThrottler.throttleCount(),
+	                        serverThroughputTracker);
 	updateTagThrottling();
 
 	rateServer.updateLastLimited(batchRateUpdater.getTpsLimit());
