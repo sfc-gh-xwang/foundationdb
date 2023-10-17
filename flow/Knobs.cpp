@@ -24,6 +24,7 @@
 #include "flow/flow.h"
 #include "flow/Knobs.h"
 #include "flow/BooleanParam.h"
+#include "flow/SafeParse.h"
 #include "flow/UnitTest.h"
 
 #include <cmath>
@@ -339,65 +340,6 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 
 }
 // clang-format on
-
-static std::string toLower(std::string const& name) {
-	std::string lower_name;
-	for (auto c = name.begin(); c != name.end(); ++c)
-		if (*c >= 'A' && *c <= 'Z')
-			lower_name += *c - 'A' + 'a';
-		else
-			lower_name += *c;
-	return lower_name;
-}
-
-// Converts the given string into a double. If any errors are
-// encountered, it throws an invalid_option_value exception.
-static double safe_stod(std::string const& str) {
-	size_t n;
-	double value = std::stod(str, &n);
-	if (n < str.size()) {
-		throw invalid_option_value();
-	}
-	return value;
-}
-
-// Converts the given (possibly hexadecimal) string into an
-// integer. If any errors are encountered, it throws an
-// invalid_option_value exception.
-static int safe_stoi(std::string const& str) {
-	size_t n;
-	int value = std::stoi(str, &n, 0);
-	if (n < str.size()) {
-		throw invalid_option_value();
-	}
-	return value;
-}
-
-// Converts the given (possibly hexadecimal) string into a 64-bit
-// integer. If any errors are encountered, it throws an
-// invalid_option_value exception.
-static int64_t safe_stoi64(std::string const& str) {
-	size_t n;
-	int64_t value = static_cast<int64_t>(std::stoll(str, &n, 0));
-	if (n < str.size()) {
-		throw invalid_option_value();
-	}
-	return value;
-}
-
-// Converts the given string into a bool. "true" and "false" are case
-// insenstively interpreted as true and false. Otherwise, any non-zero
-// integer is true. If any errors are encountered, it throws an
-// invalid_option_value exception.
-static bool safe_stob(std::string const& str) {
-	if (toLower(str) == "true") {
-		return true;
-	} else if (toLower(str) == "false") {
-		return false;
-	} else {
-		return safe_stoi(str) != 0;
-	}
-}
 
 // Parses a string value into the appropriate type based upon the knob
 // name. If any errors are encountered, it throws an

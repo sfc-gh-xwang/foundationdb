@@ -1595,8 +1595,7 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
     detailedHealthMetricsLastUpdated(0),
     smoothMidShardSize(CLIENT_KNOBS->SHARD_STAT_SMOOTH_AMOUNT),
     specialKeySpace(std::make_unique<SpecialKeySpace>(specialKeys.begin, specialKeys.end, /* test */ false)),
-    connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())),
-    quotaCostCalculator(getQuotaCostCalculatorFromKnobs()) {
+    connectToDatabaseEventCacheHolder(format("ConnectToDatabase/%s", dbId.toString().c_str())) {
 
 	TraceEvent("DatabaseContextCreated", dbId).backtrace();
 
@@ -1625,7 +1624,8 @@ DatabaseContext::DatabaseContext(Reference<AsyncVar<Reference<IClusterConnection
 	}
 
 	smoothMidShardSize.reset(CLIENT_KNOBS->INIT_MID_SHARD_BYTES);
-	globalConfig = std::make_unique<GlobalConfig>(this);
+	globalConfig = makeReference<GlobalConfig>(this);
+	quotaThrottlingConfigUpdater.start(globalConfig);
 
 	registerSpecialKeysImpl(SpecialKeySpace::MODULE::ERRORMSG,
 	                        SpecialKeySpace::IMPLTYPE::READONLY,
@@ -2147,15 +2147,23 @@ Future<Void> DatabaseContext::onProxiesChanged() const {
 }
 
 bool DatabaseContext::sampleReadTags() const {
-	double sampleRate = globalConfig->get(transactionTagSampleRate, CLIENT_KNOBS->READ_TAG_SAMPLE_RATE);
+	double const sampleRate = getReadSampleRate();
 	return sampleRate > 0 && deterministicRandom()->random01() <= sampleRate;
 }
 
 bool DatabaseContext::sampleOnCost(uint64_t cost) const {
-	double sampleCost = globalConfig->get<double>(transactionTagSampleCost, CLIENT_KNOBS->COMMIT_SAMPLE_COST);
+	double const sampleCost = getCommitSampleCost();
 	if (sampleCost <= 0)
 		return false;
 	return deterministicRandom()->random01() <= (double)cost / sampleCost;
+}
+
+double DatabaseContext::getReadSampleRate() const {
+	return quotaThrottlingConfigUpdater.getReadSampleRate();
+}
+
+uint64_t DatabaseContext::getCommitSampleCost() const {
+	return quotaThrottlingConfigUpdater.getCommitSampleCost();
 }
 
 int64_t extractIntOption(Optional<StringRef> value, int64_t minValue, int64_t maxValue) {
@@ -7764,15 +7772,15 @@ Optional<ThrottlingId> TransactionState::getThrottlingId() {
 }
 
 uint64_t DatabaseContext::getClearOperationCost() const {
-	return quotaCostCalculator->getClearCost();
+	return quotaThrottlingConfigUpdater.getClearCost();
 }
 
 uint64_t DatabaseContext::getReadOperationCost(uint64_t bytes) const {
-	return quotaCostCalculator->getReadCost(bytes);
+	return quotaThrottlingConfigUpdater.getReadCost(bytes);
 }
 
 uint64_t DatabaseContext::getWriteOperationCost(uint64_t bytes) const {
-	return quotaCostCalculator->getWriteCost(bytes);
+	return quotaThrottlingConfigUpdater.getWriteCost(bytes);
 }
 
 void TransactionState::addReadCost(uint64_t bytes) {

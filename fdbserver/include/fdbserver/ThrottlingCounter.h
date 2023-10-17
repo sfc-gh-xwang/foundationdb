@@ -31,7 +31,10 @@ class ThrottlingCounter {
 	PImpl<class ThrottlingCounterImpl> impl;
 
 public:
-	ThrottlingCounter(UID thisServerID, int maxReadersTracked, double minRateTracked);
+	ThrottlingCounter(UID thisServerID,
+	                  int maxReadersTracked,
+	                  double minRateTracked,
+	                  Reference<class IQuotaThrottlingConfig const>);
 	~ThrottlingCounter();
 
 	// Update counters tracking the busyness of each tag in the current interval

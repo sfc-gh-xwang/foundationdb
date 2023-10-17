@@ -1,5 +1,7 @@
 /**
  * IQuotaCostCalculatorTesting.actor.cpp
+ *
+ * Copyright (c) 2023 Snowflake Computing
  */
 
 #include "fdbclient/IQuotaCostCalculator.h"

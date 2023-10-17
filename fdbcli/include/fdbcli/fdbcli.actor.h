@@ -271,6 +271,8 @@ ACTOR Future<bool> profileCommandActor(Database db,
                                        bool intrans);
 // quota command
 ACTOR Future<bool> quotaCommandActor(Reference<IDatabase> db, std::vector<StringRef> tokens);
+// global_config command
+ACTOR Future<bool> globalConfigCommandActor(Reference<IDatabase> db, std::vector<StringRef> tokens);
 // setclass command
 ACTOR Future<bool> setClassCommandActor(Reference<IDatabase> db, std::vector<StringRef> tokens);
 // snapshot command

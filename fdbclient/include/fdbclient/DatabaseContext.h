@@ -26,7 +26,6 @@
 #include "flow/FastAlloc.h"
 #include "flow/FastRef.h"
 #include "fdbclient/GlobalConfig.actor.h"
-#include "fdbclient/IQuotaCostCalculator.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "flow/IRandom.h"
 #include "flow/genericactors.actor.h"
@@ -46,6 +45,7 @@
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbclient/ClusterInterface.h"
 #include "fdbclient/CommitProxyInterface.h"
+#include "fdbclient/QuotaThrottlingConfigUpdater.h"
 #include "fdbrpc/QueueModel.h"
 #include "fdbrpc/MultiInterface.h"
 #include "flow/TDMetric.actor.h"
@@ -774,11 +774,14 @@ public:
 
 	bool isThrottlingIdBusy(ThrottlingId const&) const;
 
+	double getReadSampleRate() const;
+	uint64_t getCommitSampleCost() const;
+
 	// used in template functions to create a transaction
 	using TransactionT = ReadYourWritesTransaction;
 	Reference<TransactionT> createTransaction();
 
-	std::unique_ptr<GlobalConfig> globalConfig;
+	Reference<GlobalConfig> globalConfig;
 	EventCacheHolder connectToDatabaseEventCacheHolder;
 
 	Future<TenantLookupInfo> lookupTenant(TenantName tenant);
@@ -840,7 +843,7 @@ private:
 
 	ThroughputTracker throughputTracker;
 	Future<Void> throughputTrackerFuture;
-	std::unique_ptr<IQuotaCostCalculator> quotaCostCalculator;
+	QuotaThrottlingConfigUpdater quotaThrottlingConfigUpdater;
 
 	void initializeSpecialCounters();
 };

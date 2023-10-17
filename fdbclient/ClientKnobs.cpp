@@ -274,9 +274,6 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( MAX_TRANSACTION_TAG_LENGTH,               255 );
 	init( COMMIT_SAMPLE_COST,                       100 ); BUGGIFY_KNOB(COMMIT_SAMPLE_COST, randomize && BUGGIFY, 10);
 	init( READ_TAG_SAMPLE_RATE,                    0.01 ); BUGGIFY_KNOB(READ_TAG_SAMPLE_RATE, randomize && BUGGIFY, 1.0); // Communicated to clients from cluster
-	init( TAG_THROTTLE_SMOOTHING_WINDOW,            2.0 );
-	init( TAG_THROTTLE_RECHECK_INTERVAL,            5.0 ); BUGGIFY_KNOB(TAG_THROTTLE_RECHECK_INTERVAL, randomize && BUGGIFY, 0.0);
-	init( TAG_THROTTLE_EXPIRATION_INTERVAL,        60.0 ); BUGGIFY_KNOB(TAG_THROTTLE_EXPIRATION_INTERVAL, randomize && BUGGIFY, 1.0);
 	init( QUOTA_THROTTLING_COST_FORMULA,      "minimum" ); BUGGIFY_KNOB(QUOTA_THROTTLING_COST_FORMULA, randomize && BUGGIFY, deterministicRandom()->coinflip() ? "round" : "add");
 	init( TAG_THROTTLING_PAGE_SIZE,                1024 ); BUGGIFY_KNOB(TAG_THROTTLING_PAGE_SIZE, randomize && BUGGIFY, 4096);
 	init( GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO,            4.0 );

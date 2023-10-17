@@ -953,26 +953,6 @@ def read_system_key(k):
     return value
 
 
-@enable_logging()
-def throttle(logger):
-    # no throttled tags at the beginning
-    no_throttle_tags_output = "There are no throttled tags"
-    output = run_fdbcli_command("throttle", "list")
-    logger.debug(output)
-    assert output == no_throttle_tags_output
-    # test 'throttle enable auto'
-    run_fdbcli_command("throttle", "enable", "auto")
-    # verify the change is applied by reading the system key
-    # not an elegant way, may change later
-    enable_flag = read_system_key("\\xff\\x02/throttledTags/autoThrottlingEnabled")
-    assert enable_flag == "`1'"
-    run_fdbcli_command("throttle", "disable", "auto")
-    enable_flag = read_system_key("\\xff\\x02/throttledTags/autoThrottlingEnabled")
-    # verify disabled
-    assert enable_flag == "`0'"
-    # TODO : test manual throttling, not easy to do now
-
-
 def wait_for_database_available(logger):
     # sometimes the change takes some time to have effect and the database can be unavailable at that time
     # this is to wait until the database is available again
@@ -1636,6 +1616,59 @@ def test_tenant_modes(logger):
     run_fdbcli_command("configure tenant_mode=optional_experimental")
 
 
+def test_global_config_update(logger, key: str, value: str, expected: str):
+    command = "global_config set {} {}".format(key, value)
+    output = run_fdbcli_command(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Successfully set global_config value."
+
+    # Wait for global config update to propagate
+    time.sleep(3)
+
+    command = "global_config get {}".format(key)
+    output = run_fdbcli_command(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == expected
+
+    command = "global_config clear {}".format(key)
+    output = run_fdbcli_command(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Successfully cleared global_config value."
+
+
+def test_invalid_global_config_commands(logger):
+    usage = "global_config [get <key> | set <key> <value> | clear <key>]"
+    command = "global_config get"
+    output = run_fdbcli_command_and_get_error(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == usage
+
+    command = "global_config get quotaThrottling/invalidKey"
+    output = run_fdbcli_command_and_get_error(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Unrecognized key: quotaThrottling/invalidKey\n{}".format(usage)
+
+    command = "global_config set quotaThrottling/pageSize not_a_number"
+    output = run_fdbcli_command_and_get_error(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Unable to pack value"
+
+    command = "global_config set quotaThrottling/pageSize 10KB"
+    output = run_fdbcli_command_and_get_error(command)
+    logger.debug("{} : {}".format(command, output))
+    assert output == "Unable to pack value"
+
+
+@enable_logging()
+def test_global_config(logger):
+    test_global_config_update(logger, "quotaThrottling/readSampleRate", "0.5", "0.500000")
+    test_global_config_update(logger, "quotaThrottling/fungibilityRatio", "2.0", "2.000000")
+    test_global_config_update(logger, "quotaThrottling/pageSize", "1000", "1000")
+    test_global_config_update(logger, "quotaThrottling/commitSampleCost", "10000", "10000")
+    test_global_config_update(logger, "quotaThrottling/costFormula", "add", "add")
+    test_invalid_global_config_commands(logger)
+
+
 def integer_options():
     process = subprocess.Popen(
         command_template[:-1],
@@ -1753,8 +1786,6 @@ if __name__ == "__main__":
         # TODO: reenable it until it's stable
         # suspend()
         transaction()
-        # this is replaced by the "quota" command
-        # throttle()
         triggerddteaminfolog()
         tenants()
         versionepoch()
@@ -1765,6 +1796,7 @@ if __name__ == "__main__":
         # quota()
         idempotency_ids()
         test_tenant_modes()
+        test_global_config()
     else:
         assert args.process_number > 1, "Process number should be positive"
         coordinators()

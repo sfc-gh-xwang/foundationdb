@@ -35,6 +35,7 @@
 #include "fdbclient/CommitProxyInterface.h"
 #include "fdbclient/GlobalConfig.h"
 #include "fdbclient/ReadYourWrites.h"
+#include "flow/FastRef.h"
 
 #include "flow/actorcompiler.h" // has to be last include
 
@@ -53,6 +54,13 @@ extern const KeyRef transactionTagSampleCost;
 extern const KeyRef samplingFrequency;
 extern const KeyRef samplingWindow;
 
+// Quota throttling management
+extern const KeyRef quotaThrottlingPageSize;
+extern const KeyRef quotaThrottlingFungibilityRatio;
+extern const KeyRef quotaThrottlingCostFormula;
+extern const KeyRef quotaThrottlingReadSampleRate;
+extern const KeyRef quotaThrottlingCommitSampleCost;
+
 // Structure used to hold the values stored by global configuration. The arena
 // is used as memory to store both the key and the value (the value is only
 // stored in the arena if it is an object; primitives are just copied).
@@ -64,7 +72,7 @@ struct ConfigValue : ReferenceCounted<ConfigValue> {
 	ConfigValue(Arena&& a, std::any&& v) : arena(a), value(v) {}
 };
 
-class GlobalConfig : NonCopyable {
+class GlobalConfig : public ReferenceCounted<GlobalConfig> {
 public:
 	// Requires a database pointer to allow global configuration to run
 	// transactions on the database.
@@ -103,26 +111,26 @@ public:
 	// reference which also contains the arena holding the object. As long as
 	// the caller keeps the ConfigValue reference, the value is guaranteed to
 	// be readable. An empty reference is returned if the value does not exist.
-	const Reference<ConfigValue> get(KeyRef name);
-	const std::map<KeyRef, Reference<ConfigValue>> get(KeyRangeRef range);
+	Reference<ConfigValue> get(KeyRef name) const;
+	std::map<KeyRef, Reference<ConfigValue>> get(KeyRangeRef range) const;
 
 	// For arithmetic value types, returns a copy of the value for the given
 	// key, or the supplied default value if the framework does not know about
 	// the key.
 	template <typename T, typename std::enable_if<std::is_arithmetic<T>{}, bool>::type = true>
-	const T get(KeyRef name, T defaultVal) {
-		try {
-			auto configValue = get(name);
-			if (configValue.isValid()) {
-				if (configValue->value.has_value()) {
+	T get(KeyRef name, T defaultVal) const {
+		auto const configValue = get(name);
+		if (configValue.isValid()) {
+			if (configValue->value.has_value()) {
+				try {
 					return std::any_cast<T>(configValue->value);
+				} catch (std::bad_any_cast const&) {
+					TraceEvent(SevWarnAlways, "GlobalConfigBadCast").detail("Default", defaultVal);
+					return defaultVal;
 				}
 			}
-
-			return defaultVal;
-		} catch (Error& e) {
-			throw;
 		}
+		return defaultVal;
 	}
 
 	// Trying to write into the global configuration keyspace? To write data,
@@ -133,11 +141,11 @@ public:
 
 	// Triggers the returned future when the global configuration singleton has
 	// been created and is ready.
-	Future<Void> onInitialized();
+	Future<Void> onInitialized() const;
 
 	// Triggers the returned future when any key-value pair in the global
 	// configuration changes.
-	Future<Void> onChange();
+	Future<Void> onChange() const;
 
 	// Calls \ref fn when the value associated with \ref key is changed. \ref
 	// key should be one of the string literals defined at the top of

@@ -1,5 +1,7 @@
 /**
  * IQuotaCostCalculator.h
+ *
+ * Copyright (c) 2023 Snowflake Computing
  */
 
 #pragma once

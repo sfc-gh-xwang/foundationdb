@@ -261,14 +261,16 @@ public:
 	// trace
 	int TRACE_LOG_FILE_IDENTIFIER_MAX_LENGTH;
 
-	// transaction tags
+	// Quota Throttling
 	int MAX_TRANSACTION_TAG_LENGTH;
 	int MAX_TAGS_PER_TRANSACTION;
-	int COMMIT_SAMPLE_COST; // The expectation of sampling is every COMMIT_SAMPLE_COST sample once
-	double READ_TAG_SAMPLE_RATE; // Communicated to clients from cluster
-	double TAG_THROTTLE_SMOOTHING_WINDOW;
-	double TAG_THROTTLE_RECHECK_INTERVAL;
-	double TAG_THROTTLE_EXPIRATION_INTERVAL;
+	// One commit request is sampled for every COMMIT_SAMPLE_COST
+	// bytes of quota utilization from writes:
+	int COMMIT_SAMPLE_COST;
+	// Rate at which read requests are sampled for quota throttler cost
+	// tracking purposes. This rate can be updated from through the
+	// global configuration and communicated to clients from the cluster:
+	double READ_TAG_SAMPLE_RATE;
 	// String representing the formula used by the quota throttler to estimate
 	// the cost of an operation in bytes. Options include:
 	//   - minimum (enforce a minimum cost for each operation)
@@ -306,7 +308,6 @@ public:
 	// ThroughputTracker forgets about statistics from a tag once no new transactions from that
 	// tag have been received for this duration (in seconds):
 	int64_t CLIENT_THROUGHPUT_TAG_EXPIRE_AFTER;
-
 	// Enables client-side tracking of average transaction costs. The clients will track and
 	// report the expected cost per ThrottlingID along with each GRV requests.
 	// The QuotaThrottler will utilize this information to throttle transactions.
@@ -323,7 +324,6 @@ public:
 	// Folding time parameter used for rate of the ThroughputTracker's HoltLinearSmoother
 	// for calculating the average cost.
 	double AVERAGE_COST_RATE_FOLDING_TIME;
-
 	// Enable busy throttling ID tracking. Only those IDs in the busy set will be subject to throttling by the GRV
 	// proxy. If an ID is not considered busy, it can utilize the GRV cache. The thresholds for determining whether an
 	// ID is busy or not are configurable by SERVER_KNOBS->THROTTLING_ID_BUSY_THRESHOLD and

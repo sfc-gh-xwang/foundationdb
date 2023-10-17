@@ -37,6 +37,13 @@ const KeyRef transactionTagSampleCost = "config/transaction_tag_sample_cost"_sr;
 const KeyRef samplingFrequency = "visibility/sampling/frequency"_sr;
 const KeyRef samplingWindow = "visibility/sampling/window"_sr;
 
+// Quota throttling management
+const KeyRef quotaThrottlingPageSize = "quota_throttling/pageSize"_sr;
+const KeyRef quotaThrottlingFungibilityRatio = "quota_throttling/fungibilityRatio"_sr;
+const KeyRef quotaThrottlingCostFormula = "quota_throttling/costFormula"_sr;
+const KeyRef quotaThrottlingReadSampleRate = "quota_throttling/readSampleRate"_sr;
+const KeyRef quotaThrottlingCommitSampleCost = "quota_throttling/commitSampleCost"_sr;
+
 GlobalConfig::GlobalConfig(DatabaseContext* cx) : cx(cx), lastUpdate(0) {}
 
 void GlobalConfig::applyChanges(Transaction& tr,
@@ -70,7 +77,7 @@ Key GlobalConfig::prefixedKey(KeyRef key) {
 	return key.withPrefix(SpecialKeySpace::getModuleRange(SpecialKeySpace::MODULE::GLOBALCONFIG).begin);
 }
 
-const Reference<ConfigValue> GlobalConfig::get(KeyRef name) {
+Reference<ConfigValue> GlobalConfig::get(KeyRef name) const {
 	auto it = data.find(name);
 	if (it == data.end()) {
 		return Reference<ConfigValue>();
@@ -78,7 +85,7 @@ const Reference<ConfigValue> GlobalConfig::get(KeyRef name) {
 	return it->second;
 }
 
-const std::map<KeyRef, Reference<ConfigValue>> GlobalConfig::get(KeyRangeRef range) {
+std::map<KeyRef, Reference<ConfigValue>> GlobalConfig::get(KeyRangeRef range) const {
 	std::map<KeyRef, Reference<ConfigValue>> results;
 	for (const auto& [key, value] : data) {
 		if (range.contains(key)) {
@@ -88,11 +95,11 @@ const std::map<KeyRef, Reference<ConfigValue>> GlobalConfig::get(KeyRangeRef ran
 	return results;
 }
 
-Future<Void> GlobalConfig::onInitialized() {
+Future<Void> GlobalConfig::onInitialized() const {
 	return initialized.getFuture();
 }
 
-Future<Void> GlobalConfig::onChange() {
+Future<Void> GlobalConfig::onChange() const {
 	return configChanged.onTrigger();
 }
 
@@ -204,6 +211,7 @@ ACTOR Future<Void> GlobalConfig::updater(GlobalConfig* self, const ClientDBInfo*
 						// history updates or the protocol version changed, so it
 						// must re-read the entire configuration range.
 						wait(self->refresh(self, history.back().version));
+
 						if (dbInfo->history.size() > 0) {
 							self->lastUpdate = dbInfo->history.back().version;
 						}
@@ -230,7 +238,6 @@ ACTOR Future<Void> GlobalConfig::updater(GlobalConfig* self, const ClientDBInfo*
 							self->lastUpdate = vh.version;
 						}
 					}
-
 					self->configChanged.trigger();
 				} catch (Error& e) {
 					throw;
