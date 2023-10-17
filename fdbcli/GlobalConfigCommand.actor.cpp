@@ -20,7 +20,7 @@ protected:
 public:
 	virtual ~IGlobalConfigKey() = default;
 	static Reference<IGlobalConfigKey> create(Key key);
-	Key withPrefix() const { return key.withPrefix("\xff\xff/global_config/"_sr); }
+	Key withPrefix() const { return GlobalConfig::prefixedKey(key); }
 	virtual Optional<Value> pack(Value) const = 0;
 };
 

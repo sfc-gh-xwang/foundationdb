@@ -21,7 +21,7 @@ class QuotaThrottlingConfigWorkload : public TestWorkload {
 				tr->setOption(FDBTransactionOptions::RAW_ACCESS);
 				tr->setOption(FDBTransactionOptions::LOCK_AWARE);
 				auto const tuple = Tuple::makeTuple(value);
-				tr->set(key.withPrefix("\xff\xff/global_config/"_sr), tuple.pack());
+				tr->set(GlobalConfig::prefixedKey(key), tuple.pack());
 				wait(tr->commit());
 				return Void();
 			} catch (Error& e) {
