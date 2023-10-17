@@ -867,6 +867,8 @@ def coordinators(logger):
     assert output2.split("\n")[1] == "Cluster coordinators ({}): {}".format(
         args.process_number, ",".join(addresses)
     )
+    # wait for the database becomes available after the coordinator change
+    wait_for_database_available(logger)
     # auto change should go back to 1 coordinator
     run_fdbcli_command("coordinators", "auto")
     assert (

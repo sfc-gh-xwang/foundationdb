@@ -381,7 +381,7 @@ int64_t Tuple::getInt(size_t index, bool allow_incomplete) const {
 
 	memset(&swap, neg ? '\xff' : 0, 8 - len);
 	// presentLen is how many of len bytes are actually present, it will be < len if the encoded tuple was truncated
-	int presentLen = std::min<int8_t>(len, data.size() - offsets[index] - 1);
+	int presentLen = std::min<int>(len, data.size() - offsets[index] - 1);
 	ASSERT(len == presentLen || allow_incomplete);
 	memcpy(((uint8_t*)&swap) + 8 - len, data.begin() + offsets[index] + 1, presentLen);
 	if (presentLen < len) {
