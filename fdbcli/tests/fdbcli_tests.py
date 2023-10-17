@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -212,6 +213,137 @@ def blobkey_history(logger):
     assert w[0][-1] == ")"
     assert int(w[0][:-1], 10) > 0
     assert int(w[1], 16) > 0
+
+
+@enable_logging()
+def blobrange_debug_check(logger):
+    """Trivial change detector for the blobrange check and debug commands. Runs after
+    blobrange_list() and relies on that test having built a few bits of state for us
+    to dump."""
+    r = run_fdbcli_command(r"usetenant tenant1 ; blobrange debug A B")
+    logger.debug("first command result {}".format(r))
+
+    def check_debug_a_b(r, tenant):
+        r = [ll.strip() for ll in r.split("\n")]
+        if tenant:
+            assert r[:4] == [
+                ">>> usetenant tenant1",
+                "Using tenant `tenant1'",
+                ">>> blobrange debug A B",
+                "debug blob range [A - B)",
+            ]
+            del r[:4]
+        else:
+            assert (
+                r[0]
+                == r"debug blob range [\x00\x00\x00\x00\x00\x00\x00\x01A - \x00\x00\x00\x00\x00\x00\x00\x01B)"
+            )
+            del r[0]
+
+        l3 = r[3]
+        m = re.match(r"[a-f0-9_]*_V[0-9]*\.snapshot.*@[0-9]*$", l3)
+        assert m is not None, "l3 {}".format(l3)
+        r[3] = "l3"
+
+        final = r[-1]
+        m = re.match(r"Deltas: \(0\)  IncludedVersion: [0-9]*$", final)
+        assert m is not None, "final {}".format(final)
+        del r[-1]
+
+        for idx in range(len(r)):
+            assert (
+                r[idx]
+                == [
+                    "Chunks:",
+                    # blobrange debug returns raw keys, including the tenant prefix
+                    r"[\x00\x00\x00\x00\x00\x00\x00\x01A - \x00\x00\x00\x00\x00\x00\x00\x01B)",
+                    "SnapshotFile:",
+                    "l3",
+                    "DeltaFiles:",
+                ][idx]
+            ), "line {}, {}".format(idx, r[idx])
+
+    check_debug_a_b(r, True)
+
+    r = run_fdbcli_command(r"usetenant tenant1 ; blobrange debug x y", check=False)
+    logger.debug("invalid blobrange debbug {}".format(r))
+    assert (
+        r
+        == """>>> usetenant tenant1
+Using tenant `tenant1'
+>>> blobrange debug x y
+debug blob range [x - y)
+Range is not blobbified or version too old"""
+    )
+
+    r = run_fdbcli_command(
+        r"blobrange debug \x00\x00\x00\x00\x00\x00\x00\x01A \x00\x00\x00\x00\x00\x00\x00\x01B"
+    )
+    logger.debug("tenant blobrange debug result {}".format(r))
+    check_debug_a_b(r, False)
+
+    r = run_fdbcli_command(r"usetenant tenant1 ; blobrange check A B")
+    logger.debug("tenant blobrange check {}".format(r))
+    r = r.split("\n")
+    m = re.match(
+        "Blob check complete for \\[A - B\\) @ [0-9]* in [0-9.]* seconds", r[-1]
+    )
+    assert m is not None
+    del r[-1]
+
+    for idx in range(len(r)):
+        assert (
+            r[idx]
+            == [
+                ">>> usetenant tenant1",
+                "Using tenant `tenant1'",
+                ">>> blobrange check A B",
+                "check blob range [A - B)",
+            ][idx]
+        ), "idx {}, len {}".format(idx, r[idx])
+
+    r = run_fdbcli_command(r"usetenant tenant1 ; blobrange check x y")
+    logger.debug("tenant bad blobrange check {}".format(r))
+    r = r.split("\n")
+    m = re.match("Blob check complete for \\[x - y\\) @ -1 in [0-9.]* seconds", r[-1])
+    assert m is not None, "line {}".format(r[-1])
+    del r[-1]
+    assert r == [
+        ">>> usetenant tenant1",
+        "Using tenant `tenant1'",
+        ">>> blobrange check x y",
+        "check blob range [x - y)",
+    ]
+
+    r = run_fdbcli_command(
+        r"blobrange check \x00\x00\x00\x00\x00\x00\x00\x01A \x00\x00\x00\x00\x00\x00\x00\x01B"
+    )
+    logger.debug("non-tenant blobrange check {}".format(r))
+    r = r.split("\n")
+    assert (
+        r[0]
+        == r"check blob range [\x00\x00\x00\x00\x00\x00\x00\x01A - \x00\x00\x00\x00\x00\x00\x00\x01B)"
+    )
+    assert (
+        re.match(
+            "Blob check complete for \\[\\\\x00\\\\x00\\\\x00\\\\x00\\\\x00\\\\x00\\\\x00\\\\x01A - \\\\x00\\\\x00\\\\x00\\\\x00\\\\x00\\\\x00\\\\x00\\\\x01B\\) @ [0-9]* in [0-9.]* seconds",
+            r[1],
+        )
+        is not None
+    )
+    assert len(r) == 2
+
+    r = run_fdbcli_command('blobrange check "" \\xff')
+    logger.debug("global blobrange check {}".format(r))
+    r = r.split("\n")
+    assert r[0] == r"check blob range [ - \xff)"
+    assert (
+        re.match(
+            "^Blob check complete for \\[ - \\\\xff\\) @ -1 in [0-9.]* seconds$", r[1]
+        )
+        is not None
+    )
+    assert len(r) == 2
 
 
 @enable_logging()
@@ -1773,6 +1905,7 @@ if __name__ == "__main__":
     if args.blobs:
         blobrange_list()
         blobkey_history()
+        blobrange_debug_check()
     elif args.process_number == 1:
         # TODO: disable for now, the change can cause the database unavailable
         # advanceversion()
