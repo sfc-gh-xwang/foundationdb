@@ -1614,7 +1614,6 @@ def test_tenant_modes(logger):
     run_fdbcli_command("configure tenant_mode=optional_experimental")
 
 
-@enable_logging()
 def test_global_config_update(logger, key: str, value: str, expected: str):
     command = "global_config set {} {}".format(key, value)
     output = run_fdbcli_command(command)
@@ -1635,7 +1634,6 @@ def test_global_config_update(logger, key: str, value: str, expected: str):
     assert output == "Successfully cleared global_config value."
 
 
-@enable_logging()
 def test_invalid_global_config_commands(logger):
     usage = "global_config [get <key> | set <key> <value> | clear <key>]"
     command = "global_config get"
@@ -1659,13 +1657,14 @@ def test_invalid_global_config_commands(logger):
     assert output == "Unable to pack value"
 
 
-def test_global_config():
-    test_global_config_update("quotaThrottling/readSampleRate", "0.5", "0.500000")
-    test_global_config_update("quotaThrottling/fungibilityRatio", "2.0", "2.000000")
-    test_global_config_update("quotaThrottling/pageSize", "1000", "1000")
-    test_global_config_update("quotaThrottling/commitSampleCost", "10000", "10000")
-    test_global_config_update("quotaThrottling/costFormula", "add", "add")
-    test_invalid_global_config_commands()
+@enable_logging()
+def test_global_config(logger):
+    test_global_config_update(logger, "quotaThrottling/readSampleRate", "0.5", "0.500000")
+    test_global_config_update(logger, "quotaThrottling/fungibilityRatio", "2.0", "2.000000")
+    test_global_config_update(logger, "quotaThrottling/pageSize", "1000", "1000")
+    test_global_config_update(logger, "quotaThrottling/commitSampleCost", "10000", "10000")
+    test_global_config_update(logger, "quotaThrottling/costFormula", "add", "add")
+    test_invalid_global_config_commands(logger)
 
 
 def integer_options():
