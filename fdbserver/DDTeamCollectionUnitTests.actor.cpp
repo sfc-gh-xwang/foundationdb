@@ -360,7 +360,9 @@ public:
 		collection->server_info[UID(2, 0)]->setMetrics(high_avail);
 		collection->server_info[UID(3, 0)]->setMetrics(high_avail);
 		collection->server_info[UID(4, 0)]->setMetrics(high_avail);
-		collection->server_info[UID(1, 0)]->markTeamUnhealthy(0);
+		auto status = collection->server_status.get(UID(1, 0));
+		status.isFailed = true;
+		collection->server_status.set(UID(1, 0), status);
 
 		/*
 		 * Suppose  1, 2, 3 and 4 are complete sources, i.e., they have all shards in
@@ -385,7 +387,7 @@ public:
 		auto servers = resTeam.get()->getServerIDs();
 		const std::set<UID> selectedServers(servers.begin(), servers.end());
 
-		ASSERT(expectedServers == selectedServers);
+		ASSERT_EQ(expectedServers, selectedServers);
 		return Void();
 	}
 
