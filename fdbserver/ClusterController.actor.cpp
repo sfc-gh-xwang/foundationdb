@@ -2886,7 +2886,7 @@ ACTOR Future<Void> workerHealthMonitor(ClusterControllerData* self) {
 
 				// Check if the cluster controller should trigger a recovery to exclude any degraded servers from
 				// the transaction system.
-				if (self->shouldTriggerRecoveryDueToDegradedServers()) {
+				if (self->shouldTriggerRecoveryDueToDegradedServersV2()) {
 					if (SERVER_KNOBS->CC_HEALTH_TRIGGER_RECOVERY) {
 						if (self->recentRecoveryCountDueToHealth() < SERVER_KNOBS->CC_MAX_HEALTH_RECOVERY_COUNT) {
 							self->recentHealthTriggeredRecoveryTime.push(now());
@@ -3728,6 +3728,149 @@ TEST_CASE("/fdbserver/clustercontroller/shouldTriggerRecoveryDueToDegradedServer
 	data.degradationInfo.degradedServers.clear();
 	data.degradationInfo.disconnectedServers.insert(resolver);
 	ASSERT(data.shouldTriggerRecoveryDueToDegradedServers());
+	data.degradationInfo.disconnectedServers.clear();
+
+	return Void();
+}
+
+TEST_CASE("/fdbserver/clustercontroller/shouldTriggerRecoveryDueToDegradedServersV2") {
+	// Create a testing ClusterControllerData. Most of the internal states do not matter in this test.
+	ClusterControllerData data(ClusterControllerFullInterface(),
+	                           LocalityData(),
+	                           ServerCoordinators(Reference<IClusterConnectionRecord>(
+	                               new ClusterConnectionMemoryRecord(ClusterConnectionString()))),
+	                           makeReference<AsyncVar<Optional<UID>>>());
+	NetworkAddress master(IPAddress(0x01010101), 1);
+	NetworkAddress tlog1(IPAddress(0x02020202), 1);
+	NetworkAddress tlog2(IPAddress(0x03030303), 1);
+	NetworkAddress tlog3(IPAddress(0x04040404), 1);
+	NetworkAddress backup(IPAddress(0x05050505), 1);
+	NetworkAddress grv_proxy(IPAddress(0x06060606), 1);
+	NetworkAddress commit_proxy(IPAddress(0x07070707), 1);
+	NetworkAddress commit_proxy2(IPAddress(0x07070707), 2);
+	NetworkAddress resolver(IPAddress(0x08080808), 1);
+	NetworkAddress clusterController(IPAddress(0x09090909), 1);
+	// Singletons run in the same process with the master
+	NetworkAddress data_distributor(IPAddress(0x01010101), 1);
+	NetworkAddress rate_keeper(IPAddress(0x01010101), 1);
+	UID testUID(1, 2);
+
+	// Create a ServerDBInfo using above addresses.
+	ServerDBInfo testDbInfo;
+	testDbInfo.clusterInterface.changeCoordinators =
+	    RequestStream<struct ChangeCoordinatorsRequest>(Endpoint({ clusterController }, UID(1, 2)));
+
+	MasterInterface mInterface;
+	mInterface.getCommitVersion = RequestStream<struct GetCommitVersionRequest>(Endpoint({ master }, UID(1, 2)));
+	testDbInfo.master = mInterface;
+
+	TLogInterface localTLogInterf1;
+	localTLogInterf1.peekMessages = RequestStream<struct TLogPeekRequest>(Endpoint({ tlog1 }, testUID));
+	BackupInterface backupInterf1;
+	backupInterf1.waitFailure = RequestStream<ReplyPromise<Void>>(Endpoint({ backup }, testUID));
+	TLogSet localTLogSet1;
+	localTLogSet1.isLocal = true;
+	localTLogSet1.tLogs.push_back(OptionalInterface(localTLogInterf1));
+	localTLogSet1.backupWorkers.push_back(OptionalInterface(backupInterf1));
+	testDbInfo.logSystemConfig.tLogs.push_back(localTLogSet1);
+
+	TLogInterface localTLogInterf2;
+	localTLogInterf2.peekMessages = RequestStream<struct TLogPeekRequest>(Endpoint({ tlog2 }, testUID));
+	BackupInterface backupInterf2;
+	backupInterf2.waitFailure = RequestStream<ReplyPromise<Void>>(Endpoint({ backup }, testUID));
+	TLogSet localTLogSet2;
+	localTLogSet2.isLocal = true;
+	localTLogSet2.tLogs.push_back(OptionalInterface(localTLogInterf2));
+	localTLogSet2.backupWorkers.push_back(OptionalInterface(backupInterf2));
+	testDbInfo.logSystemConfig.tLogs.push_back(localTLogSet2);
+
+	TLogInterface localTLogInterf3;
+	localTLogInterf3.peekMessages = RequestStream<struct TLogPeekRequest>(Endpoint({ tlog3 }, testUID));
+	BackupInterface backupInterf3;
+	backupInterf3.waitFailure = RequestStream<ReplyPromise<Void>>(Endpoint({ backup }, testUID));
+	TLogSet localTLogSet3;
+	localTLogSet3.isLocal = true;
+	localTLogSet3.tLogs.push_back(OptionalInterface(localTLogInterf3));
+	localTLogSet3.backupWorkers.push_back(OptionalInterface(backupInterf3));
+	testDbInfo.logSystemConfig.tLogs.push_back(localTLogSet3);
+
+	GrvProxyInterface grvProxyInterf;
+	grvProxyInterf.getConsistentReadVersion =
+	    PublicRequestStream<struct GetReadVersionRequest>(Endpoint({ grv_proxy }, testUID));
+	testDbInfo.client.grvProxies.push_back(grvProxyInterf);
+
+	CommitProxyInterface commitProxyInterf;
+	commitProxyInterf.commit =
+	    PublicRequestStream<struct CommitTransactionRequest>(Endpoint({ commit_proxy }, testUID));
+	testDbInfo.client.commitProxies.push_back(commitProxyInterf);
+
+	CommitProxyInterface commitProxyInterf2;
+	commitProxyInterf2.commit =
+	    PublicRequestStream<struct CommitTransactionRequest>(Endpoint({ commit_proxy2 }, testUID));
+	testDbInfo.client.commitProxies.push_back(commitProxyInterf2);
+
+	ResolverInterface resolverInterf;
+	resolverInterf.resolve = RequestStream<struct ResolveTransactionBatchRequest>(Endpoint({ resolver }, testUID));
+	testDbInfo.resolvers.push_back(resolverInterf);
+
+	DataDistributorInterface ddInterf;
+	ddInterf.waitFailure = RequestStream<ReplyPromise<Void>>(Endpoint({ data_distributor }, testUID));
+	testDbInfo.distributor = ddInterf;
+
+	RatekeeperInterface rkInterf;
+	rkInterf.getRateInfo = RequestStream<struct GetRateInfoRequest>(Endpoint({ rate_keeper }, testUID));
+	testDbInfo.ratekeeper = rkInterf;
+
+	testDbInfo.recoveryState = RecoveryState::ACCEPTING_COMMITS;
+
+	// No recovery when no degraded servers.
+	data.db.serverInfo->set(testDbInfo);
+	ASSERT(!data.shouldTriggerRecoveryDueToDegradedServersV2());
+
+	// Test duplicates in disconnected and degraded server lists are not counted twice
+	// Test the limit of stateless processes that can be excluded
+	data.degradationInfo.degradedServers.insert(grv_proxy);
+	data.degradationInfo.degradedServers.insert(commit_proxy);
+	data.degradationInfo.degradedServers.insert(resolver);
+	ASSERT_EQ(data.getDegradedTlogProcesses(data.degradationInfo.degradedServers).size(), 0);
+	ASSERT_EQ(data.getDegradedStatelessProcesses(data.degradationInfo.degradedServers).size(), 3);
+	data.degradationInfo.disconnectedServers.insert(grv_proxy);
+	data.degradationInfo.disconnectedServers.insert(commit_proxy);
+	data.degradationInfo.disconnectedServers.insert(resolver);
+	// Three distinct processes to be excluded, which does not exceed the limit
+	ASSERT(data.shouldTriggerRecoveryDueToDegradedServersV2());
+	data.degradationInfo.disconnectedServers.insert(commit_proxy2);
+	// Four distinct processes to be excluded, which does not exceed the limit
+	ASSERT(data.shouldTriggerRecoveryDueToDegradedServersV2());
+	// Duplicates do not change the total count
+	data.degradationInfo.disconnectedServers.insert(commit_proxy2);
+	ASSERT(data.shouldTriggerRecoveryDueToDegradedServersV2());
+	// Five distinct processes to be excluded, which exceeds the limit
+	data.degradationInfo.degradedServers.insert(master);
+	ASSERT(!data.shouldTriggerRecoveryDueToDegradedServersV2());
+	data.degradationInfo.degradedServers.clear();
+	data.degradationInfo.disconnectedServers.clear();
+
+	// Test the limit of tlogs that can be excluded
+	data.degradationInfo.degradedServers.insert(tlog1);
+	data.degradationInfo.degradedServers.insert(tlog2);
+	ASSERT_EQ(data.getDegradedTlogProcesses(data.degradationInfo.degradedServers).size(), 2);
+	ASSERT_EQ(data.getDegradedStatelessProcesses(data.degradationInfo.degradedServers).size(), 0);
+	data.degradationInfo.disconnectedServers.insert(tlog2);
+	// Tow distinct tlogs to be excluded, which does not exceed the limit
+	ASSERT(data.shouldTriggerRecoveryDueToDegradedServersV2());
+	data.degradationInfo.disconnectedServers.insert(tlog3);
+	// Three distinct tlogs to be excluded, which exceeds the limit
+	ASSERT(!data.shouldTriggerRecoveryDueToDegradedServersV2());
+	data.degradationInfo.degradedServers.clear();
+	data.degradationInfo.disconnectedServers.clear();
+
+	// Check if only singletons are degraded, it will still trigger the recovery
+	data.degradationInfo.degradedServers.insert(data_distributor);
+	data.degradationInfo.disconnectedServers.insert(rate_keeper);
+	ASSERT(data.shouldTriggerRecoveryDueToDegradedServersV2());
+	ASSERT_EQ(data.getDegradedStatelessProcesses(data.degradationInfo.degradedServers).size(), 1);
+	data.degradationInfo.degradedServers.clear();
 	data.degradationInfo.disconnectedServers.clear();
 
 	return Void();

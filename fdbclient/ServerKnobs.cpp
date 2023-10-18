@@ -701,8 +701,10 @@ void ServerKnobs::initialize(Randomize randomize, ClientKnobs* clientKnobs, IsSi
 	init( CC_MIN_DEGRADATION_INTERVAL,                         120.0 );
 	init( TENANT_BALANCER_FAILURE_TIME,                          1.0 );
 	init( ENCRYPT_KEY_PROXY_FAILURE_TIME,                        0.1 ); BUGGIFY_KNOB(ENCRYPT_KEY_PROXY_FAILURE_TIME, isSimulated, 1.0 + deterministicRandom()->random01());
-	init( CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE,                     10 );
+	init( CC_DEGRADED_PEER_DEGREE_TO_EXCLUDE,                     -1 );
 	init( CC_MAX_EXCLUSION_DUE_TO_HEALTH,                          2 );
+	init( CC_MAX_STATELESS_EXCLUSION_DUE_TO_HEALTH,                4 );
+	init( CC_MAX_TLOG_EXCLUSION_DUE_TO_HEALTH,                     2 );
 	init( CC_HEALTH_TRIGGER_RECOVERY,                          false );
 	init( CC_TRACKING_HEALTH_RECOVERY_INTERVAL,               3600.0 );
 	init( CC_MAX_HEALTH_RECOVERY_COUNT,                            5 );

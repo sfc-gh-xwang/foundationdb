@@ -681,6 +681,9 @@ public:
 	                                        // this server since it may because of server overload.
 	int CC_MAX_EXCLUSION_DUE_TO_HEALTH; // The max number of degraded servers to exclude by Cluster Controller due to
 	                                    // degraded health.
+	int CC_MAX_STATELESS_EXCLUSION_DUE_TO_HEALTH; // The max number of degraded stateless processes that can be excluded
+	                                              // by CC
+	int CC_MAX_TLOG_EXCLUSION_DUE_TO_HEALTH; // The max number of degraded tlogs that can be excluded by CC
 	bool CC_HEALTH_TRIGGER_RECOVERY; // If true, cluster controller will kill the master to trigger recovery when
 	                                 // detecting degraded servers. If false, cluster controller only prints a warning.
 	double CC_TRACKING_HEALTH_RECOVERY_INTERVAL; // The number of recovery count should not exceed

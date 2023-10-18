@@ -1256,6 +1256,10 @@ ACTOR Future<Void> tenantBalancer(TenantBalancerInterface tbi,
 
 void registerThreadForProfiling();
 
+// Returns true if `address` is used as a stateless process(indicated by `dbi`), i.e., master, proxy, resolver, and
+// singletons(DD, ratekeeper and so on)
+bool isStatelessProcess(const NetworkAddress& address, const ServerDBInfo& dbi);
+
 // Returns true if `address` is used in the db (indicated by `dbInfo`) transaction system and in the db's primary
 // satellite DC.
 bool addressInDbAndPrimarySatelliteDc(const NetworkAddress& address, Reference<AsyncVar<ServerDBInfo> const> dbInfo);

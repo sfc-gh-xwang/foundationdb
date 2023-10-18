@@ -1162,6 +1162,32 @@ public:
 		return currentDegradationInfo;
 	}
 
+	std::unordered_set<NetworkAddress> getDegradedStatelessProcesses(
+	    const std::unordered_set<NetworkAddress>& serverList) {
+		const ServerDBInfo& dbi = db.serverInfo->get();
+		std::unordered_set<NetworkAddress> stateless;
+		for (const auto& server : serverList) {
+			if (isStatelessProcess(server, dbi))
+				stateless.insert(server);
+		}
+		return stateless;
+	}
+
+	std::unordered_set<NetworkAddress> getDegradedTlogProcesses(const std::unordered_set<NetworkAddress>& serverList) {
+		const ServerDBInfo& dbi = db.serverInfo->get();
+		std::unordered_set<NetworkAddress> tlogs;
+		for (const auto& server : serverList) {
+			for (const auto& logSet : dbi.logSystemConfig.tLogs) {
+				for (const auto& tlog : logSet.tLogs) {
+					if (tlog.present() && tlog.interf().addresses().contains(server)) {
+						tlogs.insert(server);
+					}
+				}
+			}
+		}
+		return tlogs;
+	}
+
 	// Whether the transaction system (in primary DC if in HA setting) contains degraded servers.
 	bool transactionSystemContainsDegradedServers() const {
 		const ServerDBInfo& dbi = db.serverInfo->get();
@@ -1276,6 +1302,7 @@ public:
 		return !remoteTransactionSystemContainsDegradedServers();
 	}
 
+	// TODO : remove the old implementation and update related tests
 	// Returns true when the cluster controller should trigger a recovery due to degraded servers used in the
 	// transaction system in the primary data center.
 	bool shouldTriggerRecoveryDueToDegradedServers() {
@@ -1295,6 +1322,44 @@ public:
 		}
 
 		return transactionSystemContainsDegradedServers();
+	}
+
+	// Check degraded tlogs and stateless processes separately
+	bool shouldTriggerRecoveryDueToDegradedServersV2() {
+		if (db.serverInfo->get().recoveryState < RecoveryState::ACCEPTING_COMMITS) {
+			return false;
+		}
+
+		// Do not trigger recovery if the cluster controller is excluded, since the master will change
+		// anyways once the cluster controller is moved
+		if (id_worker[clusterControllerProcessId].priorityInfo.isExcluded) {
+			TraceEvent(SevWarn, "DegradedCCBeingExcluded").log();
+			return false;
+		}
+
+		// There are possible duplicates in degradationInfo.degradedServers and degradationInfo.disconnectedServers
+		// Unify them to remove duplicates
+		std::unordered_set<NetworkAddress> degradedProcesses;
+		degradedProcesses.insert(degradationInfo.degradedServers.begin(), degradationInfo.degradedServers.end());
+		degradedProcesses.insert(degradationInfo.disconnectedServers.begin(),
+		                         degradationInfo.disconnectedServers.end());
+
+		auto degradedTlogs = getDegradedTlogProcesses(degradedProcesses);
+		if (degradedTlogs.size() > SERVER_KNOBS->CC_MAX_TLOG_EXCLUSION_DUE_TO_HEALTH) {
+			TraceEvent(SevWarn, "DegradedTlogCountExceedsExclusionLimit")
+			    .detail("DegradedTlogs", describe(degradedTlogs));
+			return false;
+		}
+
+		auto degradedStatelessProcesses = getDegradedStatelessProcesses(degradedProcesses);
+		if (degradedStatelessProcesses.size() > SERVER_KNOBS->CC_MAX_STATELESS_EXCLUSION_DUE_TO_HEALTH) {
+			TraceEvent(SevWarn, "DegradedStatelessCountExceedsExclusionLimit")
+			    .detail("DegradedStatelessProcesses", describe(degradedStatelessProcesses));
+			return false;
+		}
+
+		// As long as there are degraded tlogs or stateless processes, it will trigger the recovery
+		return (degradedTlogs.size() > 0 || degradedStatelessProcesses.size() > 0);
 	}
 
 	// Returns true when the cluster controller should trigger a failover due to degraded servers used in the

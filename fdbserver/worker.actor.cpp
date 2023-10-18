@@ -758,12 +758,8 @@ ACTOR Future<Void> registrationClient(
 	}
 }
 
-// Returns true if `address` is used in the db (indicated by `dbInfo`) transaction system and in the db's primary DC.
-bool addressInDbAndPrimaryDc(const NetworkAddress& address, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
-	const auto& dbi = dbInfo->get();
-	ASSERT(dbi.master.present());
-
-	if (dbi.master.get().addresses().contains(address)) {
+bool isStatelessProcess(const NetworkAddress& address, const ServerDBInfo& dbi) {
+	if (dbi.master.present() && dbi.master.get().addresses().contains(address)) {
 		return true;
 	}
 
@@ -796,7 +792,7 @@ bool addressInDbAndPrimaryDc(const NetworkAddress& address, Reference<AsyncVar<S
 	}
 
 	for (const auto& resolver : dbi.resolvers) {
-		if (resolver.address() == address) {
+		if (resolver.addresses().contains(address)) {
 			return true;
 		}
 	}
@@ -811,6 +807,18 @@ bool addressInDbAndPrimaryDc(const NetworkAddress& address, Reference<AsyncVar<S
 		if (commitProxy.addresses().contains(address)) {
 			return true;
 		}
+	}
+
+	return false;
+}
+
+// Returns true if `address` is used in the db (indicated by `dbInfo`) transaction system and in the db's primary DC.
+bool addressInDbAndPrimaryDc(const NetworkAddress& address, Reference<AsyncVar<ServerDBInfo> const> dbInfo) {
+	const auto& dbi = dbInfo->get();
+	ASSERT(dbi.master.present());
+
+	if (isStatelessProcess(address, dbi)) {
+		return true;
 	}
 
 	auto localityIsInPrimaryDc = [&dbInfo](const LocalityData& locality) {
